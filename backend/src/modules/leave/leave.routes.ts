@@ -103,6 +103,31 @@ leaveRouter.post("/requests", requireWriteAccess, h(async (req: AuthenticatedReq
   return leaveController.submitRequest(req, res);
 }));
 
+/**
+ * GET /requests/my — the caller's own leave requests, whoever they are.
+ *
+ * The dashboard activity feed has always called this and it never existed, so the request
+ * 404'd on every load. The feed uses Promise.allSettled, so the rejection was absorbed and
+ * leave simply never appeared among a user's recent activity — no error, just a feed that
+ * silently omitted half of what it promised.
+ *
+ * Distinct from GET /requests, which widens for privileged roles: an admin asking /requests
+ * gets their whole branch, which is not what "my recent activity" means. Here employeeId is
+ * forced to the caller for everyone, so the answer cannot widen with the caller's role.
+ *
+ * Registered before /requests/:id/review so "my" is never read as an id.
+ */
+leaveRouter.get("/requests/my", h(async (req: AuthenticatedRequest, res: Response) => {
+  const callerEmp = await getEmployeeForUser(req.authUser!.id);
+  // A login with no employee record has no leave of its own. That is an empty feed, not an
+  // error — the dashboard renders for such accounts too.
+  if (!callerEmp) return res.json({ success: true, data: [], total: 0 });
+
+  const query = req.query as Record<string, unknown>;
+  query.employeeId = callerEmp.id;
+  return leaveController.listRequests(req, res);
+}));
+
 // Employee self-scope: employees see only their own leave requests; privileged roles filtered by branch.
 leaveRouter.get("/requests", h(async (req: AuthenticatedRequest, res: Response) => {
   const userId = req.authUser!.id;

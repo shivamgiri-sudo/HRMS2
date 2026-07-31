@@ -410,20 +410,31 @@ export const leaveService = {
     const offset = (page - 1) * limit;
     const conds: string[] = [];
     const params: unknown[] = [];
-    if (employeeId)  { conds.push("employee_id = ?");    params.push(employeeId); }
-    if (leaveTypeId) { conds.push("leave_type_id = ?");  params.push(leaveTypeId); }
-    if (status)      { conds.push("status = ?");         params.push(status); }
-    if (fromDate)    { conds.push("from_date >= ?");     params.push(fromDate); }
-    if (toDate)      { conds.push("to_date <= ?");       params.push(toDate); }
-    if (activeOn)    { conds.push("from_date <= ?");     params.push(activeOn);
-                       conds.push("to_date >= ?");       params.push(activeOn); }
+    // Every condition is qualified with lr., because the join below brings in a table that
+    // also carries created_at — leaving them bare would make those references ambiguous.
+    if (employeeId)  { conds.push("lr.employee_id = ?");    params.push(employeeId); }
+    if (leaveTypeId) { conds.push("lr.leave_type_id = ?");  params.push(leaveTypeId); }
+    if (status)      { conds.push("lr.status = ?");         params.push(status); }
+    if (fromDate)    { conds.push("lr.from_date >= ?");     params.push(fromDate); }
+    if (toDate)      { conds.push("lr.to_date <= ?");       params.push(toDate); }
+    if (activeOn)    { conds.push("lr.from_date <= ?");     params.push(activeOn);
+                       conds.push("lr.to_date >= ?");       params.push(activeOn); }
     const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
+    // leave_request stores only leave_type_id and leave_type_code, so a caller rendering a
+    // request had no name to show. The dashboard activity feed fell back to the word "Leave"
+    // for every entry, which reads as though the type were unknown. The join adds the name
+    // without removing anything: lr.* keeps every field existing callers already read.
     const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT * FROM leave_request ${where} ORDER BY applied_at DESC LIMIT ${limit} OFFSET ${offset}`,
+      `SELECT lr.*, lt.leave_name AS leave_type, lt.leave_code
+         FROM leave_request lr
+         LEFT JOIN leave_type_master lt ON lt.id = lr.leave_type_id
+        ${where}
+        ORDER BY lr.applied_at DESC
+        LIMIT ${limit} OFFSET ${offset}`,
       params
     );
     const [countRows] = await db.execute<RowDataPacket[]>(
-      `SELECT COUNT(*) AS total FROM leave_request ${where}`, params
+      `SELECT COUNT(*) AS total FROM leave_request lr ${where}`, params
     );
     return { data: rows as LeaveRequest[], total: (countRows as any)[0]?.total ?? 0, page, limit };
   },
