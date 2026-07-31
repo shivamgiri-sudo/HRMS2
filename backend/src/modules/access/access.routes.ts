@@ -10,6 +10,7 @@ import {
 } from "./access.service.js";
 import {
   listRolePageAccessByRole, upsertRolePageAccess, deleteRolePageAccess,
+  bulkSetModuleAccess,
   listDesignationRoleMap, upsertDesignationRoleMap, deleteDesignationRoleMap,
   createAccessRequest, listAccessRequests, approveAccessRequest, denyAccessRequest,
 } from "./role-page-access.service.js";
@@ -244,6 +245,17 @@ router.get("/roles/:roleKey/permissions", requireRole("admin"), h(async (req: Au
       },
     })),
   });
+}));
+
+// PUT /api/access/roles/:roleKey/module-access — set all pages in a module to a given permission level
+router.put("/roles/:roleKey/module-access", requireRole("admin"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const roleKey = req.params.roleKey;
+  const { module: moduleName, permissions } = req.body;
+  if (!moduleName || !permissions) {
+    return res.status(400).json({ success: false, error: "module and permissions required" });
+  }
+  const count = await bulkSetModuleAccess(roleKey, moduleName, permissions, req.authUser!.id);
+  res.json({ success: true, pages_updated: count });
 }));
 
 router.put("/roles/:roleKey/permissions", requireRole("admin"), h(async (req: AuthenticatedRequest, res: Response) => {

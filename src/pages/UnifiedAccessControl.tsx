@@ -1,14 +1,19 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Activity,
+  ArrowLeft,
   Check,
   ChevronDown,
   ChevronRight,
   Eye,
+  GripVertical,
+  Grid3X3,
   KeyRound,
+  Layers,
   Loader2,
   Lock,
+  Pencil,
   Plus,
   RefreshCw,
   Search,
@@ -18,6 +23,7 @@ import {
   UserCog,
   Users,
   X,
+  Zap,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { toast } from "sonner";
@@ -46,7 +52,9 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import { formatIST } from "@/lib/utils";
 
-type TabKey = "users" | "permissions" | "admin";
+type TabKey = "users" | "permissions" | "builder" | "admin";
+type PermView = "modules" | "pages";
+type DragPayload = { kind: "module"; name: string } | { kind: "page"; page_code: string; page_name: string; module: string };
 type AccessLevel = "no-access" | "view-only" | "editor" | "creator" | "full-access";
 type PermissionKey = "can_view" | "can_create" | "can_edit" | "can_delete" | "can_export";
 
@@ -153,6 +161,12 @@ const TEMPLATE_PERMISSIONS: Record<AccessLevel, PermissionSet> = {
   "full-access": { can_view: true, can_create: true, can_edit: true, can_delete: true, can_export: true },
 };
 
+const MODULE_ORDER = [
+  "Dashboards", "ATS", "Employees", "Attendance", "Leave", "WFM",
+  "Payroll", "Quality", "Reports", "LMS", "Access", "Settings",
+  "Admin", "Exit", "Client Portal", "Integrations", "Finance", "Unassigned",
+];
+
 function accessLevelFromPermissions(permissions: PermissionSet): AccessLevel {
   const { can_view, can_create, can_edit, can_delete, can_export } = permissions;
   if (!can_view && !can_create && !can_edit && !can_delete && !can_export) return "no-access";
@@ -160,6 +174,24 @@ function accessLevelFromPermissions(permissions: PermissionSet): AccessLevel {
   if (can_view && can_create && can_edit) return "creator";
   if (can_view && can_edit) return "editor";
   if (can_view) return "view-only";
+  return "no-access";
+}
+
+function deriveModuleAccessLevel(
+  pages: Array<{ permissions: PermissionSet; isDirty?: boolean }>,
+  _rolePermissionMap: Map<string, PagePermission>,
+  _pendingEdits: Record<string, Partial<PermissionSet>>
+): AccessLevel {
+  if (pages.length === 0) return "no-access";
+  const levels = pages.map((p) => accessLevelFromPermissions(p.permissions));
+  const allFull = levels.every((l) => l === "full-access");
+  const allNone = levels.every((l) => l === "no-access");
+  const allView = levels.every((l) => l === "view-only" || l === "no-access");
+  const anyGranted = levels.some((l) => l !== "no-access");
+  if (allFull) return "full-access";
+  if (allNone) return "no-access";
+  if (allView && anyGranted) return "view-only";
+  if (anyGranted) return "editor";
   return "no-access";
 }
 
@@ -231,6 +263,17 @@ export default function UnifiedAccessControl() {
   const [denyOpen, setDenyOpen] = useState(false);
   const [denyRequestId, setDenyRequestId] = useState("");
   const [denyReason, setDenyReason] = useState("");
+  // Permissions tab view: module grid vs page table
+  const [permView, setPermView] = useState<PermView>("modules");
+  const [filteredModule, setFilteredModule] = useState<string | null>(null);
+
+  // Drag-and-drop builder state
+  const [dragPayload, setDragPayload] = useState<DragPayload | null>(null);
+  const [builderRole, setBuilderRole] = useState("");
+  const [builderUser, setBuilderUser] = useState<UserOption | null>(null);
+  const [builderUserSearch, setBuilderUserSearch] = useState("");
+  const [builderDropZone, setBuilderDropZone] = useState<"role" | "user" | null>(null);
+  const [builderLevelOverride, setBuilderLevelOverride] = useState<AccessLevel>("view-only");
 
   const { data: roles = [], isLoading: rolesLoading } = useQuery<RoleInfo[]>({
     queryKey: ["access-control", "roles"],
@@ -265,11 +308,11 @@ export default function UnifiedAccessControl() {
   });
 
   const { data: roleSummaries = [], isFetching: roleSummariesLoading } = useQuery<RoleSummary[]>({
-    queryKey: ["access-control", "role-summaries", roles.map((role) => role.role_key).join(",")],
+    queryKey: ["access-control", "role-summaries", roles.map((r) => r.role_key).join(",")],
     queryFn: async () => {
       const summaries = await Promise.all(
-        roles.map(async (role) => {
-          const res = await hrmsApi.get<{ data: RoleSummary }>(`/api/access/roles/${role.role_key}/summary`);
+        roles.map(async (r) => {
+          const res = await hrmsApi.get<{ data: RoleSummary }>(`/api/access/roles/${r.role_key}/summary`);
           return res.data;
         })
       );
@@ -387,6 +430,22 @@ export default function UnifiedAccessControl() {
     onError: (error: any) => toast.error(error?.message ?? "Failed to save permissions"),
   });
 
+  const moduleAccessMutation = useMutation({
+    mutationFn: async ({ moduleName, level }: { moduleName: string; level: AccessLevel }) => {
+      await hrmsApi.put(`/api/access/roles/${selectedRole}/module-access`, {
+        module: moduleName,
+        permissions: TEMPLATE_PERMISSIONS[level],
+      });
+    },
+    onSuccess: (_data, { moduleName, level }) => {
+      toast.success(`${moduleName} set to ${ACCESS_LEVELS[level].label}`);
+      setPendingPermissionEdits({});
+      queryClient.invalidateQueries({ queryKey: ["access-control", "role-permissions", selectedRole] });
+      queryClient.invalidateQueries({ queryKey: ["access-control", "role-summaries"] });
+    },
+    onError: (error: any) => toast.error(error?.message ?? "Failed to apply module access"),
+  });
+
   const approveMutation = useMutation({
     mutationFn: async (id: string) => hrmsApi.post(`/api/access/requests/${id}/approve`, {}),
     onSuccess: () => {
@@ -406,6 +465,67 @@ export default function UnifiedAccessControl() {
       queryClient.invalidateQueries({ queryKey: ["access-control"] });
     },
     onError: () => toast.error("Failed to deny request"),
+  });
+
+  const debouncedBuilderSearch = useDebouncedValue(builderUserSearch, 250);
+  const { data: builderUsers = [], isFetching: builderUsersFetching } = useQuery<UserOption[]>({
+    queryKey: ["access-control", "builder-users", debouncedBuilderSearch],
+    queryFn: async () => {
+      const res = await hrmsApi.get<{ data: UserOption[] }>(
+        `/api/access/users?search=${encodeURIComponent(debouncedBuilderSearch)}&limit=10`
+      );
+      return res.data ?? [];
+    },
+    enabled: activeTab === "builder" && debouncedBuilderSearch.trim().length > 1,
+    staleTime: 5 * 60 * 1000,
+  });
+
+  const dropOnRoleMutation = useMutation({
+    mutationFn: async ({ roleKey, payload, level }: { roleKey: string; payload: DragPayload; level: AccessLevel }) => {
+      if (payload.kind === "module") {
+        await hrmsApi.put(`/api/access/roles/${roleKey}/module-access`, {
+          module: payload.name,
+          permissions: TEMPLATE_PERMISSIONS[level],
+        });
+      } else {
+        await hrmsApi.put(`/api/access/roles/${roleKey}/permissions`, {
+          updates: [{ page_code: payload.page_code, permissions: TEMPLATE_PERMISSIONS[level] }],
+        });
+      }
+    },
+    onSuccess: (_data, { roleKey, payload, level }) => {
+      const target = payload.kind === "module" ? payload.name : payload.page_name;
+      toast.success(`${target} → ${ACCESS_LEVELS[level].label} for role`);
+      queryClient.invalidateQueries({ queryKey: ["access-control", "role-permissions", roleKey] });
+      queryClient.invalidateQueries({ queryKey: ["access-control", "role-summaries"] });
+    },
+    onError: (error: any) => toast.error(error?.message ?? "Failed to apply access"),
+  });
+
+  const dropOnUserMutation = useMutation({
+    mutationFn: async ({ userId, payload, level }: { userId: string; payload: DragPayload; level: AccessLevel }) => {
+      if (payload.kind === "module") {
+        // Fetch all pages in the module from the already-loaded catalog
+        const pages = pageCatalog.filter((p) => (p.module ?? "Unassigned") === payload.name);
+        const assignments = pages.map((p) => ({ page_code: p.page_code, permissions: TEMPLATE_PERMISSIONS[level] }));
+        if (assignments.length > 0) {
+          await hrmsApi.post("/api/access/user-page-access/bulk-assign", { user_id: userId, assignments, notes: `DnD builder: module ${payload.name}` });
+        }
+      } else {
+        await hrmsApi.post("/api/access/user-page-access/assign", {
+          user_id: userId,
+          page_code: payload.page_code,
+          permissions: TEMPLATE_PERMISSIONS[level],
+          notes: "DnD builder assignment",
+        });
+      }
+    },
+    onSuccess: (_data, { payload, level }) => {
+      const target = payload.kind === "module" ? payload.name : payload.page_name;
+      toast.success(`${target} → ${ACCESS_LEVELS[level].label} for user`);
+      queryClient.invalidateQueries({ queryKey: ["access-control", "user-roles"] });
+    },
+    onError: (error: any) => toast.error(error?.message ?? "Failed to assign user access"),
   });
 
   const rolePermissionMap = useMemo(() => {
@@ -433,18 +553,36 @@ export default function UnifiedAccessControl() {
       const moduleName = page.module || "Unassigned";
       groups.set(moduleName, [...(groups.get(moduleName) ?? []), page]);
     }
-    return [...groups.entries()].sort(([a], [b]) => a.localeCompare(b));
+    return [...groups.entries()].sort(([a], [b]) => {
+      const ai = MODULE_ORDER.indexOf(a);
+      const bi = MODULE_ORDER.indexOf(b);
+      if (ai === -1 && bi === -1) return a.localeCompare(b);
+      if (ai === -1) return 1;
+      if (bi === -1) return -1;
+      return ai - bi;
+    });
   }, [mergedPages]);
 
-  const selectedRoleSummary = roleSummaries.find((role) => role.role_key === selectedRole);
+  const moduleSummaries = useMemo(() => {
+    return groupedPages.map(([moduleName, pages]) => {
+      const granted = pages.filter((p) => accessLevelFromPermissions(p.permissions) !== "no-access").length;
+      const dirty = pages.filter((p) => p.isDirty).length;
+      const accessLevel = deriveModuleAccessLevel(pages, rolePermissionMap, pendingPermissionEdits);
+      return { moduleName, pageCount: pages.length, granted, dirty, accessLevel };
+    });
+  }, [groupedPages, rolePermissionMap, pendingPermissionEdits]);
+
+  const filteredGroupedPages = useMemo(() => {
+    if (!filteredModule) return groupedPages;
+    return groupedPages.filter(([name]) => name === filteredModule);
+  }, [groupedPages, filteredModule]);
+
+  const selectedRoleSummary = roleSummaries.find((r) => r.role_key === selectedRole);
 
   function updatePagePermission(pageCode: string, key: PermissionKey, checked: boolean) {
     setPendingPermissionEdits((prev) => ({
       ...prev,
-      [pageCode]: {
-        ...(prev[pageCode] ?? {}),
-        [key]: checked,
-      },
+      [pageCode]: { ...(prev[pageCode] ?? {}), [key]: checked },
     }));
   }
 
@@ -467,6 +605,28 @@ export default function UnifiedAccessControl() {
     }
     updatePermissionsMutation.mutate(updates);
   }
+
+  function handleRoleCardClick(roleKey: string) {
+    setSelectedRole(roleKey);
+    setPendingPermissionEdits({});
+    setExpandedModules({});
+    setPermView("modules");
+    setFilteredModule(null);
+    setActiveTab("permissions");
+  }
+
+  function drillIntoModule(moduleName: string) {
+    setFilteredModule(moduleName);
+    setPermView("pages");
+    setExpandedModules({ [moduleName]: true });
+  }
+
+  function backToModules() {
+    setFilteredModule(null);
+    setPermView("modules");
+  }
+
+  const dirtyCount = Object.keys(pendingPermissionEdits).length;
 
   return (
     <DashboardLayout>
@@ -522,10 +682,11 @@ export default function UnifiedAccessControl() {
         </div>
 
         <div className="rounded-2xl border border-slate-200 bg-white p-1 shadow-sm">
-          <div className="grid gap-1 sm:grid-cols-3">
+          <div className="grid gap-1 sm:grid-cols-4">
             {([
               { key: "users" as const, label: "Users & Roles", icon: Users },
               { key: "permissions" as const, label: "Permissions", icon: Shield },
+              { key: "builder" as const, label: "DnD Builder", icon: Zap },
               ...(isAdmin ? [{ key: "admin" as const, label: "Administration", icon: Activity }] : []),
             ] as const).map((tab) => {
               const Icon = tab.icon;
@@ -548,6 +709,7 @@ export default function UnifiedAccessControl() {
           </div>
         </div>
 
+        {/* ──────────────── USERS & ROLES TAB ──────────────── */}
         {activeTab === "users" && (
           <section className="grid gap-5 xl:grid-cols-[minmax(340px,0.95fr)_1.25fr]">
             <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
@@ -596,7 +758,7 @@ export default function UnifiedAccessControl() {
                       </div>
                       {user.roles?.length ? (
                         <div className="mt-2 flex flex-wrap gap-1">
-                          {user.roles.map((role) => <Badge key={role} variant="secondary">{role}</Badge>)}
+                          {user.roles.map((r) => <Badge key={r} variant="secondary">{r}</Badge>)}
                         </div>
                       ) : null}
                     </button>
@@ -631,14 +793,14 @@ export default function UnifiedAccessControl() {
                         <p className="mt-2 rounded-lg bg-amber-50 p-3 text-sm text-amber-800">No active role assigned.</p>
                       ) : (
                         <div className="mt-2 flex flex-wrap gap-2">
-                          {selectedUserRoles.map((role) => (
-                            <span key={role.role_key} className="inline-flex items-center gap-2 rounded-full border bg-white py-1 pl-3 pr-1 text-sm font-semibold text-slate-700">
-                              {role.role_name}
+                          {selectedUserRoles.map((r) => (
+                            <span key={r.role_key} className="inline-flex items-center gap-2 rounded-full border bg-white py-1 pl-3 pr-1 text-sm font-semibold text-slate-700">
+                              {r.role_name}
                               <Button
                                 size="icon"
                                 variant="ghost"
                                 className="h-7 w-7 rounded-full text-rose-600"
-                                onClick={() => revokeRoleMutation.mutate(role.role_key)}
+                                onClick={() => revokeRoleMutation.mutate(r.role_key)}
                                 disabled={revokeRoleMutation.isPending}
                               >
                                 <X className="h-3.5 w-3.5" />
@@ -652,42 +814,67 @@ export default function UnifiedAccessControl() {
                 )}
               </div>
 
+              {/* Role Summary — clickable cards */}
               <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
                 <div className="flex items-center justify-between">
                   <div>
                     <h2 className="text-lg font-black text-slate-950">Role Summary</h2>
-                    <p className="text-sm text-slate-500">Who has what, and how much page coverage it gives.</p>
+                    <p className="text-sm text-slate-500">Click any role to view and edit its permissions.</p>
                   </div>
                   {roleSummariesLoading || rolesLoading ? <Loader2 className="h-5 w-5 animate-spin text-slate-400" /> : null}
                 </div>
                 <div className="mt-4 grid gap-3 md:grid-cols-2">
-                  {(roleSummaries.length ? roleSummaries : roles.map((role) => ({
-                    role_key: role.role_key,
-                    role_name: role.role_name,
-                    role_description: role.description,
+                  {(roleSummaries.length ? roleSummaries : roles.map((r) => ({
+                    role_key: r.role_key,
+                    role_name: r.role_name,
+                    role_description: r.description,
                     user_count: 0,
                     page_count: 0,
                     modules: [],
-                  }))).map((role) => (
-                    <div key={role.role_key} className="rounded-xl border border-slate-200 p-4">
+                  }))).map((r) => (
+                    <button
+                      key={r.role_key}
+                      type="button"
+                      onClick={() => handleRoleCardClick(r.role_key)}
+                      className="group relative rounded-xl border border-slate-200 p-4 text-left transition hover:border-indigo-300 hover:bg-indigo-50/40 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
+                    >
+                      {/* Edit indicator */}
+                      <span className="absolute right-3 top-3 flex items-center gap-1 rounded-full bg-indigo-100 px-2 py-0.5 text-[10px] font-bold text-indigo-700 opacity-0 transition group-hover:opacity-100">
+                        <Pencil className="h-2.5 w-2.5" />
+                        Edit Permissions
+                      </span>
                       <div className="flex items-start justify-between gap-3">
                         <div>
-                          <div className="font-black text-slate-950">{role.role_name}</div>
-                          <div className="text-xs text-slate-500">{role.role_key}</div>
+                          <div className="font-black text-slate-950">{r.role_name}</div>
+                          <div className="text-xs text-slate-500">{r.role_key}</div>
                         </div>
-                        <Badge className="bg-slate-950 text-white hover:bg-slate-950">{role.user_count} users</Badge>
+                        <Badge className="bg-slate-950 text-white hover:bg-slate-950 shrink-0">{r.user_count} users</Badge>
                       </div>
                       <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
                         <div className="rounded-lg bg-slate-50 p-2">
-                          <div className="font-bold text-slate-950">{role.page_count}</div>
+                          <div className="font-bold text-slate-950">{r.page_count}</div>
                           <div className="text-slate-500">Viewable pages</div>
                         </div>
                         <div className="rounded-lg bg-slate-50 p-2">
-                          <div className="font-bold text-slate-950">{role.modules?.length ?? 0}</div>
+                          <div className="font-bold text-slate-950">{r.modules?.length ?? 0}</div>
                           <div className="text-slate-500">Modules</div>
                         </div>
                       </div>
-                    </div>
+                      {r.modules && r.modules.length > 0 && (
+                        <div className="mt-3 flex flex-wrap gap-1">
+                          {r.modules.slice(0, 4).map((m) => (
+                            <span key={m.module_name} className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-600">
+                              {m.module_name}
+                            </span>
+                          ))}
+                          {r.modules.length > 4 && (
+                            <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-500">
+                              +{r.modules.length - 4} more
+                            </span>
+                          )}
+                        </div>
+                      )}
+                    </button>
                   ))}
                 </div>
               </div>
@@ -695,128 +882,526 @@ export default function UnifiedAccessControl() {
           </section>
         )}
 
+        {/* ──────────────── PERMISSIONS TAB ──────────────── */}
         {activeTab === "permissions" && (
           <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+            {/* Header row */}
             <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
               <div>
                 <h2 className="text-lg font-black text-slate-950">Role Permissions</h2>
-                <p className="text-sm text-slate-500">Grouped by module with visual access levels instead of a long checkbox wall.</p>
+                <p className="text-sm text-slate-500">
+                  {permView === "modules"
+                    ? "Click a module card to manage its pages, or use quick-access buttons."
+                    : filteredModule
+                    ? `Showing pages in module: ${filteredModule}`
+                    : "Grouped by module with visual access levels."}
+                </p>
               </div>
               <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                {/* Role selector */}
                 <Select value={selectedRole} onValueChange={(value) => {
                   setSelectedRole(value);
                   setPendingPermissionEdits({});
                   setExpandedModules({});
+                  setPermView("modules");
+                  setFilteredModule(null);
                 }}>
                   <SelectTrigger className="w-full min-w-64 sm:w-72">
                     <SelectValue placeholder="Select role..." />
                   </SelectTrigger>
                   <SelectContent>
-                    {roles.map((role) => (
-                      <SelectItem key={role.role_key} value={role.role_key}>{role.role_name}</SelectItem>
+                    {roles.map((r) => (
+                      <SelectItem key={r.role_key} value={r.role_key}>{r.role_name}</SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
+
+                {/* View toggle */}
+                {selectedRole && (
+                  <div className="flex rounded-lg border border-slate-200 p-0.5">
+                    <button
+                      type="button"
+                      onClick={() => { setPermView("modules"); setFilteredModule(null); }}
+                      className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-bold transition ${
+                        permView === "modules" ? "bg-slate-950 text-white" : "text-slate-600 hover:bg-slate-50"
+                      }`}
+                    >
+                      <Grid3X3 className="h-3.5 w-3.5" />
+                      Modules
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => { setPermView("pages"); setFilteredModule(null); }}
+                      className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-bold transition ${
+                        permView === "pages" ? "bg-slate-950 text-white" : "text-slate-600 hover:bg-slate-50"
+                      }`}
+                    >
+                      <Layers className="h-3.5 w-3.5" />
+                      All Pages
+                    </button>
+                  </div>
+                )}
+
                 <Button
                   onClick={saveAllPermissionEdits}
-                  disabled={!selectedRole || updatePermissionsMutation.isPending || Object.keys(pendingPermissionEdits).length === 0}
+                  disabled={!selectedRole || updatePermissionsMutation.isPending || dirtyCount === 0}
                 >
                   {updatePermissionsMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-                  Save Changes
+                  Save {dirtyCount > 0 ? `(${dirtyCount})` : "Changes"}
                 </Button>
               </div>
             </div>
 
+            {/* Role summary pill */}
             {selectedRoleSummary ? (
               <div className="mt-4 rounded-xl border border-indigo-100 bg-indigo-50 p-4">
                 <div className="flex flex-wrap items-center gap-3">
                   <Badge className="bg-indigo-700 hover:bg-indigo-700">{selectedRoleSummary.role_name}</Badge>
                   <span className="text-sm font-semibold text-indigo-950">{selectedRoleSummary.user_count} users</span>
                   <span className="text-sm font-semibold text-indigo-950">{selectedRoleSummary.page_count} pages</span>
+                  {dirtyCount > 0 && (
+                    <span className="rounded-full bg-amber-200 px-2 py-0.5 text-xs font-bold text-amber-800">
+                      {dirtyCount} unsaved change{dirtyCount !== 1 ? "s" : ""}
+                    </span>
+                  )}
                 </div>
               </div>
             ) : null}
 
             {!selectedRole ? (
-              <EmptyState text="Select a role to view page permissions." />
+              <EmptyState text="Select a role above to view and edit permissions. Or click any role card in the 'Users & Roles' tab." />
             ) : pagesLoading || permissionsLoading ? (
               <div className="flex justify-center py-12"><Loader2 className="h-7 w-7 animate-spin text-slate-400" /></div>
-            ) : (
-              <div className="mt-5 space-y-3">
-                {groupedPages.map(([moduleName, pages]) => {
-                  const open = expandedModules[moduleName] ?? false;
-                  const granted = pages.filter((page) => accessLevelFromPermissions(page.permissions) !== "no-access").length;
-                  const full = pages.filter((page) => accessLevelFromPermissions(page.permissions) === "full-access").length;
-                  const summaryLevel: AccessLevel = full === pages.length ? "full-access" : granted > 0 ? "editor" : "no-access";
-
+            ) : permView === "modules" ? (
+              /* ── MODULE GRID VIEW (View A) ── */
+              <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                {moduleSummaries.map(({ moduleName, pageCount, granted, dirty, accessLevel }) => {
+                  const levelConfig = ACCESS_LEVELS[accessLevel];
+                  const LevelIcon = levelConfig.icon;
                   return (
-                    <div key={moduleName} className="overflow-hidden rounded-xl border border-slate-200">
-                      <div className="flex flex-col gap-3 bg-slate-50 p-4 lg:flex-row lg:items-center lg:justify-between">
-                        <button
-                          type="button"
-                          className="flex min-w-0 items-center gap-3 text-left"
-                          onClick={() => setExpandedModules((prev) => ({ ...prev, [moduleName]: !open }))}
-                        >
-                          {open ? <ChevronDown className="h-5 w-5 text-slate-500" /> : <ChevronRight className="h-5 w-5 text-slate-500" />}
-                          <div>
-                            <div className="font-black text-slate-950">{moduleName}</div>
-                            <div className="text-xs text-slate-500">{granted} of {pages.length} pages granted</div>
-                          </div>
-                        </button>
-                        <div className="flex flex-wrap items-center gap-2">
-                          <AccessBadge level={summaryLevel} />
-                          {(["view-only", "editor", "full-access", "no-access"] as AccessLevel[]).map((level) => (
-                            <Button key={level} variant="outline" size="sm" onClick={() => applyTemplateToModule(moduleName, level)}>
-                              {ACCESS_LEVELS[level].label}
-                            </Button>
-                          ))}
+                    <div
+                      key={moduleName}
+                      className={`rounded-xl border p-4 transition ${
+                        dirty > 0
+                          ? "border-amber-300 bg-amber-50"
+                          : "border-slate-200 bg-white hover:border-indigo-200 hover:shadow-sm"
+                      }`}
+                    >
+                      {/* Module header */}
+                      <div className="flex items-start justify-between gap-2">
+                        <div>
+                          <div className="font-black text-slate-950 leading-tight">{moduleName}</div>
+                          <div className="mt-0.5 text-xs text-slate-500">{pageCount} pages · {granted} granted</div>
                         </div>
+                        <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold border-transparent ${levelConfig.className}`}>
+                          <LevelIcon className="h-2.5 w-2.5" />
+                          {levelConfig.label}
+                        </span>
                       </div>
 
-                      {open && (
-                        <div className="overflow-auto">
-                          <table className="w-full text-sm">
-                            <thead className="bg-white text-left text-xs font-bold uppercase tracking-wide text-slate-500">
-                              <tr>
-                                <th className="px-4 py-3">Page</th>
-                                <th className="px-4 py-3">Access Level</th>
-                                {PERMISSIONS.map((permission) => (
-                                  <th key={permission.key} className="px-3 py-3 text-center">{permission.label}</th>
-                                ))}
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {pages.map((page) => (
-                                <tr key={page.page_code} className={`border-t ${page.isDirty ? "bg-amber-50" : "bg-white"}`}>
-                                  <td className="px-4 py-3">
-                                    <div className="font-bold text-slate-950">{page.page_name ?? page.page_code}</div>
-                                    <div className="font-mono text-xs text-slate-500">{page.page_code}</div>
-                                  </td>
-                                  <td className="px-4 py-3">
-                                    <AccessBadge level={accessLevelFromPermissions(page.permissions)} />
-                                  </td>
-                                  {PERMISSIONS.map((permission) => (
-                                    <td key={permission.key} className="px-3 py-3 text-center">
-                                      <Checkbox
-                                        checked={page.permissions[permission.key]}
-                                        onCheckedChange={(checked) => updatePagePermission(page.page_code, permission.key, Boolean(checked))}
-                                      />
-                                    </td>
-                                  ))}
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
+                      {dirty > 0 && (
+                        <div className="mt-2 rounded-md bg-amber-100 px-2 py-1 text-[10px] font-bold text-amber-800">
+                          {dirty} unsaved change{dirty !== 1 ? "s" : ""}
                         </div>
                       )}
+
+                      {/* Quick access buttons */}
+                      <div className="mt-3 grid grid-cols-2 gap-1.5">
+                        {(["view-only", "editor", "full-access", "no-access"] as AccessLevel[]).map((level) => (
+                          <button
+                            key={level}
+                            type="button"
+                            disabled={moduleAccessMutation.isPending}
+                            onClick={() => {
+                              applyTemplateToModule(moduleName, level);
+                            }}
+                            className={`rounded-lg border px-2 py-1.5 text-[10px] font-bold transition hover:shadow-sm ${
+                              level === "no-access"
+                                ? "border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100"
+                                : level === "full-access"
+                                ? "border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100"
+                                : level === "view-only"
+                                ? "border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100"
+                                : "border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
+                            }`}
+                          >
+                            {ACCESS_LEVELS[level].label}
+                          </button>
+                        ))}
+                      </div>
+
+                      {/* Drill-in button */}
+                      <button
+                        type="button"
+                        onClick={() => drillIntoModule(moduleName)}
+                        className="mt-3 flex w-full items-center justify-between rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-bold text-slate-700 transition hover:border-indigo-200 hover:bg-indigo-50 hover:text-indigo-700"
+                      >
+                        <span>Manage Pages</span>
+                        <ChevronRight className="h-3.5 w-3.5" />
+                      </button>
                     </div>
                   );
                 })}
+              </div>
+            ) : (
+              /* ── PAGE TABLE VIEW (View B) ── */
+              <div className="mt-5">
+                {/* Back link + module filter bar */}
+                <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                  {filteredModule ? (
+                    <button
+                      type="button"
+                      onClick={backToModules}
+                      className="flex items-center gap-1.5 text-sm font-bold text-indigo-700 hover:text-indigo-900"
+                    >
+                      <ArrowLeft className="h-4 w-4" />
+                      All Modules
+                    </button>
+                  ) : (
+                    <span className="text-sm font-semibold text-slate-600">All {groupedPages.length} modules</span>
+                  )}
+
+                  {!filteredModule && (
+                    <Select
+                      value={filteredModule ?? "__all__"}
+                      onValueChange={(v) => setFilteredModule(v === "__all__" ? null : v)}
+                    >
+                      <SelectTrigger className="w-52">
+                        <SelectValue placeholder="Filter by module..." />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="__all__">All modules</SelectItem>
+                        {groupedPages.map(([name]) => (
+                          <SelectItem key={name} value={name}>{name}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  )}
+                </div>
+
+                <div className="space-y-3">
+                  {filteredGroupedPages.map(([moduleName, pages]) => {
+                    const open = filteredModule === moduleName ? true : (expandedModules[moduleName] ?? false);
+                    const granted = pages.filter((page) => accessLevelFromPermissions(page.permissions) !== "no-access").length;
+                    const full = pages.filter((page) => accessLevelFromPermissions(page.permissions) === "full-access").length;
+                    const summaryLevel: AccessLevel = full === pages.length ? "full-access" : granted > 0 ? "editor" : "no-access";
+
+                    return (
+                      <div key={moduleName} className="overflow-hidden rounded-xl border border-slate-200">
+                        <div className="flex flex-col gap-3 bg-slate-50 p-4 lg:flex-row lg:items-center lg:justify-between">
+                          <button
+                            type="button"
+                            className="flex min-w-0 items-center gap-3 text-left"
+                            onClick={() => {
+                              if (!filteredModule) {
+                                setExpandedModules((prev) => ({ ...prev, [moduleName]: !open }));
+                              }
+                            }}
+                          >
+                            {open ? <ChevronDown className="h-5 w-5 text-slate-500" /> : <ChevronRight className="h-5 w-5 text-slate-500" />}
+                            <div>
+                              <div className="font-black text-slate-950">{moduleName}</div>
+                              <div className="text-xs text-slate-500">{granted} of {pages.length} pages granted</div>
+                            </div>
+                          </button>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <AccessBadge level={summaryLevel} />
+                            {(["view-only", "editor", "full-access", "no-access"] as AccessLevel[]).map((level) => (
+                              <Button key={level} variant="outline" size="sm" onClick={() => applyTemplateToModule(moduleName, level)}>
+                                {ACCESS_LEVELS[level].label}
+                              </Button>
+                            ))}
+                          </div>
+                        </div>
+
+                        {open && (
+                          <div className="overflow-auto">
+                            <table className="w-full text-sm">
+                              <thead className="bg-white text-left text-xs font-bold uppercase tracking-wide text-slate-500">
+                                <tr>
+                                  <th className="px-4 py-3">Page</th>
+                                  <th className="px-4 py-3">Access Level</th>
+                                  {PERMISSIONS.map((permission) => (
+                                    <th key={permission.key} className="px-3 py-3 text-center">{permission.label}</th>
+                                  ))}
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {pages.map((page) => (
+                                  <tr key={page.page_code} className={`border-t ${page.isDirty ? "bg-amber-50" : "bg-white"}`}>
+                                    <td className="px-4 py-3">
+                                      <div className="font-bold text-slate-950">{page.page_name ?? page.page_code}</div>
+                                      <div className="font-mono text-xs text-slate-500">{page.page_code}</div>
+                                    </td>
+                                    <td className="px-4 py-3">
+                                      <AccessBadge level={accessLevelFromPermissions(page.permissions)} />
+                                    </td>
+                                    {PERMISSIONS.map((permission) => (
+                                      <td key={permission.key} className="px-3 py-3 text-center">
+                                        <Checkbox
+                                          checked={page.permissions[permission.key]}
+                                          onCheckedChange={(checked) => updatePagePermission(page.page_code, permission.key, Boolean(checked))}
+                                        />
+                                      </td>
+                                    ))}
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
             )}
           </section>
         )}
 
+        {/* ──────────────── DND BUILDER TAB ──────────────── */}
+        {activeTab === "builder" && (
+          <section className="grid gap-5 xl:grid-cols-[1fr_360px]">
+            {/* Left: draggable source palette */}
+            <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+              <div className="flex items-start justify-between">
+                <div>
+                  <h2 className="text-lg font-black text-slate-950">Access Palette</h2>
+                  <p className="text-sm text-slate-500">
+                    Drag any module or page from this list onto a role or user drop zone on the right.
+                  </p>
+                </div>
+                {pagesLoading ? <Loader2 className="h-5 w-5 animate-spin text-slate-400" /> : null}
+              </div>
+
+              {/* Level selector for what happens when you drop */}
+              <div className="mt-4 flex flex-wrap items-center gap-2">
+                <span className="text-xs font-bold uppercase tracking-wide text-slate-500">Drop grants:</span>
+                {(["view-only", "editor", "creator", "full-access", "no-access"] as AccessLevel[]).map((level) => (
+                  <button
+                    key={level}
+                    type="button"
+                    onClick={() => setBuilderLevelOverride(level)}
+                    className={`rounded-full px-3 py-1 text-xs font-bold transition ${
+                      builderLevelOverride === level
+                        ? `${ACCESS_LEVELS[level].className} ring-2 ring-offset-1 ring-current`
+                        : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                    }`}
+                  >
+                    {ACCESS_LEVELS[level].label}
+                  </button>
+                ))}
+              </div>
+
+              {pageCatalog.length === 0 ? (
+                <div className="mt-6">
+                  <EmptyState text="Load the Permissions tab once to populate the page catalog, then come back here." />
+                </div>
+              ) : (
+                <div className="mt-5 space-y-4 max-h-[60vh] overflow-y-auto pr-1">
+                  {groupedPages.map(([moduleName, pages]) => (
+                    <div key={moduleName}>
+                      {/* Draggable module chip */}
+                      <div
+                        draggable
+                        onDragStart={(e) => {
+                          setDragPayload({ kind: "module", name: moduleName });
+                          e.dataTransfer.effectAllowed = "copy";
+                          e.dataTransfer.setData("text/plain", `module::${moduleName}`);
+                        }}
+                        onDragEnd={() => setDragPayload(null)}
+                        className="flex cursor-grab items-center gap-2 rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2 active:cursor-grabbing hover:border-indigo-400 hover:bg-indigo-100 transition"
+                      >
+                        <GripVertical className="h-4 w-4 shrink-0 text-indigo-400" />
+                        <span className="font-black text-sm text-indigo-900">{moduleName}</span>
+                        <span className="ml-auto rounded-full bg-indigo-200 px-2 py-0.5 text-[10px] font-bold text-indigo-800">{pages.length} pages</span>
+                      </div>
+
+                      {/* Draggable page rows */}
+                      <div className="ml-4 mt-1 space-y-1">
+                        {pages.map((page) => (
+                          <div
+                            key={page.page_code}
+                            draggable
+                            onDragStart={(e) => {
+                              setDragPayload({ kind: "page", page_code: page.page_code, page_name: page.page_name ?? page.page_code, module: moduleName });
+                              e.dataTransfer.effectAllowed = "copy";
+                              e.dataTransfer.setData("text/plain", `page::${page.page_code}`);
+                            }}
+                            onDragEnd={() => setDragPayload(null)}
+                            className="flex cursor-grab items-center gap-2 rounded-md border border-slate-200 bg-slate-50 px-3 py-1.5 text-sm active:cursor-grabbing hover:border-slate-300 hover:bg-white transition"
+                          >
+                            <GripVertical className="h-3.5 w-3.5 shrink-0 text-slate-400" />
+                            <span className="font-semibold text-slate-800 truncate">{page.page_name ?? page.page_code}</span>
+                            <span className="ml-auto font-mono text-[10px] text-slate-400 shrink-0">{page.page_code}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Right: drop zones */}
+            <div className="space-y-4">
+              {/* Pending drag indicator */}
+              {dragPayload && (
+                <div className="rounded-xl border-2 border-dashed border-indigo-400 bg-indigo-50 px-4 py-3 text-sm font-bold text-indigo-700 animate-pulse">
+                  Dragging: {dragPayload.kind === "module" ? `Module "${dragPayload.name}"` : `Page "${dragPayload.page_name}"`}
+                  <span className="ml-2 font-normal text-indigo-500">→ drop on a target below</span>
+                </div>
+              )}
+
+              {/* Drop zone: Role */}
+              <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                <h3 className="font-black text-slate-950">Drop onto Role</h3>
+                <p className="mt-0.5 text-xs text-slate-500">Grants access at role level (affects all users of this role).</p>
+                <Select
+                  value={builderRole}
+                  onValueChange={setBuilderRole}
+                >
+                  <SelectTrigger className="mt-3">
+                    <SelectValue placeholder="Select a role to drop onto..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {roles.map((r) => (
+                      <SelectItem key={r.role_key} value={r.role_key}>{r.role_name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+
+                {/* Drop zone area */}
+                <div
+                  onDragOver={(e) => {
+                    if (!builderRole) return;
+                    e.preventDefault();
+                    e.dataTransfer.dropEffect = "copy";
+                    setBuilderDropZone("role");
+                  }}
+                  onDragLeave={() => setBuilderDropZone(null)}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    setBuilderDropZone(null);
+                    if (!builderRole || !dragPayload) {
+                      if (!builderRole) toast.error("Select a role first");
+                      return;
+                    }
+                    dropOnRoleMutation.mutate({ roleKey: builderRole, payload: dragPayload, level: builderLevelOverride });
+                    setDragPayload(null);
+                  }}
+                  className={`mt-3 flex min-h-20 items-center justify-center rounded-xl border-2 border-dashed transition ${
+                    builderDropZone === "role"
+                      ? "border-indigo-500 bg-indigo-50"
+                      : builderRole
+                      ? "border-slate-300 bg-slate-50 hover:border-indigo-300 hover:bg-indigo-50/50"
+                      : "border-slate-200 bg-slate-50 opacity-50 cursor-not-allowed"
+                  }`}
+                >
+                  {dropOnRoleMutation.isPending ? (
+                    <Loader2 className="h-6 w-6 animate-spin text-indigo-500" />
+                  ) : builderDropZone === "role" ? (
+                    <p className="text-sm font-bold text-indigo-700">Release to grant {ACCESS_LEVELS[builderLevelOverride].label}</p>
+                  ) : (
+                    <p className="text-xs text-slate-400">{builderRole ? "Drop here to apply access" : "Choose a role above first"}</p>
+                  )}
+                </div>
+              </div>
+
+              {/* Drop zone: User */}
+              <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                <h3 className="font-black text-slate-950">Drop onto User</h3>
+                <p className="mt-0.5 text-xs text-slate-500">Grants direct user-level page access override.</p>
+
+                {builderUser ? (
+                  <div className="mt-3 flex items-center justify-between rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2">
+                    <div>
+                      <div className="text-sm font-bold text-indigo-900">{builderUser.full_name || builderUser.email}</div>
+                      <div className="text-xs text-indigo-600">{builderUser.employee_code ?? builderUser.email}</div>
+                    </div>
+                    <button type="button" onClick={() => setBuilderUser(null)} className="text-indigo-400 hover:text-indigo-700">
+                      <X className="h-4 w-4" />
+                    </button>
+                  </div>
+                ) : (
+                  <div className="mt-3 space-y-2">
+                    <div className="relative">
+                      <Search className="absolute left-3 top-2.5 h-3.5 w-3.5 text-slate-400" />
+                      <Input
+                        value={builderUserSearch}
+                        onChange={(e) => setBuilderUserSearch(e.target.value)}
+                        placeholder="Search user..."
+                        className="pl-8 text-sm h-9"
+                      />
+                    </div>
+                    {debouncedBuilderSearch.length > 1 && (
+                      <div className="max-h-32 overflow-y-auto rounded-lg border border-slate-200 bg-white shadow-sm">
+                        {builderUsersFetching ? (
+                          <div className="flex justify-center py-3"><Loader2 className="h-4 w-4 animate-spin text-slate-400" /></div>
+                        ) : builderUsers.length === 0 ? (
+                          <p className="py-3 text-center text-xs text-slate-500">No users found</p>
+                        ) : builderUsers.map((u) => (
+                          <button
+                            key={u.id}
+                            type="button"
+                            onClick={() => { setBuilderUser(u); setBuilderUserSearch(""); }}
+                            className="w-full px-3 py-2 text-left text-sm hover:bg-slate-50 border-b last:border-b-0"
+                          >
+                            <div className="font-semibold text-slate-900">{u.full_name || u.email}</div>
+                            <div className="text-xs text-slate-500">{u.employee_code}</div>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Drop zone area */}
+                <div
+                  onDragOver={(e) => {
+                    if (!builderUser) return;
+                    e.preventDefault();
+                    e.dataTransfer.dropEffect = "copy";
+                    setBuilderDropZone("user");
+                  }}
+                  onDragLeave={() => setBuilderDropZone(null)}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    setBuilderDropZone(null);
+                    if (!builderUser || !dragPayload) {
+                      if (!builderUser) toast.error("Select a user first");
+                      return;
+                    }
+                    dropOnUserMutation.mutate({ userId: builderUser.id, payload: dragPayload, level: builderLevelOverride });
+                    setDragPayload(null);
+                  }}
+                  className={`mt-3 flex min-h-20 items-center justify-center rounded-xl border-2 border-dashed transition ${
+                    builderDropZone === "user"
+                      ? "border-emerald-500 bg-emerald-50"
+                      : builderUser
+                      ? "border-slate-300 bg-slate-50 hover:border-emerald-300 hover:bg-emerald-50/50"
+                      : "border-slate-200 bg-slate-50 opacity-50 cursor-not-allowed"
+                  }`}
+                >
+                  {dropOnUserMutation.isPending ? (
+                    <Loader2 className="h-6 w-6 animate-spin text-emerald-500" />
+                  ) : builderDropZone === "user" ? (
+                    <p className="text-sm font-bold text-emerald-700">Release to grant {ACCESS_LEVELS[builderLevelOverride].label}</p>
+                  ) : (
+                    <p className="text-xs text-slate-400">{builderUser ? "Drop here to apply access" : "Choose a user above first"}</p>
+                  )}
+                </div>
+              </div>
+
+              {/* Hint card */}
+              <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
+                <span className="font-bold">How it works:</span> Select the access level at the top of the palette, then drag any module or page chip from the left panel and drop it on a role or user target. The grant is applied immediately and audited.
+              </div>
+            </div>
+          </section>
+        )}
+
+        {/* ──────────────── ADMINISTRATION TAB ──────────────── */}
         {activeTab === "admin" && (
           <section className="grid gap-5 xl:grid-cols-[1.2fr_0.8fr]">
             <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
@@ -965,9 +1550,9 @@ export default function UnifiedAccessControl() {
                 </SelectTrigger>
                 <SelectContent>
                   {roles
-                    .filter((role) => !selectedUserRoles.some((assigned) => assigned.role_key === role.role_key))
-                    .map((role) => (
-                      <SelectItem key={role.role_key} value={role.role_key}>{role.role_name}</SelectItem>
+                    .filter((r) => !selectedUserRoles.some((assigned) => assigned.role_key === r.role_key))
+                    .map((r) => (
+                      <SelectItem key={r.role_key} value={r.role_key}>{r.role_name}</SelectItem>
                     ))}
                 </SelectContent>
               </Select>

@@ -128,6 +128,33 @@ export async function deleteRolePageAccess(
   });
 }
 
+// ─── Module-level bulk access ─────────────────────────────────────────────────
+
+export async function bulkSetModuleAccess(
+  roleKey: string,
+  moduleName: string,
+  perms: { can_view: boolean; can_create: boolean; can_edit: boolean; can_delete: boolean; can_export: boolean },
+  actorId: string
+): Promise<number> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT page_code FROM page_catalog WHERE module = ? AND active_status = 1`,
+    [moduleName]
+  );
+  const pageCodes = (rows as Array<RowDataPacket & { page_code: string }>).map((r) => r.page_code);
+  for (const pageCode of pageCodes) {
+    await upsertRolePageAccess(roleKey, pageCode, perms, actorId);
+  }
+  await logSensitiveAction({
+    action_type: "MODULE_ACCESS_SET",
+    module_key: "access",
+    actor_user_id: actorId,
+    entity_type: "role_page_access",
+    entity_id: `${roleKey}::module::${moduleName}`,
+    change_summary: { role_key: roleKey, module: moduleName, permissions: perms, pages_affected: pageCodes.length },
+  });
+  return pageCodes.length;
+}
+
 // ─── Designation → Role map ───────────────────────────────────────────────────
 
 export async function listDesignationRoleMap(): Promise<DesignationRoleRow[]> {
