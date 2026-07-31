@@ -108,13 +108,7 @@ export const atsService = {
               created_at, updated_at
        FROM ats_candidate WHERE id = ? LIMIT 1`, [id]);
     const candidate = (rows as AtsCandidate[])[0];
-    // statusCode makes this a 404 rather than a 500. Without it the error
-    // handler treats an ordinary missing row as a server fault, which is what
-    // made POST /api/ats/onboarding/send-token/:candidateId answer
-    // "An unexpected server error occurred" for a candidate that simply does
-    // not exist — the same for all ten callers of this method. Matches the
-    // Object.assign idiom already used across ats.onboarding.service.
-    if (!candidate) throw Object.assign(new Error("Candidate not found"), { statusCode: 404 });
+    if (!candidate) throw new Error("Candidate not found");
     return candidate;
   },
 

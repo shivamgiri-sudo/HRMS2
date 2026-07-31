@@ -102,7 +102,7 @@ export default function NativeProcurementPage() {
   const { data: deptData } = useQuery({
     queryKey: ['departments-list'],
     queryFn: async () => {
-      const r = await hrmsApi.get<any>('/api/org/departments');
+      const r = await hrmsApi.get<any>('/api/departments');
       return ((r as any)?.data ?? r ?? []) as Department[];
     },
   });

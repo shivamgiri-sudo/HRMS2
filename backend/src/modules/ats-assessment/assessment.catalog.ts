@@ -80,15 +80,6 @@ const written = (
   keywords,
   marks,
   difficulty: "advanced",
-  // Written answers go to a human, not to keyword matching. assessment.service
-  // reads this directly:
-  //   evaluationMode = manualReview ? "manual" : type === "text" ? "keyword" : "auto"
-  // so dropping it silently downgrades every free-text answer in the catalog to
-  // auto-scoring. That is what happened between 8bede7c5 (24 Jul) and this line
-  // being restored — the flag was deleted as collateral in a commit about a
-  // candidate-master dropdown, and nothing caught it because the catalog test
-  // is not wired into CI.
-  manualReview: true,
 });
 
 const COMMON: Record<AssessmentRole, AssessmentQuestionDefinition[]> = {

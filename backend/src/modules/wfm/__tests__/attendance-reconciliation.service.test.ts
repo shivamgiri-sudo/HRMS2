@@ -72,42 +72,25 @@ describe("attendanceReconciliationService", () => {
       ],
     });
 
-    // Keyed by the table each query reads, not by call order.
-    //
-    // This test used to queue results positionally with mockResolvedValueOnce.
-    // When the COSEC-exclusion query was added at the top of audit() every mock
-    // shifted by one: the employee row was consumed as the exclusion list, the
-    // biometric row as the employee list, and so on, so no ADR row was ever
-    // matched and countsByType came back empty. The assertion failed with
-    // "expected undefined to be 1" — a mock-drift failure that reads like a
-    // logic bug and cost real time to tell apart.
-    //
-    // Same fix, same reason as keying the payroll.security mocks by SQL.
-    dbQuery.mockImplementation(async (sql: string) => {
-      if (sql.includes("attendance_reconciliation_cosec_exclusion")) return [[], []];
-
-      if (sql.includes("employee_biometric_enrollment")) {
-        return [[{
+    dbQuery
+      .mockResolvedValueOnce([[
+        {
           employee_id: "emp-1",
           employee_code: "MAS47814",
           biometric_code: "MAS47814",
           cosec_user_id: "MAS47814",
-          active_status: 1,
-          employment_status: "active",
-        }], []];
-      }
-
-      if (sql.includes("integration_biometric_daily")) {
-        return [[{
+        },
+      ], []])
+      .mockResolvedValueOnce([[
+        {
           employee_code: "MAS47814",
           record_date: "2026-07-25",
           biometric_minutes: 557,
           total_punches: 11,
-        }], []];
-      }
-
-      if (sql.includes("attendance_daily_record")) {
-        return [[{
+        },
+      ], []])
+      .mockResolvedValueOnce([[
+        {
           employee_id: "emp-1",
           record_date: "2026-07-25",
           attendance_status: "absent",
@@ -118,13 +101,12 @@ describe("attendanceReconciliationService", () => {
           source_system: "dialer_session_log.session_date",
           is_locked: 0,
           mismatch_flag: 1,
-        }], []];
-      }
-
-      // apr, dialer_session_log, and anything added later: no rows, which is
-      // what this scenario needs (biometric evidence but no APR or dialler).
-      return [[], []];
-    });
+        },
+      ], []])
+      .mockResolvedValueOnce([[], []])
+      .mockResolvedValueOnce([[], []])
+      .mockResolvedValueOnce([[], []])
+      .mockResolvedValueOnce([[], []]);
 
     const result = await attendanceReconciliationService.audit({
       from: "2026-07-25",

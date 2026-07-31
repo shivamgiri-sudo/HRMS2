@@ -44,23 +44,6 @@ function setCache(key: string, data: any): void {
   }
 }
 
-/**
- * Drop every cached hr-hub page.
- *
- * The cache key embeds the caller's user id and the full query string, so a write
- * that changes one employee's attendance cannot be targeted precisely — the
- * affected employee may appear in any number of filter combinations cached for
- * any number of users. Clearing the whole map is the only correct option, and it
- * is cheap: this is a <=100-entry, 30-second performance cache, not a store.
- *
- * Called after a discard rewrites attendance, otherwise the Attendance Hub keeps
- * serving pre-discard present_days / lwp_days for up to 30s even on a forced
- * refetch.
- */
-export function invalidateHrHubCache(): void {
-  hrHubCache.clear();
-}
-
 router.use(requireAuth);
 
 // GET /api/employees/me — returns the employee record for the logged-in user with nested details

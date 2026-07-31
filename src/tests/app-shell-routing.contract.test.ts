@@ -205,10 +205,6 @@ describe("application shell routing contracts", () => {
       "/super-admin/live-location",
       "/terms-of-service",
       "/two-factor",
-      // Public visitor kiosk surfaces. Mounted in public.routes.tsx with no
-      // ProtectedRoute, reached from a gate device or a link rather than the
-      // sidebar, so their absence from navigation is the intent.
-      "/visitor-gate",
       "/visitor-register",
       "/visitor-status",
       "/walkin-registration",

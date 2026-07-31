@@ -82,65 +82,6 @@ export async function executeReportForWorker(
       break;
     }
 
-    case 'notification-undeliverable-recipients': {
-      // Every active employee with at least one delivery gap, and which gap.
-      //
-      // 'gap_reason' is built from the same rules shared/recipient-resolver.ts applies at
-      // send time, so this report and the resolver cannot drift into disagreeing about who
-      // is reachable:
-      //   * fin events force official_email on an allowed company domain, no fallback;
-      //   * every manager CC resolves through employees.reporting_manager_id.
-      // The domain list mirrors shared/email-domains.ts.
-      addScopeFilters(scope, clauses, params);
-      clauses.push('e.active_status = 1');
-      const where = clauses.join(' AND ');
-      rows = await run(
-        `SELECT e.employee_code,
-                COALESCE(NULLIF(TRIM(e.full_name),''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-                b.branch_name,
-                p.process_name,
-                NULLIF(TRIM(COALESCE(e.official_email, e.office_email)),'') AS official_email,
-                NULLIF(TRIM(COALESCE(e.email, e.personal_email)),'')        AS personal_email,
-                COALESCE(NULLIF(TRIM(m.full_name),''), m.employee_code)      AS reporting_manager,
-                TRIM(BOTH '; ' FROM CONCAT_WS('; ',
-                  CASE WHEN NULLIF(TRIM(COALESCE(e.official_email, e.office_email)),'') IS NULL
-                       THEN 'No official email - cannot receive payslip, F&F or increment' END,
-                  CASE WHEN NULLIF(TRIM(COALESCE(e.official_email, e.office_email)),'') IS NOT NULL
-                        AND SUBSTRING_INDEX(LOWER(COALESCE(e.official_email, e.office_email)),'@',-1)
-                            NOT IN ('teammas.in','teammas.co.in','mascallnet.com')
-                        AND SUBSTRING_INDEX(LOWER(COALESCE(e.official_email, e.office_email)),'@',-1)
-                            NOT LIKE '%.teammas.in'
-                       THEN 'Official email is not on a company domain' END,
-                  CASE WHEN NULLIF(TRIM(COALESCE(e.official_email, e.office_email, e.email, e.personal_email)),'') IS NULL
-                       THEN 'No email address of any kind' END,
-                  CASE WHEN m.id IS NULL
-                       THEN 'No reporting manager - every manager CC resolves to nobody' END,
-                  CASE WHEN m.id IS NOT NULL AND m.active_status <> 1
-                       THEN 'Reporting manager is inactive' END
-                )) AS gap_reason,
-                CASE WHEN NULLIF(TRIM(COALESCE(e.official_email, e.office_email)),'') IS NULL
-                     THEN 'Yes' ELSE 'No' END AS blocks_financial_mail
-           FROM employees e
-           LEFT JOIN branch_master b  ON b.id = e.branch_id
-           LEFT JOIN process_master p ON p.id = e.process_id
-           LEFT JOIN employees m      ON m.id = COALESCE(e.reporting_manager_id, e.manager_id)
-          WHERE ${where}
-            AND (
-                  NULLIF(TRIM(COALESCE(e.official_email, e.office_email)),'') IS NULL
-               OR NULLIF(TRIM(COALESCE(e.official_email, e.office_email, e.email, e.personal_email)),'') IS NULL
-               OR m.id IS NULL
-               OR m.active_status <> 1
-               OR (SUBSTRING_INDEX(LOWER(COALESCE(e.official_email, e.office_email)),'@',-1)
-                     NOT IN ('teammas.in','teammas.co.in','mascallnet.com')
-                   AND SUBSTRING_INDEX(LOWER(COALESCE(e.official_email, e.office_email)),'@',-1)
-                     NOT LIKE '%.teammas.in')
-                )
-          ORDER BY blocks_financial_mail DESC, b.branch_name, e.employee_code`,
-        params
-      );
-      break;
-    }
-
     case 'headcount': {
       addScopeFilters(scope, clauses, params);
       clauses.push("e.active_status = 1", "LOWER(COALESCE(e.employment_status,'active')) = 'active'");

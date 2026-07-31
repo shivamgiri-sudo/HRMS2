@@ -56,32 +56,35 @@ const frontendRoot = resolve(repoRoot, "src");
  * can tell "blocked on a decision" from "nobody has got to it".
  */
 const KNOWN_GAPS: Record<string, string> = {
-  // ── No route in origin/main. Triaged 2026-07-31 by whether a user can actually
-  // reach the call: a page wired into the router, or a hook some mounted
-  // component uses. Reachable ones are live defects; the rest are unfinished
-  // scaffolding that cannot fire, and should be built or deleted, not rushed.
+  // ── Prefix mismatches: the route exists, the client addresses it wrongly.
+  // Same class as the three shipped on 2026-07-31 (salary certificates, BGV
+  // manual review, onboarding resend). Cheap to fix, listed so the gate can go
+  // green before someone picks them up.
+  "GET /api/assets/employee/:p":
+    "Prefix mismatch. assetsRouter mounts at /api/assets-mgmt, not /api/assets; the route itself (GET /employee/:employeeId) exists. Fix is a one-line client change in NativeEmployeeStatCard.",
+  "GET /api/departments":
+    "Prefix mismatch. org.routes builds CRUD at /departments under app.use('/api/org'), so the real path is /api/org/departments. Fix is a one-line client change in NativeProcurementPage.",
 
-  // Reachable — a user can hit these today.
-  "GET /api/employees/me/promotions":
-    "REACHABLE (EmployeeJourney is routed). Employee self-service promotion history; no route in origin/main, so the section renders empty.",
-  "GET /api/employees/me/transfers":
-    "REACHABLE (EmployeeJourney is routed). Pairs with /me/promotions; same fix.",
-  "GET /api/helpdesk/grievances/:p/timeline":
-    "REACHABLE (NativeGrievanceCommandCenter is routed, calls it from two places). The grievances module exists but has no /timeline route.",
-  "GET /api/org/companies":
-    "REACHABLE (NativePayrollHRValidation is routed). No /companies route on the org router, which does have branches/departments/lobs/designations/campaigns.",
-  "GET /api/executive/quality-summary/process-breakdown":
-    "REACHABLE (useExecutiveQuality is used by a mounted component). Only /quality-summary exists on the executive router, not the breakdown.",
-  "POST /api/ats/onboarding/requests":
-    "REACHABLE (useOnboardingRequest is used by two components). No /requests route under the onboarding router.",
-
-  // Not reachable — dead scaffolding. Cannot lose data because nothing invokes it.
+  // ── No such route anywhere in origin/main. Each needs building or the client
+  // call removing; none has been triaged yet.
   "POST /api/wfm/attendance/web-punch-in":
-    "NOT REACHABLE: WebPunchButton is never mounted and useWebPunchIn is never used. The schema was never shipped either — no web_punch_in/out column exists anywhere in mas_hrms. Build the feature properly or delete the client code; do not add a route to satisfy this line.",
+    "No matching route in origin/main. Web punch-in is a real attendance path — triage before anything else in this block, since a silent failure here loses attendance data.",
   "POST /api/wfm/attendance/web-punch-out":
-    "NOT REACHABLE: pairs with web-punch-in, same dead component and same missing schema.",
+    "No matching route in origin/main. Pairs with web-punch-in; same priority.",
+  "GET /api/employees/me/promotions":
+    "No matching route in origin/main. Employee self-service promotion history; not yet triaged.",
+  "GET /api/employees/me/transfers":
+    "No matching route in origin/main. Employee self-service transfer history; not yet triaged.",
+  "GET /api/helpdesk/grievances/:p/timeline":
+    "No matching route in origin/main, though the grievances module exists. Called twice from NativeGrievanceCommandCenter; not yet triaged.",
+  "GET /api/org/companies":
+    "No matching route in origin/main. Called from NativePayrollHRValidation; not yet triaged.",
+  "GET /api/executive/quality-summary/process-breakdown":
+    "No matching route in origin/main. Executive quality drill-down; not yet triaged.",
+  "POST /api/ats/onboarding/requests":
+    "No matching route in origin/main under the onboarding router; not yet triaged.",
   "POST /api/performance-feedback/quality/connect-sheet":
-    "NOT REACHABLE: QualityDataUpload is not used by any mounted component. Sheet-connect for quality feedback; unfinished scaffolding.",
+    "No matching route in origin/main. Sheet-connect for quality feedback; not yet triaged.",
 
   // ── Blocked on a decision, investigated in depth on 2026-07-31.
   "POST /api/performance-feedback/reports":

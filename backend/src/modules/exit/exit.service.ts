@@ -7,7 +7,6 @@ import { logger } from "../../lib/logger.js";
 import { sendSMS } from "../communication/sms.helper.js";
 import type { ExitRequest, ExitStats, PaginatedResult } from "./exit.types.js";
 import { createDefaultClearanceTasks, createExitHealthSnapshot } from "./exit-intelligence.service.js";
-import { notifyResignationSubmitted, notifyResignationDecision } from "./exit.notifications.js";
 
 // Singleton transporter — created once at module load, not per-call
 const mailer = nodemailer.createTransport({
@@ -200,23 +199,11 @@ export const exitService = {
       return null;
     });
 
-    // Fire-and-forget: notify manager of resignation.
-    //
-    // Strangler, not a rewrite. The gateway path resolves the manager through the shared
-    // resolver (official email, HR copied, and a RECORDED drop when an employee has no
-    // manager — the legacy path below returns silently in that case). It only actually
-    // delivers once resignation_submitted is switched live; until then it runs in shadow
-    // and reports false, so the legacy mailer still covers the notification. Once live,
-    // the legacy call is skipped and there is never a double email.
-    void notifyResignationSubmitted(id)
-      .then((delivered) => {
-        if (delivered) return null;
-        return notifyManagerOfResignation(input.employeeId, id);
-      })
-      .catch((err: unknown) => {
-        logger.error({ err, exitRequestId: id }, '[exit] Manager notification failed');
-        return null;
-      });
+    // Fire-and-forget: notify manager of resignation
+    notifyManagerOfResignation(input.employeeId, id).catch((err: unknown) => {
+      logger.error({ err, exitRequestId: id }, '[exit] Manager notification failed');
+      return null;
+    });
 
     // SMS — separation initiated (fire-and-forget)
     try {
@@ -261,17 +248,6 @@ export const exitService = {
        VALUES (UUID(), ?, ?, ?, ?, ?)`,
       [id, nextStatus, "status_update", userId, remarks]
     );
-
-    // Email on the outcomes the employee is entitled to hear about. Ships in shadow.
-    // Only these three are notified: the intermediate review stages are internal queue
-    // movements, and mailing someone every time their resignation changes desk is noise.
-    setImmediate(() => {
-      const decision =
-        nextStatus === "accepted" ? "accepted" :
-        nextStatus === "rejected" ? "rejected" :
-        nextStatus === "revoked"  ? "revoked"  : null;
-      if (decision) void notifyResignationDecision(id, decision);
-    });
 
     if (["accepted", "notice_serving"].includes(nextStatus)) {
       await createDefaultClearanceTasks(id, (existing as any).employee_id).catch((err: unknown) => {

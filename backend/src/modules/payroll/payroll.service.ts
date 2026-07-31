@@ -5,7 +5,6 @@ import { getEffectiveConfig } from "../customization/customization-engine.js";
 import { assertSalaryAssignmentAllowed } from "./salary-governance.guard.js";
 import { leaveService } from "../leave/leave.service.js";
 import { validateTransition, canEdit, type RunStatus } from "./payroll-lifecycle.js";
-import { notifyPayrollRunStatus, notifyPayslipsReady } from "./payroll.notifications.js";
 import type {
   BulkAssignInput,
   BulkAssignResult,
@@ -339,20 +338,6 @@ export const payrollService = {
     if (input.status === "disbursed") { sets.push("disbursed_by = ?", "disbursed_at = NOW()"); params.push(userId); }
     params.push(id);
     await db.execute(`UPDATE salary_prep_run SET ${sets.join(", ")} WHERE id = ?`, params);
-
-    // Email notification (fire-and-forget). Run-level statuses notify finance/payroll
-    // roles; 'disbursed' fans out to one payslip_ready per employee instead. All ship in
-    // shadow, and payslip_ready is financial — official email only, and the resolver
-    // refuses it outright if anyone ever adds a CC to that event.
-    setImmediate(() => {
-      if (input.status === "disbursed") {
-        void notifyPayslipsReady(id).then((s) =>
-          console.log(`[payroll-notify] run ${id}: ${s.employees} payslips — notified=${s.notified} skipped=${s.skipped}`),
-        );
-      } else {
-        void notifyPayrollRunStatus(id, input.status);
-      }
-    });
 
     // On manual lock: lapse any pending leave requests for this month's employees
     if (input.status === "locked") {

@@ -36,56 +36,24 @@ Measured read-only against production on 2026-07-31. **These numbers constrain t
 
 | | Active employees | Have official email | Have any email | Have **no** email |
 |---|---|---|---|---|
-| Total | **1,152** | **997** (86.5%) | 1,127 | **25** |
+| Total | **1,152** | **996** (86.5%) | 1,127 | **25** |
 
 Financial events are forced to `official_email` + the domain allowlist
-(`report-email-resolver.ts:14` — `teammas.in`, `teammas.co.in`, `mascallnet.com`).
+(`report-email-resolver.ts:14` — `teammas.in`, `teammas.co.in`, `mascallnet.com`). So:
 
-> ### ⚠️ CORRECTED 2026-07-31 — the earlier figure understated this badly
->
-> This section originally said "156 cannot receive a payslip", counting only employees
-> whose `official_email` was **empty**. That is not the rule the resolver applies: it also
-> requires the address to be on a company domain. Applying the real rule:
->
-> **725 of 1,152 active employees (62.9%) cannot receive a payslip, F&F or increment.**
-> Only **427 (37.1%)** can.
->
-> The gap is `official_email` being populated with personal addresses. Of the 997 active
-> employees with a value in that column:
->
-> | Domain | Count | Deliverable for `fin`? |
-> |---|---|---|
-> | `gmail.com` | 519 | no |
-> | `teammas.co.in` | 387 | yes |
-> | `teammas.in` | 40 | yes |
-> | `example.com` | 31 | no — test data |
-> | `gamil.com` / `gamail.com` / `gmaik.com` | 5 | no — typos of gmail |
-> | yahoo / hotmail / outlook / other | 4 | no |
->
-> By branch, blocked/active: NOIDA 315/406, AHMEDABAD-JALDARSHAN 262/271, DELHI 48/51,
-> HQ 12/12, NOIDA-2 44/362, CORP 7/13.
->
-> This was found by building the `notification-undeliverable-recipients` report (§6.6),
-> which is exactly what that report exists to surface. It changes the go-live picture for
-> every `fin` event: payslip delivery is not close to viable until `official_email` is
-> cleaned up, and the report is the worklist for doing it.
+> **156 active employees (13.5%) cannot receive a payslip, F&F, or increment email today.**
 
-Blocked for financial mail, by branch — this is the corrected view (empty **or**
-non-company-domain `official_email`):
+Concentrated, not scattered:
 
-| Branch | Active | Blocked for `fin` | % |
+| Branch | Active | No official email | No email at all |
 |---|---|---|---|
-| `NOIDA` | 406 | **315** | 78% |
-| `AHMH-JD` | 271 | **262** | 97% |
-| `DELHI` | 51 | **48** | 94% |
-| `NOIDA-2` | 362 | 44 | 12% |
-| `HQ` | 12 | **12** | 100% |
-| *(no branch)* | 10 | 10 | 100% |
-| `CORP` | 13 | 7 | 54% |
-
-NOIDA-2 is the outlier in the good direction — 88% deliverable — which suggests its
-onboarding captured company addresses properly and the others did not. That is the
-pattern to copy rather than a mystery to solve.
+| `DELHI` | 51 | **48** (94%) | 0 |
+| `AHMH-JD` | 271 | 46 | **16** |
+| `NOIDA` | 406 | 33 | 6 |
+| `HQ` | 12 | **12** (100%) | 0 |
+| *(no branch)* | 10 | 10 | 0 |
+| `NOIDA-2` | 362 | 5 | 3 |
+| `CORP` | 13 | 1 | 0 |
 
 ### 2.2 Can the CC actually be reached?
 
@@ -363,7 +331,7 @@ None of this blocks the build. All of it blocks go-live for the affected events.
 
 | # | Gap | Impact | Owner |
 |---|---|---|---|
-| 1 | **725 of 1,152 active employees (62.9%) cannot receive financial mail** — 155 have no official email at all, and 570 more have a personal address (mostly gmail.com) sitting in the `official_email` column. See the corrected §2.1. | Cannot receive payslip / F&F / increment. Blocks go-live for every `fin` event. | HR |
+| 1 | **156 active employees have no official email**; DELHI 48/51, HQ 12/12 | Cannot receive payslip / F&F / increment | HR |
 | 2 | **25 employees have no email at all** (16 in AHMH-JD) | Cannot receive anything | HR |
 | 3 | **`branch_wfm_spoc_config` is empty** | Every roster CC falls through to the fallback chain | WFM |
 | 4 | **`branch_head_assignments` holds 3 fake rows** (`'Trapezoid'`, `'Okaya'`); only 4 users carry a branch-scoped `branch_head` role across 45 branches | Branch-head CC resolves for ~4 branches | HR / Access admin |

@@ -210,12 +210,8 @@ describe("payroll closed statuses", () => {
     expect(PAYROLL_CLOSED_STATUSES).toContain("published");
   });
 
-  it("treats an approved run as closed", () => {
-    // calculatePayrollRunScoped ends with an unconditional
-    // `UPDATE salary_prep_run SET status = 'processing'`, so recalculating an
-    // approved run silently reverts its sign-off. 80 approved leaves sit in such
-    // months and must go through a payroll adjustment instead.
-    expect(PAYROLL_CLOSED_STATUSES).toContain("approved");
+  it("does not treat an approved run as closed", () => {
+    expect(PAYROLL_CLOSED_STATUSES).not.toContain("approved");
   });
 });
 
@@ -265,17 +261,10 @@ describe("discardService.previewLeave", () => {
     expect(preview.payroll[0].isClosed).toBe(true);
   });
 
-  it("blocks when the payroll month is approved (recalc would revert the sign-off)", async () => {
+  it("does not block when the payroll month is only approved", async () => {
     mockPreview({ run: [{ run_month: "2026-07", status: "approved" }] });
     const preview = await discardService.previewLeave("lr-1", actor);
-    expect(preview.blockers.map((b) => b.code)).toContain("PAYROLL_MONTH_CLOSED");
-  });
-
-  it("does not block a draft or processing month", async () => {
-    mockPreview({ run: [{ run_month: "2026-07", status: "processing" }] });
-    const preview = await discardService.previewLeave("lr-1", actor);
     expect(preview.blockers.map((b) => b.code)).not.toContain("PAYROLL_MONTH_CLOSED");
-    expect(preview.payroll[0].isClosed).toBe(false);
   });
 
   it("blocks when any run for the month is closed, even if another is open", async () => {

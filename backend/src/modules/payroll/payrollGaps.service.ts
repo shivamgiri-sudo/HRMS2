@@ -169,21 +169,6 @@ export const payrollGapsService = {
     }
 
     const result = calculateTds(annualTaxableIncome, statutoryConfig);
-
-    // checkTdsConfigExists() only proves at least one tds_slab_% row exists; it
-    // does not prove every key calculateTds needs is present. Honour the
-    // calculator's own verdict rather than assuming, or a partially seeded
-    // config would report a confident zero.
-    if (result.status === "pending_configuration") {
-      return {
-        tds: 0,
-        status: "pending_configuration",
-        note:
-          `TDS configuration is incomplete — missing ${result.missing_config_keys.join(", ")}. ` +
-          `Projection withheld; no hardcoded defaults are applied.`,
-      };
-    }
-
     return {
       tds: result.tds_annual,
       status: "configured",

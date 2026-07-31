@@ -3,7 +3,6 @@ import { randomUUID } from "crypto";
 import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { db } from "../../db/mysql.js";
-import { quarterlyTdsFilingType } from "./statutory-regime.js";
 import type { Response } from "express";
 import type { RowDataPacket } from "mysql2";
 import { logSensitiveAction } from "../../shared/auditLog.js";
@@ -20,7 +19,7 @@ async function ensureTable(): Promise<void> {
     CREATE TABLE IF NOT EXISTS statutory_filing_record (
       id              CHAR(36)      NOT NULL DEFAULT (UUID()),
       filing_month    VARCHAR(7)    NOT NULL,
-      filing_type     ENUM('EPF','ESIC','PT','TDS_24Q','TDS_138','LWF') NOT NULL,
+      filing_type     ENUM('EPF','ESIC','PT','TDS_24Q','LWF') NOT NULL,
       state_code      VARCHAR(10)   NULL,
       due_date        DATE          NOT NULL,
       amount_due      DECIMAL(14,2) NULL,
@@ -48,10 +47,7 @@ function defaultDueDate(filingMonth: string, type: string): string {
   switch (type) {
     case "EPF":    return `${next}-15`;  // 15th of following month
     case "ESIC":   return `${next}-15`;
-    // Form 24Q under the 1961 Act, Form 138 from the 2025 Act (1 Apr 2026).
-    // The form was renumbered; the 7th-of-following-month rule was not.
-    case "TDS_24Q":
-    case "TDS_138": return `${next}-07`;
+    case "TDS_24Q": return `${next}-07`; // 7th of following month
     case "PT":     return `${next}-10`;
     case "LWF":    return `${next}-15`;
     default:       return `${next}-15`;
@@ -128,10 +124,7 @@ payrollStatutoryFilingRouter.post(
     const types: Array<{ type: string; amount: number | null }> = [
       { type: "EPF",     amount: Number(amounts.epf_due)  || null },
       { type: "ESIC",    amount: Number(amounts.esic_due) || null },
-      // Form 24Q for periods under the 1961 Act, Form 138 from the 2025 Act
-      // (1 Apr 2026). Chosen by the period being filed, not by today's date, so
-      // a late filing for an earlier month still records the form it was due on.
-      { type: quarterlyTdsFilingType(month), amount: Number(amounts.tds_due) || null },
+      { type: "TDS_24Q", amount: Number(amounts.tds_due)  || null },
       { type: "PT",      amount: Number(amounts.pt_due)   || null },
     ];
 
@@ -229,7 +222,7 @@ payrollStatutoryFilingRouter.post(
     if (!filing_month || !filing_type || !due_date) {
       return res.status(400).json({ success: false, message: "filing_month, filing_type, due_date are required" });
     }
-    const validTypes = ["EPF", "ESIC", "PT", "TDS_24Q", "TDS_138", "LWF"];
+    const validTypes = ["EPF", "ESIC", "PT", "TDS_24Q", "LWF"];
     if (!validTypes.includes(filing_type)) {
       return res.status(400).json({ success: false, message: `filing_type must be one of: ${validTypes.join(", ")}` });
     }
