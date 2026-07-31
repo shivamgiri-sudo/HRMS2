@@ -155,8 +155,6 @@ function ReadOnlyField({ label, value }: { label: string; value: string | number
 
 function ProvisioningTaskCard({ task }: { task: ProvisioningTask }) {
   const icons: Record<string, React.ReactNode> = {
-    WFM_PROCESS_ALIGNMENT: <Clock className="h-5 w-5" />,
-    IT_EMAIL_DOMAIN_ASSET: <Server className="h-5 w-5" />,
     ADMIN_BIOMETRIC_ID_CARD: <ShieldCheck className="h-5 w-5" />,
     APPOINTMENT_LETTER_ESIGN: <FileText className="h-5 w-5" />,
   };
