@@ -40,7 +40,7 @@ const pct = (part: unknown, whole: unknown) => {
 export async function getClientKpis(f: ClientDrillFilters) {
   const rows = await querySource<Record<string, unknown>>(
     `SELECT q.ClientId AS client_id,
-            COALESCE(c.name, CONCAT('Client ', q.ClientId)) AS client_name,
+            CONCAT('Client ', q.ClientId) AS client_name,
             COUNT(*) AS audit_count,
             ROUND(AVG(q.quality_percentage),1) AS cq_score,
             ROUND(AVG(CASE WHEN q.quality_percentage>0 THEN q.quality_percentage END),1) AS without_fatal_cq,
@@ -50,9 +50,8 @@ export async function getClientKpis(f: ClientDrillFilters) {
             SUM(CASE WHEN q.quality_percentage=0 THEN 1 ELSE 0 END) AS fatal_count,
             ROUND(AVG(q.total_score),1) AS avg_parameters
        FROM db_audit.call_quality_assessment q
-       LEFT JOIN shivamgiri.md_clients c ON c.dialdesk_client_id = CAST(q.ClientId AS UNSIGNED)
       WHERE ${SCOPE}
-      GROUP BY q.ClientId, c.name`,
+      GROUP BY q.ClientId`,
     scopeParams(f)
   );
   const row = rows[0];
@@ -108,7 +107,7 @@ export async function getClientDaily(f: ClientDrillFilters) {
 export async function getClientAgents(f: ClientDrillFilters) {
   const rows = await querySource<Record<string, unknown>>(
     `SELECT q.User AS agent_code,
-            COALESCE(ANY_VALUE(e.employee_name), q.User) AS agent_name,
+            COALESCE(ANY_VALUE(e.full_name), q.User) AS agent_name,
             COUNT(*) AS audit_count,
             ROUND(AVG(q.quality_percentage),1) AS cq_score,
             ROUND(AVG(CASE WHEN q.quality_percentage>0 THEN q.quality_percentage END),1) AS without_fatal_cq,
@@ -140,9 +139,18 @@ export async function getClientAgents(f: ClientDrillFilters) {
 /**
  * Which breach drove the fatals.
  *
- * A fatal is quality_percentage = 0; the reason is whichever serious-breach column carries
- * text on that call. One call can trip several, so a call is counted under each breach it
- * records and the counts deliberately do not sum to fatal_count.
+ * A fatal is quality_percentage = 0; the reason is whichever serious-breach column answers
+ * "Yes" on that call.
+ *
+ * The test is that literal answer, not "column is non-empty". These columns are written by an
+ * assessment model and hold "No" on the overwhelming majority of calls, alongside "",
+ * "Yes/No" and even "Respond with either Yes or No." — 137,350 "No" against 47 "Yes" for
+ * data theft on one client. Treating non-empty as a breach reported every fatal call as
+ * having tripped all seven, which is exactly the kind of confident, plausible, wrong number
+ * this drill-down exists to expose.
+ *
+ * One call can genuinely trip several, so a call is counted under each breach it answers Yes
+ * to and the counts deliberately do not sum to fatal_count.
  */
 const FATAL_PARAMETERS: ReadonlyArray<{ column: string; label: string }> = [
   { column: "data_theft_or_misuse", label: "Data theft or misuse" },
@@ -158,8 +166,8 @@ export async function getClientFatal(f: ClientDrillFilters) {
   // Column names come from the constant above, never from the request.
   const selects = FATAL_PARAMETERS.map(
     ({ column }, i) =>
-      `SUM(CASE WHEN COALESCE(q.${column},'') NOT IN ('','null') THEN 1 ELSE 0 END) AS c${i},
-       COUNT(DISTINCT CASE WHEN COALESCE(q.${column},'') NOT IN ('','null') THEN q.User END) AS a${i}`
+      `SUM(CASE WHEN LOWER(TRIM(COALESCE(q.${column},''))) = 'yes' THEN 1 ELSE 0 END) AS c${i},
+       COUNT(DISTINCT CASE WHEN LOWER(TRIM(COALESCE(q.${column},''))) = 'yes' THEN q.User END) AS a${i}`
   ).join(",\n            ");
 
   const rows = await querySource<Record<string, unknown>>(
@@ -237,7 +245,7 @@ export async function getClientTranscript(leadId: string) {
   const rows = await querySource<Record<string, unknown>>(
     `SELECT q.lead_id,
             DATE_FORMAT(q.CallDate,'%Y-%m-%d') AS date,
-            COALESCE(e.employee_name, q.User) AS agent_name,
+            COALESCE(e.full_name, q.User) AS agent_name,
             q.quality_percentage AS cq_score,
             COALESCE(q.Transcribe_Text,'') AS transcript_text,
             ${FATAL_PARAMETERS.map(({ column }) => `q.${column}`).join(", ")}
@@ -253,8 +261,7 @@ export async function getClientTranscript(leadId: string) {
   // Which breaches this specific call recorded, named rather than raw column values.
   const breached = FATAL_PARAMETERS
     .filter(({ column }) => {
-      const value = String(row[column] ?? "").trim();
-      return value !== "" && value !== "null";
+      return String(row[column] ?? "").trim().toLowerCase() === "yes";
     })
     .map(({ label }) => label);
 
