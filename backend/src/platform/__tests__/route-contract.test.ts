@@ -61,19 +61,9 @@ const KNOWN_GAPS: Record<string, string> = {
   // component uses. Reachable ones are live defects; the rest are unfinished
   // scaffolding that cannot fire, and should be built or deleted, not rushed.
 
-  // Reachable — a user can hit these today.
-  "GET /api/employees/me/promotions":
-    "REACHABLE (EmployeeJourney is routed). Employee self-service promotion history; no route in origin/main, so the section renders empty.",
-  "GET /api/employees/me/transfers":
-    "REACHABLE (EmployeeJourney is routed). Pairs with /me/promotions; same fix.",
-  "GET /api/helpdesk/grievances/:p/timeline":
-    "REACHABLE (NativeGrievanceCommandCenter is routed, calls it from two places). The grievances module exists but has no /timeline route.",
-  "GET /api/org/companies":
-    "REACHABLE (NativePayrollHRValidation is routed). No /companies route on the org router, which does have branches/departments/lobs/designations/campaigns.",
-  "GET /api/executive/quality-summary/process-breakdown":
-    "REACHABLE (useExecutiveQuality is used by a mounted component). Only /quality-summary exists on the executive router, not the breakdown.",
+  // Reachable — a user can hit this today.
   "POST /api/ats/onboarding/requests":
-    "REACHABLE (useOnboardingRequest is used by two components). No /requests route under the onboarding router.",
+    "BLOCKED on a product decision, not wiring. useOnboardingRequest is a self-service flow: someone who is not yet an employee asks to be onboarded, posting {user_id, email, full_name, message}. ats_onboarding_request is a different concept entirely — HR-initiated candidate onboarding keyed by candidate_id/branch_id/requested_by, with 287 live rows — so writing that payload there would corrupt an active HR table. The GET half is broken for the same mismatch: it sits behind requireRole('hr','recruiter','admin','super_admin','payroll_hr'), which the non-employee caller cannot satisfy, and its rows carry no user_id for the client's find(r => r.user_id === user.id) to match. Needs its own table and a decision on who reviews these requests.",
 
   // Not reachable — dead scaffolding. Cannot lose data because nothing invokes it.
   "POST /api/wfm/attendance/web-punch-in":

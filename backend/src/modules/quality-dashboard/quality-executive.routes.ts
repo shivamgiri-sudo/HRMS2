@@ -83,4 +83,52 @@ router.get(
   }
 );
 
+/**
+ * GET /api/executive/quality-summary/process-breakdown
+ *
+ * The per-process rows on their own. useExecutiveQuality asks for this
+ * separately so the breakdown table can refresh without re-fetching the whole
+ * executive summary, but the route did not exist — the hook swallowed the 404
+ * into an empty array and the table simply rendered blank.
+ *
+ * No new query: getExecutiveSummary already computes process_performance, and
+ * this returns exactly that slice. Same roles as the parent summary, because it
+ * is the same organisation-wide quality data viewed more narrowly.
+ *
+ * The failure path sets unavailable:true alongside the empty array. An empty
+ * list on its own is indistinguishable from genuinely perfect quality across
+ * every process, which is the reading an executive dashboard must never invite.
+ */
+router.get(
+  '/quality-summary/process-breakdown',
+  requireAuth,
+  requireRole('ceo', 'coo', 'super_admin', 'admin'),
+  async (req: AuthenticatedRequest, res: Response) => {
+    const daysBack = parseInt(req.query.daysBack as string) || 30;
+    try {
+      if (!req.authUser?.id) {
+        return res.status(403).json({ success: false, error: 'Unauthorized' });
+      }
+      if (daysBack < 1 || daysBack > 365) {
+        return res.status(400).json({ success: false, error: 'daysBack must be between 1 and 365' });
+      }
+
+      const result = await service.getExecutiveSummary(daysBack);
+      res.json({
+        success: true,
+        data: result.process_performance ?? [],
+        last_updated: new Date(),
+        filter: { daysBack },
+      });
+    } catch (error) {
+      logger.error('Error fetching executive process breakdown:', error);
+      res.json({
+        success: true,
+        data: buildQualityFallback(daysBack, 'Quality audit data is currently unavailable').process_performance ?? [],
+        unavailable: true,
+      });
+    }
+  }
+);
+
 export { router as qualityExecutiveRouter };
