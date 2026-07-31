@@ -6,6 +6,7 @@ import "leaflet/dist/leaflet.css";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { MapPin, Users, RefreshCw, AlertCircle, Search, X, Clock } from "lucide-react";
+import { useUserRole } from "@/hooks/useUserRole";
 
 // Fix Leaflet default marker icons broken by Vite bundler
 delete (L.Icon.Default.prototype as any)._getIconUrl;
@@ -139,21 +140,40 @@ export default function LiveLocationMap() {
   const mapRef     = useRef<L.Map | null>(null);
   const markerRefs = useRef<Record<string, L.Marker>>({});
 
+  // Determine if the current user is super_admin — scoped roles must pass branch_id.
+  const { data: roleData } = useUserRole();
+  const isSuperAdmin = (roleData?.roleKeys ?? []).includes("super_admin");
+
   // Live location data — polls every 30s.
   // window=online → last 15 min; window=all → last 24h (offline workers at last-known spot).
   const liveWindow = showOffline ? "all" : "online";
   const { data: liveData, isLoading, isError, refetch, dataUpdatedAt } = useQuery({
-    queryKey: ["live-location", liveWindow],
+    queryKey: ["live-location", liveWindow, branchFilter],
     queryFn: async () => {
-      const res = await hrmsApi.get<{ success: boolean; data: LiveEmployee[] }>(
-        `/api/location/live?window=${liveWindow}`,
-      );
+      let url = `/api/location/live?window=${liveWindow}`;
+      // Scoped roles require branch_id. Resolve the id from allBranches (populated by
+      // the org-branches query below). If allBranches is not yet loaded or no branch is
+      // selected, we skip the param and let the backend return an appropriate error —
+      // the super_admin path never reaches this branch so it is unaffected.
+      if (!isSuperAdmin && branchFilter) {
+        // allBranches is initialised from the sibling useQuery further down; access it
+        // through a closure ref so we don't create a circular dependency.
+        const branchList = branchDataRef.current;
+        const found = branchList?.find((b) => b.branch_name === branchFilter);
+        if (found) {
+          url += `&branch_id=${encodeURIComponent(found.id)}`;
+        }
+      }
+      const res = await hrmsApi.get<{ success: boolean; data: LiveEmployee[] }>(url);
       return res.data ?? [];
     },
     refetchInterval: 30_000,
     refetchIntervalInBackground: true, // keep polling even when tab is not focused
     staleTime: 15_000,
   });
+
+  // Ref that lets the liveData queryFn read the branch list without a dependency cycle.
+  const branchDataRef = useRef<BranchOption[]>([]);
 
   // All active branches — includes lat/lng for travel-time calc
   const { data: branchData } = useQuery({
@@ -191,6 +211,9 @@ export default function LiveLocationMap() {
   const employees    = liveData ?? [];
   const allBranches  = branchData ?? [];
   const allProcesses = processData ?? [];
+
+  // Keep branchDataRef in sync so the liveData queryFn can read it in closures.
+  useEffect(() => { branchDataRef.current = allBranches; }, [allBranches]);
 
   // Build a lookup: branch_name → { lat, lng } for travel-time calculation
   const branchCoords = useMemo(() => {

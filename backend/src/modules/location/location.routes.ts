@@ -1,10 +1,10 @@
 import { Router } from "express";
 import type { Response } from "express";
 import { requireAuth } from "../../middleware/authMiddleware.js";
-import { requireRole } from "../../middleware/requireRole.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { db } from "../../db/mysql.js";
 import type { RowDataPacket } from "mysql2";
+import { hasAnyRole, hasScopedAccess } from "../../shared/scopeAccess.js";
 
 const router = Router();
 const h = (fn: (req: any, res: any) => Promise<unknown>) =>
@@ -94,13 +94,39 @@ router.post("/heartbeat", h(async (req: AuthenticatedRequest, res: Response) => 
   return res.json({ success: true });
 }));
 
-// GET /api/location/live — super_admin only
+// GET /api/location/live
+// super_admin: unrestricted; all employees visible.
+// branch_head, hr_admin, operations_manager, process_manager: must pass branch_id query param;
+//   access is validated against user_assignment_scope via hasScopedAccess.
 // window=online (default) → heartbeats in the last 15 min (currently on-shift).
 // window=all             → last 24h, so offline workers still show at their last-known spot.
 // window=<minutes>       → custom lookback (capped at 7 days).
 // Each row carries a `stale` flag (1/0): 1 when the last fix is older than 15 min.
 const ONLINE_WINDOW_MINUTES = 15;
-router.get("/live", requireRole("super_admin"), h(async (req: AuthenticatedRequest, res: Response) => {
+const SCOPED_LIVE_ROLES = ["branch_head", "hr_admin", "operations_manager", "process_manager"];
+
+router.get("/live", h(async (req: AuthenticatedRequest, res: Response) => {
+  const userId = req.authUser!.id;
+
+  const isSuperAdmin = await hasAnyRole(userId, "super_admin");
+  let branchIdFilter: string | null = null;
+
+  if (!isSuperAdmin) {
+    const hasScopedRole = await hasAnyRole(userId, ...SCOPED_LIVE_ROLES);
+    if (!hasScopedRole) {
+      return res.status(403).json({ success: false, error: "Forbidden" });
+    }
+    const branchIdParam = String(req.query.branch_id ?? "").trim();
+    if (!branchIdParam) {
+      return res.status(400).json({ success: false, error: "branch_id is required for your role" });
+    }
+    const allowed = await hasScopedAccess(userId, SCOPED_LIVE_ROLES, { branchId: branchIdParam });
+    if (!allowed) {
+      return res.status(403).json({ success: false, error: "Outside assigned scope" });
+    }
+    branchIdFilter = branchIdParam;
+  }
+
   const windowParam = String(req.query.window ?? "online").toLowerCase();
   let minutes = ONLINE_WINDOW_MINUTES;
   if (windowParam === "all") {
@@ -110,8 +136,11 @@ router.get("/live", requireRole("super_admin"), h(async (req: AuthenticatedReque
     if (Number.isFinite(n) && n > 0) minutes = Math.min(n, 7 * 24 * 60);
   }
 
-  const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT
+  let query: string;
+  let params: unknown[];
+
+  if (branchIdFilter) {
+    query = `SELECT
        ell.employee_id,
        ell.latitude,
        ell.longitude,
@@ -124,17 +153,58 @@ router.get("/live", requireRole("super_admin"), h(async (req: AuthenticatedReque
        (ell.captured_at < NOW() - INTERVAL ${ONLINE_WINDOW_MINUTES} MINUTE) AS stale
      FROM employee_live_location ell
      WHERE ell.captured_at >= NOW() - INTERVAL ? MINUTE
-     ORDER BY ell.full_name ASC`,
-    [minutes],
-  );
+       AND ell.employee_id IN (SELECT id FROM employees WHERE branch_id = ? AND active_status = 1)
+     ORDER BY ell.full_name ASC`;
+    params = [minutes, branchIdFilter];
+  } else {
+    query = `SELECT
+       ell.employee_id,
+       ell.latitude,
+       ell.longitude,
+       ell.accuracy,
+       ell.captured_at,
+       ell.full_name,
+       ell.branch_name,
+       ell.process_name,
+       ell.designation,
+       (ell.captured_at < NOW() - INTERVAL ${ONLINE_WINDOW_MINUTES} MINUTE) AS stale
+     FROM employee_live_location ell
+     WHERE ell.captured_at >= NOW() - INTERVAL ? MINUTE
+     ORDER BY ell.full_name ASC`;
+    params = [minutes];
+  }
 
+  const [rows] = await db.execute<RowDataPacket[]>(query, params);
   return res.json({ success: true, data: rows });
 }));
 
-// GET /api/location/history/:employeeId?date=YYYY-MM-DD — super_admin only
+// GET /api/location/history/:employeeId?date=YYYY-MM-DD
+// super_admin: unrestricted.
+// Scoped roles: access validated against the employee's branch via hasScopedAccess.
 // Ordered GPS trail for one employee on a given day (default: today, server time).
-router.get("/history/:employeeId", requireRole("super_admin"), h(async (req: AuthenticatedRequest, res: Response) => {
+router.get("/history/:employeeId", h(async (req: AuthenticatedRequest, res: Response) => {
+  const userId = req.authUser!.id;
   const employeeId = String(req.params.employeeId);
+
+  const isSuperAdmin = await hasAnyRole(userId, "super_admin");
+  if (!isSuperAdmin) {
+    const hasScopedRole = await hasAnyRole(userId, ...SCOPED_LIVE_ROLES);
+    if (!hasScopedRole) {
+      return res.status(403).json({ success: false, error: "Forbidden" });
+    }
+    // Look up the employee's branch_id to enforce scope
+    const [empRows] = await db.execute<RowDataPacket[]>(
+      "SELECT branch_id FROM employees WHERE id = ? AND active_status = 1 LIMIT 1",
+      [employeeId],
+    );
+    const emp = (empRows as RowDataPacket[])[0] as any;
+    const empBranchId: string | null = emp?.branch_id ?? null;
+    const allowed = await hasScopedAccess(userId, SCOPED_LIVE_ROLES, { branchId: empBranchId });
+    if (!allowed) {
+      return res.status(403).json({ success: false, error: "Outside assigned scope" });
+    }
+  }
+
   const dateParam  = String(req.query.date ?? "").trim();
   const dayFilter  = /^\d{4}-\d{2}-\d{2}$/.test(dateParam) ? dateParam : null;
 

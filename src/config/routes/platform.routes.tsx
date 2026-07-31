@@ -144,7 +144,7 @@ export const platformRouteElements = (
       <Route path="/super-admin/module-access"   element={<ProtectedRoute roles={['admin']}><Gate pageCode="SUPER_ADMIN_MODULE_ACCESS"><SuperAdminModuleAccess /></Gate></ProtectedRoute>} />
       <Route path="/super-admin/policy-engine"   element={<ProtectedRoute roles={['super_admin']}><Gate pageCode="SUPER_ADMIN_POLICY_ENGINE"><NativePolicyEngine /></Gate></ProtectedRoute>} />
       <Route path="/super-admin/company-feed-creators" element={<ProtectedRoute roles={['super_admin']}><NativeCompanyFeedCreatorAccess /></ProtectedRoute>} />
-      <Route path="/super-admin/live-location"   element={<ProtectedRoute roles={['super_admin']}><LiveLocationMap /></ProtectedRoute>} />
+      <Route path="/super-admin/live-location"   element={<ProtectedRoute roles={['super_admin','branch_head','hr_admin','operations_manager','process_manager']}><LiveLocationMap /></ProtectedRoute>} />
 
       {/* AI / Copilot */}
       <Route path="/settings/ai-providers"       element={<ProtectedRoute roles={['super_admin']}><AIProviderSettings /></ProtectedRoute>} />
