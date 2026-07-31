@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import {
@@ -336,6 +336,8 @@ export default function BranchBudgetManagementWorkspace() {
   const [undoStack, setUndoStack] = useState<string[]>([]);
   const [savedSnapshot, setSavedSnapshot] = useState<string>("[]");
   const [expandedGradeCostCentres, setExpandedGradeCostCentres] = useState<Set<string>>(new Set());
+  const [autoSaveStatus, setAutoSaveStatus] = useState<"idle" | "pending" | "saved">("idle");
+  const autoSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const capabilitiesQuery = useQuery({
     queryKey: ["branch-budget-capabilities"],
@@ -374,7 +376,7 @@ export default function BranchBudgetManagementWorkspace() {
   const priorByKey = useMemo(() => {
     const map = new Map<string, number>();
     (priorDetail.data?.lines ?? []).forEach((l) => {
-      const key = `${l.head}|${l.sub_head ?? ""}`;
+      const key = `${l.head}|${(l.sub_head ?? (l as any).subHead ?? "").toLowerCase()}`;
       map.set(key, (map.get(key) ?? 0) + Number(l.gross_amount ?? 0));
     });
     return map;
@@ -568,6 +570,19 @@ export default function BranchBudgetManagementWorkspace() {
     });
     return changed;
   }, [lines, savedSnapshot]);
+
+  // Auto-save: 3-second debounce after any line edit, only when a draft already exists.
+  useEffect(() => {
+    if (!canEdit || !savedBudgetId || dirtyCount === 0 || saveBudget.isPending) return;
+    setAutoSaveStatus("pending");
+    if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current);
+    autoSaveTimer.current = setTimeout(() => {
+      void save(false).then(() => setAutoSaveStatus("saved"));
+      setTimeout(() => setAutoSaveStatus("idle"), 3000);
+    }, 3000);
+    return () => { if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lines]);
 
   /** Edits that reshape a line rather than nudge a number. Undo snapshots these, so one Undo steps
    *  back a whole decision instead of a single keystroke. */
@@ -826,7 +841,7 @@ Reason:`
                 <h1 className="mt-5 max-w-4xl text-3xl font-black tracking-tight sm:text-4xl">Branch Budget Control Room</h1>
                 <p className="mt-3 max-w-3xl text-sm leading-6 text-slate-300">Create detailed tax-aware lines, classify every active Sub-head and control all downstream GRNs and P&L costs from one approved source.</p>
                 <div className="mt-6 flex flex-wrap gap-3">
-                  {capabilities?.canCreate && <><Button onClick={() => void save(false)} disabled={saveBudget.isPending || locked}><Save className="mr-2 h-4 w-4" />Save draft</Button><Button variant="outline" className="border-white/15 bg-white/5 text-white hover:bg-white/10" onClick={() => void save(true)} disabled={saveBudget.isPending || locked}><Send className="mr-2 h-4 w-4" />Submit to Branch Head</Button></>}
+                  {capabilities?.canCreate && <><Button onClick={() => void save(false)} disabled={saveBudget.isPending || locked}><Save className="mr-2 h-4 w-4" />Save draft</Button><Button variant="outline" className="border-white/15 bg-white/5 text-white hover:bg-white/10" onClick={() => void save(true)} disabled={saveBudget.isPending || locked}><Send className="mr-2 h-4 w-4" />Submit to Branch Head</Button>{autoSaveStatus === "pending" && <span className="flex items-center gap-1 text-xs text-slate-300"><Loader2 className="h-3 w-3 animate-spin" />Auto-saving…</span>}{autoSaveStatus === "saved" && <span className="flex items-center gap-1 text-xs text-emerald-300"><CheckCircle2 className="h-3 w-3" />Saved</span>}</>}
                   {/* The stage reviewer can correct the lines in place instead of bouncing the whole
                       budget back. The budget does not move: they still have to Approve. */}
                   {canReviewCurrent && <Button onClick={() => void saveReviewerEdit()} disabled={reviewerReviseBudget.isPending}><Save className="mr-2 h-4 w-4" />Save my corrections</Button>}
@@ -966,7 +981,7 @@ Reason:`
                   onCopyForward={() => {
                     pushUndo();
                     setLines((current) => current.map((l) => {
-                      const prior = priorByKey.get(`${l.head}|${l.subHead ?? ""}`) ?? 0;
+                      const prior = priorByKey.get(`${l.head}|${(l.subHead ?? "").toLowerCase()}`) ?? 0;
                       const already = (Number(l.quantity) || 0) * (Number(l.unitRate) || 0);
                       // Only fill what is still empty — never overwrite a figure already planned.
                       return prior > 0 && already === 0 ? { ...l, quantity: 1, unitRate: prior } : l;
@@ -1302,11 +1317,15 @@ Reason:`
                 onDeleteHead={async (head) => {
                   const subHeadNote = head.subHeads.length ? ` and its ${head.subHeads.length} sub-head(s)` : "";
                   if (!window.confirm(`Delete "${head.headName}"${subHeadNote}?\n\nIf any budget line, GRN or coverage review already uses it, it is retired (set inactive) instead of removed so the history stays readable.`)) return;
-                  reportExpenseMasterDelete("Head", await deleteHead.mutateAsync(head.id));
+                  const result = await deleteHead.mutateAsync(head.id);
+                  reportExpenseMasterDelete("Head", result);
+                  setLines((prev) => prev.filter((l) => l.head !== head.headName));
                 }}
                 onDeleteSubHead={async (_head, item) => {
                   if (!window.confirm(`Delete sub-head "${item.subHeadName}"?\n\nIf any budget line, GRN or coverage review already uses it, it is retired (set inactive) instead of removed so the history stays readable.`)) return;
-                  reportExpenseMasterDelete("Sub-head", await deleteSubHead.mutateAsync(item.id));
+                  const result = await deleteSubHead.mutateAsync(item.id);
+                  reportExpenseMasterDelete("Sub-head", result);
+                  setLines((prev) => prev.filter((l) => !(l.head === _head.headName && l.subHead === item.subHeadName)));
                 }}
               />
             </TabsContent>

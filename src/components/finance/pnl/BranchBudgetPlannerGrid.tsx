@@ -567,10 +567,11 @@ export function BranchBudgetPlannerGrid({
                                     <div className="max-h-44 overflow-auto">
                                       {costCentres.map((cc) => {
                                         const direct = line.planningLevel !== "branch";
-                                        const selected = line.includedCostCentreIds ?? [];
+                                        // null means "all CCs selected" — materialise to full array so .includes() works correctly
+                                        const selected = line.includedCostCentreIds ?? costCentres.map((c) => c.id);
                                         const on = direct
                                           ? line.costCentreId === cc.id
-                                          : selected.length === 0 || selected.includes(cc.id);
+                                          : selected.includes(cc.id);
                                         if (direct) {
                                           return (
                                             <label key={cc.id} className="flex items-center gap-1.5 py-0.5 text-[12px] text-slate-700">
@@ -584,12 +585,9 @@ export function BranchBudgetPlannerGrid({
                                           <label key={cc.id} className="flex items-center gap-1.5 py-0.5 text-[12px] text-slate-700">
                                             <input type="checkbox" checked={on} disabled={!canEdit}
                                               onChange={(e) => {
-                                                // Empty means "all", so the first unticking has to
-                                                // materialise the full set before removing one.
-                                                const base = selected.length ? selected : costCentres.map((c) => c.id);
                                                 const next = e.target.checked
-                                                  ? [...new Set([...base, cc.id])]
-                                                  : base.filter((id) => id !== cc.id);
+                                                  ? [...new Set([...selected, cc.id])]
+                                                  : selected.filter((id) => id !== cc.id);
                                                 onUpdateLine(index, { includedCostCentreIds: next.length === costCentres.length ? null : next });
                                               }} />
                                             <span className="truncate font-mono">{cc.costCentreCode}</span>
@@ -698,9 +696,17 @@ export function BranchBudgetPlannerGrid({
                             for the right sharing method. */}
                         {costCentres.flatMap((cc, ci) => {
                           const cellAmount = p?.cells[ci]?.amount ?? 0;
+                          const isDirectRow = line.planningLevel !== "branch";
+                          const isAssignedCC = cc.id === line.costCentreId;
                           // Switch to a manual split, keeping every current figure, then apply the
                           // one the user just typed. Percentages are what the engine stores.
                           const typeAmount = (raw: string) => {
+                            if (isDirectRow) {
+                              // Direct mode: the gross amount is quantity × unitRate; set quantity=1
+                              // so the row total equals whatever the user types directly.
+                              onUpdateLine(index, { quantity: 1, unitRate: Number(raw) || 0 });
+                              return;
+                            }
                             const typed = Number(raw) || 0;
                             const total = p?.amount ?? 0;
                             if (total <= 0) return;
@@ -715,12 +721,14 @@ export function BranchBudgetPlannerGrid({
                             });
                           };
                           return [
-                            <td key={`u-${index}-${cc.id}`} className={`border-b border-l border-slate-200 p-0 ${isMetered ? "bg-white" : calcCell}`}
-                              title={isMetered
-                                ? "Projected consumption for this cost centre. Units × Rate gives its amount."
-                                : "Units are only entered on a metered row; on this row the amounts are what you type or what the method derives."}
-                              onClick={isMetered ? undefined : explain("Units apply to metered rows. On this row, type into the Amount cell instead.")}>
-                              {isMetered ? (
+                            <td key={`u-${index}-${cc.id}`} className={`border-b border-l border-slate-200 p-0 ${isMetered && !isDirectRow ? "bg-white" : calcCell}`}
+                              title={isDirectRow
+                                ? "Units do not apply to direct cost-centre rows — type directly into the Amount cell."
+                                : isMetered
+                                  ? "Projected consumption for this cost centre. Units × Rate gives its amount."
+                                  : "Units are only entered on a metered row; on this row the amounts are what you type or what the method derives."}
+                              onClick={!isDirectRow && !isMetered ? explain("Units apply to metered rows. On this row, type into the Amount cell instead.") : undefined}>
+                              {isMetered && !isDirectRow ? (
                                 <input type="number" min="0" step="1" disabled={!canEdit} aria-label={`${cc.costCentreCode} units`}
                                   className={`w-full bg-transparent px-2 py-1 ${num} outline-none focus:bg-white focus:ring-2 focus:ring-blue-600/30`}
                                   value={p?.cells[ci]?.units ?? ""}
@@ -732,12 +740,18 @@ export function BranchBudgetPlannerGrid({
                               ) : <div className={`px-2 py-1 ${num} text-slate-500`}>—</div>}
                             </td>,
                             <td key={`a-${index}-${cc.id}`} className={`border-b border-r border-slate-200 p-0 ${unbalanced ? "bg-rose-50" : "bg-white"}`}
-                              title="This cost centre's share in rupees. Typing here overrides the sharing method for this row.">
-                              <input type="number" min="0" step="1" disabled={!canEdit}
-                                aria-label={`${cc.costCentreCode} share amount`}
-                                className={`w-full bg-transparent px-2 py-1 ${num} outline-none focus:bg-white focus:ring-2 focus:ring-blue-600/30 ${unbalanced ? "text-rose-700" : ""}`}
-                                value={cellAmount || ""}
-                                onChange={(e) => typeAmount(e.target.value)} />
+                              title={isDirectRow
+                                ? (isAssignedCC ? "Direct amount for this cost centre." : "Amount is assigned to the selected cost centre only.")
+                                : "This cost centre's share in rupees. Typing here overrides the sharing method for this row."}>
+                              {isDirectRow && !isAssignedCC ? (
+                                <div className={`px-2 py-1 ${num} text-center text-slate-400`}>—</div>
+                              ) : (
+                                <input type="number" min="0" step="1" disabled={!canEdit}
+                                  aria-label={`${cc.costCentreCode} share amount`}
+                                  className={`w-full bg-transparent px-2 py-1 ${num} outline-none focus:bg-white focus:ring-2 focus:ring-blue-600/30 ${unbalanced ? "text-rose-700" : ""}`}
+                                  value={cellAmount || ""}
+                                  onChange={(e) => typeAmount(e.target.value)} />
+                              )}
                             </td>,
                           ];
                         })}
