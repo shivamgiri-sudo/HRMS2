@@ -314,6 +314,12 @@ export const visitorService = {
       new_value_json: { status: decision },
       req,
     });
+    // Close the host's approval-needed inbox alert so the repeat-reminder stops.
+    inboxService.resolveItems({
+      entity_type: "visitor_visit",
+      entity_id: visitId,
+      types: ["visitor_approval_needed"],
+    }).catch(() => {});
     return { id: visitId, status: decision };
   },
 
