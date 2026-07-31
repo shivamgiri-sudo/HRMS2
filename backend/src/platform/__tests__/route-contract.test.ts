@@ -62,6 +62,14 @@ const KNOWN_GAPS: Record<string, string> = {
   // scaffolding that cannot fire, and should be built or deleted, not rushed.
 
   // Reachable — a user can hit these today.
+  "GET /api/employees/me/promotions":
+    "REACHABLE (EmployeeJourney is routed). Employee self-service promotion history; no route in origin/main, so the section renders empty.",
+  "GET /api/employees/me/transfers":
+    "REACHABLE (EmployeeJourney is routed). Pairs with /me/promotions; same fix.",
+  "GET /api/helpdesk/grievances/:p/timeline":
+    "REACHABLE (NativeGrievanceCommandCenter is routed, calls it from two places). The grievances module exists but has no /timeline route.",
+  "GET /api/org/companies":
+    "REACHABLE (NativePayrollHRValidation is routed). No /companies route on the org router, which does have branches/departments/lobs/designations/campaigns.",
   "GET /api/executive/quality-summary/process-breakdown":
     "REACHABLE (useExecutiveQuality is used by a mounted component). Only /quality-summary exists on the executive router, not the breakdown.",
   "POST /api/ats/onboarding/requests":
