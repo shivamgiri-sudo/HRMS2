@@ -6,7 +6,7 @@ import {
   Network, Package, Search, Server, Settings, Settings2, ShieldCheck, Sparkles,
   Target, TrendingUp, Upload, User, UserMinus, UserPlus, Users, Users2, Wallet,
   Zap, DollarSign, ShoppingCart, LayoutDashboard, Crown, Receipt, CheckCircle,
-  Plus, Send, Lock, Shield, ShieldAlert, PenSquare, Eye, UsersRound, Mail,
+  Plus, Send, Lock, Shield, ShieldAlert, PenSquare, Eye, UsersRound, RotateCcw, Mail,
 } from "lucide-react";
 import type { NavGroup } from "./SidebarNav";
 
@@ -53,6 +53,7 @@ export const navGroups: NavGroup[] = [
           { label: "Regularization",           href: "/attendance/regularizations",    icon: ic(Clock),         pageCode: "ATTENDANCE_REGULARIZATION", description: "Regularize" },
           { label: "Attendance Disputes", href: "/attendance/disputes", icon: ic(ClipboardList), roles: ["admin","hr","wfm","manager","super_admin"], description: "Review attendance disputes" },
           { label: "Attendance Lookup",        href: "/hr/attendance-lookup",          icon: ic(Search),        roles: ["super_admin","admin","hr","payroll_head","payroll_admin","wfm"], description: "View any employee's attendance" },
+          { label: "Discard & Reversal",       href: "/admin/discard-center",          icon: ic(RotateCcw),     roles: ["super_admin","wfm"], description: "Audit trail of reversed approvals" },
           { label: "My Roster",                href: "/my-roster",                     icon: ic(Calendar),      public: true, description: "Roster" },
           { label: "Week-off Preference",      href: "/week-off-preferences",          icon: ic(CalendarDays),  public: true, description: "Week-off" },
           { label: "Roster Preference",        href: "/roster-preference",             icon: ic(Calendar),      pageCode: "WFM_ROSTER", description: "Roster preferences" },
@@ -323,8 +324,9 @@ export const navGroups: NavGroup[] = [
           { label: "Vendor Payments",         href: "/finance/vendor-payment-tracking",  icon: ic(DollarSign),   roles: ["admin","finance","super_admin","finance_head","accounts_head","payroll_head"], description: "Vendor payment tracking" },
           { label: "Vendors", href: "/vendors", icon: ic(Users), roles: ["admin","super_admin","finance","manager"], description: "Vendor master" },
           { label: "Procurement", href: "/procurement", icon: ic(ShoppingCart), pageCode: "PROCUREMENT", description: "Procurement requests" },
-          { label: "Expense Finance Queue",   href: "/expenses/finance",                 icon: ic(Receipt),      roles: ["admin","finance","super_admin","finance_head","accounts_head"], description: "Expense reimbursement control" },
-          { label: "Expense Reports",         href: "/expenses/reports",                 icon: ic(BarChart3),    roles: ["admin","finance","super_admin","finance_head","accounts_head"], description: "Expense analytics" },
+          // /expenses/* is retired — see the comment in config/routes/finance.routes.tsx.
+          // These pointed at a module whose tables have never existed in mas_hrms.
+          { label: "Reimbursement Queue",     href: "/payroll/reimbursements",           icon: ic(Receipt),      roles: ["admin","finance","super_admin","finance_head","accounts_head"], description: "Employee reimbursement control" },
         ],
       },
       {
@@ -340,15 +342,20 @@ export const navGroups: NavGroup[] = [
     ],
   },
 
-  /* ── EXPENSES ─────────────────────────────────────────────── */
+  /* ── EXPENSES ─────────────────────────────────────────────────
+     The five /expenses/* pages are retired; every one of them 500'd because the
+     backing tables have never existed in mas_hrms (see finance.routes.tsx for the
+     full reasoning and why running migration 099 would move the P&L). The routes
+     now redirect to /payroll/reimbursements, which is the working employee-claim
+     flow, so this section points there directly rather than advertising dead links.
+     MY_EXPENSES and EXPENSE_CREATE are kept as the page codes because both sit in
+     COMMON_USER_PAGE_CODES and are granted to every role. */
   {
     title: "Expenses",
     items: [
-      { label: "My Expenses",    href: "/expenses",           icon: ic(Receipt),      pageCode: "MY_EXPENSES", description: "My expense claims" },
-      { label: "New Claim",      href: "/expenses/new",       icon: ic(Plus),         pageCode: "EXPENSE_CREATE", description: "New expense claim" },
-      { label: "Approvals",      href: "/expenses/approvals", icon: ic(CheckCircle),  pageCode: "EXPENSE_APPROVALS", roles: ["manager", "admin"], description: "Approve team expenses" },
-      { label: "Finance Queue",  href: "/expenses/finance",   icon: ic(DollarSign),   pageCode: "EXPENSE_FINANCE", roles: ["finance", "admin", "super_admin", "finance_head", "accounts_head"], description: "Finance approval queue" },
-      { label: "Reports",        href: "/expenses/reports",   icon: ic(BarChart3),    pageCode: "EXPENSE_REPORTS", roles: ["admin", "finance", "super_admin", "finance_head", "accounts_head"], description: "Expense analytics" },
+      { label: "My Reimbursements", href: "/payroll/reimbursements", icon: ic(Receipt),     pageCode: "MY_EXPENSES",    description: "My reimbursement claims" },
+      { label: "New Claim",         href: "/payroll/reimbursements", icon: ic(Plus),        pageCode: "EXPENSE_CREATE", description: "Raise a reimbursement claim" },
+      { label: "Approvals",         href: "/payroll/reimbursements", icon: ic(CheckCircle), roles: ["manager", "admin"], description: "Approve team claims" },
     ],
   },
 

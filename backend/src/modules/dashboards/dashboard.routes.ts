@@ -343,13 +343,33 @@ router.get("/:dashboardCode/summary", h(async (req: AuthenticatedRequest, res: a
   const { user, context, scope } = await requestedScope(req);
   // Unions work_item with work_inbox_item. Reading work_item alone showed an empty
   // inbox on all 12 dashboards while 65k live rows sat in the other table.
-  const workItems = await getUnifiedInboxSummary(user.id, context.roleKeys);
+  //
+  // Isolate the inbox from the metrics. This await runs before
+  // executeDashboardMetrics, so an unhandled failure here 500s the whole summary
+  // and renders every metric tile as an em-dash. CEO UAT 31-Jul-2026 reported
+  // exactly that on /ceo/dashboard — nine hollow tiles and four "unavailable"
+  // panels from one failing aggregation.
+  //
+  // On failure `workItems` is OMITTED, never zeroed: a fabricated
+  // "0 pending / 0 overdue" reads as an empty inbox and would hide the outage,
+  // which dashboard-error-semantics.test.ts explicitly forbids. `workItemsStatus`
+  // is what tells the client the difference between "empty" and "unknown".
+  let workItems: Awaited<ReturnType<typeof getUnifiedInboxSummary>> | undefined;
+  let workItemsStatus: "ok" | "unavailable" = "ok";
+  try {
+    workItems = await getUnifiedInboxSummary(user.id, context.roleKeys);
+  } catch (err: unknown) {
+    console.error("[dashboards/summary] work-item aggregation failed", err instanceof Error ? err.message : err);
+    workItems = undefined;
+    workItemsStatus = "unavailable";
+  }
 
   const generatedAt = new Date();
   const data = dashboardSummarySchema.parse({
     dashboardCode,
     scope,
     workItems,
+    workItemsStatus,
     metrics: await executeDashboardMetrics(dashboardCode, scope, generatedAt),
     generatedAt: generatedAt.toISOString(),
   });

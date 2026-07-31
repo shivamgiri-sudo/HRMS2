@@ -7,6 +7,7 @@ import {
   BarChart2,
   CalendarDays,
   ChevronDown,
+  Clock,
   Loader,
   Phone,
   PhoneIncoming,
@@ -923,7 +924,21 @@ export default function NativeOperationsDashboard() {
   const [mgmtLoading, setMgmtLoading] = useState(false);
   const [mgmtError, setMgmtError] = useState("");
   const [opsFlags, setOpsFlags] = useState<InterventionFlag[]>([]);
-  const [slaAdherence, setSlaAdherence] = useState<number | null>(null);
+  // Renamed from slaAdherence. The value assigned here has always been
+  // login_adherence_pct — the share of scheduled agents who logged in — while the
+  // tile was titled "SLA Adherence". They are different measures, and the CEO UAT
+  // reported "SLA Adherence 0.0%" as an SLA failure when it was in fact a login
+  // adherence figure. No SLA measurement exists in this payload.
+  const [loginAdherence, setLoginAdherence] = useState<number | null>(null);
+  // Live call metrics. getDailyOpsPulse already returns these; the page destructured
+  // only two fields and discarded the rest, which is why the CEO UAT found "no live
+  // call metrics at all — no AHT, no call volume" on an operations dashboard.
+  const [callMetrics, setCallMetrics] = useState<{
+    total_calls?: number;
+    avg_aht_seconds?: number;
+    avg_calls_per_agent?: number;
+    avg_shrinkage_pct?: number;
+  } | null>(null);
 
   const loadMgmt = async () => {
     setMgmtLoading(true);
@@ -947,11 +962,24 @@ export default function NativeOperationsDashboard() {
 
   useEffect(() => {
     void loadMgmt();
-    hrmsApi.get<{ success: boolean; data: { intervention_flags?: InterventionFlag[]; login_adherence_pct?: number } }>("/api/bi/daily-operations-pulse")
+    hrmsApi.get<{ success: boolean; data: {
+      intervention_flags?: InterventionFlag[];
+      login_adherence_pct?: number;
+      total_calls?: number;
+      avg_aht_seconds?: number;
+      avg_calls_per_agent?: number;
+      avg_shrinkage_pct?: number;
+    } }>("/api/bi/daily-operations-pulse")
       .then((res) => {
         const d = (res as any)?.data;
         setOpsFlags(d?.intervention_flags ?? []);
-        if (d?.login_adherence_pct != null) setSlaAdherence(Number(d.login_adherence_pct));
+        if (d?.login_adherence_pct != null) setLoginAdherence(Number(d.login_adherence_pct));
+        setCallMetrics({
+          total_calls: d?.total_calls,
+          avg_aht_seconds: d?.avg_aht_seconds,
+          avg_calls_per_agent: d?.avg_calls_per_agent,
+          avg_shrinkage_pct: d?.avg_shrinkage_pct,
+        });
       })
       .catch(() => setOpsFlags([]));
   }, []);
@@ -1026,11 +1054,44 @@ export default function NativeOperationsDashboard() {
             }
           />
           <StatCard
-            title="SLA Adherence"
-            value={slaAdherence != null ? `${slaAdherence.toFixed(1)}%` : "—"}
+            title="Login Adherence"
+            value={loginAdherence != null ? `${loginAdherence.toFixed(1)}%` : "—"}
             icon={<Target className="h-5 w-5" />}
             tone={
-              slaAdherence != null && slaAdherence < 90
+              loginAdherence != null && loginAdherence < 90
+                ? "bg-amber-50 text-amber-700"
+                : "bg-emerald-50 text-emerald-700"
+            }
+          />
+        </div>
+
+        {/* Live call metrics — returned by /api/bi/daily-operations-pulse all along,
+            but previously discarded by the page. */}
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <StatCard
+            title="Total Calls"
+            value={callMetrics?.total_calls != null ? Number(callMetrics.total_calls).toLocaleString("en-IN") : "—"}
+            icon={<Activity className="h-5 w-5" />}
+            tone="bg-blue-50 text-blue-700"
+          />
+          <StatCard
+            title="Avg AHT"
+            value={callMetrics?.avg_aht_seconds != null ? `${Math.round(Number(callMetrics.avg_aht_seconds))}s` : "—"}
+            icon={<Clock className="h-5 w-5" />}
+            tone="bg-indigo-50 text-indigo-700"
+          />
+          <StatCard
+            title="Calls / Agent"
+            value={callMetrics?.avg_calls_per_agent != null ? Number(callMetrics.avg_calls_per_agent).toFixed(1) : "—"}
+            icon={<Activity className="h-5 w-5" />}
+            tone="bg-sky-50 text-sky-700"
+          />
+          <StatCard
+            title="Shrinkage"
+            value={callMetrics?.avg_shrinkage_pct != null ? `${Number(callMetrics.avg_shrinkage_pct).toFixed(1)}%` : "—"}
+            icon={<Target className="h-5 w-5" />}
+            tone={
+              callMetrics?.avg_shrinkage_pct != null && Number(callMetrics.avg_shrinkage_pct) > 30
                 ? "bg-amber-50 text-amber-700"
                 : "bg-emerald-50 text-emerald-700"
             }

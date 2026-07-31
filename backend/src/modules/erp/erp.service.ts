@@ -152,11 +152,39 @@ export const contractService = {
 // ─── Expenses ────────────────────────────────────────────────────────────────
 
 export const expenseService = {
-  async list(filters: { employee_id?: string; status?: string }) {
+  /**
+   * expense_claim is a mixed ledger. As of 31-Jul-2026 it holds 5,634 rows:
+   * 2,955 vendor_bill (~₹11.85 Cr), 2,579 imprest and 100 employee_claim, migrated
+   * from the db_bill finance system. This endpoint backs the ERP "Expenses" tab,
+   * which is an employee-expense screen — it previously applied NO expense_type
+   * filter and NO limit, so it returned the entire vendor-bill ledger into that
+   * screen, and its Approve/Reject buttons acted on migrated vendor bills. Those
+   * buttons run expense_policy checks keyed on `category`, and every migrated row
+   * carries category 'other' whose policy cap is ₹5,000 — so approving a ₹-crore
+   * vendor bill through this screen would auto-REJECT it.
+   *
+   * expense_type is therefore explicit. Callers wanting the vendor/imprest ledger
+   * must ask for it; the default is the employee-claim view the UI presents.
+   */
+  async list(filters: { employee_id?: string; status?: string; expense_type?: string | string[] }) {
     const conds: string[] = [];
     const params: unknown[] = [];
     if (filters.employee_id) { conds.push("e.employee_id = ?"); params.push(filters.employee_id); }
     if (filters.status)      { conds.push("e.status = ?");      params.push(filters.status); }
+
+    // expense_type reaches here straight off req.query on the privileged path, so
+    // validate against the ENUM rather than trusting the caller — qs can hand us
+    // arrays or objects, and an unrecognised value must not silently widen the
+    // result set back to the whole ledger.
+    const VALID_EXPENSE_TYPES = ["employee_claim", "vendor_bill", "imprest", "salary_advance"];
+    const requested = filters.expense_type
+      ? (Array.isArray(filters.expense_type) ? filters.expense_type : [filters.expense_type])
+      : [];
+    const types = requested.filter((t): t is string => typeof t === "string" && VALID_EXPENSE_TYPES.includes(t));
+    const effectiveTypes = types.length > 0 ? types : ["employee_claim"];
+    conds.push(`e.expense_type IN (${effectiveTypes.map(() => "?").join(", ")})`);
+    params.push(...effectiveTypes);
+
     const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT e.*,
@@ -165,7 +193,8 @@ export const expenseService = {
        FROM expense_claim e
        LEFT JOIN employees emp ON emp.id = e.employee_id
        ${where}
-       ORDER BY e.expense_date DESC`,
+       ORDER BY e.expense_date DESC
+       LIMIT 500`,
       params
     );
     return rows as RowDataPacket[];
@@ -210,6 +239,22 @@ export const expenseService = {
     // Load expense to check category for policy validation
     const claim = await this.getById(id);
     if (!claim) return null;
+
+    // Refuse to review anything that is not an employee claim. The policy engine
+    // below keys on `category`, and all 5,534 migrated vendor_bill/imprest rows
+    // carry category 'other' — whose policy cap is ₹5,000 — so putting a ₹-crore
+    // vendor bill through here would silently auto-reject it and stamp the row.
+    // Vendor bills are settled through the GRN → vendor_payment_tracking flow,
+    // not through this screen.
+    if (claim.expense_type && claim.expense_type !== "employee_claim") {
+      throw Object.assign(
+        new Error(
+          `Expense ${id} is a ${claim.expense_type} and cannot be reviewed here. ` +
+          `Vendor bills and imprest are settled through the GRN and vendor payment flow.`,
+        ),
+        { statusCode: 409 },
+      );
+    }
 
     const [policyRows] = await db.execute<RowDataPacket[]>(
       "SELECT * FROM expense_policy WHERE category = ? AND is_active = 1 LIMIT 1",

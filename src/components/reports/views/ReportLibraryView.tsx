@@ -805,6 +805,33 @@ export default function NativeReportsCenterV2() {
 
   const isSuperAdmin = userRoles.includes("super_admin");
 
+  /**
+   * Whether this user may download the selected report directly.
+   *
+   * The button was gated on `isSuperAdmin` alone, which is STRICTER than the
+   * backend it calls. GET /api/reports/suite/:code/export already permits any role
+   * listed in the report's `exportRoles` (report-suite.routes.ts) — so users who
+   * were entitled to export simply never saw the control, and the CEO UAT reported
+   * "no CSV / XLSX / PDF export exists, only Request by Email" across all 39 reports.
+   *
+   * `exportRoles` is declared on every catalog entry and was read nowhere in the
+   * render path. This mirrors the backend rule rather than inventing a second one;
+   * the backend remains the enforcement point.
+   *
+   * Note this does not by itself give the CEO export rights: "ceo" currently appears
+   * in 0 of the 87 exportRoles arrays in lib/report-catalog.ts. Populating those is a
+   * per-report ownership decision, not a code change.
+   */
+  const canExportSelected = (() => {
+    if (isSuperAdmin) return true;
+    if (!selectedReport) return false;
+    const allowed = selectedReport.exportRoles ?? [];
+    // An empty list means "not restricted", matching the backend's
+    // `catalogEntry.exportRoles.length === 0` branch.
+    if (allowed.length === 0) return true;
+    return allowed.some((role) => userRoles.includes(role));
+  })();
+
   const pageSize = 100;
   const runnerRef = useRef<HTMLDivElement>(null);
 
@@ -1194,13 +1221,13 @@ export default function NativeReportsCenterV2() {
                     </div>
                     <div className="flex flex-col items-end gap-1">
                       <div className="flex items-center gap-2">
-                        {isSuperAdmin && (
+                        {canExportSelected && (
                           <button
                             type="button"
                             onClick={handleDownloadXlsx}
                             disabled={downloadState === "loading"}
                             className="flex items-center gap-1.5 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:bg-emerald-400 text-white text-sm font-semibold rounded-lg transition-colors shadow-sm"
-                            title="Download XLSX directly (super admin)"
+                            title="Download XLSX directly"
                           >
                             {downloadState === "loading"
                               ? <Loader2 size={14} className="animate-spin" />

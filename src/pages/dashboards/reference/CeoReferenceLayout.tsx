@@ -50,7 +50,10 @@ export function CeoReferenceLayout({ data, filters }: { data: ReferenceDashboard
   const active = metricDetail(m, "hc", "active") ?? metricValue(m, "hc");
   const attendance = metricDetail(m, "att", "attendanceRate") ?? metricValue(m, "att");
   const shrinkage = numberAt(data.workforce, "summary", "shrinkage_pct");
-  const revenue = numberAt(data.pnl, "kpis", "organisationRevenue");
+  // `organisationRevenue` is not a key the P&L service returns (see
+  // bpo-pnl.service.ts) — it was always undefined, so the Revenue Gap helper line
+  // permanently read "Revenue risk" instead of the actual revenue figure.
+  const revenue = numberAt(data.pnl, "kpis", "recognizedRevenue") ?? numberAt(data.pnl, "kpis", "organisationRevenue");
   const revenueGap = numberAt(data.pnl, "kpis", "revenueAtRisk") ?? numberAt(data.pnl, "kpis", "revenueGapMtd");
   const certified = numberAt(data.workforce, "training", "certified_learners") ?? numberAt(data.workforce, "training", "certifiedLearners");
   const onboarding = metricDetail(m, "onb", "pending") ?? metricValue(m, "onb");
@@ -59,6 +62,10 @@ export function CeoReferenceLayout({ data, filters }: { data: ReferenceDashboard
   const tat = metricDetail(m, "tat", "breached") ?? metricValue(m, "tat");
   const incentiveCount = metricDetail(m, "incentive", "pendingBatches") ?? metricValue(m, "incentive");
   const incentiveAmount = metricDetail(m, "incentive", "pendingAmount");
+  // docCompliance is already in the CEO bundle and drives the Document Coverage
+  // panel below; surfacing it as a tile fills one of the slots vacated by the
+  // three removed metrics rather than leaving the grid short.
+  const docCoverage = metricDetail(m, "docCompliance", "coveragePct");
   const ready = metricDetail(m, "payroll", "readyCount") ?? metricValue(m, "payroll");
   const blocked = metricDetail(m, "payroll", "blockerCount");
   const totalPayroll = ready !== null && blocked !== null ? ready + blocked : null;
@@ -80,11 +87,25 @@ export function CeoReferenceLayout({ data, filters }: { data: ReferenceDashboard
     <div className="reference-dashboard-page">
       <ReferenceHeader title="CEO Dashboard" subtitle="Organisation-wide summary" badge="CEO View" right={filters} />
 
+      {/*
+        TAT Breached, Name Mismatch and Incentive Pending were removed 31-Jul-2026.
+
+        All three read metric keys the CEO bundle never requested, so they rendered a
+        permanent em-dash (CEO UAT). Wiring them was the obvious fix and is wrong:
+        their source tables are empty in production — task_tat_instance 0 rows,
+        candidate_name_match_summary 0, incentive_upload_batch 0 — so the tiles would
+        have reported a confident "0 TAT breached" and "0 name mismatches" for
+        pipelines that are not running at all. A false zero on an executive dashboard
+        is worse than a blank one.
+
+        BGV is kept: candidate_bgv_check holds 203 live rows, and `bgv` is now in the
+        CEO bundle (dashboard-definition.service.ts), so the tile shows a real figure.
+
+        Restore the other three here and in the bundle once their pipelines feed data.
+      */}
       <ReferenceActionStrip title="Today's Operations — Immediate Actions" items={[
-        { label: "TAT Breached", value: tat, detail: "Tickets waiting beyond SLA", tone: "red", href: "/work-inbox" },
         { label: "BGV Pending", value: bgv, detail: "Approvals pending", tone: "red", href: "/ats/bgv", ...drill("bgv") },
-        { label: "Name Mismatch (Blocking)", value: mismatch, detail: "Requires immediate review", tone: "red", href: "/ats/name-consistency", ...drill("nm") },
-        { label: "Incentive Pending", value: incentiveCount, detail: incentiveAmount === null ? "Approvals pending" : `${formatCurrency(incentiveAmount)} pending`, tone: "amber", href: "/payroll/incentives" },
+        { label: "Onboarding Pending", value: onboarding, detail: "Joiners awaiting completion", tone: "amber", href: "/ats/onboarding-requests", ...drill("onb") },
         { label: "Payroll Readiness", value: payrollReadiness === null ? null : `${payrollReadiness}%`, detail: "Complete pending items", tone: "amber", href: "/payroll/branch-readiness" },
       ]} />
 
@@ -98,14 +119,15 @@ export function CeoReferenceLayout({ data, filters }: { data: ReferenceDashboard
       <div className="grid gap-4 xl:grid-cols-[1.45fr_0.55fr]">
         <div className="grid grid-cols-2 gap-0 overflow-hidden rounded-xl border border-[#e3e9f2] bg-white sm:grid-cols-4">
           {[
+            // Name Mismatch, TAT Breached and Incentive Pending removed — see the
+            // note above the action strip. Their source tables hold no rows, so the
+            // tiles could only ever assert a false zero.
             ["Active Headcount", active, Users, "blue"],
             ["Onboarding Pending", onboarding, UserCheck, "green"],
             ["BGV Pending", bgv, ShieldAlert, "violet"],
-            ["Name Mismatch (Blocking)", mismatch, CircleAlert, "red"],
-            ["TAT Breached", tat, TriangleAlert, "red"],
-            ["Incentive Pending", incentiveCount, Award, "amber"],
             ["Payroll Readiness", payrollReadiness === null ? null : `${payrollReadiness}%`, Target, "violet"],
             ["Resignation Risk", resignation, UserMinus, "red"],
+            ["Document Coverage", docCoverage === null ? null : `${docCoverage}%`, BadgeCheck, "green"],
           ].map(([label, value, Icon, tone], index) => {
             const IconComponent = Icon as typeof Users;
             return <div key={String(label)} className={`flex min-h-[100px] min-w-0 items-start gap-3 border-[#edf1f6] p-4 ${index % 4 !== 3 ? "sm:border-r" : ""} ${index < 4 ? "border-b" : ""}`}><span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${tone === "green" ? "bg-[#eaf8ef] text-[#16a34a]" : tone === "red" ? "bg-[#fff0f1] text-[#ef4444]" : tone === "amber" ? "bg-[#fff4e8] text-[#f97316]" : tone === "violet" ? "bg-[#f3efff] text-[#7c3aed]" : "bg-[#edf4ff] text-[#0b63e5]"}`}><IconComponent className="h-4 w-4" /></span><div className="min-w-0"><p className="text-xs font-semibold leading-4 text-[#1d2b45]">{label}</p><p className="mt-2 text-[21px] font-extrabold leading-none text-[#0b1f44]">{formatValue(value)}</p><p className="mt-2 text-xs text-[#71809a]">Live organisation value</p></div></div>;

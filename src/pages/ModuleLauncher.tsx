@@ -5,6 +5,27 @@ import { useQuery } from "@tanstack/react-query";
 import { ArrowRight, Briefcase, GraduationCap, ShieldCheck, Users, BarChart3, Clock, Settings } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { useWorkforceAccess } from "@/hooks/useUserRole";
+import { PAGE_CODE_BY_ROUTE } from "@/lib/pageRoutePageCodes";
+
+/**
+ * page_code -> route, inverted from the frontend's own route map.
+ *
+ * The router is the authority on what exists; page_catalog.page_path is a database
+ * copy that has drifted from it more than once. WORKFORCE_COMMAND_CENTER is the
+ * worked example: sql/216 overwrote the correct '/performance/command-center' with
+ * '/workforce/command-center', which has never been mounted, and this launcher sent
+ * all eight roles holding that grant straight to the 404 page. Preferring the
+ * router's path makes a future catalog drift inert rather than user-visible.
+ */
+const ROUTE_BY_PAGE_CODE: Record<string, string> = Object.entries(PAGE_CODE_BY_ROUTE).reduce(
+  (acc, [route, code]) => {
+    // First wins — several codes share a route (e.g. the ATS command centre), and
+    // the earliest entry is the canonical one.
+    if (!acc[code]) acc[code] = route;
+    return acc;
+  },
+  {} as Record<string, string>,
+);
 
 const iconMap: Record<string, JSX.Element> = {
   // Core modules
@@ -82,7 +103,9 @@ export default function ModuleLauncher() {
             ...page,
             module_code: page.module_code ?? page.module ?? page.page_code.split("_")[0] ?? "HRMS",
             page_description: page.page_description ?? page.description ?? "Open workspace",
-            route_path: page.route_path ?? page.page_path ?? "/dashboard",
+            // Router first, database second. See ROUTE_BY_PAGE_CODE above.
+            route_path:
+              ROUTE_BY_PAGE_CODE[page.page_code] ?? page.route_path ?? page.page_path ?? "/dashboard",
           }));
       } catch {
         return access.visiblePageCodes.map(fallbackPageFromCode);

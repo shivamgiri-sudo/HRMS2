@@ -150,6 +150,16 @@ describe("application shell routing contracts", () => {
       "/display/waiting-room",
       "/employee-lifecycle-v2",
       "/engagement/command-center",
+      // Retired module. These five now redirect to /payroll/reimbursements, which is
+      // what the sidebar links to instead — the backing tables (expense_claims,
+      // expense_items, …) have never existed in mas_hrms, so every page 500'd.
+      // Kept as redirects rather than deleted so existing links and bookmarks land
+      // somewhere useful. See src/config/routes/finance.routes.tsx.
+      "/expenses",
+      "/expenses/approvals",
+      "/expenses/finance",
+      "/expenses/new",
+      "/expenses/reports",
       "/exit/resignation-command-center",
       "/features",
       "/finance/process-pnl/lobs",

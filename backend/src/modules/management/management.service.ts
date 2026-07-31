@@ -2,6 +2,13 @@ import { randomUUID } from "crypto";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
+import {
+  HALF_DAY_STATUS,
+  LATEST_COMPLETE_ATTENDANCE_DATE_SQL,
+  attendedDaysSql,
+  expectedToWorkSql,
+  presentSql,
+} from "../../shared/attendanceStatus.js";
 import type { Request } from "express";
 
 function numberValue(value: unknown): number {
@@ -333,9 +340,17 @@ export const managementService = {
       attendanceRows,
       kpiRows,
     ] = await Promise.all([
+      // employment_status is filtered here to match dashboard-metric.service.ts,
+      // which is what every other headcount tile uses. Without it this surface
+      // counted employees the rest of the product does not — the CEO UAT saw 1152
+      // here against different figures elsewhere for the same organisation.
       db.execute<RowDataPacket[]>(
         `SELECT
-           SUM(e.active_status = 1 AND e.date_of_joining <= CURDATE()) AS headcount,
+           SUM(
+             e.active_status = 1
+             AND LOWER(COALESCE(e.employment_status, 'active')) = 'active'
+             AND e.date_of_joining <= CURDATE()
+           ) AS headcount,
            SUM(
              COALESCE(e.date_of_leaving, e.resignation_date, e.date_of_exit)
              BETWEEN DATE_SUB(CURDATE(), INTERVAL 29 DAY) AND CURDATE()
@@ -358,17 +373,30 @@ export const managementService = {
           WHERE ht.status IN ('open', 'in_progress') ${empConds.clause}`,
         empConds.params
       ),
+      // Anchored on LATEST_COMPLETE_ATTENDANCE_DATE_SQL, not MAX(record_date) <= CURDATE().
+      //
+      // The old anchor resolved to TODAY. Attendance rows are created at start of
+      // day and reconciled overnight, so "today" is a partially-written day: on
+      // 2026-07-30 at 15:00 it held 802 rows of which 1 was present and 431 were
+      // missing_punch. That is what produced the "Attendance Rate 2.3%" the CEO UAT
+      // reported — the panel was reading an in-progress day as if it were final.
+      // The shared helper picks the latest substantially-processed day and
+      // explicitly excludes today; see shared/attendanceStatus.ts for why a
+      // row-count threshold alone is not sufficient.
+      //
+      // Status vocabulary now comes from the same helpers as every other surface.
+      // 'on_leave' and 'leave' in the old list are not ENUM members; the real value
+      // is 'leave_approved'. 'present' alone also omitted 'week_off_worked'.
       db.execute<RowDataPacket[]>(
         `SELECT
            COUNT(*) AS total,
-           SUM(adr.attendance_status NOT IN ('on_leave','leave','leave_approved','week_off','holiday')) AS expected_to_work,
-           SUM(adr.attendance_status = 'present') AS present,
-           SUM(adr.attendance_status = 'half_day') AS half_day
+           ${expectedToWorkSql("adr.attendance_status")} AS expected_to_work,
+           ${presentSql("adr.attendance_status")} AS present,
+           SUM(adr.attendance_status = '${HALF_DAY_STATUS}') AS half_day,
+           MAX(adr.record_date) AS as_of_date
          FROM attendance_daily_record adr
          JOIN employees e ON e.id = adr.employee_id
-         WHERE adr.record_date = (
-           SELECT MAX(record_date) FROM attendance_daily_record WHERE record_date <= CURDATE()
-         ) ${empConds.clause}`,
+         WHERE adr.record_date = ${LATEST_COMPLETE_ATTENDANCE_DATE_SQL} ${empConds.clause}`,
         empConds.params
       ),
       this.getTeamKpiSummary({
@@ -604,17 +632,17 @@ export const managementService = {
           GROUP BY COALESCE(NULLIF(current_stage, ''), 'Unspecified')
           ORDER BY value DESC`,
       ),
+      // Same anchor as every other attendance surface. Reading today's partially
+      // written day made this status breakdown report a wall of missing_punch:
+      // on 2026-07-30 at 15:00 today held 431 missing_punch against 1 present,
+      // while the completed day before it held 631 present and 4 missing_punch.
       db.execute<RowDataPacket[]>(
         `SELECT
            record_date,
            attendance_status AS status,
            COUNT(*) AS value
          FROM attendance_daily_record
-         WHERE record_date = (
-           SELECT MAX(record_date)
-           FROM attendance_daily_record
-           WHERE record_date <= CURDATE()
-         )
+         WHERE record_date = ${LATEST_COMPLETE_ATTENDANCE_DATE_SQL}
          GROUP BY record_date, attendance_status`,
       ),
       db.execute<RowDataPacket[]>(
@@ -795,8 +823,19 @@ export const managementService = {
       : null;
 
     // Manager-specific: expense claims, work items
+    //
+    // This filtered `status = 'pending'`, which is not a member of the column's
+    // ENUM('draft','submitted','approved','rejected','paid') — so it matched
+    // nothing and the "Expense Claims" tile read 0 on the CEO, HR Admin, Manager,
+    // Ops and both reference dashboards despite 5,634 live rows. 'submitted' is
+    // the awaiting-review state.
+    //
+    // expense_type is constrained too: the table is a mixed ledger and 5,534 of
+    // those rows are migrated vendor bills and imprest, which are settled through
+    // the GRN / vendor-payment flow and are not a manager's expense queue.
     const [expenseResult] = await db.execute<RowDataPacket[]>(
-      `SELECT COUNT(*) as count FROM expense_claim WHERE status = 'pending'`
+      `SELECT COUNT(*) as count FROM expense_claim
+        WHERE status = 'submitted' AND expense_type = 'employee_claim'`
     ).catch(() => [[{ count: 0 }]] as any);
 
     const [overtaskResult] = await db.execute<RowDataPacket[]>(
@@ -837,16 +876,16 @@ export const managementService = {
          pm.id,
          pm.process_name,
          COUNT(DISTINCT e.id) AS headcount,
-         SUM(adr.attendance_status = 'present') AS present_count,
-         SUM(adr.attendance_status NOT IN ('on_leave','leave','leave_approved','week_off','holiday')) AS expected_to_work,
+         ${presentSql("adr.attendance_status")} AS present_count,
+         ${expectedToWorkSql("adr.attendance_status")} AS expected_to_work,
          ROUND(
-           SUM(adr.attendance_status = 'present') * 100.0 /
-           NULLIF(SUM(adr.attendance_status NOT IN ('on_leave','leave','leave_approved','week_off','holiday')), 0),
+           ${attendedDaysSql("adr.attendance_status")} * 100.0 /
+           NULLIF(${expectedToWorkSql("adr.attendance_status")}, 0),
          2) AS attendance_pct
        FROM process_master pm
        LEFT JOIN employees e ON e.process_id = pm.id AND e.employment_status = 'active'
        LEFT JOIN attendance_daily_record adr ON adr.employee_id = e.id
-         AND adr.record_date = (SELECT MAX(r) FROM (SELECT MAX(record_date) AS r FROM attendance_daily_record WHERE record_date <= CURDATE()) sub)
+         AND adr.record_date = ${LATEST_COMPLETE_ATTENDANCE_DATE_SQL}
        WHERE pm.active_status = 1
        GROUP BY pm.id, pm.process_name
        HAVING headcount > 0

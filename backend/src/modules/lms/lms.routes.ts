@@ -72,6 +72,20 @@ const LMS_SESSION_ROUTES: Record<LmsSessionUserType, { route: string; storageKey
   management: { route: "/management", storageKey: "lms_token_management" },
 };
 
+/**
+ * The portal names on the wire ("trainee") do not match the keys the service
+ * builds its access object with ("employee" — see lmsService access:{} in
+ * lms.service.ts). Indexing the access object by portal name therefore yielded
+ * `undefined` for trainee and 403'd every user of /lms/my-learning regardless
+ * of role or LMS enrolment. Map explicitly rather than renaming the service
+ * key: /native/employee below reads `.employee` directly.
+ */
+const PORTAL_ACCESS_KEY: Record<LmsPortal, "employee" | "coordinator" | "admin"> = {
+  trainee: "employee",
+  coordinator: "coordinator",
+  admin: "admin",
+};
+
 function isLmsPortal(value: unknown): value is LmsPortal {
   return value === "trainee" || value === "coordinator" || value === "admin";
 }
@@ -245,7 +259,7 @@ router.get("/launch-context", h(async (req: AuthenticatedRequest, res: Response)
     return res.status(503).json({ success: false, message: "LMS_API_URL not configured on HRMS backend" });
   }
 
-  if (!ctx.access.access[portal]) {
+  if (!ctx.access.access[PORTAL_ACCESS_KEY[portal]]) {
     return res.status(403).json({ success: false, message: `LMS access is not assigned for the ${portal} portal` });
   }
 

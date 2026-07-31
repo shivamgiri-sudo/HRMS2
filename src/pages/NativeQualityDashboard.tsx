@@ -92,12 +92,30 @@ function ScorePill({ score }: { score: number }) {
 
 // ─── Animated Counter ─────────────────────────────────────────────────────────
 
+/**
+ * Count-up counter. The animation is a flourish; the number is the product.
+ *
+ * CEO UAT 31-Jul-2026 reported TOTAL CALLS, AGENTS, ABOVE-80% and BELOW-50% all
+ * reading 0 while the same payload rendered "41.1% of total" beside them and a
+ * client breakdown of 2,462 audited calls below them. Those percentages are
+ * computed by pct(), which only prints when `total_calls > 0` — so the figures
+ * were correct in the response and only these tiles were wrong: the counter had
+ * been stranded on its 0 seed because the rAF run never completed.
+ *
+ * The animation is now unable to leave a tile showing a wrong number: a timer
+ * settles the true value whether or not a single frame is ever served (rAF is
+ * suspended outright in a hidden tab and in headless capture; timers are not).
+ */
 function AnimatedNumber({ target, suffix = "" }: { target: number; suffix?: string }) {
   const [val, setVal] = useState(0);
   const frame = useRef<number | null>(null);
   useEffect(() => {
-    const start = performance.now();
     const duration = 800;
+    if (typeof requestAnimationFrame !== "function") {
+      setVal(target);
+      return;
+    }
+    const start = performance.now();
     const tick = (now: number) => {
       const progress = Math.min((now - start) / duration, 1);
       const eased = 1 - Math.pow(1 - progress, 3);
@@ -105,7 +123,11 @@ function AnimatedNumber({ target, suffix = "" }: { target: number; suffix?: stri
       if (progress < 1) frame.current = requestAnimationFrame(tick);
     };
     frame.current = requestAnimationFrame(tick);
-    return () => { if (frame.current) cancelAnimationFrame(frame.current); };
+    const settle = setTimeout(() => setVal(target), duration + 150);
+    return () => {
+      if (frame.current) cancelAnimationFrame(frame.current);
+      clearTimeout(settle);
+    };
   }, [target]);
   return <>{val.toLocaleString()}{suffix}</>;
 }

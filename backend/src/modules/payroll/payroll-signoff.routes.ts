@@ -106,21 +106,73 @@ router.get(
 
 // ─────────────────────────────────────────────────────────────────────────────
 // GET /runs
-// List runs pending finance sign-off (calculated or validated, not yet finance-approved).
+// List runs pending finance sign-off: calculated but not yet finance-approved.
+//
+// The predicate is `status = 'processing'`, matching what the mainline calculator
+// writes when a run finishes computing (payrollCalculate.service.ts — it sets
+// 'processing' on success and resets to 'draft' on failure).
+//
+// It previously read `status IN ('calculated','validated')`. Neither value is ever
+// written to this column: 'calculated' is only set by the parallel payroll-compliance
+// calculator, and 'validated' is written to a DIFFERENT column, validation_status
+// (339_payroll_validation_status.sql). Live census on 31-Jul-2026 was FINALIZED 51,
+// approved 12, processing 3, draft 1 — so the old filter could never match a row.
+//
+// FINALIZED is deliberately excluded: it spans 2021-03 to 2026-04 across 63,316
+// payslip lines, i.e. closed history, not a sign-off queue.
+//
+// LOWER() because the column mixes casing — 'FINALIZED' is uppercase while every
+// other value is lowercase, and a case-sensitive comparison has already caused
+// production defects elsewhere in this module (see payroll.routes.ts).
+//
+// SYNTHETIC RUNS ARE EXCLUDED. Live data on 31-Jul-2026 held two 2026-07 runs that
+// render identically in the UI ("Jul 2026 — processing", total_employees 1288):
+//   93ff8899… created_by 'system'        — real, 1,467 lines, ₹1,23,05,845 net
+//   e17386a3… created_by 'test-auto-gen' — synthetic, 1,288 lines, ₹1,22,13,316 net
+// The second is a v1 UUID with a MAC node, i.e. inserted by raw SQL rather than the
+// application, and its window_close_date was never set. Without this guard a finance
+// user would be offered a ₹1.22 Cr test run as a signable option with nothing on
+// screen distinguishing it from the real one.
+//
+// created_by is unvalidated free text (it holds NULL, 'system', 'test-auto-gen',
+// 'emp-finance-001' and bare UUIDs across the 67 live runs, and NOT ONE of the 67
+// resolves to a row in auth_user), so this is a defence-in-depth filter, not a
+// substitute for purging the synthetic row. created_by is also returned below so
+// the caller can see the provenance of what it is about to approve.
+//
+// HEADCOUNT AND NET ARE COMPUTED FROM salary_prep_line, NOT read from the run header.
+// salary_prep_run.total_employees is stale on 16 of the 67 live runs, sometimes by
+// two orders of magnitude — the May-2026 draft claims 11 against 1,148 actual
+// employees, two FINALIZED runs claim 0 against ~1,100, and the very run finance
+// would sign off (Jul-2026) claims 1,288 against 1,467. Approving payroll against a
+// headcount that understates by 179 people is not acceptable, and buildStatus()
+// below already derives net salary from the lines for exactly this reason.
 // ─────────────────────────────────────────────────────────────────────────────
+const SYNTHETIC_RUN_CREATORS = ["test-auto-gen", "codex-e2e", "smoke-test", "demo-seed"];
+
 router.get(
   "/runs",
   requireRole("finance", "super_admin", "payroll_head", "payroll", "ceo", "admin"),
   h(async (_req: AuthenticatedRequest, res: Response) => {
+    const placeholders = SYNTHETIC_RUN_CREATORS.map(() => "?").join(", ");
     const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT id, run_month, status,
-              finance_approved_by, finance_approved_at, finance_remarks,
-              ceo_acknowledged_by, ceo_acknowledged_at, ceo_remarks
-         FROM salary_prep_run
-        WHERE status IN ('calculated', 'validated')
-          AND finance_approved_at IS NULL
-        ORDER BY run_month DESC
+      `SELECT r.id, r.run_month, r.status, r.created_by,
+              r.total_employees AS header_employee_count,
+              COUNT(DISTINCT l.employee_id) AS employee_count,
+              COALESCE(SUM(l.net_salary), 0)  AS total_net_salary,
+              r.finance_approved_by, r.finance_approved_at, r.finance_remarks,
+              r.ceo_acknowledged_by, r.ceo_acknowledged_at, r.ceo_remarks
+         FROM salary_prep_run r
+         LEFT JOIN salary_prep_line l ON l.run_id = r.id
+        WHERE LOWER(COALESCE(r.status, '')) = 'processing'
+          AND r.finance_approved_at IS NULL
+          AND LOWER(COALESCE(r.created_by, '')) NOT IN (${placeholders})
+        GROUP BY r.id, r.run_month, r.status, r.created_by, r.total_employees,
+                 r.finance_approved_by, r.finance_approved_at, r.finance_remarks,
+                 r.ceo_acknowledged_by, r.ceo_acknowledged_at, r.ceo_remarks
+        ORDER BY r.run_month DESC
         LIMIT 20`,
+      SYNTHETIC_RUN_CREATORS,
     );
 
     return res.json({ success: true, data: rows });

@@ -139,6 +139,7 @@ export const ROLE_SPECIFIC_PAGE_CODES = {
     "WFM_DASHBOARD",
     "WFM_ATTENDANCE_DASHBOARD",
     "ATTENDANCE_DISPUTES",
+    "DISCARD_CENTER",
     "WFM_ROSTER",
     "WFM_LIVE_TRACKER",
     "WFM_AUTO_ROSTER",
@@ -234,8 +235,17 @@ export const ROLE_SPECIFIC_PAGE_CODES = {
     "QUALITY_DASHBOARD",
     "WORKFORCE_COMMAND_CENTER",
     "REPORTS_CENTER",
-    "ADVANCED_REPORTS",
-    "KPI_DASHBOARD",
+    // ADVANCED_REPORTS and KPI_DASHBOARD removed 31-Jul-2026 (CEO UAT).
+    // Neither has a page behind it:
+    //   ADVANCED_REPORTS -> /advanced-reports is a bare <Navigate to="/reports">
+    //     legacy stub (config/routes/finance.routes.tsx). The report builder,
+    //     cross-module query and scheduled email delivery it advertises were
+    //     never built at that path.
+    //   KPI_DASHBOARD  -> /kpi/dashboard has never been mounted in the router.
+    //     Seeded by sql/216_missing_page_catalog_entries.sql; already
+    //     active_status=0 in the live catalog, but still listed here, so the
+    //     generated UAT matrix kept sending testers to a 404. The real page is
+    //     OPERATIONS_KPI (/operations-kpi), which the CEO already holds below.
     "OPERATIONS_KPI",
   ],
   trainer: [
@@ -347,6 +357,32 @@ export const ROLE_SPECIFIC_PAGE_CODES = {
 
 export type RbacRoleKey = keyof typeof ROLE_SPECIFIC_PAGE_CODES | "super_admin";
 
+/**
+ * Pages withheld from a role even though COMMON_USER_PAGE_CODES grants them to
+ * everyone.
+ *
+ * COMMON_USER_PAGE_CODES is a blanket self-service grant, which is correct for
+ * things every employee has — a profile, a payslip, a leave request. It is wrong
+ * for self-service pages that only apply to some populations, and there was
+ * previously no way to say so: the union in getRolePageCodes() had no exclusion
+ * step, so the only options were "everyone" or "remove the page from the product".
+ *
+ * Keep this list very short. It is for pages that are structurally meaningless for
+ * a role, not for permission tuning — that belongs in role_page_access.
+ */
+export const ROLE_EXCLUDED_PAGE_CODES: Readonly<Record<string, readonly string[]>> = {
+  // The CEO is not measured on operational KPIs, so "My KPI" has nothing to show
+  // him. The CEO UAT reported the page as hollow — 3 KPIs tracked, 0 with data,
+  // Overall Score 0% — and the right fix is to not offer the page rather than to
+  // make an empty one look better.
+  //
+  // Note the underlying data disagrees and should be looked at separately: as of
+  // 31-Jul-2026 MAS00001 carries 3 rows in kpi_employee_resolved and 28 in
+  // kpi_daily_actual, because KPI assignment resolves by process and the CEO sits
+  // in one. Those assignments also feed the org-wide leaderboard and averages.
+  ceo: ["MY_KPI"],
+};
+
 export function uniquePageCodes(pageCodes: readonly string[]): string[] {
   return Array.from(new Set(pageCodes));
 }
@@ -360,8 +396,10 @@ export function getRolePageCodes(roleKey: string, allPageCodes: readonly string[
   // migration 604) — so it is fixed there rather than by widening this function.
   if (roleKey === "super_admin") return uniquePageCodes(allPageCodes);
 
+  const excluded = new Set(ROLE_EXCLUDED_PAGE_CODES[roleKey] ?? []);
+
   return uniquePageCodes([
     ...COMMON_USER_PAGE_CODES,
     ...(ROLE_SPECIFIC_PAGE_CODES[roleKey as keyof typeof ROLE_SPECIFIC_PAGE_CODES] ?? []),
-  ]);
+  ]).filter((pageCode) => !excluded.has(pageCode));
 }

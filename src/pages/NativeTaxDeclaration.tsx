@@ -6,6 +6,7 @@ import {
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { apiBaseUrl, apiUrl } from "@/lib/apiBase";
+import { currentFinancialYear, financialYearOptions } from "@/lib/financialYear";
 import { formatISTDate } from "@/lib/utils";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -77,7 +78,12 @@ type FormState = {
 const INR = (v: number) =>
   new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(v ?? 0);
 
-const FINANCIAL_YEARS = ["2024-2025", "2025-2026", "2026-2027"];
+// Derived, not hardcoded. The literal list this replaced —
+// ["2024-2025","2025-2026","2026-2027"] — would have run out after 31-Mar-2027,
+// and its companion `useState("2025-2026")` default meant that on 31-Jul-2026 the
+// page opened on the PRIOR financial year, so declarations were filed against the
+// wrong FY (CEO UAT 31-Jul-2026).
+const FINANCIAL_YEARS = financialYearOptions(2, 0);
 
 const EMPTY_FORM: FormState = {
   regime: "new",
@@ -226,7 +232,7 @@ export default function NativeTaxDeclaration() {
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [employeeSearch, setEmployeeSearch] = useState("");
   const [selectedEmployeeId, setSelectedEmployeeId] = useState<string>("");
-  const [selectedFY, setSelectedFY] = useState<string>("2025-2026");
+  const [selectedFY, setSelectedFY] = useState<string>(() => currentFinancialYear());
 
   const [declaration, setDeclaration] = useState<TaxDeclaration | null>(null);
   const [history, setHistory] = useState<DeclarationHistory[]>([]);

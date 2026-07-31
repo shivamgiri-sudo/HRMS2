@@ -326,9 +326,17 @@ export default function NativeOperationsKPI() {
 
   const flagged = leaderboard.filter((e) => e.weighted_score_pct < TNI_THRESHOLD);
 
+  // "Employees Scored" counts the whole leaderboard while the average was taken over
+  // the same set including everyone at 0.00 — so the CEO UAT could not reconcile
+  // "Avg Ops Score 98%" with a distribution of 205 employees at 120.0% and 35 at 0.0%.
+  // A zero here means "no measurable actual for the period", not "scored zero", so it
+  // belongs in neither the average nor the scored count.
+  const scoredEntries = leaderboard.filter((e) => (e.weighted_score_pct ?? 0) > 0);
+  const unscoredCount = leaderboard.length - scoredEntries.length;
+
   const avgScore =
-    leaderboard.length > 0
-      ? Math.round(leaderboard.reduce((s, e) => s + (e.weighted_score_pct ?? 0), 0) / leaderboard.length)
+    scoredEntries.length > 0
+      ? Math.round(scoredEntries.reduce((s, e) => s + (e.weighted_score_pct ?? 0), 0) / scoredEntries.length)
       : 0;
 
   const topPerformer = leaderboard[0] ?? null;
@@ -403,8 +411,8 @@ export default function NativeOperationsKPI() {
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <StatCard
             title="Employees Scored"
-            value={leaderboard.length}
-            sub={`Period: ${period}`}
+            value={scoredEntries.length}
+            sub={unscoredCount > 0 ? `${unscoredCount} with no data · ${period}` : `Period: ${period}`}
             icon={<Users className="h-5 w-5" />}
             color="from-blue-400 to-indigo-500"
           />

@@ -54,7 +54,35 @@ interface TimelineEvent {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
+/**
+ * Display names for work-item types.
+ *
+ * Any key missing here falls through to the raw database value, which is how the
+ * CEO UAT saw "attendance_missing_punch" rendered as a user-facing Module label.
+ * The map covered thirteen types that barely occur while omitting the ones that
+ * dominate the table — of 65k live rows, `alerts` (43,964) and
+ * `attendance_missing_punch` (13,635) alone are 88%, and neither had a label.
+ *
+ * Keys below are the actual `work_inbox_item.type` values present in mas_hrms,
+ * verified 31-Jul-2026, rather than a guess at what the schema might emit.
+ */
 const MODULE_LABELS: Record<string, string> = {
+  // Highest-volume types, all previously unlabelled.
+  alerts: "Alerts",
+  attendance_missing_punch: "Attendance",
+  attendance_validation: "Attendance",
+  attendance_regularization: "Attendance",
+  payroll_attendance_conflict: "Payroll",
+  sla_breach_uncalled: "Recruitment SLA",
+  walkin_submission_sla: "Walk-in SLA",
+  walkin_feedback_pending: "Walk-in",
+  interview_submission_overdue: "Interviews",
+  candidate_no_show: "Candidates",
+  requisition_approved: "Requisitions",
+  visitor_approval_needed: "Visitors",
+  announcements: "Announcements",
+  leave_request: "Leave",
+  // Pre-existing entries, retained.
   leave_approval: "Leave",
   regularization: "Attendance",
   exit_clearance: "Exit",
@@ -69,6 +97,19 @@ const MODULE_LABELS: Record<string, string> = {
   pip_checkpoint: "PIP",
   workflow_request: "Workflow",
 };
+
+/**
+ * Last-resort label for a type with no entry above. Turns `some_raw_key` into
+ * "Some Raw Key" so a missing mapping degrades to something readable instead of
+ * exposing a database identifier to the user.
+ */
+export function humaniseModuleKey(key: string): string {
+  return key
+    .split("_")
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
 
 const RISK_STYLES: Record<Risk, { badge: string; ring: string; bar: string }> = {
   breached:  { badge: "bg-red-100 text-red-700 border-red-200",    ring: "ring-2 ring-red-300",    bar: "bg-red-500" },
@@ -199,7 +240,7 @@ function ActionSheet({
                 <span className={`rounded-full px-2.5 py-0.5 text-[10px] font-bold capitalize ${PRIORITY_STYLES[task.priority] ?? PRIORITY_STYLES.normal}`}>
                   {task.priority}
                 </span>
-                <span className="text-[10px] text-slate-400">{MODULE_LABELS[task.module] ?? task.module}</span>
+                <span className="text-[10px] text-slate-400">{MODULE_LABELS[task.module] ?? humaniseModuleKey(task.module)}</span>
               </div>
             </div>
             <SheetClose asChild>
@@ -308,7 +349,7 @@ function TaskCard({ task, onOpen }: { task: PendingTask; onOpen: () => void }) {
           {task.priority}
         </span>
         <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium text-slate-500">
-          {MODULE_LABELS[task.module] ?? task.module}
+          {MODULE_LABELS[task.module] ?? humaniseModuleKey(task.module)}
         </span>
       </div>
 
@@ -456,7 +497,7 @@ export default function NativeWorkInbox() {
                   onClick={() => setActiveModule(mod)}
                   className={`rounded-xl px-3.5 py-1.5 text-xs font-bold transition-all ${activeModule === mod ? "bg-blue-600 text-white shadow" : "bg-slate-100 text-slate-600 hover:bg-slate-200"}`}
                 >
-                  {MODULE_LABELS[mod] ?? mod} <span className="ml-1 opacity-60">{count}</span>
+                  {MODULE_LABELS[mod] ?? humaniseModuleKey(mod)} <span className="ml-1 opacity-60">{count}</span>
                 </button>
               ))}
             </div>

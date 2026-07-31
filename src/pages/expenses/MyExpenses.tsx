@@ -6,12 +6,12 @@ import { ExpenseClaimCard } from '../../components/expenses/ExpenseClaimCard';
 import { useMyClaims, useCreateClaim } from '../../integrations/expenses/hooks';
 import { ExpenseStatus } from '../../integrations/expenses/types';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
-import { Plus, Receipt } from 'lucide-react';
+import { AlertTriangle, Plus, Receipt } from 'lucide-react';
 
 export default function MyExpenses() {
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState<string>('all');
-  const { data, isLoading } = useMyClaims(activeTab !== 'all' ? activeTab as ExpenseStatus : undefined);
+  const { data, isLoading, isError, error, refetch } = useMyClaims(activeTab !== 'all' ? activeTab as ExpenseStatus : undefined);
   const { isPending } = useCreateClaim();
 
   const handleNewClaim = () => {
@@ -49,7 +49,24 @@ export default function MyExpenses() {
           <TabsTrigger value={ExpenseStatus.REJECTED}>Rejected</TabsTrigger>
         </TabsList>
         <TabsContent value={activeTab} className="mt-4">
-          {data?.claims.length === 0 ? (
+          {/*
+            Three states, not two. `data` is undefined when the query fails, and
+            `undefined === 0` is false — so a failed load previously fell through
+            to the grid below and rendered nothing at all: no claims, no empty
+            state, no error. CEO UAT 31-Jul-2026 reported exactly that ("tabs
+            render but nothing below them, so the user cannot tell whether it is
+            loading, empty or broken"). A failure must say so.
+          */}
+          {isError ? (
+            <div className="text-center py-12">
+              <AlertTriangle className="h-12 w-12 mx-auto text-destructive mb-4" />
+              <p className="font-medium">Could not load your expense claims</p>
+              <p className="text-sm text-muted-foreground mt-1">
+                {error instanceof Error ? error.message : 'The expenses service did not respond.'}
+              </p>
+              <Button variant="outline" className="mt-4" onClick={() => void refetch()}>Try again</Button>
+            </div>
+          ) : !data || data.claims.length === 0 ? (
             <div className="text-center py-12">
               <Receipt className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
               <p className="text-muted-foreground">No expense claims yet</p>

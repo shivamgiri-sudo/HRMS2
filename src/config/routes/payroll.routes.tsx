@@ -50,9 +50,33 @@ const NativeSalaryIncrement     = lazy(() => import("@/pages/NativeSalaryIncreme
 const HolidayWork               = lazy(() => import("@/pages/payroll/HolidayWork"));
 const PfManagement              = lazy(() => import("@/pages/payroll/PfManagement"));
 
+/**
+ * Roles entitled to the org-wide admin Payslip Center. Everyone else — including
+ * the CEO — gets their own payslip.
+ *
+ * This mirrors the roles the backend actually authorises for payslip data
+ * (payroll-lines.compat.routes.ts and payroll.secure.routes.ts). It is NOT a
+ * security boundary: the API enforces that. It stops the UI offering a console
+ * whose every request would 403, which is what produced the CEO UAT finding —
+ * an "Access denied. Required: admin or hr or finance or payroll" banner painted
+ * over a fully populated payroll run history.
+ */
+const PAYSLIP_CENTER_ROLES = [
+  "super_admin", "admin", "hr", "hr_head",
+  "finance", "finance_head", "accounts_head",
+  "payroll", "payroll_head", "payroll_branch", "payroll_hr", "payroll_admin",
+];
+
 function PayslipCenterRoute() {
-  const { primaryRole, employeeId, employeeName, employeeCode } = useWorkforceAccess();
-  if (primaryRole === "employee" && employeeId) {
+  const { roleKeys, employeeId, employeeName, employeeCode } = useWorkforceAccess();
+
+  // Dispatch on payroll entitlement, not on primaryRole === "employee".
+  // The old test sent anyone whose primary role was not literally "employee" to
+  // the admin console — so a CEO, a trainer or a team leader all landed on an
+  // org-wide payroll screen instead of their own payslip.
+  const canSeePayslipCenter = roleKeys.some((role) => PAYSLIP_CENTER_ROLES.includes(role));
+
+  if (!canSeePayslipCenter && employeeId) {
     return (
       <DashboardLayout>
         <PayslipViewer

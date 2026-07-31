@@ -26,6 +26,7 @@ export const PAGE_CODE_BY_ROUTE: Record<string, string> = {
   "/attendance-regularization": "ATTENDANCE_REGULARIZATION",
   "/attendance/regularizations": "ATTENDANCE_REGULARIZATION",
   "/attendance/disputes": "ATTENDANCE_DISPUTES",
+  "/admin/discard-center": "DISCARD_CENTER",
   "/audit-log": "AUDIT_LOG",
   "/bulk-upload": "BULK_UPLOAD",
   "/career-planning": "CAREER_PLANNING",
@@ -118,6 +119,10 @@ export const PAGE_CODE_BY_ROUTE: Record<string, string> = {
   "/payroll/validation": "PAYROLL_VALIDATION",
   "/payroll/variance": "PAYROLL_VARIANCE",
   "/people-experience/command-center": "PEOPLE_EXPERIENCE_COMMAND_CENTER",
+  // Was missing entirely, which is why the page-access contract test never noticed
+  // that page_catalog pointed WORKFORCE_COMMAND_CENTER at '/workforce/command-center'
+  // — a route that has never been mounted — leaving eight roles on a 404.
+  "/performance/command-center": "WORKFORCE_COMMAND_CENTER",
   "/pip-management": "PIP_MANAGEMENT",
   "/portal-data-manager": "PORTAL_DATA_MANAGER",
   "/privacy/dpdp-withdrawal": "DPDP_WITHDRAWAL",

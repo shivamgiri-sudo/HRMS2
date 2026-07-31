@@ -36,6 +36,12 @@ export function EmployeeReferenceLayout({ data, employeeName }: { data: Referenc
   const absent = asNumber(attendance.absentDays ?? attendance.absent);
   const late = asNumber(attendance.lateDays ?? attendance.late);
   const attendancePct = asNumber(attendance.attendancePct ?? attendance.attendance_pct);
+  // Half-days are the missing link between the two tiles. The CEO UAT reported
+  // "Present 0 Days" beside "Attendance % 13.8%" as a contradiction — but both
+  // figures were correct: that month held 0 full-present days and 8 half-days
+  // against 29 expected, and 8 x 0.5 / 29 = 13.8%. The panel simply never showed
+  // the half-day count that reconciles them.
+  const halfDay = asNumber(attendance.halfDays ?? attendance.half_day ?? attendance.halfDay);
   const completion = asNumber(lms.completion_pct ?? lms.completionPct ?? lms.course_completion_pct);
   const mcq = asNumber(lms.mcq_best_score ?? lms.mcqBestScore);
   const readiness = asNumber(lms.readiness_score ?? lms.readinessScore);
@@ -90,14 +96,16 @@ export function EmployeeReferenceLayout({ data, employeeName }: { data: Referenc
       <ReferenceHeader title={`Welcome, ${employeeName}`} subtitle="Your personal dashboard" badge="Self Service" />
 
       <ReferencePanel title="My Attendance This Month" bodyClassName="p-3">
-        <ReferenceMetricGrid columns={4} loading={data.loading} metrics={[
-          { label: "Present", value: present, helper: "Days", icon: UserCheck, tone: "green",
+        <ReferenceMetricGrid columns={5} loading={data.loading} metrics={[
+          { label: "Present", value: present, helper: "Full days", icon: UserCheck, tone: "green",
+            ...drill("att"), },
+          { label: "Half Day", value: halfDay, helper: "Counts as 0.5", icon: Clock3, tone: halfDay && halfDay > 0 ? "amber" : "blue",
             ...drill("att"), },
           { label: "Absent", value: absent, helper: "Day", icon: TriangleAlert, tone: absent && absent > 0 ? "red" : "green",
             ...drill("att"), },
           { label: "Late", value: late, helper: "Days", icon: Clock3, tone: late && late > 0 ? "amber" : "blue",
             ...drill("att"), },
-          { label: "Attendance %", value: attendancePct, valueSuffix: "%", helper: "This Month", icon: Target, tone: "blue",
+          { label: "Attendance %", value: attendancePct, valueSuffix: "%", helper: "Full + half days", icon: Target, tone: "blue",
             ...drill("att"), },
         ]} />
       </ReferencePanel>

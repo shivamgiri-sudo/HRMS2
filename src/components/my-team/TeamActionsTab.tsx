@@ -92,9 +92,12 @@ export default function TeamActionsTab() {
     staleTime: 30_000,
   });
 
+  // Was /api/expenses/claims/pending-approval, which 500s for every user — its
+  // table (expense_claims) has never existed in mas_hrms. The /expenses module is
+  // retired; /api/payroll/reimbursements is the working employee-claim flow.
   const { data: expenseData, isLoading: w3 } = useQuery({
-    queryKey: ["expenses", "pending-approval"],
-    queryFn: () => hrmsApi.get<any>("/api/expenses/claims/pending-approval"),
+    queryKey: ["reimbursements", "pending-approval"],
+    queryFn: () => hrmsApi.get<any>("/api/payroll/reimbursements?status=submitted"),
     staleTime: 30_000,
   });
 

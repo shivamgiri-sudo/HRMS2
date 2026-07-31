@@ -7,6 +7,8 @@ import { useGeoCapture } from "@/hooks/useGeoCapture";
 import { useDebounce } from "@/hooks/useDebounce";
 import { useSearchParams } from "react-router-dom";
 import { useWorkforceAccess } from "@/hooks/useUserRole";
+import { useCanDiscard } from "@/hooks/useDiscard";
+import { DiscardDialog } from "@/components/discard/DiscardDialog";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { StatusBadge as SmartHRStatusBadge, normalizeStatus } from "@/components/ui/status-badge"; // kept for stage badges in DetailDialog
@@ -38,7 +40,8 @@ type RequestStatus =
   | "pending_admin"
   | "approved"
   | "rejected"
-  | "cancelled";
+  | "cancelled"
+  | "discarded";
 
 type RegularizationDetail = {
   id: string;
@@ -247,7 +250,7 @@ const PUNCH_DISPUTE_TYPES = [
   { value: "wrong_punch", label: "Wrong Punch" },
   { value: "late_mark_dispute", label: "Late Mark Dispute" },
   { value: "early_logout_dispute", label: "Early Logout Dispute" },
-  { value: "cosec_sync_issue", label: "CosEC Sync Issue" },
+  { value: "cosec_sync_issue", label: "COSEC Sync Issue" },
   { value: "manual_punch_correction", label: "Manual Punch Correction" },
 ];
 
@@ -278,12 +281,13 @@ const statusLabel: Record<string, string> = {
   approved: "Approved",
   rejected: "Rejected",
   cancelled: "Cancelled",
+  discarded: "Discarded",
 };
 
 function normalizeRegularizationStatus(status: string): RequestStatus {
   if (status === "pending") return "pending_manager";
   if (status === "manager_approved") return "pending_admin";
-  if (["approved", "rejected", "cancelled"].includes(status)) return status as RequestStatus;
+  if (["approved", "rejected", "cancelled", "discarded"].includes(status)) return status as RequestStatus;
   return "submitted";
 }
 
@@ -435,7 +439,18 @@ const TABLE_PAGE_SIZE = 20;
 export default function AttendanceRegularization() {
   const geoCapture = useGeoCapture();
   const { toast } = useToast();
-  const { employeeId: currentEmployeeId } = useWorkforceAccess();
+  const { employeeId: currentEmployeeId, roleKeys } = useWorkforceAccess();
+
+  // The "Bulk approve safe" control below sits inside the personal "My Requests"
+  // panel and previously had NO role condition at all — its only guard was
+  // `disabled={safeBulkIds.length === 0}`. The CEO UAT (31-Jul-2026) flagged an
+  // approver action on a self-service screen; worse, the router backing it
+  // (wfm.regularization.secure.routes.ts) carries only requireAuth, so authorisation
+  // rests entirely on row scope. Gate the control on roles that actually approve
+  // regularisations. Scope enforcement on the backend remains the real boundary —
+  // this stops the control being offered to someone who should never see it.
+  const APPROVER_ROLES = ["super_admin", "admin", "hr", "hr_head", "manager", "branch_head", "process_manager", "wfm", "team_leader", "tl"];
+  const canBulkApprove = roleKeys.some((role) => APPROVER_ROLES.includes(role));
   const [requests, setRequests] = useState<EmployeeRequest[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [filterStatus, setFilterStatus] = useState("all");
@@ -444,6 +459,11 @@ export default function AttendanceRegularization() {
   const [tablePage, setTablePage] = useState(1);
   const [selectedRequest, setSelectedRequest] = useState<EmployeeRequest | null>(null);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
+
+  // Discarding an approved regularization is narrower than approving one:
+  // super_admin and wfm only, never a manager or branch head.
+  const { canDiscard } = useCanDiscard();
+  const [discardTarget, setDiscardTarget] = useState<{ id: string; isDispute: boolean } | null>(null);
 
   // Batch mode state
   const [batchMode, setBatchMode] = useState(false);
@@ -1383,17 +1403,19 @@ export default function AttendanceRegularization() {
                 <h2 className="text-sm font-semibold text-slate-950">My Requests</h2>
                 <p className="mt-0.5 text-xs text-slate-500">Track status, view approval stages and evidence. ({filteredRequests.length} of {requests.length})</p>
               </div>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                disabled={safeBulkIds.length === 0 || bulkApproveMutation.isPending}
-                onClick={() => bulkApproveMutation.mutate(safeBulkIds)}
-                className="h-9 text-xs"
-              >
-                {bulkApproveMutation.isPending ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="mr-1.5 h-3.5 w-3.5" />}
-                Bulk approve safe ({safeBulkIds.length})
-              </Button>
+              {canBulkApprove && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={safeBulkIds.length === 0 || bulkApproveMutation.isPending}
+                  onClick={() => bulkApproveMutation.mutate(safeBulkIds)}
+                  className="h-9 text-xs"
+                >
+                  {bulkApproveMutation.isPending ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="mr-1.5 h-3.5 w-3.5" />}
+                  Bulk approve safe ({safeBulkIds.length})
+                </Button>
+              )}
             </div>
             <div className="flex flex-wrap gap-2">
               <Select value={filterStatus} onValueChange={(v) => { setFilterStatus(v); setTablePage(1); }}>
@@ -1526,6 +1548,19 @@ export default function AttendanceRegularization() {
                                   </button>
                                 </>
                               )}
+                              {/* Reverses an approval that already rewrote the
+                                  attendance day. super_admin / wfm only. */}
+                              {request.current_status === "approved" && canDiscard && (
+                                <button
+                                  onClick={() => setDiscardTarget({
+                                    id: request.id,
+                                    isDispute: Boolean((request as any).dispute_type),
+                                  })}
+                                  className="rounded-md border border-rose-300 bg-white px-2 py-1 text-xs font-semibold text-rose-700 hover:bg-rose-50"
+                                >
+                                  Discard
+                                </button>
+                              )}
                             </div>
                           </Td>
                         </tr>
@@ -1565,6 +1600,14 @@ export default function AttendanceRegularization() {
       {selectedRequest && (
         <DetailDialog request={selectedRequest} onClose={() => setSelectedRequest(null)} />
       )}
+
+      <DiscardDialog
+        open={Boolean(discardTarget)}
+        onOpenChange={(open) => { if (!open) setDiscardTarget(null); }}
+        entityType={discardTarget?.isDispute ? "dispute" : "regularization"}
+        entityId={discardTarget?.id ?? null}
+        onDiscarded={loadRequests}
+      />
     </DashboardLayout>
   );
 }

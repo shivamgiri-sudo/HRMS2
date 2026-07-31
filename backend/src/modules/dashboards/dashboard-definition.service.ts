@@ -107,7 +107,18 @@ const DASHBOARD_METRICS: Readonly<Record<DashboardCode, readonly MetricKey[]>> =
   // attException + docCompliance give the org-wide blocker roll-up: the exceptions that
   // stop a payroll run, and the active employees with no document on file.
   SUPER_ADMIN_DASHBOARD: ["hc", "att", "onb", "resign", "payroll", "attException", "docCompliance"],
-  CEO_DASHBOARD: ["hc", "att", "payroll", "onb", "resign", "attException", "docCompliance"],
+  // `bgv` added 31-Jul-2026 (CEO UAT): the layout renders a BGV Pending tile but the
+  // bundle never requested the metric, so it was a permanent em-dash.
+  //
+  // `nm`, `incentive` and `tat` are deliberately NOT added, even though the layout
+  // has tiles for them and builders exist. Their source tables are empty in
+  // production — candidate_name_match_summary 0 rows, incentive_upload_batch 0,
+  // task_tat_instance 0 — so requesting them would render a confident "0" that
+  // asserts "no name mismatches" and "no TAT breaches" when neither pipeline is
+  // running. A false zero on an executive dashboard is worse than a blank. Those
+  // three tiles are removed from CeoReferenceLayout instead; re-add the keys here
+  // once the pipelines feed data.
+  CEO_DASHBOARD: ["hc", "att", "payroll", "onb", "resign", "attException", "docCompliance", "bgv"],
   HR_DASHBOARD: [
     "onb", "tat", "resign", "dpdp", "appointmentEsign", "bgv", "nm", "joiningDocEsign",
     "hc", "att", "docCompliance", "training", "leaveApprovals",

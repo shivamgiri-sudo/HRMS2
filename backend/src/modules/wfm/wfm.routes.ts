@@ -9,6 +9,15 @@ import { wfmService } from "./wfm.service.js";
 import { getLiveTracker } from "./liveTracker.service.js";
 import { rosterPreferenceService } from "./roster-preference.service.js";
 import { getEmployeeForUser } from "../../shared/accessGuard.js";
+import {
+  HALF_DAY_STATUS,
+  LEAVE_STATUSES,
+  NON_WORKING_STATUSES,
+  attendedDaysSql,
+  expectedToWorkSql,
+  presentSql,
+  statusList,
+} from "../../shared/attendanceStatus.js";
 import { planningRuleService } from "./planningRule.service.js";
 import { slotRequirementService } from "./slotRequirement.service.js";
 import { weekoffDayRuleService } from "./weekoffDayRule.service.js";
@@ -1172,25 +1181,42 @@ wfmRouter.get("/my-attendance", h(async (req: any, res: any) => {
   const month = String(istDate.getMonth() + 1).padStart(2, '0');
   const monthStr = `${year}-${month}`;
 
-  // Calculate month-to-date attendance summary
+  // Calculate month-to-date attendance summary.
+  //
+  // This query used to hand-roll its status vocabulary, which produced the
+  // contradiction the CEO UAT reported on /my-dashboard: "Present 0 Days" shown
+  // beside "Attendance % 13.8%" for the same person and period. Three separate
+  // deviations from shared/attendanceStatus.ts caused it:
+  //
+  //   1. presentDays counted only 'present', while the percentage numerator also
+  //      credited half-days — so the two tiles measured different things. It also
+  //      dropped 'week_off_worked', a real ENUM member, so anyone working a week
+  //      off had that day counted nowhere.
+  //   2. The denominator excluded only holiday and week_off, leaving approved
+  //      leave in "expected to work" and depressing every percentage.
+  //   3. lateDays counted attendance_status = 'late', which is not a member of the
+  //      ENUM at all — lateness is the separate late_mark flag — so it has always
+  //      read 0. It now mirrors lateMarks rather than silently reporting nothing.
+  //
+  // All of it now derives from the shared helpers, so this endpoint, the org-wide
+  // metric and the dashboards agree by construction.
   const [rows] = await db.execute(
     `SELECT
-       SUM(CASE WHEN attendance_status = 'present' THEN 1 ELSE 0 END) AS presentDays,
-       SUM(CASE WHEN attendance_status = 'half_day' THEN 1 ELSE 0 END) AS halfDays,
+       ${presentSql()} AS presentDays,
+       SUM(CASE WHEN attendance_status = '${HALF_DAY_STATUS}' THEN 1 ELSE 0 END) AS halfDays,
        SUM(CASE WHEN attendance_status = 'absent' THEN 1 ELSE 0 END) AS absentDays,
-       SUM(CASE WHEN attendance_status = 'late' THEN 1 ELSE 0 END) AS lateDays,
-       SUM(CASE WHEN attendance_status = 'leave_approved' THEN 1 ELSE 0 END) AS leaveDays,
+       SUM(CASE WHEN late_mark = 1 THEN 1 ELSE 0 END) AS lateDays,
+       SUM(CASE WHEN attendance_status IN (${statusList(LEAVE_STATUSES)}) THEN 1 ELSE 0 END) AS leaveDays,
        SUM(CASE WHEN attendance_status = 'holiday' THEN 1 ELSE 0 END) AS holidayDays,
        SUM(CASE WHEN attendance_status = 'week_off' THEN 1 ELSE 0 END) AS weekOffDays,
        SUM(COALESCE(lwp_value, 0)) AS totalLwp,
        SUM(CASE WHEN late_mark = 1 THEN 1 ELSE 0 END) AS lateMarks,
-       COUNT(CASE WHEN attendance_status NOT IN ('holiday', 'week_off') THEN 1 END) AS totalWorkingDays,
+       COUNT(CASE WHEN attendance_status NOT IN (${statusList(NON_WORKING_STATUSES)}) THEN 1 END) AS totalWorkingDays,
+       ${expectedToWorkSql()} AS expectedToWork,
        ROUND(SUM(COALESCE(raw_minutes, 0)) / 60, 2) AS totalHours,
        SUM(CASE WHEN work_mode IN ('wfo', 'office') THEN 1 ELSE 0 END) AS wfoDays,
        ROUND(
-         (SUM(CASE WHEN attendance_status = 'present' THEN 1 ELSE 0 END) +
-          SUM(CASE WHEN attendance_status = 'half_day' THEN 0.5 ELSE 0 END)) /
-         NULLIF(COUNT(CASE WHEN attendance_status NOT IN ('holiday', 'week_off') THEN 1 END), 0) * 100,
+         ${attendedDaysSql()} / NULLIF(${expectedToWorkSql()}, 0) * 100,
          1
        ) AS attendancePct
      FROM attendance_daily_record
@@ -1211,6 +1237,7 @@ wfmRouter.get("/my-attendance", h(async (req: any, res: any) => {
     totalLwp: 0,
     lateMarks: 0,
     totalWorkingDays: 0,
+    expectedToWork: 0,
     totalHours: 0,
     wfoDays: 0,
     attendancePct: 0,
@@ -1249,16 +1276,22 @@ wfmRouter.get("/attendance/summary/:employeeId/:month", h(async (req: any, res: 
 
   const [rows] = await db.execute(
     `SELECT
-       SUM(CASE WHEN attendance_status IN ('present', 'late') THEN 1 ELSE 0 END) AS presentDays,
-       SUM(CASE WHEN attendance_status = 'half_day' THEN 1 ELSE 0 END) AS halfDays,
+       -- Same canon as /my-attendance above. This endpoint had the identical
+       -- defects plus one of its own: presentDays counted IN ('present','late'),
+       -- and 'late' is not an ENUM member, so it contributed nothing while giving
+       -- the impression late arrivals were being credited as present.
+       ${presentSql()} AS presentDays,
+       SUM(CASE WHEN attendance_status = '${HALF_DAY_STATUS}' THEN 1 ELSE 0 END) AS halfDays,
        SUM(CASE WHEN attendance_status = 'absent' THEN 1 ELSE 0 END) AS absentDays,
-       SUM(CASE WHEN attendance_status = 'late' THEN 1 ELSE 0 END) AS lateDays,
-       SUM(CASE WHEN attendance_status = 'leave_approved' THEN 1 ELSE 0 END) AS leaveDays,
+       SUM(CASE WHEN late_mark = 1 THEN 1 ELSE 0 END) AS lateDays,
+       SUM(CASE WHEN attendance_status IN (${statusList(LEAVE_STATUSES)}) THEN 1 ELSE 0 END) AS leaveDays,
        SUM(CASE WHEN attendance_status = 'holiday' THEN 1 ELSE 0 END) AS holidayDays,
        SUM(CASE WHEN attendance_status = 'week_off' THEN 1 ELSE 0 END) AS weekOffDays,
        SUM(COALESCE(lwp_value, 0)) AS totalLwp,
        SUM(CASE WHEN late_mark = 1 THEN 1 ELSE 0 END) AS lateMarks,
-       COUNT(CASE WHEN attendance_status NOT IN ('holiday', 'week_off') THEN 1 END) AS totalWorkingDays,
+       COUNT(CASE WHEN attendance_status NOT IN (${statusList(NON_WORKING_STATUSES)}) THEN 1 END) AS totalWorkingDays,
+       ${expectedToWorkSql()} AS expectedToWork,
+       ROUND(${attendedDaysSql()} / NULLIF(${expectedToWorkSql()}, 0) * 100, 1) AS attendancePct,
        ROUND(SUM(COALESCE(raw_minutes, 0)) / 60, 2) AS totalHours,
        SUM(CASE WHEN work_mode IN ('wfo', 'office') THEN 1 ELSE 0 END) AS wfoDays
      FROM attendance_daily_record

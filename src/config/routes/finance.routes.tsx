@@ -46,14 +46,44 @@ export const financeRouteElements = (
       <Route path="/finance/process-pnl/period-close"  element={<ProtectedRoute roles={pnlRoles}><PnlPeriodClosePage /></ProtectedRoute>} />
       <Route path="/finance/process-pnl/:processId"    element={<ProtectedRoute roles={pnlRoles}><ProcessPnlDetailPage /></ProtectedRoute>} />
 
-      {/* Expenses */}
-      <Route path="/expenses"              element={<ProtectedRoute><MyExpenses /></ProtectedRoute>} />
-      <Route path="/expenses/new"          element={<ProtectedRoute><NewExpenseClaim /></ProtectedRoute>} />
-      <Route path="/expenses/new/:claimId" element={<ProtectedRoute><NewExpenseClaim /></ProtectedRoute>} />
-      <Route path="/expenses/approvals"    element={<ProtectedRoute><ExpenseApprovals /></ProtectedRoute>} />
-      <Route path="/expenses/finance"      element={<ProtectedRoute roles={['super_admin','admin','finance','finance_head','accounts_head']}><FinanceQueue /></ProtectedRoute>} />
-      <Route path="/expenses/reports"      element={<ProtectedRoute roles={['super_admin','admin','finance','finance_head','accounts_head']}><ExpenseReports /></ProtectedRoute>} />
-      <Route path="/expenses/:claimId"     element={<ProtectedRoute><NewExpenseClaim /></ProtectedRoute>} />
+      {/*
+        Expenses — RETIRED, redirected to the working reimbursement flow.
+
+        Every route here was non-functional for every user. The backend module
+        (backend/src/modules/expenses/*) queries `expense_claims`, `expense_items`,
+        `expense_approvals` and `expense_payments` — none of which exist in
+        mas_hrms. Their creating migration, sql/migrations/099_create_expense_tables.sql,
+        never ran and cannot: it sits in a directory the migration runner does not
+        resolve, it is absent from MIGRATION_MANIFEST, and it declares
+        `employee_id INT` with a foreign key to employees(id), which is CHAR(36) —
+        an FK MySQL cannot create. Verified live on 31-Jul-2026: every endpoint
+        returns "Table 'mas_hrms.expense_claims' doesn't exist".
+
+        The fix is NOT to run 099. process-pnl.service.ts computes
+        directNonPeopleCost from `expense_claims` behind `tableExists()` guards
+        that are currently false; creating the table would flip them true and
+        silently move directCost, contributionMargin and operatingProfit on every
+        process with no code change.
+
+        Repointing at the live `expense_claim` (singular) was also rejected: it is
+        the migrated db_bill finance ledger (5,634 rows, ~₹12.5 Cr, mostly vendor
+        bills), it is already owned by the ERP Expenses tab, and its flat
+        CHAR(36) shape is incompatible with this module's INT/claim+items model.
+
+        /payroll/reimbursements is the surviving employee-claim implementation:
+        self-service create, submit, approve, reject and delete over
+        employee_reimbursement_claim, which the module provisions itself.
+
+        The page components are deliberately left on disk rather than deleted, so
+        this is reversible if the module is ever rebuilt against a real schema.
+      */}
+      <Route path="/expenses"              element={<Navigate to="/payroll/reimbursements" replace />} />
+      <Route path="/expenses/new"          element={<Navigate to="/payroll/reimbursements" replace />} />
+      <Route path="/expenses/new/:claimId" element={<Navigate to="/payroll/reimbursements" replace />} />
+      <Route path="/expenses/approvals"    element={<Navigate to="/payroll/reimbursements" replace />} />
+      <Route path="/expenses/finance"      element={<Navigate to="/payroll/reimbursements" replace />} />
+      <Route path="/expenses/reports"      element={<Navigate to="/payroll/reimbursements" replace />} />
+      <Route path="/expenses/:claimId"     element={<Navigate to="/payroll/reimbursements" replace />} />
 
       {/* Legacy redirects */}
       <Route path="/master-reports" element={<Navigate to="/reports" replace />} />

@@ -252,11 +252,24 @@ export const kpiService = {
   // ─── Leaderboard ──────────────────────────────────────────────────────────
 
   async getLeaderboard(filters: LeaderboardFilters): Promise<LeaderboardEntry[]> {
-    const conds: string[] = ["DATE_FORMAT(kda.score_date, '%Y-%m') = ?"];
-    const params: unknown[] = [filters.period];
+    // score_date is compared as a half-open range rather than through
+    // DATE_FORMAT(...) = ?. Wrapping the column in a function makes the predicate
+    // non-sargable, so no index on score_date can be used and this window-function
+    // query full-scans kpi_daily_actual — a large part of why the Operations
+    // dashboard took ~30s to paint.
+    const conds: string[] = ["kda.score_date >= ? AND kda.score_date < DATE_ADD(?, INTERVAL 1 MONTH)"];
+    const monthStart = `${filters.period}-01`;
+    const params: unknown[] = [monthStart, monthStart];
     if (filters.branchId)  { conds.push("e.branch_id = ?");  params.push(filters.branchId); }
     if (filters.processId) { conds.push("e.process_id = ?"); params.push(filters.processId); }
     if (filters.family)    { conds.push("m.family = ?");     params.push(filters.family); }
+
+    // Automated test records rank alongside real staff otherwise. The CEO UAT found
+    // "Codex E2E Candidate CODEX_E2E_1783176395010 / MAS62917" at rank 8; there are
+    // four such employees live. active_status = 1 alone does not exclude them.
+    conds.push("e.employee_code NOT LIKE 'CODEX\\_E2E%'");
+    conds.push("COALESCE(e.full_name, '') NOT LIKE '%Codex E2E%'");
+
     const limit = filters.limit ?? 200;
 
     const [rows] = await db.execute<RowDataPacket[]>(

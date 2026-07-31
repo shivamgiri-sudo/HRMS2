@@ -67,6 +67,11 @@ export const dashboardSummarySchema = z.object({
       actionUrl: z.string().nullable().optional(),
     })).optional(),
   }).optional(),
+  // "unavailable" means the inbox aggregation failed and `workItems` is absent.
+  // It is deliberately not zeroed — an empty inbox and an unknown inbox must
+  // stay distinguishable. The metrics below are unaffected and still valid: the
+  // inbox must never be able to blank the rest of the dashboard.
+  workItemsStatus: z.enum(["ok", "unavailable"]).optional(),
   metrics: z.record(z.string(), dashboardMetricSchema),
 });
 

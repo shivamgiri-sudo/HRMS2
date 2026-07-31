@@ -421,7 +421,11 @@ const MIGRATION_MANIFEST: string[] = [
   "543_cosec_exclusion_and_inactive_issue_type.sql", // Ignore intentional COSEC identities and separate inactive punch activity
   "1008_migrate_photo_urls_to_api.sql",         // Migrate employee photo URLs from /uploads/ to /api/files/
   "1009_ats_hiring_followup_call_feedback.sql", // ATS hiring: follow-up call outcome, date, notes, reschedule columns
+  "1021_payroll_signoff_columns_and_ceo_sod.sql", // salary_prep_run sign-off columns (route 500'd without them) + narrow ceo create/delete grants
+  "1022_page_catalog_path_reconciliation.sql",    // WORKFORCE_COMMAND_CENTER path regression (404 for 8 roles) + retire ADVANCED_REPORTS stub
+  "1023_discard_approved_records.sql",            // Discard approved leave/regularization/dispute: pre-approval snapshots + discard audit log
   "1024_candidate_onboarding_document_rejected_status.sql", // document_status lacked 'rejected'; every secure-viewer reject hit ERROR 1265
+  "1027_ceo_my_kpi_revoke.sql",                   // CEO is not measured on operational KPIs — remove the hollow /my-kpi page from that role only
   ];
 
 export type MigrationHealth = {

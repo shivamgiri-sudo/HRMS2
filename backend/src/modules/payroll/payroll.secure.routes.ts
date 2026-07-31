@@ -13,7 +13,25 @@ router.use(requireAuth);
 
 const PAYROLL_READ_SCOPE_ROLES = ["hr", "finance", "payroll"];
 
-router.get("/runs", requireRole("admin", "hr", "finance", "payroll", "ceo"), h(async (req, res) => {
+// `ceo` removed 31-Jul-2026 (CEO UAT, Critical).
+//
+// These two endpoints returned org-wide payroll to a CEO token — every run, every
+// branch, back to 2023 on /runs, and employee-level gross/net/deductions on
+// /records — because allowCeoAllRead resolves the scope clause to `1=1`. The
+// /payroll/payslips page then rendered that data underneath an "Access denied"
+// banner raised by a *different* endpoint (payroll-lines.compat.routes.ts, which
+// never allowed ceo), so the UI looked broken while the data was genuinely served.
+//
+// Policy decision: the CEO sees their own payslip, not the organisation's payroll.
+// This matches the project charter rule against exposing payroll, salary, tax, PF,
+// UAN or bank data through management surfaces.
+//
+// Note this is deliberately narrow. `allowCeoAllRead` stays true elsewhere (~25
+// call sites across employees, leave, exit, ATS and WFM) where org-wide CEO read
+// is intended; payroll is the exception, so it is switched off here rather than in
+// shared/scopeAccess.ts. requireRole already blocks the CEO before scope is
+// evaluated — the flag is set false as defence in depth, not as the only gate.
+router.get("/runs", requireRole("admin", "hr", "finance", "payroll"), h(async (req, res) => {
   const scoped = await buildScopeWhereClause(
     req.authUser!.id,
     PAYROLL_READ_SCOPE_ROLES,
@@ -21,13 +39,15 @@ router.get("/runs", requireRole("admin", "hr", "finance", "payroll", "ceo"), h(a
       branchId: "spr.branch_id",
       processId: "spr.process_id",
     },
-    { allowAdminBypass: true, allowCeoAllRead: true },
+    { allowAdminBypass: true, allowCeoAllRead: false },
   );
   (req as any).scopeFilter = scoped;
   return c.listRuns(req, res);
 }));
 
-router.get("/records", requireRole("admin", "hr", "finance", "payroll", "ceo"), h(async (req, res) => {
+// `ceo` removed — see the note on /runs above. This one is the more sensitive of
+// the pair: it returns employee-level gross, net and deductions.
+router.get("/records", requireRole("admin", "hr", "finance", "payroll"), h(async (req, res) => {
   const scoped = await buildScopeWhereClause(
     req.authUser!.id,
     PAYROLL_READ_SCOPE_ROLES,
@@ -35,7 +55,7 @@ router.get("/records", requireRole("admin", "hr", "finance", "payroll", "ceo"), 
       branchId: "e.branch_id",
       processId: "e.process_id",
     },
-    { allowAdminBypass: true, allowCeoAllRead: true },
+    { allowAdminBypass: true, allowCeoAllRead: false },
   );
 
   const page = Math.max(1, Number(req.query.page ?? 1) || 1);

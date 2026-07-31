@@ -19,7 +19,11 @@ type CoachingForm = { employee_id: string; session_date: string; session_type: s
 type TeamMember = { id: string; employee_code: string; full_name: string };
 type ActiveTab = "overview" | "kpi" | "coaching" | "alerts";
 type Lens = "CEO" | "HR" | "Finance" | "Operations";
-type CeoMetrics = { payroll_liability: { run_month: string | null; total_gross: number; total_net: number; employer_statutory: number; employee_count: number }; hc_gap: { total_gap: number; processes_understaffed: number }; revenue_at_risk: { total_daily_estimate: number }; billing: { last_month_billed: number; billing_month: string | null }; attrition_cost: { exits_30d: number; replacement_cost_estimate: number }; hiring_pipeline: { open_candidates: number; offers_pending_joining: number }; ff_liability: { pending_count: number; pending_amount: number } };
+// payroll_liability and ff_liability are nulled by the backend for callers without
+// payroll entitlement (management.routes.ts /ceo-metrics -> PAYROLL_ONLY_FIELDS).
+// `ceo` and `hr` are on the route's role list but not in PAYROLL_ROLES, so they
+// always receive null here. They must stay nullable in the type.
+type CeoMetrics = { payroll_liability: { run_month: string | null; total_gross: number; total_net: number; employer_statutory: number; employee_count: number } | null; hc_gap: { total_gap: number; processes_understaffed: number }; revenue_at_risk: { total_daily_estimate: number }; billing: { last_month_billed: number; billing_month: string | null }; attrition_cost: { exits_30d: number; replacement_cost_estimate: number }; hiring_pipeline: { open_candidates: number; offers_pending_joining: number }; ff_liability: { pending_count: number; pending_amount: number } | null };
 
 function inrFmt(v: number) { if (v >= 10_000_000) return `₹${(v / 10_000_000).toFixed(2)} Cr`; if (v >= 100_000) return `₹${(v / 100_000).toFixed(2)} L`; return new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(v); }
 
@@ -148,9 +152,18 @@ export default function NativeManagementDashboard() {
   const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
   const [opsPulse, setOpsPulse] = useState<{ intervention_flags: { type: string; severity: "critical" | "warning" | "info"; detail: string; action: string }[] } | null>(null);
   const [attritionBreakdown, setAttritionBreakdown] = useState<{ reason: string; count: number; pct: number }[]>([]);
+  const [restrictedFields, setRestrictedFields] = useState<string[]>([]);
+
+  // Distinguish "redacted because you lack payroll entitlement" from "no data".
+  // Rendering an em-dash for a deliberate redaction reads as a broken dashboard.
+  const isRestricted = (field: keyof CeoMetrics) => restrictedFields.includes(field);
+  const payrollAmt = (value: number | null | undefined) =>
+    value == null ? (isRestricted("payroll_liability") ? "Restricted" : "—") : inrFmt(value);
+  const ffAmt = (value: number | null | undefined) =>
+    value == null ? (isRestricted("ff_liability") ? "Restricted" : "—") : inrFmt(value);
 
   const loadDashboard = async () => { try { const res = await hrmsApi.get<{ success: boolean; data: DashboardStats }>("/api/management/dashboard"); setDashStats(res.data ?? null); } catch { /* handled by summary UI */ } };
-  const loadCeoMetrics = async () => { try { const res = await hrmsApi.get<{ success: boolean; data: CeoMetrics }>("/api/management/ceo-metrics"); setCeoMetrics(res.data ?? null); } catch { /* silent */ } };
+  const loadCeoMetrics = async () => { try { const res = await hrmsApi.get<{ success: boolean; data: CeoMetrics; restricted?: string[] }>("/api/management/ceo-metrics"); setCeoMetrics(res.data ?? null); setRestrictedFields(res.restricted ?? []); } catch { /* silent */ } };
   const loadKpi = async () => { try { const res = await hrmsApi.get<{ success: boolean; data: TeamKpi[] }>(`/api/management/team-kpi?period=${kpiPeriod}`); setTeamKpi(res.data ?? []); } catch { /* silent */ } };
   const loadCoaching = async () => { try { const res = await hrmsApi.get<{ success: boolean; data: CoachingSession[] }>("/api/management/coaching"); setCoachingSessions(res.data ?? []); } catch { /* silent */ } };
   const loadAlerts = async () => { try { const res = await hrmsApi.get<{ success: boolean; data: PerformanceAlert[] }>("/api/management/alerts"); setAlerts(res.data ?? []); } catch { /* silent */ } };
@@ -366,11 +379,13 @@ export default function NativeManagementDashboard() {
 
                 <InsightCard
                   title="Payroll Liability"
-                  value={ceoMetrics ? inrFmt(ceoMetrics.payroll_liability.total_gross) : "—"}
+                  value={payrollAmt(ceoMetrics?.payroll_liability?.total_gross)}
                   icon={<BarChart3 className="h-6 w-6 text-[#3BAD49]" />}
                   trend="up"
                   trendValue="+8% YoY"
-                  insight={`Monthly gross payroll for ${ceoMetrics?.payroll_liability.employee_count ?? 0} employees. Includes statutory PF/ESIC of ${ceoMetrics ? inrFmt(ceoMetrics.payroll_liability.employer_statutory) : "—"}. Run: ${ceoMetrics?.payroll_liability.run_month ?? "Latest"}.`}
+                  insight={isRestricted("payroll_liability")
+                    ? "Payroll liability is restricted for your role. A payroll entitlement is required to view gross, net and statutory figures."
+                    : `Monthly gross payroll for ${ceoMetrics?.payroll_liability?.employee_count ?? 0} employees. Includes statutory PF/ESIC of ${payrollAmt(ceoMetrics?.payroll_liability?.employer_statutory)}. Run: ${ceoMetrics?.payroll_liability?.run_month ?? "Latest"}.`}
                   severity="info"
                   onClick={() => navigate("/payroll")}
                 />
@@ -497,12 +512,14 @@ export default function NativeManagementDashboard() {
 
                 <InsightCard
                   title="F&F Settlement Pending"
-                  value={ceoMetrics?.ff_liability.pending_count ?? 0}
+                  value={isRestricted("ff_liability") ? "Restricted" : (ceoMetrics?.ff_liability?.pending_count ?? 0)}
                   icon={<AlertTriangle className="h-6 w-6 text-[#E8231A]" />}
-                  trend={(ceoMetrics?.ff_liability.pending_count ?? 0) > 0 ? "up" : "stable"}
-                  trendValue={ceoMetrics ? inrFmt(ceoMetrics.ff_liability.pending_amount) : "—"}
-                  insight={`${ceoMetrics?.ff_liability.pending_count ?? 0} full & final settlements pending. Total liability: ${ceoMetrics ? inrFmt(ceoMetrics.ff_liability.pending_amount) : "—"}. Average resolution time: 21 days. Prioritize statutory compliance and timely disbursement.`}
-                  severity={(ceoMetrics?.ff_liability.pending_count ?? 0) > 0 ? "warning" : "success"}
+                  trend={(ceoMetrics?.ff_liability?.pending_count ?? 0) > 0 ? "up" : "stable"}
+                  trendValue={ffAmt(ceoMetrics?.ff_liability?.pending_amount)}
+                  insight={isRestricted("ff_liability")
+                    ? "Full & final settlement liability is restricted for your role. A payroll entitlement is required to view pending settlement amounts."
+                    : `${ceoMetrics?.ff_liability?.pending_count ?? 0} full & final settlements pending. Total liability: ${ffAmt(ceoMetrics?.ff_liability?.pending_amount)}. Average resolution time: 21 days. Prioritize statutory compliance and timely disbursement.`}
+                  severity={(ceoMetrics?.ff_liability?.pending_count ?? 0) > 0 ? "warning" : "success"}
                   onClick={() => handleCardClick("F&F Pending")}
                 />
               </div>
@@ -524,41 +541,51 @@ export default function NativeManagementDashboard() {
 
                 <InsightCard
                   title="Gross Payroll (Monthly)"
-                  value={ceoMetrics ? inrFmt(ceoMetrics.payroll_liability.total_gross) : "—"}
+                  value={payrollAmt(ceoMetrics?.payroll_liability?.total_gross)}
                   icon={<BarChart3 className="h-6 w-6 text-[#3BAD49]" />}
                   trend="up"
                   trendValue="+5% MoM"
-                  insight={`Monthly gross payroll for ${ceoMetrics?.payroll_liability.employee_count ?? 0} employees. Includes base, allowances, incentives. Excludes statutory deductions. Run: ${ceoMetrics?.payroll_liability.run_month ?? "Latest"}. Budget variance: within 3%.`}
+                  insight={isRestricted("payroll_liability")
+                    ? "Gross payroll is restricted for your role. A payroll entitlement is required to view this figure."
+                    : `Monthly gross payroll for ${ceoMetrics?.payroll_liability?.employee_count ?? 0} employees. Includes base, allowances, incentives. Excludes statutory deductions. Run: ${ceoMetrics?.payroll_liability?.run_month ?? "Latest"}. Budget variance: within 3%.`}
                   severity="info"
                 />
 
                 <InsightCard
                   title="Net Payable"
-                  value={ceoMetrics ? inrFmt(ceoMetrics.payroll_liability.total_net) : "—"}
+                  value={payrollAmt(ceoMetrics?.payroll_liability?.total_net)}
                   icon={<CheckCircle2 className="h-6 w-6 text-[#3BAD49]" />}
                   trend="stable"
                   trendValue="Post-deduction"
-                  insight={`Net disbursement amount after PF, ESIC, TDS, loans, and other deductions. Employer statutory: ${ceoMetrics ? inrFmt(ceoMetrics.payroll_liability.employer_statutory) : "—"}. Total cash outflow: ${ceoMetrics ? inrFmt((ceoMetrics.payroll_liability.total_net + ceoMetrics.payroll_liability.employer_statutory)) : "—"}.`}
+                  insight={isRestricted("payroll_liability")
+                    ? "Net payable is restricted for your role. A payroll entitlement is required to view disbursement figures."
+                    : `Net disbursement amount after PF, ESIC, TDS, loans, and other deductions. Employer statutory: ${payrollAmt(ceoMetrics?.payroll_liability?.employer_statutory)}. Total cash outflow: ${payrollAmt(ceoMetrics?.payroll_liability ? ceoMetrics.payroll_liability.total_net + ceoMetrics.payroll_liability.employer_statutory : null)}.`}
                   severity="info"
                 />
 
                 <InsightCard
                   title="Employer Statutory (PF+ESIC)"
-                  value={ceoMetrics ? inrFmt(ceoMetrics.payroll_liability.employer_statutory) : "—"}
+                  value={payrollAmt(ceoMetrics?.payroll_liability?.employer_statutory)}
                   icon={<AlertCircle className="h-6 w-6 text-[#E8231A]" />}
                   trend="stable"
                   trendValue="Compliance"
-                  insight="Employer's statutory contribution to PF and ESIC funds. Due date: 15th of following month. Ensure timely remittance to avoid penalties. Historical compliance: 100%."
+                  insight={isRestricted("payroll_liability")
+                    ? "Employer statutory liability is restricted for your role. A payroll entitlement is required to view PF and ESIC contributions."
+                    : "Employer's statutory contribution to PF and ESIC funds. Due date: 15th of following month. Ensure timely remittance to avoid penalties. Historical compliance: 100%."}
                   severity="info"
                 />
 
                 <InsightCard
                   title="Last Month Billing"
-                  value={ceoMetrics ? inrFmt(ceoMetrics.billing.last_month_billed) : "—"}
+                  value={ceoMetrics?.billing ? inrFmt(ceoMetrics.billing.last_month_billed) : "—"}
                   icon={<BarChart3 className="h-6 w-6 text-[#1B6AB5]" />}
                   trend="up"
-                  trendValue={ceoMetrics?.billing.billing_month ?? "N/A"}
-                  insight={`Client billing for ${ceoMetrics?.billing.billing_month ?? "latest month"}. Revenue vs payroll ratio: ${ceoMetrics ? ((ceoMetrics.billing.last_month_billed / ceoMetrics.payroll_liability.total_gross) * 100).toFixed(1) : "—"}%. Target: maintain >150% margin.`}
+                  trendValue={ceoMetrics?.billing?.billing_month ?? "N/A"}
+                  insight={`Client billing for ${ceoMetrics?.billing?.billing_month ?? "latest month"}. Revenue vs payroll ratio: ${
+                    ceoMetrics?.billing && ceoMetrics.payroll_liability && ceoMetrics.payroll_liability.total_gross > 0
+                      ? `${((ceoMetrics.billing.last_month_billed / ceoMetrics.payroll_liability.total_gross) * 100).toFixed(1)}%`
+                      : isRestricted("payroll_liability") ? "Restricted" : "—"
+                  }. Target: maintain >150% margin.`}
                   severity="info"
                 />
 

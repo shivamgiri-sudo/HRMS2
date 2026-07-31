@@ -404,10 +404,35 @@ export async function syncAttendanceMetrics(date: string): Promise<SyncResult> {
 
   const formulaIds = await getFormulaIds(['ATTENDANCE_PCT']);
   let synced = 0;
+  let skipped = 0;
+
+  // Days nobody was expected to attend, plus approved leave. Previously these fell
+  // into the trailing `: 0` below and were written as a 0% attendance KPI — so a
+  // week off, a public holiday or approved leave scored as total failure. That is
+  // the origin of the 0.0% cohort the CEO UAT found on /operations-kpi sitting
+  // beside 205 employees pinned at the 120% cap: the distribution was an artefact
+  // of scoring non-working days, not a measurement.
+  //
+  // 'week_off_worked' is deliberately NOT excluded — that is a day actually worked
+  // and must score as present, which the old ['P','PRESENT'] test also missed.
+  const NOT_SCOREABLE = new Set([
+    'WEEK_OFF', 'HOLIDAY', 'LEAVE_APPROVED', 'ON_LEAVE', 'LEAVE',
+  ]);
 
   for (const rec of rows as any[]) {
-    const status = String(rec.attendance_status).toUpperCase();
-    const value = ['P', 'PRESENT'].includes(status) ? 100 : ['H', 'HALF_DAY'].includes(status) ? 50 : 0;
+    const status = String(rec.attendance_status ?? '').toUpperCase();
+
+    if (NOT_SCOREABLE.has(status)) {
+      skipped += 1;
+      continue;
+    }
+
+    const value = ['P', 'PRESENT', 'WEEK_OFF_WORKED'].includes(status)
+      ? 100
+      : ['H', 'HALF_DAY'].includes(status)
+        ? 50
+        : 0;
+
     await upsertDailyActual({
       employeeId: rec.employee_id,
       metricCode: 'ATTENDANCE_PCT',
@@ -422,7 +447,7 @@ export async function syncAttendanceMetrics(date: string): Promise<SyncResult> {
     synced += 1;
   }
 
-  return { synced, skipped: 0, errors: [] };
+  return { synced, skipped, errors: [] };
 }
 
 export async function syncQualityMetrics(yearMonth: string): Promise<SyncResult> {

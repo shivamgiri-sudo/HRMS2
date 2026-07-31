@@ -39,8 +39,22 @@ export interface LiveTrackerFilters {
   branchName?: string;
 }
 
+/**
+ * Today's date in IST as YYYY-MM-DD.
+ *
+ * toISOString() is UTC, so between 00:00 and 05:30 IST it yields YESTERDAY and the
+ * live tracker queried the wrong roster day — reporting an empty shift during the
+ * night shift, which is precisely when this screen is watched.
+ */
+function istToday(): string {
+  const now = new Date();
+  return new Date(now.getTime() + (330 + now.getTimezoneOffset()) * 60_000)
+    .toISOString()
+    .slice(0, 10);
+}
+
 export async function getLiveTracker(filters: LiveTrackerFilters): Promise<LiveTrackerResult> {
-  const date = filters.date ?? new Date().toISOString().slice(0, 10);
+  const date = filters.date ?? istToday();
 
   const conds: string[] = ["ra.roster_date = ?"];
   const params: unknown[] = [date];
