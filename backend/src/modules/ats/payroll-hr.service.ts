@@ -527,7 +527,11 @@ export async function getValidationRecord(candidateId: string) {
       c.mobile as candidate_mobile,
       c.email as candidate_email,
       hr.full_name as payroll_hr_name,
-      dept.department_name,
+      -- department_master's column is dept_name; department_name does not exist
+      -- and made this query fail with ERROR 1054 once the company_master join
+      -- above was removed and stopped masking it. Aliased so the response shape
+      -- the client reads is unchanged.
+      dept.dept_name as department_name,
       des.designation_name,
       proc.process_name,
       cost.cost_centre_name,
