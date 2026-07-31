@@ -4,8 +4,25 @@
  * Verifies:
  * 1. Non-admin users get 403 on the reconciliation endpoint
  * 2. Admin users can retrieve the report
- * 3. A user with Supabase role but no MySQL role is denied by requireRole middleware
+ * 3. A user with a Supabase role but no MySQL role is denied by requireRole
  *    (backend API authority lives in MySQL only)
+ *
+ * AUTH MOCKING
+ * ------------
+ * Authentication is MySQL JWT — authService.verifyAccessToken — not Supabase.
+ * This suite used to authenticate by mocking supabaseAuthClient.auth.getUser,
+ * which the request path no longer consults, so every request 401'd and none of
+ * the assertions below were reached.
+ *
+ * supabaseAdmin is still mocked, because the reconciliation SERVICE genuinely
+ * reads Supabase roles to compare them against MySQL. That is the subject of the
+ * test, not the way in.
+ *
+ * Role lookups are matched on SQL rather than by call order. requireAuth resolves
+ * a user's roles and read-only flag on a cache miss, so the number of queries
+ * before the handler runs depends on cache state — positional mockResolvedValueOnce
+ * chains silently shift when that changes. Matching on the statement is stable
+ * whatever the middleware does.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import request from "supertest";
@@ -18,11 +35,11 @@ vi.mock("../src/db/supabaseAdmin.js", () => ({
       })),
     })),
   },
-  supabaseAuthClient: {
-    auth: {
-      getUser: vi.fn(),
-    },
-  },
+  supabaseAuthClient: { auth: { getUser: vi.fn() } },
+}));
+
+vi.mock("../src/modules/auth/auth.service.js", () => ({
+  authService: { verifyAccessToken: vi.fn() },
 }));
 
 vi.mock("../src/db/mysql.js", () => ({
@@ -33,17 +50,45 @@ vi.mock("../src/db/mysql.js", () => ({
 import { app } from "../src/app.js";
 import { db } from "../src/db/mysql.js";
 import { supabaseAdmin } from "../src/db/supabaseAdmin.js";
-import { supabaseAuthClient } from "../src/db/supabaseAdmin.js";
+import { authService } from "../src/modules/auth/auth.service.js";
+import { invalidateAuthContextCache } from "../src/middleware/authMiddleware.js";
 
 const mockExecute = db.execute as ReturnType<typeof vi.fn>;
-const mockGetUser = supabaseAuthClient.auth.getUser as ReturnType<typeof vi.fn>;
+const mockVerify = authService.verifyAccessToken as ReturnType<typeof vi.fn>;
 const mockFrom = supabaseAdmin.from as ReturnType<typeof vi.fn>;
 
-function mockStaffAuth(userId: string) {
-  mockGetUser.mockResolvedValue({ data: { user: { id: userId, email: `${userId}@test.com` } }, error: null });
+/** Users this suite authenticates as, so their cached auth context can be cleared. */
+const USERS = ["user-employee", "user-hr", "user-admin", "user-supabase-only"];
+
+/**
+ * Authenticate as `userId` holding `roleKeys` in MySQL.
+ *
+ * Every role query answers from `roleKeys`, so it does not matter how many times
+ * requireAuth and requireRole each ask. Callers layer service-specific responses
+ * on top via `extra`.
+ */
+function authenticateAs(
+  userId: string,
+  roleKeys: string[],
+  extra?: (sql: string) => unknown[] | undefined,
+) {
+  mockVerify.mockReturnValue({ id: userId, email: `${userId}@test.com` });
+  mockExecute.mockImplementation(async (sql: unknown) => {
+    const text = String(sql);
+    const fromExtra = extra?.(text);
+    if (fromExtra) return fromExtra;
+    if (/is_read_only/i.test(text)) return [[{ is_read_only: 0 }], []];
+    if (/user_roles/i.test(text)) return [roleKeys.map((role_key) => ({ role_key })), []];
+    return [[], []];
+  });
 }
 
-beforeEach(() => vi.clearAllMocks());
+beforeEach(() => {
+  vi.clearAllMocks();
+  // requireAuth caches a user's resolved roles for 30 seconds. Without this, the
+  // second test to authenticate as a given user reuses the first test's roles.
+  for (const id of USERS) invalidateAuthContextCache(id);
+});
 
 // ── 1. Non-admin blocked ──────────────────────────────────────────────────────
 
@@ -54,9 +99,7 @@ describe("GET /api/access/rbac-reconciliation — access control", () => {
   });
 
   it("returns 403 when authenticated user has employee role only (MySQL)", async () => {
-    mockStaffAuth("user-employee");
-    // MySQL user_roles — only employee
-    mockExecute.mockResolvedValueOnce([[{ role_key: "employee" }], []]);
+    authenticateAs("user-employee", ["employee"]);
 
     const r = await request(app)
       .get("/api/access/rbac-reconciliation")
@@ -65,8 +108,7 @@ describe("GET /api/access/rbac-reconciliation — access control", () => {
   });
 
   it("returns 403 when user has hr role only (not admin)", async () => {
-    mockStaffAuth("user-hr");
-    mockExecute.mockResolvedValueOnce([[{ role_key: "hr" }], []]);
+    authenticateAs("user-hr", ["hr"]);
 
     const r = await request(app)
       .get("/api/access/rbac-reconciliation")
@@ -79,20 +121,16 @@ describe("GET /api/access/rbac-reconciliation — access control", () => {
 
 describe("GET /api/access/rbac-reconciliation — admin access", () => {
   it("returns 200 with reconciliation report for admin user", async () => {
-    mockStaffAuth("user-admin");
-    // requireRole check — admin
-    mockExecute.mockResolvedValueOnce([[{ role_key: "admin" }], []]);
-    // access.service: MySQL user_roles query
-    mockExecute.mockResolvedValueOnce([[{ user_id: "u-1", role_key: "admin" }], []]);
-    // Supabase user_roles query (via supabaseAdmin.from mock)
-    mockFrom.mockReturnValueOnce({
+    authenticateAs("user-admin", ["admin"], (sql) =>
+      // The service's own scan of MySQL role assignments, as opposed to the
+      // caller's role check.
+      /SELECT[\s\S]*user_id[\s\S]*role_key/i.test(sql)
+        ? [[{ user_id: "u-1", role_key: "admin" }], []]
+        : undefined,
+    );
+    mockFrom.mockReturnValue({
       select: vi.fn(() => ({
-        order: vi.fn(() =>
-          Promise.resolve({
-            data: [{ user_id: "u-1", role: "admin" }],
-            error: null,
-          })
-        ),
+        order: vi.fn(() => Promise.resolve({ data: [{ user_id: "u-1", role: "admin" }], error: null })),
       })),
     });
 
@@ -109,11 +147,11 @@ describe("GET /api/access/rbac-reconciliation — admin access", () => {
   });
 
   it("reports active MySQL roles pointing to a missing auth_user without querying Supabase", async () => {
-    mockStaffAuth("user-admin");
-    mockExecute.mockResolvedValueOnce([[{ role_key: "admin" }], []]);
-    mockExecute.mockResolvedValueOnce([[{ user_id: "u-missing", role_key: "hr" }], []]);
-    mockExecute.mockResolvedValueOnce([[{ role_key: "hr" }], []]);
-    mockExecute.mockResolvedValueOnce([[], []]);
+    authenticateAs("user-admin", ["admin"], (sql) =>
+      /SELECT[\s\S]*user_id[\s\S]*role_key/i.test(sql)
+        ? [[{ user_id: "u-missing", role_key: "hr" }], []]
+        : undefined,
+    );
 
     const r = await request(app)
       .get("/api/access/rbac-reconciliation")
@@ -122,7 +160,7 @@ describe("GET /api/access/rbac-reconciliation — admin access", () => {
     expect(r.status).toBe(200);
     const report = r.body.data;
     expect(report.mismatches.length).toBeGreaterThan(0);
-    const mismatch = report.mismatches.find((m: any) => m.user_id === "u-missing");
+    const mismatch = report.mismatches.find((m: { user_id: string }) => m.user_id === "u-missing");
     expect(mismatch).toBeDefined();
     expect(mismatch.in_mysql_only).toContain("hr");
     expect(mismatch.supabase_roles).toHaveLength(0);
@@ -134,12 +172,9 @@ describe("GET /api/access/rbac-reconciliation — admin access", () => {
 
 describe("RBAC authority — MySQL is the backend authority", () => {
   it("user with Supabase role but absent from MySQL user_roles is denied protected API", async () => {
-    // Auth passes (Supabase JWT valid)
-    mockStaffAuth("user-supabase-only");
-    // MySQL user_roles: empty — no roles in MySQL for this user
-    mockExecute.mockResolvedValueOnce([[], []]);
+    // The JWT verifies, but MySQL holds no roles for this user.
+    authenticateAs("user-supabase-only", []);
 
-    // Attempt to access an admin-protected endpoint (reconciliation endpoint itself)
     const r = await request(app)
       .get("/api/access/rbac-reconciliation")
       .set("Authorization", "Bearer valid.staff.token");
@@ -148,17 +183,10 @@ describe("RBAC authority — MySQL is the backend authority", () => {
   });
 
   it("report does not auto-fix or backfill roles — mismatches are reported only", async () => {
-    mockStaffAuth("user-admin");
-    mockExecute.mockResolvedValueOnce([[{ role_key: "admin" }], []]);
-    mockExecute.mockResolvedValueOnce([[], []]);
-    mockFrom.mockReturnValueOnce({
+    authenticateAs("user-admin", ["admin"]);
+    mockFrom.mockReturnValue({
       select: vi.fn(() => ({
-        order: vi.fn(() =>
-          Promise.resolve({
-            data: [{ user_id: "u-ghost", role: "admin" }],
-            error: null,
-          })
-        ),
+        order: vi.fn(() => Promise.resolve({ data: [{ user_id: "u-ghost", role: "admin" }], error: null })),
       })),
     });
 
@@ -167,11 +195,10 @@ describe("RBAC authority — MySQL is the backend authority", () => {
       .set("Authorization", "Bearer valid.staff.token");
 
     expect(r.status).toBe(200);
-    // Only one execute call should have happened for the MySQL user_roles query
-    // (requireRole check + access.service query = 2 execute calls, no INSERT/UPDATE)
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const writeCalls = mockExecute.mock.calls.filter(([sql]: any) =>
-      typeof sql === "string" && /INSERT|UPDATE|DELETE/i.test(sql)
+    // Reconciliation reports; it must never write. A report that silently
+    // repaired the mismatch would hide the drift it exists to surface.
+    const writeCalls = mockExecute.mock.calls.filter(([sql]: [unknown]) =>
+      typeof sql === "string" && /INSERT|UPDATE|DELETE/i.test(sql),
     );
     expect(writeCalls).toHaveLength(0);
   });
