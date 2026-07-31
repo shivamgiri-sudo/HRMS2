@@ -1445,15 +1445,19 @@ router.get(
     const run = (runRows as Array<{ run_month: string }>)[0];
     if (!run) return res.status(404).json({ success: false, message: "Run not found" });
 
-    // Load prep line for gross / TDS
+    // Existence guard only. The certificate's figures are summed across the
+    // whole financial year below; this just confirms the employee actually
+    // belongs to the run the caller named, so an arbitrary runId cannot be used
+    // to pull a certificate for someone who was never in it.
     const [lineRows] = await db.execute<RowDataPacket[]>(
-      `SELECT spl.gross_salary, spl.tds_amount, spl.tds
+      `SELECT 1 AS present
          FROM salary_prep_line spl
         WHERE spl.run_id = ? AND spl.employee_id = ? LIMIT 1`,
       [runId, employeeId]
     );
-    const line = (lineRows as Array<{ gross_salary: number; tds_amount: number; tds: number }>)[0];
-    if (!line) return res.status(404).json({ success: false, message: "Payroll line not found for employee" });
+    if ((lineRows as RowDataPacket[]).length === 0) {
+      return res.status(404).json({ success: false, message: "Payroll line not found for employee" });
+    }
 
     // Load employee details
     const [empRows] = await db.execute<RowDataPacket[]>(
@@ -1490,17 +1494,77 @@ router.get(
       declared_hra: number; declared_80c: number; declared_80d: number; regime: string;
     }>)[0] ?? null;
 
-    const grossSalary = Number(line.gross_salary);
+    /**
+     * Actual amounts paid across the financial year — not one month annualised.
+     *
+     * This previously reported the run's monthly gross and multiplied it by 12.
+     * That is wrong for anyone who joined or left mid-year, had a salary
+     * revision, took LWP, or received a bonus, incentive or arrears — which in
+     * practice is most people. A TDS certificate reports what was actually paid
+     * and actually deducted, so it is summed from the payroll lines themselves.
+     *
+     * Only finalized runs count: a draft or cancelled run is not money paid.
+     *
+     * A month can hold several runs — a re-run, a correction, an abandoned
+     * draft — and exactly one is canonical for that month: the most-progressed
+     * status, newest on a tie. Summing all of them would double-count a
+     * corrected month, so ROW_NUMBER picks one line per month, matching the
+     * convention the payroll analytics endpoints already follow.
+     */
+    const fyFirstMonth = `${fyStart}-04`;
+    const fyLastMonth  = `${fyStart + 1}-03`;
+
+    const [fyRows] = await db.execute<RowDataPacket[]>(
+      `SELECT COUNT(*)                                   AS months_paid,
+              COALESCE(SUM(gross_salary), 0)             AS gross_salary,
+              COALESCE(SUM(tds_deducted), 0)             AS tds_deducted,
+              COALESCE(SUM(professional_tax), 0)         AS professional_tax,
+              COALESCE(SUM(pf_employee), 0)              AS pf_employee,
+              MIN(run_month)                             AS first_month,
+              MAX(run_month)                             AS last_month
+         FROM (
+           SELECT spr.run_month,
+                  spl.gross_salary,
+                  COALESCE(NULLIF(spl.tds_amount, 0), spl.tds) AS tds_deducted,
+                  spl.professional_tax,
+                  spl.pf_employee,
+                  ROW_NUMBER() OVER (
+                    PARTITION BY spr.run_month
+                    ORDER BY FIELD(spr.status, 'disbursed', 'locked', 'approved', 'completed'),
+                             spr.created_at DESC
+                  ) AS rn
+             FROM salary_prep_line spl
+             JOIN salary_prep_run spr ON spr.id = spl.run_id
+            WHERE spl.employee_id = ?
+              AND spr.run_month BETWEEN ? AND ?
+              AND spr.status IN ('locked', 'approved', 'disbursed', 'completed')
+              AND spl.status NOT IN ('excluded', 'blocked')
+         ) canonical
+        WHERE canonical.rn = 1`,
+      [employeeId, fyFirstMonth, fyLastMonth]
+    );
+    const fy = (fyRows as Array<{
+      months_paid: number; gross_salary: number; tds_deducted: number;
+      professional_tax: number; pf_employee: number;
+      first_month: string | null; last_month: string | null;
+    }>)[0];
+
+    const grossSalary  = Number(fy?.gross_salary ?? 0);
+    const tdsDeducted  = Number(fy?.tds_deducted ?? 0);
+    const professionalTax = Number(fy?.professional_tax ?? 0);
+    const monthsPaid   = Number(fy?.months_paid ?? 0);
 
     const [sdRows] = await db.execute<RowDataPacket[]>(
       `SELECT config_value FROM statutory_config WHERE config_key = 'tds_standard_deduction' LIMIT 1`
     );
     const standardDeduction = Number((sdRows as any[])[0]?.config_value ?? 75000);
 
-    const tdsDeducted = Number(line.tds_amount) || Number(line.tds) || 0;
+    // Professional tax is deductible from salary income (s.16(iii) of the 1961
+    // Act), so it reduces taxable income alongside the standard deduction.
     const totalDeductions = standardDeduction
+      + professionalTax
       + (decl ? Number(decl.declared_hra) + Number(decl.declared_80c) + Number(decl.declared_80d) : 0);
-    const netTaxableIncome = Math.max(0, (grossSalary * 12) - totalDeductions);
+    const netTaxableIncome = Math.max(0, grossSalary - totalDeductions);
 
     // Which Act governs the year this certificate covers, and therefore what the
     // certificate is called. The Income-tax Act, 2025 renamed the salary TDS
@@ -1532,10 +1596,27 @@ router.get(
           designation: emp?.designation ?? null,
           period: `Apr ${fyStart} – Mar ${fyStart + 1}`,
         },
+        // Annual actuals, summed from finalized payroll lines for this FY.
         gross_salary: grossSalary,
         standard_deduction: standardDeduction,
+        professional_tax: professionalTax,
         tds_deducted: tdsDeducted,
         net_taxable_income: netTaxableIncome,
+        /**
+         * How much of the year this certificate actually rests on.
+         *
+         * A mid-year joiner legitimately has fewer than 12 months; a year with
+         * unfinalized runs does not. The reader cannot tell those apart from the
+         * totals alone, so the basis is stated rather than implied — and
+         * `is_partial_year` marks anything short of a full twelve.
+         */
+        basis: {
+          months_paid: monthsPaid,
+          first_month: fy?.first_month ?? null,
+          last_month: fy?.last_month ?? null,
+          is_partial_year: monthsPaid > 0 && monthsPaid < 12,
+          financial_year_range: `${fyFirstMonth} to ${fyLastMonth}`,
+        },
         declaration: decl
           ? {
               hra: Number(decl.declared_hra),
