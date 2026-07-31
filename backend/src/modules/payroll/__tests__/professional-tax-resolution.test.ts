@@ -75,6 +75,35 @@ describe("professional tax when the state is known", () => {
     await expect(resolveProfessionalTax("MAS1234", "Uttar Pradesh", 30000)).resolves.toBe(0);
   });
 
+  it("recognises an exempt state whatever the casing", async () => {
+    // branch_master holds "DELHI", "Delhi" and "GUJARAT" interchangeably. A
+    // case-sensitive check would misclassify a real state as unconfigured and
+    // block payroll for it.
+    execute.mockResolvedValue([[], []]);
+    await expect(resolveProfessionalTax("MAS1", "DELHI", 30000)).resolves.toBe(0);
+    await expect(resolveProfessionalTax("MAS2", "  haryana  ", 30000)).resolves.toBe(0);
+  });
+
+  it("refuses when a state has no slabs and is not known to be exempt", async () => {
+    // The under-deduction this prevents. Punjab levies professional tax and has
+    // no rows in pt_slab_master, so the old code returned 0 — indistinguishable
+    // from Uttar Pradesh, which genuinely owes nothing. A shortfall here is the
+    // employer's liability, so it is reported rather than assumed away.
+    execute
+      .mockResolvedValueOnce([[], []])   // no slab for this income
+      .mockResolvedValueOnce([[], []]);  // and none for the state at all
+    await expect(resolveProfessionalTax("MAS1234", "Punjab", 30000)).rejects.toThrow(
+      /not configured for state "Punjab"/,
+    );
+  });
+
+  it("says what to do about an unconfigured state", async () => {
+    execute.mockResolvedValue([[], []]);
+    await expect(resolveProfessionalTax("MAS1234", "Kerala", 30000)).rejects.toThrow(
+      /Add its slabs to pt_slab_master, or record the state as PT-exempt/,
+    );
+  });
+
   it("returns 0 when the state has slabs but the income is below the lowest", async () => {
     execute
       .mockResolvedValueOnce([[], []])          // no bracket for this income

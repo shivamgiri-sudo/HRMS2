@@ -1,4 +1,4 @@
--- 1032_missing_notification_templates.sql
+-- 1034_missing_notification_templates.sql
 --
 -- Writes the six templates that events NAME but that do not exist.
 --
