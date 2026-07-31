@@ -1,4 +1,4 @@
-import { Route } from "react-router-dom";
+import { Route, Navigate } from "react-router-dom";
 import { lazy } from "./lazy";
 import { ProtectedRoute } from "@/components/auth/ProtectedRoute";
 import WorkforcePageGate from "@/components/security/WorkforcePageGate";
@@ -31,6 +31,6 @@ export const complianceRouteElements = (
       <Route path="/provisioning/wfm-alignment"          element={<ProtectedRoute roles={['wfm','admin','super_admin']}><Gate pageCode="PROVISIONING_WFM_ALIGNMENT"><NativeITProvisioningTracker /></Gate></ProtectedRoute>} />
       <Route path="/provisioning/it"                     element={<ProtectedRoute roles={['it','admin','super_admin']}><Gate pageCode="PROVISIONING_IT"><NativeITProvisioningTracker /></Gate></ProtectedRoute>} />
       <Route path="/provisioning/admin"                  element={<ProtectedRoute roles={['branch_admin','hr','admin','super_admin']}><Gate pageCode="PROVISIONING_ADMIN"><NativeITProvisioningTracker /></Gate></ProtectedRoute>} />
-      <Route path="/provisioning/appointment-letter"     element={<ProtectedRoute roles={['hr','admin','super_admin']}><Gate pageCode="PROVISIONING_APPOINTMENT_LETTER"><NativeITProvisioningTracker /></Gate></ProtectedRoute>} />
+      <Route path="/provisioning/appointment-letter"     element={<Navigate to="/ats/joining-control-room" replace />} />
   </>
 );
