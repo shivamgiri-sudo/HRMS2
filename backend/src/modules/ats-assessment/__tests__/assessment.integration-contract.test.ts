@@ -45,9 +45,34 @@ describe("ATS assessment integration contracts", () => {
       workspace.indexOf("setAssessmentSummary(null)"),
       workspace.indexOf("setSubstituteMode(isSubstitute)"),
     );
-    expect(assessmentFetchBlock).not.toContain("setForm(");
-    expect(assessmentFetchBlock).not.toContain("skillTypingScore");
-    expect(assessmentFetchBlock).not.toContain("skillAiScore");
+
+    // This block used to forbid setForm() outright, on the principle that
+    // assessment data is advisory and must never become the recruiter's
+    // submitted evaluation. f37a9f48 then added a deliberate pre-fill: when a
+    // completed assessment exists, its typing and percentage scores seed the
+    // matching form fields.
+    //
+    // The blanket ban is not the invariant worth keeping — silent substitution
+    // is. Pre-filling an empty field the recruiter can still overwrite, while
+    // telling them it happened, does not substitute anything. So assert the two
+    // properties that actually protect the recruiter's judgement:
+    //
+    //   1. it only ever fills a blank field — `prev.x || value` keeps whatever
+    //      the recruiter typed, so their input cannot be overwritten;
+    //   2. it is disclosed in the UI, so a pre-filled score is never mistaken
+    //      for one the recruiter entered.
+    //
+    // If either disappears, assessment output starts masquerading as human
+    // assessment, which is what the original test was defending against.
+    expect(assessmentFetchBlock).toContain("skillTypingScore: prev.skillTypingScore || typingVal");
+    expect(assessmentFetchBlock).toContain("skillAiScore:     prev.skillAiScore     || aiVal");
+    expect(assessmentFetchBlock).toContain("setAssessmentAutoFilled(true)");
+    expect(workspace).toContain("pre-filled from assessment");
+
+    // The summary itself stays read-only: the fetch must not write anything
+    // back to the assessment service.
+    expect(assessmentFetchBlock).not.toContain("hrmsApi.post");
+    expect(assessmentFetchBlock).not.toContain("hrmsApi.patch");
 
     // Existing canonical interview submission remains present and unchanged in purpose.
     expect(workspace).toContain('/api/ats-full-parity/recruiter-submission');
