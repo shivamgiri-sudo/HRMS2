@@ -40,6 +40,27 @@ const EXPENSE_MASTER_READ_ROLES: RoleKey[] = [
   "accounts_head",
 ];
 const EXPENSE_MASTER_WRITE_ROLES: RoleKey[] = ["super_admin", "finance_head"];
+/**
+ * Adding a head or sub-head stays with Finance Head. Editing or deleting one that budgets, GRNs
+ * and coverage reviews already reference by name is Super Admin only — a rename silently detaches
+ * every historical row that still carries the old name.
+ */
+const EXPENSE_MASTER_EDIT_ROLES: RoleKey[] = ["super_admin"];
+
+function assertSuperAdminForEdit(req: AuthenticatedRequest) {
+  if (!req.body?.id) return;
+  if (!userHasRole(req, "super_admin")) {
+    throw Object.assign(
+      new Error("Only a Super Admin can edit an existing expense head or sub-head"),
+      { statusCode: 403 }
+    );
+  }
+}
+
+function expenseMasterErrorStatus(error: unknown) {
+  const status = (error as { statusCode?: number } | null)?.statusCode;
+  return typeof status === "number" ? status : 400;
+}
 
 const UPLOAD_DIR = "uploads/grn-attachments";
 if (!existsSync(UPLOAD_DIR)) mkdirSync(UPLOAD_DIR, { recursive: true });
@@ -167,13 +188,14 @@ function grNExpenseMasterRoutes(router: Router) {
     requireRole(...EXPENSE_MASTER_WRITE_ROLES),
     async (req: AuthenticatedRequest, res) => {
       try {
+        assertSuperAdminForEdit(req);
         const data = await financeExpenseMasterService.saveHead(
           req.body,
           req.authUser.id
         );
         res.status(req.body?.id ? 200 : 201).json({ success: true, data });
       } catch (error: unknown) {
-        res.status(400).json({
+        res.status(expenseMasterErrorStatus(error)).json({
           success: false,
           error: error instanceof Error ? error.message : "Unable to save expense head",
         });
@@ -187,15 +209,56 @@ function grNExpenseMasterRoutes(router: Router) {
     requireRole(...EXPENSE_MASTER_WRITE_ROLES),
     async (req: AuthenticatedRequest, res) => {
       try {
+        assertSuperAdminForEdit(req);
         const data = await financeExpenseMasterService.saveSubHead(
           req.body,
           req.authUser.id
         );
         res.status(req.body?.id ? 200 : 201).json({ success: true, data });
       } catch (error: unknown) {
-        res.status(400).json({
+        res.status(expenseMasterErrorStatus(error)).json({
           success: false,
           error: error instanceof Error ? error.message : "Unable to save expense sub-head",
+        });
+      }
+    }
+  );
+
+  router.delete(
+    "/expense-heads/:id",
+    requireWriteAccess,
+    requireRole(...EXPENSE_MASTER_EDIT_ROLES),
+    async (req: AuthenticatedRequest, res) => {
+      try {
+        const data = await financeExpenseMasterService.deleteHead(
+          req.params.id,
+          req.authUser.id
+        );
+        res.json({ success: true, data });
+      } catch (error: unknown) {
+        res.status(expenseMasterErrorStatus(error)).json({
+          success: false,
+          error: error instanceof Error ? error.message : "Unable to delete expense head",
+        });
+      }
+    }
+  );
+
+  router.delete(
+    "/expense-sub-heads/:id",
+    requireWriteAccess,
+    requireRole(...EXPENSE_MASTER_EDIT_ROLES),
+    async (req: AuthenticatedRequest, res) => {
+      try {
+        const data = await financeExpenseMasterService.deleteSubHead(
+          req.params.id,
+          req.authUser.id
+        );
+        res.json({ success: true, data });
+      } catch (error: unknown) {
+        res.status(expenseMasterErrorStatus(error)).json({
+          success: false,
+          error: error instanceof Error ? error.message : "Unable to delete expense sub-head",
         });
       }
     }
