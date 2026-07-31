@@ -19,6 +19,8 @@ function toActiveFlag(value: unknown): 0 | 1 {
   }
   return Number(value) === 0 ? 0 : 1;
 }
+import { writeAuditLog } from "../../shared/auditLog.js";
+import { tableExists } from "../../shared/dbHelpers.js";
 import type {
   BudgetGstType,
   BudgetTaxTreatment,
@@ -55,6 +57,85 @@ export interface SaveExpenseHeadInput {
   description?: string | null;
   displayOrder?: number;
   activeStatus?: boolean;
+}
+
+/**
+ * Where a head or sub-head is still referenced. Budget lines and GRNs record the head/sub-head by
+ * NAME rather than by id — there is no foreign key to follow — so those two are counted by name,
+ * and by head code as well because older rows carry the code in the same column. Coverage reviews
+ * do point at the master row by id (finance_budget_subhead_status has real foreign keys) and are
+ * counted separately.
+ */
+export interface ExpenseMasterUsage {
+  budgetLines: number;
+  grns: number;
+  coverageReviews: number;
+}
+
+export interface DeleteExpenseMasterResult {
+  id: string;
+  name: string;
+  /** true when the row was removed outright; false when it was retired (active_status = 0). */
+  removed: boolean;
+  usage: ExpenseMasterUsage;
+}
+
+const usageTotal = (usage: ExpenseMasterUsage) =>
+  usage.budgetLines + usage.grns + usage.coverageReviews;
+
+const addUsage = (a: ExpenseMasterUsage, b: ExpenseMasterUsage): ExpenseMasterUsage => ({
+  budgetLines: a.budgetLines + b.budgetLines,
+  grns: a.grns + b.grns,
+  coverageReviews: a.coverageReviews + b.coverageReviews,
+});
+
+/** Table names here are literals from this module, never user input. */
+async function countRows(table: string, where: string, params: unknown[]) {
+  if (!(await tableExists(table))) return 0;
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT COUNT(*) AS n FROM ${table} ${where}`,
+    params
+  );
+  return Number(rows[0]?.n ?? 0);
+}
+
+async function headUsage(
+  headId: string,
+  headName: string,
+  headCode: string
+): Promise<ExpenseMasterUsage> {
+  const nameParams = [headName, headCode];
+  const nameClause = "WHERE LOWER(head) IN (LOWER(?), LOWER(?))";
+  return {
+    budgetLines: await countRows("finance_budget_line", nameClause, nameParams),
+    grns: await countRows("grn_request", nameClause, nameParams),
+    coverageReviews: await countRows(
+      "finance_budget_subhead_status",
+      "WHERE expense_head_id = ?",
+      [headId]
+    ),
+  };
+}
+
+async function subHeadUsage(
+  subHeadId: string,
+  subHeadName: string,
+  headName: string,
+  headCode: string
+): Promise<ExpenseMasterUsage> {
+  // Scoped to the parent head as well, because sub-head names are only unique within a head.
+  const nameParams = [subHeadName, headName, headCode];
+  const nameClause =
+    "WHERE LOWER(COALESCE(sub_head, '')) = LOWER(?) AND LOWER(head) IN (LOWER(?), LOWER(?))";
+  return {
+    budgetLines: await countRows("finance_budget_line", nameClause, nameParams),
+    grns: await countRows("grn_request", nameClause, nameParams),
+    coverageReviews: await countRows(
+      "finance_budget_subhead_status",
+      "WHERE expense_sub_head_id = ?",
+      [subHeadId]
+    ),
+  };
 }
 
 export interface SaveExpenseSubHeadInput {
@@ -288,5 +369,138 @@ export const financeExpenseMasterService = {
       [id, ...values.slice(0, 12), actorUserId, actorUserId]
     );
     return { id };
+  },
+
+  /**
+   * Remove a sub-head when nothing references it, retire it when something does.
+   *
+   * A budget line records its sub-head by name, and an approved budget is a financial record, so a
+   * sub-head that any line or GRN already names is never dropped — it is set inactive, which is
+   * what both the planner and the master list filter on, so it disappears from every picker while
+   * the history that names it stays readable.
+   */
+  async deleteSubHead(
+    id: string,
+    actorUserId: string
+  ): Promise<DeleteExpenseMasterResult> {
+    if (!id) throw new Error("Sub-head id is required");
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT sh.id, sh.sub_head_name, sh.active_status, h.head_name, h.head_code
+         FROM finance_expense_sub_head_master sh
+         JOIN finance_expense_head_master h ON h.id = sh.head_id
+        WHERE sh.id = ? LIMIT 1`,
+      [id]
+    );
+    const row = rows[0];
+    if (!row) throw new Error("Expense sub-head not found");
+
+    const usage = await subHeadUsage(
+      id,
+      String(row.sub_head_name),
+      String(row.head_name),
+      String(row.head_code)
+    );
+    const removed = usageTotal(usage) === 0;
+
+    if (removed) {
+      await db.execute(
+        `DELETE FROM finance_expense_sub_head_master WHERE id = ?`,
+        [id]
+      );
+    } else {
+      await db.execute(
+        `UPDATE finance_expense_sub_head_master
+            SET active_status = 0, updated_by = ?, updated_at = NOW()
+          WHERE id = ?`,
+        [actorUserId, id]
+      );
+    }
+
+    await writeAuditLog({
+      actor_user_id: actorUserId,
+      action_type: removed ? "expense_sub_head_deleted" : "expense_sub_head_retired",
+      module_key: "finance_expense_master",
+      entity_type: "finance_expense_sub_head_master",
+      entity_id: id,
+      metadata: { subHeadName: row.sub_head_name, headName: row.head_name, usage },
+    });
+
+    return { id, name: String(row.sub_head_name), removed, usage };
+  },
+
+  /**
+   * Remove a head when neither it nor any of its sub-heads is referenced, retire it otherwise.
+   *
+   * A head is only dropped together with its sub-heads, because the sub-head table has a foreign
+   * key to it. Retiring leaves the sub-head rows' own active_status untouched: the list query
+   * already hides every sub-head of an inactive head, so nothing extra needs changing, and a
+   * restore then puts back exactly what was there.
+   */
+  async deleteHead(
+    id: string,
+    actorUserId: string
+  ): Promise<DeleteExpenseMasterResult> {
+    if (!id) throw new Error("Head id is required");
+    const [heads] = await db.execute<RowDataPacket[]>(
+      `SELECT id, head_name, head_code FROM finance_expense_head_master WHERE id = ? LIMIT 1`,
+      [id]
+    );
+    const head = heads[0];
+    if (!head) throw new Error("Expense head not found");
+
+    const headName = String(head.head_name);
+    const headCode = String(head.head_code);
+    const [subHeads] = await db.execute<RowDataPacket[]>(
+      `SELECT id, sub_head_name FROM finance_expense_sub_head_master WHERE head_id = ?`,
+      [id]
+    );
+
+    let usage = await headUsage(id, headName, headCode);
+    for (const sub of subHeads) {
+      usage = addUsage(
+        usage,
+        await subHeadUsage(String(sub.id), String(sub.sub_head_name), headName, headCode)
+      );
+    }
+    const removed = usageTotal(usage) === 0;
+
+    if (removed) {
+      const connection = await db.getConnection();
+      try {
+        await connection.beginTransaction();
+        await connection.execute(
+          `DELETE FROM finance_expense_sub_head_master WHERE head_id = ?`,
+          [id]
+        );
+        await connection.execute(
+          `DELETE FROM finance_expense_head_master WHERE id = ?`,
+          [id]
+        );
+        await connection.commit();
+      } catch (error) {
+        await connection.rollback();
+        throw error;
+      } finally {
+        connection.release();
+      }
+    } else {
+      await db.execute(
+        `UPDATE finance_expense_head_master
+            SET active_status = 0, updated_by = ?, updated_at = NOW()
+          WHERE id = ?`,
+        [actorUserId, id]
+      );
+    }
+
+    await writeAuditLog({
+      actor_user_id: actorUserId,
+      action_type: removed ? "expense_head_deleted" : "expense_head_retired",
+      module_key: "finance_expense_master",
+      entity_type: "finance_expense_head_master",
+      entity_id: id,
+      metadata: { headName, subHeadCount: subHeads.length, usage },
+    });
+
+    return { id, name: headName, removed, usage };
   },
 };
