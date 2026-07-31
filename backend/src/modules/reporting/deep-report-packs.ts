@@ -205,12 +205,12 @@ export const DEEP_REPORT_PACKS: DeepReportPack[] = [
     complianceControls: ["Policy-year entitlement", "Approval evidence", "LWP/payroll reconciliation", "Special leave documentation"],
     sensitiveDomains: ["medical and family leave", "payroll impact"],
     perspectives: [
-      p("overview", "Leave control summary", "Entitlement, usage and available balance.", ["leave-balance", "leave-balance-export"]),
+      p("overview", "Leave control summary", "Entitlement, usage and available balance.", ["leave-balance"]),
       p("trend", "Leave utilisation trend", "Leave consumption and absence patterns.", ["leave-utilization"]),
       p("register", "Leave and holiday registers", "Request and holiday evidence.", ["leave-utilization", "holiday-master-list"]),
-      p("exceptions", "Leave exceptions", "Negative balances, special leave and encashment cases.", ["maternity-paternity-register", "leave-encashment-register"]),
+      p("exceptions", "Leave exceptions", "Negative balances and lapse cases.", ["leave-lapse-summary"]),
       p("reconciliation", "Leave-to-payroll reconciliation", "Approved leave, LWP and payable-day consistency.", ["payroll-reconciliation", "lwp-deduction-register"]),
-      p("compliance", "Leave policy evidence", "Special leave and holiday policy compliance.", ["maternity-paternity-register", "holiday-master-list"]),
+      p("compliance", "Leave policy evidence", "Leave register and holiday policy compliance.", ["leave-utilization", "holiday-master-list"]),
     ],
     sourceGroups: [
       s("balance", "Leave balances", "Annual entitlement and balance ledger.", ["leave_balance_ledger"]),

@@ -45,6 +45,11 @@ export const ROLE_SPECIFIC_PAGE_CODES = {
     "EMAIL_TEMPLATE_BULK_IMPORT",
     "MIGRATION_CONSOLE",
     "ADVANCED_REPORTS",
+    // Reports Center was already granted to manager and process_manager but not
+    // to admin, so administrators could not open /reports at all. Adding it here
+    // only exposes the Report Library page; every individual report remains gated
+    // by its own catalog viewRoles/exportRoles and by branch/process row scope.
+    "REPORTS_CENTER",
   ],
   hr: [
     "HR_DASHBOARD",

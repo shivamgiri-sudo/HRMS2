@@ -61,32 +61,16 @@ reportSuiteHighRiskRouter.get("/employee-movement", roles, h(async (req, res) =>
   return sendRows(res, "employee-movement", sql, [from, to, ...filterParams], limitParam(req.query.limit));
 }));
 
-reportSuiteHighRiskRouter.get("/leave-balance", roles, h(async (req, res) => {
-  const clauses: string[] = [];
-  const params: unknown[] = [];
-  addScopedEmployeeFilters(req, clauses, params);
-  clauses.push("lbl.balance_year = ?");
-  params.push(Number(req.query.year ?? new Date().getFullYear()));
-  if (String(req.query.includeInactive ?? "0") !== "1") clauses.push("e.active_status = 1");
-  const sql = `SELECT e.employee_code,
-                      COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-                      b.branch_name, d.dept_name AS department_name, p.process_name,
-                      lt.leave_code, lt.leave_name,
-                      COALESCE(lbl.allocated_days, 0) AS allocated_days,
-                      COALESCE(lbl.used_days, 0) AS used_days,
-                      COALESCE(lbl.adjusted_days, 0) AS adjusted_days,
-                      (COALESCE(lbl.allocated_days,0) + COALESCE(lbl.adjusted_days,0) - COALESCE(lbl.used_days,0)) AS remaining_days,
-                      CASE WHEN (COALESCE(lbl.allocated_days,0) + COALESCE(lbl.adjusted_days,0) - COALESCE(lbl.used_days,0)) < 0 THEN 'NEGATIVE_BALANCE' ELSE 'OK' END AS balance_status
-                 FROM leave_balance_ledger lbl
-                 JOIN employees e ON e.id = lbl.employee_id
-                 JOIN leave_type_master lt ON lt.id = lbl.leave_type_id
-                 LEFT JOIN branch_master b ON b.id = e.branch_id AND COALESCE(b.active_status,1)=1
-                 LEFT JOIN department_master d ON d.id = e.department_id AND COALESCE(d.active_status,1)=1
-                 LEFT JOIN process_master p ON p.id = e.process_id AND COALESCE(p.active_status,1)=1
-                WHERE ${clauses.join(" AND ")}
-                ORDER BY employee_name, lt.leave_code`;
-  return sendRows(res, "leave-balance", sql, params, limitParam(req.query.limit));
-}));
+// NOTE: "leave-balance" is deliberately NOT handled here.
+//
+// This router is mounted at /suite BEFORE reportSuiteRouter, so any handler
+// defined here shadows the canonical catalog-driven route. It previously served
+// leave-balance with its own one-row-per-employee-per-leave-type SQL, which
+// silently overrode the canonical pivoted executor and returned the wrong shape.
+//
+// leave-balance now falls through to reportSuiteRouter's `/:code` handler, which
+// applies the same reportScopeMiddleware + reportCatalogAccessMiddleware gate and
+// dispatches to the canonical executor. Do not re-add a handler for it here.
 
 reportSuiteHighRiskRouter.get("/payroll-register", roles, h(async (req, res) => {
   const clauses: string[] = [];

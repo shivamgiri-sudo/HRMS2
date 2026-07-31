@@ -46,9 +46,77 @@ async function count(baseSql: string, params: unknown[]): Promise<number> {
 // leave-balance
 // ---------------------------------------------------------------------------
 /**
- * Cross-joins all active leave types with each active employee's balance for the given
- * year.  The year is a validated safe integer from yearParam() and is embedded directly
- * into the JOIN ON clause as a literal — this avoids positional-? conflicts between the
+ * Classifies a leave_type_master row into one of the four business report buckets.
+ *
+ * Order matters. Maternity/paternity are tested FIRST because this deployment's
+ * leave_type_master stores leave_code 'ML' for *Maternity* Leave (180 days) while
+ * *Medical/Sick* leave is stored as 'SL'. The report's "ML" column means medical
+ * leave, so matching on leave_name before leave_code prevents maternity being
+ * counted in the ML column and simultaneously in PTL/MTL.
+ *
+ * Matching on both name and code keeps this correct across deployments that use
+ * the legacy PTRL/MTRL aliases.
+ */
+const LEAVE_BUCKET_SQL = `
+  CASE
+    WHEN LOWER(lt.leave_name) LIKE '%matern%' OR lt.leave_code IN ('MTL','MTRL')      THEN 'PTLMTL'
+    WHEN LOWER(lt.leave_name) LIKE '%patern%' OR lt.leave_code IN ('PTL','PTRL')      THEN 'PTLMTL'
+    WHEN LOWER(lt.leave_name) LIKE '%casual%' OR lt.leave_code IN ('CL','CAS')        THEN 'CL'
+    WHEN LOWER(lt.leave_name) LIKE '%earned%' OR LOWER(lt.leave_name) LIKE '%privilege%'
+         OR lt.leave_code IN ('EL','PL_E')                                            THEN 'EL'
+    WHEN LOWER(lt.leave_name) LIKE '%sick%'   OR LOWER(lt.leave_name) LIKE '%medical%'
+         OR lt.leave_code IN ('SL','MED')                                             THEN 'ML'
+    ELSE NULL
+  END`;
+
+/**
+ * Authoritative per-bucket aggregates, reusing the same balance arithmetic the
+ * Leave module already applies in leave_balance_ledger:
+ *
+ *   Current = allocated_days + adjusted_days   (credited before usage, incl. approved adjustments)
+ *   Taken   = used_days                        (approved/posted usage only)
+ *   Remain  = allocated_days + adjusted_days - used_days
+ *
+ * No new leave-policy calculation is introduced here and no entitlement value
+ * (4 / 180 / etc.) is hardcoded — every figure comes from the ledger.
+ */
+function bucketAggregates(): string {
+  const buckets: Array<[string, string]> = [
+    ['cl', 'CL'], ['ml', 'ML'], ['el', 'EL'], ['ptl_mtl', 'PTLMTL'],
+  ];
+  const parts: string[] = [];
+  for (const [prefix, bucket] of buckets) {
+    parts.push(
+      `ROUND(COALESCE(SUM(CASE WHEN ${LEAVE_BUCKET_SQL} = '${bucket}' ` +
+      `THEN COALESCE(lbl.allocated_days,0) + COALESCE(lbl.adjusted_days,0) END),0),2) AS ${prefix}_current`
+    );
+  }
+  for (const [prefix, bucket] of buckets) {
+    parts.push(
+      `ROUND(COALESCE(SUM(CASE WHEN ${LEAVE_BUCKET_SQL} = '${bucket}' ` +
+      `THEN COALESCE(lbl.used_days,0) END),0),2) AS ${prefix}_taken`
+    );
+  }
+  for (const [prefix, bucket] of buckets) {
+    parts.push(
+      `ROUND(COALESCE(SUM(CASE WHEN ${LEAVE_BUCKET_SQL} = '${bucket}' ` +
+      `THEN COALESCE(lbl.allocated_days,0) + COALESCE(lbl.adjusted_days,0) ` +
+      `- COALESCE(lbl.used_days,0) END),0),2) AS ${prefix}_remain`
+    );
+  }
+  return parts.join(',\n           ');
+}
+
+/**
+ * leave-balance — one row per employee, CL / ML / EL / PTL-MTL pivoted into
+ * Current / Taken / Remain column groups.
+ *
+ * Grain is strictly one row per employee (primary key: employee code). Employees
+ * with no ledger row for a leave type still appear, with 0 for that type, because
+ * leave_balance_ledger is LEFT JOINed onto employees.
+ *
+ * The reporting month selects the ledger balance_year. The year is a validated
+ * safe integer embedded as a literal to avoid positional-? conflicts between the
  * JOIN ON parameter and the WHERE parameters.
  */
 export async function leaveBalance(
@@ -56,7 +124,9 @@ export async function leaveBalance(
   scope: ExecScope,
   options: ExecOptions
 ): Promise<ExecResult> {
-  const year = yearParam(filters.year); // safe integer 2001–2099, embedded as literal
+  // Month drives the report; fall back to `year` for backward compatibility.
+  const month = monthParam(filters.month);
+  const year  = filters.month ? Number(month.slice(0, 4)) : yearParam(filters.year);
 
   const clauses: string[] = ["e.id IS NOT NULL"];
   const params: unknown[] = [];
@@ -69,28 +139,40 @@ export async function leaveBalance(
     params.push(options.cursor);
   }
 
+  // Worker mode keysets on e.id, so it must order by e.id to stay consistent.
+  // Preview/export use the business default sort: EmpCode ascending.
+  const orderBy = options.mode === "worker"
+    ? "e.id ASC"
+    : "e.employee_code ASC, e.id ASC";
+
   const base = `
     SELECT e.id AS _cursor,
-           e.employee_code,
-           COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-           b.branch_name, p.process_name,
-           lt.leave_name, lt.leave_code,
-           COALESCE(lbl.allocated_days,0) AS allocated_days,
-           COALESCE(lbl.used_days,0) AS used_days,
-           COALESCE(lbl.adjusted_days,0) AS adjusted_days,
-           COALESCE(lbl.allocated_days,0) + COALESCE(lbl.adjusted_days,0)
-             - COALESCE(lbl.used_days,0) AS remaining_days,
-           lbl.balance_year
+           e.employee_code AS emp_code,
+           COALESCE(NULLIF(e.full_name,''), TRIM(CONCAT(e.first_name,' ',COALESCE(e.last_name,'')))) AS emp_name,
+           COALESCE(b.branch_name,'') AS branch_name,
+           -- Canonical master relationship only. The legacy denormalised
+           -- employees.cost_center free-text column is deliberately not used.
+           COALESCE(NULLIF(cc.cost_centre_name,''), NULLIF(cc.cost_centre_code,''), '') AS cost_center,
+           COALESCE(p.process_name,'') AS process_name,
+           ${bucketAggregates()}
       FROM employees e
-      JOIN leave_type_master lt ON lt.active_status = 1
+      LEFT JOIN branch_master b       ON b.id  = e.branch_id
+      LEFT JOIN process_master p      ON p.id  = e.process_id
+      LEFT JOIN cost_centre_master cc ON cc.id = e.cost_centre_id
       LEFT JOIN leave_balance_ledger lbl
              ON lbl.employee_id = e.id
-            AND lbl.leave_type_id = lt.id
             AND lbl.balance_year = ${year}
-      LEFT JOIN branch_master b ON b.id = e.branch_id
-      LEFT JOIN process_master p ON p.id = e.process_id
+      -- active_status = 1 is REQUIRED, not cosmetic. Production retains retired
+      -- leave types that still hold ledger history: 'SL' (Sick Leave, retired in
+      -- favour of 'ML' Medical Leave) and 'PL' (Paternity, superseded by 'PTRL').
+      -- Without this filter SL is summed into the ML column on top of ML, and PL
+      -- into PTL/MTL on top of PTRL/MTRL — double-counting retired entitlements.
+      LEFT JOIN leave_type_master lt  ON lt.id = lbl.leave_type_id
+                                     AND lt.active_status = 1
      WHERE ${clauses.join(" AND ")}
-     ORDER BY e.id ASC, lt.leave_name`;
+     GROUP BY e.id, e.employee_code, e.full_name, e.first_name, e.last_name,
+              b.branch_name, cc.cost_centre_name, cc.cost_centre_code, p.process_name
+     ORDER BY ${orderBy}`;
 
   const total = options.includeTotal ? await count(base, params) : 0;
   const sql   = options.mode === "worker" ? `${base} LIMIT ${options.limit}` : applyPagination(base, options);
@@ -187,32 +269,47 @@ export async function leaveUtilization(
   clauses.push("lr.from_date BETWEEN ? AND ?");
   params.push(from, to);
 
-  // Worker cursor on e.id — all leave-type rows for one employee share the same cursor
-  // value; keyset pagination resumes cleanly at the next employee.
+  // Grain is one row per leave request, so the keyset cursor is the request id.
   if (options.mode === "worker" && options.cursor != null) {
-    clauses.push("e.id > ?");
+    clauses.push("lr.id > ?");
     params.push(options.cursor);
   }
 
+  // One row per approved leave request, matching the business-supplied format:
+  // SR# | EMPLOYEE_CODE | EMPLOYEE_NAME | LEAVE_NAME | LEAVE TYPE | DAYS_USED |
+  // START DATE | END DATE | BRANCH_NAME | PROCESS_NAME | LEAVE REQUST DATE |
+  // LEAVE APPROVED DATE | APPROVED BY | LEAVE REMARKS
+  //
+  // Previously this aggregated with GROUP BY + SUM(total_days) + COUNT(*), which
+  // collapsed each employee's requests into one row per leave type and could not
+  // carry per-request dates. Maternity and paternity requests appear here like any
+  // other leave type, so a separate register is no longer needed.
+  //
+  // Dates render as dd-MMM-yy (30-Jul-26) to match the supplied format.
   const base = `
-    SELECT e.id AS _cursor,
+    SELECT lr.id AS _cursor,
+           ROW_NUMBER() OVER (ORDER BY lr.from_date DESC, e.employee_code ASC) AS sr_no,
            e.employee_code,
-           COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-           lt.leave_name, lt.leave_code,
-           SUM(lr.total_days) AS days_used,
-           COUNT(*) AS requests_count,
-           b.branch_name, p.process_name
+           COALESCE(NULLIF(e.full_name,''), TRIM(CONCAT(e.first_name,' ',COALESCE(e.last_name,'')))) AS employee_name,
+           lt.leave_name,
+           lt.leave_code AS leave_type,
+           lr.total_days AS days_used,
+           DATE_FORMAT(lr.from_date, '%d-%b-%y') AS start_date,
+           DATE_FORMAT(lr.to_date,   '%d-%b-%y') AS end_date,
+           COALESCE(b.branch_name, '')  AS branch_name,
+           COALESCE(p.process_name, '') AS process_name,
+           COALESCE(DATE_FORMAT(COALESCE(lr.requested_at, lr.applied_at), '%d-%b-%y'), '') AS leave_request_date,
+           COALESCE(DATE_FORMAT(lr.approved_at, '%d-%b-%y'), '') AS leave_approved_date,
+           COALESCE(NULLIF(appr.employee_code,''), NULLIF(lr.approved_by,''), '') AS approved_by,
+           COALESCE(NULLIF(lr.reason,''), '') AS leave_remarks
       FROM leave_request lr
       JOIN employees e           ON e.id  = lr.employee_id
       JOIN leave_type_master lt  ON lt.id = lr.leave_type_id
       LEFT JOIN branch_master b  ON b.id  = e.branch_id
       LEFT JOIN process_master p ON p.id  = e.process_id
+      LEFT JOIN employees appr   ON appr.id = lr.approved_by
      WHERE ${clauses.join(" AND ")}
-     GROUP BY e.id, e.employee_code,
-              COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))),
-              lt.id, lt.leave_name, lt.leave_code,
-              b.branch_name, p.process_name
-     ORDER BY e.id ASC`;
+     ORDER BY lr.from_date DESC, e.employee_code ASC`;
 
   const total = options.includeTotal ? await count(base, params) : 0;
   const sql   = options.mode === "worker" ? `${base} LIMIT ${options.limit}` : applyPagination(base, options);
@@ -544,10 +641,13 @@ export async function leaveLapseSummary(
 // holiday-master-list
 // ---------------------------------------------------------------------------
 /**
- * holiday_master is not employee-scoped; company and branch scope are applied directly
- * on hm columns.  Process / department / cost-centre scope dimensions are not applicable.
- * Assumes hm.company_id exists; if the column is absent, enforce isolation via
- * branch scope restriction alone and add company_id to the holiday_master schema.
+ * Reads leave_holiday_master (NOT "holiday_master" — that table does not exist).
+ *
+ * The table is not employee-scoped, so branch scope is applied directly on
+ * hm.branch_id; process / department / cost-centre dimensions do not apply.
+ *
+ * An empty result means the table has no rows for the selected branch/year, not
+ * a failure — holiday masters are often sparsely populated.
  */
 export async function holidayMasterList(
   filters: ExecFilters,

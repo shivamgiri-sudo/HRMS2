@@ -61,6 +61,16 @@ export interface ReportDefinition {
   rowGrain: string;
   primaryKey: string[];
   columns: ColumnDef[];
+  /**
+   * Optional grouped header row rendered ABOVE the normal column header row.
+   * Spans must sum to columns.length. Reports that omit this keep their existing
+   * single-row header, so this is fully backward compatible.
+   */
+  headerGroups?: Array<{ label: string; colSpan: number }>;
+  /** Render empty text cells blank instead of the default em dash. Opt-in per report. */
+  blankInsteadOfDash?: boolean;
+  /** Numeric column keys whose zero value renders as an empty cell. */
+  blankWhenZero?: string[];
   filters: FilterDef[];
   viewRoles: string[];
   exportRoles: string[];
@@ -930,26 +940,49 @@ export const REPORT_CATALOG: ReportDefinition[] = [
     name: "Leave Balance Report",
     category: "Leave",
     subcategory: "Balance & Allocation",
-    description: "Current leave balances by employee and leave type",
-    rowGrain: "One row per employee per leave type",
-    primaryKey: ["employee_code", "leave_code"],
+    description:
+      "Leave balance in MAS Callnet format — CL/ML/EL/PTL-MTL columns for Current, Taken and Remaining, one row per employee",
+    rowGrain: "One row per employee",
+    primaryKey: ["emp_code"],
     columns: [
-      { key: "employee_code", label: "Emp Code", format: "text", width: 100 },
-      { key: "employee_name", label: "Employee Name", format: "text", width: 180 },
-      { key: "branch_name", label: "Branch", format: "text", width: 120 },
-      { key: "process_name", label: "Process", format: "text", width: 140 },
-      { key: "leave_code", label: "Leave Code", format: "text", width: 80 },
-      { key: "leave_name", label: "Leave Type", format: "text", width: 140 },
-      { key: "allocated_days", label: "Allocated", format: "number", width: 80, align: "right" },
-      { key: "used_days", label: "Used", format: "number", width: 80, align: "right" },
-      { key: "adjusted_days", label: "Adjusted", format: "number", width: 80, align: "right" },
-      { key: "remaining_days", label: "Remaining", format: "number", width: 80, align: "right" },
+      { key: "emp_code",        label: "EmpCode",      format: "text",   width: 110 },
+      { key: "emp_name",        label: "EmpName",      format: "text",   width: 220 },
+      { key: "branch_name",     label: "BranchName",   format: "text",   width: 130 },
+      { key: "cost_center",     label: "Cost Center",  format: "text",   width: 180 },
+      { key: "process_name",    label: "Process Name", format: "text",   width: 170 },
+
+      { key: "cl_current",      label: "CL",           format: "number", width: 64, align: "center" },
+      { key: "ml_current",      label: "ML",           format: "number", width: 64, align: "center" },
+      { key: "el_current",      label: "EL",           format: "number", width: 64, align: "center" },
+      { key: "ptl_mtl_current", label: "PTL/MTL",      format: "number", width: 84, align: "center" },
+
+      { key: "cl_taken",        label: "CL",           format: "number", width: 64, align: "center" },
+      { key: "ml_taken",        label: "ML",           format: "number", width: 64, align: "center" },
+      { key: "el_taken",        label: "EL",           format: "number", width: 64, align: "center" },
+      { key: "ptl_mtl_taken",   label: "PTL/MTL",      format: "number", width: 84, align: "center" },
+
+      { key: "cl_remain",       label: "CL",           format: "number", width: 64, align: "center" },
+      { key: "ml_remain",       label: "ML",           format: "number", width: 64, align: "center" },
+      { key: "el_remain",       label: "EL",           format: "number", width: 64, align: "center" },
+      { key: "ptl_mtl_remain",  label: "PTL/MTL",      format: "number", width: 84, align: "center" },
     ],
-    filters: [F_YEAR, F_BRANCH, F_PROCESS, { key: "leaveType", label: "Leave Type", type: "text" }],
+    headerGroups: [
+      { label: "Emp Details",   colSpan: 4 },
+      { label: "",              colSpan: 1 },
+      { label: "Current Leave", colSpan: 4 },
+      { label: "Leave Taken",   colSpan: 4 },
+      { label: "Leave Remain",  colSpan: 4 },
+    ],
+    filters: [F_MONTH, F_BRANCH, F_PROCESS],
     viewRoles: ROLES_HR_MANAGER,
     exportRoles: ROLES_HR_ADMIN,
     sourceTables: ["leave_balance_ledger", "leave_type_master", "employees"],
     branchScoped: true,
+    processScoped: true,
+    calculationNotes:
+      "Current = allocated_days + adjusted_days; Taken = used_days; Remain = Current - Taken, " +
+      "all read from leave_balance_ledger for the selected month's balance year. " +
+      "Maternity and paternity share the single PTL/MTL column; the ML column is medical/sick leave.",
     sensitivityLevel: "confidential",
     containsPII: true,
     containsFinancialData: false,
@@ -983,29 +1016,44 @@ export const REPORT_CATALOG: ReportDefinition[] = [
   },
 
   {
+    // Approved leave register in the MAS Callnet format. Covers every leave type,
+    // so maternity and paternity requests appear here and no separate
+    // Maternity / Paternity Leave Register is needed.
     code: "leave-utilization",
     name: "Leave Utilization Report",
     category: "Leave",
     subcategory: "Utilization & Trends",
-    description: "Leave requests and their status",
+    description:
+      "Approved leave register — one row per leave request with dates, branch, process and approval details",
     rowGrain: "One row per leave request",
-    primaryKey: ["employee_code", "from_date", "leave_code"],
+    primaryKey: ["employee_code", "start_date", "leave_type"],
     columns: [
-      { key: "from_date", label: "From Date", format: "date", width: 100 },
-      { key: "to_date", label: "To Date", format: "date", width: 100 },
-      { key: "employee_code", label: "Emp Code", format: "text", width: 100 },
-      { key: "employee_name", label: "Employee Name", format: "text", width: 180 },
-      { key: "branch_name", label: "Branch", format: "text", width: 120 },
-      { key: "leave_code", label: "Leave Code", format: "text", width: 80 },
-      { key: "leave_name", label: "Leave Type", format: "text", width: 140 },
-      { key: "total_days", label: "Days", format: "number", width: 60, align: "right" },
-      { key: "status", label: "Status", format: "status", width: 100 },
+      { key: "sr_no",               label: "SR#",                 format: "number", width: 60,  align: "center" },
+      { key: "employee_code",       label: "EMPLOYEE_CODE",       format: "text",   width: 120 },
+      { key: "employee_name",       label: "EMPLOYEE_NAME",       format: "text",   width: 200 },
+      { key: "leave_name",          label: "LEAVE_NAME",          format: "text",   width: 140 },
+      { key: "leave_type",          label: "LEAVE TYPE",          format: "text",   width: 90,  align: "center" },
+      { key: "days_used",           label: "DAYS_USED",           format: "number", width: 90,  align: "center" },
+      { key: "start_date",          label: "START DATE",          format: "text",   width: 110, align: "center" },
+      { key: "end_date",            label: "END DATE",            format: "text",   width: 110, align: "center" },
+      { key: "branch_name",         label: "BRANCH_NAME",         format: "text",   width: 130 },
+      { key: "process_name",        label: "PROCESS_NAME",        format: "text",   width: 170 },
+      { key: "leave_request_date",  label: "LEAVE REQUST DATE",   format: "text",   width: 140, align: "center" },
+      { key: "leave_approved_date", label: "LEAVE APPROVED DATE", format: "text",   width: 150, align: "center" },
+      { key: "approved_by",         label: "APPROVED BY",         format: "text",   width: 130 },
+      { key: "leave_remarks",       label: "LEAVE REMARKS",       format: "text",   width: 200 },
     ],
-    filters: [F_DATE_FROM, F_DATE_TO, F_BRANCH, { key: "leaveType", label: "Leave Type", type: "text" }],
+    blankInsteadOfDash: true,
+    filters: [F_DATE_FROM, F_DATE_TO, F_BRANCH, F_PROCESS],
     viewRoles: ROLES_HR_MANAGER,
     exportRoles: ROLES_HR_ADMIN,
     sourceTables: ["leave_request", "leave_type_master", "employees"],
     branchScoped: true,
+    processScoped: true,
+    calculationNotes:
+      "Approved requests only (status = 'approved'); pending, rejected and cancelled are excluded. " +
+      "Dates render as dd-MMM-yy. LEAVE REQUST DATE, LEAVE APPROVED DATE and APPROVED BY are blank " +
+      "wherever the source request carries no requested_at / approved_at / approved_by value.",
   },
 
   {
@@ -1058,58 +1106,15 @@ export const REPORT_CATALOG: ReportDefinition[] = [
     branchScoped: true,
   },
 
-  {
-    code: "maternity-paternity-register",
-    name: "Maternity / Paternity Leave Register",
-    category: "Leave",
-    subcategory: "Special Categories",
-    description: "Maternity and paternity leave records",
-    rowGrain: "One row per leave request",
-    primaryKey: ["employee_code", "from_date"],
-    columns: [
-      { key: "employee_code", label: "Emp Code", format: "text", width: 100 },
-      { key: "employee_name", label: "Employee Name", format: "text", width: 180 },
-      { key: "branch_name", label: "Branch", format: "text", width: 120 },
-      { key: "leave_type", label: "Leave Type", format: "text", width: 120 },
-      { key: "from_date", label: "From Date", format: "date", width: 100 },
-      { key: "to_date", label: "To Date", format: "date", width: 100 },
-      { key: "total_days", label: "Total Days", format: "number", width: 80, align: "right" },
-      { key: "status", label: "Status", format: "status", width: 100 },
-      { key: "expected_return", label: "Expected Return", format: "date", width: 120 },
-    ],
-    filters: [F_YEAR, F_BRANCH],
-    viewRoles: ROLES_HR_ADMIN,
-    exportRoles: ROLES_HR_ADMIN,
-    sourceTables: ["leave_request", "employees"],
-    branchScoped: true,
-  },
-
-  {
-    code: "leave-encashment-register",
-    name: "Leave Encashment Register",
-    category: "Leave",
-    subcategory: "Special Categories",
-    description: "Leave encashment requests and payments",
-    rowGrain: "One row per encashment request",
-    primaryKey: ["employee_code", "encashment_date"],
-    columns: [
-      { key: "employee_code", label: "Emp Code", format: "text", width: 100 },
-      { key: "employee_name", label: "Employee Name", format: "text", width: 180 },
-      { key: "branch_name", label: "Branch", format: "text", width: 120 },
-      { key: "process_name", label: "Process", format: "text", width: 140 },
-      { key: "leave_type", label: "Leave Type", format: "text", width: 120 },
-      { key: "days_encashed", label: "Days Encashed", format: "number", width: 100, align: "right" },
-      { key: "encashment_amount", label: "Amount", format: "currency", width: 120, align: "right" },
-      { key: "encashment_date", label: "Encashment Date", format: "date", width: 120 },
-      { key: "status", label: "Status", format: "status", width: 100 },
-      { key: "payroll_month", label: "Payroll Month", format: "text", width: 100 },
-    ],
-    filters: [F_YEAR, F_BRANCH],
-    viewRoles: ROLES_HR_ADMIN,
-    exportRoles: ROLES_HR_ADMIN,
-    sourceTables: ["leave_encashment", "employees"],
-    branchScoped: true,
-  },
+  // "maternity-paternity-register" is intentionally NOT listed. Maternity and
+  // paternity requests are ordinary leave types and now appear in the Leave
+  // Utilization Report, which covers every leave type with the same columns.
+  //
+  // "leave-encashment-register" is intentionally NOT listed either: it is not
+  // required, and its source table (leave_encashment_request) does not exist.
+  //
+  // Both executors remain registered in EXECUTOR_MAP so any saved request or
+  // deep link that still carries the old code keeps resolving.
 
   {
     code: "leave-lapse-summary",
