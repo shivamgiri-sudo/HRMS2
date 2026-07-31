@@ -3,6 +3,8 @@ import type { Response } from "express";
 import { requireAuth } from "../../middleware/authMiddleware.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
+import { hasAnyRole } from "../../shared/scopeAccess.js";
+import { getEmployeeForUser } from "../../shared/accessGuard.js";
 import { pfCreationService } from "./pf-creation.service.js";
 
 const router = Router();
@@ -57,7 +59,31 @@ router.post("/import-acknowledgement", requireRole("admin", "super_admin", "payr
   return res.json({ success: true, data });
 }));
 
+/**
+ * PF status for one employee.
+ *
+ * "employee" is in the allowed roles so a person can check their own PF
+ * creation status — but requireRole only answers "may you call this", never
+ * "about whom". Without the ownership check below, any authenticated employee
+ * could read a colleague's record by changing the id in the URL, and
+ * getEmployeePfStatus returns epfo_uan_assigned and epfo_member_id_assigned:
+ * UAN and PF member ID, which the charter names as never-expose data.
+ *
+ * Privileged roles are unaffected — they short-circuit before the lookup, so
+ * payroll and HR keep reading any employee exactly as before. Only the
+ * self-service path is narrowed, which is what it was always meant to be.
+ */
 router.get("/employee/:employeeId", requireRole("admin", "super_admin", "payroll_hr", "payroll", "hr", "employee"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const isPrivileged = await hasAnyRole(
+    req.authUser!.id,
+    "admin", "super_admin", "payroll_hr", "payroll", "hr",
+  );
+  if (!isPrivileged) {
+    const own = await getEmployeeForUser(req.authUser!.id);
+    if (!own || own.id !== req.params.employeeId) {
+      return res.status(403).json({ success: false, message: "Forbidden: not your PF record" });
+    }
+  }
   const data = await pfCreationService.getEmployeePfStatus(req.params.employeeId);
   return res.json({ success: true, data });
 }));
