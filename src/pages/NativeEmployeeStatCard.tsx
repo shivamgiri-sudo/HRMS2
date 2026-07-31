@@ -636,7 +636,7 @@ function AssetsTab({ employeeId }: { employeeId: string }) {
   const { data, isLoading } = useQuery({
     queryKey: ["emp-assets", employeeId],
     queryFn: () => hrmsApi.get<{ data: Array<{ id: string; asset_name: string; asset_code: string; category: string; assigned_date: string; condition_at_assignment: string; returned_date: string | null }> }>(
-      `/api/assets/employee/${employeeId}`
+      `/api/assets-mgmt/employee/${employeeId}`
     ),
   });
   const assets = data?.data ?? [];
