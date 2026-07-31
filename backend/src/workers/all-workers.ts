@@ -29,6 +29,7 @@ import { startReportGenerationWorker, stopReportGenerationWorker } from "./repor
 import { startReportEmailDeliveryWorker, stopReportEmailDeliveryWorker } from "./report-email-delivery.worker.js";
 import { startReportStaleRecoveryWorker, stopReportStaleRecoveryWorker } from "./report-stale-recovery.worker.js";
 import { startTatEscalationWorker, stopTatEscalationWorker } from "./tat-escalation.worker.js";
+import { startReportSubscriptionWorker, stopReportSubscriptionWorker } from "./report-subscription.worker.js";
 import { registerNotificationDeliverer } from "../modules/communication/notification.deliverer.js";
 import { clearAllTimers } from "./worker-utils.js";
 
@@ -146,6 +147,12 @@ const WORKERS: Array<{ name: string; start: () => Promise<void> }> = [
     start: startReportStaleRecoveryWorker,
   },
   {
+    // Gated by worker_config.enabled = 0 (migration 1023); individual subscriptions are
+    // additionally is_active=0 and dispatch_mode='shadow' (migration 1025).
+    name: "report-subscription",
+    start: () => { startReportSubscriptionWorker(); return Promise.resolve(); },
+  },
+  {
     // Gated twice over: worker_config.enabled = 0 (migration 1023) stops it running at
     // all, and every SLA event ships dispatch_mode='shadow' so even when it runs it
     // resolves and claims without delivering.
@@ -205,6 +212,7 @@ function shutdown(): void {
   stopReportEmailDeliveryWorker();
   stopReportStaleRecoveryWorker();
   stopTatEscalationWorker();
+  stopReportSubscriptionWorker();
   clearAllTimers();
   console.log("[workers] Clean shutdown complete.");
   process.exit(0);

@@ -15,6 +15,7 @@
     "src/shared/recipient-resolver.types.ts",
     "src/shared/worker-config.ts",
     "src/modules/communication/notification.gateway.ts",
+    "src/modules/roster/roster.notifications.ts",
     "src/modules/governance/tat.service.ts",
     "src/workers/tat-escalation.worker.ts",
     "src/workers/report-subscription.worker.ts",
