@@ -188,6 +188,32 @@ jobs:
           done
           exit 1
 
+      # These seven suites cover payroll authorization, role administration, the
+      # access audit log, ATS scope, PII masking, audit logging, employee
+      # privacy/ownership and the feedback workflow. Every one of them was 100%
+      # failing on main for over a month — each sent a "<role>.token" placeholder
+      # that stopped authenticating when auth moved to MySQL JWTs, so all they
+      # proved was that unauthenticated requests get rejected.
+      #
+      # Nothing caught it, because this job ran a hand-picked list that happened
+      # not to include them. Listing them here is the point: a security suite
+      # that is not in CI is a security suite that can rot silently.
+      - name: Payroll, access and lifecycle security suites
+        shell: bash
+        run: |
+          for attempt in 1 2; do
+            (cd backend && npm exec -- vitest run \
+              tests/payroll.security.test.ts \
+              tests/pr16.security.test.ts \
+              tests/platform.foundation.test.ts \
+              tests/ats.wfm.completion.test.ts \
+              tests/management.performance.test.ts \
+              tests/performance-feedback.integration.test.ts \
+              tests/employee.lifecycle.test.ts) && exit 0
+            echo "Payroll/access/lifecycle security suites attempt $attempt failed."
+          done
+          exit 1
+
   finance-validation:
     name: Finance API and schema contract
     runs-on: ubuntu-latest
