@@ -736,6 +736,25 @@ async function triggerRealBgvChecksAsync(
   await syncBgvReport(candidateId, adapter.providerKey);
 }
 
+/**
+ * Decrypt a stored PAN for a provider call, or null when it cannot be used.
+ *
+ * A decrypt failure must never break the BGV trigger: an unreadable ciphertext
+ * (rotated key, row written elsewhere) falls back to the legacy column and the
+ * check lands in manual review exactly as before.
+ */
+function decryptPanForProvider(encrypted: unknown): string | null {
+  const value = nonEmptyString(encrypted);
+  if (!value) return null;
+  try {
+    const pan = String(decrypt(value)).trim().toUpperCase();
+    return /^[A-Z]{5}[0-9]{4}[A-Z]$/.test(pan) ? pan : null;
+  } catch (error) {
+    console.warn("[BGV] Could not decrypt stored PAN - falling back to manual review:", error instanceof Error ? error.message : String(error));
+    return null;
+  }
+}
+
 export async function loadAsyncBgvTriggerContext(
   candidateId: string,
   decryptAccountNumber: (value: string) => string = decrypt,
@@ -746,6 +765,8 @@ export async function loadAsyncBgvTriggerContext(
        c.mobile,
        c.email,
        c.pan_number,
+       -- Ciphertext, decrypted below solely to make the provider call.
+       p.pan_number_encrypted,
        -- Aadhaar offline verification only needs the last 4 digits, which the
        -- masked value carries ("XXXX-XXXX-1234"). Read it from the profile rather
        -- than depending on the raw column, which this flow no longer writes.
@@ -790,7 +811,7 @@ export async function loadAsyncBgvTriggerContext(
       full_name: nonEmptyString(candidateRow.full_name),
       mobile: nonEmptyString(candidateRow.mobile),
       email: nonEmptyString(candidateRow.email),
-      pan_number: nonEmptyString(candidateRow.pan_number),
+      pan_number: decryptPanForProvider(candidateRow.pan_number_encrypted) ?? nonEmptyString(candidateRow.pan_number),
       aadhar_number: nonEmptyString(candidateRow.aadhar_number),
       uan_number: nonEmptyString(candidateRow.uan_number),
       date_of_birth: nonEmptyString(candidateRow.date_of_birth),
@@ -1108,6 +1129,13 @@ export async function saveEmployeeDetails(token: string, input: Record<string, u
   const id = randomUUID();
   const panMasked = maskPan(input.panNumber ?? input.pan_number ?? input.pan_number_masked);
   const panHash = hashValue(input.panNumber ?? input.pan_number);
+  // Encrypted at rest so PAN verification can actually run. The masked form is not
+  // a PAN and the hash is one-way, so neither can be sent to a provider - which is
+  // why automatic PAN verification could never fire. Same treatment bank account
+  // numbers already get: only the server decrypts it, and the browser still only
+  // ever receives the masked value.
+  const rawPan = String(input.panNumber ?? input.pan_number ?? "").trim().toUpperCase();
+  const panEncrypted = /^[A-Z]{5}[0-9]{4}[A-Z]$/.test(rawPan) ? encrypt(rawPan) : null;
   const aadhaarMasked = maskAadhaar(input.aadhaarNumber ?? input.aadhar_number ?? input.aadhaar_number);
   const aadhaarHash = hashValue(input.aadhaarNumber ?? input.aadhar_number ?? input.aadhaar_number);
 
@@ -1123,13 +1151,13 @@ export async function saveEmployeeDetails(token: string, input: Record<string, u
         nominee2_name, nominee2_relation, nominee2_dob, nominee2_share_pct,
         permanent_address, permanent_state, permanent_city, permanent_pincode,
         present_address, present_state, present_city, present_pincode, mobile_number, alt_mobile_number,
-        personal_email_id, official_email_id, pan_number_masked, pan_number_hash, aadhaar_number_masked,
+        personal_email_id, official_email_id, pan_number_masked, pan_number_hash, pan_number_encrypted, aadhaar_number_masked,
         aadhaar_number_hash, passport_no, driving_license_no,
         uan_number, epf_number, esic_number,
         source_type, source, profile_status,
         mother_name, emergency_contact_name, emergency_contact_relation, emergency_contact_mobile,
         nationality, religion, category, address_proof_type)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'employee_details_saved', ?, ?, ?, ?, ?, ?, ?, ?)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'employee_details_saved', ?, ?, ?, ?, ?, ?, ?, ?)
      ON DUPLICATE KEY UPDATE
         title = VALUES(title), employee_name = VALUES(employee_name), relation = VALUES(relation),
         father_husband_name = VALUES(father_husband_name), gender = VALUES(gender), marital_status = VALUES(marital_status),
@@ -1144,6 +1172,7 @@ export async function saveEmployeeDetails(token: string, input: Record<string, u
         alt_mobile_number = VALUES(alt_mobile_number), personal_email_id = VALUES(personal_email_id), official_email_id = VALUES(official_email_id),
         pan_number_masked = COALESCE(VALUES(pan_number_masked), pan_number_masked),
         pan_number_hash = COALESCE(VALUES(pan_number_hash), pan_number_hash),
+        pan_number_encrypted = COALESCE(VALUES(pan_number_encrypted), pan_number_encrypted),
         aadhaar_number_masked = COALESCE(VALUES(aadhaar_number_masked), aadhaar_number_masked),
         aadhaar_number_hash = COALESCE(VALUES(aadhaar_number_hash), aadhaar_number_hash),
         passport_no = VALUES(passport_no), driving_license_no = VALUES(driving_license_no),
@@ -1188,6 +1217,7 @@ export async function saveEmployeeDetails(token: string, input: Record<string, u
       input.officialEmailId ?? null,
       panMasked,
       panHash,
+      panEncrypted,
       aadhaarMasked,
       aadhaarHash,
       input.passportNo ?? input["passportNumber"] ?? input["passport_number"] ?? null,
