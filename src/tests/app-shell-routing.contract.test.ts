@@ -205,6 +205,10 @@ describe("application shell routing contracts", () => {
       "/super-admin/live-location",
       "/terms-of-service",
       "/two-factor",
+      // Public kiosk/gate pages, same class as the two below: reached by QR or a
+      // direct link at reception, never from the sidebar. /visitor-gate was mounted
+      // without an allowlist entry, which left this contract red on main.
+      "/visitor-gate",
       "/visitor-register",
       "/visitor-status",
       "/walkin-registration",

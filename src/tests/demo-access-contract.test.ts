@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { getDemoCred, resolveActiveDemoCredential } from "@/lib/demoCreds";
-import { COMMON_USER_PAGE_CODES, ROLE_DASHBOARD_PAGE_CODES } from "@/lib/rbacPageMatrix";
+import { COMMON_USER_PAGE_CODES, ROLE_DASHBOARD_PAGE_CODES, ROLE_EXCLUDED_PAGE_CODES } from "@/lib/rbacPageMatrix";
 
 const NON_COMMON_ROLE_DASHBOARD_CODES = ROLE_DASHBOARD_PAGE_CODES.filter(
   (pageCode) => !COMMON_USER_PAGE_CODES.includes(pageCode as any),
@@ -72,7 +72,21 @@ describe("demo access contract", () => {
     "trainer@mascallnet.com",
     "demo@mascallnet.com",
   ])("grants common employee pages to %s", (email) => {
-    const pages = getDemoCred(email)?.pages ?? [];
-    expect(COMMON_USER_PAGE_CODES.every((pageCode) => pages.includes(pageCode))).toBe(true);
+    const cred = getDemoCred(email);
+    const pages = cred?.pages ?? [];
+
+    // Every common page EXCEPT any the credential's role explicitly excludes.
+    // ROLE_EXCLUDED_PAGE_CODES was introduced 31-Jul-2026 so the CEO — who is not
+    // measured on operational KPIs — no longer receives MY_KPI. Demo credentials
+    // derive their pages from getRolePageCodes, so they inherit the exclusion.
+    // Reading the exclusion list rather than hardcoding the CEO keeps an
+    // undocumented removal failing while a declared one passes.
+    const excluded = new Set(ROLE_EXCLUDED_PAGE_CODES[cred?.role ?? ""] ?? []);
+    const expected = COMMON_USER_PAGE_CODES.filter((pageCode) => !excluded.has(pageCode));
+
+    expect(expected.every((pageCode) => pages.includes(pageCode))).toBe(true);
+    for (const pageCode of excluded) {
+      expect(pages).not.toContain(pageCode);
+    }
   });
 });
