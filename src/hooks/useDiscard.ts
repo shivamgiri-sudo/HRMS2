@@ -100,19 +100,64 @@ export function useDiscardPreview(entityType: DiscardEntityType | null, id: stri
   });
 }
 
-/** Every cache a discard can invalidate — balances, lists, counters, history. */
-const AFFECTED_QUERY_KEYS = [
+/**
+ * Every cache a discard can invalidate.
+ *
+ * A discard changes three things at once — leave balance, attendance, and the
+ * payroll figures derived from attendance — so anything reading any of those has
+ * to be refetched. Several of these carry a 5-minute staleTime (the dashboards,
+ * `attendance-monthly`, the calendar widget), so without an explicit invalidation
+ * they show pre-discard numbers for minutes, not seconds.
+ *
+ * Keys are matched element-by-element, not by substring: `["attendance-hub"]`
+ * matches nothing at all, and does not prefix-match
+ * `["attendance-hub-filter-options"]`. Every entry below was checked against a
+ * real `useQuery` call site.
+ *
+ * Not listed, deliberately: the Regularization and Disputes pages hold their rows
+ * in `useState` rather than TanStack, so they cannot be invalidated — they are
+ * refreshed instead through the dialog's `onDiscarded` callback.
+ */
+export const AFFECTED_QUERY_KEYS = [
+  // ── Leave ────────────────────────────────────────────────────────────────
   ["leave-requests"],
-  ["leave-stats"],
   ["leave-balances"],
   ["leave-balance"],
   ["leave-eligibility"],
   ["team-leaves"],
-  ["regularizations"],
   ["regularization-history"],
-  ["attendance-disputes"],
-  ["attendance-hub"],
+
+  // ── Attendance ───────────────────────────────────────────────────────────
+  ["hub-employees"],          // Attendance Hub / Attendance Lookup table
+  ["hub-today-summary"],      // Hub header counters
+  ["attendance-summary"],     // Hub drawer → Attendance tab
   ["attendance-daily"],
+  ["attendance-ncosec"],      // main Attendance page table
+  ["attendance-my-summary"],  // Attendance page tiles (present / LWP / absent)
+  ["attendance-calendar"],
+  ["adr-calendar"],
+  ["day-detail"],
+  ["attendance-today"],
+  ["attendance-monthly"],
+  ["team-attendance-daily"],
+  ["my-attendance-history"],
+  ["emp-attendance"],
+
+  // ── Payroll (a leave/LWP change moves earned salary) ─────────────────────
+  ["running-salary"],
+  ["payslip-history"],
+  ["payslip-detail"],
+  ["payroll-line-attendance"],
+  ["payroll-attendance-control-tower"],
+
+  // ── Dashboards ───────────────────────────────────────────────────────────
+  ["dashboard-employee-summary"],
+  ["dashboard-workforce-attendance"],
+  ["dashboard-attendance"],
+  ["dashboard-summary"],
+  ["reference-dashboard-summary"],
+
+  // ── This feature ─────────────────────────────────────────────────────────
   ["discard-history"],
   ["pending-approvals"],
 ];
