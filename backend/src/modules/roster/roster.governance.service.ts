@@ -4,6 +4,7 @@ import type { Request } from "express";
 import { db } from "../../db/mysql.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
 import { sendSMS } from "../communication/sms.helper.js";
+import { notifyRosterPublished } from "./roster.notifications.js";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -295,6 +296,26 @@ export const rosterGovernanceService = {
     const setClause = ["status = ?", ...extra].join(", ");
     await db.execute(`UPDATE weekly_roster_cycle SET ${setClause} WHERE id = ?`, [newStatus, ...params, id]);
     await logSensitiveAction({ actor_user_id: userId, action_type: "ROSTER_CYCLE_STATUS_CHANGED", module_key: "roster_gov", entity_type: "weekly_roster_cycle", entity_id: id, change_summary: { from: cycle.status, to: newStatus, process_id: cycle.process_id }, req });
+
+    // Email per rostered employee (fire-and-forget), alongside the SMS blast below
+    // rather than instead of it. Ships in shadow.
+    if (newStatus === 'published') {
+      setImmediate(async () => {
+        try {
+          const stats = await notifyRosterPublished({
+            id,
+            branch_id: cycle.branch_id,
+            process_id: cycle.process_id,
+            week_start_date: cycle.week_start_date,
+            week_end_date: cycle.week_end_date,
+            ack_deadline: (cycle as { ack_deadline?: string | null }).ack_deadline ?? null,
+          });
+          console.log(`[roster-notify] cycle ${id}: ${stats.employees} employees`);
+        } catch (err) {
+          console.error(`[roster-notify] cycle ${id} failed:`, (err as Error).message);
+        }
+      });
+    }
 
     // SMS blast to all employees on this roster when published (fire-and-forget)
     if (newStatus === 'published') {

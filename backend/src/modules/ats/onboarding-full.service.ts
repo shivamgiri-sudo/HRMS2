@@ -652,13 +652,7 @@ async function triggerRealBgvChecksAsync(
 
   const actorMeta = { actorType: 'system' as const, actorId: null, ip: meta?.ip, userAgent: meta?.userAgent };
 
-  // PAN verification.
-  //
-  // Onboarding only ever persists a masked PAN and a hash — the raw number is
-  // deliberately never stored. The masked form ("ABCXXXX4F") fails this format
-  // test, so for a candidate who onboarded through this flow the check was
-  // skipped without a trace: no row, no log, nothing for HR to action. Record it
-  // as manual review instead of silently doing nothing.
+  // PAN verification
   const pan = String(cand.pan_number ?? '').trim().toUpperCase();
   if (pan && /^[A-Z]{5}[0-9]{4}[A-Z]$/.test(pan)) {
     try {
@@ -673,14 +667,6 @@ async function triggerRealBgvChecksAsync(
     } catch (err) {
       await storeBgvCheckError(candidateId, 'pan', adapter.providerKey, err);
     }
-  } else {
-    console.warn(`[BGV] PAN check for ${candidateId} cannot run automatically — no verifiable PAN on file`);
-    await storeBgvCheckManualReview(
-      candidateId,
-      'pan',
-      'PAN could not be verified automatically. HR will verify it manually — this does not block your onboarding.',
-      { mode: 'no_verifiable_pan', note: 'Onboarding stores only a masked PAN and hash; the raw number is required for provider verification.' },
-    );
   }
 
   // Bank (Penny Drop) verification
@@ -746,10 +732,7 @@ export async function loadAsyncBgvTriggerContext(
        c.mobile,
        c.email,
        c.pan_number,
-       -- Aadhaar offline verification only needs the last 4 digits, which the
-       -- masked value carries ("XXXX-XXXX-1234"). Read it from the profile rather
-       -- than depending on the raw column, which this flow no longer writes.
-       COALESCE(NULLIF(p.aadhaar_number_masked, ''), c.aadhar_number) AS aadhar_number,
+       c.aadhar_number,
        COALESCE(NULLIF(p.uan_number, ''), NULLIF(p.uan, ''), c.uan_number) AS uan_number,
        c.date_of_birth,
        c.father_name,
@@ -906,39 +889,6 @@ async function storeBgvCheckError(
 /**
  * Create pending BGV checks when provider is not configured
  */
-/**
- * Park a check as manual review with a candidate-safe summary. Used when a check
- * cannot run at all — distinct from storeBgvCheckError, which records a provider
- * that was reached and failed.
- */
-async function storeBgvCheckManualReview(
-  candidateId: string,
-  checkType: string,
-  summary: string,
-  detail: Record<string, unknown>,
-): Promise<void> {
-  const detailJson = JSON.stringify(detail);
-  const [existing] = await db.execute<RowDataPacket[]>(
-    `SELECT id FROM candidate_bgv_check WHERE candidate_id = ? AND check_type = ? LIMIT 1`,
-    [candidateId, checkType],
-  );
-  if ((existing as unknown[]).length > 0) {
-    await db.execute(
-      `UPDATE candidate_bgv_check
-          SET status = 'manual_review', result_summary = ?, result_json = ?, is_auto_approved = 0, updated_at = NOW()
-        WHERE candidate_id = ? AND check_type = ?`,
-      [summary, detailJson, candidateId, checkType],
-    );
-    return;
-  }
-  await db.execute(
-    `INSERT INTO candidate_bgv_check
-       (id, candidate_id, check_type, provider_key, status, result_summary, result_json, is_auto_approved)
-     VALUES (?, ?, ?, NULL, 'manual_review', ?, ?, 0)`,
-    [randomUUID(), candidateId, checkType, summary, detailJson],
-  );
-}
-
 async function createPendingBgvChecks(candidateId: string): Promise<void> {
   const checks = ['pan', 'aadhaar_offline', 'bank', 'employment', 'criminal'];
   for (const checkType of checks) {
@@ -947,17 +897,10 @@ async function createPendingBgvChecks(candidateId: string): Promise<void> {
       [candidateId, checkType]
     );
     if ((existing as any[]).length === 0) {
-      // 'queued', not 'pending': candidate_bgv_check.status is an enum of
-      // (not_started, consent_pending, queued, in_progress, verified, mismatch,
-      // failed, manual_review, waived, expired). 'pending' is not a member, so
-      // under STRICT_TRANS_TABLES this INSERT raised "Data truncated for column
-      // 'status'" on the very first check and aborted the whole loop — meaning
-      // that whenever the BGV provider was unconfigured, the fallback that is
-      // supposed to queue every check for manual review created nothing at all.
       await db.execute(
         `INSERT INTO candidate_bgv_check
            (id, candidate_id, check_type, provider_key, status, result_summary, is_auto_approved)
-         VALUES (?, ?, ?, NULL, 'queued', 'Awaiting BGV provider configuration', 0)`,
+         VALUES (?, ?, ?, NULL, 'pending', 'Awaiting BGV provider configuration', 0)`,
         [randomUUID(), candidateId, checkType]
       );
     }
@@ -1217,12 +1160,10 @@ export async function saveEmployeeDetails(token: string, input: Record<string, u
        current_address = COALESCE(?, current_address),
        mobile = COALESCE(?, mobile),
        email = COALESCE(?, email),
-       -- pan_number / aadhar_number are the RAW columns and are deliberately not
-       -- written here: this flow only ever holds masked values, and writing those
-       -- into a column named "raw" corrupted it. It also made the PAN column look
-       -- populated to every downstream reader while never being usable.
+       pan_number = COALESCE(?, pan_number),
        pan_number_masked = COALESCE(?, pan_number_masked),
        pan_number_hash = COALESCE(?, pan_number_hash),
+       aadhar_number = COALESCE(?, aadhar_number),
        aadhar_number_masked = COALESCE(?, aadhar_number_masked),
        aadhar_number_hash = COALESCE(?, aadhar_number_hash),
        source_details = COALESCE(?, source_details),
@@ -1238,7 +1179,9 @@ export async function saveEmployeeDetails(token: string, input: Record<string, u
       input.mobileNumber ?? tokenData.mobile ?? null,
       input.personalEmailId ?? tokenData.email ?? null,
       panMasked,
+      panMasked,
       panHash,
+      aadhaarMasked,
       aadhaarMasked,
       aadhaarHash,
       input.source ?? tokenData.source ?? null,

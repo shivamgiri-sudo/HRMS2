@@ -7,6 +7,7 @@ import { logger } from "../../lib/logger.js";
 import { sendSMS } from "../communication/sms.helper.js";
 import type { ExitRequest, ExitStats, PaginatedResult } from "./exit.types.js";
 import { createDefaultClearanceTasks, createExitHealthSnapshot } from "./exit-intelligence.service.js";
+import { notifyResignationSubmitted, notifyResignationDecision } from "./exit.notifications.js";
 
 // Singleton transporter — created once at module load, not per-call
 const mailer = nodemailer.createTransport({
@@ -199,11 +200,15 @@ export const exitService = {
       return null;
     });
 
-    // Fire-and-forget: notify manager of resignation
-    notifyManagerOfResignation(input.employeeId, id).catch((err: unknown) => {
-      logger.error({ err, exitRequestId: id }, '[exit] Manager notification failed');
-      return null;
-    });
+    // Fire-and-forget: notify manager of resignation.
+    // Strangler: the gateway reports delivered only once resignation_submitted is
+    // live; until then the legacy mailer still covers it. Never a double send.
+    void notifyResignationSubmitted(id)
+      .then((delivered) => (delivered ? null : notifyManagerOfResignation(input.employeeId, id)))
+      .catch((err: unknown) => {
+        logger.error({ err, exitRequestId: id }, '[exit] Manager notification failed');
+        return null;
+      });
 
     // SMS — separation initiated (fire-and-forget)
     try {
@@ -248,6 +253,16 @@ export const exitService = {
        VALUES (UUID(), ?, ?, ?, ?, ?)`,
       [id, nextStatus, "status_update", userId, remarks]
     );
+
+    // Email only on the outcomes the employee is entitled to hear about. The
+    // intermediate review stages are internal queue movements.
+    setImmediate(() => {
+      const decision =
+        nextStatus === "accepted" ? "accepted" :
+        nextStatus === "rejected" ? "rejected" :
+        nextStatus === "revoked"  ? "revoked"  : null;
+      if (decision) void notifyResignationDecision(id, decision);
+    });
 
     if (["accepted", "notice_serving"].includes(nextStatus)) {
       await createDefaultClearanceTasks(id, (existing as any).employee_id).catch((err: unknown) => {

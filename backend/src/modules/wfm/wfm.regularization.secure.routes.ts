@@ -7,6 +7,7 @@ import { buildScopeWhereClause, hasAnyRole, hasScopedAccess } from "../../shared
 import { regularizationSchema } from "./wfm.validation.js";
 import { wfmService } from "./wfm.service.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
+import { notifyRegularizationDecision, notifyRegularizationStage2Pending } from "./attendance.notifications.js";
 
 export const wfmRegularizationSecureRouter = Router();
 wfmRegularizationSecureRouter.use(requireAuth);
@@ -344,6 +345,16 @@ async function _performReview(req: any, regularizationId: string): Promise<Revie
     : status === "manager_approved"
       ? "REGULARIZATION_MANAGER_APPROVED"
       : "REGULARIZATION_REJECTED";
+
+  // Email notification (fire-and-forget), alongside the audit log below. A final
+  // decision tells the employee; manager_approved tells the WFM chain. Shadow.
+  setImmediate(() => {
+    if (status === "approved" || status === "rejected") {
+      void notifyRegularizationDecision(regularizationId, status, reviewerNote);
+    } else if (status === "manager_approved") {
+      void notifyRegularizationStage2Pending(regularizationId);
+    }
+  });
 
   void logSensitiveAction({
     actor_user_id: req.authUser.id,

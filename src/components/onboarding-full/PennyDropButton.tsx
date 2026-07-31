@@ -1,26 +1,7 @@
 import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { CheckCircle2, Loader2, AlertCircle } from "lucide-react";
-import { hrmsApi, getHrmsApiErrorStatus, type HrmsApiError } from "@/lib/hrmsApi";
-
-/** `{ success, data }` envelope — hrmsApi hands back the body, so data is one level down. */
-type BgvCheckRow = { check_type?: string; status?: string; result_summary?: string | null };
-type BgvStatusEnvelope = { data?: { checks?: BgvCheckRow[] } };
-
-function bankCheckOf(body: BgvStatusEnvelope | undefined): BgvCheckRow | undefined {
-  return (body?.data?.checks ?? []).find((c) => c.check_type === "bank");
-}
-
-/** HrmsApiError carries the parsed body on .payload; there is no axios .response. */
-function apiErrorMessage(err: unknown, fallback: string): string {
-  const payload = (err as HrmsApiError | undefined)?.payload as
-    | { message?: unknown; error?: unknown }
-    | undefined;
-  const fromPayload = payload?.message ?? payload?.error;
-  if (typeof fromPayload === "string" && fromPayload) return fromPayload;
-  const message = (err as Error | undefined)?.message;
-  return typeof message === "string" && message ? message : fallback;
-}
+import { hrmsApi } from "@/lib/hrmsApi";
 
 export function PennyDropButton({
   token,
@@ -45,10 +26,11 @@ export function PennyDropButton({
     async function checkExisting() {
       if (!token) return;
       try {
-        const res = await hrmsApi.get<BgvStatusEnvelope>(`/api/ats/bgv/status?token=${encodeURIComponent(token)}`);
-        const bankCheck = bankCheckOf(res);
+        const res = await hrmsApi.get(`/api/ats/bgv/status?token=${encodeURIComponent(token)}`);
+        const checks: any[] = res.data?.data?.checks ?? [];
+        const bankCheck = checks.find((c: any) => c.check_type === "bank");
         if (bankCheck) {
-          setBankStatus(bankCheck.status ?? null);
+          setBankStatus(bankCheck.status);
           setResultSummary(bankCheck.result_summary ?? null);
         }
       } catch {
@@ -62,16 +44,17 @@ export function PennyDropButton({
     setLoading(true);
     setError(null);
     try {
-      const res = await hrmsApi.post<BgvStatusEnvelope>("/api/ats/bgv/verify/bank", {
+      const res = await hrmsApi.post("/api/ats/bgv/verify/bank", {
         token,
         accountNo,
         ifscCode,
         accountHolderName,
       });
 
-      const bankCheck = bankCheckOf(res);
+      const checks: any[] = res.data?.data?.checks ?? [];
+      const bankCheck = checks.find((c: any) => c.check_type === "bank");
       if (bankCheck) {
-        setBankStatus(bankCheck.status ?? null);
+        setBankStatus(bankCheck.status);
         setResultSummary(bankCheck.result_summary ?? null);
       } else {
         // Response succeeded but no bank check record yet — treat as queued
@@ -79,8 +62,8 @@ export function PennyDropButton({
         setResultSummary("Bank verification queued for review.");
       }
     } catch (err: any) {
-      const status = getHrmsApiErrorStatus(err);
-      const msg = apiErrorMessage(err, "Verification failed. Please try again.");
+      const status = err.response?.status;
+      const msg = err.response?.data?.message ?? err.response?.data?.error ?? err.message;
 
       if (status === 403) {
         setError("BGV consent is required before bank verification. Please complete Step 5 first.");
