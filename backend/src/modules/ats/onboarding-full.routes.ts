@@ -181,19 +181,56 @@ async function streamOnboardingDocument(
   return fs.createReadStream(filePath).pipe(res);
 }
 
-/** 60 req/min per IP — general candidate onboarding read/write */
+/**
+ * Rate-limit identity for candidate routes.
+ *
+ * Keying on IP was wrong twice over. A branch office NATs every candidate behind
+ * one public address, so candidates onboarding at the same time ate each other's
+ * budget; and one candidate's own journey legitimately issues far more writes than
+ * the old 10/min cap allowed — a single pass through the form burned the budget at
+ * the document step, after which bank, education, experience, family, statutory and
+ * submit all failed with "Too many requests". Keying on the onboarding token scopes
+ * the budget to one candidate, which is the unit we actually want to protect.
+ */
+function candidateRateKey(req: Request): string {
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  const token = String(body.token ?? req.query.token ?? "").trim();
+  if (token) return `tok:${createHash("sha256").update(token).digest("hex").slice(0, 32)}`;
+  return `ip:${req.ip ?? req.socket.remoteAddress ?? "unknown"}`;
+}
+
+const limiterValidate = { keyGeneratorIpFallback: false as const };
+
+/** 120 reads/min per candidate — /status is refetched after every save. */
 const candidateReadLimiter = rateLimit({
-  windowMs: 60 * 1000, max: 60, standardHeaders: true, legacyHeaders: false,
+  windowMs: 60 * 1000, max: 120, standardHeaders: true, legacyHeaders: false,
+  keyGenerator: candidateRateKey, validate: limiterValidate,
   message: { success: false, message: "Too many requests, please slow down" },
 });
-/** 10 req/min per IP — document upload, submit, and sensitive operations */
+/** 100 writes/min per candidate — abuse guard, not a brake on normal form use. */
 const candidateWriteLimiter = rateLimit({
-  windowMs: 60 * 1000, max: 10, standardHeaders: true, legacyHeaders: false,
+  windowMs: 60 * 1000, max: 100, standardHeaders: true, legacyHeaders: false,
+  keyGenerator: candidateRateKey, validate: limiterValidate,
   message: { success: false, message: "Too many requests, please slow down" },
 });
-/** 5 req/min per IP — submission endpoint */
+/**
+ * 30 uploads/min per candidate. Mounted AFTER multer so req.body.token exists —
+ * multipart fields are not parsed before it — which means the file is already on
+ * disk when we reject, so the handler removes it rather than orphaning it.
+ */
+const candidateUploadLimiter = rateLimit({
+  windowMs: 60 * 1000, max: 30, standardHeaders: true, legacyHeaders: false,
+  keyGenerator: candidateRateKey, validate: limiterValidate,
+  handler: (req: Request, res: Response) => {
+    const uploaded = (req as Request & { file?: { path?: string } }).file;
+    if (uploaded?.path) fs.unlink(uploaded.path, () => { /* best effort */ });
+    res.status(429).json({ success: false, message: "Too many uploads, please wait a moment and try again" });
+  },
+});
+/** 10 submissions/min per candidate — retrying a failed submit must not lock them out. */
 const candidateSubmitLimiter = rateLimit({
-  windowMs: 60 * 1000, max: 5, standardHeaders: true, legacyHeaders: false,
+  windowMs: 60 * 1000, max: 10, standardHeaders: true, legacyHeaders: false,
+  keyGenerator: candidateRateKey, validate: limiterValidate,
   message: { success: false, message: "Too many submission attempts, please wait" },
 });
 
@@ -263,7 +300,7 @@ router.post("/final-section", candidateWriteLimiter, h(async (req, res) => {
   return res.json({ success: true, data: await saveFinalSection(token, input, meta(req)) });
 }));
 
-router.post("/documents", candidateWriteLimiter, upload.single("file"), h(async (req, res) => {
+router.post("/documents", upload.single("file"), candidateUploadLimiter, h(async (req, res) => {
   const token = String(req.body.token ?? "");
   if (!token) return res.status(400).json({ success: false, message: "token required" });
   if (!req.file) return res.status(400).json({ success: false, message: "file required" });

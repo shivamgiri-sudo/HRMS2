@@ -1417,6 +1417,50 @@ export async function savePfOptOutConsent(token: string, input: Record<string, u
   return saveStatutory(token, { ...input, pf_opt_out_consent: true });
 }
 
+/**
+ * Documents a candidate must have on file before the profile can be submitted,
+ * with the spellings the upload form actually produces. Submit used to check only
+ * that a profile row and a bank row existed, so a candidate whose uploads all
+ * failed still reached "submitted" with nothing attached — on production that is
+ * how 15 of 38 submitted candidates ended up with no identity documents at all,
+ * two of them already approved.
+ */
+const MANDATORY_DOCUMENTS: Array<{ label: string; matches: string[] }> = [
+  { label: "Aadhaar Card", matches: ["aadhaar", "aadhar"] },
+  { label: "PAN Card", matches: ["pan"] },
+  { label: "Address Proof", matches: ["address proof"] },
+  { label: "Cancelled Cheque / Bank Passbook", matches: ["cancelled cheque", "cheque", "passbook"] },
+  { label: "Passport Size Photo", matches: ["passport photo", "passport size", "photo"] },
+  { label: "10th Marksheet", matches: ["10th"] },
+  { label: "12th Marksheet / Diploma", matches: ["12th", "diploma"] },
+];
+
+/** Returns the labels of mandatory documents this candidate has not provided. */
+async function findMissingMandatoryDocuments(candidateId: string): Promise<string[]> {
+  const [docRows] = await db.execute<RowDataPacket[]>(
+    `SELECT doc_type, doc_name FROM candidate_onboarding_document WHERE candidate_id = ?`,
+    [candidateId],
+  );
+  const held = docRows
+    .map((r) => `${String(r.doc_type ?? "")} ${String(r.doc_name ?? "")}`.toLowerCase())
+    .filter(Boolean);
+
+  // DigiLocker pulls Aadhaar and PAN straight from the government source, so a
+  // completed DigiLocker session satisfies them without a manual re-upload.
+  const [bridgeRows] = await db.execute<RowDataPacket[]>(
+    `SELECT digilocker_status FROM ats_onboarding_bridge WHERE candidate_id = ? ORDER BY created_at DESC LIMIT 1`,
+    [candidateId],
+  );
+  const digilockerDone = String(bridgeRows[0]?.digilocker_status ?? "") === "documents_received";
+
+  return MANDATORY_DOCUMENTS.filter((req) => {
+    if (digilockerDone && (req.matches.includes("aadhaar") || req.matches.includes("pan"))) return false;
+    // "photo" must not be satisfied by "Photocopy of ..." style names, so compare
+    // against the whole doc_type/doc_name text rather than a bare substring of one word.
+    return !held.some((text) => req.matches.some((m) => text.includes(m)));
+  }).map((r) => r.label);
+}
+
 export async function submitFullOnboarding(token: string, meta?: { ip?: string; userAgent?: string }) {
   const tokenData = await validateOnboardingToken(token);
   const candidateId = tokenData.candidate_id as string;
@@ -1433,6 +1477,14 @@ export async function submitFullOnboarding(token: string, meta?: { ip?: string; 
     [candidateId]
   );
   if (!bankRows.length) throw Object.assign(new Error("Bank details are required before submit"), { statusCode: 400 });
+
+  const missingDocuments = await findMissingMandatoryDocuments(candidateId);
+  if (missingDocuments.length) {
+    throw Object.assign(
+      new Error(`Please upload these required documents before submitting: ${missingDocuments.join(", ")}.`),
+      { statusCode: 400, code: "MISSING_REQUIRED_DOCUMENTS" },
+    );
+  }
 
   await db.execute(
     `UPDATE candidate_onboarding_profile SET profile_status = 'submitted', submitted_at = NOW(), updated_at = NOW()

@@ -159,6 +159,8 @@ export default function CandidateOnboardingFullPage() {
           onSave={onb.saveEmployee}
           digilockerStatus={onb.status?.digilocker?.status}
           onDigilocker={onb.startDigilocker}
+          consentAccepted={onb.consentAccepted}
+          onConsent={onb.grantConsent}
         />
       )}
 

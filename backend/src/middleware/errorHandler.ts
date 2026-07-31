@@ -1,4 +1,5 @@
 import type { NextFunction, Request, Response } from "express";
+import { randomBytes } from "crypto";
 import { ZodError } from "zod";
 
 const IS_PROD = process.env.NODE_ENV === "production";
@@ -37,16 +38,39 @@ export function errorHandler(
         message: error.message
       });
     }
-    // 5xx errors: never leak internal details (DB schema, stack traces) in production
-    const clientMessage = IS_PROD ? "An unexpected server error occurred" : error.message;
-    return res.status(statusCode && statusCode >= 500 ? statusCode : 500).json({
+    // An explicit 5xx statusCode means the code chose that status and wrote that
+    // message for the candidate — "DigiLocker is temporarily unavailable, upload
+    // manually instead", "Live BGV provider is not configured". Masking those was
+    // showing candidates "An unexpected server error occurred" for conditions the
+    // product already had clear, actionable wording for, and left them with no idea
+    // what to do next. Only genuinely unexpected throws (no statusCode) are masked.
+    if (statusCode && statusCode >= 500) {
+      return res.status(statusCode).json({
+        success: false,
+        errorCode: operationalError.code ?? null,
+        message: error.message
+      });
+    }
+    // Unexpected 500: never leak internals (DB schema, stack traces) in production,
+    // but return a reference the candidate can quote so the log line is findable.
+    const reference = randomBytes(4).toString("hex");
+    console.error(`API Error reference=${reference}`, error);
+    return res.status(500).json({
       success: false,
-      message: clientMessage
+      reference,
+      message: IS_PROD
+        ? `An unexpected server error occurred. Please quote reference ${reference} if you contact HR.`
+        : error.message
     });
   }
 
+  const reference = randomBytes(4).toString("hex");
+  console.error(`API Error reference=${reference}`, error);
   return res.status(500).json({
     success: false,
-    message: IS_PROD ? "An unexpected server error occurred" : "Unexpected server error"
+    reference,
+    message: IS_PROD
+      ? `An unexpected server error occurred. Please quote reference ${reference} if you contact HR.`
+      : "Unexpected server error"
   });
 }

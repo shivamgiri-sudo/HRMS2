@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { useCallback, useEffect, useRef, useState } from "react";
-import { hrmsApi } from "@/lib/hrmsApi";
+import { hrmsApi, getHrmsApiErrorStatus } from "@/lib/hrmsApi";
 import { useGeoCapture } from "@/hooks/useGeoCapture";
 
 const API = "/api/ats/onboarding-full";
@@ -124,14 +124,27 @@ function last4FromMasked(masked: unknown): string {
   return digits.length >= 4 ? digits.slice(-4) : "";
 }
 
-// Extract the most useful message from a BGV API error response
+// Extract the most useful message from a BGV API error response.
+//
+// hrmsApi throws an HrmsApiError carrying `.status` and `.payload` — it is not
+// axios and never sets `.response`. Reading `e.response.status` therefore matched
+// nothing, so every status-specific branch below was dead code and candidates got
+// the raw server string for conditions the product had proper wording for.
+function bgvErrorStatus(e: any): number | null {
+  const status = getHrmsApiErrorStatus(e) ?? e?.response?.status ?? e?.status;
+  return typeof status === "number" ? status : null;
+}
+
 function extractBgvError(e: any, fallback: string): string {
-  const status = e?.response?.status;
-  const serverMsg = e?.response?.data?.error ?? e?.response?.data?.message ?? null;
+  const status = bgvErrorStatus(e);
+  const serverMsg =
+    e?.payload?.message ?? e?.payload?.error ??
+    e?.response?.data?.error ?? e?.response?.data?.message ??
+    (typeof e?.message === "string" ? e.message : null);
   if (status === 503) return serverMsg ?? "Verification service is not configured — please contact HR.";
   if (status === 403) return serverMsg ?? "BGV consent required — please complete the consent step first.";
   if (status === 400) return serverMsg ?? fallback;
-  return serverMsg ?? e?.message ?? fallback;
+  return serverMsg ?? fallback;
 }
 
 export const EMPTY_EMPLOYEE: EmployeeForm = {
@@ -508,7 +521,7 @@ export function useOnboardingFull(token: string) {
       setBgvApiAvailable(true);
       await load();
     } catch (e: any) {
-      const status = (e as any)?.response?.status;
+      const status = bgvErrorStatus(e);
       if (status === 503) {
         // BGV service offline — consent not recorded on server; inform HR will process manually
         setBgvApiAvailable(false);

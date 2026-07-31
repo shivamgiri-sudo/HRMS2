@@ -4,6 +4,7 @@ import {
   FileUp, Info, Loader2, ShieldCheck, Trash2, Upload, WifiOff,
 } from "lucide-react";
 import { LiveSelfieCapture } from "./LiveSelfieCapture";
+import { compressImageForUpload } from "@/lib/compressImageForUpload";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -330,6 +331,7 @@ export function Step2Personal({
 
 export function Step3AddressKyc({
   employee, setEmployee, saving, onSave, digilockerStatus, onDigilocker,
+  consentAccepted = false, onConsent,
 }: {
   employee: EmployeeForm;
   setEmployee: React.Dispatch<React.SetStateAction<EmployeeForm>>;
@@ -337,6 +339,8 @@ export function Step3AddressKyc({
   onSave: () => void;
   digilockerStatus?: string;
   onDigilocker?: () => void;
+  consentAccepted?: boolean;
+  onConsent?: () => void;
 }) {
   const upd = (k: keyof EmployeeForm, v: string) => setEmployee((p) => ({ ...p, [k]: v }));
   const [sameAddr, setSameAddr] = useState(() =>
@@ -412,21 +416,52 @@ export function Step3AddressKyc({
             </div>
           </div>
         ) : (
-          <Button
-            onClick={onDigilocker}
-            disabled={saving}
-            size="lg"
-            className="mt-3 min-h-[52px] px-8 text-base font-bold rounded-lg bg-indigo-600 hover:bg-indigo-700"
-          >
-            {saving ? (
-              <>
-                <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                Redirecting to DigiLocker...
-              </>
-            ) : (
-              <>🔗 Connect DigiLocker</>
+          <>
+            {/*
+              DigiLocker was moved here from Step 5, but the background-verification
+              consent it depends on stayed behind on Step 5. Every candidate who
+              pressed Connect before reaching Step 5 got a flat 403 from
+              /bgv/digilocker/start, which is why no DigiLocker session has been
+              created since June. The consent is now asked for at the point of use.
+            */}
+            {!consentAccepted && (
+              <label className="mt-3 flex items-start gap-2.5 rounded-lg border-2 border-indigo-200 bg-indigo-50 p-3 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={false}
+                  onChange={() => onConsent?.()}
+                  disabled={saving}
+                  className="mt-0.5 h-4 w-4 flex-shrink-0 accent-indigo-600"
+                />
+                <span className="text-xs text-indigo-900">
+                  I authorise MAS Callnet to verify my identity documents (Aadhaar and PAN) with
+                  the issuing authority through DigiLocker, for employment onboarding and
+                  statutory compliance.
+                </span>
+              </label>
             )}
-          </Button>
+            <Button
+              onClick={onDigilocker}
+              disabled={saving || !consentAccepted}
+              size="lg"
+              className="mt-3 min-h-[52px] px-8 text-base font-bold rounded-lg bg-indigo-600 hover:bg-indigo-700"
+            >
+              {saving ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                  Redirecting to DigiLocker...
+                </>
+              ) : (
+                <>🔗 Connect DigiLocker</>
+              )}
+            </Button>
+            {!consentAccepted && (
+              <p className="mt-1.5 text-[11px] text-slate-500">
+                Tick the box above to enable DigiLocker, or skip this step and upload your
+                documents manually in Step 4.
+              </p>
+            )}
+          </>
         )}
 
         <SectionHead sub="As on Aadhaar / official document">Step 2: Permanent Address</SectionHead>
@@ -561,8 +596,13 @@ export function Step4Documents({
 
   const handleSelfieCapture = useCallback(async (selfieFile: File) => {
     setSelfieUploading(true);
+    setErr("");
     try {
       await onUpload(selfieFile, "Live Selfie", "Live Selfie (Identity Verification)", "");
+      // Clearing on success matters: a failed attempt used to leave its message on
+      // screen forever, so candidates saw a red "Failed to fetch" sitting directly
+      // under the green "Live Selfie Captured" box from the retry that worked.
+      setErr("");
     } catch (e: any) {
       setErr(e.message || "Selfie upload failed");
     } finally {
@@ -572,10 +612,17 @@ export function Step4Documents({
 
   const upload = async () => {
     if (!file) { setErr("Please select a file first"); return; }
-    if (file.size > 5 * 1024 * 1024) { setErr("File size must be under 5 MB"); return; }
     setUploading(true); setErr("");
     try {
-      await onUpload(file, docType, docName, pageNo);
+      // Re-encode before the size check: a 7 MB phone photo is a perfectly valid
+      // document that used to be rejected outright, and shrinking it also makes
+      // the upload survive a weak mobile connection.
+      const toSend = await compressImageForUpload(file);
+      if (toSend.size > 5 * 1024 * 1024) {
+        setErr("File size must be under 5 MB. Please retake the photo at a lower resolution.");
+        return;
+      }
+      await onUpload(toSend, docType, docName, pageNo);
       setFile(null);
       setPageNo("");
       setFileKey((k) => k + 1);

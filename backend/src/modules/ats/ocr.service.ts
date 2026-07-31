@@ -22,8 +22,16 @@ export async function extractFromDocument(filePath: string, docType: string): Pr
     return { rawText: "", extractedNumber: null, extractedName: null, confidence: 0, documentType: "other" };
   }
 
+  // errorHandler is mandatory here, not cosmetic. When tesseract.js cannot decode
+  // an image its worker callback rejects the promise AND, when no errorHandler was
+  // supplied, also runs `throw Error(data)` (createWorker.js:210-218). That throw
+  // happens inside a worker 'message' callback, so no caller-side .catch() can ever
+  // see it — it surfaces as an uncaughtException and kills the backend process.
+  // One candidate uploading an unreadable Aadhaar photo took the whole API down,
+  // and the severed connection is what the browser reports as "Failed to fetch".
   const { data } = await Tesseract.recognize(filePath, "eng", {
     logger: () => {},
+    errorHandler: () => {},
   });
 
   const text = data.text;
