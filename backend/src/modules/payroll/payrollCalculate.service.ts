@@ -284,8 +284,6 @@ interface EmployeeRow {
   employee_id: string;
   employee_code: string;
   prep_line_id?: string | null;
-  overtime_hours: number;
-  overtime_amount: number;
   ctc_annual: number;
   basic_pct: number;
   hra_pct: number;
@@ -463,8 +461,6 @@ export async function calculatePayrollRunScoped(
   const [empRows] = await db.execute<RowDataPacket[]>(
     `SELECT e.id AS employee_id, e.employee_code,
             spl_existing.id AS prep_line_id,
-            COALESCE(spl_existing.overtime_hours, 0)  AS overtime_hours,
-            COALESCE(spl_existing.overtime_amount, 0) AS overtime_amount,
             esa.ctc_annual, esa.structure_id, ss.basic_pct, ss.hra_pct,
             bm.state AS state_code,
             e.process_id, e.branch_id,
@@ -1020,11 +1016,8 @@ export async function calculatePayrollRunScoped(
       gratuityPct: statConfig["gratuity_pct"],
     });
 
-    // Preserve WFM-entered OT across recalculations (written by PATCH /lines/:id/overtime)
-    const otAmount = Number(emp.overtime_amount) || 0;
-
-    // Net pay = payrollService net + holiday work extra payout + overtime - advance recovery - loan EMI - misc deductions
-    const netPayFinal = Math.max(0, calc.net_salary + holidayWorkExtraPayout + otAmount - advanceRecovery - loanEmi - miscDeductions);
+    // Net pay = payrollService net + holiday work extra payout - advance recovery - loan EMI - misc deductions
+    const netPayFinal = Math.max(0, calc.net_salary + holidayWorkExtraPayout - advanceRecovery - loanEmi - miscDeductions);
     const totalDedFinal = calc.total_deductions + advanceRecovery + loanEmi + miscDeductions;
 
     // 6. Accumulate prep line for batch upsert after loop
@@ -1090,10 +1083,6 @@ export async function calculatePayrollRunScoped(
     for (const ded of statutoryDeductions) {
       if (ded.amount <= 0) continue;
       batchComponents.push([randomUUID(), runId, prepLineId, emp.employee_id, ded.code, ded.name, 'deduction', ded.amount, 'statutory', 0]);
-    }
-
-    if (otAmount > 0) {
-      batchComponents.push([randomUUID(), runId, prepLineId, emp.employee_id, 'OVERTIME', 'Overtime Allowance', 'earning', otAmount, 'overtime', 1]);
     }
 
     for (const ded of miscComponents) {
