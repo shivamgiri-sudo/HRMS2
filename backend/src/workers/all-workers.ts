@@ -29,6 +29,7 @@ import { startReportGenerationWorker, stopReportGenerationWorker } from "./repor
 import { startReportEmailDeliveryWorker, stopReportEmailDeliveryWorker } from "./report-email-delivery.worker.js";
 import { startReportStaleRecoveryWorker, stopReportStaleRecoveryWorker } from "./report-stale-recovery.worker.js";
 import { startTatEscalationWorker, stopTatEscalationWorker } from "./tat-escalation.worker.js";
+import { startReportSubscriptionWorker, stopReportSubscriptionWorker } from "./report-subscription.worker.js";
 import { registerNotificationDeliverer } from "../modules/communication/notification.deliverer.js";
 import { clearAllTimers } from "./worker-utils.js";
 
@@ -152,6 +153,15 @@ const WORKERS: Array<{ name: string; start: () => Promise<void> }> = [
     name: "tat-escalation",
     start: () => { startTatEscalationWorker(); return Promise.resolve(); },
   },
+  {
+    // Was registered in NEITHER this file nor server.ts. The worker existed and
+    // report_subscription shipped with it, so the feature looked complete — but nothing
+    // imported it, meaning a scheduled report could never have fired under either
+    // topology. Gated the same way: worker_config.enabled = 0 (migration 1025) and every
+    // subscription is_active = 0.
+    name: "report-subscription",
+    start: () => { startReportSubscriptionWorker(); return Promise.resolve(); },
+  },
 ];
 
 async function startAllWorkers(): Promise<void> {
@@ -205,6 +215,7 @@ function shutdown(): void {
   stopReportEmailDeliveryWorker();
   stopReportStaleRecoveryWorker();
   stopTatEscalationWorker();
+  stopReportSubscriptionWorker();
   clearAllTimers();
   console.log("[workers] Clean shutdown complete.");
   process.exit(0);

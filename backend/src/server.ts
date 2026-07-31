@@ -34,6 +34,7 @@ import { startRetentionCron } from "./workers/privacy-retention.worker.js";
 import { startAtsRemindersScheduler } from "./modules/ats/ats-reminders.cron.js";
 import { startEmployeeLifecycleWorker } from "./workers/employee-lifecycle.worker.js";
 import { startTatEscalationWorker } from "./workers/tat-escalation.worker.js";
+import { startReportSubscriptionWorker } from "./workers/report-subscription.worker.js";
 import { registerNotificationDeliverer } from "./modules/communication/notification.deliverer.js";
 import { clearAllTimers } from "./workers/worker-utils.js";
 
@@ -156,6 +157,11 @@ function startServer() {
         // other topology, which is exactly what happened to ats-reminders.
         // Gated by worker_config.enabled (0 by default) regardless of which starts it.
         startTatEscalationWorker();
+        // Same dual registration. This one was in NEITHER file: the worker was written
+        // and the report_subscription table shipped, but nothing ever imported it, so a
+        // scheduled report could never have run however it was configured. Gated by
+        // worker_config.enabled (0) and every subscription is_active=0.
+        startReportSubscriptionWorker();
         console.log(
           "[schedulers] tenure, communication, attendance, attendance-reconciliation, legacy-sync, access-expiry, it-provisioning, leave-monthly, leave-annual, payroll-window, performance-ingestion, business-action-sync, breach-sla, privacy-retention, ats-reminders, employee-lifecycle started",
         );

@@ -101,6 +101,33 @@ describe('notification wiring is not silently deleted', () => {
     });
   }
 
+  /**
+   * Scheduler split-brain: all-workers.ts (the pm2 `hrms2-workers` process) and server.ts
+   * register DIFFERENT worker sets. A worker in only one silently never runs in the other
+   * topology — which already happened to ats-reminders, and had happened to
+   * report-subscription: it was in NEITHER, so a scheduled report could not have fired
+   * however it was configured, while the table and the worker file both existed and made
+   * the feature look finished.
+   */
+  const SRC = resolve(MODULES_DIR, '..');
+  const DUAL_REGISTERED = [
+    { worker: 'tat-escalation.worker.js', starter: 'startTatEscalationWorker' },
+    { worker: 'report-subscription.worker.js', starter: 'startReportSubscriptionWorker' },
+  ];
+
+  describe.each(DUAL_REGISTERED)('$starter is registered in BOTH schedulers', ({ worker, starter }) => {
+    const files = ['workers/all-workers.ts', 'server.ts'];
+    it.each(files)('%s imports and calls it', (rel) => {
+      const src = stripComments(readFileSync(resolve(SRC, rel), 'utf8'));
+      expect(src, `${rel} must import ${worker}`).toContain(worker);
+      expect(
+        (src.match(new RegExp(`\\b${starter}\\s*\\(`, 'g')) ?? []).length,
+        `${rel} imports ${starter} but never calls it — the worker will never run in ` +
+          `this topology, and nothing else will tell you.`,
+      ).toBeGreaterThan(0);
+    });
+  });
+
   it('the gateway is the only thing the notification modules dispatch through', () => {
     for (const { module } of WIRING) {
       const src = stripComments(read(module));
