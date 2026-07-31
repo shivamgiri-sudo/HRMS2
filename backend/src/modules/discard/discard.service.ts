@@ -239,9 +239,10 @@ async function recalcPayroll(
   sourceEventType: string,
   sourceEventId: string,
   actorUserId: string
-): Promise<{ status: string | null; warnings: string[] }> {
+): Promise<{ status: string | null; outcomes: string[]; warnings: string[] }> {
   const warnings: string[] = [];
   const statuses: string[] = [];
+  const outcomes: string[] = [];
   for (const month of months) {
     try {
       const { recalculateOpenPayrollForEmployee } = await import(
@@ -256,6 +257,7 @@ async function recalcPayroll(
         actorUserId,
       });
       statuses.push(`${month}:${res.status}`);
+      outcomes.push(String(res.status));
 
       // Nothing drains payroll_recalculation_queue — no worker, cron or job reads
       // it, so a queued row stays 'pending' forever. Since a discard already
@@ -269,10 +271,60 @@ async function recalcPayroll(
         );
       }
     } catch (err: any) {
+      outcomes.push("failed");
       warnings.push(`Payroll recalculation failed for ${month}: ${err?.message ?? String(err)}`);
     }
   }
-  return { status: statuses.length ? statuses.join(", ") : null, warnings };
+  return { status: statuses.length ? statuses.join(", ") : null, outcomes, warnings };
+}
+
+/**
+ * Collapse the per-month outcomes into something that fits payroll_recalc_status.
+ *
+ * The column is VARCHAR(30). The detailed form recalcPayroll returns for the API
+ * response is `2026-07:recalculated, 2026-08:queued` — already 38 characters for
+ * the two-month case a leave crossing a month boundary produces, so storing that
+ * verbatim would silently truncate mid-status and read as a different outcome.
+ * The aggregate keeps what someone acting on this needs: did payroll move, and if
+ * not everywhere, what did it do instead.
+ */
+function aggregateRecalcStatus(outcomes: string[]): string | null {
+  if (!outcomes.length) return null;
+  const distinct = [...new Set(outcomes)];
+  if (distinct.length === 1) return distinct[0].slice(0, 30);
+  // Mixed. Name only the months that did NOT move — those are the actionable ones.
+  const stalled = distinct.filter((s) => s !== "recalculated");
+  return `partial:${stalled.join("/")}`.slice(0, 30);
+}
+
+/**
+ * Write the payroll outcome onto the ledger row, after the fact.
+ *
+ * recalcPayroll runs after commit — whether the run recalculated, queued, or found
+ * no open run is simply not known while the transaction is open, so this cannot be
+ * part of the INSERT. Without it the column stays NULL forever and the Discard
+ * Center, which reads history straight off this table, shows the recalc outcome as
+ * blank; the information would exist only in the API response of the single request
+ * that performed the discard, and vanish when the dialog closed.
+ *
+ * Isolated like every other post-commit effect: the discard is already durable and
+ * a failed annotation must not be reported as a failed discard.
+ */
+async function recordRecalcStatus(discardId: string, outcomes: string[]): Promise<string[]> {
+  const status = aggregateRecalcStatus(outcomes);
+  if (!status) return [];
+  try {
+    await db.execute(
+      `UPDATE approval_discard_log SET payroll_recalc_status = ? WHERE id = ?`,
+      [status, discardId]
+    );
+    return [];
+  } catch (err: any) {
+    return [
+      `Payroll recalculation outcome '${status}' could not be recorded on the discard ` +
+      `ledger: ${err?.message ?? String(err)}. The discard itself is complete.`,
+    ];
+  }
 }
 
 /**
@@ -644,6 +696,7 @@ export const discardService = {
     warnings.push(...(await rederiveDates(employeeId, plans)));
     const payrollResult = await recalcPayroll(employeeId, months, "leave_discarded", id, actor.userId);
     warnings.push(...payrollResult.warnings);
+    warnings.push(...(await recordRecalcStatus(discardId, payrollResult.outcomes)));
     warnings.push(...(await refreshDerivedStores(employeeId, months)));
 
     await logSensitiveAction({
@@ -750,6 +803,7 @@ export const discardService = {
       employeeId, [month], "attendance_regularization_discarded", id, actor.userId
     );
     warnings.push(...payrollResult.warnings);
+    warnings.push(...(await recordRecalcStatus(discardId, payrollResult.outcomes)));
     warnings.push(...(await refreshDerivedStores(employeeId, [month])));
 
     // Two audit rows, mirroring the approval pair: one on the request, one on the
