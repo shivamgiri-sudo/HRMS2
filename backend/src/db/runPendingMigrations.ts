@@ -421,6 +421,7 @@ const MIGRATION_MANIFEST: string[] = [
   "543_cosec_exclusion_and_inactive_issue_type.sql", // Ignore intentional COSEC identities and separate inactive punch activity
   "1008_migrate_photo_urls_to_api.sql",         // Migrate employee photo URLs from /uploads/ to /api/files/
   "1009_ats_hiring_followup_call_feedback.sql", // ATS hiring: follow-up call outcome, date, notes, reschedule columns
+  "1024_candidate_onboarding_document_rejected_status.sql", // document_status lacked 'rejected'; every secure-viewer reject hit ERROR 1265
   ];
 
 export type MigrationHealth = {

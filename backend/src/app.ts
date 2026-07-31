@@ -182,6 +182,7 @@ import { tatRouter } from "./modules/governance/tat.routes.js";
 import { nameConsistencyRouter } from "./modules/ats/name-consistency.routes.js";
 import { jclrRouter } from "./modules/ats/jclr.routes.js";
 import { joiningControlRoomRouter } from "./modules/ats/joining-control-room.routes.js";
+import { secureDocumentsRouter } from "./modules/ats/secure-documents.routes.js";
 import { salaryComponentAssignmentRouter } from "./modules/ats/salary-component-assignment.routes.js";
 import { employeeCodeGateRouter } from "./modules/ats/employee-code-gate.routes.js";
 import { payrollHRRouter } from "./modules/ats/payroll-hr.routes.js";
@@ -506,6 +507,10 @@ app.use("/api/governance/tat", tatRouter);
 app.use("/api/ats/name-consistency", nameConsistencyRouter);
 app.use("/api/ats/jclr", jclrRouter);
 app.use("/api/ats/joining-control-room", joiningControlRoomRouter);
+// Secure candidate document viewer (JCLR "Documents" tab). Mounted here, after
+// clientRouter has applied requireAuth, because verify/reject read req.authUser.
+// The router shipped in 03ee489e but was never mounted — every endpoint 404'd.
+app.use("/api/ats", secureDocumentsRouter);
 app.use("/api/ats/salary-components", salaryComponentAssignmentRouter);
 app.use("/api/ats/employee-code", employeeCodeGateRouter);
 app.use("/api/ats/payroll-hr", payrollHRRouter);
