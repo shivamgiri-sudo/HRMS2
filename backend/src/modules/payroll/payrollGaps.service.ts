@@ -129,4 +129,51 @@ export const payrollGapsService = {
     };
   },
 
+  /**
+   * Basic TDS slab projection on an annual taxable income.
+   *
+   * Withholds a projection entirely when statutory_config carries no tds_slab_*
+   * rows, rather than falling back to constants. That is the charter rule — TDS
+   * must be blocked or pending unless approved slab configuration exists, with no
+   * hardcoded fallback slabs — and the reason is staleness, not arithmetic: rates
+   * baked into code keep deducting last year's numbers after a Finance Act
+   * changes them, and nothing tells anyone. Under-deduction is the employer's
+   * liability, so this fails visibly instead.
+   *
+   * This function was previously removed, leaving its type (TdsProjection), its
+   * helper (checkTdsConfigExists) and the calculateTds import orphaned in this
+   * file and its tests failing as "is not a function". Restored to the contract
+   * those survivors and tests/payroll.security.test.ts already specify.
+   *
+   * `tds` is the ANNUAL figure, matching the annual income taken as input.
+   * Nothing consumes this yet — it is a projection helper, not a payroll path.
+   */
+  async computeBasicTds(annualTaxableIncome: number): Promise<TdsProjection> {
+    if (!(await checkTdsConfigExists())) {
+      return {
+        tds: 0,
+        status: "pending_configuration",
+        note:
+          "TDS slab configuration absent from statutory_config — projection withheld. " +
+          "Seed and approve tds_slab_* keys; no hardcoded defaults are applied.",
+      };
+    }
+
+    const [cfgRows] = await db.execute<RowDataPacket[]>(
+      "SELECT config_key, config_value FROM statutory_config"
+    );
+    const statutoryConfig: Record<string, number> = {};
+    for (const row of cfgRows as Array<{ config_key: string; config_value: string }>) {
+      const value = Number(row.config_value);
+      if (Number.isFinite(value)) statutoryConfig[String(row.config_key).toLowerCase()] = value;
+    }
+
+    const result = calculateTds(annualTaxableIncome, statutoryConfig);
+    return {
+      tds: result.tds_annual,
+      status: "configured",
+      note: `Projected from statutory_config slabs at an effective rate of ${result.effective_rate}%.`,
+    };
+  },
+
 };

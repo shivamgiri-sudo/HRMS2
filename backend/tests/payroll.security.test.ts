@@ -23,6 +23,7 @@
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import request from "supertest";
+import jwt from "jsonwebtoken";
 
 vi.mock("../src/db/supabaseAdmin.js", () => ({
   supabaseAdmin: {},
@@ -44,7 +45,30 @@ const mockExecute = db.execute as ReturnType<typeof vi.fn>;
 const mockGetUser = supabaseAuthClient.auth.getUser as ReturnType<typeof vi.fn>;
 const mockLogSensitiveAction = logSensitiveAction as ReturnType<typeof vi.fn>;
 
-const EMP_TOKEN = { Authorization: "Bearer employee.token" };
+/**
+ * A real JWT, not a "mock-token-*" demo token, and not the retired
+ * "<role>.token" placeholder this file used to send.
+ *
+ * The placeholder stopped working when auth moved to MySQL JWTs: the middleware
+ * hands anything not starting with "mock-token" to verifyAccessToken, jwt.verify
+ * throws on "employee.token", and every request 401s. That is why all 18
+ * failures here read "expected 401 to be 403" — the suite was asserting nothing
+ * about payroll authorization, only that unauthenticated requests are rejected.
+ *
+ * A demo token would authenticate but would NOT fix the suite: requireRole
+ * resolves demo users from req.authUser.role and never queries user_roles, so
+ * the per-test role mocks below would go unconsumed and mockEmployeeNoRoles —
+ * the "user holds no roles at all" case — could not be expressed at all. These
+ * tests exist to prove DB-driven role checks, so the token has to go down the
+ * real JWT path. Signed with the same secret tests/setup.ts verifies against.
+ */
+const JWT_SECRET = process.env.JWT_SECRET || "change-me-jwt-secret-32characters!!";
+const empJwt = jwt.sign(
+  { sub: "user-emp", email: "employee@mcn.com", iat: Math.floor(Date.now() / 1000) },
+  JWT_SECRET,
+  { expiresIn: "1h" },
+);
+const EMP_TOKEN = { Authorization: `Bearer ${empJwt}` };
 
 // Helper — authenticate as employee (user-emp) with no privileged roles
 function mockEmployee(userId = "user-emp") {
