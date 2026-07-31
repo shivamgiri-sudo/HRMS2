@@ -1,84 +1,14 @@
 import { useState } from "react";
 import { ChevronDown, ChevronUp, Loader2 } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
-import { useRunningSalary, usePayslipHistory, usePayslipDetail } from "@/hooks/useAttendanceHub";
+import { usePayslipHistory, usePayslipDetail } from "@/hooks/useAttendanceHub";
 import type { PayslipSummary } from "@/hooks/useAttendanceHub";
-import { formatLastSynced } from "@/lib/utils";
+import { RunningMonthCard } from "@/components/payroll/RunningMonthCard";
 
 const INR = (v: number | null | undefined) =>
   `₹${Number(v ?? 0).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
-function getTodayMonth() {
-  // Payroll months are IST months. Deriving this from the browser's local clock
-  // showed the wrong month to anyone outside IST around the month boundary,
-  // which made the running-month salary look inconsistent with Payroll.
-  return new Intl.DateTimeFormat("en-CA", {
-    timeZone: "Asia/Kolkata", year: "numeric", month: "2-digit",
-  }).format(new Date()).slice(0, 7);
-}
-
 const MONTH_NAMES = ["", "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-
-function RunningMonthCard({ employeeId }: { employeeId: string }) {
-  const currentMonth = getTodayMonth();
-  const { data: rs, isLoading, dataUpdatedAt } = useRunningSalary(employeeId, currentMonth);
-
-  if (isLoading) return <Skeleton className="h-40 rounded-2xl" />;
-  if (!rs) return <div className="rounded-2xl border border-slate-200 p-6 text-center text-sm text-slate-500">No running salary data for current month.</div>;
-
-  return (
-    <div className="rounded-2xl border border-indigo-200 bg-gradient-to-br from-white via-white to-[#e8f2fc] p-5 shadow-sm">
-      <div className="flex items-start justify-between mb-4">
-        <div>
-          <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">Running Month Earned</p>
-          <p className="mt-1 text-2xl font-bold text-slate-950">{INR(rs.earned_salary_till_date)}</p>
-          <p className="text-xs text-slate-500 mt-0.5">Net (after deductions): <span className="font-semibold text-slate-800">{INR(rs.earned_net_till_date)}</span></p>
-          {dataUpdatedAt > 0 && (
-            <p className="text-[10px] text-slate-400 mt-1">
-              Live estimate · {formatLastSynced(dataUpdatedAt)}
-            </p>
-          )}
-        </div>
-        <div className="rounded-xl bg-[#e8f2fc] px-3 py-1.5 text-xs font-semibold text-[#1B6AB5]">
-          {getTodayMonth()}
-        </div>
-      </div>
-      <div className="grid grid-cols-4 gap-3 text-center border-t border-indigo-100 pt-4">
-        {[
-          { label: "Payable Days", value: rs.earned_payable_days },
-          { label: "Eligible Weekoffs", value: rs.eligible_weekoff_till_date },
-          { label: "Eligible Holidays", value: rs.eligible_holiday_till_date },
-          { label: "LWP (MTD)", value: rs.lwp_till_date ?? 0 },
-        ].map(item => (
-          <div key={item.label}>
-            <p className="text-base font-bold text-slate-800">{item.value}</p>
-            <p className="text-[10px] text-slate-500 mt-0.5">{item.label}</p>
-          </div>
-        ))}
-      </div>
-      <div className="grid grid-cols-3 gap-3 text-center border-t border-indigo-100 pt-3 mt-3">
-        <div>
-          <p className="text-sm font-semibold text-slate-700">{INR(rs.pf_employee)}</p>
-          <p className="text-[10px] text-slate-500 mt-0.5">PF (Employee)</p>
-        </div>
-        <div>
-          {rs.esic_applicable === false ? (
-            <p className="text-xs font-medium text-slate-400 italic">Not applicable</p>
-          ) : (
-            <p className="text-sm font-semibold text-slate-700">{INR(rs.esic_employee)}</p>
-          )}
-          <p className="text-[10px] text-slate-500 mt-0.5">
-            ESIC{rs.esic_applicable === false ? " (above ceiling)" : ""}
-          </p>
-        </div>
-        <div>
-          <p className="text-sm font-semibold text-slate-700">{INR(rs.professional_tax)}</p>
-          <p className="text-[10px] text-slate-500 mt-0.5">Prof. Tax</p>
-        </div>
-      </div>
-    </div>
-  );
-}
 
 function PayslipRow({ line, employeeId }: { line: PayslipSummary; employeeId: string }) {
   const [open, setOpen] = useState(false);

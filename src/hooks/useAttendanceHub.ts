@@ -87,6 +87,12 @@ export interface RunningSalary {
   professional_tax: number;
   esic_applicable?: boolean;
   gross_monthly?: number;
+  /**
+   * Only present once the month is finalized: the running estimate always
+   * computes with tds = 0, but the stored salary_prep_line the backend
+   * substitutes after lock carries a real TDS figure.
+   */
+  tds?: number;
 }
 
 export interface PayslipSummary {
@@ -252,12 +258,31 @@ export function useAttendanceSummary(employeeId: string | null, month: string) {
 
 // ── Salary ─────────────────────────────────────────────────────────────────
 
-export function useRunningSalary(employeeId: string | null, month: string) {
+/**
+ * Running-month salary for one employee.
+ *
+ * `self` picks the self-service endpoint, which resolves the employee from the
+ * JWT. Employees must use it — `/running-summary/:employeeId` is role-gated to
+ * payroll/HR/management and 403s for them. Both routes run the same
+ * computeRunningSalary() engine and apply the same finalized-line override, so
+ * the returned figures are identical; only the authorization differs.
+ */
+export function useRunningSalary(
+  employeeId: string | null,
+  month: string,
+  opts: { self?: boolean } = {},
+) {
+  const self = opts.self === true;
   return useQuery({
-    queryKey: ["running-salary", employeeId, month],
-    enabled: !!employeeId,
+    queryKey: ["running-salary", self ? "me" : (employeeId ?? "none"), month],
+    // The self route needs no employeeId — the backend reads it from the token.
+    enabled: self || !!employeeId,
     queryFn: async () => {
-      const res = await hrmsApi.get<any>(`/api/payroll/running-summary/${employeeId}?month=${month}`);
+      const res = await hrmsApi.get<any>(
+        self
+          ? `/api/payroll/running-summary/me?month=${month}`
+          : `/api/payroll/running-summary/${employeeId}?month=${month}`
+      );
       return (res?.data ?? res?.summary ?? res) as RunningSalary;
     },
     staleTime: 0,

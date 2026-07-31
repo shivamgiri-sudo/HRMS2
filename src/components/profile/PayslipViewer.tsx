@@ -42,6 +42,8 @@ import {
 } from "lucide-react";
 import { downloadMasCallnetPayslip } from "@/lib/masCallnetPayslipGeneratorV2";
 import { numberToWords } from "@/lib/numberToWords";
+import { RunningMonthCard, getIstRunMonth } from "@/components/payroll/RunningMonthCard";
+import { useRunningSalary } from "@/hooks/useAttendanceHub";
 
 interface PayslipViewerProps {
   employeeId: string;
@@ -241,12 +243,10 @@ export function PayslipViewer({ employeeId, employeeName, employeeCode }: Paysli
     enabled: !!employeeId,
   });
 
-  // Fetch running salary for the current month if it hasn't been finalized
   // Payroll months are IST months — deriving them from the browser's local clock
   // put users in other timezones a month behind around the month boundary.
-  const currentMonthKey = new Intl.DateTimeFormat("en-CA", {
-    timeZone: "Asia/Kolkata", year: "numeric", month: "2-digit",
-  }).format(new Date()).slice(0, 7);
+  const currentMonthKey = getIstRunMonth();
+  const viewingCurrentYear = parseInt(selectedYear) === currentDate.getFullYear();
   // Only treat current month as "has payslip" when the run is locked/approved/disbursed.
   // Processing/draft/calculated runs are in-flight — show the live estimate instead.
   const FINALISED_STATUSES = new Set(["locked", "approved", "disbursed", "completed", "paid", "credited"]);
@@ -255,17 +255,15 @@ export function PayslipViewer({ employeeId, employeeName, employeeCode }: Paysli
            FINALISED_STATUSES.has((r.run_status ?? "").toLowerCase()),
   );
 
-  const { data: runningSalary } = useQuery({
-    queryKey: ["running-salary", employeeId, currentMonthKey],
-    queryFn: async () => {
-      if (!employeeId) return null;
-      const res = await hrmsApi.get<{ success: boolean; data: any }>(
-        `/api/payroll/running-summary/me?month=${currentMonthKey}`
-      );
-      return res.data ?? null;
-    },
-    enabled: !!employeeId && parseInt(selectedYear) === currentDate.getFullYear() && !hasCurrentMonthPayslip,
-  });
+  // The same hook, endpoint and cache entry the RunningMonthCard below reads,
+  // so the summary tiles cannot disagree with the card. Fetched unconditionally
+  // now: the backend substitutes the finalized salary_prep_line once the month
+  // is locked, which leaves the frontend nothing to gate on.
+  const { data: runningSalaryRaw } = useRunningSalary(employeeId, currentMonthKey, { self: true });
+  // The tiles and the derived salary structure describe the SELECTED year. The
+  // running month belongs to the current one, so it must not leak into either
+  // when the user is looking back at an earlier year.
+  const runningSalary = viewingCurrentYear ? runningSalaryRaw : undefined;
 
   // Check for new payslips and show alert
   useEffect(() => {
@@ -457,7 +455,7 @@ export function PayslipViewer({ employeeId, employeeName, employeeCode }: Paysli
   //   draft/processing record → use stored figures (same engine, labelled Draft)
   //   no record yet → use running estimate (live attendance-based)
   const latestIsDraft = latestRecord?.is_draft === true;
-  const useRunningEstimate = runningSalary && !hasCurrentMonthPayslip;
+  const useRunningEstimate = !!runningSalary && !hasCurrentMonthPayslip;
 
   const displayGross = useRunningEstimate
     ? Number(runningSalary.earned_salary_till_date ?? 0)
@@ -537,92 +535,38 @@ export function PayslipViewer({ employeeId, employeeName, employeeCode }: Paysli
           </Card>
         )}
 
-        {/* Running Salary for Current Month (if not yet finalized) */}
-        {runningSalary && parseInt(selectedYear) === currentDate.getFullYear() && !hasCurrentMonthPayslip && (
-          <Card className="rounded-3xl border-2 border-blue-200 bg-gradient-to-r from-blue-50 to-cyan-50 shadow-md">
-            <CardContent className="p-5">
-              <div className="space-y-4">
-                <div>
-                  <div className="flex items-center gap-2 text-xs font-extrabold uppercase tracking-wider text-blue-800">
-                    <CalendarCheck className="size-4" />
-                    Earned Till Date — {new Date().toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}
-                  </div>
-                  <p className="mt-2 text-3xl font-black tabular-nums text-blue-900">
-                    {renderSensitive(formatCurrency(runningSalary.earned_net_till_date || 0))}
-                  </p>
-                  <p className="mt-1 text-xs text-blue-700">
-                    Gross till date: {renderSensitive(formatCurrency(runningSalary.earned_salary_till_date || 0))}
-                  </p>
-                </div>
-                <div className="grid grid-cols-2 gap-3 text-xs">
-                  <div className="rounded-lg bg-white/60 p-2.5">
-                    <p className="text-muted-foreground">Earned days</p>
-                    <p className="mt-1 font-bold text-blue-900">{runningSalary.earned_payable_days || 0}</p>
-                  </div>
-                  <div className="rounded-lg bg-white/60 p-2.5">
-                    <p className="text-muted-foreground">Projected month-end</p>
-                    <p className="mt-1 font-bold text-blue-900">{renderSensitive(formatCurrency(runningSalary.projected_net || 0))}</p>
-                  </div>
-                </div>
-
-                {/* Deduction breakdown */}
-                {(runningSalary.pf_employee > 0 || runningSalary.esic_employee > 0 || runningSalary.professional_tax > 0) && (
-                  <div className="rounded-lg border border-slate-200 bg-white/80 p-3">
-                    <p className="text-xs font-semibold text-slate-700 mb-2">Earned Deductions (Till Date)</p>
-                    <div className="grid grid-cols-3 gap-2 text-xs">
-                      {runningSalary.pf_employee > 0 && (
-                        <div className="flex flex-col">
-                          <span className="text-slate-500">PF</span>
-                          <span className="font-mono font-semibold text-red-600">
-                            {renderSensitive(`-₹${Number(runningSalary.pf_employee).toFixed(2)}`)}
-                          </span>
-                        </div>
-                      )}
-                      {runningSalary.esic_employee > 0 && (
-                        <div className="flex flex-col">
-                          <span className="text-slate-500">ESIC</span>
-                          <span className="font-mono font-semibold text-red-600">
-                            {renderSensitive(`-₹${Number(runningSalary.esic_employee).toFixed(2)}`)}
-                          </span>
-                        </div>
-                      )}
-                      {runningSalary.professional_tax > 0 && (
-                        <div className="flex flex-col">
-                          <span className="text-slate-500">PT</span>
-                          <span className="font-mono font-semibold text-red-600">
-                            {renderSensitive(`-₹${Number(runningSalary.professional_tax).toFixed(2)}`)}
-                          </span>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                )}
-
-                <p className="text-xs text-blue-600 italic">
-                  This is a live estimate based on today's attendance. Final payslip will be available after payroll processing.
-                </p>
-              </div>
-            </CardContent>
-          </Card>
-        )}
+        {/* Running month — the same card, endpoint and fields the Attendance Hub
+            and Running Payroll pages render. Shown unconditionally: once the
+            month's run is locked the backend returns the finalized figures
+            through this endpoint, so hiding it would drop the authoritative
+            number rather than a guess. */}
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-[0.08em] text-slate-500 mb-2">Running Month</p>
+          <RunningMonthCard
+            employeeId={employeeId}
+            month={currentMonthKey}
+            self
+            renderAmount={renderSensitive}
+          />
+        </div>
 
         <section className="grid gap-4 sm:grid-cols-3">
           {[
             {
               label: useRunningEstimate ? "Earned gross (till date)" : latestIsDraft ? "Gross salary (Draft)" : "Latest gross salary",
-              value: (latestRecord || runningSalary) ? formatCurrency(displayGross) : "Not available",
+              value: (latestRecord || useRunningEstimate) ? formatCurrency(displayGross) : "Not available",
               icon: Plus,
               tone: "border-emerald-200 bg-emerald-50 text-emerald-800",
             },
             {
               label: "Total deductions",
-              value: (latestRecord || runningSalary) ? formatCurrency(displayDeductions) : "Not available",
+              value: (latestRecord || useRunningEstimate) ? formatCurrency(displayDeductions) : "Not available",
               icon: Minus,
               tone: "border-rose-200 bg-rose-50 text-rose-800",
             },
             {
               label: useRunningEstimate ? "Earned net (till date)" : latestIsDraft ? "Net salary (Draft)" : "Net salary",
-              value: (latestRecord || runningSalary) ? formatCurrency(displayNet) : "Not available",
+              value: (latestRecord || useRunningEstimate) ? formatCurrency(displayNet) : "Not available",
               icon: Wallet,
               tone: "border-blue-200 bg-blue-50 text-[#073f78]",
             },
