@@ -28,6 +28,7 @@ import { startInboxReconciliationWorker, stopInboxReconciliationWorker } from ".
 import { startReportGenerationWorker, stopReportGenerationWorker } from "./report-generation.worker.js";
 import { startReportEmailDeliveryWorker, stopReportEmailDeliveryWorker } from "./report-email-delivery.worker.js";
 import { startReportStaleRecoveryWorker, stopReportStaleRecoveryWorker } from "./report-stale-recovery.worker.js";
+import { startTatEscalationWorker, stopTatEscalationWorker } from "./tat-escalation.worker.js";
 import { clearAllTimers } from "./worker-utils.js";
 
 const WORKERS: Array<{ name: string; start: () => Promise<void> }> = [
@@ -143,6 +144,13 @@ const WORKERS: Array<{ name: string; start: () => Promise<void> }> = [
     name: "report-stale-recovery",
     start: startReportStaleRecoveryWorker,
   },
+  {
+    // Gated twice over: worker_config.enabled = 0 (migration 1023) stops it running at
+    // all, and every SLA event ships dispatch_mode='shadow' so even when it runs it
+    // resolves and claims without delivering.
+    name: "tat-escalation",
+    start: startTatEscalationWorker,
+  },
 ];
 
 async function startAllWorkers(): Promise<void> {
@@ -193,6 +201,7 @@ function shutdown(): void {
   stopReportGenerationWorker();
   stopReportEmailDeliveryWorker();
   stopReportStaleRecoveryWorker();
+  stopTatEscalationWorker();
   clearAllTimers();
   console.log("[workers] Clean shutdown complete.");
   process.exit(0);

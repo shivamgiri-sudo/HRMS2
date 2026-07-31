@@ -1,9 +1,10 @@
 {
-  // Scoped typecheck for the notification primitives.
+  // Scoped typecheck for the notification build.
   //
   // Only files with shallow import graphs belong here. Adding a module-level file such as
-  // dispatch.service.ts pulls in the whole app graph: the check then runs 7+ minutes and
-  // leaves an unkillable ~130MB orphan when interrupted. Verify those with vitest instead.
+  // dispatch.service.ts, all-workers.ts or server.ts pulls in the whole app graph: the
+  // check then runs 7+ minutes and leaves an unkillable ~130MB orphan when interrupted.
+  // Verify those with vitest and targeted greps instead.
   //
   // Usage: npx tsc -p tsconfig.notif.json     (completes in seconds)
   "extends": "./tsconfig.json",
@@ -13,6 +14,8 @@
     "src/shared/recipient-resolver.ts",
     "src/shared/recipient-resolver.types.ts",
     "src/shared/worker-config.ts",
-    "src/modules/communication/notification.gateway.ts"
+    "src/modules/communication/notification.gateway.ts",
+    "src/modules/governance/tat.service.ts",
+    "src/workers/tat-escalation.worker.ts"
   ]
 }

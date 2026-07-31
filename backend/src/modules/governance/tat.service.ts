@@ -58,63 +58,134 @@ export async function checkAndEscalateTat(): Promise<number> {
   return checkAndEscalate();
 }
 
-export async function checkAndEscalate(): Promise<number> {
-  // Step 1: Mark overdue open tasks as sla_breached and capture their ids
-  const [breachedRows] = await db.execute<RowDataPacket[]>(
-    `SELECT id, task_type, entity_type, entity_id, assigned_to, branch_id
-     FROM task_tat_instance
-     WHERE status = 'open' AND due_at < NOW()`
+/** One escalation that is due to fire. */
+export interface DueEscalation {
+  tatInstanceId: string;
+  taskType: string;
+  entityType: string;
+  entityId: string;
+  assignedTo: string | null;
+  ownerUserId: string | null;
+  branchId: string | null;
+  processId: string | null;
+  dueAt: Date;
+  escalationLevel: number;
+  notifyRole: string | null;
+  notifyUserId: string | null;
+  escalationAction: string;
+  hoursOverdue: number;
+}
+
+/**
+ * Escalations that are due right now and have not already been logged.
+ *
+ * Three things this deliberately does that the previous implementation did not:
+ *
+ *  - It honours `trigger_after_hours`. The old loop walked EVERY level for a breached task
+ *    in a single pass, so a task one minute overdue immediately notified the owner, their
+ *    manager and the branch head at once. That alone was a storm.
+ *  - It excludes levels already present in task_escalation_log, so a 15-minute poll does
+ *    not re-notify the same level forever.
+ *  - It respects a backfill floor. Without one, the first run after deployment sees every
+ *    overdue task in the system's history — the shape of the 43,943-alert incident.
+ */
+export async function findDueEscalations(opts: {
+  backfillFloor: Date | string;
+  limit?: number;
+}): Promise<DueEscalation[]> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT t.id            AS tat_instance_id,
+            t.task_type, t.entity_type, t.entity_id,
+            t.assigned_to, t.owner_user_id, t.branch_id, t.process_id, t.due_at,
+            e.escalation_level, e.notify_role, e.notify_user_id, e.escalation_action,
+            TIMESTAMPDIFF(HOUR, t.due_at, NOW()) AS hours_overdue
+       FROM task_tat_instance t
+       JOIN escalation_matrix_master e
+         ON e.task_type = t.task_type
+        AND e.is_active = 1
+        -- the level is due only once this many hours have passed since due_at
+        AND NOW() >= DATE_ADD(t.due_at, INTERVAL e.trigger_after_hours HOUR)
+      WHERE t.status IN ('open', 'in_progress', 'sla_breached')
+        AND t.due_at < NOW()
+        AND t.due_at >= ?
+        AND NOT EXISTS (
+              SELECT 1 FROM task_escalation_log l
+               WHERE l.tat_instance_id = t.id
+                 AND l.escalation_level = e.escalation_level
+            )
+      ORDER BY t.due_at ASC, e.escalation_level ASC
+      LIMIT ${Math.max(1, Math.min(500, opts.limit ?? 50))}`,
+    [opts.backfillFloor],
   );
 
-  if (!breachedRows.length) return 0;
+  return (rows as RowDataPacket[]).map((r) => ({
+    tatInstanceId: r.tat_instance_id,
+    taskType: r.task_type,
+    entityType: r.entity_type,
+    entityId: r.entity_id,
+    assignedTo: r.assigned_to ?? null,
+    ownerUserId: r.owner_user_id ?? null,
+    branchId: r.branch_id ?? null,
+    processId: r.process_id ?? null,
+    dueAt: r.due_at,
+    escalationLevel: Number(r.escalation_level),
+    notifyRole: r.notify_role ?? null,
+    notifyUserId: r.notify_user_id ?? null,
+    escalationAction: r.escalation_action ?? 'notify',
+    hoursOverdue: Number(r.hours_overdue ?? 0),
+  }));
+}
 
-  // Batch-update status
-  const breachedIds = breachedRows.map((r: any) => r.id);
+/**
+ * Record that a level has been escalated. Returns false when another worker got there
+ * first — uq_tel_level (migration 1024) makes that a duplicate-key error rather than a
+ * second notification.
+ *
+ * Column names here are the REAL ones: tat_instance_id, triggered_at, notified_user_id,
+ * action_taken. The previous code used task_tat_instance_id / created_at / notify_user_id
+ * / action, none of which exist, so every call threw.
+ */
+export async function recordEscalation(esc: DueEscalation): Promise<boolean> {
+  try {
+    await db.execute(
+      `INSERT INTO task_escalation_log
+         (id, tat_instance_id, escalation_level, triggered_at, notified_user_id, notify_role, action_taken)
+       VALUES (?, ?, ?, NOW(), ?, ?, ?)`,
+      [randomUUID(), esc.tatInstanceId, esc.escalationLevel, esc.notifyUserId, esc.notifyRole, esc.escalationAction],
+    );
+    return true;
+  } catch (err) {
+    if ((err as { code?: string }).code === 'ER_DUP_ENTRY') return false;
+    throw err;
+  }
+}
+
+/** Flag the instance as breached. Idempotent — safe to call on every escalation level. */
+export async function markBreached(tatInstanceId: string): Promise<void> {
   await db.execute(
     `UPDATE task_tat_instance
-     SET status = 'sla_breached', updated_at = NOW()
-     WHERE id IN (${breachedIds.map(() => "?").join(",")})`,
-    breachedIds
+        SET status = 'sla_breached', current_escalation_level = GREATEST(COALESCE(current_escalation_level,0), 1),
+            updated_at = NOW()
+      WHERE id = ? AND status <> 'completed'`,
+    [tatInstanceId],
   );
+}
 
-  // Step 2: For each breached task, look up escalation matrix and insert log + work item
-  for (const task of breachedRows) {
-    const [escRows] = await db.execute<RowDataPacket[]>(
-      `SELECT * FROM escalation_matrix_master
-       WHERE task_type = ? AND is_active = 1
-       ORDER BY escalation_level ASC`,
-      [(task as any).task_type]
-    );
-
-    for (const esc of escRows) {
-      const logId = randomUUID();
-      await db.execute(
-        `INSERT INTO task_escalation_log
-           (id, task_tat_instance_id, escalation_level, action, notify_role, notify_user_id, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, NOW())`,
-        [
-          logId,
-          (task as any).id,
-          (esc as any).escalation_level ?? 1,
-          (esc as any).escalation_action ?? "notify",
-          (esc as any).notify_role ?? null,
-          (esc as any).notify_user_id ?? null,
-        ]
-      );
-
-      // Insert work item for the notify_role if set
-      if ((esc as any).notify_role) {
-        await db.execute(
-          `INSERT INTO work_item
-             (id, item_type, entity_type, entity_id, assigned_to_role, due_at, priority, status, created_at, updated_at)
-           VALUES (UUID(), 'TAT_BREACH', ?, ?, ?, NOW(), 'high', 'pending', NOW(), NOW())`,
-          [(task as any).entity_type, (task as any).entity_id, (esc as any).notify_role]
-        );
-      }
-    }
-  }
-
-  return breachedRows.length;
+/**
+ * Legacy entry point, still routed from POST /api/governance/tat/tasks/recalculate.
+ *
+ * Kept so the existing route keeps working (CLAUDE.md rule 3), but it now only marks
+ * overdue instances as breached. It deliberately does NOT notify: notification belongs to
+ * tat-escalation.worker.ts, which owns the kill switch, the backfill floor and the caps.
+ * An HTTP endpoint that can email hundreds of people is not something to leave lying around.
+ */
+export async function checkAndEscalate(): Promise<number> {
+  const [res] = await db.execute<ResultSetHeader>(
+    `UPDATE task_tat_instance
+        SET status = 'sla_breached', updated_at = NOW()
+      WHERE status = 'open' AND due_at < NOW()`,
+  );
+  return res.affectedRows ?? 0;
 }
 
 /**
@@ -128,10 +199,15 @@ export async function completeTatInstance(id: string, completedBy: string): Prom
     [id]
   );
 
+  // Real columns: tat_instance_id / triggered_at / notified_user_id / action_taken.
+  // The previous names (task_tat_instance_id, action, notify_user_id, created_at) do not
+  // exist, so completing a task threw after the status update had already committed.
+  // Level 0 marks a completion row and cannot collide with escalation levels 1..3 under
+  // uq_tel_level.
   await db.execute(
     `INSERT INTO task_escalation_log
-       (id, task_tat_instance_id, escalation_level, action, notify_user_id, created_at)
-     VALUES (UUID(), ?, 0, 'completed', ?, NOW())`,
+       (id, tat_instance_id, escalation_level, triggered_at, notified_user_id, action_taken, resolved_at)
+     VALUES (UUID(), ?, 0, NOW(), ?, 'completed', NOW())`,
     [id, completedBy]
   );
 }

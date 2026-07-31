@@ -33,6 +33,7 @@ import { startBreachSlaCron } from "./modules/privacy/dpdp-breach-sla.cron.js";
 import { startRetentionCron } from "./workers/privacy-retention.worker.js";
 import { startAtsRemindersScheduler } from "./modules/ats/ats-reminders.cron.js";
 import { startEmployeeLifecycleWorker } from "./workers/employee-lifecycle.worker.js";
+import { startTatEscalationWorker } from "./workers/tat-escalation.worker.js";
 import { clearAllTimers } from "./workers/worker-utils.js";
 
 // WORKER GOVERNANCE: When WORKERS_PROCESS=external, ALL workers run in separate process
@@ -144,6 +145,12 @@ function startServer() {
         // which has no npm script and no importer — so anyone approved before
         // their joining date was never activated at all.
         startEmployeeLifecycleWorker();
+        // Registered here AND in workers/all-workers.ts. Production runs the workers
+        // process (WORKERS_PROCESS=external), so this branch is skipped there — but a
+        // worker registered in only one of the two files silently never runs in the
+        // other topology, which is exactly what happened to ats-reminders.
+        // Gated by worker_config.enabled (0 by default) regardless of which starts it.
+        startTatEscalationWorker();
         console.log(
           "[schedulers] tenure, communication, attendance, attendance-reconciliation, legacy-sync, access-expiry, it-provisioning, leave-monthly, leave-annual, payroll-window, performance-ingestion, business-action-sync, breach-sla, privacy-retention, ats-reminders, employee-lifecycle started",
         );
