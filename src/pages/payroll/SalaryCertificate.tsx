@@ -281,7 +281,7 @@ export default function SalaryCertificate() {
   const { data: historyData, refetch: refetchHistory } = useQuery<HistoryResponse>({
     queryKey: ["cert-history", historyEmpId],
     queryFn: () =>
-      hrmsApi.get<HistoryResponse>(`/api/payroll/certificates/employee/${historyEmpId}`),
+      hrmsApi.get<HistoryResponse>(`/api/payroll/salary-certificates/employee/${historyEmpId}`),
     enabled: !!historyEmpId,
   });
 
@@ -292,7 +292,7 @@ export default function SalaryCertificate() {
   // ---------------------------------------------------------------------------
   const generateMutation = useMutation<GenerateResponse, Error, Record<string, unknown>>({
     mutationFn: (payload) =>
-      hrmsApi.post<GenerateResponse>("/api/payroll/certificates/generate", payload),
+      hrmsApi.post<GenerateResponse>("/api/payroll/salary-certificates/generate", payload),
     onSuccess: (res) => {
       setCertData(res.data.certificate_data);
       toast({ title: "Certificate generated", description: `${templateLabel(res.data.template)} ready to print.` });

@@ -434,7 +434,7 @@ export default function NativeHROnboardingRequests() {
     setBgvReviewSaving(true);
     setBgvReviewError(null);
     try {
-      await hrmsApi.post(`/api/ats/bgv/manual-review/${state.candidateId}`, {
+      await hrmsApi.post(`/api/ats/bgv/candidates/${state.candidateId}/manual-review`, {
         checkId: state.checkId,
         status: state.status,
         remarks: state.remarks,

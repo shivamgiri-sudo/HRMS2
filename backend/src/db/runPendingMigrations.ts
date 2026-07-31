@@ -425,6 +425,7 @@ const MIGRATION_MANIFEST: string[] = [
   "1022_page_catalog_path_reconciliation.sql",    // WORKFORCE_COMMAND_CENTER path regression (404 for 8 roles) + retire ADVANCED_REPORTS stub
   "1023_discard_approved_records.sql",            // Discard approved leave/regularization/dispute: pre-approval snapshots + discard audit log
   "1024_candidate_onboarding_document_rejected_status.sql", // document_status lacked 'rejected'; every secure-viewer reject hit ERROR 1265
+  "1028_salary_certificate_request_collation.sql", // utf8mb4_0900_ai_ci vs employees' utf8mb4_unicode_ci — the join 500'd with ERROR 1267
   "1027_ceo_my_kpi_revoke.sql",                   // CEO is not measured on operational KPIs — remove the hollow /my-kpi page from that role only
   ];
 
