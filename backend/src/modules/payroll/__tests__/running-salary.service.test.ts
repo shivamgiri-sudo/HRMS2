@@ -30,9 +30,29 @@ vi.mock("../payrollCalculate.service.js", () => ({
   getPtFromSlab,
 }));
 
+/**
+ * Imported statically, not via `await import()` inside each test.
+ *
+ * vi.mock is hoisted above imports, so a static import is guaranteed to bind the
+ * mocked dependencies. A dynamic import inside a test body has no such guarantee
+ * and raced the mock registry whenever this file ran alongside others: the
+ * service would occasionally bind the REAL holiday-work service, whose own
+ * queries then consumed the db mock's queued values and left a later call
+ * returning undefined. It surfaced as `(intermediate value) is not iterable` at
+ * the employee_statutory_override query — a crash with no connection to the
+ * actual cause. Passed alone, failed roughly two runs in three in a full suite.
+ */
+import { computeRunningSalary } from "../running-salary.service.js";
+
 describe("computeRunningSalary", () => {
   beforeEach(() => {
     execute.mockReset();
+    // mockReset() clears the default too, leaving any call beyond the queued
+    // sequence returning undefined — which destructures into an opaque
+    // TypeError rather than a readable assertion failure. tests/setup.ts mocks
+    // this module with exactly this default for the same reason; restore it so
+    // a miscounted query fails by asserting a wrong number, not by crashing.
+    execute.mockResolvedValue([[], []]);
     resolveHolidaysForEmployee.mockReset();
     calculateWeekoffEligibility.mockReset();
     calculateNetSalary.mockReset();
@@ -107,7 +127,6 @@ describe("computeRunningSalary", () => {
         professional_tax: 0,
       });
 
-    const { computeRunningSalary } = await import("../running-salary.service.js");
     const result = await computeRunningSalary("emp-1", "2026-07-01", "2026-07-25");
 
     expect(result.earned_payable_days).toBe(4.5);
@@ -191,7 +210,6 @@ describe("computeRunningSalary", () => {
         professional_tax: 0,
       });
 
-    const { computeRunningSalary } = await import("../running-salary.service.js");
     const result = await computeRunningSalary("emp-1", "2026-07-01", "2026-07-25");
 
     // The assertion this test exists for: the locked night-shift half day counts
