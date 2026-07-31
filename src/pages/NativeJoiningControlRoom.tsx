@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
-import { AlertTriangle, CheckCircle2, ClipboardCheck, Clock, ExternalLink, FileText, Loader2, RefreshCw, Search, Server, ShieldCheck, UserCheck } from "lucide-react";
+import { AlertTriangle, CheckCircle2, ClipboardCheck, ExternalLink, FileText, Loader2, RefreshCw, Search, ShieldCheck, UserCheck } from "lucide-react";
+import { Link } from "react-router-dom";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -461,7 +462,7 @@ export default function NativeJoiningControlRoom() {
                         </div>
                         <p className="text-sm text-slate-500">
                           Salary was configured during the Employment Offer stage in{" "}
-                          <a href="/ats/onboarding-requests" className="text-blue-600 hover:underline">Onboarding Requests</a>.
+                          <Link to="/ats/onboarding-requests" className="text-blue-600 hover:underline">Onboarding Requests</Link>.
                           To modify, edit the offer there before Branch Head approval.
                         </p>
                       </>
@@ -469,7 +470,7 @@ export default function NativeJoiningControlRoom() {
                       <div className="rounded border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
                         <AlertTriangle className="mb-2 h-5 w-5" />
                         No employment offer found. Submit an offer from{" "}
-                        <a href="/ats/onboarding-requests" className="font-medium underline">Onboarding Requests</a> first.
+                        <Link to="/ats/onboarding-requests" className="font-medium underline">Onboarding Requests</Link> first.
                       </div>
                     )}
                   </TabsContent>
@@ -593,27 +594,22 @@ export default function NativeJoiningControlRoom() {
                           Employee code generated. Provisioning tasks have been auto-dispatched to IT, Admin, WFM, and HR.
                         </div>
                         <div className="grid gap-4 md:grid-cols-2">
-                          {(detail.provisioningTasks?.length ? detail.provisioningTasks : [
-                            { task_code: "WFM_PROCESS_ALIGNMENT", task_label: "WFM Process Alignment", assigned_role: "wfm", status: "pending" },
-                            { task_code: "IT_EMAIL_DOMAIN_ASSET", task_label: "IT Email, Domain & Asset", assigned_role: "it", status: "pending" },
-                            { task_code: "ADMIN_BIOMETRIC_ID_CARD", task_label: "Admin Biometric & ID Card", assigned_role: "admin", status: "pending" },
-                            { task_code: "APPOINTMENT_LETTER_ESIGN", task_label: "Appointment Letter E-Sign", assigned_role: "hr", status: "pending" },
-                          ]).map((task) => (
-                            <ProvisioningTaskCard key={task.task_code} task={task} />
-                          ))}
+                          {detail.provisioningTasks?.length ? (
+                            detail.provisioningTasks.map((task) => (
+                              <ProvisioningTaskCard key={task.task_code} task={task} />
+                            ))
+                          ) : (
+                            <div className="col-span-2 rounded border border-blue-200 bg-blue-50 p-3 text-sm text-blue-800">
+                              Provisioning tasks are being dispatched — refresh in a moment.
+                            </div>
+                          )}
                         </div>
                         <div className="flex flex-wrap gap-2">
                           <Button type="button" variant="outline" size="sm" asChild>
-                            <a href="/provisioning/it"><Server className="mr-2 h-4 w-4" />IT Provisioning</a>
+                            <Link to="/ats/joining-documents-tracker"><FileText className="mr-2 h-4 w-4" />Joining Documents Tracker</Link>
                           </Button>
                           <Button type="button" variant="outline" size="sm" asChild>
-                            <a href="/provisioning/admin"><ShieldCheck className="mr-2 h-4 w-4" />Admin Provisioning</a>
-                          </Button>
-                          <Button type="button" variant="outline" size="sm" asChild>
-                            <a href="/provisioning/wfm-alignment"><Clock className="mr-2 h-4 w-4" />WFM Alignment</a>
-                          </Button>
-                          <Button type="button" variant="outline" size="sm" asChild>
-                            <a href="/provisioning/appointment-letter"><FileText className="mr-2 h-4 w-4" />Appointment Letters</a>
+                            <Link to="/ats/bgv"><ShieldCheck className="mr-2 h-4 w-4" />Open BGV Center</Link>
                           </Button>
                         </div>
                       </>
