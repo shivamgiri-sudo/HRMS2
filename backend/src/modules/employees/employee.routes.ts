@@ -5,6 +5,7 @@ import { requireRole } from "../../middleware/requireRole.js";
 import { requireScopedRole } from "../../middleware/scopeMiddleware.js";
 import { buildScopeWhereClause, hasScopedAccess } from "../../shared/scopeAccess.js";
 import { db } from "../../db/mysql.js";
+import { mobilityService } from "../mobility/mobility.service.js";
 import { employeeController as c } from "./employee.controller.js";
 import { employeeService } from "./employee.service.js";
 import { employeeFiltersSchema } from "./employee.validation.js";
@@ -356,6 +357,39 @@ router.get("/me/journey", h(async (req: any, res: any) => {
   });
   return res.json({ success: true, data });
 }));
+
+// GET /api/employees/me/promotions and /me/transfers — the caller's own records.
+//
+// EmployeeJourney renders one personal timeline from three sources: /me/journey
+// above, plus these two. They had no route at all, so the page silently rendered
+// a timeline missing every promotion and transfer.
+//
+// Deliberately not served by pointing the page at /api/mobility/{promotions,
+// transfers}: those already exist and scope correctly for an ordinary employee,
+// but they return every record in the company for admin and hr. On a screen whose
+// whole premise is "my journey", an HR user would have seen everyone's history
+// mixed into their own. These always scope to the actor, whatever their role.
+function meScopedMobility(
+  path: "promotions" | "transfers",
+  fetch: (employeeId: string) => Promise<unknown[]>,
+) {
+  router.get(`/me/${path}`, h(async (req: any, res: any) => {
+    const userId = req.authUser?.id;
+    if (!userId) return res.status(401).json({ success: false, error: "Unauthorized" });
+
+    const [rows] = await db.execute(
+      "SELECT id FROM employees WHERE user_id = ? AND active_status = 1 LIMIT 1",
+      [userId]
+    ) as any[];
+    if (!rows.length) return res.status(404).json({ success: false, error: "No employee record for this user" });
+
+    const data = await fetch(rows[0].id);
+    return res.json({ success: true, data });
+  }));
+}
+
+meScopedMobility("promotions", (employee_id) => mobilityService.listPromotions({ employee_id }));
+meScopedMobility("transfers", (employee_id) => mobilityService.listTransfers({ employee_id }));
 
 // GET /api/employees/me/bank-change-status — check if a pending bank change request exists
 router.get("/me/bank-change-status", h(async (req: any, res: any) => {
