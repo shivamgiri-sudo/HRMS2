@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { LoginSmartGreeting } from "@/components/integrations/LoginSmartGreeting";
 import { hrmsApi } from "@/lib/hrmsApi";
+import { APP_VERSION } from "@/lib/version";
 
 const companyLogo = "/mcn-logo.png?v=999";
 const currentYear = new Date().getFullYear();
@@ -177,9 +178,38 @@ export default function AuthClean() {
     }
   };
 
+  const infoLoading = loginInfo.active_employees === 0 && loginInfo.branches.length === 0 && loginInfo.announcements.length === 0;
+
   return (
-    <div className="flex min-h-screen">
-      {/* ── Left Panel — MAS Branding ──────────────────────────────── */}
+    <div className="flex min-h-screen flex-col lg:flex-row">
+
+      {/* ── Mobile top banner (visible only below lg) ─────────────── */}
+      <div
+        className="flex items-center justify-between px-4 py-3 lg:hidden"
+        style={{ background: "linear-gradient(135deg, #071428 0%, #0c1d3a 100%)" }}
+      >
+        <div className="flex items-center gap-3">
+          <div className="flex h-10 w-24 items-center justify-center rounded-xl bg-white/95 px-2">
+            <img src={companyLogo} alt="Mas Callnet" className="h-auto w-full object-contain" />
+          </div>
+          <div>
+            <p className="text-xs font-black text-white leading-tight">Mas Callnet India Pvt Ltd</p>
+            <p className="text-[10px] font-semibold" style={{ color: "#5aa0dd" }}>HRMS Platform</p>
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          {loginInfo.branches.length > 0 && (
+            <span className="rounded-full px-2 py-0.5 text-[10px] font-semibold" style={{ background: "rgba(255,255,255,0.08)", color: "#94a3b8", border: "1px solid rgba(255,255,255,0.1)" }}>
+              {loginInfo.branches.length} branch{loginInfo.branches.length > 1 ? "es" : ""}
+            </span>
+          )}
+          <span className="rounded-full px-2 py-0.5 text-[10px] font-semibold" style={{ background: "rgba(27,106,181,0.2)", color: "#5aa0dd", border: "1px solid rgba(27,106,181,0.3)" }}>
+            v{APP_VERSION}
+          </span>
+        </div>
+      </div>
+
+      {/* ── Left Panel — MAS Branding (desktop) ───────────────────── */}
       <div
         className="relative hidden flex-col justify-between overflow-hidden p-10 lg:flex lg:w-[52%] xl:w-[58%]"
         style={{
@@ -300,9 +330,15 @@ export default function AuthClean() {
               </a>
             ))}
           </div>
-          <p className="text-xs text-slate-500">
-            © {currentYear} Mas Callnet India Pvt Ltd · Secure · Reliable · Enterprise-Grade
-          </p>
+          <div className="flex items-center gap-2">
+            <span
+              className="inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-bold"
+              style={{ background: "rgba(27,106,181,0.15)", color: "#5aa0dd", border: "1px solid rgba(27,106,181,0.3)" }}
+            >
+              v{APP_VERSION}
+            </span>
+            <p className="text-xs text-slate-500">© {currentYear} Mas Callnet India Pvt Ltd</p>
+          </div>
         </div>
       </div>
 
@@ -598,8 +634,16 @@ export default function AuthClean() {
             </div>
           </div>
 
-          {/* Announcement ticker */}
-          {loginInfo.announcements.length > 0 && (
+          {/* Announcement ticker — skeleton while live data loads */}
+          {infoLoading && (
+            <div className="mt-5 overflow-hidden rounded-2xl border border-slate-100 bg-slate-50 px-4 py-3 animate-pulse">
+              <div className="flex items-center gap-2.5">
+                <div className="h-4 w-4 flex-shrink-0 rounded-full bg-slate-200" />
+                <div className="h-3 w-3/4 rounded-full bg-slate-200" />
+              </div>
+            </div>
+          )}
+          {!infoLoading && loginInfo.announcements.length > 0 && (
             <div className="mt-5 overflow-hidden rounded-2xl border border-blue-100 bg-blue-50 px-4 py-3">
               <div className="flex items-start gap-2.5">
                 <Megaphone className="mt-0.5 h-4 w-4 flex-shrink-0 text-[#1B6AB5]" />
