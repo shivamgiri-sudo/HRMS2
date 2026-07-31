@@ -4,6 +4,25 @@ import type { PoolConnection } from "mysql2/promise";
 import { db } from "../../db/mysql.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
 
+/**
+ * A rejection the caller caused and can fix, tagged with the status it deserves.
+ *
+ * errorHandler only forwards an error's own message when the status is 4xx; anything else becomes
+ * "An unexpected server error occurred" in production. Every rule below was a bare Error, so a
+ * finance user who mistyped an amount saw that generic line instead of "exceeds outstanding
+ * balance" — the one sentence that tells them what to change. These are data-entry corrections on
+ * a record-keeping screen, not server faults, and they were also filling error monitoring with
+ * false 500s.
+ *
+ * 400 for a value typed wrong, 404 for a record that is not there, 409 for a request that is
+ * well-formed but conflicts with the record's current state.
+ */
+function requestError(statusCode: number, message: string): Error & { statusCode: number } {
+  const error = new Error(message) as Error & { statusCode: number };
+  error.statusCode = statusCode;
+  return error;
+}
+
 const PAYMENT_MODES = [
   "Cheque",
   "NEFT",
@@ -70,16 +89,16 @@ async function lockedPayment(connection: PoolConnection, paymentId: string) {
     [paymentId]
   );
   const payment = rows[0] as any;
-  if (!payment) throw new Error("Vendor payment record not found");
+  if (!payment) throw requestError(404, "Vendor payment record not found");
   return payment;
 }
 
 function validatePaymentDate(value: string) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
-    throw new Error("Payment date must be a valid date");
+    throw requestError(400, "Payment date must be a valid date");
   }
   if (value > new Date().toISOString().slice(0, 10)) {
-    throw new Error("Payment date cannot be in the future");
+    throw requestError(400, "Payment date cannot be in the future");
   }
 }
 
@@ -113,13 +132,13 @@ export const vendorPaymentLedgerService = {
     actorRole?: string
   ) {
     if (!PAYMENT_MODES.includes(payload.paymentMode)) {
-      throw new Error("Invalid payment mode");
+      throw requestError(400, "Invalid payment mode");
     }
     validatePaymentDate(payload.paymentDate);
 
     const amount = roundMoney(Number(payload.paymentAmount));
     if (!Number.isFinite(amount) || amount <= 0) {
-      throw new Error("Payment amount must be greater than zero");
+      throw requestError(400, "Payment amount must be greater than zero");
     }
 
     const connection = await db.getConnection();
@@ -130,10 +149,10 @@ export const vendorPaymentLedgerService = {
       await connection.beginTransaction();
       const payment = await lockedPayment(connection, paymentId);
       if (["Paid", "Closed", "Rejected"].includes(String(payment.payment_status))) {
-        throw new Error(`Payment is locked in status ${payment.payment_status}`);
+        throw requestError(409, `Payment is locked in status ${payment.payment_status}`);
       }
       if (String(payment.payment_status) === "On Hold") {
-        throw new Error("Release the payment hold before dispatching an installment");
+        throw requestError(409, "Release the payment hold before dispatching an installment");
       }
 
       const currentPaid = roundMoney(Number(payment.paid_amount ?? 0));
@@ -142,20 +161,21 @@ export const vendorPaymentLedgerService = {
         Number(payment.balance_amount ?? dueAmount - currentPaid)
       );
       if (amount - balanceBefore > 0.01) {
-        throw new Error(
+        throw requestError(
+          400,
           `Payment amount ${amount.toFixed(2)} exceeds outstanding balance ${balanceBefore.toFixed(2)}`
         );
       }
 
       const externalTransactionId = payload.transactionId?.trim() || null;
       if (payload.paymentMode !== "Cash" && !externalTransactionId) {
-        throw new Error("UTR / Cheque No. / transaction reference is required");
+        throw requestError(400, "UTR / Cheque No. / transaction reference is required");
       }
 
       let bankName: string | null = null;
       const bankId = payload.bankId?.trim() || null;
       if (BANK_MODES.has(payload.paymentMode)) {
-        if (!bankId) throw new Error("Bank is required for this payment mode");
+        if (!bankId) throw requestError(400, "Bank is required for this payment mode");
         const [bankRows] = await connection.execute<RowDataPacket[]>(
           `SELECT bank_name
              FROM bank_master
@@ -163,7 +183,7 @@ export const vendorPaymentLedgerService = {
             LIMIT 1`,
           [bankId]
         );
-        if (!bankRows[0]) throw new Error("Selected bank is inactive or unavailable");
+        if (!bankRows[0]) throw requestError(400, "Selected bank is inactive or unavailable");
         bankName = String(bankRows[0].bank_name);
       }
 
@@ -178,7 +198,7 @@ export const vendorPaymentLedgerService = {
           [referenceLock]
         );
         if (Number(lockRows[0]?.acquired ?? 0) !== 1) {
-          throw new Error("Payment reference is currently being processed; retry once");
+          throw requestError(409, "Payment reference is currently being processed; retry once");
         }
 
         const [duplicateRows] = await connection.execute<RowDataPacket[]>(
@@ -191,7 +211,7 @@ export const vendorPaymentLedgerService = {
           [payload.paymentMode, bankId, externalTransactionId]
         );
         if (duplicateRows[0]) {
-          throw new Error("This transaction reference is already recorded");
+          throw requestError(409, "This transaction reference is already recorded");
         }
       }
 
@@ -327,7 +347,7 @@ export const vendorPaymentLedgerService = {
     actorUserId: string,
     actorRole?: string
   ) {
-    if (hold && !reason?.trim()) throw new Error("Hold reason is required");
+    if (hold && !reason?.trim()) throw requestError(400, "Hold reason is required");
     const connection = await db.getConnection();
     let nextStatus = "Payment Pending";
     let auditSummary: Record<string, unknown> = {};
@@ -335,7 +355,7 @@ export const vendorPaymentLedgerService = {
       await connection.beginTransaction();
       const payment = await lockedPayment(connection, paymentId);
       if (["Paid", "Closed", "Rejected"].includes(String(payment.payment_status))) {
-        throw new Error(`Payment is locked in status ${payment.payment_status}`);
+        throw requestError(409, `Payment is locked in status ${payment.payment_status}`);
       }
 
       const paidAmount = roundMoney(Number(payment.paid_amount ?? 0));
@@ -426,7 +446,7 @@ export const vendorPaymentLedgerService = {
           FOR UPDATE`,
         [transactionRowId, paymentId]
       );
-      if (!transactionRows[0]) throw new Error("Payment installment was not found");
+      if (!transactionRows[0]) throw requestError(404, "Payment installment was not found");
 
       await connection.execute(
         `UPDATE vendor_payment_transaction

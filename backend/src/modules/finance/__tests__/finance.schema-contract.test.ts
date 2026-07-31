@@ -218,6 +218,33 @@ describe("finance database and API contract", () => {
     }
   });
 
+  it("rejects vendor-payment data-entry mistakes as 4xx, not as server errors", () => {
+    // errorHandler replaces any 5xx message with "An unexpected server error occurred" in
+    // production. Every rule here was a bare Error, so a finance user who mistyped an amount was
+    // told the server had failed instead of what to change -- on a screen whose whole job is
+    // recording payment details. Each throw must therefore carry its own 4xx status.
+    const source = read("src/modules/finance/vendor-payment-ledger.service.ts");
+
+    // The one genuine server fault: the aggregate update failing is a broken write, not bad input.
+    const serverFaults = ["Vendor payment aggregate could not be updated"];
+
+    const bareThrows = (source.match(/throw new Error\([\s\S]{0,90}?\)/g) ?? [])
+      .filter((thrown) => !serverFaults.some((fault) => thrown.includes(fault)));
+    expect(
+      bareThrows,
+      "these throws reach the user as opaque 500s -- raise them via requestError(status, message)"
+    ).toEqual([]);
+
+    // Spot-check the classification, so a later edit cannot quietly downgrade these to 500.
+    expect(source).toMatch(/requestError\(\s*404,\s*"Vendor payment record not found"/);
+    expect(source).toMatch(/requestError\(\s*400,\s*"Invalid payment mode"/);
+    expect(source).toMatch(/requestError\(\s*400,[\s\S]{0,80}exceeds outstanding balance/);
+    expect(source).toMatch(/requestError\(\s*409,\s*`Payment is locked in status/);
+    expect(source).toMatch(/requestError\(\s*409,\s*"This transaction reference is already recorded"/);
+    // The helper must set statusCode, or errorHandler will not forward the message.
+    expect(source).toContain("error.statusCode = statusCode");
+  });
+
   it("registers the additive multi-LOB and vendor-payment bridge migrations", () => {
     const manifest = read("src/db/runPendingMigrations.ts");
     const sql421 = read("sql/421_process_lob_pnl_foundation.sql");
