@@ -379,18 +379,32 @@ function contentHash(template: AssessmentTemplateDefinition) {
 async function syncBuiltInTemplatesInternal() {
   for (const definition of DEFAULT_ASSESSMENT_TEMPLATES) {
     const hash = contentHash(definition);
-    const existing = await rows<TemplateRow>(
+
+    // Fetch ALL rows for this template_code so we can detect a hash that was
+    // used in a previous version (e.g. after a catalog revert).  Checking only
+    // the latest row would miss this and attempt an INSERT that violates the
+    // composite unique key (template_code, content_hash).
+    const allRows = await rows<TemplateRow>(
       db,
       `SELECT *
        FROM ats_assessment_template
        WHERE template_code = ?
-       ORDER BY template_version DESC
-       LIMIT 1`,
+       ORDER BY template_version DESC`,
       [definition.code],
     );
-    const latest = existing[0];
 
-    if (latest?.content_hash === hash) {
+    const matchingRow = allRows.find((r) => r.content_hash === hash);
+
+    if (matchingRow) {
+      // The catalog content matches an existing row (current or an older version
+      // that was just re-activated by a catalog revert).  Activate that row and
+      // deactivate all others — no INSERT needed.
+      await db.execute(
+        `UPDATE ats_assessment_template
+         SET active_status = 0, updated_at = NOW()
+         WHERE template_code = ? AND source_type = 'built_in' AND id != ?`,
+        [definition.code, matchingRow.id],
+      );
       await db.execute(
         `UPDATE ats_assessment_template
          SET template_name = ?, process_key = ?, role_key = ?, experience_level = ?,
@@ -407,68 +421,42 @@ async function syncBuiltInTemplatesInternal() {
           definition.durationMinutes,
           definition.passingPercentage,
           JSON.stringify(definition),
-          latest.id,
+          matchingRow.id,
         ],
       );
       continue;
     }
 
+    // New catalog content — insert a fresh version row.
+    const latest = allRows[0];
     const version = Number(latest?.template_version ?? 0) + 1;
-    try {
-      await db.execute(
-        `UPDATE ats_assessment_template
-         SET active_status = 0
-         WHERE template_code = ? AND source_type = 'built_in'`,
-        [definition.code],
-      );
-      await db.execute(
-        `INSERT INTO ats_assessment_template (
-          id, template_code, template_name, process_key, role_key, experience_level,
-          difficulty_level, duration_minutes, passing_percentage, gate_mode,
-          template_version, content_hash, config_json, source_type, active_status
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'advisory', ?, ?, CAST(? AS JSON), 'built_in', 1)`,
-        [
-          randomUUID(),
-          definition.code,
-          definition.name,
-          definition.process,
-          definition.role,
-          definition.experienceLevel,
-          definition.difficulty,
-          definition.durationMinutes,
-          definition.passingPercentage,
-          version,
-          hash,
-          JSON.stringify(definition),
-        ],
-      );
-    } catch (error) {
-      const databaseError = error as { code?: string };
-      if (databaseError.code !== "ER_DUP_ENTRY") throw error;
-      // Compatibility for an earlier draft schema that had template_code as a
-      // single-column unique key. Updating that draft row is safe because this
-      // branch has not been merged into production.
-      await db.execute(
-        `UPDATE ats_assessment_template
-         SET template_name = ?, process_key = ?, role_key = ?, experience_level = ?,
-             difficulty_level = ?, duration_minutes = ?, passing_percentage = ?,
-             content_hash = ?, config_json = CAST(? AS JSON), source_type = 'built_in',
-             active_status = 1, updated_at = NOW()
-         WHERE template_code = ?`,
-        [
-          definition.name,
-          definition.process,
-          definition.role,
-          definition.experienceLevel,
-          definition.difficulty,
-          definition.durationMinutes,
-          definition.passingPercentage,
-          hash,
-          JSON.stringify(definition),
-          definition.code,
-        ],
-      );
-    }
+    await db.execute(
+      `UPDATE ats_assessment_template
+       SET active_status = 0
+       WHERE template_code = ? AND source_type = 'built_in'`,
+      [definition.code],
+    );
+    await db.execute(
+      `INSERT INTO ats_assessment_template (
+        id, template_code, template_name, process_key, role_key, experience_level,
+        difficulty_level, duration_minutes, passing_percentage, gate_mode,
+        template_version, content_hash, config_json, source_type, active_status
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'advisory', ?, ?, CAST(? AS JSON), 'built_in', 1)`,
+      [
+        randomUUID(),
+        definition.code,
+        definition.name,
+        definition.process,
+        definition.role,
+        definition.experienceLevel,
+        definition.difficulty,
+        definition.durationMinutes,
+        definition.passingPercentage,
+        version,
+        hash,
+        JSON.stringify(definition),
+      ],
+    );
   }
 }
 
