@@ -142,6 +142,25 @@ describe("running-summary routes", () => {
     expect(computeRunningSalary).toHaveBeenCalledWith(EMPLOYEE_ID, `${RUN_MONTH}-01`, undefined);
   });
 
+  it("authorizes every role that can open a page rendering the card", async () => {
+    withNoFinalizedRun();
+
+    await request(buildApp()).get(`/api/payroll/running-summary/${EMPLOYEE_ID}?month=${RUN_MONTH}`);
+
+    expect(hasAnyRole).toHaveBeenCalled();
+    const [, ...allowedRoles] = hasAnyRole.mock.calls[0] as [string, ...string[]];
+    // /payroll/running-breakdown grants wfm; /hr/attendance-lookup grants wfm and
+    // payroll_admin. If this endpoint does not, those users reach the page and take
+    // a 403 on the only figure it exists to show. hasAnyRole compares role_key
+    // exactly, so there is no alias normalisation to rely on here.
+    for (const role of [
+      "super_admin", "admin", "payroll_head", "payroll_branch", "payroll",
+      "payroll_admin", "hr", "hr_admin", "wfm", "branch_head", "management",
+    ]) {
+      expect(allowedRoles).toContain(role);
+    }
+  });
+
   it("denies the per-employee route to roles outside the payroll/HR set", async () => {
     withNoFinalizedRun();
     hasAnyRole.mockResolvedValue(false);

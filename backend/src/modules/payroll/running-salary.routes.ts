@@ -210,11 +210,19 @@ runningSalaryRouter.get(
   requireAuth,
   async (req: AuthenticatedRequest, res: Response) => {
     const userId = req.authUser!.id;
+    // wfm and payroll_admin are included deliberately. Both pages that render the
+    // running-month card — /payroll/running-breakdown and /hr/attendance-lookup —
+    // already grant them, and the payroll module already authorizes them on
+    // comparable data: PAYROLL_ROLES in payroll-attendance-control.service.ts
+    // carries wfm, and holiday-debug.routes.ts carries both. Omitting them here
+    // made this route the outlier, so those users reached the page and took a 403
+    // on the one figure it exists to show. hasAnyRole matches role_key exactly —
+    // there is no payroll_admin -> payroll normalisation to fall back on.
     if (
       !(await hasAnyRole(
         userId,
         "super_admin", "admin", "payroll_head", "payroll_branch", "payroll",
-        "hr", "hr_admin", "branch_head", "management"
+        "payroll_admin", "hr", "hr_admin", "wfm", "branch_head", "management"
       ))
     ) {
       return res.status(403).json({ success: false, message: "Access denied" });
