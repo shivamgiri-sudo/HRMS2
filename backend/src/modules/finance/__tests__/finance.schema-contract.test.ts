@@ -184,6 +184,40 @@ describe("finance database and API contract", () => {
     expect(page).not.toContain("/bulk-update");
   });
 
+  it("calls vendor-payment endpoints on the mounted path with the keys the service reads", () => {
+    // The sheet had both wrong: it posted to /api/vendor-payments (404 — the router mounts under
+    // /api/finance) with snake_case keys the service never reads, so paymentMode arrived undefined
+    // and validation rejected it as an invalid mode. Neither failed at build time, and the earlier
+    // contract test only covered VendorPaymentDispatchPage, so the sheet went unchecked.
+    // Every caller is asserted here, not just the one that happened to be correct.
+    const callers = [
+      "../src/pages/finance/VendorPaymentDispatchPage.tsx",
+      "../src/components/finance/vendor/PaymentDispatchSheet.tsx",
+    ];
+    for (const caller of callers) {
+      const source = read(caller);
+      const paths = source.match(/["'`][^"'`]*vendor-payments\/[^"'`]*["'`]/g) ?? [];
+      expect(paths.length, `${caller} should call the vendor-payment API`).toBeGreaterThan(0);
+      for (const path of paths) {
+        expect(path, `${caller} must call the mounted /api/finance path`).toContain("/api/finance/vendor-payments/");
+      }
+      // Scoped to the dispatch call's own body. Checking the whole file would flag the snake_case
+      // VendorPayment interface and draft state, which mirror the API's response and are correct.
+      const dispatchBody = source.match(/vendor-payments\/[^`]*\/dispatch`,\s*\{([\s\S]*?)\n\s*\}\)/);
+      if (dispatchBody) {
+        const body = dispatchBody[1];
+        // The exact keys DispatchPaymentPayload reads. A snake_case body still compiles, then fails
+        // at runtime as "Invalid payment mode", so the names are pinned here.
+        for (const key of ["paymentMode", "paymentDate", "paymentAmount"]) {
+          expect(body, `${caller} dispatch body must send ${key}`).toContain(`${key}:`);
+        }
+        expect(body, `${caller} dispatch body must not use snake_case keys`).not.toMatch(
+          /\b(payment_mode|payment_date|installment_amount|transaction_id|bank_id)\s*:/
+        );
+      }
+    }
+  });
+
   it("registers the additive multi-LOB and vendor-payment bridge migrations", () => {
     const manifest = read("src/db/runPendingMigrations.ts");
     const sql421 = read("sql/421_process_lob_pnl_foundation.sql");

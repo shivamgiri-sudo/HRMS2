@@ -78,13 +78,17 @@ export function PaymentDispatchSheet({ payment, open, onOpenChange, onSaved }: P
 
   const dispatchMutation = useMutation({
     mutationFn: async () => {
-      const res = await hrmsApi.post(`/api/vendor-payments/${payment!.id}/dispatch`, {
-        installment_amount: Number(installmentAmt),
-        payment_mode: mode,
-        payment_date: paymentDate,
-        bank_id: bank || null,
-        transaction_id: utr || null,
-        remarks: remarks || null,
+      // The router mounts at /api/finance, and the service reads camelCase keys. Both were wrong
+      // here: the path 404'd, and had it resolved, snake_case keys would have arrived undefined and
+      // failed validation as "Invalid payment mode". Sent as undefined rather than null when empty,
+      // because the service trims and tests these for presence.
+      const res = await hrmsApi.post(`/api/finance/vendor-payments/${payment!.id}/dispatch`, {
+        paymentAmount: Number(installmentAmt),
+        paymentMode: mode,
+        paymentDate: paymentDate,
+        bankId: bank || undefined,
+        transactionId: utr?.trim() || undefined,
+        remarks: remarks?.trim() || undefined,
       });
       return res.data;
     },
@@ -99,9 +103,9 @@ export function PaymentDispatchSheet({ payment, open, onOpenChange, onSaved }: P
 
   const holdMutation = useMutation({
     mutationFn: async (hold: boolean) => {
-      const res = await hrmsApi.post(`/api/vendor-payments/${payment!.id}/hold`, {
+      const res = await hrmsApi.post(`/api/finance/vendor-payments/${payment!.id}/hold`, {
         hold,
-        reason: holdReason || null,
+        reason: holdReason?.trim() || undefined,
       });
       return res.data;
     },
