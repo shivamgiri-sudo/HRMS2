@@ -232,6 +232,73 @@ export const INBOX_RESOLUTION_RULES: readonly ResolutionRule[] = [
   },
 ];
 
+/**
+ * Identify open items that are exact restatements of another open item.
+ *
+ * createItem now keeps one open row per (user, type, entity, action_url), but
+ * that only stops new duplicates — it cannot collapse what the old 30-minute
+ * window and the daily official-email insert already wrote. Production carried
+ * 30,077 open rows standing for 757 pieces of work, roughly forty copies each,
+ * which is what makes a bell unusable even after the stale alerts are gone.
+ *
+ * The survivor is the *oldest* row in each group, matching createItem's rule
+ * that ageing counts from when the work first came up rather than from the
+ * last reminder. Ties on created_at break by id so the choice is deterministic
+ * and a re-run closes nothing new.
+ *
+ * Grouping is done here rather than in SQL because "keep the oldest of each
+ * group" needs the id of a specific row, which a GROUP BY cannot hand back
+ * without MySQL-version-specific contortions around updating a table that the
+ * subquery also reads.
+ */
+export async function findDuplicateOpenItems(): Promise<{
+  toClose: string[];
+  groupsAffected: number;
+}> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT id, user_id, type, entity_type, entity_id, action_url, created_at
+       FROM work_inbox_item
+      WHERE is_actioned = 0`,
+  );
+
+  const groups = new Map<string, Array<{ id: string; created_at: string }>>();
+  for (const r of rows as RowDataPacket[]) {
+    const key = [r.user_id, r.type, r.entity_type ?? "", r.entity_id ?? "", r.action_url ?? ""].join(" ");
+    const bucket = groups.get(key);
+    const entry = { id: String(r.id), created_at: String(r.created_at ?? "") };
+    if (bucket) bucket.push(entry);
+    else groups.set(key, [entry]);
+  }
+
+  const toClose: string[] = [];
+  let groupsAffected = 0;
+  for (const bucket of groups.values()) {
+    if (bucket.length < 2) continue;
+    groupsAffected += 1;
+    bucket.sort((a, b) =>
+      a.created_at === b.created_at ? a.id.localeCompare(b.id) : a.created_at.localeCompare(b.created_at),
+    );
+    for (let i = 1; i < bucket.length; i += 1) toClose.push(bucket[i].id);
+  }
+
+  return { toClose, groupsAffected };
+}
+
+/** Close the given items by id, in batches so no single lock is long-held. */
+export async function closeItemsByIds(ids: readonly string[]): Promise<number> {
+  let closed = 0;
+  for (let i = 0; i < ids.length; i += BATCH_SIZE) {
+    const chunk = ids.slice(i, i + BATCH_SIZE);
+    const [result] = await db.execute<ResultSetHeader>(
+      `UPDATE work_inbox_item SET is_actioned = 1, is_read = 1
+        WHERE is_actioned = 0 AND id IN (${chunk.map(() => "?").join(",")})`,
+      [...chunk],
+    );
+    closed += Number(result?.affectedRows ?? 0);
+  }
+  return closed;
+}
+
 export interface ReconciliationResult {
   /** Alerts closed (or, in a dry run, that would be closed) per rule. */
   byRule: Record<string, number>;

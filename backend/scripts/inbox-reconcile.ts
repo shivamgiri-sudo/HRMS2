@@ -6,7 +6,12 @@
  */
 import "dotenv/config";
 import { mkdirSync, writeFileSync } from "node:fs";
-import { runInboxReconciliation, INBOX_RESOLUTION_RULES } from "../src/modules/inbox/inbox-reconciliation.js";
+import {
+  closeItemsByIds,
+  findDuplicateOpenItems,
+  runInboxReconciliation,
+  INBOX_RESOLUTION_RULES,
+} from "../src/modules/inbox/inbox-reconciliation.js";
 import { db } from "../src/db/mysql.js";
 
 const apply = process.argv.includes("--apply");
@@ -72,7 +77,32 @@ async function main(): Promise<void> {
     const n = result.byRule[rule.key] ?? 0;
     console.log(`  ${String(n).padStart(6)}  ${rule.key.padEnd(30)} — resolved when ${rule.resolvedWhen}`);
   }
-  console.log(`\n  ${String(result.total).padStart(6)}  TOTAL`);
+  console.log(`\n  ${String(result.total).padStart(6)}  TOTAL resolved`);
+
+  // Collapse after the rules, so rows they already closed are not mistaken for
+  // duplicates of something still open.
+  const { toClose, groupsAffected } = await findDuplicateOpenItems();
+  console.log(
+    `\n  ${String(toClose.length).padStart(6)}  duplicate rows restating ${groupsAffected} task(s) already in the bell`,
+  );
+  if (apply && toClose.length > 0) {
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+    writeFileSync(
+      `./.deploy-backups/work_inbox_item-dupes-${stamp}.sql`,
+      [
+        `-- Reverses the duplicate collapse applied at ${stamp}.`,
+        `-- These rows were unread duplicates of an older open item that remains open.`,
+        ...Array.from({ length: Math.ceil(toClose.length / 500) }, (_, i) =>
+          `UPDATE work_inbox_item SET is_actioned = 0 WHERE id IN (${toClose
+            .slice(i * 500, i * 500 + 500)
+            .map((id) => `'${id}'`)
+            .join(",")});`,
+        ),
+      ].join("\n") + "\n",
+    );
+    const collapsed = await closeItemsByIds(toClose);
+    console.log(`  collapsed ${collapsed}`);
+  }
 
   const [after] = await db.execute<any[]>(
     "SELECT COUNT(*) AS open_items FROM work_inbox_item WHERE is_actioned = 0",

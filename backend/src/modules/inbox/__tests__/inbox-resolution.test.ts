@@ -15,7 +15,11 @@ const mocks = vi.hoisted(() => ({ execute: vi.fn() }));
 vi.mock('../../../db/mysql.js', () => ({ db: { execute: mocks.execute } }));
 
 import { inboxService } from '../inbox.service.js';
-import { INBOX_RESOLUTION_RULES, runInboxReconciliation } from '../inbox-reconciliation.js';
+import {
+  INBOX_RESOLUTION_RULES,
+  findDuplicateOpenItems,
+  runInboxReconciliation,
+} from '../inbox-reconciliation.js';
 
 /** Shape mysql2 returns for a write. */
 const write = (affectedRows: number) => [{ affectedRows }, []];
@@ -241,6 +245,109 @@ describe('inbox reconciliation rules', () => {
   });
 
   it('carries on after a rule fails so one bad rule cannot stall the sweep', async () => {
+    const rules = [
+      { key: 'broken', resolvedWhen: 'never', where: 'w.is_actioned = 0 AND bad_column = 1' },
+      { key: 'good', resolvedWhen: 'always', where: 'w.is_actioned = 0' },
+    ];
+    mocks.execute
+      .mockRejectedValueOnce(new Error("Unknown column 'bad_column'"))
+      .mockResolvedValueOnce(write(4));
+
+    const result = await runInboxReconciliation({ rules });
+
+    expect(result.byRule.broken).toBe(0);
+    expect(result.byRule.good).toBe(4);
+  });
+});
+
+describe('duplicate collapse', () => {
+  beforeEach(() => mocks.execute.mockReset());
+
+  const row = (id: string, created_at: string, over: Record<string, unknown> = {}) => ({
+    id,
+    user_id: 'emp-1',
+    type: 'alerts',
+    entity_type: 'official_email_compliance',
+    entity_id: 'employee-1',
+    action_url: '/profile?tab=profile',
+    created_at,
+    ...over,
+  });
+
+  it('keeps the oldest of a group and closes the restatements', async () => {
+    // 30,077 open rows stood for 757 pieces of work — ~40 copies each, written
+    // before dedup was fixed. The oldest survives so ageing stays honest.
+    mocks.execute.mockResolvedValueOnce(read([
+      row('c', '2026-07-20 09:00:00'),
+      row('a', '2026-06-15 09:00:00'),
+      row('b', '2026-07-01 09:00:00'),
+    ]));
+
+    const { toClose, groupsAffected } = await findDuplicateOpenItems();
+
+    expect(groupsAffected).toBe(1);
+    expect(toClose.sort()).toEqual(['b', 'c']);
+    expect(toClose).not.toContain('a');
+  });
+
+  it('leaves a lone item alone', async () => {
+    mocks.execute.mockResolvedValueOnce(read([row('only', '2026-07-01 09:00:00')]));
+    const { toClose, groupsAffected } = await findDuplicateOpenItems();
+    expect(toClose).toEqual([]);
+    expect(groupsAffected).toBe(0);
+  });
+
+  it('treats a different action_url as different work', async () => {
+    // Two dates of the same employee's missing punch are not duplicates.
+    mocks.execute.mockResolvedValueOnce(read([
+      row('d1', '2026-07-01 09:00:00', { type: 'attendance_missing_punch', action_url: '/x?date=2026-07-01' }),
+      row('d2', '2026-07-02 09:00:00', { type: 'attendance_missing_punch', action_url: '/x?date=2026-07-02' }),
+    ]));
+
+    const { toClose } = await findDuplicateOpenItems();
+
+    expect(toClose).toEqual([]);
+  });
+
+  it('never merges across users — each recipient owns their own copy', async () => {
+    mocks.execute.mockResolvedValueOnce(read([
+      row('u1', '2026-07-01 09:00:00', { user_id: 'emp-1' }),
+      row('u2', '2026-07-01 09:00:00', { user_id: 'emp-2' }),
+    ]));
+
+    const { toClose } = await findDuplicateOpenItems();
+
+    expect(toClose).toEqual([]);
+  });
+
+  it('breaks created_at ties deterministically so a re-run closes nothing new', async () => {
+    const sameInstant = '2026-07-01 09:00:00';
+    mocks.execute.mockResolvedValueOnce(read([
+      row('zz', sameInstant), row('aa', sameInstant), row('mm', sameInstant),
+    ]));
+
+    const first = await findDuplicateOpenItems();
+
+    mocks.execute.mockResolvedValueOnce(read([
+      row('mm', sameInstant), row('zz', sameInstant), row('aa', sameInstant),
+    ]));
+    const second = await findDuplicateOpenItems();
+
+    expect(first.toClose.sort()).toEqual(['mm', 'zz']);
+    expect(second.toClose.sort()).toEqual(first.toClose.sort());
+  });
+
+  it('only ever reads rows that are still open', async () => {
+    mocks.execute.mockResolvedValueOnce(read([]));
+    await findDuplicateOpenItems();
+    expect(String(mocks.execute.mock.calls[0][0])).toContain('is_actioned = 0');
+  });
+});
+
+describe('reconciliation rule failure isolation', () => {
+  beforeEach(() => mocks.execute.mockReset());
+
+  it('reports zero for a rule whose SQL is rejected', async () => {
     const rules = [
       { key: 'broken', resolvedWhen: 'never', where: 'w.is_actioned = 0 AND bad_column = 1' },
       { key: 'good', resolvedWhen: 'always', where: 'w.is_actioned = 0' },

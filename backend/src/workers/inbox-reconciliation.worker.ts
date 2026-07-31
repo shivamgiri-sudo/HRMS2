@@ -10,7 +10,11 @@
  * this is the safety net behind them, not the primary mechanism.
  */
 
-import { runInboxReconciliation } from "../modules/inbox/inbox-reconciliation.js";
+import {
+  closeItemsByIds,
+  findDuplicateOpenItems,
+  runInboxReconciliation,
+} from "../modules/inbox/inbox-reconciliation.js";
 
 const CHECK_INTERVAL_MS = 5 * 60 * 1000;
 /** Let the API warm up before the first sweep touches the DB. */
@@ -34,6 +38,16 @@ async function sweep(): Promise<void> {
         .map(([k, n]) => `${k}=${n}`)
         .join(" ");
       console.log(`[inbox-reconciliation] closed ${result.total} resolved alert(s): ${detail}`);
+    }
+
+    // Runs after the rules, so anything they closed is already out of the way
+    // and is never counted as a duplicate of a still-open item.
+    const { toClose, groupsAffected } = await findDuplicateOpenItems();
+    if (toClose.length > 0) {
+      const collapsed = await closeItemsByIds(toClose);
+      console.log(
+        `[inbox-reconciliation] collapsed ${collapsed} duplicate row(s) across ${groupsAffected} task(s)`,
+      );
     }
   } catch (error) {
     console.error(
