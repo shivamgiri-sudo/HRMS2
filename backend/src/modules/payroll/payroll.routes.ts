@@ -10,7 +10,6 @@ import { requireWFMAccess } from "../../middleware/requireWFMAccess.js";
 import { payrollRunLimiter } from "../../middleware/rateLimiter.js";
 import { buildScopeWhereClause, hasAnyRole as hasAnyRoleAsync } from "../../shared/scopeAccess.js";
 import { statutoryRegimeForFinancialYear } from "./statutory-regime.js";
-import { getPartAAvailability } from "./tds-certificate-part-a.service.js";
 import { getEmployeeForUser, hasRole } from "../../shared/accessGuard.js";
 
 // Synchronous role check against req.user.role (used for validate/reject guards)
@@ -1575,14 +1574,6 @@ router.get(
     // today's date — otherwise reprinting an older year would relabel it wrongly.
     const regime = statutoryRegimeForFinancialYear(fyStart);
 
-    // Part A — tax deposited, challan and BSR codes, TRACES verification — is
-    // issued by TRACES from the quarterly return and cannot be produced here.
-    // Reporting its state alongside Part B is what stops this response being
-    // mistaken for a complete certificate: without a verified Part A it is half
-    // a document, and an employee filing from it would be missing the half that
-    // proves the tax was actually deposited.
-    const partA = await getPartAAvailability(employeeId, fyStart);
-
     return res.json({
       success: true,
       data: {
@@ -1590,23 +1581,6 @@ router.get(
         period: run.run_month,
         // Additive: existing consumers are unaffected, and a client that renders
         // this instead of a hardcoded "Form 16" is correct for every year.
-        /**
-         * Completeness of the certificate, stated rather than implied.
-         *
-         * Part B below is produced here. Part A comes from TRACES and cannot
-         * be. `is_complete` is false until a verified Part A exists, so a
-         * client can say "your Part B is ready, Part A is pending" instead of
-         * presenting half a document as a whole one.
-         */
-        part_a: {
-          status: partA.status,
-          available: partA.verified,
-          certificate_number: partA.certificateNumber,
-          vault_document_id: partA.vaultDocumentId,
-          covers_quarters: partA.coversQuarters,
-          message: partA.message,
-        },
-        is_complete: partA.verified,
         statutory: {
           act: regime.actName,
           certificate_form: regime.salaryCertificateForm,

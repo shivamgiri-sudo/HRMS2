@@ -52,8 +52,6 @@ const LINEAGE_COLUMNS = [
   'formula_version_id',
   'integration_run_id',
   'computed_at',
-  'process_id_at_event',
-  'branch_id_at_event',
 ];
 
 const FORMULA_BY_METRIC: Record<string, string> = {
@@ -171,38 +169,6 @@ async function mapEmployees(identifiers: string[]): Promise<Map<string, string>>
   return map;
 }
 
-type EmployeeScope = { processId: string | null; branchId: string | null };
-
-// process_id_at_event / branch_id_at_event are a snapshot of where the employee sat when the
-// fact was written, not a live join — an agent who moves process must not retro-relabel their
-// old scores. Cached because upsertDailyActual runs once per employee per metric per day
-// (~45k calls), but only briefly, so a mid-day transfer is picked up by the next sync rather
-// than frozen for the lifetime of the process.
-const EMPLOYEE_SCOPE_TTL_MS = 60_000;
-let employeeScopeCache: { loadedAt: number; scopes: Map<string, EmployeeScope> } | null = null;
-
-async function getEmployeeScope(employeeId: string): Promise<EmployeeScope> {
-  if (!employeeScopeCache || Date.now() - employeeScopeCache.loadedAt > EMPLOYEE_SCOPE_TTL_MS) {
-    const [rows] = await db
-      .execute<RowDataPacket[]>('SELECT id, process_id, branch_id FROM employees')
-      .catch(() => [[], []] as any);
-    const scopes = new Map<string, EmployeeScope>();
-    for (const row of rows as any[]) {
-      scopes.set(String(row.id), {
-        processId: row.process_id ? String(row.process_id) : null,
-        branchId: row.branch_id ? String(row.branch_id) : null,
-      });
-    }
-    employeeScopeCache = { loadedAt: Date.now(), scopes };
-  }
-  return employeeScopeCache.scopes.get(String(employeeId)) ?? { processId: null, branchId: null };
-}
-
-/** Exposed so tests and long-lived workers can force a reload rather than wait out the TTL. */
-export function resetEmployeeScopeCache() {
-  employeeScopeCache = null;
-}
-
 async function upsertDailyActual(fact: MetricFact, metricIds: Map<string, string>, formulaIds: Map<string, string>) {
   const metricId = metricIds.get(fact.metricCode);
   if (!metricId) return false;
@@ -226,12 +192,6 @@ async function upsertDailyActual(fact: MetricFact, metricIds: Map<string, string
   maybeAdd('source_record_count', fact.sourceRecordCount ?? null);
   maybeAdd('formula_version_id', formulaIds.get(fact.metricCode) ?? null);
   maybeAdd('integration_run_id', null);
-
-  if (lineageColumns.has('process_id_at_event') || lineageColumns.has('branch_id_at_event')) {
-    const scope = await getEmployeeScope(fact.employeeId);
-    maybeAdd('process_id_at_event', scope.processId);
-    maybeAdd('branch_id_at_event', scope.branchId);
-  }
 
   const computedAtNow = lineageColumns.has('computed_at');
   const columns = [...baseColumns, ...optionalColumns, ...(computedAtNow ? ['computed_at'] : [])];

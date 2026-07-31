@@ -429,8 +429,6 @@ const MIGRATION_MANIFEST: string[] = [
   "1027_ceo_my_kpi_revoke.sql",                   // CEO is not measured on operational KPIs — remove the hollow /my-kpi page from that role only
   "1030_statutory_config_versioning.sql",
   "1031_statutory_filing_act_2025_forms.sql",   // Income-tax Act 2025 renumbered the quarterly salary TDS statement from Form 24Q to Form 138; the ENUM is widened, never narrowed, so filed rows keep meaning what they meant         // statutory_config keys are UNIQUE, so a Finance Act change overwrote the old rates and a prior month could no longer be recomputed at the rates it was actually deducted under
-  "1032_tds_certificate_part_a.sql",           // Part A of the salary TDS certificate is issued by TRACES and cannot be generated here; this records which document belongs to which employee and year
-  "1035_kpi_master_config_designation.sql",     // A process target overrode a designation target instead of combining, so "EXECUTIVE on Onfido" could not be targeted separately; adds designation_id as an optional second dimension
   ];
 
 export type MigrationHealth = {

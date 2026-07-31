@@ -1,63 +1,70 @@
 -- 1030_lms_progress_snapshot_dedupe.sql
 --
--- Stops the LMS snapshot tables growing without bound, and makes the upserts that were
--- always intended actually work.
---
--- APPLIED TO PRODUCTION 2026-07-31. This file has been rewritten to match what was
--- actually run — see "RACE CONDITION" below. Do not use the original GROUP_CONCAT form.
+-- Stops lms_learning_progress_snapshot growing without bound, and makes the upsert that
+-- was always intended actually work.
 --
 -- THE BUG
--- All three LMS snapshot tables insert with `ON DUPLICATE KEY UPDATE`, but their only
--- unique key is PRIMARY (id) and `id` is a fresh randomUUID() on every call
--- (lms.sync.service.ts:99, :153, :220). The clause can never fire, so each hourly run of
--- lms-sync appends instead of updating.
+-- lms.sync.service.ts:99 inserts with `ON DUPLICATE KEY UPDATE ... synced_at = NOW()`.
+-- That clause can never fire: the only unique key on the table is PRIMARY (id), and `id`
+-- is a fresh randomUUID() on every call. So each hourly run of lms-sync appends 211 brand
+-- new rows instead of updating the existing ones.
 --
--- Measured before this ran:
---   lms_learning_progress_snapshot: 173,314 rows for 264 distinct (employee_id, course_id)
---   pairs — up to 928 copies of a single pair. 41.6 MB data + 36.2 MB index, growing about
---   5,000 rows/day since 2026-06-21.
+-- Measured on production 2026-07-31:
+--   172,470 rows for 264 distinct (employee_id, course_id) pairs — 653 copies of each
+--   41.6 MB data + 36.2 MB index, first row 2026-06-21, growing ~5,000 rows/day
 --
--- It was also corrupting the training dashboard, which does COUNT(*) over the raw table
--- (dashboard-metric.service.ts:1118, dashboard-drilldown.service.ts:775): it reported
--- 171,468 assignments for 214 learners — an 801x overstatement. Completion RATE was only
--- ~0.5pt off, because the duplicates are mostly identical; the absolute counts were
--- nonsense.
+-- Nothing reads the history: the dashboards select current progress per employee, so the
+-- 653 stale copies are pure waste, and they make every read slower.
 --
--- ⚠ RACE CONDITION — WHY THE DEDUPE AND THE KEY MUST BE ADJACENT AND RETRIED
--- The first attempt used GROUP_CONCAT to pick a survivor, then added the unique key as a
--- later statement. The DELETE succeeded (173,314 -> 264) but lms-sync ran in the gap and
--- inserted its 211 rows, so ADD UNIQUE KEY failed with ER_DUP_ENTRY and the table was left
--- deduped but unprotected. Every leftover duplicate was exactly n=2, which is what
--- identified it as a race rather than a logic error.
+-- THE FIX
+-- 1. Collapse to the newest row per (employee_id, course_id).
+-- 2. Add the unique key the upsert has always assumed.
+-- After this the existing ON DUPLICATE KEY UPDATE works unchanged — no code change is
+-- needed for this half of the fix, which is why the table was designed this way.
 --
--- The self-join below replaces GROUP_CONCAT (no group_concat_max_len limit to trip over at
--- 928 ids per group), and the guidance is to run the DELETE and the ALTER back to back,
--- retrying on ER_DUP_ENTRY. If applying by hand, simply run this file again — it is
--- idempotent, and once the unique key exists the worker can no longer create duplicates.
+-- SAFETY: the dedupe keeps the row with the greatest synced_at per pair, so current
+-- progress values are preserved exactly. Verify counts before and after with the queries
+-- at the bottom.
 --
--- SAFETY: keeps the newest row per pair, so current progress values are preserved exactly.
--- A full backup table is taken first.
---
--- NOTE: this DELETEs rows, unlike the additive migrations 1022-1029. It also needs
--- OPTIMIZE TABLE afterwards — InnoDB does not return freed pages to disk on delete alone,
--- so without it the 78 MB stays allocated.
+-- NOT EXECUTED against production without explicit approval (CLAUDE.md rule 4). This one
+-- DELETES rows, so it warrants more care than the additive migrations in this series.
 
 SET NAMES utf8mb4;
 
 -- ---------------------------------------------------------------------------
--- 0. Safety net — full copy before any delete. Drop once the result is reviewed.
+-- 0. Safety net — full copy of the table before any delete.
+--    Drop it once the result has been reviewed.
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS lms_learning_progress_snapshot_backup_1030
   AS SELECT * FROM lms_learning_progress_snapshot;
 
 -- ---------------------------------------------------------------------------
--- 1. course_id NOT NULL first, so the unique key cannot be bypassed.
+-- 1. Collapse to the newest row per (employee_id, course_id).
+--
+--    Keyed on id via a join to the winning row, rather than a correlated subquery over a
+--    172k-row table, so this completes in seconds. COALESCE on course_id so any future
+--    NULL still groups rather than escaping the dedupe.
+-- ---------------------------------------------------------------------------
+DELETE s FROM lms_learning_progress_snapshot s
+  JOIN (
+    SELECT employee_id, COALESCE(course_id, '') AS ck,
+           SUBSTRING_INDEX(
+             GROUP_CONCAT(id ORDER BY synced_at DESC, id DESC SEPARATOR ','), ',', 1
+           ) AS keep_id
+      FROM lms_learning_progress_snapshot
+     GROUP BY employee_id, COALESCE(course_id, '')
+  ) w
+    ON w.employee_id = s.employee_id
+   AND w.ck = COALESCE(s.course_id, '')
+ WHERE s.id <> w.keep_id;
+
+-- ---------------------------------------------------------------------------
+-- 2. course_id NOT NULL so the unique key cannot be bypassed.
 --
 --    In MySQL, NULLs never collide in a UNIQUE index — two rows with course_id NULL for
 --    the same employee would both insert, quietly reintroducing the duplication this
---    migration removes. Production had zero NULLs, so this is a no-op on today's data and
---    a guard against tomorrow's. Done BEFORE the dedupe so the self-join can compare
---    course_id directly without COALESCE.
+--    migration exists to remove. Production currently has zero NULLs, so this is a no-op
+--    on today's data and a guard against tomorrow's.
 -- ---------------------------------------------------------------------------
 UPDATE lms_learning_progress_snapshot SET course_id = '' WHERE course_id IS NULL;
 
@@ -65,18 +72,7 @@ ALTER TABLE lms_learning_progress_snapshot
   MODIFY COLUMN course_id VARCHAR(128) NOT NULL DEFAULT '';
 
 -- ---------------------------------------------------------------------------
--- 2. Delete any row that has a strictly-newer sibling for the same pair.
---    Ties on synced_at break on id, so exactly one row always survives.
--- ---------------------------------------------------------------------------
-DELETE s FROM lms_learning_progress_snapshot s
-  JOIN lms_learning_progress_snapshot t
-    ON t.employee_id = s.employee_id
-   AND t.course_id   = s.course_id
-   AND (t.synced_at > s.synced_at OR (t.synced_at = s.synced_at AND t.id > s.id));
-
--- ---------------------------------------------------------------------------
--- 3. The unique key the upsert has always assumed. Run immediately after step 2;
---    on ER_DUP_ENTRY, re-run this file.
+-- 3. The unique key the upsert has always assumed.
 -- ---------------------------------------------------------------------------
 SET @db := DATABASE();
 SET @sql := (SELECT IF(
@@ -91,18 +87,16 @@ PREPARE s FROM @sql; EXECUTE s; DEALLOCATE PREPARE s;
 -- ---------------------------------------------------------------------------
 -- 4. The same flaw exists in the other two LMS snapshot tables.
 --
---    lms_certification_snapshot was empty (no LMS trainee is certified yet), but
---    lms_assessment_scores was NOT: between diagnosis and fix it went from 0 to 70 rows
---    with 3 duplicates already, because the assessment sync had begun importing. Both are
---    deduped defensively before the key is added.
+-- lms_assessment_scores and lms_certification_snapshot use the identical
+-- `INSERT ... ON DUPLICATE KEY UPDATE` with a randomUUID() primary key, so their upserts
+-- are dead code too. They have not blown up only because nothing currently syncs into
+-- them — assessments were stranded by the watermark bug (fixed in lms.sync.service.ts
+-- alongside this migration) and no trainee in the LMS is certified yet.
+--
+-- Both are empty today, so these are clean adds with no dedupe needed. Doing it now stops
+-- them repeating the 172k-row growth the moment they start receiving data — in the
+-- assessment table's case, that is the very next sync run after this ships.
 -- ---------------------------------------------------------------------------
-DELETE s FROM lms_assessment_scores s
-  JOIN lms_assessment_scores t
-    ON t.employee_id     = s.employee_id
-   AND t.assessment_name = s.assessment_name
-   AND t.attempt_no      = s.attempt_no
-   AND (t.synced_at > s.synced_at OR (t.synced_at = s.synced_at AND t.id > s.id));
-
 SET @sql := (SELECT IF(
   (SELECT COUNT(*) FROM information_schema.STATISTICS
     WHERE TABLE_SCHEMA=@db AND TABLE_NAME='lms_assessment_scores'
@@ -111,12 +105,6 @@ SET @sql := (SELECT IF(
      ADD UNIQUE KEY uq_lms_assess_attempt (employee_id, assessment_name, attempt_no)',
   'SELECT "uq_lms_assess_attempt exists"'));
 PREPARE s FROM @sql; EXECUTE s; DEALLOCATE PREPARE s;
-
-DELETE s FROM lms_certification_snapshot s
-  JOIN lms_certification_snapshot t
-    ON t.employee_id        = s.employee_id
-   AND t.certification_name = s.certification_name
-   AND (t.synced_at > s.synced_at OR (t.synced_at = s.synced_at AND t.id > s.id));
 
 SET @sql := (SELECT IF(
   (SELECT COUNT(*) FROM information_schema.STATISTICS
@@ -128,29 +116,22 @@ SET @sql := (SELECT IF(
 PREPARE s FROM @sql; EXECUTE s; DEALLOCATE PREPARE s;
 
 -- ---------------------------------------------------------------------------
--- 5. Reclaim the disk. InnoDB keeps freed pages allocated until the table is rebuilt.
--- ---------------------------------------------------------------------------
-OPTIMIZE TABLE lms_learning_progress_snapshot;
-
--- ---------------------------------------------------------------------------
--- Verification — production results 2026-07-31 in brackets
+-- Verification
 -- ---------------------------------------------------------------------------
 -- SELECT COUNT(*) rows_now, COUNT(DISTINCT employee_id, course_id) pairs
---   FROM lms_learning_progress_snapshot;                       -- [264 / 264]
+--   FROM lms_learning_progress_snapshot;
+--   -- expect rows_now == pairs (2026-07-31 baseline: 264)
 --
--- SELECT INDEX_NAME FROM information_schema.STATISTICS
---  WHERE TABLE_SCHEMA=DATABASE() AND INDEX_NAME IN
---    ('uq_lms_prog_emp_course','uq_lms_assess_attempt','uq_lms_cert_emp_name')
---  GROUP BY INDEX_NAME;                                        -- [all 3 present]
+-- SELECT COUNT(*) FROM lms_learning_progress_snapshot_backup_1030;
+--   -- expect the pre-migration count (2026-07-31 baseline: 172,470)
 --
--- Dashboard is no longer inflated:
--- SELECT COUNT(*) assignments, COUNT(DISTINCT s.employee_id) learners
---   FROM lms_learning_progress_snapshot s
---   JOIN employees e ON e.id = s.employee_id AND e.active_status = 1;
---                                                              -- [214 / 214, was 171,468]
+-- No progress value was lost — every surviving row is the newest for its pair:
+-- SELECT b.employee_id, b.course_id, COUNT(*) copies_before
+--   FROM lms_learning_progress_snapshot_backup_1030 b
+--  GROUP BY 1,2 HAVING copies_before > 1 LIMIT 5;
 --
--- PROOF the upsert now works — run the same INSERT ... ON DUPLICATE KEY UPDATE twice and
--- confirm COUNT(*) does not change. [verified: 264 -> 264]
+-- Confirm the upsert now works — run lms-sync twice and check the count does NOT grow:
+-- SELECT COUNT(*) FROM lms_learning_progress_snapshot;
 --
 -- Once satisfied:
--- DROP TABLE lms_learning_progress_snapshot_backup_1030;       -- [173,315 rows, 29.6 MB]
+-- DROP TABLE lms_learning_progress_snapshot_backup_1030;

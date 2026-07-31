@@ -187,7 +187,7 @@ router.post(
 router.get(
   '/pending-approval',
   requireAuth,
-  requireRole('branch_head', 'admin', 'super_admin'),
+  requireRole('branch_head', 'admin', 'super_admin', 'hr', 'payroll_hr'),
   h(async (req: AuthenticatedRequest, res) => {
     const scopeFilter = await buildScopeWhereClause(
       req.authUser!.id,
@@ -203,7 +203,7 @@ router.get(
 router.post(
   '/offers/:id/approve',
   requireAuth,
-  requireRole('branch_head', 'admin', 'super_admin'),
+  requireRole('branch_head', 'admin', 'super_admin', 'hr', 'payroll_hr'),
   h(async (req: AuthenticatedRequest, res) => {
     const result = await approveOffer(req.params!.id, req.authUser!.id, req.body.remarks);
     res.json({ ok: true, ...result });
@@ -213,7 +213,7 @@ router.post(
 router.post(
   '/offers/:id/reject',
   requireAuth,
-  requireRole('branch_head', 'admin', 'super_admin'),
+  requireRole('branch_head', 'admin', 'super_admin', 'hr', 'payroll_hr'),
   h(async (req: AuthenticatedRequest, res) => {
     if (!req.body.remarks) { res.status(400).json({ error: 'remarks required for rejection' }); return; }
     await rejectOffer(req.params!.id, req.authUser!.id, req.body.remarks);
