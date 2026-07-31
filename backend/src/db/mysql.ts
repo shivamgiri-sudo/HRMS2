@@ -38,6 +38,10 @@ const _pool: Pool = mysql.createPool({
   idleTimeout:        env.DB_POOL_IDLE_TIMEOUT_MS,
 });
 
+_pool.on('connection', (conn) => {
+  conn.query("SET time_zone = '+05:30'");
+});
+
 /**
  * RELIABILITY: Transient errors that are safe to retry.
  *

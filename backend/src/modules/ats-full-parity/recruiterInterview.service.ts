@@ -5,6 +5,7 @@ import { db } from "../../db/mysql.js";
 import { sendOnboardingToken } from "../ats/ats.onboarding.service.js";
 import { sendRejectedEmail } from "../ats/ats.email.service.js";
 import { jobRequisitionService } from "../job-requisition/job-requisition.service.js";
+import { toIST } from "../../shared/timezone.js";
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -218,6 +219,7 @@ export interface PendingCandidate {
   pendingMinutes: number;
   status: string;
   recruiterAssignedName?: string | null;
+  createdAt: string | null;
 }
 
 export async function getMyPendingCandidates(recruiterName?: string): Promise<PendingCandidate[]> {
@@ -235,10 +237,8 @@ export async function getMyPendingCandidates(recruiterName?: string): Promise<Pe
        applied_for_branch,
        COALESCE(status, current_stage, 'Waiting') AS status,
        recruiter_assigned_name,
-       TIMESTAMPDIFF(MINUTE,
-         CONCAT(COALESCE(created_date, DATE(created_at)), ' ', COALESCE(created_time, TIME(created_at))),
-         NOW()
-       ) AS pending_minutes
+       created_at,
+       TIMESTAMPDIFF(MINUTE, created_at, NOW()) AS pending_minutes
      FROM ats_candidate
      WHERE active_status = 1
        ${recruiterClause}
@@ -257,6 +257,7 @@ export async function getMyPendingCandidates(recruiterName?: string): Promise<Pe
     pendingMinutes: Number(r.pending_minutes ?? 0),
     status: r.status ?? "Waiting",
     recruiterAssignedName: (r as any).recruiter_assigned_name ?? null,
+    createdAt: toIST((r as any).created_at),
   }));
 }
 
@@ -339,10 +340,8 @@ export async function getOtherRecruitersPendingCandidates(
        applied_for_branch,
        status,
        recruiter_assigned_name,
-       TIMESTAMPDIFF(MINUTE,
-         CONCAT(COALESCE(created_date, DATE(created_at)), ' ', COALESCE(created_time, TIME(created_at))),
-         NOW()
-       ) AS pending_minutes
+       created_at,
+       TIMESTAMPDIFF(MINUTE, created_at, NOW()) AS pending_minutes
      FROM ats_candidate
      WHERE active_status = 1
        AND status = 'Waiting'
@@ -364,6 +363,7 @@ export async function getOtherRecruitersPendingCandidates(
     pendingMinutes: Number(r.pending_minutes ?? 0),
     status: r.status ?? "Waiting",
     recruiterAssignedName: (r as any).recruiter_assigned_name ?? null,
+    createdAt: toIST((r as any).created_at),
   }));
 }
 
