@@ -9,6 +9,7 @@ import { requireScopedRole } from "../../middleware/scopeMiddleware.js";
 import { requireWFMAccess } from "../../middleware/requireWFMAccess.js";
 import { payrollRunLimiter } from "../../middleware/rateLimiter.js";
 import { buildScopeWhereClause, hasAnyRole as hasAnyRoleAsync } from "../../shared/scopeAccess.js";
+import { statutoryRegimeForFinancialYear } from "./statutory-regime.js";
 import { getEmployeeForUser, hasRole } from "../../shared/accessGuard.js";
 
 // Synchronous role check against req.user.role (used for validate/reject guards)
@@ -1501,11 +1502,30 @@ router.get(
       + (decl ? Number(decl.declared_hra) + Number(decl.declared_80c) + Number(decl.declared_80d) : 0);
     const netTaxableIncome = Math.max(0, (grossSalary * 12) - totalDeductions);
 
+    // Which Act governs the year this certificate covers, and therefore what the
+    // certificate is called. The Income-tax Act, 2025 renamed the salary TDS
+    // certificate from Form 16 to Form 130 with effect from 1 April 2026, so a
+    // certificate for FY 2026-27 is a Form 130 while one reissued for FY 2025-26
+    // remains a Form 16. Resolved from the financial year covered, never from
+    // today's date — otherwise reprinting an older year would relabel it wrongly.
+    const regime = statutoryRegimeForFinancialYear(fyStart);
+
     return res.json({
       success: true,
       data: {
         financial_year: financialYear,
         period: run.run_month,
+        // Additive: existing consumers are unaffected, and a client that renders
+        // this instead of a hardcoded "Form 16" is correct for every year.
+        statutory: {
+          act: regime.actName,
+          certificate_form: regime.salaryCertificateForm,
+          certificate_label: `Form ${regime.salaryCertificateForm}`,
+          salary_tds_section: regime.salaryTdsSection,
+          quarterly_return_form: regime.quarterlyReturnForm,
+          rebate_section: regime.rebateSection,
+          period_term: regime.periodTerm,
+        },
         employee: {
           name: emp?.name ?? "",
           pan: emp?.pan ?? null,
