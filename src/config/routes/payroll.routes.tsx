@@ -40,6 +40,7 @@ const BulkOutputs               = lazy(() => import("@/pages/payroll/BulkOutputs
 const LoanManagement            = lazy(() => import("@/pages/payroll/LoanManagement"));
 const PayrollSignOff            = lazy(() => import("@/pages/payroll/PayrollSignOff"));
 const SalaryCertificate         = lazy(() => import("@/pages/payroll/SalaryCertificate"));
+const TdsCertificatePartA       = lazy(() => import("@/pages/payroll/TdsCertificatePartA"));
 const ReimbursementManagement   = lazy(() => import("@/pages/payroll/ReimbursementManagement"));
 const PayrollEpfCompliancePage  = lazy(() => import("@/pages/PayrollEpfCompliancePage"));
 const PfCreationQueuePage       = lazy(() => import("@/pages/payroll/PfCreationQueuePage"));
@@ -124,6 +125,10 @@ export const payrollRouteElements = (
       <Route path="/payroll/loans"               element={<ProtectedRoute roles={['super_admin','payroll_head','finance','admin','hr','employee']}><Gate pageCode="PAYROLL_LOANS"><LoanManagement /></Gate></ProtectedRoute>} />
       <Route path="/payroll/sign-off"            element={<ProtectedRoute roles={['super_admin','payroll_head','finance','ceo','admin']}><Gate pageCode="PAYROLL_SIGN_OFF"><PayrollSignOff /></Gate></ProtectedRoute>} />
       <Route path="/payroll/salary-certificates" element={<ProtectedRoute roles={['super_admin','payroll_head','finance','admin','hr','employee']}><Gate pageCode="PAYROLL_SALARY_CERTIFICATES"><SalaryCertificate /></Gate></ProtectedRoute>} />
+      {/* Roles mirror the backend's PAYROLL_ROLES for this router, so the screen
+          is not offered to someone whose every request would 403. The API is the
+          actual boundary. */}
+      <Route path="/payroll/tds-certificate-part-a" element={<ProtectedRoute roles={['super_admin','admin','payroll_head','payroll','payroll_hr','finance']}><Gate pageCode="PAYROLL_TDS_PART_A"><TdsCertificatePartA /></Gate></ProtectedRoute>} />
       <Route path="/payroll/reimbursements"      element={<ProtectedRoute roles={['super_admin','payroll_head','finance','admin','hr','employee']}><Gate pageCode="PAYROLL_REIMBURSEMENTS"><ReimbursementManagement /></Gate></ProtectedRoute>} />
       <Route path="/payroll/ho-queues"           element={<ProtectedRoute roles={['super_admin','payroll_head','payroll','finance','hr','admin']}><Gate pageCode="PAYROLL_HO_QUEUES"><NativePayrollHOQueues /></Gate></ProtectedRoute>} />
       <Route path="/payroll/cheque-validation"   element={<Navigate to="/payroll/ho-queues" replace />} />
