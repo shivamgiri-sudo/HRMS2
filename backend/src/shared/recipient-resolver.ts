@@ -167,6 +167,38 @@ async function runSelector(
       return { rows: hr, label: `wfm_chain:${b}#branch_hr`, policy: 'default' };
     }
 
+    case 'approver_chain': {
+      const id = sel.employeeId ?? ctx.employeeId;
+      const b = sel.branchId ?? ctx.branchId;
+      if (!id && !b) return { rows: [], label: 'approver_chain:<none>', policy: 'default' };
+
+      // 1. The reporting manager, which is who this SHOULD reach.
+      if (id) {
+        const mgr = await q(
+          `SELECT ${PERSON_COLS} FROM employees sub
+             JOIN employees e ON e.id = COALESCE(sub.reporting_manager_id, sub.manager_id)
+            WHERE sub.id = ? AND ${ACTIVE} LIMIT 1`, [id]);
+        if (mgr.length) return { rows: mgr, label: `approver_chain:${id}#manager`, policy: 'default' };
+      }
+      if (!b) return { rows: [], label: `approver_chain:${id ?? '?'}#no_branch`, policy: 'default' };
+
+      // 2. Branch head — same dual source as the branch_head selector, since
+      //    branch_head_assignments holds only 3 fake seed rows in production.
+      const assigned = await q(
+        `SELECT ${PERSON_COLS}
+           FROM branch_head_assignments bha
+           JOIN branch_master b ON bha.branch_name IN (b.branch_name, b.branch_code)
+           JOIN employees e     ON e.id = bha.branch_head_id
+          WHERE b.id = ? AND bha.is_active = 1 AND ${ACTIVE}`, [b]);
+      const scoped = await roleScopeRows(['branch_head'], { type: 'branch', branchIds: [b] }, 5);
+      const head = [...assigned, ...scoped];
+      if (head.length) return { rows: head, label: `approver_chain:${b}#branch_head`, policy: 'default' };
+
+      // 3. Branch HR, so the request is seen by someone rather than nobody.
+      const hr = await roleScopeRows(['hr'], { type: 'branch', branchIds: [b] }, 5);
+      return { rows: hr, label: `approver_chain:${b}#branch_hr`, policy: 'default' };
+    }
+
     case 'role_scope': {
       const scope = sel.scope ?? { type: 'all' as const };
       return {

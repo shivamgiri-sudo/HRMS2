@@ -38,6 +38,18 @@ export type RecipientSelector =
    * production — a bare wfm_spoc selector would silently address nobody on every roster event.
    */
   | { kind: 'wfm_chain';           branchId?: string }
+  /**
+   * Ordered fallback for "whoever must act on this employee's request":
+   * reporting_manager -> branch_head -> branch HR, stopping at the first that yields.
+   *
+   * Exists because 235 of 1,152 active employees (20%) have no reachable reporting
+   * manager — 165 with no manager set, 62 pointing at a missing or inactive one, 8 whose
+   * manager has no email. Delhi Office is 0 of 51. With a bare `reporting_manager`
+   * selector those requests resolve to nobody and the notification is suppressed, so the
+   * request simply sits there unseen. Escalating to the branch is strictly better than
+   * telling no one, and it degrades to HR rather than to silence.
+   */
+  | { kind: 'approver_chain';      employeeId?: string; branchId?: string }
   | { kind: 'role_scope';          roleKeys: string[];
                                    scope?: { type: 'all' }
                                          | { type: 'branch';  branchIds: string[] }
