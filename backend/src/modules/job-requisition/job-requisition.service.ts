@@ -585,6 +585,54 @@ export const jobRequisitionService = {
     return rows[0] as JobRequisition;
   },
 
+  async extendDeadline(
+    id: string,
+    newValidity: string,
+    reason: string,
+    actorId: string
+  ): Promise<JobRequisition> {
+    const existing = await this.getRequisition(id);
+    if (!existing) {
+      throw Object.assign(new Error("Requisition not found"), { statusCode: 404 });
+    }
+    if (existing.approval_status !== "approved") {
+      throw Object.assign(
+        new Error("Deadline can only be extended on approved requisitions"),
+        { statusCode: 409 }
+      );
+    }
+
+    const newDate = new Date(newValidity);
+    if (isNaN(newDate.getTime())) {
+      throw Object.assign(new Error("Invalid date format for new_validity"), { statusCode: 400 });
+    }
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    if (newDate <= today) {
+      throw Object.assign(new Error("New deadline must be in the future"), { statusCode: 400 });
+    }
+
+    await db.execute(
+      `UPDATE job_requisition
+          SET requisition_validity = ?, updated_at = NOW()
+        WHERE id = ?`,
+      [newValidity, id]
+    );
+
+    // Write audit log entry reusing the existing approval_log table
+    await db.execute(
+      `INSERT INTO job_requisition_approval_log
+         (id, requisition_id, approval_step, action, actor_id, actor_name, actor_role, remarks)
+       VALUES (?, ?, 0, 'deadline_extended', ?, NULL, NULL, ?)`,
+      [randomUUID(), id, actorId, `Extended deadline to ${newValidity}. Reason: ${reason}`]
+    );
+
+    const [rows] = await db.execute<RowDataPacket[]>(
+      "SELECT * FROM job_requisition WHERE id = ? LIMIT 1",
+      [id]
+    );
+    return rows[0] as JobRequisition;
+  },
+
   /**
    * Link a candidate to a requisition
    */

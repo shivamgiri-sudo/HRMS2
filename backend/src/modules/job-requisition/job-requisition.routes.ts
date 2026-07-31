@@ -357,6 +357,31 @@ jobRequisitionRouter.post(
   })
 );
 
+// ─── Extend Deadline ─────────────────────────────────────────────────────────
+jobRequisitionRouter.post(
+  "/:id/extend-deadline",
+  requireAuth,
+  requireRole("super_admin", "hr", "recruitment_hr", "branch_head"),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const { id } = req.params;
+    const { new_validity, reason } = req.body;
+    const userId = req.authUser?.id;
+
+    if (!userId) {
+      return res.status(401).json({ success: false, message: "User not authenticated" });
+    }
+    if (!new_validity || typeof new_validity !== "string") {
+      return res.status(400).json({ success: false, message: "new_validity (YYYY-MM-DD) is required" });
+    }
+    if (!reason || typeof reason !== "string" || reason.trim().length < 5) {
+      return res.status(400).json({ success: false, message: "A reason of at least 5 characters is required" });
+    }
+
+    const data = await jobRequisitionService.extendDeadline(id, new_validity, reason.trim(), userId);
+    return res.json({ success: true, data, message: "Deadline extended" });
+  })
+);
+
 // ─── Link Candidate to Requisition ───────────────────────────────────────────
 jobRequisitionRouter.post(
   "/:id/link-candidate",
