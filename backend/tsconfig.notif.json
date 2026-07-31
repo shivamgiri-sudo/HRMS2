@@ -19,6 +19,7 @@
     "src/modules/leave/leave.notifications.ts",
     "src/modules/wfm/attendance.notifications.ts",
     "src/modules/payroll/payroll.notifications.ts",
+    "src/modules/exit/exit.notifications.ts",
     "src/modules/governance/tat.service.ts",
     "src/workers/tat-escalation.worker.ts",
     "src/workers/report-subscription.worker.ts",
