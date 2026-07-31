@@ -3,31 +3,88 @@
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import request from "supertest";
+import jwt from "jsonwebtoken";
 vi.mock("../src/db/supabaseAdmin.js", () => ({ supabaseAdmin: {}, supabaseAuthClient: { auth: { getUser: vi.fn() } } }));
 vi.mock("../src/db/mysql.js", () => ({ db: { execute: vi.fn().mockResolvedValue([[], []]) }, pingDb: vi.fn() }));
 import { app } from "../src/app.js";
 import { db } from "../src/db/mysql.js";
-import { supabaseAuthClient } from "../src/db/supabaseAdmin.js";
+// supabaseAdmin stays mocked above (app.ts imports it); authMiddleware no
+// longer calls it — auth is MySQL JWT now.
 const mockExecute = db.execute as ReturnType<typeof vi.fn>;
-const mockGetUser = supabaseAuthClient.auth.getUser as ReturnType<typeof vi.fn>;
-const ADMIN = { Authorization: "Bearer admin.token" };
-const EMP = { Authorization: "Bearer emp.token" };
-beforeEach(() => { vi.clearAllMocks(); mockExecute.mockResolvedValue([[], []]); });
-function mockAdmin() { mockGetUser.mockResolvedValue({ data: { user: { id: "u-admin" } }, error: null }); mockExecute.mockResolvedValueOnce([[{ role_key: "admin" }], []]); }
-function mockEmployee(empId: string) { mockGetUser.mockResolvedValue({ data: { user: { id: "u-emp" } }, error: null }); mockExecute.mockResolvedValueOnce([[{ role_key: "employee" }], []]); mockExecute.mockResolvedValueOnce([[{ id: empId }], []]); }
+
+const JWT_SECRET = process.env.JWT_SECRET || "change-me-jwt-secret-32characters!!";
+
+/**
+ * Real JWTs replace the retired "<role>.token" placeholders — jwt.verify throws
+ * on those, so every request 401'd and none of the management-performance or
+ * client-portal rules this suite covers were ever exercised.
+ *
+ * Fresh subject per call: authMiddleware caches resolved roles for 30 seconds
+ * per user id, so a fixed subject lets one test inherit another's roles.
+ */
+let subjectCounter = 0;
+const bearer = (sub: string) => ({
+  Authorization: `Bearer ${jwt.sign(
+    { sub: `${sub}-${++subjectCounter}`, email: `${sub}@mcn.com`, iat: Math.floor(Date.now() / 1000) },
+    JWT_SECRET,
+    { expiresIn: "1h" },
+  )}`,
+});
+
+/**
+ * Ordered fixtures for SELECTs only.
+ *
+ * These tests were written as positional db.execute queues, which is a
+ * reasonable way to express "this query, then that one" — but it broke once
+ * auth started issuing its own queries, because the number of those varies with
+ * whether the subject is already in authMiddleware's 30-second role cache. So
+ * the ordering is kept where it carries meaning (SELECTs, in the order the route
+ * makes them) and removed where it never did: role lookups and writes are
+ * answered by shape, outside the queue.
+ */
+let selectQueue: unknown[][] = [];
+function selectRows(rows: unknown[]) { selectQueue.push(rows); }
+
+function authAs(sub: string, roles: string[]) {
+  selectQueue = [];
+  mockExecute.mockImplementation(async (sql: unknown) => {
+    const text = String(sql);
+    if (/FROM user_roles/i.test(text)) return [roles.map((r) => ({ role_key: r })), []];
+    if (/user_assignment_scope|FROM auth_user/i.test(text)) return [[], []];
+    if (/^\s*(INSERT|UPDATE|DELETE|REPLACE)/i.test(text)) return [{ affectedRows: 1 }, []];
+    return [selectQueue.length ? selectQueue.shift()! : [], []];
+  });
+  return bearer(sub);
+}
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  mockExecute.mockReset();
+  mockExecute.mockResolvedValue([[], []]);
+  selectQueue = [];
+});
+
+const mockAdmin = () => authAs("u-admin", ["admin"]);
+const mockEmployeeRole = () => authAs("u-emp", ["employee"]);
+const mockManager = () => authAs("u-mgr", ["manager"]);
+/** Employee whose user maps to a specific employee record (first SELECT). */
+function mockEmployee(empId: string) {
+  const auth = authAs("u-emp", ["employee"]);
+  selectRows([{ id: empId }]);
+  return auth;
+}
 
 // ── 1. GET /api/management/team-kpi ──────────────────────────────────────────
 
 describe("GET /api/management/team-kpi", () => {
   it("returns 200 for admin with kpi rows", async () => {
-    mockAdmin();
+    const auth = mockAdmin();
     // resolveTeamScope hasRole check — admin is a wide role
-    mockExecute.mockResolvedValueOnce([[{ role_key: "admin" }], []]);
     // getTeamKpiSummary db.execute
-    mockExecute.mockResolvedValueOnce([[
+    selectRows([
       { id: "k1", employee_id: "e1", employee_code: "MCN001", full_name: "Alice", period: "2026-05", overall_score: 92.5, rank_position: 1 },
-    ], []]);
-    const r = await request(app).get("/api/management/team-kpi").set(ADMIN);
+    ]);
+    const r = await request(app).get("/api/management/team-kpi").set(auth);
     expect(r.status).toBe(200);
     expect(Array.isArray(r.body.data)).toBe(true);
     expect(r.body.data.length).toBeGreaterThan(0);
@@ -35,9 +92,8 @@ describe("GET /api/management/team-kpi", () => {
 
   it("returns 403 for employee role", async () => {
     // requireAuth getUser + requireRole user_roles (employee)
-    mockGetUser.mockResolvedValue({ data: { user: { id: "u-emp" } }, error: null });
-    mockExecute.mockResolvedValueOnce([[{ role_key: "employee" }], []]);
-    const r = await request(app).get("/api/management/team-kpi").set(EMP);
+    const auth = mockEmployeeRole();
+    const r = await request(app).get("/api/management/team-kpi").set(auth);
     expect(r.status).toBe(403);
   });
 });
@@ -46,34 +102,32 @@ describe("GET /api/management/team-kpi", () => {
 
 describe("GET /api/management/coaching", () => {
   it("returns 200 for admin and sees all sessions", async () => {
-    // requireAuth + hasRole check (admin sees all)
-    mockGetUser.mockResolvedValue({ data: { user: { id: "u-admin" } }, error: null });
+    // admin sees all sessions
+    const auth = mockAdmin();
     // hasRole call: SELECT role_key FROM user_roles
-    mockExecute.mockResolvedValueOnce([[{ role_key: "admin" }], []]);
     // listCoachingSessions db.execute
-    mockExecute.mockResolvedValueOnce([[
+    selectRows([
       { id: "cs-1", employee_id: "e1", employee_code: "MCN001", full_name: "Alice", session_type: "performance", status: "scheduled" },
       { id: "cs-2", employee_id: "e2", employee_code: "MCN002", full_name: "Bob",   session_type: "quality",     status: "completed" },
-    ], []]);
-    const r = await request(app).get("/api/management/coaching").set(ADMIN);
+    ]);
+    const r = await request(app).get("/api/management/coaching").set(auth);
     expect(r.status).toBe(200);
     expect(r.body.data).toHaveLength(2);
   });
 
   it("returns 200 for employee and sees own sessions only", async () => {
     // requireAuth getUser
-    mockGetUser.mockResolvedValue({ data: { user: { id: "u-emp" } }, error: null });
+    const auth = mockEmployeeRole();
     // hasRole call for coaching route (returns employee — not admin/hr/manager)
-    mockExecute.mockResolvedValueOnce([[{ role_key: "employee" }], []]);
     // getEmployeeForUser call
-    mockExecute.mockResolvedValueOnce([[{ id: "emp-1", employee_code: "MCN003" }], []]);
+    selectRows([{ id: "emp-1", employee_code: "MCN003" }]);
     // getDirectReportIds call — employee has no reports, so route falls back to own sessions
-    mockExecute.mockResolvedValueOnce([[], []]);
+    selectRows([]);
     // listCoachingSessions filtered by employee_id=emp-1
-    mockExecute.mockResolvedValueOnce([[
+    selectRows([
       { id: "cs-3", employee_id: "emp-1", employee_code: "MCN003", full_name: "Carol", session_type: "coaching", status: "scheduled" },
-    ], []]);
-    const r = await request(app).get("/api/management/coaching").set(EMP);
+    ]);
+    const r = await request(app).get("/api/management/coaching").set(auth);
     expect(r.status).toBe(200);
     expect(r.body.data).toHaveLength(1);
     expect(r.body.data[0].employee_id).toBe("emp-1");
@@ -84,14 +138,12 @@ describe("GET /api/management/coaching", () => {
 
 describe("POST /api/management/coaching", () => {
   it("returns 201 for admin, creates session and calls audit", async () => {
-    mockAdmin();
+    const auth = mockAdmin();
     // createCoachingSession: INSERT + logSensitiveAction INSERT + SELECT
-    mockExecute.mockResolvedValueOnce([{ affectedRows: 1 }, []]);         // INSERT coaching_session
-    mockExecute.mockResolvedValueOnce([{ affectedRows: 1 }, []]);         // INSERT sensitive_action_log (audit)
-    mockExecute.mockResolvedValueOnce([[{ id: "cs-new-1", employee_id: "emp-uuid-1", session_type: "performance", session_date: "2026-06-01", status: "scheduled" }], []]); // SELECT
+    selectRows([{ id: "cs-new-1", employee_id: "emp-uuid-1", session_type: "performance", session_date: "2026-06-01", status: "scheduled" }]); // SELECT
     const r = await request(app)
       .post("/api/management/coaching")
-      .set(ADMIN)
+      .set(auth)
       .send({ employee_id: "emp-uuid-1", session_date: "2026-06-01", session_type: "performance" });
     expect(r.status).toBe(201);
     expect(r.body.data).toBeDefined();
@@ -103,20 +155,19 @@ describe("POST /api/management/coaching", () => {
   });
 
   it("returns 403 for employee on POST /coaching", async () => {
-    mockGetUser.mockResolvedValue({ data: { user: { id: "u-emp" } }, error: null });
-    mockExecute.mockResolvedValueOnce([[{ role_key: "employee" }], []]);
+    const auth = mockEmployeeRole();
     const r = await request(app)
       .post("/api/management/coaching")
-      .set(EMP)
+      .set(auth)
       .send({ employee_id: "emp-uuid-1", session_date: "2026-06-01", session_type: "performance" });
     expect(r.status).toBe(403);
   });
 
   it("returns 400 when required fields are missing", async () => {
-    mockAdmin();
+    const auth = mockAdmin();
     const r = await request(app)
       .post("/api/management/coaching")
-      .set(ADMIN)
+      .set(auth)
       .send({ session_type: "quality" }); // missing employee_id and session_date
     expect(r.status).toBe(400);
   });
@@ -126,23 +177,21 @@ describe("POST /api/management/coaching", () => {
 
 describe("GET /api/management/alerts", () => {
   it("returns 200 for admin with alert rows", async () => {
-    mockAdmin();
+    const auth = mockAdmin();
     // resolveTeamScope hasRole check — admin is a wide role
-    mockExecute.mockResolvedValueOnce([[{ role_key: "admin" }], []]);
     // listAlerts db.execute
-    mockExecute.mockResolvedValueOnce([[
+    selectRows([
       { id: "a1", employee_id: "e1", employee_code: "MCN001", full_name: "Alice", severity: "critical", acknowledged: 0 },
-    ], []]);
-    const r = await request(app).get("/api/management/alerts").set(ADMIN);
+    ]);
+    const r = await request(app).get("/api/management/alerts").set(auth);
     expect(r.status).toBe(200);
     expect(r.body.data).toHaveLength(1);
     expect(r.body.data[0].severity).toBe("critical");
   });
 
   it("returns 403 for employee", async () => {
-    mockGetUser.mockResolvedValue({ data: { user: { id: "u-emp" } }, error: null });
-    mockExecute.mockResolvedValueOnce([[{ role_key: "employee" }], []]);
-    const r = await request(app).get("/api/management/alerts").set(EMP);
+    const auth = mockEmployeeRole();
+    const r = await request(app).get("/api/management/alerts").set(auth);
     expect(r.status).toBe(403);
   });
 });
@@ -151,13 +200,11 @@ describe("GET /api/management/alerts", () => {
 
 describe("POST /api/management/alerts/:id/acknowledge", () => {
   it("returns 200 for admin and audit INSERT is present", async () => {
-    mockAdmin();
+    const auth = mockAdmin();
     // acknowledgeAlert: UPDATE performance_alert + INSERT sensitive_action_log
-    mockExecute.mockResolvedValueOnce([{ affectedRows: 1 }, []]);   // UPDATE
-    mockExecute.mockResolvedValueOnce([{ affectedRows: 1 }, []]);   // INSERT audit
     const r = await request(app)
       .post("/api/management/alerts/alert-uuid-1/acknowledge")
-      .set(ADMIN);
+      .set(auth);
     expect(r.status).toBe(200);
     expect(r.body.ok).toBe(true);
     expect(mockExecute).toHaveBeenCalledWith(
@@ -167,11 +214,10 @@ describe("POST /api/management/alerts/:id/acknowledge", () => {
   });
 
   it("returns 403 for employee", async () => {
-    mockGetUser.mockResolvedValue({ data: { user: { id: "u-emp" } }, error: null });
-    mockExecute.mockResolvedValueOnce([[{ role_key: "employee" }], []]);
+    const auth = mockEmployeeRole();
     const r = await request(app)
       .post("/api/management/alerts/alert-uuid-1/acknowledge")
-      .set(EMP);
+      .set(auth);
     expect(r.status).toBe(403);
   });
 });
@@ -180,18 +226,21 @@ describe("POST /api/management/alerts/:id/acknowledge", () => {
 
 describe("GET /api/management/dashboard", () => {
   it("returns a live operational summary for admin", async () => {
-    mockAdmin();
+    const auth = mockAdmin();
     // resolveTeamScope hasRole check — admin is a wide role
-    mockExecute.mockResolvedValueOnce([[{ role_key: "admin" }], []]);
-    mockExecute.mockResolvedValueOnce([[{ headcount: 100, exits_30d: 5 }], []]);
-    mockExecute.mockResolvedValueOnce([[{ pending_leaves: 3 }], []]);
-    mockExecute.mockResolvedValueOnce([[{ open_tickets: 2 }], []]);
-    mockExecute.mockResolvedValueOnce([[{ total: 100, present: 90, half_day: 4 }], []]);
-    mockExecute.mockResolvedValueOnce([[
+    selectRows([{ headcount: 100, exits_30d: 5 }]);
+    selectRows([{ pending_leaves: 3 }]);
+    selectRows([{ open_tickets: 2 }]);
+    // getDashboard divides by attendance.expected_to_work, not `total` — the old
+    // fixture named a column the service stopped reading, so expectedToWork was 0
+    // and attendance_rate came out 0 instead of 92. The assertion was right; the
+    // fixture had drifted.
+    selectRows([{ expected_to_work: 100, present: 90, half_day: 4 }]);
+    selectRows([
       { employee_id: "e1", overall_score: 85.2 },
       { employee_id: "e2", overall_score: 74.8 },
-    ], []]);
-    const r = await request(app).get("/api/management/dashboard").set(ADMIN);
+    ]);
+    const r = await request(app).get("/api/management/dashboard").set(auth);
     expect(r.status).toBe(200);
     expect(r.body.data).toMatchObject({
       headcount: 100,
@@ -207,9 +256,8 @@ describe("GET /api/management/dashboard", () => {
   });
 
   it("returns 403 for employee", async () => {
-    mockGetUser.mockResolvedValue({ data: { user: { id: "u-emp" } }, error: null });
-    mockExecute.mockResolvedValueOnce([[{ role_key: "employee" }], []]);
-    const r = await request(app).get("/api/management/dashboard").set(EMP);
+    const auth = mockEmployeeRole();
+    const r = await request(app).get("/api/management/dashboard").set(auth);
     expect(r.status).toBe(403);
   });
 });
@@ -225,14 +273,12 @@ describe("Portal endpoint blocked without Supabase JWT", () => {
 
 describe("SECURITY — Manager scope", () => {
   it("manager team-kpi is restricted to direct reports plus self", async () => {
-    mockGetUser.mockResolvedValue({ data: { user: { id: "u-mgr" } }, error: null });
-    mockExecute.mockResolvedValueOnce([[{ role_key: "manager" }], []]);
-    mockExecute.mockResolvedValueOnce([[{ role_key: "manager" }], []]);
-    mockExecute.mockResolvedValueOnce([[{ id: "mgr-emp", employee_code: "MGR001" }], []]);
-    mockExecute.mockResolvedValueOnce([[{ id: "rep-1" }], []]);
-    mockExecute.mockResolvedValueOnce([[], []]);
+    const auth = mockManager();
+    selectRows([{ id: "mgr-emp", employee_code: "MGR001" }]);
+    selectRows([{ id: "rep-1" }]);
+    selectRows([]);
 
-    const r = await request(app).get("/api/management/team-kpi").set({ Authorization: "Bearer mgr.token" });
+    const r = await request(app).get("/api/management/team-kpi").set(auth);
     expect(r.status).toBe(200);
     expect(r.body.data).toEqual([]);
     expect(mockExecute).toHaveBeenCalledWith(
@@ -242,14 +288,12 @@ describe("SECURITY — Manager scope", () => {
   });
 
   it("manager alerts are restricted to direct reports plus self", async () => {
-    mockGetUser.mockResolvedValue({ data: { user: { id: "u-mgr" } }, error: null });
-    mockExecute.mockResolvedValueOnce([[{ role_key: "manager" }], []]);
-    mockExecute.mockResolvedValueOnce([[{ role_key: "manager" }], []]);
-    mockExecute.mockResolvedValueOnce([[{ id: "mgr-emp", employee_code: "MGR001" }], []]);
-    mockExecute.mockResolvedValueOnce([[{ id: "rep-1" }], []]);
-    mockExecute.mockResolvedValueOnce([[], []]);
+    const auth = mockManager();
+    selectRows([{ id: "mgr-emp", employee_code: "MGR001" }]);
+    selectRows([{ id: "rep-1" }]);
+    selectRows([]);
 
-    const r = await request(app).get("/api/management/alerts").set({ Authorization: "Bearer mgr.token" });
+    const r = await request(app).get("/api/management/alerts").set(auth);
     expect(r.status).toBe(200);
     expect(r.body.data).toEqual([]);
     expect(mockExecute).toHaveBeenCalledWith(
@@ -259,14 +303,14 @@ describe("SECURITY — Manager scope", () => {
   });
 
   it("manager dashboard is restricted to direct reports plus self", async () => {
-    mockGetUser.mockResolvedValue({ data: { user: { id: "u-mgr" } }, error: null });
-    mockExecute.mockResolvedValueOnce([[{ role_key: "manager" }], []]);
-    mockExecute.mockResolvedValueOnce([[{ role_key: "manager" }], []]);
-    mockExecute.mockResolvedValueOnce([[{ id: "mgr-emp", employee_code: "MGR001" }], []]);
-    mockExecute.mockResolvedValueOnce([[{ id: "rep-1" }], []]);
-    mockExecute.mockResolvedValue([[{ headcount: 0, exits_30d: 0, pending_leaves: 0, open_tickets: 0, total: 0, present: 0, half_day: 0 }], []]);
+    const auth = mockManager();
+    selectRows([{ id: "mgr-emp", employee_code: "MGR001" }]);
+    selectRows([{ id: "rep-1" }]);
+    for (let i = 0; i < 6; i += 1) {
+      selectRows([{ headcount: 0, exits_30d: 0, pending_leaves: 0, open_tickets: 0, total: 0, present: 0, half_day: 0 }]);
+    }
 
-    const r = await request(app).get("/api/management/dashboard").set({ Authorization: "Bearer mgr.token" });
+    const r = await request(app).get("/api/management/dashboard").set(auth);
     expect(r.status).toBe(200);
     expect(mockExecute).toHaveBeenCalledWith(
       expect.stringContaining("e.id IN (?,?)"),
@@ -274,23 +318,21 @@ describe("SECURITY — Manager scope", () => {
     );
   });
   it("employee sees own coaching (200) via server-side mapping", async () => {
-    mockGetUser.mockResolvedValue({ data: { user: { id: "u-emp" } }, error: null });
-    mockExecute.mockResolvedValueOnce([[{ role_key: "employee" }], []]);
-    mockExecute.mockResolvedValueOnce([[{ id: "emp-self", employee_code: "E001" }], []]);
-    mockExecute.mockResolvedValueOnce([[], []]);
-    mockExecute.mockResolvedValueOnce([[{ id: "c-1", employee_id: "emp-self" }], []]);
-    const r = await request(app).get("/api/management/coaching").set({ Authorization: "Bearer emp.token" });
+    const auth = mockEmployeeRole();
+    selectRows([{ id: "emp-self", employee_code: "E001" }]);
+    selectRows([]);
+    selectRows([{ id: "c-1", employee_id: "emp-self" }]);
+    const r = await request(app).get("/api/management/coaching").set(auth);
     expect(r.status).toBe(200);
   });
   it("dashboard response contains no payroll fields", async () => {
-    mockGetUser.mockResolvedValue({ data: { user: { id: "u-admin" } }, error: null });
-    mockExecute.mockResolvedValueOnce([[{ role_key: "admin" }], []]);
-    mockExecute.mockResolvedValueOnce([[{ headcount: 5, exits_30d: 0 }], []]);
-    mockExecute.mockResolvedValueOnce([[{ pending_leaves: 2 }], []]);
-    mockExecute.mockResolvedValueOnce([[{ open_tickets: 1 }], []]);
-    mockExecute.mockResolvedValueOnce([[{ total: 5, present: 4, half_day: 1 }], []]);
-    mockExecute.mockResolvedValueOnce([[{ employee_id: "e1", overall_score: 80 }], []]);
-    const r = await request(app).get("/api/management/dashboard").set({ Authorization: "Bearer admin.token" });
+    const auth = mockAdmin();
+    selectRows([{ headcount: 5, exits_30d: 0 }]);
+    selectRows([{ pending_leaves: 2 }]);
+    selectRows([{ open_tickets: 1 }]);
+    selectRows([{ total: 5, present: 4, half_day: 1 }]);
+    selectRows([{ employee_id: "e1", overall_score: 80 }]);
+    const r = await request(app).get("/api/management/dashboard").set(auth);
     expect(r.status).toBe(200);
     const keys = Object.keys(r.body.data ?? {});
     expect(keys).not.toContain("salary");
