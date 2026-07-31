@@ -150,7 +150,7 @@ const WORKERS: Array<{ name: string; start: () => Promise<void> }> = [
     // all, and every SLA event ships dispatch_mode='shadow' so even when it runs it
     // resolves and claims without delivering.
     name: "tat-escalation",
-    start: startTatEscalationWorker,
+    start: () => { startTatEscalationWorker(); return Promise.resolve(); },
   },
 ];
 

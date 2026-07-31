@@ -34,6 +34,7 @@ import { startRetentionCron } from "./workers/privacy-retention.worker.js";
 import { startAtsRemindersScheduler } from "./modules/ats/ats-reminders.cron.js";
 import { startEmployeeLifecycleWorker } from "./workers/employee-lifecycle.worker.js";
 import { startTatEscalationWorker } from "./workers/tat-escalation.worker.js";
+import { registerNotificationDeliverer } from "./modules/communication/notification.deliverer.js";
 import { clearAllTimers } from "./workers/worker-utils.js";
 
 // WORKER GOVERNANCE: When WORKERS_PROCESS=external, ALL workers run in separate process
