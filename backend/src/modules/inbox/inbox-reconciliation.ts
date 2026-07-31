@@ -14,6 +14,18 @@
  * leaves the alert standing, because a missed alert is a worse failure than a
  * stale one.
  *
+ * There is one deliberate exception, at the bottom of the rule list. The dated
+ * attendance alerts — missing punch and validation — ask someone to raise a
+ * regularization for one specific past day, and the only proof of completion
+ * is that regularization existing. On production 13,616 of them had none, and
+ * no other source can settle them: the column that would show a punch,
+ * attendance_daily_record.biometric_status, is NULL on all 111,904 rows. Left
+ * alone they accumulate forever and drown the alerts that still matter. They
+ * are therefore retired once the day they concern is far enough back that the
+ * payroll month is closed and the correction can no longer be made. That
+ * window is a business policy, not a technical threshold, so it lives in the
+ * named constant below and nowhere else.
+ *
  * Rules were written against the live `mas_hrms` schema and its actual column
  * values, not against the schema files — several columns that look
  * authoritative are dead. `attendance_daily_record.biometric_status` is NULL
@@ -38,6 +50,26 @@ const REGULARIZATION_CLOSED = `('approved','rejected','cancelled')`;
  * Verified against production: parses cleanly on all 13,632 open rows.
  */
 const ALERT_DATE = `SUBSTRING_INDEX(w.action_url, 'date=', -1)`;
+
+/**
+ * How far back a dated attendance alert stays actionable. Past this the
+ * payroll month is closed and the regularization it asks for can no longer be
+ * made, so the alert is asking for something impossible. Set by the business,
+ * not derived from anything — change it here and both rules below follow.
+ */
+const DATED_ATTENDANCE_ALERT_MAX_AGE_DAYS = 30;
+
+/**
+ * Age test for a dated attendance alert. Prefers the day the alert is actually
+ * about, which is carried in action_url; falls back to when it was raised for
+ * any row that does not carry one, so no row is unreachable by this rule.
+ */
+const datedAlertIsExpired = `(
+     ( w.action_url LIKE '%date=%'
+       AND ${ALERT_DATE} < DATE_SUB(CURDATE(), INTERVAL ${DATED_ATTENDANCE_ALERT_MAX_AGE_DAYS} DAY) )
+  OR ( w.action_url NOT LIKE '%date=%'
+       AND w.created_at < DATE_SUB(NOW(), INTERVAL ${DATED_ATTENDANCE_ALERT_MAX_AGE_DAYS} DAY) )
+)`;
 
 export interface ResolutionRule {
   /** Alert type this rule closes. */
@@ -178,6 +210,25 @@ export const INBOX_RESOLUTION_RULES: readonly ResolutionRule[] = [
               OR LOWER(COALESCE(NULLIF(TRIM(e.official_email), ''), e.email)) LIKE '%@teammas.in'
               OR LOWER(COALESCE(NULLIF(TRIM(e.official_email), ''), e.email)) LIKE '%@teammas.co.in' )
       )`,
+  },
+
+  // ── Age-based retirement — the documented exception ────────────────────────
+  // These two close without proof of completion. See the note at the top of
+  // the file: no proof is obtainable, and the correction they ask for is no
+  // longer possible once the payroll month has closed.
+  {
+    key: "attendance_missing_punch_expired",
+    resolvedWhen: `the day it concerns is over ${DATED_ATTENDANCE_ALERT_MAX_AGE_DAYS} days old and can no longer be corrected`,
+    where: `
+      w.type = 'attendance_missing_punch' AND w.is_actioned = 0
+      AND ${datedAlertIsExpired}`,
+  },
+  {
+    key: "attendance_validation_expired",
+    resolvedWhen: `the day it concerns is over ${DATED_ATTENDANCE_ALERT_MAX_AGE_DAYS} days old and can no longer be corrected`,
+    where: `
+      w.type = 'attendance_validation' AND w.is_actioned = 0
+      AND ${datedAlertIsExpired}`,
   },
 ];
 

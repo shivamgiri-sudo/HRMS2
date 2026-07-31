@@ -196,6 +196,37 @@ describe('inbox reconciliation rules', () => {
     expect(rule?.where).toContain('lr.employee_id = w.entity_id');
   });
 
+  it('retires dated attendance alerts only once the day is past correcting', () => {
+    // The one place age is allowed to close an alert: no proof of completion
+    // exists for these (biometric_status is NULL on every attendance row) and
+    // the regularization they ask for cannot be made after payroll closes.
+    for (const key of ['attendance_missing_punch_expired', 'attendance_validation_expired']) {
+      const rule = INBOX_RESOLUTION_RULES.find((r) => r.key === key);
+      expect(rule).toBeTruthy();
+      expect(rule?.where).toContain('INTERVAL 30 DAY');
+      // Anything inside the window keeps nagging, which is the point.
+      expect(rule?.where).toContain('<');
+    }
+  });
+
+  it('ages dated alerts on the day they concern, not the day they were raised', () => {
+    // A punch alert for the 1st raised on the 3rd must expire against the 1st,
+    // or a backfilled alert would outlive the month it belongs to.
+    const rule = INBOX_RESOLUTION_RULES.find((r) => r.key === 'attendance_missing_punch_expired');
+    expect(rule?.where).toContain("SUBSTRING_INDEX(w.action_url, 'date=', -1)");
+    // Rows with no date in the URL are still reachable, via created_at.
+    expect(rule?.where).toContain('w.created_at <');
+  });
+
+  it('never retires a non-attendance alert on age alone', () => {
+    // Age is scoped to the two dated attendance types and nothing else — a
+    // pending leave or an uncalled candidate must never expire quietly.
+    for (const rule of INBOX_RESOLUTION_RULES) {
+      if (rule.key.endsWith('_expired')) continue;
+      expect(rule.where).not.toContain('INTERVAL 30 DAY');
+    }
+  });
+
   it('writes nothing on a dry run', async () => {
     mocks.execute.mockResolvedValue(read([{ n: 7 }]));
 
