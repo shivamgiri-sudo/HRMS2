@@ -14,6 +14,8 @@
     "migrate:status": "tsx src/scripts/migrate.ts --status",
     "typecheck": "tsc --noEmit",
     "check:routes": "vitest run src/platform/__tests__/route-contract.test.ts",
+    "test:baseline": "node scripts/check-test-baseline.mjs",
+    "test:baseline:update": "node scripts/check-test-baseline.mjs --update",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
