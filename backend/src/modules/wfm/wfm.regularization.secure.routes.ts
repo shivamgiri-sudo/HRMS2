@@ -8,6 +8,7 @@ import { regularizationSchema } from "./wfm.validation.js";
 import { wfmService } from "./wfm.service.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
 import { notifyRegularizationDecision, notifyRegularizationStage2Pending } from "./attendance.notifications.js";
+import { resolveEffectiveApprover } from "../../shared/approvalEscalation.js";
 
 export const wfmRegularizationSecureRouter = Router();
 wfmRegularizationSecureRouter.use(requireAuth);
@@ -89,7 +90,8 @@ async function regularizationReviewRole(userId: string, regularizationId: string
   if (!target) return null;
   const callerEmp = await getEmployeeForUser(userId);
   if (callerEmp?.id === target.employee_id) return null;
-  if (callerEmp?.id && (callerEmp.id === target.reporting_manager_id || callerEmp.id === target.manager_id)) {
+  const { approverId } = await resolveEffectiveApprover(target.employee_id);
+  if (callerEmp?.id && approverId !== null && callerEmp.id === approverId) {
     return "manager";
   }
   const wfmScoped = await hasScopedAccess(

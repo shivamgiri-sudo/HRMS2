@@ -5,6 +5,7 @@ import { db } from "../../db/mysql.js";
 import { getEmployeeForUser } from "../../shared/accessGuard.js";
 import { buildScopeWhereClause, hasAnyRole } from "../../shared/scopeAccess.js";
 import { leaveService } from "./leave.service.js";
+import { resolveEffectiveApprover } from "../../shared/approvalEscalation.js";
 
 export const leaveSecureRouter = Router();
 leaveSecureRouter.use(requireAuth);
@@ -28,7 +29,8 @@ async function canReviewLeave(userId: string, requestId: string): Promise<boolea
   if (!target) return false;
   const callerEmp = await getEmployeeForUser(userId);
   if (callerEmp?.id && callerEmp.id === target.employee_id) return false;
-  return Boolean(callerEmp?.id && (callerEmp.id === target.reporting_manager_id || callerEmp.id === target.manager_id));
+  const { approverId } = await resolveEffectiveApprover(target.employee_id);
+  return Boolean(callerEmp?.id && approverId !== null && callerEmp.id === approverId);
 }
 
 leaveSecureRouter.get("/requests", h(async (req: any, res: any) => {

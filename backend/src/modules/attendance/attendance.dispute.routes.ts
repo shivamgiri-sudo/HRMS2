@@ -20,6 +20,7 @@ import {
 } from "../../shared/scopeAccess.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
 import { wfmService } from "../wfm/wfm.service.js";
+import { resolveEffectiveApprover } from "../../shared/approvalEscalation.js";
 
 export const attendanceDisputeRouter = Router();
 attendanceDisputeRouter.use(requireAuth);
@@ -389,7 +390,12 @@ attendanceDisputeRouter.post("/disputes/:id/manager-action", h(async (req, res) 
       managerEmployeeId: dispute.reporting_manager_id ?? dispute.manager_id,
       employeeId: dispute.employee_id,
     }, { allowAdminBypass: true, requireScopeForNonAdmin: true });
-    if (!scoped) return res.status(403).json({ success: false, error: "Forbidden: employee outside your scope" });
+    // Also allow the escalated approver (skip-level when direct manager is on leave)
+    const { approverId } = await resolveEffectiveApprover(dispute.employee_id);
+    const isEscalatedApprover = approverId !== null && callerEmp.id === approverId;
+    if (!scoped && !isEscalatedApprover) {
+      return res.status(403).json({ success: false, error: "Forbidden: employee outside your scope" });
+    }
   }
 
   // Guard: manager cannot directly approve payroll-impact disputes
