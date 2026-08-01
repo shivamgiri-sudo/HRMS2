@@ -167,10 +167,10 @@ async function streamOnboardingDocument(
     });
   }
 
-  // Resolve rather than trusting the stored path: rows written on another machine
-  // or under a different working directory point somewhere unreadable, which is
-  // why 58 documents preview as "File not found on disk" while the files are
-  // present. See onboardingDocumentPath.
+  // Resolve rather than trusting the stored path: a row written on another machine
+  // or under a different working directory would otherwise be unreadable here. This
+  // guards against that mismatch; it is not a recovery mechanism -- the documents
+  // marked file_missing are genuinely absent from disk. See onboardingDocumentPath.
   const filePath = resolveOnboardingDocumentFile(doc.file_path);
   if (!filePath) {
     return res.status(404).json({ success: false, message: "File not found on disk" });
