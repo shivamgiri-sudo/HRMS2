@@ -1,53 +1,46 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link } from "react-router-dom";
 import {
   AlertCircle,
-  ArrowRight,
   BadgeCheck,
-  Building2,
-  Calculator,
-  Check,
   CheckCircle2,
-  ChevronRight,
-  CircleDollarSign,
-  Copy,
-  FileCheck2,
-  FilePlus2,
-  FileSearch,
-  FileText,
   IndianRupee,
-  Landmark,
   Loader2,
-  PackageCheck,
   Plus,
-  ReceiptText,
   RefreshCw,
   RotateCcw,
   Save,
   ScanLine,
   Send,
   ShieldCheck,
-  Sparkles,
   Split,
   Trash2,
   UploadCloud,
-  WalletCards,
-  WandSparkles,
-  X,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { SearchableSelect, type SearchableOption } from "@/components/ui/searchable-select";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { calculateBudgetLine } from "@/hooks/useBranchBudget";
 import { useToast } from "@/hooks/use-toast";
 import { hrmsApi } from "@/lib/hrmsApi";
+import { cn } from "@/lib/utils";
 
 type GrnType = "vendor" | "imprest";
-type WorkspaceStep = "proof" | "invoice" | "budget" | "validation" | "review";
+
+const NO_COST_CENTRE = "__none__";
+const GENERAL_SUB_HEAD = "General";
 
 type BudgetLine = {
   id: string;
@@ -85,26 +78,34 @@ type AllocationDraft = {
 type GrnFormState = {
   grnType: GrnType;
   branchId: string;
+  billDate: string;
+  remarks: string;
+
+  // Budget coordinates the raiser actually thinks in. Together these resolve
+  // one approved budget line; `budgetLineId` only disambiguates when a
+  // cost centre / head / sub-head trio still matches more than one line.
+  costCentreKey: string;
+  head: string;
+  subHead: string;
+  budgetLineId: string;
+
+  /**
+   * Vendor mode: amount BEFORE GST. Imprest mode: the receipt total.
+   * In split mode this is the declared invoice total including tax.
+   */
+  amount: number;
+
+  // Vendor-only.
   vendorId: string;
   invoiceNumber: string;
-  billDate: string;
-  servicePeriodStart: string;
-  servicePeriodEnd: string;
-  purchaseReference: string;
   vendorGstin: string;
   placeOfSupply: string;
-  invoiceTotal: number;
-  otherCharges: number;
-  roundOffAmount: number;
+  purchaseReference: string;
   paymentTermsDays: number;
-  remarks: string;
+  dueDate: string;
 };
 
-type CreatedGrn = {
-  id: string;
-  grnNumber: string;
-  submitted: boolean;
-};
+type CreatedGrn = { id: string; grnNumber: string; submitted: boolean };
 
 type WorkspaceDocument = {
   id: string;
@@ -134,29 +135,24 @@ type WorkspacePayload = {
 const EMPTY_FORM: GrnFormState = {
   grnType: "vendor",
   branchId: "",
+  billDate: "",
+  remarks: "",
+  costCentreKey: "",
+  head: "",
+  subHead: "",
+  budgetLineId: "",
+  amount: 0,
   vendorId: "",
   invoiceNumber: "",
-  billDate: "",
-  servicePeriodStart: "",
-  servicePeriodEnd: "",
-  purchaseReference: "",
   vendorGstin: "",
   placeOfSupply: "",
-  invoiceTotal: 0,
-  otherCharges: 0,
-  roundOffAmount: 0,
+  purchaseReference: "",
   paymentTermsDays: 30,
-  remarks: "",
+  dueDate: "",
 };
 
 function newAllocation(): AllocationDraft {
-  return {
-    key: crypto.randomUUID(),
-    budgetLineId: "",
-    quantity: 1,
-    unitRate: 0,
-    remarks: "",
-  };
+  return { key: crypto.randomUUID(), budgetLineId: "", quantity: 1, unitRate: 0, remarks: "" };
 }
 
 function financialYearFromPeriod(period: string) {
@@ -168,14 +164,19 @@ function financialYearFromPeriod(period: string) {
 }
 
 function addDays(dateString: string, days: number) {
-  if (!dateString) return "—";
+  if (!dateString) return "";
   const date = new Date(`${dateString}T00:00:00`);
+  if (Number.isNaN(date.getTime())) return "";
   date.setDate(date.getDate() + Number(days || 0));
-  return date.toLocaleDateString("en-IN", {
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-  });
+  return date.toISOString().slice(0, 10);
+}
+
+function daysBetween(from: string, to: string) {
+  if (!from || !to) return null;
+  const a = new Date(`${from}T00:00:00`).getTime();
+  const b = new Date(`${to}T00:00:00`).getTime();
+  if (Number.isNaN(a) || Number.isNaN(b)) return null;
+  return Math.round((b - a) / 86_400_000);
 }
 
 function money(value: number) {
@@ -187,9 +188,7 @@ function money(value: number) {
 }
 
 function decimal(value: number, digits = 4) {
-  return Number(value || 0).toLocaleString("en-IN", {
-    maximumFractionDigits: digits,
-  });
+  return Number(value || 0).toLocaleString("en-IN", { maximumFractionDigits: digits });
 }
 
 function unwrapList(value: any): any[] {
@@ -210,67 +209,6 @@ function parseJson(value: unknown) {
   }
 }
 
-function StepPill({
-  active,
-  completed,
-  children,
-}: {
-  active: boolean;
-  completed: boolean;
-  children: React.ReactNode;
-}) {
-  return (
-    <span
-      className={`inline-flex h-8 min-w-8 items-center justify-center rounded-full border px-2 text-[11px] font-bold transition-all ${
-        active
-          ? "border-blue-200 bg-blue-600 text-white shadow-sm shadow-blue-200"
-          : completed
-            ? "border-emerald-200 bg-emerald-50 text-emerald-700"
-            : "border-slate-200 bg-white text-slate-400"
-      }`}
-    >
-      {completed ? <Check className="h-3.5 w-3.5" /> : children}
-    </span>
-  );
-}
-
-function MetricCard({
-  label,
-  value,
-  helper,
-  tone = "slate",
-}: {
-  label: string;
-  value: string;
-  helper?: string;
-  tone?: "slate" | "blue" | "emerald" | "amber" | "rose";
-}) {
-  const styles = {
-    slate: "border-slate-200 bg-white",
-    blue: "border-blue-200 bg-blue-50/70",
-    emerald: "border-emerald-200 bg-emerald-50/70",
-    amber: "border-amber-200 bg-amber-50/70",
-    rose: "border-rose-200 bg-rose-50/70",
-  };
-  return (
-    <div className={`rounded-2xl border p-4 ${styles[tone]}`}>
-      <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">
-        {label}
-      </p>
-      <p className="mt-2 text-lg font-bold text-slate-950">{value}</p>
-      {helper && <p className="mt-1 text-[11px] text-slate-500">{helper}</p>}
-    </div>
-  );
-}
-
-function RequiredLabel({ children }: { children: React.ReactNode }) {
-  return (
-    <Label className="text-xs font-semibold text-slate-700">
-      {children} <span className="text-rose-500">*</span>
-    </Label>
-  );
-}
-
 function statusTone(status: string) {
   if (["passed", "completed", "matched"].includes(status)) {
     return "border-emerald-200 bg-emerald-50 text-emerald-700";
@@ -281,34 +219,147 @@ function statusTone(status: string) {
   return "border-rose-200 bg-rose-50 text-rose-700";
 }
 
+/** Runs `calculateBudgetLine` for a line at a given quantity. */
+function computeLine(line: BudgetLine, quantity: number, unitRate?: number) {
+  return calculateBudgetLine({
+    head: line.head,
+    subHead: line.sub_head,
+    itemName: line.item_name,
+    quantity: Number(quantity),
+    unit: line.unit,
+    unitRate: Number(unitRate ?? line.unit_rate),
+    taxTreatment: line.tax_treatment,
+    gstRate: Number(line.gst_rate),
+    gstType: line.gst_type,
+    recoverableTaxPct: Number(line.recoverable_tax_pct),
+    justification: line.justification,
+  });
+}
+
+// ─── Layout primitives ──────────────────────────────────────────────────────
+
+/**
+ * One form field. Label sits beside the control from `md` up and stacks above
+ * it on narrower screens, so the page never scrolls sideways on a phone.
+ */
+function FieldRow({
+  label,
+  htmlFor,
+  required,
+  hint,
+  error,
+  children,
+}: {
+  label: string;
+  htmlFor?: string;
+  required?: boolean;
+  hint?: string;
+  error?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="grid gap-1.5 px-4 py-3 md:grid-cols-[210px_minmax(0,1fr)] md:items-start md:gap-4">
+      <Label
+        htmlFor={htmlFor}
+        className="text-xs font-semibold text-slate-700 md:pt-2.5"
+      >
+        {label}
+        {required && <span className="ml-0.5 text-rose-500">*</span>}
+      </Label>
+      <div className="min-w-0">
+        {children}
+        {error ? (
+          <p className="mt-1 flex items-start gap-1 text-[11px] font-medium text-rose-600">
+            <AlertCircle className="mt-px h-3 w-3 shrink-0" />
+            {error}
+          </p>
+        ) : (
+          hint && <p className="mt-1 text-[11px] text-slate-500">{hint}</p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function FormSection({
+  title,
+  description,
+  action,
+  children,
+}: {
+  title: string;
+  description?: string;
+  action?: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  return (
+    <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+      <header className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 px-4 py-3">
+        <div>
+          <h2 className="text-sm font-semibold text-slate-900">{title}</h2>
+          {description && <p className="mt-0.5 text-xs text-slate-500">{description}</p>}
+        </div>
+        {action}
+      </header>
+      <div className="divide-y divide-slate-100">{children}</div>
+    </section>
+  );
+}
+
+/** Read-only value rendered at input height so rows stay on one baseline. */
+function StaticValue({ children, muted }: { children: React.ReactNode; muted?: boolean }) {
+  return (
+    <div
+      className={cn(
+        "flex h-11 items-center text-sm font-medium md:h-10",
+        muted ? "text-slate-400" : "text-slate-900"
+      )}
+    >
+      {children}
+    </div>
+  );
+}
+
+const inputClass = "h-11 md:h-10";
+
+// ─── Component ──────────────────────────────────────────────────────────────
+
 export function BudgetLinkedGrnForm() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [form, setForm] = useState<GrnFormState>(EMPTY_FORM);
+  const [splitMode, setSplitMode] = useState(false);
   const [allocations, setAllocations] = useState<AllocationDraft[]>([newAllocation()]);
   const [files, setFiles] = useState<File[]>([]);
   const [created, setCreated] = useState<CreatedGrn | null>(null);
-  const [activeStep, setActiveStep] = useState<WorkspaceStep>("proof");
   const [autoAnalyze, setAutoAnalyze] = useState(true);
   const [extractedFields, setExtractedFields] = useState<Record<string, any> | null>(null);
+  const [showErrors, setShowErrors] = useState(false);
+  const [vendorSearch, setVendorSearch] = useState("");
 
+  const isVendor = form.grnType === "vendor";
   const period = form.billDate ? form.billDate.slice(0, 7) : "";
 
   const { data: branchResponse } = useQuery({
     queryKey: ["grn-budget-branches"],
     queryFn: () => hrmsApi.get<any>("/api/org/branches?limit=200"),
   });
-  const { data: vendorResponse } = useQuery({
-    queryKey: ["grn-budget-vendors"],
-    queryFn: () => hrmsApi.get<any>("/api/erp/vendors?limit=500"),
+
+  // Vendor master holds ~1.8k active rows, so the list is searched server-side
+  // rather than dumped into the picker.
+  const { data: vendorResponse, isFetching: vendorsLoading } = useQuery({
+    queryKey: ["grn-vendor-search", vendorSearch],
+    enabled: isVendor,
+    queryFn: () =>
+      hrmsApi.get<any>(
+        `/api/erp/vendors?is_active=1&limit=50&q=${encodeURIComponent(vendorSearch.trim())}`
+      ),
   });
 
   const branches = unwrapList(branchResponse).filter(
     (branch) => Number(branch.active_status ?? 1) === 1
   );
-  const vendors = unwrapList(vendorResponse).filter(
-    (vendor) => Number(vendor.is_active ?? vendor.active_status ?? 1) === 1
-  );
+  const vendors = unwrapList(vendorResponse);
 
   const { data: lineResponse, isLoading: linesLoading } = useQuery({
     queryKey: ["available-budget-lines", form.branchId, period],
@@ -332,35 +383,124 @@ export function BudgetLinkedGrnForm() {
     : null;
 
   const latestExtraction = workspace?.extractions?.[0];
-  const serverExtractedFields = parseJson(latestExtraction?.extracted_fields_json);
-  const effectiveExtractedFields = extractedFields ?? serverExtractedFields;
+  const effectiveExtractedFields =
+    extractedFields ?? parseJson(latestExtraction?.extracted_fields_json);
   const selectedVendor = vendors.find((vendor) => vendor.id === form.vendorId);
+
+  // ── Cascade: cost centre → head → sub-head → (item, only when ambiguous) ──
+
+  const costCentreOptions = useMemo<SearchableOption[]>(() => {
+    const seen = new Map<string, string>();
+    budgetLines.forEach((line) => {
+      const key = line.cost_centre_id ?? NO_COST_CENTRE;
+      if (!seen.has(key)) {
+        seen.set(key, line.cost_centre_name ?? "Branch (no cost centre)");
+      }
+    });
+    return [...seen].map(([value, label]) => ({ value, label }));
+  }, [budgetLines]);
+
+  const linesInCostCentre = useMemo(
+    () =>
+      form.costCentreKey
+        ? budgetLines.filter(
+            (line) => (line.cost_centre_id ?? NO_COST_CENTRE) === form.costCentreKey
+          )
+        : [],
+    [budgetLines, form.costCentreKey]
+  );
+
+  const headOptions = useMemo(
+    () => [...new Set(linesInCostCentre.map((line) => line.head))].map((head) => ({
+      value: head,
+      label: head,
+    })),
+    [linesInCostCentre]
+  );
+
+  const linesInHead = useMemo(
+    () => linesInCostCentre.filter((line) => line.head === form.head),
+    [linesInCostCentre, form.head]
+  );
+
+  const subHeadOptions = useMemo(
+    () =>
+      [...new Set(linesInHead.map((line) => line.sub_head || GENERAL_SUB_HEAD))].map(
+        (subHead) => ({ value: subHead, label: subHead })
+      ),
+    [linesInHead]
+  );
+
+  const matchingLines = useMemo(
+    () =>
+      form.subHead
+        ? linesInHead.filter((line) => (line.sub_head || GENERAL_SUB_HEAD) === form.subHead)
+        : [],
+    [linesInHead, form.subHead]
+  );
+
+  // Only surface an item picker when the trio genuinely maps to several lines.
+  const needsItemChoice = matchingLines.length > 1;
+
+  const resolvedLine = useMemo(() => {
+    if (matchingLines.length === 1) return matchingLines[0];
+    return matchingLines.find((line) => line.id === form.budgetLineId) ?? null;
+  }, [matchingLines, form.budgetLineId]);
+
+  // Clear downstream selections whenever an upstream one changes, so a stale
+  // head can never survive a cost-centre switch.
+  useEffect(() => {
+    setForm((current) => {
+      if (!current.head) return current;
+      const validHead = linesInCostCentre.some((line) => line.head === current.head);
+      return validHead ? current : { ...current, head: "", subHead: "", budgetLineId: "" };
+    });
+  }, [linesInCostCentre]);
+
+  useEffect(() => {
+    setForm((current) => {
+      if (!current.subHead) return current;
+      const validSubHead = linesInHead.some(
+        (line) => (line.sub_head || GENERAL_SUB_HEAD) === current.subHead
+      );
+      return validSubHead ? current : { ...current, subHead: "", budgetLineId: "" };
+    });
+  }, [linesInHead]);
+
+  useEffect(() => {
+    if (matchingLines.length === 1 && form.budgetLineId !== matchingLines[0].id) {
+      setForm((current) => ({ ...current, budgetLineId: matchingLines[0].id }));
+    }
+  }, [matchingLines, form.budgetLineId]);
+
+  // ── Amount → quantity (single-line mode) ────────────────────────────────
+  //
+  // The approved unit rate is never exceeded (the server rejects that), so the
+  // typed amount is turned into a quantity instead.
+
+  const singleLine = useMemo(() => {
+    if (splitMode || !resolvedLine || !(form.amount > 0)) return null;
+    const perUnit = computeLine(resolvedLine, 1);
+    const basis = isVendor ? Number(perUnit.base) : Number(perUnit.gross);
+    if (!(basis > 0)) return null;
+    const quantity = Number((form.amount / basis).toFixed(4));
+    const totals = computeLine(resolvedLine, quantity);
+    return { quantity, totals, perUnit };
+  }, [splitMode, resolvedLine, form.amount, isVendor]);
 
   const calculatedAllocations = useMemo(
     () =>
       allocations.map((allocation) => {
         const line = budgetLines.find((item) => item.id === allocation.budgetLineId);
         const calculation = line
-          ? calculateBudgetLine({
-              head: line.head,
-              subHead: line.sub_head,
-              itemName: line.item_name,
-              quantity: Number(allocation.quantity),
-              unit: line.unit,
-              unitRate: Number(allocation.unitRate),
-              taxTreatment: line.tax_treatment,
-              gstRate: Number(line.gst_rate),
-              gstType: line.gst_type,
-              recoverableTaxPct: Number(line.recoverable_tax_pct),
-              justification: line.justification,
-            })
+          ? computeLine(line, allocation.quantity, allocation.unitRate)
           : null;
         return { allocation, line, calculation };
       }),
     [allocations, budgetLines]
   );
 
-  const totals = useMemo(
+  const splitTotals = useMemo(
     () =>
       calculatedAllocations.reduce(
         (sum, item) => {
@@ -375,56 +515,123 @@ export function BudgetLinkedGrnForm() {
     [calculatedAllocations]
   );
 
-  const allocationDifference = Math.round((totals.gross - Number(form.invoiceTotal || 0)) * 100) / 100;
-  const allocationReady =
-    allocations.length > 0
-    && allocations.every((item) => item.budgetLineId && Number(item.quantity) > 0 && Number(item.unitRate) >= 0)
-    && Number(form.invoiceTotal) > 0
-    && Math.abs(allocationDifference) <= 0.01;
+  const totals = splitMode
+    ? splitTotals
+    : {
+        base: Number(singleLine?.totals.base ?? 0),
+        tax: Number(singleLine?.totals.tax ?? 0),
+        gross: Number(singleLine?.totals.gross ?? 0),
+        pnl: Number(singleLine?.totals.pnlCost ?? 0),
+      };
 
-  const localValidation = useMemo(() => {
-    const proofPresent = files.length > 0 || Boolean(workspace?.documents?.length);
-    const mandatoryInvoiceFields = Boolean(
-      form.branchId
-      && form.billDate
-      && form.invoiceNumber.trim()
-      && form.servicePeriodStart
-      && form.servicePeriodEnd
-      && form.purchaseReference.trim()
-      && form.placeOfSupply.trim()
-      && Number(form.invoiceTotal) > 0
-      && (form.grnType === "imprest" || (form.vendorId && form.vendorGstin.trim()))
-    );
-    return {
-      proofPresent,
-      mandatoryInvoiceFields,
-      allocationReady,
-      vendorReady: form.grnType === "imprest" || Boolean(selectedVendor),
-    };
-  }, [allocationReady, files.length, form, selectedVendor, workspace?.documents?.length]);
+  const splitDifference =
+    Math.round((splitTotals.gross - Number(form.amount || 0)) * 100) / 100;
 
-  const localPassCount = Object.values(localValidation).filter(Boolean).length;
-  const localReadiness = Math.round((localPassCount / Object.keys(localValidation).length) * 100);
+  // ── Per-field validation ────────────────────────────────────────────────
+
+  const errors = useMemo(() => {
+    const next: Record<string, string> = {};
+    if (!form.branchId) next.branchId = "Select the branch this spend belongs to.";
+    if (!form.billDate) {
+      next.billDate = isVendor ? "Invoice date is required." : "Receipt date is required.";
+    }
+    // The cascade is only rendered in single-line mode; in split mode the
+    // allocation rows carry the budget coordinates instead.
+    if (!splitMode) {
+      if (!form.costCentreKey) next.costCentreKey = "Select a cost centre.";
+      if (!form.head) next.head = "Select an expense head.";
+      if (!form.subHead) next.subHead = "Select a sub-head.";
+      if (needsItemChoice && !form.budgetLineId) {
+        next.budgetLineId = "More than one budget line matches — pick the item.";
+      }
+    }
+    if (!form.remarks.trim()) next.remarks = "Add a short reason for this spend.";
+    if (!(form.amount > 0)) next.amount = "Enter an amount greater than zero.";
+
+    if (isVendor) {
+      if (!form.vendorId) next.vendorId = "Select the vendor.";
+      if (!form.invoiceNumber.trim()) next.invoiceNumber = "Invoice number is required.";
+      if (form.dueDate && form.billDate) {
+        const gap = daysBetween(form.billDate, form.dueDate);
+        if (gap !== null && gap < 0) next.dueDate = "Due date cannot fall before the invoice date.";
+      }
+    }
+
+    // Budget capacity — checked client-side so the raiser is not bounced by the
+    // server after filling everything.
+    if (!splitMode && resolvedLine && singleLine) {
+      if (singleLine.quantity > Number(resolvedLine.available_quantity) + 0.0001) {
+        next.amount = `Only ${decimal(Number(resolvedLine.available_quantity))} ${resolvedLine.unit} remain approved on this budget line.`;
+      } else if (
+        Number(singleLine.totals.gross) >
+        Number(resolvedLine.available_gross_amount) + 0.01
+      ) {
+        next.amount = `Exceeds the approved budget balance of ${money(Number(resolvedLine.available_gross_amount))}.`;
+      }
+    }
+
+    if (splitMode) {
+      if (!allocations.every((item) => item.budgetLineId)) {
+        next.split = "Select a budget line in every row.";
+      } else if (Math.abs(splitDifference) > 0.01) {
+        next.split = `Split must equal the invoice total exactly. Difference ${money(splitDifference)}.`;
+      }
+    }
+    return next;
+  }, [
+    form,
+    isVendor,
+    needsItemChoice,
+    splitMode,
+    resolvedLine,
+    singleLine,
+    allocations,
+    splitDifference,
+  ]);
+
+  const proofPresent = files.length > 0 || Boolean(workspace?.documents?.length);
   const serverBlocking = (workspace?.validations ?? []).filter(
     (item) => Number(item.is_blocking) === 1 && item.validation_status === "failed"
   );
-  const readiness = workspace?.grn?.validation_score != null
-    ? Number(workspace.grn.validation_score)
-    : localReadiness;
-  const canSubmit =
-    localValidation.proofPresent
-    && localValidation.mandatoryInvoiceFields
-    && localValidation.allocationReady
-    && localValidation.vendorReady
-    && serverBlocking.length === 0;
+  const hasErrors = Object.keys(errors).length > 0;
+  const canSubmit = !hasErrors && proofPresent && serverBlocking.length === 0;
 
-  const stepCompleted: Record<WorkspaceStep, boolean> = {
-    proof: localValidation.proofPresent,
-    invoice: localValidation.mandatoryInvoiceFields,
-    budget: localValidation.allocationReady,
-    validation: workspace ? serverBlocking.length === 0 && Boolean(workspace.validations?.length) : false,
-    review: Boolean(created?.submitted),
-  };
+  const checklist = [
+    { label: "Proof attached", done: proofPresent },
+    { label: "Details complete", done: !hasErrors },
+    { label: "Budget resolved", done: Boolean(splitMode ? allocations[0]?.budgetLineId : resolvedLine) },
+    {
+      label: "Server validations clear",
+      done: Boolean(workspace?.validations?.length) && serverBlocking.length === 0,
+    },
+  ];
+  const readiness =
+    workspace?.grn?.validation_score != null
+      ? Number(workspace.grn.validation_score)
+      : Math.round((checklist.filter((item) => item.done).length / checklist.length) * 100);
+
+  const err = (key: string) => (showErrors ? errors[key] : undefined);
+
+  // Quantity is stored to 4dp, so a rate that does not divide evenly can leave
+  // the computed figure a paisa off what was typed. Say so rather than let the
+  // total look wrong.
+  const roundingNote = (() => {
+    if (splitMode || !singleLine || !(form.amount > 0)) return undefined;
+    const settled = isVendor
+      ? Number(singleLine.totals.base)
+      : Number(singleLine.totals.gross);
+    const drift = Math.round((settled - form.amount) * 100) / 100;
+    if (Math.abs(drift) < 0.01) return undefined;
+    return `Rounded to ${money(settled)} to fit the approved unit rate.`;
+  })();
+
+  // payment_terms_days is still stored, but it is now derived from the date the
+  // raiser actually picked rather than driving it.
+  const dueDateGap = daysBetween(form.billDate, form.dueDate);
+  const resolvedPaymentTerms =
+    form.dueDate && dueDateGap !== null && dueDateGap >= 0 ? dueDateGap : form.paymentTermsDays;
+
+  // ── Allocation helpers (split mode only) ────────────────────────────────
 
   function updateAllocation(key: string, patch: Partial<AllocationDraft>) {
     setAllocations((current) =>
@@ -432,13 +639,8 @@ export function BudgetLinkedGrnForm() {
     );
   }
 
-  function addAllocation(copyFrom?: AllocationDraft) {
-    setAllocations((current) => [
-      ...current,
-      copyFrom
-        ? { ...copyFrom, key: crypto.randomUUID(), quantity: 1 }
-        : newAllocation(),
-    ]);
+  function addAllocation() {
+    setAllocations((current) => [...current, newAllocation()]);
   }
 
   function removeAllocation(key: string) {
@@ -450,10 +652,10 @@ export function BudgetLinkedGrnForm() {
   function autoBalanceLastRow() {
     const last = allocations[allocations.length - 1];
     const line = budgetLines.find((item) => item.id === last.budgetLineId);
-    if (!line || Number(last.quantity) <= 0 || Number(form.invoiceTotal) <= 0) {
+    if (!line || Number(last.quantity) <= 0 || Number(form.amount) <= 0) {
       toast({
         title: "Select the final budget line first",
-        description: "Enter invoice total and quantity before auto-balancing.",
+        description: "Enter the invoice total and a quantity before auto-balancing.",
         variant: "destructive",
       });
       return;
@@ -461,7 +663,7 @@ export function BudgetLinkedGrnForm() {
     const otherGross = calculatedAllocations
       .filter((item) => item.allocation.key !== last.key)
       .reduce((sum, item) => sum + Number(item.calculation?.gross ?? 0), 0);
-    const remainingGross = Math.round((Number(form.invoiceTotal) - otherGross) * 100) / 100;
+    const remainingGross = Math.round((Number(form.amount) - otherGross) * 100) / 100;
     if (remainingGross <= 0) {
       toast({
         title: "No positive balance remains",
@@ -485,68 +687,14 @@ export function BudgetLinkedGrnForm() {
     updateAllocation(last.key, { unitRate: Math.max(0, Number(rate.toFixed(4))) });
   }
 
-  function distributeEqually() {
-    if (!allocations.every((item) => item.budgetLineId) || Number(form.invoiceTotal) <= 0) {
-      toast({
-        title: "Complete budget selections",
-        description: "Select a budget line in every row and enter the invoice total.",
-        variant: "destructive",
-      });
-      return;
-    }
-    const invoiceTotal = Number(form.invoiceTotal);
-    const grossPerRow = invoiceTotal / allocations.length;
-
-    setAllocations((current) => {
-      const updated = current.map((allocation) => {
-        const line = budgetLines.find((item) => item.id === allocation.budgetLineId)!;
-        const taxFactor = ["exclusive", "reverse_charge"].includes(line.tax_treatment)
-          ? 1 + Number(line.gst_rate) / 100
-          : 1;
-        const rate = grossPerRow / (Math.max(Number(allocation.quantity), 0.0001) * taxFactor);
-        return {
-          ...allocation,
-          unitRate: Math.min(Number(line.unit_rate), Number(rate.toFixed(4))),
-        };
-      });
-
-      // Auto-balance last row to absorb rounding and rate caps
-      if (updated.length > 0) {
-        const lastIdx = updated.length - 1;
-        const last = updated[lastIdx];
-        const line = budgetLines.find((item) => item.id === last.budgetLineId);
-        if (line && Number(last.quantity) > 0) {
-          const otherGross = updated
-            .slice(0, lastIdx)
-            .reduce((sum, alloc) => {
-              const ln = budgetLines.find((item) => item.id === alloc.budgetLineId);
-              if (!ln) return sum;
-              const tf = ["exclusive", "reverse_charge"].includes(ln.tax_treatment) ? 1 + Number(ln.gst_rate) / 100 : 1;
-              return sum + Number(alloc.unitRate) * Number(alloc.quantity) * tf;
-            }, 0);
-          const remainingGross = Math.round((invoiceTotal - otherGross) * 100) / 100;
-          if (remainingGross > 0) {
-            const taxFactor = ["exclusive", "reverse_charge"].includes(line.tax_treatment)
-              ? 1 + Number(line.gst_rate) / 100
-              : 1;
-            const balancedRate = remainingGross / (Number(last.quantity) * taxFactor);
-            if (balancedRate <= Number(line.unit_rate) + 0.0001) {
-              updated[lastIdx] = { ...last, unitRate: Math.max(0, Number(balancedRate.toFixed(4))) };
-            }
-          }
-        }
-      }
-      return updated;
-    });
-  }
-
   function resetForm() {
     setForm(EMPTY_FORM);
     setAllocations([newAllocation()]);
     setFiles([]);
     setCreated(null);
-    setActiveStep("proof");
     setExtractedFields(null);
+    setSplitMode(false);
+    setShowErrors(false);
   }
 
   function applyExtractedFields(fields: Record<string, any>) {
@@ -554,39 +702,39 @@ export function BudgetLinkedGrnForm() {
       ...current,
       invoiceNumber: String(fields.invoiceNumber ?? current.invoiceNumber ?? ""),
       billDate: String(fields.invoiceDate ?? current.billDate ?? ""),
-      servicePeriodStart: String(fields.servicePeriodStart ?? current.servicePeriodStart ?? ""),
-      servicePeriodEnd: String(fields.servicePeriodEnd ?? current.servicePeriodEnd ?? ""),
-      purchaseReference: String(fields.purchaseReference ?? current.purchaseReference ?? "NA"),
+      purchaseReference: String(fields.purchaseReference ?? current.purchaseReference ?? ""),
       vendorGstin: String(fields.vendorGstin ?? current.vendorGstin ?? ""),
       placeOfSupply: String(fields.placeOfSupply ?? current.placeOfSupply ?? ""),
-      invoiceTotal: Number(fields.grossAmount ?? fields.invoiceTotal ?? current.invoiceTotal ?? 0),
-      otherCharges: Number(fields.otherCharges ?? current.otherCharges ?? 0),
-      roundOffAmount: Number(fields.roundOffAmount ?? current.roundOffAmount ?? 0),
-      paymentTermsDays: Number(fields.paymentTermsDays ?? current.paymentTermsDays ?? 30),
     }));
     setExtractedFields(fields);
-    setActiveStep("invoice");
   }
 
   const persistMutation = useMutation({
     mutationFn: async (submit: boolean) => {
-      if (!form.branchId) throw new Error("Branch is mandatory");
-      if (!form.billDate) throw new Error("Invoice / receipt date is mandatory");
-      if (!form.invoiceNumber.trim()) throw new Error("Invoice / receipt number is mandatory");
-      if (!form.servicePeriodStart || !form.servicePeriodEnd) {
-        throw new Error("Service period start and end are mandatory");
+      setShowErrors(true);
+      if (hasErrors) {
+        throw new Error("Some details still need attention — see the highlighted fields.");
       }
-      if (!form.purchaseReference.trim()) throw new Error("PO / contract reference is mandatory; use NA when not applicable");
-      if (!form.placeOfSupply.trim()) throw new Error("Place of supply is mandatory");
-      if (form.grnType === "vendor" && !form.vendorId) throw new Error("Active Vendor Master selection is mandatory");
-      if (form.grnType === "vendor" && !form.vendorGstin.trim()) throw new Error("Vendor GSTIN is mandatory; use NA only for a valid non-GST vendor");
-      if (!allocationReady) throw new Error(`Cost-centre split must match the invoice total exactly. Difference ${money(allocationDifference)}`);
-      if (submit && !(files.length || workspace?.documents?.length)) {
+      if (submit && !proofPresent) {
         throw new Error("At least one invoice or supporting proof is mandatory");
       }
 
-      const first = calculatedAllocations[0];
-      if (!first?.line) throw new Error("Select an approved budget line");
+      const rows: AllocationDraft[] = splitMode
+        ? allocations
+        : [
+            {
+              key: "single",
+              budgetLineId: resolvedLine!.id,
+              quantity: singleLine!.quantity,
+              unitRate: Number(resolvedLine!.unit_rate),
+              remarks: "",
+            },
+          ];
+
+      const firstLine = splitMode
+        ? budgetLines.find((line) => line.id === rows[0].budgetLineId)!
+        : resolvedLine!;
+
       let current = created;
       if (!current) {
         const result = await hrmsApi.post<{ id: string; grnNumber: string }>(
@@ -594,16 +742,16 @@ export function BudgetLinkedGrnForm() {
           {
             grnType: form.grnType,
             branchId: form.branchId,
-            budgetLineId: first.line.id,
-            processId: first.line.process_id ?? undefined,
-            costCentreId: first.line.cost_centre_id ?? undefined,
-            vendorId: form.grnType === "vendor" ? form.vendorId : undefined,
-            quantity: Number(first.allocation.quantity),
-            unitRate: Number(first.allocation.unitRate),
+            budgetLineId: firstLine.id,
+            processId: firstLine.process_id ?? undefined,
+            costCentreId: firstLine.cost_centre_id ?? undefined,
+            vendorId: isVendor ? form.vendorId : undefined,
+            quantity: Number(rows[0].quantity),
+            unitRate: Number(rows[0].unitRate),
             billDate: form.billDate,
-            paymentTermsDays: Number(form.paymentTermsDays),
+            paymentTermsDays: isVendor ? Number(resolvedPaymentTerms) : 0,
             remarks: form.remarks || undefined,
-            financialYear: financialYearFromPeriod(first.line.period_code),
+            financialYear: financialYearFromPeriod(firstLine.period_code),
           }
         );
         current = { ...result, submitted: false };
@@ -611,16 +759,15 @@ export function BudgetLinkedGrnForm() {
       }
 
       await hrmsApi.put(`/api/finance/grns/${current.id}/allocations`, {
-        invoiceNumber: form.invoiceNumber,
-        servicePeriodStart: form.servicePeriodStart,
-        servicePeriodEnd: form.servicePeriodEnd,
-        purchaseReference: form.purchaseReference,
-        vendorGstin: form.vendorGstin,
-        placeOfSupply: form.placeOfSupply,
-        otherCharges: Number(form.otherCharges),
-        roundOffAmount: Number(form.roundOffAmount),
-        declaredInvoiceTotal: Number(form.invoiceTotal),
-        allocations: allocations.map((item) => ({
+        invoiceNumber: isVendor ? form.invoiceNumber : undefined,
+        purchaseReference: isVendor ? form.purchaseReference || undefined : undefined,
+        vendorGstin: isVendor ? form.vendorGstin || undefined : undefined,
+        placeOfSupply: isVendor ? form.placeOfSupply || undefined : undefined,
+        // Only declared in split mode. In single-line mode the amount drives the
+        // quantity, so the server's computed gross IS the invoice total and a
+        // declared figure could only ever contradict it.
+        declaredInvoiceTotal: splitMode ? Number(form.amount) : undefined,
+        allocations: rows.map((item) => ({
           budgetLineId: item.budgetLineId,
           quantity: Number(item.quantity),
           unitRate: Number(item.unitRate),
@@ -653,7 +800,10 @@ export function BudgetLinkedGrnForm() {
         } catch (analysisError) {
           toast({
             title: "Draft saved; automated extraction needs review",
-            description: analysisError instanceof Error ? analysisError.message : "Document analysis was unavailable.",
+            description:
+              analysisError instanceof Error
+                ? analysisError.message
+                : "Document analysis was unavailable.",
           });
         }
       }
@@ -670,20 +820,15 @@ export function BudgetLinkedGrnForm() {
     },
     onSuccess: (result, submit) => {
       toast({
-        title: submit ? "Smart GRN submitted to Branch Head" : "Smart GRN draft saved",
+        title: submit ? "GRN submitted to Branch Head" : "GRN draft saved",
         description: result.grnNumber,
       });
       void queryClient.invalidateQueries({ queryKey: ["grn-list"] });
       void queryClient.invalidateQueries({ queryKey: ["available-budget-lines"] });
       void queryClient.invalidateQueries({ queryKey: ["smart-grn-workspace", result.id] });
-      setActiveStep(submit ? "review" : "validation");
     },
     onError: (error: Error) =>
-      toast({
-        title: "GRN could not be saved",
-        description: error.message,
-        variant: "destructive",
-      }),
+      toast({ title: "GRN could not be saved", description: error.message, variant: "destructive" }),
   });
 
   const analyzeMutation = useMutation({
@@ -698,8 +843,14 @@ export function BudgetLinkedGrnForm() {
     onSuccess: (data) => {
       if (data?.fields) setExtractedFields(data.fields);
       toast({
-        title: data?.status === "completed" ? "Invoice extraction completed" : "Manual document verification required",
-        description: data?.confidence != null ? `Confidence ${data.confidence}%` : "Review the invoice alongside the form.",
+        title:
+          data?.status === "completed"
+            ? "Invoice extraction completed"
+            : "Manual document verification required",
+        description:
+          data?.confidence != null
+            ? `Confidence ${data.confidence}%`
+            : "Review the invoice alongside the form.",
       });
       void workspaceQuery.refetch();
     },
@@ -735,567 +886,1048 @@ export function BudgetLinkedGrnForm() {
       toast({ title: "Validation failed", description: error.message, variant: "destructive" }),
   });
 
-  const primaryDocument = workspace?.documents?.find((item) => Number(item.is_primary) === 1)
-    ?? workspace?.documents?.[0];
+  const primaryDocument =
+    workspace?.documents?.find((item) => Number(item.is_primary) === 1) ?? workspace?.documents?.[0];
+
+  const locked = Boolean(created);
+  const submitted = Boolean(created?.submitted);
+
+  const actionButtons = (
+    <div className="flex gap-2">
+      {created && (
+        <Button type="button" size="sm" variant="ghost" onClick={resetForm} aria-label="Start a new GRN">
+          <RotateCcw className="h-4 w-4" />
+        </Button>
+      )}
+      <Button
+        size="sm"
+        variant="outline"
+        className="h-10 flex-1 md:h-9 md:flex-none"
+        disabled={persistMutation.isPending || submitted}
+        onClick={() => persistMutation.mutate(false)}
+      >
+        {persistMutation.isPending ? (
+          <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
+        ) : (
+          <Save className="mr-1.5 h-4 w-4" />
+        )}
+        Save draft
+      </Button>
+      <Button
+        size="sm"
+        className="h-10 flex-1 md:h-9 md:flex-none"
+        disabled={persistMutation.isPending || submitted || !canSubmit}
+        onClick={() => persistMutation.mutate(true)}
+      >
+        {persistMutation.isPending ? (
+          <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
+        ) : (
+          <Send className="mr-1.5 h-4 w-4" />
+        )}
+        Submit GRN
+      </Button>
+    </div>
+  );
+
+  const totalStrip = (
+    <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs">
+      {created && (
+        <span className="font-mono text-sm font-bold text-[#073f78]">{created.grnNumber}</span>
+      )}
+      <span className="text-slate-500">
+        Total: <b className="text-sm text-slate-900">{totals.gross ? money(totals.gross) : "—"}</b>
+      </span>
+      <span
+        className={cn(
+          "rounded-full px-2 py-0.5 text-[10px] font-bold",
+          readiness >= 80
+            ? "bg-emerald-100 text-emerald-700"
+            : readiness >= 50
+              ? "bg-amber-100 text-amber-700"
+              : "bg-slate-100 text-slate-600"
+        )}
+      >
+        {readiness}% ready
+      </span>
+    </div>
+  );
 
   return (
-    <div className="flex h-full flex-col">
-      {/* ── Sticky action bar ── */}
-      <div className="sticky top-0 z-20 flex items-center justify-between gap-4 border-b bg-white px-4 py-2 text-xs shrink-0">
-        <div className="flex items-center gap-4 flex-wrap">
-          {created && (
-            <span className="font-mono font-bold text-[#073f78] text-sm">{created.grnNumber}</span>
-          )}
-          <span className="text-slate-500">
-            Invoice:{" "}
-            <b className="text-slate-900">
-              {form.invoiceTotal ? `₹${Number(form.invoiceTotal).toLocaleString("en-IN")}` : "—"}
-            </b>
-          </span>
-          <span className="text-slate-500">
-            Allocated:{" "}
-            <b className="text-slate-900">
-              {totals.gross ? `₹${Number(totals.gross).toLocaleString("en-IN")}` : "—"}
-            </b>
-          </span>
-          <span className={`font-semibold ${Math.abs(allocationDifference) <= 0.01 ? "text-emerald-600" : "text-rose-600"}`}>
-            Diff: {allocationDifference >= 0 ? "+" : ""}{Number(allocationDifference).toLocaleString("en-IN")}
-          </span>
-          <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${readiness >= 80 ? "bg-emerald-100 text-emerald-700" : readiness >= 50 ? "bg-amber-100 text-amber-700" : "bg-slate-100 text-slate-600"}`}>
-            {readiness}% ready
-          </span>
-        </div>
-        <div className="flex gap-2">
-          {created && (
-            <Button type="button" size="sm" variant="ghost" onClick={resetForm}>
-              <RotateCcw className="h-3.5 w-3.5" />
-            </Button>
-          )}
-          <Button
-            size="sm"
-            variant="outline"
-            disabled={persistMutation.isPending || Boolean(created?.submitted)}
-            onClick={() => persistMutation.mutate(false)}
-          >
-            {persistMutation.isPending ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Save className="mr-1.5 h-3.5 w-3.5" />}
-            Save draft
-          </Button>
-          <Button
-            size="sm"
-            disabled={persistMutation.isPending || Boolean(created?.submitted) || !canSubmit}
-            onClick={() => { setActiveStep("review"); persistMutation.mutate(true); }}
-          >
-            {persistMutation.isPending ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Send className="mr-1.5 h-3.5 w-3.5" />}
-            Submit GRN
-          </Button>
+    <div className="flex h-full flex-col bg-slate-50/60">
+      {/* Header — sticky on every size; actions move to a bottom bar on phones. */}
+      <div className="sticky top-0 z-20 shrink-0 border-b bg-white px-4 py-2">
+        <div className="flex items-center justify-between gap-4">
+          {totalStrip}
+          <div className="hidden md:block">{actionButtons}</div>
         </div>
       </div>
 
-      {created?.submitted && (
-        <div className="flex items-center gap-3 border-b border-emerald-200 bg-emerald-50 px-4 py-2 text-xs shrink-0">
-          <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0" />
-          <p className="text-emerald-800 font-medium">Submitted to Branch Head with allocation-aware budget controls.</p>
+      {submitted && (
+        <div className="flex shrink-0 items-center gap-3 border-b border-emerald-200 bg-emerald-50 px-4 py-2 text-xs">
+          <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600" />
+          <p className="font-medium text-emerald-800">
+            Submitted to Branch Head with allocation-aware budget controls.
+          </p>
         </div>
       )}
 
-      {/* ── Main 2-column layout ── */}
-      <div className="flex flex-1 overflow-hidden min-h-0">
-        {/* Left — form sections (scrollable) */}
-        <div className="flex-1 overflow-y-auto px-4 pb-8 pt-4 space-y-5 min-w-0">
-        {/* ── Proof section ── */}
-        <section id="proof" className="pt-4">
-          <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">
-            Proof / Document
-          </h2>
-          <Card className="overflow-hidden rounded-3xl border-slate-200 shadow-sm">
-            <CardHeader className="border-b border-slate-100 bg-gradient-to-r from-blue-50/80 to-white">
-              <CardTitle className="flex items-center gap-2 text-base">
-                <UploadCloud className="h-5 w-5 text-blue-700" /> Mandatory proof and document intelligence
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-5 p-6">
-              <label className="group flex min-h-20 cursor-pointer flex-col items-center justify-center rounded-[26px] border-2 border-dashed border-slate-300 bg-slate-50/70 px-6 text-center transition hover:border-blue-400 hover:bg-blue-50/40">
-                <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-white shadow-sm ring-1 ring-slate-200 group-hover:ring-blue-200">
-                  <UploadCloud className="h-6 w-6 text-blue-700" />
-                </div>
-                <p className="mt-4 text-sm font-bold text-slate-900">Drop invoice and supporting documents here</p>
-                <p className="mt-2 max-w-lg text-xs leading-5 text-slate-500">
-                  PDF, JPG, PNG or WEBP. Up to 10 files, 20 MB each. The first document is treated as the primary invoice.
-                </p>
+      <div className="flex min-h-0 flex-1 overflow-hidden">
+        <div className="min-w-0 flex-1 space-y-4 overflow-y-auto px-3 pb-32 pt-4 md:px-4 md:pb-8">
+          {/* ── Mode ── */}
+          <Tabs
+            value={form.grnType}
+            onValueChange={(value) =>
+              !locked && setForm((current) => ({ ...current, grnType: value as GrnType }))
+            }
+          >
+            <TabsList className="grid h-auto w-full grid-cols-2 md:w-auto md:inline-grid">
+              <TabsTrigger value="vendor" disabled={locked} className="h-10 gap-2 px-4">
+                <IndianRupee className="h-4 w-4" /> Vendor GRN
+              </TabsTrigger>
+              <TabsTrigger value="imprest" disabled={locked} className="h-10 gap-2 px-4">
+                <UploadCloud className="h-4 w-4" /> Imprest
+              </TabsTrigger>
+            </TabsList>
+          </Tabs>
+
+          {showErrors && hasErrors && (
+            <div
+              role="alert"
+              className="flex items-start gap-2 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-xs text-rose-800"
+            >
+              <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+              <p>
+                {Object.keys(errors).length} field
+                {Object.keys(errors).length > 1 ? "s need" : " needs"} attention. Each one is marked
+                below.
+              </p>
+            </div>
+          )}
+
+          {/* ── Proof ── */}
+          <FormSection
+            title="Proof"
+            description="Attach the invoice or receipt. At least one file is required to submit."
+          >
+            <div className="px-4 py-3">
+              <label className="flex cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-slate-300 bg-slate-50 px-4 py-6 text-center transition-colors hover:border-slate-400 hover:bg-slate-100">
+                <UploadCloud className="h-6 w-6 text-slate-400" />
+                <span className="text-sm font-medium text-slate-700">
+                  Tap to attach invoice or receipt
+                </span>
+                <span className="text-[11px] text-slate-500">
+                  PDF, JPG, PNG or WEBP · up to 10 files, 20 MB each
+                </span>
                 <input
                   type="file"
                   multiple
                   accept=".pdf,.jpg,.jpeg,.png,.webp"
-                  className="hidden"
-                  disabled={created?.submitted}
-                  onChange={(event) => {
-                    const selected = Array.from(event.target.files ?? []);
-                    setFiles((current) => [...current, ...selected].slice(0, 10));
-                    event.target.value = "";
-                  }}
+                  className="sr-only"
+                  onChange={(event) => setFiles(Array.from(event.target.files ?? []))}
                 />
               </label>
 
-              <div className="grid gap-3 md:grid-cols-2">
-                {files.map((file, index) => (
-                  <div key={`${file.name}-${index}`} className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-white p-3">
-                    <FileText className="h-5 w-5 text-blue-600" />
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate text-xs font-semibold text-slate-800">{file.name}</p>
-                      <p className="text-[10px] text-slate-500">{(file.size / 1024 / 1024).toFixed(2)} MB · Pending upload</p>
-                    </div>
-                    <button type="button" onClick={() => setFiles((current) => current.filter((_, itemIndex) => itemIndex !== index))} className="rounded-full p-1 text-slate-400 hover:bg-rose-50 hover:text-rose-600">
-                      <X className="h-4 w-4" />
-                    </button>
-                  </div>
-                ))}
-                {(workspace?.documents ?? []).map((document) => (
-                  <div key={document.id} className="flex items-center gap-3 rounded-2xl border border-emerald-200 bg-emerald-50/60 p-3">
-                    <FileCheck2 className="h-5 w-5 text-emerald-600" />
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate text-xs font-semibold text-emerald-950">{document.original_name}</p>
-                      <p className="text-[10px] text-emerald-700">Uploaded · {document.extraction_status.replaceAll("_", " ")}</p>
-                    </div>
-                    <Badge className={`border text-[10px] ${statusTone(document.extraction_status)}`}>
-                      {Number(document.is_primary) === 1 ? "Primary" : "Support"}
-                    </Badge>
-                  </div>
-                ))}
-              </div>
+              {(files.length > 0 || (workspace?.documents?.length ?? 0) > 0) && (
+                <ul className="mt-3 space-y-1.5">
+                  {files.map((file) => (
+                    <li
+                      key={file.name}
+                      className="flex items-center justify-between gap-2 rounded-lg bg-slate-50 px-3 py-2 text-xs"
+                    >
+                      <span className="truncate text-slate-700">{file.name}</span>
+                      <Badge variant="outline" className="shrink-0">
+                        Pending upload
+                      </Badge>
+                    </li>
+                  ))}
+                  {workspace?.documents?.map((document) => (
+                    <li
+                      key={document.id}
+                      className="flex items-center justify-between gap-2 rounded-lg bg-slate-50 px-3 py-2 text-xs"
+                    >
+                      <span className="truncate text-slate-700">{document.original_name}</span>
+                      <Badge
+                        variant="outline"
+                        className={cn("shrink-0", statusTone(document.extraction_status))}
+                      >
+                        {Number(document.is_primary) === 1 ? "Primary" : "Support"}
+                      </Badge>
+                    </li>
+                  ))}
+                </ul>
+              )}
 
-              <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                <label className="flex items-center gap-2 text-xs font-medium text-slate-700">
-                  <input type="checkbox" checked={autoAnalyze} onChange={(event) => setAutoAnalyze(event.target.checked)} />
-                  Analyze the primary invoice automatically after upload
+              <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
+                <label className="flex items-center gap-2 text-xs text-slate-600">
+                  <input
+                    type="checkbox"
+                    className="h-4 w-4"
+                    checked={autoAnalyze}
+                    onChange={(event) => setAutoAnalyze(event.target.checked)}
+                  />
+                  Read the invoice automatically after upload
                 </label>
                 {primaryDocument && (
-                  <Button type="button" variant="outline" size="sm" disabled={analyzeMutation.isPending} onClick={() => analyzeMutation.mutate(primaryDocument.id)}>
-                    {analyzeMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <ScanLine className="mr-2 h-4 w-4" />}
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    disabled={analyzeMutation.isPending}
+                    onClick={() => analyzeMutation.mutate(primaryDocument.id)}
+                  >
+                    {analyzeMutation.isPending ? (
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    ) : (
+                      <ScanLine className="mr-2 h-4 w-4" />
+                    )}
                     Analyze invoice
                   </Button>
                 )}
               </div>
-            </CardContent>
-          </Card>
-        </section>
+            </div>
+          </FormSection>
 
-        {/* ── Invoice section ── */}
-        <section id="invoice" className="pt-6">
-          <h2 className="mb-3 text-xs font-semibold uppercase tracking-wide text-slate-400">
-            Invoice details
-          </h2>
-          <Card className="overflow-hidden rounded-3xl border-slate-200 shadow-sm">
-            <CardHeader className="border-b border-slate-100 bg-gradient-to-r from-indigo-50/80 to-white">
-              <CardTitle className="flex items-center gap-2 text-base">
-                <ReceiptText className="h-5 w-5 text-indigo-700" /> Invoice identity and tax facts
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="grid gap-5 p-6 md:grid-cols-2 xl:grid-cols-3">
-              <div className="space-y-2">
-                <RequiredLabel>GRN type</RequiredLabel>
-                <select className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm" value={form.grnType} disabled={Boolean(created)} onChange={(event) => setForm((current) => ({ ...current, grnType: event.target.value as GrnType, vendorId: event.target.value === "vendor" ? current.vendorId : "", vendorGstin: event.target.value === "vendor" ? current.vendorGstin : "NA" }))}>
-                  <option value="vendor">Vendor GRN</option>
-                  <option value="imprest">Imprest / reimbursement GRN</option>
-                </select>
-              </div>
-              <div className="space-y-2">
-                <RequiredLabel>Branch</RequiredLabel>
-                <select className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm" value={form.branchId} disabled={Boolean(created)} onChange={(event) => { setForm((current) => ({ ...current, branchId: event.target.value })); setAllocations([newAllocation()]); }}>
-                  <option value="">Select assigned branch</option>
-                  {branches.map((branch) => <option key={branch.id} value={branch.id}>{branch.branch_name ?? branch.name}</option>)}
-                </select>
-              </div>
-              <div className="space-y-2">
-                <RequiredLabel>Invoice / receipt date</RequiredLabel>
-                <Input type="date" value={form.billDate} disabled={Boolean(created)} onChange={(event) => { setForm((current) => ({ ...current, billDate: event.target.value })); setAllocations([newAllocation()]); }} />
-              </div>
-              <div className="space-y-2">
-                <RequiredLabel>Invoice / receipt number</RequiredLabel>
-                <Input value={form.invoiceNumber} onChange={(event) => setForm((current) => ({ ...current, invoiceNumber: event.target.value }))} placeholder="Exact number printed on proof" />
-              </div>
-              {form.grnType === "vendor" && (
-                <div className="space-y-2 md:col-span-2">
-                  <RequiredLabel>Vendor Master</RequiredLabel>
-                  <select className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm" value={form.vendorId} disabled={Boolean(created)} onChange={(event) => setForm((current) => ({ ...current, vendorId: event.target.value }))}>
-                    <option value="">Select active vendor</option>
-                    {vendors.map((vendor) => <option key={vendor.id} value={vendor.id}>{vendor.vendor_code ? `${vendor.vendor_code} · ` : ""}{vendor.vendor_name ?? vendor.name}</option>)}
-                  </select>
-                </div>
-              )}
-              <div className="space-y-2">
-                <RequiredLabel>Vendor GSTIN</RequiredLabel>
-                <Input value={form.vendorGstin} onChange={(event) => setForm((current) => ({ ...current, vendorGstin: event.target.value.toUpperCase() }))} placeholder="GSTIN or NA" />
-              </div>
-              <div className="space-y-2">
-                <RequiredLabel>Place of supply</RequiredLabel>
-                <Input value={form.placeOfSupply} onChange={(event) => setForm((current) => ({ ...current, placeOfSupply: event.target.value }))} placeholder="State / place" />
-              </div>
-              <div className="space-y-2">
-                <RequiredLabel>PO / contract reference</RequiredLabel>
-                <Input value={form.purchaseReference} onChange={(event) => setForm((current) => ({ ...current, purchaseReference: event.target.value }))} placeholder="Reference or NA" />
-              </div>
-              <div className="space-y-2">
-                <RequiredLabel>Service period start</RequiredLabel>
-                <Input type="date" value={form.servicePeriodStart} onChange={(event) => setForm((current) => ({ ...current, servicePeriodStart: event.target.value }))} />
-              </div>
-              <div className="space-y-2">
-                <RequiredLabel>Service period end</RequiredLabel>
-                <Input type="date" value={form.servicePeriodEnd} onChange={(event) => setForm((current) => ({ ...current, servicePeriodEnd: event.target.value }))} />
-              </div>
-              <div className="space-y-2">
-                <RequiredLabel>Invoice total including tax</RequiredLabel>
-                <Input type="number" min="0.01" step="0.01" value={form.invoiceTotal || ""} onChange={(event) => setForm((current) => ({ ...current, invoiceTotal: Number(event.target.value) }))} />
-              </div>
-              <div className="space-y-2">
-                <RequiredLabel>Payment terms</RequiredLabel>
-                <select className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm" value={form.paymentTermsDays} onChange={(event) => setForm((current) => ({ ...current, paymentTermsDays: Number(event.target.value) }))}>
-                  {[0, 7, 15, 30, 45, 60, 90].map((days) => <option key={days} value={days}>{days === 0 ? "Immediate" : `${days} days`}</option>)}
-                </select>
-              </div>
-              <div className="space-y-2">
-                <Label>Other charges</Label>
-                <Input type="number" step="0.01" value={form.otherCharges} onChange={(event) => setForm((current) => ({ ...current, otherCharges: Number(event.target.value) }))} />
-              </div>
-              <div className="space-y-2">
-                <Label>Round-off amount</Label>
-                <Input type="number" step="0.01" value={form.roundOffAmount} onChange={(event) => setForm((current) => ({ ...current, roundOffAmount: Number(event.target.value) }))} />
-              </div>
-              <div className="space-y-2">
-                <Label>Financial year</Label>
-                <Input value={financialYearFromPeriod(period)} readOnly />
-              </div>
-              <div className="space-y-2">
-                <Label>Calculated due date</Label>
-                <Input value={addDays(form.billDate, form.paymentTermsDays)} readOnly />
-              </div>
-              <div className="space-y-2 md:col-span-2 xl:col-span-3">
-                <RequiredLabel>Purpose, receipt details and exception remarks</RequiredLabel>
-                <Textarea className="min-h-24" value={form.remarks} onChange={(event) => setForm((current) => ({ ...current, remarks: event.target.value }))} placeholder="Explain the business purpose, receipt/service confirmation and any exception." />
-              </div>
+          {/* ── Details ── */}
+          <FormSection
+            title={isVendor ? "Invoice details" : "Receipt details"}
+            description={
+              isVendor
+                ? "Who the payment goes to and against what document."
+                : "When the expense was incurred."
+            }
+          >
+            <FieldRow label="Branch" htmlFor="grn-branch" required error={err("branchId")}>
+              <SearchableSelect
+                id="grn-branch"
+                aria-label="Branch"
+                disabled={locked}
+                options={branches.map((branch) => ({
+                  value: branch.id,
+                  label: branch.branch_name ?? branch.name,
+                  hint: branch.branch_code ?? undefined,
+                }))}
+                value={form.branchId}
+                onChange={(value) => {
+                  setForm((current) => ({
+                    ...current,
+                    branchId: value,
+                    costCentreKey: "",
+                    head: "",
+                    subHead: "",
+                    budgetLineId: "",
+                  }));
+                  setAllocations([newAllocation()]);
+                }}
+                placeholder="Select branch"
+                searchPlaceholder="Type a branch name…"
+              />
+            </FieldRow>
 
-              {effectiveExtractedFields && (
-                <div className="rounded-2xl border border-violet-200 bg-violet-50/70 p-4 md:col-span-2 xl:col-span-3">
-                  <div className="flex flex-wrap items-center justify-between gap-3">
-                    <div>
-                      <p className="flex items-center gap-2 text-xs font-bold text-violet-950"><FileSearch className="h-4 w-4" /> Extracted invoice facts</p>
-                      <p className="mt-1 text-[11px] text-violet-700">Review before applying. Manual changes remain fully auditable.</p>
-                    </div>
-                    <div className="flex gap-2">
-                      <Button type="button" variant="outline" size="sm" onClick={() => applyExtractedFields(effectiveExtractedFields)}>Apply extracted values</Button>
-                      {created && <Button type="button" size="sm" disabled={confirmExtractionMutation.isPending} onClick={() => confirmExtractionMutation.mutate()}>{confirmExtractionMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <BadgeCheck className="mr-2 h-4 w-4" />}Confirm & audit</Button>}
-                    </div>
-                  </div>
-                  <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                    {[
-                      ["Vendor", effectiveExtractedFields.vendorName],
-                      ["Invoice", effectiveExtractedFields.invoiceNumber],
-                      ["Date", effectiveExtractedFields.invoiceDate],
-                      ["Gross", effectiveExtractedFields.grossAmount != null ? money(Number(effectiveExtractedFields.grossAmount)) : "—"],
-                      ["GSTIN", effectiveExtractedFields.vendorGstin],
-                      ["Tax", effectiveExtractedFields.taxAmount != null ? money(Number(effectiveExtractedFields.taxAmount)) : "—"],
-                      ["Confidence", effectiveExtractedFields.confidence != null ? `${effectiveExtractedFields.confidence}%` : "—"],
-                      ["PO / Contract", effectiveExtractedFields.purchaseReference],
-                    ].map(([label, value]) => <div key={String(label)} className="rounded-xl bg-white/80 p-3"><p className="text-[10px] uppercase tracking-wide text-violet-500">{label}</p><p className="mt-1 truncate text-xs font-semibold text-violet-950">{String(value ?? "—")}</p></div>)}
-                  </div>
-                </div>
-              )}
-            </CardContent>
-          </Card>
-        </section>
+            <FieldRow
+              label={isVendor ? "Invoice date" : "Receipt date"}
+              htmlFor="grn-bill-date"
+              required
+              error={err("billDate")}
+              hint={period ? `Financial year ${financialYearFromPeriod(period)}` : undefined}
+            >
+              <Input
+                id="grn-bill-date"
+                type="date"
+                className={inputClass}
+                disabled={locked}
+                value={form.billDate}
+                onChange={(event) => {
+                  const billDate = event.target.value;
+                  setForm((current) => ({
+                    ...current,
+                    billDate,
+                    costCentreKey: "",
+                    head: "",
+                    subHead: "",
+                    budgetLineId: "",
+                    dueDate:
+                      current.dueDate || !billDate
+                        ? current.dueDate
+                        : addDays(billDate, current.paymentTermsDays),
+                  }));
+                  setAllocations([newAllocation()]);
+                }}
+              />
+            </FieldRow>
 
-        {/* ── Budget allocation section ── */}
-        <section id="allocations" className="pt-8">
-          <h2 className="mb-3 text-xs font-semibold uppercase tracking-wide text-slate-400">
-            Budget allocation
-          </h2>
-          <Card className="overflow-hidden rounded-3xl border-slate-200 shadow-sm">
-            <CardHeader className="border-b border-slate-100 bg-gradient-to-r from-emerald-50/80 to-white">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <CardTitle className="flex items-center gap-2 text-base"><Split className="h-5 w-5 text-emerald-700" /> Multi-cost-centre allocation</CardTitle>
-                <div className="flex flex-wrap gap-2">
-                  <Button type="button" variant="outline" size="sm" onClick={distributeEqually}><Calculator className="mr-2 h-4 w-4" />Equal split</Button>
-                  <Button type="button" variant="outline" size="sm" onClick={autoBalanceLastRow}><WandSparkles className="mr-2 h-4 w-4" />Auto-balance last</Button>
-                  <Button type="button" size="sm" onClick={() => addAllocation()}><Plus className="mr-2 h-4 w-4" />Add allocation</Button>
-                </div>
-              </div>
-            </CardHeader>
-            <CardContent className="space-y-4 p-5">
-              {!form.branchId || !period ? (
-                <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">Select Branch and Invoice Date first to load active approved budget lines.</div>
-              ) : linesLoading ? (
-                <div className="flex items-center justify-center py-16 text-sm text-slate-500"><Loader2 className="mr-2 h-5 w-5 animate-spin" />Loading active budgets…</div>
-              ) : !budgetLines.length ? (
-                <div className="rounded-2xl border border-amber-200 bg-amber-50 p-5 text-sm text-amber-900">No active approved budget line is available for {period}. Complete Branch Head, Finance Head and Accounts Head approval first.</div>
-              ) : (
-                /* ── Compact tabular allocation ── */
-                <div className="overflow-x-auto rounded-xl border border-slate-200">
-                  <table className="w-full text-xs">
-                    <thead>
-                      <tr className="border-b bg-slate-50">
-                        <th className="w-7 px-2 py-2 text-center font-medium text-slate-500">#</th>
-                        <th className="px-3 py-2 text-left font-medium text-slate-500">Budget line</th>
-                        <th className="w-28 px-2 py-2 text-center font-medium text-slate-500">Cost centre</th>
-                        <th className="w-24 px-2 py-2 text-center font-medium text-slate-500">Qty</th>
-                        <th className="w-28 px-2 py-2 text-center font-medium text-slate-500">Unit rate</th>
-                        <th className="w-28 px-2 py-2 text-right font-medium text-slate-500">Gross</th>
-                        <th className="w-28 px-2 py-2 text-right font-medium text-slate-500">P&L cost</th>
-                        <th className="px-2 py-2 text-left font-medium text-slate-500">Remarks</th>
-                        <th className="w-16 px-2 py-2"></th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100">
-                      {calculatedAllocations.map(({ allocation, line, calculation }, index) => (
-                        <tr key={allocation.key} className="group hover:bg-slate-50/60">
-                          <td className="px-2 py-1.5 text-center">
-                            <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-emerald-100 text-[10px] font-bold text-emerald-700">{index + 1}</span>
-                          </td>
-                          <td className="px-3 py-1.5 min-w-[280px]">
-                            <select
-                              className="w-full h-8 rounded-md border border-input bg-background px-2 text-xs"
-                              value={allocation.budgetLineId}
-                              onChange={(event) => {
-                                const selectedLine = budgetLines.find((item) => item.id === event.target.value);
-                                updateAllocation(allocation.key, { budgetLineId: event.target.value, quantity: Math.min(1, Number(selectedLine?.available_quantity ?? 1)), unitRate: Number(selectedLine?.unit_rate ?? 0) });
-                              }}
-                            >
-                              <option value="">Select budget line</option>
-                              {budgetLines.map((item) => (
-                                <option key={item.id} value={item.id}>
-                                  {item.budget_number} · {item.head}/{item.sub_head || "General"} · {item.item_name} · {money(Number(item.available_gross_amount))}
-                                </option>
-                              ))}
-                            </select>
-                            {line && (
-                              <p className="mt-0.5 text-[10px] text-slate-400 truncate">
-                                {line.cost_centre_name ?? "Branch"} · {line.process_name ?? "Shared"} · avail {decimal(Number(line.available_quantity))} {line.unit} · {line.tax_treatment.replaceAll("_", " ")} {line.gst_rate}%
-                              </p>
-                            )}
-                          </td>
-                          <td className="px-2 py-1.5 text-center text-[10px] text-slate-500">{line?.cost_centre_name ?? "—"}</td>
-                          <td className="px-2 py-1.5">
-                            <Input
-                              type="number" min="0.0001" step="0.0001"
-                              max={line ? Number(line.available_quantity) : undefined}
-                              value={allocation.quantity}
-                              onChange={(e) => updateAllocation(allocation.key, { quantity: Number(e.target.value) })}
-                              className="h-8 w-24 text-center text-xs"
-                            />
-                          </td>
-                          <td className="px-2 py-1.5">
-                            <Input
-                              type="number" min="0" step="0.0001"
-                              max={line ? Number(line.unit_rate) : undefined}
-                              value={allocation.unitRate}
-                              onChange={(e) => updateAllocation(allocation.key, { unitRate: Number(e.target.value) })}
-                              className="h-8 w-28 text-right text-xs"
-                            />
-                          </td>
-                          <td className="px-2 py-1.5 text-right font-semibold">{money(Number(calculation?.gross ?? 0))}</td>
-                          <td className="px-2 py-1.5 text-right text-amber-700">{money(Number(calculation?.pnlCost ?? 0))}</td>
-                          <td className="px-2 py-1.5">
-                            <Input
-                              value={allocation.remarks}
-                              onChange={(e) => updateAllocation(allocation.key, { remarks: e.target.value })}
-                              placeholder="Optional context"
-                              className="h-8 text-xs"
-                            />
-                          </td>
-                          <td className="px-2 py-1.5">
-                            <div className="flex gap-0.5">
-                              <button type="button" title="Duplicate" onClick={() => addAllocation(allocation)} className="rounded p-1 text-slate-400 hover:bg-blue-50 hover:text-blue-600"><Copy className="h-3.5 w-3.5" /></button>
-                              <button type="button" title="Remove" disabled={allocations.length === 1} onClick={() => removeAllocation(allocation.key)} className="rounded p-1 text-slate-400 hover:bg-rose-50 hover:text-rose-600 disabled:opacity-30"><Trash2 className="h-3.5 w-3.5" /></button>
-                            </div>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                    <tfoot>
-                      <tr className={`border-t-2 ${Math.abs(allocationDifference) <= 0.01 && Number(form.invoiceTotal) > 0 ? "border-emerald-300 bg-emerald-50/60" : "border-rose-300 bg-rose-50/60"}`}>
-                        <td colSpan={5} className="px-3 py-2 text-xs font-bold text-slate-700">Totals</td>
-                        <td className="px-2 py-2 text-right text-xs font-bold text-slate-900">{money(totals.gross)}</td>
-                        <td className="px-2 py-2 text-right text-xs font-bold text-amber-700">{money(totals.pnl)}</td>
-                        <td colSpan={2} className="px-2 py-2 text-right text-xs">
-                          <span className={`font-bold ${Math.abs(allocationDifference) <= 0.01 ? "text-emerald-700" : "text-rose-700"}`}>
-                            Diff: {allocationDifference >= 0 ? "+" : ""}{money(allocationDifference)}
-                          </span>
-                        </td>
-                      </tr>
-                    </tfoot>
-                  </table>
-                </div>
-              )}
-            </CardContent>
-          </Card>
-        </section>
+            {isVendor && (
+              <>
+                <FieldRow label="Invoice number" htmlFor="grn-invoice-no" required error={err("invoiceNumber")}>
+                  <Input
+                    id="grn-invoice-no"
+                    className={inputClass}
+                    value={form.invoiceNumber}
+                    placeholder="As printed on the invoice"
+                    onChange={(event) =>
+                      setForm((current) => ({ ...current, invoiceNumber: event.target.value }))
+                    }
+                  />
+                </FieldRow>
 
-        {/* ── Validation section ── */}
-        <section id="validation" className="pt-8">
-          <h2 className="mb-3 text-xs font-semibold uppercase tracking-wide text-slate-400">
-            Validation
-          </h2>
-          <Card className="overflow-hidden rounded-3xl border-slate-200 shadow-sm">
-            <CardHeader className="border-b border-slate-100 bg-gradient-to-r from-amber-50/80 to-white">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <CardTitle className="flex items-center gap-2 text-base"><ShieldCheck className="h-5 w-5 text-amber-700" /> Smart validation centre</CardTitle>
-                <Button type="button" variant="outline" size="sm" disabled={!created || revalidateMutation.isPending} onClick={() => revalidateMutation.mutate()}>{revalidateMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}Run server validation</Button>
+                <FieldRow label="Vendor" htmlFor="grn-vendor" required error={err("vendorId")}>
+                  <SearchableSelect
+                    id="grn-vendor"
+                    aria-label="Vendor"
+                    disabled={locked}
+                    loading={vendorsLoading}
+                    options={vendors.map((vendor) => ({
+                      value: vendor.id,
+                      label: (vendor.vendor_name ?? vendor.name ?? "").trim(),
+                      hint: vendor.vendor_code ?? undefined,
+                    }))}
+                    value={form.vendorId}
+                    onChange={(value) => {
+                      const picked = vendors.find((vendor) => vendor.id === value);
+                      setForm((current) => ({
+                        ...current,
+                        vendorId: value,
+                        vendorGstin: current.vendorGstin || (picked?.gst_number ?? ""),
+                      }));
+                    }}
+                    search={vendorSearch}
+                    onSearchChange={setVendorSearch}
+                    placeholder="Select vendor"
+                    searchPlaceholder="Type a vendor name or code…"
+                    emptyText={
+                      vendorSearch.trim() ? "No vendor matches that." : "Start typing to search."
+                    }
+                  />
+                </FieldRow>
+
+                <FieldRow label="Vendor GSTIN" htmlFor="grn-gstin">
+                  <Input
+                    id="grn-gstin"
+                    className={cn(inputClass, "font-mono uppercase")}
+                    value={form.vendorGstin}
+                    placeholder="GSTIN, or NA for a non-GST vendor"
+                    onChange={(event) =>
+                      setForm((current) => ({
+                        ...current,
+                        vendorGstin: event.target.value.toUpperCase(),
+                      }))
+                    }
+                  />
+                </FieldRow>
+
+                <FieldRow label="Place of supply" htmlFor="grn-place">
+                  <Input
+                    id="grn-place"
+                    className={inputClass}
+                    value={form.placeOfSupply}
+                    placeholder="State or place"
+                    onChange={(event) =>
+                      setForm((current) => ({ ...current, placeOfSupply: event.target.value }))
+                    }
+                  />
+                </FieldRow>
+
+                <FieldRow
+                  label="Contract reference"
+                  htmlFor="grn-contract-ref"
+                  hint="Contract or agreement reference. Leave blank if there is none."
+                >
+                  <Input
+                    id="grn-contract-ref"
+                    className={inputClass}
+                    value={form.purchaseReference}
+                    placeholder="Contract reference"
+                    onChange={(event) =>
+                      setForm((current) => ({ ...current, purchaseReference: event.target.value }))
+                    }
+                  />
+                </FieldRow>
+
+                <FieldRow
+                  label="Payment due date"
+                  htmlFor="grn-due-date"
+                  error={err("dueDate")}
+                  hint={
+                    form.billDate && form.dueDate && dueDateGap !== null && dueDateGap >= 0
+                      ? `${dueDateGap} days from the invoice date`
+                      : "Enter the date payment is actually due."
+                  }
+                >
+                  <Input
+                    id="grn-due-date"
+                    type="date"
+                    className={inputClass}
+                    min={form.billDate || undefined}
+                    value={form.dueDate}
+                    onChange={(event) =>
+                      setForm((current) => ({ ...current, dueDate: event.target.value }))
+                    }
+                  />
+                </FieldRow>
+              </>
+            )}
+          </FormSection>
+
+          {/* ── Budget coordinates ── */}
+          <FormSection
+            title="Where this spend belongs"
+            description="Cost centre, head and sub-head together identify the approved budget."
+            action={
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="text-xs"
+                onClick={() => setSplitMode((value) => !value)}
+              >
+                <Split className="mr-1.5 h-3.5 w-3.5" />
+                {splitMode ? "Use a single cost centre" : "Split across cost centres"}
+              </Button>
+            }
+          >
+            {!form.branchId || !period ? (
+              <div className="px-4 py-4 text-xs text-amber-800">
+                Select the branch and date first to load approved budgets.
               </div>
-            </CardHeader>
-            <CardContent className="space-y-4 p-6">
-              {!created ? (
-                <div className="rounded-2xl border border-blue-200 bg-blue-50 p-5 text-sm text-blue-900">Save the draft to run database-backed duplicate, document, budget and reconciliation controls.</div>
-              ) : workspaceQuery.isLoading ? (
-                <div className="flex items-center justify-center py-16 text-sm text-slate-500"><Loader2 className="mr-2 h-5 w-5 animate-spin" />Loading validations…</div>
-              ) : (
-                <>
-                  <div className="grid gap-3 md:grid-cols-2">
-                    {(workspace?.validations ?? []).map((validation) => (
-                      <div key={validation.id} className={`flex items-start gap-3 rounded-2xl border p-4 ${statusTone(validation.validation_status)}`}>
-                        {validation.validation_status === "passed" ? <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0" /> : <AlertCircle className="mt-0.5 h-5 w-5 shrink-0" />}
-                        <div><p className="text-xs font-bold">{validation.validation_code.replaceAll("_", " ")}</p><p className="mt-1 text-[11px] leading-5 opacity-90">{validation.message}</p>{Number(validation.is_blocking) === 1 && validation.validation_status === "failed" && <Badge className="mt-2 border-rose-300 bg-white/50 text-rose-700">Blocking</Badge>}</div>
-                      </div>
-                    ))}
-                  </div>
-                  {(workspace?.duplicates?.length ?? 0) > 0 && (
-                    <div className="rounded-2xl border border-rose-200 bg-rose-50 p-5">
-                      <p className="text-xs font-bold text-rose-950">Duplicate review</p>
-                      <div className="mt-3 space-y-2">
-                        {workspace!.duplicates.map((duplicate) => <div key={duplicate.id} className="flex items-center justify-between rounded-xl bg-white/80 p-3 text-xs"><span>{duplicate.match_type.replaceAll("_", " ")} · {duplicate.matched_grn_number ?? "Document match"}</span><Badge className="border-rose-200 bg-rose-50 text-rose-700">{Number(duplicate.confidence_score).toFixed(0)}%</Badge></div>)}
-                      </div>
-                    </div>
+            ) : linesLoading ? (
+              <div className="flex items-center gap-2 px-4 py-6 text-xs text-slate-500">
+                <Loader2 className="h-4 w-4 animate-spin" /> Loading approved budgets…
+              </div>
+            ) : !budgetLines.length ? (
+              <div className="px-4 py-4 text-xs text-amber-800">
+                No approved budget line is available for {period}. Branch Head, Finance Head and
+                Accounts Head approval must be completed first.
+              </div>
+            ) : splitMode ? (
+              <div className="px-4 py-3">
+                <SplitAllocationEditor
+                  budgetLines={budgetLines}
+                  rows={calculatedAllocations}
+                  totals={splitTotals}
+                  difference={splitDifference}
+                  error={err("split")}
+                  onUpdate={updateAllocation}
+                  onAdd={addAllocation}
+                  onRemove={removeAllocation}
+                  onAutoBalance={autoBalanceLastRow}
+                  canRemove={allocations.length > 1}
+                />
+              </div>
+            ) : (
+              <>
+                <FieldRow label="Cost centre" htmlFor="grn-cc" required error={err("costCentreKey")}>
+                  <SearchableSelect
+                    id="grn-cc"
+                    aria-label="Cost centre"
+                    options={costCentreOptions}
+                    value={form.costCentreKey}
+                    onChange={(value) =>
+                      setForm((current) => ({
+                        ...current,
+                        costCentreKey: value,
+                        head: "",
+                        subHead: "",
+                        budgetLineId: "",
+                      }))
+                    }
+                    placeholder="Select cost centre"
+                    searchPlaceholder="Type a cost centre…"
+                  />
+                </FieldRow>
+
+                <FieldRow label="Head" htmlFor="grn-head" required error={err("head")}>
+                  <SearchableSelect
+                    id="grn-head"
+                    aria-label="Expense head"
+                    disabled={!form.costCentreKey}
+                    options={headOptions}
+                    value={form.head}
+                    onChange={(value) =>
+                      setForm((current) => ({
+                        ...current,
+                        head: value,
+                        subHead: "",
+                        budgetLineId: "",
+                      }))
+                    }
+                    placeholder={form.costCentreKey ? "Select head" : "Select a cost centre first"}
+                    searchPlaceholder="Type a head…"
+                  />
+                </FieldRow>
+
+                <FieldRow label="Sub-head" htmlFor="grn-subhead" required error={err("subHead")}>
+                  <SearchableSelect
+                    id="grn-subhead"
+                    aria-label="Expense sub-head"
+                    disabled={!form.head}
+                    options={subHeadOptions}
+                    value={form.subHead}
+                    onChange={(value) =>
+                      setForm((current) => ({ ...current, subHead: value, budgetLineId: "" }))
+                    }
+                    placeholder={form.head ? "Select sub-head" : "Select a head first"}
+                    searchPlaceholder="Type a sub-head…"
+                  />
+                </FieldRow>
+
+                {/* Shown only when the trio above is genuinely ambiguous. */}
+                {needsItemChoice && (
+                  <FieldRow
+                    label="Item"
+                    htmlFor="grn-item"
+                    required
+                    error={err("budgetLineId")}
+                    hint={`${matchingLines.length} budget lines share this head and sub-head.`}
+                  >
+                    <SearchableSelect
+                      id="grn-item"
+                      aria-label="Budget item"
+                      options={matchingLines.map((line) => ({
+                        value: line.id,
+                        label: line.item_name,
+                        hint: `${money(Number(line.available_gross_amount))} left`,
+                        keywords: line.budget_number,
+                      }))}
+                      value={form.budgetLineId}
+                      onChange={(value) =>
+                        setForm((current) => ({ ...current, budgetLineId: value }))
+                      }
+                      placeholder="Select the item"
+                      searchPlaceholder="Type an item name…"
+                    />
+                  </FieldRow>
+                )}
+
+                {resolvedLine && (
+                  <FieldRow label="Approved budget">
+                    <StaticValue>
+                      <span className="text-xs font-normal text-slate-600">
+                        {resolvedLine.budget_number} · {money(Number(resolvedLine.available_gross_amount))}{" "}
+                        available · {decimal(Number(resolvedLine.available_quantity))}{" "}
+                        {resolvedLine.unit} left
+                      </span>
+                    </StaticValue>
+                  </FieldRow>
+                )}
+              </>
+            )}
+          </FormSection>
+
+          {/* ── Amount ── */}
+          <FormSection
+            title="Amount"
+            description={
+              isVendor
+                ? "Enter the value before GST. The tax and total are calculated for you."
+                : "Enter the amount spent. The total is calculated for you."
+            }
+          >
+            <FieldRow
+              label={splitMode ? "Invoice total (incl. GST)" : isVendor ? "Amount without GST" : "Amount"}
+              htmlFor="grn-amount"
+              required
+              error={err("amount")}
+              hint={roundingNote}
+            >
+              <Input
+                id="grn-amount"
+                type="number"
+                inputMode="decimal"
+                min="0.01"
+                step="0.01"
+                className={cn(inputClass, "text-right font-semibold tabular-nums")}
+                value={form.amount || ""}
+                placeholder="0.00"
+                onChange={(event) =>
+                  setForm((current) => ({ ...current, amount: Number(event.target.value) }))
+                }
+              />
+            </FieldRow>
+
+            {!splitMode && isVendor && (
+              <FieldRow
+                label="GST rate"
+                hint={
+                  resolvedLine
+                    ? `Set by the approved budget line (${resolvedLine.tax_treatment.split("_").join(" ")}).`
+                    : undefined
+                }
+              >
+                <StaticValue muted={!resolvedLine}>
+                  {resolvedLine ? `${decimal(Number(resolvedLine.gst_rate), 2)}%` : "Select a sub-head first"}
+                </StaticValue>
+              </FieldRow>
+            )}
+
+            <div className="bg-slate-50 px-4 py-3">
+              <dl className="ml-auto w-full space-y-1.5 text-sm md:max-w-sm">
+                <div className="flex justify-between gap-4">
+                  <dt className="text-slate-500">Taxable value</dt>
+                  <dd className="tabular-nums font-medium text-slate-700">{money(totals.base)}</dd>
+                </div>
+                <div className="flex justify-between gap-4">
+                  <dt className="text-slate-500">GST</dt>
+                  <dd className="tabular-nums font-medium text-slate-700">{money(totals.tax)}</dd>
+                </div>
+                <div className="flex justify-between gap-4 border-t border-slate-200 pt-1.5">
+                  <dt className="font-semibold text-slate-900">Total payable</dt>
+                  <dd className="tabular-nums text-base font-bold text-slate-900">
+                    {money(totals.gross)}
+                  </dd>
+                </div>
+              </dl>
+            </div>
+
+            <FieldRow label="Remark" htmlFor="grn-remarks" required error={err("remarks")}>
+              <Textarea
+                id="grn-remarks"
+                className="min-h-20"
+                value={form.remarks}
+                placeholder="What was bought or paid for, and why."
+                onChange={(event) =>
+                  setForm((current) => ({ ...current, remarks: event.target.value }))
+                }
+              />
+            </FieldRow>
+          </FormSection>
+
+          {/* ── Extraction ── */}
+          {effectiveExtractedFields && (
+            <FormSection
+              title="Read from the invoice"
+              description="Check these against the document before applying."
+              action={
+                <div className="flex gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => applyExtractedFields(effectiveExtractedFields)}
+                  >
+                    Apply
+                  </Button>
+                  {created && (
+                    <Button
+                      type="button"
+                      size="sm"
+                      disabled={confirmExtractionMutation.isPending}
+                      onClick={() => confirmExtractionMutation.mutate()}
+                    >
+                      {confirmExtractionMutation.isPending ? (
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      ) : (
+                        <BadgeCheck className="mr-2 h-4 w-4" />
+                      )}
+                      Confirm
+                    </Button>
                   )}
-                </>
-              )}
-            </CardContent>
-          </Card>
-        </section>
-
-        {/* ── Review section ── */}
-        <section id="review" className="pt-8">
-          <Card className="overflow-hidden rounded-3xl border-slate-200 shadow-sm">
-            <CardHeader className="border-b border-slate-100 bg-gradient-to-r from-violet-50/80 to-white">
-              <CardTitle className="flex items-center gap-2 text-base"><FileCheck2 className="h-5 w-5 text-violet-700" /> Final review and approval impact</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-5 p-6">
-              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                <MetricCard label="Invoice" value={form.invoiceNumber || "—"} />
-                <MetricCard label="Vendor" value={form.grnType === "imprest" ? "Imprest holder" : selectedVendor?.vendor_name ?? selectedVendor?.name ?? "—"} />
-                <MetricCard label="Gross payable" value={money(totals.gross)} tone="blue" />
-                <MetricCard label="P&L impact" value={money(totals.pnl)} tone="amber" />
-              </div>
-              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-5">
-                <p className="text-xs font-bold text-slate-900">Approval sequence</p>
-                <div className="mt-4 grid gap-3 md:grid-cols-4">
-                  {[
-                    ["Branch Admin", "Submits validated GRN"],
-                    ["Branch Head", "Reserves every split budget line"],
-                    ["Finance Head", "Consumes each split and approves P&L attribution"],
-                    [form.grnType === "vendor" ? "Accounts Head" : "Imprest Closure", form.grnType === "vendor" ? "Dispatches payment installments" : "Closes approved expense"],
-                  ].map(([title, helper], index) => <div key={String(title)} className="relative rounded-2xl border border-slate-200 bg-white p-4"><div className="flex h-7 w-7 items-center justify-center rounded-full bg-slate-900 text-[11px] font-bold text-white">{index + 1}</div><p className="mt-3 text-xs font-bold text-slate-900">{title}</p><p className="mt-1 text-[10px] leading-4 text-slate-500">{helper}</p></div>)}
                 </div>
-              </div>
-              {!canSubmit && !created?.submitted && (
-                <div className="flex items-start gap-3 rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-900"><AlertCircle className="mt-0.5 h-5 w-5 shrink-0" /><div><p className="font-semibold">Submission is blocked</p><p className="mt-1 text-xs">Complete mandatory invoice fields, attach proof, reconcile splits to ₹0.00 and clear all server blocking validations.</p></div></div>
-              )}
-            </CardContent>
-          </Card>
-        </section>
-        </div>
-
-        {/* Right — sticky sidebar summary */}
-        <div className="w-72 shrink-0 border-l bg-slate-50 overflow-y-auto px-4 py-4 space-y-4 hidden xl:flex xl:flex-col">
-          {/* Step checklist */}
-          <div className="rounded-2xl border border-slate-200 bg-white p-4">
-            <p className="text-[10px] font-bold uppercase tracking-wide text-slate-500 mb-3">Completion checklist</p>
-            <div className="space-y-2">
-              {([
-                ["proof", "Proof attached", localValidation.proofPresent],
-                ["invoice", "Invoice fields", localValidation.mandatoryInvoiceFields],
-                ["budget", "Allocation balanced", localValidation.allocationReady],
-                ["validation", "Validations clear", workspace ? serverBlocking.length === 0 && Boolean(workspace.validations?.length) : false],
-              ] as [string, string, boolean][]).map(([, label, ok]) => (
-                <div key={label} className="flex items-center gap-2 text-xs">
-                  <span className={`h-5 w-5 rounded-full flex items-center justify-center shrink-0 ${ok ? "bg-emerald-100 text-emerald-700" : "bg-slate-100 text-slate-400"}`}>
-                    {ok ? <Check className="h-3 w-3" /> : <span className="text-[9px]">○</span>}
-                  </span>
-                  <span className={ok ? "text-slate-700 font-medium" : "text-slate-400"}>{label}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* Cost summary */}
-          <div className="rounded-2xl border border-slate-200 bg-white p-4 space-y-3">
-            <p className="text-[10px] font-bold uppercase tracking-wide text-slate-500">Cost summary</p>
-            {[
-              ["Base amount", money(totals.base)],
-              ["Tax", money(totals.tax)],
-              ["Gross allocated", money(totals.gross)],
-              ["P&L cost", money(totals.pnl)],
-            ].map(([label, value]) => (
-              <div key={String(label)} className="flex items-center justify-between text-xs">
-                <span className="text-slate-500">{label}</span>
-                <span className="font-semibold text-slate-900">{value}</span>
-              </div>
-            ))}
-            <div className={`flex items-center justify-between text-xs font-bold border-t pt-2 ${Math.abs(allocationDifference) <= 0.01 ? "text-emerald-700" : "text-rose-700"}`}>
-              <span>Difference</span>
-              <span>{money(allocationDifference)}</span>
-            </div>
-          </div>
-
-          {/* Invoice metadata */}
-          {(form.invoiceNumber || form.billDate) && (
-            <div className="rounded-2xl border border-slate-200 bg-white p-4 space-y-2">
-              <p className="text-[10px] font-bold uppercase tracking-wide text-slate-500">Invoice</p>
-              {form.invoiceNumber && (
-                <div className="text-xs"><span className="text-slate-400">Number </span><span className="font-semibold">{form.invoiceNumber}</span></div>
-              )}
-              {form.billDate && (
-                <div className="text-xs"><span className="text-slate-400">Date </span><span className="font-semibold">{form.billDate}</span></div>
-              )}
-              {selectedVendor && (
-                <div className="text-xs"><span className="text-slate-400">Vendor </span><span className="font-semibold">{selectedVendor.vendor_name ?? selectedVendor.name}</span></div>
-              )}
-              {form.paymentTermsDays != null && (
-                <div className="text-xs"><span className="text-slate-400">Due </span><span className="font-semibold">{addDays(form.billDate, form.paymentTermsDays)}</span></div>
-              )}
-            </div>
-          )}
-
-          {/* Approval path */}
-          <div className="rounded-2xl border border-slate-200 bg-white p-4">
-            <p className="text-[10px] font-bold uppercase tracking-wide text-slate-500 mb-3">Approval path</p>
-            <div className="space-y-2">
-              {[
-                "Branch Admin → submits",
-                "Branch Head → reserves budget",
-                "Finance Head → P&L attribution",
-                form.grnType === "vendor" ? "Accounts Head → payment" : "Imprest closure",
-              ].map((step, i) => (
-                <div key={i} className="flex items-start gap-2 text-xs text-slate-600">
-                  <span className="h-4 w-4 rounded-full bg-slate-800 text-white text-[9px] font-bold flex items-center justify-center shrink-0 mt-0.5">{i + 1}</span>
-                  <span>{step}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* Server validations summary */}
-          {workspace?.validations?.length ? (
-            <div className="rounded-2xl border border-slate-200 bg-white p-4">
-              <p className="text-[10px] font-bold uppercase tracking-wide text-slate-500 mb-2">Server controls</p>
-              <div className="space-y-1.5">
-                {workspace.validations.slice(0, 6).map((v) => (
-                  <div key={v.id} className={`flex items-center gap-1.5 rounded-lg px-2 py-1 text-[10px] border ${v.validation_status === "passed" || v.validation_status === "overridden" ? "border-emerald-200 bg-emerald-50 text-emerald-700" : Number(v.is_blocking) ? "border-rose-200 bg-rose-50 text-rose-700" : "border-amber-200 bg-amber-50 text-amber-700"}`}>
-                    {v.validation_status === "passed" ? <CheckCircle2 className="h-3 w-3 shrink-0" /> : <AlertCircle className="h-3 w-3 shrink-0" />}
-                    <span className="truncate">{v.validation_code.replaceAll("_", " ")}</span>
+              }
+            >
+              <div className="grid gap-3 px-4 py-3 sm:grid-cols-2 lg:grid-cols-4">
+                {[
+                  ["Vendor", effectiveExtractedFields.vendorName],
+                  ["Invoice", effectiveExtractedFields.invoiceNumber],
+                  ["Date", effectiveExtractedFields.invoiceDate],
+                  [
+                    "Gross",
+                    effectiveExtractedFields.grossAmount != null
+                      ? money(Number(effectiveExtractedFields.grossAmount))
+                      : "—",
+                  ],
+                  ["GSTIN", effectiveExtractedFields.vendorGstin],
+                  [
+                    "Confidence",
+                    effectiveExtractedFields.confidence != null
+                      ? `${effectiveExtractedFields.confidence}%`
+                      : "—",
+                  ],
+                ].map(([label, value]) => (
+                  <div key={String(label)} className="rounded-lg bg-slate-50 p-2.5">
+                    <p className="text-[10px] uppercase tracking-wide text-slate-500">{label}</p>
+                    <p className="mt-0.5 truncate text-xs font-semibold text-slate-900">
+                      {String(value ?? "—")}
+                    </p>
                   </div>
                 ))}
               </div>
-            </div>
-          ) : null}
+            </FormSection>
+          )}
+
+          {/* ── Validation ── */}
+          {workspace && (
+            <FormSection
+              title="Checks"
+              action={
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={!created || revalidateMutation.isPending}
+                  onClick={() => revalidateMutation.mutate()}
+                >
+                  {revalidateMutation.isPending ? (
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  ) : (
+                    <RefreshCw className="mr-2 h-4 w-4" />
+                  )}
+                  Re-run
+                </Button>
+              }
+            >
+              <ul className="divide-y divide-slate-100">
+                {(workspace.validations ?? []).map((validation) => (
+                  <li key={validation.id} className="flex items-start gap-2 px-4 py-2.5 text-xs">
+                    <ShieldCheck
+                      className={cn(
+                        "mt-px h-3.5 w-3.5 shrink-0",
+                        validation.validation_status === "passed"
+                          ? "text-emerald-600"
+                          : validation.validation_status === "warning"
+                            ? "text-amber-600"
+                            : "text-rose-600"
+                      )}
+                    />
+                    <span className="text-slate-700">{validation.message}</span>
+                    {Number(validation.is_blocking) === 1 &&
+                      validation.validation_status === "failed" && (
+                        <Badge variant="outline" className="ml-auto shrink-0 border-rose-200 text-rose-700">
+                          Blocking
+                        </Badge>
+                      )}
+                  </li>
+                ))}
+              </ul>
+            </FormSection>
+          )}
+
+          {/* Summary for screens without the sidebar. */}
+          <div className="xl:hidden">
+            <FormSection title="Readiness">
+              <ul className="divide-y divide-slate-100">
+                {checklist.map((item) => (
+                  <li key={item.label} className="flex items-center gap-2 px-4 py-2.5 text-xs">
+                    <CheckCircle2
+                      className={cn(
+                        "h-4 w-4 shrink-0",
+                        item.done ? "text-emerald-600" : "text-slate-300"
+                      )}
+                    />
+                    <span className={item.done ? "text-slate-700" : "text-slate-400"}>
+                      {item.label}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </FormSection>
+          </div>
         </div>
+
+        {/* Desktop sidebar */}
+        <aside className="hidden w-72 shrink-0 overflow-y-auto border-l bg-white p-4 xl:block">
+          <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-400">Readiness</h3>
+          <ul className="mt-3 space-y-2">
+            {checklist.map((item) => (
+              <li key={item.label} className="flex items-center gap-2 text-xs">
+                <CheckCircle2
+                  className={cn("h-4 w-4 shrink-0", item.done ? "text-emerald-600" : "text-slate-300")}
+                />
+                <span className={item.done ? "text-slate-700" : "text-slate-400"}>{item.label}</span>
+              </li>
+            ))}
+          </ul>
+
+          <h3 className="mt-6 text-xs font-semibold uppercase tracking-wide text-slate-400">Cost</h3>
+          <dl className="mt-3 space-y-1.5 text-xs">
+            <div className="flex justify-between">
+              <dt className="text-slate-500">Taxable</dt>
+              <dd className="tabular-nums font-medium">{money(totals.base)}</dd>
+            </div>
+            <div className="flex justify-between">
+              <dt className="text-slate-500">GST</dt>
+              <dd className="tabular-nums font-medium">{money(totals.tax)}</dd>
+            </div>
+            <div className="flex justify-between border-t pt-1.5">
+              <dt className="font-semibold text-slate-700">Total</dt>
+              <dd className="tabular-nums font-bold">{money(totals.gross)}</dd>
+            </div>
+            <div className="flex justify-between">
+              <dt className="text-slate-500">P&amp;L impact</dt>
+              <dd className="tabular-nums font-medium text-amber-700">{money(totals.pnl)}</dd>
+            </div>
+          </dl>
+
+          <h3 className="mt-6 text-xs font-semibold uppercase tracking-wide text-slate-400">
+            Approval path
+          </h3>
+          <ol className="mt-3 space-y-2 text-xs text-slate-600">
+            {[
+              "Branch Admin submits",
+              "Branch Head reviews",
+              "Finance Head reviews",
+              isVendor ? "Accounts Head → payment" : "Imprest closure",
+            ].map((step, index) => (
+              <li key={step} className="flex gap-2">
+                <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-slate-100 text-[9px] font-bold text-slate-500">
+                  {index + 1}
+                </span>
+                {step}
+              </li>
+            ))}
+          </ol>
+        </aside>
       </div>
+
+      {/* Mobile action bar — thumb reach, Total always visible. */}
+      <div className="fixed inset-x-0 bottom-0 z-30 border-t bg-white px-3 py-2.5 shadow-[0_-2px_8px_rgba(0,0,0,0.06)] md:hidden">
+        <div className="mb-2 flex items-center justify-between text-xs">
+          <span className="text-slate-500">Total payable</span>
+          <b className="text-base tabular-nums text-slate-900">{money(totals.gross)}</b>
+        </div>
+        {actionButtons}
+      </div>
+    </div>
+  );
+}
+
+// ─── Split allocation editor ────────────────────────────────────────────────
+
+/**
+ * The advanced path: one invoice spread over several budget lines. Renders as a
+ * table from `md` up and as stacked cards below it, so a 9-column grid never
+ * forces the page to scroll sideways on a phone.
+ */
+function SplitAllocationEditor({
+  budgetLines,
+  rows,
+  totals,
+  difference,
+  error,
+  onUpdate,
+  onAdd,
+  onRemove,
+  onAutoBalance,
+  canRemove,
+}: {
+  budgetLines: BudgetLine[];
+  rows: Array<{ allocation: AllocationDraft; line?: BudgetLine; calculation: any }>;
+  totals: { base: number; tax: number; gross: number; pnl: number };
+  difference: number;
+  error?: string;
+  onUpdate: (key: string, patch: Partial<AllocationDraft>) => void;
+  onAdd: () => void;
+  onRemove: (key: string) => void;
+  onAutoBalance: () => void;
+  canRemove: boolean;
+}) {
+  const lineOptions: SearchableOption[] = budgetLines.map((line) => ({
+    value: line.id,
+    label: `${line.head}/${line.sub_head || GENERAL_SUB_HEAD} · ${line.item_name}`,
+    hint: money(Number(line.available_gross_amount)),
+    keywords: `${line.budget_number} ${line.cost_centre_name ?? ""}`,
+  }));
+
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap gap-2">
+        <Button type="button" variant="outline" size="sm" onClick={onAutoBalance}>
+          Auto-balance last row
+        </Button>
+        <Button type="button" size="sm" onClick={onAdd}>
+          <Plus className="mr-1.5 h-3.5 w-3.5" /> Add row
+        </Button>
+      </div>
+
+      {/* Stacked cards on phones. */}
+      <div className="space-y-3 md:hidden">
+        {rows.map(({ allocation, line, calculation }, index) => (
+          <div key={allocation.key} className="rounded-xl border border-slate-200 p-3">
+            <div className="mb-2 flex items-center justify-between">
+              <span className="text-xs font-bold text-slate-500">Row {index + 1}</span>
+              {canRemove && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-11 w-11 p-0"
+                  aria-label={`Remove row ${index + 1}`}
+                  onClick={() => onRemove(allocation.key)}
+                >
+                  <Trash2 className="h-4 w-4 text-slate-400" />
+                </Button>
+              )}
+            </div>
+            <div className="space-y-2">
+              <SearchableSelect
+                aria-label={`Budget line for row ${index + 1}`}
+                options={lineOptions}
+                value={allocation.budgetLineId}
+                onChange={(value) => {
+                  const picked = budgetLines.find((item) => item.id === value);
+                  onUpdate(allocation.key, {
+                    budgetLineId: value,
+                    quantity: Math.min(1, Number(picked?.available_quantity ?? 1)),
+                    unitRate: Number(picked?.unit_rate ?? 0),
+                  });
+                }}
+                placeholder="Select budget line"
+              />
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <Label className="text-[11px] text-slate-500">Qty</Label>
+                  <Input
+                    type="number"
+                    inputMode="decimal"
+                    min="0.0001"
+                    step="0.0001"
+                    className="h-11"
+                    value={allocation.quantity}
+                    onChange={(event) =>
+                      onUpdate(allocation.key, { quantity: Number(event.target.value) })
+                    }
+                  />
+                </div>
+                <div>
+                  <Label className="text-[11px] text-slate-500">Unit rate</Label>
+                  <Input
+                    type="number"
+                    inputMode="decimal"
+                    min="0"
+                    step="0.0001"
+                    max={line ? Number(line.unit_rate) : undefined}
+                    className="h-11 text-right"
+                    value={allocation.unitRate}
+                    onChange={(event) =>
+                      onUpdate(allocation.key, { unitRate: Number(event.target.value) })
+                    }
+                  />
+                </div>
+              </div>
+              <div className="flex justify-between rounded-lg bg-slate-50 px-3 py-2 text-xs">
+                <span className="text-slate-500">Gross</span>
+                <b className="tabular-nums">{money(Number(calculation?.gross ?? 0))}</b>
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Table from md up. */}
+      <div className="hidden md:block">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead className="w-8">#</TableHead>
+              <TableHead>Budget line</TableHead>
+              <TableHead className="w-24 text-center">Qty</TableHead>
+              <TableHead className="w-28 text-right">Unit rate</TableHead>
+              <TableHead className="w-28 text-right">Gross</TableHead>
+              <TableHead className="w-12" />
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {rows.map(({ allocation, line, calculation }, index) => (
+              <TableRow key={allocation.key}>
+                <TableCell className="text-xs text-slate-400">{index + 1}</TableCell>
+                <TableCell className="min-w-[260px]">
+                  <SearchableSelect
+                    aria-label={`Budget line for row ${index + 1}`}
+                    className="h-9"
+                    options={lineOptions}
+                    value={allocation.budgetLineId}
+                    onChange={(value) => {
+                      const picked = budgetLines.find((item) => item.id === value);
+                      onUpdate(allocation.key, {
+                        budgetLineId: value,
+                        quantity: Math.min(1, Number(picked?.available_quantity ?? 1)),
+                        unitRate: Number(picked?.unit_rate ?? 0),
+                      });
+                    }}
+                    placeholder="Select budget line"
+                  />
+                  {line && (
+                    <p className="mt-0.5 truncate text-[10px] text-slate-400">
+                      {line.cost_centre_name ?? "Branch"} · avail{" "}
+                      {decimal(Number(line.available_quantity))} {line.unit}
+                    </p>
+                  )}
+                </TableCell>
+                <TableCell>
+                  <Input
+                    type="number"
+                    inputMode="decimal"
+                    min="0.0001"
+                    step="0.0001"
+                    className="h-9 text-center"
+                    value={allocation.quantity}
+                    onChange={(event) =>
+                      onUpdate(allocation.key, { quantity: Number(event.target.value) })
+                    }
+                  />
+                </TableCell>
+                <TableCell>
+                  <Input
+                    type="number"
+                    inputMode="decimal"
+                    min="0"
+                    step="0.0001"
+                    max={line ? Number(line.unit_rate) : undefined}
+                    className="h-9 text-right"
+                    value={allocation.unitRate}
+                    onChange={(event) =>
+                      onUpdate(allocation.key, { unitRate: Number(event.target.value) })
+                    }
+                  />
+                </TableCell>
+                <TableCell className="text-right text-xs font-semibold tabular-nums">
+                  {money(Number(calculation?.gross ?? 0))}
+                </TableCell>
+                <TableCell>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="h-8 w-8 p-0"
+                    disabled={!canRemove}
+                    aria-label={`Remove row ${index + 1}`}
+                    onClick={() => onRemove(allocation.key)}
+                  >
+                    <Trash2 className="h-3.5 w-3.5 text-slate-400" />
+                  </Button>
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </div>
+
+      <div
+        className={cn(
+          "flex flex-wrap items-center justify-between gap-2 rounded-xl border px-3 py-2 text-xs",
+          Math.abs(difference) <= 0.01
+            ? "border-emerald-200 bg-emerald-50"
+            : "border-rose-200 bg-rose-50"
+        )}
+      >
+        <span className="font-semibold text-slate-700">
+          Allocated {money(totals.gross)}
+        </span>
+        <span
+          className={cn(
+            "font-bold tabular-nums",
+            Math.abs(difference) <= 0.01 ? "text-emerald-700" : "text-rose-700"
+          )}
+        >
+          Difference {difference >= 0 ? "+" : ""}
+          {money(difference)}
+        </span>
+      </div>
+
+      {error && (
+        <p className="flex items-start gap-1 text-[11px] font-medium text-rose-600">
+          <AlertCircle className="mt-px h-3 w-3 shrink-0" />
+          {error}
+        </p>
+      )}
     </div>
   );
 }

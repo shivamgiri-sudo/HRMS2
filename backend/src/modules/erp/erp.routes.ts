@@ -22,7 +22,13 @@ router.get(
   "/vendors",
   requireRole("admin", "hr", "finance"),
   h(async (req: AuthenticatedRequest, res: Response) => {
-    const data = await vendorService.list(req.query as { is_active?: string; vendor_type?: string });
+    const data = await vendorService.list(req.query as {
+      is_active?: string;
+      vendor_type?: string;
+      q?: string;
+      limit?: string;
+      offset?: string;
+    });
     res.json({ success: true, data });
   })
 );
