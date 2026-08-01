@@ -990,15 +990,35 @@ async function upsertFieldValue(params: {
   return id;
 }
 
+/**
+ * Optional fields that have no source path.
+ *
+ * The system can never fill these and nothing requires them, so counting them as
+ * "missing" pinned the whole document at hr_fill_required for good — which is
+ * why a joining kit containing the NDA could never be sent. Derived from the
+ * definitions rather than hardcoded, so a future optional-and-unsourced field is
+ * handled without another fix here.
+ *
+ * HR can still enter a value by hand on the review screen; that sets
+ * value_source = 'HR_ENTERED' and is unaffected.
+ */
+const NON_BLOCKING_FIELD_KEYS: string[] = COMMON_TEMPLATE_FIELDS
+  .filter((f) => f.required === false && !f.source_path)
+  .map((f) => String(f.field_key));
+
 async function persistChecklistFillStatus(checklistId: string) {
+  // `NOT IN ()` is a syntax error, so use a sentinel that never matches a key.
+  const skip = NON_BLOCKING_FIELD_KEYS.length ? NON_BLOCKING_FIELD_KEYS : ["__none__"];
+  const skipSql = skip.map(() => "?").join(",");
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT
-        SUM(CASE WHEN fill_status = 'hr_fill_required' THEN 1 ELSE 0 END) AS missing_count,
+        SUM(CASE WHEN fill_status = 'hr_fill_required'
+                  AND field_key NOT IN (${skipSql}) THEN 1 ELSE 0 END) AS missing_count,
         SUM(CASE WHEN value_source = 'HR_ENTERED' THEN 1 ELSE 0 END) AS hr_count,
         SUM(CASE WHEN employee_confirmed = 0 THEN 1 ELSE 0 END) AS unconfirmed_count
        FROM employee_joining_document_field_value
       WHERE checklist_id = ?`,
-    [checklistId],
+    [...skip, checklistId],
   );
   const row = rows[0] as RowDataPacket | undefined;
   const missing = Number(row?.missing_count ?? 0);
