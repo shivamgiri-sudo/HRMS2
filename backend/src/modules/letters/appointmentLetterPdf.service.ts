@@ -36,12 +36,19 @@ const MUTED = "#6B7280";
 const ACCENT = "#0EA5E9";
 
 /**
- * Whitespace held at the foot of every page.
+ * Whitespace held clear on the SIGNATURE page.
  *
  * Must clear y=160: the provider's widget occupies y 100-160. 120pt — the value
- * originally planned before measuring — would still have been overlapped.
+ * planned before measuring — would still have been overlapped.
+ *
+ * Applied to the final page only. The provider stamps the last page (page 4 of 4
+ * in the real signed contract), and reserving it on every page left barely 60%
+ * of each page usable, turning a five-page letter into fifteen.
  */
 export const RESERVE = { band: 180 };
+
+/** Ordinary bottom margin for body pages: enough for the footer, nothing more. */
+const BODY_BOTTOM = 70;
 
 export type AppointmentLetterInput = {
   employeeName: string;
@@ -96,7 +103,7 @@ function drawLetterhead(doc: Doc, lh: BranchLetterhead) {
 
 /** Start a new page when the next block would intrude into the reserved band. */
 function ensureRoom(doc: Doc, needed: number) {
-  if (doc.y + needed > doc.page.height - RESERVE.band) doc.addPage();
+  if (doc.y + needed > doc.page.height - BODY_BOTTOM) doc.addPage();
 }
 
 function heading(doc: Doc, text: string) {
@@ -151,40 +158,64 @@ function salaryTable(doc: Doc, s: AppointmentLetterSalary) {
   doc.moveDown(0.6);
 }
 
-/** The company signature block, drawn inside the reserved band on the last page. */
-function signatureBlock(doc: Doc, input: AppointmentLetterInput) {
-  const bandTop = doc.page.height - RESERVE.band;
+/**
+ * The company signature, on a page of its own.
+ *
+ * A dedicated page rather than a band at the foot of the last content page:
+ * that approach split the block across a page boundary when the text happened
+ * to end near the bottom, and cost ~40% of every page to reserve space only the
+ * final page ever needs.
+ *
+ * The lower portion is left deliberately empty — the provider stamps the
+ * employee's Aadhaar signature at Rect [425,100,545,160] on this page.
+ */
+function signaturePage(doc: Doc, input: AppointmentLetterInput) {
+  doc.addPage();
   const left = PAGE.margin;
+  let y = doc.y;
 
-  doc.moveTo(left, bandTop + 8).lineTo(doc.page.width - PAGE.margin, bandTop + 8)
-    .lineWidth(0.6).strokeColor("#D1D5DB").stroke();
+  doc.font("Helvetica-Bold").fontSize(11).fillColor(INK).text("SIGNATURES", left, y);
+  y = doc.y + 6;
+  doc.moveTo(left, y).lineTo(doc.page.width - PAGE.margin, y)
+    .lineWidth(0.8).strokeColor(ACCENT).stroke();
+  y += 18;
 
-  let y = bandTop + 16;
-  doc.font("Helvetica-Bold").fontSize(9).fillColor(INK)
+  doc.font("Helvetica-Bold").fontSize(9.5).fillColor(INK)
     .text(`For ${COMPANY_NAME}`, left, y, { width: 320 });
-  y += 13;
-  doc.font("Helvetica").fontSize(8).fillColor(INK)
-    .text(`Digitally signed/authorised by: ${input.signerName}`, left, y, { width: 320 });
-  y += 11;
-  doc.text(`Designation: ${input.signerDesignation}`, left, y, { width: 320 });
-  y += 11;
-  doc.text(`Date and time of issuance: ${istTimestamp(input.issueDate ?? new Date())}`, left, y, { width: 320 });
-  y += 11;
-  doc.text(`Appointment Letter ID: ${input.letterNumber}`, left, y, { width: 320 });
-  y += 11;
-  doc.fontSize(7).fillColor(MUTED)
-    .text(`Verify: ${input.verificationUrl}`, left, y, { width: 330 });
+  y += 15;
+  doc.font("Helvetica").fontSize(8.5).fillColor(INK);
+  for (const line of [
+    `Digitally signed/authorised by: ${input.signerName}`,
+    `Designation: ${input.signerDesignation}`,
+    `Date and time of issuance: ${istTimestamp(input.issueDate ?? new Date())}`,
+    `Appointment Letter ID: ${input.letterNumber}`,
+  ]) {
+    doc.text(line, left, y, { width: 330 });
+    y += 12;
+  }
+  doc.fontSize(7).fillColor(MUTED).text(`Verify: ${input.verificationUrl}`, left, y, { width: 340 });
 
-  // QR sits right of the text but left of x=425, clear of the Aadhaar widget.
   if (input.qrPngDataUrl) {
     try {
       const b64 = input.qrPngDataUrl.replace(/^data:image\/png;base64,/, "");
-      doc.image(Buffer.from(b64, "base64"), 340, bandTop + 16, { width: 68, height: 68 });
-    } catch { /* a missing QR must not stop issuance */ }
+      doc.image(Buffer.from(b64, "base64"), doc.page.width - PAGE.margin - 78, doc.y - 92, { width: 78, height: 78 });
+    } catch { /* a missing QR must never stop issuance */ }
   }
 
+  // Employee acceptance. Left empty for the provider's stamp; the labelled box
+  // sits exactly where the widget lands so the two agree visually.
+  const boxY = 88;
+  doc.font("Helvetica-Bold").fontSize(9.5).fillColor(INK)
+    .text("Accepted by the employee", left, boxY + 96, { width: 320 });
+  doc.font("Helvetica").fontSize(8).fillColor(MUTED)
+    .text(`${input.employeeName} (${input.employeeCode})`, left, boxY + 110, { width: 320 })
+    .text("Signed electronically under Aadhaar eSign.", left, boxY + 122, { width: 320 });
+
+  doc.rect(420, boxY + 6, 130, 78).lineWidth(0.8).strokeColor("#CBD5E1").stroke();
+  doc.fontSize(6.5).fillColor(MUTED)
+    .text("Aadhaar eSign area", 426, boxY + 70, { width: 120 });
+
   if (input.selfSignedNotice) {
-    // Stated on the face of the letter: this signature is not CCA-licensed.
     doc.font("Helvetica-Bold").fontSize(6.5).fillColor("#B45309")
       .text(input.selfSignedNotice, left, doc.page.height - 26, {
         width: doc.page.width - PAGE.margin * 2, align: "center",
@@ -248,7 +279,8 @@ export async function renderAppointmentLetterPdf(input: AppointmentLetterInput):
   const unsigned = await new Promise<Buffer>((resolve, reject) => {
     const doc = new PDFDocument({
       size: PAGE.size,
-      margins: { top: PAGE.margin, bottom: PAGE.margin + RESERVE.band, left: PAGE.margin, right: PAGE.margin },
+      // Body pages use an ordinary margin; the signature gets its own page.
+      margins: { top: PAGE.margin, bottom: BODY_BOTTOM, left: PAGE.margin, right: PAGE.margin },
       bufferPages: true,
     });
     const chunks: Buffer[] = [];
@@ -309,7 +341,7 @@ export async function renderAppointmentLetterPdf(input: AppointmentLetterInput):
       .forEach((t, i) => body(doc, `${i + 1}. ${t}`));
 
     // The company block goes on the final page, inside the reserved band.
-    signatureBlock(doc, { ...input, issueDate: issue });
+    signaturePage(doc, { ...input, issueDate: issue });
     doc.end();
   });
 
@@ -318,12 +350,15 @@ export async function renderAppointmentLetterPdf(input: AppointmentLetterInput):
   const font = await lib.embedFont(StandardFonts.Helvetica);
   const pages = lib.getPages();
   pages.forEach((page, i) => {
+    // The last page is the signature page: nothing may be drawn in its lower
+    // half, so it gets no footer at all.
+    if (i === pages.length - 1) return;
     const { width } = page.getSize();
     page.drawText(`${COMPANY_NAME} | Private & Confidential | ${input.letterNumber}`, {
-      x: PAGE.margin, y: RESERVE.band - 14, size: 6.5, font, color: rgb(0.42, 0.45, 0.5),
+      x: PAGE.margin, y: 40, size: 6.5, font, color: rgb(0.42, 0.45, 0.5),
     });
     page.drawText(`Page ${i + 1} of ${pages.length}`, {
-      x: width - PAGE.margin - 60, y: RESERVE.band - 14, size: 6.5, font, color: rgb(0.42, 0.45, 0.5),
+      x: width - PAGE.margin - 60, y: 40, size: 6.5, font, color: rgb(0.42, 0.45, 0.5),
     });
   });
   return Buffer.from(await lib.save());
