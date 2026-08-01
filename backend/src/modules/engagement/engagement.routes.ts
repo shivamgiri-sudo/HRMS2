@@ -179,5 +179,17 @@ router.get("/daily-login/status", h(c.getStreakStatus));
 router.get("/daily-login/history", h(c.getLoginHistory));
 router.get("/daily-login/leaderboard", h(c.getStreakLeaderboard));
 
+// =========================================================================
+// Daily Tips / Did You Know
+// =========================================================================
+router.get("/tips/today", h(c.getTodayTip));
+router.post("/tips/:tipId/read", h(c.markTipAsRead));
+router.get("/tips/archive", h(c.getTipArchive));
+router.get("/tips/my-history", h(c.getMyTipHistory));
+router.post("/tips", requireRole("admin", "hr", "super_admin"), h(c.createTip));
+router.put("/tips/:tipId", requireRole("admin", "hr", "super_admin"), h(c.updateTip));
+router.delete("/tips/:tipId", requireRole("admin", "hr", "super_admin"), h(c.deleteTip));
+router.get("/tips/stats", requireRole("admin", "hr", "super_admin"), h(c.getTipStats));
+
 export { router as engagementRouter };
 

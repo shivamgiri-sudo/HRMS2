@@ -245,5 +245,72 @@ export const engagementController = {
     const leaderboard = await dailyLoginService.getStreakLeaderboard(limit);
     return res.json({ success: true, data: leaderboard });
   },
+
+  // =========================================================================
+  // Daily Tips / Did You Know
+  // =========================================================================
+
+  async getTodayTip(req: AuthenticatedRequest, res: Response) {
+    const employee = await requireEmployee(req);
+    const { dailyTipsService } = await import('./daily-tips.service.js');
+    const result = await dailyTipsService.getTodayTip(employee.id);
+    return res.json({ success: true, data: result });
+  },
+
+  async markTipAsRead(req: AuthenticatedRequest, res: Response) {
+    const employee = await requireEmployee(req);
+    const tipId = req.params.tipId;
+    if (!tipId) return res.status(400).json({ success: false, error: 'tipId is required' });
+    const { dailyTipsService } = await import('./daily-tips.service.js');
+    const result = await dailyTipsService.markTipAsRead(employee.id, tipId);
+    return res.json({ success: true, data: result });
+  },
+
+  async getTipArchive(req: AuthenticatedRequest, res: Response) {
+    const category = req.query.category as string | undefined;
+    const limit = Math.min(Number(req.query.limit) || 20, 100);
+    const offset = Number(req.query.offset) || 0;
+    const { dailyTipsService } = await import('./daily-tips.service.js');
+    const result = await dailyTipsService.getTipArchive({ category: category as any, limit, offset });
+    return res.json({ success: true, data: result });
+  },
+
+  async getMyTipHistory(req: AuthenticatedRequest, res: Response) {
+    const employee = await requireEmployee(req);
+    const limit = Math.min(Number(req.query.limit) || 30, 100);
+    const { dailyTipsService } = await import('./daily-tips.service.js');
+    const history = await dailyTipsService.getReadHistory(employee.id, limit);
+    return res.json({ success: true, data: history });
+  },
+
+  async createTip(req: AuthenticatedRequest, res: Response) {
+    const userId = req.authUser?.id;
+    if (!userId) return res.status(401).json({ success: false, error: 'Unauthorized' });
+    const { dailyTipsService } = await import('./daily-tips.service.js');
+    const tip = await dailyTipsService.createTip(req.body, userId);
+    return res.status(201).json({ success: true, data: tip });
+  },
+
+  async updateTip(req: AuthenticatedRequest, res: Response) {
+    const tipId = req.params.tipId;
+    if (!tipId) return res.status(400).json({ success: false, error: 'tipId is required' });
+    const { dailyTipsService } = await import('./daily-tips.service.js');
+    const tip = await dailyTipsService.updateTip(tipId, req.body);
+    return res.json({ success: true, data: tip });
+  },
+
+  async deleteTip(req: AuthenticatedRequest, res: Response) {
+    const tipId = req.params.tipId;
+    if (!tipId) return res.status(400).json({ success: false, error: 'tipId is required' });
+    const { dailyTipsService } = await import('./daily-tips.service.js');
+    await dailyTipsService.deleteTip(tipId);
+    return res.json({ success: true });
+  },
+
+  async getTipStats(_req: AuthenticatedRequest, res: Response) {
+    const { dailyTipsService } = await import('./daily-tips.service.js');
+    const stats = await dailyTipsService.getTipStats();
+    return res.json({ success: true, data: stats });
+  },
 };
 

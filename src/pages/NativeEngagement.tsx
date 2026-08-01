@@ -18,6 +18,7 @@ import { KudosCard } from "@/components/engagement/KudosCard";
 import { PointsDisplay } from "@/components/engagement/PointsDisplay";
 import { TierBadge } from "@/components/engagement/TierBadge";
 import { DailyRewardClaim } from "@/components/engagement/DailyRewardClaim";
+import { TipOfTheDay } from "@/components/engagement/TipOfTheDay";
 import type {
   ApiResponse,
   EngagementSummary,
@@ -87,7 +88,7 @@ export default function NativeEngagement() {
         {/* Daily Activities Section */}
         <div className="grid gap-4 lg:grid-cols-2">
           <DailyRewardClaim />
-          {/* More daily activities will be added here: Trivia, Wheel, Puzzle */}
+          <TipOfTheDay />
         </div>
 
         {/* Metrics */}
