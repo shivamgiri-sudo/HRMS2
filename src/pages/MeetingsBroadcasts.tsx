@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { Button } from "@/components/ui/button";
 import { Video, Users, Calendar, RefreshCw } from "lucide-react";
@@ -7,7 +7,7 @@ import { MeetingList } from "@/components/mcnmeet/MeetingList";
 import { MeetingForm } from "@/components/mcnmeet/MeetingForm";
 import { MeetingDetails } from "@/components/mcnmeet/MeetingDetails";
 import { MeetingStatusBadge } from "@/components/mcnmeet/MeetingStatusBadge";
-import { useAuth } from "@/contexts/AuthContext";
+import { useHasRole } from "@/hooks/useUserRole";
 import { Skeleton } from "@/components/ui/skeleton";
 
 const MCN_NAVY = "#073f78";
@@ -26,15 +26,24 @@ function fmtDate(iso: string) {
 }
 
 export default function MeetingsBroadcasts() {
-  const { user } = useAuth();
   const { data: config, isLoading: configLoading } = useMcnmeetConfig();
 
-  const role = user?.role ?? 'employee';
-  const isAdmin = ADMIN_ROLES.includes(role);
-  const isManager = MANAGER_ROLES.includes(role);
+  // useHasRole, not user.role: HrmsUser carries only { id, email, isReadOnly },
+  // so `user?.role ?? 'employee'` resolved to 'employee' for everyone and the
+  // admin and manager surfaces below were hidden from all users.
+  const isAdmin = useHasRole(...ADMIN_ROLES);
+  const isManager = useHasRole(...MANAGER_ROLES);
   const canCreate = config?.can_create ?? false;
 
-  const [tab, setTab] = useState<Tab>(isManager ? 'admin' : 'my');
+  const [tab, setTab] = useState<Tab>('my');
+
+  // Roles arrive from a query, so isManager is false on first render and the
+  // initial tab cannot depend on it. Land managers on 'admin' once it resolves,
+  // but only before they have chosen a tab themselves.
+  const tabChosen = useRef(false);
+  useEffect(() => {
+    if (isManager && !tabChosen.current) setTab('admin');
+  }, [isManager]);
   const [view, setView] = useState<View>('list');
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
@@ -112,7 +121,7 @@ export default function MeetingsBroadcasts() {
               { id: 'admin' as Tab, label: 'All Meetings', icon: <Users className="h-4 w-4" /> },
               { id: 'my' as Tab, label: 'My Meetings', icon: <Calendar className="h-4 w-4" /> },
             ]).map(t => (
-              <button key={t.id} onClick={() => setTab(t.id)}
+              <button key={t.id} onClick={() => { tabChosen.current = true; setTab(t.id); }}
                 className={`flex items-center gap-1.5 px-4 py-2.5 text-sm font-semibold border-b-2 transition-colors ${
                   tab === t.id
                     ? 'border-[#073f78] text-[#073f78]'

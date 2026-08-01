@@ -26,7 +26,7 @@ import {
   type CostCentreRecord,
   type CostCentreInput,
 } from "@/hooks/useCostCentreManagement";
-import { useAuth } from "@/contexts/AuthContext";
+import { useHasRole } from "@/hooks/useUserRole";
 
 type SheetMode = "create" | "edit" | "view";
 
@@ -49,7 +49,6 @@ const emptyInput: CostCentreInput = {
 };
 
 export function CostCentreSheet({ open, onOpenChange, mode, costCentre, onSaved }: CostCentreSheetProps) {
-  const { user } = useAuth();
   const [activeTab, setActiveTab] = useState("basic");
   const [data, setData] = useState<Partial<CostCentreInput>>(emptyInput);
   const [actionDialog, setActionDialog] = useState<{ type: string; title: string } | null>(null);
@@ -234,13 +233,18 @@ export function CostCentreSheet({ open, onOpenChange, mode, costCentre, onSaved 
     }
   };
 
-  const userRole = String(user?.role ?? "").toLowerCase();
+  // useHasRole, not user.role: HrmsUser carries only { id, email, isReadOnly },
+  // so `user?.role` was always undefined and every approval action below was
+  // permanently hidden — the cost-centre workflow could never leave draft.
+  const isFinanceApprover = useHasRole("finance_head", "accounts_head", "admin", "super_admin");
+  const isAdmin = useHasRole("admin", "super_admin");
+
   const canEdit = mode !== "view" && ["draft", "revision_required"].includes(costCentre?.status ?? "draft");
   const canSubmit = costCentre && ["draft", "revision_required"].includes(costCentre.status);
-  const canApproveL1 = costCentre?.status === "pending_l1" && ["finance_head", "accounts_head", "admin", "super_admin"].includes(userRole);
-  const canApproveL2 = costCentre?.status === "pending_l2" && ["admin", "super_admin"].includes(userRole);
-  const canActivate = costCentre?.status === "approved" && ["admin", "super_admin"].includes(userRole);
-  const canClose = costCentre?.status === "active" && ["finance_head", "accounts_head", "admin", "super_admin"].includes(userRole);
+  const canApproveL1 = costCentre?.status === "pending_l1" && isFinanceApprover;
+  const canApproveL2 = costCentre?.status === "pending_l2" && isAdmin;
+  const canActivate = costCentre?.status === "approved" && isAdmin;
+  const canClose = costCentre?.status === "active" && isFinanceApprover;
 
   return (
     <>

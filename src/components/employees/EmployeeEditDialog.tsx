@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useMemo } from "react";
 import { hrmsApi } from "@/lib/hrmsApi";
-import { useAuth } from "@/contexts/AuthContext";
+import { useHasRole } from "@/hooks/useUserRole";
 import { useMutation, useQueryClient, useQuery } from "@tanstack/react-query";
 import {
   Dialog,
@@ -115,7 +115,10 @@ const formatCurrency = (value: number) => {
 };
 
 export function EmployeeEditDialog({ employee, open, onOpenChange }: EmployeeEditDialogProps) {
-  const { user } = useAuth();
+  // useHasRole, not user.role: HrmsUser carries only { id, email, isReadOnly },
+  // so `user?.role` was always undefined and the Salary Start Date field below
+  // was hidden from everyone, including super admins.
+  const canSetSalaryStartDate = useHasRole("super_admin", "admin", "hr");
   const queryClient = useQueryClient();
   const [formData, setFormData] = useState<EditFormData>({
     employee_code: "",
@@ -824,7 +827,7 @@ export function EmployeeEditDialog({ employee, open, onOpenChange }: EmployeeEdi
                 </div>
 
                 {/* Salary Start Date - HR/Admin only */}
-                {(user?.role === 'super_admin' || user?.role === 'admin' || user?.role === 'hr') && (
+                {canSetSalaryStartDate && (
                   <div className="space-y-2">
                     <Label htmlFor="salary_start_date" className="text-sm font-semibold text-slate-700">
                       Salary Start Date

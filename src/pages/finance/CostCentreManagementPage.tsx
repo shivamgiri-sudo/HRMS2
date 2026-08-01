@@ -5,12 +5,11 @@ import { CostCentreListView } from "@/components/finance/cost-centre/CostCentreL
 import { CostCentreApprovalQueue } from "@/components/finance/cost-centre/CostCentreApprovalQueue";
 import { CostCentreSheet } from "@/components/finance/cost-centre/CostCentreSheet";
 import { useCostCentreDetail, type CostCentreRecord } from "@/hooks/useCostCentreManagement";
-import { useAuth } from "@/contexts/AuthContext";
+import { useHasRole } from "@/hooks/useUserRole";
 
 type SheetMode = "create" | "edit" | "view";
 
 export default function CostCentreManagementPage() {
-  const { user } = useAuth();
   const [tab, setTab] = useState("list");
   const [sheetOpen, setSheetOpen] = useState(false);
   const [sheetMode, setSheetMode] = useState<SheetMode>("view");
@@ -18,8 +17,9 @@ export default function CostCentreManagementPage() {
 
   const { data: selectedCostCentre, refetch } = useCostCentreDetail(selectedId);
 
-  const userRole = String(user?.role ?? "").toLowerCase();
-  const canViewQueue = ["finance_head", "accounts_head", "admin", "super_admin"].includes(userRole);
+  // useHasRole, not user.role: HrmsUser carries only { id, email, isReadOnly },
+  // so `user?.role` is always undefined and this tab was hidden from everyone.
+  const canViewQueue = useHasRole("finance_head", "accounts_head", "admin", "super_admin");
 
   const openCreate = () => {
     setSelectedId(null);
