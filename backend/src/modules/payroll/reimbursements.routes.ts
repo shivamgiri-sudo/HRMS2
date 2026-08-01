@@ -54,7 +54,12 @@ async function ensureTable(): Promise<void> {
       KEY idx_erc_emp    (employee_id),
       KEY idx_erc_month  (claim_month),
       KEY idx_erc_status (status)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    -- COLLATE is mandatory here, not cosmetic. Without it MySQL 8 applies the SERVER
+    -- default (utf8mb4_0900_ai_ci) while every other table in mas_hrms is
+    -- utf8mb4_unicode_ci, so JOIN employees e ON e.id = erc.employee_id fails with
+    -- ER_CANT_AGGREGATE_2COLLATIONS and every reimbursements endpoint 500s. Migration 1038
+    -- converts the table that was already created without it.
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
   `);
 }
 
