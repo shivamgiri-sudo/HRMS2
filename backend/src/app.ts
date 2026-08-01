@@ -154,6 +154,7 @@ import { clientDrillRouter } from "./modules/quality-dashboard/client-drill.rout
 import { qualityExecutiveRouter } from "./modules/quality-dashboard/quality-executive.routes.js";
 import { qualityManagerRouter } from "./modules/quality-dashboard/quality-manager.routes.js";
 import { qualityQARouter } from "./modules/quality-dashboard/quality-qa.routes.js";
+import { qaAuditRouter } from "./modules/quality-dashboard/qa-audit.routes.js";
 import { qualityAggregationRouter } from "./modules/quality-dashboard/quality-aggregation.routes.js";
 import { callMasterRouter } from "./modules/call-master/call-master.routes.js";
 import { inboundRouter } from "./modules/call-master/inbound.routes.js";
@@ -516,6 +517,7 @@ app.use("/api/quality-dashboard", qualityDashboardRouter);
 app.use("/api/executive", qualityExecutiveRouter);
 app.use("/api/manager", qualityManagerRouter);
 app.use("/api/qa", qualityQARouter);
+app.use("/api/qa", qaAuditRouter);   // manual QA audit capture — the routes QA_EVALUATION/QA_CALIBRATION were granted for in June
 app.use("/api/agent", qualityAggregationRouter);
 app.use("/api/call-master", callMasterRouter);
 app.use("/api/inbound", inboundRouter);
