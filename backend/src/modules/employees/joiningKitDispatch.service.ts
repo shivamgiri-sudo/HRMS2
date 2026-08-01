@@ -17,7 +17,7 @@ import path from "path";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { env } from "../../config/env.js";
-import { assembleJoiningKit, kitEligibleDocuments, KIT_DOCUMENT_CODES } from "./joiningKitAssembly.service.js";
+import { assembleJoiningKit, kitEligibleDocuments } from "./joiningKitAssembly.service.js";
 
 const sha256 = (v: string) => createHash("sha256").update(v).digest("hex");
 const STORAGE = (employeeId: string) =>
@@ -184,15 +184,20 @@ export async function dispatchJoiningKit(kitId: string, actorUserId: string | nu
   // checked every esign document for the employee, so a document the kit does
   // not contain could block a kit, which is how the EPF forms blocked kits they
   // were never part of.
-  const kitCodes = KIT_DOCUMENT_CODES.map(() => "?").join(",");
-  const [pending] = await db.execute<RowDataPacket[]>(
-    `SELECT document_name FROM employee_joining_document_checklist
-      WHERE employee_id = ? AND action_type = 'esign'
-        AND document_code IN (${kitCodes})
-        AND fill_status = 'hr_fill_required'`,
-    [employeeId, ...KIT_DOCUMENT_CODES],
-  ).catch(() => [[]] as unknown as [RowDataPacket[]]);
-  const pendingRows = pending as RowDataPacket[];
+  // Ask eligibility what is actually in this kit, then check only those. A
+  // parallel query over the document codes re-introduces the same class of bug
+  // twice over: it flagged EPF forms that were never kit members, and it
+  // flagged already-signed documents that eligibility now excludes.
+  const members = await kitEligibleDocuments(employeeId);
+  const memberIds = members.map((d) => String(d.id));
+  const pendingRows: RowDataPacket[] = memberIds.length
+    ? ((await db.query<RowDataPacket[]>(
+        `SELECT document_name FROM employee_joining_document_checklist
+          WHERE id IN (${memberIds.map(() => "?").join(",")})
+            AND fill_status = 'hr_fill_required'`,
+        memberIds,
+      ).catch(() => [[]] as unknown as [RowDataPacket[]]))[0] as RowDataPacket[])
+    : [];
   if (pendingRows.length > 0) {
     // Name them: HR needs to know which document to complete, not merely that
     // one exists.
