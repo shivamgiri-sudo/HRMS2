@@ -200,5 +200,14 @@ router.get("/trivia/leaderboard", h(c.getTriviaLeaderboard));
 router.get("/trivia/questions", requireRole("admin", "hr", "super_admin"), h(c.getTriviaQuestionBank));
 router.post("/trivia/questions", requireRole("admin", "hr", "super_admin"), h(c.createTriviaQuestion));
 
+// =========================================================================
+// Brain Teaser
+// =========================================================================
+router.get("/brain-teaser/today", h(c.getTodayTeaser));
+router.post("/brain-teaser/hint", h(c.revealTeaserHint));
+router.post("/brain-teaser/answer", h(c.submitTeaserAnswer));
+router.get("/brain-teaser/bank", requireRole("admin", "hr", "super_admin"), h(c.getTeaserBank));
+router.post("/brain-teaser/bank", requireRole("admin", "hr", "super_admin"), h(c.createTeaser));
+
 export { router as engagementRouter };
 

@@ -358,5 +358,55 @@ export const engagementController = {
     const result = await dailyTriviaService.getQuestionBank({ limit, offset, category });
     return res.json({ success: true, data: result });
   },
+
+  // =========================================================================
+  // Brain Teaser
+  // =========================================================================
+
+  async getTodayTeaser(req: AuthenticatedRequest, res: Response) {
+    const employee = await requireEmployee(req);
+    const { brainTeaserService } = await import('./brain-teaser.service.js');
+    const result = await brainTeaserService.getTodayTeaser(employee.id);
+    return res.json({ success: true, data: result });
+  },
+
+  async revealTeaserHint(req: AuthenticatedRequest, res: Response) {
+    const employee = await requireEmployee(req);
+    const { teaserId, hintNumber } = req.body;
+    if (!teaserId || ![1, 2].includes(Number(hintNumber))) {
+      return res.status(400).json({ success: false, error: 'teaserId and hintNumber (1 or 2) are required' });
+    }
+    const { brainTeaserService } = await import('./brain-teaser.service.js');
+    const result = await brainTeaserService.revealHint(employee.id, teaserId, Number(hintNumber) as 1 | 2);
+    return res.json({ success: true, data: result });
+  },
+
+  async submitTeaserAnswer(req: AuthenticatedRequest, res: Response) {
+    const employee = await requireEmployee(req);
+    const { teaserId, submittedAnswer, timeTakenSecs } = req.body;
+    if (!teaserId || !submittedAnswer) {
+      return res.status(400).json({ success: false, error: 'teaserId and submittedAnswer are required' });
+    }
+    const { brainTeaserService } = await import('./brain-teaser.service.js');
+    const result = await brainTeaserService.submitAnswer(employee.id, teaserId, submittedAnswer, timeTakenSecs);
+    return res.json({ success: true, data: result });
+  },
+
+  async createTeaser(req: AuthenticatedRequest, res: Response) {
+    const userId = req.authUser?.id;
+    if (!userId) return res.status(401).json({ success: false, error: 'Unauthorized' });
+    const { brainTeaserService } = await import('./brain-teaser.service.js');
+    const teaser = await brainTeaserService.createTeaser(req.body, userId);
+    return res.status(201).json({ success: true, data: teaser });
+  },
+
+  async getTeaserBank(req: AuthenticatedRequest, res: Response) {
+    const limit = Math.min(Number(req.query.limit) || 50, 100);
+    const offset = Number(req.query.offset) || 0;
+    const category = req.query.category as any;
+    const { brainTeaserService } = await import('./brain-teaser.service.js');
+    const result = await brainTeaserService.getTeaserBank({ limit, offset, category });
+    return res.json({ success: true, data: result });
+  },
 };
 

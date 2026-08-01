@@ -20,6 +20,7 @@ import { TierBadge } from "@/components/engagement/TierBadge";
 import { DailyRewardClaim } from "@/components/engagement/DailyRewardClaim";
 import { TipOfTheDay } from "@/components/engagement/TipOfTheDay";
 import { DailyTrivia } from "@/components/engagement/DailyTrivia";
+import { BrainTeaser } from "@/components/engagement/BrainTeaser";
 import type {
   ApiResponse,
   EngagementSummary,
@@ -91,6 +92,7 @@ export default function NativeEngagement() {
           <DailyRewardClaim />
           <TipOfTheDay />
           <DailyTrivia />
+          <BrainTeaser />
         </div>
 
         {/* Metrics */}
