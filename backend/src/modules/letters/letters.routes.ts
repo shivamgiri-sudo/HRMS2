@@ -184,7 +184,7 @@ router.post("/preview-html", requireRole("admin", "hr", "super_admin"), h(async 
 
   // Fetch latest salary assignment for salary components
   const [salRows] = await db.execute<RowDataPacket[]>(
-    `SELECT * FROM employee_salary_assignment WHERE employee_id = ? AND active_status = 1 ORDER BY effective_date DESC LIMIT 1`,
+    `SELECT * FROM employee_salary_assignment WHERE employee_id = ? AND active_status = 1 ORDER BY effective_from DESC LIMIT 1`,
     [employee_id]
   );
   const sal = (salRows as RowDataPacket[])[0] as any ?? {};
