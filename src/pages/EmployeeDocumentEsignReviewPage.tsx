@@ -26,6 +26,9 @@ export default function EmployeeDocumentEsignReviewPage() {
   const [actorName, setActorName] = useState("");
   const [comment, setComment] = useState("");
   const [result, setResult] = useState<string | null>(null);
+  // Kept so the signing page is always reachable by a plain link, even if the
+  // automatic redirect below is prevented for any reason.
+  const [signUrl, setSignUrl] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -67,7 +70,20 @@ export default function EmployeeDocumentEsignReviewPage() {
       if (action === "esign") {
         const providerUrl = String(body?.data?.provider_url || payload?.session.provider_url || "");
         if (providerUrl && /^https?:/i.test(providerUrl)) {
-          window.open(providerUrl, "_blank", "noopener,noreferrer");
+          setSignUrl(providerUrl);
+          // Navigate this tab rather than window.open.
+          //
+          // window.open only survives inside the synchronous run of a user gesture.
+          // This runs after `await fetch(...)`, so the gesture context is already
+          // gone and Chrome blocks the popup SILENTLY — the button appeared to do
+          // nothing at all, with no error anywhere. Headless browsers do not
+          // enforce that gating, which is why it looked fine under test.
+          //
+          // A same-tab redirect is never blocked, and it is the better flow anyway:
+          // the signer comes back here afterwards, and mobile browsers handle one
+          // tab far better than a popup.
+          window.location.assign(providerUrl);
+          return;
         }
         setResult(body?.data?.fallback_message || "eSign request started. Completion waits for Luckpay confirmation.");
       } else {
@@ -96,6 +112,19 @@ export default function EmployeeDocumentEsignReviewPage() {
               <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
               <p className="font-semibold">{error}</p>
             </div>
+          </div>
+        )}
+
+        {signUrl && (
+          <div className="rounded-2xl border border-cyan-400/30 bg-cyan-500/10 px-4 py-3 text-sm text-cyan-100">
+            <p className="font-semibold">Taking you to Aadhaar eSign…</p>
+            <p className="mt-1 text-cyan-200/90">
+              If nothing happens,{" "}
+              <a href={signUrl} rel="noreferrer" className="font-bold underline underline-offset-2 hover:text-white">
+                open the Aadhaar eSign page
+              </a>
+              .
+            </p>
           </div>
         )}
 
