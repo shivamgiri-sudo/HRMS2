@@ -264,7 +264,11 @@ export async function getBgvApiCostReport(days = 30): Promise<{
   unmappedEndpoints: string[];
 }> {
   const [rateRows] = await db.execute<RowDataPacket[]>(
-    `SELECT setting_key, setting_value FROM org_settings WHERE category = 'bgv_api_costs'`,
+    // org_settings is a flat key/value table — it has no `category` column, so the previous
+    // filter threw ER_BAD_FIELD_ERROR and this report 500'd on every call. The rates live as
+    // individual bgv_api_cost_<type> keys, which is exactly what the prefix strip below
+    // assumes.
+    `SELECT setting_key, setting_value FROM org_settings WHERE setting_key LIKE 'bgv_api_cost_%'`,
   );
   const rates: Record<string, number> = {};
   for (const row of rateRows as RowDataPacket[]) {

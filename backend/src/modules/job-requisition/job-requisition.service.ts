@@ -1062,8 +1062,10 @@ export const jobRequisitionService = {
         END) AS offered_count,
 
         COUNT(DISTINCT CASE
+          -- ats_onboarding_bridge names this column status, not bridge_status; the old
+          -- reference threw ER_BAD_FIELD_ERROR and 500'd the whole funnel endpoint.
           WHEN ob.id IS NOT NULL
-            AND (ob.bridge_status != 'pending'
+            AND (ob.status != 'pending'
                  OR ob.joining_document_completion_pct > 0
                  OR ob.hr_approved_at IS NOT NULL)
           THEN ob.id
