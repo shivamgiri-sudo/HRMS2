@@ -7,6 +7,7 @@ import type { Response } from "express";
 import type { RowDataPacket } from "mysql2";
 import multer from "multer";
 import { randomUUID } from "crypto";
+import { recalculateOpenPayrollForEmployee } from "./payroll-targeted-recalculation.service.js";
 
 export const payrollMoreRouter = Router();
 const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any, next: any) => fn(req, res).catch(next);
@@ -272,6 +273,213 @@ payrollMoreRouter.post("/recalculation-queue/bulk", requireRole("admin", "super_
     count: employees.length,
   });
 }));
+
+// ─── Salary Drift Check ───────────────────────────────────────────────────────
+
+payrollMoreRouter.get(
+  "/runs/:runId/drift-check",
+  requireRole("payroll_head", "payroll_branch", "admin", "super_admin", "finance", "payroll"),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const { runId } = req.params as { runId: string };
+    const [runRows] = await db.execute<RowDataPacket[]>(
+      `SELECT id, run_month, attendance_snapshot_locked FROM salary_prep_run WHERE id = ? LIMIT 1`,
+      [runId],
+    );
+    const run = (runRows as any[])[0];
+    if (!run) return res.status(404).json({ success: false, message: "Run not found" });
+
+    if (run.attendance_snapshot_locked) {
+      return res.status(409).json({
+        success: false,
+        message: "Attendance snapshot is locked — recalculation is disabled for this run.",
+      });
+    }
+
+    const runMonth = String(run.run_month); // YYYY-MM
+    const monthStart = `${runMonth}-01`;
+    const monthEnd = (() => {
+      const [y, m] = runMonth.split("-").map(Number);
+      return `${runMonth}-${String(new Date(y, m, 0).getDate()).padStart(2, "0")}`;
+    })();
+
+    const [driftRows] = await db.execute<RowDataPacket[]>(
+      `SELECT spl.employee_id,
+              e.employee_code, e.first_name, e.last_name,
+              COALESCE(bm.branch_name, e.branch_name) AS branch_name,
+              COALESCE(pm.process_name, e.process_name) AS process_name,
+              spl.paid_working_days                       AS stored_paid_days,
+              ROUND(adr.live_paid_base, 1)                AS live_paid_days,
+              ROUND(adr.live_paid_base - spl.paid_working_days, 1) AS diff
+         FROM salary_prep_line spl
+         JOIN employees e ON e.id = spl.employee_id
+         LEFT JOIN branch_master bm ON bm.id = e.branch_id
+         LEFT JOIN process_master pm ON pm.id = e.process_id
+         JOIN (
+           SELECT employee_id,
+             SUM(CASE WHEN attendance_status IN ('present','late') THEN 1.0
+                      WHEN attendance_status = 'half_day'          THEN 0.5
+                      WHEN attendance_status = 'leave_approved'    THEN 1.0
+                      ELSE 0 END) AS live_paid_base
+           FROM attendance_daily_record
+           WHERE record_date BETWEEN ? AND ?
+           GROUP BY employee_id
+         ) adr ON adr.employee_id = spl.employee_id
+        WHERE spl.run_id = ?
+          AND ABS(ROUND(adr.live_paid_base, 1) - ROUND(spl.paid_working_days, 1)) > 0.4
+        ORDER BY ABS(adr.live_paid_base - spl.paid_working_days) DESC
+        LIMIT 500`,
+      [monthStart, monthEnd, runId],
+    );
+
+    const rows = driftRows as any[];
+    const underpaid_count = rows.filter((r: any) => Number(r.diff) > 0).length;
+    const overpaid_count  = rows.filter((r: any) => Number(r.diff) < 0).length;
+
+    return res.json({
+      success: true,
+      data: {
+        total_drifted: rows.length,
+        underpaid_count,
+        overpaid_count,
+        snapshot_locked: Boolean(run.attendance_snapshot_locked),
+        rows: rows.map((r: any) => ({
+          employee_id:      String(r.employee_id),
+          employee_code:    String(r.employee_code ?? ""),
+          full_name:        `${r.first_name ?? ""} ${r.last_name ?? ""}`.trim(),
+          branch_name:      r.branch_name ?? null,
+          process_name:     r.process_name ?? null,
+          stored_paid_days: Number(r.stored_paid_days),
+          live_paid_days:   Number(r.live_paid_days),
+          diff:             Number(r.diff),
+          direction:        Number(r.diff) > 0 ? "underpaid" : "overpaid",
+        })),
+      },
+    });
+  }),
+);
+
+payrollMoreRouter.post(
+  "/runs/:runId/recalculate-drift",
+  requireRole("payroll_head", "admin", "super_admin"),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const { runId } = req.params as { runId: string };
+    const { employee_ids } = req.body as { employee_ids?: string[] };
+
+    const [runRows] = await db.execute<RowDataPacket[]>(
+      `SELECT id, run_month, attendance_snapshot_locked FROM salary_prep_run WHERE id = ? LIMIT 1`,
+      [runId],
+    );
+    const run = (runRows as any[])[0];
+    if (!run) return res.status(404).json({ success: false, message: "Run not found" });
+    if (run.attendance_snapshot_locked) {
+      return res.status(409).json({ success: false, message: "Attendance snapshot is locked." });
+    }
+
+    let targetIds: string[];
+    if (employee_ids?.length) {
+      targetIds = employee_ids;
+    } else {
+      const runMonth = String(run.run_month);
+      const monthStart = `${runMonth}-01`;
+      const monthEnd = (() => {
+        const [y, m] = runMonth.split("-").map(Number);
+        return `${runMonth}-${String(new Date(y, m, 0).getDate()).padStart(2, "0")}`;
+      })();
+      const [driftRows] = await db.execute<RowDataPacket[]>(
+        `SELECT DISTINCT spl.employee_id
+           FROM salary_prep_line spl
+           JOIN (
+             SELECT employee_id,
+               SUM(CASE WHEN attendance_status IN ('present','late') THEN 1.0
+                        WHEN attendance_status = 'half_day' THEN 0.5
+                        WHEN attendance_status = 'leave_approved' THEN 1.0
+                        ELSE 0 END) AS live_paid_base
+             FROM attendance_daily_record
+             WHERE record_date BETWEEN ? AND ?
+             GROUP BY employee_id
+           ) adr ON adr.employee_id = spl.employee_id
+          WHERE spl.run_id = ?
+            AND ABS(ROUND(adr.live_paid_base, 1) - ROUND(spl.paid_working_days, 1)) > 0.4`,
+        [monthStart, monthEnd, runId],
+      );
+      targetIds = (driftRows as any[]).map((r: any) => String(r.employee_id));
+    }
+
+    const actorId = req.authUser?.id ?? "system";
+    let processed = 0, failed = 0, skipped_locked = 0;
+
+    for (const employeeId of targetIds) {
+      try {
+        const result = await recalculateOpenPayrollForEmployee({
+          employeeId,
+          payrollMonth: String(run.run_month),
+          sourceEventType: "drift_panel",
+          reason: "Manual drift recalculation from Attendance Control Tower",
+          actorUserId: actorId,
+        });
+        if (result.status === "recalculated") processed++;
+        else skipped_locked++;
+      } catch { failed++; }
+    }
+
+    return res.json({ success: true, data: { processed, failed, skipped_locked, total: targetIds.length } });
+  }),
+);
+
+// ─── Queue item actions (retry / cancel) ─────────────────────────────────────
+
+payrollMoreRouter.post(
+  "/recalculation-queue/:id/retry",
+  requireRole("payroll_head", "admin", "super_admin"),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const { id } = req.params as { id: string };
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT id, employee_id, payroll_month, reason, status FROM payroll_recalculation_queue WHERE id = ? LIMIT 1`,
+      [id],
+    );
+    const item = (rows as any[])[0];
+    if (!item) return res.status(404).json({ success: false, message: "Queue item not found" });
+    if (item.status !== "failed") {
+      return res.status(409).json({
+        success: false,
+        message: `Cannot retry item in status '${item.status}' — only failed items can be retried`,
+      });
+    }
+    const newId = randomUUID();
+    await db.execute(
+      `INSERT INTO payroll_recalculation_queue
+         (id, employee_id, payroll_month, source_event_type, reason, status, requested_by, requested_at)
+       VALUES (?, ?, ?, 'manual_override', ?, 'pending', ?, NOW())`,
+      [newId, item.employee_id, item.payroll_month, `Retry of ${id}: ${item.reason}`, req.authUser!.id],
+    );
+    return res.json({ success: true, data: { new_id: newId } });
+  }),
+);
+
+payrollMoreRouter.post(
+  "/recalculation-queue/:id/cancel",
+  requireRole("payroll_head", "admin", "super_admin"),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const { id } = req.params as { id: string };
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT id, status FROM payroll_recalculation_queue WHERE id = ? LIMIT 1`,
+      [id],
+    );
+    const item = (rows as any[])[0];
+    if (!item) return res.status(404).json({ success: false, message: "Queue item not found" });
+    if (item.status !== "pending") {
+      return res.status(409).json({
+        success: false,
+        message: `Cannot cancel item in status '${item.status}' — only pending items can be cancelled`,
+      });
+    }
+    await db.execute(
+      `UPDATE payroll_recalculation_queue SET status = 'skipped_locked', processed_at = NOW(), error_message = 'Manually cancelled' WHERE id = ?`,
+      [id],
+    );
+    return res.json({ success: true });
+  }),
+);
 
 // ─── Holiday Master ───────────────────────────────────────────────────────────
 
