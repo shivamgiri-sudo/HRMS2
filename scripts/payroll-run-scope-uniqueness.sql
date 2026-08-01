@@ -64,14 +64,35 @@ SELECT 'Step 0: duplicate scopes blocking the unique index' AS status;
 SELECT run_month,
        COALESCE(branch_filter,  '~ALL~') AS branch_scope,
        COALESCE(process_filter, '~ALL~') AS process_scope,
+       run_kind,
        COUNT(*)                          AS runs,
        GROUP_CONCAT(id ORDER BY created_at)         AS run_ids,
        GROUP_CONCAT(COALESCE(created_by, 'NULL') ORDER BY created_at) AS created_by
   FROM salary_prep_run
- GROUP BY run_month, branch_scope, process_scope
+ GROUP BY run_month, branch_scope, process_scope, run_kind
 HAVING COUNT(*) > 1;
 -- EXPECT zero rows before proceeding.
--- Known blockers as of 31-Jul-2026: 2026-07 and 2026-03 (see the header).
+--
+-- History of the blockers:
+--   2026-07  cleared 2026-07-31. A true duplicate — the test-auto-gen run's 1,288
+--            employees were a perfect subset of the real run's 1,467 — purged and
+--            archived by scripts/purge-synthetic-payroll-run.sql.
+--   2026-03  NOT a duplicate. Two disjoint populations, zero employee overlap: the
+--            operational run (1,140 lines) and a legacy import (226 lines, 76% inactive
+--            staff, branches that exist in no other run). Resolved by run_kind rather
+--            than by deleting either — requires 1039_salary_prep_run_kind.sql applied
+--            AND the legacy run classified. See that file for the evidence.
+--
+-- This grouping includes run_kind, so a month may hold one run of each kind.
+
+SELECT 'Step 0b: run_kind must exist before the key can reference it' AS status;
+SELECT IF(
+  (SELECT COUNT(*) FROM information_schema.COLUMNS
+    WHERE TABLE_SCHEMA = DATABASE()
+      AND TABLE_NAME = 'salary_prep_run'
+      AND COLUMN_NAME = 'run_kind') = 0,
+  'STOP: apply backend/sql/1039_salary_prep_run_kind.sql first',
+  'OK: run_kind present') AS precondition;
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- Step 1 — Derived scope columns. Guarded so the migration is re-runnable.
@@ -108,7 +129,7 @@ SET @sql := (SELECT IF(
     WHERE TABLE_SCHEMA = @schema AND TABLE_NAME = 'salary_prep_run'
       AND INDEX_NAME = 'uq_spr_month_scope') = 0,
   'CREATE UNIQUE INDEX uq_spr_month_scope
-     ON salary_prep_run (run_month, branch_scope_key, process_scope_key)',
+     ON salary_prep_run (run_month, branch_scope_key, process_scope_key, run_kind)',
   'SELECT ''uq_spr_month_scope already present'''));
 PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 

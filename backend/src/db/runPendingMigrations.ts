@@ -433,6 +433,7 @@ const MIGRATION_MANIFEST: string[] = [
   "1033_sensitive_action_log_entity_id_width.sql", // entity_id was CHAR(36), so every composite key (employee:date, employee:FY, designation::role) overflowed and the audit row was silently dropped — 26 approved regularizations left no ATTENDANCE_RECORD_CORRECTED trail at all
   "1035_kpi_master_config_designation.sql",     // A process target overrode a designation target instead of combining, so "EXECUTIVE on Onfido" could not be targeted separately; adds designation_id as an optional second dimension
   "1036_kpi_metric_scoring_type.sql",           // min_threshold was stored on all 291 config rows and never scored; adds an opt-in scoring_type so a floor/ceiling can gate, without moving any existing score
+  "1039_salary_prep_run_kind.sql",               // salary_prep_run could not say what a run *is*, so a legacy import and the operational payroll for 2026-03 looked like duplicates of each other
   ];
 
 export type MigrationHealth = {
