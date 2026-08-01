@@ -17,6 +17,7 @@ import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { KudosCard } from "@/components/engagement/KudosCard";
 import { PointsDisplay } from "@/components/engagement/PointsDisplay";
 import { TierBadge } from "@/components/engagement/TierBadge";
+import { DailyRewardClaim } from "@/components/engagement/DailyRewardClaim";
 import type {
   ApiResponse,
   EngagementSummary,
@@ -82,6 +83,12 @@ export default function NativeEngagement() {
             <Zap className="h-4 w-4 flex-shrink-0" /> {error}
           </div>
         )}
+
+        {/* Daily Activities Section */}
+        <div className="grid gap-4 lg:grid-cols-2">
+          <DailyRewardClaim />
+          {/* More daily activities will be added here: Trivia, Wheel, Puzzle */}
+        </div>
 
         {/* Metrics */}
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">

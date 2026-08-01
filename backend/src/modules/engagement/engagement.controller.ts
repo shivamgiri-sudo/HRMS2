@@ -212,5 +212,38 @@ export const engagementController = {
   async getPulseSummary(_req: AuthenticatedRequest, res: Response) {
     return res.json({ success: true, data: await getPulseSummary() });
   },
+
+  // =========================================================================
+  // Daily Login & Streak
+  // =========================================================================
+
+  async claimDailyLogin(req: AuthenticatedRequest, res: Response) {
+    const employee = await requireEmployee(req);
+    const { dailyLoginService } = await import('./daily-login.service.js');
+    const result = await dailyLoginService.claimDailyLogin(employee.id);
+    return res.json({ success: true, data: result });
+  },
+
+  async getStreakStatus(req: AuthenticatedRequest, res: Response) {
+    const employee = await requireEmployee(req);
+    const { dailyLoginService } = await import('./daily-login.service.js');
+    const status = await dailyLoginService.getStreakStatus(employee.id);
+    return res.json({ success: true, data: status });
+  },
+
+  async getLoginHistory(req: AuthenticatedRequest, res: Response) {
+    const employee = await requireEmployee(req);
+    const limit = Math.min(Number(req.query.limit) || 30, 100);
+    const { dailyLoginService } = await import('./daily-login.service.js');
+    const history = await dailyLoginService.getLoginHistory(employee.id, limit);
+    return res.json({ success: true, data: history });
+  },
+
+  async getStreakLeaderboard(_req: AuthenticatedRequest, res: Response) {
+    const limit = Math.min(Number(_req.query.limit) || 10, 50);
+    const { dailyLoginService } = await import('./daily-login.service.js');
+    const leaderboard = await dailyLoginService.getStreakLeaderboard(limit);
+    return res.json({ success: true, data: leaderboard });
+  },
 };
 

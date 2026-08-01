@@ -171,5 +171,13 @@ router.get("/company-post-creators", requireRole("super_admin"), h(companyPosts.
 router.post("/company-post-creators/:employeeId/grant", requireRole("super_admin"), h(companyPosts.grantCreator));
 router.post("/company-post-creators/:employeeId/revoke", requireRole("super_admin"), h(companyPosts.revokeCreator));
 
+// =========================================================================
+// Daily Login & Streak
+// =========================================================================
+router.post("/daily-login/claim", h(c.claimDailyLogin));
+router.get("/daily-login/status", h(c.getStreakStatus));
+router.get("/daily-login/history", h(c.getLoginHistory));
+router.get("/daily-login/leaderboard", h(c.getStreakLeaderboard));
+
 export { router as engagementRouter };
 

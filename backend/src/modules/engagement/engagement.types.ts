@@ -18,7 +18,23 @@ export type TransactionType =
   | 'pulse_completed'
   | 'manual_adjustment'
   | 'tier_bonus'
-  | 'activity_bonus';
+  | 'activity_bonus'
+  // Daily engagement activities
+  | 'daily_login'
+  | 'login_streak_bonus'
+  | 'wheel_spin'
+  | 'wheel_jackpot'
+  | 'trivia_correct'
+  | 'trivia_participate'
+  | 'puzzle_solved'
+  | 'puzzle_participate'
+  | 'tip_read'
+  | 'quiz_completed'
+  | 'poll_voted'
+  | 'contest_entry'
+  | 'contest_winner'
+  | 'teaser_correct'
+  | 'spotlight_featured';
 
 export type SurveyType = 'engagement' | 'feedback' | 'pulse' | 'custom';
 
