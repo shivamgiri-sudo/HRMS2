@@ -55,6 +55,7 @@ const NativeCompanyPostManage       = lazy(() => import("@/pages/NativeCompanyPo
 const NativeCompanyFeedCreatorAccess = lazy(() => import("@/pages/NativeCompanyFeedCreatorAccess"));
 const NativeSocialFeed               = lazy(() => import("@/pages/NativeSocialFeed"));
 const NativeSocialFeedAdmin          = lazy(() => import("@/pages/NativeSocialFeedAdmin"));
+const MeetingsBroadcasts             = lazy(() => import("@/pages/MeetingsBroadcasts"));
 const NativeBadges                  = lazy(() => import("@/pages/NativeBadges"));
 const NativeKudos                   = lazy(() => import("@/pages/NativeKudos"));
 const NativeSurveys                 = lazy(() => import("@/pages/NativeSurveys"));
@@ -187,6 +188,9 @@ export const platformRouteElements = (
       {/* Social media feed — external platform posts (free API / embeds) */}
       <Route path="/social-feed"       element={<ProtectedRoute><Gate pageCode="SOCIAL_FEED"><NativeSocialFeed /></Gate></ProtectedRoute>} />
       <Route path="/social-feed/admin" element={<ProtectedRoute roles={['super_admin','hr_admin','admin']}><NativeSocialFeedAdmin /></ProtectedRoute>} />
+
+      {/* MCNmeet — Video meetings & broadcasts */}
+      <Route path="/meetings" element={<ProtectedRoute><Gate pageCode="MCNMEET"><MeetingsBroadcasts /></Gate></ProtectedRoute>} />
 
       {/* Reports Hub — auth-only; per-view role gates enforced inside ReportsHub */}
       <Route path="/reports" element={<ProtectedRoute><ReportsHub /></ProtectedRoute>} />
