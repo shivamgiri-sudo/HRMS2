@@ -11,6 +11,7 @@ import { requireAuth } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { db } from "../../db/mysql.js";
+import { resolveOnboardingDocumentFile } from "./onboardingDocumentPath.js";
 import type { RowDataPacket } from "mysql2";
 import { hasScopedAccess, buildScopeWhereClause } from "../../shared/scopeAccess.js";
 import { getUserRoleContext } from "../../shared/roleResolver.js";
@@ -166,8 +167,12 @@ async function streamOnboardingDocument(
     });
   }
 
-  const filePath = String(doc.file_path ?? "");
-  if (!filePath || !fs.existsSync(filePath)) {
+  // Resolve rather than trusting the stored path: rows written on another machine
+  // or under a different working directory point somewhere unreadable, which is
+  // why 58 documents preview as "File not found on disk" while the files are
+  // present. See onboardingDocumentPath.
+  const filePath = resolveOnboardingDocumentFile(doc.file_path);
+  if (!filePath) {
     return res.status(404).json({ success: false, message: "File not found on disk" });
   }
 

@@ -11,6 +11,7 @@ import { luckpayClient, sanitizeProviderPayload } from "../integrations/luckpay/
 import { withProviderFailureLogged } from "./bgv-api-log.service.js";
 import { getConfiguredBgvProviderAdapter } from "./bgv-provider.adapter.js";
 import { encrypt, decrypt } from "../../utils/encryption.js";
+import { resolveOnboardingDocumentFile } from "./onboardingDocumentPath.js";
 import { extractFromDocument, crossValidateDocument, checkDuplicates } from "./ocr.service.js";
 // face-match loaded lazily so onboarding only loads it when needed
 let _faceMatchModule: typeof import("./face-match.service.js") | null = null;
@@ -333,7 +334,9 @@ async function triggerFaceMatch(candidateId: string, selfiePath: string, selfieD
   );
   if (!docs[0]) return;
   const idDoc = docs[0] as { id: string; file_path: string; doc_type: string };
-  await faceMatch.compareFaces(candidateId, selfiePath, idDoc.file_path, selfieDocId, idDoc.id);
+  const idDocPath = resolveOnboardingDocumentFile(idDoc.file_path);
+  if (!idDocPath) return;
+  await faceMatch.compareFaces(candidateId, selfiePath, idDocPath, selfieDocId, idDoc.id);
 }
 
 async function logCandidateAction(candidateId: string, actionType: string, payload?: unknown, meta?: { ip?: string; userAgent?: string; actorType?: ActorType; actorId?: string | null }) {
@@ -2117,7 +2120,10 @@ export async function initiateCandidateESignByToken(token: string, documentId: s
 
   // Read file buffer
   const fs = await import("fs/promises");
-  const filePath = String(doc.file_path);
+  const filePath = resolveOnboardingDocumentFile(doc.file_path);
+  if (!filePath) {
+    throw Object.assign(new Error("Document file is not available on this server"), { statusCode: 409 });
+  }
   const documentBuffer = await fs.readFile(filePath);
 
   // Get candidate details
