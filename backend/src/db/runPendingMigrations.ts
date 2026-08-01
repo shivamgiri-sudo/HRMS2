@@ -434,6 +434,9 @@ const MIGRATION_MANIFEST: string[] = [
   "1035_kpi_master_config_designation.sql",     // A process target overrode a designation target instead of combining, so "EXECUTIVE on Onfido" could not be targeted separately; adds designation_id as an optional second dimension
   "1036_kpi_metric_scoring_type.sql",           // min_threshold was stored on all 291 config rows and never scored; adds an opt-in scoring_type so a floor/ceiling can gate, without moving any existing score
   "1039_salary_prep_run_kind.sql",               // salary_prep_run could not say what a run *is*, so a legacy import and the operational payroll for 2026-03 looked like duplicates of each other
+  "1042_esign_transaction_poll_state.sql",       // Luckpay's completion callback is unreliable, so eSign completion has to be pulled on a backoff rather than waited for
+  "1046_salary_assignment_package_link.sql",     // nothing recorded WHICH approved package an employee was hired on, so appointment letters printed Bonus 0.00 for packages that grant one
+  "1047_process_metric_definition.sql",          // all 97 configured processes hold the same 3 metrics with ONE distinct target between them, because metric_code is globally unique and no table let a process name its own; this adds the per-process definition and its display label
   ];
 
 export type MigrationHealth = {

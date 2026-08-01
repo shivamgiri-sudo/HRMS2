@@ -575,7 +575,17 @@ export const authService = {
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT rt.id AS token_id, rt.user_id, rt.token_family_id, rt.rotated_at, rt.password_changed_at_snapshot,
               au.email, au.is_blocked, au.password_changed_at AS current_password_changed_at, au.session_version,
-              COALESCE(e.status, 'active') AS employee_status
+              -- employees has no status column, so this query threw ER_BAD_FIELD_ERROR on
+              -- every refresh: token refresh was broken outright and the inactive-employee
+              -- check below never ran. It failed closed (refresh denied), so no session was
+              -- wrongly extended — but users were logged out instead of refreshed.
+              --
+              -- active_status is the canonical flag, not employment_status. employment_status
+              -- holds 'inactive', 'Resigned', 'active' and 'terminated', and the check below
+              -- only tested 'inactive'/'separated' — so 28,349 resigned and 31 terminated
+              -- employees would have passed it even once the column name was corrected.
+              -- COALESCE keeps an auth_user with no employee row (admins) able to refresh.
+              COALESCE(e.active_status, 1) AS employee_active
          FROM auth_refresh_token rt
          JOIN auth_user au ON au.id = rt.user_id
          LEFT JOIN employees e ON e.user_id = au.id
@@ -611,8 +621,10 @@ export const authService = {
       throw Object.assign(new Error('Account is blocked'), { code: 'USER_BLOCKED' });
     }
 
-    // Check if employee is inactive
-    if (token.employee_status === 'inactive' || token.employee_status === 'separated') {
+    // Check if employee is inactive. Driven by active_status (0/1) rather than matching
+    // employment_status strings: those are case-inconsistent ('Resigned' vs 'inactive') and
+    // an unmatched value would silently let a separated employee keep refreshing.
+    if (Number(token.employee_active) === 0) {
       throw Object.assign(new Error('Employee account is inactive'), { code: 'EMPLOYEE_INACTIVE' });
     }
 

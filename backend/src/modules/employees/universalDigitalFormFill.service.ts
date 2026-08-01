@@ -14,6 +14,7 @@ import { fillAcroFormPdf, validateAcroFormTemplate } from "./pdfAcroFormFill.ser
 import { applyCompanySeal } from "./companySeal.service.js";
 import { resolveTemplateFile } from "./joiningDocumentTemplatePath.js";
 import { hasStructuredPdf, renderJoiningDocumentPdf } from "./joiningDocumentPdf.service.js";
+import { resolveEmployeeLetterhead } from "../org/branchAddress.service.js";
 
 const STORAGE_ROOT = path.resolve(process.cwd(), "private-storage", "employee-joining-documents");
 
@@ -1682,7 +1683,12 @@ export async function generateChecklistDraft(
     const templatePath = resolveTemplateFile(checklist.template_storage_path);
     if (hasStructuredPdf(checklist.document_code)) {
       outputFileName = `-draft.pdf`;
-      content = await renderJoiningDocumentPdf(checklist.document_code, replacements);
+      // Letterhead shows the branch that issued the document, not a hardcoded
+      // head-office address. Resolution failure is non-fatal: the renderer falls
+      // back to the constant rather than blocking a draft.
+      const letterhead = await resolveEmployeeLetterhead(String(checklist.employee_id))
+        .catch(() => undefined);
+      content = await renderJoiningDocumentPdf(checklist.document_code, replacements, letterhead);
     } else if (templatePath) {
       const fillMode = safeTrim(checklist.fill_mode) ?? "placeholder";
       if (fillMode === "placeholder" && templatePath.toLowerCase().endsWith(".docx")) {

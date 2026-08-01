@@ -86,16 +86,46 @@ router.post('/:candidateId', requireAuth, requireWriteAccess, requireRole('payro
     }
   }
 
+  // Record WHICH approved package this salary came from.
+  //
+  // This table stores only basic/hra/conveyance/special/gross/ctc — it has no
+  // bonus or admin_charges column, while 223 of the 295 packages in
+  // salary_package_master grant a bonus and 224 carry admin charges. Without the
+  // link, an appointment letter built from these amounts prints "Bonus 0.00" for
+  // an employee whose package actually grants one.
+  let packageId: string | null = typeof f.package_id === 'string' && f.package_id ? f.package_id : null;
+  if (!packageId && f.gross != null) {
+    // No explicit choice sent: identify the package by its exact amounts.
+    // Matching on salary_slab would not work — every existing row carries the
+    // placeholder 'LEGACY', not a band code. Basic and HRA must agree too, so two
+    // packages sharing a gross cannot be confused; ambiguity leaves the link null
+    // and the letter resolver falls back to the stored amounts.
+    try {
+      const [pkgRows] = await db.execute<RowDataPacket[]>(
+        `SELECT id FROM salary_package_master
+          WHERE active_status = 1 AND gross = ?
+            AND (? IS NULL OR basic = ?) AND (? IS NULL OR hra = ?)
+          LIMIT 2`,
+        [Number(f.gross), f.basic ?? null, f.basic ?? null, f.hra ?? null, f.hra ?? null]
+      );
+      const matches = pkgRows as RowDataPacket[];
+      packageId = matches.length === 1 ? String(matches[0].id) : null;
+    } catch {
+      packageId = null;
+    }
+  }
+
   await db.execute(
     `INSERT INTO salary_component_assignments (
-       id, candidate_id, effective_date, salary_slab, basic, hra, conveyance,
+       id, candidate_id, effective_date, salary_slab, package_id, basic, hra, conveyance,
        special_allowance, gross, pf_applicable, esi_applicable, employer_pf,
        employer_esi, ctc, net_estimate, assigned_by, assigned_at, approval_reference, status
-     ) VALUES (UUID(),?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NOW(),?,'active')`,
+     ) VALUES (UUID(),?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NOW(),?,'active')`,
     [
       candidateId,
       f.effective_date,
       f.salary_slab ?? null,
+      packageId,
       f.basic != null ? Number(f.basic) : null,
       f.hra != null ? Number(f.hra) : null,
       f.conveyance != null ? Number(f.conveyance) : null,
@@ -119,10 +149,11 @@ router.post('/:candidateId', requireAuth, requireWriteAccess, requireRole('payro
   // Audit
   await db.execute(
     `INSERT INTO sensitive_action_log
-       (id, actor_user_id, action_type, module_key, entity_type, entity_id, change_summary, created_at)
+       (id, actor_user_id, action_type, module_key, entity_type, entity_id, change_summary, acted_at)
      VALUES (UUID(), ?, 'SALARY_COMPONENTS_ASSIGNED', 'payroll', 'ats_candidate', ?, ?, NOW())`,
     [req.authUser!.id, candidateId, JSON.stringify({
       salary_slab: f.salary_slab ?? null,
+      package_id: packageId,
       approval_reference: f.approval_reference ?? null,
       gross: f.gross ?? null,
       ctc: f.ctc ?? null,
