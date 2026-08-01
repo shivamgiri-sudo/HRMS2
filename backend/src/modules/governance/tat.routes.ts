@@ -101,6 +101,64 @@ router.post("/escalation-matrix", requireRole("admin", "hr"), h(async (req: Auth
   return res.status(201).json({ success: true });
 }));
 
+// PUT /tat/escalation-matrix/:id — update an escalation rule
+router.put("/escalation-matrix/:id", requireRole("admin", "hr"), h(async (req: AuthenticatedRequest, res: any) => {
+  const { id } = req.params;
+  const { triggerAfterHours, notifyRole, notifyUserId, escalationAction, isActive } = req.body as {
+    triggerAfterHours?: number;
+    notifyRole?: string;
+    notifyUserId?: string;
+    escalationAction?: string;
+    isActive?: number;
+  };
+
+  const sets: string[] = [];
+  const params: unknown[] = [];
+
+  if (triggerAfterHours !== undefined) {
+    sets.push("trigger_after_hours = ?");
+    params.push(triggerAfterHours);
+  }
+  if (notifyRole !== undefined) {
+    sets.push("notify_role = ?");
+    params.push(notifyRole || null);
+  }
+  if (notifyUserId !== undefined) {
+    sets.push("notify_user_id = ?");
+    params.push(notifyUserId || null);
+  }
+  if (escalationAction !== undefined) {
+    sets.push("escalation_action = ?");
+    params.push(escalationAction);
+  }
+  if (isActive !== undefined) {
+    sets.push("is_active = ?");
+    params.push(isActive);
+  }
+
+  if (sets.length === 0) {
+    return res.status(400).json({ success: false, message: "No fields to update" });
+  }
+
+  params.push(id);
+  await db.execute(
+    `UPDATE escalation_matrix_master SET ${sets.join(", ")} WHERE id = ?`,
+    params
+  );
+
+  return res.json({ success: true });
+}));
+
+// DELETE /tat/escalation-matrix/:id — soft delete (set is_active = 0)
+router.delete("/escalation-matrix/:id", requireRole("admin", "hr"), h(async (req: AuthenticatedRequest, res: any) => {
+  const { id } = req.params;
+  await db.execute(
+    "UPDATE escalation_matrix_master SET is_active = 0 WHERE id = ?",
+    [id]
+  );
+  return res.json({ success: true });
+}));
+
 // ── TAT Instances / Tasks ─────────────────────────────────────────────────────
 
 // GET /tat/tasks — list tasks with optional filters, scoped by role
