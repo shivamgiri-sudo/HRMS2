@@ -216,7 +216,7 @@ CREATE TABLE IF NOT EXISTS engagement_contest_vote (
 CREATE TABLE IF NOT EXISTS daily_tip (
   id CHAR(36) PRIMARY KEY,
   tip_date DATE UNIQUE,
-  category ENUM('productivity', 'tech', 'communication', 'company', 'industry', 'wellness', 'fun_fact') DEFAULT 'general',
+  category ENUM('productivity', 'tech', 'communication', 'company', 'industry', 'wellness', 'fun_fact', 'general') DEFAULT 'general',
   title VARCHAR(255) NOT NULL,
   content TEXT NOT NULL,
   media_url VARCHAR(500),
