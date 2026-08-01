@@ -9,6 +9,7 @@ import { logger } from "../../lib/logger.js";
 import type { PunchAssessmentMode } from "./cosec-punch-interpretation.service.js";
 import { buildSourceUserMaps, classifySourceUser } from "./attendance-reconciliation-mapping.js";
 import { queuePayrollRecalculation, drainPayrollRecalcQueue } from "../payroll/payroll-targeted-recalculation.service.js";
+import { CLOSED_RUN_STATUSES_SQL } from "../payroll/run-status.js";
 
 export type PunchGroup = {
   cosecUserId: string;
@@ -607,7 +608,7 @@ export async function triggerPostSyncPayrollRecalc(
     const [runRows] = await db.execute<RowDataPacket[]>(
       `SELECT id FROM salary_prep_run
         WHERE run_month = ?
-          AND status NOT IN ('locked', 'disbursed', 'completed')
+          AND LOWER(status) NOT IN (${CLOSED_RUN_STATUSES_SQL})
         LIMIT 1`,
       [month],
     );
