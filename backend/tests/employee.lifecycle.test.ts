@@ -255,10 +255,21 @@ describe("POST /api/letters/generate", () => {
     mockAdmin();
     mockExecute.mockResolvedValueOnce([[{ id: "tpl-1", template_code: "OFFER_LETTER", letter_type: "offer", body_template: "Dear {{full_name}}, join as {{designation}}." }], []]);
     mockExecute.mockResolvedValueOnce([[{ id: "emp-1", employee_code: "EMP001", full_name: "Amit Kumar", first_name: "Amit", last_name: "Kumar", designation_name: "Agent", date_of_joining: "2026-06-01" }], []]);
-    // The service also reads the salary assignment before inserting; without a
-    // row here the insert consumes this slot and the chain shifts by one.
-    mockExecute.mockResolvedValueOnce([[{ ctc_annual: 360000 }], []]);
-    mockExecute.mockResolvedValueOnce([{ affectedRows: 1 }, []]);
+    // Salary now resolves through resolveAppointmentLetterSalary, which walks
+    // salary_component_assignments (package, then assignment) and refuses to
+    // issue a letter whose amounts are all zero — "Refusing to issue a letter
+    // showing zero". A ctc_annual alone does not satisfy that, so the row has to
+    // carry gross and basic. Keyed on the statement because the resolver tries
+    // several sources in order and stops at the first hit.
+    mockExecute.mockImplementation(async (sql: unknown) => {
+      const text = String(sql);
+      if (/FROM salary_component_assignments/i.test(text)) {
+        return [[{ gross: 30000, basic: 15000, hra: 6000, ctc_annual: 360000,
+                   pf_applicable: 1, esi_applicable: 0, status: "active" }], []];
+      }
+      if (/INSERT INTO generated_letter/i.test(text)) return [{ affectedRows: 1 }, []];
+      return [[], []];
+    });
 
     const r = await request(app).post("/api/letters/generate").set(ADMIN_AUTH)
       .send({ employee_id: "emp-1", template_code: "OFFER_LETTER", issued_date: "2026-06-01" });
