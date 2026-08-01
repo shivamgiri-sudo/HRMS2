@@ -217,5 +217,16 @@ router.post("/word-puzzle/guess", h(c.submitWordGuess));
 router.get("/word-puzzle/bank", requireRole("admin", "hr", "super_admin"), h(c.getWordPuzzleBank));
 router.post("/word-puzzle/bank", requireRole("admin", "hr", "super_admin"), h(c.createWordPuzzle));
 
+// =========================================================================
+// Quick Polls
+// =========================================================================
+router.get("/polls", h(c.getActivePolls));
+router.get("/polls/all", requireRole("admin", "hr", "super_admin"), h(c.getAllPolls));
+router.post("/polls", requireRole("admin", "hr", "super_admin"), h(c.createPoll));
+router.get("/polls/:pollId", h(c.getPoll));
+router.post("/polls/:pollId/vote", h(c.voteOnPoll));
+router.post("/polls/:pollId/approve", requireRole("admin", "hr", "super_admin"), h(c.approvePoll));
+router.post("/polls/:pollId/close", requireRole("admin", "hr", "super_admin"), h(c.closePoll));
+
 export { router as engagementRouter };
 

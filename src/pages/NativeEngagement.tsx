@@ -22,6 +22,7 @@ import { TipOfTheDay } from "@/components/engagement/TipOfTheDay";
 import { DailyTrivia } from "@/components/engagement/DailyTrivia";
 import { BrainTeaser } from "@/components/engagement/BrainTeaser";
 import { WordPuzzle } from "@/components/engagement/WordPuzzle";
+import { QuickPolls } from "@/components/engagement/QuickPolls";
 import type {
   ApiResponse,
   EngagementSummary,
@@ -95,6 +96,7 @@ export default function NativeEngagement() {
           <DailyTrivia />
           <BrainTeaser />
           <WordPuzzle />
+          <QuickPolls />
         </div>
 
         {/* Metrics */}

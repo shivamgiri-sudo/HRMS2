@@ -446,5 +446,65 @@ export const engagementController = {
     const result = await wordPuzzleService.getPuzzleBank({ limit, offset });
     return res.json({ success: true, data: result });
   },
+
+  // =========================================================================
+  // Quick Polls
+  // =========================================================================
+
+  async getActivePolls(req: AuthenticatedRequest, res: Response) {
+    const employee = await requireEmployee(req);
+    const { quickPollService } = await import('./quick-poll.service.js');
+    const polls = await quickPollService.getActivePolls(employee.id);
+    return res.json({ success: true, data: polls });
+  },
+
+  async getPoll(req: AuthenticatedRequest, res: Response) {
+    const employee = await requireEmployee(req);
+    const { quickPollService } = await import('./quick-poll.service.js');
+    const poll = await quickPollService.getPollById(req.params.pollId, employee.id);
+    if (!poll) return res.status(404).json({ success: false, error: 'Poll not found' });
+    return res.json({ success: true, data: poll });
+  },
+
+  async voteOnPoll(req: AuthenticatedRequest, res: Response) {
+    const employee = await requireEmployee(req);
+    const { pollId } = req.params;
+    const { selectedOption } = req.body;
+    if (!selectedOption) return res.status(400).json({ success: false, error: 'selectedOption is required' });
+    const { quickPollService } = await import('./quick-poll.service.js');
+    const result = await quickPollService.vote(employee.id, pollId, Number(selectedOption));
+    return res.json({ success: true, data: result });
+  },
+
+  async createPoll(req: AuthenticatedRequest, res: Response) {
+    const userId = req.authUser?.id;
+    if (!userId) return res.status(401).json({ success: false, error: 'Unauthorized' });
+    const { quickPollService } = await import('./quick-poll.service.js');
+    const poll = await quickPollService.createPoll(req.body, userId);
+    return res.status(201).json({ success: true, data: poll });
+  },
+
+  async approvePoll(req: AuthenticatedRequest, res: Response) {
+    const userId = req.authUser?.id;
+    if (!userId) return res.status(401).json({ success: false, error: 'Unauthorized' });
+    const { quickPollService } = await import('./quick-poll.service.js');
+    const poll = await quickPollService.approvePoll(req.params.pollId, userId);
+    return res.json({ success: true, data: poll });
+  },
+
+  async closePoll(req: AuthenticatedRequest, res: Response) {
+    const { quickPollService } = await import('./quick-poll.service.js');
+    const poll = await quickPollService.closePoll(req.params.pollId);
+    return res.json({ success: true, data: poll });
+  },
+
+  async getAllPolls(req: AuthenticatedRequest, res: Response) {
+    const status = req.query.status as any;
+    const limit = Math.min(Number(req.query.limit) || 20, 100);
+    const offset = Number(req.query.offset) || 0;
+    const { quickPollService } = await import('./quick-poll.service.js');
+    const result = await quickPollService.getAllPolls({ status, limit, offset });
+    return res.json({ success: true, data: result });
+  },
 };
 
