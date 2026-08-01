@@ -85,6 +85,23 @@ describe("daily quality sync", () => {
     expect(result.errors).toEqual([]);
   });
 
+  it("matches inactive employees too, so a resigned agent's work is still attributed", async () => {
+    // This filtered on active_status = 1, so the moment someone resigned their
+    // already-completed work stopped being attributed. Two of July's 48 scored
+    // agents were being dropped for exactly this. Ordering instead of filtering
+    // keeps an active employee winning any collision.
+    poolExecute.mockResolvedValueOnce([[QUALITY_ROW], []]);
+    await syncQualityMetricsForDate("2026-07-15");
+
+    const employeeLookup = dbExecute.mock.calls
+      .map(([sql]) => String(sql))
+      .find((sql) => /FROM employees/.test(sql) && /employee_code/.test(sql));
+
+    expect(employeeLookup, "expected an employee lookup query").toBeDefined();
+    expect(employeeLookup).not.toMatch(/WHERE active_status = 1/);
+    expect(employeeLookup).toMatch(/ORDER BY active_status DESC/);
+  });
+
   it("counts only scored audits toward the fatal rate", async () => {
     // 1,383 of July's 6,568 audits carry quality_percentage NULL and max_score
     // 0 — never scored. NULL never matches "= 0", so counting them made an
@@ -94,5 +111,19 @@ describe("daily quality sync", () => {
     await syncQualityMetricsForDate("2026-07-15");
     const sql = String(poolExecute.mock.calls[0][0]);
     expect(sql).toMatch(/SUM\(quality_percentage IS NOT NULL\) AS scored_audits/);
+  });
+});
+
+describe("monthly quality sync carries the same fatal-rate correction", () => {
+  it("uses scored audits, not COUNT(*), as the denominator", async () => {
+    // The month-close job had the identical defect. Leaving them disagreeing
+    // would mean the monthly and daily numbers contradict each other for the
+    // same agent and period.
+    const { syncQualityMetrics } = await import("../src/modules/kpi/kpi-data-connector.service.js");
+    poolExecute.mockResolvedValueOnce([[], []]);
+    await syncQualityMetrics("2026-07");
+    expect(String(poolExecute.mock.calls[0][0])).toMatch(
+      /SUM\(quality_percentage IS NOT NULL\) AS scored_audits/,
+    );
   });
 });

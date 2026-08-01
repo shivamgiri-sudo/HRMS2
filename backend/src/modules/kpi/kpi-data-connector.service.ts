@@ -154,12 +154,23 @@ async function mapEmployees(identifiers: string[]): Promise<Map<string, string>>
   const unique = [...new Set(identifiers.map(normalizeIdentifier).filter(Boolean))];
   if (!unique.length) return new Map();
   const placeholders = unique.map(() => '?').join(',');
+  // Active employees first, but inactive ones still match.
+  //
+  // This filtered on active_status = 1, so the moment someone resigned their
+  // work stopped being attributed — including work already done. A quality
+  // average for the month an agent left silently excluded them, and the facts
+  // were dropped with no record of whose they were.
+  //
+  // Ordering rather than filtering keeps that strictly additive: the existing
+  // `if (!map.has(...))` below takes the first match, so an active employee
+  // still wins any collision and no currently-attributed row changes. Only
+  // identifiers that previously resolved to nobody now resolve.
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT id, employee_code, biometric_code
        FROM employees
-      WHERE active_status = 1
-        AND (UPPER(TRIM(employee_code)) IN (${placeholders})
-             OR UPPER(TRIM(COALESCE(biometric_code, ''))) IN (${placeholders}))`,
+      WHERE (UPPER(TRIM(employee_code)) IN (${placeholders})
+             OR UPPER(TRIM(COALESCE(biometric_code, ''))) IN (${placeholders}))
+      ORDER BY active_status DESC, created_at ASC`,
     [...unique, ...unique],
   );
   const map = new Map<string, string>();
@@ -606,6 +617,11 @@ export async function syncQualityMetrics(yearMonth: string): Promise<SyncResult>
       SUM(COALESCE(total_score, 0)) AS points_earned,
       SUM(COALESCE(max_score, 0)) AS points_possible,
       SUM(CASE WHEN quality_percentage = 0 THEN 1 ELSE 0 END) AS fatal_audits,
+      -- Same correction as the daily path: only scored audits may form the
+      -- fatal-rate denominator. 21% of July's audits were never scored, and
+      -- because NULL never matches "= 0" they inflated the denominator while
+      -- contributing nothing to the numerator — reporting 0% for unassessed work.
+      SUM(quality_percentage IS NOT NULL) AS scored_audits,
       COUNT(*) AS total_audits,
       DATE(MAX(CallDate)) AS last_audit_date
     FROM call_quality_assessment
@@ -635,16 +651,19 @@ export async function syncQualityMetrics(yearMonth: string): Promise<SyncResult>
           sourceRecordCount: audits,
         });
       }
-      if (audits > 0) {
+      const scoredMonth = numberValue((row as { scored_audits?: unknown }).scored_audits);
+      if (scoredMonth > 0) {
         facts.push({
           employeeId,
           metricCode: 'FATAL_RATE',
           date: factDate,
-          value: round2((numberValue(row.fatal_audits) / audits) * 100),
+          value: round2((numberValue(row.fatal_audits) / scoredMonth) * 100),
           source: 'quality',
           sourceSystem: 'db_audit.call_quality_assessment',
           numerator: numberValue(row.fatal_audits),
-          denominator: audits,
+          denominator: scoredMonth,
+          // Lineage keeps the true audit count, so the gap between audits taken
+          // and audits scored stays visible rather than being rounded away.
           sourceRecordCount: audits,
         });
       }

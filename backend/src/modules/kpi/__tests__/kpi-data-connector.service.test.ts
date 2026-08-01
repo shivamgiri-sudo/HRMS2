@@ -160,6 +160,12 @@ describe("kpi data source connector", () => {
         points_earned: 180,
         points_possible: 200,
         fatal_audits: 1,
+        // All four audits were scored here, so the fatal rate stays 1/4 = 25%
+        // and this case is unchanged. The query now also selects scored_audits
+        // because unscored audits must not sit in the denominator — 21% of
+        // July's real audits carry quality_percentage NULL, and counting them
+        // reported 0% fatal for work nobody assessed.
+        scored_audits: 4,
         total_audits: 4,
         last_audit_date: "2026-07-18",
       },
