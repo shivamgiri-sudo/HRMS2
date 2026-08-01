@@ -6,6 +6,7 @@ import { requireRole } from "../../middleware/requireRole.js";
 import { getUserRoleContext } from "../../shared/roleResolver.js";
 import { resolveDashboardScope, buildScopeWhereEmployees } from "../../shared/dashboardScope.js";
 import { submitQaAudit, listAuditsForEmployee, QaAuditError } from "./qa-audit.service.js";
+import { createForm, activateForm, listForms } from "./qa-form.service.js";
 
 /**
  * Manual QA audit capture.
@@ -164,6 +165,62 @@ router.get("/audits", h(async (req, res) => {
   }
 
   return res.json({ success: true, data: await listAuditsForEmployee(requested, from, to) });
+}));
+
+/**
+ * Defining what a process measures is narrower than scoring against it. A
+ * quality_analyst files audits; changing the criteria everyone is judged by is a
+ * QA-lead decision, so they are not in this set.
+ */
+const FORM_ADMIN_ROLES = ["super_admin", "admin", "qa", "tq_head"] as const;
+
+/** GET /api/qa/audit-forms/versions?processId= — every version, for an admin screen. */
+router.get("/audit-forms/versions", requireRole(...FORM_ADMIN_ROLES), h(async (req, res) => {
+  const processId = String(req.query.processId ?? "").trim();
+  if (!processId) return res.status(400).json({ success: false, message: "processId is required" });
+  return res.json({ success: true, data: await listForms(processId) });
+}));
+
+/** POST /api/qa/audit-forms — create a DRAFT. Drafts cannot score anyone. */
+router.post("/audit-forms", requireRole(...FORM_ADMIN_ROLES), h(async (req, res) => {
+  const { processId, formName, effectiveFrom, parameters } = req.body ?? {};
+  if (!processId || !formName || !effectiveFrom) {
+    return res.status(400).json({
+      success: false, message: "processId, formName and effectiveFrom are required",
+    });
+  }
+  if (!Array.isArray(parameters)) {
+    return res.status(400).json({ success: false, message: "parameters must be an array" });
+  }
+
+  try {
+    const result = await createForm({
+      processId: String(processId),
+      formName: String(formName).trim(),
+      effectiveFrom: String(effectiveFrom).slice(0, 10),
+      parameters,
+      createdBy: req.authUser!.id,
+    });
+    return res.status(201).json({ success: true, data: result });
+  } catch (err) {
+    return handleError(res, err);
+  }
+}));
+
+/**
+ * POST /api/qa/audit-forms/:id/activate
+ * Activating retires whatever was active for the same process — one live form
+ * per process, so "the active form" is never ambiguous.
+ */
+router.post("/audit-forms/:id/activate", requireRole(...FORM_ADMIN_ROLES), h(async (req, res) => {
+  try {
+    // The approver is taken from the session: approving criteria is an
+    // accountable act and must name whoever actually did it.
+    const result = await activateForm(String(req.params.id), req.authUser!.id);
+    return res.json({ success: true, data: result });
+  } catch (err) {
+    return handleError(res, err);
+  }
 }));
 
 export { router as qaAuditRouter };

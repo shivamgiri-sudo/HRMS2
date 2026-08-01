@@ -25,6 +25,14 @@ vi.mock("../src/shared/dashboardScope.js", () => ({
   resolveDashboardScope: (...a: unknown[]) => resolveDashboardScope(...a),
   buildScopeWhereEmployees: () => ({ sql: "1=1", params: [] }),
 }));
+const createForm = vi.fn();
+const activateForm = vi.fn();
+const listForms = vi.fn();
+vi.mock("../src/modules/quality-dashboard/qa-form.service.js", () => ({
+  createForm: (...a: unknown[]) => createForm(...a),
+  activateForm: (...a: unknown[]) => activateForm(...a),
+  listForms: (...a: unknown[]) => listForms(...a),
+}));
 vi.mock("../src/modules/quality-dashboard/qa-audit.service.js", () => ({
   submitQaAudit: (...a: unknown[]) => submitQaAudit(...a),
   listAuditsForEmployee: (...a: unknown[]) => listAuditsForEmployee(...a),
@@ -52,6 +60,7 @@ beforeEach(() => {
   execute.mockReset(); submitQaAudit.mockReset(); listAuditsForEmployee.mockReset();
   getUserRoleContext.mockReset(); resolveDashboardScope.mockReset();
   currentUser = { id: "user-1" };
+  createForm.mockReset(); activateForm.mockReset(); listForms.mockReset();
   listAuditsForEmployee.mockResolvedValue([]);
   resolveDashboardScope.mockResolvedValue({ level: "ORG_ALL" });
 });
@@ -154,6 +163,40 @@ describe("form lookup", () => {
 
   it("requires a processId", async () => {
     const res = await request(appAs("qa")).get("/api/qa/audit-forms");
+    expect(res.status).toBe(400);
+  });
+});
+
+describe("form definition is narrower than filing an audit", () => {
+  it("lets a QA lead create a draft form", async () => {
+    createForm.mockResolvedValue({ id: "f1", versionNo: 1 });
+    const res = await request(appAs("qa")).post("/api/qa/audit-forms").send({
+      processId: "p1", formName: "Inbound QA", effectiveFrom: "2026-08-01",
+      parameters: [{ parameterText: "Greeting", maxScore: 10 }],
+    });
+    expect(res.status).toBe(201);
+    expect(createForm.mock.calls[0][0].createdBy).toBe("user-1");
+  });
+
+  it("refuses a quality_analyst — they file audits, they do not set the criteria", async () => {
+    const res = await request(appAs("quality_analyst")).post("/api/qa/audit-forms").send({
+      processId: "p1", formName: "F", effectiveFrom: "2026-08-01", parameters: [],
+    });
+    expect(res.status).toBe(403);
+  });
+
+  it("names the approver from the session, not the body", async () => {
+    // Approving the criteria everyone is judged by is an accountable act.
+    activateForm.mockResolvedValue({ activatedVersion: 2, retiredFormId: "f1" });
+    const res = await request(appAs("qa"))
+      .post("/api/qa/audit-forms/f2/activate")
+      .send({ approvedBy: "somebody-else" });
+    expect(res.status).toBe(200);
+    expect(activateForm).toHaveBeenCalledWith("f2", "user-1");
+  });
+
+  it("requires the fields a form cannot exist without", async () => {
+    const res = await request(appAs("qa")).post("/api/qa/audit-forms").send({ processId: "p1" });
     expect(res.status).toBe(400);
   });
 });
