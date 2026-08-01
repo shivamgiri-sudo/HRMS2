@@ -53,7 +53,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { formatIST } from "@/lib/utils";
 
 type TabKey = "users" | "permissions" | "builder" | "admin";
-type PermView = "modules" | "pages";
+type PermView = "modules" | "pages" | "table";
 type DragPayload = { kind: "module"; name: string } | { kind: "page"; page_code: string; page_name: string; module: string };
 type AccessLevel = "no-access" | "view-only" | "editor" | "creator" | "full-access";
 type PermissionKey = "can_view" | "can_create" | "can_edit" | "can_delete" | "can_export";
@@ -263,9 +263,11 @@ export default function UnifiedAccessControl() {
   const [denyOpen, setDenyOpen] = useState(false);
   const [denyRequestId, setDenyRequestId] = useState("");
   const [denyReason, setDenyReason] = useState("");
-  // Permissions tab view: module grid vs page table
+  // Permissions tab view: module grid vs page table vs compact table
   const [permView, setPermView] = useState<PermView>("modules");
   const [filteredModule, setFilteredModule] = useState<string | null>(null);
+  const [permSearch, setPermSearch] = useState("");
+  const [paletteSearch, setPaletteSearch] = useState("");
 
   // Drag-and-drop builder state
   const [dragPayload, setDragPayload] = useState<DragPayload | null>(null);
@@ -577,6 +579,28 @@ export default function UnifiedAccessControl() {
     return groupedPages.filter(([name]) => name === filteredModule);
   }, [groupedPages, filteredModule]);
 
+  const visibleModuleSummaries = useMemo(() => {
+    if (!permSearch.trim()) return moduleSummaries;
+    const t = permSearch.toLowerCase();
+    return moduleSummaries.filter((m) => m.moduleName.toLowerCase().includes(t));
+  }, [moduleSummaries, permSearch]);
+
+  const visiblePaletteGroups = useMemo(() => {
+    if (!paletteSearch.trim()) return groupedPages;
+    const t = paletteSearch.toLowerCase();
+    return groupedPages
+      .map(([mod, pages]) => {
+        if (mod.toLowerCase().includes(t)) return [mod, pages] as [string, typeof pages];
+        const filtered = pages.filter(
+          (p) =>
+            (p.page_name ?? p.page_code).toLowerCase().includes(t) ||
+            p.page_code.toLowerCase().includes(t)
+        );
+        return filtered.length ? ([mod, filtered] as [string, typeof groupedPages[0][1]]) : null;
+      })
+      .filter((x): x is [string, typeof groupedPages[0][1]] => x !== null);
+  }, [groupedPages, paletteSearch]);
+
   const selectedRoleSummary = roleSummaries.find((r) => r.role_key === selectedRole);
 
   function updatePagePermission(pageCode: string, key: PermissionKey, checked: boolean) {
@@ -612,6 +636,7 @@ export default function UnifiedAccessControl() {
     setExpandedModules({});
     setPermView("modules");
     setFilteredModule(null);
+    setPermSearch("");
     setActiveTab("permissions");
   }
 
@@ -886,70 +911,86 @@ export default function UnifiedAccessControl() {
         {activeTab === "permissions" && (
           <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
             {/* Header row */}
-            <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-              <div>
-                <h2 className="text-lg font-black text-slate-950">Role Permissions</h2>
-                <p className="text-sm text-slate-500">
-                  {permView === "modules"
-                    ? "Click a module card to manage its pages, or use quick-access buttons."
-                    : filteredModule
-                    ? `Showing pages in module: ${filteredModule}`
-                    : "Grouped by module with visual access levels."}
-                </p>
+            <div className="flex flex-col gap-3">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <h2 className="text-lg font-black text-slate-950">Role Permissions</h2>
+                  <p className="text-sm text-slate-500">
+                    {permView === "table"
+                      ? "All modules in one compact table. Use quick-action buttons or Manage to drill in."
+                      : permView === "modules"
+                      ? "Click a module card to manage its pages, or use quick-access buttons."
+                      : filteredModule
+                      ? `Showing pages in module: ${filteredModule}`
+                      : "Grouped by module with visual access levels."}
+                  </p>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <Select value={selectedRole} onValueChange={(value) => {
+                    setSelectedRole(value);
+                    setPendingPermissionEdits({});
+                    setExpandedModules({});
+                    setPermView("modules");
+                    setFilteredModule(null);
+                    setPermSearch("");
+                  }}>
+                    <SelectTrigger className="w-64">
+                      <SelectValue placeholder="Select role..." />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {roles.map((r) => (
+                        <SelectItem key={r.role_key} value={r.role_key}>{r.role_name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <Button
+                    onClick={saveAllPermissionEdits}
+                    disabled={!selectedRole || updatePermissionsMutation.isPending || dirtyCount === 0}
+                  >
+                    {updatePermissionsMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                    Save {dirtyCount > 0 ? `(${dirtyCount})` : "Changes"}
+                  </Button>
+                </div>
               </div>
-              <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-                {/* Role selector */}
-                <Select value={selectedRole} onValueChange={(value) => {
-                  setSelectedRole(value);
-                  setPendingPermissionEdits({});
-                  setExpandedModules({});
-                  setPermView("modules");
-                  setFilteredModule(null);
-                }}>
-                  <SelectTrigger className="w-full min-w-64 sm:w-72">
-                    <SelectValue placeholder="Select role..." />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {roles.map((r) => (
-                      <SelectItem key={r.role_key} value={r.role_key}>{r.role_name}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-
-                {/* View toggle */}
-                {selectedRole && (
-                  <div className="flex rounded-lg border border-slate-200 p-0.5">
+              {selectedRole && (
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                  <div className="relative flex-1">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
+                    <Input
+                      placeholder="Search modules or pages..."
+                      value={permSearch}
+                      onChange={(e) => setPermSearch(e.target.value)}
+                      className="pl-8 h-8 text-sm"
+                    />
+                  </div>
+                  <div className="flex rounded-lg border border-slate-200 p-0.5 shrink-0">
                     <button
                       type="button"
                       onClick={() => { setPermView("modules"); setFilteredModule(null); }}
-                      className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-bold transition ${
-                        permView === "modules" ? "bg-slate-950 text-white" : "text-slate-600 hover:bg-slate-50"
-                      }`}
+                      className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-bold transition ${permView === "modules" ? "bg-slate-950 text-white" : "text-slate-600 hover:bg-slate-50"}`}
                     >
                       <Grid3X3 className="h-3.5 w-3.5" />
                       Modules
                     </button>
                     <button
                       type="button"
-                      onClick={() => { setPermView("pages"); setFilteredModule(null); }}
-                      className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-bold transition ${
-                        permView === "pages" ? "bg-slate-950 text-white" : "text-slate-600 hover:bg-slate-50"
-                      }`}
+                      onClick={() => { setPermView("table"); setFilteredModule(null); }}
+                      className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-bold transition ${permView === "table" ? "bg-slate-950 text-white" : "text-slate-600 hover:bg-slate-50"}`}
                     >
                       <Layers className="h-3.5 w-3.5" />
+                      Table
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => { setPermView("pages"); setFilteredModule(null); }}
+                      className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-bold transition ${permView === "pages" ? "bg-slate-950 text-white" : "text-slate-600 hover:bg-slate-50"}`}
+                    >
+                      <KeyRound className="h-3.5 w-3.5" />
                       All Pages
                     </button>
                   </div>
-                )}
-
-                <Button
-                  onClick={saveAllPermissionEdits}
-                  disabled={!selectedRole || updatePermissionsMutation.isPending || dirtyCount === 0}
-                >
-                  {updatePermissionsMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-                  Save {dirtyCount > 0 ? `(${dirtyCount})` : "Changes"}
-                </Button>
-              </div>
+                </div>
+              )}
             </div>
 
             {/* Role summary pill */}
@@ -975,7 +1016,10 @@ export default function UnifiedAccessControl() {
             ) : permView === "modules" ? (
               /* ── MODULE GRID VIEW (View A) ── */
               <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-                {moduleSummaries.map(({ moduleName, pageCount, granted, dirty, accessLevel }) => {
+                {visibleModuleSummaries.length === 0 && permSearch && (
+                  <div className="col-span-full py-8 text-center text-sm text-slate-400">No modules match &ldquo;{permSearch}&rdquo;</div>
+                )}
+                {visibleModuleSummaries.map(({ moduleName, pageCount, granted, dirty, accessLevel }) => {
                   const levelConfig = ACCESS_LEVELS[accessLevel];
                   const LevelIcon = levelConfig.icon;
                   return (
@@ -1043,6 +1087,69 @@ export default function UnifiedAccessControl() {
                   );
                 })}
               </div>
+            ) : permView === "table" ? (
+              /* ── COMPACT TABLE VIEW (View C) ── */
+              <div className="mt-5 overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-slate-100 bg-slate-50 text-xs font-bold uppercase tracking-wide text-slate-500">
+                      <th className="py-2.5 px-4 text-left whitespace-nowrap">Module</th>
+                      <th className="py-2.5 px-3 text-left">Access</th>
+                      <th className="py-2.5 px-3 text-left whitespace-nowrap">Pages</th>
+                      <th className="py-2.5 px-3 text-left whitespace-nowrap">Granted</th>
+                      <th className="py-2.5 px-2 text-center whitespace-nowrap">View Only</th>
+                      <th className="py-2.5 px-2 text-center whitespace-nowrap">Editor</th>
+                      <th className="py-2.5 px-2 text-center whitespace-nowrap">Full Access</th>
+                      <th className="py-2.5 px-2 text-center whitespace-nowrap">No Access</th>
+                      <th className="py-2.5 px-2 text-center">Manage</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {visibleModuleSummaries.map(({ moduleName, pageCount, granted, dirty, accessLevel }) => (
+                      <tr
+                        key={moduleName}
+                        className={dirty > 0 ? "bg-amber-50" : "hover:bg-slate-50 transition-colors"}
+                      >
+                        <td className="py-2.5 px-4 font-bold text-slate-900 whitespace-nowrap">
+                          {moduleName}
+                          {dirty > 0 && (
+                            <span className="ml-2 rounded-full bg-amber-200 px-1.5 py-0.5 text-[10px] font-bold text-amber-800">
+                              {dirty}
+                            </span>
+                          )}
+                        </td>
+                        <td className="py-2.5 px-3"><AccessBadge level={accessLevel} /></td>
+                        <td className="py-2.5 px-3 text-slate-500 text-xs">{pageCount}</td>
+                        <td className="py-2.5 px-3 text-slate-500 text-xs">{granted}</td>
+                        {(["view-only", "editor", "full-access", "no-access"] as AccessLevel[]).map((level) => (
+                          <td key={level} className="py-2.5 px-2 text-center">
+                            <button
+                              type="button"
+                              disabled={moduleAccessMutation.isPending}
+                              onClick={() => applyTemplateToModule(moduleName, level)}
+                              className={`rounded-md px-2 py-1 text-[10px] font-bold transition hover:shadow-sm whitespace-nowrap ${level === "no-access" ? "border border-slate-200 text-slate-500 hover:bg-slate-100" : level === "view-only" ? "border border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100" : level === "editor" ? "border border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100" : "border border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100"}`}
+                            >
+                              {ACCESS_LEVELS[level].label}
+                            </button>
+                          </td>
+                        ))}
+                        <td className="py-2.5 px-2 text-center">
+                          <button
+                            type="button"
+                            onClick={() => drillIntoModule(moduleName)}
+                            className="rounded-md border border-indigo-200 bg-indigo-50 px-2 py-1 text-[10px] font-bold text-indigo-700 hover:bg-indigo-100 transition whitespace-nowrap"
+                          >
+                            Manage →
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                {visibleModuleSummaries.length === 0 && (
+                  <div className="py-8 text-center text-sm text-slate-400">No modules match &ldquo;{permSearch}&rdquo;</div>
+                )}
+              </div>
             ) : (
               /* ── PAGE TABLE VIEW (View B) ── */
               <div className="mt-5">
@@ -1080,11 +1187,36 @@ export default function UnifiedAccessControl() {
                 </div>
 
                 <div className="space-y-3">
-                  {filteredGroupedPages.map(([moduleName, pages]) => {
-                    const open = filteredModule === moduleName ? true : (expandedModules[moduleName] ?? false);
-                    const granted = pages.filter((page) => accessLevelFromPermissions(page.permissions) !== "no-access").length;
-                    const full = pages.filter((page) => accessLevelFromPermissions(page.permissions) === "full-access").length;
-                    const summaryLevel: AccessLevel = full === pages.length ? "full-access" : granted > 0 ? "editor" : "no-access";
+                  {filteredGroupedPages
+                    .filter(([moduleName, pages]) => {
+                      if (!permSearch.trim()) return true;
+                      const t = permSearch.toLowerCase();
+                      return (
+                        moduleName.toLowerCase().includes(t) ||
+                        pages.some(
+                          (p) =>
+                            (p.page_name ?? p.page_code).toLowerCase().includes(t) ||
+                            p.page_code.toLowerCase().includes(t)
+                        )
+                      );
+                    })
+                    .map(([moduleName, pages]) => {
+                    const searchTerm = permSearch.trim().toLowerCase();
+                    const visiblePages =
+                      searchTerm && !moduleName.toLowerCase().includes(searchTerm)
+                        ? pages.filter(
+                            (p) =>
+                              (p.page_name ?? p.page_code).toLowerCase().includes(searchTerm) ||
+                              p.page_code.toLowerCase().includes(searchTerm)
+                          )
+                        : pages;
+                    const open =
+                      filteredModule === moduleName
+                        ? true
+                        : expandedModules[moduleName] ?? searchTerm.length > 0;
+                    const granted = visiblePages.filter((page) => accessLevelFromPermissions(page.permissions) !== "no-access").length;
+                    const full = visiblePages.filter((page) => accessLevelFromPermissions(page.permissions) === "full-access").length;
+                    const summaryLevel: AccessLevel = full === visiblePages.length ? "full-access" : granted > 0 ? "editor" : "no-access";
 
                     return (
                       <div key={moduleName} className="overflow-hidden rounded-xl border border-slate-200">
@@ -1101,7 +1233,7 @@ export default function UnifiedAccessControl() {
                             {open ? <ChevronDown className="h-5 w-5 text-slate-500" /> : <ChevronRight className="h-5 w-5 text-slate-500" />}
                             <div>
                               <div className="font-black text-slate-950">{moduleName}</div>
-                              <div className="text-xs text-slate-500">{granted} of {pages.length} pages granted</div>
+                              <div className="text-xs text-slate-500">{granted} of {visiblePages.length} pages granted</div>
                             </div>
                           </button>
                           <div className="flex flex-wrap items-center gap-2">
@@ -1127,7 +1259,7 @@ export default function UnifiedAccessControl() {
                                 </tr>
                               </thead>
                               <tbody>
-                                {pages.map((page) => (
+                                {visiblePages.map((page) => (
                                   <tr key={page.page_code} className={`border-t ${page.isDirty ? "bg-amber-50" : "bg-white"}`}>
                                     <td className="px-4 py-3">
                                       <div className="font-bold text-slate-950">{page.page_name ?? page.page_code}</div>
@@ -1198,8 +1330,21 @@ export default function UnifiedAccessControl() {
                   <EmptyState text="Load the Permissions tab once to populate the page catalog, then come back here." />
                 </div>
               ) : (
-                <div className="mt-5 space-y-4 max-h-[60vh] overflow-y-auto pr-1">
-                  {groupedPages.map(([moduleName, pages]) => (
+                <>
+                  <div className="mt-3 relative">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
+                    <Input
+                      placeholder="Search modules or pages..."
+                      value={paletteSearch}
+                      onChange={(e) => setPaletteSearch(e.target.value)}
+                      className="pl-8 h-8 text-sm"
+                    />
+                  </div>
+                  <div className="mt-3 space-y-4 max-h-[60vh] overflow-y-auto pr-1">
+                    {visiblePaletteGroups.length === 0 && paletteSearch && (
+                      <div className="py-6 text-center text-sm text-slate-400">No results for &ldquo;{paletteSearch}&rdquo;</div>
+                    )}
+                  {visiblePaletteGroups.map(([moduleName, pages]) => (
                     <div key={moduleName}>
                       {/* Draggable module chip */}
                       <div
@@ -1240,6 +1385,7 @@ export default function UnifiedAccessControl() {
                     </div>
                   ))}
                 </div>
+                </>
               )}
             </div>
 
