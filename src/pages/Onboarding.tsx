@@ -1371,6 +1371,7 @@ const Onboarding = () => {
                     </div>
 
                     {/* Requests Table */}
+                    <div className="overflow-x-auto">
                     <Table>
                       <TableHeader>
                         <TableRow>
@@ -1453,6 +1454,7 @@ const Onboarding = () => {
                         ))}
                       </TableBody>
                     </Table>
+                    </div>
                   </div>
                 )}
               </CardContent>

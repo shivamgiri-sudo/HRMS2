@@ -175,11 +175,12 @@ export default function NativeATSNameConsistency() {
                           </Button>
                           <Button
                             size="sm" variant="outline"
-                            className="h-8 text-xs cursor-pointer hidden sm:inline-flex"
+                            className="h-8 text-xs cursor-pointer"
                             disabled={recalcMutation.isPending}
                             onClick={() => recalcMutation.mutate(row.candidate_id)}
+                            title="Recalculate name consistency score"
                           >
-                            {recalcMutation.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : 'Recalculate'}
+                            {recalcMutation.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <><span className="hidden sm:inline">Recalculate</span><span className="sm:hidden">Recalc</span></>}
                           </Button>
                         </div>
                       </TableCell>

@@ -78,7 +78,7 @@ export function HrReferenceLayout({ data, filters }: { data: ReferenceDashboardD
         { label: "Resignation Discussions", value: resignation, helper: "Manager discussions pending", icon: UsersRound, tone: "amber", href: "/exit/command-center", unavailableReason: metricUnavailableReason(m, "resign"), ...drill("resign") },
       ]} />
 
-      <div className="grid max-w-[1140px] gap-3 sm:grid-cols-3">
+      <div className="grid max-w-[1140px] gap-3 grid-cols-1 sm:grid-cols-2 md:grid-cols-3">
         <ReferenceMetricGrid columns={3} loading={data.loading} metrics={[
           { label: "DPDP Withdrawal Requests", value: dpdp, helper: "Privacy requests pending", icon: FileX2, tone: "violet", href: "/compliance/dpdp-withdrawal-admin", unavailableReason: metricUnavailableReason(m, "dpdp") },
           { label: "Name Mismatches Blocking", value: nameMismatch, helper: "Blocking employee-code generation", icon: TriangleAlert, tone: "red", href: "/ats/name-consistency", unavailableReason: metricUnavailableReason(m, "nm") },
@@ -86,7 +86,7 @@ export function HrReferenceLayout({ data, filters }: { data: ReferenceDashboardD
         ]} />
       </div>
 
-      <div className="grid gap-4 xl:grid-cols-[1.08fr_0.92fr]">
+      <div className="grid gap-3 sm:gap-4 grid-cols-1 lg:grid-cols-2 xl:grid-cols-[1.08fr_0.92fr]">
         <ReferenceAIBrief
           title="Automated HR Operations Summary"
           intro="Here's a summary of recruitment and onboarding operations based on live data."
@@ -104,7 +104,7 @@ export function HrReferenceLayout({ data, filters }: { data: ReferenceDashboardD
         <ReferenceWorkInbox maxItems={5} />
       </div>
 
-      <div className="grid gap-4 xl:grid-cols-2">
+      <div className="grid gap-3 sm:gap-4 grid-cols-1 lg:grid-cols-2">
         <OnboardingFunnelPanel data={data} />
         <AttendanceBreakdownPanel data={data} />
         <ExitPipelinePanel data={data} />

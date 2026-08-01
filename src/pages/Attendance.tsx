@@ -1249,6 +1249,7 @@ const Attendance = () => {
             ) : attendanceRecords && attendanceRecords.length > 0 ? (
               <>
                 <div className="overflow-hidden rounded-xl border border-gray-200">
+                  <div className="overflow-x-auto">
                   <Table className="smarthr-table">
                     <TableHeader>
                       <TableRow>
@@ -1421,14 +1422,12 @@ const Attendance = () => {
                                   {record.clock_in_location_name && (
                                     <Tooltip>
                                       <TooltipTrigger asChild>
-                                        <p className="max-w-[180px] truncate">
-                                          <span className="font-semibold text-slate-700">
-                                            In:
-                                          </span>{" "}
+                                        <p className="max-w-[180px] truncate lg:max-w-none lg:whitespace-normal">
+                                          <span className="font-semibold text-slate-700">In:</span>{" "}
                                           {record.clock_in_location_name}
                                         </p>
                                       </TooltipTrigger>
-                                      <TooltipContent>
+                                      <TooltipContent side="top" className="max-w-[240px] text-wrap">
                                         {record.clock_in_location_name}
                                       </TooltipContent>
                                     </Tooltip>
@@ -1437,14 +1436,12 @@ const Attendance = () => {
                                   {record.clock_out_location_name && (
                                     <Tooltip>
                                       <TooltipTrigger asChild>
-                                        <p className="max-w-[180px] truncate">
-                                          <span className="font-semibold text-slate-700">
-                                            Out:
-                                          </span>{" "}
+                                        <p className="max-w-[180px] truncate lg:max-w-none lg:whitespace-normal">
+                                          <span className="font-semibold text-slate-700">Out:</span>{" "}
                                           {record.clock_out_location_name}
                                         </p>
                                       </TooltipTrigger>
-                                      <TooltipContent>
+                                      <TooltipContent side="top" className="max-w-[240px] text-wrap">
                                         {record.clock_out_location_name}
                                       </TooltipContent>
                                     </Tooltip>
@@ -1508,6 +1505,7 @@ const Attendance = () => {
                       })}
                     </TableBody>
                   </Table>
+                  </div>
                 </div>
 
                 {renderPaginationControls()}

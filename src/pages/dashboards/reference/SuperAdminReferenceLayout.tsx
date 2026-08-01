@@ -178,7 +178,7 @@ export function SuperAdminReferenceLayout({ data, filters }: { data: ReferenceDa
         </ReferencePanel>
       </div>
 
-      <div className="grid gap-4 xl:grid-cols-2">
+      <div className="grid gap-3 sm:gap-4 grid-cols-1 lg:grid-cols-2">
         <AttendanceBreakdownPanel data={data} />
         <PayrollBlockersPanel data={data} />
         <OnboardingFunnelPanel data={data} />

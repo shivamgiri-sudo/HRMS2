@@ -84,7 +84,7 @@ export function CeoReferenceLayout({ data, filters }: { data: ReferenceDashboard
   }));
 
   return (
-    <div className="reference-dashboard-page">
+    <div className="reference-dashboard-page px-1 sm:px-0">
       <ReferenceHeader title="CEO Dashboard" subtitle="Organisation-wide summary" badge="CEO View" right={filters} />
 
       {/*
@@ -116,7 +116,7 @@ export function CeoReferenceLayout({ data, filters }: { data: ReferenceDashboard
         { label: "Certified Learners", value: certified, helper: "vs last 30 days", icon: BadgeCheck, tone: "amber" },
       ]} />
 
-      <div className="grid gap-4 xl:grid-cols-[1.45fr_0.55fr]">
+      <div className="grid gap-3 sm:gap-4 grid-cols-1 lg:grid-cols-[1.45fr_0.55fr]">
         <div className="grid grid-cols-2 gap-0 overflow-hidden rounded-xl border border-[#e3e9f2] bg-white sm:grid-cols-4">
           {[
             // Name Mismatch, TAT Breached and Incentive Pending removed — see the
@@ -136,7 +136,7 @@ export function CeoReferenceLayout({ data, filters }: { data: ReferenceDashboard
         <ReferenceWorkInbox maxItems={5} />
       </div>
 
-      <div className="grid gap-4 xl:grid-cols-[0.62fr_1.05fr]">
+      <div className="grid gap-3 sm:gap-4 grid-cols-1 lg:grid-cols-2 xl:grid-cols-[0.62fr_1.05fr]">
         <ReferenceAIBrief title="Automated Executive Summary" actionHref="/reports" items={[
           { label: "Attendance rate", value: attendance === null ? null : `${attendance}%`, text: "Organisation-wide processed attendance rate.", icon: Fingerprint, tone: "blue" },
           { label: "Shrinkage", value: shrinkage === null ? null : `${shrinkage}%`, text: "Average shrinkage based on current workforce and availability.", icon: Activity, tone: shrinkage !== null && shrinkage > 20 ? "red" : "green" },
@@ -152,7 +152,7 @@ export function CeoReferenceLayout({ data, filters }: { data: ReferenceDashboard
         </ReferencePanel>
       </div>
 
-      <div className="grid gap-4 xl:grid-cols-[1.25fr_0.75fr]">
+      <div className="grid gap-3 sm:gap-4 grid-cols-1 lg:grid-cols-2 xl:grid-cols-[1.25fr_0.75fr]">
         <ReferencePanel title="Quality Overview (Last 30 Days)">
           <div className="grid gap-3 sm:grid-cols-3"><div className="rounded-lg border border-[#e3e9f2] p-4"><p className="text-xs text-[#71809a]">Org Quality Score</p><p className="mt-2 text-[23px] font-extrabold text-[#0b1f44]">{formatValue(qualityScore)}</p></div><div className="rounded-lg border border-[#e3e9f2] p-4"><p className="text-xs text-[#71809a]">Quality vs Target</p><p className="mt-2 text-[23px] font-extrabold text-[#0b1f44]">{formatValue(qualityScore, "%")}</p><ReferenceProgress label={`Target ${formatValue(qualityTarget, "%")}`} value={qualityScore} max={qualityTarget || 100} tone={qualityScore !== null && qualityTarget !== null && qualityScore >= qualityTarget ? "green" : "red"} /></div><div className="rounded-lg border border-[#e3e9f2] p-4"><p className="text-xs text-[#71809a]">Risk Agents</p><p className="mt-2 text-[23px] font-extrabold text-[#0b1f44]">{formatValue(riskAgents)}</p></div></div>
           <div className="mt-4 overflow-x-auto rounded-lg border border-[#e3e9f2]"><table className="w-full min-w-[560px] text-left text-xs"><thead className="bg-[#f8fafc] text-[#61708a]"><tr><th className="px-3 py-2">Process</th><th>Avg Score</th><th>Agents</th><th>Calls</th><th>Status</th></tr></thead><tbody className="divide-y divide-[#edf1f6]">{processRows.length ? processRows.slice(0, 6).map((row, index) => <tr key={String(row.id ?? index)}><td className="px-3 py-2 font-medium text-[#1d2b45]">{String(row.process_name ?? row.process ?? `Process ${index + 1}`)}</td><td>{formatValue(row.avg_score ?? row.score)}</td><td>{formatValue(row.agents ?? row.agent_count)}</td><td>{formatValue(row.calls ?? row.audit_count)}</td><td className="font-semibold text-[#16a34a]">{String(row.status ?? "—")}</td></tr>) : <tr><td colSpan={5} className="px-3 py-8 text-center text-[#94a3b8]">Quality scorecard is unavailable</td></tr>}</tbody></table></div>
@@ -164,7 +164,7 @@ export function CeoReferenceLayout({ data, filters }: { data: ReferenceDashboard
         </ReferencePanel>
       </div>
 
-      <div className="grid gap-4 xl:grid-cols-2">
+      <div className="grid gap-3 sm:gap-4 grid-cols-1 lg:grid-cols-2">
         <AttendanceBreakdownPanel data={data} />
         <PayrollBlockersPanel data={data} />
         <OnboardingFunnelPanel data={data} />

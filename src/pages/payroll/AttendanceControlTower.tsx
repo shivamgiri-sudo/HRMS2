@@ -692,6 +692,7 @@ export default function AttendanceControlTower() {
               </CardTitle>
             </CardHeader>
             <CardContent className="p-0">
+              <div className="overflow-x-auto">
               {selected.length > 0 && (
                 <div className="flex flex-wrap items-center justify-between gap-2 border-y bg-slate-50 px-4 py-2">
                   <span className="text-xs font-medium text-slate-600">
@@ -916,6 +917,7 @@ export default function AttendanceControlTower() {
                     ))}
                   </TableBody>
                 </Table>
+              </div>
               <div className="flex items-center justify-between border-t px-4 py-3">
                 <span className="text-xs text-slate-500">Page {page} of {totalPages}</span>
                 <div className="flex gap-2">

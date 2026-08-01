@@ -341,11 +341,11 @@ export function SmartGrnApprovalQueue() {
             <thead className="sticky top-0 bg-white">
               <tr className="border-b">
                 <th className="h-8 px-3 text-left font-medium text-slate-500 w-[110px]">GRN</th>
-                <th className="h-8 px-3 text-left font-medium text-slate-500 hidden sm:table-cell">Type</th>
+                <th className="h-8 px-3 text-left font-medium text-slate-500">Type</th>
                 <th className="h-8 px-3 text-left font-medium text-slate-500">Branch</th>
-                <th className="h-8 px-3 text-left font-medium text-slate-500 hidden md:table-cell">Vendor</th>
+                <th className="h-8 px-3 text-left font-medium text-slate-500">Vendor</th>
                 <th className="h-8 px-3 text-right font-medium text-slate-500">Amount</th>
-                <th className="h-8 px-3 text-left font-medium text-slate-500 hidden lg:table-cell">Due</th>
+                <th className="h-8 px-3 text-left font-medium text-slate-500">Due</th>
                 <th className="h-8 px-3 text-left font-medium text-slate-500">Status</th>
                 <th className="h-8 px-3 text-left font-medium text-slate-500">Review</th>
               </tr>
@@ -358,7 +358,7 @@ export function SmartGrnApprovalQueue() {
                   onClick={() => { setTarget(row); setDecision("approved"); setReviewNote(""); setOverrideCode(null); setOverrideReason(""); }}
                 >
                   <td className="px-3 py-1 font-mono text-xs font-bold text-[#073f78]">{row.grn_number}</td>
-                  <td className="px-3 py-1 hidden sm:table-cell">
+                  <td className="px-3 py-1">
                     <Badge variant="outline" className="text-xs capitalize">{row.grn_type}</Badge>
                   </td>
                   <td className="px-3 py-1 truncate max-w-[100px]">
@@ -367,9 +367,9 @@ export function SmartGrnApprovalQueue() {
                       {row.branch_name ?? row.branch_id}
                     </span>
                   </td>
-                  <td className="px-3 py-1 hidden md:table-cell truncate max-w-[100px]">{row.vendor_name ?? (row.grn_type === "imprest" ? "Imprest" : "—")}</td>
+                  <td className="px-3 py-1 truncate max-w-[100px]">{row.vendor_name ?? (row.grn_type === "imprest" ? "Imprest" : "—")}</td>
                   <td className="px-3 py-1 text-right font-medium">{money(row.amount_with_tax ?? row.amount)}</td>
-                  <td className="px-3 py-1 hidden lg:table-cell">{row.due_date ? date(row.due_date) : "—"}</td>
+                  <td className="px-3 py-1">{row.due_date ? date(row.due_date) : "—"}</td>
                   <td className="px-3 py-1">
                     <Badge variant="secondary" className="text-xs">{labelStatus(row.status)}</Badge>
                   </td>

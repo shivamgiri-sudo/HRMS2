@@ -862,19 +862,19 @@ const Leaves = () => {
           </div>
 
           <Tabs defaultValue="overview" className="w-full">
-            <TabsList className="grid w-full grid-cols-4 lg:w-[680px]">
-              <TabsTrigger value="overview">My Overview</TabsTrigger>
-              <TabsTrigger value="pending">
-                Pending
-                <Badge variant="secondary" className="ml-2">
-                  {pendingRequests.length}
-                </Badge>
-              </TabsTrigger>
-
-              <TabsTrigger value="processed">Processed</TabsTrigger>
-
-              <TabsTrigger value="calendar">Calendar View</TabsTrigger>
-            </TabsList>
+            <div className="mobile-scroll-x w-full">
+              <TabsList className="inline-flex h-auto min-w-max gap-1 rounded-xl border border-slate-200 bg-slate-100/80 p-1 backdrop-blur-sm">
+                <TabsTrigger value="overview" className="whitespace-nowrap rounded-lg px-3 py-2 text-xs sm:text-sm">My Overview</TabsTrigger>
+                <TabsTrigger value="pending" className="whitespace-nowrap rounded-lg px-3 py-2 text-xs sm:text-sm">
+                  Pending
+                  <Badge variant="secondary" className="ml-2">
+                    {pendingRequests.length}
+                  </Badge>
+                </TabsTrigger>
+                <TabsTrigger value="processed" className="whitespace-nowrap rounded-lg px-3 py-2 text-xs sm:text-sm">Processed</TabsTrigger>
+                <TabsTrigger value="calendar" className="whitespace-nowrap rounded-lg px-3 py-2 text-xs sm:text-sm">Calendar</TabsTrigger>
+              </TabsList>
+            </div>
 
             <TabsContent value="overview" className="mt-5">
               <LeaveTrends employeeId={myEmployeeId ?? undefined} />

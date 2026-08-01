@@ -954,14 +954,16 @@ const Payroll = () => {
                 </p>
               </div>
 
-              <TabsList className="grid w-full grid-cols-6 lg:w-auto">
-                <TabsTrigger value="current">Current Payroll</TabsTrigger>
-                <TabsTrigger value="history">Payroll History</TabsTrigger>
-                <TabsTrigger value="analytics">Analytics</TabsTrigger>
-                <TabsTrigger value="salary">Salary Structure</TabsTrigger>
-                <TabsTrigger value="finance">Finance Queue</TabsTrigger>
-                <TabsTrigger value="signoff">Signoff</TabsTrigger>
-              </TabsList>
+              <div className="mobile-scroll-x w-full">
+                <TabsList className="inline-flex h-auto min-w-max gap-1 rounded-xl border border-slate-200 bg-slate-100/80 p-1 backdrop-blur-sm">
+                  <TabsTrigger value="current" className="whitespace-nowrap rounded-lg px-3 py-2 text-xs sm:text-sm">Current Payroll</TabsTrigger>
+                  <TabsTrigger value="history" className="whitespace-nowrap rounded-lg px-3 py-2 text-xs sm:text-sm">History</TabsTrigger>
+                  <TabsTrigger value="analytics" className="whitespace-nowrap rounded-lg px-3 py-2 text-xs sm:text-sm">Analytics</TabsTrigger>
+                  <TabsTrigger value="salary" className="whitespace-nowrap rounded-lg px-3 py-2 text-xs sm:text-sm">Salary</TabsTrigger>
+                  <TabsTrigger value="finance" className="whitespace-nowrap rounded-lg px-3 py-2 text-xs sm:text-sm">Finance Queue</TabsTrigger>
+                  <TabsTrigger value="signoff" className="whitespace-nowrap rounded-lg px-3 py-2 text-xs sm:text-sm">Signoff</TabsTrigger>
+                </TabsList>
+              </div>
             </div>
 
             <TabsContent value="current" className="mt-0 space-y-4">

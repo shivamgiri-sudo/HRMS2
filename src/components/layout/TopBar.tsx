@@ -112,14 +112,19 @@ export function TopBar({
   return (
     <header
       className="hrms-topbar sticky top-0 z-30"
-      style={{ minHeight: "var(--topbar-height)" }}
+      style={{
+        minHeight: "var(--topbar-height)",
+        background: "rgba(255,255,255,0.88)",
+        backdropFilter: "blur(24px) saturate(180%)",
+        WebkitBackdropFilter: "blur(24px) saturate(180%)",
+      }}
     >
-      <div className="flex min-h-[64px] items-center gap-3 px-4 sm:px-5 lg:px-6">
-        {/* Mobile menu trigger */}
+      <div className="flex min-h-[64px] items-center gap-2 px-3 sm:gap-3 sm:px-5 lg:px-6">
+        {/* Mobile menu trigger — touch-friendly 44px minimum */}
         <Button
           variant="ghost"
           size="icon"
-          className="h-9 w-9 shrink-0 rounded-xl text-slate-500 hover:bg-slate-100 lg:hidden"
+          className="h-11 w-11 shrink-0 rounded-xl text-slate-500 hover:bg-slate-100/80 lg:hidden"
           onClick={onMenuClick}
           aria-label="Open navigation"
         >
@@ -146,17 +151,17 @@ export function TopBar({
           ))}
         </nav>
 
-        {/* Search */}
+        {/* Search — responsive, collapsible on small screens */}
         <form
           onSubmit={onSearchSubmit}
-          className="relative ml-auto max-w-sm flex-1 lg:ml-4 lg:max-w-md"
+          className="relative ml-auto max-w-[180px] flex-1 sm:max-w-sm lg:ml-4 lg:max-w-md"
         >
-          <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
           <Input
             value={searchQuery}
             onChange={(e) => onSearchChange(e.target.value)}
             placeholder="Search..."
-            className="h-9 rounded-xl border-slate-200 bg-slate-50 pl-9 pr-4 text-sm focus:bg-white"
+            className="h-10 rounded-xl border-slate-200/80 bg-slate-50/80 pl-10 pr-4 text-sm backdrop-blur-sm transition-all focus:bg-white focus:border-[#1B6AB5] sm:h-9"
             aria-label="Search modules"
           />
           {searchQuery.trim() && searchResults && searchResults.length > 0 && (
@@ -188,8 +193,8 @@ export function TopBar({
           )}
         </form>
 
-        {/* Right actions */}
-        <div className="flex shrink-0 items-center gap-1.5">
+        {/* Right actions — touch-friendly spacing */}
+        <div className="flex shrink-0 items-center gap-1 sm:gap-1.5">
           {/* View As Employee picker — super_admin only, when feature is enabled */}
           {showViewAsPicker && (
             <Popover open={viewAsOpen} onOpenChange={(open) => {

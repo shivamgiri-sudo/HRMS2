@@ -831,10 +831,10 @@ function ContractsTab() {
                     <td className="p-4"><Badge label={c.status} cls={CONTRACT_STATUS_COLORS[c.status]} /></td>
                     <td className="p-4">
                       <div className="relative group inline-block">
-                        <button className="cursor-pointer inline-flex items-center gap-1 rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-50 transition-colors">
+                        <button className="cursor-pointer inline-flex items-center gap-1 rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-50 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-400">
                           Status <ChevronDown className="h-3 w-3" />
                         </button>
-                        <div className="absolute right-0 top-full z-10 mt-1 hidden group-hover:block w-36 rounded-2xl border bg-white shadow-lg overflow-hidden">
+                        <div className="absolute right-0 top-full z-10 mt-1 hidden group-hover:block group-focus-within:block w-36 rounded-2xl border bg-white shadow-lg overflow-hidden">
                           {CONTRACT_STATUSES.filter((s) => s !== c.status).map((s) => (
                             <button key={s} onClick={() => updateStatus(c.id, s)}
                               className="block w-full cursor-pointer px-4 py-2.5 text-left text-xs font-semibold capitalize text-slate-700 hover:bg-slate-50 transition-colors">
@@ -1358,10 +1358,10 @@ function BillingTab() {
                     <td className="p-4"><Badge label={inv.status} cls={INVOICE_STATUS_COLORS[inv.status]} /></td>
                     <td className="p-4">
                       <div className="relative group inline-block">
-                        <button className="cursor-pointer inline-flex items-center gap-1 rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-50 transition-colors">
+                        <button className="cursor-pointer inline-flex items-center gap-1 rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-50 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-400">
                           Status <ChevronDown className="h-3 w-3" />
                         </button>
-                        <div className="absolute right-0 top-full z-10 mt-1 hidden group-hover:block w-40 rounded-2xl border bg-white shadow-lg overflow-hidden">
+                        <div className="absolute right-0 top-full z-10 mt-1 hidden group-hover:block group-focus-within:block w-40 rounded-2xl border bg-white shadow-lg overflow-hidden">
                           {INVOICE_STATUSES.filter((s) => s !== inv.status).map((s) => (
                             <button key={s} onClick={() => updateInvoiceStatus(inv.id, s)}
                               className="block w-full cursor-pointer px-4 py-2.5 text-left text-xs font-semibold capitalize text-slate-700 hover:bg-slate-50 transition-colors">

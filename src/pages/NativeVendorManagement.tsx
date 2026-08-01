@@ -260,9 +260,9 @@ export default function NativeVendorManagement() {
                     <TableRow className="bg-slate-50/80">
                       <TableHead className="text-xs font-bold uppercase tracking-wide">Code</TableHead>
                       <TableHead className="text-xs font-bold uppercase tracking-wide">Title</TableHead>
-                      <TableHead className="text-xs font-bold uppercase tracking-wide hidden sm:table-cell">Vendor</TableHead>
-                      <TableHead className="text-xs font-bold uppercase tracking-wide hidden md:table-cell">Period</TableHead>
-                      <TableHead className="text-xs font-bold uppercase tracking-wide hidden lg:table-cell">Value</TableHead>
+                      <TableHead className="text-xs font-bold uppercase tracking-wide">Vendor</TableHead>
+                      <TableHead className="text-xs font-bold uppercase tracking-wide">Period</TableHead>
+                      <TableHead className="text-xs font-bold uppercase tracking-wide">Value</TableHead>
                       <TableHead className="text-xs font-bold uppercase tracking-wide">Status</TableHead>
                     </TableRow>
                   </TableHeader>
@@ -274,11 +274,11 @@ export default function NativeVendorManagement() {
                           <p className="font-semibold text-slate-900 text-sm">{c.title}</p>
                           <p className="text-xs text-slate-400 capitalize">{c.contract_type}</p>
                         </TableCell>
-                        <TableCell className="text-sm text-slate-600 hidden sm:table-cell">{c.vendor_name ?? '—'}</TableCell>
-                        <TableCell className="text-xs text-slate-500 hidden md:table-cell whitespace-nowrap">
+                        <TableCell className="text-sm text-slate-600">{c.vendor_name ?? '—'}</TableCell>
+                        <TableCell className="text-xs text-slate-500 whitespace-nowrap">
                           {c.start_date} → {c.end_date ?? 'Open'}
                         </TableCell>
-                        <TableCell className="font-semibold text-slate-700 hidden lg:table-cell">
+                        <TableCell className="font-semibold text-slate-700">
                           {c.value != null ? `₹${Number(c.value).toLocaleString('en-IN')}` : '—'}
                         </TableCell>
                         <TableCell>

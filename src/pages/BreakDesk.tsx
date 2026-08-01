@@ -1032,8 +1032,8 @@ export default function BreakDesk() {
                 )}
 
                 {/* Full-Screen Table (No Virtual Scrolling) */}
-                <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-                  <div className="max-h-[calc(100vh-200px)] overflow-auto">
+                <div className="rounded-2xl border border-slate-200 bg-white shadow-sm">
+                  <div className="max-h-[calc(100vh-200px)] overflow-auto rounded-2xl">
                     <table className="min-w-[1080px] w-full text-xs">
                       <thead className="sticky top-0 z-10 bg-slate-50">
                         <tr className="text-left text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">

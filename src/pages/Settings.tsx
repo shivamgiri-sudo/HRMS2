@@ -851,6 +851,7 @@ const Settings = () => {
                 ) : departments.length === 0 ? (
                   <div className="py-8 text-center text-muted-foreground">No departments found. Add your first department.</div>
                 ) : (
+                  <div className="overflow-x-auto">
                   <Table className="smarthr-table">
                     <TableHeader>
                       <TableRow>
@@ -884,6 +885,7 @@ const Settings = () => {
                       ))}
                     </TableBody>
                   </Table>
+                  </div>
                 )}
               </CardContent>
             </Card>
@@ -975,6 +977,7 @@ const Settings = () => {
                 ) : leaveTypes.length === 0 ? (
                   <div className="py-8 text-center text-muted-foreground">No leave types found. Add your first leave type.</div>
                 ) : (
+                  <div className="overflow-x-auto">
                   <Table>
                     <TableHeader>
                       <TableRow>
@@ -1016,6 +1019,7 @@ const Settings = () => {
                       ))}
                     </TableBody>
                   </Table>
+                  </div>
                 )}
               </CardContent>
             </Card>

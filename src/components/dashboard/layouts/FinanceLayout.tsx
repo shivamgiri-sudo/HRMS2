@@ -364,13 +364,14 @@ export function FinanceLayout() {
               <CardTitle className="text-sm font-bold text-slate-900">Employee Blockers</CardTitle>
             </CardHeader>
             <CardContent className="p-0">
+              <div className="overflow-x-auto">
               <table className="w-full">
                 <thead>
                   <tr className="border-b border-slate-100">
                     <th className="text-left px-5 py-3 text-[11px] font-semibold text-slate-500 uppercase tracking-wider">
                       Blocker Type
                     </th>
-                    <th className="text-left px-5 py-3 text-[11px] font-semibold text-slate-500 uppercase tracking-wider hidden md:table-cell">
+                    <th className="text-left px-5 py-3 text-[11px] font-semibold text-slate-500 uppercase tracking-wider">
                       Description
                     </th>
                     <th className="text-right px-5 py-3 text-[11px] font-semibold text-slate-500 uppercase tracking-wider">
@@ -386,7 +387,7 @@ export function FinanceLayout() {
                       className="border-b border-slate-50 hover:bg-slate-50 transition-colors"
                     >
                       <td className="px-5 py-3 text-sm font-medium text-slate-800">{row.type}</td>
-                      <td className="px-5 py-3 text-sm text-slate-500 hidden md:table-cell">
+                      <td className="px-5 py-3 text-sm text-slate-500">
                         {row.desc}
                       </td>
                       <td className="px-5 py-3 text-right">
@@ -406,6 +407,7 @@ export function FinanceLayout() {
                   ))}
                 </tbody>
               </table>
+              </div>
             </CardContent>
           </Card>
         </div>

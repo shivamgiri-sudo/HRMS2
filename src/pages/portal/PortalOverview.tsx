@@ -63,11 +63,11 @@ export default function PortalOverview() {
 
           <div className="flex items-center gap-3">
             {clientName && (
-              <div className="hidden sm:flex items-center gap-2 bg-slate-800/40 border border-slate-800/60 rounded-full px-3 py-1 text-slate-300">
-                <div className="w-5 h-5 rounded-full bg-blue-500/20 text-blue-400 flex items-center justify-center text-[10px] font-bold">
+              <div className="flex items-center gap-2 bg-slate-800/40 border border-slate-800/60 rounded-full px-3 py-1 text-slate-300">
+                <div className="w-5 h-5 rounded-full bg-blue-500/20 text-blue-400 flex items-center justify-center text-[10px] font-bold flex-shrink-0">
                   {clientName.charAt(0).toUpperCase()}
                 </div>
-                <span className="text-xs font-medium">{clientName}</span>
+                <span className="text-xs font-medium truncate max-w-[100px] sm:max-w-none">{clientName}</span>
               </div>
             )}
             <button

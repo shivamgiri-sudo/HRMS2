@@ -245,7 +245,7 @@ export function PayrollReferenceLayout({ data, filters }: { data: ReferenceDashb
         </ReferencePanel>
       </div>
 
-      <div className="grid gap-4 xl:grid-cols-3">
+      <div className="grid gap-3 sm:gap-4 grid-cols-1 md:grid-cols-2 xl:grid-cols-3">
         <ReferencePanel title={`Statutory Summary (${currentMonth})`}>
           <div className="divide-y divide-[#edf1f6]">
             <ReferenceListRow title="Provident Fund (PF)" value={formatCurrency(pf)} tone="green" />

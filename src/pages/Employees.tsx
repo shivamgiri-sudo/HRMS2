@@ -552,7 +552,7 @@ const Employees = () => {
 
         <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
           {isLoading ? (
-            <div className="flex gap-6">
+            <div className="flex flex-wrap gap-4">
               {[1, 2, 3, 4].map((item) => (
                 <Skeleton key={item} className="h-20 w-24 rounded-xl" />
               ))}

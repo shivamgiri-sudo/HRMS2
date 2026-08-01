@@ -215,12 +215,17 @@ export function DashboardLayout({ children, subheader }: Props) {
     <div className="min-h-dvh" style={{ background: "var(--surface-page)" }}>
       <PWAInstallBanner />
 
-      {/* Mobile overlay */}
+      {/* Mobile overlay — glass blur backdrop */}
       {sidebarOpen && (
         <button
           type="button"
           aria-label="Close sidebar"
-          className="fixed inset-0 z-40 bg-slate-950/60 backdrop-blur-sm lg:hidden"
+          className="fixed inset-0 z-40 lg:hidden"
+          style={{
+            background: "rgba(7, 15, 35, 0.65)",
+            backdropFilter: "blur(8px)",
+            WebkitBackdropFilter: "blur(8px)",
+          }}
           onClick={() => setSidebarOpen(false)}
         />
       )}
@@ -236,36 +241,148 @@ export function DashboardLayout({ children, subheader }: Props) {
         {SidebarContent}
       </aside>
 
-      {/* Mobile slide-in sidebar */}
+      {/* Mobile slide-in sidebar — full-height, max 85vw, all menu items */}
       <aside
         className={cn(
-          "fixed inset-y-0 left-0 z-50 lg:hidden",
-          "transition-transform duration-300 ease-out",
-          sidebarOpen ? "translate-x-0" : "-translate-x-full"
+          "fixed inset-y-0 left-0 z-50 lg:hidden flex flex-col",
+          "transition-transform duration-300 ease-out will-change-transform",
+          sidebarOpen ? "translate-x-0" : "-translate-x-full",
         )}
-        style={{ width: 272, borderRight: "1px solid var(--sidebar-hairline)" }}
+        style={{
+          width: "min(320px, 85vw)",
+          background: "linear-gradient(160deg, rgba(7,45,95,0.98) 0%, rgba(3,14,40,0.99) 100%)",
+          backdropFilter: "blur(24px) saturate(200%)",
+          WebkitBackdropFilter: "blur(24px) saturate(200%)",
+          borderRight: "1px solid rgba(255,255,255,0.09)",
+          boxShadow: "6px 0 60px rgba(0,0,0,0.55), inset -1px 0 0 rgba(255,255,255,0.06)",
+        }}
       >
-        <div className="absolute right-3 top-3 z-10">
+        {/* ── Header: logo + close ── */}
+        <div
+          className="flex flex-shrink-0 items-center justify-between px-3 py-3"
+          style={{ borderBottom: "1px solid rgba(255,255,255,0.09)" }}
+        >
+          <Link
+            to="/dashboard"
+            onClick={() => setSidebarOpen(false)}
+            className="flex items-center gap-2.5 min-w-0"
+          >
+            <div
+              className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-xl"
+              style={{ background: "rgba(255,255,255,0.12)", border: "1px solid rgba(255,255,255,0.18)" }}
+            >
+              {logoError ? (
+                <span className="text-[11px] font-black text-white">MCN</span>
+              ) : (
+                <img
+                  src={companyLogo}
+                  alt="MCN"
+                  className="h-6 w-6 object-contain"
+                  onError={() => setLogoError(true)}
+                />
+              )}
+            </div>
+            <div className="min-w-0">
+              <p className="truncate text-[12px] font-extrabold uppercase tracking-[0.07em] text-white leading-none">
+                MAS Callnet
+              </p>
+              <p className="text-[9px] font-semibold uppercase tracking-[0.12em] leading-none mt-0.5"
+                style={{ color: "rgba(159,198,231,0.65)" }}>
+                PeopleOS
+              </p>
+            </div>
+          </Link>
+
           <Button
             type="button"
             variant="ghost"
             size="icon"
-            className="h-8 w-8 rounded-lg"
-            style={{ color: "var(--sidebar-ink-muted)" }}
+            className="h-10 w-10 flex-shrink-0 rounded-xl transition-all active:scale-95"
+            style={{ color: "rgba(255,255,255,0.65)", minHeight: 44, minWidth: 44 }}
             onClick={() => setSidebarOpen(false)}
-            aria-label="Close sidebar"
+            aria-label="Close navigation"
           >
-            <X className="h-4 w-4" />
+            <X className="h-5 w-5" />
           </Button>
         </div>
-        {SidebarContent}
+
+        {/* ── User profile chip ── */}
+        <Link
+          to="/profile"
+          onClick={() => setSidebarOpen(false)}
+          className="mx-2.5 mt-2.5 flex flex-shrink-0 items-center gap-3 rounded-2xl px-3 py-2 transition-all active:scale-[0.97]"
+          style={{
+            background: "rgba(255,255,255,0.07)",
+            border: "1px solid rgba(255,255,255,0.11)",
+          }}
+        >
+          <Avatar className="h-9 w-9 flex-shrink-0 ring-2 ring-white/25">
+            <AvatarImage src={normalizeMediaUrl(myProfile?.avatar_url)} alt="My photo" />
+            <AvatarFallback
+              className="text-sm font-bold"
+              style={{ background: "#3BAD49", color: "#fff" }}
+            >
+              {userInitials}
+            </AvatarFallback>
+          </Avatar>
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-[12px] font-bold leading-tight text-white">
+              {myProfile?.full_name || myProfile?.first_name || "My Profile"}
+            </p>
+            <p className="mt-0.5 truncate text-[10px] leading-none" style={{ color: "rgba(159,198,231,0.75)" }}>
+              {myProfile?.designation || myProfile?.employee_code || user?.email}
+            </p>
+          </div>
+          <span
+            className="flex-shrink-0 rounded-lg px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider"
+            style={{ background: "rgba(59,173,73,0.20)", border: "1px solid rgba(59,173,73,0.35)", color: "#86efac" }}
+          >
+            View
+          </span>
+        </Link>
+
+        {/* ── Full nav — all groups, all items, scrollable ── */}
+        <div
+          className="mobile-drawer-nav flex-1 overflow-y-auto overscroll-contain px-1 py-1"
+          style={{
+            scrollbarWidth: "thin",
+            scrollbarColor: "rgba(255,255,255,0.10) transparent",
+          }}
+        >
+          <SidebarNav
+            groups={filteredGroups}
+            onNavigate={() => setSidebarOpen(false)}
+          />
+        </div>
+
+        {/* ── Version footer ── */}
+        <div
+          className="flex-shrink-0 px-3 pb-3 pt-2 text-center"
+          style={{
+            borderTop: "1px solid rgba(255,255,255,0.07)",
+            paddingBottom: "max(12px, env(safe-area-inset-bottom, 12px))",
+          }}
+        >
+          <Link
+            to="/changelog"
+            onClick={() => setSidebarOpen(false)}
+            className="text-[10px] font-medium transition-opacity hover:opacity-80"
+            style={{ color: "rgba(159,198,231,0.50)" }}
+          >
+            v{displayVersion} · MAS PeopleOS
+          </Link>
+        </div>
       </aside>
 
       {/* Main content area — owns the scroll so sidebar position is preserved on navigation */}
       <div
         id="main-content-area"
-        className="flex min-w-0 flex-col pb-16 lg:pb-0 lg:pl-[var(--sidebar-width)]"
-        style={{ height: "100dvh", overflowY: "auto" }}
+        className="flex min-w-0 flex-col lg:pl-[var(--sidebar-width)]"
+        style={{
+          height: "100dvh",
+          overflowY: "auto",
+          paddingBottom: "calc(58px + env(safe-area-inset-bottom, 0px) + 0.5rem)",
+        }}
       >
         {/* Topbar */}
         <TopBar
@@ -296,10 +413,13 @@ export function DashboardLayout({ children, subheader }: Props) {
         </main>
       </div>
 
-      {/* Mobile bottom navigation */}
+      {/* Mobile bottom navigation — glassmorphism */}
       <nav
-        className="fixed bottom-0 left-0 right-0 z-30 flex items-center justify-around border-t bg-white px-2 pb-safe lg:hidden"
-        style={{ borderColor: "var(--border-hairline)", height: 58 }}
+        className="glass-nav fixed bottom-0 left-0 right-0 z-30 flex items-center justify-around px-2 lg:hidden"
+        style={{
+          height: "calc(58px + env(safe-area-inset-bottom, 0px))",
+          paddingBottom: "env(safe-area-inset-bottom, 0px)",
+        }}
         aria-label="Primary navigation"
       >
         {BOTTOM_NAV.map((tab) => {
@@ -309,22 +429,22 @@ export function DashboardLayout({ children, subheader }: Props) {
               key={tab.href}
               to={tab.href}
               className={cn(
-                "flex flex-col items-center gap-0.5 rounded-xl px-3 py-1.5 text-[10px] font-semibold transition",
-                active
-                  ? "text-[#1B6AB5]"
-                  : "text-slate-400"
+                "flex min-h-[44px] min-w-[44px] flex-col items-center justify-center gap-1 rounded-2xl px-3 py-2 text-[10px] font-bold transition-all duration-200",
+                active ? "scale-105 text-[#1B6AB5]" : "text-slate-400 hover:text-slate-600",
               )}
               aria-current={active ? "page" : undefined}
             >
               <span
                 className={cn(
-                  "flex h-7 w-7 items-center justify-center rounded-xl transition",
-                  active ? "bg-[#e8f2fc]" : ""
+                  "flex h-8 w-8 items-center justify-center rounded-xl transition-all duration-200",
+                  active ? "bg-gradient-to-br from-[#e8f2fc] to-[#d1e6f9] shadow-sm" : "",
                 )}
               >
                 {tab.icon}
               </span>
-              {tab.label}
+              <span className={cn("transition-opacity duration-200", active ? "opacity-100" : "opacity-70")}>
+                {tab.label}
+              </span>
             </Link>
           );
         })}

@@ -123,8 +123,8 @@ export default function NativeTATDashboard() {
                 <TableHeader>
                   <TableRow className="bg-slate-50/80">
                     <TableHead className="text-xs font-bold uppercase tracking-wide">Task Type</TableHead>
-                    <TableHead className="text-xs font-bold uppercase tracking-wide hidden sm:table-cell">Entity</TableHead>
-                    <TableHead className="text-xs font-bold uppercase tracking-wide hidden md:table-cell">Assigned To</TableHead>
+                    <TableHead className="text-xs font-bold uppercase tracking-wide">Entity</TableHead>
+                    <TableHead className="text-xs font-bold uppercase tracking-wide">Assigned To</TableHead>
                     <TableHead className="text-xs font-bold uppercase tracking-wide">Due At</TableHead>
                     <TableHead className="text-xs font-bold uppercase tracking-wide">Status</TableHead>
                     <TableHead className="text-xs font-bold uppercase tracking-wide">Actions</TableHead>
@@ -134,8 +134,8 @@ export default function NativeTATDashboard() {
                   {openTasks.slice(0, 100).map(t => (
                     <TableRow key={t.id} className={`transition-colors ${isOverdue(t.due_at, t.status) ? 'bg-red-50/20 hover:bg-red-50/40' : 'hover:bg-slate-50/60'}`}>
                       <TableCell className="font-semibold text-slate-900 text-sm">{t.task_type}</TableCell>
-                      <TableCell className="text-xs text-slate-400 hidden sm:table-cell font-mono">{t.entity_type}:{t.entity_id?.slice(0, 8)}…</TableCell>
-                      <TableCell className="text-sm text-slate-600 hidden md:table-cell">{t.assigned_to_name ?? t.assigned_to?.slice(0, 8) ?? '—'}</TableCell>
+                      <TableCell className="text-xs text-slate-400 font-mono">{t.entity_type}:{t.entity_id?.slice(0, 8)}…</TableCell>
+                      <TableCell className="text-sm text-slate-600">{t.assigned_to_name ?? t.assigned_to?.slice(0, 8) ?? '—'}</TableCell>
                       <TableCell className="text-sm text-slate-600 whitespace-nowrap">{t.due_at ? formatISTDate(t.due_at) : '—'}</TableCell>
                       <TableCell>
                         <span className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-[10px] font-bold whitespace-nowrap ${urgencyBadge(t.due_at, t.status)}`}>

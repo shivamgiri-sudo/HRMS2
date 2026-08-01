@@ -96,11 +96,11 @@ export function EmployeeReferenceLayout({ data, employeeName }: { data: Referenc
   };
 
   return (
-    <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_22rem]">
+    <div className="grid gap-4 md:gap-6 xl:grid-cols-[minmax(0,1fr)_22rem]">
     <div className="reference-dashboard-page min-w-0">
       <ReferenceHeader title={`Welcome, ${employeeName}`} subtitle="Your personal dashboard" badge="Self Service" />
 
-      <ReferencePanel title="My Attendance This Month" bodyClassName="p-3">
+      <ReferencePanel title="My Attendance This Month" bodyClassName="p-2 sm:p-3">
         <ReferenceMetricGrid columns={5} loading={data.loading} metrics={[
           { label: "Present", value: present, helper: "Full days", icon: UserCheck, tone: "green",
             ...drill("att"), },
@@ -115,7 +115,7 @@ export function EmployeeReferenceLayout({ data, employeeName }: { data: Referenc
         ]} />
       </ReferencePanel>
 
-      <div className="grid gap-4 xl:grid-cols-[1.02fr_0.98fr]">
+      <div className="grid gap-3 sm:gap-4 grid-cols-1 lg:grid-cols-2 xl:grid-cols-[1.02fr_0.98fr]">
         <ReferencePanel
           title="My Training Status"
           bodyClassName="p-0"
@@ -154,7 +154,7 @@ export function EmployeeReferenceLayout({ data, employeeName }: { data: Referenc
         ]} />
       </div>
 
-      <div className="grid gap-4 xl:grid-cols-[1.05fr_0.95fr]">
+      <div className="grid gap-3 sm:gap-4 grid-cols-1 lg:grid-cols-2 xl:grid-cols-[1.05fr_0.95fr]">
         <ReferencePanel title="My Onboarding Status" bodyClassName="px-5 py-4">
           <div className="grid items-center gap-4 sm:grid-cols-[52px_1fr_90px]">
             <span className="flex h-12 w-12 items-center justify-center rounded-full bg-[#f3efff] text-[#7c3aed]"><UserCheck className="h-5 w-5" /></span>
@@ -165,13 +165,20 @@ export function EmployeeReferenceLayout({ data, employeeName }: { data: Referenc
         <div aria-hidden="true" />
       </div>
 
-      <div className="grid gap-4 xl:grid-cols-[1.05fr_0.95fr]">
+      <div className="grid gap-3 sm:gap-4 grid-cols-1 lg:grid-cols-2 xl:grid-cols-[1.05fr_0.95fr]">
         <ReferencePanel title="My Leave Balance" action={<a href="/leaves" className="text-xs font-semibold text-[#0b63e5]">View Leave Policy</a>} bodyClassName="p-0">
           <div className="divide-y divide-[#edf1f6]">
             {leaveRows.length ? leaveRows.map((row) => {
               const used = row.used ?? (row.total !== null && row.remaining !== null ? Math.max(0, row.total - row.remaining) : null);
               const total = row.total ?? ((used ?? 0) + (row.remaining ?? 0));
-              return <div key={row.label} className="grid grid-cols-[minmax(0,1fr)_90px_minmax(120px,1fr)_70px] items-center gap-3 px-5 py-3 text-xs"><span className="truncate font-medium text-[#1d2b45]">{row.label}</span><span className="font-bold text-[#16a34a]">{formatValue(row.remaining)} Days</span><ReferenceProgress label="" value={used} max={total || 1} tone="green" /><span className="text-right font-medium text-[#61708a]">{formatValue(used)} / {formatValue(total)}</span></div>;
+              return (
+                <div key={row.label} className="grid grid-cols-2 sm:grid-cols-[minmax(0,1fr)_90px_minmax(120px,1fr)_70px] items-center gap-2 sm:gap-3 px-3 sm:px-5 py-3 text-xs">
+                  <span className="truncate font-medium text-[#1d2b45]">{row.label}</span>
+                  <span className="font-bold text-[#16a34a] text-right sm:text-left">{formatValue(row.remaining)} Days</span>
+                  <div className="hidden sm:block"><ReferenceProgress label="" value={used} max={total || 1} tone="green" /></div>
+                  <span className="hidden sm:block text-right font-medium text-[#61708a]">{formatValue(used)} / {formatValue(total)}</span>
+                </div>
+              );
             }) : <div className="px-5 py-10 text-center text-xs text-[#94a3b8]">Leave balance is unavailable</div>}
           </div>
         </ReferencePanel>
@@ -179,7 +186,7 @@ export function EmployeeReferenceLayout({ data, employeeName }: { data: Referenc
       </div>
 
       <ReferencePanel title="Source Freshness" bodyClassName="p-0">
-        <div className="grid divide-y divide-[#edf1f6] sm:grid-cols-2 sm:divide-x sm:divide-y-0 xl:grid-cols-5">
+        <div className="grid divide-y divide-[#edf1f6] grid-cols-2 sm:grid-cols-3 sm:divide-x sm:divide-y-0 lg:grid-cols-5">
           {sourceFreshness.map(([source, asOf]) => (
             <div key={source} className="px-4 py-3">
               <p className="text-xs font-semibold capitalize text-[#1d2b45]">{source}</p>
@@ -192,7 +199,7 @@ export function EmployeeReferenceLayout({ data, employeeName }: { data: Referenc
       <LeaveApprovalPanel data={data} />
 
       <ReferencePanel title="Quick Links" bodyClassName="p-3">
-        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+        <div className="grid gap-2 sm:gap-3 grid-cols-2 md:grid-cols-3 xl:grid-cols-5">
           <ReferenceQuickLink icon={CalendarDays} title="Apply Leave" subtitle="Request time off" href="/leaves" tone="green" />
           <ReferenceQuickLink icon={FileText} title="View Payslip" subtitle="Check your salary details" href="/payroll/payslips" tone="blue" />
           <ReferenceQuickLink icon={Headphones} title="Raise Helpdesk" subtitle="Get support for issues" href="/helpdesk" tone="amber" />
@@ -207,6 +214,11 @@ export function EmployeeReferenceLayout({ data, employeeName }: { data: Referenc
       {/* MAS Connect — social feed widget */}
       <SocialFeedWidget onPlayVideo={(id, title) => setVideoModal({ id, title })} />
       {videoModal && <VideoModal videoId={videoModal.id} title={videoModal.title} onClose={() => setVideoModal(null)} />}
+
+      {/* Company Feed — shown inline on mobile/tablet (hidden on xl where it's in the right aside) */}
+      <div className="xl:hidden">
+        <CompanyFeedSidePanel />
+      </div>
     </div>
 
     <aside className="hidden xl:block">

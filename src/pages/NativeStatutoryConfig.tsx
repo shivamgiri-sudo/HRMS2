@@ -1089,8 +1089,8 @@ export default function NativeStatutoryConfig() {
                     <tr>
                       <th className="px-5 py-3.5 font-semibold">Config Key</th>
                       <th className="px-5 py-3.5 font-semibold">Value</th>
-                      <th className="px-5 py-3.5 font-semibold hidden md:table-cell">Description</th>
-                      <th className="px-5 py-3.5 font-semibold text-right hidden lg:table-cell">Last Updated</th>
+                      <th className="px-5 py-3.5 font-semibold">Description</th>
+                      <th className="px-5 py-3.5 font-semibold text-right">Last Updated</th>
                       {isSuperAdmin && <th className="px-5 py-3.5 font-semibold text-right">Actions</th>}
                     </tr>
                   </thead>
@@ -1324,8 +1324,8 @@ function RawConfigRow({
           <span className="font-bold text-slate-900">{row.config_value ?? "—"}</span>
         )}
       </td>
-      <td className="px-5 py-3.5 text-slate-500 hidden md:table-cell">{row.description || "—"}</td>
-      <td className="px-5 py-3.5 text-right font-mono text-xs text-slate-400 hidden lg:table-cell">{fmtDate(row.updated_at)}</td>
+      <td className="px-5 py-3.5 text-slate-500">{row.description || "—"}</td>
+      <td className="px-5 py-3.5 text-right font-mono text-xs text-slate-400">{fmtDate(row.updated_at)}</td>
       {isSuperAdmin && (
         <td className="px-5 py-3.5 text-right space-x-1 whitespace-nowrap">
           {!editing && (

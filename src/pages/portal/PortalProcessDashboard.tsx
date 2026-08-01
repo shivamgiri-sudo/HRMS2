@@ -76,18 +76,18 @@ export default function PortalProcessDashboard() {
             </div>
           </div>
 
-          <div className="hidden sm:flex items-center gap-4 bg-slate-950/40 border border-slate-800 px-3 py-1.5 rounded-lg">
-            <div className="text-right">
-              <p className="text-xs font-bold text-white leading-tight">{clientName}</p>
-              <p className="text-[9px] text-slate-500 font-semibold">{processName}</p>
+          <div className="flex items-center gap-3 bg-slate-950/40 border border-slate-800 px-3 py-1.5 rounded-lg">
+            <div className="text-right min-w-0">
+              <p className="text-xs font-bold text-white leading-tight truncate max-w-[120px] sm:max-w-none">{clientName}</p>
+              <p className="text-[9px] text-slate-500 font-semibold truncate max-w-[120px] sm:max-w-none">{processName}</p>
             </div>
-            <div className="w-1.5 h-6 bg-slate-800" />
+            <div className="hidden sm:block w-1.5 h-6 bg-slate-800" />
             <div className="flex items-center gap-1.5">
               <span className="relative flex h-2 w-2">
                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
                 <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
               </span>
-              <span className="text-[10px] font-bold text-emerald-400 tracking-wider uppercase">Active</span>
+              <span className="text-[10px] font-bold text-emerald-400 tracking-wider uppercase hidden sm:inline">Active</span>
             </div>
           </div>
 
