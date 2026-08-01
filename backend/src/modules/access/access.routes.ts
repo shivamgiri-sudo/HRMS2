@@ -411,7 +411,13 @@ router.post("/roles/assign-scope", requireRole("admin"), h(async (req: Authentic
     return res.json({ ok: true, note: "scope already exists" });
   }
   await db.execute(
-    `INSERT INTO user_assignment_scope (id, user_id, role_key, scope_type, branch_id, process_id, active_status, assigned_by_user_id, assigned_at)
+    // Neither assigned_by_user_id nor assigned_at existed, so granting a scope always threw
+    // ER_BAD_FIELD_ERROR — this endpoint has never worked. assigned_at is dropped rather
+    // than added: the table already has created_at and the code passed NOW(), the same
+    // value. assigned_by_user_id is added by migration 1049, because who granted a
+    // data-access scope is recorded nowhere else — role changes reach sensitive_action_log,
+    // scope grants do not.
+    `INSERT INTO user_assignment_scope (id, user_id, role_key, scope_type, branch_id, process_id, active_status, assigned_by_user_id, created_at)
      VALUES (UUID(), ?, ?, ?, ?, ?, 1, ?, NOW())`,
     [user_id, role_key, scope_type, branch_id ?? null, process_id ?? null, req.authUser!.id]
   );
