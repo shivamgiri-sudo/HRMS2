@@ -78,13 +78,21 @@ vi.mock("../src/modules/ats/salary.calculator.js", () => ({
   calculateSalary: vi.fn().mockReturnValue({}),
 }));
 
-vi.mock("../src/middleware/authMiddleware.js", () => ({
-  requireAuth: (req: any, _res: any, next: any) => {
-    req.authUser = { id: "user-hr-1", role: "hr" };
-    req.user = { id: "user-hr-1", email: "hr@test.com", role: "hr" };
-    next();
-  },
-}));
+// Spread the real module: replacing it wholesale drops requireWriteAccess and
+// the other guards that routers import at load time, and vitest then fails the
+// whole file with `No "requireWriteAccess" export is defined`. Only requireAuth
+// is stood in for.
+vi.mock("../src/middleware/authMiddleware.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/middleware/authMiddleware.js")>();
+  return {
+    ...actual,
+    requireAuth: (req: any, _res: any, next: any) => {
+      req.authUser = { id: "user-hr-1", role: "hr" };
+      req.user = { id: "user-hr-1", email: "hr@test.com", role: "hr" };
+      next();
+    },
+  };
+});
 
 vi.mock("../src/middleware/requireRole.js", () => ({
   requireRole: (..._roles: string[]) => (_req: any, _res: any, next: any) => next(),

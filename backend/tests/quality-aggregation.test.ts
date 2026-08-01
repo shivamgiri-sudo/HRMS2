@@ -1,12 +1,37 @@
 import { QualityAggregationService } from '../src/modules/quality-dashboard/quality-aggregation.service';
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { db } from '../src/db';
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
+
+/**
+ * The service is constructed with a stub pool rather than the real one.
+ *
+ * It previously imported `{ db } from '../src/db'` — a directory, not a module.
+ * Node's ESM resolver does not fall back to an index file, so the suite died at
+ * load with ERR_MODULE_NOT_FOUND and had never run.
+ *
+ * Pointing it at the real pool only moved the failure: these tests assert the
+ * SHAPE of what getCQScore returns — which keys exist, that a gap is computed —
+ * so they need a database that answers deterministically, not one that has to be
+ * reachable. Empty result sets exercise the service's own defaults, which is the
+ * behaviour under test.
+ */
+function stubPool(rows: Record<string, unknown>[] = []) {
+  const connection = {
+    execute: vi.fn().mockResolvedValue([rows, []]),
+    query: vi.fn().mockResolvedValue([rows, []]),
+    release: vi.fn(),
+  };
+  return {
+    execute: vi.fn().mockResolvedValue([rows, []]),
+    query: vi.fn().mockResolvedValue([rows, []]),
+    getConnection: vi.fn().mockResolvedValue(connection),
+  };
+}
 
 describe('QualityAggregationService', () => {
   let service: QualityAggregationService;
 
   beforeAll(() => {
-    service = new QualityAggregationService(db);
+    service = new QualityAggregationService(stubPool() as never);
   });
 
   describe('getCQScore', () => {
@@ -109,8 +134,29 @@ describe('QualityAggregationService', () => {
   describe('getCallDetail', () => {
     it('returns single call with sub-scores', async () => {
       const callId = '684407';
+      // getCallDetail throws when the lookup finds nothing, so unlike the
+      // aggregate methods above it needs a row rather than an empty set.
+      const withCall = new QualityAggregationService(stubPool([{
+        call_id: callId,
+        date: '2026-07-01',
+        lead_id: 'lead-1',
+        lead_name: 'Test Lead',
+        scenario: 'INBOUND',
+        cq_pct: 82,
+        has_fatal: 0,
+        duration_sec: 240,
+        opening_score: 9,
+        soft_skills_score: 8,
+        hold_procedure_score: 7,
+        resolution_score: 9,
+        closing_score: 8,
+        recording_url: 'https://example.invalid/rec/684407',
+        transcript_text: null,
+        feedback: 'Good call',
+        peer_scenario_avg: 80,
+      }]) as never);
 
-      const result = await service.getCallDetail(callId);
+      const result = await withCall.getCallDetail(callId);
 
       expect(result).toHaveProperty('call_id');
       expect(result).toHaveProperty('date');
