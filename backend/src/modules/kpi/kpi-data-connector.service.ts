@@ -509,6 +509,93 @@ export async function syncAttendanceMetrics(date: string): Promise<SyncResult> {
   return { synced, skipped, errors: [] };
 }
 
+/**
+ * Quality for ONE day, so a score can be attributed to the process the agent
+ * actually worked that day.
+ *
+ * syncQualityMetrics() below aggregates a whole month with GROUP BY User and
+ * writes a single fact dated at MAX(CallDate). That yields one quality number
+ * per agent per month, which cannot be split across processes if the agent
+ * moved mid-month, and produces no daily trend. It also only runs on the 2nd of
+ * the month, for the month before, so quality is perpetually up to five weeks
+ * behind every other metric.
+ *
+ * This mirrors syncAprMetrics: one bounded day, one fact per agent per day,
+ * idempotent through the same ON DUPLICATE KEY UPDATE. The monthly function is
+ * left untouched — kpi-master.routes and performance-safe-sync both call it for
+ * month-close, and that is a legitimate separate job.
+ */
+export async function syncQualityMetricsForDate(date: string): Promise<SyncResult> {
+  const { pool, errors } = await readSourcePool('quality_audit');
+  if (!pool) return { synced: 0, skipped: 0, errors };
+
+  const sql = `
+    SELECT
+      UPPER(TRIM(\`User\`)) AS agent_user,
+      SUM(COALESCE(total_score, 0)) AS points_earned,
+      SUM(COALESCE(max_score, 0)) AS points_possible,
+      SUM(CASE WHEN quality_percentage = 0 THEN 1 ELSE 0 END) AS fatal_audits,
+      -- Only audits that were actually scored may form the fatal-rate
+      -- denominator. 1,383 of July's 6,568 audits carry quality_percentage NULL
+      -- and max_score 0 — never scored at all. Because NULL never matches
+      -- "= 0", counting them made an agent with 17 unscored audits report a
+      -- 0% fatal rate, which reads as flawless work.
+      SUM(quality_percentage IS NOT NULL) AS scored_audits,
+      COUNT(*) AS total_audits
+    FROM call_quality_assessment
+    WHERE CallDate >= ? AND CallDate < ?
+    GROUP BY UPPER(TRIM(\`User\`))
+  `;
+
+  try {
+    const [rows] = await pool.execute(sql, [date, nextDate(date)]);
+    return writeFacts(rows as SourceAggregate[], ['QUALITY_SCORE', 'FATAL_RATE'], (row, employeeId) => {
+      const possible = numberValue(row.points_possible);
+      const audits = numberValue(row.total_audits);
+      const facts: MetricFact[] = [];
+      if (possible > 0) {
+        facts.push({
+          employeeId,
+          metricCode: 'QUALITY_SCORE',
+          // The date being synced, not MAX(CallDate) — that is the whole
+          // difference between a daily fact and a monthly rollup.
+          date,
+          value: round2((numberValue(row.points_earned) / possible) * 100),
+          source: 'quality',
+          sourceSystem: 'db_audit.call_quality_assessment',
+          numerator: numberValue(row.points_earned),
+          denominator: possible,
+          sourceRecordCount: audits,
+        });
+      }
+      // Emit nothing rather than a flattering zero when the day's audits were
+      // never scored. No fatal rate is an honest gap; 0% is a false claim.
+      const scored = numberValue((row as { scored_audits?: unknown }).scored_audits);
+      if (scored > 0) {
+        facts.push({
+          employeeId,
+          metricCode: 'FATAL_RATE',
+          date,
+          value: round2((numberValue(row.fatal_audits) / scored) * 100),
+          source: 'quality',
+          sourceSystem: 'db_audit.call_quality_assessment',
+          numerator: numberValue(row.fatal_audits),
+          denominator: scored,
+          // Lineage keeps the true audit count, so the gap between audits taken
+          // and audits scored stays visible rather than being rounded away.
+          sourceRecordCount: audits,
+        });
+      }
+      return facts;
+    }, {
+      sourceSystem: 'quality_audit',
+      sourceEntity: 'db_audit.call_quality_assessment',
+    });
+  } catch (error) {
+    return { synced: 0, skipped: 0, errors: [errorMessage(error)] };
+  }
+}
+
 export async function syncQualityMetrics(yearMonth: string): Promise<SyncResult> {
   const { pool, errors } = await readSourcePool('quality_audit');
   if (!pool) return { synced: 0, skipped: 0, errors };

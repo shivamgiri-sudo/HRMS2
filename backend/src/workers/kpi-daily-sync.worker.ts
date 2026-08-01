@@ -1,4 +1,4 @@
-import { syncAprMetrics, syncAttendanceMetrics, syncConversionMetrics, syncSalesBrandMisMetrics, syncSalesOrderMetrics, syncQualityMetrics } from '../modules/kpi/kpi-data-connector.service.js';
+import { syncAprMetrics, syncAttendanceMetrics, syncConversionMetrics, syncSalesBrandMisMetrics, syncSalesOrderMetrics, syncQualityMetrics, syncQualityMetricsForDate } from '../modules/kpi/kpi-data-connector.service.js';
 
 const DAILY_INTERVAL_MS = 24 * 60 * 60 * 1000;
 const DAILY_HOUR = 1;
@@ -69,6 +69,17 @@ async function runDailySync(): Promise<void> {
     console.log(`[KpiDailySyncWorker] Sales order sync: ${salesOrderResult.synced} synced, ${salesOrderResult.skipped} skipped, ${salesOrderResult.errors.length} errors`);
   } catch (err: any) {
     console.error(`[KpiDailySyncWorker] Sales order sync failed:`, err.message);
+  }
+
+  // Quality daily, alongside every other source. It previously ran only on the
+  // 2nd of the month for the month before, so quality sat up to five weeks
+  // behind the metrics it is compared against, and arrived as one rollup per
+  // agent that could not be split across processes.
+  try {
+    const qDaily = await syncQualityMetricsForDate(date);
+    console.log(`[KpiDailySyncWorker] Quality sync (${date}): ${qDaily.synced} synced, ${qDaily.skipped} skipped, ${qDaily.errors.length} errors`);
+  } catch (err: any) {
+    console.error(`[KpiDailySyncWorker] Quality daily sync failed:`, err.message);
   }
 
   const today = new Date();
