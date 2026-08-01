@@ -46,10 +46,18 @@ vi.mock("../src/config/env.js", () => ({
 
 // ── Auth shims ────────────────────────────────────────────────────────────────
 
+// Only fills in an identity when the test has not already provided one. This
+// used to assign req.authUser unconditionally, overwriting whatever the app
+// factories had just set — so makeApp("user-rec-1", "recruiter") had no effect
+// and every request ran as demo-user-id/employee regardless of which actor the
+// case was about. requireAuth is mounted on the router, so it runs after the
+// factory middleware and won.
 vi.mock("../src/middleware/authMiddleware.js", () => ({
   requireAuth: (req: any, _res: any, next: any) => {
-    req.authUser = { id: "demo-user-id", role: "employee" };
-    req.user = { id: "demo-user-id", email: "demo@mascallnet.com", role: "employee" };
+    if (!req.authUser) {
+      req.authUser = { id: "demo-user-id", role: "employee", roles: ["employee"] };
+      req.user = { id: "demo-user-id", email: "demo@mascallnet.com", role: "employee" };
+    }
     next();
   },
 }));
@@ -97,11 +105,6 @@ async function makeApp(userId: string, role: string) {
   const app = express();
   app.use(express.json());
   app.use((req: any, _res: any, next) => {
-    // requireRole reads authUser.roles (array) and only falls back to a user_roles
-    // query when it is absent. This fake middleware set role (singular) alone, so
-    // every request fell through to the mocked DB, resolved to zero roles, and was
-    // rejected 403 — which is why all 11 cases failed regardless of what they were
-    // actually asserting. The middleware moved from role to roles; this did not.
     req.authUser = { id: userId, role, roles: [role] };
     next();
   });
@@ -114,11 +117,6 @@ async function makeFpApp(userId: string, role: string) {
   const app = express();
   app.use(express.json());
   app.use((req: any, _res: any, next) => {
-    // requireRole reads authUser.roles (array) and only falls back to a user_roles
-    // query when it is absent. This fake middleware set role (singular) alone, so
-    // every request fell through to the mocked DB, resolved to zero roles, and was
-    // rejected 403 — which is why all 11 cases failed regardless of what they were
-    // actually asserting. The middleware moved from role to roles; this did not.
     req.authUser = { id: userId, role, roles: [role] };
     next();
   });
