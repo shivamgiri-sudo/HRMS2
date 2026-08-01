@@ -113,6 +113,20 @@ export function useLOBs() {
   });
 }
 
+type OrgMasterKey = "clients" | "lobs" | "branches" | "processes" | "designations";
+
+export function useOrgMasters(key: OrgMasterKey) {
+  const clients = useClients();
+  const lobs = useLOBs();
+  const branches = useBranches();
+  const processes = useProcesses();
+  const designations = useDesignations();
+  const map: Record<OrgMasterKey, ReturnType<typeof useClients>> = {
+    clients, lobs, branches, processes, designations,
+  };
+  return map[key];
+}
+
 export function useCostCentreMigrationStatus() {
   return useQuery({
     queryKey: ["org", "cost-centres", "migration-status"],
