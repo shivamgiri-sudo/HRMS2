@@ -3,6 +3,7 @@ import { app } from "./app.js";
 import { env } from "./config/env.js";
 import { db } from "./db/mysql.js";
 import { runPendingMigrations, verifySchemaVersion } from "./db/runPendingMigrations.js";
+import { checkRequiredTables, REQUIRED_TABLES } from "./db/schema-presence-check.js";
 
 // MIGRATION GOVERNANCE: When enabled, API startup only verifies schema version
 // instead of running migrations. Use `npm run migrate` to apply migrations separately.
@@ -122,6 +123,25 @@ function startServer() {
     // rather than silently doing nothing. Events are still individually gated by
     // notification_event_config, so registering this does not make anything send.
     registerNotificationDeliverer();
+
+    // SKIP_MIGRATIONS=true in production means a deploy applies no schema, so code can ship
+    // against a table nobody created. Name them once here rather than discovering it later
+    // from a drip of runtime errors — employee_geofence_alerts logged 167 before anyone
+    // noticed. Reports only; a missing optional table must not stop the server booting.
+    void checkRequiredTables(db, REQUIRED_TABLES)
+      .then(({ missing }) => {
+        if (missing.length > 0) {
+          console.error(
+            `[schema] ${missing.length} required table(s) MISSING — run the matching migration: ${missing.join(", ")}`,
+          );
+        } else {
+          console.log(`[schema] all ${REQUIRED_TABLES.length} required tables present`);
+        }
+      })
+      .catch((err: unknown) => {
+        console.warn("[schema] presence check skipped:", (err as Error).message);
+      });
+
     startOfficialEmailComplianceScheduler();
     startIntegrationScheduler();
     console.log("[scheduler] official-email and integration scheduler started");
