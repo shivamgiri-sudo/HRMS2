@@ -6,7 +6,7 @@ import {
   Network, Package, Search, Server, Settings, Settings2, ShieldCheck, Sparkles,
   Target, TrendingUp, Upload, User, UserMinus, UserPlus, Users, Users2, Wallet,
   Zap, DollarSign, ShoppingCart, LayoutDashboard, Crown, Receipt, CheckCircle,
-  Plus, Send, Lock, Shield, ShieldAlert, PenSquare, Eye, UsersRound, RotateCcw, Mail,
+  Plus, Send, Lock, Shield, ShieldAlert, PenSquare, Eye, UsersRound, RotateCcw, Mail, Share2,
 } from "lucide-react";
 import type { NavGroup } from "./SidebarNav";
 
@@ -79,6 +79,7 @@ export const navGroups: NavGroup[] = [
         children: [
           { label: "Engagement",         href: "/engagement",                          icon: ic(Sparkles),       public: true, description: "Engagement" },
           { label: "Company Feed",       href: "/engagement/company-feed",             icon: ic(Send),           public: true, description: "Approved company updates" },
+          { label: "Social Media",       href: "/social-feed",                         icon: ic(Share2),         public: true, description: "MAS Callnet on social media" },
           { label: "Creator Studio",     href: "/engagement/company-feed/create",      icon: ic(PenSquare),      public: true, description: "Submit posts for moderation" },
           { label: "Approval Queue",     href: "/engagement/company-feed/approvals",   icon: ic(ShieldCheck),    roles: ["hr_head","admin","super_admin"], description: "Review pending posts" },
           { label: "Feed Management",    href: "/engagement/company-feed/manage",      icon: ic(Eye),            roles: ["hr_head","admin","super_admin"], description: "Manage published and reviewed posts" },

@@ -53,6 +53,8 @@ const NativeCompanyPostCreate       = lazy(() => import("@/pages/NativeCompanyPo
 const NativeCompanyPostApproval     = lazy(() => import("@/pages/NativeCompanyPostApproval"));
 const NativeCompanyPostManage       = lazy(() => import("@/pages/NativeCompanyPostManage"));
 const NativeCompanyFeedCreatorAccess = lazy(() => import("@/pages/NativeCompanyFeedCreatorAccess"));
+const NativeSocialFeed               = lazy(() => import("@/pages/NativeSocialFeed"));
+const NativeSocialFeedAdmin          = lazy(() => import("@/pages/NativeSocialFeedAdmin"));
 const NativeBadges                  = lazy(() => import("@/pages/NativeBadges"));
 const NativeKudos                   = lazy(() => import("@/pages/NativeKudos"));
 const NativeSurveys                 = lazy(() => import("@/pages/NativeSurveys"));
@@ -181,6 +183,10 @@ export const platformRouteElements = (
       <Route path="/engagement/kudos"            element={<ProtectedRoute><NativeKudos /></ProtectedRoute>} />
       <Route path="/engagement/surveys"          element={<ProtectedRoute><NativeSurveys /></ProtectedRoute>} />
       <Route path="/engagement/leaderboard"      element={<ProtectedRoute><NativeLeaderboard /></ProtectedRoute>} />
+
+      {/* Social media feed — external platform posts (free API / embeds) */}
+      <Route path="/social-feed"       element={<ProtectedRoute><Gate pageCode="SOCIAL_FEED"><NativeSocialFeed /></Gate></ProtectedRoute>} />
+      <Route path="/social-feed/admin" element={<ProtectedRoute roles={['super_admin','hr_admin','admin']}><NativeSocialFeedAdmin /></ProtectedRoute>} />
 
       {/* Reports Hub — auth-only; per-view role gates enforced inside ReportsHub */}
       <Route path="/reports" element={<ProtectedRoute><ReportsHub /></ProtectedRoute>} />

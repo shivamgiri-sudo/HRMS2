@@ -217,6 +217,8 @@ import { loginInfoRouter } from "./modules/public/login-info.routes.js";
 import { visitorSecurityRouter } from "./modules/visitor/visitor-security.routes.js";
 import { pushRouter } from "./modules/push/push.routes.js";
 import { locationRouter } from "./modules/location/location.routes.js";
+import { socialFeedRouter } from "./modules/social-feed/social-feed.routes.js";
+import { startSocialFeedCron } from "./modules/social-feed/social-feed.cron.js";
 
 export const app = express();
 
@@ -555,6 +557,9 @@ app.use("/api/policy-engine", policyEngineRouter);
 
 app.use("/api/push", pushRouter);
 app.use("/api/location", locationRouter);
+app.use("/api/social-feed", socialFeedRouter);
+
+startSocialFeedCron();
 
 app.use(notFoundHandler);
 app.use(errorHandler);
