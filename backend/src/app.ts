@@ -83,6 +83,7 @@ import { helpdeskRouter } from "./modules/helpdesk/helpdesk.routes.js";
 import { lettersRouter } from "./modules/letters/letters.routes.js";
 import { appointmentEsignRouter } from "./modules/letters/appointment-esign.routes.js";
 import { dscConfigRouter } from "./modules/letters/dscConfig.routes.js";
+import { appointmentLetterRouter } from "./modules/letters/appointmentLetter.routes.js";
 import { atsExtRouter } from "./modules/ats-extensions/ats-ext.routes.js";
 import { wfmExtRouter } from "./modules/wfm-extensions/wfm-ext.routes.js";
 import { managementRouter } from "./modules/management/management.routes.js";
@@ -435,6 +436,9 @@ app.use("/api/letters", lettersRouter);
 app.use("/api/letters", appointmentEsignRouter);
 // Company signing certificate — super_admin only, handles private key material.
 app.use("/api/signing", dscConfigRouter);
+// Payroll HR issuance. Separate from appointment-esign.routes.ts, which is
+// admin/hr only and sits on a table with two competing schemas.
+app.use("/api/letters", appointmentLetterRouter);
 app.use("/api/wfm-ext", wfmExtRouter);
 app.use("/api/management", managementRouter);
 app.use("/api/management", managementCommandCenterRouter);
