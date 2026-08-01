@@ -21,6 +21,7 @@ import {
   getChecklistDocumentFileForAccess,
   getJoiningDocumentFileForAccess,
   getJoiningDocumentEsignStatus,
+  syncJoiningDocumentEsign,
   getPublicJoiningDocumentDraftFile,
   getJoiningDocumentPack,
   getPublicJoiningDocumentEsignSession,
@@ -679,6 +680,22 @@ employeeJoiningDocumentsRouter.get("/:employeeId/joining-documents/checklist/:ch
 
 employeeJoiningDocumentsRouter.get("/:employeeId/joining-documents/:checklistId/esign/status", h(async (req: AuthenticatedRequest, res) => {
   const data = await getJoiningDocumentEsignStatus({
+    employeeId: req.params.employeeId,
+    checklistId: req.params.checklistId,
+    actorUserId: req.authUser!.id,
+  });
+  return res.json({ success: true, data });
+}));
+
+/**
+ * Pull the signed artefact from the provider for a transaction that is still open.
+ *
+ * Luckpay does not reliably push a completion callback, so a document can sit at
+ * 'esign_initiated' indefinitely after the employee has genuinely signed. This is
+ * the manual counterpart to the reconciliation worker.
+ */
+employeeJoiningDocumentsRouter.post("/:employeeId/joining-documents/:checklistId/esign/sync", h(async (req: AuthenticatedRequest, res) => {
+  const data = await syncJoiningDocumentEsign({
     employeeId: req.params.employeeId,
     checklistId: req.params.checklistId,
     actorUserId: req.authUser!.id,

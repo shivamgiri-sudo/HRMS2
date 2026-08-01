@@ -1743,6 +1743,44 @@ export async function getPublicJoiningDocumentEsignSession(publicToken: string):
   return row;
 }
 
+/**
+ * Ask the provider what happened to an open eSign and store the artefact.
+ *
+ * Luckpay's completion callback is unreliable (documented in
+ * luckpay-status.service.ts), so signatures that genuinely happened can leave the
+ * checklist parked at 'esign_initiated' forever. This is the pull side of that.
+ */
+export async function syncJoiningDocumentEsign(params: {
+  employeeId: string;
+  checklistId: string;
+  actorUserId: string;
+}) {
+  await resolveEmployeeDocumentAccessContext(params.actorUserId, params.employeeId);
+  const checklist = await fetchChecklistRow(params.checklistId);
+  if (!checklist || checklist.employee_id !== params.employeeId) {
+    const err = new Error("Checklist item not found") as Error & { statusCode?: number };
+    err.statusCode = 404;
+    throw err;
+  }
+
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT client_transaction_id
+       FROM employee_document_esign_transaction
+      WHERE checklist_id = ? AND provider = 'luckpay' AND client_transaction_id IS NOT NULL
+      ORDER BY initiated_at DESC
+      LIMIT 1`,
+    [params.checklistId],
+  );
+  const clientTransactionId = String(rows[0]?.client_transaction_id ?? "").trim();
+  if (!clientTransactionId) {
+    return { synced: false, reason: "no_transaction", message: "No eSign transaction exists for this document yet." };
+  }
+
+  const { syncEsignStatus } = await import("../integrations/luckpay/luckpay-status.service.js");
+  const outcome = await syncEsignStatus(clientTransactionId);
+  return { synced: true, ...outcome };
+}
+
 export async function getJoiningDocumentEsignStatus(params: {
   employeeId: string;
   checklistId: string;
@@ -1815,7 +1853,12 @@ async function finalizeChecklistEsign(params: {
   checklist: ChecklistRow;
   signerName: string;
   signerRemarks?: string | null;
+  /** Our own employee_document_esign_transaction primary key. */
   transactionId?: string | null;
+  /** The id WE gave the provider, e.g. "joining-doc-<uuid>". */
+  clientTransactionId?: string | null;
+  /** The id the PROVIDER gave us (gatewayId), e.g. "APIB1785567457469073". */
+  providerReferenceId?: string | null;
   publicToken?: string | null;
   actorType: ActorType;
   actionType: string;
@@ -1841,11 +1884,15 @@ async function finalizeChecklistEsign(params: {
   let signedBuffer: Buffer = originalBuffer;
   let providerArtefactRetrieved = false;
 
-  if (isWebhookFinalisation && params.transactionId) {
+  if (isWebhookFinalisation && (params.clientTransactionId || params.providerReferenceId)) {
     try {
+      // These MUST be the provider's own identifiers. This previously passed the
+      // checklist UUID and our internal transaction PK, neither of which Luckpay
+      // has ever seen, so every download silently failed and every signature was
+      // recorded as 'pending_artefact'.
       const doc = await luckpayClient.downloadESignDocument({
-        clientTransactionId: params.checklist.id,
-        transactionId: params.transactionId,
+        clientTransactionId: params.clientTransactionId ?? "",
+        transactionId: params.providerReferenceId ?? "",
       });
       if (doc.buffer?.length) {
         signedBuffer = doc.buffer;
@@ -2084,22 +2131,37 @@ export async function handleJoiningDocumentEsignWebhook(input: {
     "",
   ).trim();
   const clientTransactionId = String(payload.client_transaction_id ?? payload.clientTransactionId ?? "").trim();
-  const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT id, checklist_id, employee_id, candidate_id, document_code, status
-       FROM employee_document_esign_transaction
-      WHERE (? <> '' AND provider_reference_id = ?)
-         OR (? <> '' AND client_transaction_id = ?)
-      ORDER BY initiated_at DESC
-      LIMIT 1`,
-    [providerReferenceId, providerReferenceId, clientTransactionId, clientTransactionId],
-  );
-  const tx = rows[0] as (RowDataPacket & {
+
+  // client_transaction_id is ours and unique per (provider, id); provider_reference_id
+  // is the vendor's gatewayId. Match on the former FIRST rather than OR-ing both into
+  // one query — an OR with ORDER BY initiated_at DESC can resolve to a different, newer
+  // transaction than the one the callback is actually about.
+  const TX_COLUMNS =
+    "id, checklist_id, employee_id, candidate_id, document_code, status, client_transaction_id, provider_reference_id";
+
+  const findTx = async (column: "client_transaction_id" | "provider_reference_id", value: string) => {
+    if (!value) return undefined;
+    const [found] = await db.execute<RowDataPacket[]>(
+      `SELECT ${TX_COLUMNS}
+         FROM employee_document_esign_transaction
+        WHERE provider = 'luckpay' AND ${column} = ?
+        ORDER BY initiated_at DESC
+        LIMIT 1`,
+      [value],
+    );
+    return found[0];
+  };
+
+  const tx = ((await findTx("client_transaction_id", clientTransactionId)) ??
+    (await findTx("provider_reference_id", providerReferenceId))) as (RowDataPacket & {
     id: string;
     checklist_id: string;
     employee_id: string;
     candidate_id: string | null;
     document_code: string;
     status: string;
+    client_transaction_id: string | null;
+    provider_reference_id: string | null;
   }) | undefined;
   if (!tx) {
     return { matched: false, processed: false };
@@ -2146,6 +2208,11 @@ export async function handleJoiningDocumentEsignWebhook(input: {
         signerName,
         signerRemarks: String(payload.remarks ?? payload.comment ?? "").trim() || null,
         transactionId: tx.id,
+        // What the PROVIDER knows this signature by. tx.id is our own primary key
+        // and means nothing to Luckpay — passing it as the provider's identifiers
+        // is why no signed artefact has ever been retrieved.
+        clientTransactionId: tx.client_transaction_id ?? null,
+        providerReferenceId: tx.provider_reference_id ?? null,
         actorType: "system",
         actionType: "LUCKPAY_WEBHOOK_ESIGN_COMPLETED",
         ipAddress: input.ipAddress ?? null,

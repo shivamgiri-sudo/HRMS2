@@ -46,11 +46,30 @@ function extensionFor(doc: LuckpayDocumentResult, fallback: string) {
   return fallback;
 }
 
+/**
+ * Where joining-document artefacts live. Mirrors the layout writeSecureFile uses
+ * in employeeJoiningDocuments.service.ts, so a signed file retrieved here is
+ * found by the same readers that serve HR-uploaded and generated files.
+ */
+export function joiningDocumentStorageDir(employeeId: string, documentCode: string) {
+  return path.resolve(
+    process.cwd(),
+    "private-storage/employee-joining-documents",
+    employeeId,
+    documentCode.toLowerCase(),
+    "signed",
+  );
+}
+
 /** Writes provider bytes to private storage. Returns the absolute path, or null when nothing inline was returned. */
-async function persistDocument(doc: LuckpayDocumentResult, fallbackExt: string): Promise<string | null> {
+async function persistDocument(
+  doc: LuckpayDocumentResult,
+  fallbackExt: string,
+  targetDir: string = STORAGE_DIR,
+): Promise<string | null> {
   if (!doc.buffer?.length) return null;
-  await fs.promises.mkdir(STORAGE_DIR, { recursive: true });
-  const filePath = path.join(STORAGE_DIR, `${randomUUID()}${extensionFor(doc, fallbackExt)}`);
+  await fs.promises.mkdir(targetDir, { recursive: true });
+  const filePath = path.join(targetDir, `${randomUUID()}${extensionFor(doc, fallbackExt)}`);
   await fs.promises.writeFile(filePath, doc.buffer);
   return filePath;
 }
@@ -294,7 +313,11 @@ export async function syncEsignStatus(clientTransactionId: string): Promise<Sync
   let signedFileId: string | null = null;
   try {
     const doc = await luckpayClient.downloadESignDocument({ clientTransactionId, transactionId });
-    const stored = await persistDocument(doc, ".pdf");
+    // Joining-document artefacts belong beside the rest of that employee's
+    // documents. persistDocument's default lands them in the onboarding tree,
+    // which leaves employee_joining_document_file.storage_path pointing outside
+    // the directory every joining-document reader looks in.
+    const stored = await persistDocument(doc, ".pdf", joiningDocumentStorageDir(String(row.employee_id), String(row.document_code)));
     if (stored) {
       storedFiles.push(stored);
       const newFileId = randomUUID();
@@ -336,10 +359,37 @@ export async function syncEsignStatus(clientTransactionId: string): Promise<Sync
     [JSON.stringify(sanitizeProviderPayload({ ...status.sanitized, ...documentMeta })), signedFileId, row.id],
   );
 
+  // Mirror finalizeChecklistEsign: status alone leaves fill_status, signature_mode
+  // and final_file_locked_at unset, so the document reads as signed on one screen
+  // and unsigned on another. signature_mode stays honest about whether the
+  // provider's artefact was actually retrieved.
   await db.execute(
     `UPDATE employee_joining_document_checklist
-        SET status = 'esign_completed', updated_at = NOW()
+        SET status = 'esign_completed',
+            fill_status = 'esign_completed',
+            signature_mode = ?,
+            final_file_locked_at = NOW(),
+            completed_at = NOW(),
+            updated_at = NOW()
       WHERE id = ?`,
+    [signedFileId ? "aadhaar_esign_verified" : "aadhaar_esign_pending_artefact", row.checklist_id],
+  ).catch(() => undefined);
+
+  // recalculateDocumentProgress is the documented single writer of
+  // employees.joining_document_completion_pct. Without this the employee stays
+  // below 100% forever even with every document signed.
+  try {
+    const { recalculateDocumentProgress } = await import("../../employees/employeeJoiningDocuments.service.js");
+    await recalculateDocumentProgress(String(row.employee_id));
+  } catch (error) {
+    console.warn("[syncEsignStatus] progress recalculation failed:", (error as Error)?.message ?? error);
+  }
+
+  // Consume the public signing token so a completed link cannot be replayed.
+  await db.execute(
+    `UPDATE employee_joining_document_public_token
+        SET token_status = 'consumed', consumed_at = NOW()
+      WHERE checklist_id = ? AND token_status = 'active'`,
     [row.checklist_id],
   ).catch(() => undefined);
 
