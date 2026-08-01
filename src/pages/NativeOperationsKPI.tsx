@@ -261,13 +261,22 @@ export default function NativeOperationsKPI() {
       const res = await hrmsApi.get<Process[] | { data: Process[] }>("/api/processes");
       const list = Array.isArray(res) ? res : (res as { data: Process[] }).data ?? [];
       setProcesses(list);
-      if (list.length > 0 && !selectedProcess) {
-        setSelectedProcess(list[0].id);
-      }
+      // Deliberately defaults to All Processes — no auto-select.
+      //
+      // This used to set selectedProcess to whichever process /api/processes happened to
+      // return first. That was invisible for as long as the filter was broken: the UI sent
+      // `process_id`, the zod schema declared `processId`, and the unknown key was stripped,
+      // so every request was org-wide regardless of the dropdown. Round 1's "205 employees
+      // scored" was that org-wide number.
+      //
+      // Once the filter started binding correctly, the auto-select became live and the page
+      // began asking for one arbitrary process. Processes without kpi_process_config targets
+      // return nothing, which is why Round 2 read "Employees Scored 0" for every period while
+      // 963 employees remained scoreable org-wide for 2026-07.
     } catch {
       // Processes are optional
     }
-  }, [selectedProcess]);
+  }, []);
 
   const loadData = useCallback(async () => {
     if (!period) return;
@@ -331,8 +340,15 @@ export default function NativeOperationsKPI() {
   // "Avg Ops Score 98%" with a distribution of 205 employees at 120.0% and 35 at 0.0%.
   // A zero here means "no measurable actual for the period", not "scored zero", so it
   // belongs in neither the average nor the scored count.
-  const scoredEntries = leaderboard.filter((e) => (e.weighted_score_pct ?? 0) > 0);
-  const unscoredCount = leaderboard.length - scoredEntries.length;
+  // weighted_score_pct is SUM(...)/NULLIF(SUM(weightage),0), so it is NULL when the
+  // employee's process has no configured target at all — a configuration gap, not a
+  // performance result. `?? 0 > 0` folded that into the same bucket as a genuine zero and
+  // reported both as "no data", which made a whole unconfigured process indistinguishable
+  // from a process of people who scored nothing.
+  const scoredEntries = leaderboard.filter((e) => e.weighted_score_pct != null && e.weighted_score_pct > 0);
+  const untargetedCount = leaderboard.filter((e) => e.weighted_score_pct == null).length;
+  const zeroScoredCount = leaderboard.filter((e) => e.weighted_score_pct === 0).length;
+  const unscoredCount = untargetedCount + zeroScoredCount;
 
   const avgScore =
     scoredEntries.length > 0
@@ -412,7 +428,13 @@ export default function NativeOperationsKPI() {
           <StatCard
             title="Employees Scored"
             value={scoredEntries.length}
-            sub={unscoredCount > 0 ? `${unscoredCount} with no data · ${period}` : `Period: ${period}`}
+            sub={
+              untargetedCount > 0
+                ? `${untargetedCount} without a configured target · ${period}`
+                : unscoredCount > 0
+                  ? `${unscoredCount} with no data · ${period}`
+                  : `Period: ${period}`
+            }
             icon={<Users className="h-5 w-5" />}
             color="from-blue-400 to-indigo-500"
           />
