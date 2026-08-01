@@ -149,6 +149,10 @@ const envSchema = z.object({
   LUCKPAY_TOKEN_CACHE_TTL_SECONDS: z.coerce.number().int().min(1).default(45),
   LUCKPAY_TIMEOUT_MS: z.coerce.number().int().min(1000).default(60000),
   LUCKPAY_PROVIDER_ENABLED: z.string().default("false"),
+  // Pull eSign completion instead of waiting for a callback that may never arrive.
+  // Default off: checkESignStatus / downloadESignDocument may be billed per call,
+  // so this stays disabled until per-endpoint billing is confirmed with Luckpay.
+  ESIGN_RECONCILIATION_ENABLED: z.string().default("false"),
   ATS_FORM_API_KEY: z.string().optional(),
   COURT_CHECK_API_URL: z.string().url().default("https://api.infinityai.in"),
   COURT_CHECK_API_KEY: z.string().optional(),
@@ -272,6 +276,7 @@ export const env = {
   OUTBOUND_ALLOW_PRIVATE_URLS: parsed.data.OUTBOUND_ALLOW_PRIVATE_URLS === 'true',
   SEED_DEMO_DATA: parsed.data.SEED_DEMO_DATA === 'true',
   LUCKPAY_PROVIDER_ENABLED: parsed.data.LUCKPAY_PROVIDER_ENABLED === "true",
+  ESIGN_RECONCILIATION_ENABLED: parsed.data.ESIGN_RECONCILIATION_ENABLED === "true",
   NCOSEC_RECONCILIATION_ENABLED: parsed.data.NCOSEC_RECONCILIATION_ENABLED !== "false",
   NCOSEC_RECONCILIATION_AUTO_FIX: parsed.data.NCOSEC_RECONCILIATION_AUTO_FIX === "true",
 };

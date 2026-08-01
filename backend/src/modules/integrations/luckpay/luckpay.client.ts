@@ -15,6 +15,7 @@ import {
   assertLuckpayEnabled,
   getLuckpayDiagnostics,
   luckpayPostJson,
+  luckpayPostBinaryOrJson,
   luckpayPostMultipart,
   pickLuckpayField,
   sanitizeProviderPayload,
@@ -143,6 +144,22 @@ function decodeBase64(value: string | null): Buffer | null {
  *                            wrapper {file_in_base64, size_in_bytes, file_name,
  *                            file_type}, so the bytes need decoding twice.
  */
+/** Wraps a document the provider returned as a raw body rather than a JSON envelope. */
+function rawDocumentResult(buffer: Buffer, contentType: string | null): LuckpayDocumentResult {
+  const ext = contentType?.includes("pdf") ? "pdf"
+    : contentType?.includes("zip") ? "zip"
+    : contentType?.includes("png") ? "png"
+    : contentType?.includes("jpeg") ? "jpg"
+    : "bin";
+  return {
+    buffer,
+    url: null,
+    fileName: `esign-document.${ext}`,
+    contentType: contentType ?? "application/pdf",
+    sanitized: { binaryBody: true, bytes: buffer.length, contentType },
+  };
+}
+
 function toDocumentResult(response: LuckpayResponse): LuckpayDocumentResult {
   const raw = pickLuckpayField(response, [
     "esignDownloadDetails.file", "details.file", "esignDetails.file",
@@ -273,8 +290,9 @@ export const luckpayClient = {
   /** Retrieve the DigiLocker/KYC documents once checkKycStatus reports success. */
   async downloadKycDocument(payload: LuckpayTransactionRef) {
     const cfg = await digilockerConfig();
-    const response = await luckpayPostJson(cfg, "/downloadKycDocument", payload);
-    return toDocumentResult(response);
+    const { binary, contentType, response } = await luckpayPostBinaryOrJson(cfg, "/downloadKycDocument", payload);
+    if (binary) return rawDocumentResult(binary, contentType);
+    return toDocumentResult(response!);
   },
 
   /** Poll an eSign request for completion. */
@@ -284,11 +302,18 @@ export const luckpayClient = {
     return toStatusResult(response, payload, "esign");
   },
 
-  /** Retrieve the signed PDF once checkESignStatus reports success. */
+  /**
+   * Retrieve the signed PDF once checkESignStatus reports success.
+   *
+   * This endpoint answers with Content-Type: application/pdf and a raw PDF body,
+   * NOT the JSON envelope the other endpoints use. Verified against production:
+   * 79,582 bytes beginning "%PDF-1.7".
+   */
   async downloadESignDocument(payload: LuckpayTransactionRef) {
     const cfg = await digilockerConfig();
-    const response = await luckpayPostJson(cfg, "/downloadESignDocument", payload);
-    return toDocumentResult(response);
+    const { binary, contentType, response } = await luckpayPostBinaryOrJson(cfg, "/downloadESignDocument", payload);
+    if (binary) return rawDocumentResult(binary, contentType);
+    return toDocumentResult(response!);
   },
 
   /**
