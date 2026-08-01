@@ -2,6 +2,7 @@ import { db } from '../../db/mysql.js';
 import { getPoolForKey } from '../external-db/external-db.service.js';
 import type { Pool } from 'mysql2/promise';
 import type { RowDataPacket, ResultSetHeader } from 'mysql2';
+import { recordMappingException } from './mapping-exception.service.js';
 
 type KpiSource = 'apr' | 'attendance' | 'quality' | 'manual' | 'calculated';
 
@@ -261,7 +262,17 @@ async function readSourcePool(key: string): Promise<{ pool: Pool | null; errors:
   }
 }
 
-async function writeFacts(rows: SourceAggregate[], metricCodes: string[], buildFacts: (row: SourceAggregate, employeeId: string) => MetricFact[]): Promise<SyncResult> {
+async function writeFacts(
+  rows: SourceAggregate[],
+  metricCodes: string[],
+  buildFacts: (row: SourceAggregate, employeeId: string) => MetricFact[],
+  /**
+   * Where these rows came from, so an agent code that maps to nobody can be
+   * queued for someone to fix. Without it the identifier is only counted, and a
+   * silent `skipped += 1` is how an agent stops being measured unnoticed.
+   */
+  unmappedSource?: { sourceSystem: string; sourceEntity: string },
+): Promise<SyncResult> {
   const metricIds = await getMetricIds(metricCodes);
   const formulaIds = await getFormulaIds(metricCodes);
   const employeeMap = await mapEmployees(rows.map((row) => row.agent_user ?? ''));
@@ -273,6 +284,14 @@ async function writeFacts(rows: SourceAggregate[], metricCodes: string[], buildF
     const employeeId = employeeMap.get(normalizeIdentifier(row.agent_user));
     if (!employeeId) {
       skipped += 1;
+      if (unmappedSource) {
+        await recordMappingException({
+          ...unmappedSource,
+          externalIdentifier: String(row.agent_user ?? ''),
+          exceptionType: 'employee_unmapped',
+          detail: `No employee matches this agent identifier, so its metrics are not being recorded`,
+        });
+      }
       continue;
     }
     for (const fact of buildFacts(row, employeeId)) {
@@ -543,6 +562,12 @@ export async function syncQualityMetrics(yearMonth: string): Promise<SyncResult>
         });
       }
       return facts;
+    }, {
+      // Quality is where an unmapped agent hurts most: the feed stopped
+      // populating Campaign in May 2026, so `User` is the only link between a
+      // score and a person.
+      sourceSystem: 'quality_audit',
+      sourceEntity: 'db_audit.call_quality_assessment',
     });
   } catch (error) {
     return { synced: 0, skipped: 0, errors: [errorMessage(error)] };

@@ -10,6 +10,15 @@ CREATE TABLE IF NOT EXISTS login_announcement (
   expires_at   DATETIME
 );
 
--- Seed a welcome message
+-- Seed a welcome message.
+--
+-- Guarded with NOT EXISTS so re-running this file cannot stack duplicate welcome banners on
+-- the login screen. The CREATE above is already idempotent; the seed was not, and every
+-- migration here is run by hand (production sets SKIP_MIGRATIONS=true), which makes an
+-- accidental second run entirely plausible.
 INSERT INTO login_announcement (id, message, active_status, pinned)
-VALUES (UUID(), '🎉 Welcome to MAS Callnet PeopleOS — your complete workforce hub', 1, 1);
+SELECT UUID(), '🎉 Welcome to MAS Callnet PeopleOS — your complete workforce hub', 1, 1
+FROM DUAL
+WHERE NOT EXISTS (
+  SELECT 1 FROM login_announcement WHERE message LIKE '%Welcome to MAS Callnet PeopleOS%'
+);
