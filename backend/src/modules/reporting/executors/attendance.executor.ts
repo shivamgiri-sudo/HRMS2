@@ -726,9 +726,12 @@ export async function biometricReconciliation(
       JOIN employees e ON e.id = adr.employee_id
       LEFT JOIN branch_master b ON b.id = e.branch_id
       LEFT JOIN process_master p ON p.id = e.process_id
+      -- integration_biometric_daily keys on employee_code + activity_date. It has neither
+      -- employee_id nor record_date, so the previous join threw ER_BAD_FIELD_ERROR on every
+      -- run and this report has never returned a row (36,190 biometric rows sat unjoinable).
       LEFT JOIN integration_biometric_daily ibd
-             ON ibd.employee_id = e.id
-            AND ibd.record_date = adr.record_date
+             ON ibd.employee_code = e.employee_code
+            AND ibd.activity_date = adr.record_date
      WHERE ${clauses.join(" AND ")}
      ORDER BY adr.id ASC`;
 
