@@ -5,14 +5,43 @@ import { db } from "../../db/mysql.js";
 // ─── Vendors ────────────────────────────────────────────────────────────────
 
 export const vendorService = {
-  async list(filters: { is_active?: string; vendor_type?: string }) {
+  async list(filters: {
+    is_active?: string;
+    vendor_type?: string;
+    q?: string;
+    limit?: string | number;
+    offset?: string | number;
+  }) {
     const conds: string[] = [];
     const params: unknown[] = [];
     if (filters.is_active !== undefined) { conds.push("is_active = ?"); params.push(filters.is_active); }
     if (filters.vendor_type)             { conds.push("vendor_type = ?"); params.push(filters.vendor_type); }
+
+    // Type-ahead search. Without this the whole vendor_master is returned and the
+    // caller has to filter client-side.
+    const term = String(filters.q ?? "").trim();
+    if (term) {
+      conds.push("(vendor_name LIKE ? OR vendor_code LIKE ? OR gst_number LIKE ?)");
+      const like = `%${term.replace(/[%_\\]/g, (ch) => `\\${ch}`)}%`;
+      params.push(like, like, like);
+    }
+
     const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
+
+    // Paging is opt-in. Several existing callers (NativeERP, NativeVendorManagement,
+    // NativeProcurementPage) request no limit and rely on the full list, so the
+    // unbounded default is preserved deliberately.
+    // LIMIT/OFFSET are interpolated rather than bound: mysql2 prepared statements
+    // reject placeholders in these positions. Both are coerced to integers first.
+    let paging = "";
+    if (filters.limit !== undefined && String(filters.limit).trim() !== "") {
+      const limit = Math.min(Math.max(Math.trunc(Number(filters.limit)) || 0, 1), 500);
+      const offset = Math.max(Math.trunc(Number(filters.offset)) || 0, 0);
+      paging = ` LIMIT ${limit} OFFSET ${offset}`;
+    }
+
     const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT * FROM vendor_master ${where} ORDER BY vendor_name`,
+      `SELECT * FROM vendor_master ${where} ORDER BY vendor_name${paging}`,
       params
     );
     return rows as RowDataPacket[];
