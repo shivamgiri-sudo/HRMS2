@@ -529,9 +529,12 @@ reportSuiteRouter.get("/:code", reportScopeMiddleware, reportCatalogAccessMiddle
       // The date predicate moves into the LEFT JOIN condition. Leaving it in WHERE
       // would filter out the NULL side and silently degrade this back to an inner join.
       //
-      // Its two placeholders sit in the JOIN, which mysql2 binds positionally BEFORE
-      // every WHERE placeholder — hence unshift rather than push.
-      params.unshift(from, to);
+      // Four placeholders now sit ahead of the WHERE — two in the adr JOIN and two in the
+      // date-restricted session subquery — and mysql2 binds positionally, so they must be
+      // prepended. unshift preserves argument order, so this yields
+      // [adrFrom, adrTo, sesFrom, sesTo, ...whereParams] which is the order they appear in
+      // the statement.
+      params.unshift(from, to, from, to);
       sql = `SELECT adr.record_date,
                     e.employee_code,
                     COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
@@ -566,16 +569,21 @@ reportSuiteRouter.get("/:code", reportScopeMiddleware, reportCatalogAccessMiddle
                LEFT JOIN department_master d ON d.id = e.department_id
                LEFT JOIN designation_master desig ON desig.id = e.designation_id
                LEFT JOIN employees rm ON rm.id = e.reporting_manager_id
-               LEFT JOIN wfm_roster_assignment wra ON wra.employee_id = adr.employee_id AND wra.roster_date = adr.record_date
+               LEFT JOIN wfm_roster_assignment wra ON wra.employee_id = e.id AND wra.roster_date = adr.record_date
                LEFT JOIN wfm_shift_master ws ON ws.id = wra.shift_id
                LEFT JOIN (
+                 -- Date-restricted. Without the WHERE this grouped the whole of
+                 -- wfm_attendance_session — 34,398 rows — on every request, against 792 for
+                 -- the single-day default. It is also joined to the nullable side of a LEFT
+                 -- JOIN, so nothing downstream could narrow it either.
                  SELECT employee_id, session_date,
                         MIN(login_time) AS earliest_punch,
                         MAX(logout_time) AS latest_punch,
                         SUM(total_login_minutes) AS total_login_minutes
                    FROM wfm_attendance_session
+                  WHERE session_date BETWEEN ? AND ?
                   GROUP BY employee_id, session_date
-               ) agg_ses ON agg_ses.employee_id = adr.employee_id AND agg_ses.session_date = adr.record_date
+               ) agg_ses ON agg_ses.employee_id = e.id AND agg_ses.session_date = adr.record_date
               WHERE ${clauses.join(" AND ")}
               ORDER BY adr.record_date DESC, b.branch_name, employee_name`;
       break;
