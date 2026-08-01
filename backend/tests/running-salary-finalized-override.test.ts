@@ -29,6 +29,13 @@ function statusList(): string[] {
   return m[1].split(",").map((s) => s.trim().replace(/^'|'$/g, ""));
 }
 
+/** The CLOSED_STATUSES set that drives is_finalized / is_draft. */
+function closedStatuses(): string[] {
+  const m = SRC.match(/CLOSED_STATUSES = new Set\(\[([^\]]*)\]\)/);
+  if (!m) throw new Error("CLOSED_STATUSES set not found");
+  return m[1].split(",").map((s) => s.trim().replace(/^"|"$/g, "")).filter(Boolean);
+}
+
 /** The CASE ranking, as status -> rank. */
 function ranking(): Record<string, number> {
   const block = SRC.match(/CASE spr\.status([\s\S]*?)END/);
@@ -59,10 +66,29 @@ describe("getFinalizedLineForMonth — which runs count as settled", () => {
     expect(statusList().filter((s) => s.toLowerCase() === "finalized")).toEqual(["finalized"]);
   });
 
-  it("never admits an open month — those must stay a live estimate", () => {
-    const list = statusList();
-    expect(list).not.toContain("processing");
-    expect(list).not.toContain("draft");
+  it("never reports an open month as settled", () => {
+    // The query deliberately admits draft/processing runs (13a61794) so the card
+    // shows the figure payroll actually computed instead of a second, different
+    // estimate. The protection moved rather than disappeared: an open month is
+    // returned but must carry is_finalized:false / is_draft:true, which is what
+    // RunningMonthCard, PayslipViewer and Payroll.tsx branch on to label it
+    // "Draft". Guard that, not the old exclusion.
+    const closed = closedStatuses();
+    for (const open of ["draft", "processing", "calculating", "calculated"]) {
+      expect(closed).not.toContain(open);
+    }
+  });
+
+  it("ranks every open status below every settled one", () => {
+    // A month with both a settled line and a stale draft line must resolve to
+    // the settled one — LIMIT 1 takes whichever the CASE ranks first.
+    const rank = ranking();
+    const closed = closedStatuses().map((s) => rank[s]).filter((n) => Number.isFinite(n));
+    const open = ["draft", "processing", "calculating", "calculated"]
+      .map((s) => rank[s]).filter((n) => Number.isFinite(n));
+    expect(closed.length).toBeGreaterThan(0);
+    expect(open.length).toBeGreaterThan(0);
+    expect(Math.max(...closed)).toBeLessThan(Math.min(...open));
   });
 });
 

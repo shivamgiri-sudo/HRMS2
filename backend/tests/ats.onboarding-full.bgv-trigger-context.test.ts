@@ -41,9 +41,15 @@ describe("loadAsyncBgvTriggerContext", () => {
 
     const context = await loadAsyncBgvTriggerContext("candidate-1", (value) => value === "enc-value" ? "001122334455" : "");
 
-    expect(mockDbExecute.mock.calls[0][0]).not.toContain("p.pan_number");
-    expect(mockDbExecute.mock.calls[0][0]).not.toContain("p.aadhar_number");
-    expect(mockDbExecute.mock.calls[0][0]).not.toContain("p.account_number");
+    // These profile columns do not exist in the live schema, so selecting one
+    // would make the whole BGV trigger fail with ER_BAD_FIELD_ERROR. Matched
+    // with a boundary rather than toContain: the query legitimately selects
+    // p.pan_number_encrypted, which contains "p.pan_number" as a substring and
+    // made a plain toContain fail on correct SQL.
+    const sql = String(mockDbExecute.mock.calls[0][0]);
+    for (const col of ["p.pan_number", "p.aadhar_number", "p.account_number"]) {
+      expect(sql).not.toMatch(new RegExp(col.replace(".", "\\.") + "\\b(?!_)"));
+    }
     expect(mockDbExecute.mock.calls[1][0]).toContain("account_no_encrypted");
     expect(context.bank.accountNo).toBe("001122334455");
     expect(context.bank.ifscCode).toBe("HDFC0001234");
