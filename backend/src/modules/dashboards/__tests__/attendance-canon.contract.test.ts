@@ -100,7 +100,12 @@ describe("attendance canon", () => {
     const source = stripComments(read("src/modules/wfm/wfm.routes.ts"));
     // presentDays and the percentage numerator must be the same expression, or the
     // two tiles measure different things and read as a contradiction.
-    expect(source).toMatch(/\$\{presentSql\(\)\}\s+AS presentDays/);
+    //
+    // The COALESCE(..., 0) wrapper is permitted and expected: an empty month returns one
+    // row of NULLs rather than zero rows, which blanked every tile on /my-dashboard on
+    // 1 August. What matters here is that the canonical helper is what gets wrapped — a
+    // hand-rolled expression in its place is the drift this guards against.
+    expect(source).toMatch(/\$\{presentSql\(\)\}(?:,\s*0\))?\s+AS presentDays/);
     expect(source).toMatch(/\$\{attendedDaysSql\(\)\}\s*\/\s*NULLIF\(\$\{expectedToWorkSql\(\)\}/);
   });
 

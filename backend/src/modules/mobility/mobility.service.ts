@@ -236,13 +236,58 @@ export const mobilityService = {
       );
 
       if (salary_revision != null && salary_revision > 0) {
-        await db.execute(
-          `INSERT INTO employee_salary_assignment
-             (id, employee_id, ctc, effective_date, created_by, created_at)
-           VALUES (?, ?, ?, CURDATE(), ?, NOW())
-           ON DUPLICATE KEY UPDATE ctc = VALUES(ctc), effective_date = VALUES(effective_date)`,
-          [randomUUID(), employee_id, salary_revision, data.approved_by]
+        // This INSERT could never succeed: it wrote ctc / effective_date / created_by, none
+        // of which exist — the columns are ctc_annual / effective_from / assigned_by. Every
+        // approved promotion carrying a salary revision threw ER_BAD_FIELD_ERROR here, after
+        // the designation UPDATE above had already committed. The employee was promoted, the
+        // record marked completed, and the new CTC was never recorded.
+        //
+        // structure_id is NOT NULL with no default, and a promotion does not choose a new
+        // salary structure — it carries the current one forward. Read it from the active
+        // assignment rather than inventing a value.
+        const [currentRows] = await db.execute<RowDataPacket[]>(
+          `SELECT structure_id
+             FROM employee_salary_assignment
+            WHERE employee_id = ? AND active_status = 1
+            ORDER BY effective_from DESC
+            LIMIT 1`,
+          [employee_id]
         );
+        const structureId = (currentRows as RowDataPacket[])[0]?.structure_id as string | undefined;
+
+        if (!structureId) {
+          // Loudly, not silently: without an existing structure there is nothing to carry
+          // forward, and quietly skipping is how a missing salary revision goes unnoticed.
+          console.error(
+            `[mobility] promotion ${id}: employee ${employee_id} has no active salary assignment, ` +
+              `so the revision to ${salary_revision} was NOT recorded. Assign a salary structure first.`
+          );
+        } else {
+          // One active assignment per employee is the invariant — 0 of 29,927 employees have
+          // more than one. Supersede the current row before inserting, matching
+          // employee.service.ts. ON DUPLICATE KEY is deliberately absent: the only unique key
+          // is PRIMARY(id) and every insert supplies a fresh UUID, so the clause could never
+          // have fired, and appending is correct for an effective-dated history table.
+          await db.execute(
+            `UPDATE employee_salary_assignment
+                SET active_status = 0, effective_to = CURDATE()
+              WHERE employee_id = ? AND active_status = 1`,
+            [employee_id]
+          );
+          await db.execute(
+            `INSERT INTO employee_salary_assignment
+               (id, employee_id, structure_id, ctc_annual, effective_from, assigned_by, assignment_reason)
+             VALUES (?, ?, ?, ?, CURDATE(), ?, ?)`,
+            [
+              randomUUID(),
+              employee_id,
+              structureId,
+              salary_revision,
+              data.approved_by,
+              `Promotion: ${from_designation ?? "–"} → ${to_designation}`,
+            ]
+          );
+        }
       }
 
       await db.execute(

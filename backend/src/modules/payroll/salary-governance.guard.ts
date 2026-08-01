@@ -45,7 +45,7 @@ async function writeAudit(
   try {
     await db.execute(
       `INSERT INTO sensitive_action_log
-         (id, actor_user_id, action_type, module_key, entity_type, entity_id, change_summary, created_at)
+         (id, actor_user_id, action_type, module_key, entity_type, entity_id, change_summary, acted_at)
        VALUES (UUID(), ?, ?, 'payroll', 'salary_assignment', ?, ?, NOW())`,
       [actorUserId, actionType, entityId ?? null, JSON.stringify(summary)]
     );

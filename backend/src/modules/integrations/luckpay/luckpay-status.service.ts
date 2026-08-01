@@ -279,7 +279,7 @@ export async function syncDigilockerStatus(candidateId: string): Promise<SyncOut
 export async function syncEsignStatus(clientTransactionId: string): Promise<SyncOutcome> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT id, checklist_id, employee_id, candidate_id, document_code,
-            client_transaction_id, provider_reference_id, status
+            client_transaction_id, provider_reference_id, status, signed_file_id
        FROM employee_document_esign_transaction
       WHERE provider = 'luckpay' AND client_transaction_id = ?
       LIMIT 1`,
@@ -292,7 +292,11 @@ export async function syncEsignStatus(clientTransactionId: string): Promise<Sync
   if (!transactionId) {
     return { state: "not_started", clientTransactionId, message: "No provider transaction id recorded" };
   }
-  if (["signed", "completed"].includes(String(row.status ?? ""))) {
+  // Short-circuit only when the artefact is genuinely in hand. Returning early on
+  // status alone left every 'signed but signed_file_id IS NULL' row permanently
+  // unrecoverable — exactly the state the identifier bug created, and the state a
+  // failed download creates. Those rows must be able to heal on a later pass.
+  if (["signed", "completed"].includes(String(row.status ?? "")) && row.signed_file_id) {
     return { state: "completed", clientTransactionId, transactionId, changed: false };
   }
 

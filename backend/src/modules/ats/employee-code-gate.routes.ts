@@ -129,7 +129,7 @@ router.post(
     // Audit
     await db.execute(
       `INSERT INTO sensitive_action_log
-         (id, actor_user_id, action_type, module_key, entity_type, entity_id, change_summary, created_at)
+         (id, actor_user_id, action_type, module_key, entity_type, entity_id, change_summary, acted_at)
        VALUES (UUID(), ?, 'EMPLOYEE_CODE_GENERATED', 'ats', 'ats_candidate', ?, ?, NOW())`,
       [req.authUser!.id, candidateId, JSON.stringify({ employee_code: empCode })],
     ).catch(() => {});

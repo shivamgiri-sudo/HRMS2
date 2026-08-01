@@ -138,11 +138,18 @@ describe("atsService.createCandidate", () => {
 
   it("inserts candidate and returns it", async () => {
     mockExecute.mockResolvedValueOnce([[]]); // no duplicate mobile
+    // The email duplicate check was restored to createCandidate (it had been
+    // lost), so a valid address costs one more query before the INSERT.
+    mockExecute.mockResolvedValueOnce([[]]); // no duplicate email
     mockExecute.mockResolvedValueOnce([{ affectedRows: 1 }]); // INSERT
     mockExecute.mockResolvedValueOnce([[fakeCandidate]]); // re-fetch by id (getCandidate)
     const result = await atsService.createCandidate(fullCandidateInput, "user-1");
     expect(result.full_name).toBe("Rahul Sharma");
-    expect(String(mockExecute.mock.calls[1][0])).toContain("INSERT");
+    // Located by statement rather than index, so a further query added ahead of
+    // it cannot silently point this assertion at the wrong call.
+    expect(
+      mockExecute.mock.calls.some(([sql]) => /INSERT INTO ats_candidate/i.test(String(sql))),
+    ).toBe(true);
   });
 });
 

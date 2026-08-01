@@ -60,14 +60,24 @@ export class BankDetailSyncHandler extends DomainSyncBase {
 
       try {
         const [res] = await db.execute<any>(
+          // Two columns here never existed, so every legacy bank-detail import threw
+          // ER_BAD_FIELD_ERROR — silently, because the whole block sits in a bare
+          // try/catch. The column is bank_branch, not bank_branch_name.
+          //
+          // verified_status did not exist either, and it is not a rename: the code wrote the
+          // string 'legacy_imported' while the real column, verified, is tinyint(1). That
+          // string is provenance, not a verification state. A legacy-imported account has
+          // NOT been verified by anyone, so it is recorded as verified = 0 — which is both
+          // true and the safe default. Provenance is already implied by this handler being
+          // the writer; inventing a column to carry it would be a schema change, not a fix.
           `INSERT INTO employee_bank_detail
-             (id, employee_id, account_number, bank_name, bank_branch_name,
-              ifsc_code, account_holder_name, is_primary, verified_status, created_at)
-           VALUES (UUID(), ?, ?, ?, ?, ?, ?, 1, 'legacy_imported', NOW())
+             (id, employee_id, account_number, bank_name, bank_branch,
+              ifsc_code, account_holder_name, is_primary, verified, created_at)
+           VALUES (UUID(), ?, ?, ?, ?, ?, ?, 1, 0, NOW())
            ON DUPLICATE KEY UPDATE
              account_number      = VALUES(account_number),
              bank_name           = VALUES(bank_name),
-             bank_branch_name    = VALUES(bank_branch_name),
+             bank_branch         = VALUES(bank_branch),
              ifsc_code           = VALUES(ifsc_code),
              account_holder_name = VALUES(account_holder_name),
              updated_at          = NOW()`,

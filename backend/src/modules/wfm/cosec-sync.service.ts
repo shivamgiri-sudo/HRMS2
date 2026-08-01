@@ -37,7 +37,49 @@ type SyncResult = {
 };
 
 let lastSyncResult: SyncResult | null = null;
-let running = false;
+
+/**
+ * When the in-flight sync started, or null when idle.
+ *
+ * This was a plain boolean. The `finally` below does clear it, so a thrown
+ * error was never the problem — a *hang* was. The COSEC SQL Server spends
+ * ~15s in its post-login phase and can stall there indefinitely, and a sync
+ * that never returns never reaches `finally`, so the flag stayed set for the
+ * life of the process. Every subsequent run then refused with "COSEC sync is
+ * already running": 5,593 failed runs, against a connector whose credentials
+ * are perfectly valid.
+ *
+ * Holding the start time instead of a boolean lets a later run recognise a
+ * lock nobody is holding any more and take it over.
+ */
+let runningSince: number | null = null;
+
+/**
+ * A real sync moves ~45 days of punches and takes minutes, not hours. Beyond
+ * this the holder is assumed dead. Deliberately generous: taking over too
+ * early risks two concurrent syncs, and the writes are upserts but the source
+ * pull is expensive.
+ */
+const STALE_LOCK_MS = Number(process.env.COSEC_SYNC_STALE_LOCK_MS ?? 60 * 60 * 1000);
+
+export type CosecLockDecision =
+  | { action: "acquire" }
+  | { action: "reject"; heldMs: number }
+  | { action: "takeover"; heldMs: number };
+
+/**
+ * Pure lock decision, split out so it can be tested without a COSEC server, a
+ * database, or an hour of waiting. sync() holds the only mutable state.
+ */
+export function decideCosecLock(
+  heldSince: number | null,
+  now: number,
+  staleAfterMs: number,
+): CosecLockDecision {
+  if (heldSince === null) return { action: "acquire" };
+  const heldMs = now - heldSince;
+  return heldMs < staleAfterMs ? { action: "reject", heldMs } : { action: "takeover", heldMs };
+}
 
 function boolEnv(name: string, fallback = false): boolean {
   const raw = process.env[name];
@@ -638,12 +680,25 @@ export const cosecSyncService = {
   },
 
   isRunning() {
-    return running;
+    return runningSince !== null;
   },
 
   async sync(options: { from?: string; to?: string } = {}): Promise<SyncResult> {
-    if (running) throw new Error("COSEC sync is already running");
-    running = true;
+    const lock = decideCosecLock(runningSince, Date.now(), STALE_LOCK_MS);
+    if (lock.action === "reject") {
+      throw new Error(
+        `COSEC sync is already running (started ${Math.round(lock.heldMs / 1000)}s ago)`,
+      );
+    }
+    if (lock.action === "takeover") {
+      // Past the threshold nobody is coming back. Say so loudly — a silent
+      // takeover would hide the hang that caused it.
+      logger.warn(
+        { heldMs: lock.heldMs, staleAfterMs: STALE_LOCK_MS },
+        "[COSEC Sync] previous run never released the lock; assuming it died and taking over",
+      );
+    }
+    runningSince = Date.now();
     const from = normalizeDateInput(options.from, defaultFromDate());
     const to = normalizeDateInput(options.to, defaultToDate());
     const config = getConfig();
@@ -785,7 +840,7 @@ export const cosecSyncService = {
       lastSyncResult = result;
       return result;
     } finally {
-      running = false;
+      runningSince = null;
     }
   },
 

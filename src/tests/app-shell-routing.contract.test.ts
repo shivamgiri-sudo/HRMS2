@@ -208,6 +208,10 @@ describe("application shell routing contracts", () => {
       "/reports/source-validation",
       "/reset-password",
       "/reviews-management",
+      // Admin surface for the Social Media page, gated to super_admin/hr_admin/admin and
+      // opened from /social-feed — which is itself in the sidebar. Same class as the other
+      // parent-screen entries above, not a forgotten menu item.
+      "/social-feed/admin",
       "/security",
       "/super-admin/live-location",
       "/terms-of-service",

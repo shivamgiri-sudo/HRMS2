@@ -349,6 +349,77 @@ export async function luckpayPostJson(
   return toLuckpayResponse((response as { data?: unknown })?.data);
 }
 
+/**
+ * POST for the download endpoints, which do not always answer with JSON.
+ *
+ * /downloadESignDocument returns `Content-Type: application/pdf` and a RAW PDF
+ * body — not a JSON envelope, not base64. Fetching that through luckpayPostJson
+ * let axios decode 79KB of binary as UTF-8 text, which silently mangles it beyond
+ * recovery: the signed document was reachable all along and every retrieval
+ * produced zero usable bytes.
+ *
+ * So read the body as bytes first and decide afterwards. When it is a document,
+ * return the buffer untouched; when it is JSON, hand back the usual envelope so
+ * the existing base64/nested extraction still applies.
+ */
+export async function luckpayPostBinaryOrJson(
+  cfg: LuckpayResolvedConfig,
+  path: string,
+  payload: Record<string, unknown>,
+): Promise<{ binary: Buffer | null; contentType: string | null; response: LuckpayResponse | null }> {
+  const accessToken = await getLuckpayAccessToken(cfg);
+  const raw = await requestWithRetry(async () => axios.post(
+    `${cfg.baseUrl}${path}`,
+    payload,
+    {
+      timeout: cfg.timeoutMs,
+      responseType: "arraybuffer",
+      headers: {
+        Authorization: luckpayAuthHeader(cfg.clientId),
+        "X-Access-Token": `Bearer ${accessToken}`,
+        "Content-Type": "application/json",
+      },
+      maxContentLength: Infinity,
+      maxBodyLength: Infinity,
+    },
+  ), { idempotent: false }) as { data?: unknown; headers?: Record<string, string> };
+
+  const contentType = String(raw?.headers?.["content-type"] ?? "").toLowerCase() || null;
+  const body = raw?.data;
+
+  // responseType 'arraybuffer' normally yields bytes, but a JSON body can still
+  // arrive already parsed (interceptors, mocks, some proxies). Handle the parsed
+  // shape directly rather than forcing it through Buffer.from, which would
+  // produce garbage.
+  if (body && typeof body === "object" && !Buffer.isBuffer(body) && !(body instanceof ArrayBuffer) && !ArrayBuffer.isView(body)) {
+    return { binary: null, contentType, response: toLuckpayResponse(body) };
+  }
+
+  const buffer = Buffer.isBuffer(body)
+    ? body
+    : typeof body === "string"
+      ? Buffer.from(body, "binary")
+      : Buffer.from((body ?? []) as ArrayBuffer);
+
+  // Trust the bytes over the header — a mislabelled body is still a document.
+  const looksBinary =
+    buffer.subarray(0, 5).toString("latin1") === "%PDF-" ||
+    buffer.subarray(0, 2).toString("latin1") === "PK" ||
+    (contentType !== null && /application\/(pdf|zip|octet-stream)|image\//.test(contentType));
+
+  if (looksBinary && buffer.length > 0) {
+    return { binary: buffer, contentType, response: null };
+  }
+
+  try {
+    return { binary: null, contentType, response: toLuckpayResponse(JSON.parse(buffer.toString("utf8"))) };
+  } catch {
+    // Neither a recognised document nor JSON. Surface it as an empty envelope so
+    // the caller reports "nothing retrieved" rather than throwing.
+    return { binary: null, contentType, response: toLuckpayResponse({}) };
+  }
+}
+
 export async function luckpayPostMultipart(
   cfg: LuckpayResolvedConfig,
   path: string,
