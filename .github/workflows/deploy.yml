@@ -46,6 +46,55 @@ jobs:
         run: npx vitest run tests/peopleos-module-registry.test.ts tests/policy.test.ts tests/domain-registry.test.ts tests/data-governance.test.ts tests/action-item-registry.test.ts
         timeout-minutes: 5
 
+      # ── Everything below this line was missing on 01-Aug-2026 ──────────────────
+      # Five deploys shipped green that day while the CI workflow was failing on the
+      # same commits, because deploy.yml and ci.yml are separate workflows and this
+      # one consults nothing. The gate above covers 5 registry files out of ~3,600
+      # tests and touches none of the pages under UAT. Four working pages broke in
+      # one release and reached the CEO mid-test.
+      #
+      # These are not new tests. They already exist, already pass, and already run in
+      # ci.yml — where nothing acts on the result. Running them here is what makes
+      # them a gate rather than a report.
+
+      # The suite that would have caught three of the four regressions. It guards the
+      # UI/API contracts — an endpoint changing shape under a page that reads it.
+      - name: Frontend test suite
+        run: npx vitest run --config vitest.config.ts --testTimeout=60000
+        timeout-minutes: 10
+
+      # The six contracts written against the Round 1 findings. Without these in the
+      # deploy path, a fix for a UAT finding can be reverted by an unrelated commit
+      # and ship again.
+      - name: CEO UAT regression contracts
+        working-directory: backend
+        run: |
+          npx vitest run \
+            src/modules/dashboards/__tests__/attendance-canon.contract.test.ts \
+            src/modules/dashboards/__tests__/dashboard-summary-inbox-isolation.test.ts \
+            src/modules/payroll/__tests__/payroll-signoff-schema-contract.test.ts \
+            src/modules/payroll/__tests__/payroll-payslip-access.contract.test.ts \
+            src/modules/access/__tests__/ceo-page-scope.contract.test.ts \
+            src/modules/lms/__tests__/lms-launch-context-portal.contract.test.ts \
+            src/modules/lms/__tests__/lms-session-insert.contract.test.ts \
+            src/modules/reporting/__tests__/daily-attendance-report.contract.test.ts
+        timeout-minutes: 10
+
+      # Authentication, document vault, migration governance, route contract, database
+      # reliability and worker safety. A production deploy should not be able to ship
+      # past a failing auth or RBAC contract.
+      - name: Security and RBAC contracts
+        working-directory: backend
+        run: |
+          npx vitest run \
+            src/modules/auth/__tests__/auth-security.test.ts \
+            src/modules/files/__tests__/document-vault-security.test.ts \
+            src/db/__tests__/migration-governance.test.ts \
+            src/platform/__tests__/route-contract.test.ts \
+            src/db/__tests__/connection-reliability.test.ts \
+            src/workers/__tests__/worker-safety.test.ts
+        timeout-minutes: 10
+
       - name: Build frontend
         run: npm run build
 
