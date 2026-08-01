@@ -43,21 +43,48 @@ export type DispatchOutcome = {
   emailedTo?: string[];
 };
 
-async function audit(kitId: string | null, action: string, actorUserId: string | null, detail: unknown) {
+/**
+ * Kit audit entry.
+ *
+ * Writes the columns this table actually has. An earlier version used a
+ * `detail_json` column that does not exist and passed NULL for a NOT NULL
+ * employee_id, so every entry was silently rejected — the .catch() below hid it
+ * completely. Found by running the flow rather than by reading it.
+ *
+ * The catch stays: an audit failure must not abort a send. But a failure is now
+ * logged rather than discarded, so the next one is visible.
+ */
+async function audit(
+  kitId: string | null,
+  employeeId: string,
+  action: string,
+  actorUserId: string | null,
+  detail: unknown,
+) {
   await db.execute(
     `INSERT INTO employee_joining_document_audit_log
-       (id, checklist_id, employee_id, action_type, actor_type, actor_user_id, detail_json, created_at)
-     VALUES (?, NULL, NULL, ?, 'system', ?, CAST(? AS JSON), NOW())`,
-    [randomUUID(), action, actorUserId, JSON.stringify({ kitId, ...(detail as object ?? {}) })],
-  ).catch(() => undefined);
+       (id, employee_id, checklist_id, document_code, action_type,
+        new_value, remarks, actor_user_id, actor_type)
+     VALUES (?, ?, NULL, 'JOINING_KIT', ?, CAST(? AS JSON), ?, ?, 'system')`,
+    [
+      randomUUID(),
+      employeeId,
+      action,
+      JSON.stringify({ kitId, ...((detail as object) ?? {}) }),
+      `Joining kit ${kitId ?? ""}`.trim(),
+      actorUserId,
+    ],
+  ).catch((e: unknown) => {
+    console.warn("[joining-kit] audit entry not written:", e instanceof Error ? e.message : e);
+  });
 }
 
-async function blockKit(kitId: string, reason: BlockedReason, message: string): Promise<DispatchOutcome> {
+async function blockKit(kitId: string, employeeId: string, reason: BlockedReason, message: string): Promise<DispatchOutcome> {
   await db.execute(
     `UPDATE employee_joining_esign_kit SET status = 'blocked', blocked_reason = ? WHERE id = ?`,
     [reason, kitId],
   ).catch(() => undefined);
-  await audit(kitId, "KIT_BLOCKED", null, { reason, message });
+  await audit(kitId, employeeId, "KIT_BLOCKED", null, { reason, message });
   return { kitId, status: "blocked", blockedReason: reason, message };
 }
 
@@ -96,7 +123,7 @@ export async function queueJoiningKit(params: {
     [kitId, params.employeeId, params.candidateId ?? null, String(docs[0].id),
      params.triggerSource ?? "manual", params.actorUserId ?? null],
   );
-  await audit(kitId, "KIT_QUEUED", params.actorUserId ?? null, { documents: docs.length });
+  await audit(kitId, params.employeeId, "KIT_QUEUED", params.actorUserId ?? null, { documents: docs.length });
   return { kitId, created: true };
 }
 
@@ -128,10 +155,10 @@ export async function dispatchJoiningKit(kitId: string, actorUserId: string | nu
   }
 
   if (!env.JOINING_KIT_ESIGN_ENABLED) {
-    return blockKit(kitId, "feature_disabled", "The consolidated joining kit is switched off (JOINING_KIT_ESIGN_ENABLED).");
+    return blockKit(kitId, String(kit.employee_id), "feature_disabled", "The consolidated joining kit is switched off (JOINING_KIT_ESIGN_ENABLED).");
   }
   if (!env.LUCKPAY_PROVIDER_ENABLED) {
-    return blockKit(kitId, "provider_disabled", "The eSign provider is disabled, so no kit can be sent.");
+    return blockKit(kitId, String(kit.employee_id), "provider_disabled", "The eSign provider is disabled, so no kit can be sent.");
   }
 
   const employeeId = String(kit.employee_id);
@@ -148,7 +175,7 @@ export async function dispatchJoiningKit(kitId: string, actorUserId: string | nu
     [employeeId],
   ).catch(() => [[{ n: 0 }]] as unknown as [RowDataPacket[]]);
   if (Number((live as RowDataPacket[])[0]?.n ?? 0) > 0) {
-    return blockKit(kitId, "per_document_flow_active",
+    return blockKit(kitId, employeeId, "per_document_flow_active",
       "This employee already has an active per-document signing link. Let it complete or expire before sending a kit.");
   }
 
@@ -159,14 +186,14 @@ export async function dispatchJoiningKit(kitId: string, actorUserId: string | nu
     [employeeId],
   ).catch(() => [[{ n: 0 }]] as unknown as [RowDataPacket[]]);
   if (Number((pending as RowDataPacket[])[0]?.n ?? 0) > 0) {
-    return blockKit(kitId, "hr_fill_pending",
+    return blockKit(kitId, employeeId, "hr_fill_pending",
       "Some documents still need HR to fill them in. Complete those before sending the kit.");
   }
 
   const recipients = [kit.personal_email, kit.official_email]
     .filter((e): e is string => typeof e === "string" && e.includes("@"));
   if (recipients.length === 0) {
-    return blockKit(kitId, "no_recipient_email", "This employee has no email address on record.");
+    return blockKit(kitId, employeeId, "no_recipient_email", "This employee has no email address on record.");
   }
 
   // ── assemble ───────────────────────────────────────────────────────────────
@@ -182,12 +209,12 @@ export async function dispatchJoiningKit(kitId: string, actorUserId: string | nu
     });
   } catch (e) {
     const err = e as { code?: string; message: string };
-    return blockKit(kitId, (err.code as BlockedReason) ?? "draft_missing", err.message);
+    return blockKit(kitId, employeeId, (err.code as BlockedReason) ?? "draft_missing", err.message);
   }
 
   // A placeholder would ask the employee to sign a watermarked draft.
   if (assembled.buffer.toString("latin1").includes("TEMPLATE NOT CONFIGURED")) {
-    return blockKit(kitId, "placeholder_draft",
+    return blockKit(kitId, employeeId, "placeholder_draft",
       "One of the documents is still an unconfigured placeholder draft. Configure its template before sending.");
   }
 
@@ -259,7 +286,7 @@ export async function dispatchJoiningKit(kitId: string, actorUserId: string | nu
       `UPDATE employee_joining_esign_kit SET status = 'failed', blocked_reason = 'provider_error' WHERE id = ?`,
       [kitId],
     ).catch(() => undefined);
-    await audit(kitId, "KIT_PROVIDER_FAILED", actorUserId, { error: errorMessage });
+    await audit(kitId, employeeId, "KIT_PROVIDER_FAILED", actorUserId, { error: errorMessage });
     return { kitId, status: "failed", message: `The eSign provider rejected the request: ${errorMessage}` };
   }
 
@@ -316,7 +343,7 @@ export async function dispatchJoiningKit(kitId: string, actorUserId: string | nu
     console.warn("[joining-kit] email failed:", e instanceof Error ? e.message : e);
   }
 
-  await audit(kitId, "KIT_SENT", actorUserId, {
+  await audit(kitId, employeeId, "KIT_SENT", actorUserId, {
     documents: assembled.items.length, pages: assembled.totalPages, emailed: emailedTo.length,
   });
 
@@ -486,7 +513,7 @@ export async function finalizeKitEsign(params: {
     await recalculateDocumentProgress(String(kit.employee_id));
   } catch { /* derived value; never block completion on it */ }
 
-  await audit(params.kitId, "KIT_SIGNED", null, {
+  await audit(params.kitId, String(kit.employee_id), "KIT_SIGNED", null, {
     documents: items.length, artefactRetrieved: Boolean(signedBytes), placementOk,
   });
 
