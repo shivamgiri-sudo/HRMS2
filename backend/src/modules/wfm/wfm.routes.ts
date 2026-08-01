@@ -1200,25 +1200,34 @@ wfmRouter.get("/my-attendance", h(async (req: any, res: any) => {
   //
   // All of it now derives from the shared helpers, so this endpoint, the org-wide
   // metric and the dashboards agree by construction.
+  // Every aggregate is COALESCEd because an empty month returns one row of NULLs, not
+  // zero rows. SUM() over no rows is NULL, and an aggregate query without GROUP BY always
+  // produces exactly one row — so the `?? {...}` default below can never fire, and the
+  // response goes out as fourteen null fields.
+  //
+  // That is what blanked every tile on /my-dashboard on 1 August: it was the first day of
+  // the month, the caller had no rows yet in 2026-08, and asNumber(null) renders "—".
+  // Verified against production: the same query over an empty month returns
+  // presentDays NULL / attendancePct NULL, and returns 0 / 0.0 once COALESCEd.
   const [rows] = await db.execute(
     `SELECT
-       ${presentSql()} AS presentDays,
-       SUM(CASE WHEN attendance_status = '${HALF_DAY_STATUS}' THEN 1 ELSE 0 END) AS halfDays,
-       SUM(CASE WHEN attendance_status = 'absent' THEN 1 ELSE 0 END) AS absentDays,
-       SUM(CASE WHEN late_mark = 1 THEN 1 ELSE 0 END) AS lateDays,
-       SUM(CASE WHEN attendance_status IN (${statusList(LEAVE_STATUSES)}) THEN 1 ELSE 0 END) AS leaveDays,
-       SUM(CASE WHEN attendance_status = 'holiday' THEN 1 ELSE 0 END) AS holidayDays,
-       SUM(CASE WHEN attendance_status = 'week_off' THEN 1 ELSE 0 END) AS weekOffDays,
-       SUM(COALESCE(lwp_value, 0)) AS totalLwp,
-       SUM(CASE WHEN late_mark = 1 THEN 1 ELSE 0 END) AS lateMarks,
-       COUNT(CASE WHEN attendance_status NOT IN (${statusList(NON_WORKING_STATUSES)}) THEN 1 END) AS totalWorkingDays,
-       ${expectedToWorkSql()} AS expectedToWork,
-       ROUND(SUM(COALESCE(raw_minutes, 0)) / 60, 2) AS totalHours,
-       SUM(CASE WHEN work_mode IN ('wfo', 'office') THEN 1 ELSE 0 END) AS wfoDays,
-       ROUND(
+       COALESCE(${presentSql()}, 0) AS presentDays,
+       COALESCE(SUM(CASE WHEN attendance_status = '${HALF_DAY_STATUS}' THEN 1 ELSE 0 END), 0) AS halfDays,
+       COALESCE(SUM(CASE WHEN attendance_status = 'absent' THEN 1 ELSE 0 END), 0) AS absentDays,
+       COALESCE(SUM(CASE WHEN late_mark = 1 THEN 1 ELSE 0 END), 0) AS lateDays,
+       COALESCE(SUM(CASE WHEN attendance_status IN (${statusList(LEAVE_STATUSES)}) THEN 1 ELSE 0 END), 0) AS leaveDays,
+       COALESCE(SUM(CASE WHEN attendance_status = 'holiday' THEN 1 ELSE 0 END), 0) AS holidayDays,
+       COALESCE(SUM(CASE WHEN attendance_status = 'week_off' THEN 1 ELSE 0 END), 0) AS weekOffDays,
+       COALESCE(SUM(COALESCE(lwp_value, 0)), 0) AS totalLwp,
+       COALESCE(SUM(CASE WHEN late_mark = 1 THEN 1 ELSE 0 END), 0) AS lateMarks,
+       COALESCE(COUNT(CASE WHEN attendance_status NOT IN (${statusList(NON_WORKING_STATUSES)}) THEN 1 END), 0) AS totalWorkingDays,
+       COALESCE(${expectedToWorkSql()}, 0) AS expectedToWork,
+       COALESCE(ROUND(SUM(COALESCE(raw_minutes, 0)) / 60, 2), 0) AS totalHours,
+       COALESCE(SUM(CASE WHEN work_mode IN ('wfo', 'office') THEN 1 ELSE 0 END), 0) AS wfoDays,
+       COALESCE(ROUND(
          ${attendedDaysSql()} / NULLIF(${expectedToWorkSql()}, 0) * 100,
          1
-       ) AS attendancePct
+       ), 0) AS attendancePct
      FROM attendance_daily_record
      WHERE employee_id = ?
        AND DATE_FORMAT(record_date, '%Y-%m') = ?
@@ -1226,22 +1235,11 @@ wfmRouter.get("/my-attendance", h(async (req: any, res: any) => {
     [selfEmp.id, monthStr]
   );
 
-  const data = (rows as any[])[0] ?? {
-    presentDays: 0,
-    halfDays: 0,
-    absentDays: 0,
-    lateDays: 0,
-    leaveDays: 0,
-    holidayDays: 0,
-    weekOffDays: 0,
-    totalLwp: 0,
-    lateMarks: 0,
-    totalWorkingDays: 0,
-    expectedToWork: 0,
-    totalHours: 0,
-    wfoDays: 0,
-    attendancePct: 0,
-  };
+  // No `?? {...}` fallback here on purpose. rows[0] is always present for an aggregate
+  // without GROUP BY, so a default object would be unreachable and would imply a guard
+  // that does not exist — which is exactly how the NULL month went unnoticed. The
+  // COALESCEs above are the guard.
+  const data = (rows as any[])[0];
 
   return res.json({
     success: true,
@@ -1280,20 +1278,22 @@ wfmRouter.get("/attendance/summary/:employeeId/:month", h(async (req: any, res: 
        -- defects plus one of its own: presentDays counted IN ('present','late'),
        -- and 'late' is not an ENUM member, so it contributed nothing while giving
        -- the impression late arrivals were being credited as present.
-       ${presentSql()} AS presentDays,
-       SUM(CASE WHEN attendance_status = '${HALF_DAY_STATUS}' THEN 1 ELSE 0 END) AS halfDays,
-       SUM(CASE WHEN attendance_status = 'absent' THEN 1 ELSE 0 END) AS absentDays,
-       SUM(CASE WHEN late_mark = 1 THEN 1 ELSE 0 END) AS lateDays,
-       SUM(CASE WHEN attendance_status IN (${statusList(LEAVE_STATUSES)}) THEN 1 ELSE 0 END) AS leaveDays,
-       SUM(CASE WHEN attendance_status = 'holiday' THEN 1 ELSE 0 END) AS holidayDays,
-       SUM(CASE WHEN attendance_status = 'week_off' THEN 1 ELSE 0 END) AS weekOffDays,
-       SUM(COALESCE(lwp_value, 0)) AS totalLwp,
-       SUM(CASE WHEN late_mark = 1 THEN 1 ELSE 0 END) AS lateMarks,
-       COUNT(CASE WHEN attendance_status NOT IN (${statusList(NON_WORKING_STATUSES)}) THEN 1 END) AS totalWorkingDays,
-       ${expectedToWorkSql()} AS expectedToWork,
-       ROUND(${attendedDaysSql()} / NULLIF(${expectedToWorkSql()}, 0) * 100, 1) AS attendancePct,
-       ROUND(SUM(COALESCE(raw_minutes, 0)) / 60, 2) AS totalHours,
-       SUM(CASE WHEN work_mode IN ('wfo', 'office') THEN 1 ELSE 0 END) AS wfoDays
+       -- COALESCEd for the same reason as /my-attendance: an empty month returns one
+       -- row of NULLs, never zero rows, so the default object below is unreachable.
+       COALESCE(${presentSql()}, 0) AS presentDays,
+       COALESCE(SUM(CASE WHEN attendance_status = '${HALF_DAY_STATUS}' THEN 1 ELSE 0 END), 0) AS halfDays,
+       COALESCE(SUM(CASE WHEN attendance_status = 'absent' THEN 1 ELSE 0 END), 0) AS absentDays,
+       COALESCE(SUM(CASE WHEN late_mark = 1 THEN 1 ELSE 0 END), 0) AS lateDays,
+       COALESCE(SUM(CASE WHEN attendance_status IN (${statusList(LEAVE_STATUSES)}) THEN 1 ELSE 0 END), 0) AS leaveDays,
+       COALESCE(SUM(CASE WHEN attendance_status = 'holiday' THEN 1 ELSE 0 END), 0) AS holidayDays,
+       COALESCE(SUM(CASE WHEN attendance_status = 'week_off' THEN 1 ELSE 0 END), 0) AS weekOffDays,
+       COALESCE(SUM(COALESCE(lwp_value, 0)), 0) AS totalLwp,
+       COALESCE(SUM(CASE WHEN late_mark = 1 THEN 1 ELSE 0 END), 0) AS lateMarks,
+       COALESCE(COUNT(CASE WHEN attendance_status NOT IN (${statusList(NON_WORKING_STATUSES)}) THEN 1 END), 0) AS totalWorkingDays,
+       COALESCE(${expectedToWorkSql()}, 0) AS expectedToWork,
+       COALESCE(ROUND(${attendedDaysSql()} / NULLIF(${expectedToWorkSql()}, 0) * 100, 1), 0) AS attendancePct,
+       COALESCE(ROUND(SUM(COALESCE(raw_minutes, 0)) / 60, 2), 0) AS totalHours,
+       COALESCE(SUM(CASE WHEN work_mode IN ('wfo', 'office') THEN 1 ELSE 0 END), 0) AS wfoDays
      FROM attendance_daily_record
      WHERE employee_id = ?
        AND DATE_FORMAT(record_date, '%Y-%m') = ?
@@ -1304,20 +1304,8 @@ wfmRouter.get("/attendance/summary/:employeeId/:month", h(async (req: any, res: 
     [employeeId, month, month]
   );
 
-  const data = (rows as any[])[0] ?? {
-    presentDays: 0,
-    halfDays: 0,
-    absentDays: 0,
-    lateDays: 0,
-    leaveDays: 0,
-    holidayDays: 0,
-    weekOffDays: 0,
-    totalLwp: 0,
-    lateMarks: 0,
-    totalWorkingDays: 0,
-    totalHours: 0,
-    wfoDays: 0,
-  };
+  // Unreachable default removed — see /my-attendance above. The COALESCEs are the guard.
+  const data = (rows as any[])[0];
 
   return res.json({
     success: true,

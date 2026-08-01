@@ -131,7 +131,16 @@ async function loadEmployee(employeeId?: string | null): Promise<EmployeeDashboa
 
   const attendanceRecord = asRecord(attendance.value);
   const fallbackAttendance = employeeAttendanceFallback(attendanceSummary.value);
-  const resolvedAttendance = Object.keys(attendanceRecord).length > 0 ? attendanceRecord : fallbackAttendance;
+  // Tests for content, not key count. /api/wfm/my-attendance returns fourteen keys whose
+  // values are all null when the month has no rows yet, so a key-count check treats that
+  // as a populated payload and shadows the fallback — which is the sibling endpoint that
+  // does coalesce to zero. On 1 August that shadowing turned every attendance tile into an
+  // em-dash. Belt and braces alongside the COALESCEs now in wfm.routes.ts: this endpoint
+  // is not the only possible source of an all-null record.
+  const attendanceHasValues = Object.values(attendanceRecord).some(
+    (value) => value !== null && value !== undefined,
+  );
+  const resolvedAttendance = attendanceHasValues ? attendanceRecord : fallbackAttendance;
   const leavePayload = leave.value;
   const leaveRecord = asRecord(leavePayload);
   const errors = [attendance, attendanceSummary, leave, onboarding, lms, engagement]
