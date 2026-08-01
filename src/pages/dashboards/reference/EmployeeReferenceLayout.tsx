@@ -26,8 +26,12 @@ import { asNumber, formatValue, stringAt } from "../reference-dashboard-model";
 import { ReferenceAIBrief, ReferenceWorkInbox } from "./ReferenceOperationalPanels";
 import { LeaveApprovalPanel } from "./ReferenceSharedPanels";
 import { CompanyFeedSidePanel } from "@/components/dashboard/CompanyFeedSidePanel";
+import { SocialFeedWidget } from "@/components/social/SocialFeedWidget";
+import { VideoModal } from "@/components/social/VideoModal";
+import { useState } from "react";
 
 export function EmployeeReferenceLayout({ data, employeeName }: { data: ReferenceDashboardData; employeeName: string }) {
+  const [videoModal, setVideoModal] = useState<{ id: string; title: string } | null>(null);
   const drill = data.drilldownFor ?? (() => ({}));
   const attendance = data.employee.attendance;
   const onboarding = data.employee.onboarding;
@@ -195,6 +199,10 @@ export function EmployeeReferenceLayout({ data, employeeName }: { data: Referenc
           <ReferenceQuickLink icon={Briefcase} title="Internal Jobs" subtitle="Career opportunities" href="/people/ijp" tone="green" />
         </div>
       </ReferencePanel>
+
+      {/* MAS Connect — social feed widget */}
+      <SocialFeedWidget onPlayVideo={(id, title) => setVideoModal({ id, title })} />
+      {videoModal && <VideoModal videoId={videoModal.id} title={videoModal.title} onClose={() => setVideoModal(null)} />}
     </div>
 
     <aside className="hidden xl:block">
