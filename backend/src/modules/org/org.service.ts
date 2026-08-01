@@ -404,24 +404,210 @@ export const campaignService = {
 // ── Cost Centre ───────────────────────────────────────────────────────────────
 
 export const costCentreService = {
-  list: (options?: ListOptions) => listActive("cost_centre_master", "cost_centre_code", { entityType: "cost_centre", ...options }),
+  async list(options: ListOptions = {}) {
+    const { q, active_status, page, limit, employeeId } = options;
+    const whereClauses: string[] = [];
+    const params: (string | number)[] = [];
+
+    // Status filter
+    if (active_status === "0" || active_status === 0) {
+      whereClauses.push("cc.active_status = 0");
+    } else if (active_status === "all") {
+      // No filter
+    } else {
+      whereClauses.push("cc.active_status = 1"); // Default
+    }
+
+    // Search filter
+    if (q && q.trim()) {
+      whereClauses.push("(cc.cost_centre_name LIKE ? OR cc.cost_centre_code LIKE ? OR cl.client_name LIKE ? OR p.process_name LIKE ?)");
+      params.push(`%${q.trim()}%`, `%${q.trim()}%`, `%${q.trim()}%`, `%${q.trim()}%`);
+    }
+
+    const whereClause = whereClauses.length > 0 ? `WHERE ${whereClauses.join(" AND ")}` : "";
+
+    // Pagination
+    let limitClause = "";
+    if (limit && limit > 0) {
+      const limitVal = Math.min(limit, 500);
+      const offset = page && page > 1 ? (page - 1) * limitVal : 0;
+      limitClause = `LIMIT ${limitVal} OFFSET ${offset}`;
+    }
+
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT cc.*,
+              cl.client_name,
+              cl.client_code,
+              l.lob_name,
+              l.lob_code,
+              b.branch_name,
+              b.branch_code,
+              p.process_name,
+              p.process_code,
+              CASE
+                WHEN cc.client_id IS NULL OR cc.lob_id IS NULL OR cc.branch_id IS NULL OR cc.process_id IS NULL
+                THEN 1 ELSE 0
+              END AS needs_migration
+         FROM cost_centre_master cc
+         LEFT JOIN client_master cl ON cl.id = cc.client_id
+         LEFT JOIN lob_master l ON l.id = cc.lob_id
+         LEFT JOIN branch_master b ON b.id = cc.branch_id
+         LEFT JOIN process_master p ON p.id = cc.process_id
+        ${whereClause}
+        ORDER BY cc.cost_centre_code
+        ${limitClause}`,
+      params
+    );
+
+    if (employeeId) {
+      for (const item of rows) {
+        try {
+          const result = await getEffectiveConfig(employeeId, "cost_centre", item.id, item);
+          Object.assign(item, result.config);
+        } catch (err) {
+          console.warn(`Customization error for cost_centre ${item.id}:`, err);
+        }
+      }
+    }
+    return rows;
+  },
+
   getById: (id: string) => getById("cost_centre_master", id),
   setStatus: (id: string, status: number) => setStatus("cost_centre_master", id, status),
-  async create(data: { cost_centre_code: string; cost_centre_name: string; branch_id?: string; department_id?: string }) {
+
+  async countOrphanedRecords(): Promise<{ total: number; orphaned: number }> {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT
+         COUNT(*) AS total,
+         SUM(CASE WHEN client_id IS NULL OR lob_id IS NULL OR branch_id IS NULL OR process_id IS NULL THEN 1 ELSE 0 END) AS orphaned
+       FROM cost_centre_master
+       WHERE active_status = 1`
+    );
+    const row = rows[0] ?? { total: 0, orphaned: 0 };
+    return { total: Number(row.total), orphaned: Number(row.orphaned) };
+  },
+
+  async create(data: {
+    cost_centre_code: string;
+    cost_centre_name: string;
+    client_id: string;
+    lob_id: string;
+    branch_id: string;
+    process_id: string;
+    department_id?: string;
+  }) {
+    // Check for orphaned records - block creation until all are migrated
+    const { orphaned } = await this.countOrphanedRecords();
+    if (orphaned > 0) {
+      throw Object.assign(
+        new Error(`Cannot create new cost centre: ${orphaned} existing cost centre(s) need migration. Please assign Client, LOB, Branch, and Process to all existing cost centres first.`),
+        { statusCode: 400 }
+      );
+    }
+
+    // Validate all required fields
+    if (!data.client_id?.trim()) {
+      throw Object.assign(new Error("Client is required for cost centre"), { statusCode: 400 });
+    }
+    if (!data.lob_id?.trim()) {
+      throw Object.assign(new Error("LOB is required for cost centre"), { statusCode: 400 });
+    }
+    if (!data.branch_id?.trim()) {
+      throw Object.assign(new Error("Branch is required for cost centre"), { statusCode: 400 });
+    }
+    if (!data.process_id?.trim()) {
+      throw Object.assign(new Error("Process is required for cost centre"), { statusCode: 400 });
+    }
+
     const id = randomUUID();
     await db.execute(
-      "INSERT INTO cost_centre_master (id, cost_centre_code, cost_centre_name, branch_id, department_id) VALUES (?, ?, ?, ?, ?)",
-      [id, data.cost_centre_code, data.cost_centre_name, data.branch_id ?? null, data.department_id ?? null]
+      `INSERT INTO cost_centre_master
+         (id, cost_centre_code, cost_centre_name, client_id, lob_id, branch_id, process_id, department_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        id,
+        data.cost_centre_code,
+        data.cost_centre_name,
+        data.client_id.trim(),
+        data.lob_id.trim(),
+        data.branch_id.trim(),
+        data.process_id.trim(),
+        data.department_id?.trim() || null,
+      ]
     );
     return getById("cost_centre_master", id);
   },
-  async update(id: string, data: { cost_centre_name?: string; branch_id?: string; department_id?: string }) {
+
+  async update(id: string, data: {
+    cost_centre_name?: string;
+    client_id?: string;
+    lob_id?: string;
+    branch_id?: string;
+    process_id?: string;
+    department_id?: string;
+  }) {
     await db.execute(
-      "UPDATE cost_centre_master SET cost_centre_name = COALESCE(?, cost_centre_name), branch_id = COALESCE(?, branch_id), department_id = COALESCE(?, department_id), updated_at = NOW() WHERE id = ?",
-      [data.cost_centre_name ?? null, data.branch_id ?? null, data.department_id ?? null, id]
+      `UPDATE cost_centre_master SET
+         cost_centre_name = COALESCE(?, cost_centre_name),
+         client_id = COALESCE(NULLIF(?, ''), client_id),
+         lob_id = COALESCE(NULLIF(?, ''), lob_id),
+         branch_id = COALESCE(NULLIF(?, ''), branch_id),
+         process_id = COALESCE(NULLIF(?, ''), process_id),
+         department_id = COALESCE(NULLIF(?, ''), department_id),
+         updated_at = NOW()
+       WHERE id = ?`,
+      [
+        data.cost_centre_name ?? null,
+        data.client_id ?? null,
+        data.lob_id ?? null,
+        data.branch_id ?? null,
+        data.process_id ?? null,
+        data.department_id ?? null,
+        id,
+      ]
     );
     return getById("cost_centre_master", id);
   },
+
+  async migrate(id: string, data: {
+    client_id: string;
+    lob_id: string;
+    branch_id: string;
+    process_id: string;
+  }) {
+    // Validate all required fields for migration
+    if (!data.client_id?.trim()) {
+      throw Object.assign(new Error("Client is required"), { statusCode: 400 });
+    }
+    if (!data.lob_id?.trim()) {
+      throw Object.assign(new Error("LOB is required"), { statusCode: 400 });
+    }
+    if (!data.branch_id?.trim()) {
+      throw Object.assign(new Error("Branch is required"), { statusCode: 400 });
+    }
+    if (!data.process_id?.trim()) {
+      throw Object.assign(new Error("Process is required"), { statusCode: 400 });
+    }
+
+    await db.execute(
+      `UPDATE cost_centre_master SET
+         client_id = ?,
+         lob_id = ?,
+         branch_id = ?,
+         process_id = ?,
+         updated_at = NOW()
+       WHERE id = ?`,
+      [
+        data.client_id.trim(),
+        data.lob_id.trim(),
+        data.branch_id.trim(),
+        data.process_id.trim(),
+        id,
+      ]
+    );
+    return getById("cost_centre_master", id);
+  },
+
   delete: (id: string) => softDelete("cost_centre_master", id),
 };
 
@@ -500,13 +686,87 @@ export const policyService = {
 // ── Process ───────────────────────────────────────────────────────────────────
 
 export const processService = {
-  list: (options?: ListOptions) => listActive("process_master", "process_name", { entityType: "process", ...options }),
+  async list(options: ListOptions = {}) {
+    const { q, active_status, page, limit, employeeId } = options;
+    const whereClauses: string[] = [];
+    const params: (string | number)[] = [];
+
+    // Status filter
+    if (active_status === "0" || active_status === 0) {
+      whereClauses.push("pm.active_status = 0");
+    } else if (active_status === "all") {
+      // No filter
+    } else {
+      whereClauses.push("pm.active_status = 1"); // Default
+    }
+
+    // Search filter
+    if (q && q.trim()) {
+      whereClauses.push("(pm.process_name LIKE ? OR pm.process_code LIKE ? OR cl.client_name LIKE ? OR bm.branch_name LIKE ?)");
+      params.push(`%${q.trim()}%`, `%${q.trim()}%`, `%${q.trim()}%`, `%${q.trim()}%`);
+    }
+
+    const whereClause = whereClauses.length > 0 ? `WHERE ${whereClauses.join(" AND ")}` : "";
+
+    // Pagination
+    let limitClause = "";
+    if (limit && limit > 0) {
+      const limitVal = Math.min(limit, 500);
+      const offset = page && page > 1 ? (page - 1) * limitVal : 0;
+      limitClause = `LIMIT ${limitVal} OFFSET ${offset}`;
+    }
+
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT pm.*,
+              bm.branch_name,
+              bm.branch_code,
+              cl.client_name AS client_name_joined,
+              cl.client_code
+         FROM process_master pm
+         LEFT JOIN branch_master bm ON bm.id = pm.branch_id
+         LEFT JOIN client_master cl ON cl.id = pm.client_id
+        ${whereClause}
+        ORDER BY pm.process_name
+        ${limitClause}`,
+      params
+    );
+
+    // Map client_name: prefer joined FK value, fall back to legacy text field
+    for (const row of rows) {
+      (row as any).client_name = (row as any).client_name_joined ?? (row as any).client_name ?? null;
+    }
+
+    if (employeeId) {
+      for (const row of rows) {
+        try {
+          const result = await getEffectiveConfig(employeeId, "process", row.id, row);
+          Object.assign(row, result.config);
+        } catch (err) {
+          console.warn(`Customization error for process ${row.id}:`, err);
+        }
+      }
+    }
+    return rows;
+  },
+
   getById: (id: string) => getById("process_master", id),
   setStatus: (id: string, status: number) => setStatus("process_master", id, status),
-  async create(data: { process_code: string; process_name: string; branch_id?: string; department_id?: string; business_lob?: string; client_name?: string; workload_type?: string }) {
+
+  async create(data: {
+    process_code: string;
+    process_name: string;
+    branch_id?: string;
+    department_id?: string;
+    business_lob?: string;
+    client_id?: string;
+    client_name?: string;
+    workload_type?: string;
+  }) {
     const id = randomUUID();
     await db.execute(
-      "INSERT INTO process_master (id, process_code, process_name, branch_id, department_id, business_lob, client_name, workload_type) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+      `INSERT INTO process_master
+         (id, process_code, process_name, branch_id, department_id, business_lob, client_id, client_name, workload_type)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         id,
         data.process_code,
@@ -514,19 +774,30 @@ export const processService = {
         data.branch_id?.trim() || null,
         data.department_id?.trim() || null,
         data.business_lob?.trim() || null,
-        data.client_name?.trim() || null,
+        data.client_id?.trim() || null,
+        data.client_name?.trim() || null, // Keep for backward compatibility
         data.workload_type?.trim() || null,
       ]
     );
     return getById("process_master", id);
   },
-  async update(id: string, data: { process_name?: string; branch_id?: string; department_id?: string; business_lob?: string; client_name?: string; workload_type?: string }) {
+
+  async update(id: string, data: {
+    process_name?: string;
+    branch_id?: string;
+    department_id?: string;
+    business_lob?: string;
+    client_id?: string;
+    client_name?: string;
+    workload_type?: string;
+  }) {
     await db.execute(
       `UPDATE process_master SET
         process_name  = COALESCE(?, process_name),
         branch_id     = COALESCE(NULLIF(?, ''), branch_id),
         department_id = COALESCE(NULLIF(?, ''), department_id),
         business_lob  = COALESCE(NULLIF(?, ''), business_lob),
+        client_id     = COALESCE(NULLIF(?, ''), client_id),
         client_name   = COALESCE(NULLIF(?, ''), client_name),
         workload_type = COALESCE(NULLIF(?, ''), workload_type),
         updated_at    = NOW()
@@ -536,6 +807,7 @@ export const processService = {
         data.branch_id?.trim() ?? null,
         data.department_id?.trim() ?? null,
         data.business_lob?.trim() ?? null,
+        data.client_id?.trim() ?? null,
         data.client_name?.trim() ?? null,
         data.workload_type?.trim() ?? null,
         id,
@@ -543,5 +815,6 @@ export const processService = {
     );
     return getById("process_master", id);
   },
+
   delete: (id: string) => softDelete("process_master", id),
 };

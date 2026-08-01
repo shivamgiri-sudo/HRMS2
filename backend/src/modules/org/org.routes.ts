@@ -157,71 +157,62 @@ buildCrud("/locations",     locationService);
 buildCrud("/policies",      policyService);
 buildCrud("/processes",     processService);
 
-// Cost-centres: only return CCs from ACTIVE branches; includes dominant process name for dropdown display
+// Cost-centres: migration status (must be before :id route)
+router.get("/cost-centres/migration-status", h(async (_req: Request, res: Response) => {
+  const { total, orphaned } = await costCentreService.countOrphanedRecords();
+  res.json({
+    success: true,
+    data: {
+      total,
+      orphaned,
+      migrationComplete: orphaned === 0,
+      message: orphaned > 0
+        ? `${orphaned} of ${total} cost centre(s) need Client, LOB, Branch, and Process assigned.`
+        : "All cost centres have required relationships.",
+    },
+  });
+}));
+
+// Cost-centres: list with full relationship joins
 router.get("/cost-centres", h(async (req: Request, res: Response) => {
-  const { q, active_status, page, limit, branch_name, branch_id } = req.query;
-  let sql = `
-    SELECT cc.*,
-      (SELECT p.process_name
-       FROM employees e
-       JOIN process_master p ON p.id = e.process_id
-       WHERE e.cost_centre_id = cc.id AND e.active_status = 1
-       GROUP BY p.id ORDER BY COUNT(*) DESC LIMIT 1) AS process_name
-    FROM cost_centre_master cc
-    JOIN branch_master bm ON bm.id = cc.branch_id AND bm.active_status = 1`;
-  const params: (string | number)[] = [];
-  const whereClauses: string[] = [];
-
-  // Status filter
-  if (active_status === "0") {
-    whereClauses.push("cc.active_status = 0");
-  } else if (active_status === "all") {
-    // No filter
-  } else {
-    whereClauses.push("cc.active_status = 1"); // Default
-  }
-
-  // Branch filters
-  if (branch_id)   { whereClauses.push("cc.branch_id = ?");                 params.push(branch_id as string); }
-  if (branch_name) { whereClauses.push("LOWER(bm.branch_name) = LOWER(?)"); params.push(branch_name as string); }
-
-  // Search filter
-  if (q && typeof q === "string" && q.trim()) {
-    whereClauses.push("(cc.cost_centre_name LIKE ? OR cc.cost_centre_code LIKE ?)");
-    params.push(`%${q.trim()}%`, `%${q.trim()}%`);
-  }
-
-  sql += whereClauses.length > 0 ? ` WHERE ${whereClauses.join(" AND ")}` : "";
-  sql += " ORDER BY cc.cost_centre_name";
-
-  // Pagination
-  if (limit && typeof limit === "string") {
-    const limitVal = Math.min(parseInt(limit, 10), 500);
-    const pageVal = page && typeof page === "string" ? parseInt(page, 10) : 1;
-    const offset = pageVal > 1 ? (pageVal - 1) * limitVal : 0;
-    sql += ` LIMIT ${limitVal} OFFSET ${offset}`;
-  }
-
-  const [rows] = await db.execute<any[]>(sql, params);
+  const { q, active_status, page, limit } = req.query;
+  const options = {
+    q: q as string | undefined,
+    active_status: active_status as string | undefined,
+    page: page ? parseInt(page as string, 10) : undefined,
+    limit: limit ? parseInt(limit as string, 10) : undefined,
+  };
+  const rows = await costCentreService.list(options);
   return res.json({ data: rows });
 }));
+
 router.get("/cost-centres/:id", h(async (req: Request, res: Response) => {
   const item = await costCentreService.getById(req.params.id);
   if (!item) return res.status(404).json({ error: "Not found" });
   res.json({ data: item });
 }));
+
 router.post("/cost-centres", requireRole("admin", "hr"), h(async (req: Request, res: Response) => {
   const item = await costCentreService.create(req.body);
   res.status(201).json({ data: item });
 }));
+
 router.put("/cost-centres/:id", requireRole("admin", "hr"), h(async (req: Request, res: Response) => {
   const item = await costCentreService.update(req.params.id, req.body);
   res.json({ data: item });
 }));
+
+// Cost-centres: migrate existing record with required FKs
+router.put("/cost-centres/:id/migrate", requireRole("admin", "hr"), h(async (req: Request, res: Response) => {
+  const item = await costCentreService.migrate(req.params.id, req.body);
+  res.json({ data: item, message: "Cost centre migrated successfully" });
+}));
+
 router.delete("/cost-centres/:id", requireRole("admin"), h(async (req: Request, res: Response) => {
   await costCentreService.delete(req.params.id);
   res.json({ ok: true });
 }));
+
 router.patch("/cost-centres/:id/status", requireRole("admin", "hr"), h(async (req: Request, res: Response) => {
   const { active_status } = req.body;
   if (active_status !== 0 && active_status !== 1) {
@@ -321,12 +312,15 @@ router.get("/export/masters",
     }));
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(processRows), "Process Master");
 
-    // Sheet 3: Cost Centre Master
+    // Sheet 3: Cost Centre Master (with relationship names)
     const ccRows = (costCentres as any[]).map((c) => ({
       "Cost Centre Code": c.cost_centre_code ?? "",
       "Cost Centre Name": c.cost_centre_name ?? "",
-      "Branch ID": c.branch_id ?? "",
-      "Department ID": c.department_id ?? "",
+      "Client": c.client_name ?? "",
+      "LOB": c.lob_name ?? "",
+      "Branch": c.branch_name ?? "",
+      "Process": c.process_name ?? "",
+      "Needs Migration": c.needs_migration ? "Yes" : "No",
       "Status": Number(c.active_status) === 1 ? "Active" : "Inactive",
     }));
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(ccRows), "Cost Centre Master");

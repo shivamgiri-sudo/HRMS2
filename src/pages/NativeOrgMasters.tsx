@@ -653,11 +653,14 @@ interface ProcessRecord {
   branch_name: string | null;
   business_lob: string | null;
   workload_type: string | null;
+  client_id: string | null;
   client_name: string | null;
   active_status: number;
 }
 
 interface BranchOption { id: string; branch_name: string; }
+interface ClientOption { id: string; client_name: string; client_code: string; }
+interface LOBOption { id: string; lob_name: string; lob_code: string; }
 
 const WORKLOAD_TYPES = [
   { value: "", label: "— not set —" },
@@ -677,7 +680,7 @@ interface ProcessFormData {
   branch_id: string;
   business_lob: string;
   workload_type: string;
-  client_name: string;
+  client_id: string;
 }
 
 const emptyProcessForm = (): ProcessFormData => ({
@@ -686,15 +689,52 @@ const emptyProcessForm = (): ProcessFormData => ({
   branch_id: "",
   business_lob: "",
   workload_type: "",
-  client_name: "",
+  client_id: "",
+});
+
+// ── Cost Centre types ─────────────────────────────────────────────────────────
+
+interface CostCentreRecord {
+  id: string;
+  cost_centre_code: string;
+  cost_centre_name: string;
+  client_id: string | null;
+  client_name: string | null;
+  lob_id: string | null;
+  lob_name: string | null;
+  branch_id: string | null;
+  branch_name: string | null;
+  process_id: string | null;
+  process_name: string | null;
+  needs_migration: number;
+  active_status: number;
+}
+
+interface CostCentreFormData {
+  cost_centre_code: string;
+  cost_centre_name: string;
+  client_id: string;
+  lob_id: string;
+  branch_id: string;
+  process_id: string;
+}
+
+const emptyCostCentreForm = (): CostCentreFormData => ({
+  cost_centre_code: "",
+  cost_centre_name: "",
+  client_id: "",
+  lob_id: "",
+  branch_id: "",
+  process_id: "",
 });
 
 function ProcessFormModal({
-  title, form, branches, onChange, onSubmit, onClose, submitting, submitLabel,
+  title, form, branches, clients, onChange, onSubmit, onClose, submitting, submitLabel,
 }: {
   title: string;
   form: ProcessFormData;
   branches: BranchOption[];
+  clients: ClientOption[];
   onChange: (key: keyof ProcessFormData, value: string) => void;
   onSubmit: () => void;
   onClose: () => void;
@@ -734,13 +774,17 @@ function ProcessFormModal({
             />
           </div>
           <div>
-            <label className="block text-sm font-semibold text-slate-700 mb-1.5">Client / Campaign Name</label>
-            <input
-              value={form.client_name}
-              onChange={(e) => onChange("client_name", e.target.value)}
-              placeholder="e.g. Onfido Ltd"
-              className="w-full rounded-2xl border px-4 py-3 text-sm outline-none focus:border-blue-400 transition-colors"
-            />
+            <label className="block text-sm font-semibold text-slate-700 mb-1.5">Client</label>
+            <select
+              value={form.client_id}
+              onChange={(e) => onChange("client_id", e.target.value)}
+              className="w-full rounded-2xl border px-4 py-3 text-sm outline-none focus:border-blue-400 transition-colors bg-white"
+            >
+              <option value="">— select client —</option>
+              {clients.map((c) => (
+                <option key={c.id} value={c.id}>{c.client_name}</option>
+              ))}
+            </select>
           </div>
           <div>
             <label className="block text-sm font-semibold text-slate-700 mb-1.5">Branch</label>
@@ -800,6 +844,7 @@ function ProcessFormModal({
 function ProcessTab({ isAdmin }: { isAdmin: boolean }) {
   const [records, setRecords] = useState<ProcessRecord[]>([]);
   const [branches, setBranches] = useState<BranchOption[]>([]);
+  const [clients, setClients] = useState<ClientOption[]>([]);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
   const [search, setSearch] = useState("");
@@ -819,14 +864,17 @@ function ProcessTab({ isAdmin }: { isAdmin: boolean }) {
     setLoading(true);
     setMessage("");
     try {
-      const [procRes, branchRes] = await Promise.all([
+      const [procRes, branchRes, clientRes] = await Promise.all([
         hrmsApi.get<{ data: ProcessRecord[] } | ProcessRecord[]>("/api/org/processes"),
         hrmsApi.get<{ data: BranchOption[] } | BranchOption[]>("/api/org/branches"),
+        hrmsApi.get<{ data: ClientOption[] } | ClientOption[]>("/api/clients"),
       ]);
       const procs = Array.isArray(procRes) ? procRes : (procRes as { data: ProcessRecord[] }).data ?? [];
       const brs = Array.isArray(branchRes) ? branchRes : (branchRes as { data: BranchOption[] }).data ?? [];
+      const cls = Array.isArray(clientRes) ? clientRes : (clientRes as { data: ClientOption[] }).data ?? [];
       setRecords(procs);
       setBranches(brs);
+      setClients(cls);
     } catch (err: unknown) {
       setMessage(err instanceof Error ? err.message : "Failed to load");
     } finally {
@@ -873,7 +921,7 @@ function ProcessTab({ isAdmin }: { isAdmin: boolean }) {
       branch_id: rec.branch_id ?? "",
       business_lob: rec.business_lob ?? "",
       workload_type: rec.workload_type ?? "",
-      client_name: rec.client_name ?? "",
+      client_id: rec.client_id ?? "",
     });
     setEditRecord(rec);
   };
@@ -1050,6 +1098,7 @@ function ProcessTab({ isAdmin }: { isAdmin: boolean }) {
           title="Add Process / LOB"
           form={addForm}
           branches={branches}
+          clients={clients}
           onChange={(k, v) => setAddForm((prev) => ({ ...prev, [k]: v }))}
           onSubmit={submitAdd}
           onClose={() => setShowAdd(false)}
@@ -1063,11 +1112,645 @@ function ProcessTab({ isAdmin }: { isAdmin: boolean }) {
           title={`Edit — ${editRecord.process_name}`}
           form={editForm}
           branches={branches}
+          clients={clients}
           onChange={(k, v) => setEditForm((prev) => ({ ...prev, [k]: v }))}
           onSubmit={submitEdit}
           onClose={() => setEditRecord(null)}
           submitting={editSubmitting}
           submitLabel="Save Changes"
+        />
+      )}
+    </div>
+  );
+}
+
+// ── Cost Centre Tab ──────────────────────────────────────────────────────────
+
+function CostCentreFormModal({
+  title, form, clients, lobs, branches, processes, onChange, onSubmit, onClose, submitting, submitLabel,
+}: {
+  title: string;
+  form: CostCentreFormData;
+  clients: ClientOption[];
+  lobs: LOBOption[];
+  branches: BranchOption[];
+  processes: ProcessRecord[];
+  onChange: (key: keyof CostCentreFormData, value: string) => void;
+  onSubmit: () => void;
+  onClose: () => void;
+  submitting: boolean;
+  submitLabel: string;
+}) {
+  const filteredProcesses = form.branch_id
+    ? processes.filter((p) => p.branch_id === form.branch_id || !p.branch_id)
+    : processes;
+
+  const suggestCode = () => {
+    const client = clients.find((c) => c.id === form.client_id);
+    const branch = branches.find((b) => b.id === form.branch_id);
+    const process = processes.find((p) => p.id === form.process_id);
+    if (client && branch && process) {
+      return `${client.client_code}_${branch.branch_name?.substring(0, 3).toUpperCase() || "BR"}_${process.process_code}`;
+    }
+    return "";
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 backdrop-blur-sm p-4">
+      <div className="w-full max-w-2xl rounded-3xl bg-white shadow-2xl max-h-[90vh] overflow-y-auto">
+        <div className="flex items-center justify-between border-b p-6 sticky top-0 bg-white z-10">
+          <h2 className="text-lg font-black text-slate-950">{title}</h2>
+          <button onClick={onClose} className="cursor-pointer text-slate-400 hover:text-slate-700 transition-colors">
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+        <div className="p-6 space-y-5">
+          <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 text-sm text-amber-800">
+            <strong>Required:</strong> All four relationships (Client, LOB, Branch, Process) must be selected to create a cost centre.
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-semibold text-slate-700 mb-1.5">
+                Client <span className="text-rose-500">*</span>
+              </label>
+              <select
+                value={form.client_id}
+                onChange={(e) => onChange("client_id", e.target.value)}
+                className="w-full rounded-2xl border px-4 py-3 text-sm outline-none focus:border-blue-400 transition-colors bg-white"
+              >
+                <option value="">— select client —</option>
+                {clients.map((c) => (
+                  <option key={c.id} value={c.id}>{c.client_name}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-semibold text-slate-700 mb-1.5">
+                LOB <span className="text-rose-500">*</span>
+              </label>
+              <select
+                value={form.lob_id}
+                onChange={(e) => onChange("lob_id", e.target.value)}
+                className="w-full rounded-2xl border px-4 py-3 text-sm outline-none focus:border-blue-400 transition-colors bg-white"
+              >
+                <option value="">— select LOB —</option>
+                {lobs.map((l) => (
+                  <option key={l.id} value={l.id}>{l.lob_name}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-semibold text-slate-700 mb-1.5">
+                Branch <span className="text-rose-500">*</span>
+              </label>
+              <select
+                value={form.branch_id}
+                onChange={(e) => {
+                  onChange("branch_id", e.target.value);
+                  if (form.process_id) {
+                    const proc = processes.find((p) => p.id === form.process_id);
+                    if (proc && proc.branch_id && proc.branch_id !== e.target.value) {
+                      onChange("process_id", "");
+                    }
+                  }
+                }}
+                className="w-full rounded-2xl border px-4 py-3 text-sm outline-none focus:border-blue-400 transition-colors bg-white"
+              >
+                <option value="">— select branch —</option>
+                {branches.map((b) => (
+                  <option key={b.id} value={b.id}>{b.branch_name}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-semibold text-slate-700 mb-1.5">
+                Process <span className="text-rose-500">*</span>
+              </label>
+              <select
+                value={form.process_id}
+                onChange={(e) => onChange("process_id", e.target.value)}
+                className="w-full rounded-2xl border px-4 py-3 text-sm outline-none focus:border-blue-400 transition-colors bg-white"
+              >
+                <option value="">— select process —</option>
+                {filteredProcesses.map((p) => (
+                  <option key={p.id} value={p.id}>{p.process_name}</option>
+                ))}
+              </select>
+              {form.branch_id && filteredProcesses.length < processes.length && (
+                <p className="text-xs text-slate-400 mt-1">Filtered by selected branch</p>
+              )}
+            </div>
+          </div>
+
+          <div className="border-t pt-4">
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-semibold text-slate-700 mb-1.5">
+                  Cost Centre Code <span className="text-rose-500">*</span>
+                </label>
+                <div className="flex gap-2">
+                  <input
+                    value={form.cost_centre_code}
+                    onChange={(e) => onChange("cost_centre_code", e.target.value)}
+                    placeholder="e.g. ABC_DEL_PROC1"
+                    className="flex-1 rounded-2xl border px-4 py-3 text-sm outline-none focus:border-blue-400 transition-colors font-mono"
+                  />
+                  {form.client_id && form.branch_id && form.process_id && !form.cost_centre_code && (
+                    <button
+                      type="button"
+                      onClick={() => onChange("cost_centre_code", suggestCode())}
+                      className="px-3 py-2 text-xs font-semibold text-blue-600 hover:text-blue-800 transition-colors cursor-pointer"
+                    >
+                      Suggest
+                    </button>
+                  )}
+                </div>
+              </div>
+              <div>
+                <label className="block text-sm font-semibold text-slate-700 mb-1.5">
+                  Cost Centre Name <span className="text-rose-500">*</span>
+                </label>
+                <input
+                  value={form.cost_centre_name}
+                  onChange={(e) => onChange("cost_centre_name", e.target.value)}
+                  placeholder="e.g. ABC Corp Delhi Process1"
+                  className="w-full rounded-2xl border px-4 py-3 text-sm outline-none focus:border-blue-400 transition-colors"
+                />
+              </div>
+            </div>
+          </div>
+        </div>
+        <div className="flex gap-3 border-t p-6 sticky bottom-0 bg-white">
+          <button
+            onClick={onClose}
+            className="flex-1 cursor-pointer rounded-2xl border border-slate-200 py-3 text-sm font-semibold text-slate-700 hover:bg-slate-50 transition-colors"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={onSubmit}
+            disabled={submitting}
+            className="flex-1 cursor-pointer rounded-2xl bg-slate-950 py-3 text-sm font-bold text-white hover:bg-slate-800 transition-colors disabled:opacity-50"
+          >
+            {submitting ? "Saving…" : submitLabel}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function CostCentreTab({ isAdmin }: { isAdmin: boolean }) {
+  const [records, setRecords] = useState<CostCentreRecord[]>([]);
+  const [clients, setClients] = useState<ClientOption[]>([]);
+  const [lobs, setLobs] = useState<LOBOption[]>([]);
+  const [branches, setBranches] = useState<BranchOption[]>([]);
+  const [processes, setProcesses] = useState<ProcessRecord[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [message, setMessage] = useState("");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState<"1" | "0" | "all">("1");
+
+  const [migrationStatus, setMigrationStatus] = useState<{ total: number; orphaned: number; migrationComplete: boolean; message: string } | null>(null);
+
+  const [showAdd, setShowAdd] = useState(false);
+  const [addForm, setAddForm] = useState<CostCentreFormData>(emptyCostCentreForm());
+  const [addSubmitting, setAddSubmitting] = useState(false);
+
+  const [editRecord, setEditRecord] = useState<CostCentreRecord | null>(null);
+  const [editForm, setEditForm] = useState<CostCentreFormData>(emptyCostCentreForm());
+  const [editSubmitting, setEditSubmitting] = useState(false);
+
+  const [migrateRecord, setMigrateRecord] = useState<CostCentreRecord | null>(null);
+  const [migrateForm, setMigrateForm] = useState<CostCentreFormData>(emptyCostCentreForm());
+  const [migrateSubmitting, setMigrateSubmitting] = useState(false);
+
+  const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
+  const [deleteSubmitting, setDeleteSubmitting] = useState(false);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setMessage("");
+    try {
+      const params = new URLSearchParams();
+      if (searchQuery.trim()) params.set("q", searchQuery.trim());
+      params.set("active_status", statusFilter);
+      const url = `/api/org/cost-centres${params.toString() ? `?${params.toString()}` : ""}`;
+
+      const [ccRes, clientRes, lobRes, branchRes, procRes, migRes] = await Promise.all([
+        hrmsApi.get<{ data: CostCentreRecord[] } | CostCentreRecord[]>(url),
+        hrmsApi.get<{ data: ClientOption[] } | ClientOption[]>("/api/clients"),
+        hrmsApi.get<{ data: LOBOption[] } | LOBOption[]>("/api/org/lobs"),
+        hrmsApi.get<{ data: BranchOption[] } | BranchOption[]>("/api/org/branches"),
+        hrmsApi.get<{ data: ProcessRecord[] } | ProcessRecord[]>("/api/org/processes"),
+        hrmsApi.get<{ success: boolean; data: typeof migrationStatus }>("/api/org/cost-centres/migration-status"),
+      ]);
+
+      setRecords(Array.isArray(ccRes) ? ccRes : ccRes.data ?? []);
+      setClients(Array.isArray(clientRes) ? clientRes : clientRes.data ?? []);
+      setLobs(Array.isArray(lobRes) ? lobRes : lobRes.data ?? []);
+      setBranches(Array.isArray(branchRes) ? branchRes : branchRes.data ?? []);
+      setProcesses(Array.isArray(procRes) ? procRes : procRes.data ?? []);
+      setMigrationStatus(migRes.data ?? null);
+    } catch (err: unknown) {
+      setMessage(err instanceof Error ? err.message : "Failed to load");
+    } finally {
+      setLoading(false);
+    }
+  }, [searchQuery, statusFilter]);
+
+  useEffect(() => { void load(); }, [load]);
+
+  const openAdd = () => {
+    if (migrationStatus && !migrationStatus.migrationComplete) {
+      setMessage(`Cannot create new cost centres: ${migrationStatus.orphaned} existing record(s) need migration first.`);
+      return;
+    }
+    setAddForm(emptyCostCentreForm());
+    setShowAdd(true);
+  };
+
+  const submitAdd = async () => {
+    if (!addForm.client_id) { setMessage("Client is required."); return; }
+    if (!addForm.lob_id) { setMessage("LOB is required."); return; }
+    if (!addForm.branch_id) { setMessage("Branch is required."); return; }
+    if (!addForm.process_id) { setMessage("Process is required."); return; }
+    if (!addForm.cost_centre_code.trim()) { setMessage("Cost centre code is required."); return; }
+    if (!addForm.cost_centre_name.trim()) { setMessage("Cost centre name is required."); return; }
+    setAddSubmitting(true);
+    setMessage("");
+    try {
+      await hrmsApi.post("/api/org/cost-centres", addForm);
+      setShowAdd(false);
+      setAddForm(emptyCostCentreForm());
+      await load();
+    } catch (err: unknown) {
+      setMessage(err instanceof Error ? err.message : "Create failed");
+    } finally {
+      setAddSubmitting(false);
+    }
+  };
+
+  const openEdit = (rec: CostCentreRecord) => {
+    setEditForm({
+      cost_centre_code: rec.cost_centre_code,
+      cost_centre_name: rec.cost_centre_name,
+      client_id: rec.client_id ?? "",
+      lob_id: rec.lob_id ?? "",
+      branch_id: rec.branch_id ?? "",
+      process_id: rec.process_id ?? "",
+    });
+    setEditRecord(rec);
+  };
+
+  const submitEdit = async () => {
+    if (!editRecord) return;
+    if (!editForm.cost_centre_name.trim()) { setMessage("Cost centre name is required."); return; }
+    setEditSubmitting(true);
+    setMessage("");
+    try {
+      await hrmsApi.put(`/api/org/cost-centres/${editRecord.id}`, editForm);
+      setEditRecord(null);
+      setEditForm(emptyCostCentreForm());
+      await load();
+    } catch (err: unknown) {
+      setMessage(err instanceof Error ? err.message : "Update failed");
+    } finally {
+      setEditSubmitting(false);
+    }
+  };
+
+  const openMigrate = (rec: CostCentreRecord) => {
+    setMigrateForm({
+      cost_centre_code: rec.cost_centre_code,
+      cost_centre_name: rec.cost_centre_name,
+      client_id: rec.client_id ?? "",
+      lob_id: rec.lob_id ?? "",
+      branch_id: rec.branch_id ?? "",
+      process_id: rec.process_id ?? "",
+    });
+    setMigrateRecord(rec);
+  };
+
+  const submitMigrate = async () => {
+    if (!migrateRecord) return;
+    if (!migrateForm.client_id) { setMessage("Client is required."); return; }
+    if (!migrateForm.lob_id) { setMessage("LOB is required."); return; }
+    if (!migrateForm.branch_id) { setMessage("Branch is required."); return; }
+    if (!migrateForm.process_id) { setMessage("Process is required."); return; }
+    setMigrateSubmitting(true);
+    setMessage("");
+    try {
+      await hrmsApi.put(`/api/org/cost-centres/${migrateRecord.id}/migrate`, migrateForm);
+      setMigrateRecord(null);
+      setMigrateForm(emptyCostCentreForm());
+      await load();
+    } catch (err: unknown) {
+      setMessage(err instanceof Error ? err.message : "Migration failed");
+    } finally {
+      setMigrateSubmitting(false);
+    }
+  };
+
+  const submitDelete = async (id: string) => {
+    setDeleteSubmitting(true);
+    setMessage("");
+    try {
+      await hrmsApi.delete(`/api/org/cost-centres/${id}`);
+      setDeleteConfirmId(null);
+      await load();
+    } catch (err: unknown) {
+      setMessage(err instanceof Error ? err.message : "Delete failed");
+      setDeleteConfirmId(null);
+    } finally {
+      setDeleteSubmitting(false);
+    }
+  };
+
+  const toggleStatus = async (record: CostCentreRecord) => {
+    const newStatus = isActive(record as unknown as OrgRecord) ? 0 : 1;
+    setMessage("");
+    try {
+      await hrmsApi.patch(`/api/org/cost-centres/${record.id}/status`, { active_status: newStatus });
+      await load();
+    } catch (err: unknown) {
+      setMessage(err instanceof Error ? err.message : "Status update failed");
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      {/* Migration Warning Banner */}
+      {migrationStatus && !migrationStatus.migrationComplete && (
+        <div className="flex items-start gap-3 rounded-2xl border border-amber-300 bg-amber-50 p-4">
+          <AlertTriangle className="h-5 w-5 text-amber-600 flex-shrink-0 mt-0.5" />
+          <div>
+            <p className="font-bold text-amber-800">Data Migration Required</p>
+            <p className="text-sm text-amber-700 mt-1">
+              {migrationStatus.message} Click the <strong>Migrate</strong> button on each record to assign the required Client, LOB, Branch, and Process relationships.
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* Tab toolbar */}
+      <div className="flex flex-col gap-3">
+        <div className="flex items-center justify-between flex-wrap gap-2">
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => load()}
+              disabled={loading}
+              className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50 transition-colors cursor-pointer disabled:opacity-50"
+            >
+              <RefreshCcw className="h-4 w-4" />
+              Refresh
+            </button>
+            <div className="flex gap-1 rounded-xl border border-slate-200 bg-white p-1">
+              {(["1", "0", "all"] as const).map((status) => (
+                <button
+                  key={status}
+                  onClick={() => setStatusFilter(status)}
+                  className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors ${
+                    statusFilter === status
+                      ? "bg-slate-950 text-white"
+                      : "text-slate-600 hover:bg-slate-50"
+                  }`}
+                >
+                  {status === "1" ? "Active" : status === "0" ? "Inactive" : "All"}
+                </button>
+              ))}
+            </div>
+          </div>
+          <button
+            onClick={openAdd}
+            disabled={migrationStatus && !migrationStatus.migrationComplete}
+            className="inline-flex items-center gap-2 rounded-2xl bg-slate-950 px-4 py-2 text-sm font-bold text-white hover:bg-slate-800 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+            title={migrationStatus && !migrationStatus.migrationComplete ? "Complete migration first" : undefined}
+          >
+            <Plus className="h-4 w-4" />
+            Add Cost Centre
+          </button>
+        </div>
+        <input
+          type="text"
+          placeholder="Search cost centres, clients, processes..."
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm outline-none focus:border-blue-400 transition-colors"
+        />
+      </div>
+
+      {/* Message */}
+      {message && (
+        <div className="flex items-center gap-3 rounded-2xl border border-blue-200 bg-blue-50 p-3 text-sm font-bold text-blue-800">
+          <AlertTriangle className="h-4 w-4 flex-shrink-0" />
+          {message}
+          <button onClick={() => setMessage("")} className="ml-auto cursor-pointer">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+      )}
+
+      {/* Table */}
+      <div className="overflow-hidden rounded-3xl border bg-white shadow-sm">
+        {loading ? (
+          <div className="flex items-center justify-center py-16">
+            <Loader className="h-8 w-8 animate-spin text-slate-400" />
+          </div>
+        ) : records.length === 0 ? (
+          <div className="py-16 text-center text-slate-400">
+            <DollarSign className="mx-auto mb-3 h-10 w-10 opacity-30" />
+            <p className="font-semibold">No cost centres found.</p>
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-slate-50 text-left text-xs uppercase text-slate-500">
+                <tr>
+                  <th className="p-4 font-semibold">Code</th>
+                  <th className="p-4 font-semibold">Name</th>
+                  <th className="p-4 font-semibold">Client</th>
+                  <th className="p-4 font-semibold">LOB</th>
+                  <th className="p-4 font-semibold">Branch</th>
+                  <th className="p-4 font-semibold">Process</th>
+                  <th className="p-4 font-semibold">Status</th>
+                  <th className="p-4 font-semibold">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {records.map((rec) => {
+                  const needsMigration = rec.needs_migration === 1;
+                  return (
+                    <tr key={rec.id} className={`border-t hover:bg-slate-50/80 transition-colors ${needsMigration ? "bg-amber-50/50" : ""}`}>
+                      <td className="p-4 font-mono text-xs text-slate-600">{rec.cost_centre_code}</td>
+                      <td className="p-4 font-semibold text-slate-900">{rec.cost_centre_name}</td>
+                      <td className="p-4">
+                        {rec.client_name ? (
+                          <span className="text-slate-700">{rec.client_name}</span>
+                        ) : (
+                          <span className="text-rose-400 text-xs font-semibold">Not set</span>
+                        )}
+                      </td>
+                      <td className="p-4">
+                        {rec.lob_name ? (
+                          <span className="text-slate-600 text-xs">{rec.lob_name}</span>
+                        ) : (
+                          <span className="text-rose-400 text-xs font-semibold">Not set</span>
+                        )}
+                      </td>
+                      <td className="p-4">
+                        {rec.branch_name ? (
+                          <span className="inline-flex items-center gap-1 rounded-full bg-blue-50 px-2.5 py-0.5 text-xs font-semibold text-blue-700">
+                            {rec.branch_name}
+                          </span>
+                        ) : (
+                          <span className="text-rose-400 text-xs font-semibold">Not set</span>
+                        )}
+                      </td>
+                      <td className="p-4">
+                        {rec.process_name ? (
+                          <span className="text-slate-600 text-xs">{rec.process_name}</span>
+                        ) : (
+                          <span className="text-rose-400 text-xs font-semibold">Not set</span>
+                        )}
+                      </td>
+                      <td className="p-4">
+                        {isActive(rec as unknown as OrgRecord) ? (
+                          <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700">
+                            <Check className="h-3 w-3" /> Active
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-500">
+                            Inactive
+                          </span>
+                        )}
+                      </td>
+                      <td className="p-4">
+                        <div className="flex items-center gap-2">
+                          {needsMigration && (
+                            <button
+                              onClick={() => openMigrate(rec)}
+                              className="cursor-pointer rounded-xl bg-amber-500 px-3 py-1.5 text-xs font-bold text-white hover:bg-amber-600 transition-colors"
+                              title="Migrate - assign required relationships"
+                            >
+                              Migrate
+                            </button>
+                          )}
+                          <button
+                            onClick={() => openEdit(rec)}
+                            className="cursor-pointer rounded-xl border border-slate-200 p-2 text-slate-500 hover:bg-slate-100 hover:text-slate-800 transition-colors"
+                            title="Edit"
+                          >
+                            <Pencil className="h-3.5 w-3.5" />
+                          </button>
+                          {isAdmin && (
+                            <>
+                              <button
+                                onClick={() => toggleStatus(rec)}
+                                className={`cursor-pointer rounded-xl border px-3 py-1.5 text-xs font-semibold transition-colors ${
+                                  isActive(rec as unknown as OrgRecord)
+                                    ? "border-amber-200 text-amber-700 hover:bg-amber-50"
+                                    : "border-emerald-200 text-emerald-700 hover:bg-emerald-50"
+                                }`}
+                                title={isActive(rec as unknown as OrgRecord) ? "Deactivate" : "Activate"}
+                              >
+                                {isActive(rec as unknown as OrgRecord) ? "Deactivate" : "Activate"}
+                              </button>
+                              {deleteConfirmId === rec.id ? (
+                                <div className="flex items-center gap-1">
+                                  <button
+                                    onClick={() => submitDelete(rec.id)}
+                                    disabled={deleteSubmitting}
+                                    className="cursor-pointer rounded-xl bg-rose-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-rose-700 transition-colors disabled:opacity-50"
+                                  >
+                                    {deleteSubmitting ? "…" : "Confirm"}
+                                  </button>
+                                  <button
+                                    onClick={() => setDeleteConfirmId(null)}
+                                    className="cursor-pointer rounded-xl border border-slate-200 px-2 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50 transition-colors"
+                                  >
+                                    Cancel
+                                  </button>
+                                </div>
+                              ) : (
+                                <button
+                                  onClick={() => setDeleteConfirmId(rec.id)}
+                                  className="cursor-pointer rounded-xl border border-rose-200 p-2 text-rose-500 hover:bg-rose-50 transition-colors"
+                                  title="Delete"
+                                >
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                </button>
+                              )}
+                            </>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+            <div className="border-t px-4 py-2 text-xs text-slate-400">
+              Showing {records.length} cost centre(s)
+              {migrationStatus && migrationStatus.orphaned > 0 && (
+                <span className="ml-2 text-amber-600">
+                  ({migrationStatus.orphaned} need migration)
+                </span>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Add modal */}
+      {showAdd && (
+        <CostCentreFormModal
+          title="Add Cost Centre"
+          form={addForm}
+          clients={clients}
+          lobs={lobs}
+          branches={branches}
+          processes={processes}
+          onChange={(k, v) => setAddForm((prev) => ({ ...prev, [k]: v }))}
+          onSubmit={submitAdd}
+          onClose={() => setShowAdd(false)}
+          submitting={addSubmitting}
+          submitLabel="Create"
+        />
+      )}
+
+      {/* Edit modal */}
+      {editRecord && (
+        <CostCentreFormModal
+          title={`Edit — ${editRecord.cost_centre_name}`}
+          form={editForm}
+          clients={clients}
+          lobs={lobs}
+          branches={branches}
+          processes={processes}
+          onChange={(k, v) => setEditForm((prev) => ({ ...prev, [k]: v }))}
+          onSubmit={submitEdit}
+          onClose={() => setEditRecord(null)}
+          submitting={editSubmitting}
+          submitLabel="Save Changes"
+        />
+      )}
+
+      {/* Migrate modal */}
+      {migrateRecord && (
+        <CostCentreFormModal
+          title={`Migrate — ${migrateRecord.cost_centre_name}`}
+          form={migrateForm}
+          clients={clients}
+          lobs={lobs}
+          branches={branches}
+          processes={processes}
+          onChange={(k, v) => setMigrateForm((prev) => ({ ...prev, [k]: v }))}
+          onSubmit={submitMigrate}
+          onClose={() => setMigrateRecord(null)}
+          submitting={migrateSubmitting}
+          submitLabel="Complete Migration"
         />
       )}
     </div>
@@ -1144,6 +1827,8 @@ export default function NativeOrgMasters() {
         {/* Active tab content */}
         {activeTab === "processes" ? (
           <ProcessTab key="processes" isAdmin={isAdmin || isAdminOrHR} />
+        ) : activeTab === "cost-centres" ? (
+          <CostCentreTab key="cost-centres" isAdmin={isAdmin || isAdminOrHR} />
         ) : (
           <EntityTab key={activeTab} tab={currentTab} isAdmin={isAdmin || isAdminOrHR} />
         )}
