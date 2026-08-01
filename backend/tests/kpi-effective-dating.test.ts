@@ -34,7 +34,31 @@ beforeEach(() => {
   resetEffectiveDatingSupport();
 });
 
-describe("target resolution when 1048 has been applied", () => {
+describe("undated rows must still resolve", () => {
+  it("treats a NULL effective_from as 'always applied', not as excluded", async () => {
+    // Both columns already existed on production — nullable, and NULL on all 372
+    // rows. The first version of this predicate read `effective_from <= CURDATE()`,
+    // so the support check found the columns, switched the filter on, and
+    // NULL <= CURDATE() is never true. Every target row would have been filtered
+    // out and every employee would have resolved to zero KPIs.
+    //
+    // Caught by executing the migration against a clone of production rather
+    // than reading it.
+    execute
+      .mockResolvedValueOnce(EMPLOYEE)
+      .mockResolvedValueOnce(columnsPresent(2))
+      .mockResolvedValueOnce([[], []]);
+
+    await resolveEmployeeKpis("emp-1");
+
+    const sql = String(execute.mock.calls[2][0]);
+    expect(sql).toMatch(/kmc\.effective_from IS NULL OR kmc\.effective_from <= CURDATE\(\)/);
+    // The bare form must not survive anywhere in the predicate.
+    expect(sql).not.toMatch(/AND kmc\.effective_from <= CURDATE\(\)/);
+  });
+});
+
+describe("target resolution when the migration has been applied", () => {
   it("restricts to the version in force today", async () => {
     execute
       .mockResolvedValueOnce(EMPLOYEE)      // employee org units

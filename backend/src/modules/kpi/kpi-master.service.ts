@@ -214,8 +214,20 @@ async function effectiveDatingPredicate(): Promise<string> {
       .catch(() => [[{ n: 0 }], []] as any);
     effectiveDatingSupported = Number((rows as any[])[0]?.n ?? 0) === 2;
   }
+  // NULL on either bound means "no bound", not "excluded".
+  //
+  // This originally read `kmc.effective_from <= CURDATE()`. Both columns already
+  // existed on production — added by an earlier change, nullable, and NULL on
+  // all 372 rows — so the support check found them, switched the filter on, and
+  // NULL <= CURDATE() is never true. Every target row would have been filtered
+  // out and every employee would have resolved to zero KPIs.
+  //
+  // Caught by executing the migration against a throwaway schema rather than
+  // reading it. A NULL-tolerant predicate is also the right semantics
+  // independently: a target with no start date has always applied.
   return effectiveDatingSupported
-    ? "AND kmc.effective_from <= CURDATE() AND (kmc.effective_to IS NULL OR kmc.effective_to >= CURDATE())"
+    ? "AND (kmc.effective_from IS NULL OR kmc.effective_from <= CURDATE()) " +
+      "AND (kmc.effective_to IS NULL OR kmc.effective_to >= CURDATE())"
     : "";
 }
 
