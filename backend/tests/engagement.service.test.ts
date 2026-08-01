@@ -144,7 +144,12 @@ describe("engagement auto awards", () => {
 
     await expect(checkAutoAwards("employee-1", "payslip_acknowledged")).resolves.toHaveLength(1);
     expect(mockExecuteRun).toHaveBeenCalledWith(
-      expect.stringContaining("INSERT INTO employee_badge_earned"),
+      // INSERT IGNORE, not INSERT — so "INSERT INTO" is not a substring of the
+      // statement any more. The IGNORE is the point: awarding a badge is
+      // idempotent, so a re-run cannot hand the same employee the same badge
+      // twice. Matching it explicitly keeps that visible rather than asserting
+      // a weaker fragment.
+      expect.stringContaining("INSERT IGNORE INTO employee_badge_earned"),
       expect.arrayContaining(["employee-1", "badge-Payslip Champion"])
     );
   });
