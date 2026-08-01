@@ -178,6 +178,12 @@ const envSchema = z.object({
 
   // AI provider — Gemini
   GEMINI_API_KEY: z.string().default(""),
+
+  // MCNmeet video meetings
+  MCNMEET_ENABLED: z.string().default("false"),
+  MCNMEET_BASE_URL: z.string().url().default("https://mcnmeet.teammas.in"),
+  MCNMEET_GOOGLE_BACKUP_ENABLED: z.string().default("true"),
+  MCNMEET_GOOGLE_AUTO_CREATE_ENABLED: z.string().default("false"),
 });
 
 const parsed = envSchema.safeParse(process.env);
@@ -279,4 +285,7 @@ export const env = {
   ESIGN_RECONCILIATION_ENABLED: parsed.data.ESIGN_RECONCILIATION_ENABLED === "true",
   NCOSEC_RECONCILIATION_ENABLED: parsed.data.NCOSEC_RECONCILIATION_ENABLED !== "false",
   NCOSEC_RECONCILIATION_AUTO_FIX: parsed.data.NCOSEC_RECONCILIATION_AUTO_FIX === "true",
+  MCNMEET_ENABLED: parsed.data.MCNMEET_ENABLED === "true",
+  MCNMEET_GOOGLE_BACKUP_ENABLED: parsed.data.MCNMEET_GOOGLE_BACKUP_ENABLED !== "false",
+  MCNMEET_GOOGLE_AUTO_CREATE_ENABLED: parsed.data.MCNMEET_GOOGLE_AUTO_CREATE_ENABLED === "true",
 };
