@@ -4,6 +4,7 @@ import { RowDataPacket, ResultSetHeader } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { env } from "../../config/env.js";
 import type { MeetingType, MeetingStatus, AudienceRow, CreateMeetingInput, UpdateMeetingInput } from "./mcnmeet.types.js";
+import { notifyMeetingCreated, notifyMeetingCancelled, notifyRecordingAvailable } from "./mcnmeet.notification.js";
 
 interface MeetingRow extends RowDataPacket {
   id: string;
@@ -285,6 +286,8 @@ export async function cancelMeeting(id: string, reason: string, cancelledBy: str
   );
   if (result.affectedRows > 0) {
     await logMeetingEvent(id, 'cancelled', cancelledBy, { reason });
+    // Fire-and-forget push notification to invitees
+    notifyMeetingCancelled(id, reason).catch(() => {});
   }
   return result.affectedRows > 0;
 }
@@ -375,6 +378,12 @@ export async function resolveInvitees(meetingId: string, resolvedBy: string): Pr
   }
 
   await logMeetingEvent(meetingId, 'invitees_resolved', resolvedBy, { count: added });
+
+  // Fire-and-forget push notifications to newly resolved invitees
+  if (added > 0) {
+    notifyMeetingCreated(meetingId).catch(() => {});
+  }
+
   return added;
 }
 
@@ -421,6 +430,8 @@ export async function updateRecording(meetingId: string, recordingUrl: string, u
   );
   if (result.affectedRows > 0) {
     await logMeetingEvent(meetingId, 'recording_added', updatedBy, { recordingUrl });
+    // Fire-and-forget push notification to attendees about recording
+    notifyRecordingAvailable(meetingId, recordingUrl).catch(() => {});
   }
   return result.affectedRows > 0;
 }

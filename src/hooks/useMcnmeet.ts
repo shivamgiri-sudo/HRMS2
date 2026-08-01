@@ -222,6 +222,10 @@ export function useAddRecording(id: string) {
   });
 }
 
+export function getCalendarDownloadUrl(id: string): string {
+  return `/api/mcnmeet/meetings/${id}/calendar.ics`;
+}
+
 export function useMarkAttendance(meetingId: string) {
   const qc = useQueryClient();
   return useMutation({

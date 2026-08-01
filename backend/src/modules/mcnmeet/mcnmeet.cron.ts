@@ -1,6 +1,7 @@
 import { ResultSetHeader } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { env } from "../../config/env.js";
+import { sendUpcomingMeetingReminders } from "./mcnmeet.notification.js";
 
 const INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
 
@@ -27,6 +28,11 @@ export function startMcnmeetCron() {
   intervalHandle = setInterval(async () => {
     try {
       await transitionMeetingStatuses();
+      // Send 15-min reminders for upcoming meetings
+      const reminderCount = await sendUpcomingMeetingReminders();
+      if (reminderCount > 0) {
+        console.log(`[mcnmeet-cron] Sent reminders for ${reminderCount} upcoming meeting(s)`);
+      }
     } catch (err) {
       console.error("[mcnmeet-cron] status transition error:", err);
     }

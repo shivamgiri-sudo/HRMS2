@@ -205,4 +205,59 @@ router.get('/reports/summary', requireRole(...ADMIN_ROLES), async (req: Authenti
   } catch (err) { next(err); }
 });
 
+// .ics calendar download
+router.get('/meetings/:id/calendar.ics', async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+  try {
+    const meeting = await service.getMeeting(req.params.id);
+    if (!meeting) {
+      return res.status(404).json({ success: false, message: 'Meeting not found' });
+    }
+
+    const startDate = new Date(meeting.start_at);
+    const endDate = meeting.end_at
+      ? new Date(meeting.end_at)
+      : new Date(startDate.getTime() + (meeting.duration_minutes ?? 60) * 60 * 1000);
+
+    const formatDateForIcs = (d: Date) => d.toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '');
+
+    const icsContent = [
+      'BEGIN:VCALENDAR',
+      'VERSION:2.0',
+      'PRODID:-//MAS Callnet//MCNmeet//EN',
+      'CALSCALE:GREGORIAN',
+      'METHOD:REQUEST',
+      'BEGIN:VEVENT',
+      `DTSTART:${formatDateForIcs(startDate)}`,
+      `DTEND:${formatDateForIcs(endDate)}`,
+      `DTSTAMP:${formatDateForIcs(new Date())}`,
+      `UID:${meeting.id}@mcnmeet.teammas.in`,
+      `SUMMARY:${escapeIcsText(meeting.title)}`,
+      meeting.description ? `DESCRIPTION:${escapeIcsText(meeting.description)}` : '',
+      `URL:${meeting.mcnmeet_join_url}`,
+      `LOCATION:${meeting.mcnmeet_join_url}`,
+      'STATUS:CONFIRMED',
+      'SEQUENCE:0',
+      'BEGIN:VALARM',
+      'TRIGGER:-PT15M',
+      'ACTION:DISPLAY',
+      'DESCRIPTION:Meeting starting in 15 minutes',
+      'END:VALARM',
+      'END:VEVENT',
+      'END:VCALENDAR',
+    ].filter(Boolean).join('\r\n');
+
+    res.setHeader('Content-Type', 'text/calendar; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="${meeting.meeting_code}.ics"`);
+    res.send(icsContent);
+  } catch (err) { next(err); }
+});
+
+function escapeIcsText(text: string): string {
+  return text
+    .replace(/\\/g, '\\\\')
+    .replace(/;/g, '\\;')
+    .replace(/,/g, '\\,')
+    .replace(/\n/g, '\\n');
+}
+
 export const mcnmeetRouter = router;

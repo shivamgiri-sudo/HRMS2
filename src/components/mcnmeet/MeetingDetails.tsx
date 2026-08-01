@@ -6,10 +6,10 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "sonner";
-import { Calendar, Clock, Users, ExternalLink, Video, AlertTriangle, Loader2, Check, Link2 } from "lucide-react";
+import { Calendar, Clock, Users, ExternalLink, Video, AlertTriangle, Loader2, Check, Link2, CalendarDays } from "lucide-react";
 import {
   useMeeting, useCancelMeeting, useResolveInvitees, useAddRecording, useUpdateMeeting, useAcknowledge, useSelfJoin,
-  MEETING_TYPE_LABELS, MEETING_STATUS_LABELS, AUDIENCE_TYPE_LABELS, type MeetingStatus, type Invitee,
+  getCalendarDownloadUrl, MEETING_TYPE_LABELS, MEETING_STATUS_LABELS, AUDIENCE_TYPE_LABELS, type MeetingStatus, type Invitee,
 } from "@/hooks/useMcnmeet";
 import { MeetingStatusBadge } from "./MeetingStatusBadge";
 import { AttendancePanel } from "./AttendancePanel";
@@ -173,6 +173,12 @@ export function MeetingDetails({ meetingId, onBack, isAdmin }: Props) {
                 className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-2 text-xs text-slate-500 hover:bg-slate-50">
                 <Link2 className="h-3.5 w-3.5" /> Copy link
               </button>
+              <a
+                href={getCalendarDownloadUrl(meetingId)}
+                download
+                className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-2 text-xs text-slate-500 hover:bg-slate-50">
+                <CalendarDays className="h-3.5 w-3.5" /> Add to calendar
+              </a>
             </div>
             <div className="flex h-1">
               <div className="flex-1 bg-[#1B6AB5]" />
