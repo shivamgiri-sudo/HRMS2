@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { ExternalLink, MessageCircle, Play, RefreshCw, ThumbsUp } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -62,8 +62,22 @@ function timeAgo(dateStr: string | null): string {
 function extractYouTubeId(url: string): string | null {
   try {
     const u = new URL(url);
-    return u.searchParams.get("v") ?? u.pathname.split("/").pop() ?? null;
+    return u.searchParams.get("v") ?? null;
   } catch { return null; }
+}
+
+// ── Thumbnail with maxres → hq fallback ───────────────────────────────────
+function YtThumbnail({ videoId, alt }: { videoId: string; alt: string }) {
+  const [src, setSrc] = useState(`https://i.ytimg.com/vi/${videoId}/maxresdefault.jpg`);
+  return (
+    <img
+      src={src}
+      alt={alt}
+      className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"
+      loading="lazy"
+      onError={() => setSrc(`https://i.ytimg.com/vi/${videoId}/mqdefault.jpg`)}
+    />
+  );
 }
 
 // ── Post card ──────────────────────────────────────────────────────────────
@@ -73,16 +87,13 @@ function PostCard({ post, onPlayVideo }: { post: SocialPost; onPlayVideo?: (id: 
 
   return (
     <article className="group flex flex-col overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-sm transition-shadow duration-200 hover:shadow-xl">
-      {/* MCN three-stripe top */}
       <McnStripe h={3} />
-
-      {post.media_url && (
+      {(post.media_url || videoId) && (
         <div className="relative aspect-video w-full overflow-hidden bg-slate-100">
-          <img
-            src={post.media_url} alt={post.content_text ?? ""}
-            className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"
-            loading="lazy"
-          />
+          {videoId
+            ? <YtThumbnail videoId={videoId} alt={post.content_text ?? ""} />
+            : <img src={post.media_url!} alt={post.content_text ?? ""} className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105" loading="lazy" />
+          }
           {videoId && onPlayVideo && (
             <button
               onClick={() => onPlayVideo(videoId, post.content_text ?? "")}
@@ -96,7 +107,6 @@ function PostCard({ post, onPlayVideo }: { post: SocialPost; onPlayVideo?: (id: 
           )}
         </div>
       )}
-
       <div className="flex flex-1 flex-col gap-3 p-4">
         <div className="flex items-center justify-between">
           <span className={`flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider ${meta.badgeCls}`}>
@@ -104,11 +114,7 @@ function PostCard({ post, onPlayVideo }: { post: SocialPost; onPlayVideo?: (id: 
           </span>
           {post.published_at && <span className="text-[11px] text-slate-400">{timeAgo(post.published_at)}</span>}
         </div>
-
-        {post.content_text && (
-          <p className="flex-1 text-sm leading-6 text-slate-700 line-clamp-3">{post.content_text}</p>
-        )}
-
+        {post.content_text && <p className="flex-1 text-sm leading-6 text-slate-700 line-clamp-3">{post.content_text}</p>}
         <div className="flex items-center justify-between border-t border-slate-100 pt-3">
           <div className="flex items-center gap-3 text-xs text-slate-400">
             <span className="flex items-center gap-1"><ThumbsUp className="h-3.5 w-3.5" /> {post.like_count}</span>
@@ -116,18 +122,11 @@ function PostCard({ post, onPlayVideo }: { post: SocialPost; onPlayVideo?: (id: 
           </div>
           <div className="flex items-center gap-2">
             {videoId && onPlayVideo && (
-              <button
-                onClick={() => onPlayVideo(videoId, post.content_text ?? "")}
-                className="flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-xs font-bold text-white transition hover:opacity-90 cursor-pointer"
-                style={{ background: MCN_RED }}
-              >
+              <button onClick={() => onPlayVideo(videoId, post.content_text ?? "")} className="flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-xs font-bold text-white cursor-pointer hover:opacity-90" style={{ background: MCN_RED }}>
                 <Play className="h-3 w-3 fill-white" /> Play
               </button>
             )}
-            <a
-              href={post.post_url} target="_blank" rel="noopener noreferrer"
-              className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:bg-slate-100 cursor-pointer"
-            >
+            <a href={post.post_url} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-100 cursor-pointer">
               Open <ExternalLink className="h-3 w-3" />
             </a>
           </div>
@@ -148,29 +147,25 @@ function FeedList({ platform, onPlayVideo }: { platform: SocialPlatformFilter; o
     <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
       {Array.from({ length: 6 }, (_, i) => (
         <div key={i} className="overflow-hidden rounded-2xl border border-slate-100 bg-white">
-          <div className="h-[3px] flex"><div className="flex-1 bg-slate-200"/><div className="flex-1 bg-slate-200"/><div className="flex-1 bg-slate-200"/></div>
-          <Skeleton className="aspect-video w-full" />
+          <McnStripe h={3} /><Skeleton className="aspect-video w-full" />
           <div className="space-y-2 p-4"><Skeleton className="h-3 w-24 rounded-full" /><Skeleton className="h-3 w-full" /><Skeleton className="h-3 w-3/4" /></div>
         </div>
       ))}
     </div>
   );
-
   if (isError) return (
     <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-12 text-center">
       <p className="text-sm font-semibold text-rose-700">Could not load posts</p>
       <button onClick={() => void refetch()} className="mt-3 rounded-xl border border-rose-200 bg-white px-4 py-1.5 text-xs font-semibold text-rose-700 hover:bg-rose-50 cursor-pointer">Retry</button>
     </div>
   );
-
   if (posts.length === 0) return (
     <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-16 text-center">
       <img src="/mcn-icon.png" alt="" className="mx-auto mb-3 h-10 opacity-20" onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }} />
-      <p className="text-sm font-medium text-slate-500">No posts synced yet for this platform.</p>
+      <p className="text-sm font-medium text-slate-500">No posts synced yet.</p>
       <p className="mt-1 text-xs text-slate-400">Posts sync automatically every 30 minutes.</p>
     </div>
   );
-
   return (
     <div className="space-y-6">
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
@@ -187,67 +182,150 @@ function FeedList({ platform, onPlayVideo }: { platform: SocialPlatformFilter; o
   );
 }
 
-// ── Embed components ───────────────────────────────────────────────────────
+// ── Facebook embed — iframe approach (works without JS SDK) ────────────────
 function FacebookEmbed() {
-  const ensureSDK = useCallback((el: HTMLDivElement | null) => {
-    if (!el) return;
-    if ((window as any).FB) { (window as any).FB.XFBML.parse(el); return; }
-    if (document.getElementById("facebook-jssdk")) return;
-    const s = document.createElement("script");
-    s.id = "facebook-jssdk"; s.src = "https://connect.facebook.net/en_US/sdk.js#xfbml=1&version=v19.0";
-    s.async = true; s.defer = true; document.body.appendChild(s);
-  }, []);
+  const src = `https://www.facebook.com/plugins/page.php?href=https%3A%2F%2Fwww.facebook.com%2FTeamMas9&tabs=timeline&width=600&height=700&small_header=false&adapt_container_width=true&hide_cover=false&show_facepile=true`;
   return (
     <div className="overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-sm">
       <McnStripe h={3} />
-      <div className="flex justify-center p-2" ref={ensureSDK}>
-        <div id="fb-root" />
-        <div className="fb-page" data-href="https://www.facebook.com/TeamMas9" data-tabs="timeline" data-width="560" data-height="660" data-small-header="false" data-adapt-container-width="true" data-hide-cover="false" data-show-facepile="true">
-          <blockquote cite="https://www.facebook.com/TeamMas9" className="fb-xfbml-parse-ignore"><a href="https://www.facebook.com/TeamMas9">MAS Callnet</a></blockquote>
-        </div>
+      <div className="relative flex justify-center bg-[#f0f2f5]">
+        <iframe
+          src={src}
+          width="600"
+          height="700"
+          style={{ border: "none", overflow: "hidden", maxWidth: "100%" }}
+          scrolling="no"
+          frameBorder="0"
+          allowFullScreen
+          allow="autoplay; clipboard-write; encrypted-media; picture-in-picture; web-share"
+          title="MAS Callnet Facebook"
+          className="w-full"
+        />
       </div>
-    </div>
-  );
-}
-
-function InstagramCard() {
-  return (
-    <div className="overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-sm">
-      <McnStripe h={3} />
-      <div className="flex flex-col items-center gap-4 px-8 py-10 text-center">
-        <div className="flex h-20 w-20 items-center justify-center rounded-full text-white shadow-lg" style={{ background: "linear-gradient(135deg,#833AB4,#FD1D1D,#F77737)" }}>
-          <svg className="h-10 w-10" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2.163c3.204 0 3.584.012 4.85.07 3.252.148 4.771 1.691 4.919 4.919.058 1.265.069 1.645.069 4.849 0 3.205-.012 3.584-.069 4.849-.149 3.225-1.664 4.771-4.919 4.919-1.266.058-1.644.07-4.85.07-3.204 0-3.584-.012-4.849-.07-3.26-.149-4.771-1.699-4.919-4.92-.058-1.265-.07-1.644-.07-4.849 0-3.204.013-3.583.07-4.849.149-3.227 1.664-4.771 4.919-4.919 1.266-.057 1.645-.069 4.849-.069zm0-2.163c-3.259 0-3.667.014-4.947.072-4.358.2-6.78 2.618-6.98 6.98-.059 1.281-.073 1.689-.073 4.948 0 3.259.014 3.668.072 4.948.2 4.358 2.618 6.78 6.98 6.98 1.281.058 1.689.072 4.948.072 3.259 0 3.668-.014 4.948-.072 4.354-.2 6.782-2.618 6.979-6.98.059-1.28.073-1.689.073-4.948 0-3.259-.014-3.667-.072-4.947-.196-4.354-2.617-6.78-6.979-6.98-1.281-.059-1.69-.073-4.949-.073zm0 5.838c-3.403 0-6.162 2.759-6.162 6.162s2.759 6.163 6.162 6.163 6.162-2.759 6.162-6.163c0-3.403-2.759-6.162-6.162-6.162zm0 10.162c-2.209 0-4-1.79-4-4 0-2.209 1.791-4 4-4s4 1.791 4 4c0 2.21-1.791 4-4 4zm6.406-11.845c-.796 0-1.441.645-1.441 1.44s.645 1.44 1.441 1.44c.795 0 1.439-.645 1.439-1.44s-.644-1.44-1.439-1.44z" /></svg>
-        </div>
-        <div>
-          <p className="text-lg font-black" style={{ color: MCN_NAVY }}>@teammas9</p>
-          <p className="mt-1 text-sm text-slate-500">Follow MAS Callnet on Instagram for team moments, culture highlights, and company updates.</p>
-        </div>
-        <a href="https://instagram.com/teammas9" target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-2 rounded-2xl px-6 py-2.5 text-sm font-bold text-white shadow-md transition hover:opacity-90 cursor-pointer" style={{ background: "linear-gradient(135deg,#833AB4,#FD1D1D,#F77737)" }}>
-          View Profile <ExternalLink className="h-3.5 w-3.5" />
+      <div className="flex items-center justify-end border-t border-slate-100 px-4 py-3">
+        <a href="https://www.facebook.com/TeamMas9" target="_blank" rel="noopener noreferrer" className="flex items-center gap-1.5 text-xs font-semibold text-[#1877F2] hover:underline cursor-pointer">
+          Open Facebook page <ExternalLink className="h-3 w-3" />
         </a>
       </div>
     </div>
   );
 }
 
-declare global { interface Window { twttr?: { widgets: { load: () => void } } } }
+// ── Instagram embed — official iframe oEmbed ──────────────────────────────
+// Instagram allows embedding individual public posts via their oEmbed endpoint.
+// Without a post URL we show the profile card + recent post iframes.
+const INSTAGRAM_POST_URLS = [
+  // Add real post URLs from https://www.instagram.com/teammas9/ here
+  // e.g. "https://www.instagram.com/p/C_XXXXXXXX/"
+];
 
-function TwitterEmbed() {
-  const ensureWidget = useCallback((el: HTMLDivElement | null) => {
-    if (!el) return;
-    if (window.twttr?.widgets?.load) { window.twttr.widgets.load(); return; }
-    const s = document.createElement("script"); s.src = "https://platform.twitter.com/widgets.js"; s.async = true; s.charset = "utf-8"; document.body.appendChild(s);
-  }, []);
+function InstagramEmbed() {
   return (
     <div className="overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-sm">
       <McnStripe h={3} />
-      <div className="flex justify-center p-4" ref={ensureWidget}>
-        <a className="twitter-timeline" data-width="560" data-height="660" data-theme="light" href="https://twitter.com/MASCallnet">Loading X / Twitter feed…</a>
+      <div className="flex flex-col items-center gap-5 px-6 py-8">
+        {/* Profile header */}
+        <div className="flex items-center gap-4 w-full">
+          <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-full text-white shadow-lg" style={{ background: "linear-gradient(135deg,#833AB4,#FD1D1D,#F77737)" }}>
+            <svg className="h-8 w-8" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2.163c3.204 0 3.584.012 4.85.07 3.252.148 4.771 1.691 4.919 4.919.058 1.265.069 1.645.069 4.849 0 3.205-.012 3.584-.069 4.849-.149 3.225-1.664 4.771-4.919 4.919-1.266.058-1.644.07-4.85.07-3.204 0-3.584-.012-4.849-.07-3.26-.149-4.771-1.699-4.919-4.92-.058-1.265-.07-1.644-.07-4.849 0-3.204.013-3.583.07-4.849.149-3.227 1.664-4.771 4.919-4.919 1.266-.057 1.645-.069 4.849-.069zm0-2.163c-3.259 0-3.667.014-4.947.072-4.358.2-6.78 2.618-6.98 6.98-.059 1.281-.073 1.689-.073 4.948 0 3.259.014 3.668.072 4.948.2 4.358 2.618 6.78 6.98 6.98 1.281.058 1.689.072 4.948.072 3.259 0 3.668-.014 4.948-.072 4.354-.2 6.782-2.618 6.979-6.98.059-1.28.073-1.689.073-4.948 0-3.259-.014-3.667-.072-4.947-.196-4.354-2.617-6.78-6.979-6.98-1.281-.059-1.69-.073-4.949-.073zm0 5.838c-3.403 0-6.162 2.759-6.162 6.162s2.759 6.163 6.162 6.163 6.162-2.759 6.162-6.163c0-3.403-2.759-6.162-6.162-6.162zm0 10.162c-2.209 0-4-1.79-4-4 0-2.209 1.791-4 4-4s4 1.791 4 4c0 2.21-1.791 4-4 4zm6.406-11.845c-.796 0-1.441.645-1.441 1.44s.645 1.44 1.441 1.44c.795 0 1.439-.645 1.439-1.44s-.644-1.44-1.439-1.44z" /></svg>
+          </div>
+          <div>
+            <p className="text-base font-black" style={{ color: MCN_NAVY }}>@teammas9</p>
+            <p className="text-sm text-slate-500">MAS Callnet on Instagram</p>
+          </div>
+          <a href="https://instagram.com/teammas9" target="_blank" rel="noopener noreferrer" className="ml-auto inline-flex items-center gap-1.5 rounded-2xl px-4 py-2 text-sm font-bold text-white cursor-pointer hover:opacity-90 shrink-0" style={{ background: "linear-gradient(135deg,#833AB4,#FD1D1D,#F77737)" }}>
+            Follow <ExternalLink className="h-3.5 w-3.5" />
+          </a>
+        </div>
+
+        {/* Embedded posts — if post URLs are configured */}
+        {INSTAGRAM_POST_URLS.length > 0 ? (
+          <div className="grid w-full gap-4 sm:grid-cols-2">
+            {INSTAGRAM_POST_URLS.slice(0, 4).map((postUrl) => (
+              <iframe
+                key={postUrl}
+                src={`${postUrl}embed/`}
+                className="w-full rounded-xl border-0"
+                height="480"
+                scrolling="no"
+                frameBorder="0"
+                allowFullScreen
+                allow="autoplay; clipboard-write; encrypted-media; picture-in-picture; web-share"
+                title="Instagram post"
+              />
+            ))}
+          </div>
+        ) : (
+          <div className="w-full rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-6 py-8 text-center">
+            <p className="text-sm text-slate-600 font-medium">Instagram post embedding requires individual post URLs.</p>
+            <p className="mt-2 text-xs text-slate-400">
+              Visit <a href="https://instagram.com/teammas9" target="_blank" rel="noopener noreferrer" className="text-pink-600 underline">@teammas9</a> and share recent post links with admin to display them here.
+            </p>
+          </div>
+        )}
       </div>
     </div>
   );
 }
 
+// ── X / Twitter timeline embed ────────────────────────────────────────────
+declare global { interface Window { twttr?: { widgets: { load: (el?: HTMLElement) => void } } } }
+
+function TwitterEmbed() {
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const inject = () => {
+      if (!containerRef.current) return;
+      if (window.twttr?.widgets) {
+        window.twttr.widgets.load(containerRef.current);
+        return;
+      }
+      if (!document.getElementById("twitter-wjs")) {
+        const s = document.createElement("script");
+        s.id = "twitter-wjs";
+        s.src = "https://platform.twitter.com/widgets.js";
+        s.async = true;
+        s.charset = "utf-8";
+        s.onload = () => window.twttr?.widgets?.load(containerRef.current ?? undefined);
+        document.head.appendChild(s);
+      }
+    };
+    inject();
+  }, []);
+
+  return (
+    <div className="overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-sm">
+      <McnStripe h={3} />
+      <div className="bg-black px-4 py-3 flex items-center gap-3">
+        <svg className="h-5 w-5 text-white" viewBox="0 0 24 24" fill="currentColor"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-4.714-6.231-5.401 6.231H2.74l7.73-8.835L1.254 2.25H8.08l4.259 5.622 5.905-5.622zm-1.161 17.52h1.833L7.084 4.126H5.117z" /></svg>
+        <p className="text-white font-black text-sm">@MASCallnet on X</p>
+        <a href="https://twitter.com/MASCallnet" target="_blank" rel="noopener noreferrer" className="ml-auto text-xs text-slate-300 hover:text-white flex items-center gap-1 cursor-pointer">
+          Open <ExternalLink className="h-3 w-3" />
+        </a>
+      </div>
+      <div ref={containerRef} className="flex justify-center p-4 bg-white min-h-[400px]">
+        <a
+          className="twitter-timeline"
+          data-width="600"
+          data-height="700"
+          data-theme="light"
+          data-tweet-limit="6"
+          href="https://twitter.com/MASCallnet"
+        >
+          <div className="flex items-center justify-center py-16">
+            <div className="text-center">
+              <div className="mx-auto mb-3 h-8 w-8 animate-spin rounded-full border-2 border-slate-200 border-t-slate-600" />
+              <p className="text-sm text-slate-500">Loading X / Twitter feed…</p>
+            </div>
+          </div>
+        </a>
+      </div>
+    </div>
+  );
+}
+
+// ── LinkedIn ───────────────────────────────────────────────────────────────
 function LinkedInCard() {
   return (
     <div className="overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-sm">
@@ -257,12 +335,17 @@ function LinkedInCard() {
           <svg className="h-10 w-10" viewBox="0 0 24 24" fill="currentColor"><path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433a2.062 2.062 0 0 1-2.063-2.065 2.064 2.064 0 1 1 2.063 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z" /></svg>
         </div>
         <div>
-          <p className="text-lg font-black" style={{ color: MCN_NAVY }}>MAS Callnet</p>
-          <p className="mt-1 text-sm text-slate-500">LinkedIn does not offer a free public feed API. Follow our company page for career opportunities and company news.</p>
+          <p className="text-lg font-black" style={{ color: MCN_NAVY }}>MAS Callnet on LinkedIn</p>
+          <p className="mt-1 text-sm text-slate-500 max-w-sm">LinkedIn does not provide a free embeddable feed. Follow our company page directly for career opportunities, company news, and milestones.</p>
         </div>
         <a href="https://www.linkedin.com/company/mas-callnet" target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-2 rounded-2xl bg-[#0A66C2] px-6 py-2.5 text-sm font-bold text-white shadow-md transition hover:bg-[#004182] cursor-pointer">
           Follow on LinkedIn <ExternalLink className="h-3.5 w-3.5" />
         </a>
+        {/* LinkedIn follow button widget */}
+        <div className="mt-2">
+          <script src="https://platform.linkedin.com/in.js" type="text/javascript"> lang: en_US</script>
+          <script type="IN/FollowCompany" data-id="mas-callnet" data-counter="bottom"></script>
+        </div>
       </div>
     </div>
   );
@@ -272,7 +355,7 @@ function LinkedInCard() {
 function SectionHead({ label, icon }: { label: string; icon: React.ReactNode }) {
   return (
     <div className="mb-4 flex items-center gap-3">
-      <div className="flex w-1 self-stretch flex-col overflow-hidden rounded-full">
+      <div className="flex w-1.5 self-stretch flex-col overflow-hidden rounded-full">
         <div className="flex-1" style={{ background: MCN_BLUE }} />
         <div className="flex-1" style={{ background: MCN_GREEN }} />
         <div className="flex-1" style={{ background: MCN_RED }} />
@@ -285,19 +368,19 @@ function SectionHead({ label, icon }: { label: string; icon: React.ReactNode }) 
   );
 }
 
-// ── Tab definition ─────────────────────────────────────────────────────────
+// ── Tabs ───────────────────────────────────────────────────────────────────
 type TabKey = "all" | "youtube" | "facebook" | "instagram" | "twitter" | "linkedin";
 
 const TABS: { key: TabKey; label: string; icon: React.ReactNode; active: string; idle: string }[] = [
   { key: "all", label: "All",
     icon: <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>,
     active: "text-white shadow-sm", idle: "bg-white text-slate-600 border border-slate-200 hover:border-slate-400" },
-  { key: "youtube",   label: "YouTube",    icon: PLATFORM_META.youtube.icon,    active: PLATFORM_META.youtube.tabActive,    idle: PLATFORM_META.youtube.tabIdle },
-  { key: "facebook",  label: "Facebook",   icon: PLATFORM_META.facebook.icon,   active: PLATFORM_META.facebook.tabActive,   idle: PLATFORM_META.facebook.tabIdle },
-  { key: "instagram", label: "Instagram",  icon: PLATFORM_META.instagram.icon,  active: PLATFORM_META.instagram.tabActive,  idle: PLATFORM_META.instagram.tabIdle },
+  { key: "youtube",   label: "YouTube",    icon: PLATFORM_META.youtube.icon,   active: PLATFORM_META.youtube.tabActive,   idle: PLATFORM_META.youtube.tabIdle },
+  { key: "facebook",  label: "Facebook",   icon: PLATFORM_META.facebook.icon,  active: PLATFORM_META.facebook.tabActive,  idle: PLATFORM_META.facebook.tabIdle },
+  { key: "instagram", label: "Instagram",  icon: PLATFORM_META.instagram.icon, active: PLATFORM_META.instagram.tabActive, idle: PLATFORM_META.instagram.tabIdle },
   { key: "twitter",   label: "X / Twitter",
     icon: <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="currentColor"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-4.714-6.231-5.401 6.231H2.74l7.73-8.835L1.254 2.25H8.08l4.259 5.622 5.905-5.622zm-1.161 17.52h1.833L7.084 4.126H5.117z" /></svg>,
-    active: "text-white shadow-sm", idle: "bg-white text-slate-600 border border-slate-200 hover:border-slate-400" },
+    active: "bg-black text-white shadow-sm", idle: "bg-white text-slate-600 border border-slate-200 hover:border-slate-400" },
   { key: "linkedin",  label: "LinkedIn",
     icon: <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="currentColor"><path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433a2.062 2.062 0 0 1-2.063-2.065 2.064 2.064 0 1 1 2.063 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z" /></svg>,
     active: "bg-[#0A66C2] text-white shadow-sm", idle: "bg-white text-slate-600 border border-slate-200 hover:border-[#0A66C2]/40 hover:text-[#0A66C2]" },
@@ -316,52 +399,38 @@ export default function NativeSocialFeed() {
 
       <div className="mx-auto max-w-7xl space-y-5 px-4 py-6">
 
-        {/* ── MCN branded hero header ── */}
+        {/* MCN branded hero */}
         <div className="overflow-hidden rounded-3xl shadow-lg" style={{ background: MCN_NAVY }}>
           <div className="flex flex-wrap items-center justify-between gap-4 px-6 py-5">
             <div className="flex items-center gap-4">
-              <img
-                src="/mcn-logo.png" alt="MAS Callnet"
-                className="h-8 brightness-0 invert"
-                onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
-              />
+              <img src="/mcn-logo.png" alt="MAS Callnet" className="h-8 brightness-0 invert" onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }} />
               <div>
                 <h1 className="text-xl font-black text-white tracking-tight">MAS Connect</h1>
                 <p className="text-sm text-blue-200">Stay connected with MAS Callnet on social media</p>
               </div>
             </div>
-            <button
-              onClick={() => qc.invalidateQueries({ queryKey: ["social-feed"] })}
-              className="inline-flex items-center gap-2 rounded-2xl border border-white/25 bg-white/10 px-4 py-2 text-sm font-semibold text-white transition hover:bg-white/20 cursor-pointer"
-            >
+            <button onClick={() => qc.invalidateQueries({ queryKey: ["social-feed"] })} className="inline-flex items-center gap-2 rounded-2xl border border-white/25 bg-white/10 px-4 py-2 text-sm font-semibold text-white transition hover:bg-white/20 cursor-pointer">
               <RefreshCw className="h-3.5 w-3.5" /> Refresh
             </button>
           </div>
-          {/* MCN identity stripe */}
           <McnStripe h={4} />
         </div>
 
-        {/* ── Platform tabs ── */}
+        {/* Platform tabs */}
         <div className="flex flex-wrap gap-2">
           {TABS.map((tab) => (
             <button
               key={tab.key}
               onClick={() => setActiveTab(tab.key)}
-              className={`inline-flex items-center gap-2 rounded-2xl px-4 py-2 text-sm font-semibold transition-all duration-150 cursor-pointer ${
-                activeTab === tab.key
-                  ? tab.key === "all" || tab.key === "twitter"
-                    ? `${tab.active} text-white`
-                    : tab.active
-                  : tab.idle
-              }`}
-              style={activeTab === tab.key && (tab.key === "all" || tab.key === "twitter") ? { background: MCN_NAVY } : undefined}
+              className={`inline-flex items-center gap-2 rounded-2xl px-4 py-2 text-sm font-semibold transition-all duration-150 cursor-pointer ${activeTab === tab.key ? tab.active : tab.idle}`}
+              style={activeTab === tab.key && tab.key === "all" ? { background: MCN_NAVY } : undefined}
             >
               {tab.icon} {tab.label}
             </button>
           ))}
         </div>
 
-        {/* ── Tab content ── */}
+        {/* Tab content */}
         <div className="min-h-[400px]">
           {activeTab === "all" && (
             <div className="space-y-8">
@@ -377,7 +446,7 @@ export default function NativeSocialFeed() {
                   </div>
                   <div>
                     <SectionHead label="Instagram" icon={PLATFORM_META.instagram.icon} />
-                    <InstagramCard />
+                    <InstagramEmbed />
                   </div>
                 </div>
               </section>
@@ -385,11 +454,10 @@ export default function NativeSocialFeed() {
           )}
           {activeTab === "youtube"   && <FeedList platform="youtube" onPlayVideo={handlePlayVideo} />}
           {activeTab === "facebook"  && <FacebookEmbed />}
-          {activeTab === "instagram" && <InstagramCard />}
+          {activeTab === "instagram" && <InstagramEmbed />}
           {activeTab === "twitter"   && <TwitterEmbed />}
           {activeTab === "linkedin"  && <LinkedInCard />}
         </div>
-
       </div>
     </DashboardLayout>
   );

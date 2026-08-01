@@ -46,8 +46,8 @@ export async function fetchYouTubePosts(channelId: string): Promise<FetchedPost[
 
     const title = extractText(entry, 'title');
     const published = extractText(entry, 'published');
-    const thumbnail = extractAttr(entry, 'media:thumbnail', 'url')
-      ?? `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`;
+    // Always use maxresdefault — hqdefault from RSS is often a 9KB grey placeholder.
+    const thumbnail = `https://i.ytimg.com/vi/${videoId}/maxresdefault.jpg`;
     const description = extractText(entry, 'media:description');
     const postUrl = `https://www.youtube.com/watch?v=${videoId}`;
 

@@ -44,7 +44,7 @@ export function VideoModal({ videoId, title, onClose }: VideoModalProps) {
         {/* 16:9 iframe */}
         <div className="aspect-video bg-black">
           <iframe
-            src={`https://www.youtube.com/embed/${videoId}?autoplay=1&rel=0&modestbranding=1`}
+            src={`https://www.youtube-nocookie.com/embed/${videoId}?autoplay=1&rel=0&modestbranding=1`}
             title={title}
             allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
             allowFullScreen
