@@ -250,7 +250,12 @@ payrollExtendedRouter.get("/runs/:id/salary-sheet-export", requireRole("admin", 
         ''                                                 AS ChequeNumber,
         ''                                                 AS ChequeDate,
         ''                                                 AS PrintDate,
-        COALESCE(e.status, '')                             AS LeftStatus,
+        -- employees has no status column, so this whole payroll register export threw
+        -- ER_BAD_FIELD_ERROR. Same defect as the auth refresh query, but the right fix
+        -- differs: auth needed a boolean gate (active_status), whereas LeftStatus is a
+        -- descriptive report column, so it wants employment_status — 'Resigned',
+        -- 'terminated', 'inactive', 'active' — which is what a reader of this export expects.
+        COALESCE(e.employment_status, '')                  AS LeftStatus,
         NULL AS TaxTotalGross,
         NULL AS TaxSection10,
         NULL AS TaxBalance,
