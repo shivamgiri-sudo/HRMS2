@@ -73,6 +73,13 @@ const LMS_SESSION_ROUTES: Record<LmsSessionUserType, { route: string; storageKey
 };
 
 /**
+ * The user_type values the LMS's own CHECK constraint accepts on portal_sessions
+ * (chk_portal_session_user_type). Deliberately narrower than LMS_SESSION_ROUTES, which
+ * carries a 'management' persona the LMS schema does not recognise.
+ */
+const LMS_PORTAL_SESSION_USER_TYPES: readonly string[] = ["trainee", "coordinator", "admin"];
+
+/**
  * The portal names on the wire ("trainee") do not match the keys the service
  * builds its access object with ("employee" — see lmsService access:{} in
  * lms.service.ts). Indexing the access object by portal name therefore yielded
@@ -186,10 +193,32 @@ async function buildLmsSession(
   const expiresAt = new Date(Date.now() + 6 * 60 * 60 * 1000);
   const pool = await getLmsPool();
 
+  // portal_sessions lives in the LMS's own database (lms_mcn), which is on a separate
+  // release cycle. Its 20260729100000_secure_browser_sessions migration added
+  // session_family_id and absolute_expires_at as NOT NULL with no default, and this INSERT
+  // supplied neither — so every launch failed with
+  // "Field 'session_family_id' doesn't have a default value".
+  //
+  // It went unnoticed for three days because a separate bug was returning 403 before
+  // execution ever reached here. Once that was fixed the crash surfaced immediately.
+  //
+  // Both values follow the LMS's own backfill convention (migration lines 41 and 44):
+  // session_family_id = id for a new family, absolute_expires_at = expires_at. The latter
+  // also satisfies their CHECK (absolute_expires_at >= expires_at, line 54).
+  //
+  // The LMS also constrains user_type to ('trainee','coordinator','admin') — note that
+  // LMS_SESSION_ROUTES carries a fourth 'management' persona that would violate it. No
+  // resolver path returns it today, but fail with a readable message rather than a raw
+  // constraint violation if one ever does.
+  if (!LMS_PORTAL_SESSION_USER_TYPES.includes(identity.userType)) {
+    throw new Error(`LMS does not accept a portal session for user type "${identity.userType}"`);
+  }
+
   await pool.execute(
-    `INSERT INTO portal_sessions (id, token, user_id, user_type, expires_at, created_at)
-     VALUES (?, ?, ?, ?, ?, NOW())`,
-    [sessionId, lmsToken, identity.userId, identity.userType, expiresAt]
+    `INSERT INTO portal_sessions
+       (id, session_family_id, token, user_id, user_type, expires_at, absolute_expires_at, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, NOW())`,
+    [sessionId, sessionId, lmsToken, identity.userId, identity.userType, expiresAt, expiresAt]
   );
 
   await db.execute(
@@ -241,7 +270,8 @@ router.get("/native/admin", h(async (req: AuthenticatedRequest, res: Response) =
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : "LMS service error";
     console.error("[lms/native/admin]", msg);
-    res.status(500).json({ success: false, error: "LMS dashboard unavailable", _details: msg });
+    // Same disclosure defect as /launch-context: _details carried the raw driver text.
+    res.status(500).json({ success: false, error: "LMS dashboard unavailable" });
   }
 }));
 
@@ -282,10 +312,13 @@ router.get("/launch-context", h(async (req: AuthenticatedRequest, res: Response)
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : "LMS launch unavailable";
     console.error("[lms/launch-context] direct LMS session mint failed:", message);
+    // `error` is deliberately not returned. hrmsApi.ts prefers payload.error over
+    // payload.message, so anything put here is what the user reads — which is how
+    // "Field 'session_family_id' doesn't have a default value" reached the CEO's screen.
+    // The detail is logged above; the browser gets the curated message only.
     res.status(502).json({
       success: false,
       message: "LMS launch unavailable",
-      error: message,
     });
   }
 }));
