@@ -397,13 +397,15 @@ export default function NativeSocialFeed() {
     <DashboardLayout>
       {videoModal && <VideoModal videoId={videoModal.id} title={videoModal.title} onClose={() => setVideoModal(null)} />}
 
-      <div className="mx-auto max-w-7xl space-y-5 px-4 py-6">
+      <div className="w-full space-y-5">
 
         {/* MCN branded hero */}
         <div className="overflow-hidden rounded-3xl shadow-lg" style={{ background: MCN_NAVY }}>
           <div className="flex flex-wrap items-center justify-between gap-4 px-6 py-5">
             <div className="flex items-center gap-4">
-              <img src="/mcn-logo.png" alt="MAS Callnet" className="h-8 brightness-0 invert" onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }} />
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white p-1 shadow-sm">
+                <img src="/mcn-logo.png" alt="MAS Callnet" className="h-full w-full object-contain" onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }} />
+              </div>
               <div>
                 <h1 className="text-xl font-black text-white tracking-tight">MAS Connect</h1>
                 <p className="text-sm text-blue-200">Stay connected with MAS Callnet on social media</p>
@@ -462,3 +464,4 @@ export default function NativeSocialFeed() {
     </DashboardLayout>
   );
 }
+

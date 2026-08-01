@@ -98,11 +98,13 @@ export function SocialFeedWidget({ onPlayVideo }: SocialFeedWidgetProps = {}) {
     <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
       {/* MCN navy header */}
       <div className="flex items-center gap-2.5 px-4 py-3" style={{ background: MCN_NAVY }}>
-        <img
-          src="/mcn-icon.png" alt="MCN"
-          className="h-5 w-5 brightness-0 invert shrink-0"
-          onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
-        />
+        <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded bg-white p-0.5">
+          <img
+            src="/mcn-icon.png" alt="MCN"
+            className="h-full w-full object-contain"
+            onError={(e) => { (e.currentTarget as HTMLImageElement).parentElement!.style.display = "none"; }}
+          />
+        </div>
         <p className="flex-1 text-sm font-black text-white">MAS Connect</p>
         <Link
           to="/social-feed"

@@ -18,12 +18,14 @@ export function VideoModal({ videoId, title, onClose }: VideoModalProps) {
       >
         {/* MCN navy top bar */}
         <div className="flex items-center gap-3 bg-[#073f78] px-4 py-3">
-          <img
-            src="/mcn-icon.png"
-            alt="MCN"
-            className="h-5 w-5 brightness-0 invert"
-            onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
-          />
+          <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded bg-white p-0.5">
+            <img
+              src="/mcn-icon.png"
+              alt="MCN"
+              className="h-full w-full object-contain"
+              onError={(e) => { (e.currentTarget as HTMLImageElement).parentElement!.style.display = "none"; }}
+            />
+          </div>
           <p className="flex-1 truncate text-sm font-black text-white">{title || "MAS Connect"}</p>
           <button
             onClick={onClose}
