@@ -490,6 +490,231 @@ export function uniquePageCodes(pageCodes: readonly string[]): string[] {
   return Array.from(new Set(pageCodes));
 }
 
+/**
+ * Grants that exist in production but were never written into the curated matrix
+ * above. Imported verbatim from role_page_access on 2026-08-01, not authored.
+ *
+ * WHY THIS EXISTS
+ * ---------------
+ * scripts/apply-rbac-page-matrix.mjs sets active_status = 0 on every grant
+ * absent from this file. The matrix held 148 page codes; production granted 181.
+ * Running the applier would therefore have revoked 158 role/page grants across
+ * 20 roles — including PAYROLL_REIMBURSEMENTS, PAYROLL_RUNNING_BREAKDOWN and
+ * HELPDESK_KB for all 1,357 employees, and 24 pages for hr covering onboarding,
+ * salary certificates and the payroll control tower.
+ *
+ * Recording them here makes the applier a no-op for existing access rather than
+ * a demolition, which is the only way it becomes safe to run at all.
+ *
+ * Kept SEPARATE from ROLE_SPECIFIC_PAGE_CODES on purpose. Those entries are
+ * deliberate decisions about who should see what; these are observations of what
+ * is currently true. Merging them would make the two indistinguishable, and a
+ * grant nobody chose would start to look like one somebody did.
+ *
+ * These want reviewing rather than trusting — some are very likely accidents of
+ * history. Deleting one here is a real revocation, so do it knowingly.
+ */
+export const LIVE_IMPORTED_PAGE_CODES: Readonly<Record<string, readonly string[]>> = {
+  admin: [
+    "ATTENDANCE_LOOKUP",
+    "CONFIGURATION_CENTER",
+    "EMAIL_COMMAND_CENTRE",
+    "PAYROLL_ATTENDANCE_CONTROL_TOWER",
+    "PAYROLL_BRANCH_READINESS",
+    "PAYROLL_CHEQUE_VALIDATION",
+    "PAYROLL_CONFIG_FLAGS",
+    "PAYROLL_HOLIDAY_MASTER",
+    "PAYROLL_HOLIDAY_WORK_APPROVALS",
+    "PAYROLL_HOLIDAY_WORK_REQUESTS",
+    "PAYROLL_HO_QUEUES",
+    "PAYROLL_NOC",
+    "PAYROLL_OVERTIME",
+    "PAYROLL_RECALCULATION_QUEUE",
+    "PAYROLL_REIMBURSEMENTS",
+    "PAYROLL_RUNNING_BREAKDOWN",
+  ],
+  assistant_manager: [
+    "MODULE_LAUNCHER",
+  ],
+  branch_head: [
+    "ATS_BRANCH_HEAD_APPROVAL",
+    "ATS_COMMAND_CENTER",
+    "ATS_INTERVIEW_APPROVALS",
+    "CONTROL_TOWER",
+    "JOBS",
+    "PAYROLL_ATTENDANCE_CONTROL_TOWER",
+    "PAYROLL_BRANCH_READINESS",
+  ],
+  branch_hr: [
+    "ATS_BRANCH_HEAD_APPROVAL",
+    "ATS_INTERVIEW_QUEUE",
+    "ATS_INTERVIEW_SUBMIT",
+    "ATS_JOINING_CONTROL_ROOM",
+    "ATS_STATUTORY_ONBOARDING",
+    "ATTENDANCE_LOOKUP",
+    "CANDIDATE_ONBOARDING_FULL",
+    "EMPLOYEE_DASHBOARD",
+    "EMPLOYEE_JOINING_DOCUMENTS",
+    "GRIEVANCE_COMMAND_CENTER",
+    "ONBOARDING_FULL",
+    "ONBOARDING_REQUESTS",
+    "ONBOARDING_REVIEW",
+    "ONBOARDING_SECTION_STATUS",
+    "PROVISIONING_APPOINTMENT",
+    "PROVISIONING_APPOINTMENT_LETTER",
+    "RESIGNATION_COMMAND_CENTER",
+    "SALARY_CERTIFICATE",
+  ],
+  branch_payroll: [
+    "ATTENDANCE_LOOKUP",
+    "PAYROLL_ATTENDANCE_CONTROL_TOWER",
+    "PAYROLL_ATTENDANCE_OVERRIDES",
+    "PAYROLL_BRANCH_READINESS",
+    "PAYROLL_DASHBOARD",
+    "PAYROLL_HOLIDAY_WORK_APPROVALS",
+    "PAYROLL_LOANS",
+    "PAYROLL_NOC",
+    "PAYROLL_REIMBURSEMENTS",
+    "SALARY_CERTIFICATE",
+  ],
+  branch_wfm: [
+    "ATTENDANCE_LOOKUP",
+    "PAYROLL_ATTENDANCE_CONTROL_TOWER",
+    "PAYROLL_BRANCH_READINESS",
+    "PAYROLL_HOLIDAY_MASTER",
+    "PAYROLL_HOLIDAY_WORK_REQUESTS",
+    "TEAM_ROSTER",
+    "WEEK_OFF_PREFERENCES",
+  ],
+  employee: [
+    "ENGAGEMENT_COMMAND_CENTER",
+    "HELPDESK_KB",
+    "PAYROLL_REIMBURSEMENTS",
+    "PAYROLL_RUNNING_BREAKDOWN",
+    "PEOPLE_EXPERIENCE_COMMAND_CENTER",
+  ],
+  finance: [
+    "PAYROLL_BRANCH_READINESS",
+    "PAYROLL_CHEQUE_VALIDATION",
+    "PAYROLL_HO_QUEUES",
+    "PAYROLL_REIMBURSEMENTS",
+  ],
+  finance_head: [
+    "PAYROLL_CHEQUE_VALIDATION",
+    "PAYROLL_DASHBOARD",
+    "PAYROLL_RUNNING_BREAKDOWN",
+  ],
+  hr: [
+    "ATS_BRANCH_HEAD_APPROVAL",
+    "ATS_INTERVIEW_QUEUE",
+    "ATS_INTERVIEW_SUBMIT",
+    "ATS_JOINING_CONTROL_ROOM",
+    "ATS_STATUTORY_ONBOARDING",
+    "ATTENDANCE_LOOKUP",
+    "CANDIDATE_ONBOARDING_FULL",
+    "EMAIL_COMMAND_CENTRE",
+    "EMPLOYEE_DASHBOARD",
+    "EMPLOYEE_JOINING_DOCUMENTS",
+    "GRIEVANCE_COMMAND_CENTER",
+    "ONBOARDING_FULL",
+    "ONBOARDING_REQUESTS",
+    "ONBOARDING_REVIEW",
+    "ONBOARDING_SECTION_STATUS",
+    "PAYROLL_ATTENDANCE_CONTROL_TOWER",
+    "PAYROLL_BRANCH_READINESS",
+    "PAYROLL_CHEQUE_VALIDATION",
+    "PAYROLL_HO_QUEUES",
+    "PAYROLL_REIMBURSEMENTS",
+    "PROVISIONING_APPOINTMENT",
+    "PROVISIONING_APPOINTMENT_LETTER",
+    "RESIGNATION_COMMAND_CENTER",
+    "SALARY_CERTIFICATE",
+  ],
+  hr_admin: [
+    "PAYROLL_DEDUCTION_TYPES",
+    "PAYROLL_DEDUCTION_UPLOAD",
+  ],
+  interviewer: [
+    "ATS_INTERVIEW_QUEUE",
+    "ATS_INTERVIEW_SUBMIT",
+    "MODULE_LAUNCHER",
+  ],
+  operations_head: [
+    "JOBS",
+  ],
+  payroll: [
+    "ATTENDANCE_LOOKUP",
+    "PAYROLL_ATTENDANCE_CONTROL_TOWER",
+    "PAYROLL_ATTENDANCE_OVERRIDES",
+    "PAYROLL_BRANCH_READINESS",
+    "PAYROLL_CHEQUE_VALIDATION",
+    "PAYROLL_DASHBOARD",
+    "PAYROLL_HOLIDAY_WORK_APPROVALS",
+    "PAYROLL_HO_QUEUES",
+    "PAYROLL_LOANS",
+    "PAYROLL_NOC",
+    "PAYROLL_OVERTIME",
+    "PAYROLL_REIMBURSEMENTS",
+    "SALARY_CERTIFICATE",
+  ],
+  payroll_admin: [
+    "ATTENDANCE_LOOKUP",
+    "MODULE_LAUNCHER",
+    "PAYROLL_ATTENDANCE_OVERRIDES",
+  ],
+  payroll_branch: [
+    "PAYROLL_ATTENDANCE_CONTROL_TOWER",
+    "PAYROLL_BRANCH_READINESS",
+    "PAYROLL_CALENDAR",
+    "PAYROLL_CONFIG_FLAGS",
+    "PAYROLL_HOLIDAY_MASTER",
+    "PAYROLL_HOLIDAY_WORK_APPROVALS",
+    "PAYROLL_HOLIDAY_WORK_REQUESTS",
+    "PAYROLL_NOC",
+    "PAYROLL_RECALCULATION_QUEUE",
+    "PAYROLL_RUNNING_BREAKDOWN",
+  ],
+  payroll_head: [
+    "ATTENDANCE_LOOKUP",
+    "PAYROLL_ATTENDANCE_CONTROL_TOWER",
+    "PAYROLL_BRANCH_READINESS",
+    "PAYROLL_CALENDAR",
+    "PAYROLL_CHEQUE_VALIDATION",
+    "PAYROLL_CONFIG_FLAGS",
+    "PAYROLL_HOLIDAY_MASTER",
+    "PAYROLL_HOLIDAY_WORK_APPROVALS",
+    "PAYROLL_HOLIDAY_WORK_REQUESTS",
+    "PAYROLL_HO_QUEUES",
+    "PAYROLL_NOC",
+    "PAYROLL_OVERTIME",
+    "PAYROLL_RECALCULATION_QUEUE",
+    "PAYROLL_REIMBURSEMENTS",
+    "PAYROLL_RUNNING_BREAKDOWN",
+    "PAYROLL_VALIDATION",
+  ],
+  recruiter: [
+    "ATS_INTERVIEW_QUEUE",
+    "ATS_INTERVIEW_SUBMIT",
+    "MODULE_LAUNCHER",
+  ],
+  recruitment_hr: [
+    "ATS_BULK_IMPORT",
+    "JOBS",
+  ],
+  wfm: [
+    "ATTENDANCE_LOOKUP",
+    "PAYROLL_ATTENDANCE_CONTROL_TOWER",
+    "PAYROLL_BRANCH_READINESS",
+    "PAYROLL_HOLIDAY_MASTER",
+    "PAYROLL_HOLIDAY_WORK_APPROVALS",
+    "PAYROLL_HOLIDAY_WORK_REQUESTS",
+    "PAYROLL_OVERTIME",
+    "PAYROLL_RUNNING_BREAKDOWN",
+    "TEAM_ROSTER",
+    "WEEK_OFF_PREFERENCES",
+  ],
+} as const;
+
 export function getRolePageCodes(roleKey: string, allPageCodes: readonly string[] = []): string[] {
   // super_admin receives exactly the pages the caller says are active — no union with
   // COMMON_USER_PAGE_CODES. That is deliberate: page_catalog decides which pages exist, and
@@ -504,5 +729,8 @@ export function getRolePageCodes(roleKey: string, allPageCodes: readonly string[
   return uniquePageCodes([
     ...COMMON_USER_PAGE_CODES,
     ...(ROLE_SPECIFIC_PAGE_CODES[roleKey as keyof typeof ROLE_SPECIFIC_PAGE_CODES] ?? []),
+    // Access that already exists in production. Without this the applier would
+    // revoke 158 grants across 20 roles the first time anyone ran it.
+    ...(LIVE_IMPORTED_PAGE_CODES[roleKey] ?? []),
   ]).filter((pageCode) => !excluded.has(pageCode));
 }
