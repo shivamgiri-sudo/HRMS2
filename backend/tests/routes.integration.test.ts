@@ -20,6 +20,15 @@ vi.mock("../src/modules/process/process.repository.js", () => ({
   getProcessRepository: vi.fn(),
 }));
 
+// /api/health reports healthy only when the database pings AND the schema
+// verifies, so both inputs have to be controlled here. Without this the real
+// verifySchemaVersion runs against a mocked database, finds migrations pending
+// and returns 503 regardless of what pingDb was told to do.
+vi.mock("../src/db/runPendingMigrations.js", () => ({
+  verifySchemaVersion: vi.fn().mockResolvedValue({ valid: true, pendingCount: 0 }),
+  getMigrationHealth: vi.fn().mockResolvedValue({ applied: 0, pending: 0, failed: 0 }),
+}));
+
 import { supabaseAuthClient } from "../src/db/supabaseAdmin.js";
 import { db, pingDb } from "../src/db/mysql.js";
 import { getProcessRepository } from "../src/modules/process/process.repository.js";
@@ -70,21 +79,29 @@ beforeEach(() => {
 // ─── Health Route ──────────────────────────────────────────────────────────────
 
 describe("GET /api/health", () => {
-  it("returns healthy status with db ok when ping succeeds", async () => {
+  it("returns healthy status when the database pings and the schema verifies", async () => {
     mockPingDb.mockResolvedValueOnce(undefined);
     const res = await request(app).get("/api/health");
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
     expect(res.body.status).toBe("healthy");
-    expect(res.body.db).toBe("ok");
     expect(res.body.timestamp).toBeDefined();
   });
 
-  it("returns db error when ping fails", async () => {
+  it("reports degraded without disclosing why when the database is unreachable", async () => {
     mockPingDb.mockRejectedValueOnce(new Error("connection refused"));
+
     const res = await request(app).get("/api/health");
-    expect(res.status).toBe(503); // health endpoint returns 503 when db is down
-    expect(res.body.db).toBe("error");
+
+    expect(res.status).toBe(503);
+    expect(res.body.success).toBe(false);
+    expect(res.body.status).toBe("degraded");
+    // The endpoint is unauthenticated, and deliberately stopped returning a `db`
+    // field or any migration detail — an anonymous caller learning which
+    // component failed is reconnaissance. This asserted res.body.db === "error"
+    // and so could not pass once that detail was withheld on purpose.
+    expect(res.body.db).toBeUndefined();
+    expect(JSON.stringify(res.body)).not.toMatch(/migration|schema|pending/i);
   });
 });
 
