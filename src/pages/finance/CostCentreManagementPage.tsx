@@ -5,7 +5,7 @@ import { CostCentreListView } from "@/components/finance/cost-centre/CostCentreL
 import { CostCentreApprovalQueue } from "@/components/finance/cost-centre/CostCentreApprovalQueue";
 import { CostCentreSheet } from "@/components/finance/cost-centre/CostCentreSheet";
 import { useCostCentreDetail, type CostCentreRecord } from "@/hooks/useCostCentreManagement";
-import { useAuth } from "@/hooks/useAuth";
+import { useAuth } from "@/contexts/AuthContext";
 
 type SheetMode = "create" | "edit" | "view";
 
