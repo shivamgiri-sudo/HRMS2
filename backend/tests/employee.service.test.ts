@@ -168,7 +168,12 @@ describe("employeeService.createEmployee with structureId + ctcAnnual", () => {
     }, "user-1");
     expect(r.employee_code).toBe("MCN001");
     expect(exec.mock.calls.some(([sql]) => /INSERT INTO employee_salary_assignment/i.test(sql as string))).toBe(true);
-    expect(exec.mock.calls.some(([sql]) => /INSERT INTO employee_journey_log/i.test(sql as string))).toBe(true);
+    // employee_journey_log is no longer written here. Journey events moved to
+    // journeyLog.service.appendJourneyEvent, which employee-creation-orchestrator
+    // calls on the ATS candidate-conversion path. employeeService.createEmployee
+    // is the direct-API path and does not log one, so asserting it here tested a
+    // responsibility this unit no longer has.
+    expect(exec.mock.calls.some(([sql]) => /INSERT INTO employee_journey_log/i.test(sql as string))).toBe(false);
   });
 
   it("skips salary assignment when structureId not provided", async () => {
@@ -181,6 +186,11 @@ describe("employeeService.createEmployee with structureId + ctcAnnual", () => {
       dateOfJoining: "2026-06-01",
     }, "user-1");
     expect(exec.mock.calls.some(([sql]) => /INSERT INTO employee_salary_assignment/i.test(sql as string))).toBe(false);
-    expect(exec.mock.calls.some(([sql]) => /INSERT INTO employee_journey_log/i.test(sql as string))).toBe(true);
+    // employee_journey_log is no longer written here. Journey events moved to
+    // journeyLog.service.appendJourneyEvent, which employee-creation-orchestrator
+    // calls on the ATS candidate-conversion path. employeeService.createEmployee
+    // is the direct-API path and does not log one, so asserting it here tested a
+    // responsibility this unit no longer has.
+    expect(exec.mock.calls.some(([sql]) => /INSERT INTO employee_journey_log/i.test(sql as string))).toBe(false);
   });
 });
