@@ -24,8 +24,27 @@ process.env.PORTAL_DEMO_BYPASS = 'true';
 // This prevents Express app bootstrap from crashing on real DB connections.
 vi.mock('../src/db/mysql.js', () => {
   const mockExecute = vi.fn().mockResolvedValue([[], []]);
+  // getConnection is part of the shape too. Several services take a pooled
+  // connection rather than querying the pool — payroll's calculate path, the
+  // quality aggregation service, the company-post transaction — and against a
+  // stub without it they die on "db.getConnection is not a function", which
+  // reads as a bug in the code under test rather than a gap in this stub. The
+  // connection answers empty like the pool, and its transaction methods are
+  // no-ops, so a service can open, use and release one without special-casing.
+  const mockConnection = {
+    execute: vi.fn().mockResolvedValue([[], []]),
+    query: vi.fn().mockResolvedValue([[], []]),
+    beginTransaction: vi.fn().mockResolvedValue(undefined),
+    commit: vi.fn().mockResolvedValue(undefined),
+    rollback: vi.fn().mockResolvedValue(undefined),
+    release: vi.fn(),
+  };
   return {
-    db: { execute: mockExecute, query: vi.fn().mockResolvedValue([[], []]) },
+    db: {
+      execute: mockExecute,
+      query: vi.fn().mockResolvedValue([[], []]),
+      getConnection: vi.fn().mockResolvedValue(mockConnection),
+    },
   };
 });
 

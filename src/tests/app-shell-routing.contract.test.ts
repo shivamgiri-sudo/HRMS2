@@ -168,6 +168,13 @@ describe("application shell routing contracts", () => {
       "/hr-onboarding-requests",
       "/interview-registration",
       "/it-provisioning",
+      // Retired pages kept resolvable as redirects rather than 404s. Both were removed
+      // from the ceo role on 31-Jul and deactivated in page_catalog by migration 1022, so
+      // neither belongs in the sidebar — but the URLs are still printed in the UAT matrix
+      // and in bookmarks, and both returned "Oops! Page not found" in two rounds of CEO
+      // testing. /kpi/dashboard -> /operations-kpi, /workforce/command-center ->
+      // /performance/command-center.
+      "/kpi/dashboard",
       "/jobs",
       "/leave-approvals",
       "/leave/requests",
@@ -212,6 +219,7 @@ describe("application shell routing contracts", () => {
       "/visitor-register",
       "/visitor-status",
       "/walkin-registration",
+      "/workforce/command-center",
       "/wfm-roster",
       "/wfm/adherence-command-center",
       "/wfm/agent-attendance-view",

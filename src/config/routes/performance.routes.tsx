@@ -60,6 +60,17 @@ export const performanceRouteElements = (
       {/* Performance Hub */}
       <Route path="/performance-hub" element={<ProtectedRoute><Gate pageCode="PERFORMANCE_HUB"><PerformanceHub /></Gate></ProtectedRoute>} />
 
+      {/* Retired URLs kept resolvable.
+          Both were removed from the ceo role on 31-Jul (rbacPageMatrix.ts) and deactivated
+          in page_catalog by migration 1022, so the in-app launcher no longer offers them.
+          Neither ever had a route, so anyone following an old link — or the URL printed in
+          the UAT matrix, which is how the CEO reached them in both rounds — got a hard 404
+          reading "Oops! Page not found".
+          Redirecting is cheaper than building the pages and closes it for bookmarks and
+          stale documents too, rather than only for the next reissue of the matrix. */}
+      <Route path="/kpi/dashboard"            element={<Navigate to="/operations-kpi" replace />} />
+      <Route path="/workforce/command-center" element={<Navigate to="/performance/command-center" replace />} />
+
       {/* KPI */}
       <Route path="/kpi-config"   element={<ProtectedRoute><Gate pageCode="KPI_CONFIG"><NativeKPIConfiguration /></Gate></ProtectedRoute>} />
       <Route path="/operations-kpi" element={<ProtectedRoute><Gate pageCode="OPERATIONS_KPI"><NativeOperationsKPI /></Gate></ProtectedRoute>} />

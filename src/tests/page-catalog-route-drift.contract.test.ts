@@ -120,9 +120,21 @@ describe("page catalog / router drift", () => {
     expect(mountedRoutes.has("/performance/command-center")).toBe(true);
   });
 
-  it("never mounts the bad path that migration 216 wrote", () => {
-    expect(mountedRoutes.has("/workforce/command-center")).toBe(false);
-    expect(Object.keys(PAGE_CODE_BY_ROUTE)).not.toContain("/workforce/command-center");
+  it("never serves the bad path that migration 216 wrote as a real page", () => {
+    // The drift this guards against is the Command Center being *mounted* at the path
+    // migration 216 wrote, which is how the catalog and the router disagreed. A redirect
+    // to the canonical path is the opposite of that: it resolves the old URL without
+    // giving it a page of its own, so the old links printed in the UAT matrix stop 404ing.
+    const routeSource = read("src/config/routes/performance.routes.tsx");
+    const index = routeSource.indexOf('path="/workforce/command-center"');
+    if (index > -1) {
+      const element = routeSource.slice(index, index + 200);
+      expect(element, "the bad path must only ever be a redirect").toContain(
+        '<Navigate to="/performance/command-center"',
+      );
+    }
+    // It must still never be the page code's canonical route.
+    expect(PAGE_CODE_BY_ROUTE["/workforce/command-center"]).toBeUndefined();
   });
 
   it("ships a migration that repairs the drifted paths", () => {

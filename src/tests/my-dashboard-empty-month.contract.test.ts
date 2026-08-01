@@ -50,14 +50,16 @@ describe("my-dashboard attendance on an empty month", () => {
       "AS attendancePct",
       "AS expectedToWork",
     ]) {
-      const occurrences = [...routesCode.matchAll(new RegExp(field.replace(/\$/g, "\\$"), "g"))];
+      const occurrences = [...routesCode.matchAll(new RegExp(field, "g"))];
       expect(occurrences.length, `${field} not found`).toBeGreaterThan(0);
       for (const match of occurrences) {
-        // Look back far enough to span a multi-line COALESCE(ROUND(...), 0), which a
-        // single-line window cannot see.
-        const window = routesCode.slice(Math.max(0, match.index! - 400), match.index!);
-        const selectItem = window.slice(window.lastIndexOf(",\n") + 1);
-        expect(selectItem, `${field} is not coalesced`).toContain("COALESCE(");
+        // Match the closing shape of the wrapper rather than trying to find where the
+        // select item begins. COALESCE(expr, 0) always ends ", 0)" immediately before the
+        // alias, and that holds whether the expression is on one line or five — a
+        // line-based scan mis-slices the multi-line COALESCE(ROUND(...), 0) and reads the
+        // comma inside ROUND(x, 1) as the item boundary.
+        const before = routesCode.slice(Math.max(0, match.index! - 6), match.index!);
+        expect(before, `${field} is not wrapped in COALESCE(..., 0)`).toContain(", 0)");
       }
     }
   });
