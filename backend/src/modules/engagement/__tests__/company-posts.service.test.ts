@@ -231,6 +231,14 @@ describe("company feed permissions and creator access", () => {
   beforeEach(() => {
     executeMock.mockReset();
     connectionExecuteMock.mockReset();
+    // mockReset drops the implementation as well as the calls, so any query a
+    // test does not explicitly stub resolves to undefined — and the service
+    // destructures every result as `const [rows] = await db.execute(...)`, which
+    // then throws "(intermediate value) is not iterable" from inside the code
+    // under test rather than reporting a missing fixture. An empty result set is
+    // the honest default: no rows found.
+    executeMock.mockResolvedValue([[], []]);
+    connectionExecuteMock.mockResolvedValue([[], []]);
     beginTransactionMock.mockClear();
     commitMock.mockClear();
     rollbackMock.mockClear();
@@ -250,7 +258,9 @@ describe("company feed permissions and creator access", () => {
     executeMock.mockResolvedValueOnce([[], []]);
 
     await expect(assertCanCreateCompanyPost("user-1")).rejects.toThrow("creator access");
-    expect(executeMock.mock.calls[0][0]).toContain("company_post_creator_access");
+    expect(
+      executeMock.mock.calls.some(([sql]) => String(sql).includes("company_post_creator_access")),
+    ).toBe(true);
   });
 
   it("allows only normalized moderation roles", async () => {
@@ -310,7 +320,9 @@ describe("company feed permissions and creator access", () => {
       .mockResolvedValueOnce([[{ id: "access-1" }], []]);
 
     await expect(listCompanyPostCreators({ actorUserId: "super-admin-id" })).resolves.toEqual([{ id: "access-1" }]);
-    expect(executeMock.mock.calls[1][0]).toContain("FROM company_post_creator_access");
+    expect(
+      executeMock.mock.calls.some(([sql]) => String(sql).includes("FROM company_post_creator_access")),
+    ).toBe(true);
   });
 });
 
@@ -318,6 +330,14 @@ describe("company feed lifecycle and moderation", () => {
   beforeEach(() => {
     executeMock.mockReset();
     connectionExecuteMock.mockReset();
+    // mockReset drops the implementation as well as the calls, so any query a
+    // test does not explicitly stub resolves to undefined — and the service
+    // destructures every result as `const [rows] = await db.execute(...)`, which
+    // then throws "(intermediate value) is not iterable" from inside the code
+    // under test rather than reporting a missing fixture. An empty result set is
+    // the honest default: no rows found.
+    executeMock.mockResolvedValue([[], []]);
+    connectionExecuteMock.mockResolvedValue([[], []]);
     beginTransactionMock.mockClear();
     commitMock.mockClear();
     rollbackMock.mockClear();
@@ -411,84 +431,111 @@ describe("company feed lifecycle and moderation", () => {
     expect(connectionExecuteMock.mock.calls[1][0]).toContain("INSERT INTO company_post_media");
   });
 
+
+/**
+ * Answer the list queries by statement rather than by call order.
+ *
+ * listCompanyPosts runs a COUNT before the row SELECT, and some callers run an
+ * access check before both. These tests were written against a version with no
+ * COUNT, so their positional mockResolvedValueOnce chains fed the count query the
+ * rows and left the real query with the default empty set. Keying on the
+ * statement survives the service adding or reordering queries.
+ */
+function stubPostList(opts: { posts?: unknown[]; media?: unknown[]; access?: unknown[] } = {}) {
+  const posts = opts.posts ?? [];
+  executeMock.mockImplementation(async (sql: unknown) => {
+    const text = String(sql);
+    if (/COUNT\(\*\)/i.test(text)) return [[{ total: posts.length }], []];
+    if (/FROM company_post_media/i.test(text)) return [opts.media ?? [], []];
+    if (/FROM company_posts cp/i.test(text)) return [posts, []];
+    return [opts.access ?? [], []];
+  });
+}
+
   it("lists only approved posts on the public feed", async () => {
-    executeMock
-      .mockResolvedValueOnce([[makePostRow({
-        status: "approved",
-        moderation_state: "manual_override_approved",
-      })], []])
-      .mockResolvedValueOnce([[makeMediaRow()], []]);
+    stubPostList({
+      posts: [makePostRow({ status: "approved", moderation_state: "manual_override_approved" })],
+      media: [makeMediaRow()],
+    });
 
     const result = await listApprovedCompanyFeed();
 
-    expect(result.every((post) => post.status === "approved")).toBe(true);
-    expect(executeMock.mock.calls[0][0]).toContain("status = 'approved' AND active_status = 1");
+    expect(result.posts.every((post) => post.status === "approved")).toBe(true);
+    expect(
+      executeMock.mock.calls.some(([sql]) => String(sql).includes("cp.status = 'approved' AND cp.active_status = 1")),
+    ).toBe(true);
   });
 
   it("lets creators view their own non-approved posts", async () => {
-    executeMock
-      .mockResolvedValueOnce([[{ 1: 1 }], []])
-      .mockResolvedValueOnce([[
+    stubPostList({
+      access: [{ 1: 1 }],
+      posts: [
         makePostRow({ status: "pending_approval" }),
         makePostRow({
           id: "00000000-0000-0000-0000-000000000102",
           status: "rejected",
           moderation_state: "manual_override_rejected",
         }),
-      ], []])
-      .mockResolvedValueOnce([[], []]);
+      ],
+    });
 
     const result = await listMyCompanyPosts({
       actorUserId: "00000000-0000-0000-0000-000000000201",
     });
 
-    expect(result.map((post) => post.status)).toEqual(["pending_approval", "rejected"]);
-    expect(executeMock.mock.calls[1][0]).toContain("author_user_id = ? AND active_status = 1");
-    expect(executeMock.mock.calls[1][0]).toContain("status <> 'deleted'");
+    expect(result.posts.map((post) => post.status)).toEqual(["pending_approval", "rejected"]);
+    expect(
+      executeMock.mock.calls.some(([sql]) => String(sql).includes("cp.author_user_id = ? AND cp.active_status = 1")),
+    ).toBe(true);
+    expect(
+      executeMock.mock.calls.some(([sql]) => String(sql).includes("cp.status <> 'deleted'")),
+    ).toBe(true);
   });
 
   it("returns pending and borderline posts in the moderator approval queue", async () => {
-    executeMock
-      .mockResolvedValueOnce([[{ role_key: "hr_head" }], []])
-      .mockResolvedValueOnce([[
+    stubPostList({
+      access: [{ role_key: "hr_head" }],
+      posts: [
         makePostRow({ status: "pending_approval" }),
         makePostRow({
           id: "00000000-0000-0000-0000-000000000103",
           status: "borderline_flagged",
           moderation_state: "borderline",
         }),
-      ], []])
-      .mockResolvedValueOnce([[], []]);
+      ],
+    });
 
     const result = await listCompanyPostApprovals({
       actorUserId: "00000000-0000-0000-0000-000000000701",
     });
 
-    expect(result.map((post) => post.status)).toEqual(["pending_approval", "borderline_flagged"]);
-    expect(executeMock.mock.calls[1][0]).toContain(
-      "status IN ('pending_approval', 'borderline_flagged') AND active_status = 1",
-    );
+    expect(result.posts.map((post) => post.status)).toEqual(["pending_approval", "borderline_flagged"]);
+    expect(
+      executeMock.mock.calls.some(([sql]) => String(sql).includes("cp.status IN ('pending_approval', 'borderline_flagged') AND cp.active_status = 1")),
+    ).toBe(true);
   });
 
   it("returns non-deleted posts for moderator management", async () => {
-    executeMock
-      .mockResolvedValueOnce([[{ role_key: "super_admin" }], []])
-      .mockResolvedValueOnce([[
+    stubPostList({
+      access: [{ role_key: "super_admin" }],
+      posts: [
         makePostRow({ status: "approved" }),
         makePostRow({
           id: "00000000-0000-0000-0000-000000000104",
           status: "rejected",
           moderation_state: "manual_override_rejected",
         }),
-      ], []])
-      .mockResolvedValueOnce([[], []]);
+      ],
+    });
 
     const result = await listCompanyPostManagement({
       actorUserId: "00000000-0000-0000-0000-000000000710",
     });
 
-    expect(result.map((post) => post.status)).toEqual(["approved", "rejected"]);
-    expect(executeMock.mock.calls[1][0]).toContain("status <> 'deleted' AND active_status = 1");
+    expect(result.posts.map((post) => post.status)).toEqual(["approved", "rejected"]);
+    expect(
+      executeMock.mock.calls.some(([sql]) => String(sql).includes("cp.status <> 'deleted' AND cp.active_status = 1")),
+    ).toBe(true);
   });
 
   it("approves a queued post and audits the moderation action", async () => {
