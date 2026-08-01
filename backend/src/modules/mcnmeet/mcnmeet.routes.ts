@@ -12,7 +12,30 @@ import type { MeetingStatus, MeetingType } from "./mcnmeet.types.js";
 const router = Router();
 
 const ADMIN_ROLES = ['super_admin', 'admin', 'hr_admin', 'hr'];
-const MANAGER_ROLES = [...ADMIN_ROLES, 'manager', 'process_manager', 'branch_head', 'trainer', 'coordinator', 'wfm'];
+const MANAGER_ROLES = [...ADMIN_ROLES, 'manager', 'process_manager', 'branch_head', 'trainer', 'coordinator', 'wfm', 'tl', 'team_leader'];
+
+// Meeting type -> allowed creator roles
+const MEETING_TYPE_PERMISSIONS: Record<MeetingType, string[]> = {
+  team_meeting: ['super_admin', 'admin', 'hr_admin', 'hr', 'manager', 'process_manager', 'branch_head', 'tl', 'team_leader', 'coordinator'],
+  live_broadcast: ['super_admin', 'admin', 'hr_admin', 'branch_head'],
+  training_induction: ['super_admin', 'admin', 'hr_admin', 'hr', 'trainer', 'coordinator'],
+  interview: ['super_admin', 'admin', 'hr_admin', 'hr', 'recruiter', 'recruitment_hr', 'manager', 'process_manager'],
+  coaching_1on1: ['super_admin', 'admin', 'hr_admin', 'hr', 'manager', 'process_manager', 'tl', 'team_leader'],
+  compliance_policy: ['super_admin', 'admin', 'hr_admin', 'compliance'],
+};
+
+function canCreateMeetingType(role: string | undefined, meetingType: MeetingType): boolean {
+  if (!role) return false;
+  const allowedRoles = MEETING_TYPE_PERMISSIONS[meetingType] ?? [];
+  return allowedRoles.includes(role);
+}
+
+function getAllowedMeetingTypes(role: string | undefined): MeetingType[] {
+  if (!role) return [];
+  return (Object.keys(MEETING_TYPE_PERMISSIONS) as MeetingType[]).filter(
+    type => MEETING_TYPE_PERMISSIONS[type].includes(role)
+  );
+}
 
 function featureGuard(req: AuthenticatedRequest, res: Response, next: NextFunction) {
   if (!env.MCNMEET_ENABLED) {
@@ -24,13 +47,18 @@ function featureGuard(req: AuthenticatedRequest, res: Response, next: NextFuncti
 router.use(featureGuard);
 router.use(requireAuth);
 
-router.get('/config', (req, res) => {
+router.get('/config', (req: AuthenticatedRequest, res: Response) => {
+  const role = req.authUser?.role;
+  const allowedTypes = getAllowedMeetingTypes(role);
+
   res.json({
     success: true,
     enabled: env.MCNMEET_ENABLED,
     base_url: env.MCNMEET_BASE_URL,
     google_backup_enabled: env.MCNMEET_GOOGLE_BACKUP_ENABLED,
     google_auto_create: env.MCNMEET_GOOGLE_AUTO_CREATE_ENABLED,
+    can_create: allowedTypes.length > 0,
+    allowed_meeting_types: allowedTypes,
   });
 });
 
@@ -54,12 +82,22 @@ router.get('/meetings', requireRole(...MANAGER_ROLES), async (req: Authenticated
   } catch (err) { next(err); }
 });
 
-router.post('/meetings', requireRole(...MANAGER_ROLES), async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+router.post('/meetings', async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
   try {
     const parsed = createMeetingSchema.safeParse(req.body);
     if (!parsed.success) {
       return res.status(400).json({ success: false, errors: parsed.error.flatten().fieldErrors });
     }
+
+    // Check type-specific permission
+    const role = req.authUser?.role;
+    if (!canCreateMeetingType(role, parsed.data.meeting_type)) {
+      return res.status(403).json({
+        success: false,
+        message: `Your role (${role}) cannot create meetings of type '${parsed.data.meeting_type}'`,
+      });
+    }
+
     const id = await service.createMeeting(parsed.data, req.authUser!.id);
     res.status(201).json({ success: true, id });
   } catch (err) { next(err); }

@@ -13,13 +13,17 @@ import { useBranches, useProcesses, useLOBs, useDesignations } from "@/hooks/use
 interface Props {
   onSuccess?: (id: string) => void;
   onCancel?: () => void;
+  allowedMeetingTypes?: MeetingType[];
 }
 
-const MEETING_TYPES = Object.entries(MEETING_TYPE_LABELS) as [MeetingType, string][];
+const ALL_MEETING_TYPES = Object.entries(MEETING_TYPE_LABELS) as [MeetingType, string][];
 const AUDIENCE_TYPES = Object.entries(AUDIENCE_TYPE_LABELS) as [AudienceType, string][];
 const AUDIENCES_WITH_VALUE: AudienceType[] = ['branch','department','process','lob','designation','reporting_manager_team','selected_employees'];
 
-export function MeetingForm({ onSuccess, onCancel }: Props) {
+export function MeetingForm({ onSuccess, onCancel, allowedMeetingTypes }: Props) {
+  const MEETING_TYPES = allowedMeetingTypes?.length
+    ? ALL_MEETING_TYPES.filter(([type]) => allowedMeetingTypes.includes(type))
+    : ALL_MEETING_TYPES;
   const create = useCreateMeeting();
   const { data: branches } = useBranches();
   const { data: processes } = useProcesses();

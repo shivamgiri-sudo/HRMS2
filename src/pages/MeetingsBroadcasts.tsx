@@ -13,7 +13,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 const MCN_NAVY = "#073f78";
 
 const ADMIN_ROLES = ['super_admin', 'admin', 'hr_admin', 'hr'];
-const MANAGER_ROLES = [...ADMIN_ROLES, 'manager', 'process_manager', 'branch_head', 'trainer', 'coordinator', 'wfm'];
+const MANAGER_ROLES = [...ADMIN_ROLES, 'manager', 'process_manager', 'branch_head', 'trainer', 'coordinator', 'wfm', 'tl', 'team_leader', 'recruiter'];
 
 type View = 'list' | 'create' | 'detail';
 type Tab = 'admin' | 'my';
@@ -32,7 +32,7 @@ export default function MeetingsBroadcasts() {
   const role = user?.role ?? 'employee';
   const isAdmin = ADMIN_ROLES.includes(role);
   const isManager = MANAGER_ROLES.includes(role);
-  const canCreate = isManager;
+  const canCreate = config?.can_create ?? false;
 
   const [tab, setTab] = useState<Tab>(isManager ? 'admin' : 'my');
   const [view, setView] = useState<View>('list');
@@ -138,7 +138,11 @@ export default function MeetingsBroadcasts() {
         {view === 'create' && (
           <div className="rounded-2xl border border-slate-100 bg-white p-5 shadow-sm sm:p-6">
             <h2 className="mb-5 text-lg font-bold" style={{ color: MCN_NAVY }}>Create New Meeting</h2>
-            <MeetingForm onSuccess={handleCreateSuccess} onCancel={handleBack} />
+            <MeetingForm
+              onSuccess={handleCreateSuccess}
+              onCancel={handleBack}
+              allowedMeetingTypes={config?.allowed_meeting_types}
+            />
           </div>
         )}
 

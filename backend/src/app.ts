@@ -221,6 +221,7 @@ import { locationRouter } from "./modules/location/location.routes.js";
 import { socialFeedRouter } from "./modules/social-feed/social-feed.routes.js";
 import { startSocialFeedCron } from "./modules/social-feed/social-feed.cron.js";
 import { mcnmeetRouter } from "./modules/mcnmeet/mcnmeet.routes.js";
+import { startMcnmeetCron } from "./modules/mcnmeet/mcnmeet.cron.js";
 
 export const app = express();
 
@@ -564,6 +565,7 @@ app.use("/api/social-feed", socialFeedRouter);
 app.use("/api/mcnmeet", mcnmeetRouter);
 
 startSocialFeedCron();
+startMcnmeetCron();
 
 app.use(notFoundHandler);
 app.use(errorHandler);

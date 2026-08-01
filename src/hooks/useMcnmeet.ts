@@ -79,6 +79,8 @@ export interface McnmeetConfig {
   base_url: string | null;
   google_backup_enabled: boolean;
   google_auto_create: boolean;
+  can_create: boolean;
+  allowed_meeting_types: MeetingType[];
 }
 
 export function useMcnmeetConfig() {
@@ -89,6 +91,8 @@ export function useMcnmeetConfig() {
       base_url: r.base_url,
       google_backup_enabled: r.google_backup_enabled,
       google_auto_create: r.google_auto_create,
+      can_create: r.can_create ?? false,
+      allowed_meeting_types: r.allowed_meeting_types ?? [],
     })),
     staleTime: 5 * 60 * 1000,
     retry: false,

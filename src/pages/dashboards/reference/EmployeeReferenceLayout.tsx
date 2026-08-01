@@ -28,6 +28,7 @@ import { LeaveApprovalPanel } from "./ReferenceSharedPanels";
 import { CompanyFeedSidePanel } from "@/components/dashboard/CompanyFeedSidePanel";
 import { SocialFeedWidget } from "@/components/social/SocialFeedWidget";
 import { VideoModal } from "@/components/social/VideoModal";
+import { MyMeetingsWidget } from "@/components/mcnmeet/MyMeetingsWidget";
 import { useState } from "react";
 
 export function EmployeeReferenceLayout({ data, employeeName }: { data: ReferenceDashboardData; employeeName: string }) {
@@ -199,6 +200,9 @@ export function EmployeeReferenceLayout({ data, employeeName }: { data: Referenc
           <ReferenceQuickLink icon={Briefcase} title="Internal Jobs" subtitle="Career opportunities" href="/people/ijp" tone="green" />
         </div>
       </ReferencePanel>
+
+      {/* MCNmeet — upcoming meetings widget */}
+      <MyMeetingsWidget />
 
       {/* MAS Connect — social feed widget */}
       <SocialFeedWidget onPlayVideo={(id, title) => setVideoModal({ id, title })} />
