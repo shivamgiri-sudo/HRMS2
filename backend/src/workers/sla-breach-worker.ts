@@ -13,12 +13,29 @@ try {
 
 // ── Configuration ────────────────────────────────────────────────────────────
 
-const SLA_THRESHOLD_MINUTES = 30; // Send alert after 30 minutes
+// Original hardcoded value, now read from tat_matrix_master.ATS_QUEUE_WAIT
+// const SLA_THRESHOLD_MINUTES = 30;
 const CHECK_INTERVAL_MS = 5 * 60 * 1000; // Check every 5 minutes
 const ALERT_COOLDOWN_MS = 60 * 60 * 1000; // Don't re-alert same candidate for 1 hour
 const STARTUP_DELAY_MS = 30 * 1000;
 const CANDIDATE_SCAN_LIMIT = 100;
 const MAX_ALERTS_PER_RUN = 10;
+
+/**
+ * Read SLA threshold from tat_matrix_master. Falls back to 30 min if not configured.
+ */
+async function getSlaThresholdMinutes(): Promise<number> {
+  try {
+    const [rows]: any = await db.execute(
+      `SELECT default_tat_hours FROM tat_matrix_master
+       WHERE task_type = 'ATS_QUEUE_WAIT' AND is_active = 1 LIMIT 1`
+    );
+    const hours = rows?.[0]?.default_tat_hours ?? 0.5;
+    return Math.round(hours * 60);
+  } catch {
+    return 30; // fallback to original hardcoded value
+  }
+}
 
 let startupTimeoutRef: ReturnType<typeof setTimeout> | undefined;
 let intervalRef: ReturnType<typeof setInterval> | undefined;
@@ -63,7 +80,7 @@ function cleanupAlertCache(): void {
 /**
  * Find candidates waiting beyond SLA threshold
  */
-async function findSLABreachCandidates(): Promise<any[]> {
+async function findSLABreachCandidates(slaThresholdMinutes: number): Promise<any[]> {
   try {
     const [rows]: any = await db.execute(
       `SELECT
@@ -86,7 +103,7 @@ async function findSLABreachCandidates(): Promise<any[]> {
          AND COALESCE(qt.arrival_time, qt.created_at) >= DATE_SUB(NOW(), INTERVAL 24 HOUR)
        ORDER BY pending_minutes ASC
        LIMIT ${CANDIDATE_SCAN_LIMIT}`,
-      [SLA_THRESHOLD_MINUTES]
+      [slaThresholdMinutes]
     );
 
     return rows || [];
@@ -107,9 +124,10 @@ async function processSLABreaches(): Promise<void> {
 
   isProcessing = true;
   try {
-    console.log("[SLABreachWorker] Checking for SLA breaches...");
+    const slaThreshold = await getSlaThresholdMinutes();
+    console.log(`[SLABreachWorker] Checking for SLA breaches (threshold: ${slaThreshold} min)...`);
 
-    const candidates = await findSLABreachCandidates();
+    const candidates = await findSLABreachCandidates(slaThreshold);
 
     if (candidates.length === 0) {
       console.log("[SLABreachWorker] No SLA breaches found");
@@ -141,7 +159,7 @@ async function processSLABreaches(): Promise<void> {
           user_id: candidate.recruiter_user_id,
           type: "sla_breach_uncalled",
           title: `Candidate not called — ${candidate.candidate_name}`,
-          description: `Token ${candidate.q_token || "N/A"} has been waiting ${candidate.pending_minutes} min without being called. SLA threshold: ${SLA_THRESHOLD_MINUTES} min.`,
+          description: `Token ${candidate.q_token || "N/A"} has been waiting ${candidate.pending_minutes} min without being called. SLA threshold: ${slaThreshold} min.`,
           entity_type: "ats_candidate",
           entity_id: candidate.candidate_id,
           action_url: "/ats/walkin-queue",
@@ -164,7 +182,6 @@ async function processSLABreaches(): Promise<void> {
  */
 function startWorker(): Promise<void> {
   console.log("[SLABreachWorker] Starting...");
-  console.log(`[SLABreachWorker] SLA threshold: ${SLA_THRESHOLD_MINUTES} minutes`);
   console.log(`[SLABreachWorker] Check interval: ${CHECK_INTERVAL_MS / 1000} seconds`);
 
   // Let the API finish warming up before any external notification work begins.
