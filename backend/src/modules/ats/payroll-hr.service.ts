@@ -441,10 +441,15 @@ export async function validateAndAssignSalary(input: SalaryValidationInput) {
 
     // Log in notification table
     await connection.execute(
+      // Three defects, and fixing only the obvious two still fails. title and message do not
+      // exist (the columns are notification_title and notification_body), and event_type is
+      // NOT NULL with no default and was never supplied — so a rename alone throws
+      // ER_NO_DEFAULT_FOR_FIELD. Verified by probing each form against production.
+      // event_type mirrors notification_type here: this row IS the payroll-validation event.
       `INSERT INTO ats_notification_log (
-        id, candidate_id, notification_type, recipient_type, recipient_id,
-        title, message, read_status
-      ) VALUES (UUID(), ?, 'payroll_validation', 'hr', ?, ?, ?, 0)`,
+        id, candidate_id, event_type, notification_type, recipient_type, recipient_id,
+        notification_title, notification_body, read_status
+      ) VALUES (UUID(), ?, 'payroll_validation', 'payroll_validation', 'hr', ?, ?, ?, 0)`,
       [
         input.candidate_id,
         input.payroll_hr_id,
