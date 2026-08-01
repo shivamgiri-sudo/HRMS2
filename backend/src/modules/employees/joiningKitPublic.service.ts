@@ -86,8 +86,12 @@ export async function getPublicKitSession(token: string): Promise<KitSession> {
   );
 
   const [tx] = await db.execute<RowDataPacket[]>(
+    // This table records initiated_at, not created_at. Ordering by a column
+    // that does not exist made every real signing link answer 500 — invisible
+    // to a test that only ever used an invalid token, because that path returns
+    // 404 before reaching this query.
     `SELECT provider_url, status FROM employee_document_esign_transaction
-      WHERE kit_id = ? AND scope = 'kit' ORDER BY created_at DESC LIMIT 1`,
+      WHERE kit_id = ? AND scope = 'kit' ORDER BY initiated_at DESC LIMIT 1`,
     [String(tok.kit_id)],
   );
 
@@ -172,7 +176,7 @@ export async function startKitEsign(params: {
   const session = await getPublicKitSession(params.token);
   await db.execute(
     `INSERT INTO employee_joining_document_audit_log
-       (id, employee_id, document_code, action_type, actor_type, new_value, ip_address, user_agent, acted_at)
+       (id, employee_id, document_code, action_type, actor_type, new_value, ip_address, user_agent, created_at)
      VALUES (UUID(), ?, 'JOINING_KIT', 'KIT_ESIGN_OPENED', 'public_token', ?, ?, ?, NOW())`,
     [
       // employee_id is NOT NULL; the kit always has one.
