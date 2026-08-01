@@ -20,7 +20,12 @@ CREATE TABLE IF NOT EXISTS ats_branch_head_approval (
   id CHAR(36) NOT NULL DEFAULT (UUID()) PRIMARY KEY,
   payroll_validation_id CHAR(36) NOT NULL,
   branch_head_id CHAR(36) NOT NULL,
-  approval_status ENUM('approved', 'rejected') NOT NULL,
+  -- Must match 138_ats_complete_journey.sql, which creates this same table.
+  -- This file previously declared ENUM('approved','rejected'), and whichever
+  -- of the two CREATE TABLE IF NOT EXISTS statements ran first decided the
+  -- shape. Production got this one, so 'pending' could not be stored and the
+  -- branch-head queue was permanently empty. See 1054.
+  approval_status ENUM('pending', 'approved', 'rejected', 'sent_back') NOT NULL DEFAULT 'pending',
   employee_code_generated VARCHAR(50) NULL,
   remarks TEXT NULL,
   approved_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
