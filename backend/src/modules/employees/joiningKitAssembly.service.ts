@@ -27,6 +27,26 @@ export const KIT_RESERVE_BAND = 180;
 /** Deterministic order, so a kit's page map is reproducible. */
 const ORDER_FIRST = "EMPLOYMENT_CONTRACT";
 
+/**
+ * What belongs in a kit: the six documents rendered from TEMPLATE_DEFINITIONS.
+ *
+ * The EPF forms are deliberately excluded. They are acroform documents with
+ * their own consent receipt, correction loop, payroll review stage and
+ * company-seal step, and EPF Form 2 alone carries 53 fields of statutory
+ * nominee data — EPS nominee, family members, dates of birth, addresses.
+ * Including them meant no kit could send until EPF was complete, which defeats
+ * the purpose of consolidating at all. They keep their existing per-document
+ * flow, which is built around those extra stages.
+ */
+export const KIT_DOCUMENT_CODES = [
+  "EMPLOYMENT_CONTRACT",
+  "NDA_CONFIDENTIALITY",
+  "IT_COMPLIANCE",
+  "BAMS_DECLARATION",
+  "PI_PROCESSING_CONSENT",
+  "ZERO_TOLERANCE_ACK",
+] as const;
+
 export type KitItem = {
   checklistId: string;
   documentCode: string;
@@ -68,8 +88,9 @@ export async function kitEligibleDocuments(employeeId: string): Promise<RowDataP
             ORDER BY f2.uploaded_at DESC LIMIT 1
          )
       WHERE c.employee_id = ? AND c.action_type = 'esign'
+        AND c.document_code IN (${KIT_DOCUMENT_CODES.map(() => "?").join(",")})
       ORDER BY (c.document_code = ?) DESC, c.document_code`,
-    [employeeId, ORDER_FIRST],
+    [employeeId, ...KIT_DOCUMENT_CODES, ORDER_FIRST],
   );
   return rows as RowDataPacket[];
 }

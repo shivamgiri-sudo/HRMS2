@@ -17,7 +17,7 @@ import path from "path";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { env } from "../../config/env.js";
-import { assembleJoiningKit, kitEligibleDocuments } from "./joiningKitAssembly.service.js";
+import { assembleJoiningKit, kitEligibleDocuments, KIT_DOCUMENT_CODES } from "./joiningKitAssembly.service.js";
 
 const sha256 = (v: string) => createHash("sha256").update(v).digest("hex");
 const STORAGE = (employeeId: string) =>
@@ -179,15 +179,26 @@ export async function dispatchJoiningKit(kitId: string, actorUserId: string | nu
       "This employee already has an active per-document signing link. Let it complete or expire before sending a kit.");
   }
 
-  // Anything HR is still filling in would be signed in a half-finished state.
+  // Anything HR is still filling in would be signed half-finished — but only
+  // documents that are actually IN the kit are relevant. This previously
+  // checked every esign document for the employee, so a document the kit does
+  // not contain could block a kit, which is how the EPF forms blocked kits they
+  // were never part of.
+  const kitCodes = KIT_DOCUMENT_CODES.map(() => "?").join(",");
   const [pending] = await db.execute<RowDataPacket[]>(
-    `SELECT COUNT(*) n FROM employee_joining_document_checklist
-      WHERE employee_id = ? AND action_type = 'esign' AND fill_status = 'hr_fill_required'`,
-    [employeeId],
-  ).catch(() => [[{ n: 0 }]] as unknown as [RowDataPacket[]]);
-  if (Number((pending as RowDataPacket[])[0]?.n ?? 0) > 0) {
+    `SELECT document_name FROM employee_joining_document_checklist
+      WHERE employee_id = ? AND action_type = 'esign'
+        AND document_code IN (${kitCodes})
+        AND fill_status = 'hr_fill_required'`,
+    [employeeId, ...KIT_DOCUMENT_CODES],
+  ).catch(() => [[]] as unknown as [RowDataPacket[]]);
+  const pendingRows = pending as RowDataPacket[];
+  if (pendingRows.length > 0) {
+    // Name them: HR needs to know which document to complete, not merely that
+    // one exists.
     return blockKit(kitId, employeeId, "hr_fill_pending",
-      "Some documents still need HR to fill them in. Complete those before sending the kit.");
+      `These documents still need HR to complete them before the kit can be sent: ${
+        pendingRows.map((r) => r.document_name).join(", ")}.`);
   }
 
   const recipients = [kit.personal_email, kit.official_email]
