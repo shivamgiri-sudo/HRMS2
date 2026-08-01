@@ -119,10 +119,67 @@ export const atsService = {
   },
 
   async createCandidate(input: CreateCandidateInput, userId: string | null): Promise<AtsCandidate> {
-    const [dup] = await db.execute<RowDataPacket[]>(
-      "SELECT id FROM ats_candidate WHERE mobile = ? LIMIT 1", [input.mobile]
+    // Duplicate detection, restored. 2885092d added mobile-stage messaging and the
+    // whole email branch ("enforce registration fields, email duplicate check,
+    // reprocess detection"); a later whole-tree commit reduced this to a single
+    // mobile check with no status handling, and the tests asserting the rest went
+    // red rather than the loss being noticed. Against production that let 1,283
+    // duplicate-email candidate rows accumulate across 1,123 addresses.
+    const [dupMobile] = await db.execute<RowDataPacket[]>(
+      "SELECT id, current_stage, active_status FROM ats_candidate WHERE mobile = ? LIMIT 1",
+      [input.mobile]
     );
-    if ((dup as RowDataPacket[]).length > 0) throw new Error("This mobile already registered");
+    if ((dupMobile as RowDataPacket[]).length > 0) {
+      const existing = (dupMobile as RowDataPacket[])[0];
+      const stage = String(existing.current_stage ?? "");
+      if (stage === "Rejected") {
+        const err = new Error("This mobile belongs to a previously rejected candidate. Please contact HR to reprocess.");
+        (err as any).statusCode = 409;
+        (err as any).code = "DUPLICATE_REJECTED";
+        throw err;
+      }
+      if (stage === "Selected" || stage === "converted") {
+        const err = new Error("This mobile belongs to a candidate who was already selected.");
+        (err as any).statusCode = 409;
+        (err as any).code = "DUPLICATE_SELECTED";
+        throw err;
+      }
+      const err = new Error("This mobile is already registered");
+      (err as any).statusCode = 409;
+      (err as any).code = "DUPLICATE_MOBILE";
+      throw err;
+    }
+
+    // Email duplicates, but only for an address that is actually an address.
+    //
+    // This guard is new, and deliberate. 14,246 of 33,856 production candidates
+    // carry no usable email — "0" alone appears 1,576 times, alongside "AN",
+    // "abc@gmail.com" and shared @teammas.in inboxes. Recruiters evidently use
+    // placeholders where a candidate has no email, so checking every non-empty
+    // value would reject those registrations outright and break intake. The
+    // original check had no such guard; restoring it verbatim would have.
+    const email = String(input.email ?? "").trim();
+    const isRealAddress = /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email);
+    if (isRealAddress) {
+      const [dupEmail] = await db.execute<RowDataPacket[]>(
+        "SELECT id, current_stage FROM ats_candidate WHERE email = ? LIMIT 1",
+        [email]
+      );
+      if ((dupEmail as RowDataPacket[]).length > 0) {
+        const existing = (dupEmail as RowDataPacket[])[0];
+        const stage = String(existing.current_stage ?? "");
+        if (stage === "Rejected") {
+          const err = new Error("This email belongs to a previously rejected candidate. Please contact HR to reprocess.");
+          (err as any).statusCode = 409;
+          (err as any).code = "DUPLICATE_EMAIL_REJECTED";
+          throw err;
+        }
+        const err = new Error("This email is already registered");
+        (err as any).statusCode = 409;
+        (err as any).code = "DUPLICATE_EMAIL";
+        throw err;
+      }
+    }
 
     // Normalize sourcing channel before insert
     const normalizedChannel = normalizeSourceChannel(input.sourcingChannel);
