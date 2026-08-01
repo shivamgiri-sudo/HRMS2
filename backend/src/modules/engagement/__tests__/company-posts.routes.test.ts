@@ -113,9 +113,17 @@ describe("company post engagement routes", () => {
   });
 
   it("returns the approved feed payload", async () => {
-    vi.mocked(listApprovedCompanyFeed).mockResolvedValueOnce([
-      { id: "post-1", status: "approved" },
-    ] as any);
+    // listApprovedCompanyFeed returns CompanyPostListResult ({ posts, total,
+    // page, limit }), and the controller spreads it: res.json({ success, ...result }).
+    // Resolving a bare array here made that spread produce { '0': {...} } — the
+    // array's indices as object keys — so the assertion could not match whatever
+    // the route did.
+    vi.mocked(listApprovedCompanyFeed).mockResolvedValueOnce({
+      posts: [{ id: "post-1", status: "approved" }],
+      total: 1,
+      page: 1,
+      limit: 20,
+    } as any);
 
     const response = await request(app)
       .get("/api/engagement/company-posts/feed")
@@ -124,7 +132,10 @@ describe("company post engagement routes", () => {
     expect(response.status).toBe(200);
     expect(response.body).toEqual({
       success: true,
-      data: [{ id: "post-1", status: "approved" }],
+      posts: [{ id: "post-1", status: "approved" }],
+      total: 1,
+      page: 1,
+      limit: 20,
     });
     expect(listApprovedCompanyFeed).toHaveBeenCalledTimes(1);
   });
@@ -271,13 +282,19 @@ describe("company post engagement routes", () => {
       .send({ review_notes: "Approved for publish", actor_user_id: "ignored" });
 
     expect(response.status).toBe(200);
-    expect(approveCompanyPost).toHaveBeenCalledWith({
-      action: "approve",
-      actor_user_id: "11111111-1111-1111-1111-111111111111",
-      post_id: "22222222-2222-2222-2222-222222222222",
-      reason: undefined,
-      review_notes: "Approved for publish",
-    });
+    // objectContaining: the controller also forwards audit context (ipAddress,
+    // userAgent) whose values depend on the machine running the test, and it no
+    // longer passes `reason` on approve. Asserting the exact object pinned both
+    // the environment and a field that is gone; these are the arguments that
+    // actually carry meaning.
+    expect(approveCompanyPost).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "approve",
+        actor_user_id: "11111111-1111-1111-1111-111111111111",
+        post_id: "22222222-2222-2222-2222-222222222222",
+        review_notes: "Approved for publish",
+      }),
+    );
   });
 
   it("rejects a company post with authenticated actor context", async () => {
@@ -289,13 +306,15 @@ describe("company post engagement routes", () => {
       .send({ reason: "Needs revision", review_notes: "Too promotional" });
 
     expect(response.status).toBe(200);
-    expect(rejectCompanyPost).toHaveBeenCalledWith({
-      action: "reject",
-      actor_user_id: "11111111-1111-1111-1111-111111111111",
-      post_id: "22222222-2222-2222-2222-222222222222",
-      reason: "Needs revision",
-      review_notes: "Too promotional",
-    });
+    expect(rejectCompanyPost).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "reject",
+        actor_user_id: "11111111-1111-1111-1111-111111111111",
+        post_id: "22222222-2222-2222-2222-222222222222",
+        reason: "Needs revision",
+        review_notes: "Too promotional",
+      }),
+    );
   });
 
   it("soft deletes a company post with authenticated actor context", async () => {
@@ -308,11 +327,13 @@ describe("company post engagement routes", () => {
 
     expect(response.status).toBe(200);
     expect(response.body).toEqual({ success: true });
-    expect(deleteCompanyPost).toHaveBeenCalledWith({
-      actorUserId: "11111111-1111-1111-1111-111111111111",
-      postId: "22222222-2222-2222-2222-222222222222",
-      reason: "Removed after review",
-    });
+    expect(deleteCompanyPost).toHaveBeenCalledWith(
+      expect.objectContaining({
+        actorUserId: "11111111-1111-1111-1111-111111111111",
+        postId: "22222222-2222-2222-2222-222222222222",
+        reason: "Removed after review",
+      }),
+    );
   });
 
   it("blocks creator access assignment listing for non-super-admin callers", async () => {
