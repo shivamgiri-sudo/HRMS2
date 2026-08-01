@@ -1,7 +1,8 @@
-import { useState } from "react";
-import { ExternalLink, MessageCircle, RefreshCw, ThumbsUp } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { useState, useCallback } from "react";
+import {
+  ExternalLink, MessageCircle, Play, RefreshCw, ThumbsUp, X,
+} from "lucide-react";
+import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useSocialFeed, type SocialPost, type SocialPlatformFilter } from "@/hooks/useSocialFeed";
 import { useQueryClient } from "@tanstack/react-query";
@@ -11,37 +12,43 @@ import { useQueryClient } from "@tanstack/react-query";
 const PLATFORM_META = {
   facebook: {
     label: "Facebook",
-    badge: "bg-[#1877F2] text-white",
-    border: "border-[#1877F2]/20",
+    color: "#1877F2",
+    badgeBg: "bg-[#1877F2]",
+    tabActiveBg: "bg-[#1877F2] text-white shadow-sm",
+    tabIdleBg: "bg-white text-slate-600 border border-slate-200 hover:border-[#1877F2]/40 hover:text-[#1877F2]",
     icon: (
       <svg className="h-4 w-4" viewBox="0 0 24 24" fill="currentColor">
-        <path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"/>
+        <path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z" />
       </svg>
     ),
   },
   instagram: {
     label: "Instagram",
-    badge: "bg-gradient-to-br from-[#833AB4] via-[#FD1D1D] to-[#F77737] text-white",
-    border: "border-pink-200",
+    color: "#E1306C",
+    badgeBg: "bg-gradient-to-br from-[#833AB4] via-[#FD1D1D] to-[#F77737]",
+    tabActiveBg: "bg-gradient-to-r from-[#833AB4] via-[#FD1D1D] to-[#F77737] text-white shadow-sm",
+    tabIdleBg: "bg-white text-slate-600 border border-slate-200 hover:border-pink-300 hover:text-pink-600",
     icon: (
       <svg className="h-4 w-4" viewBox="0 0 24 24" fill="currentColor">
-        <path d="M12 2.163c3.204 0 3.584.012 4.85.07 3.252.148 4.771 1.691 4.919 4.919.058 1.265.069 1.645.069 4.849 0 3.205-.012 3.584-.069 4.849-.149 3.225-1.664 4.771-4.919 4.919-1.266.058-1.644.07-4.85.07-3.204 0-3.584-.012-4.849-.07-3.26-.149-4.771-1.699-4.919-4.92-.058-1.265-.07-1.644-.07-4.849 0-3.204.013-3.583.07-4.849.149-3.227 1.664-4.771 4.919-4.919 1.266-.057 1.645-.069 4.849-.069zm0-2.163c-3.259 0-3.667.014-4.947.072-4.358.2-6.78 2.618-6.98 6.98-.059 1.281-.073 1.689-.073 4.948 0 3.259.014 3.668.072 4.948.2 4.358 2.618 6.78 6.98 6.98 1.281.058 1.689.072 4.948.072 3.259 0 3.668-.014 4.948-.072 4.354-.2 6.782-2.618 6.979-6.98.059-1.28.073-1.689.073-4.948 0-3.259-.014-3.667-.072-4.947-.196-4.354-2.617-6.78-6.979-6.98-1.281-.059-1.69-.073-4.949-.073zm0 5.838c-3.403 0-6.162 2.759-6.162 6.162s2.759 6.163 6.162 6.163 6.162-2.759 6.162-6.163c0-3.403-2.759-6.162-6.162-6.162zm0 10.162c-2.209 0-4-1.79-4-4 0-2.209 1.791-4 4-4s4 1.791 4 4c0 2.21-1.791 4-4 4zm6.406-11.845c-.796 0-1.441.645-1.441 1.44s.645 1.44 1.441 1.44c.795 0 1.439-.645 1.439-1.44s-.644-1.44-1.439-1.44z"/>
+        <path d="M12 2.163c3.204 0 3.584.012 4.85.07 3.252.148 4.771 1.691 4.919 4.919.058 1.265.069 1.645.069 4.849 0 3.205-.012 3.584-.069 4.849-.149 3.225-1.664 4.771-4.919 4.919-1.266.058-1.644.07-4.85.07-3.204 0-3.584-.012-4.849-.07-3.26-.149-4.771-1.699-4.919-4.92-.058-1.265-.07-1.644-.07-4.849 0-3.204.013-3.583.07-4.849.149-3.227 1.664-4.771 4.919-4.919 1.266-.057 1.645-.069 4.849-.069zm0-2.163c-3.259 0-3.667.014-4.947.072-4.358.2-6.78 2.618-6.98 6.98-.059 1.281-.073 1.689-.073 4.948 0 3.259.014 3.668.072 4.948.2 4.358 2.618 6.78 6.98 6.98 1.281.058 1.689.072 4.948.072 3.259 0 3.668-.014 4.948-.072 4.354-.2 6.782-2.618 6.979-6.98.059-1.28.073-1.689.073-4.948 0-3.259-.014-3.667-.072-4.947-.196-4.354-2.617-6.78-6.979-6.98-1.281-.059-1.69-.073-4.949-.073zm0 5.838c-3.403 0-6.162 2.759-6.162 6.162s2.759 6.163 6.162 6.163 6.162-2.759 6.162-6.163c0-3.403-2.759-6.162-6.162-6.162zm0 10.162c-2.209 0-4-1.79-4-4 0-2.209 1.791-4 4-4s4 1.791 4 4c0 2.21-1.791 4-4 4zm6.406-11.845c-.796 0-1.441.645-1.441 1.44s.645 1.44 1.441 1.44c.795 0 1.439-.645 1.439-1.44s-.644-1.44-1.439-1.44z" />
       </svg>
     ),
   },
   youtube: {
     label: "YouTube",
-    badge: "bg-[#FF0000] text-white",
-    border: "border-red-200",
+    color: "#FF0000",
+    badgeBg: "bg-[#FF0000]",
+    tabActiveBg: "bg-[#FF0000] text-white shadow-sm",
+    tabIdleBg: "bg-white text-slate-600 border border-slate-200 hover:border-red-300 hover:text-red-600",
     icon: (
       <svg className="h-4 w-4" viewBox="0 0 24 24" fill="currentColor">
-        <path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z"/>
+        <path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z" />
       </svg>
     ),
   },
 };
 
-// ── Single post card ──────────────────────────────────────────────────────
+// ── Helpers ────────────────────────────────────────────────────────────────
 
 function timeAgo(dateStr: string | null): string {
   if (!dateStr) return "";
@@ -51,70 +58,154 @@ function timeAgo(dateStr: string | null): string {
   if (h < 24) return `${h}h ago`;
   const d = Math.floor(h / 24);
   if (d < 30) return `${d}d ago`;
-  const mo = Math.floor(d / 30);
-  return `${mo}mo ago`;
+  return `${Math.floor(d / 30)}mo ago`;
 }
 
-function PostCard({ post }: { post: SocialPost }) {
-  const meta = PLATFORM_META[post.platform];
+function extractYouTubeId(url: string): string | null {
+  try {
+    const u = new URL(url);
+    return u.searchParams.get("v") ?? u.pathname.split("/").pop() ?? null;
+  } catch {
+    return null;
+  }
+}
+
+// ── Inline video modal ─────────────────────────────────────────────────────
+
+function VideoModal({ videoId, title, onClose }: { videoId: string; title: string; onClose: () => void }) {
   return (
-    <article className="group overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm transition hover:-translate-y-0.5 hover:shadow-md">
-      {post.media_url && (
-        <div className="aspect-video w-full overflow-hidden bg-slate-100">
-          <img
-            src={post.media_url}
-            alt=""
-            className="h-full w-full object-cover"
-            loading="lazy"
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm"
+      onClick={onClose}
+    >
+      <div
+        className="relative w-full max-w-4xl rounded-2xl overflow-hidden shadow-2xl bg-black"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Close button */}
+        <button
+          onClick={onClose}
+          className="absolute right-3 top-3 z-10 flex h-8 w-8 items-center justify-center rounded-full bg-black/60 text-white transition hover:bg-black cursor-pointer"
+          aria-label="Close video"
+        >
+          <X className="h-4 w-4" />
+        </button>
+
+        {/* 16:9 iframe */}
+        <div className="aspect-video w-full">
+          <iframe
+            src={`https://www.youtube.com/embed/${videoId}?autoplay=1&rel=0&modestbranding=1`}
+            title={title}
+            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+            allowFullScreen
+            className="h-full w-full border-0"
           />
         </div>
-      )}
-      <div className="p-4 space-y-3">
-        <div className="flex items-start justify-between gap-2">
-          <div className="flex items-center gap-2">
-            <span className={`flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide ${meta.badge}`}>
-              {meta.icon}
-              {meta.label}
-            </span>
+
+        {/* Title bar */}
+        {title && (
+          <div className="bg-slate-950 px-4 py-3">
+            <p className="truncate text-sm font-semibold text-white">{title}</p>
           </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── Post card ──────────────────────────────────────────────────────────────
+
+function PostCard({ post, onPlayVideo }: { post: SocialPost; onPlayVideo?: (id: string, title: string) => void }) {
+  const meta = PLATFORM_META[post.platform];
+  const videoId = post.platform === "youtube" ? extractYouTubeId(post.post_url) : null;
+
+  return (
+    <article
+      className="group flex flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:shadow-lg"
+      style={{ borderTop: `3px solid ${meta.color}` }}
+    >
+      {/* Thumbnail / video preview */}
+      {post.media_url && (
+        <div className="relative aspect-video w-full overflow-hidden bg-slate-100">
+          <img
+            src={post.media_url}
+            alt={post.content_text ?? ""}
+            className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"
+            loading="lazy"
+          />
+          {/* Play overlay for YouTube */}
+          {videoId && onPlayVideo && (
+            <button
+              onClick={() => onPlayVideo(videoId, post.content_text ?? "")}
+              className="absolute inset-0 flex items-center justify-center bg-black/30 opacity-0 transition-opacity duration-200 group-hover:opacity-100 cursor-pointer"
+              aria-label="Play video"
+            >
+              <div className="flex h-14 w-14 items-center justify-center rounded-full bg-[#FF0000] shadow-xl">
+                <Play className="h-6 w-6 fill-white text-white ml-1" />
+              </div>
+            </button>
+          )}
+        </div>
+      )}
+
+      <div className="flex flex-1 flex-col gap-3 p-4">
+        {/* Platform badge + time */}
+        <div className="flex items-center justify-between">
+          <span className={`flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-white ${meta.badgeBg}`}>
+            {meta.icon}
+            {meta.label}
+          </span>
           {post.published_at && (
-            <span className="shrink-0 text-[11px] text-slate-400">{timeAgo(post.published_at)}</span>
+            <span className="text-[11px] text-slate-400">{timeAgo(post.published_at)}</span>
           )}
         </div>
 
+        {/* Text content */}
         {post.content_text && (
-          <p className="text-sm leading-6 text-slate-700 line-clamp-4">{post.content_text}</p>
+          <p className="flex-1 text-sm leading-6 text-slate-700 line-clamp-3">{post.content_text}</p>
         )}
 
-        <div className="flex items-center justify-between pt-1">
-          <div className="flex items-center gap-3">
-            <span className="flex items-center gap-1 text-xs text-slate-400">
-              <ThumbsUp className="h-3.5 w-3.5" />
-              {post.like_count}
+        {/* Footer */}
+        <div className="flex items-center justify-between border-t border-slate-100 pt-3">
+          <div className="flex items-center gap-3 text-xs text-slate-400">
+            <span className="flex items-center gap-1">
+              <ThumbsUp className="h-3.5 w-3.5" /> {post.like_count}
             </span>
-            <span className="flex items-center gap-1 text-xs text-slate-400">
-              <MessageCircle className="h-3.5 w-3.5" />
-              {post.comment_count}
+            <span className="flex items-center gap-1">
+              <MessageCircle className="h-3.5 w-3.5" /> {post.comment_count}
             </span>
           </div>
-          <a
-            href={post.post_url}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:bg-slate-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2"
-          >
-            Open post
-            <ExternalLink className="h-3 w-3" />
-          </a>
+
+          <div className="flex items-center gap-2">
+            {videoId && onPlayVideo && (
+              <button
+                onClick={() => onPlayVideo(videoId, post.content_text ?? "")}
+                className="flex items-center gap-1.5 rounded-xl bg-[#FF0000] px-3 py-1.5 text-xs font-bold text-white transition hover:bg-red-700 cursor-pointer"
+              >
+                <Play className="h-3 w-3 fill-white" /> Play
+              </button>
+            )}
+            <a
+              href={post.post_url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:bg-slate-100 cursor-pointer"
+            >
+              Open <ExternalLink className="h-3 w-3" />
+            </a>
+          </div>
         </div>
       </div>
     </article>
   );
 }
 
-// ── Feed list with pagination ──────────────────────────────────────────────
+// ── Feed list ──────────────────────────────────────────────────────────────
 
-function FeedList({ platform }: { platform: SocialPlatformFilter }) {
+function FeedList({ platform, onPlayVideo }: {
+  platform: SocialPlatformFilter;
+  onPlayVideo: (id: string, title: string) => void;
+}) {
   const [page, setPage] = useState(1);
   const { data, isLoading, isError, refetch, isFetching } = useSocialFeed(platform, page, 12);
   const posts = data?.posts ?? [];
@@ -142,9 +233,12 @@ function FeedList({ platform }: { platform: SocialPlatformFilter }) {
     return (
       <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-12 text-center">
         <p className="text-sm font-semibold text-rose-700">Could not load posts</p>
-        <Button variant="outline" size="sm" className="mt-3" onClick={() => void refetch()}>
+        <button
+          onClick={() => void refetch()}
+          className="mt-3 rounded-xl border border-rose-200 bg-white px-4 py-1.5 text-xs font-semibold text-rose-700 hover:bg-rose-50 cursor-pointer"
+        >
           Retry
-        </Button>
+        </button>
       </div>
     );
   }
@@ -152,8 +246,8 @@ function FeedList({ platform }: { platform: SocialPlatformFilter }) {
   if (posts.length === 0) {
     return (
       <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-16 text-center">
-        <p className="text-sm font-medium text-slate-500">No posts yet for this platform.</p>
-        <p className="mt-1 text-xs text-slate-400">Posts sync every 30 minutes — check back soon.</p>
+        <p className="text-sm font-medium text-slate-500">No posts synced yet for this platform.</p>
+        <p className="mt-1 text-xs text-slate-400">Posts sync every 30 minutes automatically.</p>
       </div>
     );
   }
@@ -161,50 +255,56 @@ function FeedList({ platform }: { platform: SocialPlatformFilter }) {
   return (
     <div className="space-y-6">
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-        {posts.map((post) => <PostCard key={post.id} post={post} />)}
+        {posts.map((post) => (
+          <PostCard key={post.id} post={post} onPlayVideo={onPlayVideo} />
+        ))}
       </div>
-
       {totalPages > 1 && (
         <div className="flex items-center justify-center gap-3">
-          <Button variant="outline" size="sm" disabled={page <= 1 || isFetching} onClick={() => setPage(p => p - 1)}>
+          <button
+            disabled={page <= 1 || isFetching}
+            onClick={() => setPage((p) => p - 1)}
+            className="rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-40 cursor-pointer"
+          >
             Previous
-          </Button>
+          </button>
           <span className="text-sm text-slate-500">Page {page} of {totalPages}</span>
-          <Button variant="outline" size="sm" disabled={page >= totalPages || isFetching} onClick={() => setPage(p => p + 1)}>
+          <button
+            disabled={page >= totalPages || isFetching}
+            onClick={() => setPage((p) => p + 1)}
+            className="rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-40 cursor-pointer"
+          >
             Next
-          </Button>
+          </button>
         </div>
       )}
     </div>
   );
 }
 
-// ── Facebook Page Plugin embed (free, no API key) ─────────────────────────
+// ── Embed components ───────────────────────────────────────────────────────
 
 function FacebookEmbed() {
-  const ensureSDK = (el: HTMLDivElement | null) => {
+  const ensureSDK = useCallback((el: HTMLDivElement | null) => {
     if (!el) return;
-    if ((window as any).FB) {
-      (window as any).FB.XFBML.parse(el);
-      return;
-    }
+    if ((window as any).FB) { (window as any).FB.XFBML.parse(el); return; }
+    if (document.getElementById("facebook-jssdk")) return;
     const s = document.createElement("script");
     s.id = "facebook-jssdk";
     s.src = "https://connect.facebook.net/en_US/sdk.js#xfbml=1&version=v19.0";
-    s.async = true;
-    s.defer = true;
+    s.async = true; s.defer = true;
     document.body.appendChild(s);
-  };
+  }, []);
 
   return (
-    <div className="flex justify-center" ref={ensureSDK}>
+    <div className="flex justify-center overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm" ref={ensureSDK}>
       <div id="fb-root" />
       <div
         className="fb-page"
         data-href="https://www.facebook.com/TeamMas9"
         data-tabs="timeline"
-        data-width="600"
-        data-height="700"
+        data-width="560"
+        data-height="680"
         data-small-header="false"
         data-adapt-container-width="true"
         data-hide-cover="false"
@@ -218,175 +318,255 @@ function FacebookEmbed() {
   );
 }
 
-// ── Instagram embed (official oEmbed, no API key for public posts) ─────────
-
-function InstagramEmbed() {
-  const ensureScript = (el: HTMLDivElement | null) => {
-    if (!el) return;
-    if ((window as any).instgrm) {
-      (window as any).instgrm.Embeds.process();
-      return;
-    }
-    const s = document.createElement("script");
-    s.src = "https://www.instagram.com/embed.js";
-    s.async = true;
-    document.body.appendChild(s);
-  };
-
+function InstagramCard() {
   return (
-    <div className="flex flex-col items-center gap-6" ref={ensureScript}>
-      {/* Instagram doesn't offer a timeline widget — show the profile card + link */}
-      <div className="w-full max-w-lg rounded-2xl border border-slate-200 bg-white p-8 text-center shadow-sm">
-        <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full text-white" style={{ background: "linear-gradient(135deg,#833AB4,#FD1D1D,#F77737)" }}>
-          <svg className="h-8 w-8" viewBox="0 0 24 24" fill="currentColor">
-            <path d="M12 2.163c3.204 0 3.584.012 4.85.07 3.252.148 4.771 1.691 4.919 4.919.058 1.265.069 1.645.069 4.849 0 3.205-.012 3.584-.069 4.849-.149 3.225-1.664 4.771-4.919 4.919-1.266.058-1.644.07-4.85.07-3.204 0-3.584-.012-4.849-.07-3.26-.149-4.771-1.699-4.919-4.92-.058-1.265-.07-1.644-.07-4.849 0-3.204.013-3.583.07-4.849.149-3.227 1.664-4.771 4.919-4.919 1.266-.057 1.645-.069 4.849-.069zm0-2.163c-3.259 0-3.667.014-4.947.072-4.358.2-6.78 2.618-6.98 6.98-.059 1.281-.073 1.689-.073 4.948 0 3.259.014 3.668.072 4.948.2 4.358 2.618 6.78 6.98 6.98 1.281.058 1.689.072 4.948.072 3.259 0 3.668-.014 4.948-.072 4.354-.2 6.782-2.618 6.979-6.98.059-1.28.073-1.689.073-4.948 0-3.259-.014-3.667-.072-4.947-.196-4.354-2.617-6.78-6.979-6.98-1.281-.059-1.69-.073-4.949-.073zm0 5.838c-3.403 0-6.162 2.759-6.162 6.162s2.759 6.163 6.162 6.163 6.162-2.759 6.162-6.163c0-3.403-2.759-6.162-6.162-6.162zm0 10.162c-2.209 0-4-1.79-4-4 0-2.209 1.791-4 4-4s4 1.791 4 4c0 2.21-1.791 4-4 4zm6.406-11.845c-.796 0-1.441.645-1.441 1.44s.645 1.44 1.441 1.44c.795 0 1.439-.645 1.439-1.44s-.644-1.44-1.439-1.44z"/>
+    <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+      <div className="h-1.5 w-full" style={{ background: "linear-gradient(90deg,#833AB4,#FD1D1D,#F77737)" }} />
+      <div className="flex flex-col items-center gap-4 px-8 py-10 text-center">
+        <div
+          className="flex h-20 w-20 items-center justify-center rounded-full text-white shadow-lg"
+          style={{ background: "linear-gradient(135deg,#833AB4,#FD1D1D,#F77737)" }}
+        >
+          <svg className="h-10 w-10" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M12 2.163c3.204 0 3.584.012 4.85.07 3.252.148 4.771 1.691 4.919 4.919.058 1.265.069 1.645.069 4.849 0 3.205-.012 3.584-.069 4.849-.149 3.225-1.664 4.771-4.919 4.919-1.266.058-1.644.07-4.85.07-3.204 0-3.584-.012-4.849-.07-3.26-.149-4.771-1.699-4.919-4.92-.058-1.265-.07-1.644-.07-4.849 0-3.204.013-3.583.07-4.849.149-3.227 1.664-4.771 4.919-4.919 1.266-.057 1.645-.069 4.849-.069zm0-2.163c-3.259 0-3.667.014-4.947.072-4.358.2-6.78 2.618-6.98 6.98-.059 1.281-.073 1.689-.073 4.948 0 3.259.014 3.668.072 4.948.2 4.358 2.618 6.78 6.98 6.98 1.281.058 1.689.072 4.948.072 3.259 0 3.668-.014 4.948-.072 4.354-.2 6.782-2.618 6.979-6.98.059-1.28.073-1.689.073-4.948 0-3.259-.014-3.667-.072-4.947-.196-4.354-2.617-6.78-6.979-6.98-1.281-.059-1.69-.073-4.949-.073zm0 5.838c-3.403 0-6.162 2.759-6.162 6.162s2.759 6.163 6.162 6.163 6.162-2.759 6.162-6.163c0-3.403-2.759-6.162-6.162-6.162zm0 10.162c-2.209 0-4-1.79-4-4 0-2.209 1.791-4 4-4s4 1.791 4 4c0 2.21-1.791 4-4 4zm6.406-11.845c-.796 0-1.441.645-1.441 1.44s.645 1.44 1.441 1.44c.795 0 1.439-.645 1.439-1.44s-.644-1.44-1.439-1.44z" />
           </svg>
         </div>
-        <h3 className="text-base font-bold text-slate-900">@teammas9 on Instagram</h3>
-        <p className="mt-2 text-sm text-slate-500">
-          Follow MAS Callnet on Instagram for the latest updates, team moments, and company culture.
-        </p>
+        <div>
+          <p className="text-lg font-black text-slate-950">@teammas9</p>
+          <p className="mt-1 text-sm text-slate-500">
+            Follow MAS Callnet on Instagram for team moments, culture highlights, and company updates.
+          </p>
+        </div>
         <a
           href="https://instagram.com/teammas9"
           target="_blank"
           rel="noopener noreferrer"
-          className="mt-5 inline-flex items-center gap-2 rounded-lg px-5 py-2.5 text-sm font-semibold text-white transition"
+          className="inline-flex items-center gap-2 rounded-2xl px-6 py-2.5 text-sm font-bold text-white shadow-md transition hover:opacity-90 cursor-pointer"
           style={{ background: "linear-gradient(135deg,#833AB4,#FD1D1D,#F77737)" }}
         >
-          View on Instagram
-          <ExternalLink className="h-3.5 w-3.5" />
+          View Profile <ExternalLink className="h-3.5 w-3.5" />
         </a>
       </div>
     </div>
   );
 }
 
-// ── X/Twitter embed ────────────────────────────────────────────────────────
-
-declare global {
-  interface Window { twttr?: { widgets: { load: () => void } } }
-}
+declare global { interface Window { twttr?: { widgets: { load: () => void } } } }
 
 function TwitterEmbed() {
-  const ensureWidget = (el: HTMLDivElement | null) => {
+  const ensureWidget = useCallback((el: HTMLDivElement | null) => {
     if (!el) return;
-    if (window.twttr?.widgets?.load) {
-      window.twttr.widgets.load();
-    } else {
-      const s = document.createElement("script");
-      s.src = "https://platform.twitter.com/widgets.js";
-      s.async = true;
-      s.charset = "utf-8";
-      document.body.appendChild(s);
-    }
-  };
+    if (window.twttr?.widgets?.load) { window.twttr.widgets.load(); return; }
+    const s = document.createElement("script");
+    s.src = "https://platform.twitter.com/widgets.js";
+    s.async = true; s.charset = "utf-8";
+    document.body.appendChild(s);
+  }, []);
 
   return (
-    <div className="flex justify-center" ref={ensureWidget}>
-      <a
-        className="twitter-timeline"
-        data-width="600"
-        data-height="700"
-        data-theme="light"
-        href="https://twitter.com/MASCallnet"
-      >
-        Loading X/Twitter feed…
-      </a>
+    <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+      <div className="h-1.5 w-full bg-slate-950" />
+      <div className="flex justify-center p-4" ref={ensureWidget}>
+        <a
+          className="twitter-timeline"
+          data-width="560"
+          data-height="680"
+          data-theme="light"
+          href="https://twitter.com/MASCallnet"
+        >
+          Loading X / Twitter feed…
+        </a>
+      </div>
     </div>
   );
 }
 
-// ── LinkedIn card ─────────────────────────────────────────────────────────
-
 function LinkedInCard() {
   return (
-    <div className="flex justify-center">
-      <div className="w-full max-w-lg rounded-2xl border border-slate-200 bg-white p-8 text-center shadow-sm">
-        <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-[#0A66C2] text-white">
-          <svg className="h-8 w-8" viewBox="0 0 24 24" fill="currentColor">
-            <path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433a2.062 2.062 0 0 1-2.063-2.065 2.064 2.064 0 1 1 2.063 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z"/>
+    <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+      <div className="h-1.5 w-full bg-[#0A66C2]" />
+      <div className="flex flex-col items-center gap-4 px-8 py-10 text-center">
+        <div className="flex h-20 w-20 items-center justify-center rounded-full bg-[#0A66C2] text-white shadow-lg">
+          <svg className="h-10 w-10" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433a2.062 2.062 0 0 1-2.063-2.065 2.064 2.064 0 1 1 2.063 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z" />
           </svg>
         </div>
-        <h3 className="text-base font-bold text-slate-900">MAS Callnet on LinkedIn</h3>
-        <p className="mt-2 text-sm text-slate-500">
-          LinkedIn does not offer a free public feed API. Follow our company page to stay updated with the latest news, job openings, and company milestones.
-        </p>
+        <div>
+          <p className="text-lg font-black text-slate-950">MAS Callnet</p>
+          <p className="mt-1 text-sm text-slate-500">
+            LinkedIn does not offer a free public feed API. Follow our company page for career opportunities, company news, and milestones.
+          </p>
+        </div>
         <a
           href="https://www.linkedin.com/company/mas-callnet"
           target="_blank"
           rel="noopener noreferrer"
-          className="mt-5 inline-flex items-center gap-2 rounded-lg bg-[#0A66C2] px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-[#004182]"
+          className="inline-flex items-center gap-2 rounded-2xl bg-[#0A66C2] px-6 py-2.5 text-sm font-bold text-white shadow-md transition hover:bg-[#004182] cursor-pointer"
         >
-          Follow on LinkedIn
-          <ExternalLink className="h-3.5 w-3.5" />
+          Follow on LinkedIn <ExternalLink className="h-3.5 w-3.5" />
         </a>
       </div>
     </div>
   );
 }
 
-// ── Main page ─────────────────────────────────────────────────────────────
+// ── Tab definition ─────────────────────────────────────────────────────────
+
+type TabKey = "all" | "youtube" | "facebook" | "instagram" | "twitter" | "linkedin";
+
+const TABS: { key: TabKey; label: string; icon: React.ReactNode; activeCls: string; idleCls: string }[] = [
+  {
+    key: "all",
+    label: "All",
+    icon: <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="7" height="7" /><rect x="14" y="3" width="7" height="7" /><rect x="3" y="14" width="7" height="7" /><rect x="14" y="14" width="7" height="7" /></svg>,
+    activeCls: "bg-slate-950 text-white shadow-sm",
+    idleCls: "bg-white text-slate-600 border border-slate-200 hover:border-slate-400 hover:text-slate-900",
+  },
+  {
+    key: "youtube",
+    label: "YouTube",
+    icon: PLATFORM_META.youtube.icon,
+    activeCls: PLATFORM_META.youtube.tabActiveBg,
+    idleCls: PLATFORM_META.youtube.tabIdleBg,
+  },
+  {
+    key: "facebook",
+    label: "Facebook",
+    icon: PLATFORM_META.facebook.icon,
+    activeCls: PLATFORM_META.facebook.tabActiveBg,
+    idleCls: PLATFORM_META.facebook.tabIdleBg,
+  },
+  {
+    key: "instagram",
+    label: "Instagram",
+    icon: PLATFORM_META.instagram.icon,
+    activeCls: PLATFORM_META.instagram.tabActiveBg,
+    idleCls: PLATFORM_META.instagram.tabIdleCls,
+  },
+  {
+    key: "twitter",
+    label: "X / Twitter",
+    icon: <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="currentColor"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-4.714-6.231-5.401 6.231H2.74l7.73-8.835L1.254 2.25H8.08l4.259 5.622 5.905-5.622zm-1.161 17.52h1.833L7.084 4.126H5.117z" /></svg>,
+    activeCls: "bg-slate-950 text-white shadow-sm",
+    idleCls: "bg-white text-slate-600 border border-slate-200 hover:border-slate-400 hover:text-slate-900",
+  },
+  {
+    key: "linkedin",
+    label: "LinkedIn",
+    icon: <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="currentColor"><path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433a2.062 2.062 0 0 1-2.063-2.065 2.064 2.064 0 1 1 2.063 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z" /></svg>,
+    activeCls: "bg-[#0A66C2] text-white shadow-sm",
+    idleCls: "bg-white text-slate-600 border border-slate-200 hover:border-[#0A66C2]/40 hover:text-[#0A66C2]",
+  },
+];
+
+// Fix typo in tab definitions
+TABS[3].idleCls = PLATFORM_META.instagram.tabIdleBg;
+
+// ── Main page ──────────────────────────────────────────────────────────────
 
 export default function NativeSocialFeed() {
   const qc = useQueryClient();
+  const [activeTab, setActiveTab] = useState<TabKey>("all");
+  const [videoModal, setVideoModal] = useState<{ id: string; title: string } | null>(null);
 
-  const handleRefresh = () => {
-    qc.invalidateQueries({ queryKey: ["social-feed"] });
-  };
+  const handlePlayVideo = useCallback((id: string, title: string) => {
+    setVideoModal({ id, title });
+  }, []);
 
   return (
-    <div className="mx-auto max-w-7xl space-y-6 px-4 py-6">
-      {/* Header */}
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-bold text-slate-900">Company Social Media</h1>
-          <p className="mt-1 text-sm text-slate-500">
-            MAS Callnet on Facebook, Instagram, YouTube, X, and LinkedIn
-          </p>
+    <DashboardLayout>
+      {/* Inline video modal */}
+      {videoModal && (
+        <VideoModal
+          videoId={videoModal.id}
+          title={videoModal.title}
+          onClose={() => setVideoModal(null)}
+        />
+      )}
+
+      <div className="mx-auto max-w-7xl space-y-6 px-4 py-6">
+        {/* Page header */}
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <h1 className="text-2xl font-black text-slate-950">MAS Connect</h1>
+            <p className="mt-0.5 text-sm text-slate-500">
+              MAS Callnet across Facebook, Instagram, YouTube, X, and LinkedIn
+            </p>
+          </div>
+          <button
+            onClick={() => qc.invalidateQueries({ queryKey: ["social-feed"] })}
+            className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 cursor-pointer"
+          >
+            <RefreshCw className="h-3.5 w-3.5" /> Refresh
+          </button>
         </div>
-        <Button variant="outline" size="sm" onClick={handleRefresh} className="flex items-center gap-1.5">
-          <RefreshCw className="h-3.5 w-3.5" />
-          Refresh
-        </Button>
-      </div>
 
-      {/* Platform tabs */}
-      <Tabs defaultValue="all">
-        <TabsList className="flex-wrap h-auto gap-1">
-          <TabsTrigger value="all">All</TabsTrigger>
-          <TabsTrigger value="facebook">Facebook</TabsTrigger>
-          <TabsTrigger value="instagram">Instagram</TabsTrigger>
-          <TabsTrigger value="youtube">YouTube</TabsTrigger>
-          <TabsTrigger value="twitter">X / Twitter</TabsTrigger>
-          <TabsTrigger value="linkedin">LinkedIn</TabsTrigger>
-        </TabsList>
+        {/* Platform tabs */}
+        <div className="flex flex-wrap gap-2">
+          {TABS.map((tab) => (
+            <button
+              key={tab.key}
+              onClick={() => setActiveTab(tab.key)}
+              className={`inline-flex items-center gap-2 rounded-2xl px-4 py-2 text-sm font-semibold transition-all duration-150 cursor-pointer ${
+                activeTab === tab.key ? tab.activeCls : tab.idleCls
+              }`}
+            >
+              {tab.icon}
+              {tab.label}
+            </button>
+          ))}
+        </div>
 
-        <div className="mt-6">
-          <TabsContent value="all">
-            <div className="grid gap-6 xl:grid-cols-2">
-              <div>
-                <p className="mb-3 text-xs font-semibold uppercase tracking-widest text-slate-400">Facebook</p>
-                <FacebookEmbed />
-              </div>
-              <div className="space-y-6">
-                <div>
-                  <p className="mb-3 text-xs font-semibold uppercase tracking-widest text-slate-400">Instagram</p>
-                  <InstagramEmbed />
+        {/* Tab content */}
+        <div className="min-h-[400px]">
+          {activeTab === "all" && (
+            <div className="space-y-8">
+              {/* YouTube row */}
+              <section>
+                <div className="mb-3 flex items-center gap-2">
+                  <div className="flex h-6 w-6 items-center justify-center rounded-lg bg-[#FF0000] text-white">
+                    {PLATFORM_META.youtube.icon}
+                  </div>
+                  <p className="text-sm font-black text-slate-950">YouTube</p>
                 </div>
-                <div>
-                  <p className="mb-3 text-xs font-semibold uppercase tracking-widest text-slate-400">YouTube</p>
-                  <FeedList platform="youtube" />
+                <FeedList platform="youtube" onPlayVideo={handlePlayVideo} />
+              </section>
+
+              {/* Facebook + Instagram side by side */}
+              <section>
+                <div className="grid gap-6 xl:grid-cols-2">
+                  <div>
+                    <div className="mb-3 flex items-center gap-2">
+                      <div className="flex h-6 w-6 items-center justify-center rounded-lg bg-[#1877F2] text-white">
+                        {PLATFORM_META.facebook.icon}
+                      </div>
+                      <p className="text-sm font-black text-slate-950">Facebook</p>
+                    </div>
+                    <FacebookEmbed />
+                  </div>
+                  <div>
+                    <div className="mb-3 flex items-center gap-2">
+                      <div className="flex h-6 w-6 items-center justify-center rounded-lg text-white" style={{ background: "linear-gradient(135deg,#833AB4,#FD1D1D,#F77737)" }}>
+                        {PLATFORM_META.instagram.icon}
+                      </div>
+                      <p className="text-sm font-black text-slate-950">Instagram</p>
+                    </div>
+                    <InstagramCard />
+                  </div>
                 </div>
-              </div>
+              </section>
             </div>
-          </TabsContent>
-          <TabsContent value="facebook"><FacebookEmbed /></TabsContent>
-          <TabsContent value="instagram"><InstagramEmbed /></TabsContent>
-          <TabsContent value="youtube"><FeedList platform="youtube" /></TabsContent>
-          <TabsContent value="twitter"><TwitterEmbed /></TabsContent>
-          <TabsContent value="linkedin"><LinkedInCard /></TabsContent>
+          )}
+
+          {activeTab === "youtube" && (
+            <FeedList platform="youtube" onPlayVideo={handlePlayVideo} />
+          )}
+          {activeTab === "facebook" && <FacebookEmbed />}
+          {activeTab === "instagram" && <InstagramCard />}
+          {activeTab === "twitter" && <TwitterEmbed />}
+          {activeTab === "linkedin" && <LinkedInCard />}
         </div>
-      </Tabs>
-    </div>
+      </div>
+    </DashboardLayout>
   );
 }
