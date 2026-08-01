@@ -156,6 +156,7 @@ import { qualityExecutiveRouter } from "./modules/quality-dashboard/quality-exec
 import { qualityManagerRouter } from "./modules/quality-dashboard/quality-manager.routes.js";
 import { qualityQARouter } from "./modules/quality-dashboard/quality-qa.routes.js";
 import { qaAuditRouter } from "./modules/quality-dashboard/qa-audit.routes.js";
+import { processMetricDefinitionRouter } from "./modules/kpi/process-metric-definition.routes.js";
 import { qualityAggregationRouter } from "./modules/quality-dashboard/quality-aggregation.routes.js";
 import { callMasterRouter } from "./modules/call-master/call-master.routes.js";
 import { inboundRouter } from "./modules/call-master/inbound.routes.js";
@@ -526,6 +527,7 @@ app.use("/api/executive", qualityExecutiveRouter);
 app.use("/api/manager", qualityManagerRouter);
 app.use("/api/qa", qualityQARouter);
 app.use("/api/qa", qaAuditRouter);   // manual QA audit capture — the routes QA_EVALUATION/QA_CALIBRATION were granted for in June
+app.use("/api/kpi/process-metrics", processMetricDefinitionRouter);   // per-process metric definitions — 1047 had readers and no writer
 app.use("/api/agent", qualityAggregationRouter);
 app.use("/api/call-master", callMasterRouter);
 app.use("/api/inbound", inboundRouter);
