@@ -604,11 +604,32 @@ export async function startDigilockerByToken(token: string, requestedDocuments: 
   await ensureConsent(candidateId);
   const adapter = await getConfiguredBgvProviderAdapter();
   const session = await adapter.startDigilocker(candidateId, requestedDocuments.length ? requestedDocuments : ["AADHAAR", "PAN"]);
+
+  // Production has thrown "Data too long for column 'auth_url'" here 10 times. auth_url is
+  // TEXT (65,535 bytes), so the provider is returning something that is not a redirect URL —
+  // most likely an error body in the field the adapter reads. The root cause is on the
+  // provider side and is not diagnosable from this end, but failing as an opaque MySQL error
+  // several layers down is what made it hard to see at all. Reject it here instead, naming
+  // the provider and the actual size, and do not write a session row that cannot be used.
+  const authUrl = String(session.authUrl ?? "");
+  if (!/^https?:\/\//i.test(authUrl) || authUrl.length > 2048) {
+    await logEvent(candidateId, "DIGILOCKER_SESSION_FAILED", {
+      providerKey: adapter.providerKey,
+      reason: !/^https?:\/\//i.test(authUrl) ? "auth_url is not an http(s) URL" : "auth_url exceeds 2048 chars",
+      authUrlLength: authUrl.length,
+      authUrlPrefix: authUrl.slice(0, 120),
+    }, null, { actorType: "candidate", ip: meta?.ip, userAgent: meta?.userAgent });
+    throw new Error(
+      `DigiLocker provider '${adapter.providerKey}' returned an unusable auth_url ` +
+      `(${authUrl.length} chars, starts "${authUrl.slice(0, 60)}"). No session was created.`,
+    );
+  }
+
   await db.execute(
     `INSERT INTO candidate_digilocker_session
        (id, candidate_id, state_token, provider_key, auth_url, session_status, requested_documents_json, expires_at)
      VALUES (?, ?, ?, ?, ?, 'created', ?, ?)`,
-    [randomUUID(), candidateId, session.state, adapter.providerKey, session.authUrl, JSON.stringify(requestedDocuments), session.expiresAt]
+    [randomUUID(), candidateId, session.state, adapter.providerKey, authUrl, JSON.stringify(requestedDocuments), session.expiresAt]
   );
   await logEvent(candidateId, "DIGILOCKER_SESSION_CREATED", { state: session.state, requestedDocuments }, null, { actorType: "candidate", ip: meta?.ip, userAgent: meta?.userAgent });
   return session;
