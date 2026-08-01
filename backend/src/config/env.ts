@@ -153,6 +153,10 @@ const envSchema = z.object({
   // Default off: checkESignStatus / downloadESignDocument may be billed per call,
   // so this stays disabled until per-endpoint billing is confirmed with Luckpay.
   ESIGN_RECONCILIATION_ENABLED: z.string().default("false"),
+  // One signing session for all joining documents instead of one per
+  // document. Default off: it changes what an employee is asked to sign,
+  // so it is switched on deliberately rather than by deploying.
+  JOINING_KIT_ESIGN_ENABLED: z.string().default("false"),
   ATS_FORM_API_KEY: z.string().optional(),
   COURT_CHECK_API_URL: z.string().url().default("https://api.infinityai.in"),
   COURT_CHECK_API_KEY: z.string().optional(),
@@ -282,6 +286,7 @@ export const env = {
   OUTBOUND_ALLOW_PRIVATE_URLS: parsed.data.OUTBOUND_ALLOW_PRIVATE_URLS === 'true',
   SEED_DEMO_DATA: parsed.data.SEED_DEMO_DATA === 'true',
   LUCKPAY_PROVIDER_ENABLED: parsed.data.LUCKPAY_PROVIDER_ENABLED === "true",
+  JOINING_KIT_ESIGN_ENABLED: parsed.data.JOINING_KIT_ESIGN_ENABLED === "true",
   ESIGN_RECONCILIATION_ENABLED: parsed.data.ESIGN_RECONCILIATION_ENABLED === "true",
   NCOSEC_RECONCILIATION_ENABLED: parsed.data.NCOSEC_RECONCILIATION_ENABLED !== "false",
   NCOSEC_RECONCILIATION_AUTO_FIX: parsed.data.NCOSEC_RECONCILIATION_AUTO_FIX === "true",

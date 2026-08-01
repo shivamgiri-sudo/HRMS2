@@ -2137,7 +2137,7 @@ export async function handleJoiningDocumentEsignWebhook(input: {
   // one query — an OR with ORDER BY initiated_at DESC can resolve to a different, newer
   // transaction than the one the callback is actually about.
   const TX_COLUMNS =
-    "id, checklist_id, employee_id, candidate_id, document_code, status, client_transaction_id, provider_reference_id";
+    "id, checklist_id, kit_id, scope, employee_id, candidate_id, document_code, status, client_transaction_id, provider_reference_id";
 
   const findTx = async (column: "client_transaction_id" | "provider_reference_id", value: string) => {
     if (!value) return undefined;
@@ -2193,6 +2193,22 @@ export async function handleJoiningDocumentEsignWebhook(input: {
   );
 
   if (normalizedStatus === "signed") {
+    // A kit covers several documents with one signature, so completion has to
+    // close every member rather than only the anchor the transaction points at.
+    if (String((tx as { scope?: string }).scope ?? "document") === "kit" && (tx as { kit_id?: string }).kit_id) {
+      const { finalizeKitEsign } = await import("./joiningKitDispatch.service.js");
+      return {
+        matched: true,
+        processed: true,
+        result: await finalizeKitEsign({
+          kitId: String((tx as { kit_id?: string }).kit_id),
+          transactionId: String(tx.id),
+          clientTransactionId: tx.client_transaction_id ?? null,
+          providerReferenceId: tx.provider_reference_id ?? null,
+        }),
+      };
+    }
+
     const checklist = await fetchChecklistRow(String(tx.checklist_id));
     if (!checklist) {
       const err = new Error("Checklist item not found for eSign webhook") as Error & { statusCode?: number };
