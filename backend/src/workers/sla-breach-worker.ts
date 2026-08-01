@@ -1,5 +1,6 @@
 import { notifySLABreach } from "../services/ats-notification.helper.js";
 import { inboxService } from "../modules/inbox/inbox.service.js";
+import { isWorkerEnabled, markWorkerRun } from "../shared/worker-config.js";
 
 // Database connection
 let db: any;
@@ -15,6 +16,9 @@ try {
 
 // Original hardcoded value, now read from tat_matrix_master.ATS_QUEUE_WAIT
 // const SLA_THRESHOLD_MINUTES = 30;
+// Must match the worker_config.worker_name row exactly, or the kill switch
+// silently does nothing (isWorkerEnabled fails open on a missing row).
+const WORKER_NAME = "sla-breach";
 const CHECK_INTERVAL_MS = 5 * 60 * 1000; // Check every 5 minutes
 const ALERT_COOLDOWN_MS = 60 * 60 * 1000; // Don't re-alert same candidate for 1 hour
 const STARTUP_DELAY_MS = 30 * 1000;
@@ -117,6 +121,18 @@ async function findSLABreachCandidates(slaThresholdMinutes: number): Promise<any
  * Process SLA breach alerts
  */
 async function processSLABreaches(): Promise<void> {
+  // Kill switch. This worker mails candidates' recruiters and HR directly via
+  // ats-notification.helper -> emailService, a path that consults neither
+  // notification_event_config nor anything else — so turning every event off in
+  // the notifications admin screen had no effect on it, and there was no way to
+  // stop it short of a deploy. worker_config.enabled is that way.
+  //
+  // isWorkerEnabled fails OPEN, so the existing 'sla-breach' row (enabled = 1)
+  // keeps current behaviour until somebody sets it to 0.
+  if (!(await isWorkerEnabled(WORKER_NAME))) {
+    return;
+  }
+
   if (isProcessing) {
     console.log("[SLABreachWorker] Previous check is still running; skipping overlap");
     return;
@@ -172,6 +188,9 @@ async function processSLABreaches(): Promise<void> {
     }
 
     cleanupAlertCache();
+    // Every worker_config row currently reads last_run_at = never, which makes it
+    // impossible to tell a disabled worker from a stalled one.
+    await markWorkerRun(WORKER_NAME);
   } finally {
     isProcessing = false;
   }
