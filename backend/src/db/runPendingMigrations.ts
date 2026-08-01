@@ -440,6 +440,7 @@ const MIGRATION_MANIFEST: string[] = [
   "1048_appointment_letter_issue.sql",          // new table rather than appointment_letter_request, which carries two competing schemas from migrations 267 and 299
   "1047_process_metric_definition.sql",          // all 97 configured processes hold the same 3 metrics with ONE distinct target between them, because metric_code is globally unique and no table let a process name its own; this adds the per-process definition and its display label
   "1051_kpi_master_config_effective_dating.sql", // kpi_master_config upserts in place, so editing a target rewrote history — a June score reported as measured against an August target; adds effective_from/to and widens the unique key
+  "1052_qa_audit_capture.sql",                   // there is no quality schema in mas_hrms at all — QA_EVALUATION and QA_CALIBRATION have been granted since June with no route and no table behind them; manually-audited processes had nowhere to record a score
   ];
 
 export type MigrationHealth = {
