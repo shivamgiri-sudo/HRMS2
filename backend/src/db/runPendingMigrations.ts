@@ -443,6 +443,7 @@ const MIGRATION_MANIFEST: string[] = [
   "1051_kpi_master_config_effective_dating.sql", // kpi_master_config upserts in place, so editing a target rewrote history — a June score reported as measured against an August target; adds effective_from/to and widens the unique key
   "1052_qa_audit_capture.sql",                   // there is no quality schema in mas_hrms at all — QA_EVALUATION and QA_CALIBRATION have been granted since June with no route and no table behind them; manually-audited processes had nowhere to record a score
   "1053_qa_evaluation_page_access.sql",          // QA_EVALUATION and QA_CALIBRATION did not exist in production at all — no page_catalog row and no grants — so /quality/audit-forms was gated on a code that blocks every role
+  "1054_branch_head_approval_pending_status.sql", // 138 and 141 both CREATE this table and disagree; production got 141's ENUM('approved','rejected'), so every "send to branch head" INSERT of 'pending' threw and rolled back the stage change with it
   ];
 
 export type MigrationHealth = {

@@ -3,35 +3,23 @@ import { db } from '../db/mysql.js';
 import { env } from '../config/env.js';
 import nodemailer from 'nodemailer';
 import { inboxService } from '../modules/inbox/inbox.service.js';
+import { isWorkerEnabled, markWorkerRun } from '../shared/worker-config.js';
+import { shouldAlert, markAlerted, cleanupCooldowns } from '../shared/alert-cooldown.js';
 
 // ── Configuration ─────────────────────────────────────────────────────────────
 
+// Must match the worker_config.worker_name row seeded by migration 1054, or the
+// kill switch silently does nothing — isWorkerEnabled fails open on a missing row.
+const WORKER_NAME = 'interview-delay-alert';
 const DELAY_THRESHOLD_MINUTES = 120;         // Alert after 2 hours in called/in_interview
 const CHECK_INTERVAL_MS = 10 * 60 * 1000;   // Poll every 10 minutes
 const ALERT_COOLDOWN_MS  = 2 * 60 * 60 * 1000; // Re-alert cooldown: 2 hours per token
 
 let intervalRef: ReturnType<typeof setInterval> | undefined;
 
-// ── In-Memory Dedup ────────────────────────────────────────────────────────────
-
-const alertedTokens = new Map<string, number>(); // tokenId → lastAlertTimestamp
-
-function shouldAlert(tokenId: string): boolean {
-  const last = alertedTokens.get(tokenId);
-  if (!last) return true;
-  return (Date.now() - last) >= ALERT_COOLDOWN_MS;
-}
-
-function markAlerted(tokenId: string): void {
-  alertedTokens.set(tokenId, Date.now());
-}
-
-function cleanupCache(): void {
-  const cutoff = Date.now() - (2 * ALERT_COOLDOWN_MS);
-  for (const [id, ts] of alertedTokens.entries()) {
-    if (ts < cutoff) alertedTokens.delete(id);
-  }
-}
+// Dedup lives in the alert_cooldown table rather than a Map: this worker mails
+// through its own nodemailer transport (see below) and a pm2 restart used to
+// re-alert every delayed interview.
 
 // ── Email ─────────────────────────────────────────────────────────────────────
 
@@ -181,6 +169,13 @@ async function findDelayedInterviews(): Promise<any[]> {
 // ── Main Loop ─────────────────────────────────────────────────────────────────
 
 async function checkDelays(): Promise<void> {
+  // Kill switch. This worker mails through a private nodemailer transport that
+  // consults neither notification_event_config nor notification_log, so nothing
+  // in the notifications admin screen could stop it. worker_config.enabled can.
+  if (!(await isWorkerEnabled(WORKER_NAME))) {
+    return;
+  }
+
   console.log('[InterviewDelayAlert] Checking for delayed interviews...');
   const rows = await findDelayedInterviews();
 
@@ -192,7 +187,7 @@ async function checkDelays(): Promise<void> {
   console.log(`[InterviewDelayAlert] Found ${rows.length} delayed interview(s)`);
 
   for (const row of rows) {
-    if (!shouldAlert(row.token_id)) {
+    if (!(await shouldAlert(WORKER_NAME, row.token_id, ALERT_COOLDOWN_MS))) {
       console.log(`[InterviewDelayAlert] Skipping ${row.candidate_name} (cooldown active)`);
       continue;
     }
@@ -215,10 +210,11 @@ async function checkDelays(): Promise<void> {
       }).catch((e: unknown) => console.warn("[InterviewDelayAlert] inbox write failed:", e));
     }
 
-    markAlerted(row.token_id);
+    await markAlerted(WORKER_NAME, row.token_id);
   }
 
-  cleanupCache();
+  await cleanupCooldowns(WORKER_NAME, 2 * ALERT_COOLDOWN_MS);
+  await markWorkerRun(WORKER_NAME);
 }
 
 export function startInterviewDelayAlertWorker(): void {

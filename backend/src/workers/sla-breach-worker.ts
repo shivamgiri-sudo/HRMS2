@@ -1,6 +1,7 @@
 import { notifySLABreach } from "../services/ats-notification.helper.js";
 import { inboxService } from "../modules/inbox/inbox.service.js";
 import { isWorkerEnabled, markWorkerRun } from "../shared/worker-config.js";
+import { shouldAlert, markAlerted, cleanupCooldowns } from "../shared/alert-cooldown.js";
 
 // Database connection
 let db: any;
@@ -44,40 +45,14 @@ async function getSlaThresholdMinutes(): Promise<number> {
 let startupTimeoutRef: ReturnType<typeof setTimeout> | undefined;
 let intervalRef: ReturnType<typeof setInterval> | undefined;
 
-// ── In-Memory Alert Tracking ─────────────────────────────────────────────────
+// ── Alert Tracking ───────────────────────────────────────────────────────────
+//
+// The cooldown used to be a module-level Map. ecosystem.config.cjs permits 10 pm2
+// restarts and each one emptied it, re-alerting every waiting candidate — which is
+// how 18,959 SLA mails accumulated, 6,510 of them in a single day. It now lives in
+// the alert_cooldown table so a restart no longer resets it.
 
-const alertedCandidates = new Map<string, number>(); // candidateId → lastAlertTimestamp
 let isProcessing = false;
-
-/**
- * Check if we should alert for this candidate (respects cooldown)
- */
-function shouldAlert(candidateId: string): boolean {
-  const lastAlert = alertedCandidates.get(candidateId);
-  if (!lastAlert) return true;
-
-  const elapsed = Date.now() - lastAlert;
-  return elapsed >= ALERT_COOLDOWN_MS;
-}
-
-/**
- * Mark candidate as alerted
- */
-function markAlerted(candidateId: string): void {
-  alertedCandidates.set(candidateId, Date.now());
-}
-
-/**
- * Clean up old alert records (older than 2 hours)
- */
-function cleanupAlertCache(): void {
-  const cutoff = Date.now() - (2 * ALERT_COOLDOWN_MS);
-  for (const [candidateId, timestamp] of alertedCandidates.entries()) {
-    if (timestamp < cutoff) {
-      alertedCandidates.delete(candidateId);
-    }
-  }
-}
 
 // ── Worker Logic ─────────────────────────────────────────────────────────────
 
@@ -155,7 +130,7 @@ async function processSLABreaches(): Promise<void> {
 
     for (const candidate of candidates) {
       if (alertsSent >= MAX_ALERTS_PER_RUN) break;
-      if (!shouldAlert(candidate.candidate_id)) continue;
+      if (!(await shouldAlert(WORKER_NAME, candidate.candidate_id, ALERT_COOLDOWN_MS))) continue;
 
       console.log(`[SLABreachWorker] Alerting for ${candidate.candidate_name} (${candidate.pending_minutes} mins)`);
 
@@ -183,11 +158,11 @@ async function processSLABreaches(): Promise<void> {
         }).catch((e: unknown) => console.warn("[SLABreachWorker] inbox write failed:", e));
       }
 
-      markAlerted(candidate.candidate_id);
+      await markAlerted(WORKER_NAME, candidate.candidate_id);
       alertsSent += 1;
     }
 
-    cleanupAlertCache();
+    await cleanupCooldowns(WORKER_NAME, 2 * ALERT_COOLDOWN_MS);
     // Every worker_config row currently reads last_run_at = never, which makes it
     // impossible to tell a disabled worker from a stalled one.
     await markWorkerRun(WORKER_NAME);
