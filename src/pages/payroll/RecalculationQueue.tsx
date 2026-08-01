@@ -18,7 +18,7 @@ const STATUS_BADGE: Record<string, string> = {
 };
 
 interface QueueItem {
-  id: number;
+  id: string;
   employee_name: string;
   employee_code: string;
   payroll_month: string;
@@ -26,6 +26,15 @@ interface QueueItem {
   reason: string;
   status: string;
   requested_at: string;
+  processed_at?: string | null;
+  error_message?: string | null;
+}
+
+interface RunOption {
+  id: string;
+  run_month: string;
+  status: string;
+  total_employees: number;
 }
 
 interface Employee { id: string; employee_code: string; name: string; }
@@ -60,6 +69,9 @@ export default function RecalculationQueue() {
   const [bulkError, setBulkError] = useState<string | null>(null);
   const [bulkSuccess, setBulkSuccess] = useState<string | null>(null);
 
+  // Runs list for bulk modal dropdown
+  const [runs, setRuns] = useState<RunOption[]>([]);
+
   const fetchQueue = useCallback(() => {
     setLoading(true);
     setError(null);
@@ -76,6 +88,15 @@ export default function RecalculationQueue() {
   }, [statusFilter, monthFilter]);
 
   useEffect(() => { fetchQueue(); }, [fetchQueue]);
+
+  useEffect(() => {
+    hrmsApi.get<any>("/api/payroll/runs?limit=20")
+      .then((res: any) => {
+        const list = Array.isArray(res) ? res : (res?.data ?? res?.runs ?? []);
+        setRuns(list.filter((r: any) => !["locked", "disbursed"].includes(r.status)));
+      })
+      .catch(() => {});
+  }, []);
 
   const searchEmployees = (q: string) => {
     setTrigSearch(q);
@@ -136,6 +157,24 @@ export default function RecalculationQueue() {
       setBulkError(e.message ?? "Failed to queue bulk recalculation");
     } finally {
       setBulkSubmitting(false);
+    }
+  };
+
+  const retryItem = async (id: string) => {
+    try {
+      await hrmsApi.post(`/api/payroll/recalculation-queue/${id}/retry`, {});
+      fetchQueue();
+    } catch (e: any) {
+      setError(e.message ?? "Retry failed");
+    }
+  };
+
+  const cancelItem = async (id: string) => {
+    try {
+      await hrmsApi.post(`/api/payroll/recalculation-queue/${id}/cancel`, {});
+      fetchQueue();
+    } catch (e: any) {
+      setError(e.message ?? "Cancel failed");
     }
   };
 
@@ -260,11 +299,13 @@ export default function RecalculationQueue() {
                 <th className="text-left px-4 py-2">Reason</th>
                 <th className="text-left px-4 py-2">Status</th>
                 <th className="text-left px-4 py-2">Requested At</th>
+                <th className="text-left px-4 py-2">Processed At</th>
+                <th className="text-left px-4 py-2">Actions</th>
               </tr>
             </thead>
             <tbody>
               {loading && (
-                <tr><td colSpan={7} className="px-4 py-6 text-center text-muted-foreground">Loading…</td></tr>
+                <tr><td colSpan={9} className="px-4 py-6 text-center text-muted-foreground">Loading…</td></tr>
               )}
               {!loading && items.map((item) => (
                 <tr key={item.id} className="border-t hover:bg-muted/40">
@@ -281,10 +322,41 @@ export default function RecalculationQueue() {
                   <td className="px-4 py-2 text-xs text-muted-foreground whitespace-nowrap">
                     {item.requested_at ? new Date(item.requested_at).toLocaleString("en-IN") : "—"}
                   </td>
+                  <td className="px-4 py-2 text-xs text-muted-foreground whitespace-nowrap">
+                    {item.processed_at ? new Date(item.processed_at).toLocaleString("en-IN") : "—"}
+                  </td>
+                  <td className="px-4 py-2">
+                    <div className="flex gap-1.5 items-center">
+                      {item.status === "failed" && (
+                        <button
+                          className="text-xs px-2 py-1 rounded border border-amber-300 text-amber-700 hover:bg-amber-50"
+                          onClick={() => void retryItem(item.id)}
+                        >
+                          Retry
+                        </button>
+                      )}
+                      {item.status === "pending" && (
+                        <button
+                          className="text-xs px-2 py-1 rounded border border-slate-300 text-slate-600 hover:bg-slate-50"
+                          onClick={() => void cancelItem(item.id)}
+                        >
+                          Cancel
+                        </button>
+                      )}
+                      {item.status === "failed" && item.error_message && (
+                        <details className="relative inline">
+                          <summary className="text-xs text-slate-500 cursor-pointer select-none">Error</summary>
+                          <p className="absolute z-10 left-0 mt-1 bg-white border rounded shadow p-2 text-xs max-w-xs text-red-600 whitespace-normal">
+                            {item.error_message}
+                          </p>
+                        </details>
+                      )}
+                    </div>
+                  </td>
                 </tr>
               ))}
               {!loading && items.length === 0 && (
-                <tr><td colSpan={7} className="px-4 py-6 text-center text-muted-foreground">No items in queue.</td></tr>
+                <tr><td colSpan={9} className="px-4 py-6 text-center text-muted-foreground">No items in queue.</td></tr>
               )}
             </tbody>
           </table>
@@ -309,13 +381,20 @@ export default function RecalculationQueue() {
                   </div>
                 )}
                 <div>
-                  <label className="text-sm font-medium block mb-1">Run ID <span className="text-red-500">*</span></label>
-                  <Input
-                    placeholder="Enter payroll run ID"
+                  <label className="text-sm font-medium block mb-1">Payroll Run <span className="text-red-500">*</span></label>
+                  <select
+                    className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                     value={bulkRunId}
                     onChange={(e) => setBulkRunId(e.target.value)}
                     disabled={bulkSubmitting}
-                  />
+                  >
+                    <option value="">— Select run —</option>
+                    {runs.map(r => (
+                      <option key={r.id} value={r.id}>
+                        {r.run_month} · {r.status} · {r.total_employees} employees
+                      </option>
+                    ))}
+                  </select>
                 </div>
                 <div>
                   <label className="text-sm font-medium block mb-1">Reason</label>
