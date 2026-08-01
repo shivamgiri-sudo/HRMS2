@@ -1,15 +1,9 @@
 import { useState } from "react";
-import { AlertTriangle, CheckCircle, Loader2, RefreshCw, Settings } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+  AlertTriangle, CheckCircle2, ExternalLink, Loader, RefreshCcw,
+  Settings, Share2, X, Youtube,
+} from "lucide-react";
+import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import {
   useSocialFeedAdminConfig,
   useSaveSocialConfig,
@@ -17,29 +11,50 @@ import {
   type SocialPlatform,
 } from "@/hooks/useSocialFeed";
 
-const PLATFORMS: { key: SocialPlatform; label: string; tokenLabel: string; pageIdLabel: string; tokenHelp: string }[] = [
+// ── Platform definitions ────────────────────────────────────────────────────
+
+const PLATFORMS: {
+  key: SocialPlatform;
+  label: string;
+  color: string;
+  pageIdLabel: string;
+  pageIdPlaceholder: string;
+  hasToken: boolean;
+  tokenHelp: string;
+}[] = [
   {
     key: "facebook",
     label: "Facebook",
-    tokenLabel: "Page Access Token",
+    color: "#1877F2",
     pageIdLabel: "Facebook Page ID",
-    tokenHelp: "Generate a permanent Page Access Token in Meta for Developers → Tools → Graph API Explorer.",
+    pageIdPlaceholder: "e.g. 123456789012345",
+    hasToken: true,
+    tokenHelp:
+      'In Meta Graph API Explorer, call GET /me/accounts and copy the "id" and "access_token" for your page.',
   },
   {
     key: "instagram",
     label: "Instagram",
-    tokenLabel: "Instagram Access Token",
+    color: "#E1306C",
     pageIdLabel: "Instagram Business User ID",
-    tokenHelp: "Link your Instagram Business account to your Facebook Page. Get the IG User ID from the Graph API Explorer.",
+    pageIdPlaceholder: "e.g. 17841400000000000",
+    hasToken: true,
+    tokenHelp:
+      "Link your Instagram Business account to your Facebook Page. Then call GET /{page-id}?fields=instagram_business_account to get the IG User ID. The token is the same as your Facebook Page Token.",
   },
   {
     key: "youtube",
     label: "YouTube",
-    tokenLabel: "Not required (public RSS)",
+    color: "#FF0000",
     pageIdLabel: "YouTube Channel ID",
-    tokenHelp: "Find your Channel ID in YouTube Studio → Settings → Channel → Basic info.",
+    pageIdPlaceholder: "e.g. UCxxxxxxxxxxxxxxxxxxxxxx",
+    hasToken: false,
+    tokenHelp:
+      "Find your Channel ID in YouTube Studio → Settings → Channel → Basic info. No token required — posts are fetched via free RSS.",
   },
 ];
+
+// ── Helpers ─────────────────────────────────────────────────────────────────
 
 function daysUntilExpiry(expiry: string | null): number | null {
   if (!expiry) return null;
@@ -47,195 +62,342 @@ function daysUntilExpiry(expiry: string | null): number | null {
   return Math.ceil(diff / (1000 * 60 * 60 * 24));
 }
 
-function TokenExpiryBadge({ expiry }: { expiry: string | null }) {
+function ExpiryBadge({ expiry }: { expiry: string | null }) {
   const days = daysUntilExpiry(expiry);
   if (days === null) return null;
-  if (days < 0) return <span className="text-xs font-semibold text-rose-600">Expired</span>;
-  if (days < 10) return <span className="flex items-center gap-1 text-xs font-semibold text-amber-600"><AlertTriangle className="h-3 w-3" /> Expires in {days}d</span>;
-  return <span className="text-xs text-slate-400">Expires in {days}d</span>;
+  if (days < 0)
+    return (
+      <span className="inline-flex items-center gap-1 rounded-full bg-red-100 px-2 py-0.5 text-[11px] font-semibold text-red-700">
+        <AlertTriangle className="h-3 w-3" /> Token expired
+      </span>
+    );
+  if (days < 10)
+    return (
+      <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-700">
+        <AlertTriangle className="h-3 w-3" /> Expires in {days}d
+      </span>
+    );
+  return (
+    <span className="inline-flex items-center gap-1 rounded-full bg-green-100 px-2 py-0.5 text-[11px] font-semibold text-green-700">
+      <CheckCircle2 className="h-3 w-3" /> {days}d remaining
+    </span>
+  );
 }
 
-function PlatformCard({
+// ── Platform row form ────────────────────────────────────────────────────────
+
+function PlatformRow({
   platform,
   existing,
   count,
   lastSynced,
 }: {
-  platform: typeof PLATFORMS[0];
+  platform: (typeof PLATFORMS)[0];
   existing?: { page_id: string; token_expiry: string | null; enabled: boolean };
   count: number;
   lastSynced: string | null;
 }) {
   const [pageId, setPageId] = useState(existing?.page_id ?? "");
   const [token, setToken] = useState("");
-  const [expiry, setExpiry] = useState(existing?.token_expiry?.slice(0, 10) ?? "");
-
+  const [expiryDate, setExpiryDate] = useState(
+    existing?.token_expiry ? existing.token_expiry.slice(0, 10) : "",
+  );
+  const [saved, setSaved] = useState(false);
   const save = useSaveSocialConfig();
 
-  const handleSave = () => {
-    save.mutate({
-      platform: platform.key,
-      page_id: pageId.trim(),
-      plain_token: token.trim() || undefined,
-      token_expiry: expiry ? `${expiry}T00:00:00Z` : null,
-    });
+  const handleSave = async () => {
+    if (!pageId.trim()) return;
+    // Only send token_expiry if a date was actually entered
+    const expiry =
+      expiryDate.trim() ? `${expiryDate}T00:00:00Z` : null;
+
+    save.mutate(
+      {
+        platform: platform.key,
+        page_id: pageId.trim(),
+        plain_token: token.trim() || undefined,
+        token_expiry: expiry,
+        enabled: true,
+      },
+      {
+        onSuccess: () => {
+          setSaved(true);
+          setToken("");
+          setTimeout(() => setSaved(false), 3000);
+        },
+      },
+    );
   };
 
+  const syncedLabel = lastSynced
+    ? new Date(lastSynced).toLocaleString("en-IN", {
+        day: "2-digit", month: "short", year: "numeric",
+        hour: "2-digit", minute: "2-digit",
+      })
+    : "Not synced yet";
+
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="flex items-center justify-between text-base">
-          <span>{platform.label}</span>
-          <span className="text-xs font-normal text-slate-400">{count} cached posts</span>
-        </CardTitle>
-        <CardDescription className="text-xs">
-          {lastSynced
-            ? `Last synced: ${new Date(lastSynced).toLocaleString("en-IN")}`
-            : "Not yet synced"}
-          {existing?.token_expiry && (
-            <span className="ml-2">
-              · <TokenExpiryBadge expiry={existing.token_expiry} />
-            </span>
-          )}
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        <div className="space-y-1.5">
-          <Label className="text-xs">{platform.pageIdLabel}</Label>
-          <Input
+    <div className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
+      {/* Header */}
+      <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4">
+        <div className="flex items-center gap-3">
+          <div
+            className="flex h-9 w-9 items-center justify-center rounded-xl text-white"
+            style={{ backgroundColor: platform.color }}
+          >
+            {platform.key === "youtube" ? (
+              <Youtube className="h-4 w-4" />
+            ) : (
+              <Share2 className="h-4 w-4" />
+            )}
+          </div>
+          <div>
+            <p className="text-sm font-black text-slate-950">{platform.label}</p>
+            <p className="text-xs text-slate-400">{syncedLabel} · {count} posts cached</p>
+          </div>
+        </div>
+        {existing?.token_expiry && (
+          <ExpiryBadge expiry={existing.token_expiry} />
+        )}
+        {existing?.page_id && !existing.token_expiry && (
+          <span className="inline-flex items-center gap-1 rounded-full bg-green-100 px-2 py-0.5 text-[11px] font-semibold text-green-700">
+            <CheckCircle2 className="h-3 w-3" /> Configured
+          </span>
+        )}
+      </div>
+
+      {/* Form */}
+      <div className="grid gap-4 px-6 py-5 sm:grid-cols-2">
+        {/* Page ID */}
+        <div>
+          <label className="mb-1.5 block text-xs font-semibold text-slate-700">
+            {platform.pageIdLabel} <span className="text-red-500">*</span>
+          </label>
+          <input
+            type="text"
             value={pageId}
             onChange={(e) => setPageId(e.target.value)}
-            placeholder={`Enter ${platform.pageIdLabel}`}
-            className="h-8 text-sm"
+            placeholder={platform.pageIdPlaceholder}
+            className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm outline-none transition-colors focus:border-blue-400"
           />
         </div>
 
-        {platform.key !== "youtube" && (
-          <div className="space-y-1.5">
-            <Label className="text-xs">{platform.tokenLabel}</Label>
-            <Input
+        {/* Token */}
+        {platform.hasToken ? (
+          <div>
+            <label className="mb-1.5 block text-xs font-semibold text-slate-700">
+              Page Access Token
+              <span className="ml-1.5 text-slate-400 font-normal">(leave blank to keep existing)</span>
+            </label>
+            <input
               type="password"
               value={token}
               onChange={(e) => setToken(e.target.value)}
-              placeholder="Leave blank to keep existing token"
-              className="h-8 text-sm"
+              placeholder="Paste new token here"
+              className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm outline-none transition-colors focus:border-blue-400"
             />
-            <p className="text-[11px] text-slate-400">{platform.tokenHelp}</p>
+          </div>
+        ) : (
+          <div className="flex items-center gap-2 rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-2.5">
+            <CheckCircle2 className="h-4 w-4 shrink-0 text-green-500" />
+            <p className="text-xs text-slate-500">No token required — uses free public RSS feed.</p>
           </div>
         )}
 
-        {platform.key !== "youtube" && (
-          <div className="space-y-1.5">
-            <Label className="text-xs">Token Expiry Date</Label>
-            <Input
+        {/* Token expiry */}
+        {platform.hasToken && (
+          <div>
+            <label className="mb-1.5 block text-xs font-semibold text-slate-700">
+              Token Expiry Date
+              <span className="ml-1.5 text-slate-400 font-normal">(optional)</span>
+            </label>
+            <input
               type="date"
-              value={expiry}
-              onChange={(e) => setExpiry(e.target.value)}
-              className="h-8 text-sm"
+              value={expiryDate}
+              onChange={(e) => setExpiryDate(e.target.value)}
+              className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm outline-none transition-colors focus:border-blue-400"
             />
-            <p className="text-[11px] text-slate-400">Facebook tokens can be made permanent; Instagram tokens expire in ~60 days.</p>
           </div>
         )}
 
-        <Button
-          size="sm"
-          disabled={!pageId.trim() || save.isPending}
-          onClick={handleSave}
-          className="w-full"
-        >
-          {save.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle className="h-3.5 w-3.5" />}
-          <span className="ml-1.5">Save</span>
-        </Button>
+        {/* Help text */}
+        <div className={platform.hasToken ? "sm:col-span-2" : ""}>
+          <div className="flex items-start gap-2 rounded-2xl border border-blue-100 bg-blue-50 px-4 py-3">
+            <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-blue-500" />
+            <p className="text-xs text-blue-700">{platform.tokenHelp}</p>
+          </div>
+        </div>
+      </div>
 
-        {save.isSuccess && (
-          <p className="text-center text-xs text-green-600">Saved successfully.</p>
-        )}
+      {/* Footer */}
+      <div className="flex items-center justify-between border-t border-slate-100 px-6 py-4">
         {save.isError && (
-          <p className="text-center text-xs text-rose-600">Save failed. Check inputs.</p>
+          <p className="text-xs font-semibold text-red-600">
+            Save failed — check all required fields.
+          </p>
         )}
-      </CardContent>
-    </Card>
+        {saved && (
+          <p className="flex items-center gap-1 text-xs font-semibold text-green-700">
+            <CheckCircle2 className="h-3.5 w-3.5" /> Saved successfully.
+          </p>
+        )}
+        {!save.isError && !saved && <span />}
+        <button
+          onClick={handleSave}
+          disabled={!pageId.trim() || save.isPending}
+          className="inline-flex items-center gap-2 rounded-2xl bg-slate-950 px-5 py-2 text-sm font-bold text-white transition-colors hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer"
+        >
+          {save.isPending ? (
+            <Loader className="h-3.5 w-3.5 animate-spin" />
+          ) : (
+            <CheckCircle2 className="h-3.5 w-3.5" />
+          )}
+          Save
+        </button>
+      </div>
+    </div>
   );
 }
 
+// ── Main page ─────────────────────────────────────────────────────────────────
+
 export default function NativeSocialFeedAdmin() {
-  const { data, isLoading } = useSocialFeedAdminConfig();
+  const { data, isLoading, isError, refetch } = useSocialFeedAdminConfig();
   const sync = useSyncSocialFeed();
   const configs = data?.configs ?? [];
   const counts = data?.counts ?? {};
+  const [syncMsg, setSyncMsg] = useState<string | null>(null);
 
   const getConfig = (platform: SocialPlatform) =>
     configs.find((c) => c.platform === platform);
 
+  const handleSync = () => {
+    setSyncMsg(null);
+    sync.mutate(undefined, {
+      onSuccess: (result) => {
+        const parts = Object.entries(result ?? {})
+          .map(([p, n]) => `${p}: ${n} posts`)
+          .join(" · ");
+        setSyncMsg(parts || "Sync complete — no new posts.");
+      },
+      onError: () => setSyncMsg("Sync failed. Check server logs."),
+    });
+  };
+
   return (
-    <div className="mx-auto max-w-5xl space-y-6 px-4 py-6">
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <div className="flex items-center gap-2">
-            <Settings className="h-5 w-5 text-slate-500" />
-            <h1 className="text-xl font-bold text-slate-900">Social Feed Admin</h1>
+    <DashboardLayout>
+      <div className="mx-auto max-w-4xl space-y-6 px-4 py-6">
+
+        {/* Page header */}
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-slate-100">
+              <Settings className="h-5 w-5 text-slate-600" />
+            </div>
+            <div>
+              <h1 className="text-xl font-black text-slate-950">Social Feed Admin</h1>
+              <p className="text-sm text-slate-500">
+                Configure platform credentials and trigger post syncs.
+              </p>
+            </div>
           </div>
-          <p className="mt-1 text-sm text-slate-500">
-            Configure platform credentials and trigger manual syncs.
-          </p>
+          <button
+            onClick={handleSync}
+            disabled={sync.isPending}
+            className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm transition-colors hover:bg-slate-50 disabled:opacity-50 cursor-pointer"
+          >
+            {sync.isPending ? (
+              <Loader className="h-4 w-4 animate-spin" />
+            ) : (
+              <RefreshCcw className="h-4 w-4" />
+            )}
+            Sync Now
+          </button>
         </div>
-        <Button
-          variant="outline"
-          size="sm"
-          disabled={sync.isPending}
-          onClick={() => sync.mutate()}
-          className="flex items-center gap-1.5"
-        >
-          {sync.isPending
-            ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            : <RefreshCw className="h-3.5 w-3.5" />}
-          Sync Now
-        </Button>
+
+        {/* Sync result banner */}
+        {syncMsg && (
+          <div className="flex items-center gap-3 rounded-2xl border border-green-200 bg-green-50 px-4 py-3 text-sm font-semibold text-green-800">
+            <CheckCircle2 className="h-4 w-4 shrink-0" />
+            {syncMsg}
+            <button onClick={() => setSyncMsg(null)} className="ml-auto cursor-pointer text-green-600 hover:text-green-800">
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+        )}
+
+        {/* Error loading config */}
+        {isError && (
+          <div className="flex items-center gap-3 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-800">
+            <AlertTriangle className="h-4 w-4 shrink-0" />
+            Could not load configuration.
+            <button onClick={() => void refetch()} className="ml-auto cursor-pointer underline">
+              Retry
+            </button>
+          </div>
+        )}
+
+        {/* Platform cards */}
+        {isLoading ? (
+          <div className="flex items-center justify-center py-24">
+            <Loader className="h-8 w-8 animate-spin text-slate-300" />
+          </div>
+        ) : (
+          <div className="space-y-4">
+            {PLATFORMS.map((p) => {
+              const cfg = getConfig(p.key);
+              return (
+                <PlatformRow
+                  key={p.key}
+                  platform={p}
+                  existing={cfg ? { page_id: cfg.page_id, token_expiry: cfg.token_expiry, enabled: cfg.enabled } : undefined}
+                  count={counts[p.key] ?? 0}
+                  lastSynced={cfg?.last_synced_at ?? null}
+                />
+              );
+            })}
+          </div>
+        )}
+
+        {/* X/Twitter & LinkedIn guidance */}
+        <div className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
+          <div className="border-b border-slate-100 px-6 py-4">
+            <p className="text-sm font-black text-slate-950">X / Twitter & LinkedIn — No Setup Required</p>
+          </div>
+          <div className="divide-y divide-slate-100">
+            <div className="px-6 py-4">
+              <p className="text-xs font-semibold text-slate-700">X / Twitter</p>
+              <p className="mt-1 text-xs text-slate-500">
+                Uses the official Timeline embed widget — no API key needed.
+                The feed is live at{" "}
+                <a href="/social-feed" className="text-blue-600 hover:underline">
+                  /social-feed → X / Twitter tab
+                </a>
+                .
+              </p>
+            </div>
+            <div className="px-6 py-4">
+              <p className="text-xs font-semibold text-slate-700">LinkedIn</p>
+              <p className="mt-1 text-xs text-slate-500">
+                LinkedIn has no free public feed API. The LinkedIn tab shows a follow card linking to the company page.
+                To update the LinkedIn page URL, edit{" "}
+                <code className="rounded bg-slate-100 px-1 text-[11px]">src/pages/NativeSocialFeed.tsx → LinkedInCard</code>.
+              </p>
+            </div>
+            <div className="px-6 py-4">
+              <p className="text-xs font-semibold text-slate-700">Facebook (embed)</p>
+              <p className="mt-1 text-xs text-slate-500">
+                Facebook tab uses the official Page Plugin embed — shows live posts from{" "}
+                <a href="https://facebook.com/TeamMas9" target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-blue-600 hover:underline">
+                  facebook.com/TeamMas9 <ExternalLink className="h-3 w-3" />
+                </a>
+                {" "}with no API setup needed.
+              </p>
+            </div>
+          </div>
+        </div>
+
       </div>
-
-      {sync.isSuccess && sync.data && (
-        <div className="rounded-xl border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-700">
-          Sync complete — {Object.entries(sync.data).map(([p, n]) => `${p}: ${n}`).join(", ")} new posts fetched.
-        </div>
-      )}
-
-      {isLoading ? (
-        <div className="grid gap-4 md:grid-cols-3">
-          {[1, 2, 3].map((i) => (
-            <div key={i} className="h-64 animate-pulse rounded-2xl bg-slate-100" />
-          ))}
-        </div>
-      ) : (
-        <div className="grid gap-4 md:grid-cols-3">
-          {PLATFORMS.map((p) => {
-            const cfg = getConfig(p.key);
-            return (
-              <PlatformCard
-                key={p.key}
-                platform={p}
-                existing={cfg ? { page_id: cfg.page_id, token_expiry: cfg.token_expiry, enabled: cfg.enabled } : undefined}
-                count={counts[p.key] ?? 0}
-                lastSynced={cfg?.last_synced_at ?? null}
-              />
-            );
-          })}
-        </div>
-      )}
-
-      {/* X/Twitter and LinkedIn guidance */}
-      <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-5 py-4 text-sm text-slate-600 space-y-2">
-        <p className="font-semibold text-slate-700">X / Twitter setup (one-time)</p>
-        <p className="text-xs">
-          Go to <a href="https://publish.twitter.com" target="_blank" rel="noopener noreferrer" className="text-blue-600 underline">publish.twitter.com</a>, enter the company X profile URL, and copy the generated embed snippet.
-          Paste it into <code className="rounded bg-slate-200 px-1 text-[11px]">src/pages/NativeSocialFeed.tsx</code> inside the <code className="rounded bg-slate-200 px-1 text-[11px]">TwitterEmbed</code> component.
-          No backend config needed.
-        </p>
-        <p className="mt-2 font-semibold text-slate-700">LinkedIn</p>
-        <p className="text-xs">
-          LinkedIn does not offer a free post feed API. The LinkedIn tab shows a follow card linking to the company page.
-          Update the URL in <code className="rounded bg-slate-200 px-1 text-[11px]">NativeSocialFeed.tsx → LinkedInCard</code>.
-        </p>
-      </div>
-    </div>
+    </DashboardLayout>
   );
 }
