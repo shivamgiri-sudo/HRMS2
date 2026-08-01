@@ -164,13 +164,75 @@ export async function getMyWorkItems(userId: string, role: string, limit = 50, o
          LEFT JOIN employees mgr ON mgr.id = e.reporting_manager_id
         WHERE LOWER(COALESCE(lr.status, '')) = 'pending'
           AND (mgr.user_id = ? OR ? IN ('hr', 'hr_head', 'admin', 'super_admin'))
+       UNION ALL
+       /*
+        * Exit clearance tasks, derived for the same reason as leave: FF_CLEARANCE_PENDING is
+        * in the registry and nothing writes it, so 16 pending clearance tasks across 8 areas
+        * were invisible.
+        *
+        * This table routes itself — owner_role is set on all 16 (admin, hr, manager, payroll,
+        * trainer, wfm) — so no fallback is invented. owner_user_id is NULL on every row today
+        * but is honoured first, so per-person assignment starts working the moment it is used.
+        * due_date is a real column here, unlike leave, so these items can genuinely be overdue.
+        */
+       SELECT CONCAT('exitclr:', t.id) AS id,
+              'FF_CLEARANCE_PENDING' AS item_type,
+              CONCAT('Exit clearance (', t.clearance_area, '): ',
+                     COALESCE(e.full_name, e.employee_code, 'unknown employee')) AS title,
+              t.task_title AS description,
+              'exit' AS module_code,
+              'exit_clearance_task' AS entity_type,
+              t.id AS entity_id,
+              'high' AS priority,
+              'pending' AS status,
+              t.due_date AS due_at,
+              t.created_at,
+              '/exit/clearance' AS action_url,
+              e.full_name AS assigned_employee_name,
+              'exit_clearance_task' AS source_table
+         FROM exit_clearance_task t
+         LEFT JOIN employees e ON e.id = t.employee_id
+        WHERE LOWER(COALESCE(t.status, '')) = 'pending'
+          AND (t.owner_user_id = ? OR t.owner_role = ?)
+       UNION ALL
+       /*
+        * Background checks stuck needing a human. BGV_PENDING is likewise declared and never
+        * written; 58 checks sit in manual_review or mismatch.
+        *
+        * Only those two statuses qualify. 'not_started' and 'queued' are waiting on the
+        * provider, not on a person, so surfacing them would fill the inbox with items nobody
+        * can action.
+        *
+        * 17 of the 58 have no surviving ats_candidate row, so the join is LEFT and the title
+        * degrades to the candidate id. Dropping them would hide precisely the checks whose
+        * record is already damaged.
+        */
+       SELECT CONCAT('bgv:', b.id) AS id,
+              'BGV_PENDING' AS item_type,
+              CONCAT('BGV ', REPLACE(LOWER(b.status), '_', ' '), ': ',
+                     COALESCE(c.full_name, CONCAT('candidate ', b.candidate_id))) AS title,
+              CONCAT(b.check_type, COALESCE(CONCAT(' — ', b.result_summary), '')) AS description,
+              'ats' AS module_code,
+              'candidate_bgv_check' AS entity_type,
+              b.id AS entity_id,
+              'high' AS priority,
+              'pending' AS status,
+              NULL AS due_at,
+              b.created_at,
+              '/ats/bgv' AS action_url,
+              c.full_name AS assigned_employee_name,
+              'candidate_bgv_check' AS source_table
+         FROM candidate_bgv_check b
+         LEFT JOIN ats_candidate c ON c.id = b.candidate_id
+        WHERE LOWER(COALESCE(b.status, '')) IN ('manual_review', 'mismatch')
+          AND ? IN ('hr', 'hr_head', 'admin', 'super_admin', 'recruiter', 'recruitment_hr')
      ) merged
      ORDER BY FIELD(merged.priority,'critical','high','medium','low'),
               merged.due_at IS NULL,
               merged.due_at ASC,
               merged.created_at DESC
      LIMIT ${safeLimit} OFFSET ${safeOffset}`,
-    [userId, role, userId, userId, role]
+    [userId, role, userId, userId, role, userId, role, role]
   );
   return rows;
 }

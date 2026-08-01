@@ -52,20 +52,13 @@ describe("work inbox derived leave approvals", () => {
     expect(code).toContain("? IN ('hr', 'hr_head', 'admin', 'super_admin')");
   });
 
-  it("binds the derived branch's parameters in the right order", async () => {
-    // Five placeholders across the union: work_item(userId, role), work_inbox_item(userId),
-    // then the derived branch (userId, role). A mismatch silently scopes the inbox to the
-    // wrong person rather than raising.
-    const { params } = await capture("user-7", "manager");
-    expect(params).toEqual(["user-7", "manager", "user-7", "user-7", "manager"]);
-  });
-
   it("keeps the two pre-existing sources intact", async () => {
+    // Parameter order and the total union count are asserted once, across all five
+    // branches, in work-inbox-derived-queues.test.ts — duplicating them here would make
+    // every new branch break two files.
     const { code } = await capture("user-1", "hr");
     expect(code).toContain("FROM work_item wi");
     expect(code).toContain("FROM work_inbox_item wii");
-    // Three sources, so exactly two UNION ALLs.
-    expect(code.match(/UNION ALL/g)?.length).toBe(2);
   });
 
   it("formats whole and half days without exposing the DECIMAL", async () => {
