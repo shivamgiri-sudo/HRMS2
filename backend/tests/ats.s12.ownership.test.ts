@@ -97,7 +97,12 @@ async function makeApp(userId: string, role: string) {
   const app = express();
   app.use(express.json());
   app.use((req: any, _res: any, next) => {
-    req.authUser = { id: userId, role };
+    // requireRole reads authUser.roles (array) and only falls back to a user_roles
+    // query when it is absent. This fake middleware set role (singular) alone, so
+    // every request fell through to the mocked DB, resolved to zero roles, and was
+    // rejected 403 — which is why all 11 cases failed regardless of what they were
+    // actually asserting. The middleware moved from role to roles; this did not.
+    req.authUser = { id: userId, role, roles: [role] };
     next();
   });
   const { atsRouter } = await import("../src/modules/ats/ats.routes.js");
@@ -109,7 +114,12 @@ async function makeFpApp(userId: string, role: string) {
   const app = express();
   app.use(express.json());
   app.use((req: any, _res: any, next) => {
-    req.authUser = { id: userId, role };
+    // requireRole reads authUser.roles (array) and only falls back to a user_roles
+    // query when it is absent. This fake middleware set role (singular) alone, so
+    // every request fell through to the mocked DB, resolved to zero roles, and was
+    // rejected 403 — which is why all 11 cases failed regardless of what they were
+    // actually asserting. The middleware moved from role to roles; this did not.
+    req.authUser = { id: userId, role, roles: [role] };
     next();
   });
   const { atsFullParityRouter } = await import("../src/modules/ats-full-parity/atsFullParity.routes.js");
