@@ -191,5 +191,14 @@ router.put("/tips/:tipId", requireRole("admin", "hr", "super_admin"), h(c.update
 router.delete("/tips/:tipId", requireRole("admin", "hr", "super_admin"), h(c.deleteTip));
 router.get("/tips/stats", requireRole("admin", "hr", "super_admin"), h(c.getTipStats));
 
+// =========================================================================
+// Daily Trivia Quiz
+// =========================================================================
+router.get("/trivia/today", h(c.getTodayTrivia));
+router.post("/trivia/answer", h(c.submitTriviaAnswer));
+router.get("/trivia/leaderboard", h(c.getTriviaLeaderboard));
+router.get("/trivia/questions", requireRole("admin", "hr", "super_admin"), h(c.getTriviaQuestionBank));
+router.post("/trivia/questions", requireRole("admin", "hr", "super_admin"), h(c.createTriviaQuestion));
+
 export { router as engagementRouter };
 

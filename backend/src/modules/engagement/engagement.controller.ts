@@ -312,5 +312,51 @@ export const engagementController = {
     const stats = await dailyTipsService.getTipStats();
     return res.json({ success: true, data: stats });
   },
+
+  // =========================================================================
+  // Daily Trivia Quiz
+  // =========================================================================
+
+  async getTodayTrivia(req: AuthenticatedRequest, res: Response) {
+    const employee = await requireEmployee(req);
+    const { dailyTriviaService } = await import('./daily-trivia.service.js');
+    const result = await dailyTriviaService.getTodayQuestion(employee.id);
+    return res.json({ success: true, data: result });
+  },
+
+  async submitTriviaAnswer(req: AuthenticatedRequest, res: Response) {
+    const employee = await requireEmployee(req);
+    const { questionId, selectedOption, timeTakenSeconds } = req.body;
+    if (!questionId || !selectedOption) {
+      return res.status(400).json({ success: false, error: 'questionId and selectedOption are required' });
+    }
+    const { dailyTriviaService } = await import('./daily-trivia.service.js');
+    const result = await dailyTriviaService.submitAnswer(employee.id, questionId, selectedOption, timeTakenSeconds);
+    return res.json({ success: true, data: result });
+  },
+
+  async getTriviaLeaderboard(req: AuthenticatedRequest, res: Response) {
+    const date = req.query.date as string | undefined;
+    const { dailyTriviaService } = await import('./daily-trivia.service.js');
+    const result = await dailyTriviaService.getTriviaLeaderboard(date);
+    return res.json({ success: true, data: result });
+  },
+
+  async createTriviaQuestion(req: AuthenticatedRequest, res: Response) {
+    const userId = req.authUser?.id;
+    if (!userId) return res.status(401).json({ success: false, error: 'Unauthorized' });
+    const { dailyTriviaService } = await import('./daily-trivia.service.js');
+    const question = await dailyTriviaService.createQuestion(req.body, userId);
+    return res.status(201).json({ success: true, data: question });
+  },
+
+  async getTriviaQuestionBank(req: AuthenticatedRequest, res: Response) {
+    const limit = Math.min(Number(req.query.limit) || 50, 100);
+    const offset = Number(req.query.offset) || 0;
+    const category = req.query.category as any;
+    const { dailyTriviaService } = await import('./daily-trivia.service.js');
+    const result = await dailyTriviaService.getQuestionBank({ limit, offset, category });
+    return res.json({ success: true, data: result });
+  },
 };
 

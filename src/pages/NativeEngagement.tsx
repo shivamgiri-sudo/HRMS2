@@ -19,6 +19,7 @@ import { PointsDisplay } from "@/components/engagement/PointsDisplay";
 import { TierBadge } from "@/components/engagement/TierBadge";
 import { DailyRewardClaim } from "@/components/engagement/DailyRewardClaim";
 import { TipOfTheDay } from "@/components/engagement/TipOfTheDay";
+import { DailyTrivia } from "@/components/engagement/DailyTrivia";
 import type {
   ApiResponse,
   EngagementSummary,
@@ -89,6 +90,7 @@ export default function NativeEngagement() {
         <div className="grid gap-4 lg:grid-cols-2">
           <DailyRewardClaim />
           <TipOfTheDay />
+          <DailyTrivia />
         </div>
 
         {/* Metrics */}
