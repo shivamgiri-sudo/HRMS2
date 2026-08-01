@@ -55,11 +55,11 @@ export class StatutorySyncHandler extends DomainSyncBase {
         // employee_statutory_info uses employee_id as primary key (one row per employee)
         const [res] = await db.execute<any>(
           `INSERT INTO employee_statutory_info
-             (id, employee_id, epf_number, esic_number, uan_number, pan_number, created_at)
+             (id, employee_id, epf_number, esi_number, uan_number, pan_number, created_at)
            VALUES (UUID(), ?, ?, ?, ?, ?, NOW())
            ON DUPLICATE KEY UPDATE
              epf_number  = IF(VALUES(epf_number)  IS NOT NULL AND VALUES(epf_number)  != '', VALUES(epf_number),  epf_number),
-             esic_number = IF(VALUES(esic_number) IS NOT NULL AND VALUES(esic_number) != '', VALUES(esic_number), esic_number),
+             esi_number = IF(VALUES(esi_number) IS NOT NULL AND VALUES(esi_number) != '', VALUES(esi_number), esi_number),
              uan_number  = IF(VALUES(uan_number)  IS NOT NULL AND VALUES(uan_number)  != '', VALUES(uan_number),  uan_number),
              pan_number  = IF(VALUES(pan_number)  IS NOT NULL AND VALUES(pan_number)  != '', VALUES(pan_number),  pan_number),
              updated_at  = NOW()`,

@@ -58,7 +58,9 @@ describe("atsService.createCandidate — valid registration", () => {
       .mockResolvedValueOnce([[]])           // mobile dup check — no match
       .mockResolvedValueOnce([[]])           // email dup check — no match
       .mockResolvedValueOnce([{ affectedRows: 1 }]) // INSERT
-      .mockResolvedValueOnce([{ affectedRows: 1 }]) // stage log
+      // No stage-log write any more: createCandidate goes straight from the
+      // INSERT to getCandidate(id). Budgeting a value for it fed that malformed
+      // entry to the re-fetch, which then reported "Candidate not found".
       .mockResolvedValueOnce([[fakeCandidate]]);    // re-fetch
     const result = await atsService.createCandidate(validInput, "user-1");
     expect(result.full_name).toBe("Priya Singh");
@@ -69,7 +71,6 @@ describe("atsService.createCandidate — valid registration", () => {
     mockExecute
       .mockResolvedValueOnce([[]])
       .mockResolvedValueOnce([[]])
-      .mockResolvedValueOnce([{ affectedRows: 1 }])
       .mockResolvedValueOnce([{ affectedRows: 1 }])
       .mockResolvedValueOnce([[{ ...fakeCandidate, sourcing_channel: "Walk-In" }]]);
     const result = await atsService.createCandidate({ ...validInput, sourcingChannel: "walk-in" }, "user-1");
@@ -110,6 +111,49 @@ describe("atsService.createCandidate — duplicate mobile", () => {
     mockExecute.mockResolvedValueOnce([[{ id: "c1", current_stage: "converted", active_status: 1 }]]);
     const err = await atsService.createCandidate(validInput, "user-1").catch((e) => e);
     expect((err as any).code).toBe("DUPLICATE_SELECTED");
+  });
+});
+
+describe("atsService.createCandidate — placeholder emails are not deduplicated", () => {
+  beforeEach(resetDbMock);
+
+  /**
+   * 14,246 of 33,856 production candidates carry no usable email. "0" alone
+   * appears 1,576 times, alongside "AN" and "abc@gmail.com" — recruiters use a
+   * placeholder where a candidate has none. Deduplicating on those would reject
+   * the second such registration and block intake, so the check runs only for a
+   * syntactically valid address.
+   *
+   * Each case below supplies ONE mock value: if the email branch ran it would
+   * consume a second, the INSERT would read undefined and the test would fail —
+   * which is what makes these assertions meaningful rather than incidental.
+   */
+  for (const placeholder of ["0", "AN", "", "   ", "not-an-email"]) {
+    it(`registers normally when the email is ${JSON.stringify(placeholder)}`, async () => {
+      mockExecute
+        .mockResolvedValueOnce([[]])                  // mobile dup — no match
+        .mockResolvedValueOnce([{ affectedRows: 1 }]) // INSERT (email branch skipped)
+        .mockResolvedValueOnce([[fakeCandidate]]);    // re-fetch
+
+      const result = await atsService.createCandidate(
+        { ...validInput, email: placeholder },
+        "user-1",
+      );
+
+      expect(result.full_name).toBe("Priya Singh");
+      const queried = mockExecute.mock.calls.map(([sql]) => String(sql));
+      expect(queried.some((s) => /WHERE email = \?/.test(s))).toBe(false);
+    });
+  }
+
+  it("still deduplicates a real address", async () => {
+    mockExecute
+      .mockResolvedValueOnce([[]])
+      .mockResolvedValueOnce([[{ id: "c9", current_stage: "Screening" }]]);
+    const err = await atsService
+      .createCandidate({ ...validInput, email: "someone@example.com" }, "user-1")
+      .catch((e) => e);
+    expect((err as any).code).toBe("DUPLICATE_EMAIL");
   });
 });
 

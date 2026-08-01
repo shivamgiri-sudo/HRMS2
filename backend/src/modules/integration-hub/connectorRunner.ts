@@ -6,6 +6,7 @@ import { integrationService } from "./integration.service.js";
 import type { IntegrationConfig } from "./integration.types.js";
 import { syncDatabaseConnector } from "./adapters/dbSyncService.js";
 import { assertSafeOutboundUrl } from "../../shared/outboundUrlGuard.js";
+import { reportConnectorFailure } from "./connectorHealth.js";
 
 interface ConnectorConfig {
   method?: "GET" | "POST";
@@ -266,6 +267,9 @@ export async function executeConnector(
         WHERE id = ?`,
       [message, run.id]
     );
+    // The credential-decryption failures land here — this is the path that
+    // recorded dialer_1's 1,047 silent failures.
+    await reportConnectorFailure(connector.integration_key, message);
     throw error;
   }
 

@@ -1,0 +1,42 @@
+-- 1045_collation_drift_guard_notes.sql
+--
+-- DOCUMENTATION ONLY. This file intentionally contains no DDL and never needs running.
+-- It exists so the remaining collation debt is written down where the next person looking
+-- at a collation error will find it.
+--
+-- THE DEBT
+-- 44 of 807 tables are utf8mb4_0900_ai_ci while 757 are utf8mb4_unicode_ci. Each is a latent
+-- ER_CANT_AGGREGATE_2COLLATIONS the moment it is text-joined across the boundary.
+--
+-- The cause is always the same: DDL that writes DEFAULT CHARSET=utf8mb4 and omits COLLATE,
+-- letting MySQL 8 apply its SERVER default. employee_reimbursement_claim was created that
+-- way and every reimbursements endpoint 500'd from the day it shipped until 1038 converted
+-- it. Migration 426 (employee_geofence_alerts) had the identical defect and was corrected
+-- before it was ever applied.
+--
+-- WHY THESE ARE NOT CONVERTED WHOLESALE
+-- CONVERT TO on a populated table rewrites every row under a metadata lock. Doing that to 44
+-- tables in one migration is a large, risky change justified by nothing yet observed — most
+-- of them are never text-joined across the boundary and cause no error at all. Convert one
+-- when a real failure points at it, exactly as 1038 did:
+--
+--   ALTER TABLE <table> CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+--
+-- On an empty table that is instant. On a populated one, take a window.
+--
+-- HOW THE GROWTH IS STOPPED
+-- src/db/__tests__/collation-drift.test.ts fails when any migration numbered 1039 or higher
+-- creates a table with a charset but no collation. It names the file and the table. Verified
+-- against a deliberately broken probe migration, so it is known to catch a real offender
+-- rather than passing vacuously.
+--
+-- TO LIST THE CURRENT OFFENDERS
+--   SELECT TABLE_NAME, TABLE_COLLATION
+--     FROM information_schema.TABLES
+--    WHERE TABLE_SCHEMA = DATABASE()
+--      AND TABLE_TYPE = 'BASE TABLE'
+--      AND TABLE_COLLATION <> 'utf8mb4_unicode_ci'
+--    ORDER BY TABLE_NAME;
+--
+-- Known members of that set at the time of writing include billing_*, cosec_*,
+-- lms_assessment_scores, lms_learner_progress, funnel_*, expense_policy and location_master.

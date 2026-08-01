@@ -107,6 +107,11 @@ export const ROLE_SPECIFIC_PAGE_CODES = {
     "PIP_MANAGEMENT",
     "EXPENSE_APPROVALS",
     "REPORTS_CENTER",
+    "QUALITY_TEAM",
+    "CALL_MASTER",
+    "CALL_MASTER_INBOUND",
+    "SALES_BRAND_ANALYTICS",
+    "QUALITY_DASHBOARD",
   ],
   process_manager: [
     "MANAGEMENT_DASHBOARD",
@@ -123,6 +128,12 @@ export const ROLE_SPECIFIC_PAGE_CODES = {
     "PIP_MANAGEMENT",
     "EXPENSE_APPROVALS",
     "REPORTS_CENTER",
+    "QUALITY_TEAM",
+    "CALL_MASTER",
+    "CALL_MASTER_INBOUND",
+    "SALES_BRAND_ANALYTICS",
+    "QUALITY_DASHBOARD",
+    "OPERATIONS_DASHBOARD",
   ],
   team_leader: [
     "WFM_ROSTER",
@@ -131,6 +142,7 @@ export const ROLE_SPECIFIC_PAGE_CODES = {
     "CAREER_PLANNING",
     "MY_KPI",
     "EXPENSE_APPROVALS",
+    "QUALITY_TEAM",
   ],
   tl: [
     "WFM_ROSTER",
@@ -139,6 +151,7 @@ export const ROLE_SPECIFIC_PAGE_CODES = {
     "CAREER_PLANNING",
     "MY_KPI",
     "EXPENSE_APPROVALS",
+    "QUALITY_TEAM",
   ],
   wfm: [
     "WFM_DASHBOARD",
@@ -216,12 +229,20 @@ export const ROLE_SPECIFIC_PAGE_CODES = {
     "KPI_DASHBOARD",
     "GOALS",
     "REPORTS_CENTER",
+    "CALL_MASTER",
+    "CALL_MASTER_INBOUND",
+    "QUALITY_TEAM",
+    "PERFORMANCE_HUB",
   ],
   quality_analyst: [
     "QUALITY_DASHBOARD",
     "AGENT_PERFORMANCE",
     "OPERATIONS_KPI",
     "KPI_DASHBOARD",
+    "CALL_MASTER",
+    "CALL_MASTER_INBOUND",
+    "OPERATIONS_DASHBOARD",
+    "REPORTS_CENTER",
   ],
   operations_manager: [
     "OPERATIONS_DASHBOARD",
@@ -232,6 +253,12 @@ export const ROLE_SPECIFIC_PAGE_CODES = {
     "ATS_WALKIN_QUEUE",
     "JOB_REQUISITION",
     "REPORTS_CENTER",
+    "CALL_MASTER",
+    "CALL_MASTER_INBOUND",
+    "SALES_BRAND_ANALYTICS",
+    "QUALITY_DASHBOARD",
+    "AGENT_PERFORMANCE",
+    "PERFORMANCE_HUB",
   ],
   ceo: [
     "CEO_DASHBOARD",
@@ -252,6 +279,11 @@ export const ROLE_SPECIFIC_PAGE_CODES = {
     //     generated UAT matrix kept sending testers to a 404. The real page is
     //     OPERATIONS_KPI (/operations-kpi), which the CEO already holds below.
     "OPERATIONS_KPI",
+    "QUALITY_EXECUTIVE",
+    "CALL_MASTER",
+    "CALL_MASTER_INBOUND",
+    "SALES_BRAND_ANALYTICS",
+    "PERFORMANCE_HUB",
   ],
   trainer: [
     "LMS_MY_LEARNING",
@@ -342,6 +374,11 @@ export const ROLE_SPECIFIC_PAGE_CODES = {
     "PIP_MANAGEMENT",
     "REPORTS_CENTER",
     "PROCESS_MANAGER_DASHBOARD",
+    "QUALITY_EXECUTIVE",
+    "QUALITY_TEAM",
+    "CALL_MASTER",
+    "CALL_MASTER_INBOUND",
+    "PERFORMANCE_HUB",
   ],
   accounts_head: [
     "FINANCE_HEAD_DASHBOARD",
@@ -358,6 +395,67 @@ export const ROLE_SPECIFIC_PAGE_CODES = {
     "PROCESS_MANAGER_DASHBOARD",
   ],
   employee: [],
+
+  // ---------------------------------------------------------------------------
+  // Roles that had real users and no entry here at all.
+  //
+  // A role absent from this map receives only COMMON_USER_PAGE_CODES, so these
+  // people signed in to 13 pages regardless of what the routers claimed they
+  // could reach. Counts are live from user_roles on 2026-08-01.
+  //
+  // Every grant below is taken from a role list already declared on the route
+  // itself, so this closes the gap between the router and the database rather
+  // than inventing new access.
+  // ---------------------------------------------------------------------------
+
+  // Named in ~15 route role lists, navConfig, and three dashboard registries,
+  // yet absent from every role definition source in the codebase — no matrix
+  // entry, no workforce_role_catalog seed, no page grants. Mirrors ceo, which
+  // is how the routes treat it.
+  coo: [
+    "CEO_DASHBOARD",
+    "MANAGEMENT_DASHBOARD",
+    "OPERATIONS_DASHBOARD",
+    "QUALITY_DASHBOARD",
+    "QUALITY_EXECUTIVE",
+    "CALL_MASTER",
+    "CALL_MASTER_INBOUND",
+    "WORKFORCE_COMMAND_CENTER",
+    "OPERATIONS_KPI",
+    "REPORTS_CENTER",
+  ],
+
+  // 7 active users. Grants existed only in the 2026-06 SQL seed, and most of
+  // those page codes have no mounted route. Dashboard registry already allows
+  // MANAGEMENT, QUALITY and OPERATIONS for this role.
+  branch_head: [
+    "MANAGEMENT_DASHBOARD",
+    "OPERATIONS_DASHBOARD",
+    "QUALITY_DASHBOARD",
+    "QUALITY_TEAM",
+    "BUSINESS_COMMAND_CENTER",
+    "BUSINESS_ACTION_QUEUE",
+    "WFM_LIVE_TRACKER",
+    "RTA_BOARD",
+    "OPERATIONS_KPI",
+    "AGENT_PERFORMANCE",
+    "REPORTS_CENTER",
+  ],
+
+  // 5 active users. Declared on /provisioning/admin alongside hr and admin.
+  branch_admin: [
+    "PROVISIONING_ADMIN",
+    "IT_PROVISIONING_TRACKER",
+    "ASSETS_MANAGER",
+  ],
+
+  // 9 active users and no declared route access anywhere, so there is nothing
+  // to derive a grant from. Left empty on purpose rather than guessed at: the
+  // obvious candidates (ATS_CANDIDATE_MASTER, ATS_WAITING_QUEUE) expose
+  // candidate PII across all branches, and widening PII access is a product
+  // decision, not a defaulting one. Present as an explicit entry so the gap is
+  // visible instead of looking like an oversight.
+  interviewer: [],
 } as const satisfies Record<string, readonly string[]>;
 
 export type RbacRoleKey = keyof typeof ROLE_SPECIFIC_PAGE_CODES | "super_admin";

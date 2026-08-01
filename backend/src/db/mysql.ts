@@ -1,5 +1,6 @@
 import mysql, { type RowDataPacket, type FieldPacket, type QueryResult, type Pool, type PoolConnection } from "mysql2/promise";
 import { env } from "../config/env.js";
+import { isSchemaOrLogicDbError, describeDbError } from "./db-error-classification.js";
 import {
   DEFAULT_CIRCUIT_BREAKER_CONFIG,
   checkCircuitBreakerState,
@@ -98,6 +99,7 @@ function isConnectionPressureDbError(error: unknown): boolean {
   return /queue limit reached|too many connections|too many user connections/i.test(message);
 }
 
+
 /**
  * RELIABILITY: Check circuit breaker before attempting operation.
  * Throws immediately if circuit is open (fast-fail).
@@ -145,6 +147,13 @@ async function withTransientRetry<T>(operation: () => Promise<T>): Promise<T> {
       return result;
     } catch (error) {
       lastError = error;
+
+      // Visibility, not control flow: the error still propagates exactly as before. Many
+      // callers turn it into an empty result set, so without this line a wrong column or a
+      // missing table is indistinguishable from "no rows matched".
+      if (isSchemaOrLogicDbError(error)) {
+        console.error(`[mysql] ${describeDbError(error)}`);
+      }
 
       // Connection pressure should fail fast for this request. Retrying would
       // add load, but one short deployment spike should not freeze all logins.

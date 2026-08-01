@@ -17,9 +17,18 @@ import { getUserRoleContext } from "../../shared/roleResolver.js";
  * These reads previously discarded ER_BAD_FIELD_ERROR silently, so a query against
  * nonexistent columns returned HTTP 200 with empty data indefinitely.
  */
-function emptyOnError(context: string, detail: Record<string, unknown> = {}) {
+export function emptyOnError(
+  context: string,
+  detail: Record<string, unknown> = {},
+  failures?: string[],
+) {
   return (err: unknown) => {
     logSourceFailure("kpi", err, { query: context, ...detail });
+    // Record the miss for the caller as well as the log. Logging alone told
+    // operators something broke but still handed the UI an empty result that
+    // reads as "nothing happened this period" — the two are not the same
+    // answer, and only one of them means someone should look at it.
+    failures?.push(context);
     return [[]] as any;
   };
 }
@@ -196,6 +205,10 @@ router.get("/org-summary", requireRole("admin", "hr", "super_admin", "ceo", "man
   const scope = await resolveDashboardScope(req.authUser!.id, roleContext.primaryRole);
   const empScope = buildScopeWhere(scope, "e.branch_id", "e.process_id");
 
+  // Any guarded query that fails pushes its name here, so the response can say
+  // "the source failed" rather than "there is no data".
+  const sourceFailures: string[] = [];
+
   const [metricRows] = await db.execute<RowDataPacket[]>(
     `SELECT m.metric_code, m.metric_name, m.unit, m.direction,
             ROUND(AVG(a.actual_value), 2) AS avg_value,
@@ -208,7 +221,7 @@ router.get("/org-summary", requireRole("admin", "hr", "super_admin", "ceo", "man
       GROUP BY m.id
       ORDER BY samples DESC`,
     [period, ...empScope.params],
-  ).catch(emptyOnError("kpi org-summary by_metric", { period }));
+  ).catch(emptyOnError("kpi org-summary by_metric", { period }, sourceFailures));
 
   const byMetric = (metricRows as any[]) ?? [];
 
@@ -246,7 +259,7 @@ router.get("/org-summary", requireRole("admin", "hr", "super_admin", "ceo", "man
          LEFT JOIN employees e ON e.id = a.employee_id
         WHERE DATE_FORMAT(a.score_date, '%Y-%m') = ? AND ${empScope.sql}`,
       [headline.metric_code, period, ...empScope.params],
-    ).catch(emptyOnError("kpi org-summary rollup", { period }));
+    ).catch(emptyOnError("kpi org-summary rollup", { period }, sourceFailures));
 
     summary = {
       ...((summaryRows as any[])[0] ?? {}),
@@ -270,7 +283,7 @@ router.get("/org-summary", requireRole("admin", "hr", "super_admin", "ceo", "man
         ORDER BY avg_score DESC
         LIMIT 10`,
       [headline.metric_code, period, ...empScope.params],
-    ).catch(emptyOnError("kpi org-summary by_process", { period }));
+    ).catch(emptyOnError("kpi org-summary by_process", { period }, sourceFailures));
 
     [trendRows] = await db.execute<RowDataPacket[]>(
       `SELECT DATE_FORMAT(a.score_date, '%Y-%m') AS period,
@@ -282,7 +295,7 @@ router.get("/org-summary", requireRole("admin", "hr", "super_admin", "ceo", "man
         GROUP BY DATE_FORMAT(a.score_date, '%Y-%m')
         ORDER BY period ASC`,
       [headline.metric_code, ...empScope.params],
-    ).catch(emptyOnError("kpi org-summary trend", { period }));
+    ).catch(emptyOnError("kpi org-summary trend", { period }, sourceFailures));
   }
 
   return res.json({
@@ -293,13 +306,26 @@ router.get("/org-summary", requireRole("admin", "hr", "super_admin", "ceo", "man
       by_process: processRows,
       by_metric: byMetric,
       trend: trendRows,
-      ...(headline ? {} : {
-        unavailableSources: {
-          kpi: byMetric.length
-            ? `No higher-is-better percent KPI is available as a headline for ${period}`
-            : `No KPI actuals were recorded for ${period}`,
-        },
-      }),
+      // A failed query and an empty period are different answers. Saying "no
+      // actuals were recorded" when the query actually errored is what makes
+      // real breakage look like a quiet month.
+      ...(sourceFailures.length
+        ? {
+            unavailableSources: {
+              kpi: `${sourceFailures.length} KPI source quer${sourceFailures.length === 1 ? "y" : "ies"} ` +
+                `failed for ${period} — the figures below are incomplete, not zero`,
+              failedQueries: sourceFailures,
+            },
+          }
+        : headline
+          ? {}
+          : {
+              unavailableSources: {
+                kpi: byMetric.length
+                  ? `No higher-is-better percent KPI is available as a headline for ${period}`
+                  : `No KPI actuals were recorded for ${period}`,
+              },
+            }),
     },
   });
 }));

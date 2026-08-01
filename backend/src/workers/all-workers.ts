@@ -12,6 +12,7 @@ import { startLmsSyncWorker, stopLmsSyncWorker } from "./lms-sync.worker.js";
 import { startPayrollNightlyRecalcWorker, stopPayrollNightlyRecalcWorker } from "./payroll-nightly-recalc.worker.js";
 import { startAprVicidialSyncWorker, stopAprVicidialSyncWorker } from "./apr-vicidial-sync.worker.js";
 import { startEsignComplianceWorker, stopEsignComplianceWorker } from "./esign-compliance.worker.js";
+import { startEsignReconciliationWorker, stopEsignReconciliationWorker } from "./esign-reconciliation.worker.js";
 import { legacySyncWorker } from "./legacy-sync-worker.js";
 import { startTenureBadgeScheduler, stopTenureBadgeScheduler } from "../modules/engagement/tenure.cron.js";
 import { startCommunicationCleanup, stopCommunicationCleanup } from "../modules/communication/cleanup.cron.js";
@@ -115,6 +116,12 @@ const WORKERS: Array<{ name: string; start: () => Promise<void> }> = [
     start: startEsignComplianceWorker,
   },
   {
+    // Pulls signed artefacts the provider never pushed. Self-disables unless
+    // ESIGN_RECONCILIATION_ENABLED=true.
+    name: "esign-reconciliation",
+    start: startEsignReconciliationWorker,
+  },
+  {
     name: "dpdp-breach-sla",
     start: () => { startBreachSlaCron(); return Promise.resolve(); },
   },
@@ -190,6 +197,7 @@ function shutdown(): void {
   stopAccessExpiryScheduler();
   stopIntegrationScheduler();
   stopEsignComplianceWorker();
+  stopEsignReconciliationWorker();
   stopTenureBadgeScheduler();
   stopCommunicationCleanup();
   stopAttendanceEngineScheduler();

@@ -69,6 +69,45 @@ export async function assertNotCrashed(page: Page): Promise<void> {
 }
 
 /**
+ * Failures that render as a perfectly healthy page.
+ *
+ * assertNotCrashed above catches a blank screen or a bundle that failed to load. Every
+ * defect the CEO found in UAT Round 2 sailed past it: a routed 404 renders a styled page
+ * with a heading, and a leaked driver error renders as ordinary body text. Both look like
+ * a working page to anything that only checks the DOM is populated.
+ *
+ * Each pattern here corresponds to something that actually reached him on 01-Aug-2026.
+ */
+const RENDERED_FAILURES: ReadonlyArray<{ pattern: RegExp; why: string }> = [
+  { pattern: /Oops!\s*Page not found/i, why: 'routed 404 — the page is not mounted at this path' },
+  { pattern: /doesn't have a default value/i, why: 'raw MySQL error 1364 leaked to the browser' },
+  { pattern: /\bER_[A-Z_]{4,}\b/, why: 'raw MySQL driver error code leaked to the browser' },
+  { pattern: /\bSQLSTATE\b/i, why: 'raw SQL state leaked to the browser' },
+  { pattern: /\bnginx\/[\d.]+/i, why: 'nginx error page rendered into the app — the backend was unreachable' },
+  { pattern: /\b50[023] Bad Gateway|Gateway Time-?out\b/i, why: 'upstream error page rendered into the app' },
+  { pattern: /at\s+\/[\w/.-]+\.(?:ts|js):\d+:\d+/, why: 'server stack trace leaked to the browser' },
+];
+
+/**
+ * Assert the page is not showing a failure that still looks like a page.
+ *
+ * Deliberately separate from assertNotCrashed so a failure says which of the two it is:
+ * "the page did not load" and "the page loaded and is showing you a database error" need
+ * different fixes.
+ */
+export async function assertNoRenderedFailure(page: Page, path: string): Promise<void> {
+  const body = await page.locator('body').textContent() ?? '';
+  for (const { pattern, why } of RENDERED_FAILURES) {
+    const match = body.match(pattern);
+    if (match) {
+      throw new Error(
+        `${path} rendered a failure: ${why}\n  matched: "${match[0]}"\n  excerpt: ${body.substring(0, 300)}`,
+      );
+    }
+  }
+}
+
+/**
  * Wait for the DashboardLayout or any primary app shell to appear.
  * Tolerates slow lazy-loaded pages.
  */

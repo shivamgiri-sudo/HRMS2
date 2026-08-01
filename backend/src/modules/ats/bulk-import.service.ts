@@ -475,8 +475,13 @@ async function importOneCandidate(
       [recruiterUserId, candidateDbId]
     ).catch(() => {}); // Column may not exist in all migrations
     await db.execute(
-      `INSERT INTO ats_recruiter_assignment_log (id, candidate_id, new_recruiter_id, assigned_by, created_at)
-       VALUES (UUID(), ?, ?, ?, ?)`,
+      // Two defects, and fixing only the obvious one still fails. created_at does not exist
+      // on this table (it is assigned_at) — but assignment_reason is NOT NULL with no
+      // default, so a rename alone still throws ER_NO_DEFAULT_FOR_FIELD. Both are required.
+      // Verified by probing each form against production in a rolled-back transaction.
+      `INSERT INTO ats_recruiter_assignment_log
+         (id, candidate_id, new_recruiter_id, assigned_by, assigned_at, assignment_reason)
+       VALUES (UUID(), ?, ?, ?, ?, 'bulk_import')`,
       [candidateDbId, recruiterUserId, actorUserId, createdAt]
     );
   }

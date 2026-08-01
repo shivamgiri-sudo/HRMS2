@@ -5,6 +5,7 @@ import { integrationService } from "./integration.service.js";
 import { analyzeSchema } from "./schemaAnalyzer.js";
 import { promoteRows } from "./promotionEngine.js";
 import { encryptSecretPayload } from "../external-db/external-db.service.js";
+import { reportConnectorFailure } from "./connectorHealth.js";
 
 export interface ConnectorRunSummary {
   run_id: string;
@@ -81,6 +82,9 @@ export async function runConnector(
         WHERE id = ?`,
       [durationMs, msg, runId]
     );
+    // Count the streak now that the failure row exists, so a long-running
+    // breakage announces itself instead of accumulating in a table nobody reads.
+    await reportConnectorFailure(integrationKey, msg);
     return { run_id: runId, rows_fetched: rawRows.length, rows_promoted: 0, rows_failed: rawRows.length, status: "failed" };
   }
 }
