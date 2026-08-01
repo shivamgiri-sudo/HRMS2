@@ -1,16 +1,16 @@
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from '@jest/globals';
+import { describe, it, expect } from 'vitest';
 import request from 'supertest';
-import type { Express } from 'express';
 
-let app: Express;
+// Imported statically, as every other route suite here does. This used to be a
+// dynamic import inside beforeAll, "after environment is set" — but tests/setup.ts
+// sets the environment before any test module is evaluated, so the deferral bought
+// nothing and loading app.ts (which pulls in every router) regularly exceeded the
+// 10s hook timeout, failing the whole file before a single test ran.
+import { app } from '../src/app.js';
+
 const mockAuthHeader = 'Bearer mock-token-admin';
 
 describe('Operations Live Status Routes', () => {
-  beforeAll(async () => {
-    // Import app after environment is set
-    const { app: expressApp } = await import('../src/app.js');
-    app = expressApp;
-  });
 
   describe('GET /api/operations/live-status', () => {
     it('should return live agent status for authenticated OPERATIONS/ADMIN users', async () => {
@@ -19,13 +19,13 @@ describe('Operations Live Status Routes', () => {
         .set('Authorization', mockAuthHeader);
 
       expect(response.status).toBe(200);
-      expect(response.body).toHaveProperty('agents');
-      expect(response.body).toHaveProperty('summary');
-      expect(response.body).toHaveProperty('timestamp');
-      expect(Array.isArray(response.body.agents)).toBe(true);
+      expect(response.body.data).toHaveProperty('agents');
+      expect(response.body.data).toHaveProperty('summary');
+      expect(response.body.data).toHaveProperty('timestamp');
+      expect(Array.isArray(response.body.data.agents)).toBe(true);
 
-      if (response.body.agents.length > 0) {
-        const agent = response.body.agents[0];
+      if (response.body.data.agents.length > 0) {
+        const agent = response.body.data.agents[0];
         expect(agent).toHaveProperty('agent_id');
         expect(agent).toHaveProperty('agent_name');
         expect(agent).toHaveProperty('status');
@@ -48,8 +48,8 @@ describe('Operations Live Status Routes', () => {
         .set('Authorization', mockAuthHeader);
 
       expect(response.status).toBe(200);
-      expect(response.body).toHaveProperty('agents');
-      expect(Array.isArray(response.body.agents)).toBe(true);
+      expect(response.body.data).toHaveProperty('agents');
+      expect(Array.isArray(response.body.data.agents)).toBe(true);
     });
 
     it('should support optional branchName filter', async () => {
@@ -59,7 +59,7 @@ describe('Operations Live Status Routes', () => {
         .set('Authorization', mockAuthHeader);
 
       expect(response.status).toBe(200);
-      expect(response.body).toHaveProperty('agents');
+      expect(response.body.data).toHaveProperty('agents');
     });
   });
 
@@ -70,12 +70,12 @@ describe('Operations Live Status Routes', () => {
         .set('Authorization', mockAuthHeader);
 
       expect(response.status).toBe(200);
-      expect(response.body).toHaveProperty('utilization_pct');
-      expect(response.body).toHaveProperty('processes');
-      expect(Array.isArray(response.body.processes)).toBe(true);
+      expect(response.body.data).toHaveProperty('utilization_pct');
+      expect(response.body.data).toHaveProperty('processes');
+      expect(Array.isArray(response.body.data.processes)).toBe(true);
 
-      if (response.body.processes.length > 0) {
-        const proc = response.body.processes[0];
+      if (response.body.data.processes.length > 0) {
+        const proc = response.body.data.processes[0];
         expect(proc).toHaveProperty('process_name');
         expect(proc).toHaveProperty('planned_headcount');
         expect(proc).toHaveProperty('actual_logged_in');
@@ -98,11 +98,11 @@ describe('Operations Live Status Routes', () => {
         .set('Authorization', mockAuthHeader);
 
       expect(response.status).toBe(200);
-      expect(response.body).toHaveProperty('employees');
-      expect(Array.isArray(response.body.employees)).toBe(true);
+      expect(response.body.data).toHaveProperty('employees');
+      expect(Array.isArray(response.body.data.employees)).toBe(true);
 
-      if (response.body.employees.length > 0) {
-        const emp = response.body.employees[0];
+      if (response.body.data.employees.length > 0) {
+        const emp = response.body.data.employees[0];
         expect(emp).toHaveProperty('employee_code');
         expect(emp).toHaveProperty('risk_score');
         expect(emp).toHaveProperty('signals');
@@ -124,7 +124,7 @@ describe('Operations Live Status Routes', () => {
         .set('Authorization', mockAuthHeader);
 
       expect(response.status).toBe(200);
-      expect(response.body).toHaveProperty('employees');
+      expect(response.body.data).toHaveProperty('employees');
     });
   });
 });

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll } from '@jest/globals';
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import request from 'supertest';
 import { app } from '../src/app';
 
@@ -14,18 +14,18 @@ describe('Manager Quality Routes', () => {
         .set('Authorization', `Bearer ${managerToken}`);
 
       expect(response.status).toBe(200);
-      expect(response.body).toHaveProperty('team_summary');
-      expect(response.body).toHaveProperty('agent_breakdown');
-      expect(response.body).toHaveProperty('last_updated');
+      expect(response.body.data).toHaveProperty('team_summary');
+      expect(response.body.data).toHaveProperty('agent_breakdown');
+      expect(response.body.data).toHaveProperty('last_updated');
 
-      if (response.body.team_summary) {
-        expect(response.body.team_summary).toHaveProperty('avg_quality');
-        expect(response.body.team_summary).toHaveProperty('agent_count');
-        expect(response.body.team_summary).toHaveProperty('calls_handled');
-        expect(response.body.team_summary).toHaveProperty('quality_distribution');
+      if (response.body.data.team_summary) {
+        expect(response.body.data.team_summary).toHaveProperty('avg_quality');
+        expect(response.body.data.team_summary).toHaveProperty('agent_count');
+        expect(response.body.data.team_summary).toHaveProperty('calls_handled');
+        expect(response.body.data.team_summary).toHaveProperty('quality_distribution');
       }
 
-      expect(Array.isArray(response.body.agent_breakdown)).toBe(true);
+      expect(Array.isArray(response.body.data.agent_breakdown)).toBe(true);
     });
 
     it('should accept team_leader role and return valid data', async () => {
@@ -34,8 +34,8 @@ describe('Manager Quality Routes', () => {
         .set('Authorization', `Bearer ${teamLeaderToken}`);
 
       expect(response.status).toBe(200);
-      expect(response.body).toHaveProperty('team_summary');
-      expect(response.body).toHaveProperty('agent_breakdown');
+      expect(response.body.data).toHaveProperty('team_summary');
+      expect(response.body.data).toHaveProperty('agent_breakdown');
     });
 
     it('should return 403 for non-manager roles', async () => {
@@ -59,7 +59,7 @@ describe('Manager Quality Routes', () => {
         .set('Authorization', `Bearer ${managerToken}`);
 
       expect(response.status).toBe(200);
-      expect(response.body).toHaveProperty('team_summary');
+      expect(response.body.data).toHaveProperty('team_summary');
     });
 
     it('should support process query parameter', async () => {
@@ -68,7 +68,7 @@ describe('Manager Quality Routes', () => {
         .set('Authorization', `Bearer ${managerToken}`);
 
       expect(response.status).toBe(200);
-      expect(response.body).toHaveProperty('team_summary');
+      expect(response.body.data).toHaveProperty('team_summary');
     });
   });
 });

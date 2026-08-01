@@ -1,5 +1,37 @@
-import { describe, it, expect } from '@jest/globals';
+import { describe, it, expect, vi } from 'vitest';
 import request from 'supertest';
+
+/**
+ * The database is mocked so this suite exercises the route rather than the
+ * environment. Without it every query rejects, and /api/qa/quality-audit — which
+ * has no graceful-empty fallback of its own, unlike /api/manager/team-quality —
+ * returns 500, so the shape assertions below were never reached.
+ *
+ * Empty result sets are the right fixture here: the tests assert the response
+ * CONTRACT (which keys exist, that arrays are arrays), not particular figures.
+ */
+vi.mock('../src/db/mysql.js', () => {
+  // QualityQAService takes a pooled connection rather than querying the pool
+  // directly, so getConnection has to be mocked too — an execute-only stub makes
+  // the handler throw "getConnection is not a function" and return 500.
+  const connection = {
+    execute: vi.fn().mockResolvedValue([[], []]),
+    query: vi.fn().mockResolvedValue([[], []]),
+    release: vi.fn(),
+    beginTransaction: vi.fn(),
+    commit: vi.fn(),
+    rollback: vi.fn(),
+  };
+  return {
+    db: {
+      execute: vi.fn().mockResolvedValue([[], []]),
+      query: vi.fn().mockResolvedValue([[], []]),
+      getConnection: vi.fn().mockResolvedValue(connection),
+    },
+    pingDb: vi.fn(),
+  };
+});
+
 import { app } from '../src/app';
 
 describe('QA Manager Quality Routes', () => {

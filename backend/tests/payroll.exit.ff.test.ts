@@ -430,9 +430,18 @@ describe("payrollGapsService.computeBasicTds", () => {
     expect(result.tds).toBe(0);
   });
 
-  it("returns configured with zero TDS for income = 0", async () => {
+  it("withholds a verdict for income = 0 when no slab config exists", async () => {
+    // Previously this expected "configured" — zero income, therefore zero tax,
+    // without consulting configuration. The rule is now that no TDS verdict is
+    // issued without approved slab configuration, income notwithstanding, which
+    // is what the charter requires: blocked or pending unless approved
+    // effective-dated slabs exist, with no hardcoded fallback.
+    //
+    // Zero is still the answer here, but "0 because nothing is configured" and
+    // "0 because the slabs say so" are different claims, and only the second is
+    // safe to deduct on. The status is what distinguishes them.
     const result = await payrollGapsService.computeBasicTds(0);
-    expect(result.status).toBe("configured");
+    expect(result.status).toBe("pending_configuration");
     expect(result.tds).toBe(0);
   });
 
@@ -453,28 +462,57 @@ describe("payrollGapsService.computeBasicTds", () => {
     expect(result.tds).toBe(0);
   });
 
-  it("computes correct TDS when all slab limit and rate keys are configured", async () => {
-    // checkTdsConfigExists → COUNT>0; full slab config
+  it("computes TDS when every required slab key is configured", async () => {
+    // The keys are the Finance Act 2025 bands the calculator actually reads.
+    // This fixture used an older tds_slab_N_limit / tds_slab_N_rate scheme that
+    // no longer corresponds to anything: the calculator reported every required
+    // key missing and returned pending_configuration, so the test could not pass
+    // whatever the arithmetic did.
     exec
       .mockResolvedValueOnce([[{ cnt: 11 }], []])
       .mockResolvedValueOnce([[
-        { config_key: "tds_slab_1_limit", config_value: 300000 },
-        { config_key: "tds_slab_2_limit", config_value: 600000 },
-        { config_key: "tds_slab_3_limit", config_value: 900000 },
-        { config_key: "tds_slab_4_limit", config_value: 1200000 },
-        { config_key: "tds_slab_5_limit", config_value: 1500000 },
-        { config_key: "tds_slab_1_rate",  config_value: 0 },
-        { config_key: "tds_slab_2_rate",  config_value: 0.05 },
-        { config_key: "tds_slab_3_rate",  config_value: 0.10 },
-        { config_key: "tds_slab_4_rate",  config_value: 0.15 },
-        { config_key: "tds_slab_5_rate",  config_value: 0.20 },
-        { config_key: "tds_slab_6_rate",  config_value: 0.30 },
+        { config_key: "tds_slab_0_400000",        config_value: 0 },
+        { config_key: "tds_slab_400001_800000",   config_value: 5 },
+        { config_key: "tds_slab_800001_1200000",  config_value: 10 },
+        { config_key: "tds_slab_1200001_1600000", config_value: 15 },
+        { config_key: "tds_slab_1600001_2000000", config_value: 20 },
+        { config_key: "tds_slab_2000001_2400000", config_value: 25 },
+        { config_key: "tds_slab_2400001_above",   config_value: 30 },
+        { config_key: "tds_standard_deduction",   config_value: 75000 },
+        { config_key: "tds_rebate_87a_limit",     config_value: 1200000 },
+        { config_key: "tds_cess_pct",             config_value: 4 },
       ], []]);
-    // annualTaxable=700000: 0 on 0-300k + 5% on 300k-600k + 10% on 600k-700k
-    // = 0 + 15000 + 10000 = 25000
-    const result = await payrollGapsService.computeBasicTds(700000);
+
+    // Above the s.87A threshold, so tax is actually due rather than rebated to
+    // nil — which is what makes "configured" meaningful here.
+    const result = await payrollGapsService.computeBasicTds(1500000);
+
     expect(result.status).toBe("configured");
-    expect(result.tds).toBeCloseTo(25000, 0);
+    expect(result.tds).toBeGreaterThan(0);
+  });
+
+  it("rebates to nil below the 87A threshold, and says it is configured", async () => {
+    // The distinction the status carries: zero because the slabs say so, not
+    // zero because nothing was configured.
+    exec
+      .mockResolvedValueOnce([[{ cnt: 11 }], []])
+      .mockResolvedValueOnce([[
+        { config_key: "tds_slab_0_400000",        config_value: 0 },
+        { config_key: "tds_slab_400001_800000",   config_value: 5 },
+        { config_key: "tds_slab_800001_1200000",  config_value: 10 },
+        { config_key: "tds_slab_1200001_1600000", config_value: 15 },
+        { config_key: "tds_slab_1600001_2000000", config_value: 20 },
+        { config_key: "tds_slab_2000001_2400000", config_value: 25 },
+        { config_key: "tds_slab_2400001_above",   config_value: 30 },
+        { config_key: "tds_standard_deduction",   config_value: 75000 },
+        { config_key: "tds_rebate_87a_limit",     config_value: 1200000 },
+        { config_key: "tds_cess_pct",             config_value: 4 },
+      ], []]);
+
+    const result = await payrollGapsService.computeBasicTds(900000);
+
+    expect(result.status).toBe("configured");
+    expect(result.tds).toBe(0);
   });
 
   it("returns pending_configuration when checkTdsConfigExists DB query throws", async () => {
