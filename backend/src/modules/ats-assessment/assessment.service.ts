@@ -1537,10 +1537,62 @@ async function finalizeAssessment(
   const responseMap = new Map(responses.map((response) => [response.question_id, response]));
   const missing = definition.questions.filter((question) => !hasAnswer(answerValue(responseMap.get(question.id))));
   if (missing.length && !options.allowIncomplete) {
+    // Include question numbers for better debugging
+    const missingNumbers = missing.map((q) => {
+      const idx = definition.questions.findIndex((dq) => dq.id === q.id);
+      return idx >= 0 ? idx + 1 : q.id;
+    });
     throw appError(
-      `Please answer all questions (${missing.length} remaining)`,
+      `Please answer all questions (${missing.length} remaining: Q${missingNumbers.slice(0, 5).join(", Q")}${missing.length > 5 ? "..." : ""})`,
       400,
       "ASSESSMENT_INCOMPLETE",
+    );
+  }
+
+  // Auto-submit any active (started but not submitted) typing attempts before final scoring
+  const activeTyping = await rows<TypingRow>(
+    executor,
+    `SELECT * FROM ats_typing_test_attempt
+     WHERE assessment_id = ? AND submitted_at IS NULL
+     ORDER BY attempt_no DESC LIMIT 1 FOR UPDATE`,
+    [attempt.id],
+  );
+  if (activeTyping[0]) {
+    // Auto-submit with empty text if candidate never typed anything
+    const started = dateMs(activeTyping[0].started_at) ?? Date.now();
+    const elapsed = Math.max(1, Math.floor((Date.now() - started) / 1000));
+    const scored = calculateTypingScore({
+      referenceText: activeTyping[0].reference_text,
+      typedText: activeTyping[0].typed_text ?? "",
+      elapsedSeconds: Math.min(elapsed, Number(activeTyping[0].duration_limit_seconds)),
+      minNetWpm: definition.typing.minNetWpm,
+      minAccuracy: definition.typing.minAccuracy,
+    });
+    await executor.execute(
+      `UPDATE ats_typing_test_attempt
+       SET typed_text = COALESCE(typed_text, ''), elapsed_seconds = ?, submitted_at = NOW(),
+           gross_wpm = ?, net_wpm = ?, accuracy_percentage = ?, edit_distance = ?,
+           correct_characters = ?, incorrect_characters = ?, missing_characters = ?,
+           extra_characters = ?, correct_words = ?, incorrect_words = ?,
+           score_percentage = ?, passed_benchmark = ?, result_json = CAST(? AS JSON)
+       WHERE id = ?`,
+      [
+        elapsed,
+        scored.grossWpm,
+        scored.netWpm,
+        scored.accuracy,
+        scored.editDistance,
+        scored.correctCharacters,
+        scored.incorrectCharacters,
+        scored.missingCharacters,
+        scored.extraCharacters,
+        scored.correctWords,
+        scored.incorrectWords,
+        scored.score,
+        scored.passedBenchmark ? 1 : 0,
+        JSON.stringify(scored),
+        activeTyping[0].id,
+      ],
     );
   }
 
