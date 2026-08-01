@@ -11,6 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { SalaryDriftPanel } from "@/components/payroll/SalaryDriftPanel";
 
 type ControlStatus = "ready" | "warning" | "blocked";
 
@@ -44,6 +45,7 @@ interface GapRow {
   reportingManagerUserId?: string | null;
   reviewStatus?: string | null;
   reviewNote?: string | null;
+  reviewCreatedAt?: string | null;
   resolvedThrough?: string | null;
   resolvedDetail?: string | null;
 }
@@ -57,6 +59,7 @@ interface ControlTowerResponse {
     status: string;
     total_employees: number;
     total_net: number;
+    attendance_snapshot_locked?: number | boolean;
   } | null;
   status: ControlStatus;
   summary: {
@@ -147,6 +150,17 @@ function formatEvidence(status: string | null | undefined, minutes: number | nul
 
 function includesIssue(type: string, set: string[]) {
   return set.includes(type);
+}
+
+function daysOpen(reviewCreatedAt: string | null | undefined): number | null {
+  if (!reviewCreatedAt) return null;
+  return Math.floor((Date.now() - new Date(reviewCreatedAt).getTime()) / 86400000);
+}
+
+function daysOpenStyle(days: number): string {
+  if (days < 3) return "text-emerald-700";
+  if (days <= 7) return "text-amber-700";
+  return "text-red-600 font-semibold";
 }
 
 function StatCard({
@@ -528,6 +542,12 @@ export default function AttendanceControlTower() {
                   <span>No payroll run found for selected month.</span>
                 )}
             </div>
+            {data?.run?.attendance_snapshot_locked ? (
+              <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 flex items-center gap-2 text-sm text-amber-800 mb-2 mt-2">
+                <AlertTriangle className="h-4 w-4 flex-shrink-0 text-amber-600" />
+                <span><strong>Attendance snapshot is frozen.</strong> Changes resolved here won't affect the stored salary calculation — recalculation is disabled.</span>
+              </div>
+            ) : null}
           </CardContent>
         </Card>
 
@@ -732,18 +752,19 @@ export default function AttendanceControlTower() {
                       <TableHead className="h-9 px-3">COSEC Evidence</TableHead>
                       <TableHead className="h-9 px-3">Issue</TableHead>
                       <TableHead className="h-9 px-3">Impact</TableHead>
+                      <TableHead className="h-9 w-16 px-3 text-right">Days Open</TableHead>
                       <TableHead className="h-9 px-3">Action</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {isLoading && (
                       <TableRow>
-                        <TableCell colSpan={13} className="px-4 py-8 text-center text-slate-500">Loading control checks...</TableCell>
+                        <TableCell colSpan={14} className="px-4 py-8 text-center text-slate-500">Loading control checks...</TableCell>
                       </TableRow>
                     )}
                     {!isLoading && rows.length === 0 && (
                       <TableRow>
-                        <TableCell colSpan={13} className="px-4 py-8 text-center text-slate-500">No gaps found for the selected filters.</TableCell>
+                        <TableCell colSpan={14} className="px-4 py-8 text-center text-slate-500">No gaps found for the selected filters.</TableCell>
                       </TableRow>
                     )}
                     {!isLoading && rows.map((row) => (
@@ -808,6 +829,9 @@ export default function AttendanceControlTower() {
                           </div>
                         </TableCell>
                         <TableCell className="max-w-[260px] px-3 py-2 text-xs text-slate-600">{row.payrollImpact}</TableCell>
+                        <TableCell className="px-3 py-2 text-right text-xs">
+                          {(() => { const d = daysOpen(row.reviewCreatedAt); if (d === null) return <span className="text-slate-400">—</span>; return <span className={daysOpenStyle(d)}>{d}d</span>; })()}
+                        </TableCell>
                         <TableCell className="max-w-[260px] px-3 py-2">
                           <div className="space-y-2">
                             <div className="text-xs text-slate-600">{row.actionNeeded}</div>
@@ -863,6 +887,21 @@ export default function AttendanceControlTower() {
                                   Repair ADR
                                 </Button>
                               ) : null}
+                              {row.issueType === "salary_payable_days_mismatch" && row.employeeId && !data?.run?.attendance_snapshot_locked && (
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  className="h-7 px-2 text-xs border-indigo-300 text-indigo-700 hover:bg-indigo-50"
+                                  onClick={() => {
+                                    if (!data?.run?.id) return;
+                                    void hrmsApi.post(`/api/payroll/runs/${data.run!.id}/recalculate-drift`, {
+                                      employee_ids: [row.employeeId],
+                                    }).then(() => { void refetch(); });
+                                  }}
+                                >
+                                  <RefreshCw className="h-3 w-3 mr-1" />Recalculate
+                                </Button>
+                              )}
                               {row.employeeId ? (
                                 <Button asChild size="sm" variant="outline" className="h-8 px-2 text-xs">
                                   <Link to={`/attendance-regularization?employeeId=${encodeURIComponent(row.employeeId)}&date=${encodeURIComponent(row.issueDate)}`}>
@@ -891,6 +930,15 @@ export default function AttendanceControlTower() {
             </CardContent>
           </Card>
         </div>
+        {data?.run && (
+          <div className="mt-6">
+            <SalaryDriftPanel
+              runId={data.run.id}
+              runMonth={data.runMonth}
+              snapshotLocked={Boolean(data.run.attendance_snapshot_locked)}
+            />
+          </div>
+        )}
       </div>
     </DashboardLayout>
   );

@@ -134,7 +134,7 @@ async function attachReviewState(gaps: AttendanceControlGap[]) {
   const keys = gaps.map((gap) => gap.id);
   if (keys.length === 0) return gaps;
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT conflict_key, status, review_note
+    `SELECT conflict_key, status, review_note, created_at
        FROM payroll_attendance_conflict_review
       WHERE conflict_key IN (${keys.map(() => "?").join(",")})`,
     keys,
@@ -146,6 +146,7 @@ async function attachReviewState(gaps: AttendanceControlGap[]) {
       ...gap,
       reviewStatus: String(review?.status ?? "open"),
       reviewNote: review?.review_note ? String(review.review_note) : null,
+      reviewCreatedAt: review?.created_at ? String(review.created_at) : null,
     };
   });
 }
@@ -1000,7 +1001,12 @@ export const payrollAttendanceControlService = {
       runMonth,
       from,
       to,
-      run: run ?? null,
+      run: run
+        ? {
+            ...run,
+            attendance_snapshot_locked: Number(run.attendance_snapshot_locked ?? 0),
+          }
+        : null,
       status: blockers > 0 ? "blocked" : warnings > 0 ? "warning" : "ready",
       summary: {
         totalGaps: visibleGaps.length,
