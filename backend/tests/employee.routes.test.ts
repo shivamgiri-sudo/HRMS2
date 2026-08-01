@@ -5,6 +5,12 @@ vi.mock("../src/db/supabaseAdmin.js", () => ({
   supabaseAdmin: {},
   supabaseAuthClient: { auth: { getUser: vi.fn() } },
 }));
+// Authentication is MySQL JWT. This suite used to sign in by mocking
+// supabaseAuthClient.auth.getUser, which the request path no longer consults —
+// so every request 401'd and none of the assertions below were reached.
+vi.mock("../src/modules/auth/auth.service.js", () => ({
+  authService: { verifyAccessToken: vi.fn() },
+}));
 vi.mock("../src/db/mysql.js", () => ({ db: { execute: vi.fn().mockResolvedValue([[], []]) }, pingDb: vi.fn() }));
 vi.mock("../src/modules/employees/employee.service.js", () => ({
   employeeService: {
@@ -45,11 +51,14 @@ vi.mock("../src/middleware/scopeMiddleware.js", () => ({
   getTargetFromBodyOrQuery: () => ({}),
 }));
 
-import { supabaseAuthClient } from "../src/db/supabaseAdmin.js";
 import { employeeService } from "../src/modules/employees/employee.service.js";
+import { authService } from "../src/modules/auth/auth.service.js";
+import { invalidateAuthContextCache } from "../src/middleware/authMiddleware.js";
+import { db } from "../src/db/mysql.js";
 import { app } from "../src/app.js";
 
-const mockGetUser = supabaseAuthClient.auth.getUser as ReturnType<typeof vi.fn>;
+const mockVerify = authService.verifyAccessToken as ReturnType<typeof vi.fn>;
+const mockExecute = db.execute as ReturnType<typeof vi.fn>;
 const svc = employeeService as { [K in keyof typeof employeeService]: ReturnType<typeof vi.fn> };
 const AUTH = { Authorization: "Bearer mock-token-admin" };
 
@@ -65,7 +74,22 @@ const fakeEmployee = {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mockGetUser.mockResolvedValue({ data: { user: { id: "user-1", email: "admin@mcn.com" } }, error: null });
+  // requireAuth caches resolved roles per user for 30 seconds; clear it so each
+  // test starts from the same state rather than inheriting the previous one's.
+  invalidateAuthContextCache("user-1");
+  mockVerify.mockReturnValue({ id: "user-1", email: "admin@mcn.com" });
+
+  // GET /:id resolves the employee's branch and process before exposing the
+  // profile, so it can check scope — and 404s when that lookup finds nothing.
+  // Matched on SQL rather than by call order, so the route is free to add or
+  // reorder queries without silently shifting a positional chain.
+  mockExecute.mockImplementation(async (sql: unknown) => {
+    const text = String(sql);
+    if (/FROM employees WHERE id/i.test(text)) {
+      return [[{ branch_id: "branch-1", process_id: "proc-1" }], []];
+    }
+    return [[], []];
+  });
 });
 
 describe("POST /api/employees", () => {

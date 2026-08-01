@@ -5,6 +5,12 @@ vi.mock("../src/db/supabaseAdmin.js", () => ({
   supabaseAdmin: {},
   supabaseAuthClient: { auth: { getUser: vi.fn() } },
 }));
+// Authentication is MySQL JWT. Signing in via supabaseAuthClient.auth.getUser
+// stopped working when auth moved off Supabase — every request 401'd, so none
+// of the assertions below were reached.
+vi.mock("../src/modules/auth/auth.service.js", () => ({
+  authService: { verifyAccessToken: vi.fn() },
+}));
 vi.mock("../src/db/mysql.js", () => ({
   db: { execute: vi.fn().mockResolvedValue([[], []]) },
   pingDb: vi.fn(),
@@ -53,10 +59,15 @@ vi.mock("../src/shared/accessGuard.js", () => ({
 }));
 
 import { supabaseAuthClient } from "../src/db/supabaseAdmin.js";
+import { authService } from "../src/modules/auth/auth.service.js";
+import { invalidateAuthContextCache } from "../src/middleware/authMiddleware.js";
+import { db } from "../src/db/mysql.js";
 import { leaveService } from "../src/modules/leave/leave.service.js";
 import { app } from "../src/app.js";
 
 const mockGetUser = supabaseAuthClient.auth.getUser as ReturnType<typeof vi.fn>;
+const mockVerify = authService.verifyAccessToken as ReturnType<typeof vi.fn>;
+const mockExecute = db.execute as ReturnType<typeof vi.fn>;
 const svc = leaveService as { [K in keyof typeof leaveService]: ReturnType<typeof vi.fn> };
 const AUTH = { Authorization: "Bearer mock-token-admin" };
 
@@ -68,6 +79,9 @@ const fakeHoliday = { id: "hol-1", holiday_name: "Diwali", holiday_date: "2026-1
 beforeEach(() => {
   vi.clearAllMocks();
   mockGetUser.mockResolvedValue({ data: { user: { id: "user-1", email: "admin@mcn.com" } }, error: null });
+  // requireAuth caches resolved roles per user for 30 seconds.
+  invalidateAuthContextCache("user-1");
+  mockVerify.mockReturnValue({ id: "user-1", email: "admin@mcn.com" });
 });
 
 describe("GET /api/leave/types", () => {
@@ -118,10 +132,22 @@ describe("POST /api/leave/requests", () => {
 
 describe("GET /api/leave/requests", () => {
   it("returns paginated requests", async () => {
-    svc.listRequests.mockResolvedValueOnce({ data: [fakeRequest], total: 1, page: 1, limit: 20 });
+    // Served by leaveSecureRouter, which app.ts mounts BEFORE leaveRouter on the
+    // same /api/leave base — so this path never reaches leaveController and the
+    // leaveService.listRequests mock is not consulted. The secure handler builds
+    // its own SQL, so the rows are supplied through the db mock instead.
+    mockExecute.mockImplementation(async (sql: unknown) => {
+      const text = String(sql);
+      if (/COUNT\(\*\)/i.test(text)) return [[{ total: 1 }], []];
+      if (/FROM leave_request lr/i.test(text)) return [[fakeRequest], []];
+      return [[], []];
+    });
+
     const r = await request(app).get("/api/leave/requests").set(AUTH);
+
     expect(r.status).toBe(200);
     expect(r.body.data).toHaveLength(1);
+    expect(r.body.total).toBe(1);
   });
 });
 
