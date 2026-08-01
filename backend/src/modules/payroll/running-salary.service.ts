@@ -186,7 +186,49 @@ export async function computeRunningSalary(
     eligibleHolidaysTillDate;
   const cappedEarned = Math.min(Math.max(0, earnedPayableDays), activeCalDays);
 
-  const earnedSalaryTillDate = (monthlyGross / daysInMonth) * cappedEarned;
+  let earnedSalaryTillDate = (monthlyGross / daysInMonth) * cappedEarned;
+
+  // E1.9: Add approved incentives to earned salary (same as projected path below).
+  // Incentives are a month-level lump sum approved before payroll runs — they are
+  // earned as of approval, not spread across days, so they belong in the earned
+  // figure as soon as they are approved.
+  const [incentiveRowsEarned] = await db.execute<RowDataPacket[]>(
+    `SELECT SUM(COALESCE(iul.amount, 0)) AS total_incentives
+       FROM incentive_upload_line iul
+       JOIN incentive_upload_batch ibu ON ibu.id = iul.batch_id
+      WHERE iul.employee_id = ?
+        AND ibu.pay_month = ?
+        AND ibu.status = 'approved'`,
+    [employeeId, runMonth.slice(0, 7)],
+  );
+  const approvedIncentivesEarned = Number((incentiveRowsEarned[0] as any)?.total_incentives ?? 0);
+  earnedSalaryTillDate += approvedIncentivesEarned;
+
+  // Advance recovery — same query as payrollCalculate.service.ts step 5d
+  let advanceRecoveryEarned = 0;
+  try {
+    const [advRows] = await db.execute<RowDataPacket[]>(
+      `SELECT COALESCE(SUM(ROUND(amount / recovery_months, 2)), 0) AS monthly_recovery
+         FROM salary_advance_log
+        WHERE employee_id = ? AND status = 'active'`,
+      [employeeId],
+    );
+    advanceRecoveryEarned = Number((advRows[0] as any)?.monthly_recovery ?? 0);
+  } catch { /* table may not exist in all environments */ }
+
+  // Loan EMI recovery
+  let loanEmiEarned = 0;
+  try {
+    const monthStartStr = runMonth.slice(0, 7) + "-01";
+    const [loanRows] = await db.execute<RowDataPacket[]>(
+      `SELECT COALESCE(SUM(deduction_per_month), 0) AS loan_emi
+         FROM employee_loans
+        WHERE employee_id = ? AND status = 'active'
+          AND start_date <= ? AND (end_date IS NULL OR end_date >= ?)`,
+      [employeeId, monthStartStr, monthStartStr],
+    );
+    loanEmiEarned = Number((loanRows[0] as any)?.loan_emi ?? 0);
+  } catch { /* employee_loans may not exist */ }
 
   // Prorated deductions on earned gross
   const ptEarned = emp.state_code
@@ -202,7 +244,7 @@ export async function computeRunningSalary(
     ? (fixedHRA / monthlyGross) * 100
     : (emp.hra_pct ?? 20);
 
-  const earnedCalc = payrollService.calculateNetSalary({
+  const earnedCalcRaw = payrollService.calculateNetSalary({
     grossMonthlyCTC: earnedSalaryTillDate,
     workingDays: Math.max(1, cappedEarned),
     lwpDays: 0, // LWP already baked into cappedEarned
@@ -213,6 +255,11 @@ export async function computeRunningSalary(
     hraPct: effectiveHraPct,
     pfOptOut, esicOptOut,
   });
+  // Mirror the payroll-calculate deduction pass: subtract advance recovery and loan EMI
+  const earnedCalc = {
+    ...earnedCalcRaw,
+    net_salary: Math.max(0, earnedCalcRaw.net_salary - advanceRecoveryEarned - loanEmiEarned),
+  };
 
   // ── Projection ────────────────────────────────────────────────────────────
   // Count remaining calendar days from tomorrow to month-end.
@@ -254,18 +301,8 @@ export async function computeRunningSalary(
   const projectedPayableDays = Math.min(Math.max(0, projectedPayableDaysRaw), activeCalDays);
   let projectedSalary = (monthlyGross / daysInMonth) * projectedPayableDays;
 
-  // E1.9: Add approved incentives to projected salary
-  const [incentiveRows] = await db.execute<RowDataPacket[]>(
-    `SELECT SUM(COALESCE(iul.amount, 0)) AS total_incentives
-       FROM incentive_upload_line iul
-       JOIN incentive_upload_batch ibu ON ibu.id = iul.batch_id
-      WHERE iul.employee_id = ?
-        AND ibu.pay_month = ?
-        AND ibu.status = 'approved'`,
-    [employeeId, runMonth.slice(0, 7)]
-  );
-  const approvedIncentives = Number((incentiveRows[0] as any)?.total_incentives ?? 0);
-  projectedSalary += approvedIncentives;
+  // E1.9: Add approved incentives to projected salary (same value already fetched above for earned)
+  projectedSalary += approvedIncentivesEarned;
 
   // Prorated deductions on projected gross
   const ptProjected = emp.state_code

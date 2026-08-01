@@ -114,7 +114,11 @@ export function RunningMonthCard({
           <p className="text-xs text-slate-500 mt-0.5">Net (after deductions): <span className="font-semibold text-slate-800">{amount(INR(rs.earned_net_till_date))}</span></p>
           {dataUpdatedAt > 0 && (
             <p className="text-[10px] text-slate-400 mt-1">
-              Live estimate · {formatLastSynced(dataUpdatedAt)}
+              {rs.is_finalized && !rs.is_draft
+                ? `Finalised · ${formatLastSynced(dataUpdatedAt)}`
+                : rs.is_draft
+                  ? `Draft (calculated) · ${formatLastSynced(dataUpdatedAt)}`
+                  : `Live estimate · ${formatLastSynced(dataUpdatedAt)}`}
             </p>
           )}
         </div>

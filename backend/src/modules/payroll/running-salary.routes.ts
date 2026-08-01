@@ -123,7 +123,9 @@ async function getFinalizedLineForMonth(
   active_calendar_days: number;
   lwp_days: number;
   present_days: number;
-  is_finalized: true;
+  is_finalized: boolean;
+  /** true when the run is still in draft/processing — figures are calculated but not yet locked */
+  is_draft: boolean;
   // Live-estimate field aliases — keeps all frontend consumers consistent
   earned_salary_till_date: number;
   earned_net_till_date: number;
@@ -150,29 +152,27 @@ async function getFinalizedLineForMonth(
        JOIN salary_prep_run spr ON spr.id = spl.run_id
       WHERE spl.employee_id = ?
         AND spr.run_month = ?
-        -- 'finalized' belongs here and was missing, which inverted this whole
-        -- override. Production has 51 FINALIZED runs (2021-03 to 2026-04) and
-        -- zero rows in 'locked', 'disbursed' or 'completed' — so the most
-        -- settled months, 63,316 employee-months of them, fell through to a
-        -- live estimate recomputed from *current* attendance, while the 12
-        -- 'approved' months got the stored figure. Exactly backwards: a closed
-        -- month should show what was actually paid.
-        --
-        -- Lowercase matches the stored 'FINALIZED' because the column collates
-        -- utf8mb4_unicode_ci.
-        AND spr.status IN ('locked', 'approved', 'disbursed', 'completed', 'finalized')
+        -- Include draft/processing runs so the running-summary returns the stored
+        -- calculated figures as soon as payroll has run — not a live re-estimate
+        -- that will differ from what the payslip page shows. The is_draft flag in
+        -- the response lets the frontend label it "Draft" rather than "Live estimate".
+        AND spr.status IN ('locked', 'approved', 'disbursed', 'completed', 'finalized',
+                           'draft', 'processing', 'calculating', 'calculated')
         AND spl.status NOT IN ('excluded', 'blocked')
       ORDER BY
-        -- Most authoritative first. 'finalized' has to outrank 'approved', not
-        -- sit in the ELSE: 2026-03 carries both an approved and a FINALIZED run,
-        -- and without this the approved one would still win the tie.
+        -- Most authoritative first. Finalized/disbursed outrank draft so a
+        -- re-run that produces a second line for the same month uses the settled one.
         CASE spr.status
-          WHEN 'disbursed'  THEN 1
-          WHEN 'finalized'  THEN 2
-          WHEN 'locked'     THEN 3
-          WHEN 'approved'   THEN 4
-          WHEN 'completed'  THEN 5
-          ELSE 6
+          WHEN 'disbursed'   THEN 1
+          WHEN 'finalized'   THEN 2
+          WHEN 'locked'      THEN 3
+          WHEN 'approved'    THEN 4
+          WHEN 'completed'   THEN 5
+          WHEN 'calculated'  THEN 6
+          WHEN 'processing'  THEN 7
+          WHEN 'calculating' THEN 8
+          WHEN 'draft'       THEN 9
+          ELSE 10
         END
       LIMIT 1`,
     [employeeId, runMonthYYYYMM],
@@ -185,8 +185,10 @@ async function getFinalizedLineForMonth(
   const weekoffDays   = Number(row.eligible_weekoff_days ?? 0);
   const holidayDays   = Number(row.eligible_holiday_days ?? 0);
   const lwpDays       = Number(row.lwp_days       ?? 0);
+  const runStatus     = String(row.run_status ?? "");
+  const CLOSED_STATUSES = new Set(["disbursed", "finalized", "locked", "approved", "completed"]);
   return {
-    run_status:           String(row.run_status),
+    run_status:           runStatus,
     run_month:            String(row.run_month),
     gross_salary:         grossSalary,
     total_deductions:     Number(row.total_deductions ?? 0),
@@ -205,7 +207,8 @@ async function getFinalizedLineForMonth(
     active_calendar_days: Number(row.active_calendar_days ?? 0),
     lwp_days:             lwpDays,
     present_days:         Number(row.present_days ?? 0),
-    is_finalized:         true,
+    is_finalized:         CLOSED_STATUSES.has(runStatus.toLowerCase()),
+    is_draft:             !CLOSED_STATUSES.has(runStatus.toLowerCase()),
     // Aliases matching the live-estimate field names so every frontend consumer
     // (SalaryTab, RunningPayrollBreakdown, PayslipViewer) works identically
     // whether the month is finalized or still in progress.

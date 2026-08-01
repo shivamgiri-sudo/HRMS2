@@ -93,6 +93,10 @@ export interface RunningSalary {
    * substitutes after lock carries a real TDS figure.
    */
   tds?: number;
+  /** True when the backend returned a stored calculated line rather than a live estimate. */
+  is_finalized?: boolean;
+  /** True when the run is still in draft/processing — calculated but not yet locked. */
+  is_draft?: boolean;
 }
 
 export interface PayslipSummary {
