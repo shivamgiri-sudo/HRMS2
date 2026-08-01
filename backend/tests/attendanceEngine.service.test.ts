@@ -18,7 +18,7 @@ import {
   attendanceEngineService,
   classifyCosecMinutes,
   classifyOperationsNetLogin,
-  isOperationsExecutive,
+  isOperationsExecutiveByRegex,
   type EngineResult,
 } from '../src/modules/wfm/attendance-engine.service.js';
 
@@ -32,12 +32,12 @@ describe('attendance engine policy', () => {
   });
 
   it('limits net-login attendance to Operations Executive variants', () => {
-    expect(isOperationsExecutive('OPERATIONS', 'EXECUTIVE')).toBe(true);
-    expect(isOperationsExecutive('OPERATIONS', 'EXECUTIVE - VOICE')).toBe(true);
-    expect(isOperationsExecutive('OPERATIONS', 'EXECUTIVE - BACKEND')).toBe(true);
-    expect(isOperationsExecutive('OPERATIONS', 'SR. EXECUTIVE - VOICE')).toBe(false);
-    expect(isOperationsExecutive('OPERATIONS', 'TEAM LEADER')).toBe(false);
-    expect(isOperationsExecutive('INFORMATION TECHNOLOGY', 'EXECUTIVE')).toBe(false);
+    expect(isOperationsExecutiveByRegex('OPERATIONS', 'EXECUTIVE')).toBe(true);
+    expect(isOperationsExecutiveByRegex('OPERATIONS', 'EXECUTIVE - VOICE')).toBe(true);
+    expect(isOperationsExecutiveByRegex('OPERATIONS', 'EXECUTIVE - BACKEND')).toBe(true);
+    expect(isOperationsExecutiveByRegex('OPERATIONS', 'SR. EXECUTIVE - VOICE')).toBe(false);
+    expect(isOperationsExecutiveByRegex('OPERATIONS', 'TEAM LEADER')).toBe(false);
+    expect(isOperationsExecutiveByRegex('INFORMATION TECHNOLOGY', 'EXECUTIVE')).toBe(false);
   });
 
   it('uses the strict eight-hour and four-hour net-login boundaries', () => {
