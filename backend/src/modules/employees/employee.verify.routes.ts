@@ -31,6 +31,26 @@ function normalizePublicPhotoUrl(value: unknown) {
   return trimmed.replace(/^\/api\/files\/employee-photos\//, "/uploads/employee-photos/");
 }
 
+/**
+ * Public appointment-letter verification, reached by the QR printed on the letter.
+ *
+ * Deliberately minimal: name, employee code, designation, joining date, issue
+ * date, letter number, and whether it is revoked. No salary, no address, no
+ * Aadhaar or PAN — a verification page that leaks a salary would be worse than
+ * having none.
+ *
+ * Looked up by an opaque token, never by the sequential letter number, so the
+ * numbering cannot be walked.
+ */
+employeeVerifyRouter.get("/appointment/:token", h(async (req, res) => {
+  const { verifyAppointmentLetter } = await import("../letters/appointmentLetterVerify.service.js");
+  const result = await verifyAppointmentLetter(String(req.params.token ?? ""));
+  if (!result.found) {
+    return res.status(404).json({ success: false, message: "No appointment letter matches this verification link." });
+  }
+  return res.json({ success: true, data: { ...result, verified_at: new Date().toISOString() } });
+}));
+
 employeeVerifyRouter.get("/emp/:employeeCode", h(async (req, res) => {
   const employeeCode = String(req.params.employeeCode ?? "").trim();
   if (!employeeCode) return res.status(400).json({ success: false, message: "Employee code is required" });

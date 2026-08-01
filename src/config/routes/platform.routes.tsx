@@ -22,6 +22,7 @@ const NativeSupportCommandCenter    = lazy(() => import("@/pages/NativeSupportCo
 const NativeGrievanceCommandCenter  = lazy(() => import("@/pages/NativeGrievanceCommandCenter"));
 const NativeLetters                 = lazy(() => import("@/pages/NativeLetters"));
 const NativeLetterPreview           = lazy(() => import("@/pages/NativeLetterPreview"));
+const NativeCompanySigningCertificate = lazy(() => import("@/pages/NativeCompanySigningCertificate"));
 const NativeDocumentVerification    = lazy(() => import("@/pages/NativeDocumentVerification"));
 const NativeOrgMasters              = lazy(() => import("@/pages/NativeOrgMasters"));
 const NativeLocationPolicyMasters   = lazy(() => import("@/pages/NativeLocationPolicyMasters"));
@@ -118,6 +119,9 @@ export const platformRouteElements = (
       {/* Letters */}
       <Route path="/letters"                   element={<ProtectedRoute><Gate pageCode="LETTERS"><NativeLetters /></Gate></ProtectedRoute>} />
       <Route path="/letters/:id/preview"       element={<ProtectedRoute><NativeLetterPreview /></ProtectedRoute>} />
+      {/* Company signing certificate. The backend router is super_admin-only; this
+          route is intentionally not page-gated so a Super Admin can always reach it. */}
+      <Route path="/settings/signing-certificate" element={<ProtectedRoute><NativeCompanySigningCertificate /></ProtectedRoute>} />
       {/* /employee/joining-documents/esign/:token and /employee/epf-compliance/review/:token are in public.routes */}
 
       {/* Helpdesk / Support */}
