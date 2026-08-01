@@ -57,6 +57,13 @@ const HR_ONLY_CHECKLIST_STATUSES = new Set([
   "signed_verified",
   "needs_correction",
   "correction_requested",
+  // Asserting that a wet-signed copy is on file is a verification outcome like any
+  // other: recalculateDocumentProgress counts it toward mandatory_completed, it is
+  // in the terminal-status set, and payroll-governance treats it as satisfying the
+  // joining-document gate. Left out of this list it was settable by the employee
+  // themselves via isSelf access - self-approval of their own paperwork, the exact
+  // hole already closed for 'verified'.
+  "wet_signed_uploaded",
 ]);
 
 type ActorType = "hr" | "candidate" | "system" | "employee" | "public_token";
@@ -1019,6 +1026,15 @@ export async function uploadJoiningDocument(params: {
   actorUserId: string;
   ipAddress?: string | null;
   userAgent?: string | null;
+  /**
+   * HR is filing a physically signed copy because e-signing could not be used.
+   * The provider is not always available - Luckpay rejects the DOCX drafts these
+   * templates produce with "Unable to generate appearance" - and the API already
+   * tells the operator to "use the wet-sign fallback workflow". Until now that
+   * workflow did not exist: wet_signed_uploaded was read in five places and
+   * written in none, so the fallback the UI advertised could never be reached.
+   */
+  wetSigned?: boolean;
 }) {
   const access = await resolveEmployeeDocumentAccessContext(params.actorUserId, params.employeeId);
   const checklist = await fetchChecklistRow(params.checklistId);
@@ -1072,7 +1088,17 @@ export async function uploadJoiningDocument(params: {
     employeeCode: access.target.employee_code ?? "",
   }).catch(() => null);
 
-  const nextStatus = checklist.action_type === "esign" ? "uploaded_pending_esign" : "uploaded_pending_review";
+  let nextStatus = checklist.action_type === "esign" ? "uploaded_pending_esign" : "uploaded_pending_review";
+  if (params.wetSigned) {
+    // Same guard as every other verification outcome - see HR_ONLY_CHECKLIST_STATUSES.
+    const isHrReviewer = access.isAdmin || access.roles.some((role) => [...HR_SCOPE_ROLES, "hr"].includes(role));
+    if (!isHrReviewer) {
+      const err = new Error('Only HR-scoped users can file a wet-signed copy') as Error & { statusCode?: number };
+      err.statusCode = 403;
+      throw err;
+    }
+    nextStatus = "wet_signed_uploaded";
+  }
   await db.execute(
     `UPDATE employee_joining_document_checklist
         SET status = ?,

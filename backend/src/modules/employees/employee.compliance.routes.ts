@@ -500,6 +500,7 @@ employeeJoiningDocumentsRouter.post("/:employeeId/joining-documents/checklist/:c
     checklistId: req.params.checklistId,
     file: req.file,
     actorUserId: req.authUser!.id,
+      wetSigned: String(req.body?.wetSigned ?? req.body?.wet_signed ?? "").toLowerCase() === "true",
     ipAddress: req.ip,
     userAgent: req.get("user-agent") ?? null,
   });
@@ -513,6 +514,7 @@ employeeJoiningDocumentsRouter.post("/:employeeId/joining-documents/:checklistId
     checklistId: req.params.checklistId,
     file: req.file,
     actorUserId: req.authUser!.id,
+      wetSigned: String(req.body?.wetSigned ?? req.body?.wet_signed ?? "").toLowerCase() === "true",
     ipAddress: req.ip,
     userAgent: req.get("user-agent") ?? null,
   });
