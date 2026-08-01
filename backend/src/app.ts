@@ -406,6 +406,11 @@ app.use("/api/org", orgRouter);
 app.use("/api/org-chart", orgChartRouter);
 app.use("/api/ats-ext", atsExtRouter);
 app.use("/api/files", filesRouter); // must be before clientRouter (which applies requireAuth to /api/*)
+// Public joining-document e-sign links carry their own single-use token and must NOT
+// require a session. This has to stay ABOVE the "/api" clientRouter mount below, which
+// applies requireAuth to every /api/* path â€” when it sat underneath, every signing link
+// a candidate clicked answered "missing authorization token".
+app.use("/api/public/employee-documents", publicEmployeeDocumentRouter);
 app.use("/api", clientRouter);
 app.use("/api/onboarding/data", onboardingDataRouter);
 app.use("/api/onboarding/penny-drop", pennyDropRouter);
@@ -419,7 +424,6 @@ app.use("/api/employee-docs", employeeDocsRouter);
 app.use("/api/hr", hrDocumentTemplatesRouter);
 app.use("/api/company-seal", companySealRouter);
 app.use("/api/payroll", payrollEpfComplianceRouter);
-app.use("/api/public/employee-documents", publicEmployeeDocumentRouter);
 app.use("/api/helpdesk", helpdeskRouter);
 app.use("/api/letters", lettersRouter);
 app.use("/api/letters", appointmentEsignRouter);
