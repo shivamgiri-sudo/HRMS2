@@ -209,5 +209,13 @@ router.post("/brain-teaser/answer", h(c.submitTeaserAnswer));
 router.get("/brain-teaser/bank", requireRole("admin", "hr", "super_admin"), h(c.getTeaserBank));
 router.post("/brain-teaser/bank", requireRole("admin", "hr", "super_admin"), h(c.createTeaser));
 
+// =========================================================================
+// Word Puzzle (Wordle-style)
+// =========================================================================
+router.get("/word-puzzle/today", h(c.getTodayPuzzle));
+router.post("/word-puzzle/guess", h(c.submitWordGuess));
+router.get("/word-puzzle/bank", requireRole("admin", "hr", "super_admin"), h(c.getWordPuzzleBank));
+router.post("/word-puzzle/bank", requireRole("admin", "hr", "super_admin"), h(c.createWordPuzzle));
+
 export { router as engagementRouter };
 

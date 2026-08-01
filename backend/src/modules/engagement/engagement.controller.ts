@@ -408,5 +408,43 @@ export const engagementController = {
     const result = await brainTeaserService.getTeaserBank({ limit, offset, category });
     return res.json({ success: true, data: result });
   },
+
+  // =========================================================================
+  // Word Puzzle (Wordle-style)
+  // =========================================================================
+
+  async getTodayPuzzle(req: AuthenticatedRequest, res: Response) {
+    const employee = await requireEmployee(req);
+    const { wordPuzzleService } = await import('./word-puzzle.service.js');
+    const result = await wordPuzzleService.getTodayPuzzle(employee.id);
+    return res.json({ success: true, data: result });
+  },
+
+  async submitWordGuess(req: AuthenticatedRequest, res: Response) {
+    const employee = await requireEmployee(req);
+    const { puzzleId, guess } = req.body;
+    if (!puzzleId || !guess) {
+      return res.status(400).json({ success: false, error: 'puzzleId and guess are required' });
+    }
+    const { wordPuzzleService } = await import('./word-puzzle.service.js');
+    const result = await wordPuzzleService.submitGuess(employee.id, puzzleId, guess);
+    return res.json({ success: true, data: result });
+  },
+
+  async createWordPuzzle(req: AuthenticatedRequest, res: Response) {
+    const userId = req.authUser?.id;
+    if (!userId) return res.status(401).json({ success: false, error: 'Unauthorized' });
+    const { wordPuzzleService } = await import('./word-puzzle.service.js');
+    const puzzle = await wordPuzzleService.createPuzzle(req.body, userId);
+    return res.status(201).json({ success: true, data: puzzle });
+  },
+
+  async getWordPuzzleBank(req: AuthenticatedRequest, res: Response) {
+    const limit = Math.min(Number(req.query.limit) || 50, 100);
+    const offset = Number(req.query.offset) || 0;
+    const { wordPuzzleService } = await import('./word-puzzle.service.js');
+    const result = await wordPuzzleService.getPuzzleBank({ limit, offset });
+    return res.json({ success: true, data: result });
+  },
 };
 
