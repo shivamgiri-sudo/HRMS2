@@ -97,9 +97,17 @@ describe("exitService.createExitRequest", () => {
   beforeEach(() => vi.clearAllMocks());
 
   it("inserts exit request and returns it", async () => {
-    mockExecute.mockResolvedValueOnce([[], []]);               // open-check: no active exit request
-    mockExecute.mockResolvedValueOnce([{ affectedRows: 1 }]); // INSERT
-    mockExecute.mockResolvedValueOnce([[fakeRequest]]);         // re-fetch via getExitRequest
+    // Keyed on the statement, not call order: createExitRequest also looks up the
+    // employee to notify between the INSERT and the re-fetch, so a positional
+    // chain fed the re-fetch's row to that lookup and getExitRequest then threw
+    // "Exit request not found".
+    mockExecute.mockImplementation(async (sql: unknown) => {
+      const text = String(sql);
+      if (/SELECT id\s+FROM exit_request/i.test(text)) return [[], []];   // no active request
+      if (/INSERT INTO exit_request/i.test(text)) return [{ affectedRows: 1 }, []];
+      if (/SELECT er\.\*/i.test(text)) return [[fakeRequest], []];       // getExitRequest
+      return [[], []];
+    });
     const result = await exitService.createExitRequest(
       { employeeId: "emp-1", exitDate: "2026-06-30", exitType: "voluntary", reason: "Better opportunity" },
       "user-1"
@@ -109,16 +117,28 @@ describe("exitService.createExitRequest", () => {
   });
 
   it("passes null reason when not provided", async () => {
-    mockExecute.mockResolvedValueOnce([[], []]);               // open-check: no active exit request
-    mockExecute.mockResolvedValueOnce([{ affectedRows: 1 }]); // INSERT
-    mockExecute.mockResolvedValueOnce([[{ ...fakeRequest, resignation_reason: null }]]); // re-fetch
+    // Same statement-keyed stub as above. It also has to be re-declared per test:
+    // vi.clearAllMocks() clears recorded calls but leaves the implementation in
+    // place, so without this the previous test's row would be returned here.
+    mockExecute.mockImplementation(async (sql: unknown) => {
+      const text = String(sql);
+      if (/SELECT id\s+FROM exit_request/i.test(text)) return [[], []];
+      if (/INSERT INTO exit_request/i.test(text)) return [{ affectedRows: 1 }, []];
+      if (/SELECT er\.\*/i.test(text)) return [[{ ...fakeRequest, resignation_reason: null }], []];
+      return [[], []];
+    });
     const result = await exitService.createExitRequest(
       { employeeId: "emp-2", exitDate: "2026-07-31", exitType: "voluntary" },
       "user-2"
     );
     expect(result.resignation_reason).toBeNull();
-    const [, insertParams] = mockExecute.mock.calls[1]; // INSERT is call index 1 (after open-check)
-    expect(insertParams).toContain(null); // reason is null
+    // Located by statement rather than index — the service issues other queries
+    // around the INSERT, so a fixed index silently points at the wrong call.
+    const insertCall = mockExecute.mock.calls.find(([sql]) =>
+      /INSERT INTO exit_request/i.test(String(sql)),
+    );
+    expect(insertCall, "expected the exit request to be inserted").toBeDefined();
+    expect(insertCall![1]).toContain(null); // reason is null
   });
 });
 
