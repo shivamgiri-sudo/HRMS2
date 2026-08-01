@@ -124,7 +124,7 @@ const baseline = new Set(JSON.parse(readFileSync(BASELINE, "utf8")).failures ?? 
 const nowFailing = new Set(failing);
 
 let newlyBroken = failing.filter((id) => !baseline.has(id));
-const nowFixed = [...baseline].filter((id) => !nowFailing.has(id)).sort();
+let nowFixed = [...baseline].filter((id) => !nowFailing.has(id)).sort();
 
 // Confirm before accusing. This suite has timeout-prone tests, and a gate that
 // cries wolf on flake is a gate someone switches off. Re-run only the files that
@@ -138,6 +138,24 @@ if (newlyBroken.length) {
   if (flaky.length) {
     console.log(`  ${flaky.length} passed on retry — treating as flake, not a regression:`);
     for (const id of flaky) console.log(`    ${id}`);
+  }
+}
+
+// Same treatment in the other direction. A baseline entry that "now passes"
+// only because the suite was lucky this run is not fixed, and demanding its
+// removal makes the next run fail for the opposite reason — three consecutive
+// full runs here produced 135, 137 and 131 failures. Re-run the files involved
+// and keep only the entries that pass twice.
+let flakyFixed = [];
+if (nowFixed.length) {
+  const files = [...new Set(nowFixed.map((id) => id.split(" :: ")[0]))];
+  console.log(`\nRe-running ${files.length} file(s) to confirm ${nowFixed.length} fix(es)...`);
+  const stillFailing = new Set(idsOfFailures(runSuite(files)));
+  flakyFixed = nowFixed.filter((id) => stillFailing.has(id));
+  nowFixed = nowFixed.filter((id) => !stillFailing.has(id));
+  if (flakyFixed.length) {
+    console.log(`  ${flakyFixed.length} failed on retry — flaky, keeping in the baseline:`);
+    for (const id of flakyFixed) console.log(`    ${id}`);
   }
 }
 
