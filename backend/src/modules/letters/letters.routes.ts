@@ -9,6 +9,8 @@ import { renderLetterHtml } from "./letters-render.service.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
 import { db } from "../../db/mysql.js";
 import type { RowDataPacket } from "mysql2";
+import { resolveAppointmentLetterSalary, toLetterRows } from "./appointmentLetterData.service.js";
+import { istDate, assertUsableName } from "./letterFormat.js";
 
 const router = Router();
 const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any, next: any) => fn(req, res).catch(next);
@@ -182,41 +184,25 @@ router.post("/preview-html", requireRole("admin", "hr", "super_admin"), h(async 
   const emp = (empRows as RowDataPacket[])[0] as any;
   if (!emp) return res.status(404).json({ error: "Employee not found" });
 
-  // Fetch latest salary assignment for salary components
-  const [salRows] = await db.execute<RowDataPacket[]>(
-    `SELECT * FROM employee_salary_assignment WHERE employee_id = ? AND active_status = 1 ORDER BY effective_from DESC LIMIT 1`,
-    [employee_id]
-  );
-  const sal = (salRows as RowDataPacket[])[0] as any ?? {};
+
+  // Salary comes from the resolver, which knows the three real sources
+  // (approved package -> assignment -> legacy snapshot). The fields below
+  // previously read columns that do not exist on employee_salary_assignment,
+  // so every line of the salary table rendered "0.00".
+  const salary = await resolveAppointmentLetterSalary(employee_id);
 
   const data: Record<string, string> = {
-    full_name:         emp.full_name ?? "",
+    full_name:         assertUsableName(emp.full_name),
     employee_code:     emp.employee_code ?? "",
     designation:       emp.designation_name ?? "",
     department:        emp.dept_name ?? "",
     location:          emp.branch_name ?? "",
-    date_of_joining:   emp.date_of_joining?.toString().slice(0, 10) ?? "",
-    date_of_exit:      emp.date_of_exit?.toString().slice(0, 10) ?? "",
-    issued_date:       issued_date ?? new Date().toISOString().slice(0, 10),
+    date_of_joining:   istDate(emp.date_of_joining),
+    date_of_exit:      istDate(emp.date_of_exit),
+    issued_date:       istDate(issued_date ?? new Date()),
     epf_no:            emp.epf_number ?? "",
     esi_no:            emp.esic_number ?? "",
-    basic:             String(sal.basic_salary ?? "0.00"),
-    hra:               String(sal.hra ?? "0.00"),
-    conveyance:        String(sal.conveyance ?? "0.00"),
-    other_allowance:   String(sal.other_allowance ?? "0.00"),
-    special_allowance: String(sal.special_allowance ?? "0.00"),
-    bonus:             String(sal.bonus ?? "0.00"),
-    medical_allowance: String(sal.medical_allowance ?? "0.00"),
-    portfolio:         String(sal.portfolio ?? "0.00"),
-    pli:               String(sal.pli ?? "0.00"),
-    gross_salary:      String(sal.gross_salary ?? "0.00"),
-    esic:              String(sal.esic_employee ?? "0.00"),
-    epf:               String(sal.epf_employee ?? "0.00"),
-    net_salary:        String(sal.net_salary ?? "0.00"),
-    employer_esic:     String(sal.esic_employer ?? "0.00"),
-    employer_epf:      String(sal.epf_employer ?? "0.00"),
-    admin_charges:     String(sal.admin_charges ?? "0.00"),
-    ctc:               String(sal.ctc_monthly ? Number(sal.ctc_monthly) * 12 : (sal.ctc_annual ?? "0.00")),
+    ...toLetterRows(salary),
     ...(override_vars ?? {}),
   };
 
