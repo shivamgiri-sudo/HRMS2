@@ -14,6 +14,24 @@ import { atsService } from "../src/modules/ats/ats.service.js";
 
 const mockExecute = db.execute as ReturnType<typeof vi.fn>;
 
+/**
+ * Drain the mock between tests.
+ *
+ * vi.clearAllMocks() clears recorded calls but NOT queued mockResolvedValueOnce
+ * values. Several tests here queue more values than the service consumes — a
+ * spare INSERT result, an extra row set — and those survive into the next test,
+ * which then receives a value it never asked for. That is why listStageLogs saw
+ * { affectedRows: 1 } where it had queued a row array.
+ *
+ * mockReset() empties the queue and the implementation, so the default is
+ * re-established here: an empty result set, matching the global stub in setup.ts.
+ */
+function resetDbMock() {
+  mockExecute.mockReset();
+  mockExecute.mockResolvedValue([[], []]);
+}
+
+
 const fakeCandidate = {
   id: "cand-1",
   candidate_code: "ATS-20260001",
@@ -60,7 +78,7 @@ const fakeOnboardingBridge = {
 // ─── listCandidates ───────────────────────────────────────────────────────────
 
 describe("atsService.listCandidates", () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(resetDbMock);
 
   it("returns candidates", async () => {
     mockExecute.mockResolvedValueOnce([[fakeCandidate]]);
@@ -98,7 +116,7 @@ describe("atsService.listCandidates", () => {
 // ─── getCandidate ─────────────────────────────────────────────────────────────
 
 describe("atsService.getCandidate", () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(resetDbMock);
 
   it("returns candidate by id", async () => {
     mockExecute.mockResolvedValueOnce([[fakeCandidate]]);
@@ -127,7 +145,7 @@ const fullCandidateInput = {
 };
 
 describe("atsService.createCandidate", () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(resetDbMock);
 
   it("throws when mobile already exists", async () => {
     mockExecute.mockResolvedValueOnce([[{ id: fakeCandidate.id, current_stage: "Applied", active_status: 1 }]]);
@@ -156,16 +174,21 @@ describe("atsService.createCandidate", () => {
 // ─── moveStage ────────────────────────────────────────────────────────────────
 
 describe("atsService.moveStage", () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(resetDbMock);
 
   it("updates current_stage and inserts stage log", async () => {
     mockExecute.mockResolvedValueOnce([[fakeCandidate]]); // moveStage: getCandidate (initial)
     mockExecute.mockResolvedValueOnce([[fakeCandidate]]); // transitionCandidateState: SELECT id, current_stage
     mockExecute.mockResolvedValueOnce([{ affectedRows: 1 }]); // transitionCandidateState: UPDATE current_stage
     mockExecute.mockResolvedValueOnce([{ affectedRows: 1 }]); // transitionCandidateState: INSERT stage log
-    mockExecute.mockResolvedValueOnce([[{ ...fakeCandidate, current_stage: "Screening" }]]); // moveStage: getCandidate (re-fetch)
-    const result = await atsService.moveStage("cand-1", "Screening", "user-1", "Passed screening");
-    expect(result.current_stage).toBe("Screening");
+    // "Screening" is retired vocabulary. ats.status-machine.ts documents the
+    // replacement — Applied now leads to ["Arrival", "Round 1- HR Screening"],
+    // not "Screening" — so the old name is rejected as an illegal transition
+    // rather than being a fixture detail.
+    const nextStage = "Round 1- HR Screening";
+    mockExecute.mockResolvedValueOnce([[{ ...fakeCandidate, current_stage: nextStage }]]); // moveStage: getCandidate (re-fetch)
+    const result = await atsService.moveStage("cand-1", nextStage, "user-1", "Passed screening");
+    expect(result.current_stage).toBe(nextStage);
   });
 
   it("throws when candidate not found", async () => {
@@ -177,7 +200,7 @@ describe("atsService.moveStage", () => {
 // ─── listStageLogs ────────────────────────────────────────────────────────────
 
 describe("atsService.listStageLogs", () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(resetDbMock);
 
   it("returns logs for a candidate", async () => {
     mockExecute.mockResolvedValueOnce([[fakeStageLog]]);
@@ -190,7 +213,7 @@ describe("atsService.listStageLogs", () => {
 // ─── createOnboardingBridge ───────────────────────────────────────────────────
 
 describe("atsService.createOnboardingBridge", () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(resetDbMock);
 
   it("creates bridge and returns it", async () => {
     mockExecute.mockResolvedValueOnce([[fakeCandidate]]); // candidate check
@@ -215,7 +238,7 @@ describe("atsService.createOnboardingBridge", () => {
 });
 
 describe("atsService.listOnboardingBridges", () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(resetDbMock);
 
   it("returns the joined candidate lifecycle view with scope parameters", async () => {
     mockExecute.mockResolvedValueOnce([[{
@@ -236,7 +259,7 @@ describe("atsService.listOnboardingBridges", () => {
 // ─── listSourcingChannels ─────────────────────────────────────────────────────
 
 describe("atsService.listSourcingChannels", () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(resetDbMock);
 
   it("returns active sourcing channels", async () => {
     mockExecute.mockResolvedValueOnce([[
