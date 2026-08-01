@@ -13,6 +13,7 @@ import { db } from "../../db/mysql.js";
 import { fillAcroFormPdf, validateAcroFormTemplate } from "./pdfAcroFormFill.service.js";
 import { applyCompanySeal } from "./companySeal.service.js";
 import { resolveTemplateFile } from "./joiningDocumentTemplatePath.js";
+import { hasStructuredPdf, renderJoiningDocumentPdf } from "./joiningDocumentPdf.service.js";
 
 const STORAGE_ROOT = path.resolve(process.cwd(), "private-storage", "employee-joining-documents");
 
@@ -1663,10 +1664,26 @@ export async function generateChecklistDraft(
   let content: Buffer;
 
   try {
-    // Resolve once: the stored path may have been written on another OS, in which
-    // case the file is still here under its own name. See joiningDocumentTemplatePath.
+    // Prefer the letterheaded renderer wherever a definition exists.
+    //
+    // joiningDocumentPdf.service was written to issue these as finished, letterheaded
+    // PDFs carrying the company logo, address and page numbering - and was then never
+    // imported anywhere, so every joiner kept receiving the bare .docx produced from
+    // the placeholder template. Those files contain no images at all, which is why no
+    // logo has ever appeared on an issued document.
+    //
+    // It also fixes signing. Luckpay rejects every one of these .docx drafts with
+    // "Unable to generate appearance"; the only document that ever signed cleanly was
+    // a PDF. Six document codes have definitions - BAMS_DECLARATION,
+    // EMPLOYMENT_CONTRACT, IT_COMPLIANCE, NDA_CONFIDENTIALITY, PI_PROCESSING_CONSENT
+    // and ZERO_TOLERANCE_ACK - and they are exactly the six that were failing.
+    //
+    // Anything without a definition keeps the previous template path unchanged.
     const templatePath = resolveTemplateFile(checklist.template_storage_path);
-    if (templatePath) {
+    if (hasStructuredPdf(checklist.document_code)) {
+      outputFileName = `-draft.pdf`;
+      content = await renderJoiningDocumentPdf(checklist.document_code, replacements);
+    } else if (templatePath) {
       const fillMode = safeTrim(checklist.fill_mode) ?? "placeholder";
       if (fillMode === "placeholder" && templatePath.toLowerCase().endsWith(".docx")) {
         outputFileName = `${checklist.document_code.toLowerCase()}-draft.docx`;
