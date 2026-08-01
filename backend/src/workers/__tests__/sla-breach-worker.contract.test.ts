@@ -9,9 +9,13 @@ describe("SLA breach worker runtime safety", () => {
   );
 
   it("only scans recent candidates and bounds each query and notification cycle", () => {
-    expect(workerSource).toContain(
-      "CONCAT(c.created_date, ' ', c.created_time) >= DATE_SUB(NOW(), INTERVAL 24 HOUR)",
-    );
+    // The bound, not the column expression it is written against. 49c30935
+    // deliberately moved this from CONCAT(c.created_date, ' ', c.created_time)
+    // to COALESCE(qt.arrival_time, qt.created_at); the guarantee this test
+    // exists for — that the scan cannot walk the whole table — is the 24-hour
+    // window, and pinning the exact expression failed on an intended rewrite
+    // while proving nothing extra.
+    expect(workerSource).toContain("DATE_SUB(NOW(), INTERVAL 24 HOUR)");
     expect(workerSource).toContain("ORDER BY pending_minutes ASC");
     expect(workerSource).toContain("LIMIT ${CANDIDATE_SCAN_LIMIT}");
     expect(workerSource).toContain("if (alertsSent >= MAX_ALERTS_PER_RUN) break");
