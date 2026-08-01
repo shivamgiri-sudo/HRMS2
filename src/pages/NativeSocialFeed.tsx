@@ -144,7 +144,7 @@ function FeedList({ platform, onPlayVideo }: { platform: SocialPlatformFilter; o
   const totalPages = Math.ceil((data?.total ?? 0) / 12);
 
   if (isLoading) return (
-    <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+    <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
       {Array.from({ length: 6 }, (_, i) => (
         <div key={i} className="overflow-hidden rounded-2xl border border-slate-100 bg-white">
           <McnStripe h={3} /><Skeleton className="aspect-video w-full" />
@@ -168,7 +168,7 @@ function FeedList({ platform, onPlayVideo }: { platform: SocialPlatformFilter; o
   );
   return (
     <div className="space-y-6">
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {posts.map((post) => <PostCard key={post.id} post={post} onPlayVideo={onPlayVideo} />)}
       </div>
       {totalPages > 1 && (
@@ -184,16 +184,16 @@ function FeedList({ platform, onPlayVideo }: { platform: SocialPlatformFilter; o
 
 // ── Facebook embed — iframe approach (works without JS SDK) ────────────────
 function FacebookEmbed() {
-  const src = `https://www.facebook.com/plugins/page.php?href=https%3A%2F%2Fwww.facebook.com%2FTeamMas9&tabs=timeline&width=600&height=700&small_header=false&adapt_container_width=true&hide_cover=false&show_facepile=true`;
+  const src = `https://www.facebook.com/plugins/page.php?href=https%3A%2F%2Fwww.facebook.com%2FTeamMas9&tabs=timeline&width=500&height=700&small_header=true&adapt_container_width=true&hide_cover=false&show_facepile=false`;
   return (
     <div className="overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-sm">
       <McnStripe h={3} />
-      <div className="relative flex justify-center bg-[#f0f2f5]">
+      <div className="relative w-full overflow-hidden bg-[#f0f2f5]">
         <iframe
           src={src}
-          width="600"
+          width="100%"
           height="700"
-          style={{ border: "none", overflow: "hidden", maxWidth: "100%" }}
+          style={{ border: "none", overflow: "hidden", display: "block" }}
           scrolling="no"
           frameBorder="0"
           allowFullScreen
@@ -304,10 +304,10 @@ function TwitterEmbed() {
           Open <ExternalLink className="h-3 w-3" />
         </a>
       </div>
-      <div ref={containerRef} className="flex justify-center p-4 bg-white min-h-[400px]">
+      <div ref={containerRef} className="w-full overflow-hidden bg-white p-2 min-h-[400px]">
         <a
           className="twitter-timeline"
-          data-width="600"
+          data-chrome="nofooter noborders"
           data-height="700"
           data-theme="light"
           data-tweet-limit="6"
@@ -400,31 +400,31 @@ export default function NativeSocialFeed() {
       <div className="w-full space-y-5">
 
         {/* MCN branded hero */}
-        <div className="overflow-hidden rounded-3xl shadow-lg" style={{ background: MCN_NAVY }}>
-          <div className="flex flex-wrap items-center justify-between gap-4 px-6 py-5">
-            <div className="flex items-center gap-4">
-              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white p-1 shadow-sm">
+        <div className="overflow-hidden rounded-2xl sm:rounded-3xl shadow-lg" style={{ background: MCN_NAVY }}>
+          <div className="flex items-center justify-between gap-3 px-4 py-4 sm:px-6 sm:py-5">
+            <div className="flex min-w-0 items-center gap-3">
+              <div className="flex h-9 w-9 sm:h-10 sm:w-10 shrink-0 items-center justify-center rounded-xl bg-white p-1 shadow-sm">
                 <img src="/mcn-logo.png" alt="MAS Callnet" className="h-full w-full object-contain" onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }} />
               </div>
-              <div>
-                <h1 className="text-xl font-black text-white tracking-tight">MAS Connect</h1>
-                <p className="text-sm text-blue-200">Stay connected with MAS Callnet on social media</p>
+              <div className="min-w-0">
+                <h1 className="text-base sm:text-xl font-black text-white tracking-tight">MAS Connect</h1>
+                <p className="hidden sm:block text-sm text-blue-200">Stay connected with MAS Callnet on social media</p>
               </div>
             </div>
-            <button onClick={() => qc.invalidateQueries({ queryKey: ["social-feed"] })} className="inline-flex items-center gap-2 rounded-2xl border border-white/25 bg-white/10 px-4 py-2 text-sm font-semibold text-white transition hover:bg-white/20 cursor-pointer">
-              <RefreshCw className="h-3.5 w-3.5" /> Refresh
+            <button onClick={() => qc.invalidateQueries({ queryKey: ["social-feed"] })} className="inline-flex shrink-0 items-center gap-2 rounded-2xl border border-white/25 bg-white/10 px-3 py-2 sm:px-4 text-sm font-semibold text-white transition hover:bg-white/20 cursor-pointer">
+              <RefreshCw className="h-3.5 w-3.5" /> <span className="hidden sm:inline">Refresh</span>
             </button>
           </div>
           <McnStripe h={4} />
         </div>
 
-        {/* Platform tabs */}
-        <div className="flex flex-wrap gap-2">
+        {/* Platform tabs — horizontal scroll on mobile */}
+        <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-none -mx-1 px-1">
           {TABS.map((tab) => (
             <button
               key={tab.key}
               onClick={() => setActiveTab(tab.key)}
-              className={`inline-flex items-center gap-2 rounded-2xl px-4 py-2 text-sm font-semibold transition-all duration-150 cursor-pointer ${activeTab === tab.key ? tab.active : tab.idle}`}
+              className={`inline-flex shrink-0 items-center gap-1.5 rounded-2xl px-3 py-2 sm:px-4 text-xs sm:text-sm font-semibold transition-all duration-150 cursor-pointer ${activeTab === tab.key ? tab.active : tab.idle}`}
               style={activeTab === tab.key && tab.key === "all" ? { background: MCN_NAVY } : undefined}
             >
               {tab.icon} {tab.label}
@@ -433,7 +433,7 @@ export default function NativeSocialFeed() {
         </div>
 
         {/* Tab content */}
-        <div className="min-h-[400px]">
+        <div>
           {activeTab === "all" && (
             <div className="space-y-8">
               <section>
@@ -441,7 +441,7 @@ export default function NativeSocialFeed() {
                 <FeedList platform="youtube" onPlayVideo={handlePlayVideo} />
               </section>
               <section>
-                <div className="grid gap-6 xl:grid-cols-2">
+                <div className="grid gap-6 lg:grid-cols-2">
                   <div>
                     <SectionHead label="Facebook" icon={PLATFORM_META.facebook.icon} />
                     <FacebookEmbed />

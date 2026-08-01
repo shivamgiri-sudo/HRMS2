@@ -9,11 +9,11 @@ interface VideoModalProps {
 export function VideoModal({ videoId, title, onClose }: VideoModalProps) {
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm"
+      className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/80 sm:p-4 backdrop-blur-sm"
       onClick={onClose}
     >
       <div
-        className="relative w-full max-w-4xl overflow-hidden rounded-2xl shadow-2xl"
+        className="relative w-full sm:max-w-4xl overflow-hidden rounded-t-2xl sm:rounded-2xl shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
         {/* MCN navy top bar */}
