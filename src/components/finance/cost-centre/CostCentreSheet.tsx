@@ -26,7 +26,7 @@ import {
   type CostCentreRecord,
   type CostCentreInput,
 } from "@/hooks/useCostCentreManagement";
-import { useAuth } from "@/hooks/useAuth";
+import { useAuth } from "@/contexts/AuthContext";
 
 type SheetMode = "create" | "edit" | "view";
 

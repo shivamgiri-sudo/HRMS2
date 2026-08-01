@@ -6,7 +6,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { MoreHorizontal, Plus, Search, Eye, Pencil, RefreshCw } from "lucide-react";
 import { StatusBadge } from "./StatusBadge";
 import { useCostCentreList, useCostCentreStatusCounts, type CostCentreRecord, type CostCentreStatus } from "@/hooks/useCostCentreManagement";
-import { useAuth } from "@/hooks/useAuth";
+import { useAuth } from "@/contexts/AuthContext";
 import { cn } from "@/lib/utils";
 
 interface CostCentreListViewProps {
