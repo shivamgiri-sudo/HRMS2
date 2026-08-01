@@ -27,6 +27,16 @@ export type PdfLetterhead = { branchName?: string; addressLines?: string[] };
 const CONFIDENTIAL_NOTE = "Private & Confidential";
 
 const PAGE = { size: "A4" as const, margin: 56 };
+
+/**
+ * Whitespace held clear at the foot of every page for the signature.
+ *
+ * The Aadhaar provider stamps at Rect [425,100,545,160] on the last page -
+ * measured from a real signed contract, not assumed. Body text previously
+ * flowed down to y~56, straight through that band, which is what put a
+ * signature on top of the contract text. Must clear 160; 120 would not have.
+ */
+const RESERVE = { band: 180 };
 const INK = "#111827";
 const MUTED = "#6b7280";
 const RULE = "#d1d5db";
@@ -93,7 +103,8 @@ function drawLetterhead(doc: Doc, letterhead?: PdfLetterhead) {
  * pages on its own when text overflows, and those were coming out bare.
  */
 function ensureRoom(doc: Doc, needed: number) {
-  if (doc.y + needed > doc.page.height - 70) doc.addPage();
+  // Reserve the signature band as well as the footer strip.
+  if (doc.y + needed > doc.page.height - (70 + RESERVE.band)) doc.addPage();
 }
 
 /** "Signature: ______  Date: 29/07/2026" is set as a ruled block, not body text. */
@@ -121,7 +132,13 @@ function renderContent(
   if (!definition) throw new Error(`No template definition for ${documentCode}`);
 
   return new Promise((resolve, reject) => {
-    const doc = new PDFDocument({ size: PAGE.size, margin: PAGE.margin, bufferPages: true });
+    const doc = new PDFDocument({
+      size: PAGE.size,
+      // bottom margin includes the reserved band: PDFKit paginates on this,
+      // and a bare `margin` would let an overflowing paragraph run into it.
+      margins: { top: PAGE.margin, bottom: PAGE.margin + RESERVE.band, left: PAGE.margin, right: PAGE.margin },
+      bufferPages: true,
+    });
     const chunks: Buffer[] = [];
     doc.on("data", (chunk: Buffer) => chunks.push(chunk));
     doc.on("end", () => resolve(Buffer.concat(chunks)));
@@ -268,7 +285,8 @@ async function finish(pdfBytes: Buffer, addressText: string): Promise<Buffer> {
   const total = doc.getPageCount();
   doc.getPages().forEach((page, index) => {
     const { width } = page.getSize();
-    const y = 42;
+    // Moved above the reserved band so the footer is not overwritten either.
+    const y = RESERVE.band + 2;
     page.drawLine({
       start: { x: PAGE.margin, y: y + 12 }, end: { x: width - PAGE.margin, y: y + 12 },
       thickness: 0.6, color: rgb(0.82, 0.84, 0.86),
