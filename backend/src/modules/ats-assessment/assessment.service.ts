@@ -437,11 +437,34 @@ async function syncBuiltInTemplatesInternal() {
       [definition.code],
     );
     await db.execute(
+      // The SELECT above cannot make this safe on its own: syncBuiltInTemplatesInternal()
+      // runs at boot in BOTH hrms2-backend and hrms2-workers, so two processes can find no
+      // matching hash and both INSERT. One wins, the other dies on
+      // uq_assessment_template_hash — 10 such failures in the production log, all for
+      // built-in codes like ATS-INBOUND-TEAM_LEADER.
+      //
+      // ON DUPLICATE KEY UPDATE turns losing that race into a no-op rather than an error,
+      // and lands on the same end state as the matchingRow branch above: the row for this
+      // (template_code, content_hash) is the active one, with catalog fields refreshed.
+      // Unlike the LMS snapshot tables in migration 1030, the unique key genuinely exists
+      // here, so this clause is not dead code.
       `INSERT INTO ats_assessment_template (
         id, template_code, template_name, process_key, role_key, experience_level,
         difficulty_level, duration_minutes, passing_percentage, gate_mode,
         template_version, content_hash, config_json, source_type, active_status
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'advisory', ?, ?, CAST(? AS JSON), 'built_in', 1)`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'advisory', ?, ?, CAST(? AS JSON), 'built_in', 1)
+      ON DUPLICATE KEY UPDATE
+        template_name     = VALUES(template_name),
+        process_key       = VALUES(process_key),
+        role_key          = VALUES(role_key),
+        experience_level  = VALUES(experience_level),
+        difficulty_level  = VALUES(difficulty_level),
+        duration_minutes  = VALUES(duration_minutes),
+        passing_percentage= VALUES(passing_percentage),
+        config_json       = VALUES(config_json),
+        source_type       = 'built_in',
+        active_status     = 1,
+        updated_at        = NOW()`,
       [
         randomUUID(),
         definition.code,
