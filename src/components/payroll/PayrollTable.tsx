@@ -224,8 +224,8 @@ export function PayrollTable({
       const hra   = getEarning('HRA')   || Number(full?.hra ?? record.hra ?? 0);
       const bonus = getEarning('BONUS');
       const conv  = getEarning('CONVEYANCE') || getEarning('CONV');
-      const pa    = getEarning('PA') || getEarning('PERSONAL_ALLOWANCE');
-      const ma    = getEarning('MA') || getEarning('MEDICAL_ALLOWANCE');
+      const pa    = getEarning('PA') || getEarning('PERSONAL_ALLOWANCE') || getEarning('PORTFOLIO');
+      const ma    = getEarning('MA') || getEarning('MEDICAL_ALLOWANCE') || getEarning('MEDICAL');
       const sa    = getEarning('SPECIAL') || getEarning('SPECIAL_ALLOWANCE');
       const arrear    = getEarning('ARREAR');
       const incentive = getEarning('INCENTIVE');
@@ -236,7 +236,7 @@ export function PayrollTable({
       const esic  = getDeduction('ESIC_EMPLOYEE') || getDeduction('ESIC_EMP') || Number(full?.esic_employee ?? record.esicEmployee ?? 0);
       const pt    = getDeduction('PROFESSIONAL_TAX') || getDeduction('PT') || Number(full?.professional_tax ?? record.professionalTax ?? 0);
       const tds   = getDeduction('TDS') || Number(full?.tds ?? record.tdsAmount ?? 0);
-      const loan  = getDeduction('LOAN') || getDeduction('LOAN_RECOVERY');
+      const loan  = getDeduction('LOAN') || getDeduction('LOAN_RECOVERY') || getDeduction('LOAN_EMI');
       const adDed = getDeduction('ADVANCE') || getDeduction('ADVANCE_RECOVERY') || Number(full?.advance_recovery ?? record.advanceRecovery ?? 0);
       const knownDeductions = pf + esic + pt + tds + loan + adDed;
       const otherDed = Math.max(Number(full?.total_deductions ?? record.totalDeductions ?? 0) - knownDeductions, 0);

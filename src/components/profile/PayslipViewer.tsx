@@ -399,8 +399,8 @@ export function PayslipViewer({ employeeId, employeeName, employeeCode }: Paysli
     const hra = getEarning('HRA') || Number(record.hra ?? 0);
     const bonus = getEarning('BONUS') || Number(record.bonus ?? 0);
     const conv = getEarning('CONVEYANCE') || getEarning('CONV') || Number(record.conveyance ?? 0);
-    const pa = getEarning('PA') || getEarning('PERSONAL_ALLOWANCE') || Number(record.portfolio ?? 0);
-    const ma = getEarning('MA') || getEarning('MEDICAL_ALLOWANCE') || Number(record.medical_allowance ?? 0);
+    const pa = getEarning('PA') || getEarning('PERSONAL_ALLOWANCE') || getEarning('PORTFOLIO') || Number(record.portfolio ?? 0);
+    const ma = getEarning('MA') || getEarning('MEDICAL_ALLOWANCE') || getEarning('MEDICAL') || Number(record.medical_allowance ?? 0);
     const sa = getEarning('SPECIAL') || getEarning('SPECIAL_ALLOWANCE') || Number(record.special_allowance ?? 0);
     const arrear = getEarning('ARREAR') || Number(record.arrear ?? 0);
     const incentive = getEarning('INCENTIVE') || Number(record.incentive ?? 0);
@@ -414,7 +414,7 @@ export function PayslipViewer({ employeeId, employeeName, employeeCode }: Paysli
     const pt = getDeduction('PROFESSIONAL_TAX') || getDeduction('PT') || Number(record.professional_tax ?? 0);
     const tds = getDeduction('TDS') || Number(record.tds ?? record.income_tax ?? 0);
     const lwpDed = getDeduction('LWP_DEDUCTION') || getDeduction('LWP') || Number(record.lwp_deduction ?? record.leave_deduction ?? 0);
-    const loan = getDeduction('LOAN') || getDeduction('LOAN_RECOVERY') || Number(record.loan_deduction ?? 0);
+    const loan = getDeduction('LOAN') || getDeduction('LOAN_RECOVERY') || getDeduction('LOAN_EMI') || Number(record.loan_deduction ?? 0);
     const adDed = getDeduction('ADVANCE') || getDeduction('ADVANCE_RECOVERY') || Number(record.advance_recovery ?? record.advance_paid ?? 0);
     const knownDeductions = pf + esic + pt + tds + lwpDed + loan + adDed;
     const otherDed = Math.max(Number(record.total_deductions ?? 0) - knownDeductions, 0);
