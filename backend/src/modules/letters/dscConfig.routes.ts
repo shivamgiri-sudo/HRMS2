@@ -30,9 +30,14 @@ const h = (fn: AsyncHandler) => (req: AuthenticatedRequest, res: Response, next:
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 512 * 1024 },
+  // multer's callback is overloaded — cb(error) OR cb(null, accept) — so the two
+  // outcomes must be separate calls rather than one with a union argument.
   fileFilter: (_req, file, cb) => {
-    const ok = /\.(pfx|p12)$/i.test(file.originalname);
-    cb(ok ? null : new Error("Upload a .pfx or .p12 certificate file."), ok);
+    if (/\.(pfx|p12)$/i.test(file.originalname)) {
+      cb(null, true);
+      return;
+    }
+    cb(new Error("Upload a .pfx or .p12 certificate file."));
   },
 });
 
