@@ -2,6 +2,7 @@ import Tesseract from "tesseract.js";
 import path from "path";
 import { createHash, randomUUID } from "crypto";
 import { db } from "../../db/mysql.js";
+import { extractDobFromText } from "./ageVerification.service.js";
 
 const AADHAAR_REGEX = /\b(\d{4}\s?\d{4}\s?\d{4})\b/;
 const PAN_REGEX = /\b([A-Z]{3}[PCHFATBLJG][A-Z]\d{4}[A-Z])\b/;
@@ -12,6 +13,15 @@ export interface OcrExtractionResult {
   rawText: string;
   extractedNumber: string | null;
   extractedName: string | null;
+  /**
+   * Date of birth, when the document prints one.
+   *
+   * The raw text was already being stored in
+   * candidate_onboarding_document.ocr_raw_text, so an Aadhaar DOB has been
+   * sitting in the database unparsed all along. Surfacing it here lets the age
+   * check use document evidence instead of a self-declared date.
+   */
+  extractedDob: string | null;
   confidence: number;
   documentType: "aadhaar" | "pan" | "cheque" | "other";
 }
@@ -19,7 +29,7 @@ export interface OcrExtractionResult {
 export async function extractFromDocument(filePath: string, docType: string): Promise<OcrExtractionResult> {
   const ext = path.extname(filePath).toLowerCase();
   if (ext === ".pdf") {
-    return { rawText: "", extractedNumber: null, extractedName: null, confidence: 0, documentType: "other" };
+    return { rawText: "", extractedNumber: null, extractedName: null, extractedDob: null, confidence: 0, documentType: "other" };
   }
 
   // errorHandler is mandatory here, not cosmetic. When tesseract.js cannot decode
@@ -46,7 +56,7 @@ export async function extractFromDocument(filePath: string, docType: string): Pr
     return extractChequeDetails(text, confidence);
   }
 
-  return { rawText: text, extractedNumber: null, extractedName: null, confidence, documentType: "other" };
+  return { rawText: text, extractedNumber: null, extractedName: null, extractedDob: extractDobFromText(text), confidence, documentType: "other" };
 }
 
 function extractAadhaarDetails(text: string, confidence: number): OcrExtractionResult {
@@ -62,7 +72,7 @@ function extractAadhaarDetails(text: string, confidence: number): OcrExtractionR
     }
   }
 
-  return { rawText: text, extractedNumber: number, extractedName: name, confidence, documentType: "aadhaar" };
+  return { rawText: text, extractedNumber: number, extractedName: name, extractedDob: extractDobFromText(text), confidence, documentType: "aadhaar" };
 }
 
 function extractPanDetails(text: string, confidence: number): OcrExtractionResult {
@@ -79,7 +89,7 @@ function extractPanDetails(text: string, confidence: number): OcrExtractionResul
     }
   }
 
-  return { rawText: text, extractedNumber: number, extractedName: name, confidence, documentType: "pan" };
+  return { rawText: text, extractedNumber: number, extractedName: name, extractedDob: extractDobFromText(text), confidence, documentType: "pan" };
 }
 
 function extractChequeDetails(text: string, confidence: number): OcrExtractionResult {
@@ -105,6 +115,7 @@ function extractChequeDetails(text: string, confidence: number): OcrExtractionRe
     rawText: text,
     extractedNumber: accountNumber || (ifscMatch ? ifscMatch[1] : null),
     extractedName: name,
+    extractedDob: extractDobFromText(text),
     confidence,
     documentType: "cheque",
   };

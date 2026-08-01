@@ -32,6 +32,7 @@ import { logSensitiveAction } from '../../shared/auditLog.js';
 import { sendPayrollHrJoiningDocNotification } from '../ats/ats.email.service.js';
 import { issueCandidatePortalAccess } from '../ats/interview.service.js';
 import { env } from '../../config/env.js';
+import { resolveVerifiedDob } from "../ats/ageVerification.service.js";
 
 export interface EmployeeCreationInput {
   candidateId: string;
@@ -154,6 +155,27 @@ export async function createEmployeeFromCandidate(
       result.blockers.push(...statutoryValidation.blockers);
       await conn.rollback();
       return result;
+    }
+
+    // RULE 11: minimum employment age. A critical blocker with a rollback, the
+    // same shape as the statutory check above — an underage hire is not a
+    // "manual review" case, it is one that must not be created.
+    const ageCheck = await resolveVerifiedDob(candidateId, offer?.date_of_joining ?? null);
+    if (ageCheck.isMinor) {
+      result.blockers.push({
+        type: 'underage_candidate',
+        reason: ageCheck.reason,
+        severity: 'critical',
+      });
+      await conn.rollback();
+      return result;
+    }
+    if (ageCheck.conflicts.length > 0) {
+      // Sources disagree on the date of birth. Not a blocker — but HR should see
+      // it rather than have one source silently win.
+      result.warnings.push(
+        `Date of birth differs between sources (${ageCheck.source} says ${ageCheck.dob}); verify before activation.`,
+      );
     }
 
     // RULE 6: Reporting Manager Validation

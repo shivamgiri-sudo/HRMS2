@@ -13,6 +13,7 @@ import { getConfiguredBgvProviderAdapter } from "./bgv-provider.adapter.js";
 import { encrypt, decrypt } from "../../utils/encryption.js";
 import { resolveOnboardingDocumentFile } from "./onboardingDocumentPath.js";
 import { extractFromDocument, crossValidateDocument, checkDuplicates } from "./ocr.service.js";
+import { assertEmployableAge, persistMinorFlag, resolveVerifiedDob } from "./ageVerification.service.js";
 // face-match loaded lazily so onboarding only loads it when needed
 let _faceMatchModule: typeof import("./face-match.service.js") | null = null;
 async function getFaceMatch() {
@@ -1031,7 +1032,7 @@ export async function validateOnboardingToken(token: string) {
             c.id, c.candidate_code, c.full_name, c.mobile, c.email,
             c.gender, c.date_of_birth, c.applied_for_branch, c.applied_for_process,
             c.sourcing_channel, c.source_details, c.resume_url, c.selfie_url,
-            c.profile_status, br.branch_name, pm.process_name
+            c.profile_status, c.is_minor, br.branch_name, pm.process_name
        FROM ats_onboarding_bridge b
        JOIN ats_candidate c ON c.id = b.candidate_id
        LEFT JOIN branch_master br ON br.id = c.applied_for_branch
@@ -1073,6 +1074,9 @@ export async function validateOnboardingToken(token: string) {
     resume_url: row.resume_url,
     selfie_url: row.selfie_url,
     profile_status: row.profile_status,
+    // Drives the DPDP s.9 guardian-consent banner. Absent from this payload
+    // until now, so the banner in OnboardingSteps1to5.tsx could never render.
+    is_minor: Boolean((row as { is_minor?: number }).is_minor),
     saved_profile: profileRows[0] ?? null,
   };
 }
@@ -1575,6 +1579,24 @@ export async function submitFullOnboarding(token: string, meta?: { ip?: string; 
       { statusCode: 400, code: "MISSING_REQUIRED_DOCUMENTS" },
     );
   }
+
+  // Employment below 18 is not permitted. Checked here, at the last point the
+  // candidate controls, using the most trustworthy date of birth on file
+  // (provider-verified, then OCR of the Aadhaar/10th certificate, then
+  // self-declared). Judged against the joining date, since that is when
+  // employment actually begins.
+  //
+  // A candidate with no DOB on record anywhere is NOT blocked: that is a data
+  // gap, not evidence of a minor, and blocking it would stop most historic
+  // candidates outright.
+  // No joining date exists at submit time, so age is assessed as of today.
+  // createEmployeeFromCandidate re-checks against the offer's real joining
+  // date, which is the authoritative one.
+  const ageCheck = await assertEmployableAge(candidateId, null);
+  // Persist the DPDP minor flag. ats_candidate.is_minor has existed since
+  // migration 336 and nothing has ever written it, so the guardian-consent
+  // banner in the onboarding UI could never render.
+  await persistMinorFlag(candidateId, ageCheck).catch(() => undefined);
 
   await db.execute(
     `UPDATE candidate_onboarding_profile SET profile_status = 'submitted', submitted_at = NOW(), updated_at = NOW()
