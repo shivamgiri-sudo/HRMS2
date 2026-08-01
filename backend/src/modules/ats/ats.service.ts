@@ -388,12 +388,25 @@ export const atsService = {
 
     // Previous 30 days for onboarding submitted trend (HR dashboard)
     const [prevSubmittedRows] = await db.execute<RowDataPacket[]>(
+      // Three separate defects, all masked by the .catch below returning a confident 0:
+      //   bridge_status  -> the column is `status`
+      //   'submitted'    -> the real values are pending / profile_submitted / joined
+      //   updated_at     -> ats_onboarding_bridge has no such column. The pattern was copied
+      //                     from the ats_candidate query above, where updated_at does exist.
+      // created_at is a proxy for "when it was submitted" — the table records no submitted_at,
+      // so this counts bridges CREATED in the window that have reached profile_submitted.
+      // Against production this returns 2 for the previous-30-day window, not 0.
       `SELECT COUNT(*) AS cnt FROM ats_onboarding_bridge
-       WHERE bridge_status = 'submitted'
-         AND updated_at >= DATE_SUB(CURDATE(), INTERVAL 60 DAY)
-         AND updated_at < DATE_SUB(CURDATE(), INTERVAL 30 DAY)`,
+       WHERE status = 'profile_submitted'
+         AND created_at >= DATE_SUB(CURDATE(), INTERVAL 60 DAY)
+         AND created_at < DATE_SUB(CURDATE(), INTERVAL 30 DAY)`,
       []
-    ).catch(() => [[{ cnt: 0 }]] as any);
+    ).catch((err: unknown) => {
+      // Keep the dashboard up, but never silently again: a swallowed query here reads as a
+      // real zero on an HR trend tile, which is how the above survived unnoticed.
+      console.warn("[ats-stats] onboarding submitted trend failed:", (err as Error).message);
+      return [[{ cnt: 0 }]] as any;
+    });
 
     return {
       total_candidates: totalCount,

@@ -1348,7 +1348,10 @@ export const jobRequisitionService = {
          COALESCE(e.full_name, c.full_name) AS full_name,
          e.employee_code AS employee_code,
          COALESCE(e.date_of_joining, ob.joining_date) AS date_of_joining,
-         ob.bridge_status,
+         -- Aliased, not renamed: the column is status on ats_onboarding_bridge, but the
+         -- response key stays bridge_status because JobRequisitionTypes and the frontend
+         -- both read it under that name.
+         ob.status       AS bridge_status,
          c.id            AS candidate_id,
          c.full_name     AS candidate_name,
          (lm.id IS NOT NULL) AS lms_enrolled
