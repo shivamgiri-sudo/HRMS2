@@ -40,6 +40,8 @@ export const lettersService = {
     const [empRows] = await db.execute<RowDataPacket[]>(
       `SELECT e.*, d.designation_name, dept.dept_name,
               bm.branch_name,
+              COALESCE(bm.address, '')    AS branch_address,
+              COALESCE(bm.hr_contact, '') AS branch_hr_contact,
               CONCAT(e.first_name,' ',COALESCE(e.last_name,'')) AS full_name
        FROM employees e
        LEFT JOIN designation_master d ON d.id = e.designation_id
@@ -65,6 +67,9 @@ export const lettersService = {
       designation:       emp.designation_name ?? "",
       department:        emp.dept_name ?? "",
       location:          emp.branch_name ?? "",
+      branch_name:       emp.branch_name ?? "",
+      branch_address:    emp.branch_address ?? "",
+      branch_hr_contact: emp.branch_hr_contact ?? "",
       date_of_joining:   istDate(emp.date_of_joining),
       date_of_exit:      istDate(emp.date_of_exit),
       issued_date:       istDate(data.issued_date ?? new Date()),

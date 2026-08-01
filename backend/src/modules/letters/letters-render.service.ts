@@ -129,24 +129,34 @@ function pageStyles(): string {
   </style>`;
 }
 
-function footer(): string {
+function footer(d?: Record<string, string>): string {
+  // The issuing branch, when the caller supplied one. Falls back to the central
+  // contact so letters that predate branch resolution still render.
+  const addr = (d?.branch_address ?? "").split("\n").map((l) => l.trim()).filter(Boolean).join(", ");
+  const contact = (d?.branch_hr_contact ?? "").trim();
   return `<div class="footer">
-    <span>E-mail : care@teammas.in</span>
+    ${addr ? `<span>${addr}</span>` : ""}
+    <span>E-mail : ${contact || "care@teammas.in"}</span>
     <span>Web : WWW.teammas.in</span>
   </div>`;
 }
 
-function letterHeader(logoUrl: string): string {
+function letterHeader(logoUrl: string, d?: Record<string, string>): string {
+  // Branch that issued the letter, not a hardcoded head office.
+  const lines = (d?.branch_address ?? "").split("\n").map((l) => l.trim()).filter(Boolean);
+  const branch = (d?.branch_name ?? "").trim();
   return `<div class="header">
     <div class="header-left">
       <h1>Mas Callnet India Pvt. Ltd.</h1>
       <p>(An ISO 9001 : 2008 Certified Company)</p>
+      ${branch ? `<p style="margin-top:1mm;font-weight:600">${branch}</p>` : ""}
+      ${lines.length ? `<p style="margin-top:0.5mm;font-size:8.5pt;line-height:1.35">${lines.join("<br>")}</p>` : ""}
     </div>
     <img src="${logoUrl}" alt="MAS Logo" class="header-logo" />
   </div>`;
 }
 
-function expLetterHead(logoUrl: string): string {
+function expLetterHead(logoUrl: string, d?: Record<string, string>): string {
   // Experience letter uses a different header with two columns and a rule underneath
   return `<table class="exp-header-table" style="margin-bottom:2mm">
     <tr>
@@ -156,6 +166,7 @@ function expLetterHead(logoUrl: string): string {
         Registered Office : 102/C-1, Kanchan House, Karampura Commercial Complex,<br>
         New Delhi-110015<br>
         Tel . : 011-91-61105550 &nbsp; E-mail : care@teammas.in &nbsp; Web : www.teammas.in
+        ${(d?.branch_address ?? "").trim() ? `<br><br><strong>Issuing Branch${(d?.branch_name ?? "").trim() ? ` : ${(d?.branch_name ?? "").trim()}` : ""}</strong><br>${(d?.branch_address ?? "").split("\n").map((l) => l.trim()).filter(Boolean).join("<br>")}` : ""}
       </td>
       <td style="width:35%;text-align:right;vertical-align:top">
         <img src="${logoUrl}" alt="MAS Logo" style="width:60px;height:60px;object-fit:contain" />
@@ -200,7 +211,7 @@ export function renderAppointmentLetter(d: Record<string, string>, logoUrl: stri
   </head><body>
   <div class="page">
     <div class="watermark-copy">Original Copy</div>
-    ${letterHeader(logoUrl)}
+    ${letterHeader(logoUrl, d)}
 
     <div class="to-block">
       <p>To,</p>
@@ -230,7 +241,7 @@ export function renderAppointmentLetter(d: Record<string, string>, logoUrl: stri
     <table class="salary-table">
       ${salaryRows}
     </table>
-    ${footer()}
+    ${footer(d)}
   </div>
 
   <div class="page page-break">
@@ -249,7 +260,7 @@ export function renderAppointmentLetter(d: Record<string, string>, logoUrl: stri
     <p class="body-para">7.3 You shall at all times, well and truly account for and shall when so required, make over to responsible authority all moneys, properties and things belonging to the company which may have been placed in your custody or under supervision or may otherwise have come into your possession or under control.</p>
     <p class="body-para">7.4 You may be required to travel on company work as and when required. In such cases you will be entitled to travel expenses/allowances as may be in force from time to time.</p>
     <p class="body-para">7.5 You will devote your whole time during working hours in the work of the company and will not undertake any part time or other work whether honorary or remunerative without prior permission of the management.</p>
-    ${footer()}
+    ${footer(d)}
   </div>
 
   <div class="page page-break">
@@ -264,7 +275,7 @@ export function renderAppointmentLetter(d: Record<string, string>, logoUrl: stri
     <p class="body-para">9.2 In case you remain absent without prior permission or authorization or overstay leave for three consecutive calendar days, beyond the period of leave originally granted or subsequently extended it shall be deemed that you have left the services of the company on your own accord without notice and the same shall be treated as abandonment of service on your part.</p>
     <p class="body-para">9.3 During Probation, termination of your employment will be subject to Fifteen Days notice in writing from you.</p>
     <p class="body-para">9.4 On satisfactory completion of the probation period and after your confirmation in writing except for the reasons mentioned in this appointment letter, your services can be terminated by giving notice of one month or payment of basic salary in lieu thereof on either side. However, in event of your resignation, the company in its sole discretion will have an option to accept the same and relieve you prior to completion of the stipulated notice period of one month, without any pay in lieu of the notice period.</p>
-    ${footer()}
+    ${footer(d)}
   </div>
 
   <div class="page page-break">
@@ -282,7 +293,7 @@ export function renderAppointmentLetter(d: Record<string, string>, logoUrl: stri
       <p style="margin-top:6mm">Authorized Signatory</p>
       <p style="margin-top:6mm">Date of Joining: ${d.date_of_joining || ""}</p>
     </div>
-    ${footer()}
+    ${footer(d)}
   </div>
 
   <div class="page">
@@ -320,7 +331,7 @@ export function renderAppointmentLetter(d: Record<string, string>, logoUrl: stri
       <li>Personal PF/ Superannuation Account No.</li>
       <li>Social Security No. (SSN) if allotted</li>
     </ol>
-    ${footer()}
+    ${footer(d)}
   </div>
   </body></html>`;
 }
@@ -448,7 +459,7 @@ export function renderIncrementLetter(d: Record<string, string>, logoUrl: string
   ${pageStyles()}
   </head><body>
   <div class="page">
-    ${letterHeader(logoUrl)}
+    ${letterHeader(logoUrl, d)}
 
     <div class="to-block">
       <p class="date-line" style="margin-bottom:3mm">Date - ${d.issued_date || ""}</p>
@@ -487,7 +498,7 @@ export function renderIncrementLetter(d: Record<string, string>, logoUrl: string
       <p style="margin-top:8mm">${d.hr_name || "Sheelu Verma"}</p>
       <p>${d.hr_designation || "Sr. HR"}</p>
     </div>
-    ${footer()}
+    ${footer(d)}
   </div>
   </body></html>`;
 }
@@ -502,7 +513,7 @@ export function renderPromotionLetter(d: Record<string, string>, logoUrl: string
   ${pageStyles()}
   </head><body>
   <div class="page">
-    ${letterHeader(logoUrl)}
+    ${letterHeader(logoUrl, d)}
 
     <div class="to-block">
       <p class="date-line" style="margin-bottom:3mm">Date - ${d.issued_date || ""}</p>
@@ -526,7 +537,7 @@ export function renderPromotionLetter(d: Record<string, string>, logoUrl: string
       <p style="margin-top:8mm">${d.hr_name || "Sheelu Verma"}</p>
       <p>${d.hr_designation || "Sr. HR"}</p>
     </div>
-    ${footer()}
+    ${footer(d)}
   </div>
   </body></html>`;
 }
@@ -541,7 +552,7 @@ export function renderExperienceLetter(d: Record<string, string>, logoUrl: strin
   ${pageStyles()}
   </head><body>
   <div class="page">
-    ${expLetterHead(logoUrl)}
+    ${expLetterHead(logoUrl, d)}
 
     <p style="margin-bottom:4mm"><strong>Date ${d.issued_date || ""}</strong></p>
     <p class="section-heading" style="margin-bottom:4mm">To Whomsoever it May Concern</p>
@@ -556,7 +567,7 @@ export function renderExperienceLetter(d: Record<string, string>, logoUrl: strin
       <p style="margin-top:4mm">Authorized Signatory</p>
       <p>Human Resource</p>
     </div>
-    ${footer()}
+    ${footer(d)}
   </div>
   </body></html>`;
 }
@@ -577,7 +588,7 @@ export function renderNdaJoiningKit(d: Record<string, string>, logoUrl: string):
 
   <!-- PAGE 1: NDA & Confidentiality -->
   <div class="page">
-    ${letterHeader(logoUrl)}
+    ${letterHeader(logoUrl, d)}
     <p class="section-heading" style="font-size:12pt;margin-bottom:4mm">NDA &amp; Confidentiality Agreement:</p>
     <p class="body-para">I acknowledge that as part of my Employment with Mas Callnet India P. Ltd. I will be given access to information that is of a personal and/or proprietary nature, for example: Personal information related to analysts, such as names, email addresses, salaries, academic and employment information and/or sensitive information related to clients or other financial information ("Confidential Information") for the purpose of fulfilling employment obligations.</p>
     <p class="body-para">I therefore agree:</p>
@@ -615,12 +626,12 @@ export function renderNdaJoiningKit(d: Record<string, string>, logoUrl: string):
         <td>Date: <span class="sign-line">&nbsp;</span></td>
       </tr>
     </table>
-    ${footer()}
+    ${footer(d)}
   </div>
 
   <!-- PAGE 2: IT Compliance -->
   <div class="page page-break">
-    ${letterHeader(logoUrl)}
+    ${letterHeader(logoUrl, d)}
     <p class="section-heading" style="font-size:12pt">Introduction</p>
     <p class="section-heading" style="margin-top:4mm">IT Compliance Agreement</p>
     <p class="body-para">Mascall Net as an organization has its own IT infrastructure which provides the services to its native companies. As an employee of TEAMMAS every employee should have to comply or agree with the same. IT provided assets to employee are fully compliant with MISP (MasCall Net Information Security Policy).</p>
@@ -665,12 +676,12 @@ export function renderNdaJoiningKit(d: Record<string, string>, logoUrl: string):
         <td>Date: <span class="sign-line">&nbsp;</span></td>
       </tr>
     </table>
-    ${footer()}
+    ${footer(d)}
   </div>
 
   <!-- PAGE 3: Surveillance / Equal Opportunity -->
   <div class="page page-break">
-    ${letterHeader(logoUrl)}
+    ${letterHeader(logoUrl, d)}
     <p class="section-heading" style="font-size:12pt">Surveillance</p>
     <p class="body-para"><strong>Mas Callnet India Pvt. Ltd. – An Equal Opportunity Employer</strong></p>
     <p class="body-para">At Mas Callnet we don't just stop at accepting difference but we are one of the them who like to celebrate it, support it, and we thrive on it for the benefit of our employees. We do not discriminate in employment on the basis of race, color, religion, sex, marital status, disability, genetic information etc.</p>
@@ -692,12 +703,12 @@ export function renderNdaJoiningKit(d: Record<string, string>, logoUrl: string):
         <td>Signature: <span class="sign-line">&nbsp;</span></td>
       </tr>
     </table>
-    ${footer()}
+    ${footer(d)}
   </div>
 
   <!-- PAGE 4: BAMS Declaration -->
   <div class="page page-break">
-    ${letterHeader(logoUrl)}
+    ${letterHeader(logoUrl, d)}
     <p class="section-heading" style="font-size:12pt;margin-bottom:4mm">Declaration : Biometric Attendance Management System BAMS</p>
     <p class="body-para">I Hereby declare that I will follow the Biometric Attendance Management System Religiously and I am completely aware that Biometric Attendance Management is the only criteria for Tracking my Attendance and I understand the importance of the same.</p>
     <ul class="nda-ol" style="list-style-type:disc">
@@ -715,12 +726,12 @@ export function renderNdaJoiningKit(d: Record<string, string>, logoUrl: string):
         <td>DOJ: <span class="sign-line">&nbsp;</span></td>
       </tr>
     </table>
-    ${footer()}
+    ${footer(d)}
   </div>
 
   <!-- PAGE 5: Employee Consent Form -->
   <div class="page page-break">
-    ${letterHeader(logoUrl)}
+    ${letterHeader(logoUrl, d)}
     <p class="annexure-title" style="font-size:12pt">EMPLOYEE CONSENT FORM FOR PERSONAL INFORMATION PROCESSING</p>
     <p class="body-para"><strong>Employee Name: ${name}</strong></p>
     <p class="body-para">I <strong>${name}</strong>, the undersigned, hereby provide my consent to Mas Callnet India P. Ltd. ("the Company") for the processing and retention of my personal information and data, including but not limited to my Name, Residence Address, Educational qualification details, Aadhaar Card details, PAN Card details, Bank account details, and Previous Employment Details, for the purpose of completing the joining formalities and ongoing employment-related processes.</p>
@@ -738,12 +749,12 @@ export function renderNdaJoiningKit(d: Record<string, string>, logoUrl: string):
         <td>Employee Signature: <span class="sign-line">&nbsp;</span> &nbsp;&nbsp; Date: <span class="sign-line">&nbsp;</span></td>
       </tr>
     </table>
-    ${footer()}
+    ${footer(d)}
   </div>
 
   <!-- PAGE 6: Zero Tolerance Policy (summary + acknowledgment) -->
   <div class="page page-break">
-    ${letterHeader(logoUrl)}
+    ${letterHeader(logoUrl, d)}
     <p class="section-heading" style="font-size:12pt;margin-bottom:2mm">Introduction</p>
     <p class="body-para">At Mas Callnet India P. Ltd., we are committed to maintaining a safe, respectful, and professional environment for all employees, contractors, and partners. This Zero Tolerance Policy outlines unacceptable behaviors that will not be tolerated within our organization. Any violation of this policy will result in disciplinary action, including possible termination of employment and legal action.</p>
     <p class="policy-section">Scope</p>
@@ -773,7 +784,7 @@ export function renderNdaJoiningKit(d: Record<string, string>, logoUrl: string):
         <td>Date: <span class="sign-line">&nbsp;</span></td>
       </tr>
     </table>
-    ${footer()}
+    ${footer(d)}
   </div>
 
   </body></html>`;

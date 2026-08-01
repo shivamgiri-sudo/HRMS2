@@ -18,7 +18,12 @@ import { PDFDocument as PDFLibDocument, PDFRawStream, PDFName, StandardFonts, rg
 import { TEMPLATE_DEFINITIONS } from "./joiningDocumentTemplates.js";
 
 const COMPANY_NAME = "Mas Callnet India Pvt. Ltd.";
-const COMPANY_ADDRESS = "B-24, Okhla Phase-II, New Delhi - 110020";
+// Fallback only. The issuing branch address is preferred and passed in by the
+// caller; this is what prints when an employee has no branch on record.
+const COMPANY_ADDRESS_FALLBACK = "B-24, Okhla Phase-II, New Delhi - 110020";
+
+/** Issuing branch, resolved by branchAddress.service.ts. */
+export type PdfLetterhead = { branchName?: string; addressLines?: string[] };
 const CONFIDENTIAL_NOTE = "Private & Confidential";
 
 const PAGE = { size: "A4" as const, margin: 56 };
@@ -59,16 +64,21 @@ function substitute(text: string, replacements: Record<string, string>): string 
 
 type Doc = PDFKit.PDFDocument;
 
-function drawLetterhead(doc: Doc) {
+function drawLetterhead(doc: Doc, letterhead?: PdfLetterhead) {
   const top = 34;
   const logo = logoPath();
   if (logo) {
     try { doc.image(logo, PAGE.margin, top, { height: 26 }); } catch { /* fall through to text */ }
   }
+  const width = doc.page.width - PAGE.margin * 2;
   doc.font("Helvetica-Bold").fontSize(9).fillColor(INK)
-    .text(COMPANY_NAME, PAGE.margin, top, { width: doc.page.width - PAGE.margin * 2, align: "right" });
+    .text(COMPANY_NAME, PAGE.margin, top, { width, align: "right" });
+
+  // The branch that issued this document. Collapsed to at most two lines so a
+  // long postal address cannot push into the body text.
+  const addressText = letterheadAddressText(letterhead);
   doc.font("Helvetica").fontSize(7.5).fillColor(MUTED)
-    .text(COMPANY_ADDRESS, PAGE.margin, top + 12, { width: doc.page.width - PAGE.margin * 2, align: "right" });
+    .text(addressText, PAGE.margin, top + 12, { width, align: "right", height: 20, ellipsis: true });
 
   const ruleY = top + 32;
   doc.moveTo(PAGE.margin, ruleY).lineTo(doc.page.width - PAGE.margin, ruleY)
@@ -89,9 +99,23 @@ function ensureRoom(doc: Doc, needed: number) {
 /** "Signature: ______  Date: 29/07/2026" is set as a ruled block, not body text. */
 const SIGNATURE_LINE = /^(Signature|Employee Signature|For and on behalf of|Witness \d)/i;
 
+/**
+ * The exact address line drawn on the letterhead. finish() needs the identical
+ * string to recognise a page that carries nothing but the letterhead — if the
+ * two ever diverge, blank trailing pages stop being removed.
+ */
+function letterheadAddressText(letterhead?: PdfLetterhead): string {
+  const lines = (letterhead?.addressLines ?? []).filter(Boolean);
+  const branch = (letterhead?.branchName ?? "").trim();
+  return lines.length
+    ? (branch ? `${branch} — ` : "") + lines.join(", ")
+    : COMPANY_ADDRESS_FALLBACK;
+}
+
 function renderContent(
   documentCode: string,
   replacements: Record<string, string>,
+  letterhead?: PdfLetterhead,
 ): Promise<Buffer> {
   const definition = TEMPLATE_DEFINITIONS.find((entry) => entry.code === documentCode);
   if (!definition) throw new Error(`No template definition for ${documentCode}`);
@@ -105,9 +129,9 @@ function renderContent(
     // Every page gets the letterhead, including the ones PDFKit adds itself
     // when a paragraph overflows. The first page already exists, so it is drawn
     // directly; the hook covers the rest.
-    doc.on("pageAdded", () => drawLetterhead(doc));
+    doc.on("pageAdded", () => drawLetterhead(doc, letterhead));
 
-    drawLetterhead(doc);
+    drawLetterhead(doc, letterhead);
     const contentWidth = doc.page.width - PAGE.margin * 2;
 
     for (const block of definition.blocks) {
@@ -224,9 +248,9 @@ async function pageText(doc: PDFLibDocument, index: number): Promise<string> {
  * joiner would receive a document ending in blank sheets. Footers are applied
  * here rather than in PDFKit so "Page N of M" is counted after the removal.
  */
-async function finish(pdfBytes: Buffer): Promise<Buffer> {
+async function finish(pdfBytes: Buffer, addressText: string): Promise<Buffer> {
   const doc = await PDFLibDocument.load(pdfBytes);
-  const boilerplate = (COMPANY_NAME + COMPANY_ADDRESS).replace(/\s/g, "");
+  const boilerplate = (COMPANY_NAME + addressText).replace(/\s/g, "");
 
   const empty: number[] = [];
   for (let i = 0; i < doc.getPageCount(); i++) {
@@ -264,6 +288,10 @@ async function finish(pdfBytes: Buffer): Promise<Buffer> {
 export async function renderJoiningDocumentPdf(
   documentCode: string,
   replacements: Record<string, string>,
+  letterhead?: PdfLetterhead,
 ): Promise<Buffer> {
-  return finish(await renderContent(documentCode, replacements));
+  return finish(
+    await renderContent(documentCode, replacements, letterhead),
+    letterheadAddressText(letterhead),
+  );
 }
