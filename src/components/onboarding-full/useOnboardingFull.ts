@@ -661,6 +661,11 @@ export function useOnboardingFull(token: string) {
     finally { setSaving(false); }
   };
 
+  // Kept so the destination is always reachable as a plain link, even if the
+  // redirect above is prevented for any reason. A dead button with no
+  // explanation is what this whole fix is about.
+  const [redirectUrl, setRedirectUrl] = useState<string | null>(null);
+
   const startDigilocker = async () => {
     setSaving(true);
     try {
@@ -669,7 +674,20 @@ export function useOnboardingFull(token: string) {
       const payload = (res.data as any)?.data ?? res.data;
       const nextUrl = payload?.authUrl ?? payload?.redirectUrl ?? payload?.verificationUrl;
       if (!nextUrl) throw new Error("DigiLocker link was not returned by the server. Please try again or contact HR.");
-      window.open(nextUrl, "_blank");
+      // Navigate this tab instead of window.open.
+      //
+      // window.open only survives inside the synchronous run of a user gesture.
+      // This line runs after `await`, so that gesture is already spent and the
+      // browser blocks the popup SILENTLY — no error, no console warning. The
+      // button looked completely dead, and production recorded 22 DigiLocker
+      // sessions that never once got past 'created' because nobody ever
+      // actually arrived at the provider.
+      //
+      // A same-tab redirect is never blocked, and it is the right flow anyway:
+      // the candidate comes back through the provider callback, and phones
+      // handle one tab far better than a popup.
+      setRedirectUrl(String(nextUrl));
+      window.location.assign(String(nextUrl));
     } catch (e: any) { setError(extractBgvError(e, "DigiLocker verification unavailable — please contact HR")); }
     finally { setSaving(false); }
   };
@@ -684,7 +702,9 @@ export function useOnboardingFull(token: string) {
       const payload = (res.data as any)?.data ?? res.data;
       const nextUrl = payload?.verification_url ?? payload?.authUrl ?? payload?.sign_url;
       if (!nextUrl) throw new Error("eSign link was not returned by the server.");
-      window.open(nextUrl, "_blank");
+      // Same popup-blocking problem as startDigilocker above.
+      setRedirectUrl(String(nextUrl));
+      window.location.assign(String(nextUrl));
     } catch (e: any) { setError(extractBgvError(e, "eSign initiation failed")); }
     finally { setSaving(false); }
   };
@@ -800,6 +820,7 @@ export function useOnboardingFull(token: string) {
     saveEmployee, saveBank, addQualification, saveExperience, saveStatutory,
     sendOtp, verifyOtp, grantConsent, verifyPan, verifyBank, verifyAadhaar, verifyUan,
     startDigilocker, startEsign, lookupIfsc, uploadDoc, deleteDoc, submit,
+    redirectUrl,
     updateSectionStatus, getBlockers, saveFamily, saveNominees, recordPrivacyConsent,
     autosaveStatus, sectionComplete,
   };

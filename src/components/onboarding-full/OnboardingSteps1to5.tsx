@@ -330,7 +330,7 @@ export function Step2Personal({
 // ── Step 3: Address & KYC ─────────────────────────────────────────────────────
 
 export function Step3AddressKyc({
-  employee, setEmployee, saving, onSave, digilockerStatus, onDigilocker,
+  employee, setEmployee, saving, onSave, digilockerStatus, onDigilocker, digilockerRedirectUrl,
   consentAccepted = false, onConsent,
 }: {
   employee: EmployeeForm;
@@ -339,6 +339,8 @@ export function Step3AddressKyc({
   onSave: () => void;
   digilockerStatus?: string;
   onDigilocker?: () => void;
+  /** Set once a redirect has been issued, so it stays reachable as a link. */
+  digilockerRedirectUrl?: string | null;
   consentAccepted?: boolean;
   onConsent?: () => void;
 }) {
@@ -455,6 +457,22 @@ export function Step3AddressKyc({
                 <>🔗 Connect DigiLocker</>
               )}
             </Button>
+            {digilockerRedirectUrl && (
+              <div className="mt-3 rounded-lg border border-indigo-200 bg-indigo-50 p-3">
+                <p className="text-xs font-bold text-indigo-900">Taking you to DigiLocker…</p>
+                <p className="mt-1 text-xs text-indigo-800">
+                  If nothing happens,{" "}
+                  <a
+                    href={digilockerRedirectUrl}
+                    rel="noreferrer"
+                    className="font-bold underline underline-offset-2"
+                  >
+                    open DigiLocker directly
+                  </a>
+                  .
+                </p>
+              </div>
+            )}
             {!consentAccepted && (
               <p className="mt-1.5 text-[11px] text-slate-500">
                 Tick the box above to enable DigiLocker, or skip this step and upload your
@@ -866,6 +884,7 @@ export function Step4Documents({
 export function Step5Bgv({
   bgv, bgvApiAvailable, consentAccepted, saving, status,
   onConsent, onVerifyAadhaar, onVerifyPan, onVerifyBank, onVerifyUan, onDigilocker, digilockerStatus,
+  digilockerRedirectUrl,
 }: {
   bgv: BgvStatus | null;
   bgvApiAvailable: boolean;
@@ -879,6 +898,8 @@ export function Step5Bgv({
   onVerifyUan: () => void;
   onDigilocker: () => void;
   digilockerStatus?: string;
+  /** Set once a redirect has been issued, so it stays reachable as a link. */
+  digilockerRedirectUrl?: string | null;
 }) {
   return (
     <Card className="border-t-4 border-t-indigo-500 shadow-sm border border-slate-200 rounded-xl overflow-hidden">

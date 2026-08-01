@@ -159,6 +159,7 @@ export default function CandidateOnboardingFullPage() {
           onSave={onb.saveEmployee}
           digilockerStatus={onb.status?.digilocker?.status}
           onDigilocker={onb.startDigilocker}
+          digilockerRedirectUrl={onb.redirectUrl}
           consentAccepted={onb.consentAccepted}
           onConsent={onb.grantConsent}
         />
@@ -190,6 +191,7 @@ export default function CandidateOnboardingFullPage() {
           onVerifyBank={onb.verifyBank}
           onVerifyUan={onb.verifyUan}
           onDigilocker={onb.startDigilocker}
+          digilockerRedirectUrl={onb.redirectUrl}
           digilockerStatus={onb.status?.digilocker?.status}
         />
       )}
