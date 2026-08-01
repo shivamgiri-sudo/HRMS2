@@ -13,6 +13,13 @@ vi.mock("../src/db/supabaseAdmin.js", () => ({
   supabaseAuthClient: { auth: { getUser: vi.fn() } },
 }));
 vi.mock("../src/db/mysql.js", () => ({ db: { execute: vi.fn().mockResolvedValue([[], []]) }, pingDb: vi.fn() }));
+// Authentication is MySQL JWT. This suite signed in through
+// supabaseAuthClient.auth.getUser, which the request path no longer consults —
+// so every request 401'd and the permission boundary these tests exist to
+// assert was never actually exercised.
+vi.mock("../src/modules/auth/auth.service.js", () => ({
+  authService: { verifyAccessToken: vi.fn() },
+}));
 vi.mock("../src/shared/accessGuard.js", () => ({
   getEmployeeForUser: vi.fn(),
   hasRole: vi.fn(),
@@ -46,18 +53,30 @@ import { app } from "../src/app.js";
 import { supabaseAuthClient } from "../src/db/supabaseAdmin.js";
 import { getEmployeeForUser, hasProcessScope, hasRole } from "../src/shared/accessGuard.js";
 import { rosterGovernanceService as service } from "../src/modules/roster/roster.governance.service.js";
+import { authService } from "../src/modules/auth/auth.service.js";
+import { invalidateAuthContextCache } from "../src/middleware/authMiddleware.js";
 
 const authUser = supabaseAuthClient.auth.getUser as ReturnType<typeof vi.fn>;
+const mockVerify = authService.verifyAccessToken as ReturnType<typeof vi.fn>;
 const isRole = hasRole as ReturnType<typeof vi.fn>;
 const inScope = hasProcessScope as ReturnType<typeof vi.fn>;
 const employeeForUser = getEmployeeForUser as ReturnType<typeof vi.fn>;
 const svc = service as { [K in keyof typeof service]: ReturnType<typeof vi.fn> };
-const AUTH = { Authorization: "Bearer mock-token-admin" };
+// Deliberately NOT "mock-token-admin": authMiddleware maps that to the built-in
+// demo user demo-admin-id, which authenticates the request as someone other than
+// the user these tests assert about. Every expectation here names "user-1", so
+// the token must fall through to authService.verifyAccessToken, which is mocked
+// to return exactly that user.
+const AUTH = { Authorization: "Bearer test.jwt.token" };
 const cycle = { id: "cycle-1", process_id: "process-1", branch_id: "branch-1", week_start_date: "2026-06-01", week_end_date: "2026-06-07", status: "draft" };
 
 beforeEach(() => {
   vi.clearAllMocks();
   authUser.mockResolvedValue({ data: { user: { id: "user-1" } }, error: null });
+  // requireAuth caches resolved roles per user for 30 seconds; clear it so a
+  // test asserting a denial cannot inherit a previous test's granted roles.
+  invalidateAuthContextCache("user-1");
+  mockVerify.mockReturnValue({ id: "user-1", email: "user-1@test.com" });
   isRole.mockResolvedValue(false);
   inScope.mockResolvedValue(false);
   employeeForUser.mockResolvedValue(null);

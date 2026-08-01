@@ -5,12 +5,6 @@ vi.mock("../src/db/supabaseAdmin.js", () => ({
   supabaseAdmin: {},
   supabaseAuthClient: { auth: { getUser: vi.fn() } },
 }));
-// Authentication is MySQL JWT. Signing in via supabaseAuthClient.auth.getUser
-// stopped working when auth moved off Supabase — every request 401'd, so none
-// of the assertions below were reached.
-vi.mock("../src/modules/auth/auth.service.js", () => ({
-  authService: { verifyAccessToken: vi.fn() },
-}));
 vi.mock("../src/db/mysql.js", () => ({
   db: { execute: vi.fn().mockResolvedValue([[], []]) },
   pingDb: vi.fn(),
@@ -62,14 +56,11 @@ vi.mock("../src/middleware/scopeMiddleware.js", () => ({
 }));
 
 import { supabaseAuthClient } from "../src/db/supabaseAdmin.js";
-import { authService } from "../src/modules/auth/auth.service.js";
-import { invalidateAuthContextCache } from "../src/middleware/authMiddleware.js";
 import { db } from "../src/db/mysql.js";
 import { wfmService } from "../src/modules/wfm/wfm.service.js";
 import { app } from "../src/app.js";
 
 const mockGetUser = supabaseAuthClient.auth.getUser as ReturnType<typeof vi.fn>;
-const mockVerify = authService.verifyAccessToken as ReturnType<typeof vi.fn>;
 const mockExecute = db.execute as ReturnType<typeof vi.fn>;
 const svc = wfmService as { [K in keyof typeof wfmService]: ReturnType<typeof vi.fn> };
 const AUTH = { Authorization: "Bearer mock-token-admin" };
@@ -81,9 +72,6 @@ const fakeReg = { id: "reg-1", employee_id: "emp-1", session_date: "2026-05-20",
 beforeEach(() => {
   vi.clearAllMocks();
   mockGetUser.mockResolvedValue({ data: { user: { id: "user-1", email: "admin@mcn.com" } }, error: null });
-  // requireAuth caches resolved roles per user for 30 seconds.
-  invalidateAuthContextCache("user-1");
-  mockVerify.mockReturnValue({ id: "user-1", email: "admin@mcn.com" });
 
   // /api/wfm/regularizations is served by wfmRegularizationSecureRouter, which
   // app.ts mounts BEFORE wfmRouter on the same base — so those paths never reach
