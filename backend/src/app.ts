@@ -81,6 +81,7 @@ import { filesRouter } from "./modules/files/files.routes.js";
 import { employeeDocsRouter } from "./modules/employees/employee.documents.routes.js";
 import { helpdeskRouter } from "./modules/helpdesk/helpdesk.routes.js";
 import { lettersRouter } from "./modules/letters/letters.routes.js";
+import { publicJoiningKitRouter, joiningKitRouter } from "./modules/employees/joiningKit.routes.js";
 import { appointmentEsignRouter } from "./modules/letters/appointment-esign.routes.js";
 import { dscConfigRouter } from "./modules/letters/dscConfig.routes.js";
 import { appointmentLetterRouter } from "./modules/letters/appointmentLetter.routes.js";
@@ -374,6 +375,9 @@ app.use("/api/employees", employeePhotoCompatRouter);
 app.use("/api/employees", listEndpointLimiter, employee360Router);
 app.use("/api/employees", listEndpointLimiter, employeeRouter);
 app.use("/api/employees", listEndpointLimiter, employeeJoiningDocumentsRouter);
+// HR-facing kit controls. Without these the dispatcher was only reachable by
+// running a script on the server.
+app.use("/api/employees", joiningKitRouter);
 app.use("/api/employees", employeeReactivationRouter);
 app.use("/api/bgv/employee", employeeBgvRouter);
 app.use("/api/rm-change", rmChangeRouter);
@@ -419,6 +423,10 @@ app.use("/api/files", filesRouter); // must be before clientRouter (which applie
 // applies requireAuth to every /api/* path â€” when it sat underneath, every signing link
 // a candidate clicked answered "missing authorization token".
 app.use("/api/public/employee-documents", publicEmployeeDocumentRouter);
+// The joining-kit signing link is emailed to the employee and carries its own
+// token, so it must sit above the catch-all too. Mounted below it, every
+// "Review & Sign All" button in every kit email would answer 401.
+app.use("/api/public/joining-kit", publicJoiningKitRouter);
 app.use("/api", clientRouter);
 app.use("/api/onboarding/data", onboardingDataRouter);
 app.use("/api/onboarding/penny-drop", pennyDropRouter);

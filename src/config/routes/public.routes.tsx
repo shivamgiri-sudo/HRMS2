@@ -30,6 +30,8 @@ const CandidatePortalDashboard = lazy(() => import("@/pages/CandidatePortalDashb
 const PortalLogin          = lazy(() => import("@/pages/portal/PortalLogin"));
 
 const EmployeeDocumentEsignReviewPage = lazy(() => import("@/pages/EmployeeDocumentEsignReviewPage"));
+const EmployeeJoiningKitEsignPage     = lazy(() => import("@/pages/EmployeeJoiningKitEsignPage"));
+const PublicAppointmentLetterVerify   = lazy(() => import("@/pages/PublicAppointmentLetterVerify").then(m => ({ default: m.PublicAppointmentLetterVerify })));
 const EmployeeEpfComplianceReviewPage = lazy(() => import("@/pages/EmployeeEpfComplianceReviewPage"));
 const VisitorSelfRegister = lazy(() => import("@/pages/VisitorSelfRegister"));
 const VisitorStatusPage   = lazy(() => import("@/pages/VisitorStatusPage"));
@@ -58,6 +60,8 @@ export const publicRouteElements = (
       {/* Public verification (QR codes) */}
       <Route path="/verify/emp/:employeeCode"                element={<PublicEmployeeVerify />} />
       <Route path="/verify/payslip/:employeeCode/:monthYear" element={<PublicPayslipVerify />} />
+      {/* The QR printed on every appointment letter points here. */}
+      <Route path="/verify/appointment/:token"              element={<PublicAppointmentLetterVerify />} />
 
       {/* Candidate registration — CANONICAL: /interview-registration */}
       <Route path="/interview-registration" element={<NativeATSCandidateRegistration />} />
@@ -85,6 +89,8 @@ export const publicRouteElements = (
 
       {/* Token-gated document review flows (token in URL, no session required) */}
       <Route path="/employee/joining-documents/esign/:token" element={<EmployeeDocumentEsignReviewPage />} />
+      {/* One link, all joining documents. joiningKitDispatch.service.ts emails this exact path. */}
+      <Route path="/employee/joining-kit/esign/:token"       element={<EmployeeJoiningKitEsignPage />} />
       <Route path="/employee/epf-compliance/review/:token"   element={<EmployeeEpfComplianceReviewPage />} />
 
       {/* Visitor management — public unauthenticated surfaces */}

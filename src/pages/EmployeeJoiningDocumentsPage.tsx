@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useParams } from "react-router-dom";
 import { Link } from "react-router-dom";
 import {
@@ -340,6 +340,8 @@ export default function EmployeeJoiningDocumentsPage() {
           </div>
 
           <ErrorBanner message={error} onRetry={() => void load()} />
+
+          {employeeId && <JoiningKitPanel employeeId={employeeId} onSent={() => void load()} />}
 
           {/* Stat tiles */}
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
@@ -686,5 +688,135 @@ export default function EmployeeJoiningDocumentsPage() {
         </div>
       )}
     </DashboardLayout>
+  );
+}
+
+
+/**
+ * Send every joining document in one email, one consent and one billed eSign
+ * call, instead of six separate sends.
+ *
+ * Shows blockers first: a kit that cannot go out is the common case, and HR
+ * needs the work list more often than the button.
+ */
+function JoiningKitPanel({ employeeId, onSent }: { employeeId: string; onSent: () => void }) {
+  const [preview, setPreview] = useState<{
+    documents: Array<{ code: string; name: string; status: string; fillStatus: string | null }>;
+    hrFillPending: string[];
+    kits: Array<{ id: string; status: string; blocked_reason: string | null; document_count: number;
+                  total_pages: number; sent_at: string | null; completed_at: string | null }>;
+  } | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [sending, setSending] = useState(false);
+  const [msg, setMsg] = useState<{ kind: "ok" | "blocked" | "error"; text: string } | null>(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const r = await hrmsApi.get<{ data: typeof preview }>(`/api/employees/${employeeId}/joining-kit/preview`);
+      setPreview(r.data);
+    } catch {
+      setPreview(null);
+    } finally {
+      setLoading(false);
+    }
+  }, [employeeId]);
+
+  useEffect(() => { void load(); }, [load]);
+
+  const send = async () => {
+    if (!window.confirm(
+      `Send all ${preview?.documents.length ?? 0} joining documents to this employee in one email?\n\n` +
+      "This makes one billed eSign call. The employee signs once and the signature is applied to every document.",
+    )) return;
+    setSending(true);
+    setMsg(null);
+    try {
+      const r = await hrmsApi.post<{ message?: string }>(`/api/employees/${employeeId}/joining-kit/send`, {});
+      setMsg({ kind: "ok", text: r.message ?? "Kit sent." });
+      await load();
+      onSent();
+    } catch (err: unknown) {
+      // A blocked kit comes back 409 with the reason. That is an expected
+      // answer, not a fault, so it is not styled as an error.
+      const text = err instanceof Error ? err.message : "Unable to send the kit.";
+      setMsg({ kind: /still need|cannot|no |disabled|already/i.test(text) ? "blocked" : "error", text });
+    } finally {
+      setSending(false);
+    }
+  };
+
+  const open = preview?.kits.find((k) => k.status === "sent" || k.status === "queued");
+  const blocked = (preview?.hrFillPending.length ?? 0) > 0;
+
+  return (
+    <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <p className="text-xs font-bold uppercase tracking-widest text-cyan-600">One email · one signature</p>
+          <h2 className="mt-1 text-lg font-bold text-slate-900">Joining documents kit</h2>
+          <p className="mt-1 max-w-xl text-sm text-slate-500">
+            Combines the structured joining documents into a single file. The employee signs once
+            and the signature is placed in each document&apos;s own signature area.
+          </p>
+        </div>
+        {!open && (
+          <Button
+            type="button" onClick={() => void send()}
+            disabled={sending || loading || blocked || !preview?.documents.length}
+            className="min-h-[44px] gap-2"
+          >
+            {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+            Send all in one email
+          </Button>
+        )}
+      </div>
+
+      {loading ? (
+        <div className="mt-4 flex h-16 items-center justify-center"><Loader2 className="h-5 w-5 animate-spin text-slate-400" /></div>
+      ) : (
+        <>
+          {preview?.documents.length ? (
+            <div className="mt-4 flex flex-wrap gap-1.5">
+              {preview.documents.map((d) => (
+                <span key={d.code} className="rounded-lg bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-700">
+                  {d.name}
+                </span>
+              ))}
+            </div>
+          ) : (
+            <p className="mt-4 text-sm text-slate-500">No documents are eligible for a kit yet.</p>
+          )}
+
+          {blocked && (
+            <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-3">
+              <p className="text-xs font-bold uppercase tracking-wide text-amber-700">Complete these first</p>
+              <ul className="mt-1.5 space-y-1">
+                {preview!.hrFillPending.map((n) => (
+                  <li key={n} className="text-sm text-amber-900">• {n}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {open && (
+            <div className="mt-4 rounded-lg border border-cyan-200 bg-cyan-50 p-3 text-sm text-cyan-900">
+              A kit is already open for this employee — {open.document_count} documents, {open.total_pages} pages
+              {open.sent_at ? `, sent ${new Date(open.sent_at).toLocaleString("en-IN")}` : ""}.
+              Wait for it to be signed, or ask the employee to check their email.
+            </div>
+          )}
+
+          {msg && (
+            <div className={`mt-4 rounded-lg border p-3 text-sm ${
+              msg.kind === "ok" ? "border-emerald-200 bg-emerald-50 text-emerald-900"
+              : msg.kind === "blocked" ? "border-amber-200 bg-amber-50 text-amber-900"
+              : "border-red-200 bg-red-50 text-red-900"}`}>
+              {msg.text}
+            </div>
+          )}
+        </>
+      )}
+    </div>
   );
 }
