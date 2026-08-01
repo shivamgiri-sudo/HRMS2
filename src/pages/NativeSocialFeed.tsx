@@ -179,6 +179,88 @@ function FeedList({ platform }: { platform: SocialPlatformFilter }) {
   );
 }
 
+// ── Facebook Page Plugin embed (free, no API key) ─────────────────────────
+
+function FacebookEmbed() {
+  const ensureSDK = (el: HTMLDivElement | null) => {
+    if (!el) return;
+    if ((window as any).FB) {
+      (window as any).FB.XFBML.parse(el);
+      return;
+    }
+    const s = document.createElement("script");
+    s.id = "facebook-jssdk";
+    s.src = "https://connect.facebook.net/en_US/sdk.js#xfbml=1&version=v19.0";
+    s.async = true;
+    s.defer = true;
+    document.body.appendChild(s);
+  };
+
+  return (
+    <div className="flex justify-center" ref={ensureSDK}>
+      <div id="fb-root" />
+      <div
+        className="fb-page"
+        data-href="https://www.facebook.com/TeamMas9"
+        data-tabs="timeline"
+        data-width="600"
+        data-height="700"
+        data-small-header="false"
+        data-adapt-container-width="true"
+        data-hide-cover="false"
+        data-show-facepile="true"
+      >
+        <blockquote cite="https://www.facebook.com/TeamMas9" className="fb-xfbml-parse-ignore">
+          <a href="https://www.facebook.com/TeamMas9">MAS Callnet</a>
+        </blockquote>
+      </div>
+    </div>
+  );
+}
+
+// ── Instagram embed (official oEmbed, no API key for public posts) ─────────
+
+function InstagramEmbed() {
+  const ensureScript = (el: HTMLDivElement | null) => {
+    if (!el) return;
+    if ((window as any).instgrm) {
+      (window as any).instgrm.Embeds.process();
+      return;
+    }
+    const s = document.createElement("script");
+    s.src = "https://www.instagram.com/embed.js";
+    s.async = true;
+    document.body.appendChild(s);
+  };
+
+  return (
+    <div className="flex flex-col items-center gap-6" ref={ensureScript}>
+      {/* Instagram doesn't offer a timeline widget — show the profile card + link */}
+      <div className="w-full max-w-lg rounded-2xl border border-slate-200 bg-white p-8 text-center shadow-sm">
+        <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full text-white" style={{ background: "linear-gradient(135deg,#833AB4,#FD1D1D,#F77737)" }}>
+          <svg className="h-8 w-8" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M12 2.163c3.204 0 3.584.012 4.85.07 3.252.148 4.771 1.691 4.919 4.919.058 1.265.069 1.645.069 4.849 0 3.205-.012 3.584-.069 4.849-.149 3.225-1.664 4.771-4.919 4.919-1.266.058-1.644.07-4.85.07-3.204 0-3.584-.012-4.849-.07-3.26-.149-4.771-1.699-4.919-4.92-.058-1.265-.07-1.644-.07-4.849 0-3.204.013-3.583.07-4.849.149-3.227 1.664-4.771 4.919-4.919 1.266-.057 1.645-.069 4.849-.069zm0-2.163c-3.259 0-3.667.014-4.947.072-4.358.2-6.78 2.618-6.98 6.98-.059 1.281-.073 1.689-.073 4.948 0 3.259.014 3.668.072 4.948.2 4.358 2.618 6.78 6.98 6.98 1.281.058 1.689.072 4.948.072 3.259 0 3.668-.014 4.948-.072 4.354-.2 6.782-2.618 6.979-6.98.059-1.28.073-1.689.073-4.948 0-3.259-.014-3.667-.072-4.947-.196-4.354-2.617-6.78-6.979-6.98-1.281-.059-1.69-.073-4.949-.073zm0 5.838c-3.403 0-6.162 2.759-6.162 6.162s2.759 6.163 6.162 6.163 6.162-2.759 6.162-6.163c0-3.403-2.759-6.162-6.162-6.162zm0 10.162c-2.209 0-4-1.79-4-4 0-2.209 1.791-4 4-4s4 1.791 4 4c0 2.21-1.791 4-4 4zm6.406-11.845c-.796 0-1.441.645-1.441 1.44s.645 1.44 1.441 1.44c.795 0 1.439-.645 1.439-1.44s-.644-1.44-1.439-1.44z"/>
+          </svg>
+        </div>
+        <h3 className="text-base font-bold text-slate-900">@teammas9 on Instagram</h3>
+        <p className="mt-2 text-sm text-slate-500">
+          Follow MAS Callnet on Instagram for the latest updates, team moments, and company culture.
+        </p>
+        <a
+          href="https://instagram.com/teammas9"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="mt-5 inline-flex items-center gap-2 rounded-lg px-5 py-2.5 text-sm font-semibold text-white transition"
+          style={{ background: "linear-gradient(135deg,#833AB4,#FD1D1D,#F77737)" }}
+        >
+          View on Instagram
+          <ExternalLink className="h-3.5 w-3.5" />
+        </a>
+      </div>
+    </div>
+  );
+}
+
 // ── X/Twitter embed ────────────────────────────────────────────────────────
 
 declare global {
@@ -186,7 +268,6 @@ declare global {
 }
 
 function TwitterEmbed() {
-  // Ensure the widget script renders when this tab is activated.
   const ensureWidget = (el: HTMLDivElement | null) => {
     if (!el) return;
     if (window.twttr?.widgets?.load) {
@@ -202,7 +283,6 @@ function TwitterEmbed() {
 
   return (
     <div className="flex justify-center" ref={ensureWidget}>
-      {/* Replace YOUR_USERNAME with the company X/Twitter handle */}
       <a
         className="twitter-timeline"
         data-width="600"
@@ -282,9 +362,26 @@ export default function NativeSocialFeed() {
         </TabsList>
 
         <div className="mt-6">
-          <TabsContent value="all"><FeedList platform="all" /></TabsContent>
-          <TabsContent value="facebook"><FeedList platform="facebook" /></TabsContent>
-          <TabsContent value="instagram"><FeedList platform="instagram" /></TabsContent>
+          <TabsContent value="all">
+            <div className="grid gap-6 xl:grid-cols-2">
+              <div>
+                <p className="mb-3 text-xs font-semibold uppercase tracking-widest text-slate-400">Facebook</p>
+                <FacebookEmbed />
+              </div>
+              <div className="space-y-6">
+                <div>
+                  <p className="mb-3 text-xs font-semibold uppercase tracking-widest text-slate-400">Instagram</p>
+                  <InstagramEmbed />
+                </div>
+                <div>
+                  <p className="mb-3 text-xs font-semibold uppercase tracking-widest text-slate-400">YouTube</p>
+                  <FeedList platform="youtube" />
+                </div>
+              </div>
+            </div>
+          </TabsContent>
+          <TabsContent value="facebook"><FacebookEmbed /></TabsContent>
+          <TabsContent value="instagram"><InstagramEmbed /></TabsContent>
           <TabsContent value="youtube"><FeedList platform="youtube" /></TabsContent>
           <TabsContent value="twitter"><TwitterEmbed /></TabsContent>
           <TabsContent value="linkedin"><LinkedInCard /></TabsContent>
