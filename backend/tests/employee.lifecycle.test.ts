@@ -11,6 +11,52 @@ vi.mock("../src/db/supabaseAdmin.js", () => ({
 }));
 vi.mock("../src/db/mysql.js", () => ({ db: { execute: vi.fn().mockResolvedValue([[], []]) }, pingDb: vi.fn() }));
 
+/**
+ * Tokens this suite authenticates with, and who each one is.
+ *
+ * Authentication is MySQL JWT; signing in through supabaseAuthClient.auth.getUser
+ * stopped working when auth moved off Supabase, so every request here 401'd and
+ * none of the lifecycle or ownership assertions were reached.
+ */
+const TOKEN_USERS: Record<string, { id: string; email: string }> = {
+  "admin.token": { id: "u-admin", email: "admin@test.com" },
+  "hr.token": { id: "u-hr", email: "hr@test.com" },
+  "emp.token": { id: "u-emp", email: "emp@test.com" },
+};
+
+/**
+ * requireAuth is replaced rather than fed.
+ *
+ * The real middleware resolves roles and a read-only flag from the database on a
+ * cache miss, so it consumes db.execute calls before a handler runs. This suite
+ * drives 29 tests through 63 positional mockResolvedValueOnce chains, and any
+ * query requireAuth makes shifts every one of them by an unpredictable amount.
+ *
+ * The subject here is lifecycle and ownership authorization, not JWT
+ * verification — which access.rbac.test.ts covers against the real middleware.
+ * So this stands in a minimal requireAuth that consumes no queries, leaving the
+ * chains meaning exactly what they say. Unknown and missing tokens still 401, so
+ * the suite's own negative auth tests stay honest.
+ */
+vi.mock("../src/middleware/authMiddleware.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/middleware/authMiddleware.js")>();
+  return {
+    ...actual,
+    requireAuth: (req: any, res: any, next: any) => {
+      const header = String(req.headers?.authorization ?? "");
+      if (!header.startsWith("Bearer ")) {
+        return res.status(401).json({ success: false, message: "Missing authorization token" });
+      }
+      const user = TOKEN_USERS[header.replace("Bearer ", "").trim()];
+      if (!user) {
+        return res.status(401).json({ success: false, message: "Invalid or expired token" });
+      }
+      req.authUser = { id: user.id, email: user.email };
+      return next();
+    },
+  };
+});
+
 import { app } from "../src/app.js";
 import { db } from "../src/db/mysql.js";
 import { supabaseAuthClient } from "../src/db/supabaseAdmin.js";
@@ -209,12 +255,28 @@ describe("POST /api/letters/generate", () => {
     mockAdmin();
     mockExecute.mockResolvedValueOnce([[{ id: "tpl-1", template_code: "OFFER_LETTER", letter_type: "offer", body_template: "Dear {{full_name}}, join as {{designation}}." }], []]);
     mockExecute.mockResolvedValueOnce([[{ id: "emp-1", employee_code: "EMP001", full_name: "Amit Kumar", first_name: "Amit", last_name: "Kumar", designation_name: "Agent", date_of_joining: "2026-06-01" }], []]);
+    // The service also reads the salary assignment before inserting; without a
+    // row here the insert consumes this slot and the chain shifts by one.
+    mockExecute.mockResolvedValueOnce([[{ ctc_annual: 360000 }], []]);
     mockExecute.mockResolvedValueOnce([{ affectedRows: 1 }, []]);
+
     const r = await request(app).post("/api/letters/generate").set(ADMIN_AUTH)
       .send({ employee_id: "emp-1", template_code: "OFFER_LETTER", issued_date: "2026-06-01" });
+
     expect(r.status).toBe(201);
-    expect(r.body.data.generated_text).toContain("Amit Kumar");
-    expect(r.body.data.generated_text).toContain("Agent");
+    // generateLetter returns { id, letter_type, template_code }. The interpolated
+    // body is persisted, not returned, so asserting on r.body.data.generated_text
+    // could never pass — it tested a field the endpoint does not expose.
+    expect(r.body.data).toMatchObject({ letter_type: "offer", template_code: "OFFER_LETTER" });
+
+    // Assert the interpolation where it actually happens: the stored text.
+    const insert = mockExecute.mock.calls.find(([sql]: [unknown]) =>
+      /INSERT INTO generated_letter/i.test(String(sql)),
+    );
+    expect(insert, "expected the letter to be persisted").toBeDefined();
+    const stored = ((insert![1] as unknown[]) ?? []).map(String).join(" ");
+    expect(stored).toContain("Amit Kumar");
+    expect(stored).toContain("Agent");
   });
 });
 
