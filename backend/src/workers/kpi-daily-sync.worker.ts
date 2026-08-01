@@ -1,4 +1,5 @@
 import { syncAprMetrics, syncAttendanceMetrics, syncConversionMetrics, syncSalesBrandMisMetrics, syncSalesOrderMetrics, syncQualityMetrics, syncQualityMetricsForDate } from '../modules/kpi/kpi-data-connector.service.js';
+import { runWeeklyCoachingEvaluation } from '../modules/quality-dashboard/weekly-coaching.service.js';
 
 const DAILY_INTERVAL_MS = 24 * 60 * 60 * 1000;
 const DAILY_HOUR = 1;
@@ -80,6 +81,20 @@ async function runDailySync(): Promise<void> {
     console.log(`[KpiDailySyncWorker] Quality sync (${date}): ${qDaily.synced} synced, ${qDaily.skipped} skipped, ${qDaily.errors.length} errors`);
   } catch (err: any) {
     console.error(`[KpiDailySyncWorker] Quality daily sync failed:`, err.message);
+  }
+
+  // Weekly coaching review, run nightly over the rolling ISO week rather than on
+  // a fixed weekday. A "runs on Monday" job silently skips a whole week if that
+  // one night fails, and the writer's idempotency already guarantees one session
+  // per agent per week — so running every night is self-healing rather than
+  // duplicative.
+  try {
+    const coaching = await runWeeklyCoachingEvaluation(date);
+    console.log(`[KpiDailySyncWorker] Weekly coaching (${coaching.weekStart}..${coaching.weekEnd}): ` +
+      `${coaching.raised} raised, ${coaching.skippedAlreadyOpen} already open, ` +
+      `${coaching.skippedNoTrigger} no trigger, ${coaching.skippedNoCoach} no coach`);
+  } catch (err: any) {
+    console.error(`[KpiDailySyncWorker] Weekly coaching failed:`, err.message);
   }
 
   const today = new Date();
