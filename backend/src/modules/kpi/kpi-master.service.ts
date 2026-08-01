@@ -182,6 +182,48 @@ export async function deleteKpiMasterConfig(id: string) {
 // ─── Resolve KPIs for employee ────────────────────────────────────────────────
 // Priority: process(1) > cost_centre(2) > designation(3) > department(4)
 
+/**
+ * Restrict target resolution to the version in force today — but only once the
+ * columns exist.
+ *
+ * kpi_master_config upserts in place, so editing a target rewrites history: a
+ * score computed in June against a target of 80 later reports as having been
+ * measured against 95, and a performance conversation cannot separate "the agent
+ * got worse" from "we raised the bar". Migration 1048 adds effective_from /
+ * effective_to to fix that.
+ *
+ * The check is not defensive padding. Production runs SKIP_MIGRATIONS=true, so
+ * this code can ship before 1048 is applied, and an unconditional predicate
+ * would make every KPI resolution fail with ER_BAD_FIELD_ERROR. That exact
+ * sequence took reimbursements down from the day it shipped, and made every LMS
+ * mapping save throw silently. getLineageColumns() in kpi-data-connector guards
+ * the same way.
+ */
+let effectiveDatingSupported: boolean | null = null;
+
+async function effectiveDatingPredicate(): Promise<string> {
+  if (effectiveDatingSupported === null) {
+    const [rows] = await db
+      .execute<RowDataPacket[]>(
+        `SELECT COUNT(*) AS n
+           FROM INFORMATION_SCHEMA.COLUMNS
+          WHERE TABLE_SCHEMA = DATABASE()
+            AND TABLE_NAME = 'kpi_master_config'
+            AND COLUMN_NAME IN ('effective_from', 'effective_to')`,
+      )
+      .catch(() => [[{ n: 0 }], []] as any);
+    effectiveDatingSupported = Number((rows as any[])[0]?.n ?? 0) === 2;
+  }
+  return effectiveDatingSupported
+    ? "AND kmc.effective_from <= CURDATE() AND (kmc.effective_to IS NULL OR kmc.effective_to >= CURDATE())"
+    : "";
+}
+
+/** Exposed so a test, or a process that just ran the migration, can re-check. */
+export function resetEffectiveDatingSupport() {
+  effectiveDatingSupported = null;
+}
+
 export async function resolveEmployeeKpis(employeeId: string): Promise<number> {
   // Fetch employee org unit attributes
   const [empRows] = await db.execute<RowDataPacket[]>(
@@ -223,6 +265,7 @@ export async function resolveEmployeeKpis(employeeId: string): Promise<number> {
 
   if (!orClauses.length) return 0;
 
+
   const sql = `
     SELECT
       kmc.metric_id,
@@ -240,6 +283,7 @@ export async function resolveEmployeeKpis(employeeId: string): Promise<number> {
       END AS priority
     FROM kpi_master_config kmc
     WHERE kmc.is_active = 1 AND (${orClauses.join(' OR ')})
+      ${await effectiveDatingPredicate()}
     ORDER BY kmc.metric_id, priority ASC
   `;
 
