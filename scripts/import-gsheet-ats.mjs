@@ -43,10 +43,14 @@ const mysql = require('mysql2/promise');
 // ── CLI args ──────────────────────────────────────────────────────────────────
 const args = process.argv.slice(2);
 const dryRun = args.includes('--dry-run');
+// Pure insert: rows whose candidate_code is already present are left completely
+// alone. Use when the sheet is an archive being back-filled and HRMS is the
+// system of record for anything already in it.
+const insertOnly = args.includes('--insert-only');
 const filePath = args.find(a => !a.startsWith('--'));
 
 if (!filePath) {
-  console.error('Usage: node scripts/import-gsheet-ats.mjs <file.tsv|file.csv> [--dry-run]');
+  console.error('Usage: node scripts/import-gsheet-ats.mjs <file.tsv|file.csv> [--dry-run] [--insert-only]');
   process.exit(1);
 }
 if (!fs.existsSync(filePath)) {
@@ -169,6 +173,30 @@ function mapProfileStatus(status, finalDecision) {
   return 'registered';
 }
 
+/**
+ * ats_candidate.status, reconciled against the outcome columns.
+ *
+ * The sheet's Status column used to be written straight through. current_stage
+ * and profile_status are derived from FinalDecision / Walk-in EndStage instead,
+ * so the three could disagree and nothing reconciled them — and status is the
+ * only one the walk-in queue and the SLA breach worker read.
+ *
+ * The June 2026 legacy import landed 1,330 candidates that way: profile_status
+ * said registered/onboarded and current_stage said Applied/Onboarded, while
+ * status stayed 'Waiting' on every one of them. 'Waiting' means "in the lobby
+ * right now", so a month-old walk-in still counted as queued.
+ *
+ * FinalDecision is the authoritative outcome and now wins over the Status
+ * column. Where there is no decision, the sheet's own value is kept, exactly as
+ * before, so rows that were already correct are unaffected.
+ */
+function mapCandidateStatus(status, finalDecision) {
+  const fd = (finalDecision || '').trim().toLowerCase();
+  if (fd === 'selected') return 'Selected';
+  if (fd === 'rejected') return 'Rejected';
+  return status || null;
+}
+
 // ── Build INSERT row from GSheet row ─────────────────────────────────────────
 function buildRow(r) {
   const candidateCode = v(r, 'CandidateID');
@@ -253,7 +281,7 @@ function buildRow(r) {
 
     // Walk-in progress
     walkin_end_stage:           walkinEndStage             || null,
-    status:                     status                     || null,
+    status:                     mapCandidateStatus(status, finalDecision),
     update_form_link:           v(r, 'UpdateFormLink')     || null,
     walk_in_date:               createdDate,
 
@@ -332,15 +360,32 @@ const pool = await mysql.createPool({
 });
 
 let inserted = 0, updated = 0, skipped = 0, errors = 0;
+let existingSkipped = 0, noCode = 0;
+
+// Existing candidate_codes, loaded once. --insert-only skips these in JS rather
+// than relying on INSERT IGNORE, which would also swallow real errors (bad
+// dates, oversized values) and report them as duplicates.
+const [existingRows] = await pool.query('SELECT candidate_code FROM ats_candidate WHERE candidate_code IS NOT NULL');
+const existingCodes = new Set(existingRows.map((r) => String(r.candidate_code)));
+console.log(`${existingCodes.size} candidate_code(s) already in ats_candidate`);
+if (insertOnly) console.log('INSERT-ONLY mode — existing candidate_codes will be left untouched\n');
+
+// candidate_codes actually written, so an insert-only run can be undone with
+// DELETE FROM ats_candidate WHERE candidate_code IN (...).
+const insertedCodes = [];
 
 for (const rawRow of rows) {
   const row = buildRow(rawRow);
-  if (!row) { skipped++; continue; }
+  if (!row) { skipped++; noCode++; continue; }
+
+  const alreadyExists = existingCodes.has(String(row.candidate_code));
+
+  if (insertOnly && alreadyExists) { skipped++; existingSkipped++; continue; }
 
   try {
     if (dryRun) {
-      console.log(`  [DRY] would upsert ${row.candidate_code} — ${row.full_name}`);
-      inserted++;
+      if (alreadyExists) { updated++; }
+      else { inserted++; insertedCodes.push(row.candidate_code); }
       continue;
     }
 
@@ -355,15 +400,16 @@ for (const rawRow of rows) {
       .map(k => `${k} = IF(${k} IS NULL OR ${k} = '', VALUES(${k}), ${k})`)
       .join(',\n      ');
 
-    const sql = `
-      INSERT INTO ats_candidate (${cols.join(', ')})
-      VALUES (${cols.map(() => '?').join(', ')})
-      ON DUPLICATE KEY UPDATE
-      ${updateClauses}
-    `;
+    const sql = insertOnly
+      ? `INSERT INTO ats_candidate (${cols.join(', ')})
+         VALUES (${cols.map(() => '?').join(', ')})`
+      : `INSERT INTO ats_candidate (${cols.join(', ')})
+         VALUES (${cols.map(() => '?').join(', ')})
+         ON DUPLICATE KEY UPDATE
+         ${updateClauses}`;
 
     const [result] = await pool.execute(sql, vals);
-    if (result.affectedRows === 1)      inserted++;
+    if (result.affectedRows === 1)      { inserted++; insertedCodes.push(row.candidate_code); }
     else if (result.affectedRows === 2) updated++;   // 2 = row existed, was updated
     else                                skipped++;   // 0 = existed, nothing changed
 
@@ -375,14 +421,32 @@ for (const rawRow of rows) {
 
 await pool.end();
 
+// Undo list for an insert-only run. Written even on a dry run so the planned
+// blast radius is reviewable before anything is committed.
+// Written beside the input file, never into the repo root: several sessions edit
+// this working tree and a broad `git add` there would sweep the undo list into
+// an unrelated commit.
+let undoFile = '';
+if (insertOnly && insertedCodes.length) {
+  const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '');
+  undoFile = path.join(path.dirname(path.resolve(filePath)), `ats-import-inserted-${stamp}.txt`);
+  fs.writeFileSync(undoFile, insertedCodes.join('\n') + '\n');
+}
+
+const line = (label, value) => `║  ${String(label).padEnd(26)}${String(value).padEnd(10)}║`;
 console.log(`
 ╔══════════════════════════════════════╗
-║  ATS Import Complete                 ║
+║  ATS Import ${(dryRun ? 'DRY RUN' : 'Complete').padEnd(25)}║
 ╠══════════════════════════════════════╣
-║  Inserted (new):    ${String(inserted).padEnd(16)} ║
-║  Updated (existed): ${String(updated).padEnd(16)} ║
-║  Skipped (no-op):   ${String(skipped).padEnd(16)} ║
-║  Errors:            ${String(errors).padEnd(16)} ║
+${line('Mode:', insertOnly ? 'insert-only' : 'upsert')}
+${line('Inserted (new):', inserted)}
+${line(insertOnly ? 'Left alone (exists):' : 'Updated (existed):', insertOnly ? existingSkipped : updated)}
+${line('Skipped (no CandidateID):', noCode)}
+${line('Errors:', errors)}
 ╚══════════════════════════════════════╝
 `);
+if (undoFile) {
+  console.log(`Inserted candidate_codes written to:\n  ${undoFile}`);
+  console.log(`Undo with:\n  DELETE FROM ats_candidate WHERE candidate_code IN (<contents of that file>);\n`);
+}
 if (errors > 0) process.exit(1);
