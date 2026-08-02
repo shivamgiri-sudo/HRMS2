@@ -414,9 +414,7 @@
     "1055_branch_head_approval_missing_columns.sql"
   ],
   "approvedDeletions": [],
-  "knownDangling": [
-    "543_cosec_exclusion_and_inactive_issue_type.sql"
-  ],
+  "knownDangling": [],
   "knownUnlisted": [
     "000_ai_supplemental.sql",
     "000_finance_supplemental.sql",
