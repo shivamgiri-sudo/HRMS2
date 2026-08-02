@@ -191,3 +191,43 @@ describe("the journey never queries columns that do not exist", () => {
     expect(journey).toContain("ats_interview_submission");
   });
 });
+
+describe("submitting the offer is the payroll validation", () => {
+  it("derives the validation record when the offer is submitted", () => {
+    // Payroll HR enters the salary once, on the offer. validateSalaryLock reads
+    // a different table; nothing on the offer path used to write it, and the
+    // page that did was deprecated without replacing the record it produced.
+    expect(onboarding).toContain("deriveSalaryValidationFromOffer");
+    const submitAt = onboarding.indexOf("if (submit) {");
+    expect(submitAt).toBeGreaterThan(-1);
+    expect(onboarding.slice(submitAt, submitAt + 1200)).toContain("deriveSalaryValidationFromOffer");
+  });
+
+  it("copies the figures from the offer rather than inventing them", () => {
+    const fnAt = onboarding.indexOf("async function deriveSalaryValidationFromOffer");
+    const body = onboarding.slice(fnAt, fnAt + 4000);
+    expect(body).toContain("FROM ats_employment_offer o");
+    for (const col of ["o.gross", "o.date_of_joining", "o.emp_type"]) {
+      expect(body).toContain(col);
+    }
+  });
+
+  it("refuses to write a row that would violate NOT NULL", () => {
+    // gross_salary and joining_date are NOT NULL with no default.
+    const fnAt = onboarding.indexOf("async function deriveSalaryValidationFromOffer");
+    expect(onboarding.slice(fnAt, fnAt + 4000)).toMatch(/o\.gross == null \|\| !o\.date_of_joining/);
+  });
+
+  it("is idempotent — refreshes an existing row instead of duplicating", () => {
+    const fnAt = onboarding.indexOf("async function deriveSalaryValidationFromOffer");
+    const body = onboarding.slice(fnAt, fnAt + 4500);
+    expect(body).toContain("UPDATE ats_payroll_hr_validation");
+    expect(body).toContain("INSERT INTO ats_payroll_hr_validation");
+  });
+
+  it("does not block the offer when derivation fails", () => {
+    // The offer must still reach the branch head; the queue flags the gap.
+    const submitAt = onboarding.indexOf("if (submit) {");
+    expect(onboarding.slice(submitAt, submitAt + 900)).toMatch(/deriveSalaryValidationFromOffer[\s\S]{0,200}\.catch\(/);
+  });
+});
