@@ -410,7 +410,7 @@ INSERT IGNORE INTO survey_master (survey_id, survey_title, survey_description, s
 
 -- Survey 1 Questions
 INSERT IGNORE INTO survey_question
-  (question_id, survey_id, question_text, question_type, display_order, is_required, options_json)
+  (question_id, survey_id, question_text, question_type, question_order, is_required, options_json)
 VALUES
   (UUID(), @survey1_id, 'How satisfied are you with your current role?', 'scale', 1, TRUE, '{"min":1,"max":5,"labels":{"1":"Very Dissatisfied","5":"Very Satisfied"}}'),
   (UUID(), @survey1_id, 'Do you feel valued as a team member?', 'rating', 2, TRUE, '{"min":1,"max":5,"labels":{"1":"Not at all","5":"Absolutely"}}'),
@@ -428,7 +428,7 @@ INSERT IGNORE INTO survey_master (survey_id, survey_title, survey_description, s
 
 -- Survey 2 Questions
 INSERT IGNORE INTO survey_question
-  (question_id, survey_id, question_text, question_type, display_order, is_required, options_json)
+  (question_id, survey_id, question_text, question_type, question_order, is_required, options_json)
 VALUES
   (UUID(), @survey2_id, 'How effective is communication within your team?', 'scale', 1, TRUE, '{"min":1,"max":5,"labels":{"1":"Very Poor","5":"Excellent"}}'),
   (UUID(), @survey2_id, 'What communication tools do you use most?', 'multiple_choice', 2, TRUE, '["Email", "Slack", "Teams", "Phone", "In-person", "Other"]'),
