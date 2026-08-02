@@ -126,6 +126,20 @@ jobs:
           npm start > ../backend-smoke.log 2>&1 &
           echo $! > ../backend-smoke.pid
 
+      # Why this step used to be unpassable:
+      #
+      # It polled /api/health for `json.db === 'ok'` and `json.migrations.status === 'ok'`.
+      # That endpoint returns neither field and never has in this form — health.routes.ts
+      # is deliberately hardened to expose only {success, service, status, timestamp} to
+      # unauthenticated callers, precisely so migration failures are not readable from the
+      # internet. The poll therefore waited out its full 120 s on every run and the job had
+      # never once reached the browser stage.
+      #
+      # The assertions were not wrong, only unreachable at that endpoint. GET /api/health
+      # already returns 200 if and only if `dbStatus === "ok" && schemaStatus.valid`, so a
+      # 200 proves both things the old poll was trying to read. The detail it wanted lives
+      # behind auth at /api/health/readiness, which is fetched below once we have an admin
+      # token — so the evidence is stronger than before without weakening the public probe.
       - name: Wait for backend health
         run: |
           echo "::group::Backend health"
@@ -144,36 +158,55 @@ jobs:
             }
           }
 
+          // Separating liveness from readiness is the difference between "the process never
+          // started" and "the process started but the schema is behind" — two failures with
+          // completely different owners that the old single poll reported identically.
+          async function probe(path) {
+            const res = await fetch('http://localhost:5055' + path);
+            return { status: res.status, body: (await res.text()).slice(0, 400) };
+          }
+
           async function main() {
-            let lastText = '';
+            let last = 'no response yet';
+            let sawLive = false;
             let attempt = 0;
+
             while (Date.now() < deadline) {
               attempt++;
               try {
-                const res = await fetch('http://localhost:5055/api/health');
-                lastText = await res.text();
-                if (res.ok) {
-                  const json = JSON.parse(lastText);
-                  if (
-                    json?.db === 'ok' &&
-                    json?.migrations?.status === 'ok' &&
-                    Array.isArray(json?.migrations?.failed) &&
-                    json.migrations.failed.length === 0
-                  ) {
-                    console.log('Backend healthy after ' + attempt + ' attempts');
-                    console.log(JSON.stringify(json, null, 2));
-                    return;
+                if (!sawLive) {
+                  const live = await probe('/api/health/live');
+                  if (live.status === 200) {
+                    sawLive = true;
+                    console.log('  process is alive (attempt ' + attempt + ')');
                   }
-                  console.log('  attempt ' + attempt + ': HTTP ' + res.status + ' - ' + lastText.substring(0, 120));
                 }
+
+                const health = await probe('/api/health');
+                if (health.status === 200) {
+                  console.log('Backend healthy after ' + attempt + ' attempt(s).');
+                  console.log('  GET /api/health -> 200, which the route returns only when the');
+                  console.log('  DB ping succeeds and schema verification reports no pending migrations.');
+                  return;
+                }
+                last = 'HTTP ' + health.status + ' ' + health.body;
+                console.log('  attempt ' + attempt + ': ' + last);
               } catch (error) {
-                lastText = error instanceof Error ? error.message : String(error);
-                console.log('  attempt ' + attempt + ': ' + lastText);
+                last = error instanceof Error ? error.message : String(error);
+                console.log('  attempt ' + attempt + ': ' + last);
               }
               await sleep(3000);
             }
-            console.error('Backend did not become healthy within 120 s. Last response/error:');
-            console.error(lastText);
+
+            if (sawLive) {
+              console.error('Backend process is running but never became healthy within 120 s.');
+              console.error('/api/health returns 503 when the DB ping fails OR migrations are pending.');
+              console.error('Check the migration output in the log below to tell which.');
+            } else {
+              console.error('Backend process never answered /api/health/live within 120 s.');
+              console.error('It failed before binding a listener — look for a boot exception below.');
+            }
+            console.error('Last response/error: ' + last);
             dumpBackendLog();
             process.exit(1);
           }
@@ -218,6 +251,86 @@ jobs:
           async function main() {
             for (const [identifier, password] of users) await login(identifier, password);
             console.log('All API logins validated');
+          }
+
+          main().catch((error) => {
+            console.error(error);
+            try {
+              console.error('\n----- backend-smoke.log -----');
+              console.error(fs.readFileSync('backend-smoke.log', 'utf8').slice(-12000));
+              console.error('----- end backend-smoke.log -----\n');
+            } catch {}
+            process.exit(1);
+          });
+          NODE
+          echo "::endgroup::"
+
+      # The migration evidence the old health poll was reaching for, taken from the endpoint
+      # that actually publishes it. This is the step that makes the job a release gate rather
+      # than a liveness check: it fails the build on a pending or failed migration, and it
+      # prints the applied/pending counts into the run summary so a release can cite them.
+      - name: Assert migration health and record it as release evidence
+        run: |
+          echo "::group::Migration health"
+          node - <<'NODE'
+          const fs = require('node:fs');
+
+          async function main() {
+            const loginRes = await fetch('http://localhost:5055/api/auth/login', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ identifier: 'admin@mascallnet.com', password: 'Admin@123' }),
+            });
+            const loginText = await loginRes.text();
+            if (!loginRes.ok) throw new Error('admin login failed: HTTP ' + loginRes.status + ' ' + loginText);
+            const token = JSON.parse(loginText)?.data?.accessToken;
+            if (!token) throw new Error('admin login returned no access token');
+
+            const res = await fetch('http://localhost:5055/api/health/readiness', {
+              headers: { Authorization: 'Bearer ' + token },
+            });
+            const text = await res.text();
+            let json;
+            try {
+              json = JSON.parse(text);
+            } catch {
+              throw new Error('readiness returned non-JSON: HTTP ' + res.status + ' ' + text.slice(0, 400));
+            }
+
+            const m = json?.summary?.migrations ?? {};
+            console.log(JSON.stringify(json, null, 2));
+
+            const problems = [];
+            if (m.status !== 'ok') problems.push('schema verification status is "' + m.status + '", expected "ok"');
+            if ((m.pending_count ?? -1) !== 0) {
+              problems.push(m.pending_count + ' pending migration(s): ' + JSON.stringify(m.pending_files ?? []));
+            }
+            if ((m.failed_count ?? -1) !== 0) {
+              problems.push(m.failed_count + ' failed migration(s): ' + JSON.stringify(m.failed ?? []));
+            }
+
+            const summary = [
+              '### Migration health',
+              '',
+              '| Field | Value |',
+              '| --- | --- |',
+              '| schema status | `' + m.status + '` |',
+              '| applied | ' + m.applied_count + ' |',
+              '| pending | ' + m.pending_count + ' |',
+              '| failed | ' + m.failed_count + ' |',
+              '| runner status | `' + m.runner_status + '` |',
+              '',
+            ].join('\n');
+            if (process.env.GITHUB_STEP_SUMMARY) {
+              fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, summary + '\n');
+            }
+
+            if (problems.length) {
+              console.error('Migration health check failed:');
+              for (const p of problems) console.error('  - ' + p);
+              process.exit(1);
+            }
+            console.log('Migrations clean: ' + m.applied_count + ' applied, 0 pending, 0 failed.');
           }
 
           main().catch((error) => {
@@ -278,10 +391,20 @@ jobs:
           NODE
           echo "::endgroup::"
 
-      - name: Run Playwright browser smoke
+      # Scoped to the page-smoke project on purpose. playwright.config.ts also defines
+      # 'journeys' (tests/e2e/*.spec.ts) — full candidate-onboarding flows that create data
+      # and assume a populated database. Running them against a demo-seeded CI database
+      # would make this gate red for reasons that have nothing to do with whether the build
+      # renders, which is the failure mode that made the previous gate ignorable.
+      #
+      # This is a deliberate exclusion, not an oversight: 'journeys' still needs its own job
+      # against a fixture-loaded database. Until that exists it does not run in CI, and the
+      # line below says so in the log rather than leaving the omission silent.
+      - name: Run Playwright page smoke
         run: |
-          echo "::group::Playwright browser smoke"
-          npm run test:e2e:smoke
+          echo "::group::Playwright page smoke"
+          echo "Running project 'page-smoke' only. Project 'journeys' is NOT covered by this gate."
+          npx playwright test --config=playwright.config.ts --project=page-smoke
           echo "::endgroup::"
 
       - name: Failure summary
