@@ -137,16 +137,32 @@ export async function createEmployeeFromCandidate(
     }
 
     // RULE 1: BGV Validation (manual review workflow - doesn't block)
-    const bgvReadiness = await checkBgvReadiness(candidateId, offer.designation_id);
-    result.bgvStatus = getBgvReadinessSummary(bgvReadiness);
-
-    if (!bgvReadiness.ready) {
-      result.warnings.push(`BGV not complete: ${bgvReadiness.blockers.map(b => b.reason).join(', ')}`);
-      // Employee creation proceeds - manual review workflow
+    //
+    // "Doesn't block" has to be true even when the check itself fails. This
+    // call threw on every invocation for months — its query selected three
+    // columns that do not exist — and because nothing caught it, a check
+    // designed to raise a warning aborted employee creation entirely. Six
+    // offers reached bh_approved and produced no employee.
+    let bgvReadiness: Awaited<ReturnType<typeof checkBgvReadiness>> | null = null;
+    try {
+      bgvReadiness = await checkBgvReadiness(candidateId, offer.designation_id);
+      result.bgvStatus = getBgvReadinessSummary(bgvReadiness);
+    } catch (bgvErr) {
+      console.error('[EmployeeOrchestrator] BGV readiness check failed:', bgvErr);
+      result.warnings.push(
+        'BGV readiness could not be evaluated — create with manual BGV review.',
+      );
     }
+    if (bgvReadiness) {
 
-    if (bgvReadiness.manualReviewRequired) {
-      result.warnings.push('BGV manual review required before activation');
+      if (!bgvReadiness.ready) {
+        result.warnings.push(`BGV not complete: ${bgvReadiness.blockers.map(b => b.reason).join(', ')}`);
+        // Employee creation proceeds - manual review workflow
+      }
+
+      if (bgvReadiness.manualReviewRequired) {
+        result.warnings.push('BGV manual review required before activation');
+      }
     }
 
     // RULE 10: Statutory Validation
