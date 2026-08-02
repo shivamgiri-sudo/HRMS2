@@ -819,8 +819,38 @@ async function runFileOnConnection(
     return !upper.startsWith("SOURCE ") && !upper.startsWith("USE ");
   });
 
-  for (const stmt of statements) {
-    await conn.query(stmt);
+  // Idempotency is applied per STATEMENT, not per file.
+  //
+  // Previously any idempotent error — duplicate column, duplicate key, table already exists
+  // — propagated out of here, the caller caught it, and the whole file was recorded as
+  // "skipped (idempotent - already exists)". Every remaining statement in that file was
+  // silently abandoned.
+  //
+  // That is how 054_ats_onboarding_flow.sql reported success-shaped output while never
+  // creating ats_onboarding_request, and migration 180 then died sixty files later on
+  // "Table 'mas_hrms.ats_onboarding_request' doesn't exist" — an error naming neither 054
+  // nor the statement that actually stopped it. The log said the file was fine.
+  //
+  // Skipping one statement that has already been applied is exactly what idempotency means.
+  // Skipping the ninety after it is not, and it produces failures arbitrarily far from their
+  // cause. Each skip is logged so a file quietly doing nothing is visible rather than silent.
+  let skipped = 0;
+  for (const [index, stmt] of statements.entries()) {
+    try {
+      await conn.query(stmt);
+    } catch (error) {
+      if (!isIdempotentMigrationError(error)) throw error;
+      skipped++;
+      const preview = stmt.replace(/\s+/g, " ").slice(0, 100);
+      console.log(
+        `[migration]   statement ${index + 1}/${statements.length} already applied, continuing: ${preview}`
+      );
+    }
+  }
+  if (skipped) {
+    console.log(
+      `[migration]   ${path.basename(filePath)}: ${skipped} of ${statements.length} statement(s) were already applied`
+    );
   }
 }
 
