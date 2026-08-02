@@ -144,6 +144,82 @@ payrollProcessReadinessRouter.get(
 );
 
 // ---------------------------------------------------------------------------
+// GET /my-pending-count?month=YYYY-MM
+// Returns the calling user's assigned processes that are not yet ready.
+// Roles: wfm, process_manager, branch_head, payroll_branch
+// Must be registered before /:branchId/:processId to avoid param collision.
+// ---------------------------------------------------------------------------
+payrollProcessReadinessRouter.get(
+  "/my-pending-count",
+  requireAuth,
+  requireRole("wfm", "process_manager", "branch_head", "payroll_branch"),
+  async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const month = resolveMonth(req.query.month);
+      const userId = req.authUser!.id;
+
+      // Find all processes this user is assigned to via user_assignment_scope
+      const [scopeRows] = await db.execute<RowDataPacket[]>(
+        `SELECT uas.branch_id, uas.process_id
+           FROM user_assignment_scope uas
+          WHERE uas.user_id = ?
+            AND uas.active_status = 1
+            AND uas.process_id IS NOT NULL
+            AND uas.scope_type IN ('process', 'branch_process')`,
+        [userId]
+      );
+
+      const scopes = scopeRows as Array<{ branch_id: string; process_id: string }>;
+
+      if (!scopes.length) {
+        return res.json({ success: true, count: 0, processes: [] });
+      }
+
+      const pending: Array<{
+        branch_id: string;
+        process_id: string;
+        branch_name: string;
+        process_name: string;
+        readiness_score: number;
+        readiness_status: string;
+      }> = [];
+
+      for (const scope of scopes) {
+        try {
+          const rec = await payrollBranchReadinessService.getOrRefresh(
+            month,
+            scope.branch_id,
+            scope.process_id
+          );
+          if (rec.readiness_status !== "ready") {
+            pending.push({
+              branch_id: rec.branch_id,
+              process_id: rec.process_id,
+              branch_name: rec.branch_name,
+              process_name: rec.process_name,
+              readiness_score: rec.readiness_score,
+              readiness_status: rec.readiness_status,
+            });
+          }
+        } catch {
+          // skip processes that fail to load
+        }
+      }
+
+      return res.json({
+        success: true,
+        count: pending.length,
+        processes: pending,
+      });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error("[ProcessReadiness] GET /my-pending-count error:", msg);
+      return res.status(500).json({ success: false, message: "Failed to fetch pending count" });
+    }
+  }
+);
+
+// ---------------------------------------------------------------------------
 // GET /branch/:branchId?month=YYYY-MM
 // Branch Head: all processes for their branch
 // Roles: branch_head, payroll_branch, payroll_head, super_admin, payroll, wfm, process_manager
