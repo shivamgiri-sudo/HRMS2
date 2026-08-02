@@ -212,6 +212,19 @@ jobs:
           done
           exit 1
 
+      # A manifest entry that silently disappears means that migration never runs
+      # on a fresh database, and nothing fails at the time. On 2026-08-02 a stale
+      # working copy removed three entries this way; the staged deletion count was
+      # visible and was rationalised away. This makes that impossible to repeat.
+      - name: Migration manifest guard
+        shell: bash
+        run: |
+          for attempt in 1 2; do
+            (cd backend && npm exec -- vitest run src/db/__tests__/migration-manifest-guard.test.ts) && exit 0
+            echo "Migration manifest guard attempt $attempt failed."
+          done
+          exit 1
+
       # Catches a client calling an API path no router serves. Three such bugs
       # reached production in one week and none was findable by probing, because
       # requireAuth on the bare /api prefix makes a missing route 401 like a real
