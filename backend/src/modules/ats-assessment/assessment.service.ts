@@ -123,6 +123,7 @@ type AttemptRow = RowDataPacket & {
   client_meta: unknown;
   config_snapshot: unknown;
   failure_reason: string | null;
+  db_remaining_seconds?: number | null;
   created_at?: Date | string;
   updated_at?: Date | string;
   candidate_name?: string | null;
@@ -166,6 +167,7 @@ type TypingRow = RowDataPacket & {
   elapsed_seconds: number | null;
   started_at: Date | string;
   submitted_at: Date | string | null;
+  elapsed_since_start_seconds: number | null;
   gross_wpm: number | null;
   net_wpm: number | null;
   accuracy_percentage: number | null;
@@ -682,7 +684,12 @@ async function resolveTemplate(candidate: CandidateRow) {
 async function attemptById(attemptId: string, executor: Executor = db, lock = false) {
   const attempts = await rows<AttemptRow>(
     executor,
-    `SELECT * FROM ats_candidate_assessment WHERE id = ? LIMIT 1${lock ? " FOR UPDATE" : ""}`,
+    `SELECT *,
+       CASE WHEN status = 'in_progress' AND expires_at IS NOT NULL
+         THEN GREATEST(0, TIMESTAMPDIFF(SECOND, NOW(), expires_at))
+         ELSE NULL
+       END AS db_remaining_seconds
+     FROM ats_candidate_assessment WHERE id = ? LIMIT 1${lock ? " FOR UPDATE" : ""}`,
     [attemptId],
   );
   if (!attempts[0]) throw appError("Assessment session not found", 404, "ASSESSMENT_NOT_FOUND");
@@ -910,8 +917,11 @@ export async function assignAssessmentManually(input: {
   return result;
 }
 
-export function getRemainingSeconds(attempt: Pick<AttemptRow, "status" | "expires_at">) {
-  if (attempt.status !== "in_progress" || !attempt.expires_at) return null;
+export function getRemainingSeconds(attempt: Pick<AttemptRow, "status" | "expires_at"> & { db_remaining_seconds?: number | null }) {
+  if (attempt.status !== "in_progress") return null;
+  // Prefer MySQL-computed TIMESTAMPDIFF to avoid Node.js timezone string-parse bugs.
+  if (attempt.db_remaining_seconds != null) return Math.max(0, Number(attempt.db_remaining_seconds));
+  if (!attempt.expires_at) return null;
   const deadline = dateMs(attempt.expires_at);
   if (deadline === null) return null;
   return Math.max(0, Math.ceil((deadline - Date.now()) / 1000));
@@ -936,8 +946,9 @@ function candidateQuestion(question: AssessmentQuestionDefinition) {
 
 function serializeTyping(row: TypingRow, includeReference = false) {
   const duration = Number(row.duration_limit_seconds);
-  const elapsedSinceStart = row.started_at && !row.submitted_at
-    ? Math.floor((Date.now() - new Date(row.started_at).getTime()) / 1000)
+  // Use MySQL-computed elapsed (TIMESTAMPDIFF) to avoid Node.js timezone parse bugs.
+  const elapsedSinceStart = !row.submitted_at && row.elapsed_since_start_seconds != null
+    ? Math.max(0, Number(row.elapsed_since_start_seconds))
     : null;
   const remainingSeconds = elapsedSinceStart !== null
     ? Math.max(0, duration - elapsedSinceStart)
@@ -988,7 +999,8 @@ async function loadSessionData(attempt: AttemptRow) {
   );
   const typingAttempts = await rows<TypingRow>(
     db,
-    `SELECT * FROM ats_typing_test_attempt WHERE assessment_id = ? ORDER BY attempt_no ASC`,
+    `SELECT *, TIMESTAMPDIFF(SECOND, started_at, NOW()) AS elapsed_since_start_seconds
+     FROM ats_typing_test_attempt WHERE assessment_id = ? ORDER BY attempt_no ASC`,
     [attempt.id],
   );
   const candidates = await rows<CandidateRow>(
@@ -1279,7 +1291,7 @@ export async function startTypingAttempt(token: string, meta: Meta = {}) {
 
     const active = await rows<TypingRow>(
       executor,
-      `SELECT *
+      `SELECT *, TIMESTAMPDIFF(SECOND, started_at, NOW()) AS elapsed_since_start_seconds
        FROM ats_typing_test_attempt
        WHERE assessment_id = ? AND submitted_at IS NULL
        ORDER BY attempt_no DESC
@@ -1313,7 +1325,8 @@ export async function startTypingAttempt(token: string, meta: Meta = {}) {
       );
       typing = (await rows<TypingRow>(
         executor,
-        `SELECT * FROM ats_typing_test_attempt WHERE id = ? LIMIT 1`,
+        `SELECT *, TIMESTAMPDIFF(SECOND, started_at, NOW()) AS elapsed_since_start_seconds
+         FROM ats_typing_test_attempt WHERE id = ? LIMIT 1`,
         [typingId],
       ))[0];
     }
@@ -1327,9 +1340,7 @@ export async function startTypingAttempt(token: string, meta: Meta = {}) {
     );
     await connection.commit();
     const duration = Number(typing.duration_limit_seconds);
-    const elapsedSinceStart = typing.started_at
-      ? Math.floor((Date.now() - new Date(typing.started_at).getTime()) / 1000)
-      : 0;
+    const elapsedSinceStart = Math.max(0, Number(typing.elapsed_since_start_seconds ?? 0));
     return {
       id: typing.id,
       attemptNo: Number(typing.attempt_no),
@@ -1368,7 +1379,7 @@ export async function submitTypingAttempt(
     const definition = attemptDefinition(attempt, template);
     const typingRows = await rows<TypingRow>(
       executor,
-      `SELECT *
+      `SELECT *, TIMESTAMPDIFF(SECOND, started_at, NOW()) AS elapsed_since_start_seconds
        FROM ats_typing_test_attempt
        WHERE id = ? AND assessment_id = ?
        LIMIT 1
@@ -1384,8 +1395,7 @@ export async function submitTypingAttempt(
       return { ...existingResult, attemptNo: typing.attempt_no, attemptsRemaining: 2 - typing.attempt_no, alreadySubmitted: true };
     }
 
-    const started = dateMs(typing.started_at) ?? Date.now();
-    const actualElapsed = Math.max(1, Math.floor((Date.now() - started) / 1000));
+    const actualElapsed = Math.max(1, Math.max(0, Number(typing.elapsed_since_start_seconds ?? 1)));
     // Cap at duration only — grace window is for network latency, not for WPM denominator.
     const elapsed = Math.min(actualElapsed, Number(typing.duration_limit_seconds));
     const scored = calculateTypingScore({
@@ -1575,15 +1585,15 @@ async function finalizeAssessment(
   // Auto-submit any active (started but not submitted) typing attempts before final scoring
   const activeTyping = await rows<TypingRow>(
     executor,
-    `SELECT * FROM ats_typing_test_attempt
+    `SELECT *, TIMESTAMPDIFF(SECOND, started_at, NOW()) AS elapsed_since_start_seconds
+     FROM ats_typing_test_attempt
      WHERE assessment_id = ? AND submitted_at IS NULL
      ORDER BY attempt_no DESC LIMIT 1 FOR UPDATE`,
     [attempt.id],
   );
   if (activeTyping[0]) {
     // Auto-submit with empty text if candidate never typed anything
-    const started = dateMs(activeTyping[0].started_at) ?? Date.now();
-    const elapsed = Math.max(1, Math.floor((Date.now() - started) / 1000));
+    const elapsed = Math.max(1, Math.max(0, Number(activeTyping[0].elapsed_since_start_seconds ?? 1)));
     const scored = calculateTypingScore({
       referenceText: activeTyping[0].reference_text,
       typedText: activeTyping[0].typed_text ?? "",
