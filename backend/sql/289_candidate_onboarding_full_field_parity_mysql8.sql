@@ -60,7 +60,7 @@ CREATE TABLE IF NOT EXISTS candidate_onboarding_otp (
   used_at         DATETIME      NULL,
   INDEX idx_candidate (candidate_id),
   INDEX idx_expires (expires_at)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ── candidate_onboarding_language ────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS candidate_onboarding_language (
@@ -74,7 +74,7 @@ CREATE TABLE IF NOT EXISTS candidate_onboarding_language (
   created_at      DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at      DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   INDEX idx_candidate (candidate_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ── candidate_onboarding_autosave ─────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS candidate_onboarding_autosave (
@@ -84,6 +84,6 @@ CREATE TABLE IF NOT EXISTS candidate_onboarding_autosave (
   data_json       MEDIUMTEXT    NOT NULL,
   saved_at        DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   UNIQUE KEY uq_candidate_section (candidate_id, section)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 DROP PROCEDURE IF EXISTS _289_add_col;

@@ -46,4 +46,4 @@ CREATE TABLE IF NOT EXISTS payroll_branch_readiness (
   UNIQUE KEY uk_readiness_month_branch (process_month, branch_id),
   KEY idx_readiness_month (process_month),
   KEY idx_readiness_branch (branch_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

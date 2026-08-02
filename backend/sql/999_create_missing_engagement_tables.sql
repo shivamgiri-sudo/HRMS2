@@ -13,7 +13,7 @@ CREATE TABLE IF NOT EXISTS employee_badge_earned (
   INDEX idx_badge (badge_id),
   FOREIGN KEY (employee_id) REFERENCES employees(id) ON DELETE CASCADE,
   FOREIGN KEY (badge_id) REFERENCES gamification_badge_master(badge_id) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- Gamification points ledger
 CREATE TABLE IF NOT EXISTS gamification_points_ledger (
@@ -29,7 +29,7 @@ CREATE TABLE IF NOT EXISTS gamification_points_ledger (
   INDEX idx_type (transaction_type),
   INDEX idx_created (created_at),
   FOREIGN KEY (employee_id) REFERENCES employees(id) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- Gamification tier master
 CREATE TABLE IF NOT EXISTS gamification_tier_master (
@@ -47,7 +47,7 @@ CREATE TABLE IF NOT EXISTS gamification_tier_master (
   INDEX idx_level (tier_level),
   INDEX idx_points (min_points, max_points),
   INDEX idx_active (is_active)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- Employee tier status
 CREATE TABLE IF NOT EXISTS employee_tier_status (
@@ -62,7 +62,7 @@ CREATE TABLE IF NOT EXISTS employee_tier_status (
   INDEX idx_tier (current_tier_id),
   FOREIGN KEY (employee_id) REFERENCES employees(id) ON DELETE CASCADE,
   FOREIGN KEY (current_tier_id) REFERENCES gamification_tier_master(tier_id) ON DELETE SET NULL
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- Kudos templates
 CREATE TABLE IF NOT EXISTS kudos_templates (
@@ -74,7 +74,7 @@ CREATE TABLE IF NOT EXISTS kudos_templates (
   is_active TINYINT(1) NOT NULL DEFAULT 1,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- Kudos sent
 CREATE TABLE IF NOT EXISTS kudos_sent (
@@ -92,7 +92,7 @@ CREATE TABLE IF NOT EXISTS kudos_sent (
   FOREIGN KEY (sender_id) REFERENCES employees(id) ON DELETE CASCADE,
   FOREIGN KEY (receiver_id) REFERENCES employees(id) ON DELETE CASCADE,
   FOREIGN KEY (kudos_template_id) REFERENCES kudos_templates(kudos_template_id) ON DELETE SET NULL
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- Kudos reactions
 CREATE TABLE IF NOT EXISTS kudos_reactions (
@@ -104,7 +104,7 @@ CREATE TABLE IF NOT EXISTS kudos_reactions (
   UNIQUE KEY uk_kudos_employee (kudos_id, employee_id),
   FOREIGN KEY (kudos_id) REFERENCES kudos_sent(kudos_id) ON DELETE CASCADE,
   FOREIGN KEY (employee_id) REFERENCES employees(id) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- Survey master
 CREATE TABLE IF NOT EXISTS survey_master (
@@ -120,7 +120,7 @@ CREATE TABLE IF NOT EXISTS survey_master (
   created_by CHAR(36),
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- Survey questions
 CREATE TABLE IF NOT EXISTS survey_questions (
@@ -135,7 +135,7 @@ CREATE TABLE IF NOT EXISTS survey_questions (
   display_order INT NOT NULL DEFAULT 0,
   INDEX idx_survey (survey_id),
   FOREIGN KEY (survey_id) REFERENCES survey_master(survey_id) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- Survey responses
 CREATE TABLE IF NOT EXISTS survey_response (
@@ -148,7 +148,7 @@ CREATE TABLE IF NOT EXISTS survey_response (
   INDEX idx_employee (employee_id),
   FOREIGN KEY (survey_id) REFERENCES survey_master(survey_id) ON DELETE CASCADE,
   FOREIGN KEY (employee_id) REFERENCES employees(id) ON DELETE SET NULL
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- Pulse checks
 CREATE TABLE IF NOT EXISTS pulse_check (
@@ -160,7 +160,7 @@ CREATE TABLE IF NOT EXISTS pulse_check (
   INDEX idx_employee (employee_id),
   INDEX idx_submitted (submitted_at),
   FOREIGN KEY (employee_id) REFERENCES employees(id) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- Insert default tiers if none exist
 INSERT IGNORE INTO gamification_tier_master (tier_id, tier_name, tier_level, min_points, max_points, tier_color, is_active)

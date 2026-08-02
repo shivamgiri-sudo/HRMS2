@@ -12,4 +12,4 @@ CREATE TABLE IF NOT EXISTS leave_el_accrual_ledger (
   PRIMARY KEY (id),
   UNIQUE KEY uq_el_accrual (employee_id, accrual_year),
   KEY idx_el_accrual_year (accrual_year)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

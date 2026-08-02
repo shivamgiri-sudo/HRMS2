@@ -209,7 +209,7 @@ CREATE TABLE IF NOT EXISTS billing_provision_snapshot (
   INDEX idx_cc_period (cost_centre_code, finance_year, month_label),
   INDEX idx_fy (finance_year),
   INDEX idx_client (bill_client_name(80))
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
   COMMENT='Read-only monthly provision + billing snapshot from db_bill.provision_master';
 
 -- 3. billing_invoice_snapshot — actual invoices from db_bill.tbl_invoice
@@ -250,7 +250,7 @@ CREATE TABLE IF NOT EXISTS billing_invoice_snapshot (
   INDEX idx_fy (finance_year),
   INDEX idx_client (bill_client(80)),
   INDEX idx_bill_no (bill_no(50))
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
   COMMENT='Read-only invoice snapshot from db_bill.tbl_invoice';
 
 -- 4. bill_client_snapshot — distinct clients from db_bill.client_master
@@ -267,5 +267,5 @@ CREATE TABLE IF NOT EXISTS bill_client_snapshot (
   synced_at         DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
   UNIQUE KEY uq_bill_client_source (bill_source_id),
   INDEX idx_client_name (client_name(100))
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
   COMMENT='Read-only client snapshot from db_bill.client_master (893 rows)';

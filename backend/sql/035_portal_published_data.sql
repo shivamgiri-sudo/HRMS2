@@ -13,7 +13,7 @@ CREATE TABLE IF NOT EXISTS portal_published_snapshot (
   notes           TEXT,
   created_at      DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
   INDEX idx_pps_process (process_id, snapshot_type, period)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- Staging queue: HR prepares data here before approving for client view
 CREATE TABLE IF NOT EXISTS portal_data_approval_queue (
@@ -28,4 +28,4 @@ CREATE TABLE IF NOT EXISTS portal_data_approval_queue (
   reviewed_at      DATETIME,
   rejection_reason TEXT,
   created_at       DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

@@ -28,7 +28,7 @@ CREATE TABLE IF NOT EXISTS security_audit_event (
   INDEX idx_security_module      (module_key),
   INDEX idx_security_created_at  (created_at),
   INDEX idx_security_actor       (actor_user_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 INSERT IGNORE INTO schema_migrations (filename, applied_at)
 VALUES ('521_security_audit_event_table.sql', NOW());

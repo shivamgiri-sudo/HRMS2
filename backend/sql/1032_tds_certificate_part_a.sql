@@ -82,7 +82,7 @@ CREATE TABLE IF NOT EXISTS tds_certificate_part_a (
   INDEX idx_tcpa_year (financial_year),
   INDEX idx_tcpa_verified (verified_at),
   CONSTRAINT fk_tcpa_employee FOREIGN KEY (employee_id) REFERENCES employees(id) ON DELETE CASCADE
--- COLLATE is explicit, not incidental. `DEFAULT CHARSET=utf8mb4` alone resolves
+-- COLLATE is explicit, not incidental. `DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci` alone resolves
 -- to utf8mb4_0900_ai_ci on MySQL 8.0, while employees.id is utf8mb4_unicode_ci,
 -- and a foreign key between columns of different collations is rejected outright
 -- (errno 3780). Migration 1028 exists because this same mismatch reached

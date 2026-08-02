@@ -10,7 +10,7 @@
 -- CAUSE
 -- employee_reimbursement_claim is created at RUNTIME by ensureTable() in
 -- reimbursements.routes.ts, and the DDL ended with:
---     ENGINE=InnoDB DEFAULT CHARSET=utf8mb4          <- no COLLATE
+--     ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci          <- no COLLATE
 -- With no COLLATE, MySQL 8 applies the SERVER default, utf8mb4_0900_ai_ci. Every other
 -- table in mas_hrms is utf8mb4_unicode_ci — 757 of them against 45 exceptions. So
 --     JOIN employees e ON e.id = erc.employee_id

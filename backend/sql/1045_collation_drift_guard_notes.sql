@@ -8,7 +8,7 @@
 -- 44 of 807 tables are utf8mb4_0900_ai_ci while 757 are utf8mb4_unicode_ci. Each is a latent
 -- ER_CANT_AGGREGATE_2COLLATIONS the moment it is text-joined across the boundary.
 --
--- The cause is always the same: DDL that writes DEFAULT CHARSET=utf8mb4 and omits COLLATE,
+-- The cause is always the same: DDL that writes DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci and omits COLLATE,
 -- letting MySQL 8 apply its SERVER default. employee_reimbursement_claim was created that
 -- way and every reimbursements endpoint 500'd from the day it shipped until 1038 converted
 -- it. Migration 426 (employee_geofence_alerts) had the identical defect and was corrected

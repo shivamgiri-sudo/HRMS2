@@ -37,7 +37,7 @@ CREATE TABLE IF NOT EXISTS company_posts (
   KEY idx_company_posts_author_user (author_user_id),
   KEY idx_company_posts_author_employee (author_employee_id),
   KEY idx_company_posts_created (created_at)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS company_post_media (
   id char(36) NOT NULL PRIMARY KEY,
@@ -53,7 +53,7 @@ CREATE TABLE IF NOT EXISTS company_post_media (
   KEY idx_company_post_media_post (post_id),
   KEY idx_company_post_media_file (file_id),
   KEY idx_company_post_media_active (active_status)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS company_post_creator_access (
   id char(36) NOT NULL PRIMARY KEY,
@@ -69,7 +69,7 @@ CREATE TABLE IF NOT EXISTS company_post_creator_access (
   KEY idx_company_post_creator_access_employee (employee_id),
   KEY idx_company_post_creator_access_user (user_id),
   KEY idx_company_post_creator_access_active (active_status)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS company_post_audit_log (
   id char(36) NOT NULL PRIMARY KEY,
@@ -82,4 +82,4 @@ CREATE TABLE IF NOT EXISTS company_post_audit_log (
   KEY idx_company_post_audit_actor (actor_user_id),
   KEY idx_company_post_audit_action (action_type),
   KEY idx_company_post_audit_created (created_at)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

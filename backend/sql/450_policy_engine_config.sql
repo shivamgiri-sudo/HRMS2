@@ -26,7 +26,7 @@ CREATE TABLE IF NOT EXISTS business_policy_config (
   UNIQUE KEY uq_domain_section_key (domain_key, section_key, config_key),
   INDEX idx_domain (domain_key),
   INDEX idx_effective (effective_from)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS business_policy_config_history (
   id          CHAR(36)     NOT NULL DEFAULT (UUID()) PRIMARY KEY,
@@ -40,7 +40,7 @@ CREATE TABLE IF NOT EXISTS business_policy_config_history (
   changed_at  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
   INDEX idx_bph_key (domain_key, section_key, config_key),
   INDEX idx_bph_date (changed_at)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ── Seed: Payroll ────────────────────────────────────────────────────────────
 

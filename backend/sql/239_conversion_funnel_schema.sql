@@ -36,7 +36,7 @@ CREATE TABLE IF NOT EXISTS conversion_funnel_event (
   INDEX idx_cfe_entered_at (stage_entered_at),
   INDEX idx_cfe_conversion (conversion_flag, process_type),
   KEY idx_cfe_composite (process_type, funnel_stage, stage_entered_at)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- Inbound funnel stages detail
 CREATE TABLE IF NOT EXISTS inbound_funnel_detail (
@@ -61,7 +61,7 @@ CREATE TABLE IF NOT EXISTS inbound_funnel_detail (
   created_at               DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (conversion_funnel_event_id) REFERENCES conversion_funnel_event(id) ON DELETE CASCADE,
   INDEX idx_inbound_event (conversion_funnel_event_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- Outbound funnel stages detail
 CREATE TABLE IF NOT EXISTS outbound_funnel_detail (
@@ -89,7 +89,7 @@ CREATE TABLE IF NOT EXISTS outbound_funnel_detail (
   FOREIGN KEY (conversion_funnel_event_id) REFERENCES conversion_funnel_event(id) ON DELETE CASCADE,
   INDEX idx_outbound_event (conversion_funnel_event_id),
   INDEX idx_outbound_dial_at (dial_initiated_at)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- Chat funnel stages detail
 CREATE TABLE IF NOT EXISTS chat_funnel_detail (
@@ -123,7 +123,7 @@ CREATE TABLE IF NOT EXISTS chat_funnel_detail (
   FOREIGN KEY (conversion_funnel_event_id) REFERENCES conversion_funnel_event(id) ON DELETE CASCADE,
   INDEX idx_chat_event (conversion_funnel_event_id),
   INDEX idx_chat_initiated_at (chat_initiated_at)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- Email funnel stages detail
 CREATE TABLE IF NOT EXISTS email_funnel_detail (
@@ -158,7 +158,7 @@ CREATE TABLE IF NOT EXISTS email_funnel_detail (
   FOREIGN KEY (conversion_funnel_event_id) REFERENCES conversion_funnel_event(id) ON DELETE CASCADE,
   INDEX idx_email_event (conversion_funnel_event_id),
   INDEX idx_email_received_at (email_received_at)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- Process-level funnel stage configuration
 CREATE TABLE IF NOT EXISTS funnel_stage_config (
@@ -177,7 +177,7 @@ CREATE TABLE IF NOT EXISTS funnel_stage_config (
 
   UNIQUE KEY uq_funnel_stage (process_type, stage_name),
   INDEX idx_funnel_process (process_type, stage_sequence)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- Seed funnel stage configuration
 INSERT IGNORE INTO funnel_stage_config (id, process_type, stage_sequence, stage_name, stage_description, sla_minutes, target_conversion_pct) VALUES
@@ -229,7 +229,7 @@ CREATE TABLE IF NOT EXISTS funnel_daily_snapshot (
   UNIQUE KEY uq_funnel_snapshot (snapshot_date, process_type, funnel_stage),
   INDEX idx_funnel_snap_date (snapshot_date),
   INDEX idx_funnel_snap_process (process_type)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- Department/Branch-level funnel performance
 CREATE TABLE IF NOT EXISTS funnel_org_performance (
@@ -266,7 +266,7 @@ CREATE TABLE IF NOT EXISTS funnel_org_performance (
   INDEX idx_funnel_perf_process (process_type),
   INDEX idx_funnel_perf_process_id (process_id),
   KEY idx_funnel_perf_composite (performance_date, process_type, branch_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- Employee-level funnel performance
 CREATE TABLE IF NOT EXISTS funnel_employee_performance (
@@ -295,4 +295,4 @@ CREATE TABLE IF NOT EXISTS funnel_employee_performance (
   INDEX idx_emp_perf_employee (employee_id),
   INDEX idx_emp_perf_process (process_type),
   FOREIGN KEY (employee_id) REFERENCES employees(id) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
