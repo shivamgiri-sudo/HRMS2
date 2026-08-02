@@ -1,6 +1,7 @@
 import type { RowDataPacket } from 'mysql2';
 import { db } from '../db/mysql.js';
 import mysql from 'mysql2/promise';
+import { requireSecret } from '../utils/require-secret.js';
 
 const WORKER_NAME = 'apr-vicidial-sync';
 
@@ -106,8 +107,12 @@ async function getDialerDb(): Promise<mysql.Connection> {
   }
   dialerDb = await mysql.createConnection({
     host:            process.env.DIALER_DB_HOST     || '192.168.10.6',
-    user:            process.env.DIALER_DB_USER     || process.env.DB_USER || 'shivam_user',
-    password:        process.env.DIALER_DB_PASSWORD || process.env.DB_PASS || 'qwersdfg!@#hjk',
+    // No baked-in fallback: it would survive a password rotation and keep a
+    // stale credential working. Note DB_PASS was already dead here — production
+    // sets DB_PASSWORD, not DB_PASS — so the old chain relied entirely on the
+    // hardcoded value if DIALER_DB_PASSWORD were ever missing.
+    user:            requireSecret('DIALER_DB_USER', 'DB_USER'),
+    password:        requireSecret('DIALER_DB_PASSWORD', 'DB_PASSWORD'),
     database:        'dialer_db',
     timezone:        '+05:30',   // vicidial stores IST — tell mysql2 not to shift
     connectTimeout:  30000,
