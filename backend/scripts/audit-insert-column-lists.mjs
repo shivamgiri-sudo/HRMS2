@@ -16,7 +16,7 @@
  * Run:  node scripts/audit-insert-column-lists.mjs
  * Exit: 0 clean, 1 if any mismatch is found.
  */
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync, existsSync, readdirSync } from "node:fs";
 import { resolve, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -87,9 +87,38 @@ for (const file of manifest) {
   }
 }
 
+// Files that exist in sql/ but are absent from the manifest are scanned too. They do not run
+// today, so they cannot break the chain — but a migration staged for a future release is
+// exactly where a wrong column name hides until the night it is applied. Two of the files
+// prepared during this stabilisation (1061, 1062) were written against a page_id foreign key
+// that does not exist; nothing would have caught that before someone ran them by hand.
+const staged = [];
+for (const file of readdirSync(SQL_DIR).filter((f) => f.endsWith(".sql") && !manifest.includes(f))) {
+  const sql = readFileSync(join(SQL_DIR, file), "utf8");
+  for (const m of sql.matchAll(INSERT_RE)) {
+    const t = m[1].toLowerCase();
+    if (!known.has(t)) continue;
+    const missing = m[2]
+      .split(",")
+      .map((c) => c.trim().replace(/`/g, "").toLowerCase())
+      .filter((c) => /^\w+$/.test(c) && !known.get(t).has(c));
+    if (missing.length) {
+      staged.push({ file, line: sql.slice(0, m.index).split("\n").length, table: t, missing });
+    }
+  }
+}
+
 console.log(`Scanned ${manifest.length} manifest migrations, ${known.size} table definitions.`);
 console.log(`INSERTs naming a column their table does not have: ${findings.length}\n`);
 for (const f of findings) {
   console.log(`  ${f.file}:${f.line}  INSERT INTO ${f.table} uses ${f.missing.join(", ")}`);
 }
-process.exit(findings.length ? 1 : 0);
+
+if (staged.length) {
+  console.log(`\nStaged files (present in sql/, absent from the manifest): ${staged.length}`);
+  for (const f of staged) {
+    console.log(`  ${f.file}:${f.line}  INSERT INTO ${f.table} uses ${f.missing.join(", ")}`);
+  }
+}
+
+process.exit(findings.length || staged.length ? 1 : 0);
