@@ -485,9 +485,19 @@ export async function listBranchHeadDecisions(
            AND oa.id = (SELECT x.id FROM ats_offer_approval x
                          WHERE x.offer_id = o.id ORDER BY x.action_at DESC LIMIT 1)
      LEFT JOIN employees dec_by ON dec_by.id = oa.approver_id OR dec_by.user_id = oa.approver_id
-     LEFT JOIN ats_payroll_hr_validation phv ON phv.candidate_id = c.id
+     -- Pick ONE row from each of these, not every match. A candidate can hold
+     -- several validations and several bridge rows, and a plain LEFT JOIN
+     -- multiplies the result: production returned 13 rows for 7 rejections,
+     -- listing the same candidate two and three times.
+     LEFT JOIN ats_payroll_hr_validation phv
+            ON phv.id = (SELECT x.id FROM ats_payroll_hr_validation x
+                          WHERE x.candidate_id = c.id
+                          ORDER BY COALESCE(x.validated_at, x.created_at) DESC LIMIT 1)
      LEFT JOIN ats_branch_head_approval bha ON bha.payroll_validation_id = phv.id
-     LEFT JOIN ats_onboarding_bridge ob ON ob.candidate_id = c.id
+     LEFT JOIN ats_onboarding_bridge ob
+            ON ob.id = (SELECT y.id FROM ats_onboarding_bridge y
+                         WHERE y.candidate_id = c.id
+                         ORDER BY y.created_at DESC LIMIT 1)
      LEFT JOIN employees emp ON emp.id = ob.employee_id
     WHERE ${statusSql} AND ${pred.sql}${searchSql}`;
 

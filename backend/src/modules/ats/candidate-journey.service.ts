@@ -323,8 +323,13 @@ export async function getCandidateFullJourney(candidateId: string): Promise<Jour
       if (r.employee_id && !employee) {
         employee = { id: String(r.employee_id), employee_code: txt(r.employee_code) };
       }
+      // A bridge row exists from the moment onboarding starts; the employee is
+      // only real once employee_id is set. Saying "Employee record created"
+      // for a bridge with no employee contradicts the header, which correctly
+      // reports none.
       events.push({
-        phase: "EMPLOYEE", activity_type: "Employee record created",
+        phase: r.employee_id ? "EMPLOYEE" : "OFFER",
+        activity_type: r.employee_id ? "Employee record created" : "Onboarding started",
         status: txt(r.employee_code), occurred_at: iso(r.bridge_date ?? r.created_at),
         actor_name: null, source_table: "ats_onboarding_bridge", source_record_id: String(r.id),
         detail: r.joining_date ? `Joining ${String(r.joining_date).slice(0, 10)}` : null,
