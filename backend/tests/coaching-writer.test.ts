@@ -34,7 +34,7 @@ const { raiseCoachingFromQuality } = await import("../src/modules/quality-dashbo
  */
 
 const NO_ROWS: unknown = [[], []];
-const COACH = [[{ coach_id: "mgr-1" }], []];
+const COACH = [[{ coach_user_id: "mgr-login-1" }], []];
 
 const failing = {
   employeeId: "emp-1",
@@ -110,7 +110,26 @@ describe("accountability", () => {
   it("falls back from reporting_manager_id to manager_id", async () => {
     execute.mockResolvedValueOnce(NO_ROWS).mockResolvedValueOnce(COACH);
     await raiseCoachingFromQuality(failing);
-    expect(String(execute.mock.calls[1][0])).toMatch(/COALESCE\(reporting_manager_id, manager_id\)/);
+    expect(String(execute.mock.calls[1][0])).toMatch(/COALESCE\(emp\.reporting_manager_id, emp\.manager_id\)/);
+  });
+
+  it("stores the manager's LOGIN, not their employee id", async () => {
+    // coach_user_id is a user id everywhere else that reads it — the journey
+    // audit report and the BPO adapter both treat it as the acting user. But
+    // reporting_manager_id is an employee id, and none of them match auth_user.
+    // Writing it straight through attributed coaching to an actor that does not
+    // exist.
+    execute.mockResolvedValueOnce(NO_ROWS).mockResolvedValueOnce(COACH);
+    await raiseCoachingFromQuality(failing);
+    expect(String(execute.mock.calls[1][0])).toMatch(/mgr\.auth_user_id/);
+    const session = connExecute.mock.calls.find(([s]) => /INSERT INTO coaching_session/.test(String(s)));
+    expect(session?.[1]?.[2]).toBe("mgr-login-1");
+  });
+
+  it("raises nothing when the manager has no login to own it", async () => {
+    execute.mockResolvedValueOnce(NO_ROWS).mockResolvedValueOnce([[], []]);
+    const r = await raiseCoachingFromQuality(failing);
+    expect(r).toEqual({ created: false, reason: "no_employee" });
   });
 });
 

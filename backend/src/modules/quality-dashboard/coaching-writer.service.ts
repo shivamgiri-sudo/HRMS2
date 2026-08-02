@@ -24,17 +24,30 @@ export type CoachingOutcome =
   | { created: true; sessionId: string; trainingNeedId: string | null; trigger: CoachingTrigger };
 
 /**
- * The person who should hold the conversation. Falls back through the two
- * manager columns the employees table carries, then gives up rather than
- * assigning coaching to nobody in particular.
+ * The LOGIN of the person who should hold the conversation.
+ *
+ * coaching_session.coach_user_id is a user id everywhere else that touches it:
+ * management.createCoachingSession passes the session's user id, and both the
+ * journey audit report and the BPO governance adapter read the column as the
+ * acting user. But employees.reporting_manager_id holds an EMPLOYEE id — 15,965
+ * of them match employees and none match auth_user — so writing it straight in
+ * would have attributed every automated coaching session to an actor that does
+ * not exist.
+ *
+ * This resolves manager employee -> their linked login, and returns null when
+ * the manager has no account. A session nobody can be identified as owning is
+ * worse than no session.
  */
 async function resolveCoach(employeeId: string): Promise<string | null> {
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT COALESCE(reporting_manager_id, manager_id) AS coach_id
-       FROM employees WHERE id = ? LIMIT 1`,
+    `SELECT mgr.auth_user_id AS coach_user_id
+       FROM employees emp
+       JOIN employees mgr ON mgr.id = COALESCE(emp.reporting_manager_id, emp.manager_id)
+      WHERE emp.id = ? AND mgr.auth_user_id IS NOT NULL
+      LIMIT 1`,
     [employeeId],
   );
-  return rows[0]?.coach_id ? String(rows[0].coach_id) : null;
+  return rows[0]?.coach_user_id ? String(rows[0].coach_user_id) : null;
 }
 
 /**
