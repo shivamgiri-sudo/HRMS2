@@ -2010,7 +2010,10 @@ async function finalizeChecklistEsign(params: {
       const emp = empRows[0] as { employee_code: string; full_name: string; branch_id: string | null } | undefined;
       if (emp) {
         const [hrRows] = await db.execute<RowDataPacket[]>(
-          `SELECT DISTINCT u.id as user_id, u.email, u.full_name
+          // e.full_name, not u.full_name: auth_user has no name column at all.
+          // This sits inside a try/catch, so it never raised an error — it
+          // silently meant Payroll HR were never told an eSign had completed.
+          `SELECT DISTINCT u.id as user_id, u.email, e.full_name
            FROM auth_user u
            JOIN user_roles ur ON ur.user_id = u.id
            JOIN employees e ON e.user_id = u.id AND e.active_status = 1
