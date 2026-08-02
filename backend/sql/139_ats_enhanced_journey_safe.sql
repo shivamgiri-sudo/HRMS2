@@ -231,10 +231,24 @@ SET @sql = IF(
 );
 PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
+-- Third table this file redefines and does not own.
+--
+-- 138 creates ats_interview_result first, without an interviewed_at column, so the
+-- CREATE TABLE IF NOT EXISTS earlier in this file is a silent no-op and the index below
+-- targets a column that does not exist:
+--
+--   Key column 'interviewed_at' doesn't exist in table
+--
+-- The guard checked whether the INDEX existed but not whether its COLUMN did — which on a
+-- database built from scratch are different questions. Both are checked now.
 SET @sql = IF(
-  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS WHERE TABLE_SCHEMA='mas_hrms' AND TABLE_NAME='ats_interview_result' AND INDEX_NAME='idx_interview_date') = 0,
+  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS
+    WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='ats_interview_result' AND INDEX_NAME='idx_interview_date') = 0
+  AND
+  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+    WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='ats_interview_result' AND COLUMN_NAME='interviewed_at') > 0,
   'CREATE INDEX idx_interview_date ON ats_interview_result(interviewed_at)',
-  'SELECT ''idx_interview_date already exists'' AS note'
+  'SELECT ''idx_interview_date skipped: already present, or ats_interview_result uses the 138 shape'' AS note'
 );
 PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
