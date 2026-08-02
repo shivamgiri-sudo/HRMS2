@@ -174,6 +174,9 @@ const COMMON_TEMPLATE_FIELDS: DefaultFieldMap[] = [
   // The employment agreement names the second party as "r/o <address>" and
   // repeats it as the notice address, so a blank here is a defective contract.
   { field_key: "employee_address", field_label: "Residential Address", source_path: "employee.permanent_address", required: false, aliases: ["employee_address", "address", "permanent_address"] },
+  // Resolves the agreement's "s/o | d/o" from gender. Not required: an unknown
+  // gender legitimately yields both forms rather than a blank.
+  { field_key: "relation_prefix", field_label: "Relation (s/o or d/o)", source_path: "employee.relation_prefix", required: false, aliases: ["relation_prefix"] },
   // The agreement's appendix states the remuneration, so figure and words are
   // both required; a contract that says one and not the other is defective.
   { field_key: "monthly_remuneration", field_label: "Monthly Remuneration", source_path: "salary.monthly_gross", required: false, aliases: ["monthly_remuneration", "remuneration"] },
@@ -213,7 +216,7 @@ const DEFAULT_FIELDS_BY_DOCUMENT: Record<string, string[]> = {
   PI_PROCESSING_CONSENT: ["employee_name", "employee_code", "mobile", "email", "current_date"],
   ZERO_TOLERANCE_ACK: ["employee_name", "employee_code", "date_of_joining", "branch", "current_date"],
   EPF_DECLARATION: ["employee_name", "father_name", "date_of_birth", "date_of_joining", "mobile", "email", "pan_masked", "aadhaar_masked", "uan", "current_date"],
-  EMPLOYMENT_CONTRACT: ["employee_name", "employee_code", "date_of_joining", "designation", "department", "branch", "process", "current_date", "father_name", "employee_address", "monthly_remuneration", "monthly_remuneration_words"],
+  EMPLOYMENT_CONTRACT: ["employee_name", "employee_code", "date_of_joining", "designation", "department", "branch", "process", "current_date", "father_name", "relation_prefix", "employee_address", "monthly_remuneration", "monthly_remuneration_words"],
 };
 
 function normalizeToken(value: string) {
@@ -222,6 +225,23 @@ function normalizeToken(value: string) {
     .replace(/[^a-zA-Z0-9]+/g, "_")
     .replace(/^_+|_+$/g, "")
     .toLowerCase();
+}
+
+/**
+ * The field behind a template placeholder, matched by key or alias.
+ *
+ * This is what decides whether `{{something}}` is filled or silently rendered
+ * as an empty string: an unmatched placeholder still gets a field map, but with
+ * a null source_path, so nothing ever populates it and the document prints a
+ * blank where a name or a date should be. Exported so the template audit can
+ * ask the same question the renderer asks, instead of keeping a second copy of
+ * the rule that drifts out of step with this one.
+ */
+export function matchPlaceholderField(placeholder: string) {
+  const token = normalizeToken(placeholder);
+  return COMMON_TEMPLATE_FIELDS.find((field) =>
+    field.field_key === token || field.aliases?.some((alias) => normalizeToken(alias) === token),
+  );
 }
 
 function fieldsForDocument(documentCode: string) {
@@ -416,9 +436,7 @@ export function defaultMapsForTemplate(documentCode: string, fileName?: string |
   }
 
   for (const placeholder of placeholders) {
-    const matched = COMMON_TEMPLATE_FIELDS.find((field) =>
-      field.field_key === placeholder || field.aliases?.some((alias) => normalizeToken(alias) === placeholder),
-    );
+    const matched = matchPlaceholderField(placeholder);
     const fieldKey = matched?.field_key ?? placeholder;
     maps.set(fieldKey, {
       field_key: fieldKey,
@@ -522,6 +540,47 @@ function joinAddress(employee: RowDataPacket | undefined, which: "permanent" | "
   return (permanent.length ? permanent : current).join(", ");
 }
 
+/**
+ * "s/o" or "d/o" for the parties clause of the employment agreement.
+ *
+ * The template shipped the unresolved choice — "s/o | d/o" — and it printed on
+ * every contract. Anything that is not recognisably male or female keeps both
+ * forms: it reads as a form yet to be completed, which is true, rather than
+ * asserting a relationship the employee record does not support.
+ */
+/**
+ * The marital status spelled the way EPF Form 11 compares it.
+ *
+ * The form ticks a box by exact, case-insensitive match against one of four
+ * discriminants, so the spelling matters. The sources disagree: the onboarding
+ * form stores "Single", "DIVORCE" and "WIDOW", the employees table "single",
+ * "divorced" and "widowed", and none of those equals "Unmarried", "Divorcee" or
+ * "Widow/Widower". Every box therefore stayed empty even where the datum was
+ * recorded — and it usually is: only 53 onboarding rows lack one.
+ *
+ * Anything unrecognised is passed through untouched, which leaves every box
+ * unticked. That is deliberate: no box means "Separated", and picking the
+ * nearest one would state something about a real person that no record supports.
+ */
+export function maritalStatusForForm(value: unknown) {
+  const raw = String(value ?? "").trim();
+  if (!raw) return null;
+  switch (raw.toLowerCase()) {
+    case "married": return "Married";
+    case "single": case "unmarried": return "Unmarried";
+    case "widow": case "widower": case "widowed": case "widow/widower": return "Widow/Widower";
+    case "divorce": case "divorced": case "divorcee": return "Divorcee";
+    default: return raw;
+  }
+}
+
+export function relationPrefix(gender: unknown) {
+  const value = String(gender ?? "").trim().toLowerCase();
+  if (value === "male" || value === "m") return "s/o";
+  if (value === "female" || value === "f") return "d/o";
+  return "s/o | d/o";
+}
+
 /** Exported so diagnostics can resolve exactly what a document would be filled with. */
 export /**
  * Whether this employee's attendance is counted from the dialler or from
@@ -616,6 +675,7 @@ export async function buildSourceContext(employeeId: string, candidateId?: strin
         e.date_of_birth,
         e.date_of_joining,
         e.gender,
+        e.marital_status,
         e.address1, e.address2, e.city, e.state, e.pincode,
         e.permanent_address1, e.permanent_address2, e.permanent_city,
         e.permanent_state, e.permanent_pincode,
@@ -654,6 +714,7 @@ export async function buildSourceContext(employeeId: string, candidateId?: strin
     `SELECT
         father_husband_name,
         date_of_birth,
+        marital_status,
         mobile_number,
         personal_email_id,
         pan_number_masked,
@@ -704,6 +765,7 @@ export async function buildSourceContext(employeeId: string, candidateId?: strin
 
   const [[salary]] = await db.execute<RowDataPacket[]>(
     `SELECT ctc_offered, basic, hra, conveyance, da, special_allowance,
+            portfolio_allowance, medical_allowance, lta, mobile_allowance,
             other_allowance, bonus, gross, net_in_hand,
             epf_employee, epf_employer, esic_employee, esic_employer,
             professional_tax, gratuity, admin_charges
@@ -743,21 +805,44 @@ export async function buildSourceContext(employeeId: string, candidateId?: strin
 
   const attendanceSource = await resolveAttendanceSource(employee);
 
-  // Gross is the contractual monthly remuneration; fall back to a twelfth of
-  // the offered CTC when no monthly snapshot has been written yet.
+  // Gross is the contractual monthly remuneration the employee signs against.
   //
-  // `??` was the wrong operator here. Every column on employee_salary_snapshot
-  // DEFAULTs to 0, so a snapshot written without a gross holds 0.00 rather than
-  // NULL — and 0 is not nullish, so the CTC fallback never fired. The contract
-  // printed "0 (Zero)" as the remuneration for a real candidate. Treat a
-  // non-positive gross as absent, which is what it means on this table.
-  const snapshotGross = Number(salary?.gross ?? 0);
+  // Two things had to be got right here, and the first fix got the second one
+  // wrong. Every column on employee_salary_snapshot DEFAULTs to 0, so a snapshot
+  // written without a gross holds 0.00 rather than NULL — and 0 is not nullish,
+  // so a `??` fallback never fires. That is why a real contract printed
+  // "Rs. 0 (Rupees Zero only)". 16,136 of 33,443 rows are in that state.
+  //
+  // The fallback must be the sum of the components, NOT ctc_offered/12.
+  // ctc_offered on this table is a monthly figure — on 31,095 of the 31,118
+  // rows carrying one it is less than 2x the component sum — so annualising it
+  // would have put ₹1,382 on a contract whose real remuneration is ₹15,103.
+  // A wrong number that looks plausible is worse than the zero it replaced.
+  // 15,518 of the 16,136 zero-gross rows do carry components.
+  const num = (value: unknown) => {
+    const parsed = Number(value ?? 0);
+    return Number.isFinite(parsed) ? parsed : 0;
+  };
+  const componentSum = [
+    salary?.basic, salary?.hra, salary?.conveyance, salary?.da,
+    salary?.portfolio_allowance, salary?.medical_allowance, salary?.lta,
+    salary?.mobile_allowance, salary?.special_allowance, salary?.other_allowance,
+  ].reduce<number>((total, part) => total + num(part), 0);
+
+  const snapshotGross = num(salary?.gross);
+  const offeredMonthly = num(salary?.ctc_offered);
+  // 594 rows carry no figure anywhere. A blank on the contract is honest; a
+  // fabricated one is not, so nothing is invented for them.
   const grossRaw = snapshotGross > 0
     ? snapshotGross
-    : (salary?.ctc_offered ? Number(salary.ctc_offered) / 12 : null);
-  const monthlyGross = grossRaw == null || Number.isNaN(Number(grossRaw)) || Number(grossRaw) <= 0
+    : componentSum > 0
+      ? componentSum
+      : offeredMonthly > 0
+        ? offeredMonthly
+        : null;
+  const monthlyGross = grossRaw == null || !Number.isFinite(grossRaw) || grossRaw <= 0
     ? null
-    : Number(grossRaw);
+    : grossRaw;
 
   return {
     nominee,
@@ -773,6 +858,13 @@ export async function buildSourceContext(employeeId: string, candidateId?: strin
       mobile: employee?.mobile ?? onboarding?.mobile_number ?? epf?.mobile_number ?? null,
       email: employee?.email ?? onboarding?.personal_email_id ?? epf?.personal_email ?? null,
       father_name: epf?.father_or_spouse_name ?? onboarding?.father_husband_name ?? null,
+      // The agreement named the second party "<name> s/o | d/o <father>" —
+      // the template's own placeholder text, printed verbatim on every signed
+      // contract because nothing ever resolved it. Gender decides it: 43,427
+      // employees are Male and 15,139 Female, so it is nearly always known.
+      // The 63 without one keep both forms rather than have the document
+      // assert a relationship the record does not support.
+      relation_prefix: relationPrefix(employee?.gender),
       // "r/o" on the employment agreement means place of residence, so prefer
       // the permanent address and fall back to the current one.
       permanent_address: joinAddress(employee) || null,
@@ -785,7 +877,9 @@ export async function buildSourceContext(employeeId: string, candidateId?: strin
       date_of_birth: epf?.date_of_birth ?? onboarding?.date_of_birth ?? employee?.date_of_birth ?? null,
       joining_date: epf?.joining_date ?? employee?.date_of_joining ?? null,
       gender: epf?.gender ?? employee?.gender ?? null,
-      marital_status: epf?.marital_status ?? null,
+      marital_status: maritalStatusForForm(
+        epf?.marital_status ?? onboarding?.marital_status ?? employee?.marital_status,
+      ),
       mobile_number: epf?.mobile_number ?? onboarding?.mobile_number ?? employee?.mobile ?? null,
       personal_email: epf?.personal_email ?? onboarding?.personal_email_id ?? employee?.email ?? null,
       pan_masked: epf?.pan_masked ?? onboarding?.pan_number_masked ?? null,
