@@ -165,12 +165,17 @@ export async function claimDailyLogin(employeeId: string): Promise<LoginRewardRe
         [currentStreak, longestStreak, today, employeeId]
       );
     } else {
-      // Create tier status if doesn't exist
+      // Create tier status if doesn't exist — look up the lowest tier id to satisfy NOT NULL
+      const [tierIdRows] = await conn.query<RowDataPacket[]>(
+        `SELECT id FROM gamification_tier ORDER BY min_points ASC LIMIT 1`
+      );
+      const defaultTierId = tierIdRows[0]?.id;
+      if (!defaultTierId) throw new Error('No gamification tiers configured');
       await conn.query<ResultSetHeader>(
-        `INSERT INTO employee_tier_status (id, employee_id, current_streak, longest_streak, last_login_date)
-         VALUES (?, ?, ?, ?, ?)
+        `INSERT INTO employee_tier_status (id, employee_id, current_tier_id, current_streak, longest_streak, last_login_date)
+         VALUES (?, ?, ?, ?, ?, ?)
          ON DUPLICATE KEY UPDATE current_streak = ?, longest_streak = ?, last_login_date = ?`,
-        [randomUUID(), employeeId, currentStreak, longestStreak, today, currentStreak, longestStreak, today]
+        [randomUUID(), employeeId, defaultTierId, currentStreak, longestStreak, today, currentStreak, longestStreak, today]
       );
     }
 
@@ -307,7 +312,7 @@ export async function getStreakLeaderboard(
   const [rows] = await db.query<RowDataPacket[]>(
     `SELECT
        ts.employee_id as employeeId,
-       CONCAT(e.first_name, ' ', e.last_name) as employeeName,
+       e.full_name as employeeName,
        ts.current_streak as currentStreak,
        ts.longest_streak as longestStreak
      FROM employee_tier_status ts
