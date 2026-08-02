@@ -561,6 +561,15 @@ for (const rawRow of rows) {
   else if (existsByMobile) matchedByMobile++;
   const alreadyExists = existsByCode || existsByMobile;
 
+  // Claim this row's identifiers immediately, so a later row repeating them is
+  // recognised as a duplicate. The sets are otherwise a snapshot taken before
+  // the loop, and a file that repeats a person would insert them twice — the
+  // legacy workbook repeats 207 mobiles and 68 candidate ids, 225 rows' worth.
+  if (!alreadyExists) {
+    existingCodes.add(String(row.candidate_code));
+    if (mobKey) existingMobiles.add(mobKey);
+  }
+
   if (insertOnly && alreadyExists) { skipped++; existingSkipped++; continue; }
 
   try {
