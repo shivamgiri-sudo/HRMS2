@@ -1,4 +1,24 @@
 export const PAGE_CODE_BY_ROUTE: Record<string, string> = {
+  // ── Mapped 2026-08-03 during release stabilisation ─────────────────────────
+  // Each of these is granted to at least one role AND has a mounted route, but had
+  // no entry here — so nothing verified that the grant and the route agreed. That is
+  // the precise gap that let WORKFORCE_COMMAND_CENTER send eight roles to a 404 from
+  // their own launcher: a code absent from this map is invisible to the whole
+  // contract suite.
+  //
+  // Route confirmed per code by parsing each <Route> element and reading the pageCode
+  // carried within that same element, not the nearest one in the file.
+  "/ats/branch-head-approval": "ATS_BRANCH_HEAD_APPROVAL",
+  "/business-actions": "BUSINESS_ACTION_QUEUE",
+  "/business-command-center": "BUSINESS_COMMAND_CENTER",
+  "/call-master": "CALL_MASTER",
+  "/call-master/inbound": "CALL_MASTER_INBOUND",
+  "/admin/configuration": "CONFIGURATION_CENTER",
+  "/jobs": "JOBS",
+  "/performance-hub": "PERFORMANCE_HUB",
+  "/quality/executive": "QUALITY_EXECUTIVE",
+  "/quality/team": "QUALITY_TEAM",
+  "/sales/brand-analytics": "SALES_BRAND_ANALYTICS",
   "/advanced-reports": "ADVANCED_REPORTS",
   "/agent-performance": "AGENT_PERFORMANCE",
   "/assets-manager": "ASSETS_MANAGER",
