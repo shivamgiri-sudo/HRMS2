@@ -433,7 +433,7 @@ export default function NativeATSRecruiterWorkspace() {
   // (authoritative — from the employee record). candidate.branch is a free-text
   // field stored at registration and may not match branch_master exactly.
   useEffect(() => {
-    const branch = recruiterProfile?.branch_name;
+    const branch = recruiterProfile?.branch;
     if (!branch) { setBranchProcesses([]); return; }
     hrmsApi.get<{ success: boolean; data: ProcessOption[] }>(
       `/api/job-requisition/processes-for-branch/${encodeURIComponent(branch)}`
@@ -445,11 +445,11 @@ export default function NativeATSRecruiterWorkspace() {
       }
     }).catch(() => setBranchProcesses([]));
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [recruiterProfile?.branch_name]);
+  }, [recruiterProfile?.branch]);
 
   // Load open batches when selected process changes
   useEffect(() => {
-    const branch = recruiterProfile?.branch_name;
+    const branch = recruiterProfile?.branch;
     if (!selectedProcessId || !branch) {
       setOpenBatches([]);
       setSelectedRequisitionId("");
@@ -489,7 +489,7 @@ export default function NativeATSRecruiterWorkspace() {
     });
     setSelectedRequisitionId("");
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedProcessId, recruiterProfile?.branch_name]);
+  }, [selectedProcessId, recruiterProfile?.branch]);
 
   const loadPending = async () => {
     const res = await hrmsApi.get<{ success: boolean; data: any[]; recruiter?: RecruiterProfile | null }>(
