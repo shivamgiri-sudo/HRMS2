@@ -55,7 +55,25 @@ const findings = [];
 // ALTER ... ADD COLUMN is how most columns arrive after the initial CREATE, so a table's
 // real shape is the CREATE plus every later addition. Without this the scan would flag
 // perfectly good INSERTs that use a column added by a subsequent migration.
-const ADD_COL_RE = /ALTER\s+TABLE\s+`?(\w+)`?[\s\S]{0,4000}?ADD\s+COLUMN\s+(?:IF\s+NOT\s+EXISTS\s+)?`?(\w+)`?/gi;
+//
+// One ALTER frequently adds several columns at once —
+//   ALTER TABLE employees ADD COLUMN a ..., ADD COLUMN b ..., ADD INDEX ...
+// so every ADD COLUMN in the statement has to be collected, not just the first. An earlier
+// version took only the first and reported five columns of 041 as missing, which is the
+// exact false alarm that makes an audit worth ignoring.
+const ALTER_RE = /ALTER\s+TABLE\s+`?(\w+)`?([\s\S]*?)(?=;|ALTER\s+TABLE\s|$)/gi;
+const ADD_COL_RE = /ADD\s+COLUMN\s+(?:IF\s+NOT\s+EXISTS\s+)?`?(\w+)`?/gi;
+
+/** Every column any ALTER in this file adds, keyed by table. */
+function creditAlters(sql, known) {
+  for (const alter of sql.matchAll(ALTER_RE)) {
+    const table = alter[1].toLowerCase();
+    if (!known.has(table)) continue;
+    for (const col of alter[2].matchAll(ADD_COL_RE)) {
+      known.get(table).add(col[1].toLowerCase());
+    }
+  }
+}
 
 /**
  * Blank out INSERTs that already sit inside a column-existence guard.
@@ -74,18 +92,17 @@ function blankGuardedSeeds(sql) {
 for (const file of manifest) {
   const path = join(SQL_DIR, file);
   if (!existsSync(path)) continue;
-  const sql = blankGuardedSeeds(readFileSync(path, "utf8"));
+  // Credit CREATEs and ALTERs from the RAW text. blankGuardedSeeds removes guarded blocks,
+  // and most ALTERs in this repository live inside exactly such a block — blanking before
+  // crediting made 041 contribute nothing and reported five of its columns as missing.
+  const raw = readFileSync(path, "utf8");
+  const sql = blankGuardedSeeds(raw);
 
-  for (const m of sql.matchAll(CREATE_RE)) {
+  for (const m of raw.matchAll(CREATE_RE)) {
     const t = m[1].toLowerCase();
     if (!known.has(t)) known.set(t, columnsOf(m[2]));
   }
-  // Includes columns added inside quoted PREPARE strings, which is deliberate: they are
-  // still additions, and treating them as real only ever suppresses a false alarm.
-  for (const m of sql.matchAll(ADD_COL_RE)) {
-    const t = m[1].toLowerCase();
-    if (known.has(t)) known.get(t).add(m[2].toLowerCase());
-  }
+  creditAlters(raw, known);
 
   for (const m of sql.matchAll(INSERT_RE)) {
     const t = m[1].toLowerCase();
