@@ -160,3 +160,44 @@ describe("consecutive shortfall counting", () => {
     expect(raiseCoachingFromQuality.mock.calls[0][0].signal.consecutiveShortfalls).toBe(1);
   });
 });
+
+describe("an absent target is not the same as meeting it", () => {
+  const noTarget = {
+    employee_id: "e1", metric_id: "m", avg_value: 50,
+    target_value: null, sample_days: 5, audit_count: 10,
+  };
+
+  it("counts a missing target separately from a met one", async () => {
+    // Measured on production 2026-08-02: all 41 agents with quality that week
+    // had no resolved target, and zero QUALITY_SCORE targets were configured
+    // anywhere. Folding this into skippedNoTrigger made a completely inert
+    // coaching loop look like a quiet week.
+    execute.mockResolvedValueOnce([[noTarget], []]).mockResolvedValue([[], []]);
+    const result = await runWeeklyCoachingEvaluation("2026-07-15");
+
+    expect(result.skippedNoTarget).toBe(1);
+    expect(result.skippedNoTrigger).toBe(0);
+  });
+
+  it("does not bother the writer when there is no target", async () => {
+    execute.mockResolvedValueOnce([[noTarget], []]).mockResolvedValue([[], []]);
+    await runWeeklyCoachingEvaluation("2026-07-15");
+    expect(raiseCoachingFromQuality).not.toHaveBeenCalled();
+  });
+
+  it("treats a zero target as no target", async () => {
+    // Dividing by it would be worse than declining.
+    execute.mockResolvedValueOnce([[{ ...noTarget, target_value: 0 }], []]).mockResolvedValue([[], []]);
+    const result = await runWeeklyCoachingEvaluation("2026-07-15");
+    expect(result.skippedNoTarget).toBe(1);
+  });
+
+  it("still counts a genuine pass as no-trigger, not as missing", async () => {
+    execute
+      .mockResolvedValueOnce([[{ ...noTarget, target_value: 80, avg_value: 95 }], []])
+      .mockResolvedValue([[], []]);
+    const result = await runWeeklyCoachingEvaluation("2026-07-15");
+    expect(result.skippedNoTarget).toBe(0);
+    expect(result.skippedNoTrigger).toBe(1);
+  });
+});

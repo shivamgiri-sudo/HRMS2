@@ -114,6 +114,15 @@ export type WeeklyCoachingResult = {
   skippedNoTrigger: number;
   skippedAlreadyOpen: number;
   skippedNoCoach: number;
+  /**
+   * Had quality, but no target to judge it against.
+   *
+   * Counted separately because it is not the same as meeting the bar — there
+   * is no bar. Folding the two together hides the fact that coaching cannot
+   * fire at all: on 2026-08-02 all 41 agents with quality that week had no
+   * resolved target, and zero QUALITY_SCORE targets were configured anywhere.
+   */
+  skippedNoTarget: number;
 };
 
 export async function runWeeklyCoachingEvaluation(referenceDate: string): Promise<WeeklyCoachingResult> {
@@ -122,11 +131,18 @@ export async function runWeeklyCoachingEvaluation(referenceDate: string): Promis
 
   const result: WeeklyCoachingResult = {
     weekStart: start, weekEnd: end, evaluated: rows.length,
-    raised: 0, skippedNoTrigger: 0, skippedAlreadyOpen: 0, skippedNoCoach: 0,
+    raised: 0, skippedNoTrigger: 0, skippedAlreadyOpen: 0, skippedNoCoach: 0, skippedNoTarget: 0,
   };
 
   for (const row of rows) {
     try {
+      // Distinguished before the trigger is even asked, because the trigger
+      // cannot tell the caller WHY it declined and "no target" is the one
+      // reason that means nobody can be coached at all.
+      if (row.target_value === null || Number(row.target_value) <= 0) {
+        result.skippedNoTarget += 1;
+        continue;
+      }
       const outcome = await raiseCoachingFromQuality({
         employeeId: String(row.employee_id),
         periodStart: start,
@@ -160,6 +176,15 @@ export async function runWeeklyCoachingEvaluation(referenceDate: string): Promis
     }
   }
 
+  if (result.skippedNoTarget > 0 && result.raised === 0) {
+    // Loud on purpose: a run that evaluates people and raises nothing because
+    // no target exists looks identical to a healthy quiet week in the logs.
+    logger.warn(
+      result,
+      `[WeeklyCoaching] ${start}..${end}: ${result.skippedNoTarget} employee(s) had quality but no configured ` +
+      `target, so no coaching can be raised for them. Set a QUALITY_SCORE target per process.`,
+    );
+  }
   logger.info(result, `[WeeklyCoaching] ${start}..${end}: raised ${result.raised} of ${result.evaluated} evaluated`);
   return result;
 }
