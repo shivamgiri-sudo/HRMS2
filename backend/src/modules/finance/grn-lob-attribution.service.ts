@@ -89,8 +89,16 @@ async function resolveLob(
 }
 
 export const grnLobAttributionService = {
-  async listPending(limit = 100) {
+  /**
+   * Pending LOB attribution queue.
+   *
+   * `branchId` confines the result to one branch. Callers without global
+   * finance scope (branch_admin, branch_head) must always pass one — see
+   * `resolveFinanceBranchScope`, which the route applies.
+   */
+  async listPending(limit = 100, branchId?: string | null) {
     const safeLimit = Math.min(200, Math.max(1, Number(limit) || 100));
+    const scoped = branchId ? "AND g.branch_id = ?" : "";
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT g.id, g.grn_number, g.vendor_name, g.bill_date, g.service_period_end,
               g.amount_with_tax, g.amount, g.status, b.branch_name,
@@ -101,14 +109,25 @@ export const grnLobAttributionService = {
          JOIN grn_cost_allocation a ON a.grn_request_id = g.id
          LEFT JOIN branch_master b ON b.id = g.branch_id
          LEFT JOIN process_master pm ON pm.id = a.process_id
-        WHERE g.status = 'draft'
+        WHERE g.status = 'draft' ${scoped}
         GROUP BY g.id, g.grn_number, g.vendor_name, g.bill_date, g.service_period_end,
                  g.amount_with_tax, g.amount, g.status, b.branch_name
        HAVING missing_lob_count > 0
         ORDER BY g.created_at DESC
-        LIMIT ${safeLimit}`
+        LIMIT ${safeLimit}`,
+      branchId ? [branchId] : []
     );
     return rows;
+  },
+
+  /** Branch a GRN belongs to, for row-scope checks. */
+  async getBranchId(grnId: string) {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      "SELECT branch_id FROM grn_request WHERE id = ? LIMIT 1",
+      [grnId]
+    );
+    if (!rows[0]) throw Object.assign(new Error("GRN not found"), { statusCode: 404 });
+    return rows[0].branch_id ? String(rows[0].branch_id) : null;
   },
 
   async getWorkspace(grnId: string) {

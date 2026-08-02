@@ -1,4 +1,4 @@
-import { Route, Navigate } from "react-router-dom";
+import { Route } from "react-router-dom";
 import { lazy } from "./lazy";
 import { ProtectedRoute } from "@/components/auth/ProtectedRoute";
 import WorkforcePageGate from "@/components/security/WorkforcePageGate";
@@ -6,6 +6,7 @@ import WorkforcePageGate from "@/components/security/WorkforcePageGate";
 const Gate = ({ pageCode, children }: { pageCode: string; children: React.ReactNode }) =>
   <WorkforcePageGate pageCode={pageCode}>{children}</WorkforcePageGate>;
 
+const NativeAppointmentLetterQueue = lazy(() => import("@/pages/NativeAppointmentLetterQueue"));
 const NativeStatutoryCompliance     = lazy(() => import("@/pages/NativeStatutoryCompliance"));
 const NativeLabourCompliance        = lazy(() => import("@/pages/NativeLabourCompliance"));
 const NativeDPDPCompliance          = lazy(() => import("@/pages/NativeDPDPCompliance"));
@@ -31,6 +32,7 @@ export const complianceRouteElements = (
       <Route path="/provisioning/wfm-alignment"          element={<ProtectedRoute roles={['wfm','admin','super_admin']}><Gate pageCode="PROVISIONING_WFM_ALIGNMENT"><NativeITProvisioningTracker /></Gate></ProtectedRoute>} />
       <Route path="/provisioning/it"                     element={<ProtectedRoute roles={['it','admin','super_admin']}><Gate pageCode="PROVISIONING_IT"><NativeITProvisioningTracker /></Gate></ProtectedRoute>} />
       <Route path="/provisioning/admin"                  element={<ProtectedRoute roles={['branch_admin','hr','admin','super_admin']}><Gate pageCode="PROVISIONING_ADMIN"><NativeITProvisioningTracker /></Gate></ProtectedRoute>} />
-      <Route path="/provisioning/appointment-letter"     element={<Navigate to="/ats/joining-control-room" replace />} />
+      {/* Was a redirect to the control room, which has no issuance UI. */}
+      <Route path="/provisioning/appointment-letter"     element={<ProtectedRoute><NativeAppointmentLetterQueue /></ProtectedRoute>} />
   </>
 );

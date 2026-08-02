@@ -27,6 +27,26 @@ export const KIT_RESERVE_BAND = 180;
 /** Deterministic order, so a kit's page map is reproducible. */
 const ORDER_FIRST = "EMPLOYMENT_CONTRACT";
 
+/**
+ * What belongs in a kit: the six documents rendered from TEMPLATE_DEFINITIONS.
+ *
+ * The EPF forms are deliberately excluded. They are acroform documents with
+ * their own consent receipt, correction loop, payroll review stage and
+ * company-seal step, and EPF Form 2 alone carries 53 fields of statutory
+ * nominee data — EPS nominee, family members, dates of birth, addresses.
+ * Including them meant no kit could send until EPF was complete, which defeats
+ * the purpose of consolidating at all. They keep their existing per-document
+ * flow, which is built around those extra stages.
+ */
+export const KIT_DOCUMENT_CODES = [
+  "EMPLOYMENT_CONTRACT",
+  "NDA_CONFIDENTIALITY",
+  "IT_COMPLIANCE",
+  "BAMS_DECLARATION",
+  "PI_PROCESSING_CONSENT",
+  "ZERO_TOLERANCE_ACK",
+] as const;
+
 export type KitItem = {
   checklistId: string;
   documentCode: string;
@@ -55,6 +75,16 @@ export class KitAssemblyError extends Error {
 }
 
 /** The eSign documents that belong in a kit, in a stable order. */
+/**
+ * States that mean a document is finished. Mirrors isChecklistTerminalStatus in
+ * employeeJoiningDocuments.service.ts; both columns are checked because they
+ * disagree on real rows.
+ */
+const TERMINAL_STATUSES = [
+  "verified", "completed", "esign_completed", "signed_verified", "wet_signed_uploaded",
+] as const;
+const TERMINAL_SQL = TERMINAL_STATUSES.map(() => "?").join(",");
+
 export async function kitEligibleDocuments(employeeId: string): Promise<RowDataPacket[]> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT c.id, c.document_code, c.document_name, c.status,
@@ -68,8 +98,20 @@ export async function kitEligibleDocuments(employeeId: string): Promise<RowDataP
             ORDER BY f2.uploaded_at DESC LIMIT 1
          )
       WHERE c.employee_id = ? AND c.action_type = 'esign'
+        AND c.document_code IN (${KIT_DOCUMENT_CODES.map(() => "?").join(",")})
+        -- Never re-sign something already signed: it would bill a second time
+        -- and overwrite a valid signature. The signed artefact is the ground
+        -- truth here; c.status can still read 'draft_generated' on a document
+        -- that demonstrably holds an Aadhaar signature.
+        AND NOT EXISTS (
+          SELECT 1 FROM employee_joining_document_file sf
+           WHERE sf.checklist_id = c.id AND sf.deleted_at IS NULL
+             AND sf.file_role IN ('signed', 'kit_signed')
+        )
+        AND COALESCE(c.status, '') NOT IN (${TERMINAL_SQL})
+        AND COALESCE(c.fill_status, '') NOT IN (${TERMINAL_SQL})
       ORDER BY (c.document_code = ?) DESC, c.document_code`,
-    [employeeId, ORDER_FIRST],
+    [employeeId, ...KIT_DOCUMENT_CODES, ...TERMINAL_STATUSES, ...TERMINAL_STATUSES, ORDER_FIRST],
   );
   return rows as RowDataPacket[];
 }

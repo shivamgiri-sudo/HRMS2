@@ -1,5 +1,7 @@
 import { notifySLABreach } from "../services/ats-notification.helper.js";
 import { inboxService } from "../modules/inbox/inbox.service.js";
+import { isWorkerEnabled, markWorkerRun } from "../shared/worker-config.js";
+import { shouldAlert, markAlerted, cleanupCooldowns } from "../shared/alert-cooldown.js";
 
 // Database connection
 let db: any;
@@ -15,6 +17,9 @@ try {
 
 // Original hardcoded value, now read from tat_matrix_master.ATS_QUEUE_WAIT
 // const SLA_THRESHOLD_MINUTES = 30;
+// Must match the worker_config.worker_name row exactly, or the kill switch
+// silently does nothing (isWorkerEnabled fails open on a missing row).
+const WORKER_NAME = "sla-breach";
 const CHECK_INTERVAL_MS = 5 * 60 * 1000; // Check every 5 minutes
 const ALERT_COOLDOWN_MS = 60 * 60 * 1000; // Don't re-alert same candidate for 1 hour
 const STARTUP_DELAY_MS = 30 * 1000;
@@ -40,40 +45,14 @@ async function getSlaThresholdMinutes(): Promise<number> {
 let startupTimeoutRef: ReturnType<typeof setTimeout> | undefined;
 let intervalRef: ReturnType<typeof setInterval> | undefined;
 
-// ── In-Memory Alert Tracking ─────────────────────────────────────────────────
+// ── Alert Tracking ───────────────────────────────────────────────────────────
+//
+// The cooldown used to be a module-level Map. ecosystem.config.cjs permits 10 pm2
+// restarts and each one emptied it, re-alerting every waiting candidate — which is
+// how 18,959 SLA mails accumulated, 6,510 of them in a single day. It now lives in
+// the alert_cooldown table so a restart no longer resets it.
 
-const alertedCandidates = new Map<string, number>(); // candidateId → lastAlertTimestamp
 let isProcessing = false;
-
-/**
- * Check if we should alert for this candidate (respects cooldown)
- */
-function shouldAlert(candidateId: string): boolean {
-  const lastAlert = alertedCandidates.get(candidateId);
-  if (!lastAlert) return true;
-
-  const elapsed = Date.now() - lastAlert;
-  return elapsed >= ALERT_COOLDOWN_MS;
-}
-
-/**
- * Mark candidate as alerted
- */
-function markAlerted(candidateId: string): void {
-  alertedCandidates.set(candidateId, Date.now());
-}
-
-/**
- * Clean up old alert records (older than 2 hours)
- */
-function cleanupAlertCache(): void {
-  const cutoff = Date.now() - (2 * ALERT_COOLDOWN_MS);
-  for (const [candidateId, timestamp] of alertedCandidates.entries()) {
-    if (timestamp < cutoff) {
-      alertedCandidates.delete(candidateId);
-    }
-  }
-}
 
 // ── Worker Logic ─────────────────────────────────────────────────────────────
 
@@ -98,6 +77,17 @@ async function findSLABreachCandidates(slaThresholdMinutes: number): Promise<any
        LEFT JOIN ats_recruiter_roster rr ON rr.id = c.recruiter_id
        LEFT JOIN employees emp ON emp.id = rr.employee_id
        WHERE c.status = 'Waiting'
+         -- The queue token is the truth about whether somebody is still in the
+         -- lobby; ats_candidate.status is not. A candidate who walks out is
+         -- marked no_show on the token, but nothing moves them off 'Waiting'
+         -- unless the recruiter submits feedback — so filtering on status alone
+         -- re-alerted people who had already left, every 5 minutes for 24 hours.
+         -- Live on 2026-08-02: the single candidate this worker was alerting on
+         -- had queue_status = 'no_show' and had been "waiting" 1,107 minutes.
+         -- 'in_interview' is excluded here too: that is what
+         -- interview-delay-alert.worker.ts is for, and "waiting to be called" is
+         -- the wrong thing to say about somebody already in the room.
+         AND qt.queue_status = 'waiting'
          AND c.recruiter_assigned_name IS NOT NULL
          AND TIMESTAMPDIFF(MINUTE, COALESCE(qt.arrival_time, qt.created_at), NOW()) >= ?
          AND COALESCE(qt.arrival_time, qt.created_at) >= DATE_SUB(NOW(), INTERVAL 24 HOUR)
@@ -117,6 +107,18 @@ async function findSLABreachCandidates(slaThresholdMinutes: number): Promise<any
  * Process SLA breach alerts
  */
 async function processSLABreaches(): Promise<void> {
+  // Kill switch. This worker mails candidates' recruiters and HR directly via
+  // ats-notification.helper -> emailService, a path that consults neither
+  // notification_event_config nor anything else — so turning every event off in
+  // the notifications admin screen had no effect on it, and there was no way to
+  // stop it short of a deploy. worker_config.enabled is that way.
+  //
+  // isWorkerEnabled fails OPEN, so the existing 'sla-breach' row (enabled = 1)
+  // keeps current behaviour until somebody sets it to 0.
+  if (!(await isWorkerEnabled(WORKER_NAME))) {
+    return;
+  }
+
   if (isProcessing) {
     console.log("[SLABreachWorker] Previous check is still running; skipping overlap");
     return;
@@ -139,7 +141,7 @@ async function processSLABreaches(): Promise<void> {
 
     for (const candidate of candidates) {
       if (alertsSent >= MAX_ALERTS_PER_RUN) break;
-      if (!shouldAlert(candidate.candidate_id)) continue;
+      if (!(await shouldAlert(WORKER_NAME, candidate.candidate_id, ALERT_COOLDOWN_MS))) continue;
 
       console.log(`[SLABreachWorker] Alerting for ${candidate.candidate_name} (${candidate.pending_minutes} mins)`);
 
@@ -167,11 +169,14 @@ async function processSLABreaches(): Promise<void> {
         }).catch((e: unknown) => console.warn("[SLABreachWorker] inbox write failed:", e));
       }
 
-      markAlerted(candidate.candidate_id);
+      await markAlerted(WORKER_NAME, candidate.candidate_id);
       alertsSent += 1;
     }
 
-    cleanupAlertCache();
+    await cleanupCooldowns(WORKER_NAME, 2 * ALERT_COOLDOWN_MS);
+    // Every worker_config row currently reads last_run_at = never, which makes it
+    // impossible to tell a disabled worker from a stalled one.
+    await markWorkerRun(WORKER_NAME);
   } finally {
     isProcessing = false;
   }

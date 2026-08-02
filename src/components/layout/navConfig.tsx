@@ -245,6 +245,9 @@ export const navGroups: NavGroup[] = [
           { label: "My Quality",         href: "/quality/my-dashboard",  icon: ic(ShieldCheck),description: "My quality score",   roles: ["employee","agent","team_leader","manager","process_manager"] },
           { label: "Team Quality",       href: "/quality/team",          icon: ic(Users),      description: "Team quality",       roles: ["super_admin","admin","manager","process_manager","branch_head","team_leader"] },
           { label: "Executive Quality",  href: "/quality/executive",     icon: ic(BarChart3),  description: "Executive view",     roles: ["super_admin","admin","ceo","coo"] },
+          { label: "QA Audit Forms",      href: "/quality/audit-forms",   icon: ic(ClipboardList), pageCode: "QA_EVALUATION", description: "Define what a process is scored on", roles: ["super_admin","admin","qa","tq_head"] },
+          { label: "Score a Call",        href: "/quality/file-audit",    icon: ic(ShieldCheck), pageCode: "QUALITY_DASHBOARD", description: "File a QA audit", roles: ["super_admin","admin","qa","quality_analyst","tq_head"] },
+          { label: "Process Metrics",     href: "/kpi/process-metrics",   icon: ic(BarChart3), pageCode: "KPI_CONFIG", description: "What each process is measured on", roles: ["super_admin","admin","qa","tq_head","process_manager"] },
         ],
       },
       {

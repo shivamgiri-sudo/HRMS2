@@ -6,7 +6,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { MoreHorizontal, Plus, Search, Eye, Pencil, RefreshCw } from "lucide-react";
 import { StatusBadge } from "./StatusBadge";
 import { useCostCentreList, useCostCentreStatusCounts, type CostCentreRecord, type CostCentreStatus } from "@/hooks/useCostCentreManagement";
-import { useAuth } from "@/contexts/AuthContext";
+import { useHasRole } from "@/hooks/useUserRole";
 import { cn } from "@/lib/utils";
 
 interface CostCentreListViewProps {
@@ -28,7 +28,6 @@ const statusFilters: { value: CostCentreStatus | "all"; label: string }[] = [
 ];
 
 export function CostCentreListView({ onView, onEdit, onCreate }: CostCentreListViewProps) {
-  const { user } = useAuth();
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<CostCentreStatus | "all">("all");
   const [page, setPage] = useState(1);
@@ -42,8 +41,9 @@ export function CostCentreListView({ onView, onEdit, onCreate }: CostCentreListV
 
   const { data: statusCounts } = useCostCentreStatusCounts();
 
-  const userRole = String(user?.role ?? "").toLowerCase();
-  const canCreate = ["finance_head", "accounts_head", "admin", "super_admin"].includes(userRole);
+  // useHasRole, not user.role: HrmsUser carries only { id, email, isReadOnly },
+  // so `user?.role` was always undefined and nobody could create or edit.
+  const canCreate = useHasRole("finance_head", "accounts_head", "admin", "super_admin");
 
   const canEditRecord = (cc: CostCentreRecord) => {
     return ["draft", "revision_required"].includes(cc.status) && canCreate;

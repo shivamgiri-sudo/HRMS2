@@ -446,8 +446,13 @@ async function importOneCandidate(
     const status = mapInterviewStatus(round.result);
     if (!status || !round.result?.trim()) continue;
     await db.execute(
+      // created_at does not exist on this table; the timestamp column is interviewed_at,
+      // which is also the more meaningful one for an imported interview result. Verified
+      // against production: the shipped form throws ER_BAD_FIELD_ERROR, this one succeeds.
+      // recruiter_id is NOT NULL, which is satisfied here because the caller always passes
+      // recruiterUserId ?? actorUserId.
       `INSERT INTO ats_interview_result
-        (id, candidate_id, recruiter_id, interview_status, remarks, rejection_reason, created_at)
+        (id, candidate_id, recruiter_id, interview_status, remarks, rejection_reason, interviewed_at)
        VALUES (UUID(), ?, ?, ?, ?, ?, ?)`,
       [
         candidateDbId,

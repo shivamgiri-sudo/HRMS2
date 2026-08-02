@@ -39,7 +39,7 @@ import _ReactApexChartImport from "react-apexcharts";
 const ReactApexChart = (_ReactApexChartImport as any).default ?? _ReactApexChartImport;
 type ApexOptions = import("apexcharts").ApexChartOptions;
 import { toast } from "sonner";
-import { useAuth } from "@/contexts/AuthContext";
+import { useWorkforceAccess } from "@/hooks/useUserRole";
 import { useDebounce } from "@/hooks/useDebounce";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { hrmsApi } from "@/lib/hrmsApi";
@@ -386,8 +386,10 @@ function DegradedBanner({ degraded }: { degraded?: string[] }) {
 export default function NativeATSHiringEntry() {
   const location = useLocation();
   const isCalling = location.pathname.includes("/calling-entry");
-  const { user } = useAuth();
-  const roleKeys = useMemo(() => user?.roles?.map((r: any) => r.role_key) ?? [], [user?.roles]);
+  // useWorkforceAccess, not useAuth: HrmsUser carries only
+  // { id, email, isReadOnly }, so `user?.roles` was always undefined and
+  // roleKeys was permanently empty — the super-admin Branch column never showed.
+  const { roleKeys } = useWorkforceAccess();
   const todayIso = useMemo(() => {
     const ist = new Date(Date.now() + 5.5 * 60 * 60 * 1000);
     return ist.toISOString().slice(0, 10);

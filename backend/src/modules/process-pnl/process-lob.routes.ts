@@ -4,6 +4,10 @@ import {
   type AuthenticatedRequest,
 } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
+import {
+  assertFinanceRecordBranch,
+  resolveFinanceBranchScope,
+} from "../finance/finance-access-scope.js";
 import { grnLobAttributionService } from "../finance/grn-lob-attribution.service.js";
 import { processLobCommercialService } from "./process-lob-commercial.service.js";
 import { processLobService } from "./process-lob.service.js";
@@ -114,12 +118,33 @@ router.get(
   })
 );
 
+// GRN attribution is branch-scoped data. branch_admin and branch_head are
+// allowed here but have no global finance scope, so every one of these
+// endpoints resolves or asserts the branch before touching a record.
+async function assertGrnAttributionBranch(req: AuthenticatedRequest, grnId: string) {
+  await assertFinanceRecordBranch({
+    userId: req.authUser.id,
+    primaryRole: req.authUser.role,
+    userRoles: req.userRoles,
+    recordBranchId: await grnLobAttributionService.getBranchId(grnId),
+  });
+}
+
 router.get(
   "/grn-attribution/pending",
   requireRole(...GRN_ATTRIBUTION_ROLES),
   h(async (req, res) => {
+    // Returns the caller's own branch for branch_admin / branch_head, and
+    // undefined (all branches) only for global finance roles.
+    const branchId = await resolveFinanceBranchScope({
+      userId: req.authUser.id,
+      primaryRole: req.authUser.role,
+      userRoles: req.userRoles,
+      requestedBranchId: typeof req.query.branchId === "string" ? req.query.branchId : undefined,
+    });
     const data = await grnLobAttributionService.listPending(
-      req.query.limit ? Number(req.query.limit) : 100
+      req.query.limit ? Number(req.query.limit) : 100,
+      branchId ?? null
     );
     res.json({ success: true, data });
   })
@@ -129,6 +154,7 @@ router.get(
   "/grn-attribution/:grnId",
   requireRole(...GRN_ATTRIBUTION_ROLES),
   h(async (req, res) => {
+    await assertGrnAttributionBranch(req, req.params.grnId);
     const data = await grnLobAttributionService.getWorkspace(req.params.grnId);
     res.json({ success: true, data });
   })
@@ -139,6 +165,7 @@ router.put(
   requireWriteAccess,
   requireRole(...GRN_ATTRIBUTION_ROLES),
   h(async (req, res) => {
+    await assertGrnAttributionBranch(req, req.params.grnId);
     const data = await grnLobAttributionService.apply(
       req.params.grnId,
       Array.isArray(req.body?.allocations) ? req.body.allocations : [],

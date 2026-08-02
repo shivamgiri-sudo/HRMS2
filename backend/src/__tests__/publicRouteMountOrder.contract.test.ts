@@ -26,6 +26,7 @@ describe("public API routers mount before the authenticated catch-all", () => {
 
   const publicMounts = [
     'app.use("/api/public/employee-documents"',
+    'app.use("/api/public/joining-kit"',
     'app.use("/api/public/verify"',
     'app.use("/api/public/login-info"',
     'app.use("/api/ats/bgv"',
