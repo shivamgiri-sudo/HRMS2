@@ -27,15 +27,12 @@
 {
   "extends": "./tsconfig.json",
   "include": [
-    "src/modules/payroll/run-status.ts",
-    "src/modules/payroll/statutory-config.loader.ts",
-    "src/modules/payroll/statutory-config.resolver.ts",
-    "src/modules/payroll/professional-tax-states.ts",
-    "src/modules/payroll/payrollCalculate.service.ts",
-    "src/modules/payroll/payrollWindowGuard.ts",
-    "src/modules/payroll/payroll-targeted-recalculation.service.ts",
-    "src/modules/payroll/payroll.routes.ts",
-    "src/modules/payroll-compliance/payrollCompliance.service.ts"
+    "src/modules/quality-dashboard/quality-target-transition.ts",
+    "src/modules/quality-dashboard/quality-target.service.ts",
+    "src/modules/quality-dashboard/quality-target-simulation.ts",
+    "src/modules/quality-dashboard/quality-governance.routes.ts",
+    "src/modules/quality-dashboard/weekly-coaching.service.ts",
+    "src/db/runPendingMigrations.ts"
   ],
   "compilerOptions": { "noEmit": true }
 }

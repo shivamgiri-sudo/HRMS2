@@ -411,7 +411,9 @@
     "1057_process_quality_target.sql",
     "1054_branch_head_approval_pending_status.sql",
     "1054_alert_worker_governance.sql",
-    "1055_branch_head_approval_missing_columns.sql"
+    "1055_branch_head_approval_missing_columns.sql",
+    "1056_branch_head_approval_candidate_id.sql",
+    "1058_process_quality_target_state_machine.sql"
   ],
   "approvedDeletions": [],
   "knownDangling": [],

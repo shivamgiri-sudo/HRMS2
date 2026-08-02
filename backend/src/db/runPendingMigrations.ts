@@ -448,6 +448,7 @@ const MIGRATION_MANIFEST: string[] = [
   "1054_alert_worker_governance.sql",          // alert_cooldown + the interview-delay-alert worker_config row; without this line the table is never created and alert-cooldown.ts throttles nothing
   "1055_branch_head_approval_missing_columns.sql", // 1054 fixed the enum; probing the real INSERT then showed notified_at/created_at/updated_at missing and branch_head_id NOT NULL, so the same statement still threw
   "1056_branch_head_approval_candidate_id.sql", // 138 and 141 each declare a column the other omits; production (141) has no candidate_id
+  "1058_process_quality_target_state_machine.sql", // draft->simulated->pending->approved->active lifecycle; DB enforces the approver is not the author and that one open-ended active exists per process
   ];
 
 export type MigrationHealth = {

@@ -208,71 +208,27 @@ export async function createQualityTarget(input: CreateTargetInput): Promise<{ i
 }
 
 /**
- * Approve and activate a draft, superseding whatever governed before.
+ * REMOVED — this used to flip a draft straight to active in one call.
  *
- * Both happen together on purpose: an approved-but-inactive target is a state
- * nobody can act on, and a target that activates without approval is the thing
- * this table exists to prevent.
+ * 1058 replaced it with a lifecycle (simulate, submit, approve, activate) whose
+ * point is that none of those steps can be skipped: an approval has to follow a
+ * simulation of the same numbers, and the approver cannot be the author. Leaving
+ * the old one-shot in place would have kept a second door into `active` that
+ * honours none of that.
+ *
+ * It throws rather than being deleted so that any caller missed during the
+ * change fails loudly here instead of quietly bypassing governance.
+ *
+ * @deprecated Use quality-target-transition.ts.
  */
 export async function approveQualityTarget(
-  targetId: string, approverUserId: string, note?: string | null,
-): Promise<{ activated: QualityTarget; supersededId: string | null }> {
-  const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT t.*, p.process_name FROM process_quality_target t
-       JOIN process_master p ON p.id = t.process_id WHERE t.id = ? LIMIT 1`,
-    [targetId],
+  _targetId: string, _approverUserId: string, _note?: string | null,
+): Promise<never> {
+  throw new QualityTargetError(
+    "Targets are no longer approved in one step. Simulate the target, submit it for approval, "
+      + "have a second approver approve it, then activate it — see quality-target-transition.ts.",
+    410,
   );
-  if (!rows.length) throw new QualityTargetError("Target not found", 404);
-  const target = toTarget(rows[0]);
-  if (target.status !== "draft") {
-    throw new QualityTargetError(`That target is ${target.status}, not a draft`, 409);
-  }
-
-  const [current] = await db.execute<RowDataPacket[]>(
-    `SELECT id FROM process_quality_target
-      WHERE process_id = ? AND metric_code = ? AND status = 'active' LIMIT 1`,
-    [target.processId, target.metricCode],
-  );
-  const supersededId = current[0]?.id ? String(current[0].id) : null;
-
-  const conn = await db.getConnection();
-  try {
-    await conn.beginTransaction();
-    if (supersededId) {
-      // Closed the day before the new one starts, so no date resolves to two
-      // policies and no period is left ungoverned.
-      await conn.execute(
-        `UPDATE process_quality_target
-            SET status = 'superseded', effective_to = DATE_SUB(?, INTERVAL 1 DAY)
-          WHERE id = ?`,
-        [target.effectiveFrom, supersededId],
-      );
-      await recordAudit({
-        targetId: supersededId, processId: target.processId, action: "superseded",
-        reason: `Superseded by ${targetId}`, actorUserId: approverUserId,
-      }, conn as never);
-    }
-    await conn.execute(
-      `UPDATE process_quality_target
-          SET status = 'active', approved_by = ?, approved_at = NOW(), approval_note = ?
-        WHERE id = ?`,
-      [approverUserId, note ?? null, targetId],
-    );
-    await recordAudit({
-      targetId, processId: target.processId, action: "approved",
-      after: { ...target, status: "active" }, reason: note ?? null, actorUserId: approverUserId,
-    }, conn as never);
-    await conn.commit();
-  } catch (err) {
-    // Superseding the old without activating the new would leave the process
-    // with no policy at all — worse than the state we started in.
-    await conn.rollback().catch(() => {});
-    throw err;
-  } finally {
-    conn.release();
-  }
-
-  return { activated: { ...target, status: "active" }, supersededId };
 }
 
 /** The change history for a process, newest first. */
