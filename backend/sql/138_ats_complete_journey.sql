@@ -294,12 +294,16 @@ CREATE TABLE IF NOT EXISTS module_access_audit_log (
 );
 
 -- ── 15. Enhance notification systems ──────────────────────────────────────────
-ALTER TABLE ats_notification_log
-ADD COLUMN notification_type VARCHAR(50) NULL COMMENT 'Type of notification',
-ADD COLUMN recipient_type ENUM('candidate','recruiter','hr','branch_head','admin') NULL,
-ADD COLUMN recipient_id CHAR(36) NULL,
-ADD COLUMN read_status TINYINT(1) DEFAULT 0,
-ADD COLUMN read_at DATETIME NULL;
+-- Guarded 2026-08-03: ats_notification_log has no CREATE TABLE anywhere in sql/, so this ALTER
+-- stops the chain on any fresh database. Guarding lets the build proceed; it does NOT give
+-- the table a definition. Whether ats_notification_log should exist is an owner decision, recorded in
+-- docs/release/migration-reconciliation.md.
+SET @tbl_ats_notifica_1 = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES
+                   WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='ats_notification_log');
+SET @sql = IF(@tbl_ats_notifica_1 > 0,
+  'ALTER TABLE ats_notification_log ADD COLUMN notification_type VARCHAR(50) NULL COMMENT ''Type of notification'', ADD COLUMN recipient_type ENUM(''candidate'',''recruiter'',''hr'',''branch_head'',''admin'') NULL, ADD COLUMN recipient_id CHAR(36) NULL, ADD COLUMN read_status TINYINT(1) DEFAULT 0, ADD COLUMN read_at DATETIME NULL',
+  'SELECT ''ats_notification_log does not exist on this database; statement skipped'' AS n');
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 -- ── 16. Create in-portal notification table ───────────────────────────────────
 CREATE TABLE IF NOT EXISTS portal_notification (

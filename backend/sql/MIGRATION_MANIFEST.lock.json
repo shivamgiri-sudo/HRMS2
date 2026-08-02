@@ -577,5 +577,17 @@
     "review_only_cleanup_test_demo_hrms2.sql",
     "setup-dialer-kpi-metrics.sql",
     "verify_ats_fix.sql"
+  ],
+  "approvedReorders": [
+    {
+      "filename": "373_create_candidate_onboarding_profile.sql",
+      "reason": "Moved ahead of 138. 138 issues 32 bare ALTER TABLE statements against candidate_onboarding_profile and this file is the only thing that creates it, 164 entries later, so a fresh database died on the first ALTER. Single CREATE TABLE IF NOT EXISTS, only FK is to ats_candidate at 004.",
+      "approvedBy": "release stabilisation 2026-08-03"
+    },
+    {
+      "filename": "500_ai_provider_foundation.sql",
+      "reason": "Moved ahead of 425, which ALTERs ai_provider_config while this is the only file that creates it. Same shape as the 373 move: the CREATE was ordered after its dependants.",
+      "approvedBy": "release stabilisation 2026-08-03"
+    }
   ]
 }

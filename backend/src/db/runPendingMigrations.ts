@@ -291,6 +291,11 @@ const MIGRATION_MANIFEST: string[] = [
   "391_payroll_validation_freeze_columns.sql",
   "393_break_kiosk_allowed_processes.sql",
   "394_auto_roster_synced_tables.sql",
+  // Added to the manifest 2026-08-03. It creates grn_request and vendor_payment_tracking,
+  // which 405, 411 and 415 all ALTER unguarded and which the schema verifier lists as
+  // required tables. It was never listed, so on a fresh database those three died and the
+  // tables never appeared. Five statements, no foreign keys out.
+  "310_vendor_payment_tracking.sql",
   "405_finance_grn_vendor_cost_attribution.sql",
   "406_process_pnl_financial_controls.sql",
   "407_shift_roster_bulk_upload_template.sql",
@@ -371,6 +376,9 @@ const MIGRATION_MANIFEST: string[] = [
   "423_cost_centre_lob_compatibility.sql",
   "424_employee_reimbursement_claim.sql",
   "425_branch_budget_cost_centre_allocation.sql",
+  // Moved ahead of 425 on 2026-08-03: 425 ALTERs ai_provider_config and this is the only
+  // file that creates it.
+  "500_ai_provider_foundation.sql",
   "425_mira_openrouter_company_knowledge.sql",
   "426_pnl_component_master.sql",
   "426_mira_audit_resilience.sql",
@@ -391,7 +399,6 @@ const MIGRATION_MANIFEST: string[] = [
   "438_pnl_people_classification_seed_v2.sql",
   "439_pnl_running_salary_snapshot.sql",
   "435_bgv_check_type_name_match.sql",
-  "500_ai_provider_foundation.sql",
   "501_lifecycle_consolidation_phase1.sql",
   "502_designation_bgv_requirements.sql",
   "503_pt_slab_dedup.sql",

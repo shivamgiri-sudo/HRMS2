@@ -36,6 +36,7 @@ function readLock(): {
   approvedDeletions: Array<{ filename: string; reason: string; approvedBy?: string }>;
   knownDangling: string[];
   knownUnlisted: string[];
+  approvedReorders?: Array<{ filename: string; reason: string; approvedBy?: string }>;
 } {
   return JSON.parse(fs.readFileSync(LOCK_PATH, "utf8"));
 }
@@ -78,11 +79,17 @@ describe("migration manifest — ordering", () => {
     // Migrations are applied in manifest order. Reordering two that touch the
     // same table changes the resulting schema on a fresh install while leaving
     // every existing environment untouched, so nothing reveals it.
+    //
+    // A reorder is sometimes the correct fix rather than a mistake — a CREATE listed after
+    // the ALTERs that need it cannot work on a fresh database in any other way. Those go in
+    // the lock's approvedReorders with a reason, exactly like approvedDeletions, so the move
+    // is a recorded decision instead of a silent edit.
     const manifest = readManifest();
     const lock = readLock();
     const position = new Map(manifest.map((f, i) => [f, i]));
+    const approved = new Set((lock.approvedReorders ?? []).map((r) => r.filename));
 
-    const stillPresent = lock.released.filter((f) => position.has(f));
+    const stillPresent = lock.released.filter((f) => position.has(f) && !approved.has(f));
     const outOfOrder: string[] = [];
     for (let i = 1; i < stillPresent.length; i++) {
       const prev = position.get(stillPresent[i - 1])!;
@@ -90,6 +97,18 @@ describe("migration manifest — ordering", () => {
       if (cur < prev) outOfOrder.push(`${stillPresent[i]} now runs before ${stillPresent[i - 1]}`);
     }
     expect(outOfOrder, outOfOrder.join("\n")).toEqual([]);
+  });
+
+  it("every approved reorder says why it was moved", () => {
+    // Without this, approvedReorders becomes a list of filenames that silences the check —
+    // the same failure the unrouted-page-code allowlist had.
+    for (const r of readLock().approvedReorders ?? []) {
+      expect(r.reason?.trim(), `approvedReorders entry "${r.filename}" has no reason`).toBeTruthy();
+      expect(
+        r.reason.trim().length,
+        `approvedReorders entry "${r.filename}" needs a real explanation`,
+      ).toBeGreaterThan(40);
+    }
   });
 });
 
