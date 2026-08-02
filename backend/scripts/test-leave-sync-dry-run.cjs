@@ -18,7 +18,7 @@ const legacyConfig = {
   host: '14.97.30.236',
   port: 3306,
   user: 'shivam_user',
-  password: 'qwersdfg!@#hjk',
+  password: process.env.DB_PASSWORD,
   database: 'db_bill',
 };
 
@@ -27,7 +27,7 @@ const hrmsConfig = {
   host: '122.184.128.90',
   port: 3306,
   user: 'shivam_user',
-  password: 'qwersdfg!@#hjk',
+  password: process.env.DB_PASSWORD,
   database: 'mas_hrms',
 };
 

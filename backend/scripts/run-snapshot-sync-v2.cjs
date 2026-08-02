@@ -7,7 +7,7 @@ async function run() {
     host: '122.184.128.90',
     port: 3306,
     user: 'shivam_user',
-    password: 'qwersdfg!@#hjk',
+    password: process.env.DB_PASSWORD,
     database: 'mas_hrms',
     connectTimeout: 15000,
     multipleStatements: true
@@ -44,7 +44,7 @@ async function run() {
       host: '122.184.128.90',
       port: 3306,
       user: 'shivam_user',
-      password: 'qwersdfg!@#hjk',
+      password: process.env.DB_PASSWORD,
       database: 'mas_hrms'
     });
 

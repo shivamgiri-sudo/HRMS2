@@ -3,7 +3,7 @@
  *
  * WHY THIS EXISTS
  *
- * `password: process.env.DIALER_DB_PASSWORD || 'qwersdfg!@#hjk'` reads like a
+ * `password: process.env.DIALER_DB_PASSWORD || '<the real password>'` reads like a
  * convenience. It is three separate problems:
  *
  *  1. The password is now in the repository, in every clone of it, and in every

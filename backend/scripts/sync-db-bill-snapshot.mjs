@@ -19,13 +19,13 @@ import mysql from 'mysql2/promise';
 
 const HRMS = {
   host: '192.168.10.6', port: 3306,
-  user: 'shivam_user', password: 'qwersdfg!@#hjk',
+  user: 'shivam_user', password: process.env.DB_PASSWORD,
   database: 'mas_hrms', connectTimeout: 20000, multipleStatements: false,
 };
 
 const BILL = {
   host: '192.168.10.22', port: 3306,
-  user: 'shivam_user', password: 'qwersdfg!@#hjk',
+  user: 'shivam_user', password: process.env.DB_PASSWORD,
   database: 'db_bill', connectTimeout: 20000,
   dateStrings: true,  // prevents mysql2 from throwing on 0000-00-00 dates
 };
