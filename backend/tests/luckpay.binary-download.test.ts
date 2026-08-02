@@ -15,6 +15,31 @@
  * The JSON envelope path still has to work, because the KYC download does use it.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+
+/**
+ * Must run BEFORE the imports below, which is what vi.hoisted is for.
+ *
+ * config/env.ts builds a frozen `env` object at module load from a zod-parsed snapshot of
+ * process.env, and normalizeLuckpayConfig reads `env.LUCKPAY_PROVIDER_ENABLED` from it. Any
+ * assignment in beforeEach happens long after that object exists, so the client resolved
+ * enabled: false and every test in this file threw "Luckpay provider is disabled." before
+ * reaching a single assertion.
+ *
+ * These five tests were committed alongside the fix they cover (38a39e55) and have never
+ * passed — they were not in the failure baseline because the baseline predates them. Nothing
+ * about the product is wrong here; the suite simply never set the switch.
+ *
+ * LUCKPAY_WEBHOOK_SECRET is set too: env.ts treats ENABLED=true without it as a fatal
+ * misconfiguration.
+ */
+vi.hoisted(() => {
+  process.env.LUCKPAY_PROVIDER_ENABLED = "true";
+  process.env.LUCKPAY_WEBHOOK_SECRET ||= "test-webhook-secret-at-least-32-characters";
+  process.env.LUCKPAY_BASE_URL ||= "https://api-banking.luckpay.in/apibanking/api/v1";
+  process.env.LUCKPAY_CLIENT_ID ||= "test-client";
+  process.env.LUCKPAY_BASIC_TOKEN ||= "test-token";
+});
+
 import axios from "axios";
 import { luckpayClient } from "../src/modules/integrations/luckpay/luckpay.client.js";
 import { resetLuckpayTokenCache } from "../src/modules/integrations/luckpay/luckpay.transport.js";
