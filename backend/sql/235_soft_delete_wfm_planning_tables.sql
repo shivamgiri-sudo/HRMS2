@@ -14,7 +14,16 @@ ALTER TABLE wfm_slot_requirement
   ADD COLUMN IF NOT EXISTS delete_reason  VARCHAR(500) NULL    COMMENT 'Mandatory reason for deletion';
 
 -- Index for active-only queries
-CREATE INDEX IF NOT EXISTS idx_slot_req_active ON wfm_slot_requirement(is_active);
+-- MySQL does not support IF NOT EXISTS on CREATE INDEX; guarded instead.
+SET @idx_idx_slot_req_active = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS
+   WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'wfm_slot_requirement' AND INDEX_NAME = 'idx_slot_req_active'
+);
+SET @sql = IF(@idx_idx_slot_req_active = 0,
+  'CREATE INDEX idx_slot_req_active ON wfm_slot_requirement (is_active)',
+  'SELECT ''idx_slot_req_active already exists'' AS n'
+);
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 -- ═══════════════════════════════════════════════════════════════════════════════
 -- Add soft delete columns to process_weekoff_day_rule
@@ -27,7 +36,16 @@ ALTER TABLE process_weekoff_day_rule
   ADD COLUMN IF NOT EXISTS delete_reason  VARCHAR(500) NULL    COMMENT 'Mandatory reason for deletion';
 
 -- Index for active-only queries
-CREATE INDEX IF NOT EXISTS idx_weekoff_rule_active ON process_weekoff_day_rule(is_active);
+-- MySQL does not support IF NOT EXISTS on CREATE INDEX; guarded instead.
+SET @idx_idx_weekoff_rule_active = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS
+   WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'process_weekoff_day_rule' AND INDEX_NAME = 'idx_weekoff_rule_active'
+);
+SET @sql = IF(@idx_idx_weekoff_rule_active = 0,
+  'CREATE INDEX idx_weekoff_rule_active ON process_weekoff_day_rule (is_active)',
+  'SELECT ''idx_weekoff_rule_active already exists'' AS n'
+);
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 -- ═══════════════════════════════════════════════════════════════════════════════
 -- ROLLBACK (MySQL 8.0.16+)

@@ -9,4 +9,13 @@ ALTER TABLE salary_register_audit_log
   ADD COLUMN IF NOT EXISTS payload_json   LONGTEXT     NULL AFTER action;
 
 -- Add index for candidate lookups
-CREATE INDEX IF NOT EXISTS idx_sral_candidate ON salary_register_audit_log(candidate_id);
+-- MySQL does not support IF NOT EXISTS on CREATE INDEX; guarded instead.
+SET @idx_idx_sral_candidate = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS
+   WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'salary_register_audit_log' AND INDEX_NAME = 'idx_sral_candidate'
+);
+SET @sql = IF(@idx_idx_sral_candidate = 0,
+  'CREATE INDEX idx_sral_candidate ON salary_register_audit_log (candidate_id)',
+  'SELECT ''idx_sral_candidate already exists'' AS n'
+);
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;

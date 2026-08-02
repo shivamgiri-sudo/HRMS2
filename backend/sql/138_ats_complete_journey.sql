@@ -321,11 +321,56 @@ CREATE TABLE IF NOT EXISTS portal_notification (
 );
 
 -- ── 17. Add indexes for performance ───────────────────────────────────────────
-CREATE INDEX IF NOT EXISTS idx_ats_candidate_branch ON ats_candidate(branch_name);
-CREATE INDEX IF NOT EXISTS idx_ats_candidate_status ON ats_candidate(candidate_status);
-CREATE INDEX IF NOT EXISTS idx_ats_candidate_created ON ats_candidate(created_at);
-CREATE INDEX IF NOT EXISTS idx_ats_queue_status ON ats_queue_token(queue_status);
-CREATE INDEX IF NOT EXISTS idx_ats_queue_branch ON ats_queue_token(branch_name);
+-- MySQL does not support IF NOT EXISTS on CREATE INDEX; guarded instead.
+SET @idx_idx_ats_candidate_branch = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS
+   WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'ats_candidate' AND INDEX_NAME = 'idx_ats_candidate_branch'
+);
+SET @sql = IF(@idx_idx_ats_candidate_branch = 0,
+  'CREATE INDEX idx_ats_candidate_branch ON ats_candidate (branch_name)',
+  'SELECT ''idx_ats_candidate_branch already exists'' AS n'
+);
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+-- MySQL does not support IF NOT EXISTS on CREATE INDEX; guarded instead.
+SET @idx_idx_ats_candidate_status = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS
+   WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'ats_candidate' AND INDEX_NAME = 'idx_ats_candidate_status'
+);
+SET @sql = IF(@idx_idx_ats_candidate_status = 0,
+  'CREATE INDEX idx_ats_candidate_status ON ats_candidate (candidate_status)',
+  'SELECT ''idx_ats_candidate_status already exists'' AS n'
+);
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+-- MySQL does not support IF NOT EXISTS on CREATE INDEX; guarded instead.
+SET @idx_idx_ats_candidate_created = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS
+   WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'ats_candidate' AND INDEX_NAME = 'idx_ats_candidate_created'
+);
+SET @sql = IF(@idx_idx_ats_candidate_created = 0,
+  'CREATE INDEX idx_ats_candidate_created ON ats_candidate (created_at)',
+  'SELECT ''idx_ats_candidate_created already exists'' AS n'
+);
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+-- MySQL does not support IF NOT EXISTS on CREATE INDEX; guarded instead.
+SET @idx_idx_ats_queue_status = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS
+   WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'ats_queue_token' AND INDEX_NAME = 'idx_ats_queue_status'
+);
+SET @sql = IF(@idx_idx_ats_queue_status = 0,
+  'CREATE INDEX idx_ats_queue_status ON ats_queue_token (queue_status)',
+  'SELECT ''idx_ats_queue_status already exists'' AS n'
+);
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+-- MySQL does not support IF NOT EXISTS on CREATE INDEX; guarded instead.
+SET @idx_idx_ats_queue_branch = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS
+   WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'ats_queue_token' AND INDEX_NAME = 'idx_ats_queue_branch'
+);
+SET @sql = IF(@idx_idx_ats_queue_branch = 0,
+  'CREATE INDEX idx_ats_queue_branch ON ats_queue_token (branch_name)',
+  'SELECT ''idx_ats_queue_branch already exists'' AS n'
+);
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 -- ── 18. Super admin employee access ───────────────────────────────────────────
 -- Grant super admin access to MAS47814

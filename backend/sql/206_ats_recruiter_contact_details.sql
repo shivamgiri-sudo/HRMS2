@@ -8,7 +8,16 @@ ADD COLUMN IF NOT EXISTS email VARCHAR(255) NULL COMMENT 'Recruiter email addres
 ADD COLUMN IF NOT EXISTS mobile VARCHAR(20) NULL COMMENT 'Recruiter mobile number';
 
 -- Create index for faster lookups
-CREATE INDEX IF NOT EXISTS idx_ats_recruiter_name ON ats_recruiter(name);
+-- MySQL does not support IF NOT EXISTS on CREATE INDEX; guarded instead.
+SET @idx_idx_ats_recruiter_name = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS
+   WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'ats_recruiter' AND INDEX_NAME = 'idx_ats_recruiter_name'
+);
+SET @sql = IF(@idx_idx_ats_recruiter_name = 0,
+  'CREATE INDEX idx_ats_recruiter_name ON ats_recruiter (name)',
+  'SELECT ''idx_ats_recruiter_name already exists'' AS n'
+);
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 -- Update existing recruiters with contact info from employees table if available
 UPDATE ats_recruiter r

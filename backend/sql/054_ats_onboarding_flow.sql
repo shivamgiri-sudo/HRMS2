@@ -42,7 +42,16 @@ ALTER TABLE ats_onboarding_bridge ADD COLUMN onboarding_token_expires_at DATETIM
 ALTER TABLE ats_onboarding_bridge ADD COLUMN hr_approved_by CHAR(36);
 ALTER TABLE ats_onboarding_bridge ADD COLUMN hr_approved_at DATETIME;
 
-CREATE UNIQUE INDEX IF NOT EXISTS uq_onb_token ON ats_onboarding_bridge (onboarding_token);
+-- MySQL does not support IF NOT EXISTS on CREATE INDEX; guarded instead.
+SET @idx_uq_onb_token = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS
+   WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'ats_onboarding_bridge' AND INDEX_NAME = 'uq_onb_token'
+);
+SET @sql = IF(@idx_uq_onb_token = 0,
+  'CREATE UNIQUE INDEX uq_onb_token ON ats_onboarding_bridge (onboarding_token)',
+  'SELECT ''uq_onb_token already exists'' AS n'
+);
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 -- 4. NEW: ats_onboarding_request
 CREATE TABLE IF NOT EXISTS ats_onboarding_request (

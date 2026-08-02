@@ -11,6 +11,24 @@ ALTER TABLE ats_onboarding_bridge
   ADD COLUMN IF NOT EXISTS updated_at     DATETIME     NULL ON UPDATE CURRENT_TIMESTAMP COMMENT 'Last updated timestamp';
 
 -- Index for gate-check queries that filter by bridge_status
-CREATE INDEX IF NOT EXISTS idx_aob_bridge_status ON ats_onboarding_bridge (bridge_status);
+-- MySQL does not support IF NOT EXISTS on CREATE INDEX; guarded instead.
+SET @idx_idx_aob_bridge_status = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS
+   WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'ats_onboarding_bridge' AND INDEX_NAME = 'idx_aob_bridge_status'
+);
+SET @sql = IF(@idx_idx_aob_bridge_status = 0,
+  'CREATE INDEX idx_aob_bridge_status ON ats_onboarding_bridge (bridge_status)',
+  'SELECT ''idx_aob_bridge_status already exists'' AS n'
+);
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 -- Index for reverse-lookup by employee_code
-CREATE INDEX IF NOT EXISTS idx_aob_employee_code ON ats_onboarding_bridge (employee_code);
+-- MySQL does not support IF NOT EXISTS on CREATE INDEX; guarded instead.
+SET @idx_idx_aob_employee_code = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS
+   WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'ats_onboarding_bridge' AND INDEX_NAME = 'idx_aob_employee_code'
+);
+SET @sql = IF(@idx_idx_aob_employee_code = 0,
+  'CREATE INDEX idx_aob_employee_code ON ats_onboarding_bridge (employee_code)',
+  'SELECT ''idx_aob_employee_code already exists'' AS n'
+);
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
