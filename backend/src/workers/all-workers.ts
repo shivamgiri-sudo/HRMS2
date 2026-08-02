@@ -42,6 +42,7 @@ import { startReportStaleRecoveryWorker, stopReportStaleRecoveryWorker } from ".
 import { startTatEscalationWorker, stopTatEscalationWorker } from "./tat-escalation.worker.js";
 import { startReportSubscriptionWorker, stopReportSubscriptionWorker } from "./report-subscription.worker.js";
 import { registerNotificationDeliverer } from "../modules/communication/notification.deliverer.js";
+import { startPayrollPrepReminderWorker, stopPayrollPrepReminderWorker } from "./payroll-prep-reminder.worker.js";
 import { clearAllTimers } from "./worker-utils.js";
 
 const WORKERS: Array<{ name: string; start: () => Promise<void> }> = [
@@ -200,6 +201,10 @@ const WORKERS: Array<{ name: string; start: () => Promise<void> }> = [
     name: "report-subscription",
     start: () => { startReportSubscriptionWorker(); return Promise.resolve(); },
   },
+  {
+    name: "payroll-prep-reminder",
+    start: startPayrollPrepReminderWorker,
+  },
 ];
 
 async function startAllWorkers(): Promise<void> {
@@ -249,6 +254,7 @@ function shutdown(): void {
   stopInterviewDelayAlertWorker();
   stopLmsSyncWorker();
   stopPayrollNightlyRecalcWorker();
+  stopPayrollPrepReminderWorker();
   stopAprVicidialSyncWorker();
   stopITProvisioningLockScheduler();
   stopPayrollWindowClosureScheduler();
