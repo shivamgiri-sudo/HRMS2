@@ -6,7 +6,10 @@ import { useWorkforceAccess } from "@/hooks/useUserRole";
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
-import { Loader2, CheckCircle2, XCircle, X, AlertCircle, RefreshCw, Users } from 'lucide-react';
+import { Loader2, CheckCircle2, XCircle, X, AlertCircle, RefreshCw, Users, History, Ban } from 'lucide-react';
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
+import { CandidateJourneyDrawer } from '@/components/ats/CandidateJourneyDrawer';
+import { useSearchParams } from 'react-router-dom';
 import {
   Table,
   TableBody,
@@ -32,7 +35,23 @@ interface PendingOffer {
   branch_name: string;
   profile_status: string;
   offer_status: string;
+  /** 1 when Payroll HR has validated this salary. Employee creation requires it. */
+  payroll_validated?: number | boolean;
 }
+
+type DecisionRow = {
+  offer_id: string | null;
+  candidate_id: string;
+  candidate_code: string | null;
+  candidate_name: string | null;
+  branch_name: string | null;
+  decision: string;
+  decided_at: string | null;
+  decided_by_name: string | null;
+  remarks: string | null;
+  employee_code: string | null;
+  gross: string | null;
+};
 
 function offersFrom(payload: unknown): PendingOffer[] {
   if (Array.isArray(payload)) return payload as PendingOffer[];
@@ -50,17 +69,30 @@ function OfferRow({
   onAct,
   remark,
   onRemarkChange,
+  onOpenJourney,
 }: {
   offer: PendingOffer;
   acting: string | null;
   onAct: (id: string, action: 'approve' | 'reject', remark: string) => void;
   remark: string;
   onRemarkChange: (offerId: string, value: string) => void;
+  onOpenJourney: (candidateId: string) => void;
 }) {
   const isActing = acting === offer.offer_id;
+  // Employee creation needs a validated salary (validateSalaryLock). Without
+  // it Approve throws "Branch Head approval pending", which the branch head
+  // cannot act on — so the blocker is shown here instead.
+  const payrollReady = offer.payroll_validated === 1 || offer.payroll_validated === true;
 
   return (
-    <TableRow>
+    <TableRow
+      onClick={() => onOpenJourney(offer.candidate_id)}
+      onKeyDown={(e) => { if (e.key === 'Enter') onOpenJourney(offer.candidate_id); }}
+      tabIndex={0}
+      role="button"
+      aria-label={`Open journey for ${offer.full_name}`}
+      className="cursor-pointer transition-colors hover:bg-slate-50 focus:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-500"
+    >
       <TableCell>
         <div className="flex flex-col gap-1">
           <span className="font-medium">{offer.full_name}</span>
@@ -94,14 +126,21 @@ function OfferRow({
           placeholder="Enter remarks…"
           disabled={isActing}
           className="min-h-[36px] text-sm"
+          onClick={(e) => e.stopPropagation()}
         />
       </TableCell>
-      <TableCell>
+      <TableCell onClick={(e) => e.stopPropagation()}>
+        {!payrollReady && (
+          <p className="mb-1.5 text-[11px] font-medium text-amber-700">
+            Payroll HR has not validated this salary yet
+          </p>
+        )}
         <div className="flex gap-2 flex-nowrap">
           <Button
             size="sm"
             className="bg-emerald-600 hover:bg-emerald-700 text-white"
-            disabled={isActing}
+            disabled={isActing || !payrollReady}
+            title={payrollReady ? undefined : 'Payroll HR must validate the salary before this can be approved'}
             onClick={() => onAct(offer.offer_id, 'approve', remark)}
             aria-label={`Approve and activate ${offer.full_name}`}
           >
@@ -193,6 +232,60 @@ export default function NativeBranchHeadApproval() {
     );
   }
 
+  // ── past decisions ────────────────────────────────────────────────────
+  const [searchParams, setSearchParams] = useSearchParams();
+  const tab = searchParams.get('tab') ?? 'pending';
+  const journeyCandidate = searchParams.get('candidate');
+
+  const [decisions, setDecisions] = useState<DecisionRow[]>([]);
+  const [decisionsLoading, setDecisionsLoading] = useState(false);
+  const [scopeEmpty, setScopeEmpty] = useState(false);
+  const [stats, setStats] = useState<{ total_pending: number; total_approved: number; total_rejected: number } | null>(null);
+
+  const setTab = (next: string) => {
+    const p = new URLSearchParams(searchParams);
+    p.set('tab', next);
+    setSearchParams(p, { replace: true });
+  };
+
+  const openJourney = (candidateId: string) => {
+    const p = new URLSearchParams(searchParams);
+    p.set('candidate', candidateId);
+    setSearchParams(p, { replace: false });
+  };
+
+  const closeJourney = () => {
+    const p = new URLSearchParams(searchParams);
+    p.delete('candidate');
+    setSearchParams(p, { replace: true });
+  };
+
+  const loadDecisions = useCallback(async (status: 'approved' | 'rejected') => {
+    setDecisionsLoading(true);
+    try {
+      const r = await hrmsApi.get<{ data: DecisionRow[]; scopeEmpty?: boolean }>(
+        `/api/ats/branch-head-approval/decisions?status=${status}`,
+      );
+      setDecisions(Array.isArray(r.data) ? r.data : []);
+      setScopeEmpty(Boolean(r.scopeEmpty));
+    } catch {
+      setDecisions([]);
+    } finally {
+      setDecisionsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (tab === 'approved' || tab === 'rejected') void loadDecisions(tab);
+  }, [tab, loadDecisions]);
+
+  useEffect(() => {
+    // Built long ago and never called by any screen.
+    hrmsApi.get<{ data: typeof stats }>('/api/ats/branch-head-approval/stats')
+      .then((r) => setStats(r.data ?? null))
+      .catch(() => setStats(null));
+  }, []);
+
   return (
     <DashboardLayout>
       <div className="p-6 space-y-4">
@@ -203,6 +296,33 @@ export default function NativeBranchHeadApproval() {
             <span className="ml-2">Refresh</span>
           </Button>
         </div>
+
+        <Tabs value={tab} onValueChange={setTab}>
+          <TabsList>
+            <TabsTrigger value="pending" className="cursor-pointer">
+              Pending{stats ? ` (${stats.total_pending})` : ''}
+            </TabsTrigger>
+            <TabsTrigger value="approved" className="cursor-pointer">
+              Approved{stats ? ` (${stats.total_approved})` : ''}
+            </TabsTrigger>
+            <TabsTrigger value="rejected" className="cursor-pointer">
+              Rejected{stats ? ` (${stats.total_rejected})` : ''}
+            </TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="approved" className="mt-4">
+            <DecisionTable
+              rows={decisions} loading={decisionsLoading} scopeEmpty={scopeEmpty}
+              kind="approved" onOpenJourney={openJourney}
+            />
+          </TabsContent>
+          <TabsContent value="rejected" className="mt-4">
+            <DecisionTable
+              rows={decisions} loading={decisionsLoading} scopeEmpty={scopeEmpty}
+              kind="rejected" onOpenJourney={openJourney}
+            />
+          </TabsContent>
+        </Tabs>
 
         {/* Approval success banner */}
         {approvalSuccess && (
@@ -275,14 +395,14 @@ export default function NativeBranchHeadApproval() {
         ) : (
           <>
             {!loadError && !offers.length && (
-              <div className="flex flex-col items-center py-16 text-center">
+              <div className={`flex-col items-center py-16 text-center ${tab === 'pending' ? 'flex' : 'hidden'}`}>
                 <Users className="h-10 w-10 text-slate-300 mb-4" aria-hidden="true" />
                 <h3 className="text-base font-bold text-slate-700">No pending approvals</h3>
                 <p className="mt-1 text-sm text-slate-500">Offers submitted by HR will appear here for your approval.</p>
               </div>
             )}
 
-            {offers.length > 0 && (
+            {tab === 'pending' && offers.length > 0 && (
               <div className="rounded-lg border border-slate-200 bg-white overflow-x-auto">
                 <Table>
                   <TableHeader>
@@ -308,6 +428,7 @@ export default function NativeBranchHeadApproval() {
                         onAct={act}
                         remark={remarks[o.offer_id] || ''}
                         onRemarkChange={handleRemarkChange}
+                        onOpenJourney={openJourney}
                       />
                     ))}
                   </TableBody>
@@ -317,6 +438,113 @@ export default function NativeBranchHeadApproval() {
           </>
         )}
       </div>
+
+      <CandidateJourneyDrawer
+        candidateId={journeyCandidate}
+        open={Boolean(journeyCandidate)}
+        onClose={closeJourney}
+      />
     </DashboardLayout>
+  );
+}
+
+
+/**
+ * Past decisions. No action buttons — these are settled; the row exists so it
+ * can be found again and opened.
+ */
+function DecisionTable({
+  rows, loading, scopeEmpty, kind, onOpenJourney,
+}: {
+  rows: DecisionRow[];
+  loading: boolean;
+  scopeEmpty: boolean;
+  kind: 'approved' | 'rejected';
+  onOpenJourney: (candidateId: string) => void;
+}) {
+  if (loading) {
+    return (
+      <div className="flex justify-center py-16">
+        <Loader2 className="h-6 w-6 animate-spin text-slate-400" aria-label="Loading decisions" />
+      </div>
+    );
+  }
+
+  // A branch head with no branches assigned would otherwise see an ordinary
+  // empty table and conclude there is no history, when in fact they are scoped
+  // to nothing.
+  if (scopeEmpty) {
+    return (
+      <div className="flex flex-col items-center py-16 text-center">
+        <Ban className="mb-4 h-10 w-10 text-amber-300" aria-hidden="true" />
+        <h3 className="text-base font-bold text-slate-700">No branches assigned to you</h3>
+        <p className="mt-1 max-w-md text-sm text-slate-500">
+          Approval history is filtered to the branches you head. Ask HR to assign your branches
+          so past decisions appear here.
+        </p>
+      </div>
+    );
+  }
+
+  if (rows.length === 0) {
+    return (
+      <div className="flex flex-col items-center py-16 text-center">
+        <History className="mb-4 h-10 w-10 text-slate-300" aria-hidden="true" />
+        <h3 className="text-base font-bold text-slate-700">Nothing {kind} yet</h3>
+        <p className="mt-1 text-sm text-slate-500">
+          Offers you {kind === 'approved' ? 'approve' : 'reject'} will be listed here.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white">
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <TableHead>Candidate</TableHead>
+            <TableHead>Branch</TableHead>
+            <TableHead>Decided</TableHead>
+            <TableHead>By</TableHead>
+            <TableHead>Employee Code</TableHead>
+            <TableHead>Remarks</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {rows.map((r) => (
+            <TableRow
+              key={`${r.offer_id ?? r.candidate_id}`}
+              onClick={() => onOpenJourney(r.candidate_id)}
+              onKeyDown={(e) => { if (e.key === 'Enter') onOpenJourney(r.candidate_id); }}
+              tabIndex={0}
+              role="button"
+              aria-label={`Open journey for ${r.candidate_name ?? 'candidate'}`}
+              className="cursor-pointer transition-colors hover:bg-slate-50 focus:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-500"
+            >
+              <TableCell>
+                <div className="font-medium text-slate-900">{r.candidate_name ?? '—'}</div>
+                <div className="font-mono text-xs text-slate-500">{r.candidate_code ?? '—'}</div>
+              </TableCell>
+              <TableCell className="text-sm">{r.branch_name ?? '—'}</TableCell>
+              <TableCell className="text-sm">
+                {r.decided_at
+                  ? new Date(r.decided_at).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })
+                  : '—'}
+              </TableCell>
+              <TableCell className="text-sm">{r.decided_by_name ?? '—'}</TableCell>
+              <TableCell>
+                {r.employee_code
+                  ? <Badge variant="outline" className="border-teal-200 bg-teal-50 text-teal-700">{r.employee_code}</Badge>
+                  : <span className="text-xs text-slate-400">not created</span>}
+              </TableCell>
+              <TableCell className="max-w-[16rem] truncate text-sm text-slate-600" title={r.remarks ?? ''}>
+                {r.remarks ?? '—'}
+              </TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
+    </div>
   );
 }

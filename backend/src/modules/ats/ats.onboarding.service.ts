@@ -3,6 +3,8 @@ import { RowDataPacket, PoolConnection } from 'mysql2/promise';
 import { db } from '../../db/mysql.js';
 import { env } from '../../config/env.js';
 import { hasScopedAccess } from '../../shared/scopeAccess.js';
+import { recordBranchHeadDecision, revertBranchHeadDecision } from './branch-head-approval.record.js';
+import { resolveEmployeeIdForAuthUser } from './branch-head-scope.js';
 import { calculateSalary, SalaryComponents } from './salary.calculator.js';
 import {
   sendOnboardingTokenEmail,
@@ -414,7 +416,15 @@ export async function listPendingApprovals(scopeFilter: { sql: string; params: u
             r.id AS request_id, r.branch_id,
             c.id AS candidate_id, c.candidate_code, c.full_name, c.email, c.mobile,
             c.father_name, c.date_of_birth, c.profile_status,
-            b.branch_name
+            b.branch_name,
+            -- Whether Payroll HR has validated this salary. Employee creation
+            -- requires it (validateSalaryLock), so without this the branch head
+            -- clicks Approve and gets a failure they cannot act on. Surfaced on
+            -- the row so the blocker is visible before the click.
+            EXISTS (
+              SELECT 1 FROM ats_payroll_hr_validation pv
+               WHERE pv.candidate_id = c.id AND pv.validation_status = 'validated'
+            ) AS payroll_validated
      FROM ats_employment_offer o
      JOIN ats_onboarding_request r ON r.id = o.onboarding_request_id
      JOIN ats_candidate c ON c.id = r.candidate_id
@@ -444,6 +454,28 @@ export async function approveOffer(offerId: string, approverId: string, remarks?
 
   const candidateId = (offerRows[0] as any).candidate_id;
 
+  // approverId is an auth_user id here (ats.onboarding.routes.ts:208), while
+  // branch-head-approval.routes.ts:59 passes an employees.id. getApprovalHistory
+  // joins employees on branch_head_id, so storing the raw auth id would leave
+  // every approval made from this screen showing a blank approver.
+  const approverEmployeeId = await resolveEmployeeIdForAuthUser(approverId);
+
+  // Record the decision BEFORE creating the employee. validateSalaryLock
+  // (employee-creation-orchestrator.service.ts:572-600) requires this row and
+  // nothing on this path ever wrote one, so every approval from the nav-menu
+  // screen failed with "Branch Head approval pending".
+  //
+  // recorded:false means the candidate has no payroll validation. That is not
+  // an error to throw at the branch head — they cannot create one, and the
+  // orchestrator reports it accurately a moment later. The queue flags it on
+  // the row instead, before the click (listPendingApprovals.payrollValidated).
+  const decision = await recordBranchHeadDecision({
+    candidateId,
+    branchHeadEmployeeId: approverEmployeeId,
+    decision: 'approved',
+    remarks: remarks ?? null,
+  });
+
   // Use orchestrator with all business rules
   const result = await createEmployeeFromCandidate({
     candidateId,
@@ -452,6 +484,14 @@ export async function approveOffer(offerId: string, approverId: string, remarks?
   });
 
   if (!result.success) {
+    // Undo our own write. Creation fails for reasons unrelated to the branch
+    // head's judgement — an inactive reporting manager, a missing statutory
+    // field — and leaving the row 'approved' would strand the offer as decided
+    // with no employee behind it and no way to decide it again.
+    if (decision.recorded && !decision.alreadyDecided && decision.payrollValidationId) {
+      await revertBranchHeadDecision({ payrollValidationId: decision.payrollValidationId })
+        .catch((e) => console.error('[approveOffer] could not revert branch head decision:', e));
+    }
     throw Object.assign(
       new Error(`Employee creation failed: ${result.blockers.map(b => b.reason).join(', ')}`),
       {
@@ -460,6 +500,40 @@ export async function approveOffer(offerId: string, approverId: string, remarks?
         warnings: result.warnings,
       }
     );
+  }
+
+  // The decision trail the Approved tab reads. Only rejectOffer wrote one of
+  // these before, so approvals left no entry at all. Skipped when the decision
+  // was already recorded elsewhere (processBranchHeadApproval writes at :186
+  // and then calls this function), so nothing is duplicated.
+  if (!decision.alreadyDecided) {
+    await db.execute(
+      `INSERT INTO ats_offer_approval (id, offer_id, approver_id, action, remarks)
+       VALUES (UUID(), ?, ?, 'approved', ?)`,
+      [offerId, approverId, remarks ?? null],
+    ).catch((e) => console.error('[approveOffer] offer approval trail insert failed:', e));
+
+    await db.execute(
+      `UPDATE ats_candidate SET current_stage = 'offer_approved', updated_at = NOW() WHERE id = ?`,
+      [candidateId],
+    ).catch(() => undefined);
+
+    await db.execute(
+      `INSERT INTO ats_candidate_stage_log
+         (id, candidate_id, from_stage, to_stage, remarks, updated_by)
+       VALUES (UUID(), ?, 'payroll_validated', 'offer_approved', ?, ?)`,
+      [candidateId, remarks || 'Branch Head approved final offer', approverEmployeeId],
+    ).catch(() => undefined);
+
+    if (result.employeeCode && decision.payrollValidationId) {
+      // employee_code_generated is absent under migration 138; guarded so a
+      // divergent environment cannot fail an otherwise successful approval.
+      await db.execute(
+        `UPDATE ats_branch_head_approval SET employee_code_generated = ?
+          WHERE payroll_validation_id = ?`,
+        [result.employeeCode, decision.payrollValidationId],
+      ).catch(() => undefined);
+    }
   }
 
   // Return result with metadata
@@ -508,6 +582,15 @@ export async function rejectOffer(offerId: string, approverId: string, remarks: 
      VALUES (UUID(), ?, ?, 'rejected', ?)`,
     [offerId, approverId, remarks],
   );
+
+  // Mirror the approve path, or everything rejected from this screen is missing
+  // from the Rejected tab and from the candidate's journey.
+  await recordBranchHeadDecision({
+    candidateId: String(row.candidate_id),
+    branchHeadEmployeeId: await resolveEmployeeIdForAuthUser(approverId),
+    decision: 'rejected',
+    remarks,
+  }).catch((e) => console.error('[rejectOffer] could not record branch head decision:', e));
 
   await db.execute(
     `UPDATE ats_onboarding_request SET status = 'rejected', updated_at = NOW() WHERE id = ?`,

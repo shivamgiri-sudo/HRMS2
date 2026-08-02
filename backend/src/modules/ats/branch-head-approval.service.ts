@@ -1,4 +1,5 @@
 import { db } from '../../db/mysql.js';
+import { resolveBranchHeadScope, buildCandidateBranchPredicate } from './branch-head-scope.js';
 import { RowDataPacket } from 'mysql2/promise';
 import { sendSelectedEmail, sendRejectedEmail } from './ats.email.service.js';
 import { approveOffer, rejectOffer } from './ats.onboarding.service.js';
@@ -335,13 +336,18 @@ export async function getApprovalHistory(candidateId: string): Promise<ApprovalH
       bha.employee_code_generated,
       bha.remarks,
       bha.approved_at,
+      bha.created_at,
+      bha.updated_at,
       e.full_name as branch_head_name,
       e.employee_code as branch_head_code
     FROM ats_branch_head_approval bha
     INNER JOIN ats_payroll_hr_validation phv ON phv.id = bha.payroll_validation_id
     LEFT JOIN employees e ON e.id = bha.branch_head_id
     WHERE phv.candidate_id = ?
-    ORDER BY bha.approved_at DESC`,
+    -- approved_at is NULL on a pending row (migration 1055 made it nullable so a
+    -- freshly raised request stops claiming an approval time), so ordering on it
+    -- alone sorted pending rows arbitrarily.
+    ORDER BY COALESCE(bha.approved_at, bha.updated_at, bha.created_at) DESC`,
     [candidateId]
   );
 
@@ -406,5 +412,113 @@ export async function getBranchHeadStats(branchHeadId: string): Promise<{
     total_approved: approved[0]?.total_approved || 0,
     total_rejected: rejected[0]?.total_rejected || 0,
     this_month_approved: thisMonth[0]?.this_month_approved || 0,
+  };
+}
+
+
+export type BranchHeadDecisionRow = {
+  offer_id: string | null;
+  candidate_id: string;
+  candidate_code: string | null;
+  candidate_name: string | null;
+  branch_name: string | null;
+  decision: string;
+  decided_at: string | null;
+  decided_by_name: string | null;
+  decided_by_code: string | null;
+  remarks: string | null;
+  employee_code: string | null;
+  gross: string | null;
+  date_of_joining: string | null;
+  source: string;
+};
+
+/**
+ * Past approvals and rejections, scoped to the caller's branches.
+ *
+ * Primary source is the OFFERS trail — ats_employment_offer joined to
+ * ats_offer_approval. Production holds 14 rows there against 3 in
+ * ats_branch_head_approval, because /ats/offer-approvals (the screen in the nav
+ * menu) has always written to the offer tables and never to the approval table.
+ * Reading the approval table as primary would show a branch head almost none of
+ * their own history.
+ *
+ * ats_branch_head_approval is LEFT JOINed so decisions taken through the legacy
+ * screen still appear, reached via ats_payroll_hr_validation.candidate_id —
+ * never bha.candidate_id, which production's migration 141 does not have.
+ */
+export async function listBranchHeadDecisions(
+  authUserId: string,
+  opts: { status: 'approved' | 'rejected' | 'all'; search?: string | null; limit: number; offset: number },
+): Promise<{ data: BranchHeadDecisionRow[]; total: number; scopeEmpty: boolean }> {
+  const scope = await resolveBranchHeadScope(authUserId);
+  const pred = buildCandidateBranchPredicate(scope, { candidate: 'c', branch: 'b' });
+
+  // Distinguish "nothing decided yet" from "you have no branches assigned" —
+  // the caller renders a different empty state for each.
+  const scopeEmpty = !scope.unrestricted
+    && scope.branchNames.length === 0 && scope.branchIds.length === 0;
+  if (scopeEmpty) return { data: [], total: 0, scopeEmpty: true };
+
+  const statusSql =
+    opts.status === 'approved' ? `o.status = 'bh_approved'`
+    : opts.status === 'rejected' ? `o.status = 'bh_rejected'`
+    : `o.status IN ('bh_approved','bh_rejected')`;
+
+  const params: unknown[] = [];
+  let searchSql = '';
+  if (opts.search && opts.search.trim()) {
+    searchSql = ` AND (c.full_name LIKE ? OR c.candidate_code LIKE ?)`;
+    const like = `%${opts.search.trim()}%`;
+    params.push(like, like);
+  }
+
+  const base = `
+     FROM ats_employment_offer o
+     JOIN ats_candidate c ON c.id = o.candidate_id
+     LEFT JOIN branch_master b
+            ON b.id = c.applied_for_branch
+            OR b.branch_name = c.applied_for_branch
+            OR b.branch_code = c.applied_for_branch
+     LEFT JOIN ats_offer_approval oa
+            ON oa.offer_id = o.id
+           AND oa.id = (SELECT x.id FROM ats_offer_approval x
+                         WHERE x.offer_id = o.id ORDER BY x.action_at DESC LIMIT 1)
+     LEFT JOIN employees dec_by ON dec_by.id = oa.approver_id OR dec_by.user_id = oa.approver_id
+     LEFT JOIN ats_payroll_hr_validation phv ON phv.candidate_id = c.id
+     LEFT JOIN ats_branch_head_approval bha ON bha.payroll_validation_id = phv.id
+     LEFT JOIN ats_onboarding_bridge ob ON ob.candidate_id = c.id
+     LEFT JOIN employees emp ON emp.id = ob.employee_id
+    WHERE ${statusSql} AND ${pred.sql}${searchSql}`;
+
+  const whereParams = [...pred.params, ...params];
+
+  const [countRows] = await db.execute<RowDataPacket[]>(
+    `SELECT COUNT(DISTINCT o.id) AS n ${base}`, whereParams,
+  ).catch(() => [[{ n: 0 }]] as unknown as [RowDataPacket[]]);
+
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT DISTINCT
+        o.id AS offer_id, c.id AS candidate_id, c.candidate_code,
+        c.full_name AS candidate_name,
+        COALESCE(b.branch_name, c.applied_for_branch) AS branch_name,
+        CASE WHEN o.status = 'bh_approved' THEN 'approved' ELSE 'rejected' END AS decision,
+        COALESCE(oa.action_at, bha.approved_at, o.updated_at) AS decided_at,
+        dec_by.full_name AS decided_by_name,
+        dec_by.employee_code AS decided_by_code,
+        COALESCE(oa.remarks, bha.remarks) AS remarks,
+        COALESCE(emp.employee_code, ob.employee_code) AS employee_code,
+        o.gross, o.date_of_joining,
+        CASE WHEN oa.id IS NOT NULL THEN 'offer' ELSE 'legacy' END AS source
+      ${base}
+      ORDER BY decided_at DESC
+      LIMIT ${Number(opts.limit) || 100} OFFSET ${Number(opts.offset) || 0}`,
+    whereParams,
+  );
+
+  return {
+    data: rows as unknown as BranchHeadDecisionRow[],
+    total: Number(countRows[0]?.n ?? 0),
+    scopeEmpty: false,
   };
 }

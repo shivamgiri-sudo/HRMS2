@@ -447,6 +447,7 @@ const MIGRATION_MANIFEST: string[] = [
   "1054_branch_head_approval_pending_status.sql", // 138 and 141 both CREATE this table and disagree; production got 141's ENUM('approved','rejected'), so every "send to branch head" INSERT of 'pending' threw and rolled back the stage change with it
   "1054_alert_worker_governance.sql",          // alert_cooldown + the interview-delay-alert worker_config row; without this line the table is never created and alert-cooldown.ts throttles nothing
   "1055_branch_head_approval_missing_columns.sql", // 1054 fixed the enum; probing the real INSERT then showed notified_at/created_at/updated_at missing and branch_head_id NOT NULL, so the same statement still threw
+  "1056_branch_head_approval_candidate_id.sql", // 138 and 141 each declare a column the other omits; production (141) has no candidate_id
   ];
 
 export type MigrationHealth = {
