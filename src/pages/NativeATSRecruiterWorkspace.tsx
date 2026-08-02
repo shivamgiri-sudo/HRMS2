@@ -429,9 +429,11 @@ export default function NativeATSRecruiterWorkspace() {
     ? (config.stageOptions as string[]).filter((s: string) => (STAGE_RANK[s] ?? 0) <= 3)
     : (config.stageOptions as string[]);
 
-  // Load process list from process_master when candidate branch changes
+  // Load process list from process_master using the recruiter's own branch_name
+  // (authoritative — from the employee record). candidate.branch is a free-text
+  // field stored at registration and may not match branch_master exactly.
   useEffect(() => {
-    const branch = selected?.branch;
+    const branch = recruiterProfile?.branch_name;
     if (!branch) { setBranchProcesses([]); return; }
     hrmsApi.get<{ success: boolean; data: ProcessOption[] }>(
       `/api/job-requisition/processes-for-branch/${encodeURIComponent(branch)}`
@@ -443,11 +445,11 @@ export default function NativeATSRecruiterWorkspace() {
       }
     }).catch(() => setBranchProcesses([]));
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selected?.branch]);
+  }, [recruiterProfile?.branch_name]);
 
   // Load open batches when selected process changes
   useEffect(() => {
-    const branch = selected?.branch;
+    const branch = recruiterProfile?.branch_name;
     if (!selectedProcessId || !branch) {
       setOpenBatches([]);
       setSelectedRequisitionId("");
@@ -487,7 +489,7 @@ export default function NativeATSRecruiterWorkspace() {
     });
     setSelectedRequisitionId("");
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedProcessId, selected?.branch]);
+  }, [selectedProcessId, recruiterProfile?.branch_name]);
 
   const loadPending = async () => {
     const res = await hrmsApi.get<{ success: boolean; data: any[]; recruiter?: RecruiterProfile | null }>(

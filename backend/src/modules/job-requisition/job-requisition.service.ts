@@ -1008,7 +1008,7 @@ export const jobRequisitionService = {
       `SELECT pm.id, pm.process_name, pm.process_code
        FROM process_master pm
        JOIN branch_master bm ON bm.id = pm.branch_id
-       WHERE bm.branch_name = ?
+       WHERE LOWER(TRIM(bm.branch_name)) = LOWER(TRIM(?))
          AND pm.active_status = 1
        ORDER BY pm.process_name ASC`,
       [branchName]
