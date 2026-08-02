@@ -126,6 +126,45 @@ jobs:
       - name: Install Playwright Chromium
         run: npx playwright install --with-deps chromium
 
+      # The database has to exist, with the right collation, before anything connects to it.
+      #
+      # Letting the migration runner create it (by dropping MYSQL_DATABASE from the service
+      # container) got the collation right but broke boot ordering: modules like the
+      # reimbursements table-ensure connect to mas_hrms during startup, before
+      # runPendingMigrations() reaches ensureDatabaseExists, and the backend died with
+      # "Unknown database 'mas_hrms'" before binding a listener.
+      #
+      # Letting the container create it (MYSQL_DATABASE: mas_hrms) got the ordering right but
+      # the collation wrong — the image uses the server default, utf8mb4_0900_ai_ci on MySQL
+      # 8.0, and GitHub service containers give no way to pass --collation-server.
+      #
+      # So do it explicitly here: correct collation AND before any consumer starts. The
+      # runner's own assertion in ensureDatabaseExists still verifies it, so if this step is
+      # ever removed or changed the migration run says so in one clear line rather than
+      # failing on a foreign key seventeen migrations later.
+      - name: Create database with the required collation
+        working-directory: backend
+        run: |
+          echo "::group::Create database"
+          node -e "
+          const mysql = require('mysql2/promise');
+          (async () => {
+            const conn = await mysql.createConnection({
+              host: '127.0.0.1', port: 3306, user: 'root', password: 'rootpass',
+            });
+            await conn.query(
+              'CREATE DATABASE IF NOT EXISTS \`mas_hrms\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci'
+            );
+            const [rows] = await conn.query(
+              \"SELECT DEFAULT_COLLATION_NAME c FROM information_schema.SCHEMATA WHERE SCHEMA_NAME='mas_hrms'\"
+            );
+            console.log('mas_hrms collation:', rows[0].c);
+            if (rows[0].c !== 'utf8mb4_unicode_ci') process.exit(1);
+            await conn.end();
+          })().catch((e) => { console.error(e); process.exit(1); });
+          "
+          echo "::endgroup::"
+
       - name: Start backend and run migrations
         working-directory: backend
         run: |
