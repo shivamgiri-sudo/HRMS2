@@ -183,7 +183,7 @@ interface SelectionEmailData {
   branchDisplayName: string;
   roleOffered: string;
   onboardingPortalUrl: string;
-  tempPassword: string;
+  tempPassword?: string | null;
 }
 
 export function selectionCongratulationsEmail(data: SelectionEmailData): string {
@@ -216,24 +216,28 @@ export function selectionCongratulationsEmail(data: SelectionEmailData): string 
 
       <h3 style="font-size: 18px; font-weight: 700; color: #111827; margin: 24px 0 12px 0;">Next Steps - Complete Your Onboarding</h3>
 
-      <p class="text">To proceed with joining, please complete your onboarding form using the credentials below:</p>
+      <p class="text">${data.tempPassword
+        ? "To proceed with joining, please complete your onboarding form using the credentials below:"
+        : "To proceed with joining, please complete your onboarding form. The link below is personal to you and needs no password."}</p>
 
       <div class="info-card">
-        <div class="info-label">Onboarding Portal</div>
+        <div class="info-label">Onboarding Form</div>
         <div class="info-value" style="font-size: 14px; word-break: break-all;">${data.onboardingPortalUrl}</div>
-
+${data.tempPassword ? `
         <div class="info-label" style="margin-top: 12px;">Your Email</div>
         <div class="info-value" style="font-size: 14px;">${data.candidateEmail}</div>
 
         <div class="info-label" style="margin-top: 12px;">Temporary Password</div>
-        <div class="info-value">${data.tempPassword}</div>
+        <div class="info-value">${data.tempPassword}</div>` : ``}
       </div>
 
       <a href="${data.onboardingPortalUrl}" class="button">Complete Onboarding Now</a>
 
       <div class="warning-box">
         <p class="warning-text">
-          <strong>Important:</strong> Please complete your onboarding within 7 days. You will be prompted to change your password on first login.
+          <strong>Important:</strong> Please complete your onboarding within 7 days.${data.tempPassword
+            ? " You will be prompted to change your password on first login."
+            : " You will be asked to verify your Aadhaar via DigiLocker, your PAN, and your bank account as part of the form."}
         </p>
       </div>
 

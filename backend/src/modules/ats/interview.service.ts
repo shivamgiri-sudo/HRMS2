@@ -425,7 +425,39 @@ export async function issueCandidatePortalAccess(candidateId: string): Promise<v
   // long enough to be emailed, never written to a table.
   await createPortalAccess(candidateId, tempPassword);
 
-  const onboardingPortalUrl = `${env.FRONTEND_URL}/candidate-portal/login`;
+  // Send them to the 10-step form, not the portal login.
+  //
+  // /onboard-full is where DigiLocker, penny-drop and PAN verification live, and
+  // it is what the candidate actually has to complete. The portal login has
+  // never worked for anyone: ats_candidate_portal_login holds zero rows across
+  // the system's whole history, while /onboard-full has 282 tokens issued and
+  // 36 completed submissions.
+  //
+  // The existing token is reused rather than replaced, so the link in the
+  // earlier onboarding email keeps working too — two live links to the same
+  // form are fine; two links to different places are not.
+  const [tokenRows] = await db.execute<RowDataPacket[]>(
+    `SELECT onboarding_token
+       FROM ats_onboarding_bridge
+      WHERE candidate_id = ?
+        AND onboarding_token IS NOT NULL
+        AND onboarding_token_expires_at > NOW()
+      ORDER BY created_at DESC LIMIT 1`,
+    [candidateId],
+  ).catch(() => [[]] as unknown as [RowDataPacket[]]);
+
+  const liveToken = tokenRows[0]?.onboarding_token
+    ? String(tokenRows[0].onboarding_token)
+    : null;
+
+  const base = env.FRONTEND_URL || 'http://localhost:5173';
+  const onboardingPortalUrl = liveToken
+    ? `${base}/onboard-full?token=${liveToken}`
+    // No live token: the portal login is the only thing left that identifies
+    // them, so fall back to it rather than sending a link that resolves to an
+    // empty form.
+    : `${base}/candidate-portal/login`;
+
   await sendSelectionCongratulationsEmail({
     candidateId: candidate.id,
     to: candidate.email,
@@ -433,7 +465,9 @@ export async function issueCandidatePortalAccess(candidateId: string): Promise<v
     branchDisplayName: candidate.branch_display_name,
     roleOffered: candidate.applied_for_role,
     onboardingPortalUrl,
-    tempPassword,
+    // A tokenised link needs no credentials; showing a password beside it only
+    // invites the candidate to look for a login screen that is not there.
+    tempPassword: liveToken ? null : tempPassword,
   });
 }
 

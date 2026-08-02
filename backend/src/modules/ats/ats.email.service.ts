@@ -304,7 +304,8 @@ export async function sendSelectionCongratulationsEmail(params: {
   branchDisplayName: string;
   roleOffered: string;
   onboardingPortalUrl: string;
-  tempPassword: string;
+  /** Omitted when the link is a tokenised onboarding URL that needs no login. */
+  tempPassword?: string | null;
 }): Promise<SendResult> {
   const html = selectionCongratulationsEmail({
     candidateName: params.candidateName,
@@ -312,7 +313,7 @@ export async function sendSelectionCongratulationsEmail(params: {
     branchDisplayName: params.branchDisplayName,
     roleOffered: params.roleOffered,
     onboardingPortalUrl: params.onboardingPortalUrl,
-    tempPassword: params.tempPassword,
+    tempPassword: params.tempPassword ?? null,
   });
 
   return send(
