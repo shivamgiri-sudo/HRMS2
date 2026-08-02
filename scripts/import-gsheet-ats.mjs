@@ -99,9 +99,17 @@ const v = (row, key) => (row[key] ?? '').trim();
 // Parse "3/21/2026" or "3/21/2026 13:59:27" → MySQL DATE string
 function toDate(str) {
   if (!str) return null;
-  const part = str.split(' ')[0];          // drop time portion
+  const part = String(str).trim().split(' ')[0];   // drop time portion
+  if (!part) return null;
+
+  // ISO (2026-06-15). Sheets exported under a locale that formats with dashes
+  // produce this, and the M/D/YYYY split below silently yields null for it —
+  // every date column would land NULL with no error raised.
+  const iso = part.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+  if (iso) return `${iso[1]}-${iso[2].padStart(2, '0')}-${iso[3].padStart(2, '0')}`;
+
   const [m, d, y] = part.split('/');
-  if (!y) return null;
+  if (!y || !m || !d) return null;
   return `${y.padStart(4,'0')}-${m.padStart(2,'0')}-${d.padStart(2,'0')}`;
 }
 
@@ -275,7 +283,9 @@ function buildRow(r) {
 
     // Timing
     total_time_consumed:        v(r, 'Total Time Consumed') || null,
-    time_taken:                 v(r, 'AHT')                || null,
+    // 'AHT' is absent from newer exports, which carry 'Total Time Consumed'
+    // instead. aht_minutes already falls back; this did not, so it landed NULL.
+    time_taken:                 v(r, 'AHT') || v(r, 'Total Time Consumed') || null,
     sla_breached:               toTinyInt(v(r, 'SLA Breached ( 120 Mins)')),
     aht_minutes:                ahtMinutes,
 
@@ -329,12 +339,44 @@ function buildRow(r) {
     created_at:                 createdAt,
     updated_at:                 lastUpdated || createdAt,
 
-    // Typing score parsing from skilltest_typing "Accuracy=95/WPM=30"
+    // Typing / comprehension assessment.
+    //
+    // ats_candidate has had these eight columns all along and every one of the
+    // 33,861 rows has them NULL, because nothing ever read the sheet's dedicated
+    // columns. parseTyping() only salvages the free-text SkillTest_Typing field
+    // and recognises two shapes ("Accuracy=95/WPM=30" and "15/70"), returning
+    // nothing for anything else — so it was the only source and usually empty.
+    //
+    // The dedicated columns are authoritative; parseTyping is the fallback.
     ...parseTyping(v(r, 'SkillTest_Typing')),
+    ...(toDecimal(v(r, 'Typing_Speed'))    !== null ? { typing_speed:    toDecimal(v(r, 'Typing_Speed')) }    : {}),
+    ...(toDecimal(v(r, 'Typing_Accuracy')) !== null ? { typing_accuracy: toDecimal(v(r, 'Typing_Accuracy')) } : {}),
+    typing_score:               toDecimal(v(r, 'Typing_Score')),
+    typing_test_status:         v(r, 'Typing_Test_Status')            || null,
+    typing_test_attempts:       toInt(v(r, 'Typing_Test_Attempts')),
+    typing_best_attempt_no:     toInt(v(r, 'Typing_Best_Attempt_No')),
+    typing_test_last_updated:   toDatetime(v(r, 'Typing_Test_Last_Updated')),
+    comprehension_score:        toDecimal(v(r, 'Comprehension Score')),
   };
 }
 
 // Parse "Accuracy=95/WPM=30" or "15/70" (accuracy/wpm)
+// Numeric coercion for the dedicated assessment columns. Returns null rather
+// than NaN for blanks and junk, so a bad cell leaves the column untouched
+// instead of failing the row.
+function toDecimal(str) {
+  if (str === null || str === undefined) return null;
+  const s = String(str).replace(/[%,\s]/g, '');
+  if (!s) return null;
+  const n = Number.parseFloat(s);
+  return Number.isFinite(n) ? n : null;
+}
+
+function toInt(str) {
+  const n = toDecimal(str);
+  return n === null ? null : Math.trunc(n);
+}
+
 function parseTyping(str) {
   if (!str) return {};
   const accWpm = str.match(/Accuracy=(\d+).*WPM=(\d+)/i);
