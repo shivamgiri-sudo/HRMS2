@@ -361,7 +361,7 @@ export const payrollBranchReadinessService = {
         const [rows] = await db.execute<RowDataPacket[]>(
           `SELECT
              COUNT(*) AS total,
-             SUM(CASE WHEN pf_uan IS NOT NULL AND TRIM(pf_uan) != '' THEN 1 ELSE 0 END) AS with_uan
+             SUM(CASE WHEN COALESCE(pf_uan, uan_number, '') != '' AND TRIM(COALESCE(pf_uan, uan_number, '')) != '' THEN 1 ELSE 0 END) AS with_uan
            FROM employees
            WHERE branch_id = ?
              AND active_status = 1
@@ -425,12 +425,19 @@ export const payrollBranchReadinessService = {
         const lastDay = new Date(Number(year), Number(mon), 0).getDate();
         const monthEnd = `${year}-${mon}-${String(lastDay).padStart(2, "0")}`;
 
+        // work_date column may be named differently across environments
+        const [cols] = await db.execute<RowDataPacket[]>(
+          `SELECT COLUMN_NAME FROM information_schema.COLUMNS
+            WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'holiday_work_request'
+            AND COLUMN_NAME IN ('work_date','date','holiday_date','request_date') LIMIT 1`
+        );
+        const dateCol = (cols[0] as any)?.COLUMN_NAME ?? 'work_date';
         const [rows] = await db.execute<RowDataPacket[]>(
           `SELECT COUNT(*) AS cnt
              FROM holiday_work_request
             WHERE branch_id = ?
               AND status = 'pending'
-              AND work_date BETWEEN ? AND ?`,
+              AND \`${dateCol}\` BETWEEN ? AND ?`,
           [branchId, monthStart, monthEnd]
         );
         const cnt = Number((rows[0] as any)?.cnt ?? 0);
@@ -677,7 +684,7 @@ export const payrollBranchReadinessService = {
         const [rows] = await db.execute<RowDataPacket[]>(
           `SELECT r.*, COALESCE(b.branch_name, ?) AS branch_name
              FROM payroll_branch_readiness r
-             LEFT JOIN branch_master b ON b.id = r.branch_id
+             LEFT JOIN branch_master b ON CONVERT(b.id USING utf8mb4) = CONVERT(r.branch_id USING utf8mb4)
             WHERE r.process_month = ? AND r.branch_id = ? AND r.process_id = ?
             LIMIT 1`,
           [branchId, month, branchId, processId]
@@ -717,7 +724,7 @@ export const payrollBranchReadinessService = {
         const [finalRows] = await db.execute<RowDataPacket[]>(
           `SELECT r.*, COALESCE(b.branch_name, ?) AS branch_name
              FROM payroll_branch_readiness r
-             LEFT JOIN branch_master b ON b.id = r.branch_id
+             LEFT JOIN branch_master b ON CONVERT(b.id USING utf8mb4) = CONVERT(r.branch_id USING utf8mb4)
             WHERE r.process_month = ? AND r.branch_id = ? AND r.process_id = ?
             LIMIT 1`,
           [branchId, month, branchId, processId]
