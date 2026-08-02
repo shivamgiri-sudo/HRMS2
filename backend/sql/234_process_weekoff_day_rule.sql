@@ -81,47 +81,54 @@ CREATE TABLE IF NOT EXISTS process_weekoff_day_rule (
 -- New WFM notification templates for the demand-aware engine.
 -- INSERT IGNORE is idempotent.
 
-INSERT IGNORE INTO notification_template
+SET @has_category_1 = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+   WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'notification_template' AND COLUMN_NAME = 'category'
+);
+SET @sql = IF(@has_category_1 > 0,
+  'INSERT IGNORE INTO notification_template
   (id, template_code, template_name, subject_template, body_template, channel, category, active_status)
 VALUES
-  (UUID(), 'WEEKOFF_DEMAND_CONFLICT',
-   'Week-Off: Demand Conflict', 'Your Week-Off Request Could Not Be Accommodated',
-   'Hi {{employee_name}}, your preferred week-off for {{week_start_date}} ({{preferred_day}}) could not be granted as the process needs minimum {{min_hc_required}} staff on that day. An alternate day has been assigned: {{assigned_day}}.',
-   'in_app', 'wfm', 1),
+  (UUID(), ''WEEKOFF_DEMAND_CONFLICT'',
+   ''Week-Off: Demand Conflict'', ''Your Week-Off Request Could Not Be Accommodated'',
+   ''Hi {{employee_name}}, your preferred week-off for {{week_start_date}} ({{preferred_day}}) could not be granted as the process needs minimum {{min_hc_required}} staff on that day. An alternate day has been assigned: {{assigned_day}}.'',
+   ''in_app'', ''wfm'', 1),
 
-  (UUID(), 'WEEKOFF_ALTERNATE_ASSIGNED',
-   'Week-Off: Alternate Day Assigned', 'Your Week-Off Has Been Assigned',
-   'Hi {{employee_name}}, your week-off for week of {{week_start_date}} has been assigned on {{assigned_day}}. Your preferred day {{preferred_day}} was not available but this alternate meets process requirements.',
-   'in_app', 'wfm', 1),
+  (UUID(), ''WEEKOFF_ALTERNATE_ASSIGNED'',
+   ''Week-Off: Alternate Day Assigned'', ''Your Week-Off Has Been Assigned'',
+   ''Hi {{employee_name}}, your week-off for week of {{week_start_date}} has been assigned on {{assigned_day}}. Your preferred day {{preferred_day}} was not available but this alternate meets process requirements.'',
+   ''in_app'', ''wfm'', 1),
 
-  (UUID(), 'WEEKOFF_NO_PREFERENCE_AUTO_ASSIGNED',
-   'Week-Off Auto-Assigned', 'Your Week-Off Day Has Been Auto-Assigned',
-   'Hi {{employee_name}}, no week-off preference was submitted for {{week_start_date}}. The system has auto-assigned your week-off to {{assigned_day}} based on process requirements and fairness rotation.',
-   'in_app', 'wfm', 1),
+  (UUID(), ''WEEKOFF_NO_PREFERENCE_AUTO_ASSIGNED'',
+   ''Week-Off Auto-Assigned'', ''Your Week-Off Day Has Been Auto-Assigned'',
+   ''Hi {{employee_name}}, no week-off preference was submitted for {{week_start_date}}. The system has auto-assigned your week-off to {{assigned_day}} based on process requirements and fairness rotation.'',
+   ''in_app'', ''wfm'', 1),
 
-  (UUID(), 'MANAGER_REALIGNMENT_DONE',
-   'Roster Realigned by Manager', 'Your Roster Has Been Updated',
-   'Hi {{employee_name}}, your reporting manager has realigned your week-off for {{week_start_date}} to {{new_day}}. Reason: {{reason}}.',
-   'in_app', 'wfm', 1),
+  (UUID(), ''MANAGER_REALIGNMENT_DONE'',
+   ''Roster Realigned by Manager'', ''Your Roster Has Been Updated'',
+   ''Hi {{employee_name}}, your reporting manager has realigned your week-off for {{week_start_date}} to {{new_day}}. Reason: {{reason}}.'',
+   ''in_app'', ''wfm'', 1),
 
-  (UUID(), 'MANAGER_FORCE_APPROVED',
-   'Roster Force-Approved', 'Your Assigned Roster Has Been Confirmed',
-   'Hi {{employee_name}}, your reporting manager has confirmed your assigned week-off ({{assigned_day}}) for {{week_start_date}}. Your rejection request has been reviewed. Reason: {{reason}}.',
-   'in_app', 'wfm', 1),
+  (UUID(), ''MANAGER_FORCE_APPROVED'',
+   ''Roster Force-Approved'', ''Your Assigned Roster Has Been Confirmed'',
+   ''Hi {{employee_name}}, your reporting manager has confirmed your assigned week-off ({{assigned_day}}) for {{week_start_date}}. Your rejection request has been reviewed. Reason: {{reason}}.'',
+   ''in_app'', ''wfm'', 1),
 
-  (UUID(), 'ROSTER_ESCALATED_TO_HR',
-   'Roster Escalated to HR', 'Your Roster Dispute Has Been Escalated',
-   'Hi {{employee_name}}, your roster dispute for {{week_start_date}} has been escalated to HR/WFM for review. You will be notified once a decision is made.',
-   'in_app', 'wfm', 1),
+  (UUID(), ''ROSTER_ESCALATED_TO_HR'',
+   ''Roster Escalated to HR'', ''Your Roster Dispute Has Been Escalated'',
+   ''Hi {{employee_name}}, your roster dispute for {{week_start_date}} has been escalated to HR/WFM for review. You will be notified once a decision is made.'',
+   ''in_app'', ''wfm'', 1),
 
-  (UUID(), 'COVERAGE_SHORTAGE_ALERT',
-   'WFM Alert: Coverage Shortage', 'Coverage Shortage Alert — {{process_name}} {{date}}',
-   'WFM Alert: Process {{process_name}} on {{date}} has a coverage shortage. Required HC: {{required_hc}}, Scheduled HC: {{scheduled_hc}}, Gap: {{gap}}. Manager review required.',
-   'in_app', 'wfm', 1),
+  (UUID(), ''COVERAGE_SHORTAGE_ALERT'',
+   ''WFM Alert: Coverage Shortage'', ''Coverage Shortage Alert — {{process_name}} {{date}}'',
+   ''WFM Alert: Process {{process_name}} on {{date}} has a coverage shortage. Required HC: {{required_hc}}, Scheduled HC: {{scheduled_hc}}, Gap: {{gap}}. Manager review required.'',
+   ''in_app'', ''wfm'', 1),
 
-  (UUID(), 'FINAL_ROSTER_PUBLISHED',
-   'Final Roster Published', 'Roster Published for Week of {{week_start_date}}',
-   'The final approved roster for week of {{week_start_date}} has been published to the live tracker. All planned assignments are now active for attendance tracking.',
-   'in_app', 'wfm', 1);
-
+  (UUID(), ''FINAL_ROSTER_PUBLISHED'',
+   ''Final Roster Published'', ''Roster Published for Week of {{week_start_date}}'',
+   ''The final approved roster for week of {{week_start_date}} has been published to the live tracker. All planned assignments are now active for attendance tracking.'',
+   ''in_app'', ''wfm'', 1)',
+  'SELECT ''notification_template.category absent on this database; seed skipped'' AS n'
+);
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 SELECT '234_process_weekoff_day_rule.sql applied successfully' AS migration_status;

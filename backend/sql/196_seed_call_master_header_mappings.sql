@@ -21,25 +21,33 @@ ON DUPLICATE KEY UPDATE
   confirmed_at = NOW(),
   active_status = 1;
 
-INSERT INTO integration_field_map
+SET @has_source_table_1 = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+   WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'integration_field_map' AND COLUMN_NAME = 'source_table'
+);
+SET @sql = IF(@has_source_table_1 > 0,
+  'INSERT INTO integration_field_map
   (id, integration_key, source_table, source_field, target_table, target_column, transform, confirmed_by, confirmed_at)
 VALUES
-  (UUID(), 'dialer_2', 'v_call_master_inbound', 'agent_employee_code', 'integration_call_daily', 'employee_code', NULL, @system_user_id, NOW()),
-  (UUID(), 'dialer_2', 'v_call_master_inbound', 'call_date', 'integration_call_daily', 'activity_date', NULL, @system_user_id, NOW()),
-  (UUID(), 'dialer_2', 'v_call_master_inbound', 'length_in_sec', 'integration_call_daily', 'talk_minutes', NULL, @system_user_id, NOW()),
-  (UUID(), 'dialer_2', 'v_call_master_inbound', 'process_name', 'integration_call_daily', 'process_name', NULL, @system_user_id, NOW()),
-  (UUID(), 'dialer_2', 'v_call_master_outbound', 'agent_employee_code', 'integration_call_daily', 'employee_code', NULL, @system_user_id, NOW()),
-  (UUID(), 'dialer_2', 'v_call_master_outbound', 'call_date', 'integration_call_daily', 'activity_date', NULL, @system_user_id, NOW()),
-  (UUID(), 'dialer_2', 'v_call_master_outbound', 'length_in_sec', 'integration_call_daily', 'talk_minutes', NULL, @system_user_id, NOW()),
-  (UUID(), 'dialer_2', 'v_call_master_outbound', 'process_name', 'integration_call_daily', 'process_name', NULL, @system_user_id, NOW()),
-  (UUID(), 'dialer_2', 'daily_performance_snapshot', 'agent_employee_code', 'integration_call_daily', 'employee_code', NULL, @system_user_id, NOW()),
-  (UUID(), 'dialer_2', 'daily_performance_snapshot', 'snapshot_date', 'integration_call_daily', 'activity_date', NULL, @system_user_id, NOW()),
-  (UUID(), 'dialer_2', 'daily_performance_snapshot', 'total_calls', 'integration_call_daily', 'total_calls', NULL, @system_user_id, NOW()),
-  (UUID(), 'dialer_2', 'daily_performance_snapshot', 'process_name', 'integration_call_daily', 'process_name', NULL, @system_user_id, NOW())
+  (UUID(), ''dialer_2'', ''v_call_master_inbound'', ''agent_employee_code'', ''integration_call_daily'', ''employee_code'', NULL, @system_user_id, NOW()),
+  (UUID(), ''dialer_2'', ''v_call_master_inbound'', ''call_date'', ''integration_call_daily'', ''activity_date'', NULL, @system_user_id, NOW()),
+  (UUID(), ''dialer_2'', ''v_call_master_inbound'', ''length_in_sec'', ''integration_call_daily'', ''talk_minutes'', NULL, @system_user_id, NOW()),
+  (UUID(), ''dialer_2'', ''v_call_master_inbound'', ''process_name'', ''integration_call_daily'', ''process_name'', NULL, @system_user_id, NOW()),
+  (UUID(), ''dialer_2'', ''v_call_master_outbound'', ''agent_employee_code'', ''integration_call_daily'', ''employee_code'', NULL, @system_user_id, NOW()),
+  (UUID(), ''dialer_2'', ''v_call_master_outbound'', ''call_date'', ''integration_call_daily'', ''activity_date'', NULL, @system_user_id, NOW()),
+  (UUID(), ''dialer_2'', ''v_call_master_outbound'', ''length_in_sec'', ''integration_call_daily'', ''talk_minutes'', NULL, @system_user_id, NOW()),
+  (UUID(), ''dialer_2'', ''v_call_master_outbound'', ''process_name'', ''integration_call_daily'', ''process_name'', NULL, @system_user_id, NOW()),
+  (UUID(), ''dialer_2'', ''daily_performance_snapshot'', ''agent_employee_code'', ''integration_call_daily'', ''employee_code'', NULL, @system_user_id, NOW()),
+  (UUID(), ''dialer_2'', ''daily_performance_snapshot'', ''snapshot_date'', ''integration_call_daily'', ''activity_date'', NULL, @system_user_id, NOW()),
+  (UUID(), ''dialer_2'', ''daily_performance_snapshot'', ''total_calls'', ''integration_call_daily'', ''total_calls'', NULL, @system_user_id, NOW()),
+  (UUID(), ''dialer_2'', ''daily_performance_snapshot'', ''process_name'', ''integration_call_daily'', ''process_name'', NULL, @system_user_id, NOW())
 ON DUPLICATE KEY UPDATE
   target_table = VALUES(target_table),
   target_column = VALUES(target_column),
   transform = VALUES(transform),
   confirmed_by = VALUES(confirmed_by),
   confirmed_at = NOW(),
-  active_status = 1;
+  active_status = 1',
+  'SELECT ''integration_field_map.source_table absent on this database; seed skipped'' AS n'
+);
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;

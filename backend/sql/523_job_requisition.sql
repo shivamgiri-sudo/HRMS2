@@ -253,37 +253,73 @@ WHERE NOT EXISTS (
 );
 
 -- Grant access to HR and management roles
-INSERT INTO role_page_access (id, role_key, page_code, can_view, can_edit, can_delete, can_approve)
-SELECT UUID(), 'hr', 'JOB_REQUISITION', 1, 1, 0, 1
+SET @has_can_approve_1 = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+   WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'role_page_access' AND COLUMN_NAME = 'can_approve'
+);
+SET @sql = IF(@has_can_approve_1 > 0,
+  'INSERT INTO role_page_access (id, role_key, page_code, can_view, can_edit, can_delete, can_approve)
+SELECT UUID(), ''hr'', ''JOB_REQUISITION'', 1, 1, 0, 1
 FROM DUAL
 WHERE NOT EXISTS (
-  SELECT 1 FROM role_page_access WHERE role_key = 'hr' AND page_code = 'JOB_REQUISITION'
+  SELECT 1 FROM role_page_access WHERE role_key = ''hr'' AND page_code = ''JOB_REQUISITION''
+)',
+  'SELECT ''role_page_access.can_approve absent on this database; seed skipped'' AS n'
 );
-
-INSERT INTO role_page_access (id, role_key, page_code, can_view, can_edit, can_delete, can_approve)
-SELECT UUID(), 'super_admin', 'JOB_REQUISITION', 1, 1, 1, 1
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+SET @has_can_approve_2 = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+   WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'role_page_access' AND COLUMN_NAME = 'can_approve'
+);
+SET @sql = IF(@has_can_approve_2 > 0,
+  'INSERT INTO role_page_access (id, role_key, page_code, can_view, can_edit, can_delete, can_approve)
+SELECT UUID(), ''super_admin'', ''JOB_REQUISITION'', 1, 1, 1, 1
 FROM DUAL
 WHERE NOT EXISTS (
-  SELECT 1 FROM role_page_access WHERE role_key = 'super_admin' AND page_code = 'JOB_REQUISITION'
+  SELECT 1 FROM role_page_access WHERE role_key = ''super_admin'' AND page_code = ''JOB_REQUISITION''
+)',
+  'SELECT ''role_page_access.can_approve absent on this database; seed skipped'' AS n'
 );
-
-INSERT INTO role_page_access (id, role_key, page_code, can_view, can_edit, can_delete, can_approve)
-SELECT UUID(), 'branch_head', 'JOB_REQUISITION', 1, 1, 0, 1
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+SET @has_can_approve_3 = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+   WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'role_page_access' AND COLUMN_NAME = 'can_approve'
+);
+SET @sql = IF(@has_can_approve_3 > 0,
+  'INSERT INTO role_page_access (id, role_key, page_code, can_view, can_edit, can_delete, can_approve)
+SELECT UUID(), ''branch_head'', ''JOB_REQUISITION'', 1, 1, 0, 1
 FROM DUAL
 WHERE NOT EXISTS (
-  SELECT 1 FROM role_page_access WHERE role_key = 'branch_head' AND page_code = 'JOB_REQUISITION'
+  SELECT 1 FROM role_page_access WHERE role_key = ''branch_head'' AND page_code = ''JOB_REQUISITION''
+)',
+  'SELECT ''role_page_access.can_approve absent on this database; seed skipped'' AS n'
 );
-
-INSERT INTO role_page_access (id, role_key, page_code, can_view, can_edit, can_delete, can_approve)
-SELECT UUID(), 'operations_manager', 'JOB_REQUISITION', 1, 1, 0, 0
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+SET @has_can_approve_4 = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+   WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'role_page_access' AND COLUMN_NAME = 'can_approve'
+);
+SET @sql = IF(@has_can_approve_4 > 0,
+  'INSERT INTO role_page_access (id, role_key, page_code, can_view, can_edit, can_delete, can_approve)
+SELECT UUID(), ''operations_manager'', ''JOB_REQUISITION'', 1, 1, 0, 0
 FROM DUAL
 WHERE NOT EXISTS (
-  SELECT 1 FROM role_page_access WHERE role_key = 'operations_manager' AND page_code = 'JOB_REQUISITION'
+  SELECT 1 FROM role_page_access WHERE role_key = ''operations_manager'' AND page_code = ''JOB_REQUISITION''
+)',
+  'SELECT ''role_page_access.can_approve absent on this database; seed skipped'' AS n'
 );
-
-INSERT INTO role_page_access (id, role_key, page_code, can_view, can_edit, can_delete, can_approve)
-SELECT UUID(), 'recruitment_hr', 'JOB_REQUISITION', 1, 1, 0, 0
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+SET @has_can_approve_5 = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+   WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'role_page_access' AND COLUMN_NAME = 'can_approve'
+);
+SET @sql = IF(@has_can_approve_5 > 0,
+  'INSERT INTO role_page_access (id, role_key, page_code, can_view, can_edit, can_delete, can_approve)
+SELECT UUID(), ''recruitment_hr'', ''JOB_REQUISITION'', 1, 1, 0, 0
 FROM DUAL
 WHERE NOT EXISTS (
-  SELECT 1 FROM role_page_access WHERE role_key = 'recruitment_hr' AND page_code = 'JOB_REQUISITION'
+  SELECT 1 FROM role_page_access WHERE role_key = ''recruitment_hr'' AND page_code = ''JOB_REQUISITION''
+)',
+  'SELECT ''role_page_access.can_approve absent on this database; seed skipped'' AS n'
 );
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;

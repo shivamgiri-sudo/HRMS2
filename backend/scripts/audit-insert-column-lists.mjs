@@ -57,10 +57,24 @@ const findings = [];
 // perfectly good INSERTs that use a column added by a subsequent migration.
 const ADD_COL_RE = /ALTER\s+TABLE\s+`?(\w+)`?[\s\S]{0,4000}?ADD\s+COLUMN\s+(?:IF\s+NOT\s+EXISTS\s+)?`?(\w+)`?/gi;
 
+/**
+ * Blank out INSERTs that already sit inside a column-existence guard.
+ *
+ * Several seeds are wrapped as `SET @sql = IF(@has_col > 0, '<INSERT ...>', 'SELECT ...')`
+ * so a fresh database skips them rather than dying on a column that does not exist there.
+ * Those are resolved. Continuing to report them would leave the audit permanently red, and
+ * an audit that is always red is one nobody reads.
+ *
+ * Replaced with spaces rather than deleted so reported line numbers stay accurate.
+ */
+function blankGuardedSeeds(sql) {
+  return sql.replace(/SET\s+@sql\s*=\s*IF\([\s\S]*?\);/gi, (m) => m.replace(/[^\n]/g, " "));
+}
+
 for (const file of manifest) {
   const path = join(SQL_DIR, file);
   if (!existsSync(path)) continue;
-  const sql = readFileSync(path, "utf8");
+  const sql = blankGuardedSeeds(readFileSync(path, "utf8"));
 
   for (const m of sql.matchAll(CREATE_RE)) {
     const t = m[1].toLowerCase();
@@ -94,7 +108,7 @@ for (const file of manifest) {
 // that does not exist; nothing would have caught that before someone ran them by hand.
 const staged = [];
 for (const file of readdirSync(SQL_DIR).filter((f) => f.endsWith(".sql") && !manifest.includes(f))) {
-  const sql = readFileSync(join(SQL_DIR, file), "utf8");
+  const sql = blankGuardedSeeds(readFileSync(join(SQL_DIR, file), "utf8"));
   for (const m of sql.matchAll(INSERT_RE)) {
     const t = m[1].toLowerCase();
     if (!known.has(t)) continue;

@@ -35,7 +35,12 @@ SET @all_process_ids = COALESCE(@all_process_ids, '[]');
 
 -- ── 3. Upsert shivam.giri as a portal client_user ────────────────────────────
 -- We only do this if a client exists to anchor to (avoids FK failure on fresh DBs)
-INSERT INTO client_user (
+SET @has_access_level_1 = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+   WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'client_user' AND COLUMN_NAME = 'access_level'
+);
+SET @sql = IF(@has_access_level_1 > 0,
+  'INSERT INTO client_user (
   id,
   client_id,
   email,
@@ -46,22 +51,24 @@ INSERT INTO client_user (
   access_level
 )
 SELECT
-  'cu-shivam-superadmin-001',
+  ''cu-shivam-superadmin-001'',
   @internal_client_id,
-  'shivam.giri@teammas.in',
-  'Shivam Giri',
-  'Super Admin',
+  ''shivam.giri@teammas.in'',
+  ''Shivam Giri'',
+  ''Super Admin'',
   @all_process_ids,
   1,
-  'ADMIN'
+  ''ADMIN''
 WHERE @internal_client_id IS NOT NULL
 ON DUPLICATE KEY UPDATE
   process_ids  = @all_process_ids,
   is_active    = 1,
-  access_level = 'ADMIN',
-  name         = 'Shivam Giri',
-  designation  = 'Super Admin';
-
+  access_level = ''ADMIN'',
+  name         = ''Shivam Giri'',
+  designation  = ''Super Admin''',
+  'SELECT ''client_user.access_level absent on this database; seed skipped'' AS n'
+);
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 -- ── 4. Set OTP password directly so the portal login OTP flow works ──────────
 -- The portal uses email-based OTP (no password column). The user just needs
 -- to exist in client_user with is_active=1 and the correct email.

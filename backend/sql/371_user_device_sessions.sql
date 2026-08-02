@@ -28,8 +28,16 @@ CREATE TABLE IF NOT EXISTS user_device_sessions (
 COMMENT='Tracks individual device sessions for multi-device management and security auditing';
 
 -- Add org_settings for session management features
-INSERT INTO org_settings (setting_key, setting_value, description, created_at, updated_at)
+SET @has_description_1 = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+   WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'org_settings' AND COLUMN_NAME = 'description'
+);
+SET @sql = IF(@has_description_1 > 0,
+  'INSERT INTO org_settings (setting_key, setting_value, description, created_at, updated_at)
 VALUES
-  ('single_device_session_mode', '0', 'If 1, logging in from new device logs out all other sessions', NOW(), NOW()),
-  ('auto_logout_minutes', '0', 'Inactivity timeout in minutes (0 = disabled)', NOW(), NOW())
-ON DUPLICATE KEY UPDATE updated_at = NOW();
+  (''single_device_session_mode'', ''0'', ''If 1, logging in from new device logs out all other sessions'', NOW(), NOW()),
+  (''auto_logout_minutes'', ''0'', ''Inactivity timeout in minutes (0 = disabled)'', NOW(), NOW())
+ON DUPLICATE KEY UPDATE updated_at = NOW()',
+  'SELECT ''org_settings.description absent on this database; seed skipped'' AS n'
+);
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;

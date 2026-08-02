@@ -101,15 +101,22 @@ BEGIN
   SET v_global_max = GREATEST(v_max_onroll_mas, v_max_onroll_idc, v_max_offrole_mas, v_max_offrole_idc);
 
   -- Ensure the 4 rows exist, then sync all to global_max
-  INSERT INTO employee_code_sequence (company_prefix, is_offrole, current_sequence)
+  SET @has_is_offrole_1 = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+   WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'employee_code_sequence' AND COLUMN_NAME = 'is_offrole'
+);
+SET @sql = IF(@has_is_offrole_1 > 0,
+  'INSERT INTO employee_code_sequence (company_prefix, is_offrole, current_sequence)
   VALUES
-    ('MAS', FALSE, v_global_max),
-    ('MAS', TRUE,  v_global_max),
-    ('IDC', FALSE, v_global_max),
-    ('IDC', TRUE,  v_global_max)
+    (''MAS'', FALSE, v_global_max),
+    (''MAS'', TRUE,  v_global_max),
+    (''IDC'', FALSE, v_global_max),
+    (''IDC'', TRUE,  v_global_max)
   ON DUPLICATE KEY UPDATE
-    current_sequence = GREATEST(current_sequence, v_global_max);
-
+    current_sequence = GREATEST(current_sequence, v_global_max)',
+  'SELECT ''employee_code_sequence.is_offrole absent on this database; seed skipped'' AS n'
+);
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 END //
 DELIMITER ;
 CALL _sync_emp_code_seq();

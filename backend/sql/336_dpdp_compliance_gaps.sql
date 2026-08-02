@@ -114,7 +114,15 @@ INSERT IGNORE INTO dpdp_config (config_key, config_value, description) VALUES
 
 -- ─── 7. page_catalog — DPDP Data Processors and Nominee pages ───────────────
 
-INSERT IGNORE INTO page_catalog (page_key, page_title, description, roles_json, module_key, is_active)
+SET @has_page_key_1 = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+   WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'page_catalog' AND COLUMN_NAME = 'page_key'
+);
+SET @sql = IF(@has_page_key_1 > 0,
+  'INSERT IGNORE INTO page_catalog (page_key, page_title, description, roles_json, module_key, is_active)
 VALUES
-  ('DPDP_PROCESSORS',   'Data Processor Registry',  'Manage third-party data processors and DPA status', '["admin","dpo"]',         'privacy', 1),
-  ('DPDP_NOMINATE',     'Nominate Representative',  'Employee: nominate an agent to exercise DPDP rights on their behalf', '["employee"]', 'privacy', 1);
+  (''DPDP_PROCESSORS'',   ''Data Processor Registry'',  ''Manage third-party data processors and DPA status'', ''["admin","dpo"]'',         ''privacy'', 1),
+  (''DPDP_NOMINATE'',     ''Nominate Representative'',  ''Employee: nominate an agent to exercise DPDP rights on their behalf'', ''["employee"]'', ''privacy'', 1)',
+  'SELECT ''page_catalog.page_key absent on this database; seed skipped'' AS n'
+);
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;

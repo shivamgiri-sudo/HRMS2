@@ -114,6 +114,12 @@ const MIGRATION_MANIFEST: string[] = [
   "134_external_db_credentials.sql",
   "135_payroll_masters.sql",
   "137_schema_gaps.sql",
+  // Moved ahead of 138 on 2026-08-03. 138 issues 32 bare ALTER TABLE statements
+  // against candidate_onboarding_profile, and this file is the only thing that creates
+  // it — 164 manifest entries later. On a fresh database 138 died on the first ALTER.
+  // Safe to move: the file is a single CREATE TABLE IF NOT EXISTS whose only foreign
+  // key is to ats_candidate, created back at 004.
+  "373_create_candidate_onboarding_profile.sql",
   "138_ats_complete_journey.sql",
   "139_ats_enhanced_journey_safe.sql",
   "140_candidate_portal_tables.sql",
@@ -278,7 +284,6 @@ const MIGRATION_MANIFEST: string[] = [
   "370_pf_creation_automation.sql",
   "371_user_device_sessions.sql",
   "372_add_name_on_cheque.sql",
-  "373_create_candidate_onboarding_profile.sql",
   "374_employees_missing_indexes.sql",
   "375_salary_prep_line_attendance_source.sql",
   "376_break_management_module.sql",

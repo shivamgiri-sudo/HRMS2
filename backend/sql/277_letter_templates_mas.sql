@@ -40,107 +40,150 @@ CREATE TABLE IF NOT EXISTS generated_letter (
 -- =====================================================================
 -- 1. APPOINTMENT LETTER
 -- =====================================================================
-INSERT INTO letter_template (id, template_code, template_name, letter_type, description, body_template, created_by)
+SET @has_description_1 = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+   WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'letter_template' AND COLUMN_NAME = 'description'
+);
+SET @sql = IF(@has_description_1 > 0,
+  'INSERT INTO letter_template (id, template_code, template_name, letter_type, description, body_template, created_by)
 VALUES (
-  'tpl-appointment-001',
-  'APPOINTMENT_LETTER',
-  'Appointment Letter',
-  'appointment',
-  'Standard MAS Callnet appointment letter with salary breakup and T&C',
-  '{"type":"appointment","data":{"full_name":"{{full_name}}","employee_code":"{{employee_code}}","issued_date":"{{issued_date}}","date_of_joining":"{{date_of_joining}}","designation":"{{designation}}","department":"{{department}}","basic":"{{basic}}","hra":"{{hra}}","conveyance":"{{conveyance}}","other_allowance":"{{other_allowance}}","special_allowance":"{{special_allowance}}","bonus":"{{bonus}}","medical_allowance":"{{medical_allowance}}","portfolio":"{{portfolio}}","pli":"{{pli}}","gross_salary":"{{gross_salary}}","esic":"{{esic}}","epf":"{{epf}}","net_salary":"{{net_salary}}","employer_esic":"{{employer_esic}}","employer_epf":"{{employer_epf}}","admin_charges":"{{admin_charges}}","ctc":"{{ctc}}"}}',
-  'system'
+  ''tpl-appointment-001'',
+  ''APPOINTMENT_LETTER'',
+  ''Appointment Letter'',
+  ''appointment'',
+  ''Standard MAS Callnet appointment letter with salary breakup and T&C'',
+  ''{"type":"appointment","data":{"full_name":"{{full_name}}","employee_code":"{{employee_code}}","issued_date":"{{issued_date}}","date_of_joining":"{{date_of_joining}}","designation":"{{designation}}","department":"{{department}}","basic":"{{basic}}","hra":"{{hra}}","conveyance":"{{conveyance}}","other_allowance":"{{other_allowance}}","special_allowance":"{{special_allowance}}","bonus":"{{bonus}}","medical_allowance":"{{medical_allowance}}","portfolio":"{{portfolio}}","pli":"{{pli}}","gross_salary":"{{gross_salary}}","esic":"{{esic}}","epf":"{{epf}}","net_salary":"{{net_salary}}","employer_esic":"{{employer_esic}}","employer_epf":"{{employer_epf}}","admin_charges":"{{admin_charges}}","ctc":"{{ctc}}"}}'',
+  ''system''
 )
 ON DUPLICATE KEY UPDATE
   template_name = VALUES(template_name),
   body_template = VALUES(body_template),
-  updated_at = CURRENT_TIMESTAMP;
-
+  updated_at = CURRENT_TIMESTAMP',
+  'SELECT ''letter_template.description absent on this database; seed skipped'' AS n'
+);
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 -- =====================================================================
 -- 2. SALARY SLIP
 -- =====================================================================
-INSERT INTO letter_template (id, template_code, template_name, letter_type, description, body_template, created_by)
+SET @has_description_2 = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+   WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'letter_template' AND COLUMN_NAME = 'description'
+);
+SET @sql = IF(@has_description_2 > 0,
+  'INSERT INTO letter_template (id, template_code, template_name, letter_type, description, body_template, created_by)
 VALUES (
-  'tpl-salary-slip-001',
-  'SALARY_SLIP',
-  'Salary Slip',
-  'salary_slip',
-  'MAS Callnet monthly salary slip with Form 16 summary section',
-  '{"type":"salary_slip","data":{"full_name":"{{full_name}}","employee_code":"{{employee_code}}","designation":"{{designation}}","department":"{{department}}","location":"{{location}}","epf_no":"{{epf_no}}","esi_no":"{{esi_no}}","working_days":"{{working_days}}","earned_days":"{{earned_days}}","month_year":"{{month_year}}","basic":"{{basic}}","hra":"{{hra}}","bonus":"{{bonus}}","conveyance":"{{conveyance}}","pa":"{{pa}}","ma":"{{ma}}","sa":"{{sa}}","oa":"{{oa}}","arrear":"{{arrear}}","incentive":"{{incentive}}","total_earnings":"{{total_earnings}}","pf":"{{pf}}","esic":"{{esic}}","loan":"{{loan}}","advance_deduction":"{{advance_deduction}}","other_deduction":"{{other_deduction}}","total_deductions":"{{total_deductions}}","net_salary":"{{net_salary}}","net_salary_words":"{{net_salary_words}}"}}',
-  'system'
+  ''tpl-salary-slip-001'',
+  ''SALARY_SLIP'',
+  ''Salary Slip'',
+  ''salary_slip'',
+  ''MAS Callnet monthly salary slip with Form 16 summary section'',
+  ''{"type":"salary_slip","data":{"full_name":"{{full_name}}","employee_code":"{{employee_code}}","designation":"{{designation}}","department":"{{department}}","location":"{{location}}","epf_no":"{{epf_no}}","esi_no":"{{esi_no}}","working_days":"{{working_days}}","earned_days":"{{earned_days}}","month_year":"{{month_year}}","basic":"{{basic}}","hra":"{{hra}}","bonus":"{{bonus}}","conveyance":"{{conveyance}}","pa":"{{pa}}","ma":"{{ma}}","sa":"{{sa}}","oa":"{{oa}}","arrear":"{{arrear}}","incentive":"{{incentive}}","total_earnings":"{{total_earnings}}","pf":"{{pf}}","esic":"{{esic}}","loan":"{{loan}}","advance_deduction":"{{advance_deduction}}","other_deduction":"{{other_deduction}}","total_deductions":"{{total_deductions}}","net_salary":"{{net_salary}}","net_salary_words":"{{net_salary_words}}"}}'',
+  ''system''
 )
 ON DUPLICATE KEY UPDATE
   template_name = VALUES(template_name),
   body_template = VALUES(body_template),
-  updated_at = CURRENT_TIMESTAMP;
-
+  updated_at = CURRENT_TIMESTAMP',
+  'SELECT ''letter_template.description absent on this database; seed skipped'' AS n'
+);
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 -- =====================================================================
 -- 3. INCREMENT LETTER
 -- =====================================================================
-INSERT INTO letter_template (id, template_code, template_name, letter_type, description, body_template, created_by)
+SET @has_description_3 = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+   WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'letter_template' AND COLUMN_NAME = 'description'
+);
+SET @sql = IF(@has_description_3 > 0,
+  'INSERT INTO letter_template (id, template_code, template_name, letter_type, description, body_template, created_by)
 VALUES (
-  'tpl-increment-001',
-  'INCREMENT_LETTER',
-  'Increment Letter',
-  'increment',
-  'Annual performance increment letter with revised CTC table',
-  '{"type":"increment","data":{"full_name":"{{full_name}}","designation":"{{designation}}","issued_date":"{{issued_date}}","effective_date":"{{effective_date}}","revised_ctc":"{{revised_ctc}}","revised_fixed_ctc":"{{revised_fixed_ctc}}","variable_pay":"{{variable_pay}}","total_tctc":"{{total_tctc}}","hr_name":"{{hr_name}}","hr_designation":"{{hr_designation}}"}}',
-  'system'
+  ''tpl-increment-001'',
+  ''INCREMENT_LETTER'',
+  ''Increment Letter'',
+  ''increment'',
+  ''Annual performance increment letter with revised CTC table'',
+  ''{"type":"increment","data":{"full_name":"{{full_name}}","designation":"{{designation}}","issued_date":"{{issued_date}}","effective_date":"{{effective_date}}","revised_ctc":"{{revised_ctc}}","revised_fixed_ctc":"{{revised_fixed_ctc}}","variable_pay":"{{variable_pay}}","total_tctc":"{{total_tctc}}","hr_name":"{{hr_name}}","hr_designation":"{{hr_designation}}"}}'',
+  ''system''
 )
 ON DUPLICATE KEY UPDATE
   template_name = VALUES(template_name),
   body_template = VALUES(body_template),
-  updated_at = CURRENT_TIMESTAMP;
-
+  updated_at = CURRENT_TIMESTAMP',
+  'SELECT ''letter_template.description absent on this database; seed skipped'' AS n'
+);
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 -- =====================================================================
 -- 4. PROMOTION LETTER
 -- =====================================================================
-INSERT INTO letter_template (id, template_code, template_name, letter_type, description, body_template, created_by)
+SET @has_description_4 = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+   WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'letter_template' AND COLUMN_NAME = 'description'
+);
+SET @sql = IF(@has_description_4 > 0,
+  'INSERT INTO letter_template (id, template_code, template_name, letter_type, description, body_template, created_by)
 VALUES (
-  'tpl-promotion-001',
-  'PROMOTION_LETTER',
-  'Promotion Letter',
-  'promotion',
-  'Promotion letter with new designation and department',
-  '{"type":"promotion","data":{"full_name":"{{full_name}}","issued_date":"{{issued_date}}","new_designation":"{{new_designation}}","new_department":"{{new_department}}","effective_date":"{{effective_date}}","hr_name":"{{hr_name}}","hr_designation":"{{hr_designation}}"}}',
-  'system'
+  ''tpl-promotion-001'',
+  ''PROMOTION_LETTER'',
+  ''Promotion Letter'',
+  ''promotion'',
+  ''Promotion letter with new designation and department'',
+  ''{"type":"promotion","data":{"full_name":"{{full_name}}","issued_date":"{{issued_date}}","new_designation":"{{new_designation}}","new_department":"{{new_department}}","effective_date":"{{effective_date}}","hr_name":"{{hr_name}}","hr_designation":"{{hr_designation}}"}}'',
+  ''system''
 )
 ON DUPLICATE KEY UPDATE
   template_name = VALUES(template_name),
   body_template = VALUES(body_template),
-  updated_at = CURRENT_TIMESTAMP;
-
+  updated_at = CURRENT_TIMESTAMP',
+  'SELECT ''letter_template.description absent on this database; seed skipped'' AS n'
+);
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 -- =====================================================================
 -- 5. EXPERIENCE / RELIEVING LETTER
 -- =====================================================================
-INSERT INTO letter_template (id, template_code, template_name, letter_type, description, body_template, created_by)
+SET @has_description_5 = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+   WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'letter_template' AND COLUMN_NAME = 'description'
+);
+SET @sql = IF(@has_description_5 > 0,
+  'INSERT INTO letter_template (id, template_code, template_name, letter_type, description, body_template, created_by)
 VALUES (
-  'tpl-experience-001',
-  'EXPERIENCE_LETTER',
-  'Experience Letter',
-  'experience',
-  'Experience / relieving letter on MAS Callnet letterhead with CIN',
-  '{"type":"experience","data":{"full_name":"{{full_name}}","employee_code":"{{employee_code}}","issued_date":"{{issued_date}}","date_of_joining":"{{date_of_joining}}","date_of_exit":"{{date_of_exit}}","designation":"{{designation}}","department":"{{department}}","hr_name":"{{hr_name}}","hr_designation":"{{hr_designation}}"}}',
-  'system'
+  ''tpl-experience-001'',
+  ''EXPERIENCE_LETTER'',
+  ''Experience Letter'',
+  ''experience'',
+  ''Experience / relieving letter on MAS Callnet letterhead with CIN'',
+  ''{"type":"experience","data":{"full_name":"{{full_name}}","employee_code":"{{employee_code}}","issued_date":"{{issued_date}}","date_of_joining":"{{date_of_joining}}","date_of_exit":"{{date_of_exit}}","designation":"{{designation}}","department":"{{department}}","hr_name":"{{hr_name}}","hr_designation":"{{hr_designation}}"}}'',
+  ''system''
 )
 ON DUPLICATE KEY UPDATE
   template_name = VALUES(template_name),
   body_template = VALUES(body_template),
-  updated_at = CURRENT_TIMESTAMP;
-
+  updated_at = CURRENT_TIMESTAMP',
+  'SELECT ''letter_template.description absent on this database; seed skipped'' AS n'
+);
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 -- =====================================================================
 -- 6. NDA & JOINING KIT
 -- =====================================================================
-INSERT INTO letter_template (id, template_code, template_name, letter_type, description, body_template, created_by)
+SET @has_description_6 = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+   WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'letter_template' AND COLUMN_NAME = 'description'
+);
+SET @sql = IF(@has_description_6 > 0,
+  'INSERT INTO letter_template (id, template_code, template_name, letter_type, description, body_template, created_by)
 VALUES (
-  'tpl-nda-001',
-  'NDA_JOINING_KIT',
-  'NDA & Joining Kit',
-  'nda',
-  'NDA, IT compliance, BAMS declaration and consent forms for joining',
-  '{"type":"nda","data":{"full_name":"{{full_name}}","employee_code":"{{employee_code}}","date_of_joining":"{{date_of_joining}}"}}',
-  'system'
+  ''tpl-nda-001'',
+  ''NDA_JOINING_KIT'',
+  ''NDA & Joining Kit'',
+  ''nda'',
+  ''NDA, IT compliance, BAMS declaration and consent forms for joining'',
+  ''{"type":"nda","data":{"full_name":"{{full_name}}","employee_code":"{{employee_code}}","date_of_joining":"{{date_of_joining}}"}}'',
+  ''system''
 )
 ON DUPLICATE KEY UPDATE
   template_name = VALUES(template_name),
   body_template = VALUES(body_template),
-  updated_at = CURRENT_TIMESTAMP;
+  updated_at = CURRENT_TIMESTAMP',
+  'SELECT ''letter_template.description absent on this database; seed skipped'' AS n'
+);
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
