@@ -523,9 +523,16 @@ export async function listPendingApprovals(scopeFilter: { sql: string; params: u
             -- requires it (validateSalaryLock), so without this the branch head
             -- clicks Approve and gets a failure they cannot act on. Surfaced on
             -- the row so the blocker is visible before the click.
-            EXISTS (
-              SELECT 1 FROM ats_payroll_hr_validation pv
-               WHERE pv.candidate_id = c.id AND pv.validation_status = 'validated'
+            -- True when the salary can be established for this offer: either a
+            -- validation row already exists, or the offer carries the figures
+            -- to derive one at approve time. Reporting merely "does a row
+            -- exist" would warn about offers that approve perfectly well.
+            (
+              EXISTS (
+                SELECT 1 FROM ats_payroll_hr_validation pv
+                 WHERE pv.candidate_id = c.id AND pv.validation_status = 'validated'
+              )
+              OR (o.gross IS NOT NULL AND o.date_of_joining IS NOT NULL)
             ) AS payroll_validated
      FROM ats_employment_offer o
      JOIN ats_onboarding_request r ON r.id = o.onboarding_request_id
@@ -571,6 +578,14 @@ export async function approveOffer(offerId: string, approverId: string, remarks?
   // an error to throw at the branch head — they cannot create one, and the
   // orchestrator reports it accurately a moment later. The queue flags it on
   // the row instead, before the click (listPendingApprovals.payrollValidated).
+  // Self-heal offers submitted before the derivation existed. There is no
+  // resubmit path — the offer form is hidden once submitted
+  // (NativeHROnboardingRequests.tsx:1472) — so without this an existing offer
+  // could only be unblocked by rejecting it first, purely to re-open the form.
+  // The offer already holds the salary Payroll HR entered; nothing is invented.
+  await deriveSalaryValidationFromOffer(candidateId, approverId)
+    .catch((e) => console.error('[approveOffer] could not derive payroll validation:', e));
+
   const decision = await recordBranchHeadDecision({
     candidateId,
     branchHeadEmployeeId: approverEmployeeId,

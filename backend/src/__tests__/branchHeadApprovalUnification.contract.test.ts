@@ -231,3 +231,29 @@ describe("submitting the offer is the payroll validation", () => {
     expect(onboarding.slice(submitAt, submitAt + 900)).toMatch(/deriveSalaryValidationFromOffer[\s\S]{0,200}\.catch\(/);
   });
 });
+
+describe("offers submitted before the fix still approve", () => {
+  it("approveOffer derives the validation when it is missing", () => {
+    // There is no resubmit path: NativeHROnboardingRequests.tsx:1472 hides the
+    // offer form once submitted, so an existing offer could otherwise only be
+    // unblocked by rejecting it first.
+    const at = onboarding.indexOf("export async function approveOffer");
+    const body = onboarding.slice(at, at + 3000);
+    expect(body).toContain("deriveSalaryValidationFromOffer");
+  });
+
+  it("derives before recording the decision", () => {
+    const at = onboarding.indexOf("export async function approveOffer");
+    const body = onboarding.slice(at, at + 3000);
+    expect(body.indexOf("deriveSalaryValidationFromOffer"))
+      .toBeLessThan(body.indexOf("recordBranchHeadDecision"));
+  });
+
+  it("the queue flag reports whether the salary can be established", () => {
+    // Not merely whether a row exists — that would warn about offers that
+    // approve perfectly well.
+    const at = onboarding.indexOf("export async function listPendingApprovals");
+    const body = onboarding.slice(at, at + 2500);
+    expect(body).toContain("o.gross IS NOT NULL AND o.date_of_joining IS NOT NULL");
+  });
+});
