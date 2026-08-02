@@ -131,6 +131,14 @@ function parseWorkbook(filePath, sheetName) {
       const p = (n) => String(n).padStart(2, '0');
       const date = `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
       const time = `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+
+      // A time-only cell (CreatedTime) is still a Date, sitting on Excel's
+      // 1899-12-30 epoch. Rendered whole it produces "1899-12-30 12:16:24",
+      // which buildRow then concatenates onto CreatedDate as
+      // "2026-03-27 1899-12-30 12:16:24" — MySQL rejects every such row.
+      // Anything at or before the epoch is a time, so emit only the time.
+      if (d.getFullYear() < 1900) return time;
+
       return time === '00:00:00' ? date : `${date} ${time}`;
     }
 
