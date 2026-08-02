@@ -133,6 +133,24 @@ describe("history is sourced from the offers trail", () => {
     expect(service.slice(fnAt)).toContain("bha.payroll_validation_id = phv.id");
   });
 
+  it("groups by offer so one decision cannot become several rows", () => {
+    // branch_master is joined on id OR name OR code and employees on id OR
+    // user_id; either can fan out. SELECT DISTINCT could not collapse the
+    // result because the duplicates differed in the very column that fanned
+    // out, and production returned 13 rows for 7 rejections.
+    const fnAt = service.indexOf("export async function listBranchHeadDecisions");
+    // Strip comments first: the code explains itself with the phrase
+    // "not SELECT DISTINCT", which a naive scan would read as the bug.
+    const body = service.slice(fnAt).replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, "");
+    expect(body).toContain("GROUP BY o.id");
+    expect(body).not.toContain("SELECT DISTINCT");
+  });
+
+  it("counts with COUNT(DISTINCT o.id) so total and rows agree", () => {
+    const fnAt = service.indexOf("export async function listBranchHeadDecisions");
+    expect(service.slice(fnAt)).toContain("COUNT(DISTINCT o.id)");
+  });
+
   it("orders pending rows by a column that is not null", () => {
     // approved_at became nullable in migration 1055.
     expect(service).toContain("COALESCE(bha.approved_at, bha.updated_at, bha.created_at)");
