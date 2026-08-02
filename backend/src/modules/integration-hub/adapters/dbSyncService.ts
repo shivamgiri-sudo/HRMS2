@@ -11,6 +11,8 @@ import {
 import type { IntegrationConfig } from "../integration.types.js";
 import { integrationService } from "../integration.service.js";
 import { getCredentialsForKey } from "../../external-db/external-db.service.js";
+import { mayWriteTable } from "../canonical-writer.js";
+import { logger } from "../../../lib/logger.js";
 
 interface DbConfig {
   db_type?: "mysql" | "mssql" | "sqlserver";
@@ -220,6 +222,21 @@ export async function syncDatabaseConnector(
           });
         } else {
           throw new Error("Source table is not an approved dialer/CDR pattern; configure it through staged mapping");
+        }
+
+        // Refused before the source is even read: a connector that must not
+        // write this table has no reason to pull rows for it. Skipped rather
+        // than thrown, so one misrouted mapping does not fail a run that has
+        // other tables to sync.
+        const verdict = mayWriteTable(targetTable, connector.integration_key);
+        if (!verdict.allowed) {
+          result.rows_skipped++;
+          if (result.errors.length < 25) result.errors.push(verdict.reason);
+          logger.warn(
+            { integrationKey: connector.integration_key, targetTable },
+            `[dbSync] refused write: ${verdict.reason}`,
+          );
+          continue;
         }
 
         const fetched = await fetchFromDatabase({

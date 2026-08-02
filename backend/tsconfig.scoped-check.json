@@ -32,7 +32,9 @@
     "src/modules/quality-dashboard/quality-target-simulation.ts",
     "src/modules/quality-dashboard/quality-governance.routes.ts",
     "src/modules/quality-dashboard/weekly-coaching.service.ts",
-    "src/db/runPendingMigrations.ts"
+    "src/db/runPendingMigrations.ts",
+    "src/modules/integration-hub/canonical-writer.ts",
+    "src/modules/integration-hub/adapters/dbSyncService.ts"
   ],
   "compilerOptions": { "noEmit": true }
 }
