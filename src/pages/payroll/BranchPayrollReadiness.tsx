@@ -977,10 +977,12 @@ function BranchView({
   branchId,
   month,
   isBranchRole,
+  canBranchHeadSignOff,
 }: {
   branchId: string;
   month: string;
   isBranchRole: boolean;
+  canBranchHeadSignOff: boolean;
 }) {
   const [signOffOpen, setSignOffOpen] = useState(false);
   const qc = useQueryClient();
@@ -1221,7 +1223,7 @@ function BranchView({
               </span>
             )}
           </div>
-        ) : (
+        ) : canBranchHeadSignOff ? (
           <div className="flex flex-col items-end gap-1">
             <Button
               disabled={!canSignOff}
@@ -1236,6 +1238,11 @@ function BranchView({
               </p>
             )}
           </div>
+        ) : (
+          <p className="text-xs text-slate-500">
+            Awaiting Branch Head sign-off
+            {!data.attendance_frozen && " — attendance must be frozen first"}
+          </p>
         )}
       </div>
 
@@ -1419,7 +1426,9 @@ export default function BranchPayrollReadiness() {
 
   const isBranchRole =
     !isHORole &&
-    (roleKeys.includes("branch_head") || roleKeys.includes("payroll_branch"));
+    (roleKeys.includes("branch_head") || roleKeys.includes("payroll_branch") || roleKeys.includes("wfm"));
+
+  const canBranchHeadSignOff = roleKeys.includes("branch_head");
 
   const canExport =
     roleKeys.includes("payroll_head") ||
@@ -1492,7 +1501,7 @@ export default function BranchPayrollReadiness() {
         ) : isHORole ? (
           <HOView month={month} />
         ) : isBranchRole && branchId ? (
-          <BranchView branchId={branchId} month={month} isBranchRole={isBranchRole} />
+          <BranchView branchId={branchId} month={month} isBranchRole={isBranchRole} canBranchHeadSignOff={canBranchHeadSignOff} />
         ) : (
           <div className="flex flex-col items-center justify-center py-16 text-muted-foreground">
             <X className="w-8 h-8 mb-2" />

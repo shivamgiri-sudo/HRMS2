@@ -185,7 +185,7 @@ type ChecklistItem = (typeof ALLOWED_CHECKLIST_ITEMS)[number];
 payrollBranchReadinessRouter.post(
   "/:branchId/checklist",
   requireAuth,
-  requireRole("branch_head", "payroll_branch"),
+  requireRole("branch_head", "payroll_branch", "wfm"),
   async (req: AuthenticatedRequest, res: Response) => {
     try {
       const { branchId } = req.params;
@@ -347,7 +347,7 @@ payrollBranchReadinessRouter.post(
 payrollBranchReadinessRouter.post(
   "/:branchId/request-freeze",
   requireAuth,
-  requireRole("branch_head", "payroll_branch"),
+  requireRole("branch_head", "payroll_branch", "wfm"),
   async (req: AuthenticatedRequest, res: Response) => {
     try {
       const { branchId } = req.params;
@@ -425,7 +425,7 @@ payrollBranchReadinessRouter.get(
 payrollBranchReadinessRouter.post(
   "/:branchId/:processId/checklist",
   requireAuth,
-  requireRole("branch_head", "payroll_branch"),
+  requireRole("branch_head", "payroll_branch", "wfm"),
   async (req: AuthenticatedRequest, res: Response) => {
     try {
       const { branchId, processId } = req.params;
