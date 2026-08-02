@@ -152,10 +152,31 @@ PREPARE s FROM @sql; EXECUTE s; DEALLOCATE PREPARE s;
 -- SECTION 3: employee_emergency_contact — allow multiple, drop unique constraint
 -- ═══════════════════════════════════════════════════════════════════════════════
 
--- Drop the UNIQUE constraint (employee_id should not be unique here)
+-- Drop the UNIQUE constraint (employee_id should not be unique here).
+--
+-- The replacement index must exist BEFORE the drop. employee_id carries a foreign key, the
+-- unique index is the only index backing it, and InnoDB refuses to drop the last index a
+-- foreign key depends on:
+--
+--   Cannot drop index 'employee_id': needed in a foreign key constraint
+--
+-- Adding idx_eec_emp first gives the constraint somewhere else to point, after which the
+-- unique index drops cleanly. This is the same ordering mistake that took the API down at
+-- boot when migration 1035 hit it in production.
+SET @idx = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS
+  WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='employee_emergency_contact'
+  AND INDEX_NAME='idx_eec_emp'
+);
+SET @sql = IF(@idx = 0,
+  'ALTER TABLE employee_emergency_contact ADD INDEX idx_eec_emp (employee_id)',
+  'SELECT ''idx_eec_emp already present'' AS n'
+);
+PREPARE s FROM @sql; EXECUTE s; DEALLOCATE PREPARE s;
+
 SET @idx = (
   SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS
-  WHERE TABLE_SCHEMA='mas_hrms' AND TABLE_NAME='employee_emergency_contact'
+  WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='employee_emergency_contact'
   AND CONSTRAINT_TYPE='UNIQUE' AND CONSTRAINT_NAME='employee_id'
 );
 -- MySQL unique constraint via UNIQUE KEY inline is named after the column
@@ -171,7 +192,7 @@ SET @col = (
   WHERE TABLE_SCHEMA='mas_hrms' AND TABLE_NAME='employee_emergency_contact' AND COLUMN_NAME='contact_seq'
 );
 SET @sql = IF(@col = 0,
-  'ALTER TABLE employee_emergency_contact ADD COLUMN contact_seq TINYINT NOT NULL DEFAULT 1 AFTER employee_id, ADD COLUMN is_primary TINYINT(1) NOT NULL DEFAULT 0 AFTER contact_seq, ADD UNIQUE KEY uq_emp_emergency_seq (employee_id, contact_seq), ADD INDEX idx_eec_emp (employee_id)',
+  'ALTER TABLE employee_emergency_contact ADD COLUMN contact_seq TINYINT NOT NULL DEFAULT 1 AFTER employee_id, ADD COLUMN is_primary TINYINT(1) NOT NULL DEFAULT 0 AFTER contact_seq, ADD UNIQUE KEY uq_emp_emergency_seq (employee_id, contact_seq)',
   'SELECT 1'
 );
 PREPARE s FROM @sql; EXECUTE s; DEALLOCATE PREPARE s;
@@ -180,10 +201,23 @@ PREPARE s FROM @sql; EXECUTE s; DEALLOCATE PREPARE s;
 -- SECTION 4: employee_bank_detail — allow multiple accounts + primary flag
 -- ═══════════════════════════════════════════════════════════════════════════════
 
--- Drop UNIQUE on employee_id
+-- Drop UNIQUE on employee_id. Replacement index first, for the same reason as SECTION 3
+-- above: the unique index is the only one backing the foreign key, and InnoDB will not drop
+-- it while that is true.
+SET @idx = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS
+  WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='employee_bank_detail'
+  AND INDEX_NAME='idx_bank_emp'
+);
+SET @sql = IF(@idx = 0,
+  'ALTER TABLE employee_bank_detail ADD INDEX idx_bank_emp (employee_id)',
+  'SELECT ''idx_bank_emp already present'' AS n'
+);
+PREPARE s FROM @sql; EXECUTE s; DEALLOCATE PREPARE s;
+
 SET @idx = (
   SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS
-  WHERE TABLE_SCHEMA='mas_hrms' AND TABLE_NAME='employee_bank_detail'
+  WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='employee_bank_detail'
   AND CONSTRAINT_TYPE='UNIQUE' AND CONSTRAINT_NAME='employee_id'
 );
 SET @sql = IF(@idx > 0,
@@ -198,7 +232,7 @@ SET @col = (
   WHERE TABLE_SCHEMA='mas_hrms' AND TABLE_NAME='employee_bank_detail' AND COLUMN_NAME='is_primary'
 );
 SET @sql = IF(@col = 0,
-  'ALTER TABLE employee_bank_detail ADD COLUMN is_primary TINYINT(1) NOT NULL DEFAULT 1 AFTER employee_id, ADD COLUMN account_seq TINYINT NOT NULL DEFAULT 1 AFTER is_primary, ADD COLUMN active_status TINYINT(1) NOT NULL DEFAULT 1, ADD UNIQUE KEY uq_bank_seq (employee_id, account_seq), ADD INDEX idx_bank_emp (employee_id)',
+  'ALTER TABLE employee_bank_detail ADD COLUMN is_primary TINYINT(1) NOT NULL DEFAULT 1 AFTER employee_id, ADD COLUMN account_seq TINYINT NOT NULL DEFAULT 1 AFTER is_primary, ADD COLUMN active_status TINYINT(1) NOT NULL DEFAULT 1, ADD UNIQUE KEY uq_bank_seq (employee_id, account_seq)',
   'SELECT 1'
 );
 PREPARE s FROM @sql; EXECUTE s; DEALLOCATE PREPARE s;
