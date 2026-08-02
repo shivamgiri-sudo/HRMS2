@@ -5,7 +5,7 @@ import type { AuthenticatedRequest } from '../../middleware/authMiddleware.js';
 import {
   sendOnboardingToken, validateToken, submitProfile,
   listOnboardingRequests, saveOffer,
-  listPendingApprovals, approveOffer, rejectOffer,
+  listPendingApprovals, approveOffer, rejectOffer, withdrawOffer, getOfferDetail,
 } from './ats.onboarding.service.js';
 import { calculateSalary } from './salary.calculator.js';
 import { buildScopeWhereClause, hasScopedAccess } from '../../shared/scopeAccess.js';
@@ -121,6 +121,30 @@ router.post(
   h(async (req: AuthenticatedRequest, res) => {
     const { submit, ...offerData } = req.body;
     const result = await saveOffer(req.params!.id, offerData, req.authUser!.id, Boolean(submit));
+    res.json({ ok: true, ...result });
+  }),
+);
+
+// What was submitted, and what was decided on it. The submitter could not see
+// either once the form was hidden.
+router.get(
+  '/requests/:id/offer-detail',
+  requireAuth,
+  requireRole('hr', 'recruiter', 'admin', 'super_admin', 'payroll_hr', 'branch_head'),
+  h(async (req: AuthenticatedRequest, res) => {
+    res.json({ ok: true, data: await getOfferDetail(req.params!.id) });
+  }),
+);
+
+// Withdraw a submitted offer back to draft, so the submitter can revise it.
+// Same roles that may save an offer — this is the correction path for the person
+// who raised it, not an approval action.
+router.post(
+  '/offers/:id/withdraw',
+  requireAuth,
+  requireRole('hr', 'recruiter', 'admin', 'super_admin', 'payroll_hr'),
+  h(async (req: AuthenticatedRequest, res) => {
+    const result = await withdrawOffer(req.params!.id, req.authUser!.id, String(req.body?.reason ?? ''));
     res.json({ ok: true, ...result });
   }),
 );

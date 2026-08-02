@@ -509,6 +509,133 @@ export async function saveOffer(
   return { offerId, components };
 }
 
+/**
+ * Pull a submitted offer back to draft so the submitter can revise it.
+ *
+ * Without this the only way to correct a submitted offer is for the Branch Head
+ * to reject it, which records an adverse decision on the candidate for what is
+ * usually a keying error.
+ */
+export async function withdrawOffer(offerId: string, actorUserId: string, reason: string) {
+  if (!reason || !reason.trim()) {
+    throw Object.assign(new Error('A reason is required to withdraw an offer.'), { statusCode: 400 });
+  }
+
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT o.id, o.status, o.candidate_id, o.onboarding_request_id, c.full_name
+       FROM ats_employment_offer o
+       JOIN ats_candidate c ON c.id = o.candidate_id
+      WHERE o.id = ? LIMIT 1`,
+    [offerId],
+  );
+  const offer = rows[0];
+  if (!offer) throw Object.assign(new Error('Offer not found'), { statusCode: 404 });
+
+  // Only a still-pending offer is the submitter's to take back. After approval
+  // the decision belongs to the Branch Head and an employee may already exist.
+  if (String(offer.status) !== 'submitted') {
+    throw Object.assign(
+      new Error(
+        String(offer.status) === 'bh_approved'
+          ? 'This offer has already been approved by the Branch Head and cannot be withdrawn.'
+          : `This offer is '${offer.status}', not pending approval, so there is nothing to withdraw.`,
+      ),
+      { statusCode: 409 },
+    );
+  }
+
+  // Belt and braces: an employee existing at all means the chain has moved past
+  // the point where withdrawing is meaningful.
+  const [emp] = await db.execute<RowDataPacket[]>(
+    `SELECT employee_id FROM ats_onboarding_bridge
+      WHERE candidate_id = ? AND employee_id IS NOT NULL LIMIT 1`,
+    [offer.candidate_id],
+  ).catch(() => [[]] as unknown as [RowDataPacket[]]);
+  if (emp[0]) {
+    throw Object.assign(
+      new Error('An employee record already exists for this candidate, so the offer cannot be withdrawn.'),
+      { statusCode: 409 },
+    );
+  }
+
+  await db.execute(
+    `UPDATE ats_employment_offer
+        SET status = 'draft', submitted_at = NULL, updated_at = NOW()
+      WHERE id = ? AND status = 'submitted'`,
+    [offerId],
+  );
+
+  await db.execute(
+    `UPDATE ats_onboarding_request SET status = 'profile_submitted', updated_at = NOW() WHERE id = ?`,
+    [offer.onboarding_request_id],
+  ).catch(() => undefined);
+
+  // Visible on the candidate's journey: the offer went back for revision. A
+  // salary that changes with no recorded reason is exactly what an audit of
+  // this flow would ask about.
+  await db.execute(
+    `INSERT INTO ats_candidate_stage_log
+       (id, candidate_id, from_stage, to_stage, remarks, updated_by)
+     VALUES (UUID(), ?, 'Offer Submitted', 'Offer Withdrawn', ?, ?)`,
+    [offer.candidate_id, `Offer withdrawn for revision: ${reason.trim()}`, actorUserId],
+  ).catch(() => undefined);
+
+  return { offerId, candidateId: String(offer.candidate_id), status: 'draft' };
+}
+
+/**
+ * The submitted offer, as the submitter needs to see it back.
+ *
+ * Returns the full salary breakdown with names rather than ids, plus any
+ * decision taken on it. Read-only — this is the "what did I send?" view that
+ * had no data source behind it.
+ */
+export async function getOfferDetail(requestId: string) {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT o.id AS offer_id, o.status, o.emp_type, o.salary_band, o.role_type, o.profile,
+            o.date_of_joining, o.date_of_salary,
+            o.offered_ctc, o.basic, o.hra, o.conveyance, o.da,
+            o.special_allowance, o.other_allowance, o.bonus, o.gross,
+            o.pf_employee, o.pf_employer, o.esic_employee, o.esic_employer,
+            o.professional_tax, o.gratuity, o.admin_charges, o.net_in_hand,
+            o.pf_eligible, o.esi_eligible,
+            o.submitted_at, o.approved_at, o.created_at, o.updated_at,
+            o.candidate_id, c.candidate_code, c.full_name,
+            d.designation_name, dept.dept_name AS department_name,
+            cc.cost_centre_name,
+            mgr.full_name AS reporting_manager_name,
+            sub.full_name AS submitted_by_name
+       FROM ats_employment_offer o
+       JOIN ats_candidate c ON c.id = o.candidate_id
+       LEFT JOIN designation_master d ON d.id = o.designation_id
+       LEFT JOIN department_master dept ON dept.id = o.department_id
+       LEFT JOIN cost_centre_master cc ON cc.id = o.cost_centre
+       LEFT JOIN employees mgr ON mgr.id = o.reporting_manager_id
+       LEFT JOIN employees sub ON sub.id = o.created_by OR sub.user_id = o.created_by
+      WHERE o.onboarding_request_id = ?
+      ORDER BY o.created_at DESC
+      LIMIT 1`,
+    [requestId],
+  ).catch(() => [[]] as unknown as [RowDataPacket[]]);
+
+  const offer = rows[0] ?? null;
+  if (!offer) return { offer: null, decisions: [] };
+
+  // Who decided it, when, and why — the part that is invisible today even after
+  // the Branch Head has acted.
+  const [decisions] = await db.execute<RowDataPacket[]>(
+    `SELECT a.action, a.remarks, a.action_at,
+            e.full_name AS actor_name, e.employee_code AS actor_code
+       FROM ats_offer_approval a
+       LEFT JOIN employees e ON e.id = a.approver_id OR e.user_id = a.approver_id
+      WHERE a.offer_id = ?
+      ORDER BY a.action_at DESC`,
+    [String(offer.offer_id)],
+  ).catch(() => [[]] as unknown as [RowDataPacket[]]);
+
+  return { offer, decisions };
+}
+
 // ── Branch Head: List Pending Approvals ───────────────────────────────────────
 
 export async function listPendingApprovals(scopeFilter: { sql: string; params: unknown[] }) {

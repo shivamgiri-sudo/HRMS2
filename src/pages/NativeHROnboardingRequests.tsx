@@ -3,6 +3,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { hrmsApi } from '@/lib/hrmsApi';
+import { SubmittedOfferPanel } from '@/components/ats/SubmittedOfferPanel';
 import { useAuth } from '@/contexts/AuthContext';
 import { useWorkforceAccess } from '@/hooks/useUserRole';
 import { Button } from '@/components/ui/button';
@@ -1470,17 +1471,17 @@ export default function NativeHROnboardingRequests() {
             {/* D — Employment Offer form: hide when offer submitted/approved, show pending BH rejection or no offer yet */}
             {(selected.profile_status === 'profile_submitted' || selected.profile_status === 'hr_approved') && (() => {
               const offerBlocked = selected.offer_status === 'submitted' || selected.offer_status === 'bh_approved';
+              // Was a badge and one sentence: the submitter could not see the
+              // salary they had entered, nor who decided it. Now the offer is
+              // shown back to them, with a way to take it back for revision
+              // while it is still pending.
               if (offerBlocked) return (
-                <div className="rounded-xl border bg-white shadow-sm px-5 py-5">
-                  <div className="flex items-center gap-3">
-                    <OfferBadge status={selected.offer_status} />
-                    <p className="text-sm text-slate-600">
-                      {selected.offer_status === 'submitted'
-                        ? 'Offer has been submitted and is pending Branch Head approval. You cannot edit until it is rejected.'
-                        : 'Offer has been approved by Branch Head. No further changes allowed.'}
-                    </p>
-                  </div>
-                </div>
+                <SubmittedOfferPanel
+                  requestId={selected.id}
+                  offerStatus={selected.offer_status}
+                  canWithdraw={roleKeys.some((k) => ['hr', 'payroll_hr', 'admin', 'super_admin', 'recruiter'].includes(k))}
+                  onWithdrawn={async () => { await load(); setSelected(null); }}
+                />
               );
               return null;
             })()}

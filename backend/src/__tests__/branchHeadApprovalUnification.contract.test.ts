@@ -257,3 +257,45 @@ describe("offers submitted before the fix still approve", () => {
     expect(body).toContain("o.gross IS NOT NULL AND o.date_of_joining IS NOT NULL");
   });
 });
+
+describe("the submitter can see and revise their own offer", () => {
+  it("withdrawOffer only takes back an offer still pending approval", () => {
+    // After Branch Head approval the decision is not the submitter's to undo,
+    // and an employee may already exist.
+    const at = onboarding.indexOf("export async function withdrawOffer");
+    expect(at).toBeGreaterThan(-1);
+    const body = onboarding.slice(at, at + 3500);
+    expect(body).toMatch(/!== 'submitted'/);
+    expect(body).toContain("already been approved by the Branch Head");
+  });
+
+  it("refuses to withdraw once an employee exists", () => {
+    const at = onboarding.indexOf("export async function withdrawOffer");
+    expect(onboarding.slice(at, at + 3500)).toContain("An employee record already exists");
+  });
+
+  it("requires a reason and records it on the journey", () => {
+    // A salary that changes with no recorded explanation is exactly what an
+    // audit of this flow would ask about.
+    const at = onboarding.indexOf("export async function withdrawOffer");
+    const body = onboarding.slice(at, at + 3500);
+    expect(body).toContain("A reason is required to withdraw an offer.");
+    expect(body).toContain("INSERT INTO ats_candidate_stage_log");
+  });
+
+  it("getOfferDetail resolves names, not ids", () => {
+    // department_master stores dept_name, not department_name — verified
+    // against the live schema, not guessed.
+    const at = onboarding.indexOf("export async function getOfferDetail");
+    expect(at).toBeGreaterThan(-1);
+    const body = onboarding.slice(at, at + 3500);
+    expect(body).toContain("dept.dept_name AS department_name");
+    expect(body).toContain("cc.cost_centre_name");
+    expect(body).toContain("mgr.full_name AS reporting_manager_name");
+  });
+
+  it("getOfferDetail returns the decision trail", () => {
+    const at = onboarding.indexOf("export async function getOfferDetail");
+    expect(onboarding.slice(at, at + 3500)).toContain("FROM ats_offer_approval a");
+  });
+});
