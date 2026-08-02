@@ -703,7 +703,7 @@ export default function AttendanceControlTower() {
               </div>
             )}
 
-            <div className="overflow-x-auto [&_td]:!py-2 [&_td]:!px-3 [&_th]:!py-2 [&_th]:!px-3">
+            <div className="overflow-x-auto [&_td]:!py-2 [&_td]:!px-3 [&_th]:!py-2 [&_th]:!px-3 [&_tr]:h-12 [&_td]:align-middle [&_td]:overflow-hidden">
               <Table className="min-w-[1100px]">
                 <TableHeader>
                   <TableRow className="bg-slate-50 hover:bg-slate-50">
@@ -749,7 +749,7 @@ export default function AttendanceControlTower() {
                     </TableRow>
                   )}
                   {!isLoading && rows.map((row) => (
-                    <TableRow key={row.id} className={`transition-colors hover:bg-blue-50/30 ${REVIEW_ROW_STYLE[row.reviewStatus ?? "open"] ?? ""}`}>
+                    <TableRow key={row.id} className={`h-12 transition-colors hover:bg-blue-50/30 ${REVIEW_ROW_STYLE[row.reviewStatus ?? "open"] ?? ""}`}>
                       <TableCell className="px-3 py-1.5">
                         {(row.issueType === "dialler_missing_adr" || row.issueType === "ncosec_missing_adr" ||
                           ["dialler_penalty_biometric_supports_better", "biometric_penalty_dialler_supports_better"].includes(row.issueType)) ? (
@@ -766,31 +766,33 @@ export default function AttendanceControlTower() {
                       <TableCell className="px-3 py-1.5">
                         <Badge variant="outline" className={`text-[11px] ${SOURCE_STYLE[row.source] ?? SOURCE_STYLE.adr}`}>{sourceLabel(row.source)}</Badge>
                       </TableCell>
-                      <TableCell className="px-3 py-1.5">
+                      <TableCell>
                         <Badge variant="outline" className={`text-[11px] ${REVIEW_STYLE[row.reviewStatus ?? "open"] ?? REVIEW_STYLE.open}`}>
                           {prettyIssue(row.reviewStatus ?? "open")}
                         </Badge>
-                        {row.reviewNote ? <p className="mt-0.5 text-[10px] text-slate-400">{row.reviewNote}</p> : null}
                       </TableCell>
-                      <TableCell className="px-3 py-1.5 text-xs text-slate-600 max-w-[120px]">
-                        <span className="font-medium truncate block">{row.resolvedThrough ?? "—"}</span>
-                        {row.resolvedDetail ? <p className="text-[10px] text-slate-400 truncate">{row.resolvedDetail}</p> : null}
+                      <TableCell className="max-w-[110px]">
+                        <span className="truncate block text-xs font-medium text-slate-700">{row.resolvedThrough ?? "—"}</span>
                       </TableCell>
-                      <TableCell className="px-3 py-1.5 text-xs">
-                        <span className="font-medium text-slate-700">{row.reportingManagerName ?? "—"}</span>
+                      <TableCell className="max-w-[100px]">
+                        <span className="truncate block text-xs font-medium text-slate-700">{row.reportingManagerName ?? "—"}</span>
                       </TableCell>
-                      <TableCell className="px-3 py-1.5 text-xs text-slate-600">
-                        <span className="font-medium text-slate-800 block">{row.payrollSourceLabel ?? "ADR"}</span>
-                        {formatEvidence(row.adrStatus, row.adrMinutes)}
+                      <TableCell className="max-w-[120px]">
+                        <span className="truncate block text-xs font-medium text-slate-800">{row.payrollSourceLabel ?? "ADR"}</span>
+                        <span className="truncate block text-[10px] text-slate-500">{formatEvidence(row.adrStatus, row.adrMinutes)}</span>
                       </TableCell>
-                      <TableCell className="px-3 py-1.5 text-xs text-slate-600">{formatEvidence(row.aprStatus, row.aprMinutes)}</TableCell>
-                      <TableCell className="px-3 py-1.5 text-xs text-slate-600">{formatEvidence(row.biometricStatus, row.biometricMinutes)}</TableCell>
-                      <TableCell className="px-3 py-1.5 max-w-[140px]">
+                      <TableCell className="max-w-[100px]">
+                        <span className="truncate block text-xs text-slate-600">{formatEvidence(row.aprStatus, row.aprMinutes)}</span>
+                      </TableCell>
+                      <TableCell className="max-w-[100px]">
+                        <span className="truncate block text-xs text-slate-600">{formatEvidence(row.biometricStatus, row.biometricMinutes)}</span>
+                      </TableCell>
+                      <TableCell className="max-w-[130px]">
                         <Badge variant="outline" className={`text-[11px] ${SEVERITY_STYLE[row.severity]}`}>{row.severity}</Badge>
-                        <p className="mt-0.5 text-[11px] text-slate-500 capitalize line-clamp-2">{prettyIssue(row.issueType)}</p>
+                        <p className="truncate text-[10px] text-slate-500 capitalize mt-0.5">{prettyIssue(row.issueType)}</p>
                       </TableCell>
-                      <TableCell className="max-w-[160px] px-3 py-1.5 text-[11px] text-slate-500">
-                        <span className="line-clamp-2 block">{row.payrollImpact}</span>
+                      <TableCell className="max-w-[150px]">
+                        <span className="line-clamp-2 text-[11px] text-slate-500">{row.payrollImpact}</span>
                       </TableCell>
                       <TableCell className="px-3 py-1.5 text-right">
                         {(() => {
