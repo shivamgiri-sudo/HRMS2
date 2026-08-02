@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { Activity, AlertTriangle, Bell, CheckCircle2, Database, RefreshCw, Search, ShieldAlert, UserCheck, XCircle } from "lucide-react";
+import { Activity, AlertTriangle, Bell, CheckCircle2, Database, MoreHorizontal, RefreshCw, Search, ShieldAlert, UserCheck, XCircle } from "lucide-react";
 import { Link } from "react-router-dom";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { hrmsApi } from "@/lib/hrmsApi";
@@ -11,6 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { SalaryDriftPanel } from "@/components/payroll/SalaryDriftPanel";
 
 type ControlStatus = "ready" | "warning" | "blocked";
@@ -168,25 +169,34 @@ function StatCard({
   value,
   helper,
   icon,
+  accent = "blue",
 }: {
   title: string;
   value: string;
   helper: string;
   icon: ReactNode;
+  accent?: "blue" | "red" | "amber" | "green" | "indigo" | "violet";
 }) {
+  const accentMap: Record<string, { card: string; iconBg: string; value: string }> = {
+    blue:   { card: "border-blue-100 bg-gradient-to-br from-white to-blue-50/60",   iconBg: "bg-blue-100 text-blue-600",   value: "text-blue-700" },
+    red:    { card: "border-red-100 bg-gradient-to-br from-white to-red-50/60",     iconBg: "bg-red-100 text-red-600",     value: "text-red-700" },
+    amber:  { card: "border-amber-100 bg-gradient-to-br from-white to-amber-50/60", iconBg: "bg-amber-100 text-amber-600", value: "text-amber-700" },
+    green:  { card: "border-emerald-100 bg-gradient-to-br from-white to-emerald-50/60", iconBg: "bg-emerald-100 text-emerald-600", value: "text-emerald-700" },
+    indigo: { card: "border-indigo-100 bg-gradient-to-br from-white to-indigo-50/60", iconBg: "bg-indigo-100 text-indigo-600", value: "text-indigo-700" },
+    violet: { card: "border-violet-100 bg-gradient-to-br from-white to-violet-50/60", iconBg: "bg-violet-100 text-violet-600", value: "text-violet-700" },
+  };
+  const s = accentMap[accent];
   return (
-    <Card className="rounded-md">
-      <CardContent className="p-4">
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <p className="text-xs font-medium text-slate-500">{title}</p>
-            <p className="mt-1 text-xl font-semibold text-slate-950">{value}</p>
-            <p className="mt-1 text-xs text-slate-500">{helper}</p>
-          </div>
-          <div className="rounded-md border bg-white p-2 text-slate-500">{icon}</div>
+    <div className={`rounded-2xl border p-4 shadow-sm backdrop-blur-sm transition-all hover:-translate-y-0.5 hover:shadow-md ${s.card}`}>
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0 flex-1">
+          <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">{title}</p>
+          <p className={`mt-2 text-2xl font-extrabold leading-none tabular-nums tracking-tight ${s.value}`}>{value}</p>
+          <p className="mt-2 text-xs leading-snug text-slate-500">{helper}</p>
         </div>
-      </CardContent>
-    </Card>
+        <div className={`rounded-xl p-2.5 ${s.iconBg}`}>{icon}</div>
+      </div>
+    </div>
   );
 }
 
@@ -372,573 +382,501 @@ export default function AttendanceControlTower() {
     setPage(1);
   };
 
+  const totalIssues = Object.values(data?.summary.issueTypes ?? {}).reduce((a, b) => a + b, 0);
+
   return (
     <DashboardLayout>
-      <div className="mx-auto max-w-7xl space-y-5 p-5">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <h1 className="text-2xl font-semibold tracking-tight text-slate-950">Payroll Attendance Control Tower</h1>
-            <p className="mt-1 text-sm text-slate-500">
-              COSEC biometric evidence, APR dialler evidence, HRMS ADR, regularization, and salary day checks for payroll confidence.
-            </p>
-          </div>
-          <div className="flex items-center gap-2">
-            {data && (
-              <Badge variant="outline" className={`h-8 px-3 capitalize ${STATUS_STYLE[data.status]}`}>
-                {data.status === "ready" ? <CheckCircle2 className="mr-1 h-3.5 w-3.5" /> : <ShieldAlert className="mr-1 h-3.5 w-3.5" />}
-                {data.status}
-              </Badge>
-            )}
-            <Button variant="outline" size="sm" onClick={() => refetch()} disabled={isFetching}>
-              <RefreshCw className={`h-4 w-4 ${isFetching ? "animate-spin" : ""}`} />
-            </Button>
-            <Button
-              size="sm"
-              onClick={() => notifyManagers.mutate()}
-              disabled={notifyManagers.isPending || (selected.length ? selectedConflictCount === 0 : managerConflictCount === 0)}
-            >
-              <Bell className="h-4 w-4" />
-              {selected.length ? "Notify selected" : "Notify managers"}
-            </Button>
+      <div className="mx-auto max-w-[1440px] space-y-4 p-4 sm:p-5">
+
+        {/* ── Hero Header ── */}
+        <div
+          className="relative overflow-hidden rounded-2xl p-5 sm:p-6"
+          style={{
+            background: "linear-gradient(135deg, #073f78 0%, #0f5ca8 50%, #1B6AB5 100%)",
+            boxShadow: "0 8px 32px rgba(7,63,120,0.35)",
+          }}
+        >
+          {/* mesh pattern */}
+          <div className="pointer-events-none absolute inset-0 opacity-10"
+            style={{ backgroundImage: "radial-gradient(circle at 20% 50%, rgba(255,255,255,0.3) 0%, transparent 50%), radial-gradient(circle at 80% 20%, rgba(255,255,255,0.2) 0%, transparent 40%)" }} />
+          <div className="relative flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <div className="flex items-center gap-2">
+                <Activity className="h-5 w-5 text-blue-200" />
+                <span className="text-[11px] font-bold uppercase tracking-[0.14em] text-blue-200">Payroll Operations</span>
+              </div>
+              <h1 className="mt-1.5 text-2xl font-extrabold tracking-tight text-white sm:text-3xl">
+                Attendance Control Tower
+              </h1>
+              <p className="mt-1 max-w-xl text-sm text-blue-100/80">
+                COSEC biometric · APR dialler · HRMS ADR · Regularization · Salary day checks
+              </p>
+              {data?.run && (
+                <p className="mt-2 text-xs text-blue-200">
+                  Run <span className="font-semibold capitalize">{data.run.status}</span> &mdash; {numberValue(data.run.total_employees)} employees &mdash; Net ₹{numberValue(data.run.total_net)}
+                </p>
+              )}
+            </div>
+            <div className="flex flex-wrap items-center gap-2 sm:flex-nowrap sm:items-start">
+              {data && (
+                <span className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-bold capitalize backdrop-blur-sm ${STATUS_STYLE[data.status]}`}>
+                  {data.status === "ready" ? <CheckCircle2 className="h-3.5 w-3.5" /> : <ShieldAlert className="h-3.5 w-3.5" />}
+                  {data.status}
+                </span>
+              )}
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-9 border-white/25 bg-white/10 text-white hover:bg-white/20"
+                onClick={() => refetch()}
+                disabled={isFetching}
+              >
+                <RefreshCw className={`h-4 w-4 ${isFetching ? "animate-spin" : ""}`} />
+              </Button>
+              <Button
+                size="sm"
+                className="h-9 bg-white text-blue-800 hover:bg-blue-50"
+                onClick={() => notifyManagers.mutate()}
+                disabled={notifyManagers.isPending || (selected.length ? selectedConflictCount === 0 : managerConflictCount === 0)}
+              >
+                <Bell className="mr-1.5 h-4 w-4" />
+                {selected.length ? "Notify selected" : "Notify managers"}
+              </Button>
+            </div>
           </div>
         </div>
 
+        {/* ── Frozen snapshot warning ── */}
+        {data?.run?.attendance_snapshot_locked ? (
+          <div className="flex items-start gap-3 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+            <AlertTriangle className="mt-0.5 h-4 w-4 flex-shrink-0 text-amber-500" />
+            <span><strong>Attendance snapshot is frozen.</strong> Changes resolved here won't affect the stored salary calculation — recalculation is disabled.</span>
+          </div>
+        ) : null}
+
+        {/* ── Toast messages ── */}
         {notifyManagers.data && (
-          <div className="rounded-md border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
-            Sent {notifyManagers.data.notified} manager notifications for {notifyManagers.data.conflictCount} conflict rows.
-            {notifyManagers.data.skippedNoManager > 0 ? ` ${notifyManagers.data.skippedNoManager} rows had no manager user mapped.` : ""}
+          <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
+            ✓ Sent {notifyManagers.data.notified} manager notifications for {notifyManagers.data.conflictCount} conflict rows.
+            {notifyManagers.data.skippedNoManager > 0 ? ` ${notifyManagers.data.skippedNoManager} rows had no manager mapped.` : ""}
           </div>
         )}
         {updateReview.data && (
-          <div className="rounded-md border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
-            Updated {updateReview.data.updated} selected conflict rows.
+          <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
+            ✓ Updated {updateReview.data.updated} conflict rows.
           </div>
         )}
         {repairMissingAdr.data && (
-          <div className="rounded-md border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
-            Repaired {repairMissingAdr.data.repaired} ADR rows. {repairMissingAdr.data.skipped} rows were skipped because they were protected or no longer repairable.
+          <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
+            ✓ Repaired {repairMissingAdr.data.repaired} ADR rows. {repairMissingAdr.data.skipped} rows skipped.
           </div>
         )}
-        {notifyManagers.error && (
-          <div className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
-            Failed to notify reporting managers.
+        {(notifyManagers.error || repairMissingAdr.error) && (
+          <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
+            {notifyManagers.error ? "Failed to notify reporting managers." : "Failed to repair ADR missing rows."}
           </div>
         )}
-        {repairMissingAdr.error && (
-          <div className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
-            Failed to repair ADR missing rows.
-          </div>
-        )}
-
-        <Card className="rounded-md">
-          <CardContent className="p-4">
-            <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-[150px_180px_180px_210px_190px_1fr_110px_90px]">
-              <div>
-                <label className="text-xs font-medium text-slate-500" htmlFor="run-month">Payroll month</label>
-                <Input
-                  id="run-month"
-                  type="month"
-                  className="mt-1 h-9"
-                  value={runMonth}
-                  onChange={(event) => {
-                    setRunMonth(event.target.value);
-                    setPage(1);
-                  }}
-                />
-              </div>
-              <div>
-                <label className="text-xs font-medium text-slate-500">Branch</label>
-                <Select value={branchId} onValueChange={(value) => { setBranchId(value); setProcessId("all"); setPage(1); }}>
-                  <SelectTrigger className="mt-1 h-9">
-                    <SelectValue placeholder="All branches" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All branches</SelectItem>
-                    {branches.map((branch) => (
-                      <SelectItem key={branch.id} value={branch.id}>{branch.branch_name ?? branch.id}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div>
-                <label className="text-xs font-medium text-slate-500">Process</label>
-                <Select value={processId} onValueChange={(value) => { setProcessId(value); setPage(1); }}>
-                  <SelectTrigger className="mt-1 h-9">
-                    <SelectValue placeholder="All processes" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All processes</SelectItem>
-                    {processes.map((process) => (
-                      <SelectItem key={process.id} value={process.id}>{process.process_name ?? process.id}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div>
-                <label className="text-xs font-medium text-slate-500" htmlFor="issue-type">Issue type</label>
-                <Select value={issueType} onValueChange={(value) => { setIssueType(value); setPage(1); }}>
-                  <SelectTrigger id="issue-type" className="mt-1 h-9">
-                    <SelectValue placeholder="All issue types" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All issue types</SelectItem>
-                    {issueOptions.map((type) => (
-                      <SelectItem key={type} value={type}>{prettyIssue(type)}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div>
-                <label className="text-xs font-medium text-slate-500" htmlFor="review-status">Review state</label>
-                <Select value={reviewStatus} onValueChange={(value) => { setReviewStatus(value); setPage(1); }}>
-                  <SelectTrigger id="review-status" className="mt-1 h-9">
-                    <SelectValue placeholder="Open only" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">Open queue</SelectItem>
-                    <SelectItem value="open">Open</SelectItem>
-                    <SelectItem value="notified">Manager notified</SelectItem>
-                    <SelectItem value="regularization_required">Regularization required</SelectItem>
-                    <SelectItem value="reviewed">Reviewed</SelectItem>
-                    <SelectItem value="no_issue">No issue</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div>
-                <label className="text-xs font-medium text-slate-500" htmlFor="gap-search">Employee search</label>
-                <div className="relative mt-1">
-                  <Search className="pointer-events-none absolute left-2.5 top-2.5 h-4 w-4 text-slate-400" />
-                  <Input
-                    id="gap-search"
-                    className="h-9 pl-8"
-                    placeholder="Name or employee code"
-                    value={searchInput}
-                    onChange={(event) => setSearchInput(event.target.value)}
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter") {
-                        setSearch(searchInput);
-                        setPage(1);
-                      }
-                    }}
-                  />
-                </div>
-              </div>
-              <div className="flex items-end">
-                <Button size="sm" className="h-9 w-full" onClick={() => { setSearch(searchInput); setPage(1); }}>
-                  <Search className="h-4 w-4" />
-                  Search
-                </Button>
-              </div>
-              <div className="flex items-end">
-                <Button variant="ghost" size="sm" className="h-9 w-full" onClick={() => { setIssueType("all"); setReviewStatus("all"); setSearch(""); setSearchInput(""); setBranchId("all"); setProcessId("all"); setPage(1); }}>
-                  Clear
-                </Button>
-              </div>
-            </div>
-            <div className="mt-3 text-xs text-slate-500">
-                {data?.run ? (
-                  <span>Run {data.run.status} - {numberValue(data.run.total_employees)} employees - Net Rs {numberValue(data.run.total_net)}</span>
-                ) : (
-                  <span>No payroll run found for selected month.</span>
-                )}
-            </div>
-            {data?.run?.attendance_snapshot_locked ? (
-              <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 flex items-center gap-2 text-sm text-amber-800 mb-2 mt-2">
-                <AlertTriangle className="h-4 w-4 flex-shrink-0 text-amber-600" />
-                <span><strong>Attendance snapshot is frozen.</strong> Changes resolved here won't affect the stored salary calculation — recalculation is disabled.</span>
-              </div>
-            ) : null}
-          </CardContent>
-        </Card>
-
         {error && (
-          <div className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
+          <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
             Failed to load payroll attendance control data.
           </div>
         )}
 
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-5">
-          <StatCard
-            title="Open Gaps"
-            value={numberValue(data?.summary.totalGaps)}
-            helper={`${numberValue(managerConflictCount)} manager-review conflicts`}
-            icon={<AlertTriangle className="h-4 w-4" />}
-          />
-          <StatCard
-            title="Payroll Readiness"
-            value={readiness?.canCalculate ? "Can calculate" : data?.run ? "Needs review" : "No run"}
-            helper={`${readinessBlockers} blockers, ${readinessWarnings} warnings`}
-            icon={<Activity className="h-4 w-4" />}
-          />
-          <StatCard
-            title="NCOSEC Imported"
-            value={numberValue(data?.summary.sourceCounts.ncosec.rows_count)}
-            helper={`${numberValue(data?.summary.sourceCounts.ncosec.employees_count)} employees with COSEC biometric rows`}
-            icon={<Database className="h-4 w-4" />}
-          />
-          <StatCard
-            title="APR Imported"
-            value={numberValue(data?.summary.sourceCounts.apr.rows_count)}
-            helper={`${numberValue(data?.summary.sourceCounts.apr.employees_count)} employees with APR dialler rows`}
-            icon={<Database className="h-4 w-4" />}
-          />
-          <StatCard
-            title="ADR Missing Days"
-            value={numberValue(missingAdrCount)}
-            helper="APR or COSEC evidence exists but payroll day record is missing"
-            icon={<AlertTriangle className="h-4 w-4" />}
-          />
+        {/* ── Filter Bar ── */}
+        <div className="rounded-2xl border border-slate-200 bg-white/80 p-4 shadow-sm backdrop-blur-sm">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5">
+            <div>
+              <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-slate-400">Month</label>
+              <Input type="month" className="h-10 rounded-xl" value={runMonth}
+                onChange={(e) => { setRunMonth(e.target.value); setPage(1); }} />
+            </div>
+            <div>
+              <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-slate-400">Branch</label>
+              <Select value={branchId} onValueChange={(v) => { setBranchId(v); setProcessId("all"); setPage(1); }}>
+                <SelectTrigger className="h-10 rounded-xl"><SelectValue placeholder="All branches" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All branches</SelectItem>
+                  {branches.map((b) => <SelectItem key={b.id} value={b.id}>{b.branch_name ?? b.id}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-slate-400">Process</label>
+              <Select value={processId} onValueChange={(v) => { setProcessId(v); setPage(1); }}>
+                <SelectTrigger className="h-10 rounded-xl"><SelectValue placeholder="All processes" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All processes</SelectItem>
+                  {processes.map((p) => <SelectItem key={p.id} value={p.id}>{p.process_name ?? p.id}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-slate-400">Issue Type</label>
+              <Select value={issueType} onValueChange={(v) => { setIssueType(v); setPage(1); }}>
+                <SelectTrigger className="h-10 rounded-xl"><SelectValue placeholder="All issue types" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All issue types</SelectItem>
+                  {issueOptions.map((t) => <SelectItem key={t} value={t}>{prettyIssue(t)}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-slate-400">Review State</label>
+              <Select value={reviewStatus} onValueChange={(v) => { setReviewStatus(v); setPage(1); }}>
+                <SelectTrigger className="h-10 rounded-xl"><SelectValue placeholder="All states" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Open queue</SelectItem>
+                  <SelectItem value="open">Open</SelectItem>
+                  <SelectItem value="notified">Manager notified</SelectItem>
+                  <SelectItem value="regularization_required">Regularization required</SelectItem>
+                  <SelectItem value="reviewed">Reviewed</SelectItem>
+                  <SelectItem value="no_issue">No issue</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <div className="mt-3 flex gap-2">
+            <div className="relative flex-1">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+              <Input
+                className="h-10 rounded-xl pl-10"
+                placeholder="Search by name or employee code…"
+                value={searchInput}
+                onChange={(e) => setSearchInput(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter") { setSearch(searchInput); setPage(1); } }}
+              />
+            </div>
+            <Button className="h-10 rounded-xl px-5" onClick={() => { setSearch(searchInput); setPage(1); }}>
+              <Search className="mr-1.5 h-4 w-4" /> Search
+            </Button>
+            <Button variant="ghost" className="h-10 rounded-xl px-4 text-slate-500"
+              onClick={() => { setIssueType("all"); setReviewStatus("all"); setSearch(""); setSearchInput(""); setBranchId("all"); setProcessId("all"); setPage(1); }}>
+              Clear
+            </Button>
+          </div>
         </div>
 
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-          <Card className="rounded-md">
-            <CardContent className="flex items-center justify-between p-4">
-              <div>
-                <p className="text-xs font-medium text-slate-500">Open Queue</p>
-                <p className="mt-1 text-xl font-semibold text-slate-950">{numberValue(reviewQueue.open)}</p>
-              </div>
-              <Badge variant="outline" className={REVIEW_STYLE.open}>Open</Badge>
-            </CardContent>
-          </Card>
-          <Card className="rounded-md">
-            <CardContent className="flex items-center justify-between p-4">
-              <div>
-                <p className="text-xs font-medium text-slate-500">Managers Notified</p>
-                <p className="mt-1 text-xl font-semibold text-slate-950">{numberValue(reviewQueue.notified)}</p>
-              </div>
-              <Badge variant="outline" className={REVIEW_STYLE.notified}>Notified</Badge>
-            </CardContent>
-          </Card>
-          <Card className="rounded-md">
-            <CardContent className="flex items-center justify-between p-4">
-              <div>
-                <p className="text-xs font-medium text-slate-500">Needs Regularization</p>
-                <p className="mt-1 text-xl font-semibold text-slate-950">{numberValue(reviewQueue.regularization_required)}</p>
-              </div>
-              <Badge variant="outline" className={REVIEW_STYLE.regularization_required}>Regularization</Badge>
-            </CardContent>
-          </Card>
+        {/* ── Stat Tiles ── */}
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5">
+          <StatCard title="Open Gaps" value={numberValue(data?.summary.totalGaps)}
+            helper={`${numberValue(managerConflictCount)} manager conflicts`}
+            icon={<AlertTriangle className="h-5 w-5" />}
+            accent={(data?.summary.totalGaps ?? 0) > 0 ? "red" : "green"} />
+          <StatCard title="Payroll Readiness" value={readiness?.canCalculate ? "Ready" : data?.run ? "Needs Review" : "No Run"}
+            helper={`${readinessBlockers} blockers · ${readinessWarnings} warnings`}
+            icon={<Activity className="h-5 w-5" />}
+            accent={readiness?.canCalculate ? "green" : readinessBlockers > 0 ? "red" : "amber"} />
+          <StatCard title="COSEC Rows" value={numberValue(data?.summary.sourceCounts.ncosec.rows_count)}
+            helper={`${numberValue(data?.summary.sourceCounts.ncosec.employees_count)} employees`}
+            icon={<Database className="h-5 w-5" />} accent="indigo" />
+          <StatCard title="APR Rows" value={numberValue(data?.summary.sourceCounts.apr.rows_count)}
+            helper={`${numberValue(data?.summary.sourceCounts.apr.employees_count)} employees`}
+            icon={<Database className="h-5 w-5" />} accent="blue" />
+          <StatCard title="ADR Missing" value={numberValue(missingAdrCount)}
+            helper="Evidence exists, day record missing"
+            icon={<AlertTriangle className="h-5 w-5" />}
+            accent={missingAdrCount > 0 ? "amber" : "green"} />
         </div>
 
-        <Card className="rounded-md">
-          <CardContent className="flex flex-wrap items-center gap-2 p-4">
-            <span className="text-xs font-medium text-slate-500">Queue focus</span>
-            <Button
-              size="sm"
-              variant={activeFocus === "all" ? "default" : "outline"}
-              className="h-8"
-              onClick={() => setIssueFocus("all")}
-            >
-              All open
-            </Button>
-            <Button
-              size="sm"
-              variant={activeFocus === "penalty" ? "default" : "outline"}
-              className="h-8"
-              onClick={() => setIssueFocus("penalty")}
-            >
-              Penalty conflicts {numberValue(managerConflictCount)}
-            </Button>
-            <Button
-              size="sm"
-              variant={activeFocus === "adr_missing" ? "default" : "outline"}
-              className="h-8"
-              onClick={() => setIssueFocus("adr_missing")}
-            >
-              ADR missing {numberValue(missingAdrCount)}
-            </Button>
-            <Button
-              size="sm"
-              variant={activeFocus === "regularization" ? "default" : "outline"}
-              className="h-8"
-              onClick={() => setIssueFocus("regularization")}
-            >
-              Regularization blockers {numberValue(regularizationGapCount)}
-            </Button>
-            {activeFocus === "custom" ? (
-              <Badge variant="outline" className="border-slate-200 bg-slate-50 text-slate-700">
-                Custom issue filter active
-              </Badge>
-            ) : null}
-          </CardContent>
-        </Card>
+        {/* ── Review Queue Strip ── */}
+        <div className="grid grid-cols-3 gap-3">
+          {[
+            { label: "Open", count: reviewQueue.open ?? 0, style: "border-amber-200 bg-amber-50/70", badge: "bg-amber-100 text-amber-800", dot: "bg-amber-500" },
+            { label: "Manager Notified", count: reviewQueue.notified ?? 0, style: "border-blue-200 bg-blue-50/70", badge: "bg-blue-100 text-blue-800", dot: "bg-blue-500" },
+            { label: "Needs Regularization", count: reviewQueue.regularization_required ?? 0, style: "border-violet-200 bg-violet-50/70", badge: "bg-violet-100 text-violet-800", dot: "bg-violet-500" },
+          ].map((item) => (
+            <div key={item.label} className={`flex items-center gap-4 rounded-2xl border px-4 py-3 backdrop-blur-sm ${item.style}`}>
+              <div className={`flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl ${item.badge}`}>
+                <span className={`h-2.5 w-2.5 rounded-full ${item.dot}`} />
+              </div>
+              <div className="min-w-0">
+                <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">{item.label}</p>
+                <p className="mt-0.5 text-2xl font-extrabold tabular-nums leading-none text-slate-900">{numberValue(item.count)}</p>
+              </div>
+            </div>
+          ))}
+        </div>
 
-        <div className="grid grid-cols-1 gap-3 lg:grid-cols-4">
-          <Card className="rounded-md lg:col-span-1">
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm">Issue Mix</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-2">
-              {Object.entries(data?.summary.issueTypes ?? {}).length === 0 ? (
-                <div className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
-                  No attendance-payroll gaps detected.
-                </div>
-              ) : (
-                Object.entries(data?.summary.issueTypes ?? {}).map(([type, count]) => (
-                  <div key={type} className="flex items-center justify-between gap-2 rounded-md border px-3 py-2 text-sm">
-                    <span className="truncate">{prettyIssue(type)}</span>
-                    <span className="font-semibold">{count}</span>
-                  </div>
-                ))
-              )}
-            </CardContent>
-          </Card>
-
-          <Card className="rounded-md lg:col-span-3">
-            <CardHeader className="pb-2">
-              <CardTitle className="flex items-center justify-between text-sm">
-                <span>Employee Gap Register</span>
-                <span className="text-xs font-normal text-slate-500">{numberValue(data?.total)} rows</span>
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="p-0">
-              <div className="overflow-x-auto">
-              {selected.length > 0 && (
-                <div className="flex flex-wrap items-center justify-between gap-2 border-y bg-slate-50 px-4 py-2">
-                  <span className="text-xs font-medium text-slate-600">
-                    {selected.length} rows selected
-                    {selectedConflictCount > 0 ? ` - ${selectedConflictCount} manager-conflict` : ""}
-                    {selectedRepairCount > 0 ? ` - ${selectedRepairCount} ADR-repair` : ""}
+        {/* ── Queue Focus Pill Bar ── */}
+        <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-slate-200 bg-white/80 px-4 py-3 backdrop-blur-sm">
+          <span className="mr-1 text-[11px] font-bold uppercase tracking-wider text-slate-400">Focus</span>
+          {([
+            { focus: "all", label: "All Open", count: null },
+            { focus: "penalty", label: "Penalty Conflicts", count: managerConflictCount },
+            { focus: "adr_missing", label: "ADR Missing", count: missingAdrCount },
+            { focus: "regularization", label: "Regularization", count: regularizationGapCount },
+          ] as const).map(({ focus, label, count }) => {
+            const isActive = activeFocus === focus;
+            return (
+              <button
+                key={focus}
+                type="button"
+                onClick={() => setIssueFocus(focus)}
+                className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold transition-all ${
+                  isActive
+                    ? "bg-[#1B6AB5] text-white shadow-sm"
+                    : "border border-slate-200 bg-white text-slate-600 hover:border-[#1B6AB5]/40 hover:text-[#1B6AB5]"
+                }`}
+              >
+                {label}
+                {count !== null && (
+                  <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-bold ${isActive ? "bg-white/25 text-white" : "bg-slate-100 text-slate-600"}`}>
+                    {numberValue(count)}
                   </span>
-                  <div className="flex gap-2">
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={() => repairMissingAdr.mutate(selected.filter((id) => rows.some((row) => row.id === id && (row.issueType === "dialler_missing_adr" || row.issueType === "ncosec_missing_adr"))))}
-                      disabled={repairMissingAdr.isPending || selectedRepairCount === 0}
-                    >
-                      Repair ADR
-                    </Button>
-                    <Button size="sm" variant="outline" onClick={() => updateReview.mutate({ status: "regularization_required" })} disabled={updateReview.isPending}>
-                      <UserCheck className="h-4 w-4" />
-                      Needs regularization
-                    </Button>
-                    <Button size="sm" variant="outline" onClick={() => updateReview.mutate({ status: "reviewed" })} disabled={updateReview.isPending}>
-                      <CheckCircle2 className="h-4 w-4" />
-                      Mark reviewed
-                    </Button>
-                    <Button size="sm" variant="outline" onClick={() => updateReview.mutate({ status: "no_issue" })} disabled={updateReview.isPending}>
-                      <XCircle className="h-4 w-4" />
-                      No issue
-                    </Button>
-                  </div>
-                </div>
-              )}
-              <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead className="h-9 w-10 px-3">
-                        <input
-                          type="checkbox"
-                          className="h-4 w-4 rounded border-slate-300"
-                          checked={allSelectableSelected}
-                          onChange={() => {
-                            if (allSelectableSelected) {
-                              setSelected((current) => current.filter((id) => !selectableRows.some((row) => row.id === id)));
-                            } else {
-                              setSelected((current) => Array.from(new Set([...current, ...selectableRows.map((row) => row.id)])));
-                            }
-                          }}
-                          aria-label="Select all manager-review conflicts"
-                        />
-                      </TableHead>
-                      <TableHead className="h-9 px-3">Date</TableHead>
-                      <TableHead className="h-9 px-3">Employee</TableHead>
-                      <TableHead className="h-9 px-3">Source</TableHead>
-                      <TableHead className="h-9 px-3">Review</TableHead>
-                      <TableHead className="h-9 px-3">Resolved Through</TableHead>
-                      <TableHead className="h-9 px-3">Manager</TableHead>
-                      <TableHead className="h-9 px-3">Payroll Result</TableHead>
-                      <TableHead className="h-9 px-3">APR Evidence</TableHead>
-                      <TableHead className="h-9 px-3">COSEC Evidence</TableHead>
-                      <TableHead className="h-9 px-3">Issue</TableHead>
-                      <TableHead className="h-9 px-3">Impact</TableHead>
-                      <TableHead className="h-9 w-16 px-3 text-right">Days Open</TableHead>
-                      <TableHead className="h-9 px-3">Action</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {isLoading && (
-                      <TableRow>
-                        <TableCell colSpan={14} className="px-4 py-8 text-center text-slate-500">Loading control checks...</TableCell>
-                      </TableRow>
-                    )}
-                    {!isLoading && rows.length === 0 && (
-                      <TableRow>
-                        <TableCell colSpan={14} className="px-4 py-8 text-center text-slate-500">No gaps found for the selected filters.</TableCell>
-                      </TableRow>
-                    )}
-                    {!isLoading && rows.map((row) => (
-                      <TableRow key={row.id} className={REVIEW_ROW_STYLE[row.reviewStatus ?? "open"] ?? ""}>
-                        <TableCell className="px-3 py-2">
-                          {(
-                            row.issueType === "dialler_missing_adr" ||
-                            row.issueType === "ncosec_missing_adr" ||
-                            ["dialler_penalty_biometric_supports_better", "biometric_penalty_dialler_supports_better"].includes(row.issueType)
-                          ) ? (
-                            <input
-                              type="checkbox"
-                              className="h-4 w-4 rounded border-slate-300"
-                              checked={selected.includes(row.id)}
-                              onChange={() => toggleSelected(row.id)}
-                              aria-label={`Select ${row.employeeCode ?? row.employeeName ?? "conflict row"}`}
-                            />
-                          ) : null}
-                        </TableCell>
-                        <TableCell className="whitespace-nowrap px-3 py-2 text-xs text-slate-500">{row.issueDate}</TableCell>
-                        <TableCell className="px-3 py-2">
-                          <div className="font-medium text-slate-900">{row.employeeName ?? row.employeeCode ?? "-"}</div>
-                          <div className="text-xs text-slate-500">{row.employeeCode ?? "-"} - {row.branchName ?? "No branch"} - {row.processName ?? "No process"}</div>
-                        </TableCell>
-                        <TableCell className="px-3 py-2">
-                          <Badge variant="outline" className={SOURCE_STYLE[row.source] ?? SOURCE_STYLE.adr}>{sourceLabel(row.source)}</Badge>
-                        </TableCell>
-                        <TableCell className="px-3 py-2">
-                          <div className="space-y-1">
-                            <Badge variant="outline" className={REVIEW_STYLE[row.reviewStatus ?? "open"] ?? REVIEW_STYLE.open}>
-                              {prettyIssue(row.reviewStatus ?? "open")}
-                            </Badge>
-                            {row.reviewNote ? <div className="text-xs text-slate-500">{row.reviewNote}</div> : null}
-                          </div>
-                        </TableCell>
-                        <TableCell className="px-3 py-2">
-                          <div className="space-y-1">
-                            <div className="text-sm font-medium text-slate-700">{row.resolvedThrough ?? "-"}</div>
-                            {row.resolvedDetail ? <div className="text-xs text-slate-500">{row.resolvedDetail}</div> : null}
-                          </div>
-                        </TableCell>
-                        <TableCell className="px-3 py-2">
-                          <div className="text-sm font-medium text-slate-700">{row.reportingManagerName ?? "-"}</div>
-                          <div className="text-xs text-slate-500">{row.reportingManagerUserId ?? "No user mapping"}</div>
-                        </TableCell>
-                        <TableCell className="px-3 py-2">
-                          <div className="space-y-1">
-                            <div className="text-sm font-medium text-slate-800">{row.payrollSourceLabel ?? "Payroll ADR"}</div>
-                            <div className="text-xs text-slate-500">{formatEvidence(row.adrStatus, row.adrMinutes)}</div>
-                          </div>
-                        </TableCell>
-                        <TableCell className="px-3 py-2">
-                          <div className="text-xs text-slate-600">{formatEvidence(row.aprStatus, row.aprMinutes)}</div>
-                        </TableCell>
-                        <TableCell className="px-3 py-2">
-                          <div className="text-xs text-slate-600">{formatEvidence(row.biometricStatus, row.biometricMinutes)}</div>
-                        </TableCell>
-                        <TableCell className="px-3 py-2">
-                          <div className="space-y-1">
-                            <Badge variant="outline" className={SEVERITY_STYLE[row.severity]}>{row.severity}</Badge>
-                            <div className="text-xs text-slate-600">{prettyIssue(row.issueType)}</div>
-                          </div>
-                        </TableCell>
-                        <TableCell className="max-w-[260px] px-3 py-2 text-xs text-slate-600">{row.payrollImpact}</TableCell>
-                        <TableCell className="px-3 py-2 text-right text-xs">
-                          {(() => { const d = daysOpen(row.reviewCreatedAt); if (d === null) return <span className="text-slate-400">—</span>; return <span className={daysOpenStyle(d)}>{d}d</span>; })()}
-                        </TableCell>
-                        <TableCell className="max-w-[260px] px-3 py-2">
-                          <div className="space-y-2">
-                            <div className="text-xs text-slate-600">{row.actionNeeded}</div>
-                            <div className="flex flex-wrap gap-2">
-                              {["dialler_penalty_biometric_supports_better", "biometric_penalty_dialler_supports_better"].includes(row.issueType) ? (
-                                <>
-                                  <Button
-                                    size="sm"
-                                    variant="outline"
-                                    className="h-8 px-2 text-xs"
-                                    onClick={() => void notifySingleManager(row.id)}
-                                    disabled={notifyManagers.isPending || !row.reportingManagerUserId}
-                                  >
-                                    Notify
-                                  </Button>
-                                  <Button
-                                    size="sm"
-                                    variant="outline"
-                                    className="h-8 px-2 text-xs"
-                                    onClick={() => void updateSingleReview(row.id, "regularization_required")}
-                                    disabled={updateReview.isPending}
-                                  >
-                                    Needs regularization
-                                  </Button>
-                                  <Button
-                                    size="sm"
-                                    variant="outline"
-                                    className="h-8 px-2 text-xs"
-                                    onClick={() => void updateSingleReview(row.id, "reviewed")}
-                                    disabled={updateReview.isPending}
-                                  >
-                                    Reviewed
-                                  </Button>
-                                  <Button
-                                    size="sm"
-                                    variant="ghost"
-                                    className="h-8 px-2 text-xs"
-                                    onClick={() => void updateSingleReview(row.id, "no_issue")}
-                                    disabled={updateReview.isPending}
-                                  >
-                                    No issue
-                                  </Button>
-                                </>
-                              ) : null}
-                              {row.issueType === "dialler_missing_adr" || row.issueType === "ncosec_missing_adr" ? (
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  className="h-8 px-2 text-xs"
-                                  onClick={() => repairMissingAdr.mutate([row.id])}
-                                  disabled={repairMissingAdr.isPending}
-                                >
-                                  Repair ADR
-                                </Button>
-                              ) : null}
-                              {row.issueType === "salary_payable_days_mismatch" && row.employeeId && !data?.run?.attendance_snapshot_locked && (
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  className="h-7 px-2 text-xs border-indigo-300 text-indigo-700 hover:bg-indigo-50"
-                                  onClick={() => {
-                                    if (!data?.run?.id) return;
-                                    void hrmsApi.post(`/api/payroll/runs/${data.run!.id}/recalculate-drift`, {
-                                      employee_ids: [row.employeeId],
-                                    }).then(() => { void refetch(); });
-                                  }}
-                                >
-                                  <RefreshCw className="h-3 w-3 mr-1" />Recalculate
-                                </Button>
-                              )}
-                              {row.employeeId ? (
-                                <Button asChild size="sm" variant="outline" className="h-8 px-2 text-xs">
-                                  <Link to={`/attendance-regularization?employeeId=${encodeURIComponent(row.employeeId)}&date=${encodeURIComponent(row.issueDate)}`}>
-                                    Open regularization
-                                  </Link>
-                                </Button>
-                              ) : null}
-                            </div>
-                          </div>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
-              <div className="flex items-center justify-between border-t px-4 py-3">
-                <span className="text-xs text-slate-500">Page {page} of {totalPages}</span>
-                <div className="flex gap-2">
-                  <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage((p) => Math.max(1, p - 1))}>
-                    Previous
-                  </Button>
-                  <Button variant="outline" size="sm" disabled={page >= totalPages} onClick={() => setPage((p) => p + 1)}>
-                    Next
-                  </Button>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
+                )}
+              </button>
+            );
+          })}
+          {activeFocus === "custom" && (
+            <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs text-slate-500">Custom filter active</span>
+          )}
         </div>
+
+        {/* ── Main Content: Issue Mix + Gap Register ── */}
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-[260px_1fr]">
+
+          {/* Issue Mix */}
+          <div className="rounded-2xl border border-slate-200 bg-white/90 p-4 backdrop-blur-sm">
+            <h3 className="mb-3 text-sm font-bold text-slate-800">Issue Mix</h3>
+            {Object.entries(data?.summary.issueTypes ?? {}).length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-8 text-center">
+                <CheckCircle2 className="h-8 w-8 text-emerald-400" />
+                <p className="mt-2 text-sm font-medium text-emerald-700">No gaps detected</p>
+              </div>
+            ) : (
+              <div className="space-y-2.5">
+                {Object.entries(data?.summary.issueTypes ?? {}).sort(([, a], [, b]) => b - a).map(([type, count]) => {
+                  const pct = totalIssues > 0 ? Math.round((count / totalIssues) * 100) : 0;
+                  const isBlocker = ["dialler_penalty_biometric_supports_better", "biometric_penalty_dialler_supports_better"].includes(type);
+                  return (
+                    <div key={type}>
+                      <div className="mb-1 flex items-center justify-between gap-2">
+                        <span className="truncate text-[11px] font-medium text-slate-600 capitalize">{prettyIssue(type)}</span>
+                        <span className={`flex-shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-bold ${isBlocker ? "bg-red-100 text-red-700" : "bg-amber-100 text-amber-700"}`}>
+                          {count}
+                        </span>
+                      </div>
+                      <div className="h-1.5 overflow-hidden rounded-full bg-slate-100">
+                        <div
+                          className={`h-full rounded-full transition-all ${isBlocker ? "bg-red-400" : "bg-amber-400"}`}
+                          style={{ width: `${pct}%` }}
+                        />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          {/* Employee Gap Register */}
+          <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white/90 backdrop-blur-sm">
+            <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
+              <div>
+                <h3 className="text-sm font-bold text-slate-800">Employee Gap Register</h3>
+                <p className="text-[11px] text-slate-400">{numberValue(data?.total)} rows · Page {page}/{totalPages}</p>
+              </div>
+            </div>
+
+            {/* Bulk action bar */}
+            {selected.length > 0 && (
+              <div className="flex flex-wrap items-center justify-between gap-2 border-b bg-blue-50 px-4 py-2.5">
+                <span className="text-xs font-semibold text-blue-800">
+                  {selected.length} selected
+                  {selectedConflictCount > 0 ? ` · ${selectedConflictCount} conflict` : ""}
+                  {selectedRepairCount > 0 ? ` · ${selectedRepairCount} ADR-repair` : ""}
+                </span>
+                <div className="flex flex-wrap gap-2">
+                  <Button size="sm" variant="outline" className="h-7 text-xs"
+                    onClick={() => repairMissingAdr.mutate(selected.filter((id) => rows.some((row) => row.id === id && (row.issueType === "dialler_missing_adr" || row.issueType === "ncosec_missing_adr"))))}
+                    disabled={repairMissingAdr.isPending || selectedRepairCount === 0}>Repair ADR</Button>
+                  <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => updateReview.mutate({ status: "regularization_required" })} disabled={updateReview.isPending}>
+                    <UserCheck className="mr-1 h-3.5 w-3.5" />Needs Regularization
+                  </Button>
+                  <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => updateReview.mutate({ status: "reviewed" })} disabled={updateReview.isPending}>
+                    <CheckCircle2 className="mr-1 h-3.5 w-3.5" />Mark Reviewed
+                  </Button>
+                  <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => updateReview.mutate({ status: "no_issue" })} disabled={updateReview.isPending}>
+                    <XCircle className="mr-1 h-3.5 w-3.5" />No Issue
+                  </Button>
+                </div>
+              </div>
+            )}
+
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow className="bg-slate-50 hover:bg-slate-50">
+                    <TableHead className="h-9 w-10 px-3">
+                      <input type="checkbox" className="h-4 w-4 rounded border-slate-300"
+                        checked={allSelectableSelected}
+                        onChange={() => {
+                          if (allSelectableSelected) setSelected((c) => c.filter((id) => !selectableRows.some((r) => r.id === id)));
+                          else setSelected((c) => Array.from(new Set([...c, ...selectableRows.map((r) => r.id)])));
+                        }}
+                        aria-label="Select all" />
+                    </TableHead>
+                    <TableHead className="h-9 px-3 text-[11px] font-bold uppercase tracking-wider text-slate-500">Date</TableHead>
+                    <TableHead className="h-9 px-3 text-[11px] font-bold uppercase tracking-wider text-slate-500">Employee</TableHead>
+                    <TableHead className="h-9 px-3 text-[11px] font-bold uppercase tracking-wider text-slate-500">Source</TableHead>
+                    <TableHead className="h-9 px-3 text-[11px] font-bold uppercase tracking-wider text-slate-500">Review</TableHead>
+                    <TableHead className="h-9 px-3 text-[11px] font-bold uppercase tracking-wider text-slate-500">Resolved Via</TableHead>
+                    <TableHead className="h-9 px-3 text-[11px] font-bold uppercase tracking-wider text-slate-500">Manager</TableHead>
+                    <TableHead className="h-9 px-3 text-[11px] font-bold uppercase tracking-wider text-slate-500">Payroll ADR</TableHead>
+                    <TableHead className="h-9 px-3 text-[11px] font-bold uppercase tracking-wider text-slate-500">APR</TableHead>
+                    <TableHead className="h-9 px-3 text-[11px] font-bold uppercase tracking-wider text-slate-500">COSEC</TableHead>
+                    <TableHead className="h-9 px-3 text-[11px] font-bold uppercase tracking-wider text-slate-500">Issue</TableHead>
+                    <TableHead className="h-9 px-3 text-[11px] font-bold uppercase tracking-wider text-slate-500">Impact</TableHead>
+                    <TableHead className="h-9 w-16 px-3 text-right text-[11px] font-bold uppercase tracking-wider text-slate-500">Age</TableHead>
+                    <TableHead className="h-9 w-12 px-3" />
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {isLoading && (
+                    <TableRow>
+                      <TableCell colSpan={14} className="py-12 text-center text-slate-400">
+                        <RefreshCw className="mx-auto mb-2 h-6 w-6 animate-spin opacity-40" />
+                        Loading control checks…
+                      </TableCell>
+                    </TableRow>
+                  )}
+                  {!isLoading && rows.length === 0 && (
+                    <TableRow>
+                      <TableCell colSpan={14} className="py-12 text-center">
+                        <CheckCircle2 className="mx-auto mb-2 h-8 w-8 text-emerald-400" />
+                        <p className="text-sm font-medium text-slate-500">No gaps found for the selected filters.</p>
+                      </TableCell>
+                    </TableRow>
+                  )}
+                  {!isLoading && rows.map((row) => (
+                    <TableRow key={row.id} className={`transition-colors hover:bg-blue-50/30 ${REVIEW_ROW_STYLE[row.reviewStatus ?? "open"] ?? ""}`}>
+                      <TableCell className="px-3 py-1.5">
+                        {(row.issueType === "dialler_missing_adr" || row.issueType === "ncosec_missing_adr" ||
+                          ["dialler_penalty_biometric_supports_better", "biometric_penalty_dialler_supports_better"].includes(row.issueType)) ? (
+                          <input type="checkbox" className="h-4 w-4 rounded border-slate-300"
+                            checked={selected.includes(row.id)} onChange={() => toggleSelected(row.id)}
+                            aria-label={`Select ${row.employeeCode ?? row.employeeName ?? "row"}`} />
+                        ) : null}
+                      </TableCell>
+                      <TableCell className="whitespace-nowrap px-3 py-1.5 text-xs font-medium text-slate-600">{row.issueDate}</TableCell>
+                      <TableCell className="px-3 py-1.5 min-w-[160px]">
+                        <p className="text-sm font-semibold text-slate-900 leading-tight">{row.employeeName ?? row.employeeCode ?? "—"}</p>
+                        <p className="mt-0.5 text-[11px] text-slate-400 leading-tight">{row.employeeCode} · {row.branchName ?? "—"}</p>
+                      </TableCell>
+                      <TableCell className="px-3 py-1.5">
+                        <Badge variant="outline" className={`text-[11px] ${SOURCE_STYLE[row.source] ?? SOURCE_STYLE.adr}`}>{sourceLabel(row.source)}</Badge>
+                      </TableCell>
+                      <TableCell className="px-3 py-1.5">
+                        <Badge variant="outline" className={`text-[11px] ${REVIEW_STYLE[row.reviewStatus ?? "open"] ?? REVIEW_STYLE.open}`}>
+                          {prettyIssue(row.reviewStatus ?? "open")}
+                        </Badge>
+                        {row.reviewNote ? <p className="mt-0.5 text-[10px] text-slate-400">{row.reviewNote}</p> : null}
+                      </TableCell>
+                      <TableCell className="px-3 py-1.5 text-xs text-slate-600">
+                        <span className="font-medium">{row.resolvedThrough ?? "—"}</span>
+                        {row.resolvedDetail ? <p className="text-[10px] text-slate-400">{row.resolvedDetail}</p> : null}
+                      </TableCell>
+                      <TableCell className="px-3 py-1.5 text-xs">
+                        <span className="font-medium text-slate-700">{row.reportingManagerName ?? "—"}</span>
+                      </TableCell>
+                      <TableCell className="px-3 py-1.5 text-xs text-slate-600">
+                        <span className="font-medium text-slate-800 block">{row.payrollSourceLabel ?? "ADR"}</span>
+                        {formatEvidence(row.adrStatus, row.adrMinutes)}
+                      </TableCell>
+                      <TableCell className="px-3 py-1.5 text-xs text-slate-600">{formatEvidence(row.aprStatus, row.aprMinutes)}</TableCell>
+                      <TableCell className="px-3 py-1.5 text-xs text-slate-600">{formatEvidence(row.biometricStatus, row.biometricMinutes)}</TableCell>
+                      <TableCell className="px-3 py-1.5 min-w-[130px]">
+                        <Badge variant="outline" className={`text-[11px] ${SEVERITY_STYLE[row.severity]}`}>{row.severity}</Badge>
+                        <p className="mt-0.5 text-[11px] text-slate-500 capitalize">{prettyIssue(row.issueType)}</p>
+                      </TableCell>
+                      <TableCell className="max-w-[200px] px-3 py-1.5 text-[11px] text-slate-500">{row.payrollImpact}</TableCell>
+                      <TableCell className="px-3 py-1.5 text-right">
+                        {(() => {
+                          const d = daysOpen(row.reviewCreatedAt);
+                          if (d === null) return <span className="text-slate-300 text-xs">—</span>;
+                          return (
+                            <span className={`inline-flex h-6 items-center rounded-full px-2 text-[11px] font-bold ${
+                              d < 3 ? "bg-emerald-100 text-emerald-700" : d <= 7 ? "bg-amber-100 text-amber-700" : "bg-red-100 text-red-700"
+                            }`}>{d}d</span>
+                          );
+                        })()}
+                      </TableCell>
+                      <TableCell className="px-2 py-1.5">
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button variant="ghost" size="icon" className="h-8 w-8 rounded-lg text-slate-400 hover:text-slate-700">
+                              <MoreHorizontal className="h-4 w-4" />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end" className="w-52">
+                            {["dialler_penalty_biometric_supports_better", "biometric_penalty_dialler_supports_better"].includes(row.issueType) && (
+                              <>
+                                <DropdownMenuItem
+                                  onClick={() => void notifySingleManager(row.id)}
+                                  disabled={notifyManagers.isPending || !row.reportingManagerUserId}
+                                >
+                                  <Bell className="mr-2 h-4 w-4" /> Notify Manager
+                                </DropdownMenuItem>
+                                <DropdownMenuItem onClick={() => void updateSingleReview(row.id, "regularization_required")} disabled={updateReview.isPending}>
+                                  <UserCheck className="mr-2 h-4 w-4" /> Needs Regularization
+                                </DropdownMenuItem>
+                                <DropdownMenuItem onClick={() => void updateSingleReview(row.id, "reviewed")} disabled={updateReview.isPending}>
+                                  <CheckCircle2 className="mr-2 h-4 w-4" /> Mark Reviewed
+                                </DropdownMenuItem>
+                                <DropdownMenuItem onClick={() => void updateSingleReview(row.id, "no_issue")} disabled={updateReview.isPending}>
+                                  <XCircle className="mr-2 h-4 w-4" /> No Issue
+                                </DropdownMenuItem>
+                                <DropdownMenuSeparator />
+                              </>
+                            )}
+                            {(row.issueType === "dialler_missing_adr" || row.issueType === "ncosec_missing_adr") && (
+                              <DropdownMenuItem onClick={() => repairMissingAdr.mutate([row.id])} disabled={repairMissingAdr.isPending}>
+                                <RefreshCw className="mr-2 h-4 w-4" /> Repair ADR
+                              </DropdownMenuItem>
+                            )}
+                            {row.issueType === "salary_payable_days_mismatch" && row.employeeId && !data?.run?.attendance_snapshot_locked && (
+                              <DropdownMenuItem
+                                onClick={() => {
+                                  if (!data?.run?.id) return;
+                                  void hrmsApi.post(`/api/payroll/runs/${data.run!.id}/recalculate-drift`, { employee_ids: [row.employeeId] }).then(() => { void refetch(); });
+                                }}
+                              >
+                                <RefreshCw className="mr-2 h-4 w-4" /> Recalculate Drift
+                              </DropdownMenuItem>
+                            )}
+                            {row.employeeId && (
+                              <DropdownMenuItem asChild>
+                                <Link to={`/attendance-regularization?employeeId=${encodeURIComponent(row.employeeId)}&date=${encodeURIComponent(row.issueDate)}`}>
+                                  <Activity className="mr-2 h-4 w-4" /> Open Regularization
+                                </Link>
+                              </DropdownMenuItem>
+                            )}
+                            {!["dialler_penalty_biometric_supports_better", "biometric_penalty_dialler_supports_better", "dialler_missing_adr", "ncosec_missing_adr"].includes(row.issueType) && !row.employeeId && (
+                              <DropdownMenuItem disabled className="text-slate-400">No actions available</DropdownMenuItem>
+                            )}
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+
+            <div className="flex items-center justify-between border-t border-slate-100 px-4 py-3">
+              <span className="text-xs text-slate-400">Page {page} of {totalPages} · {numberValue(data?.total)} total</span>
+              <div className="flex gap-2">
+                <Button variant="outline" size="sm" className="h-8 rounded-xl" disabled={page <= 1} onClick={() => setPage((p) => Math.max(1, p - 1))}>← Prev</Button>
+                <Button variant="outline" size="sm" className="h-8 rounded-xl" disabled={page >= totalPages} onClick={() => setPage((p) => p + 1)}>Next →</Button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* ── Salary Drift Panel ── */}
         {data?.run && (
-          <div className="mt-6">
-            <SalaryDriftPanel
-              runId={data.run.id}
-              runMonth={data.runMonth}
-              snapshotLocked={Boolean(data.run.attendance_snapshot_locked)}
-            />
+          <div className="mt-2">
+            <SalaryDriftPanel runId={data.run.id} runMonth={data.runMonth} snapshotLocked={Boolean(data.run.attendance_snapshot_locked)} />
           </div>
         )}
       </div>

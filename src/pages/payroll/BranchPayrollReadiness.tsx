@@ -17,6 +17,8 @@ import {
   Download,
   ChevronDown,
   Bell,
+  TrendingUp,
+  IndianRupee,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -246,6 +248,13 @@ function getChecklistDisplay(branch: BranchReadiness, def: ChecklistDef): string
 
 // ─── Branch Card (HO view) ─────────────────────────────────────────────────────
 
+const STATUS_CARD_STYLE: Record<string, { border: string; accentBar: string; badge: string; badgeText: string }> = {
+  ready:       { border: "border-emerald-200", accentBar: "bg-emerald-400", badge: "bg-emerald-100 text-emerald-700 border-emerald-200", badgeText: "Ready" },
+  in_progress: { border: "border-amber-200",   accentBar: "bg-amber-400",   badge: "bg-amber-100 text-amber-700 border-amber-200",       badgeText: "In Progress" },
+  blocked:     { border: "border-red-200",     accentBar: "bg-red-400",     badge: "bg-red-100 text-red-700 border-red-200",             badgeText: "Blocked" },
+  not_started: { border: "border-slate-200",   accentBar: "bg-slate-300",   badge: "bg-slate-100 text-slate-500 border-slate-200",       badgeText: "Not Started" },
+};
+
 function BranchCard({
   branch,
   onOpenDetail,
@@ -257,106 +266,113 @@ function BranchCard({
   onOverride: (b: BranchReadiness) => void;
   canOverride: boolean;
 }) {
-  const colors = getScoreColors(branch.readiness_score);
+  const s = STATUS_CARD_STYLE[branch.readiness_status] ?? STATUS_CARD_STYLE.not_started;
+  const doneCount = CHECKLIST_DEFS.filter((def) => getChecklistValue(branch, def)).length;
+  const totalCount = CHECKLIST_DEFS.length;
 
   return (
-    <Card
-      className="cursor-pointer hover:shadow-md transition-shadow border"
+    <div
+      className={`group relative cursor-pointer overflow-hidden rounded-2xl border-2 bg-white shadow-sm transition-all hover:-translate-y-1 hover:shadow-lg ${s.border}`}
       onClick={() => onOpenDetail(branch)}
     >
-      <CardHeader className="pb-2">
-        <div className="flex items-start justify-between gap-2">
-          <div>
-            <CardTitle className="text-base leading-tight">{branch.branch_name}</CardTitle>
-            <p className="text-xs text-muted-foreground mt-0.5">
-              {branch.employee_count_active || branch.employee_count} Active
+      {/* Status accent bar */}
+      <div className={`absolute left-0 top-0 h-full w-1 ${s.accentBar}`} />
+
+      <div className="pl-4 pr-4 pt-4 pb-3">
+        {/* Header row */}
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0 flex-1">
+            <h3 className="truncate text-base font-bold leading-tight text-slate-900">{branch.branch_name}</h3>
+            <p className="mt-0.5 text-xs text-slate-400">
+              {branch.employee_count_active || branch.employee_count} active
               {branch.employee_count_left > 0 && (
-                <span className="text-orange-600"> · {branch.employee_count_left} Left (salary due)</span>
+                <span className="ml-1 text-orange-600 font-medium">· {branch.employee_count_left} left (salary due)</span>
               )}
             </p>
           </div>
-          <ScoreCircle score={branch.readiness_score} size={56} />
+          <div className="flex-shrink-0">
+            <ScoreCircle score={branch.readiness_score} size={52} />
+          </div>
         </div>
-      </CardHeader>
-      <CardContent className="pt-0 space-y-3">
-        {/* Checklist icon row */}
-        <div className="flex flex-wrap gap-1.5">
+
+        {/* Status badge + checklist progress */}
+        <div className="mt-3 flex items-center justify-between gap-2">
+          <span className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-[11px] font-bold ${s.badge}`}>
+            {s.badgeText}
+          </span>
+          <span className="text-[11px] text-slate-400">{doneCount}/{totalCount} checks</span>
+        </div>
+
+        {/* Progress bar */}
+        <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-slate-100">
+          <div
+            className={`h-full rounded-full transition-all ${s.accentBar}`}
+            style={{ width: `${Math.round((doneCount / totalCount) * 100)}%` }}
+          />
+        </div>
+
+        {/* Checklist pills */}
+        <div className="mt-3 flex flex-wrap gap-1">
           {CHECKLIST_DEFS.map((def) => {
             const ok = getChecklistValue(branch, def);
             const display = getChecklistDisplay(branch, def);
             return (
-              <div
+              <span
                 key={String(def.key)}
                 title={def.label + (display ? ` (${display})` : "")}
-                className={`flex items-center gap-0.5 text-xs px-1.5 py-0.5 rounded border ${
-                  ok
-                    ? "bg-emerald-50 border-emerald-200 text-emerald-700"
-                    : "bg-gray-50 border-gray-200 text-gray-400"
+                className={`inline-flex items-center gap-0.5 rounded-md border px-1.5 py-0.5 text-[10px] font-medium transition-colors ${
+                  ok ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-slate-200 bg-slate-50 text-slate-300"
                 }`}
               >
-                {def.icon}
-                {display && <span>{display}</span>}
-                {!display && (ok ? <CheckCircle2 className="w-3 h-3" /> : <XCircle className="w-3 h-3" />)}
-              </div>
+                {ok ? <CheckCircle2 className="h-2.5 w-2.5" /> : <XCircle className="h-2.5 w-2.5" />}
+                <span className="hidden sm:inline">{display ?? def.label.split(" ")[0]}</span>
+              </span>
             );
           })}
         </div>
 
-        {/* Projected salary */}
-        <div className="flex items-center justify-between text-xs text-muted-foreground">
-          <span>Projected Gross</span>
-          <span className="font-medium text-foreground">{fmtCurrency(branch.projected_gross)}</span>
-        </div>
-        {branch.projected_net != null && (
-          <div className="flex items-center justify-between text-xs text-muted-foreground">
-            <span>Projected Net</span>
-            <span className="font-medium text-foreground">{fmtCurrency(branch.projected_net)}</span>
+        {/* Salary projections */}
+        {(branch.projected_gross != null || branch.projected_net != null) && (
+          <div className="mt-3 grid grid-cols-2 gap-2 rounded-xl border border-slate-100 bg-slate-50/60 px-3 py-2">
+            <div>
+              <p className="text-[10px] font-medium text-slate-400">Gross</p>
+              <p className="mt-0.5 text-sm font-bold text-slate-800">{fmtCurrency(branch.projected_gross)}</p>
+            </div>
+            {branch.projected_net != null && (
+              <div>
+                <p className="text-[10px] font-medium text-slate-400">Net</p>
+                <p className="mt-0.5 text-sm font-bold text-slate-800">{fmtCurrency(branch.projected_net)}</p>
+              </div>
+            )}
           </div>
         )}
 
-        {/* Sign-off + override row */}
-        <div
-          className="flex items-center justify-between gap-2 pt-1"
-          onClick={(e) => e.stopPropagation()}
-        >
-          <Badge
-            variant="outline"
-            className={
-              branch.branch_head_signoff
-                ? "text-emerald-700 bg-emerald-50 border-emerald-200"
-                : "text-amber-700 bg-amber-50 border-amber-200"
-            }
-          >
-            {branch.branch_head_signoff ? "Signed Off" : "Pending Sign-off"}
-          </Badge>
-          {canOverride && (
-            branch.ho_override_ready ? (
-              <Badge variant="outline" className="text-blue-700 bg-blue-50 border-blue-200 text-xs">
-                <CheckCircle2 className="w-3 h-3 mr-1" />
-                Overridden
-              </Badge>
-            ) : (
-              <Button
-                size="sm"
-                variant="outline"
-                className="text-xs h-7"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onOverride(branch);
-                }}
-              >
+        {/* Footer: sign-off + override */}
+        <div className="mt-3 flex items-center justify-between gap-2" onClick={(e) => e.stopPropagation()}>
+          <span className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-semibold ${
+            branch.branch_head_signoff
+              ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+              : "border-amber-200 bg-amber-50 text-amber-700"
+          }`}>
+            {branch.branch_head_signoff ? <><CheckCircle2 className="h-2.5 w-2.5" /> Signed Off</> : "Pending Sign-off"}
+          </span>
+          <div className="flex items-center gap-1.5">
+            {canOverride && !branch.ho_override_ready && (
+              <Button size="sm" variant="outline" className="h-7 rounded-xl text-xs"
+                onClick={(e) => { e.stopPropagation(); onOverride(branch); }}>
                 HO Override
               </Button>
-            )
-          )}
+            )}
+            {branch.ho_override_ready && (
+              <span className="inline-flex items-center gap-1 rounded-full border border-blue-200 bg-blue-50 px-2 py-0.5 text-[11px] font-semibold text-blue-700">
+                <CheckCircle2 className="h-2.5 w-2.5" /> Overridden
+              </span>
+            )}
+            <ChevronRight className="h-4 w-4 text-slate-300 transition-transform group-hover:translate-x-0.5" />
+          </div>
         </div>
-
-        <div className="flex items-center justify-end text-xs text-muted-foreground">
-          <ChevronRight className="w-3.5 h-3.5" />
-          <span>View details</span>
-        </div>
-      </CardContent>
-    </Card>
+      </div>
+    </div>
   );
 }
 
@@ -837,71 +853,65 @@ function BranchView({
   const failingItems = CHECKLIST_DEFS.filter((def) => !getChecklistValue(data, def));
 
   return (
-    <div className="space-y-6">
-      {/* Score gauge */}
-      <div className="flex items-center gap-6 p-6 rounded-xl border bg-card">
-        <ScoreCircle score={data.readiness_score} size={96} />
-        <div>
-          <p className="text-lg font-semibold">{data.branch_name}</p>
-          <Badge variant="outline" className={`mt-1 capitalize ${colors.badge}`}>
-            {data.readiness_status.replace(/_/g, " ")}
-          </Badge>
-          <p className="text-xs text-muted-foreground mt-1">
-            {data.employee_count_active || data.employee_count} Active
-            {data.employee_count_left > 0 && (
-              <span className="text-orange-600"> · {data.employee_count_left} Left (salary due)</span>
-            )}
-            {" "}· {data.process_month}
-          </p>
-        </div>
-        {data.branch_head_signoff && (
-          <div className="ml-auto text-right">
-            <Badge
-              variant="outline"
-              className="text-emerald-700 bg-emerald-50 border-emerald-200"
-            >
-              <CheckCircle2 className="w-3.5 h-3.5 mr-1" />
-              Signed Off
-            </Badge>
-            <p className="text-xs text-muted-foreground mt-1">
-              {fmtDateTime(data.branch_head_signoff_at)}
+    <div className="space-y-5">
+      {/* Score Hero */}
+      <div
+        className={`relative overflow-hidden rounded-2xl border-2 p-5 ${
+          data.readiness_score >= 80
+            ? "border-emerald-200 bg-gradient-to-br from-emerald-50 to-white"
+            : data.readiness_score >= 60
+            ? "border-amber-200 bg-gradient-to-br from-amber-50 to-white"
+            : "border-red-200 bg-gradient-to-br from-red-50 to-white"
+        }`}
+      >
+        <div className="flex items-center gap-5">
+          <ScoreCircle score={data.readiness_score} size={88} />
+          <div className="min-w-0 flex-1">
+            <h2 className="text-xl font-bold text-slate-900">{data.branch_name}</h2>
+            <span className={`mt-1.5 inline-flex items-center rounded-full border px-3 py-0.5 text-xs font-bold capitalize ${colors.badge}`}>
+              {data.readiness_status.replace(/_/g, " ")}
+            </span>
+            <p className="mt-1.5 text-xs text-slate-500">
+              {data.employee_count_active || data.employee_count} active employees
+              {data.employee_count_left > 0 && <span className="ml-1 text-orange-600 font-medium">· {data.employee_count_left} leaving</span>}
+              {" · "}{data.process_month}
             </p>
           </div>
-        )}
+          {data.branch_head_signoff && (
+            <div className="flex-shrink-0 text-right">
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-100 px-3 py-1 text-xs font-bold text-emerald-700">
+                <CheckCircle2 className="h-3.5 w-3.5" /> Signed Off
+              </span>
+              <p className="mt-1 text-[10px] text-slate-400">{fmtDateTime(data.branch_head_signoff_at)}</p>
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Blocked guidance */}
       {data.readiness_status === "blocked" && failingItems.length > 0 && (
-        <div className="rounded-lg border border-red-200 bg-red-50 p-4 space-y-2">
-          <div className="flex items-center gap-2 text-red-800 font-medium text-sm">
-            <AlertTriangle className="w-4 h-4 flex-shrink-0" />
-            Payroll readiness is blocked. Complete the following to unblock:
+        <div className="rounded-2xl border border-red-200 bg-red-50 p-4">
+          <div className="flex items-center gap-2 text-sm font-bold text-red-800">
+            <AlertTriangle className="h-4 w-4 flex-shrink-0" />
+            Payroll readiness is blocked. Complete to unblock:
           </div>
-          <ul className="text-xs text-red-700 space-y-1 list-disc list-inside">
-            {failingItems.map((def) => (
-              <li key={String(def.key)}>{def.label}</li>
-            ))}
+          <ul className="mt-2 space-y-1 text-xs text-red-700 list-disc list-inside">
+            {failingItems.map((def) => <li key={String(def.key)}>{def.label}</li>)}
           </ul>
         </div>
       )}
 
       {/* Attendance freeze request */}
       {isBranchRole && !data.attendance_frozen && (
-        <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 flex items-center justify-between gap-4">
+        <div className="flex items-center justify-between gap-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3">
           <div>
-            <p className="text-sm font-medium text-amber-900">Attendance not yet frozen</p>
-            <p className="text-xs text-amber-700 mt-0.5">
-              Once attendance data is final, notify the Payroll Head to freeze it.
-            </p>
+            <p className="text-sm font-semibold text-amber-900">Attendance not yet frozen</p>
+            <p className="text-xs text-amber-700 mt-0.5">Notify the Payroll Head to freeze attendance once data is final.</p>
           </div>
-          <Button
-            size="sm"
-            variant="outline"
-            className="border-amber-400 text-amber-800 hover:bg-amber-100 whitespace-nowrap"
-            disabled={freezeRequestMutation.isPending}
-            onClick={() => freezeRequestMutation.mutate()}
-          >
-            <Bell className="w-3.5 h-3.5 mr-1.5" />
+          <Button size="sm" variant="outline"
+            className="flex-shrink-0 rounded-xl border-amber-400 text-amber-800 hover:bg-amber-100"
+            disabled={freezeRequestMutation.isPending} onClick={() => freezeRequestMutation.mutate()}>
+            <Bell className="mr-1.5 h-3.5 w-3.5" />
             {freezeRequestMutation.isPending ? "Sending…" : "Request Freeze"}
           </Button>
         </div>
@@ -914,46 +924,36 @@ function BranchView({
           const display = getChecklistDisplay(data, def);
           const tsKey = def.timestampKey;
           const ts = tsKey ? (data[tsKey] as string | null) : null;
-          const isManualField =
-            def.key === "custom_deductions_uploaded" || def.key === "overtime_entered";
+          const isManualField = def.key === "custom_deductions_uploaded" || def.key === "overtime_entered";
 
           return (
             <div
               key={String(def.key)}
-              className={`p-4 rounded-lg border bg-card flex items-start gap-3 ${
-                ok ? "border-emerald-200" : "border-gray-200"
+              className={`flex items-start gap-3 rounded-2xl border-2 p-4 transition-colors ${
+                ok
+                  ? "border-emerald-200 bg-gradient-to-br from-emerald-50/60 to-white"
+                  : "border-red-100 bg-gradient-to-br from-red-50/40 to-white"
               }`}
             >
-              <div className={`mt-0.5 ${ok ? "text-emerald-600" : "text-gray-300"}`}>
-                {ok ? (
-                  <CheckCircle2 className="w-5 h-5" />
-                ) : (
-                  <XCircle className="w-5 h-5 text-red-300" />
-                )}
+              <div className={`mt-0.5 flex-shrink-0 rounded-xl p-1.5 ${ok ? "bg-emerald-100 text-emerald-600" : "bg-red-100 text-red-400"}`}>
+                {ok ? <CheckCircle2 className="h-4 w-4" /> : <XCircle className="h-4 w-4" />}
               </div>
-              <div className="flex-1 min-w-0">
+              <div className="min-w-0 flex-1">
                 <div className="flex items-center justify-between gap-2">
-                  <p className="text-sm font-medium">{def.label}</p>
+                  <p className="text-sm font-semibold text-slate-800">{def.label}</p>
                   {isManualField && (
                     <ManualToggleButton
-                      branchId={data.branch_id}
-                      month={month}
+                      branchId={data.branch_id} month={month}
                       fieldKey={def.key as "custom_deductions_uploaded" | "overtime_entered"}
                       currentValue={data[def.key as keyof BranchReadiness] as number}
                       label={def.label}
                     />
                   )}
                 </div>
-                {display && <p className="text-xs text-muted-foreground">{display}</p>}
-                {ts && (
-                  <p className="text-xs text-muted-foreground mt-0.5">
-                    Updated: {fmtDateTime(ts)}
-                  </p>
-                )}
+                {display && <p className="mt-0.5 text-xs font-medium text-slate-500">{display}</p>}
+                {ts && <p className="mt-0.5 text-[10px] text-slate-400">Updated: {fmtDateTime(ts)}</p>}
                 {!isManualField && !ok && (
-                  <p className="text-xs text-muted-foreground italic mt-0.5">
-                    Go to the relevant module to update
-                  </p>
+                  <p className="mt-0.5 text-[11px] italic text-slate-400">Go to the relevant module to update</p>
                 )}
               </div>
             </div>
@@ -961,36 +961,31 @@ function BranchView({
         })}
       </div>
 
-      {/* Projections */}
+      {/* Salary Projections */}
       {(data.projected_gross != null || data.projected_net != null) && (
-        <div className="rounded-lg border p-4 space-y-3">
-          <div className="flex items-center justify-between">
-            <p className="text-sm font-semibold">Salary Projections</p>
-            <Button
-              size="icon"
-              variant="ghost"
-              className="h-7 w-7"
-              disabled={projectionMutation.isPending}
-              onClick={() => projectionMutation.mutate()}
-              title="Refresh projection"
-            >
-              <RefreshCw className={`w-4 h-4 ${projectionMutation.isPending ? "animate-spin" : ""}`} />
+        <div className="rounded-2xl border border-slate-200 bg-gradient-to-br from-slate-50 to-white p-4">
+          <div className="mb-3 flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <IndianRupee className="h-4 w-4 text-slate-500" />
+              <p className="text-sm font-bold text-slate-800">Salary Projections</p>
+            </div>
+            <Button size="icon" variant="ghost" className="h-7 w-7 rounded-xl"
+              disabled={projectionMutation.isPending} onClick={() => projectionMutation.mutate()} title="Refresh">
+              <RefreshCw className={`h-4 w-4 ${projectionMutation.isPending ? "animate-spin" : ""}`} />
             </Button>
           </div>
           <div className="grid grid-cols-2 gap-4">
-            <div>
-              <p className="text-xs text-muted-foreground">Projected Gross</p>
-              <p className="text-base font-semibold">{fmtCurrency(data.projected_gross)}</p>
+            <div className="rounded-xl border border-slate-200 bg-white p-3">
+              <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">Projected Gross</p>
+              <p className="mt-1 text-xl font-extrabold tabular-nums text-slate-900">{fmtCurrency(data.projected_gross)}</p>
             </div>
-            <div>
-              <p className="text-xs text-muted-foreground">Projected Net</p>
-              <p className="text-base font-semibold">{fmtCurrency(data.projected_net)}</p>
+            <div className="rounded-xl border border-slate-200 bg-white p-3">
+              <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">Projected Net</p>
+              <p className="mt-1 text-xl font-extrabold tabular-nums text-emerald-700">{fmtCurrency(data.projected_net)}</p>
             </div>
           </div>
           {data.projection_computed_at && (
-            <p className="text-xs text-muted-foreground">
-              Computed: {fmtDateTime(data.projection_computed_at)}
-            </p>
+            <p className="mt-2 text-[10px] text-slate-400">Computed: {fmtDateTime(data.projection_computed_at)}</p>
           )}
         </div>
       )}
@@ -1061,16 +1056,25 @@ function BranchView({
 function StatChip({
   label,
   value,
-  colorClass = "",
+  accent = "slate",
 }: {
   label: string;
   value: string | number;
-  colorClass?: string;
+  accent?: "slate" | "green" | "amber" | "red" | "blue";
 }) {
+  const accentMap: Record<string, { card: string; value: string; bar: string }> = {
+    slate: { card: "border-slate-200 bg-white", value: "text-slate-800", bar: "bg-slate-300" },
+    green: { card: "border-emerald-200 bg-emerald-50/60", value: "text-emerald-700", bar: "bg-emerald-400" },
+    amber: { card: "border-amber-200 bg-amber-50/60", value: "text-amber-700", bar: "bg-amber-400" },
+    red:   { card: "border-red-200 bg-red-50/60", value: "text-red-700", bar: "bg-red-400" },
+    blue:  { card: "border-blue-200 bg-blue-50/60", value: "text-blue-700", bar: "bg-blue-400" },
+  };
+  const s = accentMap[accent];
   return (
-    <div className={`flex flex-col items-center px-4 py-2 rounded-lg border bg-card ${colorClass}`}>
-      <p className="text-xl font-bold tabular-nums">{value}</p>
-      <p className="text-xs text-muted-foreground">{label}</p>
+    <div className={`relative overflow-hidden rounded-2xl border-2 px-4 py-3 shadow-sm transition-all hover:-translate-y-0.5 ${s.card}`}>
+      <div className={`absolute bottom-0 left-0 right-0 h-0.5 ${s.bar}`} />
+      <p className={`text-2xl font-extrabold tabular-nums leading-none ${s.value}`}>{value}</p>
+      <p className="mt-1.5 text-[11px] font-semibold uppercase tracking-wider text-slate-400">{label}</p>
     </div>
   );
 }
@@ -1145,40 +1149,23 @@ function HOView({ month }: { month: string }) {
     <div className="space-y-4">
       {/* Warning banner */}
       {notFrozenCount > 0 && (
-        <div className="flex items-center gap-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-amber-800 text-sm">
-          <AlertTriangle className="w-4 h-4 flex-shrink-0" />
+        <div className="flex items-center gap-3 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+          <AlertTriangle className="h-4 w-4 flex-shrink-0 text-amber-500" />
           <span>
-            <strong>{notFrozenCount}</strong> branch{notFrozenCount > 1 ? "es" : ""} not
-            attendance-frozen — payroll run creation will be blocked for{" "}
+            <strong>{notFrozenCount}</strong> branch{notFrozenCount > 1 ? "es" : ""} not attendance-frozen — payroll run creation will be blocked for{" "}
             {notFrozenCount > 1 ? "those branches" : "that branch"}.
           </span>
         </div>
       )}
 
       {/* Stats row */}
-      <div className="flex flex-wrap gap-3">
-        <StatChip label="Total Branches" value={stats.total} />
-        <StatChip
-          label="Ready"
-          value={stats.ready}
-          colorClass="border-emerald-200 text-emerald-700"
-        />
-        <StatChip
-          label="In Progress"
-          value={stats.inProgress}
-          colorClass="border-amber-200 text-amber-700"
-        />
-        <StatChip
-          label="Blocked"
-          value={stats.blocked}
-          colorClass="border-red-200 text-red-700"
-        />
-        <StatChip
-          label="Not Started"
-          value={stats.notStarted}
-          colorClass="border-gray-200 text-gray-500"
-        />
-        <StatChip label="Avg Score" value={`${stats.avgScore}%`} />
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+        <StatChip label="Total Branches" value={stats.total} accent="blue" />
+        <StatChip label="Ready" value={stats.ready} accent="green" />
+        <StatChip label="In Progress" value={stats.inProgress} accent="amber" />
+        <StatChip label="Blocked" value={stats.blocked} accent="red" />
+        <StatChip label="Not Started" value={stats.notStarted} accent="slate" />
+        <StatChip label="Avg Score" value={`${stats.avgScore}%`} accent={stats.avgScore >= 80 ? "green" : stats.avgScore >= 60 ? "amber" : "red"} />
       </div>
 
       {/* Branch cards */}
@@ -1254,39 +1241,46 @@ export default function BranchPayrollReadiness() {
 
   return (
     <DashboardLayout>
-      <div className="px-4 py-6 sm:px-6 lg:px-8 max-w-7xl mx-auto space-y-4">
-        {/* Page header */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-          <div>
-            <h1 className="text-xl font-bold tracking-tight">Branch Payroll Readiness</h1>
-            <p className="text-sm text-muted-foreground mt-0.5">
-              Track payroll input completeness across branches
-            </p>
-          </div>
-          <div className="flex items-center gap-2">
-            <input
-              type="month"
-              value={month}
-              onChange={(e) => setMonth(e.target.value)}
-              className="h-9 rounded-md border border-input bg-background px-3 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-            />
-            {canExport && (
-              <a
-                href={`/api/payroll/branch-readiness/export?month=${month}&format=csv`}
-                download={`branch-readiness-${month}.csv`}
-              >
-                <Button variant="outline" size="sm">
-                  <Download className="w-3.5 h-3.5 mr-1.5" />
-                  Export CSV
+      <div className="mx-auto max-w-7xl space-y-4 px-4 py-5 sm:px-5">
+        {/* Hero Header */}
+        <div
+          className="relative overflow-hidden rounded-2xl p-5 sm:p-6"
+          style={{
+            background: "linear-gradient(135deg, #064e3b 0%, #065f46 50%, #047857 100%)",
+            boxShadow: "0 8px 32px rgba(6,78,59,0.30)",
+          }}
+        >
+          <div className="pointer-events-none absolute inset-0 opacity-10"
+            style={{ backgroundImage: "radial-gradient(circle at 20% 50%, rgba(255,255,255,0.3) 0%, transparent 50%), radial-gradient(circle at 80% 20%, rgba(255,255,255,0.15) 0%, transparent 40%)" }} />
+          <div className="relative flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <div className="flex items-center gap-2">
+                <TrendingUp className="h-5 w-5 text-emerald-200" />
+                <span className="text-[11px] font-bold uppercase tracking-[0.14em] text-emerald-200">Payroll Operations</span>
+              </div>
+              <h1 className="mt-1.5 text-2xl font-extrabold tracking-tight text-white sm:text-3xl">Branch Payroll Readiness</h1>
+              <p className="mt-1 text-sm text-emerald-100/80">Track payroll input completeness · attendance freeze · sign-off · projections</p>
+            </div>
+            <div className="flex flex-wrap items-center gap-2 sm:flex-nowrap">
+              <input
+                type="month"
+                value={month}
+                onChange={(e) => setMonth(e.target.value)}
+                className="h-10 rounded-xl border border-white/25 bg-white/10 px-3 text-sm text-white placeholder-white/50 backdrop-blur-sm focus:outline-none focus:ring-2 focus:ring-white/30"
+              />
+              {canExport && (
+                <a href={`/api/payroll/branch-readiness/export?month=${month}&format=csv`} download={`branch-readiness-${month}.csv`}>
+                  <Button variant="outline" size="sm" className="h-10 rounded-xl border-white/25 bg-white/10 text-white hover:bg-white/20">
+                    <Download className="mr-1.5 h-4 w-4" /> Export CSV
+                  </Button>
+                </a>
+              )}
+              {(isHORole || isBranchRole) && (
+                <Button variant="outline" size="sm" className="h-10 rounded-xl border-white/25 bg-white/10 text-white hover:bg-white/20" onClick={handleRefreshAll}>
+                  <RefreshCw className="mr-1.5 h-4 w-4" /> Refresh
                 </Button>
-              </a>
-            )}
-            {(isHORole || isBranchRole) && (
-              <Button variant="outline" size="sm" onClick={handleRefreshAll}>
-                <RefreshCw className="w-3.5 h-3.5 mr-1.5" />
-                Refresh
-              </Button>
-            )}
+              )}
+            </div>
           </div>
         </div>
 
