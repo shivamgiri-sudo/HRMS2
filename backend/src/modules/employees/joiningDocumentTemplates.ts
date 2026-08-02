@@ -267,7 +267,7 @@ const CONTRACT: Block[] = [
   p("This Agreement is made and entered into at New Delhi on {{current_date}} by and between:"),
   p("Mas Callnet India (P) Ltd, a company registered under the Companies Act, 1956 and having its registered office at {{company_registered_office}}, and an office at {{branch_address}} (hereinafter called the Company / First Party which expression unless repugnant to the context shall mean and include its subsidiaries, its successors and assigns)"),
   p("AND"),
-  p("{{employee_name}} s/o | d/o {{father_name}} r/o {{employee_address}} (hereinafter referred to as the Second Party which expression unless repugnant to the context shall mean and include its successors in interest and permitted assigns)"),
+  p("{{employee_name}} {{relation_prefix}} {{father_name}} r/o {{employee_address}} (hereinafter referred to as the Second Party which expression unless repugnant to the context shall mean and include its successors in interest and permitted assigns)"),
   p("WHEREAS the first party is engaged in the business of software development, customisation, Business Process Outsourcing and other Information Technology Enabled and Related Services;"),
   p("AND WHEREAS the second party has represented that it is qualified and trained in the field of {{designation}} and is, therefore, capable of carrying out the activities required of it by the Company including {{process}} etc.;"),
   p("AND WHEREAS the second party has offered its services to the Company and the Company proposes to employ the services of the second party based on the assurances given by the second party."),
