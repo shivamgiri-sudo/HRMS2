@@ -15,13 +15,19 @@ ALTER TABLE wfm_slot_requirement
 
 -- Index for active-only queries
 -- MySQL does not support IF NOT EXISTS on CREATE INDEX; guarded instead.
+-- The COLUMN is checked as well as the index: on a fresh database the two are different
+-- questions, and 138 indexed ats_candidate(branch_name) on a table that has no such column.
 SET @idx_idx_slot_req_active = (
   SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS
    WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'wfm_slot_requirement' AND INDEX_NAME = 'idx_slot_req_active'
 );
-SET @sql = IF(@idx_idx_slot_req_active = 0,
+SET @col_idx_slot_req_active = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+   WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'wfm_slot_requirement' AND COLUMN_NAME IN ('is_active')
+);
+SET @sql = IF(@idx_idx_slot_req_active = 0 AND @col_idx_slot_req_active = 1,
   'CREATE INDEX idx_slot_req_active ON wfm_slot_requirement (is_active)',
-  'SELECT ''idx_slot_req_active already exists'' AS n'
+  'SELECT ''idx_slot_req_active skipped: already present, or a column it indexes does not exist'' AS n'
 );
 PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
@@ -37,13 +43,19 @@ ALTER TABLE process_weekoff_day_rule
 
 -- Index for active-only queries
 -- MySQL does not support IF NOT EXISTS on CREATE INDEX; guarded instead.
+-- The COLUMN is checked as well as the index: on a fresh database the two are different
+-- questions, and 138 indexed ats_candidate(branch_name) on a table that has no such column.
 SET @idx_idx_weekoff_rule_active = (
   SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS
    WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'process_weekoff_day_rule' AND INDEX_NAME = 'idx_weekoff_rule_active'
 );
-SET @sql = IF(@idx_idx_weekoff_rule_active = 0,
+SET @col_idx_weekoff_rule_active = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+   WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'process_weekoff_day_rule' AND COLUMN_NAME IN ('is_active')
+);
+SET @sql = IF(@idx_idx_weekoff_rule_active = 0 AND @col_idx_weekoff_rule_active = 1,
   'CREATE INDEX idx_weekoff_rule_active ON process_weekoff_day_rule (is_active)',
-  'SELECT ''idx_weekoff_rule_active already exists'' AS n'
+  'SELECT ''idx_weekoff_rule_active skipped: already present, or a column it indexes does not exist'' AS n'
 );
 PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 

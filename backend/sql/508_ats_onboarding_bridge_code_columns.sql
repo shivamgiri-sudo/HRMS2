@@ -12,23 +12,35 @@ ALTER TABLE ats_onboarding_bridge
 
 -- Index for gate-check queries that filter by bridge_status
 -- MySQL does not support IF NOT EXISTS on CREATE INDEX; guarded instead.
+-- The COLUMN is checked as well as the index: on a fresh database the two are different
+-- questions, and 138 indexed ats_candidate(branch_name) on a table that has no such column.
 SET @idx_idx_aob_bridge_status = (
   SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS
    WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'ats_onboarding_bridge' AND INDEX_NAME = 'idx_aob_bridge_status'
 );
-SET @sql = IF(@idx_idx_aob_bridge_status = 0,
+SET @col_idx_aob_bridge_status = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+   WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'ats_onboarding_bridge' AND COLUMN_NAME IN ('bridge_status')
+);
+SET @sql = IF(@idx_idx_aob_bridge_status = 0 AND @col_idx_aob_bridge_status = 1,
   'CREATE INDEX idx_aob_bridge_status ON ats_onboarding_bridge (bridge_status)',
-  'SELECT ''idx_aob_bridge_status already exists'' AS n'
+  'SELECT ''idx_aob_bridge_status skipped: already present, or a column it indexes does not exist'' AS n'
 );
 PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 -- Index for reverse-lookup by employee_code
 -- MySQL does not support IF NOT EXISTS on CREATE INDEX; guarded instead.
+-- The COLUMN is checked as well as the index: on a fresh database the two are different
+-- questions, and 138 indexed ats_candidate(branch_name) on a table that has no such column.
 SET @idx_idx_aob_employee_code = (
   SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS
    WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'ats_onboarding_bridge' AND INDEX_NAME = 'idx_aob_employee_code'
 );
-SET @sql = IF(@idx_idx_aob_employee_code = 0,
+SET @col_idx_aob_employee_code = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+   WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'ats_onboarding_bridge' AND COLUMN_NAME IN ('employee_code')
+);
+SET @sql = IF(@idx_idx_aob_employee_code = 0 AND @col_idx_aob_employee_code = 1,
   'CREATE INDEX idx_aob_employee_code ON ats_onboarding_bridge (employee_code)',
-  'SELECT ''idx_aob_employee_code already exists'' AS n'
+  'SELECT ''idx_aob_employee_code skipped: already present, or a column it indexes does not exist'' AS n'
 );
 PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;

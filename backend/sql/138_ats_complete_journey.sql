@@ -326,53 +326,83 @@ CREATE TABLE IF NOT EXISTS portal_notification (
 
 -- ── 17. Add indexes for performance ───────────────────────────────────────────
 -- MySQL does not support IF NOT EXISTS on CREATE INDEX; guarded instead.
+-- The COLUMN is checked as well as the index: on a fresh database the two are different
+-- questions, and 138 indexed ats_candidate(branch_name) on a table that has no such column.
 SET @idx_idx_ats_candidate_branch = (
   SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS
    WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'ats_candidate' AND INDEX_NAME = 'idx_ats_candidate_branch'
 );
-SET @sql = IF(@idx_idx_ats_candidate_branch = 0,
+SET @col_idx_ats_candidate_branch = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+   WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'ats_candidate' AND COLUMN_NAME IN ('branch_name')
+);
+SET @sql = IF(@idx_idx_ats_candidate_branch = 0 AND @col_idx_ats_candidate_branch = 1,
   'CREATE INDEX idx_ats_candidate_branch ON ats_candidate (branch_name)',
-  'SELECT ''idx_ats_candidate_branch already exists'' AS n'
+  'SELECT ''idx_ats_candidate_branch skipped: already present, or a column it indexes does not exist'' AS n'
 );
 PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 -- MySQL does not support IF NOT EXISTS on CREATE INDEX; guarded instead.
+-- The COLUMN is checked as well as the index: on a fresh database the two are different
+-- questions, and 138 indexed ats_candidate(branch_name) on a table that has no such column.
 SET @idx_idx_ats_candidate_status = (
   SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS
    WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'ats_candidate' AND INDEX_NAME = 'idx_ats_candidate_status'
 );
-SET @sql = IF(@idx_idx_ats_candidate_status = 0,
+SET @col_idx_ats_candidate_status = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+   WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'ats_candidate' AND COLUMN_NAME IN ('candidate_status')
+);
+SET @sql = IF(@idx_idx_ats_candidate_status = 0 AND @col_idx_ats_candidate_status = 1,
   'CREATE INDEX idx_ats_candidate_status ON ats_candidate (candidate_status)',
-  'SELECT ''idx_ats_candidate_status already exists'' AS n'
+  'SELECT ''idx_ats_candidate_status skipped: already present, or a column it indexes does not exist'' AS n'
 );
 PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 -- MySQL does not support IF NOT EXISTS on CREATE INDEX; guarded instead.
+-- The COLUMN is checked as well as the index: on a fresh database the two are different
+-- questions, and 138 indexed ats_candidate(branch_name) on a table that has no such column.
 SET @idx_idx_ats_candidate_created = (
   SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS
    WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'ats_candidate' AND INDEX_NAME = 'idx_ats_candidate_created'
 );
-SET @sql = IF(@idx_idx_ats_candidate_created = 0,
+SET @col_idx_ats_candidate_created = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+   WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'ats_candidate' AND COLUMN_NAME IN ('created_at')
+);
+SET @sql = IF(@idx_idx_ats_candidate_created = 0 AND @col_idx_ats_candidate_created = 1,
   'CREATE INDEX idx_ats_candidate_created ON ats_candidate (created_at)',
-  'SELECT ''idx_ats_candidate_created already exists'' AS n'
+  'SELECT ''idx_ats_candidate_created skipped: already present, or a column it indexes does not exist'' AS n'
 );
 PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 -- MySQL does not support IF NOT EXISTS on CREATE INDEX; guarded instead.
+-- The COLUMN is checked as well as the index: on a fresh database the two are different
+-- questions, and 138 indexed ats_candidate(branch_name) on a table that has no such column.
 SET @idx_idx_ats_queue_status = (
   SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS
    WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'ats_queue_token' AND INDEX_NAME = 'idx_ats_queue_status'
 );
-SET @sql = IF(@idx_idx_ats_queue_status = 0,
+SET @col_idx_ats_queue_status = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+   WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'ats_queue_token' AND COLUMN_NAME IN ('queue_status')
+);
+SET @sql = IF(@idx_idx_ats_queue_status = 0 AND @col_idx_ats_queue_status = 1,
   'CREATE INDEX idx_ats_queue_status ON ats_queue_token (queue_status)',
-  'SELECT ''idx_ats_queue_status already exists'' AS n'
+  'SELECT ''idx_ats_queue_status skipped: already present, or a column it indexes does not exist'' AS n'
 );
 PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 -- MySQL does not support IF NOT EXISTS on CREATE INDEX; guarded instead.
+-- The COLUMN is checked as well as the index: on a fresh database the two are different
+-- questions, and 138 indexed ats_candidate(branch_name) on a table that has no such column.
 SET @idx_idx_ats_queue_branch = (
   SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS
    WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'ats_queue_token' AND INDEX_NAME = 'idx_ats_queue_branch'
 );
-SET @sql = IF(@idx_idx_ats_queue_branch = 0,
+SET @col_idx_ats_queue_branch = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+   WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'ats_queue_token' AND COLUMN_NAME IN ('branch_name')
+);
+SET @sql = IF(@idx_idx_ats_queue_branch = 0 AND @col_idx_ats_queue_branch = 1,
   'CREATE INDEX idx_ats_queue_branch ON ats_queue_token (branch_name)',
-  'SELECT ''idx_ats_queue_branch already exists'' AS n'
+  'SELECT ''idx_ats_queue_branch skipped: already present, or a column it indexes does not exist'' AS n'
 );
 PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 

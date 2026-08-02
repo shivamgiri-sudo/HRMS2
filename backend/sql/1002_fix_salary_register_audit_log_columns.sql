@@ -10,12 +10,18 @@ ALTER TABLE salary_register_audit_log
 
 -- Add index for candidate lookups
 -- MySQL does not support IF NOT EXISTS on CREATE INDEX; guarded instead.
+-- The COLUMN is checked as well as the index: on a fresh database the two are different
+-- questions, and 138 indexed ats_candidate(branch_name) on a table that has no such column.
 SET @idx_idx_sral_candidate = (
   SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS
    WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'salary_register_audit_log' AND INDEX_NAME = 'idx_sral_candidate'
 );
-SET @sql = IF(@idx_idx_sral_candidate = 0,
+SET @col_idx_sral_candidate = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+   WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'salary_register_audit_log' AND COLUMN_NAME IN ('candidate_id')
+);
+SET @sql = IF(@idx_idx_sral_candidate = 0 AND @col_idx_sral_candidate = 1,
   'CREATE INDEX idx_sral_candidate ON salary_register_audit_log (candidate_id)',
-  'SELECT ''idx_sral_candidate already exists'' AS n'
+  'SELECT ''idx_sral_candidate skipped: already present, or a column it indexes does not exist'' AS n'
 );
 PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;

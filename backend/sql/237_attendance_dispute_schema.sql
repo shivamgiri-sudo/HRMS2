@@ -63,23 +63,35 @@ ALTER TABLE attendance_regularization
 
 -- Index for dispute_type filtering
 -- MySQL does not support IF NOT EXISTS on CREATE INDEX; guarded instead.
+-- The COLUMN is checked as well as the index: on a fresh database the two are different
+-- questions, and 138 indexed ats_candidate(branch_name) on a table that has no such column.
 SET @idx_idx_ar_dispute_type = (
   SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS
    WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'attendance_regularization' AND INDEX_NAME = 'idx_ar_dispute_type'
 );
-SET @sql = IF(@idx_idx_ar_dispute_type = 0,
+SET @col_idx_ar_dispute_type = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+   WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'attendance_regularization' AND COLUMN_NAME IN ('dispute_type')
+);
+SET @sql = IF(@idx_idx_ar_dispute_type = 0 AND @col_idx_ar_dispute_type = 1,
   'CREATE INDEX idx_ar_dispute_type ON attendance_regularization (dispute_type)',
-  'SELECT ''idx_ar_dispute_type already exists'' AS n'
+  'SELECT ''idx_ar_dispute_type skipped: already present, or a column it indexes does not exist'' AS n'
 );
 PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 -- MySQL does not support IF NOT EXISTS on CREATE INDEX; guarded instead.
+-- The COLUMN is checked as well as the index: on a fresh database the two are different
+-- questions, and 138 indexed ats_candidate(branch_name) on a table that has no such column.
 SET @idx_idx_ar_payroll_impact = (
   SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS
    WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'attendance_regularization' AND INDEX_NAME = 'idx_ar_payroll_impact'
 );
-SET @sql = IF(@idx_idx_ar_payroll_impact = 0,
+SET @col_idx_ar_payroll_impact = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+   WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'attendance_regularization' AND COLUMN_NAME IN ('payroll_impact')
+);
+SET @sql = IF(@idx_idx_ar_payroll_impact = 0 AND @col_idx_ar_payroll_impact = 1,
   'CREATE INDEX idx_ar_payroll_impact ON attendance_regularization (payroll_impact)',
-  'SELECT ''idx_ar_payroll_impact already exists'' AS n'
+  'SELECT ''idx_ar_payroll_impact skipped: already present, or a column it indexes does not exist'' AS n'
 );
 PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
@@ -104,13 +116,19 @@ ALTER TABLE attendance_daily_record
 
 -- Index for audit queries on changed records
 -- MySQL does not support IF NOT EXISTS on CREATE INDEX; guarded instead.
+-- The COLUMN is checked as well as the index: on a fresh database the two are different
+-- questions, and 138 indexed ats_candidate(branch_name) on a table that has no such column.
 SET @idx_idx_adr_status_changed = (
   SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS
    WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'attendance_daily_record' AND INDEX_NAME = 'idx_adr_status_changed'
 );
-SET @sql = IF(@idx_idx_adr_status_changed = 0,
+SET @col_idx_adr_status_changed = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+   WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'attendance_daily_record' AND COLUMN_NAME IN ('status_changed_at')
+);
+SET @sql = IF(@idx_idx_adr_status_changed = 0 AND @col_idx_adr_status_changed = 1,
   'CREATE INDEX idx_adr_status_changed ON attendance_daily_record (status_changed_at)',
-  'SELECT ''idx_adr_status_changed already exists'' AS n'
+  'SELECT ''idx_adr_status_changed skipped: already present, or a column it indexes does not exist'' AS n'
 );
 PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
@@ -139,23 +157,35 @@ ALTER TABLE sensitive_action_log
 
 -- Index for employee-centric audit queries
 -- MySQL does not support IF NOT EXISTS on CREATE INDEX; guarded instead.
+-- The COLUMN is checked as well as the index: on a fresh database the two are different
+-- questions, and 138 indexed ats_candidate(branch_name) on a table that has no such column.
 SET @idx_idx_sal_employee = (
   SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS
    WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'sensitive_action_log' AND INDEX_NAME = 'idx_sal_employee'
 );
-SET @sql = IF(@idx_idx_sal_employee = 0,
+SET @col_idx_sal_employee = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+   WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'sensitive_action_log' AND COLUMN_NAME IN ('employee_id')
+);
+SET @sql = IF(@idx_idx_sal_employee = 0 AND @col_idx_sal_employee = 1,
   'CREATE INDEX idx_sal_employee ON sensitive_action_log (employee_id)',
-  'SELECT ''idx_sal_employee already exists'' AS n'
+  'SELECT ''idx_sal_employee skipped: already present, or a column it indexes does not exist'' AS n'
 );
 PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 -- MySQL does not support IF NOT EXISTS on CREATE INDEX; guarded instead.
+-- The COLUMN is checked as well as the index: on a fresh database the two are different
+-- questions, and 138 indexed ats_candidate(branch_name) on a table that has no such column.
 SET @idx_idx_sal_actor_role = (
   SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS
    WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'sensitive_action_log' AND INDEX_NAME = 'idx_sal_actor_role'
 );
-SET @sql = IF(@idx_idx_sal_actor_role = 0,
+SET @col_idx_sal_actor_role = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+   WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'sensitive_action_log' AND COLUMN_NAME IN ('actor_role')
+);
+SET @sql = IF(@idx_idx_sal_actor_role = 0 AND @col_idx_sal_actor_role = 1,
   'CREATE INDEX idx_sal_actor_role ON sensitive_action_log (actor_role)',
-  'SELECT ''idx_sal_actor_role already exists'' AS n'
+  'SELECT ''idx_sal_actor_role skipped: already present, or a column it indexes does not exist'' AS n'
 );
 PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 

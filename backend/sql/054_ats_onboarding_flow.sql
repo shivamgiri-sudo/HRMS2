@@ -43,13 +43,19 @@ ALTER TABLE ats_onboarding_bridge ADD COLUMN hr_approved_by CHAR(36);
 ALTER TABLE ats_onboarding_bridge ADD COLUMN hr_approved_at DATETIME;
 
 -- MySQL does not support IF NOT EXISTS on CREATE INDEX; guarded instead.
+-- The COLUMN is checked as well as the index: on a fresh database the two are different
+-- questions, and 138 indexed ats_candidate(branch_name) on a table that has no such column.
 SET @idx_uq_onb_token = (
   SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS
    WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'ats_onboarding_bridge' AND INDEX_NAME = 'uq_onb_token'
 );
-SET @sql = IF(@idx_uq_onb_token = 0,
+SET @col_uq_onb_token = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+   WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'ats_onboarding_bridge' AND COLUMN_NAME IN ('onboarding_token')
+);
+SET @sql = IF(@idx_uq_onb_token = 0 AND @col_uq_onb_token = 1,
   'CREATE UNIQUE INDEX uq_onb_token ON ats_onboarding_bridge (onboarding_token)',
-  'SELECT ''uq_onb_token already exists'' AS n'
+  'SELECT ''uq_onb_token skipped: already present, or a column it indexes does not exist'' AS n'
 );
 PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
