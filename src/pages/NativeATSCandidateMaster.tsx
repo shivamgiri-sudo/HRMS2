@@ -292,7 +292,13 @@ function CandidateFeedbackForm({
     if (!branch) { setBranchProcesses([]); return; }
     hrmsApi.get<{ success: boolean; data: ProcessOption[] }>(
       `/api/job-requisition/processes-for-branch/${encodeURIComponent(branch)}`
-    ).then(res => setBranchProcesses(res.data || [])).catch(() => setBranchProcesses([]));
+    ).then(res => {
+      const data = res.data || [];
+      setBranchProcesses(data);
+      if (data.length === 0 && config.processOptions?.length > 0) {
+        console.warn(`[ATS] No process_master entries for branch "${branch}" — falling back to ats_form_config strings. Data may diverge.`);
+      }
+    }).catch(() => setBranchProcesses([]));
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [candidate.branch_name]);
 
@@ -384,6 +390,7 @@ function CandidateFeedbackForm({
         candidateId: candidate.id,
         qToken: candidate.q_token,
         interviewedForProcess: form.processName,
+        processId: /^[0-9a-f-]{36}$/i.test(selectedProcessId) ? selectedProcessId : undefined,
         walkinEndStage: form.stageName,
         finalDecision: form.finalDecision,
         round1Result: form.round1Result || null,

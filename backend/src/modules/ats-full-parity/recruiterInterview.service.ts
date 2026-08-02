@@ -476,6 +476,7 @@ interface SubmissionInput {
   substituteFlag?: boolean;
   substituteReason?: string;
   requisitionId?: string;
+  processId?: string;
 }
 
 interface RecruiterRosterRow extends RowDataPacket {
@@ -718,6 +719,7 @@ export async function submitInterviewUpdate(
     requisitionId: String(raw.requisitionId || "").trim() || undefined,
     substituteFlag: raw.substituteFlag === true || raw.substituteFlag === "true" || raw.substitute_flag === true || raw.substitute_flag === "true" || false,
     substituteReason: String(raw.substituteReason || raw.substitute_reason || "").trim() || undefined,
+    processId: String(raw.processId || raw.process_id || "").trim() || undefined,
   };
 
   if (!input.candidateId && !input.qToken) err("CandidateID or QToken required", 400);
@@ -859,6 +861,7 @@ export async function submitInterviewUpdate(
            recruiter_user_id = ?,
            recruiter_code = ?,
            interviewed_for_process = ?,
+           process_id = COALESCE(?, process_id),
            walkin_end_stage = ?,
            final_decision = ?,
            round1_result = ?,
@@ -913,6 +916,7 @@ export async function submitInterviewUpdate(
           actorUserId ?? null,
           recruiterProfile.recruiterCode,
           process,
+          input.processId ?? null,
           walkinEndStage,
           finalDecision,
           r1,
@@ -965,7 +969,7 @@ export async function submitInterviewUpdate(
       await conn.execute(
         `INSERT INTO ats_interview_submission
            (id, candidate_id, q_token, recruiter_user_id, recruiter_code,
-            interviewed_for_process, walkin_end_stage, final_decision,
+            interviewed_for_process, process_id, walkin_end_stage, final_decision,
             round1_result, round1_voc, round1_remarks,
             skilltest_typing, skilltest_ai, skilltest_result, skilltest_voc, skilltest_remarks,
             round2_result, round2_voc, round2_remarks,
@@ -980,7 +984,7 @@ export async function submitInterviewUpdate(
             offer_salary, offer_doj, reporting_timing, ot_details, performance_incentives,
             substitute_interviewer_id, substitute_reason,
             submitted_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
         [
           submissionId,
           candidate.id,
@@ -988,6 +992,7 @@ export async function submitInterviewUpdate(
           actorUserId ?? null,
           recruiterProfile.recruiterCode,
           process,
+          input.processId ?? null,
           walkinEndStage,
           finalDecision,
           r1,
