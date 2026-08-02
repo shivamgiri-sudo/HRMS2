@@ -96,9 +96,44 @@ describe("alert cooldown survives a restart", () => {
     expect(runner).toContain('"1053_qa_evaluation_page_access.sql"');
   });
 
-  it("throttling fails open rather than swallowing every alert", () => {
+  it("degrades to in-process throttling, never to no throttling", () => {
     const helper = read("src/shared/alert-cooldown.ts");
-    // A missing table must not silence SLA alerts nobody then hears about.
-    expect(helper).toMatch(/catch\s*\{\s*return true;\s*\}/);
+    // This is not hypothetical: the manifest entry for 1054 was dropped once by a
+    // concurrent session rebuilding runPendingMigrations.ts from a stale base,
+    // leaving the .sql file in place but never run. With a naive fail-open that
+    // means no throttle at all — worse than the Map this replaced.
+    expect(helper).toContain("memoryFallback");
+    expect(helper).toMatch(/memoryFallback\.set\(key, Date\.now\(\)\)/);
+    // The fallback must be consulted on the error path, not just populated.
+    const catchBlock = helper.match(/catch \(error\)[\s\S]*?\n  \}/)?.[0] ?? "";
+    expect(catchBlock).toContain("memoryFallback.get(key)");
+  });
+});
+
+/**
+ * A .sql file that is not in MIGRATION_MANIFEST never runs. The manifest is an
+ * explicit array, not a directory scan, so a file can sit in sql/ looking applied
+ * and do nothing — which is precisely what happened to 1054 within a day of it
+ * landing.
+ */
+describe("migration manifest completeness", () => {
+  it("lists every migration this change depends on", () => {
+    const runner = read("src/db/runPendingMigrations.ts");
+    for (const file of [
+      "1054_alert_worker_governance.sql",
+      // Neighbours that have each been dropped or nearly dropped by a concurrent
+      // rebuild; keeping them asserted makes the next drop fail here.
+      "1053_qa_evaluation_page_access.sql",
+      "1054_branch_head_approval_pending_status.sql",
+    ]) {
+      expect(runner, `${file} is missing from MIGRATION_MANIFEST, so it will never run`).toContain(
+        `"${file}"`
+      );
+    }
+  });
+
+  it("every sql file referenced by these workers exists on disk", () => {
+    const p = path.join(backendRoot, "sql/1054_alert_worker_governance.sql");
+    expect(fs.existsSync(p), "1054_alert_worker_governance.sql is listed but absent").toBe(true);
   });
 });

@@ -9,13 +9,25 @@ import { db } from "../db/mysql.js";
  * restart emptied the map and re-alerted every waiting candidate — which is how
  * notification_log came to hold 18,959 SLA mails, 6,510 of them in one day.
  *
- * Backed by the `alert_cooldown` table (migration 1054).
+ * Backed by the `alert_cooldown` table (migration 1054), with the old in-memory
+ * map kept as a **fallback layer**, not as the primary store.
  *
- * Fails **open** on a database error: an alert that should have been throttled is
- * a nuisance, but a throttle that silently swallows every alert because the table
- * is missing is a missed SLA nobody hears about. That matches isWorkerEnabled and
+ * The fallback is not belt-and-braces. A migration file only runs if it is also
+ * listed in MIGRATION_MANIFEST, and that list has already lost this entry once:
+ * a concurrent session rebuilt runPendingMigrations.ts from a stale base and
+ * dropped the line while leaving the .sql file in place. If that happens again,
+ * every query here throws, and a naive fail-open would mean *no throttling at
+ * all* — strictly worse than the Map this replaced. Degrading to in-process
+ * throttling instead makes the worst case equal to the old behaviour.
+ *
+ * Still fails open in the sense that matters: a database problem must not
+ * silence an SLA alert nobody then hears about. That matches isWorkerEnabled and
  * is the opposite of the notification gateway, which fails closed.
  */
+
+/** Fallback throttle used only when the table is unreachable. */
+const memoryFallback = new Map<string, number>();
+let tableUnavailable = false;
 
 /** Whether `subjectId` may be alerted about now, given `cooldownMs`. */
 export async function shouldAlert(
@@ -29,18 +41,31 @@ export async function shouldAlert(
       "SELECT last_sent_at FROM alert_cooldown WHERE alert_key = ? LIMIT 1",
       [key]
     );
+    tableUnavailable = false;
     if (!rows.length) return true;
     const last = new Date(rows[0].last_sent_at).getTime();
     if (Number.isNaN(last)) return true;
     return Date.now() - last >= cooldownMs;
-  } catch {
-    return true;
+  } catch (error) {
+    if (!tableUnavailable) {
+      tableUnavailable = true;
+      console.warn(
+        `[alert-cooldown] falling back to in-process throttling for ${workerName} — ` +
+          `is 1054_alert_worker_governance.sql in MIGRATION_MANIFEST? ` +
+          `(${error instanceof Error ? error.message : String(error)})`
+      );
+    }
+    const last = memoryFallback.get(key);
+    return last === undefined || Date.now() - last >= cooldownMs;
   }
 }
 
 /** Record that an alert just went out. Best-effort. */
 export async function markAlerted(workerName: string, subjectId: string): Promise<void> {
   const key = `${workerName}:${subjectId}`;
+  // Always recorded in memory too, so a table that disappears mid-run still has
+  // a throttle to fall back on.
+  memoryFallback.set(key, Date.now());
   try {
     await db.execute(
       `INSERT INTO alert_cooldown (alert_key, last_sent_at, send_count)
@@ -58,6 +83,10 @@ export async function markAlerted(workerName: string, subjectId: string): Promis
  * the table cannot grow without bound; there is no scheduled sweep for it.
  */
 export async function cleanupCooldowns(workerName: string, olderThanMs: number): Promise<void> {
+  const cutoff = Date.now() - olderThanMs;
+  for (const [key, ts] of memoryFallback.entries()) {
+    if (key.startsWith(`${workerName}:`) && ts < cutoff) memoryFallback.delete(key);
+  }
   try {
     await db.execute(
       `DELETE FROM alert_cooldown
