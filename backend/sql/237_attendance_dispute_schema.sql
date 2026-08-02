@@ -13,7 +13,7 @@
 
 ALTER TABLE attendance_regularization
   -- Dispute classification (NULL = plain regularization, value = formal dispute)
-  ADD COLUMN IF NOT EXISTS dispute_type ENUM(
+  ADD COLUMN dispute_type ENUM(
     'missing_punch',
     'wrong_punch',
     'late_mark_dispute',
@@ -28,38 +28,38 @@ ALTER TABLE attendance_regularization
   ) NULL COMMENT 'NULL = plain regularization; set = formal dispute type',
 
   -- Before-state capture (what the record shows before correction)
-  ADD COLUMN IF NOT EXISTS old_status VARCHAR(50) NULL
+  ADD COLUMN old_status VARCHAR(50) NULL
     COMMENT 'attendance_status value before this regularization was raised',
-  ADD COLUMN IF NOT EXISTS new_status VARCHAR(50) NULL
+  ADD COLUMN new_status VARCHAR(50) NULL
     COMMENT 'requested final attendance_status (mirrors requested_status but VARCHAR for flexibility)',
-  ADD COLUMN IF NOT EXISTS old_punch_in  TIME NULL
+  ADD COLUMN old_punch_in  TIME NULL
     COMMENT 'Actual punch-in recorded before correction',
-  ADD COLUMN IF NOT EXISTS old_punch_out TIME NULL
+  ADD COLUMN old_punch_out TIME NULL
     COMMENT 'Actual punch-out recorded before correction',
-  ADD COLUMN IF NOT EXISTS new_punch_in  TIME NULL
+  ADD COLUMN new_punch_in  TIME NULL
     COMMENT 'Corrected punch-in being requested',
-  ADD COLUMN IF NOT EXISTS new_punch_out TIME NULL
+  ADD COLUMN new_punch_out TIME NULL
     COMMENT 'Corrected punch-out being requested',
 
   -- Payroll impact flags
-  ADD COLUMN IF NOT EXISTS payroll_impact TINYINT(1) NOT NULL DEFAULT 0
+  ADD COLUMN payroll_impact TINYINT(1) NOT NULL DEFAULT 0
     COMMENT '1 = this regularization changes payable days / LWP',
-  ADD COLUMN IF NOT EXISTS payroll_head_approval_required TINYINT(1) NOT NULL DEFAULT 0
+  ADD COLUMN payroll_head_approval_required TINYINT(1) NOT NULL DEFAULT 0
     COMMENT '1 = must reach Payroll Head before final approval',
-  ADD COLUMN IF NOT EXISTS payroll_head_approved_by  VARCHAR(36) NULL
+  ADD COLUMN payroll_head_approved_by  VARCHAR(36) NULL
     COMMENT 'auth_user.id of Payroll Head who gave final approval',
-  ADD COLUMN IF NOT EXISTS payroll_head_approved_at  DATETIME NULL
+  ADD COLUMN payroll_head_approved_at  DATETIME NULL
     COMMENT 'When Payroll Head gave final approval',
 
   -- Document attachment
-  ADD COLUMN IF NOT EXISTS supporting_doc_id VARCHAR(36) NULL
+  ADD COLUMN supporting_doc_id VARCHAR(36) NULL
     COMMENT 'FK upload_batch.id or document reference for supporting evidence',
 
   -- Escalation tracking
-  ADD COLUMN IF NOT EXISTS escalated_to VARCHAR(50) NULL
+  ADD COLUMN escalated_to VARCHAR(50) NULL
     COMMENT 'Which queue this was escalated to: hr | payroll_head | super_admin',
-  ADD COLUMN IF NOT EXISTS escalated_at DATETIME NULL,
-  ADD COLUMN IF NOT EXISTS escalated_by VARCHAR(36) NULL;
+  ADD COLUMN escalated_at DATETIME NULL,
+  ADD COLUMN escalated_by VARCHAR(36) NULL;
 
 -- Index for dispute_type filtering
 -- MySQL does not support IF NOT EXISTS on CREATE INDEX; guarded instead.
@@ -89,17 +89,17 @@ PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 ALTER TABLE attendance_daily_record
   -- Capture the status BEFORE any override or regularization approval
-  ADD COLUMN IF NOT EXISTS old_attendance_status VARCHAR(50) NULL
+  ADD COLUMN old_attendance_status VARCHAR(50) NULL
     COMMENT 'attendance_status value captured before the last override/approval — for audit diff',
-  ADD COLUMN IF NOT EXISTS old_lwp_value DECIMAL(4,2) NULL
+  ADD COLUMN old_lwp_value DECIMAL(4,2) NULL
     COMMENT 'lwp_value captured before the last override — for audit diff',
 
   -- Traceable change metadata
-  ADD COLUMN IF NOT EXISTS status_change_reason VARCHAR(500) NULL
+  ADD COLUMN status_change_reason VARCHAR(500) NULL
     COMMENT 'Human-readable reason for the last status change',
-  ADD COLUMN IF NOT EXISTS status_changed_by VARCHAR(36) NULL
+  ADD COLUMN status_changed_by VARCHAR(36) NULL
     COMMENT 'auth_user.id who last changed the status (separate from override_by)',
-  ADD COLUMN IF NOT EXISTS status_changed_at DATETIME NULL
+  ADD COLUMN status_changed_at DATETIME NULL
     COMMENT 'When the status was last changed';
 
 -- Index for audit queries on changed records
@@ -120,21 +120,21 @@ PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 ALTER TABLE sensitive_action_log
   -- Structured before/after (replaces opaque change_summary for new code)
-  ADD COLUMN IF NOT EXISTS old_value_json JSON NULL
+  ADD COLUMN old_value_json JSON NULL
     COMMENT 'State before the action — structured, queryable',
-  ADD COLUMN IF NOT EXISTS new_value_json JSON NULL
+  ADD COLUMN new_value_json JSON NULL
     COMMENT 'State after the action — structured, queryable',
 
   -- Subject of the action (separate from actor)
-  ADD COLUMN IF NOT EXISTS employee_id VARCHAR(36) NULL
+  ADD COLUMN employee_id VARCHAR(36) NULL
     COMMENT 'Employee whose data was affected (not necessarily the actor)',
 
   -- Role context
-  ADD COLUMN IF NOT EXISTS actor_role VARCHAR(50) NULL
+  ADD COLUMN actor_role VARCHAR(50) NULL
     COMMENT 'Role of the actor at the time of action (admin, hr, wfm, manager, payroll_head…)',
 
   -- Mandatory reason for sensitive actions
-  ADD COLUMN IF NOT EXISTS reason TEXT NULL
+  ADD COLUMN reason TEXT NULL
     COMMENT 'Reason provided by actor for sensitive/override actions';
 
 -- Index for employee-centric audit queries
@@ -166,41 +166,41 @@ PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 -- ═══════════════════════════════════════════════════════════════════════════════
 /*
 -- 3. Revert sensitive_action_log
-DROP INDEX IF EXISTS idx_sal_employee ON sensitive_action_log;
-DROP INDEX IF EXISTS idx_sal_actor_role ON sensitive_action_log;
+DROP INDEX idx_sal_employee ON sensitive_action_log;
+DROP INDEX idx_sal_actor_role ON sensitive_action_log;
 ALTER TABLE sensitive_action_log
-  DROP COLUMN IF EXISTS old_value_json,
-  DROP COLUMN IF EXISTS new_value_json,
-  DROP COLUMN IF EXISTS employee_id,
-  DROP COLUMN IF EXISTS actor_role,
-  DROP COLUMN IF EXISTS reason;
+  DROP COLUMN old_value_json,
+  DROP COLUMN new_value_json,
+  DROP COLUMN employee_id,
+  DROP COLUMN actor_role,
+  DROP COLUMN reason;
 
 -- 2. Revert attendance_daily_record
-DROP INDEX IF EXISTS idx_adr_status_changed ON attendance_daily_record;
+DROP INDEX idx_adr_status_changed ON attendance_daily_record;
 ALTER TABLE attendance_daily_record
-  DROP COLUMN IF EXISTS old_attendance_status,
-  DROP COLUMN IF EXISTS old_lwp_value,
-  DROP COLUMN IF EXISTS status_change_reason,
-  DROP COLUMN IF EXISTS status_changed_by,
-  DROP COLUMN IF EXISTS status_changed_at;
+  DROP COLUMN old_attendance_status,
+  DROP COLUMN old_lwp_value,
+  DROP COLUMN status_change_reason,
+  DROP COLUMN status_changed_by,
+  DROP COLUMN status_changed_at;
 
 -- 1. Revert attendance_regularization
-DROP INDEX IF EXISTS idx_ar_dispute_type ON attendance_regularization;
-DROP INDEX IF EXISTS idx_ar_payroll_impact ON attendance_regularization;
+DROP INDEX idx_ar_dispute_type ON attendance_regularization;
+DROP INDEX idx_ar_payroll_impact ON attendance_regularization;
 ALTER TABLE attendance_regularization
-  DROP COLUMN IF EXISTS dispute_type,
-  DROP COLUMN IF EXISTS old_status,
-  DROP COLUMN IF EXISTS new_status,
-  DROP COLUMN IF EXISTS old_punch_in,
-  DROP COLUMN IF EXISTS old_punch_out,
-  DROP COLUMN IF EXISTS new_punch_in,
-  DROP COLUMN IF EXISTS new_punch_out,
-  DROP COLUMN IF EXISTS payroll_impact,
-  DROP COLUMN IF EXISTS payroll_head_approval_required,
-  DROP COLUMN IF EXISTS payroll_head_approved_by,
-  DROP COLUMN IF EXISTS payroll_head_approved_at,
-  DROP COLUMN IF EXISTS supporting_doc_id,
-  DROP COLUMN IF EXISTS escalated_to,
-  DROP COLUMN IF EXISTS escalated_at,
-  DROP COLUMN IF EXISTS escalated_by;
+  DROP COLUMN dispute_type,
+  DROP COLUMN old_status,
+  DROP COLUMN new_status,
+  DROP COLUMN old_punch_in,
+  DROP COLUMN old_punch_out,
+  DROP COLUMN new_punch_in,
+  DROP COLUMN new_punch_out,
+  DROP COLUMN payroll_impact,
+  DROP COLUMN payroll_head_approval_required,
+  DROP COLUMN payroll_head_approved_by,
+  DROP COLUMN payroll_head_approved_at,
+  DROP COLUMN supporting_doc_id,
+  DROP COLUMN escalated_to,
+  DROP COLUMN escalated_at,
+  DROP COLUMN escalated_by;
 */

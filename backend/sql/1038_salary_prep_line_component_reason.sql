@@ -3,4 +3,4 @@
 -- Nullable so all existing rows are unaffected.
 
 ALTER TABLE salary_prep_line_component
-  ADD COLUMN IF NOT EXISTS reason VARCHAR(500) NULL AFTER amount;
+  ADD COLUMN reason VARCHAR(500) NULL AFTER amount;

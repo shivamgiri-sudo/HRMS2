@@ -295,11 +295,11 @@ CREATE TABLE IF NOT EXISTS module_access_audit_log (
 
 -- ── 15. Enhance notification systems ──────────────────────────────────────────
 ALTER TABLE ats_notification_log
-ADD COLUMN IF NOT EXISTS notification_type VARCHAR(50) NULL COMMENT 'Type of notification',
-ADD COLUMN IF NOT EXISTS recipient_type ENUM('candidate','recruiter','hr','branch_head','admin') NULL,
-ADD COLUMN IF NOT EXISTS recipient_id CHAR(36) NULL,
-ADD COLUMN IF NOT EXISTS read_status TINYINT(1) DEFAULT 0,
-ADD COLUMN IF NOT EXISTS read_at DATETIME NULL;
+ADD COLUMN notification_type VARCHAR(50) NULL COMMENT 'Type of notification',
+ADD COLUMN recipient_type ENUM('candidate','recruiter','hr','branch_head','admin') NULL,
+ADD COLUMN recipient_id CHAR(36) NULL,
+ADD COLUMN read_status TINYINT(1) DEFAULT 0,
+ADD COLUMN read_at DATETIME NULL;
 
 -- ── 16. Create in-portal notification table ───────────────────────────────────
 CREATE TABLE IF NOT EXISTS portal_notification (

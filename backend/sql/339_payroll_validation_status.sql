@@ -3,12 +3,12 @@
 -- Salary transfer file (NEFT) can only be generated from a 'validated' run.
 
 ALTER TABLE salary_prep_run
-  ADD COLUMN IF NOT EXISTS validation_status ENUM('pending','validated','rejected') NOT NULL DEFAULT 'pending' AFTER status,
-  ADD COLUMN IF NOT EXISTS validated_by       CHAR(36) NULL AFTER validation_status,
-  ADD COLUMN IF NOT EXISTS validated_at       DATETIME NULL AFTER validated_by,
-  ADD COLUMN IF NOT EXISTS rejection_reason   TEXT     NULL AFTER validated_at,
-  ADD COLUMN IF NOT EXISTS rejected_by        CHAR(36) NULL AFTER rejection_reason,
-  ADD COLUMN IF NOT EXISTS rejected_at        DATETIME NULL AFTER rejected_by;
+  ADD COLUMN validation_status ENUM('pending','validated','rejected') NOT NULL DEFAULT 'pending' AFTER status,
+  ADD COLUMN validated_by       CHAR(36) NULL AFTER validation_status,
+  ADD COLUMN validated_at       DATETIME NULL AFTER validated_by,
+  ADD COLUMN rejection_reason   TEXT     NULL AFTER validated_at,
+  ADD COLUMN rejected_by        CHAR(36) NULL AFTER rejection_reason,
+  ADD COLUMN rejected_at        DATETIME NULL AFTER rejected_by;
 
 -- Audit trail for each validate/reject action
 CREATE TABLE IF NOT EXISTS payroll_validation_log (

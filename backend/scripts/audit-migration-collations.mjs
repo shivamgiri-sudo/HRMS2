@@ -1,5 +1,6 @@
 /**
- * Finds CREATE TABLE statements whose collation will not match the rest of the schema.
+ * Finds migration statements MySQL will reject at runtime: collations that will not match
+ * the rest of the schema, and MariaDB-only IF [NOT] EXISTS clauses.
  *
  * There are three ways to write the table footer in this repository and they do NOT all
  * produce the same collation on MySQL 8.0:
@@ -60,12 +61,43 @@ function stripComments(sql) {
     .replace(/--[^\n]*/g, (m) => " ".repeat(m.length));
 }
 
+/**
+ * Clauses MySQL does not support, however natural they look.
+ *
+ * IF [NOT] EXISTS on ADD/DROP/CHANGE COLUMN, on ADD/CREATE INDEX and on ADD KEY is MariaDB
+ * syntax. MySQL rejects all of them as plain syntax errors — not idempotency problems, just
+ * invalid SQL that has never once executed. 140 of them were in this repository, and
+ * 214_performance_indexes.sql had a header comment saying so while twelve other files went
+ * on using it.
+ *
+ * They are invisible for the same reason everything else in this audit is: a migration that
+ * never runs and a migration whose statements are rejected look identical from production.
+ */
+const MARIADB_ONLY = [
+  { re: /ADD\s+COLUMN\s+IF\s+NOT\s+EXISTS/gi, fix: "drop IF NOT EXISTS; errno 1060 is treated as idempotent per statement" },
+  { re: /DROP\s+COLUMN\s+IF\s+EXISTS/gi, fix: "drop IF EXISTS; errno 1091 is treated as idempotent per statement" },
+  { re: /ADD\s+(?:INDEX|KEY)\s+IF\s+NOT\s+EXISTS/gi, fix: "drop IF NOT EXISTS; errno 1061 is treated as idempotent per statement" },
+  { re: /DROP\s+INDEX\s+IF\s+EXISTS/gi, fix: "drop IF EXISTS; errno 1091 is treated as idempotent per statement" },
+  { re: /CREATE\s+(?:UNIQUE\s+)?INDEX\s+IF\s+NOT\s+EXISTS/gi, fix: "use a guarded PREPARE against INFORMATION_SCHEMA.STATISTICS" },
+  { re: /CHANGE\s+COLUMN\s+IF\s+EXISTS/gi, fix: "guard on the source column existing — a missing column is errno 1054, which is NOT idempotent" },
+];
+
 const findings = [];
 let scanned = 0;
 
 for (const file of readdirSync(SQL_DIR).filter((f) => f.endsWith(".sql"))) {
   const sql = stripComments(readFileSync(join(SQL_DIR, file), "utf8"));
   scanned++;
+
+  for (const { re, fix } of MARIADB_ONLY) {
+    for (const m of sql.matchAll(re)) {
+      findings.push({
+        file,
+        line: sql.slice(0, m.index).split("\n").length,
+        problem: `${m[0].replace(/\s+/g, " ")} is MariaDB syntax; MySQL rejects it — ${fix}`,
+      });
+    }
+  }
 
   for (const m of sql.matchAll(BARE_CHARSET)) {
     findings.push({

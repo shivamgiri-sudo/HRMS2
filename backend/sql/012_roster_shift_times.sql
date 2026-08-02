@@ -1,8 +1,7 @@
 -- 012_roster_shift_times.sql
 -- Add per-assignment shift override times so CSV upload can set individual
 -- start/end times without touching the shift master.
--- Uses INFORMATION_SCHEMA guards instead of ADD COLUMN IF NOT EXISTS
--- for compatibility with all MySQL 8.x versions.
+-- Uses INFORMATION_SCHEMA guards instead of ADD COLUMN -- for compatibility with all MySQL 8.x versions.
 USE mas_hrms;
 
 SET @col = (

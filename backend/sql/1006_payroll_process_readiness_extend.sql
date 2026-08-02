@@ -22,44 +22,44 @@
 
 -- ── 1. Add process_id / process_name ────────────────────────────────────────
 ALTER TABLE payroll_branch_readiness
-  ADD COLUMN IF NOT EXISTS process_id   VARCHAR(36)  NOT NULL DEFAULT ''
+  ADD COLUMN process_id   VARCHAR(36)  NOT NULL DEFAULT ''
     COMMENT 'Empty string = branch-level aggregate record. UUID = process-scoped record.'
     AFTER branch_id,
-  ADD COLUMN IF NOT EXISTS process_name VARCHAR(255) NOT NULL DEFAULT ''
+  ADD COLUMN process_name VARCHAR(255) NOT NULL DEFAULT ''
     COMMENT 'Denormalised process name for display without JOIN'
     AFTER process_id;
 
 -- index for process-scoped lookups
 ALTER TABLE payroll_branch_readiness
-  ADD INDEX IF NOT EXISTS idx_pbr_process (process_id);
+  ADD INDEX idx_pbr_process (process_id);
 
 -- ── 2. Add WFM attendance declaration columns ────────────────────────────────
 ALTER TABLE payroll_branch_readiness
-  ADD COLUMN IF NOT EXISTS attendance_data_ready    TINYINT(1)  NOT NULL DEFAULT 0
+  ADD COLUMN attendance_data_ready    TINYINT(1)  NOT NULL DEFAULT 0
     COMMENT 'WFM manual declaration: attendance punching / regularisation complete for this process'
     AFTER attendance_frozen_by,
-  ADD COLUMN IF NOT EXISTS attendance_data_ready_at DATETIME    NULL
+  ADD COLUMN attendance_data_ready_at DATETIME    NULL
     AFTER attendance_data_ready,
-  ADD COLUMN IF NOT EXISTS attendance_data_ready_by VARCHAR(36) NULL
+  ADD COLUMN attendance_data_ready_by VARCHAR(36) NULL
     AFTER attendance_data_ready_at;
 
 -- ── 3. Add process manager sign-off columns ──────────────────────────────────
 ALTER TABLE payroll_branch_readiness
-  ADD COLUMN IF NOT EXISTS process_manager_signoff    TINYINT(1) NOT NULL DEFAULT 0
+  ADD COLUMN process_manager_signoff    TINYINT(1) NOT NULL DEFAULT 0
     COMMENT 'Process Manager sign-off for this process (distinct from branch_head_signoff)'
     AFTER branch_head_remarks,
-  ADD COLUMN IF NOT EXISTS process_manager_signoff_at DATETIME    NULL
+  ADD COLUMN process_manager_signoff_at DATETIME    NULL
     AFTER process_manager_signoff,
-  ADD COLUMN IF NOT EXISTS process_manager_signoff_by VARCHAR(36) NULL
+  ADD COLUMN process_manager_signoff_by VARCHAR(36) NULL
     AFTER process_manager_signoff_at,
-  ADD COLUMN IF NOT EXISTS process_manager_remarks    TEXT        NULL
+  ADD COLUMN process_manager_remarks    TEXT        NULL
     AFTER process_manager_signoff_by;
 
 -- ── 4. Add employee_count_active / employee_count_left (were missing from .sql) ──
 ALTER TABLE payroll_branch_readiness
-  ADD COLUMN IF NOT EXISTS employee_count_active INT NOT NULL DEFAULT 0
+  ADD COLUMN employee_count_active INT NOT NULL DEFAULT 0
     AFTER employee_count,
-  ADD COLUMN IF NOT EXISTS employee_count_left   INT NOT NULL DEFAULT 0
+  ADD COLUMN employee_count_left   INT NOT NULL DEFAULT 0
     AFTER employee_count_active;
 
 -- ── 5. Widen the unique key to include process_id ───────────────────────────

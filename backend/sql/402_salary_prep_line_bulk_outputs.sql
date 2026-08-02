@@ -2,10 +2,10 @@
 -- These columns let the bulk-outputs module track generation and email delivery per payslip
 
 ALTER TABLE salary_prep_line
-  ADD COLUMN IF NOT EXISTS payslip_generated    TINYINT(1) NOT NULL DEFAULT 0,
-  ADD COLUMN IF NOT EXISTS payslip_generated_at DATETIME NULL,
-  ADD COLUMN IF NOT EXISTS payslip_emailed      TINYINT(1) NOT NULL DEFAULT 0,
-  ADD COLUMN IF NOT EXISTS payslip_emailed_at   DATETIME NULL;
+  ADD COLUMN payslip_generated    TINYINT(1) NOT NULL DEFAULT 0,
+  ADD COLUMN payslip_generated_at DATETIME NULL,
+  ADD COLUMN payslip_emailed      TINYINT(1) NOT NULL DEFAULT 0,
+  ADD COLUMN payslip_emailed_at   DATETIME NULL;
 
 -- MySQL does not support IF NOT EXISTS on CREATE INDEX; guarded instead.
 SET @idx_idx_spl_payslip_gen = (

@@ -4,7 +4,7 @@
 -- Description: Additive migration — adds clock-in/out timestamps, work mode
 --              and location columns to attendance_daily_record.
 --              Uses INFORMATION_SCHEMA guards for MySQL 8.x compatibility
---              (ADD COLUMN IF NOT EXISTS is not universally supported).
+--              (ADD COLUMN is not universally supported).
 -- =====================================================
 
 USE mas_hrms;

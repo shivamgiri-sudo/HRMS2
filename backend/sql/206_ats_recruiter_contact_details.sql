@@ -4,8 +4,8 @@
 USE mas_hrms;
 
 ALTER TABLE ats_recruiter
-ADD COLUMN IF NOT EXISTS email VARCHAR(255) NULL COMMENT 'Recruiter email address',
-ADD COLUMN IF NOT EXISTS mobile VARCHAR(20) NULL COMMENT 'Recruiter mobile number';
+ADD COLUMN email VARCHAR(255) NULL COMMENT 'Recruiter email address',
+ADD COLUMN mobile VARCHAR(20) NULL COMMENT 'Recruiter mobile number';
 
 -- Create index for faster lookups
 -- MySQL does not support IF NOT EXISTS on CREATE INDEX; guarded instead.

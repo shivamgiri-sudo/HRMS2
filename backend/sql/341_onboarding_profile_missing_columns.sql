@@ -10,6 +10,6 @@
 USE mas_hrms;
 
 ALTER TABLE candidate_onboarding_profile
-  ADD COLUMN IF NOT EXISTS alt_mobile_number  VARCHAR(15)   NULL COMMENT 'Alternate / secondary mobile number',
-  ADD COLUMN IF NOT EXISTS submit_lat         DECIMAL(10,8) NULL COMMENT 'Latitude captured at final form submission',
-  ADD COLUMN IF NOT EXISTS submit_lng         DECIMAL(11,8) NULL COMMENT 'Longitude captured at final form submission';
+  ADD COLUMN alt_mobile_number  VARCHAR(15)   NULL COMMENT 'Alternate / secondary mobile number',
+  ADD COLUMN submit_lat         DECIMAL(10,8) NULL COMMENT 'Latitude captured at final form submission',
+  ADD COLUMN submit_lng         DECIMAL(11,8) NULL COMMENT 'Longitude captured at final form submission';

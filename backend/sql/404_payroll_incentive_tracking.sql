@@ -2,7 +2,7 @@
 -- Additive only — safe to run on existing schema.
 
 ALTER TABLE salary_prep_run
-  ADD COLUMN IF NOT EXISTS incentives_applied_at DATETIME NULL COMMENT 'Timestamp when incentives were applied to this run';
+  ADD COLUMN incentives_applied_at DATETIME NULL COMMENT 'Timestamp when incentives were applied to this run';
 
 -- Index for efficient queries on whether incentives have been applied
 -- MySQL does not support IF NOT EXISTS on CREATE INDEX; guarded instead.

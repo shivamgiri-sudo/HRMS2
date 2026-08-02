@@ -32,6 +32,6 @@ CREATE TABLE IF NOT EXISTS company_post_comments (
 
 -- Add denormalised counters to company_posts for fast feed queries
 ALTER TABLE company_posts
-  ADD COLUMN IF NOT EXISTS like_count    INT NOT NULL DEFAULT 0,
-  ADD COLUMN IF NOT EXISTS dislike_count INT NOT NULL DEFAULT 0,
-  ADD COLUMN IF NOT EXISTS comment_count INT NOT NULL DEFAULT 0;
+  ADD COLUMN like_count    INT NOT NULL DEFAULT 0,
+  ADD COLUMN dislike_count INT NOT NULL DEFAULT 0,
+  ADD COLUMN comment_count INT NOT NULL DEFAULT 0;

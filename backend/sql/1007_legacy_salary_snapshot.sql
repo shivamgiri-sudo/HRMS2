@@ -120,7 +120,7 @@ FROM db_bill.masjclrentry;
 -- ============================================================================
 
 ALTER TABLE salary_increment_request
-ADD COLUMN IF NOT EXISTS source ENUM('hrms','legacy') NOT NULL DEFAULT 'hrms' AFTER status;
+ADD COLUMN source ENUM('hrms','legacy') NOT NULL DEFAULT 'hrms' AFTER status;
 
 -- ============================================================================
 -- Verification queries (run after import)

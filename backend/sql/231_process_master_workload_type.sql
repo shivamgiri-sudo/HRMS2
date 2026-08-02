@@ -13,13 +13,13 @@
 --
 -- ROLLBACK:
 --   ALTER TABLE process_master
---     DROP COLUMN IF EXISTS workload_type,
---     DROP COLUMN IF EXISTS workload_config;
---   DROP INDEX IF EXISTS idx_pm_workload_type ON process_master;
+--     DROP COLUMN workload_type,
+--     DROP COLUMN workload_config;
+--   DROP INDEX idx_pm_workload_type ON process_master;
 -- ============================================================
 
 ALTER TABLE process_master
-  ADD COLUMN IF NOT EXISTS workload_type ENUM(
+  ADD COLUMN workload_type ENUM(
     'inbound_voice',
     'outbound_voice',
     'chat',
@@ -31,11 +31,11 @@ ALTER TABLE process_master
   ) NULL COMMENT 'WFM planning workload classification — drives HC formula selection'
   AFTER process_name,
 
-  ADD COLUMN IF NOT EXISTS workload_config JSON NULL
+  ADD COLUMN workload_config JSON NULL
     COMMENT 'For blended processes: {"sub_types":["inbound_voice","chat"]}; for outbound: {"campaign_target_type":"sales"}'
   AFTER workload_type;
 
 ALTER TABLE process_master
-  ADD INDEX IF NOT EXISTS idx_pm_workload_type (workload_type);
+  ADD INDEX idx_pm_workload_type (workload_type);
 
 SELECT '231_process_master_workload_type.sql applied successfully' AS migration_status;

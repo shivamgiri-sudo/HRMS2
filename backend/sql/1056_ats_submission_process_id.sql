@@ -1,6 +1,6 @@
 -- Add process_id FK to ats_interview_submission so the stored process name
 -- is anchored to process_master. Nullable so existing rows are unaffected.
--- Uses conditional approach for MySQL (ADD COLUMN IF NOT EXISTS is MariaDB only).
+-- Uses conditional approach for MySQL (ADD COLUMN is MariaDB only).
 
 SET @dbname = DATABASE();
 

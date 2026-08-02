@@ -22,11 +22,11 @@ CREATE TABLE IF NOT EXISTS report_download_token (
 
 -- Backfill columns on report_request for richer failure tracking (additive — no data loss).
 ALTER TABLE report_request
-  ADD COLUMN IF NOT EXISTS failure_code              VARCHAR(100)  NULL AFTER failure_message,
-  ADD COLUMN IF NOT EXISTS failure_message_user      VARCHAR(500)  NULL AFTER failure_code,
-  ADD COLUMN IF NOT EXISTS failure_message_internal  TEXT          NULL AFTER failure_message_user;
+  ADD COLUMN failure_code              VARCHAR(100)  NULL AFTER failure_message,
+  ADD COLUMN failure_message_user      VARCHAR(500)  NULL AFTER failure_code,
+  ADD COLUMN failure_message_internal  TEXT          NULL AFTER failure_message_user;
 
 -- Delivery method and secure link support for report_email_delivery.
 ALTER TABLE report_email_delivery
-  ADD COLUMN IF NOT EXISTS delivery_method       ENUM('ATTACHMENT','LINK') NULL AFTER attachment_size_bytes,
-  ADD COLUMN IF NOT EXISTS secure_download_url   TEXT NULL AFTER delivery_method;
+  ADD COLUMN delivery_method       ENUM('ATTACHMENT','LINK') NULL AFTER attachment_size_bytes,
+  ADD COLUMN secure_download_url   TEXT NULL AFTER delivery_method;

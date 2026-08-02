@@ -3,10 +3,10 @@
 -- Solution: Add missing columns expected by joining-control-room.service.ts lockSalaryRegister()
 
 ALTER TABLE salary_register_audit_log
-  ADD COLUMN IF NOT EXISTS candidate_id   INT          NULL AFTER salary_register_id,
-  ADD COLUMN IF NOT EXISTS actor_id       INT          NULL AFTER candidate_id,
-  ADD COLUMN IF NOT EXISTS action         VARCHAR(100) NULL AFTER actor_id,
-  ADD COLUMN IF NOT EXISTS payload_json   LONGTEXT     NULL AFTER action;
+  ADD COLUMN candidate_id   INT          NULL AFTER salary_register_id,
+  ADD COLUMN actor_id       INT          NULL AFTER candidate_id,
+  ADD COLUMN action         VARCHAR(100) NULL AFTER actor_id,
+  ADD COLUMN payload_json   LONGTEXT     NULL AFTER action;
 
 -- Add index for candidate lookups
 -- MySQL does not support IF NOT EXISTS on CREATE INDEX; guarded instead.

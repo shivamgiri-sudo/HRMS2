@@ -4,7 +4,7 @@
 -- Surfaces as a warning badge in the Payroll Validation UI.
 
 ALTER TABLE salary_prep_line
-  ADD COLUMN IF NOT EXISTS attendance_data_source ENUM('ADR','SESSION_FALLBACK','NO_DATA') NULL
+  ADD COLUMN attendance_data_source ENUM('ADR','SESSION_FALLBACK','NO_DATA') NULL
     COMMENT 'ADR = attendance_daily_record used; SESSION_FALLBACK = legacy session fallback; NO_DATA = zeroed defaults';
 
 -- MySQL does not support IF NOT EXISTS on CREATE INDEX; guarded instead.

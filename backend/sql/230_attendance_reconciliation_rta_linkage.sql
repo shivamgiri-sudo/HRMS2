@@ -13,21 +13,21 @@
 --
 -- ROLLBACK:
 --   ALTER TABLE attendance_reconciliation_record
---     DROP COLUMN IF EXISTS final_roster_status,
---     DROP COLUMN IF EXISTS manager_action_status,
---     DROP COLUMN IF EXISTS rta_exception_label;
---   DROP INDEX IF EXISTS idx_arr_rta_exception ON attendance_reconciliation_record;
+--     DROP COLUMN final_roster_status,
+--     DROP COLUMN manager_action_status,
+--     DROP COLUMN rta_exception_label;
+--   DROP INDEX idx_arr_rta_exception ON attendance_reconciliation_record;
 -- ============================================================
 
 ALTER TABLE attendance_reconciliation_record
-  ADD COLUMN IF NOT EXISTS final_roster_status  VARCHAR(50)  NULL
+  ADD COLUMN final_roster_status  VARCHAR(50)  NULL
     COMMENT 'Copied from wfm_roster_assignment.final_roster_status at sync time',
-  ADD COLUMN IF NOT EXISTS manager_action_status VARCHAR(50) NULL
+  ADD COLUMN manager_action_status VARCHAR(50) NULL
     COMMENT 'Copied from wfm_roster_assignment.manager_action_status at sync time',
-  ADD COLUMN IF NOT EXISTS rta_exception_label  VARCHAR(100) NULL
+  ADD COLUMN rta_exception_label  VARCHAR(100) NULL
     COMMENT 'Derived display label: Scheduled / Week Off / Pending Manager Action / Roster Dispute / Shift Mismatch / etc.';
 
 ALTER TABLE attendance_reconciliation_record
-  ADD INDEX IF NOT EXISTS idx_arr_rta_exception (rta_exception_label);
+  ADD INDEX idx_arr_rta_exception (rta_exception_label);
 
 SELECT '230_attendance_reconciliation_rta_linkage.sql applied successfully' AS migration_status;

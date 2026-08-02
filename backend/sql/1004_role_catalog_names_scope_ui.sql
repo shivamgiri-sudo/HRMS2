@@ -14,13 +14,13 @@ UPDATE workforce_role_catalog SET role_name = 'WFM Analyst',               descr
 
 -- 2. Add scope_label column to user_assignment_scope for UI display (additive)
 ALTER TABLE user_assignment_scope
-  ADD COLUMN IF NOT EXISTS scope_label VARCHAR(200) NULL COMMENT 'Human-readable label for this scope row, e.g. branch name',
-  ADD COLUMN IF NOT EXISTS assigned_by_user_id CHAR(36) NULL COMMENT 'user_id of admin who created this scope row',
-  ADD COLUMN IF NOT EXISTS assigned_at DATETIME NULL DEFAULT CURRENT_TIMESTAMP COMMENT 'When this scope was assigned';
+  ADD COLUMN scope_label VARCHAR(200) NULL COMMENT 'Human-readable label for this scope row, e.g. branch name',
+  ADD COLUMN assigned_by_user_id CHAR(36) NULL COMMENT 'user_id of admin who created this scope row',
+  ADD COLUMN assigned_at DATETIME NULL DEFAULT CURRENT_TIMESTAMP COMMENT 'When this scope was assigned';
 
 -- 3. Ensure workforce_role_catalog has a category column for UI grouping (additive)
 ALTER TABLE workforce_role_catalog
-  ADD COLUMN IF NOT EXISTS category VARCHAR(100) NULL COMMENT 'UI grouping category e.g. Management, HR, IT, Finance';
+  ADD COLUMN category VARCHAR(100) NULL COMMENT 'UI grouping category e.g. Management, HR, IT, Finance';
 
 UPDATE workforce_role_catalog SET category = 'Leadership'   WHERE role_key IN ('super_admin','admin','ceo','management');
 UPDATE workforce_role_catalog SET category = 'HR'           WHERE role_key IN ('hr','branch_hr','ho_hr','process_hr');

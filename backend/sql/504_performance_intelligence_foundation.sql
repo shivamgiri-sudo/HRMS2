@@ -62,7 +62,7 @@ INSERT IGNORE INTO kpi_metric_master (
   'percent',
   'higher_is_better'
 );
--- MySQL 8 does not provide a portable ADD COLUMN IF NOT EXISTS form across all
+-- MySQL 8 does not provide a portable ADD COLUMN form across all
 -- supported deployments, so each additive change is guarded through metadata.
 SET @ddl = IF(
   EXISTS(

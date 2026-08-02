@@ -6,9 +6,9 @@
 -- Additive only — no existing columns altered, no data deleted.
 
 ALTER TABLE ats_onboarding_bridge
-  ADD COLUMN IF NOT EXISTS employee_code  VARCHAR(30)  NULL          COMMENT 'Denormalized copy of generated employee code for quick gate queries',
-  ADD COLUMN IF NOT EXISTS bridge_status  VARCHAR(50)  NOT NULL DEFAULT 'pending' COMMENT 'Lifecycle: pending | code_generated | employee_created | activated',
-  ADD COLUMN IF NOT EXISTS updated_at     DATETIME     NULL ON UPDATE CURRENT_TIMESTAMP COMMENT 'Last updated timestamp';
+  ADD COLUMN employee_code  VARCHAR(30)  NULL          COMMENT 'Denormalized copy of generated employee code for quick gate queries',
+  ADD COLUMN bridge_status  VARCHAR(50)  NOT NULL DEFAULT 'pending' COMMENT 'Lifecycle: pending | code_generated | employee_created | activated',
+  ADD COLUMN updated_at     DATETIME     NULL ON UPDATE CURRENT_TIMESTAMP COMMENT 'Last updated timestamp';
 
 -- Index for gate-check queries that filter by bridge_status
 -- MySQL does not support IF NOT EXISTS on CREATE INDEX; guarded instead.

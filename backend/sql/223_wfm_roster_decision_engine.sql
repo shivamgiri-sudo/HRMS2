@@ -7,8 +7,8 @@
 -- 1. ALTER wfm_roster_assignment — add decision traceability columns
 -- ─────────────────────────────────────────────────────────────────────────────
 ALTER TABLE wfm_roster_assignment
-  ADD COLUMN IF NOT EXISTS generation_run_id VARCHAR(36) NULL COMMENT 'FK roster_generation_run.id — NULL for manually created rows',
-  ADD COLUMN IF NOT EXISTS decision_source ENUM('manual','template','bulk_upload','swap','rule_engine') NOT NULL DEFAULT 'manual' COMMENT 'How this assignment was created';
+  ADD COLUMN generation_run_id VARCHAR(36) NULL COMMENT 'FK roster_generation_run.id — NULL for manually created rows',
+  ADD COLUMN decision_source ENUM('manual','template','bulk_upload','swap','rule_engine') NOT NULL DEFAULT 'manual' COMMENT 'How this assignment was created';
 
 -- Index only if it does not already exist
 SET @dbname = DATABASE();
@@ -31,18 +31,18 @@ PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 -- 2. ALTER weekly_roster_cycle — add acknowledgement governance columns
 -- ─────────────────────────────────────────────────────────────────────────────
 ALTER TABLE weekly_roster_cycle
-  ADD COLUMN IF NOT EXISTS required_ack_pct  DECIMAL(5,2) NOT NULL DEFAULT 80.00 COMMENT 'Min % of employees who must acknowledge before cycle can move to acknowledged status',
-  ADD COLUMN IF NOT EXISTS ack_deadline      DATETIME NULL COMMENT 'Deadline for employee acknowledgements; engine auto-acks on expiry',
-  ADD COLUMN IF NOT EXISTS manager_review_notes TEXT NULL COMMENT 'Freetext notes added by manager/WFM before publishing';
+  ADD COLUMN required_ack_pct  DECIMAL(5,2) NOT NULL DEFAULT 80.00 COMMENT 'Min % of employees who must acknowledge before cycle can move to acknowledged status',
+  ADD COLUMN ack_deadline      DATETIME NULL COMMENT 'Deadline for employee acknowledgements; engine auto-acks on expiry',
+  ADD COLUMN manager_review_notes TEXT NULL COMMENT 'Freetext notes added by manager/WFM before publishing';
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- 3. ALTER roster_daily_assignment — add dispute resolution columns
 -- ─────────────────────────────────────────────────────────────────────────────
 ALTER TABLE roster_daily_assignment
-  ADD COLUMN IF NOT EXISTS dispute_reason       VARCHAR(500) NULL,
-  ADD COLUMN IF NOT EXISTS dispute_resolved_by  VARCHAR(36) NULL,
-  ADD COLUMN IF NOT EXISTS dispute_resolved_at  DATETIME NULL,
-  ADD COLUMN IF NOT EXISTS dispute_resolution   VARCHAR(500) NULL;
+  ADD COLUMN dispute_reason       VARCHAR(500) NULL,
+  ADD COLUMN dispute_resolved_by  VARCHAR(36) NULL,
+  ADD COLUMN dispute_resolved_at  DATETIME NULL,
+  ADD COLUMN dispute_resolution   VARCHAR(500) NULL;
 
 -- FK for dispute_resolved_by — only add if employees table exists and FK doesn't exist
 SET @fkname = 'fk_rda_dispute_resolver';

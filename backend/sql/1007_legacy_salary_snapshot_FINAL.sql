@@ -64,6 +64,6 @@ CREATE TABLE IF NOT EXISTS legacy_salary_snapshot (
 
 -- Step 2: Add source column to salary_increment_request if not exists
 ALTER TABLE salary_increment_request
-ADD COLUMN IF NOT EXISTS source ENUM('hrms','legacy') NOT NULL DEFAULT 'hrms' AFTER status;
+ADD COLUMN source ENUM('hrms','legacy') NOT NULL DEFAULT 'hrms' AFTER status;
 
 SELECT 'Tables ready' AS status;

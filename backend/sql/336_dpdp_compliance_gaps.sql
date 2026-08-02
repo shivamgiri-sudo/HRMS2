@@ -6,19 +6,19 @@
 -- ─── 1. ats_candidate — minor/guardian consent flags ─────────────────────────
 
 ALTER TABLE ats_candidate
-  ADD COLUMN IF NOT EXISTS is_minor TINYINT(1) NOT NULL DEFAULT 0
+  ADD COLUMN is_minor TINYINT(1) NOT NULL DEFAULT 0
     COMMENT 'Set to 1 when candidate DOB indicates age < 18 at time of onboarding',
-  ADD COLUMN IF NOT EXISTS guardian_consent_obtained TINYINT(1) NOT NULL DEFAULT 0
+  ADD COLUMN guardian_consent_obtained TINYINT(1) NOT NULL DEFAULT 0
     COMMENT 'Set to 1 when guardian has confirmed consent for minor candidate';
 
 -- ─── 2. ats_candidate — masked PII columns (ADDITIVE; raw columns not nulled here) ───
 
 ALTER TABLE ats_candidate
-  ADD COLUMN IF NOT EXISTS aadhar_number_masked VARCHAR(20) DEFAULT NULL
+  ADD COLUMN aadhar_number_masked VARCHAR(20) DEFAULT NULL
     COMMENT 'XXXX-XXXX-LAST4 masked Aadhaar for display/audit',
-  ADD COLUMN IF NOT EXISTS pan_number_masked VARCHAR(20) DEFAULT NULL
+  ADD COLUMN pan_number_masked VARCHAR(20) DEFAULT NULL
     COMMENT 'XXXxxxxLAST2 masked PAN for display/audit',
-  ADD COLUMN IF NOT EXISTS bank_account_no_masked VARCHAR(20) DEFAULT NULL
+  ADD COLUMN bank_account_no_masked VARCHAR(20) DEFAULT NULL
     COMMENT 'XXXXXXlast4 masked bank account for display/audit';
 
 -- Backfill masked columns from existing raw values where present
@@ -43,11 +43,11 @@ UPDATE ats_candidate
 -- ─── 3. data_breach_log — SLA alert timestamp columns ───────────────────────
 
 ALTER TABLE data_breach_log
-  ADD COLUMN IF NOT EXISTS alert_sent_at_1h  DATETIME DEFAULT NULL
+  ADD COLUMN alert_sent_at_1h  DATETIME DEFAULT NULL
     COMMENT 'Timestamp when 1-hour SLA alert email was dispatched',
-  ADD COLUMN IF NOT EXISTS alert_sent_at_48h DATETIME DEFAULT NULL
+  ADD COLUMN alert_sent_at_48h DATETIME DEFAULT NULL
     COMMENT 'Timestamp when 48-hour escalation email was dispatched',
-  ADD COLUMN IF NOT EXISTS alert_sent_at_71h DATETIME DEFAULT NULL
+  ADD COLUMN alert_sent_at_71h DATETIME DEFAULT NULL
     COMMENT 'Timestamp when 71-hour critical alert email was dispatched';
 
 -- ─── 4. dpdp_nominee_registry ────────────────────────────────────────────────

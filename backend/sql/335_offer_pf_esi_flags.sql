@@ -3,7 +3,7 @@
 -- Safe: additive only (ADD COLUMN IF NOT EXISTS). Do NOT run without explicit approval.
 
 -- Step 1: PF opt-out tracking on the offer record
--- Note: ADD COLUMN IF NOT EXISTS is MariaDB syntax; MySQL 8.0 uses plain ADD COLUMN.
+-- Note: ADD COLUMN is MariaDB syntax; MySQL 8.0 uses plain ADD COLUMN.
 -- Columns are absent on fresh installs; skip manually if already applied.
 ALTER TABLE ats_employment_offer
   ADD COLUMN pf_opt_out TINYINT(1) NOT NULL DEFAULT 0

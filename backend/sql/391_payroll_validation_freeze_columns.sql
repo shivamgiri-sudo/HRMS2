@@ -4,12 +4,12 @@
 
 -- Add missing columns to salary_prep_run
 ALTER TABLE salary_prep_run
-  ADD COLUMN IF NOT EXISTS attendance_snapshot_locked TINYINT(1) NOT NULL DEFAULT 0,
-  ADD COLUMN IF NOT EXISTS compliance_checked         TINYINT(1) NOT NULL DEFAULT 0,
-  ADD COLUMN IF NOT EXISTS compliance_checked_at      DATETIME   NULL,
-  ADD COLUMN IF NOT EXISTS compliance_issues_count    INT        NOT NULL DEFAULT 0,
-  ADD COLUMN IF NOT EXISTS branch_id                  CHAR(36)   NULL,
-  ADD COLUMN IF NOT EXISTS process_id                 CHAR(36)   NULL;
+  ADD COLUMN attendance_snapshot_locked TINYINT(1) NOT NULL DEFAULT 0,
+  ADD COLUMN compliance_checked         TINYINT(1) NOT NULL DEFAULT 0,
+  ADD COLUMN compliance_checked_at      DATETIME   NULL,
+  ADD COLUMN compliance_issues_count    INT        NOT NULL DEFAULT 0,
+  ADD COLUMN branch_id                  CHAR(36)   NULL,
+  ADD COLUMN process_id                 CHAR(36)   NULL;
 
 -- Create the payroll calculation audit table referenced by freezeAttendance() and payrollCompliance.service.ts
 -- Column names match exact INSERT statements in:

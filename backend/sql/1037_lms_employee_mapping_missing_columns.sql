@@ -40,7 +40,7 @@
 SET NAMES utf8mb4;
 SET @db := DATABASE();
 
--- Guarded so re-running is safe; MySQL has no ADD COLUMN IF NOT EXISTS before 8.0.
+-- Guarded so re-running is safe; MySQL has no ADD COLUMN before 8.0.
 SET @sql := (SELECT IF(
   (SELECT COUNT(*) FROM information_schema.COLUMNS
     WHERE TABLE_SCHEMA=@db AND TABLE_NAME='lms_employee_mapping' AND COLUMN_NAME='mapping_source') = 0,

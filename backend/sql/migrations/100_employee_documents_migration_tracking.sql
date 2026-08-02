@@ -2,8 +2,8 @@
 -- Safe to run multiple times (IF NOT EXISTS guards)
 
 ALTER TABLE employee_documents
-  ADD COLUMN IF NOT EXISTS legacy_source ENUM('document_master','qual_docoments','esignature','manual') NULL AFTER doc_category,
-  ADD COLUMN IF NOT EXISTS legacy_ref_id INT NULL AFTER legacy_source;
+  ADD COLUMN legacy_source ENUM('document_master','qual_docoments','esignature','manual') NULL AFTER doc_category,
+  ADD COLUMN legacy_ref_id INT NULL AFTER legacy_source;
 
 -- Unique index to prevent duplicate imports per source+id pair
 -- Use a conditional guard since CREATE UNIQUE INDEX IF NOT EXISTS isn't supported in all MySQL 5.x

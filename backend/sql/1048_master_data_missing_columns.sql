@@ -33,7 +33,7 @@
 -- SAFETY: both columns are NULLable with no default, so every existing row is untouched and
 -- nothing needs backfilling. branch_master has 45 rows, lob_master has 5.
 --
--- Guarded so re-running is safe; MySQL has no ADD COLUMN IF NOT EXISTS before 8.0.
+-- Guarded so re-running is safe; MySQL has no ADD COLUMN before 8.0.
 
 SET NAMES utf8mb4;
 SET @db := DATABASE();

@@ -37,7 +37,7 @@
 -- ─────────────────────────────────────────────────────────────────────────────
 -- 1. salary_prep_run sign-off columns
 -- ─────────────────────────────────────────────────────────────────────────────
--- MySQL has no ADD COLUMN IF NOT EXISTS before 8.0.29 and this must stay re-runnable,
+-- MySQL has no ADD COLUMN before 8.0.29 and this must stay re-runnable,
 -- so each column is guarded through information_schema.
 
 SET @schema := DATABASE();

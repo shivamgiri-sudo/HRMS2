@@ -20,17 +20,33 @@ CREATE TABLE IF NOT EXISTS gratuity_distribution (
 );
 
 -- 2. Standardize employee address field naming (address_line1 → address1 for consistency)
-ALTER TABLE employees CHANGE COLUMN IF EXISTS address_line1 address1 VARCHAR(255) NULL;
-ALTER TABLE employees CHANGE COLUMN IF EXISTS address_line2 address2 VARCHAR(255) NULL;
+--
+-- CHANGE COLUMN IF EXISTS is MariaDB syntax; MySQL rejects it as a syntax error. Unlike the
+-- ADD/DROP cases elsewhere in this repo, the clause cannot simply be removed: renaming a
+-- column that is not there raises ER_BAD_FIELD_ERROR (1054), which is not an idempotency
+-- error and would stop the chain. So the rename is guarded on the source column existing.
+SET @has_addr1 = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+                   WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='employees' AND COLUMN_NAME='address_line1');
+SET @sql = IF(@has_addr1 > 0,
+  'ALTER TABLE employees CHANGE COLUMN address_line1 address1 VARCHAR(255) NULL',
+  'SELECT ''employees.address_line1 absent; rename skipped'' AS n');
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @has_addr2 = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+                   WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='employees' AND COLUMN_NAME='address_line2');
+SET @sql = IF(@has_addr2 > 0,
+  'ALTER TABLE employees CHANGE COLUMN address_line2 address2 VARCHAR(255) NULL',
+  'SELECT ''employees.address_line2 absent; rename skipped'' AS n');
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 -- 3. Add separate permanent address fields to employees table
 ALTER TABLE employees
-ADD COLUMN IF NOT EXISTS permanent_address1 VARCHAR(255) NULL COMMENT 'Permanent address line 1',
-ADD COLUMN IF NOT EXISTS permanent_address2 VARCHAR(255) NULL COMMENT 'Permanent address line 2',
-ADD COLUMN IF NOT EXISTS permanent_city VARCHAR(100) NULL COMMENT 'Permanent city',
-ADD COLUMN IF NOT EXISTS permanent_state VARCHAR(100) NULL COMMENT 'Permanent state',
-ADD COLUMN IF NOT EXISTS permanent_pincode VARCHAR(20) NULL COMMENT 'Permanent pincode',
-ADD COLUMN IF NOT EXISTS permanent_country VARCHAR(100) NULL COMMENT 'Permanent country';
+ADD COLUMN permanent_address1 VARCHAR(255) NULL COMMENT 'Permanent address line 1',
+ADD COLUMN permanent_address2 VARCHAR(255) NULL COMMENT 'Permanent address line 2',
+ADD COLUMN permanent_city VARCHAR(100) NULL COMMENT 'Permanent city',
+ADD COLUMN permanent_state VARCHAR(100) NULL COMMENT 'Permanent state',
+ADD COLUMN permanent_pincode VARCHAR(20) NULL COMMENT 'Permanent pincode',
+ADD COLUMN permanent_country VARCHAR(100) NULL COMMENT 'Permanent country';
 
 -- 4. Create gratuity_calculation_audit table for tracking gratuity calculations
 CREATE TABLE IF NOT EXISTS gratuity_calculation_audit (
@@ -51,8 +67,8 @@ CREATE TABLE IF NOT EXISTS gratuity_calculation_audit (
 
 -- 5. Add audit columns to full_final_calculation for nominee distribution tracking
 ALTER TABLE full_final_calculation
-ADD COLUMN IF NOT EXISTS nominee_distribution_status ENUM('not_applicable','pending','completed','rejected') NOT NULL DEFAULT 'not_applicable' AFTER is_ff_provisional,
-ADD COLUMN IF NOT EXISTS gratuity_distribution_id CHAR(36) NULL AFTER nominee_distribution_status;
+ADD COLUMN nominee_distribution_status ENUM('not_applicable','pending','completed','rejected') NOT NULL DEFAULT 'not_applicable' AFTER is_ff_provisional,
+ADD COLUMN gratuity_distribution_id CHAR(36) NULL AFTER nominee_distribution_status;
 
 -- Ensure existing records have default value
 UPDATE full_final_calculation

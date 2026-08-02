@@ -5,7 +5,7 @@
 -- rotating = follows a rolling rotation cycle (e.g. 14-day or 28-day pattern)
 
 ALTER TABLE employees
-  ADD COLUMN IF NOT EXISTS shift_rotation_type
+  ADD COLUMN shift_rotation_type
     ENUM('frozen', 'weekly', 'daily', 'rotating')
     NOT NULL DEFAULT 'frozen'
     COMMENT 'Controls how the auto-roster engine assigns shifts for this employee'

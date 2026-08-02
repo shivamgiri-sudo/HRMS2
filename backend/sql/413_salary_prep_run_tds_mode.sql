@@ -6,5 +6,5 @@
 USE mas_hrms;
 
 ALTER TABLE salary_prep_run
-  ADD COLUMN IF NOT EXISTS tds_mode ENUM('auto','manual') NOT NULL DEFAULT 'manual'
+  ADD COLUMN tds_mode ENUM('auto','manual') NOT NULL DEFAULT 'manual'
     COMMENT 'auto = taxEngineService calculates TDS; manual = salary_run_manual_tds overrides';

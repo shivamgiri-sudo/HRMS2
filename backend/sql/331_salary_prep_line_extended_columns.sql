@@ -1,5 +1,5 @@
 -- Migration 331: Extend salary_prep_line with holiday/weekoff/running-salary columns
--- All ADD COLUMN IF NOT EXISTS — safe to apply multiple times.
+-- All ADD COLUMN — safe to apply multiple times.
 -- Does NOT modify any existing column or constraint.
 
 SET @tbl = 'salary_prep_line';

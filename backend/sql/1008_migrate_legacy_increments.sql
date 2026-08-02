@@ -14,7 +14,7 @@
 
 -- First, add effective_to column if not exists
 ALTER TABLE employee_salary_assignment
-ADD COLUMN IF NOT EXISTS effective_to DATE DEFAULT NULL AFTER effective_from;
+ADD COLUMN effective_to DATE DEFAULT NULL AFTER effective_from;
 
 -- Temporary table to hold ordered legacy records with row numbers
 DROP TEMPORARY TABLE IF EXISTS tmp_legacy_ordered;

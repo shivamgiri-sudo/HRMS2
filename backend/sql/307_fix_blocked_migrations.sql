@@ -73,8 +73,7 @@ CALL _m307_add_col('employees', 'permanent_pincode',  "VARCHAR(10) NULL COMMENT 
 CALL _m307_add_col('profile_update_approval', 'branch_id', "VARCHAR(36) NULL COMMENT 'Branch of employee'");
 CALL _m307_add_col('profile_update_approval', 'pending_manager_id', "VARCHAR(36) NULL COMMENT 'Proposed reporting_manager_id'");
 
--- Add index if not exists
-DROP PROCEDURE IF EXISTS _m307_add_idx;
+-- Add index DROP PROCEDURE IF EXISTS _m307_add_idx;
 DELIMITER //
 CREATE PROCEDURE _m307_add_idx()
 BEGIN

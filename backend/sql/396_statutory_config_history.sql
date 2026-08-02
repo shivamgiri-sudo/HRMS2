@@ -14,6 +14,6 @@ CREATE TABLE IF NOT EXISTS statutory_config_history (
 
 -- Add verified_by, verified_at, review_note to form12bb detail if not exists
 ALTER TABLE tax_declaration_form12bb_detail
-  ADD COLUMN IF NOT EXISTS verified_by   CHAR(36) NULL,
-  ADD COLUMN IF NOT EXISTS verified_at   DATETIME NULL,
-  ADD COLUMN IF NOT EXISTS review_note   TEXT     NULL;
+  ADD COLUMN verified_by   CHAR(36) NULL,
+  ADD COLUMN verified_at   DATETIME NULL,
+  ADD COLUMN review_note   TEXT     NULL;

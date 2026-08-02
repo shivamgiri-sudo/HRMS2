@@ -1,6 +1,6 @@
 -- 294_payroll_window_closure.sql
 -- Adds payroll window closure tracking columns to salary_prep_run.
--- Compatible with MySQL 5.7+ (no ADD COLUMN IF NOT EXISTS / ADD INDEX IF NOT EXISTS).
+-- Compatible with MySQL 5.7+ (no ADD COLUMN / ADD INDEX IF NOT EXISTS).
 
 -- ── window_close_date ────────────────────────────────────────────────────────
 SET @c1 = (
