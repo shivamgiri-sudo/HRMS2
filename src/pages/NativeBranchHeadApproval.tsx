@@ -205,7 +205,13 @@ export default function NativeBranchHeadApproval() {
     setActing(offerId);
     setActionError(null);
     try {
-      const result: any = await hrmsApi.post(`/api/ats/onboarding/offers/${offerId}/${action}`, { remarks: remark });
+      // Approving creates the employee, dispatches provisioning and generates
+      // the joining-document pack — the first real one produced 4 provisioning
+      // tasks and 9 checklist rows. That comfortably exceeds the 30s default,
+      // and the browser aborting mid-flight showed a failure for work the
+      // server went on to complete successfully.
+      const result: any = await hrmsApi.post(
+        `/api/ats/onboarding/offers/${offerId}/${action}`, { remarks: remark }, 180000);
       if (action === 'approve' && result?.employeeCode) {
         const approvedOffer = offers.find(o => o.offer_id === offerId);
         setApprovalSuccess({ employeeCode: result.employeeCode, employeeName: approvedOffer?.full_name ?? '' });
@@ -240,6 +246,9 @@ export default function NativeBranchHeadApproval() {
   const [decisions, setDecisions] = useState<DecisionRow[]>([]);
   const [decisionsLoading, setDecisionsLoading] = useState(false);
   const [scopeEmpty, setScopeEmpty] = useState(false);
+  const [decisionTotals, setDecisionTotals] = useState<{ approved: number | null; rejected: number | null }>(
+    { approved: null, rejected: null },
+  );
   const [stats, setStats] = useState<{ total_pending: number; total_approved: number; total_rejected: number } | null>(null);
 
   const setTab = (next: string) => {
@@ -263,11 +272,12 @@ export default function NativeBranchHeadApproval() {
   const loadDecisions = useCallback(async (status: 'approved' | 'rejected') => {
     setDecisionsLoading(true);
     try {
-      const r = await hrmsApi.get<{ data: DecisionRow[]; scopeEmpty?: boolean }>(
+      const r = await hrmsApi.get<{ data: DecisionRow[]; scopeEmpty?: boolean; total?: number }>(
         `/api/ats/branch-head-approval/decisions?status=${status}`,
       );
       setDecisions(Array.isArray(r.data) ? r.data : []);
       setScopeEmpty(Boolean(r.scopeEmpty));
+      setDecisionTotals((p) => ({ ...p, [status]: Number(r.total ?? (r.data?.length ?? 0)) }));
     } catch {
       setDecisions([]);
     } finally {
@@ -299,14 +309,20 @@ export default function NativeBranchHeadApproval() {
 
         <Tabs value={tab} onValueChange={setTab}>
           <TabsList>
+            {/* Counts come from the same data as the tab contents. They were
+                read from /stats, which counts ats_branch_head_approval — the
+                legacy queue, a different model from the offers this screen
+                lists. After a successful approval Pending still showed 1,
+                because a stale row in that other table had nothing to do with
+                the list underneath it. */}
             <TabsTrigger value="pending" className="cursor-pointer">
-              Pending{stats ? ` (${stats.total_pending})` : ''}
+              Pending ({offers.length})
             </TabsTrigger>
             <TabsTrigger value="approved" className="cursor-pointer">
-              Approved{stats ? ` (${stats.total_approved})` : ''}
+              Approved{decisionTotals.approved != null ? ` (${decisionTotals.approved})` : ''}
             </TabsTrigger>
             <TabsTrigger value="rejected" className="cursor-pointer">
-              Rejected{stats ? ` (${stats.total_rejected})` : ''}
+              Rejected{decisionTotals.rejected != null ? ` (${decisionTotals.rejected})` : ''}
             </TabsTrigger>
           </TabsList>
 

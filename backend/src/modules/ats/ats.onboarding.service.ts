@@ -720,12 +720,23 @@ export async function approveOffer(offerId: string, approverId: string, remarks?
     remarks: remarks ?? null,
   });
 
-  // Use orchestrator with all business rules
-  const result = await createEmployeeFromCandidate({
-    candidateId,
-    offerId,
-    approverId,
-  });
+  // Use orchestrator with all business rules.
+  //
+  // Wrapped: createEmployeeFromCandidate THROWS on a SQL error rather than
+  // returning success:false, and the revert below was only guarded by
+  // !result.success. A throw skipped it entirely and left the approval standing
+  // with no employee behind it — which is precisely what happened on the
+  // c.fresher failure.
+  let result: Awaited<ReturnType<typeof createEmployeeFromCandidate>>;
+  try {
+    result = await createEmployeeFromCandidate({ candidateId, offerId, approverId });
+  } catch (creationErr) {
+    if (decision.recorded && !decision.alreadyDecided && decision.payrollValidationId) {
+      await revertBranchHeadDecision({ payrollValidationId: decision.payrollValidationId })
+        .catch((e) => console.error('[approveOffer] could not revert after a thrown error:', e));
+    }
+    throw creationErr;
+  }
 
   if (!result.success) {
     // Undo our own write. Creation fails for reasons unrelated to the branch
@@ -750,23 +761,35 @@ export async function approveOffer(offerId: string, approverId: string, remarks?
   // these before, so approvals left no entry at all. Skipped when the decision
   // was already recorded elsewhere (processBranchHeadApproval writes at :186
   // and then calls this function), so nothing is duplicated.
-  if (!decision.alreadyDecided) {
+  // Each write below is individually idempotent, so it runs every time rather
+  // than only when this call recorded the decision. Gating them on
+  // !alreadyDecided meant that after any earlier partial attempt the retry
+  // skipped them all — leaving the candidate at 'payroll_validated' with an
+  // approved offer and no stage log.
+  {
     await db.execute(
       `INSERT INTO ats_offer_approval (id, offer_id, approver_id, action, remarks)
-       VALUES (UUID(), ?, ?, 'approved', ?)`,
-      [offerId, approverId, remarks ?? null],
+       SELECT UUID(), ?, ?, 'approved', ?
+         FROM DUAL
+        WHERE NOT EXISTS (SELECT 1 FROM ats_offer_approval x
+                           WHERE x.offer_id = ? AND x.action = 'approved')`,
+      [offerId, approverId, remarks ?? null, offerId],
     ).catch((e) => console.error('[approveOffer] offer approval trail insert failed:', e));
 
     await db.execute(
-      `UPDATE ats_candidate SET current_stage = 'offer_approved', updated_at = NOW() WHERE id = ?`,
+      `UPDATE ats_candidate SET current_stage = 'offer_approved', updated_at = NOW()
+        WHERE id = ? AND COALESCE(current_stage, '') <> 'offer_approved'`,
       [candidateId],
     ).catch(() => undefined);
 
     await db.execute(
       `INSERT INTO ats_candidate_stage_log
          (id, candidate_id, from_stage, to_stage, remarks, updated_by)
-       VALUES (UUID(), ?, 'payroll_validated', 'offer_approved', ?, ?)`,
-      [candidateId, remarks || 'Branch Head approved final offer', approverEmployeeId],
+       SELECT UUID(), ?, 'payroll_validated', 'offer_approved', ?, ?
+         FROM DUAL
+        WHERE NOT EXISTS (SELECT 1 FROM ats_candidate_stage_log x
+                           WHERE x.candidate_id = ? AND x.to_stage = 'offer_approved')`,
+      [candidateId, remarks || 'Branch Head approved final offer', approverEmployeeId, candidateId],
     ).catch(() => undefined);
 
     if (result.employeeCode && decision.payrollValidationId) {

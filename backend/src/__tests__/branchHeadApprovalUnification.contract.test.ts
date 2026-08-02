@@ -299,3 +299,30 @@ describe("the submitter can see and revise their own offer", () => {
     expect(onboarding.slice(at, at + 3500)).toContain("FROM ats_offer_approval a");
   });
 });
+
+describe("a failed creation cannot leave the approval standing", () => {
+  it("reverts when createEmployeeFromCandidate THROWS, not only when it returns failure", () => {
+    // The revert was guarded solely by !result.success. createEmployeeFromCandidate
+    // throws on a SQL error, which skips that block — and did, leaving an
+    // approved row with no employee behind it.
+    const at = onboarding.indexOf("export async function approveOffer");
+    const body = onboarding.slice(at, at + 5000);
+    expect(body).toMatch(/catch \(creationErr\)/);
+    expect(body).toMatch(/catch \(creationErr\)[\s\S]{0,400}revertBranchHeadDecision/);
+    expect(body).toContain("throw creationErr;");
+  });
+
+  it("post-approval writes are idempotent rather than gated on alreadyDecided", () => {
+    // Gating them meant a retry after a partial failure skipped them all: the
+    // candidate stayed at 'payroll_validated' with an approved offer.
+    // Scope to the function by its end marker rather than a character count —
+    // a fixed window silently stops covering the code it is meant to check as
+    // the function grows.
+    const at = onboarding.indexOf("export async function approveOffer");
+    const end = onboarding.indexOf("export async function", at + 10);
+    const body = onboarding.slice(at, end > at ? end : undefined);
+    expect(body).toContain("WHERE NOT EXISTS (SELECT 1 FROM ats_offer_approval x");
+    expect(body).toContain("COALESCE(current_stage, '') <> 'offer_approved'");
+    expect(body).toContain("WHERE NOT EXISTS (SELECT 1 FROM ats_candidate_stage_log x");
+  });
+});
