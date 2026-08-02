@@ -2,6 +2,7 @@ import { db } from '../../db/mysql.js';
 import type { RowDataPacket } from 'mysql2';
 import { inboxService } from '../inbox/inbox.service.js';
 import { emailService } from '../communication/email.service.js';
+import { getConfiguredRecipients } from './notification-recipients.service.js';
 import { logSensitiveAction } from '../../shared/auditLog.js';
 import { env } from '../../config/env.js';
 
@@ -57,16 +58,33 @@ function provisioningEmailHtml(title: string, description: string, actionUrl: st
 // ── User lookup helpers ────────────────────────────────────────────────────────
 
 async function getUsersForBranchRole(roleKey: string, branchId: string): Promise<ResolvedUser[]> {
+  // Joined on uas.user_id, not uas.manager_employee_id.
+  //
+  // manager_employee_id is NULL on every row in this table — the SPOC is
+  // identified by user_id. Joining on it matched nothing for every branch and
+  // every role, so this function always returned zero and the caller always
+  // fell through to "everyone with the role, company-wide". That is how one
+  // NOIDA-2 joiner emailed 51 people while NOIDA-2's actual IT SPOC sat in this
+  // very table.
+  //
+  // employees is LEFT JOINed for the name only, and its active_status is NOT
+  // filtered on. Four of the 22 configured SPOCs — including HYDERABAD and
+  // JAIPUR IT — have an inactive employees row while their scope assignment is
+  // active. active_status cannot distinguish "left the company" from "record
+  // was never activated", and several are shared mailboxes
+  // (it.jaipur@teammas.in). Dropping them means nobody is told the task exists.
+  // The deliberate, active scope assignment is the better authority; a blocked
+  // login (is_blocked) is the one unambiguous reason not to notify.
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT DISTINCT e.user_id AS userId, au.email
+    `SELECT DISTINCT uas.user_id AS userId, au.email
      FROM user_assignment_scope uas
-     JOIN employees e ON e.id = uas.manager_employee_id
-     JOIN auth_user au ON au.id = e.user_id
+     JOIN auth_user au ON au.id = uas.user_id
+     LEFT JOIN employees e ON e.user_id = au.id
      WHERE uas.role_key = ?
        AND uas.branch_id = ?
        AND uas.active_status = 1
-       AND e.active_status = 1
-       AND e.user_id IS NOT NULL`,
+       AND au.email IS NOT NULL
+       AND COALESCE(au.is_blocked, 0) = 0`,
     [roleKey, branchId],
   );
   return (rows as any[]).map((r) => ({ userId: r.userId, email: r.email ?? null }));
@@ -85,14 +103,135 @@ async function getUsersForGlobalRole(roleKey: string): Promise<ResolvedUser[]> {
   return (rows as any[]).map((r) => ({ userId: r.userId, email: r.email ?? null }));
 }
 
-async function resolveUsers(assignedRole: string, branchId: string | null): Promise<ResolvedUser[]> {
-  if (!branchId || assignedRole === 'admin') {
-    return getUsersForGlobalRole(assignedRole);
+/**
+ * The reporting manager of each SPOC, for CC.
+ *
+ * Their manager is who chases the task if it stalls, so they belong on the
+ * thread rather than finding out later.
+ */
+async function reportingManagersOf(userIds: string[]): Promise<string[]> {
+  if (userIds.length === 0) return [];
+  const ph = userIds.map(() => '?').join(',');
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT DISTINCT mgr_au.email
+       FROM employees e
+       JOIN employees mgr ON mgr.id = e.reporting_manager_id AND mgr.active_status = 1
+       JOIN auth_user mgr_au ON mgr_au.id = mgr.user_id
+      WHERE e.user_id IN (${ph}) AND e.active_status = 1
+        AND mgr_au.email IS NOT NULL`,
+    userIds,
+  ).catch(() => [[]] as unknown as [RowDataPacket[]]);
+  return (rows as RowDataPacket[]).map((r) => String(r.email)).filter(Boolean);
+}
+
+/**
+ * Branch HR, for CC.
+ *
+ * Prefers HR actually scoped to the branch; falls back to
+ * branch_master.hr_contact, which is a plain address column.
+ */
+async function branchHrEmails(branchId: string | null): Promise<string[]> {
+  if (!branchId) return [];
+  const [scoped] = await db.execute<RowDataPacket[]>(
+    // user_id, for the same reason as above — manager_employee_id is NULL on
+    // every row, so this would have found no branch HR either.
+    `SELECT DISTINCT au.email
+       FROM user_assignment_scope uas
+       JOIN auth_user au ON au.id = uas.user_id
+      WHERE uas.role_key IN ('hr', 'branch_hr') AND uas.branch_id = ?
+        AND uas.active_status = 1 AND au.email IS NOT NULL
+        AND COALESCE(au.is_blocked, 0) = 0`,
+    [branchId],
+  ).catch(() => [[]] as unknown as [RowDataPacket[]]);
+  const emails = (scoped as RowDataPacket[]).map((r) => String(r.email));
+  if (emails.length > 0) return emails;
+
+  const [bm] = await db.execute<RowDataPacket[]>(
+    `SELECT hr_contact FROM branch_master WHERE id = ? LIMIT 1`, [branchId],
+  ).catch(() => [[]] as unknown as [RowDataPacket[]]);
+  const contact = String(bm[0]?.hr_contact ?? '').trim();
+  return contact.includes('@') ? [contact] : [];
+}
+
+/** The branch head, used when no SPOC is scoped to the branch. */
+async function branchHeadUsers(branchId: string | null): Promise<ResolvedUser[]> {
+  if (!branchId) return [];
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT DISTINCT e.user_id AS userId, au.email
+       FROM branch_head_assignments bha
+       JOIN branch_master b ON b.branch_name = bha.branch_name OR b.id = bha.branch_head_id
+       JOIN employees e ON e.id = bha.branch_head_id AND e.active_status = 1
+       JOIN auth_user au ON au.id = e.user_id
+      WHERE b.id = ? AND bha.is_active = TRUE AND e.user_id IS NOT NULL`,
+    [branchId],
+  ).catch(() => [[]] as unknown as [RowDataPacket[]]);
+  return (rows as RowDataPacket[]).map((r) => ({ userId: String(r.userId), email: (r.email as string) ?? null }));
+}
+
+export type TaskRecipients = {
+  to: ResolvedUser[];
+  cc: string[];
+  /** No SPOC is scoped to this branch — the task needs assigning. */
+  unassigned: boolean;
+  /** How `to` was arrived at, for the log and the audit trail. */
+  basis: 'configured' | 'branch_spoc' | 'branch_head_escalation' | 'none';
+};
+
+/**
+ * Who should act on this task, and who should be kept informed.
+ *
+ * Deliberately never falls back to "everyone with the role". That fallback
+ * emailed 51 people about a single NOIDA-2 joiner — 8 IT, 9 admin, 11 WFM and
+ * 23 HR, none of whom own that branch. A notification that goes to everyone
+ * tells no one it is theirs.
+ */
+async function resolveTaskRecipients(
+  assignedRole: string,
+  branchId: string | null,
+  eventCode?: string,
+): Promise<TaskRecipients> {
+  // Explicit configuration wins. Everything below it is inference from tables
+  // that were never written down as "this is who should be told", which is how
+  // a Training & Quality employee ended up receiving NOIDA-2's admin tasks.
+  if (eventCode) {
+    const configured = await getConfiguredRecipients(branchId, eventCode);
+    if (configured) {
+      return {
+        to: configured.to.map((r) => ({ userId: r.userId ?? '', email: r.email })),
+        cc: configured.cc,
+        unassigned: false,
+        basis: 'configured',
+      };
+    }
   }
-  const scoped = await getUsersForBranchRole(assignedRole, branchId);
-  // Fallback: if no scoped users, try global (e.g. branch_it not yet scoped)
-  if (scoped.length === 0) return getUsersForGlobalRole(assignedRole);
-  return scoped;
+
+  const scoped = branchId ? await getUsersForBranchRole(assignedRole, branchId) : [];
+
+  if (scoped.length > 0) {
+    const cc = [
+      ...(await reportingManagersOf(scoped.map((u) => u.userId))),
+      ...(await branchHrEmails(branchId)),
+    ];
+    return { to: scoped, cc, unassigned: false, basis: 'branch_spoc' };
+  }
+
+  // No SPOC for this branch. Tell whoever owns the branch, and leave the task
+  // unassigned so it shows up for reassignment.
+  const head = await branchHeadUsers(branchId);
+  if (head.length > 0) {
+    return {
+      to: head,
+      cc: await branchHrEmails(branchId),
+      unassigned: true,
+      basis: 'branch_head_escalation',
+    };
+  }
+  return { to: [], cc: [], unassigned: true, basis: 'none' };
+}
+
+/** Kept for callers that still want the raw list. */
+async function resolveUsers(assignedRole: string, branchId: string | null): Promise<ResolvedUser[]> {
+  return (await resolveTaskRecipients(assignedRole, branchId)).to;
 }
 
 // ── Notification dispatch ──────────────────────────────────────────────────────
@@ -104,7 +243,12 @@ async function dispatchNotifications(
   description: string,
   entityId: string,
   actionUrl: string,
+  cc: string[] = [],
 ): Promise<void> {
+  // The SPOC's reporting manager and branch HR are copied so the people who
+  // chase the task can see it was raised, without being asked to action it.
+  const ccList = [...new Set(cc.filter((e) => e && e.includes('@')))]
+    .filter((e) => !users.some((u) => u.email === e));
   // Deduplicate email recipients — one user with multiple roles should get only one email per task
   const emailsSent = new Set<string>();
 
@@ -116,7 +260,9 @@ async function dispatchNotifications(
   });
 
   for (const user of users) {
-    try {
+    // A shared mailbox configured as a recipient has no login, so there is no
+    // inbox to write to — it gets the email only.
+    if (user.userId) try {
       await inboxService.createItem({
         user_id: user.userId,
         type,
@@ -144,6 +290,7 @@ async function dispatchNotifications(
       try {
         await emailService.send({
           to: user.email,
+          ...(ccList.length ? { cc: ccList.join(', ') } : {}),
           subject: title,
           html: provisioningEmailHtml(title, description, fullActionUrl),
           text: `${title}\n\n${description}\n\nOpen task in HRMS: ${fullActionUrl}`,
@@ -314,18 +461,20 @@ export async function dispatchJoinProvisioningTasks(params: {
   });
 
   for (const task of JOIN_TASKS) {
-    const users = await resolveUsers(task.assignedRole, branchId);
+    const recipients = await resolveTaskRecipients(task.assignedRole, branchId, task.taskCode);
+    const users = recipients.to;
 
-    console.log(`[dispatchJoinProvisioningTasks] Resolved users for role ${task.assignedRole}:`, {
+    console.log(`[dispatchJoinProvisioningTasks] Resolved recipients for role ${task.assignedRole}:`, {
       role: task.assignedRole,
       branchId,
-      usersFound: users.length,
-      users: users.map(u => ({ userId: u.userId, email: u.email })),
+      basis: recipients.basis,
+      to: users.map(u => u.email),
+      cc: recipients.cc,
     });
 
     // CHANGED: Create unassigned task instead of skipping
     // This ensures all mandatory tasks are visible for admin reassignment
-    const isUnassigned = users.length === 0;
+    const isUnassigned = users.length === 0 || recipients.unassigned;
 
     if (isUnassigned) {
       console.error(`[dispatchJoinProvisioningTasks] No users found for role ${task.assignedRole} - creating unassigned task for ${task.taskCode}`);
@@ -354,9 +503,13 @@ export async function dispatchJoinProvisioningTasks(params: {
       assignmentException: isUnassigned,
     });
 
-    // Only send notifications if users are assigned
-    if (!isUnassigned) {
-      await dispatchNotifications(users, 'it_provisioning', title, desc, requestId, task.actionUrl);
+    // Notify whenever there is someone to tell. Gating on !isUnassigned would
+    // silence the branch-head escalation, which is precisely the case where a
+    // human most needs to hear that a task has no owner.
+    if (users.length > 0) {
+      await dispatchNotifications(
+        users, 'it_provisioning', title, desc, requestId, task.actionUrl, recipients.cc,
+      );
     }
 
     console.log(`[dispatchJoinProvisioningTasks] Dispatched notifications for ${task.taskCode}:`, {
@@ -460,7 +613,8 @@ export async function dispatchExitProvisioningTasks(params: {
   const { employeeId, employeeCode, employeeName, branchId, lastWorkingDay, exitRequestId, actorUserId } = params;
 
   for (const task of EXIT_TASKS) {
-    const users = await resolveUsers(task.assignedRole, branchId);
+    const exitRecipients = await resolveTaskRecipients(task.assignedRole, branchId, task.taskCode);
+    const users = exitRecipients.to;
     const title = task.titleFn(employeeName, employeeCode, lastWorkingDay);
     const desc = task.descFn(employeeName, employeeCode, lastWorkingDay);
 
@@ -474,7 +628,9 @@ export async function dispatchExitProvisioningTasks(params: {
       actorUserId,
     });
 
-    await dispatchNotifications(users, 'it_provisioning', title, desc, requestId, task.actionUrl);
+    await dispatchNotifications(
+      users, 'it_provisioning', title, desc, requestId, task.actionUrl, exitRecipients.cc,
+    );
   }
 }
 

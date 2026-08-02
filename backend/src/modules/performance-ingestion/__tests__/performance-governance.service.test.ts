@@ -123,11 +123,32 @@ describe("performance final governance controls", () => {
     expect(auditCode).toContain("resolveDatasetId");
   });
 
-  it("exposes only scope-filtered governance audit history", () => {
+  it("scopes dataset-specific audit history, and keeps org-level actions visible", () => {
     expect(auditRouteCode).toContain('"/governance-audit"');
     expect(auditRouteCode).toContain("requireRole(...readers)");
     expect(auditServiceCode).toContain("resolveDashboardScope");
     expect(auditServiceCode).toContain("buildDatasetScopeFilter");
-    expect(auditServiceCode).toContain("pga.dataset_id IS NOT NULL");
+
+    // This asserted `pga.dataset_id IS NOT NULL`, and the service does the
+    // opposite: `(pga.dataset_id IS NULL OR (scoped))`. The service is right.
+    //
+    // dataset_id is nullable by design (582_performance_governance_audit.sql).
+    // The rows carrying NULL are the org-level ones — identity_mapping,
+    // process_mapping, mapping_exception — which have no dataset to be scoped
+    // BY. Requiring IS NOT NULL would not tighten anything; it would hide every
+    // identity- and process-mapping change from the audit log entirely, which is
+    // the opposite of what an audit log is for.
+    //
+    // The scoping that matters is still asserted above: dataset-specific rows go
+    // through buildDatasetScopeFilter, and the endpoint is limited to
+    // super_admin, admin, hr, process_manager, qa_manager and quality_lead.
+    // BOTH queries against performance_governance_audit must carry the gate: the
+    // history listing and the distinct-action-code lookup. Asserting merely that
+    // the clause appears somewhere is not enough — with two call sites, removing
+    // one still leaves the other to satisfy a `toContain`, and the assertion
+    // passes while half the endpoint returns unscoped rows. Verified by removing
+    // one gate and watching this fail.
+    const gates = auditServiceCode.match(/pga\.dataset_id IS NULL OR \(\$\{scoped\.sql\}\)/g) ?? [];
+    expect(gates).toHaveLength(2);
   });
 });

@@ -84,6 +84,7 @@ import { lettersRouter } from "./modules/letters/letters.routes.js";
 import { publicJoiningKitRouter, joiningKitRouter } from "./modules/employees/joiningKit.routes.js";
 import { appointmentEsignRouter } from "./modules/letters/appointment-esign.routes.js";
 import { dscConfigRouter } from "./modules/letters/dscConfig.routes.js";
+import { notificationRecipientsRouter } from "./modules/it-provisioning/notification-recipients.routes.js";
 import { appointmentLetterRouter } from "./modules/letters/appointmentLetter.routes.js";
 import { atsExtRouter } from "./modules/ats-extensions/ats-ext.routes.js";
 import { wfmExtRouter } from "./modules/wfm-extensions/wfm-ext.routes.js";
@@ -447,6 +448,9 @@ app.use("/api/letters", lettersRouter);
 app.use("/api/letters", appointmentEsignRouter);
 // Company signing certificate — super_admin only, handles private key material.
 app.use("/api/signing", dscConfigRouter);
+// Who receives each branch's provisioning notifications. Super-admin only —
+// it decides who is told about every new joiner, company-wide.
+app.use("/api/notification-recipients", notificationRecipientsRouter);
 // Payroll HR issuance. Separate from appointment-esign.routes.ts, which is
 // admin/hr only and sits on a table with two competing schemas.
 app.use("/api/letters", appointmentLetterRouter);

@@ -123,6 +123,15 @@ function letterheadAddressText(letterhead?: PdfLetterhead): string {
     : COMPANY_ADDRESS_FALLBACK;
 }
 
+/** The registered office of the company, as stated in contracts.
+ *
+ * Legally distinct from the branch a person works at: this is the address the
+ * company is registered at with the MCA, and it appears in the parties clause
+ * of the agreement. It is a constant so it can be corrected in one place —
+ * nothing in the system verifies it, and it should be checked against the
+ * current certificate of incorporation. */
+const COMPANY_REGISTERED_OFFICE = "B-24, Okhla Phase-II, New Delhi-110020";
+
 function renderContent(
   documentCode: string,
   replacements: Record<string, string>,
@@ -130,6 +139,18 @@ function renderContent(
 ): Promise<Buffer> {
   const definition = TEMPLATE_DEFINITIONS.find((entry) => entry.code === documentCode);
   if (!definition) throw new Error(`No template definition for ${documentCode}`);
+
+  // Derived from the same letterhead drawn at the top of the page, so the
+  // address in the body can never contradict the one in the header.
+  const branchLines = (letterhead?.addressLines ?? []).filter(Boolean);
+  replacements = {
+    ...replacements,
+    branch_address: branchLines.length
+      ? branchLines.join(", ")
+      : COMPANY_ADDRESS_FALLBACK,
+    branch_name: (letterhead?.branchName ?? "").trim(),
+    company_registered_office: COMPANY_REGISTERED_OFFICE,
+  };
 
   return new Promise((resolve, reject) => {
     const doc = new PDFDocument({

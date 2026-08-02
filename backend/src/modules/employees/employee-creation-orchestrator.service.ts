@@ -757,10 +757,24 @@ async function createRelatedEmployeeRecords(
   // Salary snapshot. `snapshot_date` is NOT NULL with no default and must be
   // supplied; the effective column is `effective_date`, not `effective_from`.
   await conn.execute(
+    // gross and net_in_hand were omitted, and every column on this table
+    // DEFAULTs to 0 — so the snapshot recorded a gross of 0.00 while basic, HRA
+    // and CTC came through correctly. The employment contract reads
+    // salary.monthly_gross from here, so the agreement emailed to the candidate
+    // stated their remuneration as "0 (Zero)". 16,136 of 33,443 snapshots carry
+    // a zero gross.
+    //
+    // Every figure below already exists on the offer that was just approved;
+    // none is derived or assumed. Note the two renames: the offer calls them
+    // pf_employee/pf_employer, this table calls them epf_*.
     `INSERT INTO employee_salary_snapshot
        (id, employee_id, snapshot_date, effective_date,
-        ctc_offered, offered_ctc, basic, hra, conveyance, special_allowance)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ctc_offered, offered_ctc, basic, hra, conveyance, da,
+        special_allowance, other_allowance, bonus, gross, net_in_hand,
+        epf_employee, epf_employer, esic_employee, esic_employer,
+        professional_tax, gratuity, admin_charges, pli,
+        pay_mode, salary_payment_mode)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       randomUUID(),
       employeeId,
@@ -771,7 +785,22 @@ async function createRelatedEmployeeRecords(
       offer.basic ?? 0,
       offer.hra ?? 0,
       offer.conveyance ?? 0,
+      offer.da ?? 0,
       offer.special_allowance ?? 0,
+      offer.other_allowance ?? 0,
+      offer.bonus ?? 0,
+      offer.gross ?? 0,
+      offer.net_in_hand ?? 0,
+      offer.pf_employee ?? 0,
+      offer.pf_employer ?? 0,
+      offer.esic_employee ?? 0,
+      offer.esic_employer ?? 0,
+      offer.professional_tax ?? 0,
+      offer.gratuity ?? 0,
+      offer.admin_charges ?? 0,
+      offer.pli ?? 0,
+      offer.pay_mode ?? null,
+      offer.salary_payment_mode ?? null,
     ]
   );
 
