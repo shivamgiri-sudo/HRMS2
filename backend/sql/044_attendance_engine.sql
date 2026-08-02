@@ -80,10 +80,28 @@ CREATE TABLE IF NOT EXISTS attendance_daily_record (
 -- =====================================================
 
 -- AGENT designation → dialler (480/240 mins)
+-- Seeded only if that designation exists.
+--
+-- The id below is a production row. On any freshly built database designation_master is
+-- empty, so a plain VALUES insert violates attendance_rule_config_ibfk_1 and stops the whole
+-- migration chain:
+--
+--   Cannot add or update a child row: a foreign key constraint fails
+--   (`mas_hrms`.`attendance_rule_config`, CONSTRAINT `attendance_rule_config_ibfk_1`
+--    FOREIGN KEY (`designation_id`) REFERENCES `designation_master` (`id`))
+--
+-- INSERT ... SELECT makes the seed conditional on its own foreign key. Where the designation
+-- exists — production, and any database restored from it — this inserts exactly the row it
+-- always did. Where it does not, it inserts nothing and moves on, which is the correct
+-- outcome: a designation-scoped rule for a designation that does not exist has no meaning.
+--
+-- The global default below is unaffected; its designation_id is NULL by design and it is
+-- what catches every other designation.
 INSERT INTO attendance_rule_config
   (id, rule_name, scope_type, designation_id, attendance_source, full_day_minutes, half_day_minutes, grace_minutes, effective_from, active_status)
-VALUES
-  ('arc-agent-001',  'Agent Dialler Rule', 'designation', '775ef029-5caf-11f1-adb1-00155d0ab410', 'dialler', 480, 240, 15, CURDATE(), 1)
+SELECT 'arc-agent-001', 'Agent Dialler Rule', 'designation', d.id, 'dialler', 480, 240, 15, CURDATE(), 1
+  FROM designation_master d
+ WHERE d.id = '775ef029-5caf-11f1-adb1-00155d0ab410'
 ON DUPLICATE KEY UPDATE rule_name = VALUES(rule_name);
 
 -- Global biometric default — catches ALL other designations

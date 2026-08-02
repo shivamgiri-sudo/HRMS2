@@ -27,6 +27,11 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { PAGE_CODE_BY_ROUTE, PAGE_CODE_BY_ROUTE_PATTERN } from "@/lib/pageRoutePageCodes";
+import {
+  UNROUTED_GRANTED_CODES,
+  UNROUTED_GRANTED_PAGE_CODES,
+  INHERITED_UNCLASSIFIED_COUNT,
+} from "@/config/rbac/unroutedGrantedPageCodes";
 
 const read = (relative: string) => readFileSync(resolve(process.cwd(), relative), "utf8");
 
@@ -62,46 +67,18 @@ function grantedPageCodes(): Set<string> {
 }
 
 /**
- * Granted page codes with no route mapping. These are invisible to the
- * mounted-route assertion in page-access-deployment.contract.test.ts, so each one
- * is a place where a page_catalog path could drift unnoticed.
+ * Granted page codes with no route mapping now live in an evidence-carrying register:
+ * src/config/rbac/unroutedGrantedPageCodes.ts
  *
- * Shrinking this list is always welcome — add the route to PAGE_CODE_BY_ROUTE and
- * delete the entry here. Do not add to it.
+ * The bare array that used to sit here listed twenty-six codes and nothing else — no reason,
+ * no evidence, no decision. Adding a line made this contract pass and asserted nothing.
+ * The register requires a disposition per code and is self-tested below.
  */
-const KNOWN_UNMAPPED_PAGE_CODES = [
-  "APPOINTMENT_ESIGN",
-  "ATS_OFFER",
-  "BENEFITS",
-  "CLIENT_MASTER",
-  "COACHING",
-  "COMPLIANCE_DASHBOARD",
-  "CUSTOMIZATION_MANAGER",
-  "DIALER_INTEGRATION",
-  "EMPLOYEES",
-  "EMPLOYEE_EPF_COMPLIANCE",
-  "FINANCE_HEAD_DASHBOARD",
-  "HELPDESK",
-  "IT_MANAGER_DASHBOARD",
-  "KPI_DASHBOARD",
-  "LEAVE_MANAGEMENT",
-  "ORG_CHART",
-  "ORG_MASTERS",
-  "PERFORMANCE_DASHBOARD",
-  "PROCESS_CONFIG",
-  "PROCESS_MANAGER_DASHBOARD",
-  "PROVISIONING_DASHBOARD",
-  "SALARY_PREP",
-  "SALARY_PROPOSAL_APPROVALS",
-  "SALARY_REGISTER",
-  "TEAM_ATTENDANCE",
-  "WFM_ROSTER_MANAGER_QUEUE",
-].sort();
 
 describe("page catalog / router drift", () => {
   it("does not grow the set of granted page codes with no route mapping", () => {
     const unmapped = [...grantedPageCodes()].filter((code) => !mappedCodes.has(code)).sort();
-    const added = unmapped.filter((code) => !KNOWN_UNMAPPED_PAGE_CODES.includes(code));
+    const added = unmapped.filter((code) => !UNROUTED_GRANTED_CODES.includes(code));
 
     expect(
       added,
@@ -165,5 +142,70 @@ describe("page catalog / router drift", () => {
     expect(codes).toContain("OPERATIONS_KPI");
     expect(codes).toContain("REPORTS_CENTER");
     expect(codes).toContain("WORKFORCE_COMMAND_CENTER");
+  });
+});
+
+/**
+ * The register replaces a bare allowlist, so it has to be harder to abuse than one.
+ *
+ * Two properties matter. A code may only be in it if it genuinely has no route — otherwise
+ * the register becomes a way to skip mapping. And the inherited, uninvestigated backlog may
+ * not grow — otherwise "unclassified" becomes the new allowlist.
+ */
+describe("unrouted granted page code register", () => {
+  const mapped = new Set(Object.values(PAGE_CODE_BY_ROUTE));
+
+  it("only holds codes that really have no route mapping", () => {
+    const wronglyRegistered = UNROUTED_GRANTED_PAGE_CODES.filter((e) => mapped.has(e.code)).map(
+      (e) => e.code,
+    );
+    expect(
+      wronglyRegistered,
+      "These codes DO have a route mapping, so they must not be registered as unrouted — " +
+        "registering a mapped code hides it from the drift assertion for no reason.",
+    ).toEqual([]);
+  });
+
+  it("requires a disposition and evidence for every entry", () => {
+    for (const entry of UNROUTED_GRANTED_PAGE_CODES) {
+      expect(entry.evidence.trim().length, `${entry.code} has no evidence`).toBeGreaterThan(30);
+      if (entry.disposition !== "unclassified") {
+        expect(
+          entry.proposedAction.trim().length,
+          `${entry.code} is classified as "${entry.disposition}" but proposes no action`,
+        ).toBeGreaterThan(30);
+      }
+    }
+  });
+
+  it("does not let the uninvestigated backlog grow", () => {
+    // Fixed at what was inherited on 2026-08-03. A new unrouted grant must be investigated
+    // and classified, not appended to the pile that already had no reasons recorded.
+    const unclassified = UNROUTED_GRANTED_PAGE_CODES.filter((e) => e.disposition === "unclassified");
+    expect(
+      unclassified.length,
+      "The uninvestigated backlog grew. Classify the new code with evidence and a proposed " +
+        "action instead of adding it to the inherited list.",
+    ).toBeLessThanOrEqual(INHERITED_UNCLASSIFIED_COUNT);
+  });
+
+  it("keeps the sixteen investigated codes in the RBAC matrix, not deleted from it", () => {
+    // The correction that produced this file. LIVE_IMPORTED_PAGE_CODES records what
+    // production's role_page_access actually grants, and apply-rbac-page-matrix.mjs revokes
+    // every grant absent from the matrix — so deleting an entry there is a revocation, not a
+    // cleanup. Removing HELPDESK_KB and ENGAGEMENT_COMMAND_CENTER would have revoked them for
+    // all 1,357 employees. Revocation belongs in migration 1061, deliberately and reviewed.
+    const matrix = readFileSync(
+      resolve(process.cwd(), "backend/src/shared/rbacPageMatrix.ts"),
+      "utf8",
+    );
+    for (const entry of UNROUTED_GRANTED_PAGE_CODES) {
+      if (entry.disposition === "unclassified") continue;
+      expect(
+        matrix.includes(`"${entry.code}"`),
+        `${entry.code} was removed from rbacPageMatrix.ts. That makes the applier revoke it ` +
+          `in production. Propose the revocation in backend/sql/1061_... instead.`,
+      ).toBe(true);
+    }
   });
 });
