@@ -248,6 +248,7 @@ export const navGroups: NavGroup[] = [
           { label: "QA Audit Forms",      href: "/quality/audit-forms",   icon: ic(ClipboardList), pageCode: "QA_EVALUATION", description: "Define what a process is scored on", roles: ["super_admin","admin","qa","tq_head"] },
           { label: "Score a Call",        href: "/quality/file-audit",    icon: ic(ShieldCheck), pageCode: "QUALITY_DASHBOARD", description: "File a QA audit", roles: ["super_admin","admin","qa","quality_analyst","tq_head"] },
           { label: "Process Metrics",     href: "/kpi/process-metrics",   icon: ic(BarChart3), pageCode: "KPI_CONFIG", description: "What each process is measured on", roles: ["super_admin","admin","qa","tq_head","process_manager"] },
+          { label: "Quality Targets",     href: "/quality/targets",       icon: ic(Target), pageCode: "QA_EVALUATION", description: "The bar each process is judged against", roles: ["super_admin","admin","qa","tq_head"] },
         ],
       },
       {

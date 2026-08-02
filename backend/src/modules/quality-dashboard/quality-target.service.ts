@@ -33,7 +33,9 @@ export type QualityTarget = {
   evaluationPeriod: "daily" | "weekly" | "monthly";
   effectiveFrom: string;
   effectiveTo: string | null;
-  status: "draft" | "active" | "superseded" | "retired";
+  status:
+    | "draft" | "simulation_reviewed" | "pending_approval" | "approved"
+    | "active" | "inactive" | "superseded" | "rejected";
   approvedBy: string | null;
   approvedAt: string | null;
 };
