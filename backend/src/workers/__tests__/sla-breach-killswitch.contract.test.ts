@@ -50,6 +50,46 @@ describe("sla-breach worker kill switch", () => {
   });
 });
 
+/**
+ * The alert fires on candidates "waiting beyond SLA". ats_candidate.status only
+ * leaves 'Waiting' when a recruiter submits feedback, so a candidate who walked
+ * out stays 'Waiting' indefinitely while their queue token already records
+ * no_show. Filtering on status alone re-alerted people who had left, every 5
+ * minutes for 24 hours.
+ */
+describe("sla-breach only alerts on candidates actually still queued", () => {
+  const worker = read("src/workers/sla-breach-worker.ts");
+  // Comments in the block explain which states are excluded and why, so they
+  // name them. Assert against executable SQL only.
+  const query = (worker.match(/FROM ats_candidate c[\s\S]*?LIMIT/)?.[0] ?? "")
+    .split("\n")
+    .filter((line) => !line.trim().startsWith("--"))
+    .join("\n");
+
+  it("requires the queue token to still say 'waiting'", () => {
+    expect(query).toContain("qt.queue_status = 'waiting'");
+  });
+
+  it("therefore cannot alert on a walked-out or finished candidate", () => {
+    // Terminal and in-progress states must not satisfy the predicate. Asserting
+    // on the equality above is what excludes no_show, completed, called and
+    // in_interview — this documents which states that covers.
+    for (const terminal of ["no_show", "completed"]) {
+      expect(
+        query.includes(`'${terminal}'`),
+        `query should not special-case ${terminal}; the queue_status = 'waiting' equality already excludes it`
+      ).toBe(false);
+    }
+    expect(query).not.toContain("qt.queue_status IN");
+  });
+
+  it("leaves in_interview to the worker that owns it", () => {
+    const delayWorker = read("src/workers/interview-delay-alert.worker.ts");
+    expect(delayWorker).toContain("in_interview");
+    expect(query).not.toContain("in_interview");
+  });
+});
+
 describe("interview-delay-alert kill switch", () => {
   const worker = read("src/workers/interview-delay-alert.worker.ts");
 

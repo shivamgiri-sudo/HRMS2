@@ -77,6 +77,17 @@ async function findSLABreachCandidates(slaThresholdMinutes: number): Promise<any
        LEFT JOIN ats_recruiter_roster rr ON rr.id = c.recruiter_id
        LEFT JOIN employees emp ON emp.id = rr.employee_id
        WHERE c.status = 'Waiting'
+         -- The queue token is the truth about whether somebody is still in the
+         -- lobby; ats_candidate.status is not. A candidate who walks out is
+         -- marked no_show on the token, but nothing moves them off 'Waiting'
+         -- unless the recruiter submits feedback — so filtering on status alone
+         -- re-alerted people who had already left, every 5 minutes for 24 hours.
+         -- Live on 2026-08-02: the single candidate this worker was alerting on
+         -- had queue_status = 'no_show' and had been "waiting" 1,107 minutes.
+         -- 'in_interview' is excluded here too: that is what
+         -- interview-delay-alert.worker.ts is for, and "waiting to be called" is
+         -- the wrong thing to say about somebody already in the room.
+         AND qt.queue_status = 'waiting'
          AND c.recruiter_assigned_name IS NOT NULL
          AND TIMESTAMPDIFF(MINUTE, COALESCE(qt.arrival_time, qt.created_at), NOW()) >= ?
          AND COALESCE(qt.arrival_time, qt.created_at) >= DATE_SUB(NOW(), INTERVAL 24 HOUR)
