@@ -25,7 +25,13 @@ jobs:
         image: mysql:8.0
         env:
           MYSQL_ROOT_PASSWORD: rootpass
-          MYSQL_DATABASE: mas_hrms
+          # MYSQL_DATABASE is deliberately NOT set. The container would create mas_hrms with
+          # the server default collation (utf8mb4_0900_ai_ci on MySQL 8.0), after which the
+          # runner's CREATE DATABASE IF NOT EXISTS ... COLLATE utf8mb4_unicode_ci becomes a
+          # silent no-op — and migration 018 fails on an incompatible foreign key seventeen
+          # migrations later. Letting the migration runner create the database is also what a
+          # real fresh deployment does, so this job now exercises that path instead of a
+          # pre-provisioned one that never matched it.
         ports:
           - 3306:3306
         options: >-

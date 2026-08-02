@@ -748,7 +748,48 @@ async function ensureDatabaseExists(
     await conn.query(
       `CREATE DATABASE IF NOT EXISTS \`${dbName}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`
     );
-    console.log(`[migration] database '${dbName}' ensured`);
+
+    // IF NOT EXISTS makes the COLLATE clause above a no-op on a database that already
+    // exists — including one created a moment earlier by a container, an installer or a
+    // DBA. MySQL accepts that silently, and the mismatch stays invisible until some later
+    // migration declares an explicit collation on a foreign key into a table that inherited
+    // the server default.
+    //
+    // That is not hypothetical. On MySQL 8.0 the server default is utf8mb4_0900_ai_ci, so
+    // exit_request (011 declares no collation, inheriting the database's) and
+    // full_final_calculation (018 declares utf8mb4_unicode_ci explicitly) end up on
+    // different collations, and 018 dies on:
+    //
+    //   Referencing column 'exit_request_id' and referenced column 'id' in foreign key
+    //   constraint 'fk_ff_exit_request' are incompatible
+    //
+    // which names neither collation nor the database, seventeen migrations after the real
+    // mistake. STOP_ON_FIRST_FAILURE then abandons everything from 018 onward.
+    //
+    // So verify rather than assume. Failing here costs one clear line; not failing here
+    // costs a half-built schema and an error that points at the wrong file. This runs only
+    // when migrations are actually going to be applied — runPendingMigrations() returns
+    // before reaching it when SKIP_MIGRATIONS=true, which is how production boots — so an
+    // existing deployment cannot be taken down by this check.
+    const [rows] = await conn.query<RowDataPacket[]>(
+      `SELECT DEFAULT_COLLATION_NAME AS collation_name
+         FROM information_schema.SCHEMATA
+        WHERE SCHEMA_NAME = ?`,
+      [dbName]
+    );
+    const actual = rows[0]?.collation_name;
+    if (actual !== "utf8mb4_unicode_ci") {
+      throw new Error(
+        `Database '${dbName}' has collation '${actual ?? "unknown"}', but the migrations ` +
+          `require 'utf8mb4_unicode_ci'. The database already existed, so CREATE DATABASE ` +
+          `IF NOT EXISTS did not set it. Fix it before migrating:\n` +
+          `  ALTER DATABASE \`${dbName}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;\n` +
+          `Note that ALTER DATABASE changes the default for NEW tables only — any table ` +
+          `already created under the wrong collation must be converted as well, so on a ` +
+          `part-built database prefer dropping it and letting the migration runner create it.`
+      );
+    }
+    console.log(`[migration] database '${dbName}' ensured (collation ${actual})`);
   } finally {
     await conn.end();
   }

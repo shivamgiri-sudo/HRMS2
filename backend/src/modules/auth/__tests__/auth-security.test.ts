@@ -87,7 +87,27 @@ describe("Auth Security Hardening", () => {
 
     it("refreshAccess() should check employee status", () => {
       expect(authServiceCode).toContain("EMPLOYEE_INACTIVE");
-      expect(authServiceCode).toContain("employee_status");
+
+      // This used to assert the literal "employee_status". The guard was deliberately moved
+      // off that column onto active_status, because employment_status holds case-inconsistent
+      // free text ("Resigned" vs "inactive") and an unmatched value would silently let a
+      // separated employee keep refreshing. The literal assertion outlived the column and
+      // failed on a change that made the check stronger.
+      //
+      // What matters is not which column backs the guard, but that the guard reads a value
+      // the query actually returns. `Number(undefined) === 0` is false, so if the alias were
+      // ever dropped from the SELECT the check would stop firing without throwing anything —
+      // a separated employee would refresh forever and no test would notice. That is the
+      // regression worth catching, so it is the one asserted here.
+      const guard = authServiceCode.match(/if \(Number\(token\.(\w+)\) === 0\)/);
+      expect(guard, "no numeric employee-activity guard found in refreshAccess()").not.toBeNull();
+
+      const alias = guard![1];
+      expect(
+        authServiceCode,
+        `refreshAccess() gates on token.${alias}, but no SELECT aliases a column to ${alias} — ` +
+          `the guard reads undefined and can never fire`,
+      ).toMatch(new RegExp(`AS\\s+${alias}\\b`, "i"));
     });
 
     it("refreshAccess() should check password_changed_at", () => {
