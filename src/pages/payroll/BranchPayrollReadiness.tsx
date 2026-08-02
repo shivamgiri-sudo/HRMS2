@@ -331,6 +331,12 @@ function BranchCard({
           })}
         </div>
 
+        {/* Click hint */}
+        <div className="mt-2 flex items-center gap-1 text-[10px] text-slate-400">
+          <Briefcase className="h-3 w-3" />
+          <span>Click to view process-level breakdown</span>
+        </div>
+
         {/* Salary projections */}
         {(branch.projected_gross != null || branch.projected_net != null) && (
           <div className="mt-3 grid grid-cols-2 gap-2 rounded-xl border border-slate-100 bg-slate-50/60 px-3 py-2">
@@ -376,7 +382,188 @@ function BranchCard({
   );
 }
 
-// ─── Detail Drawer ─────────────────────────────────────────────────────────────
+// ─── Process Row Card (inside detail drawer) ───────────────────────────────────
+
+function ProcessReadinessRow({
+  process,
+  month,
+  branchId,
+}: {
+  process: BranchReadiness;
+  month: string;
+  branchId: string;
+}) {
+  const qc = useQueryClient();
+  const s = STATUS_CARD_STYLE[process.readiness_status] ?? STATUS_CARD_STYLE.not_started;
+  const doneCount = CHECKLIST_DEFS.filter((def) => getChecklistValue(process, def)).length;
+  const [signOffOpen, setSignOffOpen] = useState(false);
+  const [remarks, setRemarks] = useState("");
+
+  const toggleItem = useMutation({
+    mutationFn: async ({ field, value }: { field: "custom_deductions_uploaded" | "overtime_entered"; value: number }) => {
+      await hrmsApi.post(`/api/payroll/branch-readiness/${branchId}/${process.process_id}/checklist?month=${month}`, { item: field, value });
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["branch-processes", branchId, month] });
+      toast.success("Checklist updated");
+    },
+    onError: () => toast.error("Failed to update checklist"),
+  });
+
+  const signOff = useMutation({
+    mutationFn: async () => {
+      await hrmsApi.post(`/api/payroll/branch-readiness/${branchId}/${process.process_id}/signoff?month=${month}`, { remarks });
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["branch-processes", branchId, month] });
+      setSignOffOpen(false);
+      setRemarks("");
+      toast.success(`${process.process_name} signed off`);
+    },
+    onError: () => toast.error("Sign-off failed"),
+  });
+
+  return (
+    <div className={`rounded-2xl border-2 overflow-hidden ${s.border}`}>
+      {/* Process header */}
+      <div className="flex items-center justify-between gap-3 px-4 py-3 bg-white">
+        <div className="min-w-0 flex-1">
+          <p className="text-sm font-bold text-slate-900 truncate">{process.process_name || "Unnamed Process"}</p>
+          <p className="text-[11px] text-slate-400 mt-0.5">
+            {process.employee_count_active || process.employee_count || 0} active employees
+          </p>
+        </div>
+        <div className="flex items-center gap-2.5 flex-shrink-0">
+          <ScoreCircle score={process.readiness_score} size={44} />
+          <span className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-[10px] font-bold ${s.badge}`}>
+            {s.badgeText}
+          </span>
+        </div>
+      </div>
+
+      {/* Progress bar */}
+      <div className="h-1">
+        <div className={`h-full ${s.accentBar}`} style={{ width: `${Math.round((doneCount / CHECKLIST_DEFS.length) * 100)}%` }} />
+      </div>
+
+      {/* Checklist pills */}
+      <div className="flex flex-wrap gap-1.5 px-4 py-3 bg-slate-50/50">
+        {CHECKLIST_DEFS.map((def) => {
+          const ok = getChecklistValue(process, def);
+          const display = getChecklistDisplay(process, def);
+          const isManual = def.key === "custom_deductions_uploaded" || def.key === "overtime_entered";
+          return (
+            <div key={String(def.key)} className="flex items-center gap-1">
+              <span
+                title={def.label + (display ? ` (${display})` : "")}
+                className={`inline-flex items-center gap-1 rounded-lg border px-2 py-1 text-[10px] font-medium ${
+                  ok ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-slate-200 bg-white text-slate-400"
+                }`}
+              >
+                {ok ? <CheckCircle2 className="h-3 w-3" /> : <XCircle className="h-3 w-3" />}
+                {display ?? def.label.split(" ")[0]}
+              </span>
+              {isManual && !ok && (
+                <button
+                  type="button"
+                  disabled={toggleItem.isPending}
+                  onClick={() => toggleItem.mutate({ field: def.key as "custom_deductions_uploaded" | "overtime_entered", value: 1 })}
+                  className="rounded-lg border border-blue-200 bg-blue-50 px-2 py-0.5 text-[10px] font-semibold text-blue-700 hover:bg-blue-100 transition-colors"
+                  title={`Mark ${def.label} as done`}
+                >
+                  Mark done
+                </button>
+              )}
+              {isManual && ok && (
+                <button
+                  type="button"
+                  disabled={toggleItem.isPending}
+                  onClick={() => toggleItem.mutate({ field: def.key as "custom_deductions_uploaded" | "overtime_entered", value: 0 })}
+                  className="rounded-lg border border-slate-200 bg-white px-2 py-0.5 text-[10px] font-medium text-slate-400 hover:bg-slate-50 transition-colors"
+                  title={`Undo ${def.label}`}
+                >
+                  Undo
+                </button>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Salary projections if available */}
+      {(process.projected_gross != null || process.projected_net != null) && (
+        <div className="grid grid-cols-2 divide-x divide-slate-100 border-t border-slate-100">
+          <div className="px-4 py-2">
+            <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">Gross</p>
+            <p className="text-sm font-bold text-slate-800">{fmtCurrency(process.projected_gross)}</p>
+          </div>
+          <div className="px-4 py-2">
+            <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">Net</p>
+            <p className="text-sm font-bold text-emerald-700">{fmtCurrency(process.projected_net)}</p>
+          </div>
+        </div>
+      )}
+
+      {/* Process Manager Sign-off row */}
+      <div className="flex items-center justify-between gap-3 border-t border-slate-100 px-4 py-2.5 bg-white">
+        <div className="text-xs text-slate-500">
+          {process.process_manager_signoff ? (
+            <span className="inline-flex items-center gap-1 text-emerald-700 font-semibold">
+              <CheckCircle2 className="h-3.5 w-3.5" />
+              WFM signed off
+              {process.process_manager_signoff_at && (
+                <span className="font-normal text-slate-400 ml-1">{fmtDateTime(process.process_manager_signoff_at)}</span>
+              )}
+            </span>
+          ) : (
+            <span className="text-amber-600 font-medium">WFM sign-off pending</span>
+          )}
+        </div>
+        {!process.process_manager_signoff && (
+          <button
+            type="button"
+            className="inline-flex items-center gap-1.5 rounded-xl border border-blue-200 bg-blue-50 px-3 py-1.5 text-xs font-semibold text-blue-700 hover:bg-blue-100 transition-colors"
+            onClick={() => setSignOffOpen(true)}
+          >
+            <ShieldCheck className="h-3.5 w-3.5" />
+            WFM Sign-off
+          </button>
+        )}
+      </div>
+
+      {/* Sign-off dialog */}
+      {signOffOpen && (
+        <div className="border-t border-blue-100 bg-blue-50/50 px-4 py-3">
+          <p className="text-xs font-semibold text-blue-800 mb-2">
+            Confirm process readiness for <strong>{process.process_name}</strong>
+          </p>
+          <Textarea
+            placeholder="Remarks (required) — confirm that attendance, incentives, deductions and overtime are complete for this process"
+            value={remarks}
+            onChange={(e) => setRemarks(e.target.value)}
+            rows={2}
+            className="text-xs mb-2"
+          />
+          <div className="flex gap-2 justify-end">
+            <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => { setSignOffOpen(false); setRemarks(""); }}>
+              Cancel
+            </Button>
+            <Button
+              size="sm"
+              className="h-7 text-xs bg-blue-600 hover:bg-blue-700 text-white"
+              disabled={!remarks.trim() || signOff.isPending}
+              onClick={() => signOff.mutate()}
+            >
+              {signOff.isPending ? "Signing…" : "Confirm Sign-off"}
+            </Button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Detail Drawer — with process-level breakdown ──────────────────────────────
 
 function DetailDrawer({
   branch,
@@ -391,12 +578,22 @@ function DetailDrawer({
 }) {
   const qc = useQueryClient();
 
+  const processQuery = useQuery({
+    queryKey: ["branch-processes", branch?.branch_id, month],
+    queryFn: async () => {
+      const res = await hrmsApi.get<{ success: boolean; data: BranchReadiness[]; summary: { total: number; ready: number; blocked: number; avg_score: number } }>(
+        `/api/payroll/branch-readiness/${branch!.branch_id}/processes?month=${month}`
+      );
+      return res;
+    },
+    enabled: !!branch && open,
+    staleTime: 30_000,
+  });
+
   const projectionMutation = useMutation({
     mutationFn: async () => {
       if (!branch) return;
-      await hrmsApi.get(
-        `/api/payroll/branch-readiness/${branch.branch_id}/projection?month=${month}`
-      );
+      await hrmsApi.get(`/api/payroll/branch-readiness/${branch.branch_id}/projection?month=${month}`);
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["branch-readiness"] });
@@ -407,145 +604,146 @@ function DetailDrawer({
 
   if (!branch) return null;
   const colors = getScoreColors(branch.readiness_score);
+  const processes = processQuery.data?.data ?? [];
+  const procSummary = processQuery.data?.summary;
 
   return (
     <Sheet open={open} onOpenChange={(v) => !v && onClose()}>
-      <SheetContent className="w-full sm:w-[420px] overflow-y-auto">
-        <SheetHeader>
-          <SheetTitle>{branch.branch_name} — Readiness Detail</SheetTitle>
-        </SheetHeader>
-        <div className="mt-4 space-y-4">
-          <div className="flex items-center gap-4">
-            <ScoreCircle score={branch.readiness_score} size={72} />
-            <div>
-              <p className="text-sm text-muted-foreground">Readiness Score</p>
-              <Badge
-                variant="outline"
-                className={`mt-1 capitalize ${colors.badge}`}
-              >
+      <SheetContent className="w-full sm:w-[600px] md:w-[680px] overflow-y-auto p-0">
+        {/* Header */}
+        <div
+          className="sticky top-0 z-10 px-5 pt-5 pb-4"
+          style={{
+            background: "linear-gradient(135deg, #073f78 0%, #1B6AB5 100%)",
+            boxShadow: "0 4px 16px rgba(7,63,120,0.2)",
+          }}
+        >
+          <div className="flex items-center justify-between gap-3">
+            <div className="min-w-0">
+              <p className="text-[11px] font-bold uppercase tracking-wider text-blue-200">Branch Detail</p>
+              <h2 className="mt-0.5 text-xl font-extrabold text-white truncate">{branch.branch_name}</h2>
+              <p className="mt-0.5 text-xs text-blue-200">
+                {branch.employee_count_active || branch.employee_count} active · {month}
+              </p>
+            </div>
+            <div className="flex items-center gap-3 flex-shrink-0">
+              <ScoreCircle score={branch.readiness_score} size={56} />
+              <span className={`inline-flex items-center rounded-full border px-3 py-1 text-xs font-bold capitalize backdrop-blur-sm ${colors.badge}`}>
                 {branch.readiness_status.replace(/_/g, " ")}
-              </Badge>
+              </span>
             </div>
           </div>
 
-          <div className="space-y-2">
-            {CHECKLIST_DEFS.map((def) => {
-              const ok = getChecklistValue(branch, def);
-              const display = getChecklistDisplay(branch, def);
-              const tsKey = def.timestampKey;
-              const ts = tsKey ? (branch[tsKey] as string | null) : null;
-              return (
-                <div
-                  key={String(def.key)}
-                  className="flex items-start gap-3 p-3 rounded-lg border bg-card"
-                >
-                  <div
-                    className={`mt-0.5 flex-shrink-0 ${ok ? "text-emerald-600" : "text-gray-300"}`}
-                  >
-                    {ok ? (
-                      <CheckCircle2 className="w-5 h-5" />
-                    ) : (
-                      <XCircle className="w-5 h-5 text-red-300" />
-                    )}
+          {/* Branch-level projections in header */}
+          {(branch.projected_gross != null || branch.projected_net != null) && (
+            <div className="mt-3 flex items-center gap-4 rounded-xl bg-white/10 px-4 py-2">
+              <div>
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-blue-200">Branch Gross</p>
+                <p className="text-sm font-bold text-white">{fmtCurrency(branch.projected_gross)}</p>
+              </div>
+              <div className="h-8 w-px bg-white/20" />
+              <div>
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-blue-200">Branch Net</p>
+                <p className="text-sm font-bold text-emerald-300">{fmtCurrency(branch.projected_net)}</p>
+              </div>
+              <button
+                type="button"
+                className="ml-auto rounded-lg p-1.5 text-blue-200 hover:bg-white/10 transition-colors"
+                onClick={() => projectionMutation.mutate()}
+                disabled={projectionMutation.isPending}
+                title="Refresh projection"
+              >
+                <RefreshCw className={`h-4 w-4 ${projectionMutation.isPending ? "animate-spin" : ""}`} />
+              </button>
+            </div>
+          )}
+        </div>
+
+        <div className="px-5 py-4 space-y-4">
+          {/* Process summary strip */}
+          {procSummary && procSummary.total > 0 && (
+            <div className="grid grid-cols-4 gap-2">
+              {[
+                { label: "Total", value: procSummary.total, cls: "border-slate-200 text-slate-700" },
+                { label: "Ready", value: procSummary.ready, cls: "border-emerald-200 text-emerald-700 bg-emerald-50/60" },
+                { label: "Blocked", value: procSummary.blocked, cls: "border-red-200 text-red-700 bg-red-50/60" },
+                { label: "Avg Score", value: `${procSummary.avg_score}%`, cls: procSummary.avg_score >= 80 ? "border-emerald-200 text-emerald-700 bg-emerald-50/60" : procSummary.avg_score >= 50 ? "border-amber-200 text-amber-700 bg-amber-50/60" : "border-red-200 text-red-700 bg-red-50/60" },
+              ].map((item) => (
+                <div key={item.label} className={`rounded-xl border-2 px-3 py-2 text-center ${item.cls}`}>
+                  <p className="text-lg font-extrabold leading-none">{item.value}</p>
+                  <p className="mt-1 text-[10px] font-semibold uppercase tracking-wider opacity-70">{item.label}</p>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Processes */}
+          {processQuery.isLoading ? (
+            <div className="space-y-3">
+              {[1, 2, 3].map((i) => (
+                <div key={i} className="h-28 rounded-2xl bg-slate-100 animate-pulse" />
+              ))}
+            </div>
+          ) : processes.length === 0 ? (
+            <div className="flex flex-col items-center justify-center rounded-2xl border-2 border-dashed border-slate-200 py-12 text-center">
+              <Briefcase className="h-10 w-10 text-slate-300 mb-3" />
+              <p className="text-sm font-semibold text-slate-500">No processes found for this branch</p>
+              <p className="text-xs text-slate-400 mt-1">Processes must be configured in the process master</p>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              <h3 className="text-sm font-bold text-slate-700 flex items-center gap-2">
+                <Briefcase className="h-4 w-4 text-slate-400" />
+                Process-Level Readiness
+                <span className="ml-auto text-[11px] font-normal text-slate-400">{processes.length} process{processes.length !== 1 ? "es" : ""}</span>
+              </h3>
+              {processes.map((proc) => (
+                <ProcessReadinessRow
+                  key={proc.process_id || proc.process_name}
+                  process={proc}
+                  month={month}
+                  branchId={branch.branch_id}
+                />
+              ))}
+            </div>
+          )}
+
+          {/* Branch-level sign-off & override */}
+          <div className="rounded-2xl border-2 border-slate-200 overflow-hidden">
+            <div className="px-4 py-3 bg-slate-50 border-b border-slate-100">
+              <p className="text-sm font-bold text-slate-700">Branch Sign-off & Governance</p>
+            </div>
+            <div className="p-4 space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-slate-600">Branch Head Sign-off</span>
+                {branch.branch_head_signoff ? (
+                  <div className="text-right">
+                    <span className="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-bold text-emerald-700">
+                      <CheckCircle2 className="h-3 w-3" /> Signed Off
+                    </span>
+                    <p className="mt-0.5 text-[10px] text-slate-400">{fmtDateTime(branch.branch_head_signoff_at)}</p>
                   </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium">{def.label}</p>
-                    {display && (
-                      <p className="text-xs text-muted-foreground">{display}</p>
-                    )}
-                    {ts && (
-                      <p className="text-xs text-muted-foreground mt-0.5">
-                        Updated: {fmtDateTime(ts)}
-                      </p>
+                ) : (
+                  <span className="inline-flex items-center rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-bold text-amber-700">
+                    Pending
+                  </span>
+                )}
+              </div>
+              {Boolean(branch.ho_override_ready) && (
+                <div className="flex items-center justify-between">
+                  <span className="text-sm text-slate-600">HO Override</span>
+                  <div className="text-right">
+                    <span className="inline-flex items-center gap-1 rounded-full border border-blue-200 bg-blue-50 px-3 py-1 text-xs font-bold text-blue-700">
+                      <CheckCircle2 className="h-3 w-3" /> Applied
+                    </span>
+                    {branch.ho_override_reason && (
+                      <p className="mt-0.5 text-[10px] text-slate-400 italic">{branch.ho_override_reason}</p>
                     )}
                   </div>
                 </div>
-              );
-            })}
-          </div>
-
-          {/* Projections */}
-          <div className="rounded-lg border p-3 space-y-2">
-            <div className="flex items-center justify-between">
-              <p className="text-sm font-semibold">Salary Projections</p>
-              <Button
-                size="icon"
-                variant="ghost"
-                className="h-6 w-6"
-                disabled={projectionMutation.isPending}
-                onClick={() => projectionMutation.mutate()}
-                title="Refresh projection"
-              >
-                <RefreshCw className={`w-3.5 h-3.5 ${projectionMutation.isPending ? "animate-spin" : ""}`} />
-              </Button>
-            </div>
-            <div className="flex justify-between text-sm">
-              <span className="text-muted-foreground">Projected Gross</span>
-              <span className="font-medium">{fmtCurrency(branch.projected_gross)}</span>
-            </div>
-            <div className="flex justify-between text-sm">
-              <span className="text-muted-foreground">Projected Net</span>
-              <span className="font-medium">{fmtCurrency(branch.projected_net)}</span>
-            </div>
-            {branch.projection_computed_at && (
-              <p className="text-xs text-muted-foreground">
-                Computed: {fmtDateTime(branch.projection_computed_at)}
-              </p>
-            )}
-          </div>
-
-          {/* Branch head sign-off */}
-          <div className="rounded-lg border p-3 space-y-1">
-            <p className="text-sm font-semibold">Branch Head Sign-off</p>
-            {branch.branch_head_signoff ? (
-              <>
-                <Badge
-                  variant="outline"
-                  className="text-emerald-700 bg-emerald-50 border-emerald-200"
-                >
-                  Signed Off
-                </Badge>
-                <p className="text-xs text-muted-foreground">
-                  By: {branch.branch_head_signoff_by ?? "—"} on{" "}
-                  {fmtDateTime(branch.branch_head_signoff_at)}
-                </p>
-                {branch.branch_head_remarks && (
-                  <p className="text-xs text-muted-foreground italic">
-                    "{branch.branch_head_remarks}"
-                  </p>
-                )}
-              </>
-            ) : (
-              <Badge
-                variant="outline"
-                className="text-amber-700 bg-amber-50 border-amber-200"
-              >
-                Pending Sign-off
-              </Badge>
-            )}
-          </div>
-
-          {/* HO Override details */}
-          {branch.ho_override_ready ? (
-            <div className="rounded-lg border border-blue-200 bg-blue-50/50 p-3 space-y-1">
-              <Badge
-                variant="outline"
-                className="text-blue-700 bg-blue-50 border-blue-200"
-              >
-                HO Override Applied
-              </Badge>
-              {branch.ho_override_by && (
-                <p className="text-xs text-muted-foreground">
-                  By: {branch.ho_override_by} on {fmtDateTime(branch.ho_override_at)}
-                </p>
-              )}
-              {branch.ho_override_reason && (
-                <p className="text-xs text-muted-foreground italic">
-                  Reason: "{branch.ho_override_reason}"
-                </p>
               )}
             </div>
-          ) : null}
+          </div>
         </div>
       </SheetContent>
     </Sheet>

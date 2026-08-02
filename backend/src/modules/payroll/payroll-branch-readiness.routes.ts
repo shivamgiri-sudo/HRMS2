@@ -378,6 +378,142 @@ payrollBranchReadinessRouter.post(
 );
 
 // ---------------------------------------------------------------------------
+// GET /:branchId/processes?month=YYYY-MM
+// Process-level readiness for a single branch
+// Roles: branch_head, payroll_branch, payroll_head, super_admin, payroll
+// ---------------------------------------------------------------------------
+
+payrollBranchReadinessRouter.get(
+  "/:branchId/processes",
+  requireAuth,
+  requireRole("branch_head", "payroll_branch", "payroll_head", "super_admin", "payroll"),
+  async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const { branchId } = req.params;
+      const month = resolveMonth(req.query.month);
+      const processes = await payrollBranchReadinessService.getSummaryForBranch(month, branchId);
+
+      const total = processes.length;
+      const ready = processes.filter((p) => p.readiness_status === "ready").length;
+      const blocked = processes.filter((p) => p.readiness_status === "blocked").length;
+      const in_progress = processes.filter((p) => p.readiness_status === "in_progress").length;
+      const avg_score = total > 0
+        ? Math.round(processes.reduce((s, p) => s + p.readiness_score, 0) / total)
+        : 0;
+
+      return res.json({
+        success: true,
+        month,
+        branch_id: branchId,
+        data: processes,
+        summary: { total, ready, blocked, in_progress, avg_score },
+      });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error("[BranchReadiness] GET /:branchId/processes error:", msg);
+      return res.status(500).json({ success: false, message: "Failed to fetch process readiness" });
+    }
+  }
+);
+
+// ---------------------------------------------------------------------------
+// POST /:branchId/:processId/checklist
+// Update a manual checklist item for a specific process
+// Roles: branch_head, payroll_branch
+// ---------------------------------------------------------------------------
+
+payrollBranchReadinessRouter.post(
+  "/:branchId/:processId/checklist",
+  requireAuth,
+  requireRole("branch_head", "payroll_branch"),
+  async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const { branchId, processId } = req.params;
+      const month = resolveMonth(req.query.month ?? req.body?.month);
+      const { item, value } = req.body as { item?: string; value?: unknown };
+
+      const ALLOWED = ["custom_deductions_uploaded", "overtime_entered"] as const;
+      if (!item || !(ALLOWED as readonly string[]).includes(item)) {
+        return res.status(400).json({ success: false, message: `item must be one of: ${ALLOWED.join(", ")}` });
+      }
+      if (value !== 0 && value !== 1) {
+        return res.status(400).json({ success: false, message: "value must be 0 or 1" });
+      }
+
+      const confirmedAtCol = item === "custom_deductions_uploaded"
+        ? "custom_deductions_confirmed_at"
+        : "overtime_confirmed_at";
+
+      try {
+        await db.execute(
+          `UPDATE payroll_branch_readiness
+              SET ${item} = ?,
+                  ${confirmedAtCol} = ${value === 1 ? "NOW()" : "NULL"}
+            WHERE process_month = ? AND branch_id = ? AND process_id = ?`,
+          [value, month, branchId, processId]
+        );
+      } catch (dbErr: unknown) {
+        const msg = dbErr instanceof Error ? dbErr.message : String(dbErr);
+        console.warn(`[BranchReadiness] process checklist UPDATE failed — ${msg}`);
+      }
+
+      const updated = await payrollBranchReadinessService.getOrRefresh(month, branchId, processId);
+      return res.json({ success: true, message: `${item} updated to ${value}`, data: updated });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error("[BranchReadiness] POST /:branchId/:processId/checklist error:", msg);
+      return res.status(500).json({ success: false, message: "Failed to update process checklist item" });
+    }
+  }
+);
+
+// ---------------------------------------------------------------------------
+// POST /:branchId/:processId/signoff
+// Process Manager / WFM sign-off on their process readiness
+// Roles: branch_head, payroll_branch, wfm, super_admin, payroll_head
+// ---------------------------------------------------------------------------
+
+payrollBranchReadinessRouter.post(
+  "/:branchId/:processId/signoff",
+  requireAuth,
+  requireRole("branch_head", "payroll_branch", "wfm", "super_admin", "payroll_head", "payroll"),
+  async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const { branchId, processId } = req.params;
+      const month = resolveMonth(req.query.month ?? req.body?.month);
+      const userId = req.authUser!.id;
+      const { remarks } = req.body as { remarks?: string };
+
+      if (!remarks?.trim()) {
+        return res.status(400).json({ success: false, message: "Sign-off remarks are required" });
+      }
+
+      try {
+        await db.execute(
+          `UPDATE payroll_branch_readiness
+              SET process_manager_signoff = 1,
+                  process_manager_signoff_at = NOW(),
+                  process_manager_signoff_by = ?,
+                  process_manager_remarks = ?
+            WHERE process_month = ? AND branch_id = ? AND process_id = ?`,
+          [userId, remarks.trim(), month, branchId, processId]
+        );
+      } catch (dbErr: unknown) {
+        const msg = dbErr instanceof Error ? dbErr.message : String(dbErr);
+        console.warn(`[BranchReadiness] process signoff UPDATE failed — ${msg}`);
+      }
+
+      const updated = await payrollBranchReadinessService.getOrRefresh(month, branchId, processId);
+      return res.json({ success: true, message: "Process sign-off recorded", data: updated });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error("[BranchReadiness] POST /:branchId/:processId/signoff error:", msg);
+      return res.status(500).json({ success: false, message: "Failed to record process sign-off" });
+    }
+  }
+);
+
+// ---------------------------------------------------------------------------
 // GET /:branchId/projection?month=YYYY-MM
 // Salary bill projection
 // Roles: branch_head, payroll_branch, payroll_head, super_admin
