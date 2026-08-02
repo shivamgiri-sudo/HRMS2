@@ -47,10 +47,20 @@ const dryRun = args.includes('--dry-run');
 // alone. Use when the sheet is an archive being back-filled and HRMS is the
 // system of record for anything already in it.
 const insertOnly = args.includes('--insert-only');
+// Also treat a row as already present when its mobile matches an existing
+// candidate, even though the candidate_code differs.
+//
+// Not paranoia: no row in ats_candidate uses the sheet's C20xxxxxxxxx
+// CandidateID shape. Existing codes are MAS49050, 62410C, IDC36566C,
+// CND-MS5QE35L — several different generations of the system. Deduplicating on
+// candidate_code alone therefore treats every sheet row as new and re-inserts
+// people who are already there under an older code. 2,328 mobiles already
+// appear more than once, so that failure has happened before.
+const matchMobile = args.includes('--match-mobile');
 const filePath = args.find(a => !a.startsWith('--'));
 
 if (!filePath) {
-  console.error('Usage: node scripts/import-gsheet-ats.mjs <file.tsv|file.csv> [--dry-run] [--insert-only]');
+  console.error('Usage: node scripts/import-gsheet-ats.mjs <file.tsv|file.csv> [--dry-run] [--insert-only] [--match-mobile]');
   process.exit(1);
 }
 if (!fs.existsSync(filePath)) {
@@ -402,7 +412,7 @@ const pool = await mysql.createPool({
 });
 
 let inserted = 0, updated = 0, skipped = 0, errors = 0;
-let existingSkipped = 0, noCode = 0;
+let existingSkipped = 0, noCode = 0, matchedByCode = 0, matchedByMobile = 0;
 
 // Existing candidate_codes, loaded once. --insert-only skips these in JS rather
 // than relying on INSERT IGNORE, which would also swallow real errors (bad
@@ -410,7 +420,30 @@ let existingSkipped = 0, noCode = 0;
 const [existingRows] = await pool.query('SELECT candidate_code FROM ats_candidate WHERE candidate_code IS NOT NULL');
 const existingCodes = new Set(existingRows.map((r) => String(r.candidate_code)));
 console.log(`${existingCodes.size} candidate_code(s) already in ats_candidate`);
-if (insertOnly) console.log('INSERT-ONLY mode — existing candidate_codes will be left untouched\n');
+
+// Mobile index, built only when asked for — it is a second full scan.
+// Digits only, last 10 kept, so 91xxxxxxxxxx, +91-xxxxxxxxxx and xxxxxxxxxx all
+// collapse to the same key.
+const normaliseMobile = (m) => {
+  const digits = String(m ?? '').replace(/\D/g, '');
+  return digits.length >= 10 ? digits.slice(-10) : '';
+};
+let existingMobiles = new Set();
+if (matchMobile) {
+  const [mobRows] = await pool.query("SELECT mobile FROM ats_candidate WHERE mobile IS NOT NULL AND mobile <> ''");
+  existingMobiles = new Set(mobRows.map((r) => normaliseMobile(r.mobile)).filter(Boolean));
+  console.log(`${existingMobiles.size} distinct mobile(s) indexed for matching`);
+}
+
+if (insertOnly) {
+  console.log(`INSERT-ONLY mode — matching on candidate_code${matchMobile ? ' AND mobile' : ' ONLY'}`);
+  if (!matchMobile) {
+    console.log('  NOTE: no existing row uses the sheet C20xxxxxxxxx code shape. Without');
+    console.log('        --match-mobile every row here counts as new, duplicating anyone');
+    console.log('        already present under an older code.');
+  }
+  console.log('');
+}
 
 // candidate_codes actually written, so an insert-only run can be undone with
 // DELETE FROM ats_candidate WHERE candidate_code IN (...).
@@ -420,7 +453,12 @@ for (const rawRow of rows) {
   const row = buildRow(rawRow);
   if (!row) { skipped++; noCode++; continue; }
 
-  const alreadyExists = existingCodes.has(String(row.candidate_code));
+  const existsByCode = existingCodes.has(String(row.candidate_code));
+  const mobKey = normaliseMobile(row.mobile);
+  const existsByMobile = matchMobile && mobKey !== '' && existingMobiles.has(mobKey);
+  if (existsByCode) matchedByCode++;
+  else if (existsByMobile) matchedByMobile++;
+  const alreadyExists = existsByCode || existsByMobile;
 
   if (insertOnly && alreadyExists) { skipped++; existingSkipped++; continue; }
 
@@ -475,18 +513,26 @@ if (insertOnly && insertedCodes.length) {
   fs.writeFileSync(undoFile, insertedCodes.join('\n') + '\n');
 }
 
-const line = (label, value) => `║  ${String(label).padEnd(26)}${String(value).padEnd(10)}║`;
+const line = (label, value) => `║  ${String(label).padEnd(24)}${String(value).padEnd(12)}║`;
 console.log(`
 ╔══════════════════════════════════════╗
 ║  ATS Import ${(dryRun ? 'DRY RUN' : 'Complete').padEnd(25)}║
 ╠══════════════════════════════════════╣
-${line('Mode:', insertOnly ? 'insert-only' : 'upsert')}
+${line('Mode:', (insertOnly ? 'insert-only' : 'upsert') + (matchMobile ? ' +mobile' : ''))}
 ${line('Inserted (new):', inserted)}
 ${line(insertOnly ? 'Left alone (exists):' : 'Updated (existed):', insertOnly ? existingSkipped : updated)}
-${line('Skipped (no CandidateID):', noCode)}
+${line('  matched by code:', matchedByCode)}
+${line('  matched by mobile:', matchMobile ? matchedByMobile : 'n/a')}
+${line('Skipped (no ID):', noCode)}
 ${line('Errors:', errors)}
 ╚══════════════════════════════════════╝
 `);
+if (!matchMobile && inserted > 0) {
+  console.log(
+    `Re-run with --match-mobile to see how many of those ${inserted} already exist\n` +
+    `under a different candidate_code before committing to the insert.\n`
+  );
+}
 if (undoFile) {
   console.log(`Inserted candidate_codes written to:\n  ${undoFile}`);
   console.log(`Undo with:\n  DELETE FROM ats_candidate WHERE candidate_code IN (<contents of that file>);\n`);
