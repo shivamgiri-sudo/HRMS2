@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
+import { HIDDEN_ROUTES, HIDDEN_ROUTE_PATHS } from "@/config/routes/hiddenRouteRegistry";
 
 const read = (path: string) => readFileSync(resolve(process.cwd(), path), "utf8");
 
@@ -229,6 +230,15 @@ describe("application shell routing contracts", () => {
       "/wfm/agent-attendance-view",
       "/wfm/break-desk-devices",
     ]);
+    // Routes recorded in the named hidden-route registry, each carrying the parent page it
+    // is reached from and the path a user takes to get there.
+    //
+    // Kept separate from the flat list above on purpose. That list records only that a
+    // route is permitted to be hidden — not why, not who reaches it, not from where — so
+    // adding a line to it silences this contract while asserting nothing. New hidden
+    // routes belong in the registry, where an entry has to explain itself.
+    for (const path of HIDDEN_ROUTE_PATHS) intentionallyNonSidebarRoutes.add(path);
+
     const navPaths = new Set(
       [...navSource.matchAll(/href:\s*"([^"]+)"/g)].map((match) => match[1].split("?")[0]),
     );
@@ -261,5 +271,42 @@ describe("application shell routing contracts", () => {
 
     expect(referenceDashboard).toContain("/api/integrations/cosec/sync-status");
     expect(referenceDashboard).not.toContain("/api/wfm/biometric-summary/device-status");
+  });
+});
+
+/**
+ * The registry only earns its place if every entry explains itself. A hidden route with no
+ * parent and no access path is indistinguishable from a menu entry somebody forgot to add —
+ * which is the failure it exists to prevent.
+ */
+describe("hidden route registry", () => {
+  const routeSource = [
+    "public", "dashboards", "people", "recruitment", "workforce", "payroll",
+    "performance", "compliance", "finance", "platform", "portal", "visitor",
+  ]
+    .map((group) => read(`src/config/routes/${group}.routes.tsx`))
+    .join("\n");
+
+  it("gives every hidden route a parent and a real access path", () => {
+    for (const route of HIDDEN_ROUTES) {
+      expect(route.parent.trim(), `${route.path} has no parent page`).not.toBe("");
+      expect(
+        route.accessPath.trim().length,
+        `${route.path} has no meaningful access path — say how a user reaches it`,
+      ).toBeGreaterThan(20);
+      if (route.reason !== "public") {
+        expect(route.parent, `${route.path} is not public, so it needs a real parent`).not.toBe("—");
+      }
+    }
+  });
+
+  it("keeps every registered hidden route actually mounted", () => {
+    // An entry for a route that no longer exists is stale documentation that outlives the
+    // page and misleads whoever reads it next.
+    for (const route of HIDDEN_ROUTES) {
+      expect(routeSource, `${route.path} is registered but not mounted`).toContain(
+        `path="${route.path}"`,
+      );
+    }
   });
 });

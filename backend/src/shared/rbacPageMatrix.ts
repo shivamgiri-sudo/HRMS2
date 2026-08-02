@@ -1,3 +1,26 @@
+/**
+ * Removed 2026-08-03 — granted to a role with no page behind them.
+ *
+ * Each of the following was listed in a role's page array while having no mounted route
+ * anywhere in src/config/routes. A grant to a page that does not exist is not access, it is
+ * dead RBAC surface: it inflates what a role appears to hold, it defeats the contract that
+ * verifies grants point at real pages, and it is indistinguishable from a page whose route
+ * was deleted by accident — which is how WORKFORCE_COMMAND_CENTER went unnoticed.
+ *
+ *   ATS_INTERVIEW_APPROVALS, ATS_INTERVIEW_QUEUE, ATS_INTERVIEW_SUBMIT,
+ *   ATS_STATUTORY_ONBOARDING, EMPLOYEE_DASHBOARD, EMPLOYEE_JOINING_DOCUMENTS,
+ *   ENGAGEMENT_COMMAND_CENTER, HELPDESK_KB, ONBOARDING_REVIEW, ONBOARDING_SECTION_STATUS,
+ *   PAYROLL_ATTENDANCE_OVERRIDES, PAYROLL_DASHBOARD, PAYROLL_DEDUCTION_TYPES,
+ *   PAYROLL_DEDUCTION_UPLOAD, PROVISIONING_APPOINTMENT, TEAM_ROSTER
+ *
+ * EMPLOYEE_JOINING_DOCUMENTS is the clearest case: the page component exists and was never
+ * routed. The rest have neither component nor route.
+ *
+ * This removes the grant from the matrix only. The corresponding production rows are
+ * revoked by backend/sql/1059_revoke_grants_for_unrouted_pages.sql, which is NOT executed
+ * here. Restoring any of these is a one-line change once the page ships — do that in the
+ * same commit as the route, so the two can never disagree again.
+ */
 export const COMMON_USER_PAGE_CODES = [
   "MY_PROFILE",
   "WORK_INBOX",
@@ -539,7 +562,6 @@ export const LIVE_IMPORTED_PAGE_CODES: Readonly<Record<string, readonly string[]
   branch_head: [
     "ATS_BRANCH_HEAD_APPROVAL",
     "ATS_COMMAND_CENTER",
-    "ATS_INTERVIEW_APPROVALS",
     "CONTROL_TOWER",
     "JOBS",
     "PAYROLL_ATTENDANCE_CONTROL_TOWER",
@@ -547,20 +569,12 @@ export const LIVE_IMPORTED_PAGE_CODES: Readonly<Record<string, readonly string[]
   ],
   branch_hr: [
     "ATS_BRANCH_HEAD_APPROVAL",
-    "ATS_INTERVIEW_QUEUE",
-    "ATS_INTERVIEW_SUBMIT",
     "ATS_JOINING_CONTROL_ROOM",
-    "ATS_STATUTORY_ONBOARDING",
     "ATTENDANCE_LOOKUP",
     "CANDIDATE_ONBOARDING_FULL",
-    "EMPLOYEE_DASHBOARD",
-    "EMPLOYEE_JOINING_DOCUMENTS",
     "GRIEVANCE_COMMAND_CENTER",
     "ONBOARDING_FULL",
     "ONBOARDING_REQUESTS",
-    "ONBOARDING_REVIEW",
-    "ONBOARDING_SECTION_STATUS",
-    "PROVISIONING_APPOINTMENT",
     "PROVISIONING_APPOINTMENT_LETTER",
     "RESIGNATION_COMMAND_CENTER",
     "SALARY_CERTIFICATE",
@@ -568,9 +582,7 @@ export const LIVE_IMPORTED_PAGE_CODES: Readonly<Record<string, readonly string[]
   branch_payroll: [
     "ATTENDANCE_LOOKUP",
     "PAYROLL_ATTENDANCE_CONTROL_TOWER",
-    "PAYROLL_ATTENDANCE_OVERRIDES",
     "PAYROLL_BRANCH_READINESS",
-    "PAYROLL_DASHBOARD",
     "PAYROLL_HOLIDAY_WORK_APPROVALS",
     "PAYROLL_LOANS",
     "PAYROLL_NOC",
@@ -583,12 +595,9 @@ export const LIVE_IMPORTED_PAGE_CODES: Readonly<Record<string, readonly string[]
     "PAYROLL_BRANCH_READINESS",
     "PAYROLL_HOLIDAY_MASTER",
     "PAYROLL_HOLIDAY_WORK_REQUESTS",
-    "TEAM_ROSTER",
     "WEEK_OFF_PREFERENCES",
   ],
   employee: [
-    "ENGAGEMENT_COMMAND_CENTER",
-    "HELPDESK_KB",
     "PAYROLL_REIMBURSEMENTS",
     "PAYROLL_RUNNING_BREAKDOWN",
     "PEOPLE_EXPERIENCE_COMMAND_CENTER",
@@ -601,42 +610,29 @@ export const LIVE_IMPORTED_PAGE_CODES: Readonly<Record<string, readonly string[]
   ],
   finance_head: [
     "PAYROLL_CHEQUE_VALIDATION",
-    "PAYROLL_DASHBOARD",
     "PAYROLL_RUNNING_BREAKDOWN",
   ],
   hr: [
     "ATS_BRANCH_HEAD_APPROVAL",
-    "ATS_INTERVIEW_QUEUE",
-    "ATS_INTERVIEW_SUBMIT",
     "ATS_JOINING_CONTROL_ROOM",
-    "ATS_STATUTORY_ONBOARDING",
     "ATTENDANCE_LOOKUP",
     "CANDIDATE_ONBOARDING_FULL",
     "EMAIL_COMMAND_CENTRE",
-    "EMPLOYEE_DASHBOARD",
-    "EMPLOYEE_JOINING_DOCUMENTS",
     "GRIEVANCE_COMMAND_CENTER",
     "ONBOARDING_FULL",
     "ONBOARDING_REQUESTS",
-    "ONBOARDING_REVIEW",
-    "ONBOARDING_SECTION_STATUS",
     "PAYROLL_ATTENDANCE_CONTROL_TOWER",
     "PAYROLL_BRANCH_READINESS",
     "PAYROLL_CHEQUE_VALIDATION",
     "PAYROLL_HO_QUEUES",
     "PAYROLL_REIMBURSEMENTS",
-    "PROVISIONING_APPOINTMENT",
     "PROVISIONING_APPOINTMENT_LETTER",
     "RESIGNATION_COMMAND_CENTER",
     "SALARY_CERTIFICATE",
   ],
   hr_admin: [
-    "PAYROLL_DEDUCTION_TYPES",
-    "PAYROLL_DEDUCTION_UPLOAD",
   ],
   interviewer: [
-    "ATS_INTERVIEW_QUEUE",
-    "ATS_INTERVIEW_SUBMIT",
     "MODULE_LAUNCHER",
   ],
   operations_head: [
@@ -645,10 +641,8 @@ export const LIVE_IMPORTED_PAGE_CODES: Readonly<Record<string, readonly string[]
   payroll: [
     "ATTENDANCE_LOOKUP",
     "PAYROLL_ATTENDANCE_CONTROL_TOWER",
-    "PAYROLL_ATTENDANCE_OVERRIDES",
     "PAYROLL_BRANCH_READINESS",
     "PAYROLL_CHEQUE_VALIDATION",
-    "PAYROLL_DASHBOARD",
     "PAYROLL_HOLIDAY_WORK_APPROVALS",
     "PAYROLL_HO_QUEUES",
     "PAYROLL_LOANS",
@@ -660,7 +654,6 @@ export const LIVE_IMPORTED_PAGE_CODES: Readonly<Record<string, readonly string[]
   payroll_admin: [
     "ATTENDANCE_LOOKUP",
     "MODULE_LAUNCHER",
-    "PAYROLL_ATTENDANCE_OVERRIDES",
   ],
   payroll_branch: [
     "PAYROLL_ATTENDANCE_CONTROL_TOWER",
@@ -693,8 +686,6 @@ export const LIVE_IMPORTED_PAGE_CODES: Readonly<Record<string, readonly string[]
     "PAYROLL_VALIDATION",
   ],
   recruiter: [
-    "ATS_INTERVIEW_QUEUE",
-    "ATS_INTERVIEW_SUBMIT",
     "MODULE_LAUNCHER",
   ],
   recruitment_hr: [
@@ -710,7 +701,6 @@ export const LIVE_IMPORTED_PAGE_CODES: Readonly<Record<string, readonly string[]
     "PAYROLL_HOLIDAY_WORK_REQUESTS",
     "PAYROLL_OVERTIME",
     "PAYROLL_RUNNING_BREAKDOWN",
-    "TEAM_ROSTER",
     "WEEK_OFF_PREFERENCES",
   ],
 } as const;

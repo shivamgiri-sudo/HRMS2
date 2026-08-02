@@ -1,4 +1,16 @@
 export const PAGE_CODE_BY_ROUTE: Record<string, string> = {
+  // ── Classified 2026-08-03, second pass ────────────────────────────────────
+  // Route mounted and verified per code. Two are redirects, which are still valid
+  // keys here: the map records where a code is reachable, and a mounted redirect is
+  // reachable. ONBOARDING_FULL and CANDIDATE_ONBOARDING_FULL are the same page —
+  // the latter redirects to the former — and both carry live grants, so both are
+  // mapped rather than one being guessed away.
+  "/modules": "MODULE_LAUNCHER",                          // ModuleLauncher
+  "/week-off-preferences": "WEEK_OFF_PREFERENCES",        // NativeWeekOffPreferences
+  "/ats/command-centre": "ATS_COMMAND_CENTER",            // ATSCommandCentre
+  "/onboard-full": "ONBOARDING_FULL",                     // CandidateOnboardingFullPage
+  "/candidate-onboarding-full": "CANDIDATE_ONBOARDING_FULL",// redirect -> /onboard-full
+  "/onboarding-requests": "ONBOARDING_REQUESTS",          // redirect -> /onboarding?tab=requests
   // ── Mapped 2026-08-03 during release stabilisation ─────────────────────────
   // Each of these is granted to at least one role AND has a mounted route, but had
   // no entry here — so nothing verified that the grant and the route agreed. That is
