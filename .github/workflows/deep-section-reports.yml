@@ -58,11 +58,15 @@ jobs:
             exit 1
           fi
 
+      # working-directory is load-bearing. `npm --prefix backend exec -- vitest` starts vitest
+      # in the repo root under the ROOT config, whose `exclude` names `backend`, so it found no
+      # test files and exited 1 on every run. --prefix changes package resolution, not cwd.
       - name: Report architecture and source contracts
         id: report-tests
         shell: bash
+        working-directory: backend
         run: |
-          if ! npm --prefix backend exec -- vitest run \
+          if ! npx vitest run \
             src/modules/reporting/__tests__/deep-report-packs.contract.test.ts \
             src/modules/reporting/__tests__/bpo-master-report-catalog.contract.test.ts \
             src/modules/reporting/__tests__/bpo-master-source-safety.contract.test.ts \
