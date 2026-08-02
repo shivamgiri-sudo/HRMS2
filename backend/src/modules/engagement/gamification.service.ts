@@ -138,29 +138,35 @@ export async function getPointsHistory(
  * Get leaderboard - top N employees by points
  */
 export async function getLeaderboard(
-  period: 'all-time' | 'month' | 'quarter' = 'all-time',
+  period: 'all-time' | 'day' | 'week' | 'month' | 'quarter' | 'year' = 'all-time',
   limit: number = 10
 ): Promise<LeaderboardEntry[]> {
   const safeLimit = Math.min(Math.max(Math.trunc(Number(limit) || 10), 1), 100);
   let dateFilter = '';
-  if (period === 'month') {
-    dateFilter = `AND gpl.created_at >= DATE_SUB(NOW(), INTERVAL 1 MONTH)`;
+  if (period === 'day') {
+    dateFilter = `AND created_at >= CURDATE() - INTERVAL 1 DAY AND created_at < CURDATE()`;
+  } else if (period === 'week') {
+    dateFilter = `AND created_at >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)`;
+  } else if (period === 'month') {
+    dateFilter = `AND created_at >= DATE_FORMAT(NOW(), '%Y-%m-01')`;
   } else if (period === 'quarter') {
-    dateFilter = `AND gpl.created_at >= DATE_SUB(NOW(), INTERVAL 3 MONTH)`;
+    dateFilter = `AND created_at >= DATE_SUB(NOW(), INTERVAL 3 MONTH)`;
+  } else if (period === 'year') {
+    dateFilter = `AND created_at >= DATE_FORMAT(NOW(), '%Y-01-01')`;
   }
 
   const sql = `
     SELECT
       gpl.employee_id,
-      CONCAT(COALESCE(e.first_name, ''), ' ', COALESCE(e.last_name, '')) as employee_name,
+      COALESCE(e.full_name, CONCAT(COALESCE(e.first_name,''), ' ', COALESCE(e.last_name,''))) as employee_name,
       gpl.total_points as total_points,
-      COALESCE(gtm.tier_name, 'No Tier') as current_tier,
+      COALESCE(gtm.tier_name, 'Bronze') as current_tier,
       ROW_NUMBER() OVER (ORDER BY gpl.total_points DESC) as \`rank\`,
       COALESCE(badges.badges_earned, 0) as badges_earned
     FROM (
       SELECT employee_id, SUM(points_delta) as total_points
       FROM gamification_points_ledger
-      WHERE 1=1 ${dateFilter.replaceAll('gpl.', '')}
+      WHERE 1=1 ${dateFilter}
       GROUP BY employee_id
     ) gpl
     LEFT JOIN employees e ON gpl.employee_id = e.id

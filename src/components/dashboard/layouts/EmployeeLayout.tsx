@@ -9,6 +9,7 @@ import { useDashboardUser } from "../widgets/useDashboardUser";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { canAccessDashboard } from "../../../../backend/src/shared/dashboardAccessRegistry";
+import { PointsLeaderboard } from "@/components/engagement/PointsLeaderboard";
 
 export function EmployeeLayout() {
   const { firstName } = useDashboardUser();
@@ -358,7 +359,10 @@ export function EmployeeLayout() {
         </Card>
       </div>
 
-      {/* ── ROW 4: Quick Links (horizontal rows with arrows) ── */}
+      {/* ── ROW 4: Points Leaderboard ── */}
+      <PointsLeaderboard currentEmployeeId={employeeId} />
+
+      {/* ── ROW 5: Quick Links (horizontal rows with arrows) ── */}
       <Card className="rounded-2xl border border-slate-200 shadow-sm bg-white">
         <CardHeader className="border-b border-slate-100 pb-4 pt-5 px-5">
           <CardTitle className="text-sm font-bold text-slate-900">Quick Links</CardTitle>

@@ -106,9 +106,8 @@ export const engagementController = {
   },
 
   async getLeaderboard(req: AuthenticatedRequest, res: Response) {
-    const period = req.query.period === "month" || req.query.period === "quarter"
-      ? req.query.period
-      : "all-time";
+    const allowed = ["day", "week", "month", "quarter", "year", "all-time"] as const;
+    const period = allowed.includes(req.query.period as any) ? req.query.period as typeof allowed[number] : "all-time";
     return res.json({ success: true, data: await getLeaderboard(period, parseLimit(req.query.limit, 10)) });
   },
 
