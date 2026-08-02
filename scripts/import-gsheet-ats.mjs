@@ -1,22 +1,35 @@
 /**
  * ATS Google Sheet → MySQL Importer
  *
- * Reads a TSV/CSV export of the walk-in tracking sheet and upserts every row
- * into ats_candidate.  No routes, APIs, or existing records are modified.
+ * Reads an .xlsx workbook, or a TSV/CSV export, of the walk-in tracking sheet
+ * and writes every row into ats_candidate. No routes or APIs are touched.
  *
  * Usage:
- *   node scripts/import-gsheet-ats.mjs <path-to-file.tsv>   [--dry-run]
+ *   node scripts/import-gsheet-ats.mjs <file.xlsx|file.tsv|file.csv> \
+ *        [--dry-run] [--insert-only] [--match-mobile] [--sheet "<name>"]
  *
- * The input file must be the sheet saved as "Tab-separated values (.tsv)" or
- * "Comma-separated values (.csv)".  The first row must be the header row
- * exactly as exported (column order doesn't matter — matched by header name).
+ * Prefer .xlsx. Excel's Save-As silently drops leading zeros from mobile
+ * numbers, turns long ids into scientific notation and rewrites dates into the
+ * machine's locale; reading the workbook keeps the typed cell instead.
+ * Column order does not matter — columns are matched by header name.
+ *
+ * Flags:
+ *   --dry-run       write nothing; report what would happen
+ *   --insert-only   never modify a row that already exists
+ *   --match-mobile  treat a row as existing when its mobile matches, not just
+ *                   its candidate_code. Needed here: no row in ats_candidate
+ *                   uses the sheet's C20xxxxxxxxx code shape, so code-only
+ *                   matching would re-insert people already present under an
+ *                   older code (MAS49050, 62410C, IDC36566C, CND-…).
+ *   --sheet         which tab to read; defaults to the first
  *
  * Behaviour:
- *   • INSERT … ON DUPLICATE KEY UPDATE — safe to re-run; only updates fields
- *     that are non-empty in the sheet row (never blanks out existing data).
- *   • candidate_code = GSheet CandidateID  (e.g. C20260321115036221)
- *   • Skips rows where CandidateID is blank.
- *   • Reports inserted / updated / skipped counts at the end.
+ *   • Upsert by default: only fills columns that are empty, never blanks live
+ *     data. Safe to re-run.
+ *   • candidate_code = CandidateID  (e.g. C20260321115036221)
+ *   • Skips rows with a blank CandidateID.
+ *   • An --insert-only run writes the codes it created next to the input file,
+ *     so the whole load reverses with one DELETE.
  */
 
 import fs from 'fs';
@@ -57,10 +70,16 @@ const insertOnly = args.includes('--insert-only');
 // people who are already there under an older code. 2,328 mobiles already
 // appear more than once, so that failure has happened before.
 const matchMobile = args.includes('--match-mobile');
-const filePath = args.find(a => !a.startsWith('--'));
+// Which tab to read from a workbook. Defaults to the first sheet.
+const sheetIdx = args.indexOf('--sheet');
+const sheetName = sheetIdx !== -1 ? args[sheetIdx + 1] : null;
+// The index guard must not fire when --sheet is absent: sheetIdx is -1 then, and
+// sheetIdx + 1 is 0, which would discard the file argument itself.
+const sheetValueIdx = sheetIdx === -1 ? -1 : sheetIdx + 1;
+const filePath = args.filter((a, i) => !a.startsWith('--') && i !== sheetValueIdx)[0];
 
 if (!filePath) {
-  console.error('Usage: node scripts/import-gsheet-ats.mjs <file.tsv|file.csv> [--dry-run] [--insert-only] [--match-mobile]');
+  console.error('Usage: node scripts/import-gsheet-ats.mjs <file.xlsx|file.tsv|file.csv> [--dry-run] [--insert-only] [--match-mobile] [--sheet "<name>"]');
   process.exit(1);
 }
 if (!fs.existsSync(filePath)) {
@@ -69,7 +88,89 @@ if (!fs.existsSync(filePath)) {
 }
 
 // ── Parse TSV/CSV ─────────────────────────────────────────────────────────────
+/**
+ * Read .xlsx/.xls directly rather than asking for a CSV export.
+ *
+ * Excel's Save-As is lossy in ways that are invisible until the data is already
+ * in the database: leading zeros are dropped from mobile numbers, long numeric
+ * ids become scientific notation, and dates are rewritten to whatever the
+ * machine's locale happens to be. Reading the workbook keeps the typed cell.
+ *
+ * Values are normalised to the same shape the TSV path produces — trimmed
+ * strings, '' for blanks — so everything downstream is identical either way.
+ */
+function parseWorkbook(filePath, sheetName) {
+  const XLSX = require('xlsx');
+  const wb = XLSX.readFile(filePath, { cellDates: true, cellNF: true, raw: true });
+
+  const name = sheetName || wb.SheetNames[0];
+  if (!wb.Sheets[name]) {
+    console.error(`Sheet "${name}" not found. Available: ${wb.SheetNames.join(', ')}`);
+    process.exit(1);
+  }
+  if (!sheetName && wb.SheetNames.length > 1) {
+    console.log(`Workbook has ${wb.SheetNames.length} sheets; using "${name}". Override with --sheet "<name>".`);
+  }
+
+  // Cells are read individually rather than through sheet_to_json, because two
+  // things are only recoverable from the cell object itself:
+  //
+  //   dates    Excel stores them as floating-point serials. Converting back
+  //            lands a fraction of a second early, so 21 Mar 00:00:00 becomes
+  //            20 Mar 23:59:59 — the date is off by a day, silently. Rounding
+  //            to the nearest second fixes it.
+  //   percents a cell displaying 96% holds 0.96. Without the number format
+  //            (cell.z) that arrives as 0.96 and a typing accuracy of 96 is
+  //            recorded as 1.
+  const cellText = (c) => {
+    if (!c || c.v === null || c.v === undefined) return '';
+
+    if (c.t === 'd' || c.v instanceof Date) {
+      const ms = c.v instanceof Date ? c.v.getTime() : new Date(c.v).getTime();
+      const d = new Date(Math.round(ms / 1000) * 1000);       // kill serial drift
+      const p = (n) => String(n).padStart(2, '0');
+      const date = `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+      const time = `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+      return time === '00:00:00' ? date : `${date} ${time}`;
+    }
+
+    if (typeof c.v === 'number') {
+      if (typeof c.z === 'string' && c.z.includes('%')) {
+        return String(Math.round(c.v * 100 * 1e6) / 1e6);     // 0.96 -> 96
+      }
+      return String(c.v);   // never a thousands separator, never 1.2e+17
+    }
+
+    if (typeof c.v === 'boolean') return c.v ? 'Yes' : 'No';
+    return String(c.v).trim();
+  };
+
+  const sheet = wb.Sheets[name];
+  const range = XLSX.utils.decode_range(sheet['!ref']);
+  const at = (r, col) => sheet[XLSX.utils.encode_cell({ r, c: col })];
+
+  const headers = [];
+  for (let col = range.s.c; col <= range.e.c; col++) headers[col] = cellText(at(range.s.r, col)).trim();
+
+  const out = [];
+  for (let r = range.s.r + 1; r <= range.e.r; r++) {
+    const row = {};
+    let any = false;
+    for (let col = range.s.c; col <= range.e.c; col++) {
+      const h = headers[col];
+      if (!h) continue;
+      const text = cellText(at(r, col));
+      row[h] = text;
+      if (text !== '') any = true;
+    }
+    if (any) out.push(row);     // skip fully blank rows
+  }
+  return out;
+}
+
 function parseFile(filePath) {
+  if (/\.xlsx?$/i.test(filePath)) return parseWorkbook(filePath, sheetName);
+
   const raw = fs.readFileSync(filePath, 'utf8').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
   const isTsv = filePath.endsWith('.tsv') || raw.includes('\t');
   const sep = isTsv ? '\t' : ',';
