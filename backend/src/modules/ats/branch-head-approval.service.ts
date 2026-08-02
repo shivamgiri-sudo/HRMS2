@@ -507,20 +507,32 @@ export async function listBranchHeadDecisions(
     `SELECT COUNT(DISTINCT o.id) AS n ${base}`, whereParams,
   ).catch(() => [[{ n: 0 }]] as unknown as [RowDataPacket[]]);
 
+  // GROUP BY o.id, not SELECT DISTINCT.
+  //
+  // Several joins here are one-to-many no matter how the subqueries are
+  // written: branch_master is matched on id OR name OR code, and employees on
+  // id OR user_id, so either can return more than one row. DISTINCT does not
+  // help, because the duplicate rows differ in exactly the column that fanned
+  // out. Production returned 13 rows for 7 rejections that way. Grouping on the
+  // offer guarantees one row per decision regardless of how any join behaves.
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT DISTINCT
-        o.id AS offer_id, c.id AS candidate_id, c.candidate_code,
-        c.full_name AS candidate_name,
-        COALESCE(b.branch_name, c.applied_for_branch) AS branch_name,
-        CASE WHEN o.status = 'bh_approved' THEN 'approved' ELSE 'rejected' END AS decision,
-        COALESCE(oa.action_at, bha.approved_at, o.updated_at) AS decided_at,
-        dec_by.full_name AS decided_by_name,
-        dec_by.employee_code AS decided_by_code,
-        COALESCE(oa.remarks, bha.remarks) AS remarks,
-        COALESCE(emp.employee_code, ob.employee_code) AS employee_code,
-        o.gross, o.date_of_joining,
-        CASE WHEN oa.id IS NOT NULL THEN 'offer' ELSE 'legacy' END AS source
+    `SELECT
+        o.id AS offer_id,
+        MIN(c.id) AS candidate_id,
+        MIN(c.candidate_code) AS candidate_code,
+        MIN(c.full_name) AS candidate_name,
+        COALESCE(MIN(b.branch_name), MIN(c.applied_for_branch)) AS branch_name,
+        CASE WHEN MIN(o.status) = 'bh_approved' THEN 'approved' ELSE 'rejected' END AS decision,
+        COALESCE(MIN(oa.action_at), MIN(bha.approved_at), MIN(o.updated_at)) AS decided_at,
+        MIN(dec_by.full_name) AS decided_by_name,
+        MIN(dec_by.employee_code) AS decided_by_code,
+        COALESCE(MIN(oa.remarks), MIN(bha.remarks)) AS remarks,
+        COALESCE(MIN(emp.employee_code), MIN(ob.employee_code)) AS employee_code,
+        MIN(o.gross) AS gross,
+        MIN(o.date_of_joining) AS date_of_joining,
+        CASE WHEN MIN(oa.id) IS NOT NULL THEN 'offer' ELSE 'legacy' END AS source
       ${base}
+      GROUP BY o.id
       ORDER BY decided_at DESC
       LIMIT ${Number(opts.limit) || 100} OFFSET ${Number(opts.offset) || 0}`,
     whereParams,
