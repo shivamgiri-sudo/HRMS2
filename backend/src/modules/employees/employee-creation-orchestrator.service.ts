@@ -548,7 +548,11 @@ async function notifyPayrollHrToIssueJoiningDocuments(params: {
   try {
     const baseUrl = env.FRONTEND_URL || 'http://localhost:5173';
     const [hrRows] = await db.execute<RowDataPacket[]>(
-      `SELECT u.email, u.full_name
+      // auth_user has no name column at all — id, email, password_hash,
+      // is_blocked, last_login_at and so on. The name is on employees, which
+      // this query already joins. Wrapped in a try/catch, so this never
+      // surfaced: it simply meant the Payroll HR notification was never sent.
+      `SELECT u.email, e.full_name
          FROM auth_user u
          JOIN user_roles ur ON ur.user_id = u.id
          JOIN employees e ON e.user_id = u.id AND e.active_status = 1
@@ -676,11 +680,14 @@ async function validateStatutoryInfo(
   const blockers: Array<{ type: string; reason: string; severity: 'critical' }> = [];
 
   const [candRows] = await conn.execute<RowDataPacket[]>(
-    `SELECT
-       COALESCE(p.pan_number, c.pan_number) AS pan_number,
-       COALESCE(p.aadhar_number, c.aadhar_number) AS aadhar_number
+    // ats_candidate only. candidate_onboarding_profile holds no plaintext PAN
+    // or Aadhaar — just pan_number_masked / _hash / _encrypted and
+    // aadhaar_number_masked / _hash — so the COALESCE against p.pan_number
+    // referenced a column that does not exist and threw on every call. Since
+    // this function format-checks the value against PAN_REGEX, a masked or
+    // encrypted column could not serve the purpose in any case.
+    `SELECT c.pan_number, c.aadhar_number
      FROM ats_candidate c
-     LEFT JOIN candidate_onboarding_profile p ON p.candidate_id = c.id
      WHERE c.id = ? LIMIT 1`,
     [candidateId]
   );
