@@ -1,5 +1,6 @@
 import { db } from "../../db/mysql.js";
 import type { RowDataPacket } from "mysql2";
+import { evaluateCoachingTrigger } from "./coaching-trigger.js";
 
 /**
  * What a proposed threshold would actually do, before anyone approves it.
@@ -32,6 +33,8 @@ export type SimulatedEmployee = {
   auditCount: number;
   ratioOfTarget: number;
   band: "critical" | "warning" | "ok";
+  /** What evaluateCoachingTrigger — the weekly worker's own function — says. */
+  wouldTrigger: boolean;
 };
 
 export type SimulationResult = {
@@ -49,6 +52,11 @@ export type SimulationResult = {
   warningCount: number;
   /** Had quality but fewer audits than min_audit_count — judged on nothing. */
   insufficientAudits: number;
+  /**
+   * Had rows but no assessed score. Reported, never judged: coaching someone
+   * because their audits went unscored punishes them for a process failure.
+   */
+  unassessed: number;
   /** Would trigger on the strength of a single audit, had the minimum allowed it. */
   singleAuditTriggers: number;
   /** Weekly coaching sessions this implies, at the configured period. */
@@ -94,15 +102,29 @@ export async function simulateQualityTarget(input: SimulationInput): Promise<Sim
   );
 
   const employees: SimulatedEmployee[] = [];
-  let insufficientAudits = 0, singleAuditTriggers = 0;
+  let insufficientAudits = 0, singleAuditTriggers = 0, unassessed = 0;
   let windowFrom = "", windowTo = "";
 
+  // The one place the proposed configuration is expressed as the evaluator
+  // understands it. Everything below asks evaluateCoachingTrigger rather than
+  // re-deriving the answer.
+  const thresholds = {
+    warningRatio: warningPct / 100,
+    criticalRatio: criticalPct / 100,
+    minSample: minAudits,
+  };
+
   for (const r of rows) {
-    const avg = Number(r.avg_quality ?? 0);
+    // NULL means nobody assessed the work. Coercing it to 0 (as this used to)
+    // made unassessed employees look like the worst performers on the process,
+    // while the worker — correctly — raises nothing for them.
+    const avg = r.avg_quality === null || r.avg_quality === undefined ? null : Number(r.avg_quality);
     const audits = Number(r.audit_count ?? 0);
-    const ratio = input.targetScore > 0 ? (avg / input.targetScore) * 100 : 0;
+    const ratio = avg !== null && input.targetScore > 0 ? (avg / input.targetScore) * 100 : 0;
     if (!windowFrom || String(r.from_d) < windowFrom) windowFrom = String(r.from_d).slice(0, 10);
     if (!windowTo || String(r.to_d) > windowTo) windowTo = String(r.to_d).slice(0, 10);
+
+    if (avg === null) { unassessed += 1; continue; }
 
     const wouldBand: SimulatedEmployee["band"] =
       ratio < criticalPct ? "critical" : ratio < warningPct ? "warning" : "ok";
@@ -123,12 +145,23 @@ export async function simulateQualityTarget(input: SimulationInput): Promise<Sim
       auditCount: audits,
       ratioOfTarget: Math.round(ratio * 10) / 10,
       band: wouldBand,
+      // Asked, not inferred. This is the same function the weekly worker calls,
+      // so the count below is a prediction of what would actually happen rather
+      // than a second opinion about it.
+      wouldTrigger: evaluateCoachingTrigger({
+        qualityPercentage: avg,
+        fatalTriggered: false,
+        targetPercentage: input.targetScore,
+        consecutiveShortfalls: 0,
+        sampleSize: audits,
+        thresholds,
+      }) !== null,
     });
   }
 
   const criticalCount = employees.filter((e) => e.band === "critical").length;
   const warningCount = employees.filter((e) => e.band === "warning").length;
-  const wouldTrigger = criticalCount + warningCount;
+  const wouldTrigger = employees.filter((e) => e.wouldTrigger).length;
   const evaluated = employees.length;
   const rate = evaluated > 0 ? wouldTrigger / evaluated : 0;
 
@@ -148,6 +181,12 @@ export async function simulateQualityTarget(input: SimulationInput): Promise<Sim
   if (singleAuditTriggers > 0) {
     notes.push(
       `${singleAuditTriggers} employee(s) would have triggered on a single audit if the minimum were lower. The minimum of ${minAudits} is what stops one bad call becoming a coaching record.`,
+    );
+  }
+  if (unassessed > 0) {
+    notes.push(
+      `${unassessed} employee(s) have quality rows but no assessed score in this window. They are ` +
+      `excluded rather than counted as failing — an unscored audit is a process failure, not theirs.`,
     );
   }
   if (insufficientAudits > 0 && evaluated > 0) {
@@ -171,6 +210,7 @@ export async function simulateQualityTarget(input: SimulationInput): Promise<Sim
     criticalCount,
     warningCount,
     insufficientAudits,
+    unassessed,
     singleAuditTriggers,
     expectedWeeklyCoachingLoad: perWeek,
     unusuallyHighTriggerRate: rate >= HIGH_TRIGGER_RATE && evaluated > 0,
