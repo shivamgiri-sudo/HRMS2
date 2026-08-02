@@ -265,7 +265,7 @@ const ZERO: Block[] = [
 const CONTRACT: Block[] = [
   t("AGREEMENT"),
   p("This Agreement is made and entered into at New Delhi on {{current_date}} by and between:"),
-  p("Mas Callnet India (P) Ltd, a company registered under the Companies Act, 1956 and having its registered office at B-24, Okhla Phase-II, New Delhi-110020 (hereinafter called the Company / First Party which expression unless repugnant to the context shall mean and include its subsidiaries, its successors and assigns)"),
+  p("Mas Callnet India (P) Ltd, a company registered under the Companies Act, 1956 and having its registered office at {{company_registered_office}}, and an office at {{branch_address}} (hereinafter called the Company / First Party which expression unless repugnant to the context shall mean and include its subsidiaries, its successors and assigns)"),
   p("AND"),
   p("{{employee_name}} s/o | d/o {{father_name}} r/o {{employee_address}} (hereinafter referred to as the Second Party which expression unless repugnant to the context shall mean and include its successors in interest and permitted assigns)"),
   p("WHEREAS the first party is engaged in the business of software development, customisation, Business Process Outsourcing and other Information Technology Enabled and Related Services;"),
@@ -307,7 +307,7 @@ const CONTRACT: Block[] = [
 
   h("6. NOTICES"),
   li("6.1 All notices, requests, demands or other communications required or permitted to be given or made under this agreement shall only be in writing and delivered personally, or sent by registered post with A/D or a courier of repute to the intended recipient thereof at the address set forth below. The addresses of the parties for the purposes of this agreement are as follow:"),
-  p("To First Party: M/s Mas Callnet India (P) Ltd, B-24, Okhla Phase-II, New Delhi-110020"),
+  p("To First Party: M/s Mas Callnet India (P) Ltd, {{branch_address}}"),
   p("To Second Party: {{employee_name}}, {{employee_address}}"),
   li("6.2 Any Party hereto may change its address for the purpose of this Agreement by giving written notice to the other parties at the address and in the manner provided above."),
 

@@ -745,8 +745,19 @@ export async function buildSourceContext(employeeId: string, candidateId?: strin
 
   // Gross is the contractual monthly remuneration; fall back to a twelfth of
   // the offered CTC when no monthly snapshot has been written yet.
-  const grossRaw = salary?.gross ?? (salary?.ctc_offered ? Number(salary.ctc_offered) / 12 : null);
-  const monthlyGross = grossRaw == null || Number.isNaN(Number(grossRaw)) ? null : Number(grossRaw);
+  //
+  // `??` was the wrong operator here. Every column on employee_salary_snapshot
+  // DEFAULTs to 0, so a snapshot written without a gross holds 0.00 rather than
+  // NULL — and 0 is not nullish, so the CTC fallback never fired. The contract
+  // printed "0 (Zero)" as the remuneration for a real candidate. Treat a
+  // non-positive gross as absent, which is what it means on this table.
+  const snapshotGross = Number(salary?.gross ?? 0);
+  const grossRaw = snapshotGross > 0
+    ? snapshotGross
+    : (salary?.ctc_offered ? Number(salary.ctc_offered) / 12 : null);
+  const monthlyGross = grossRaw == null || Number.isNaN(Number(grossRaw)) || Number(grossRaw) <= 0
+    ? null
+    : Number(grossRaw);
 
   return {
     nominee,
