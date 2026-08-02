@@ -19,6 +19,16 @@ import { startCommunicationCleanup, stopCommunicationCleanup } from "../modules/
 import { startAttendanceEngineScheduler, stopAttendanceEngineScheduler } from "../modules/wfm/attendance-engine.cron.js";
 import { startITProvisioningLockScheduler, stopITProvisioningLockScheduler } from "../modules/it-provisioning/it-provisioning.cron.js";
 import { startEmployeeLifecycleWorker, stopEmployeeLifecycleWorker } from "./employee-lifecycle.worker.js";
+// These five were registered in server.ts ONLY. Production runs both processes
+// with WORKERS_PROCESS unset, so the API was starting every worker alongside this
+// process — 20 of them running twice. Turning that guard on without adding these
+// here first would have silently stopped all five, exactly as happened to
+// ats-reminders when it lived in one file only.
+import { initBusinessActionSyncJobs, stopBusinessActionSyncJobs } from "../cron/business-action-sync.cron.js";
+import { startDashboardSnapshotScheduler, stopDashboardSnapshotScheduler } from "../modules/dashboards/dashboard-snapshot.cron.js";
+import { startAttendanceReconciliationWorker, stopAttendanceReconciliationWorker } from "../modules/wfm/attendance-reconciliation.worker.js";
+import { startRetentionCron } from "./privacy-retention.worker.js";
+import { startAtsRemindersScheduler } from "../modules/ats/ats-reminders.cron.js";
 import { startPayrollWindowClosureScheduler, stopPayrollWindowClosureScheduler } from "../modules/payroll/payroll-window.cron.js";
 import { startPerformanceIngestionScheduler } from "../modules/performance-ingestion/performance-scheduler.service.js";
 import { startBreachSlaCron, stopBreachSlaCron } from "../modules/privacy/dpdp-breach-sla.cron.js";
@@ -98,6 +108,27 @@ const WORKERS: Array<{ name: string; start: () => Promise<void> }> = [
   {
     name: "interview-delay-alert",
     start: () => { startInterviewDelayAlertWorker(); return Promise.resolve(); },
+  },
+  // ── Previously server.ts-only (see the import block above) ──
+  {
+    name: "ats-reminders",
+    start: () => { startAtsRemindersScheduler(); return Promise.resolve(); },
+  },
+  {
+    name: "attendance-reconciliation",
+    start: () => { startAttendanceReconciliationWorker(); return Promise.resolve(); },
+  },
+  {
+    name: "dashboard-snapshot",
+    start: () => { startDashboardSnapshotScheduler(); return Promise.resolve(); },
+  },
+  {
+    name: "privacy-retention",
+    start: () => { startRetentionCron(); return Promise.resolve(); },
+  },
+  {
+    name: "business-action-sync",
+    start: () => { initBusinessActionSyncJobs(); return Promise.resolve(); },
   },
   {
     name: "lms-sync",
@@ -194,6 +225,11 @@ async function startAllWorkers(): Promise<void> {
 
 function shutdown(): void {
   console.log("\n[workers] Shutting down...");
+  // Newly moved here from server.ts. privacy-retention and ats-reminders export
+  // no stop function, so they are not listed — their timers die with the process.
+  stopBusinessActionSyncJobs();
+  stopDashboardSnapshotScheduler();
+  stopAttendanceReconciliationWorker();
   stopAccessExpiryScheduler();
   stopIntegrationScheduler();
   stopEsignComplianceWorker();
