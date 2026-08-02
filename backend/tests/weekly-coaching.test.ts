@@ -175,7 +175,7 @@ describe("an absent target is not the same as meeting it", () => {
     execute.mockResolvedValueOnce([[noTarget], []]).mockResolvedValue([[], []]);
     const result = await runWeeklyCoachingEvaluation("2026-07-15");
 
-    expect(result.skippedNoTarget).toBe(1);
+    expect(result.skippedMissingTarget).toBe(1);
     expect(result.skippedNoTrigger).toBe(0);
   });
 
@@ -189,7 +189,7 @@ describe("an absent target is not the same as meeting it", () => {
     // Dividing by it would be worse than declining.
     execute.mockResolvedValueOnce([[{ ...noTarget, target_value: 0 }], []]).mockResolvedValue([[], []]);
     const result = await runWeeklyCoachingEvaluation("2026-07-15");
-    expect(result.skippedNoTarget).toBe(1);
+    expect(result.skippedMissingTarget).toBe(1);
   });
 
   it("still counts a genuine pass as no-trigger, not as missing", async () => {
@@ -197,7 +197,42 @@ describe("an absent target is not the same as meeting it", () => {
       .mockResolvedValueOnce([[{ ...noTarget, target_value: 80, avg_value: 95 }], []])
       .mockResolvedValue([[], []]);
     const result = await runWeeklyCoachingEvaluation("2026-07-15");
-    expect(result.skippedNoTarget).toBe(0);
+    expect(result.skippedMissingTarget).toBe(0);
     expect(result.skippedNoTrigger).toBe(1);
+  });
+});
+
+describe("the missing-target gap names where to fix it", () => {
+  it("groups affected employees by process", async () => {
+    // A bare count says coaching is inert; this says which process to configure.
+    execute.mockResolvedValueOnce([[
+      { employee_id: "e1", metric_id: "m", avg_value: 50, target_value: null, sample_days: 5, audit_count: 10,
+        process_id: "p1", process_name: "Neemans Inbound" },
+      { employee_id: "e2", metric_id: "m", avg_value: 40, target_value: null, sample_days: 5, audit_count: 8,
+        process_id: "p1", process_name: "Neemans Inbound" },
+      { employee_id: "e3", metric_id: "m", avg_value: 60, target_value: null, sample_days: 5, audit_count: 9,
+        process_id: "p2", process_name: "GNC Orders" },
+    ], []]).mockResolvedValue([[], []]);
+
+    const result = await runWeeklyCoachingEvaluation("2026-07-15");
+
+    expect(result.skippedMissingTarget).toBe(3);
+    expect(result.processesMissingTarget).toEqual([
+      { processId: "p1", processName: "Neemans Inbound", employeeCount: 2 },
+      { processId: "p2", processName: "GNC Orders", employeeCount: 1 },
+    ]);
+  });
+
+  it("does not lose an employee who has no process at all", async () => {
+    // Silently dropping them would understate the gap.
+    execute.mockResolvedValueOnce([[
+      { employee_id: "e1", metric_id: "m", avg_value: 50, target_value: null, sample_days: 5, audit_count: 10,
+        process_id: null, process_name: null },
+    ], []]).mockResolvedValue([[], []]);
+
+    const result = await runWeeklyCoachingEvaluation("2026-07-15");
+    expect(result.processesMissingTarget).toEqual([
+      { processId: "unassigned", processName: "(no process assigned)", employeeCount: 1 },
+    ]);
   });
 });

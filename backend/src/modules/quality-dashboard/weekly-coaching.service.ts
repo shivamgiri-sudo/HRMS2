@@ -33,6 +33,8 @@ export function isoWeekBounds(date: string): { start: string; end: string } {
 type WeeklyQualityRow = {
   employee_id: string;
   metric_id: string;
+  process_id: string | null;
+  process_name: string | null;
   avg_value: number | null;
   target_value: number | null;
   sample_days: number;
@@ -50,6 +52,8 @@ async function weeklyQuality(start: string, end: string): Promise<WeeklyQualityR
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT k.employee_id,
             k.metric_id,
+            e.process_id,
+            p.process_name,
             ROUND(AVG(k.actual_value), 2)          AS avg_value,
             MAX(r.target_value)                    AS target_value,
             COUNT(*)                               AS sample_days,
@@ -57,11 +61,13 @@ async function weeklyQuality(start: string, end: string): Promise<WeeklyQualityR
             0                                      AS fatal_weeks
        FROM kpi_daily_actual k
        JOIN kpi_metric_master m ON m.id = k.metric_id
+       LEFT JOIN employees e ON e.id = k.employee_id
+       LEFT JOIN process_master p ON p.id = e.process_id
        LEFT JOIN kpi_employee_resolved r
               ON r.employee_id = k.employee_id AND r.metric_id = k.metric_id
       WHERE m.metric_code = 'QUALITY_SCORE'
         AND k.score_date BETWEEN ? AND ?
-      GROUP BY k.employee_id, k.metric_id`,
+      GROUP BY k.employee_id, k.metric_id, e.process_id, p.process_name`,
     [start, end],
   );
   return rows as unknown as WeeklyQualityRow[];
@@ -122,7 +128,14 @@ export type WeeklyCoachingResult = {
    * fire at all: on 2026-08-02 all 41 agents with quality that week had no
    * resolved target, and zero QUALITY_SCORE targets were configured anywhere.
    */
-  skippedNoTarget: number;
+  skippedMissingTarget: number;
+  /**
+   * Which processes are missing a target, and how many people that costs.
+   *
+   * A bare count says coaching is inert; this says where to go and fix it. The
+   * dashboard and the log line both read from here.
+   */
+  processesMissingTarget: Array<{ processId: string; processName: string; employeeCount: number }>;
 };
 
 export async function runWeeklyCoachingEvaluation(referenceDate: string): Promise<WeeklyCoachingResult> {
@@ -131,7 +144,8 @@ export async function runWeeklyCoachingEvaluation(referenceDate: string): Promis
 
   const result: WeeklyCoachingResult = {
     weekStart: start, weekEnd: end, evaluated: rows.length,
-    raised: 0, skippedNoTrigger: 0, skippedAlreadyOpen: 0, skippedNoCoach: 0, skippedNoTarget: 0,
+    raised: 0, skippedNoTrigger: 0, skippedAlreadyOpen: 0, skippedNoCoach: 0, skippedMissingTarget: 0,
+    processesMissingTarget: [],
   };
 
   for (const row of rows) {
@@ -140,7 +154,15 @@ export async function runWeeklyCoachingEvaluation(referenceDate: string): Promis
       // cannot tell the caller WHY it declined and "no target" is the one
       // reason that means nobody can be coached at all.
       if (row.target_value === null || Number(row.target_value) <= 0) {
-        result.skippedNoTarget += 1;
+        result.skippedMissingTarget += 1;
+        const pid = row.process_id ? String(row.process_id) : "unassigned";
+        const existing = result.processesMissingTarget.find((x) => x.processId === pid);
+        if (existing) existing.employeeCount += 1;
+        else result.processesMissingTarget.push({
+          processId: pid,
+          processName: row.process_name ? String(row.process_name) : "(no process assigned)",
+          employeeCount: 1,
+        });
         continue;
       }
       const outcome = await raiseCoachingFromQuality({
@@ -176,13 +198,15 @@ export async function runWeeklyCoachingEvaluation(referenceDate: string): Promis
     }
   }
 
-  if (result.skippedNoTarget > 0 && result.raised === 0) {
+  if (result.skippedMissingTarget > 0) {
     // Loud on purpose: a run that evaluates people and raises nothing because
     // no target exists looks identical to a healthy quiet week in the logs.
     logger.warn(
       result,
-      `[WeeklyCoaching] ${start}..${end}: ${result.skippedNoTarget} employee(s) had quality but no configured ` +
-      `target, so no coaching can be raised for them. Set a QUALITY_SCORE target per process.`,
+      `[WeeklyCoaching] ${start}..${end}: ${result.skippedMissingTarget} employee(s) across ` +
+      `${result.processesMissingTarget.length} process(es) had quality but no approved QUALITY_SCORE target, ` +
+      `so no coaching can be raised for them. Affected: ` +
+      `${result.processesMissingTarget.map((p) => `${p.processName} (${p.employeeCount})`).join(", ") || "unknown"}.`,
     );
   }
   logger.info(result, `[WeeklyCoaching] ${start}..${end}: raised ${result.raised} of ${result.evaluated} evaluated`);
