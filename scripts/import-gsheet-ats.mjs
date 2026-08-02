@@ -169,6 +169,30 @@ function mapProfileStatus(status, finalDecision) {
   return 'registered';
 }
 
+/**
+ * ats_candidate.status, reconciled against the outcome columns.
+ *
+ * The sheet's Status column used to be written straight through. current_stage
+ * and profile_status are derived from FinalDecision / Walk-in EndStage instead,
+ * so the three could disagree and nothing reconciled them — and status is the
+ * only one the walk-in queue and the SLA breach worker read.
+ *
+ * The June 2026 legacy import landed 1,330 candidates that way: profile_status
+ * said registered/onboarded and current_stage said Applied/Onboarded, while
+ * status stayed 'Waiting' on every one of them. 'Waiting' means "in the lobby
+ * right now", so a month-old walk-in still counted as queued.
+ *
+ * FinalDecision is the authoritative outcome and now wins over the Status
+ * column. Where there is no decision, the sheet's own value is kept, exactly as
+ * before, so rows that were already correct are unaffected.
+ */
+function mapCandidateStatus(status, finalDecision) {
+  const fd = (finalDecision || '').trim().toLowerCase();
+  if (fd === 'selected') return 'Selected';
+  if (fd === 'rejected') return 'Rejected';
+  return status || null;
+}
+
 // ── Build INSERT row from GSheet row ─────────────────────────────────────────
 function buildRow(r) {
   const candidateCode = v(r, 'CandidateID');
@@ -253,7 +277,7 @@ function buildRow(r) {
 
     // Walk-in progress
     walkin_end_stage:           walkinEndStage             || null,
-    status:                     status                     || null,
+    status:                     mapCandidateStatus(status, finalDecision),
     update_form_link:           v(r, 'UpdateFormLink')     || null,
     walk_in_date:               createdDate,
 
