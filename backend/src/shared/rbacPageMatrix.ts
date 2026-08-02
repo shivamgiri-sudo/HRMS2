@@ -17,7 +17,7 @@
  * routed. The rest have neither component nor route.
  *
  * This removes the grant from the matrix only. The corresponding production rows are
- * revoked by backend/sql/1059_revoke_grants_for_unrouted_pages.sql, which is NOT executed
+ * revoked by backend/sql/1061_revoke_grants_for_unrouted_pages.sql, which is NOT executed
  * here. Restoring any of these is a one-line change once the page ships — do that in the
  * same commit as the route, so the two can never disagree again.
  */

@@ -67,7 +67,8 @@ SET @col_exists = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
                    WHERE TABLE_SCHEMA = DATABASE()
                    AND TABLE_NAME = 'document_vault_inventory'
                    AND COLUMN_NAME = 'quarantine_until');
-SET @sql = IF(@col_exists = 0,
+SET @tbl_exists_1 = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='document_vault_inventory');
+SET @sql = IF(@tbl_exists_1>0 AND @col_exists=0,
   'ALTER TABLE document_vault_inventory ADD COLUMN quarantine_until DATETIME NULL COMMENT "File is soft-deleted but preserved until this date"',
   'SELECT "Column quarantine_until already exists" AS message');
 PREPARE stmt FROM @sql;
@@ -78,7 +79,8 @@ SET @col_exists = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
                    WHERE TABLE_SCHEMA = DATABASE()
                    AND TABLE_NAME = 'document_vault_inventory'
                    AND COLUMN_NAME = 'retention_policy_id');
-SET @sql = IF(@col_exists = 0,
+SET @tbl_exists_2 = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='document_vault_inventory');
+SET @sql = IF(@tbl_exists_2>0 AND @col_exists=0,
   'ALTER TABLE document_vault_inventory ADD COLUMN retention_policy_id VARCHAR(36) NULL COMMENT "Link to document_retention_policy"',
   'SELECT "Column retention_policy_id already exists" AS message');
 PREPARE stmt FROM @sql;
@@ -90,7 +92,8 @@ SET @col_exists = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
                    WHERE TABLE_SCHEMA = DATABASE()
                    AND TABLE_NAME = 'document_vault_inventory'
                    AND COLUMN_NAME = 'magic_bytes_validated');
-SET @sql = IF(@col_exists = 0,
+SET @tbl_exists_3 = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='document_vault_inventory');
+SET @sql = IF(@tbl_exists_3>0 AND @col_exists=0,
   'ALTER TABLE document_vault_inventory ADD COLUMN magic_bytes_validated TINYINT(1) NOT NULL DEFAULT 0 COMMENT "Whether file passed magic-byte validation"',
   'SELECT "Column magic_bytes_validated already exists" AS message');
 PREPARE stmt FROM @sql;
@@ -101,7 +104,8 @@ SET @col_exists = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
                    WHERE TABLE_SCHEMA = DATABASE()
                    AND TABLE_NAME = 'document_vault_inventory'
                    AND COLUMN_NAME = 'quarantine_reason');
-SET @sql = IF(@col_exists = 0,
+SET @tbl_exists_4 = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='document_vault_inventory');
+SET @sql = IF(@tbl_exists_4>0 AND @col_exists=0,
   'ALTER TABLE document_vault_inventory ADD COLUMN quarantine_reason VARCHAR(255) NULL COMMENT "Reason if file is quarantined (validation failure, malware, etc)"',
   'SELECT "Column quarantine_reason already exists" AS message');
 PREPARE stmt FROM @sql;

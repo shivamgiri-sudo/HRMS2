@@ -7,7 +7,8 @@ SET @col_exists = (
     AND TABLE_NAME = 'candidate_onboarding_bank_detail'
     AND COLUMN_NAME = 'name_on_cheque'
 );
-SET @sql = IF(@col_exists = 0,
+SET @tbl_exists_1 = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='candidate_onboarding_bank_detail');
+SET @sql = IF(@tbl_exists_1>0 AND @col_exists=0,
   'ALTER TABLE candidate_onboarding_bank_detail ADD COLUMN name_on_cheque VARCHAR(255) NULL COMMENT ''Name as printed on cancelled cheque'' AFTER cancelled_cheque_document_id',
   'SELECT ''Column already exists'' AS result'
 );

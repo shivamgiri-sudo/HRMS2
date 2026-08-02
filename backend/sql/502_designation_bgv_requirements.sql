@@ -128,7 +128,8 @@ SET @doc_type_exists = (
     AND COLUMN_NAME = 'document_type'
 );
 
-SET @sql = IF(@doc_type_exists = 0,
+SET @tbl_exists_1 = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='candidate_documents');
+SET @sql = IF(@tbl_exists_1>0 AND @doc_type_exists=0,
   'ALTER TABLE candidate_documents
    ADD COLUMN document_type VARCHAR(80) NULL
    COMMENT ''Normalised document type code'' AFTER candidate_id',

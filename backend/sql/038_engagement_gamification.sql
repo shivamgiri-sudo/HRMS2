@@ -50,27 +50,32 @@ PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 -- 0h. Add badge_icon if missing
 SET @col = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='gamification_badge_master' AND COLUMN_NAME='badge_icon');
-SET @sql = IF(@col=0, 'ALTER TABLE gamification_badge_master ADD COLUMN badge_icon VARCHAR(255) NULL', 'SELECT ''gbm badge_icon ok'' AS n');
+SET @tbl_exists_1 = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='gamification_badge_master');
+SET @sql = IF(@tbl_exists_1>0 AND @col=0, 'ALTER TABLE gamification_badge_master ADD COLUMN badge_icon VARCHAR(255) NULL', 'SELECT ''gbm badge_icon ok'' AS n');
 PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 -- 0i. Add criteria_json if missing
 SET @col = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='gamification_badge_master' AND COLUMN_NAME='criteria_json');
-SET @sql = IF(@col=0, 'ALTER TABLE gamification_badge_master ADD COLUMN criteria_json JSON NULL COMMENT ''Badge earning criteria''', 'SELECT ''gbm criteria_json ok'' AS n');
+SET @tbl_exists_2 = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='gamification_badge_master');
+SET @sql = IF(@tbl_exists_2>0 AND @col=0, 'ALTER TABLE gamification_badge_master ADD COLUMN criteria_json JSON NULL COMMENT ''Badge earning criteria''', 'SELECT ''gbm criteria_json ok'' AS n');
 PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 -- 0j. Add is_active if still missing (tables that never had active_status either)
 SET @col = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='gamification_badge_master' AND COLUMN_NAME='is_active');
-SET @sql = IF(@col=0, 'ALTER TABLE gamification_badge_master ADD COLUMN is_active TINYINT(1) NOT NULL DEFAULT 1', 'SELECT ''gbm is_active present ok'' AS n');
+SET @tbl_exists_3 = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='gamification_badge_master');
+SET @sql = IF(@tbl_exists_3>0 AND @col=0, 'ALTER TABLE gamification_badge_master ADD COLUMN is_active TINYINT(1) NOT NULL DEFAULT 1', 'SELECT ''gbm is_active present ok'' AS n');
 PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 -- 0k. Add created_at if missing
 SET @col = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='gamification_badge_master' AND COLUMN_NAME='created_at');
-SET @sql = IF(@col=0, 'ALTER TABLE gamification_badge_master ADD COLUMN created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP', 'SELECT ''gbm created_at ok'' AS n');
+SET @tbl_exists_4 = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='gamification_badge_master');
+SET @sql = IF(@tbl_exists_4>0 AND @col=0, 'ALTER TABLE gamification_badge_master ADD COLUMN created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP', 'SELECT ''gbm created_at ok'' AS n');
 PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 -- 0l. Add updated_at if missing
 SET @col = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='gamification_badge_master' AND COLUMN_NAME='updated_at');
-SET @sql = IF(@col=0, 'ALTER TABLE gamification_badge_master ADD COLUMN updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP', 'SELECT ''gbm updated_at ok'' AS n');
+SET @tbl_exists_5 = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='gamification_badge_master');
+SET @sql = IF(@tbl_exists_5>0 AND @col=0, 'ALTER TABLE gamification_badge_master ADD COLUMN updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP', 'SELECT ''gbm updated_at ok'' AS n');
 PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 -- =====================================================
@@ -91,7 +96,8 @@ PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 -- 0B-c. Add metadata_json if missing
 SET @col = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='employee_badge_earned' AND COLUMN_NAME='metadata_json');
-SET @sql = IF(@col=0, 'ALTER TABLE employee_badge_earned ADD COLUMN metadata_json JSON NULL COMMENT ''Additional context''', 'SELECT ''ebe metadata_json ok'' AS n');
+SET @tbl_exists_6 = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='employee_badge_earned');
+SET @sql = IF(@tbl_exists_6>0 AND @col=0, 'ALTER TABLE employee_badge_earned ADD COLUMN metadata_json JSON NULL COMMENT ''Additional context''', 'SELECT ''ebe metadata_json ok'' AS n');
 PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 -- =====================================================

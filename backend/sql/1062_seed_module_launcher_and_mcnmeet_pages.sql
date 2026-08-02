@@ -1,4 +1,4 @@
--- 1060_seed_module_launcher_and_mcnmeet_pages.sql
+-- 1062_seed_module_launcher_and_mcnmeet_pages.sql
 --
 -- NOT EXECUTED. Prepared during release stabilisation 2026-08-03.
 --

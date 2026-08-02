@@ -1,4 +1,4 @@
--- 1059_revoke_grants_for_unrouted_pages.sql
+-- 1061_revoke_grants_for_unrouted_pages.sql
 --
 -- NOT EXECUTED. Prepared during release stabilisation 2026-08-03; requires review and a
 -- controlled release window. Production runs SKIP_MIGRATIONS=true, so deploying does not
