@@ -357,13 +357,13 @@ function BranchCard({
             {branch.branch_head_signoff ? <><CheckCircle2 className="h-2.5 w-2.5" /> Signed Off</> : "Pending Sign-off"}
           </span>
           <div className="flex items-center gap-1.5">
-            {canOverride && !branch.ho_override_ready && (
+            {canOverride && !Boolean(branch.ho_override_ready) && (
               <Button size="sm" variant="outline" className="h-7 rounded-xl text-xs"
                 onClick={(e) => { e.stopPropagation(); onOverride(branch); }}>
                 HO Override
               </Button>
             )}
-            {branch.ho_override_ready && (
+            {Boolean(branch.ho_override_ready) && (
               <span className="inline-flex items-center gap-1 rounded-full border border-blue-200 bg-blue-50 px-2 py-0.5 text-[11px] font-semibold text-blue-700">
                 <CheckCircle2 className="h-2.5 w-2.5" /> Overridden
               </span>

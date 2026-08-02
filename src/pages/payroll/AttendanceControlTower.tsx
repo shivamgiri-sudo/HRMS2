@@ -632,8 +632,8 @@ export default function AttendanceControlTower() {
           )}
         </div>
 
-        {/* ── Main Content: Issue Mix + Gap Register ── */}
-        <div className="grid grid-cols-1 gap-4 lg:grid-cols-[260px_1fr]">
+        {/* ── Main Content: Issue Mix above table on standard monitors, side-by-side only on very wide ── */}
+        <div className="grid grid-cols-1 gap-4 2xl:grid-cols-[220px_1fr]">
 
           {/* Issue Mix */}
           <div className="rounded-2xl border border-slate-200 bg-white/90 p-4 backdrop-blur-sm">
@@ -703,8 +703,8 @@ export default function AttendanceControlTower() {
               </div>
             )}
 
-            <div className="overflow-x-auto">
-              <Table>
+            <div className="overflow-x-auto [&_td]:!py-2 [&_td]:!px-3 [&_th]:!py-2 [&_th]:!px-3">
+              <Table className="min-w-[1100px]">
                 <TableHeader>
                   <TableRow className="bg-slate-50 hover:bg-slate-50">
                     <TableHead className="h-9 w-10 px-3">
@@ -759,9 +759,9 @@ export default function AttendanceControlTower() {
                         ) : null}
                       </TableCell>
                       <TableCell className="whitespace-nowrap px-3 py-1.5 text-xs font-medium text-slate-600">{row.issueDate}</TableCell>
-                      <TableCell className="px-3 py-1.5 min-w-[160px]">
-                        <p className="text-sm font-semibold text-slate-900 leading-tight">{row.employeeName ?? row.employeeCode ?? "—"}</p>
-                        <p className="mt-0.5 text-[11px] text-slate-400 leading-tight">{row.employeeCode} · {row.branchName ?? "—"}</p>
+                      <TableCell className="px-3 py-1.5 min-w-[140px] max-w-[180px]">
+                        <p className="text-sm font-semibold text-slate-900 leading-tight truncate">{row.employeeName ?? row.employeeCode ?? "—"}</p>
+                        <p className="mt-0.5 text-[11px] text-slate-400 leading-tight truncate">{row.employeeCode} · {row.branchName ?? "—"}</p>
                       </TableCell>
                       <TableCell className="px-3 py-1.5">
                         <Badge variant="outline" className={`text-[11px] ${SOURCE_STYLE[row.source] ?? SOURCE_STYLE.adr}`}>{sourceLabel(row.source)}</Badge>
@@ -772,9 +772,9 @@ export default function AttendanceControlTower() {
                         </Badge>
                         {row.reviewNote ? <p className="mt-0.5 text-[10px] text-slate-400">{row.reviewNote}</p> : null}
                       </TableCell>
-                      <TableCell className="px-3 py-1.5 text-xs text-slate-600">
-                        <span className="font-medium">{row.resolvedThrough ?? "—"}</span>
-                        {row.resolvedDetail ? <p className="text-[10px] text-slate-400">{row.resolvedDetail}</p> : null}
+                      <TableCell className="px-3 py-1.5 text-xs text-slate-600 max-w-[120px]">
+                        <span className="font-medium truncate block">{row.resolvedThrough ?? "—"}</span>
+                        {row.resolvedDetail ? <p className="text-[10px] text-slate-400 truncate">{row.resolvedDetail}</p> : null}
                       </TableCell>
                       <TableCell className="px-3 py-1.5 text-xs">
                         <span className="font-medium text-slate-700">{row.reportingManagerName ?? "—"}</span>
@@ -785,11 +785,13 @@ export default function AttendanceControlTower() {
                       </TableCell>
                       <TableCell className="px-3 py-1.5 text-xs text-slate-600">{formatEvidence(row.aprStatus, row.aprMinutes)}</TableCell>
                       <TableCell className="px-3 py-1.5 text-xs text-slate-600">{formatEvidence(row.biometricStatus, row.biometricMinutes)}</TableCell>
-                      <TableCell className="px-3 py-1.5 min-w-[130px]">
+                      <TableCell className="px-3 py-1.5 max-w-[140px]">
                         <Badge variant="outline" className={`text-[11px] ${SEVERITY_STYLE[row.severity]}`}>{row.severity}</Badge>
-                        <p className="mt-0.5 text-[11px] text-slate-500 capitalize">{prettyIssue(row.issueType)}</p>
+                        <p className="mt-0.5 text-[11px] text-slate-500 capitalize line-clamp-2">{prettyIssue(row.issueType)}</p>
                       </TableCell>
-                      <TableCell className="max-w-[200px] px-3 py-1.5 text-[11px] text-slate-500">{row.payrollImpact}</TableCell>
+                      <TableCell className="max-w-[160px] px-3 py-1.5 text-[11px] text-slate-500">
+                        <span className="line-clamp-2 block">{row.payrollImpact}</span>
+                      </TableCell>
                       <TableCell className="px-3 py-1.5 text-right">
                         {(() => {
                           const d = daysOpen(row.reviewCreatedAt);
