@@ -40,19 +40,30 @@ describe('attendance engine policy', () => {
     expect(isOperationsExecutiveByRegex('INFORMATION TECHNOLOGY', 'EXECUTIVE')).toBe(false);
   });
 
-  it('uses the strict eight-hour and four-hour net-login boundaries', () => {
+  it('treats the configured four-hour floor as inclusive (net login)', () => {
+    // 240 is a FLOOR, and a floor qualifies. attendance_feature_config in
+    // production holds biometric_half_day_floor_minutes = 240, so exactly four
+    // hours earns the half day — which is what `>= 240` implements.
+    //
+    // These cases previously asserted 240 -> absent, i.e. an effective floor of
+    // 241, contradicting the configured value. 23 employee-days sit at exactly
+    // 240 in attendance_daily_record, so the difference is real pay, not a
+    // rounding curiosity.
     expect(classifyOperationsNetLogin(480)).toEqual({ status: 'present', lwpValue: 0 });
     expect(classifyOperationsNetLogin(479)).toEqual({ status: 'half_day', lwpValue: 0.5 });
     expect(classifyOperationsNetLogin(241)).toEqual({ status: 'half_day', lwpValue: 0.5 });
-    expect(classifyOperationsNetLogin(240)).toEqual({ status: 'absent', lwpValue: 1 });
+    expect(classifyOperationsNetLogin(240)).toEqual({ status: 'half_day', lwpValue: 0.5 });
     expect(classifyOperationsNetLogin(239)).toEqual({ status: 'absent', lwpValue: 1 });
   });
 
-  it('uses the strict nine-hour and four-hour COSEC boundaries', () => {
+  it('treats the configured four-hour floor as inclusive (COSEC)', () => {
+    // Same floor, and this path actually reads it: classifyCosecMinutes takes
+    // halfDayFloor as a parameter, sourced from
+    // attendance_feature_config.biometric_half_day_floor_minutes (240).
     expect(classifyCosecMinutes(540)).toEqual({ status: 'present', lwpValue: 0 });
     expect(classifyCosecMinutes(539)).toEqual({ status: 'half_day', lwpValue: 0.5 });
     expect(classifyCosecMinutes(241)).toEqual({ status: 'half_day', lwpValue: 0.5 });
-    expect(classifyCosecMinutes(240)).toEqual({ status: 'absent', lwpValue: 1 });
+    expect(classifyCosecMinutes(240)).toEqual({ status: 'half_day', lwpValue: 0.5 });
     expect(classifyCosecMinutes(239)).toEqual({ status: 'absent', lwpValue: 1 });
   });
 
