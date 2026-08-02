@@ -2,6 +2,7 @@ import { db } from '../../db/mysql.js';
 import type { RowDataPacket } from 'mysql2';
 import { inboxService } from '../inbox/inbox.service.js';
 import { emailService } from '../communication/email.service.js';
+import { getConfiguredRecipients } from './notification-recipients.service.js';
 import { logSensitiveAction } from '../../shared/auditLog.js';
 import { env } from '../../config/env.js';
 
@@ -173,7 +174,7 @@ export type TaskRecipients = {
   /** No SPOC is scoped to this branch — the task needs assigning. */
   unassigned: boolean;
   /** How `to` was arrived at, for the log and the audit trail. */
-  basis: 'branch_spoc' | 'branch_head_escalation' | 'none';
+  basis: 'configured' | 'branch_spoc' | 'branch_head_escalation' | 'none';
 };
 
 /**
@@ -187,7 +188,23 @@ export type TaskRecipients = {
 async function resolveTaskRecipients(
   assignedRole: string,
   branchId: string | null,
+  eventCode?: string,
 ): Promise<TaskRecipients> {
+  // Explicit configuration wins. Everything below it is inference from tables
+  // that were never written down as "this is who should be told", which is how
+  // a Training & Quality employee ended up receiving NOIDA-2's admin tasks.
+  if (eventCode) {
+    const configured = await getConfiguredRecipients(branchId, eventCode);
+    if (configured) {
+      return {
+        to: configured.to.map((r) => ({ userId: r.userId ?? '', email: r.email })),
+        cc: configured.cc,
+        unassigned: false,
+        basis: 'configured',
+      };
+    }
+  }
+
   const scoped = branchId ? await getUsersForBranchRole(assignedRole, branchId) : [];
 
   if (scoped.length > 0) {
@@ -243,7 +260,9 @@ async function dispatchNotifications(
   });
 
   for (const user of users) {
-    try {
+    // A shared mailbox configured as a recipient has no login, so there is no
+    // inbox to write to — it gets the email only.
+    if (user.userId) try {
       await inboxService.createItem({
         user_id: user.userId,
         type,
@@ -442,7 +461,7 @@ export async function dispatchJoinProvisioningTasks(params: {
   });
 
   for (const task of JOIN_TASKS) {
-    const recipients = await resolveTaskRecipients(task.assignedRole, branchId);
+    const recipients = await resolveTaskRecipients(task.assignedRole, branchId, task.taskCode);
     const users = recipients.to;
 
     console.log(`[dispatchJoinProvisioningTasks] Resolved recipients for role ${task.assignedRole}:`, {
@@ -594,7 +613,7 @@ export async function dispatchExitProvisioningTasks(params: {
   const { employeeId, employeeCode, employeeName, branchId, lastWorkingDay, exitRequestId, actorUserId } = params;
 
   for (const task of EXIT_TASKS) {
-    const exitRecipients = await resolveTaskRecipients(task.assignedRole, branchId);
+    const exitRecipients = await resolveTaskRecipients(task.assignedRole, branchId, task.taskCode);
     const users = exitRecipients.to;
     const title = task.titleFn(employeeName, employeeCode, lastWorkingDay);
     const desc = task.descFn(employeeName, employeeCode, lastWorkingDay);

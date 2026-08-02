@@ -23,6 +23,7 @@ const NativeGrievanceCommandCenter  = lazy(() => import("@/pages/NativeGrievance
 const NativeLetters                 = lazy(() => import("@/pages/NativeLetters"));
 const NativeLetterPreview           = lazy(() => import("@/pages/NativeLetterPreview"));
 const NativeCompanySigningCertificate = lazy(() => import("@/pages/NativeCompanySigningCertificate"));
+const NativeProvisioningRecipients   = lazy(() => import("@/pages/NativeProvisioningRecipients"));
 const NativeDocumentVerification    = lazy(() => import("@/pages/NativeDocumentVerification"));
 const NativeOrgMasters              = lazy(() => import("@/pages/NativeOrgMasters"));
 const NativeLocationPolicyMasters   = lazy(() => import("@/pages/NativeLocationPolicyMasters"));
@@ -122,6 +123,11 @@ export const platformRouteElements = (
       {/* Company signing certificate. The backend router is super_admin-only; this
           route is intentionally not page-gated so a Super Admin can always reach it. */}
       <Route path="/settings/signing-certificate" element={<ProtectedRoute><NativeCompanySigningCertificate /></ProtectedRoute>} />
+      {/* Provisioning notification recipients. Same pattern as above: the backend
+          router is super_admin-only, and the route is intentionally not page-gated
+          so a Super Admin can always reach it — a Gate on a pageCode missing from
+          page_catalog locks out every role including super_admin. */}
+      <Route path="/settings/provisioning-recipients" element={<ProtectedRoute><NativeProvisioningRecipients /></ProtectedRoute>} />
       {/* /employee/joining-documents/esign/:token and /employee/epf-compliance/review/:token are in public.routes */}
 
       {/* Helpdesk / Support */}
