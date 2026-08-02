@@ -5,7 +5,7 @@ const conn = await createConnection({
   host: '192.168.10.6',
   port: 3306,
   user: 'shivam_user',
-  password: process.env.DB_PASSWORD,
+  password: 'qwersdfg!@#hjk',
   database: 'db_audit',
 });
 

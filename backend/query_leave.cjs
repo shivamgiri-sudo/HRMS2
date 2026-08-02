@@ -3,7 +3,7 @@ const mysql = require('mysql2/promise');
   try {
     const conn = await mysql.createConnection({
       host: '192.168.10.6', port: 3306, user: 'shivam_user',
-      password: process.env.DB_PASSWORD, database: 'mas_hrms', connectTimeout: 5000
+      password: 'qwersdfg!@#hjk', database: 'mas_hrms', connectTimeout: 5000
     });
 
     // Leave types

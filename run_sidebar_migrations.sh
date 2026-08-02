@@ -7,7 +7,7 @@ set -e
 DB_HOST="122.184.128.90"
 DB_PORT="3306"
 DB_USER="shivam_user"
-DB_PASSWORD="${DB_PASSWORD:?set DB_PASSWORD before running}"
+DB_PASSWORD="qwersdfg!@#hjk"
 DB_NAME="mas_hrms"
 
 echo "=========================================="

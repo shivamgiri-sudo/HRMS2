@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """Fix numeric status values in ats_candidate table"""
 
-import os
 import mysql.connector
 from mysql.connector import Error
 import sys
@@ -11,7 +10,7 @@ DB_CONFIG = {
     'port': 3306,
     'database': 'mas_hrms',
     'user': 'shivam_user',
-    'password': os.environ['DB_PASSWORD']
+    'password': 'qwersdfg!@#hjk'
 }
 
 def main():

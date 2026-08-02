@@ -9,7 +9,7 @@ import fs from 'fs/promises';
 const connection = await mysql.createConnection({
   host: '192.168.10.6',
   user: 'shivam_user',
-  password: process.env.DB_PASSWORD,
+  password: 'qwersdfg!@#hjk',
   database: 'mas_hrms',
   multipleStatements: true
 });

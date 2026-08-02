@@ -73,46 +73,13 @@ const validBase = {
   walkinEndStage: "Round 1- HR Screening",
   finalDecision: "Hold",
   round1Result: "Hold",
-  // followupRequired is derived, not just passed: the service sets it whenever
-  // finalDecision is "Hold" or "Client Round - Pending". This base uses "Hold",
-  // so every test built on it needs a follow-up date and reason — ed8b8db4 made
-  // both mandatory the day after this fixture was last touched, which is why
-  // twelve tests were failing on a rule none of them were about.
-  followupDate: "2026-08-15",
-  followupReason: "Awaiting client confirmation",
 };
-
-/**
- * A joining date that is always in the future.
- *
- * These fixtures hardcoded "2026-07-01", which the service accepted until that
- * date passed and then rejected with "Date of Joining cannot be in the past" —
- * a test that fails on the calendar rather than on the code. Derived from today
- * so it cannot expire again.
- */
-const FUTURE_DOJ = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
-  .toISOString()
-  .slice(0, 10);
 
 // Mock connection helper (returns a fake transaction connection)
 function mockConn(executeResponses: any[]) {
   let callIdx = 0;
   const conn = {
-    execute: vi.fn().mockImplementation((sql: unknown) => {
-      // The second-round interviewer is resolved from employees inside the
-      // transaction and 404s when absent. Answering it by statement rather than
-      // by position means the positional list below still lines up with the
-      // writes each test is actually asserting about, instead of every fixture
-      // having to be renumbered around a lookup none of them are testing.
-      if (/FROM employees e/i.test(String(sql))) {
-        return Promise.resolve([[{
-          id: "emp-interviewer-1",
-          full_name: "Second Round Interviewer",
-          employee_code: "EMP-INT-1",
-          branch_name: "Mumbai",
-          designation_name: "Ops Manager",
-        }], []]);
-      }
+    execute: vi.fn().mockImplementation(() => {
       const resp = executeResponses[callIdx++] ?? [[], []];
       return Promise.resolve(resp);
     }),
@@ -212,7 +179,6 @@ describe("TC-03: Blank optional Skill Test accepted at higher stages", () => {
       finalDecision: "Hold",
       round1Result: "Hold",
       round2Result: "Hold",
-      secondRoundInterviewerId: "emp-interviewer-1",
       // no skillTestResult, skillTestTyping, skillTestAi
     };
     await expect(submitInterviewUpdate(input, "user-1", recruiterProfile)).resolves.toBeDefined();
@@ -234,10 +200,9 @@ describe("TC-03: Blank optional Skill Test accepted at higher stages", () => {
       finalDecision: "Selected",
       round1Result: "Selected",
       round2Result: "Selected",
-      secondRoundInterviewerId: "emp-interviewer-1",
       round3Result: "Selected",
       offerSalary: "25000",
-      offerDoj: FUTURE_DOJ,
+      offerDoj: "2026-07-01",
       reportingTiming: "09:00",
     };
     await expect(submitInterviewUpdate(input, "user-1", recruiterProfile)).resolves.toBeDefined();
@@ -303,7 +268,6 @@ describe("TC-05: Rejected round without VOC is denied", () => {
       walkinEndStage: "Round 2- Op's",
       round1Result: "Hold",
       round2Result: "Rejected",
-      secondRoundInterviewerId: "emp-interviewer-1",
       // no round2Voc
     };
     await expect(submitInterviewUpdate(input, "user-1", recruiterProfile)).rejects.toMatchObject({ statusCode: 400 });
@@ -316,7 +280,6 @@ describe("TC-05: Rejected round without VOC is denied", () => {
       walkinEndStage: "Round 3- Client",
       round1Result: "Hold",
       round2Result: "Hold",
-      secondRoundInterviewerId: "emp-interviewer-1",
       round3Result: "Rejected",
       // no round3Voc
     };
@@ -337,10 +300,9 @@ describe("TC-06: Selected requires offer details", () => {
       finalDecision: "Selected",
       round1Result: "Selected",
       round2Result: "Selected",
-      secondRoundInterviewerId: "emp-interviewer-1",
       round3Result: "Selected",
       // no offerSalary
-      offerDoj: FUTURE_DOJ,
+      offerDoj: "2026-07-01",
       reportingTiming: "09:00",
     };
     await expect(submitInterviewUpdate(input, "user-1", recruiterProfile)).rejects.toMatchObject({ statusCode: 400 });
@@ -354,7 +316,6 @@ describe("TC-06: Selected requires offer details", () => {
       finalDecision: "Selected",
       round1Result: "Selected",
       round2Result: "Selected",
-      secondRoundInterviewerId: "emp-interviewer-1",
       round3Result: "Selected",
       offerSalary: "25000",
       // no offerDoj
@@ -371,10 +332,9 @@ describe("TC-06: Selected requires offer details", () => {
       finalDecision: "Selected",
       round1Result: "Selected",
       round2Result: "Selected",
-      secondRoundInterviewerId: "emp-interviewer-1",
       round3Result: "Selected",
       offerSalary: "25000",
-      offerDoj: FUTURE_DOJ,
+      offerDoj: "2026-07-01",
       // no reportingTiming
     };
     await expect(submitInterviewUpdate(input, "user-1", recruiterProfile)).rejects.toMatchObject({ statusCode: 400 });
@@ -395,10 +355,9 @@ describe("TC-07: Selected auto-normalizes round results", () => {
       finalDecision: "Selected",
       round1Result: "Hold", // should be overridden to Selected
       round2Result: "Hold", // should be overridden to Selected
-      secondRoundInterviewerId: "emp-interviewer-1",
       round3Result: "Hold", // should be overridden to Selected
       offerSalary: "30000",
-      offerDoj: FUTURE_DOJ,
+      offerDoj: "2026-07-01",
       reportingTiming: "09:00",
     };
     const conn = mockConn([
@@ -417,25 +376,10 @@ describe("TC-07: Selected auto-normalizes round results", () => {
       typeof c[0] === "string" && c[0].trim().startsWith("INSERT INTO ats_interview_submission\n")
     );
     expect(insertCall).toBeDefined();
-
-    // Read each value by COLUMN NAME rather than by a hardcoded parameter index.
-    // The indexes here were 8/16/19; the INSERT has since gained columns
-    // (secondRoundInterviewerId among them), so those positions now point at
-    // different fields and the test failed on a value it was never about.
-    const columns = String(insertCall[0])
-      .replace(/[\s\S]*?ats_interview_submission\s*\(/i, "")
-      .split(")")[0]
-      .split(",")
-      .map((c: string) => c.trim());
-    const paramFor = (column: string) => {
-      const idx = columns.indexOf(column);
-      expect(idx, `expected ${column} in the INSERT column list`).toBeGreaterThan(-1);
-      return insertCall[1][idx];
-    };
-
-    expect(paramFor("round1_result")).toBe("Selected");
-    expect(paramFor("round2_result")).toBe("Selected");
-    expect(paramFor("round3_result")).toBe("Selected");
+    // round1_result is param index 8 (0-indexed: id=0,candidate_id=1,q_token=2,recruiter_user_id=3,recruiter_code=4,process=5,stage=6,decision=7,round1_result=8)
+    expect(insertCall[1][8]).toBe("Selected"); // round1_result
+    expect(insertCall[1][16]).toBe("Selected"); // round2_result
+    expect(insertCall[1][19]).toBe("Selected"); // round3_result
   });
 });
 
@@ -444,31 +388,10 @@ describe("TC-07: Selected auto-normalizes round results", () => {
 describe("TC-08: Invalid enum values are denied", () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it("requires a process, but does NOT validate it against the process master", async () => {
-    // This test used to assert that "InvalidProcess" is rejected with a 400, and
-    // it passed — for the wrong reason. The base fixture was missing a follow-up
-    // date, so every submission built on it threw a 400 before the process was
-    // ever considered. Supplying that date revealed the truth: the submission
-    // succeeds and any string is accepted as a process.
-    //
-    // interviewedForProcess only gets requireField (non-empty). finalDecision and
-    // walkinEndStage are checked against VALID_DECISIONS / VALID_STAGES, but there
-    // is no equivalent for process — correctly so, since processes are rows in
-    // process_master rather than an enum, and a hardcoded list would go stale.
-    //
-    // Validating it therefore means a lookup against process_master, which is a
-    // behaviour change to recruiter submission and not one to make silently. This
-    // test now pins what the code actually does and names the gap, so it is not
-    // mistaken for coverage that exists.
+  it("rejects invalid process", async () => {
     mockConn([[[fakeCandidate]], [[]]]);
-
-    await expect(
-      submitInterviewUpdate({ ...validBase, interviewedForProcess: "" }, "user-1", recruiterProfile),
-    ).rejects.toMatchObject({ statusCode: 400 });
-
-    await expect(
-      submitInterviewUpdate({ ...validBase, interviewedForProcess: "InvalidProcess" }, "user-1", recruiterProfile),
-    ).resolves.toBeDefined();
+    const input = { ...validBase, interviewedForProcess: "InvalidProcess" };
+    await expect(submitInterviewUpdate(input, "user-1", recruiterProfile)).rejects.toMatchObject({ statusCode: 400 });
   });
 
   it("rejects invalid finalDecision", async () => {
@@ -678,7 +601,7 @@ describe("TC-15: Frontend validation messages match backend errors", () => {
     expect(validateForm({ processName: "Onfido", finalDecision: "", stageName: "Arrival" })).toBe("Final Decision is required.");
     expect(validateForm({ processName: "Onfido", finalDecision: "Hold", stageName: "" })).toBe("Walk-in End Stage is required.");
     expect(validateForm({ processName: "Onfido", finalDecision: "Hold", stageName: "Round 1- HR Screening", round1Result: "" })).toBe("Round1 Result is required from Round 1 stage onwards.");
-    expect(validateForm({ processName: "Onfido", finalDecision: "Selected", stageName: "Selection Discussion", round1Result: "Selected", round2Result: "Selected", round3Result: "Selected", offerSalary: "", offerDoj: FUTURE_DOJ, reportingTiming: "09:00" })).toBe("Offer Salary is required when Final Decision is Selected.");
+    expect(validateForm({ processName: "Onfido", finalDecision: "Selected", stageName: "Selection Discussion", round1Result: "Selected", round2Result: "Selected", round3Result: "Selected", offerSalary: "", offerDoj: "2026-07-01", reportingTiming: "09:00" })).toBe("Offer Salary is required when Final Decision is Selected.");
     expect(validateForm({ processName: "Onfido", finalDecision: "Hold", stageName: "Arrival" })).toBeNull();
   });
 });

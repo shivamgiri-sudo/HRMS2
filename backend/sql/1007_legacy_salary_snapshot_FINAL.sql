@@ -6,7 +6,7 @@
 -- db_bill: 14.97.30.236 (or 192.168.10.22 from internal)
 -- mas_hrms: 192.168.10.6
 --
--- Command: mysql -h 192.168.10.6 -u shivam_user -p"$DB_PASSWORD" mas_hrms < 1007_legacy_salary_snapshot_FINAL.sql
+-- Command: mysql -h 192.168.10.6 -u shivam_user -p'qwersdfg!@#hjk' mas_hrms < 1007_legacy_salary_snapshot_FINAL.sql
 -- ============================================================================
 
 -- Step 1: Create snapshot table

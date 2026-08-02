@@ -131,14 +131,6 @@ function parseWorkbook(filePath, sheetName) {
       const p = (n) => String(n).padStart(2, '0');
       const date = `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
       const time = `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
-
-      // A time-only cell (CreatedTime) is still a Date, sitting on Excel's
-      // 1899-12-30 epoch. Rendered whole it produces "1899-12-30 12:16:24",
-      // which buildRow then concatenates onto CreatedDate as
-      // "2026-03-27 1899-12-30 12:16:24" — MySQL rejects every such row.
-      // Anything at or before the epoch is a time, so emit only the time.
-      if (d.getFullYear() < 1900) return time;
-
       return time === '00:00:00' ? date : `${date} ${time}`;
     }
 
@@ -558,57 +550,6 @@ if (insertOnly) {
 // DELETE FROM ats_candidate WHERE candidate_code IN (...).
 const insertedCodes = [];
 
-// ── Batched insert (insert-only mode) ───────────────────────────────────────
-const BATCH_SIZE = 200;
-const pending = [];
-
-/**
- * Write the pending rows as one multi-row INSERT.
- *
- * Rows do not all carry the same keys — the typing columns are only present
- * when the sheet had them — so the batch is written over the union of keys,
- * with null for any a given row lacks. That is safe here precisely because
- * this path never updates: nothing existing can be blanked.
- *
- * A failed batch is retried row by row. Otherwise one bad cell would take 200
- * good rows with it, and the count would be wrong with nothing to show which
- * row was at fault.
- */
-async function flushBatch() {
-  if (!pending.length) return;
-  const batch = pending.splice(0, pending.length);
-
-  const colSet = new Set();
-  for (const r of batch) for (const k of Object.keys(r)) colSet.add(k);
-  const cols = [...colSet];
-  const tuple = `(${cols.map(() => '?').join(',')})`;
-
-  try {
-    await pool.query(
-      `INSERT INTO ats_candidate (${cols.join(', ')}) VALUES ${batch.map(() => tuple).join(',')}`,
-      batch.flatMap((r) => cols.map((k) => (r[k] === undefined ? null : r[k]))),
-    );
-    inserted += batch.length;
-    for (const r of batch) insertedCodes.push(r.candidate_code);
-    process.stdout.write(`\r  inserted ${inserted}…`);
-  } catch (batchErr) {
-    console.error(`\n  batch of ${batch.length} failed (${batchErr.message}); retrying individually`);
-    for (const r of batch) {
-      const rc = Object.keys(r).filter((k) => r[k] !== null && r[k] !== undefined);
-      try {
-        await pool.execute(
-          `INSERT INTO ats_candidate (${rc.join(', ')}) VALUES (${rc.map(() => '?').join(',')})`,
-          rc.map((k) => r[k]),
-        );
-        inserted++; insertedCodes.push(r.candidate_code);
-      } catch (rowErr) {
-        console.error(`  ERROR on ${r.candidate_code}: ${rowErr.message}`);
-        errors++;
-      }
-    }
-  }
-}
-
 for (const rawRow of rows) {
   const row = buildRow(rawRow);
   if (!row) { skipped++; noCode++; continue; }
@@ -635,21 +576,6 @@ for (const rawRow of rows) {
     if (dryRun) {
       if (alreadyExists) { updated++; }
       else { inserted++; insertedCodes.push(row.candidate_code); }
-      continue;
-    }
-
-    // Insert-only rows go through the batcher. One statement per row means one
-    // network round trip per row: against the off-LAN database that is ~15
-    // rows/minute, so 3,569 rows is four hours of exposure on a link that
-    // dropped with ECONNRESET after fifteen minutes. Batching makes it ~36
-    // statements.
-    //
-    // Only insert-only batches. The upsert path builds a per-row column list on
-    // purpose — it includes only non-null values so an empty sheet cell cannot
-    // blank live data — and that cannot be expressed as one multi-row statement.
-    if (insertOnly) {
-      pending.push(row);
-      if (pending.length >= BATCH_SIZE) await flushBatch();
       continue;
     }
 
@@ -682,10 +608,6 @@ for (const rawRow of rows) {
     errors++;
   }
 }
-
-// The last batch is almost never a full one.
-if (!dryRun) await flushBatch();
-if (inserted > 0 && !dryRun) process.stdout.write('\n');
 
 await pool.end();
 

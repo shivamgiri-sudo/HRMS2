@@ -137,32 +137,16 @@ export async function createEmployeeFromCandidate(
     }
 
     // RULE 1: BGV Validation (manual review workflow - doesn't block)
-    //
-    // "Doesn't block" has to be true even when the check itself fails. This
-    // call threw on every invocation for months — its query selected three
-    // columns that do not exist — and because nothing caught it, a check
-    // designed to raise a warning aborted employee creation entirely. Six
-    // offers reached bh_approved and produced no employee.
-    let bgvReadiness: Awaited<ReturnType<typeof checkBgvReadiness>> | null = null;
-    try {
-      bgvReadiness = await checkBgvReadiness(candidateId, offer.designation_id);
-      result.bgvStatus = getBgvReadinessSummary(bgvReadiness);
-    } catch (bgvErr) {
-      console.error('[EmployeeOrchestrator] BGV readiness check failed:', bgvErr);
-      result.warnings.push(
-        'BGV readiness could not be evaluated — create with manual BGV review.',
-      );
+    const bgvReadiness = await checkBgvReadiness(candidateId, offer.designation_id);
+    result.bgvStatus = getBgvReadinessSummary(bgvReadiness);
+
+    if (!bgvReadiness.ready) {
+      result.warnings.push(`BGV not complete: ${bgvReadiness.blockers.map(b => b.reason).join(', ')}`);
+      // Employee creation proceeds - manual review workflow
     }
-    if (bgvReadiness) {
 
-      if (!bgvReadiness.ready) {
-        result.warnings.push(`BGV not complete: ${bgvReadiness.blockers.map(b => b.reason).join(', ')}`);
-        // Employee creation proceeds - manual review workflow
-      }
-
-      if (bgvReadiness.manualReviewRequired) {
-        result.warnings.push('BGV manual review required before activation');
-      }
+    if (bgvReadiness.manualReviewRequired) {
+      result.warnings.push('BGV manual review required before activation');
     }
 
     // RULE 10: Statutory Validation
@@ -548,11 +532,7 @@ async function notifyPayrollHrToIssueJoiningDocuments(params: {
   try {
     const baseUrl = env.FRONTEND_URL || 'http://localhost:5173';
     const [hrRows] = await db.execute<RowDataPacket[]>(
-      // auth_user has no name column at all — id, email, password_hash,
-      // is_blocked, last_login_at and so on. The name is on employees, which
-      // this query already joins. Wrapped in a try/catch, so this never
-      // surfaced: it simply meant the Payroll HR notification was never sent.
-      `SELECT u.email, e.full_name
+      `SELECT u.email, u.full_name
          FROM auth_user u
          JOIN user_roles ur ON ur.user_id = u.id
          JOIN employees e ON e.user_id = u.id AND e.active_status = 1
@@ -680,14 +660,11 @@ async function validateStatutoryInfo(
   const blockers: Array<{ type: string; reason: string; severity: 'critical' }> = [];
 
   const [candRows] = await conn.execute<RowDataPacket[]>(
-    // ats_candidate only. candidate_onboarding_profile holds no plaintext PAN
-    // or Aadhaar — just pan_number_masked / _hash / _encrypted and
-    // aadhaar_number_masked / _hash — so the COALESCE against p.pan_number
-    // referenced a column that does not exist and threw on every call. Since
-    // this function format-checks the value against PAN_REGEX, a masked or
-    // encrypted column could not serve the purpose in any case.
-    `SELECT c.pan_number, c.aadhar_number
+    `SELECT
+       COALESCE(p.pan_number, c.pan_number) AS pan_number,
+       COALESCE(p.aadhar_number, c.aadhar_number) AS aadhar_number
      FROM ats_candidate c
+     LEFT JOIN candidate_onboarding_profile p ON p.candidate_id = c.id
      WHERE c.id = ? LIMIT 1`,
     [candidateId]
   );

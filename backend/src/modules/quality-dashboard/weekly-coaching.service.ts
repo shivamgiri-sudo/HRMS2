@@ -2,7 +2,6 @@ import { db } from "../../db/mysql.js";
 import { logger } from "../../lib/logger.js";
 import type { RowDataPacket } from "mysql2";
 import { raiseCoachingFromQuality } from "./coaching-writer.service.js";
-import { DEFAULT_COACHING_THRESHOLDS } from "./coaching-trigger.js";
 
 /**
  * Weekly quality review: who fell short last week, and should anyone talk to them.
@@ -38,10 +37,6 @@ type WeeklyQualityRow = {
   process_name: string | null;
   avg_value: number | null;
   target_value: number | null;
-  /** From the approved process target, when one is active. */
-  warning_threshold_pct: number | null;
-  critical_threshold_pct: number | null;
-  min_audit_count: number | null;
   sample_days: number;
   audit_count: number | null;
   fatal_weeks: number;
@@ -60,14 +55,7 @@ async function weeklyQuality(start: string, end: string): Promise<WeeklyQualityR
             e.process_id,
             p.process_name,
             ROUND(AVG(k.actual_value), 2)          AS avg_value,
-            -- The approved per-process target wins where one exists. Falling
-            -- back to kpi_employee_resolved keeps today's behaviour, since
-            -- there are currently zero approved targets and dropping the
-            -- fallback would silently stop evaluating everyone.
-            COALESCE(MAX(t.target_score), MAX(r.target_value)) AS target_value,
-            MAX(t.warning_threshold_pct)           AS warning_threshold_pct,
-            MAX(t.critical_threshold_pct)          AS critical_threshold_pct,
-            MAX(t.min_audit_count)                 AS min_audit_count,
+            MAX(r.target_value)                    AS target_value,
             COUNT(*)                               AS sample_days,
             SUM(COALESCE(k.source_record_count, 0)) AS audit_count,
             0                                      AS fatal_weeks
@@ -77,16 +65,10 @@ async function weeklyQuality(start: string, end: string): Promise<WeeklyQualityR
        LEFT JOIN process_master p ON p.id = e.process_id
        LEFT JOIN kpi_employee_resolved r
               ON r.employee_id = k.employee_id AND r.metric_id = k.metric_id
-       LEFT JOIN process_quality_target t
-              ON t.process_id = e.process_id
-             AND t.metric_code = 'QUALITY_SCORE'
-             AND t.status = 'active' AND t.active_status = 1
-             AND t.effective_from <= ?
-             AND (t.effective_to IS NULL OR t.effective_to >= ?)
       WHERE m.metric_code = 'QUALITY_SCORE'
         AND k.score_date BETWEEN ? AND ?
       GROUP BY k.employee_id, k.metric_id, e.process_id, p.process_name`,
-    [end, start, start, end],
+    [start, end],
   );
   return rows as unknown as WeeklyQualityRow[];
 }
@@ -102,10 +84,6 @@ async function consecutiveShortfalls(
   metricId: string,
   beforeWeekStart: string,
   lookbackWeeks = 8,
-  // Same band the evaluator uses. It was a third hardcoded 0.9: a process
-  // configured to warn at 85% would have had its streak counted at 90%, so the
-  // escalation to a PIP could fire on weeks the evaluator never called short.
-  warningRatio: number = DEFAULT_COACHING_THRESHOLDS.warningRatio,
 ): Promise<number> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT YEARWEEK(k.score_date, 3) AS wk,
@@ -128,7 +106,7 @@ async function consecutiveShortfalls(
     const value = Number(row.avg_value ?? 0);
     // No target means the week cannot be called short, so the streak stops
     // rather than counting an unmeasurable week as a failure.
-    if (!target || value >= target * warningRatio) break;
+    if (!target || value >= target * 0.9) break;
     streak += 1;
   }
   return streak;
@@ -199,25 +177,11 @@ export async function runWeeklyCoachingEvaluation(referenceDate: string): Promis
           fatalTriggered: false,
           targetPercentage: row.target_value === null ? null : Number(row.target_value),
           consecutiveShortfalls: await consecutiveShortfalls(
-            String(row.employee_id), String(row.metric_id), start, 8,
-            row.warning_threshold_pct === null || row.warning_threshold_pct === undefined
-              ? undefined : Number(row.warning_threshold_pct) / 100,
+            String(row.employee_id), String(row.metric_id), start,
           ),
           // Audits assessed, not days worked — three days of one audit each is
           // not the same evidence as three days of twenty.
           sampleSize: Number(row.audit_count ?? 0) || Number(row.sample_days ?? 0),
-          // The process's own bands. Without these the evaluator fell back to
-          // 0.9/0.75 for everyone, which made warning_threshold_pct and
-          // critical_threshold_pct decorative — a target configured to warn at
-          // 85% of target was still evaluated at 90%.
-          thresholds: {
-            warningRatio: row.warning_threshold_pct === null || row.warning_threshold_pct === undefined
-              ? undefined : Number(row.warning_threshold_pct) / 100,
-            criticalRatio: row.critical_threshold_pct === null || row.critical_threshold_pct === undefined
-              ? undefined : Number(row.critical_threshold_pct) / 100,
-            minSample: row.min_audit_count === null || row.min_audit_count === undefined
-              ? undefined : Number(row.min_audit_count),
-          },
         },
       });
 

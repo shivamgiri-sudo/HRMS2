@@ -17,7 +17,7 @@ const DB_CONFIG = {
   host: '122.184.128.90',
   port: 3306,
   user: 'shivam_user',
-  password: process.env.DB_PASSWORD,
+  password: 'qwersdfg!@#hjk',
   database: 'mas_hrms',
   multipleStatements: true
 };

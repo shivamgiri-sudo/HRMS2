@@ -26,7 +26,7 @@ git pull origin main
 
 echo.
 echo [2/2] Running SQL migration...
-mysql -h 192.168.10.6 -u shivam_user -p"%DB_PASSWORD%" mas_hrms < backend\sql\999_branch_alias_setup.sql
+mysql -h 192.168.10.6 -u shivam_user -p"qwersdfg!@#hjk" mas_hrms < backend\sql\999_branch_alias_setup.sql
 
 if %ERRORLEVEL% EQU 0 (
     echo.

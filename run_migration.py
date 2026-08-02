@@ -4,7 +4,6 @@ ATS Fix Database Migration Script
 Connects directly to production MySQL and runs the migration
 """
 
-import os
 import mysql.connector
 from mysql.connector import Error
 import sys
@@ -16,7 +15,7 @@ DB_CONFIG = {
     'port': 3306,
     'database': 'mas_hrms',
     'user': 'shivam_user',
-    'password': os.environ['DB_PASSWORD']
+    'password': 'qwersdfg!@#hjk'
 }
 
 def execute_query(cursor, query, description=""):

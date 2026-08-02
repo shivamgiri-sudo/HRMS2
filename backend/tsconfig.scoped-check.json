@@ -32,12 +32,7 @@
     "src/modules/quality-dashboard/quality-target-simulation.ts",
     "src/modules/quality-dashboard/quality-governance.routes.ts",
     "src/modules/quality-dashboard/weekly-coaching.service.ts",
-    "src/db/runPendingMigrations.ts",
-    "src/modules/integration-hub/canonical-writer.ts",
-    "src/utils/require-secret.ts",
-    "src/db/lms-mysql.ts",
-    "src/workers/apr-vicidial-sync.worker.ts",
-    "src/modules/integration-hub/adapters/dbSyncService.ts"
+    "src/db/runPendingMigrations.ts"
   ],
   "compilerOptions": { "noEmit": true }
 }

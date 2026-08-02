@@ -36,17 +36,10 @@ none.
 Enabling any of those five produces source reads, connector-run rows and log
 noise, and zero promoted data.
 
-### 1.2 The unique key includes `integration_key` — which is the real hazard
+### 1.2 Promotion is INSERT, not upsert — and the unique key includes `integration_key`
 
-**Corrected 2026-08-02.** An earlier revision of this document said promotion is
-"INSERT, not upsert". That is true of `promotionEngine.ts:50`, but that path is
-whitelisted to `dialer_session_log` only (`INTEGRATION_TARGET_TABLES`) and never
-writes biometric or call data at all. The path that *does* write them is
-`adapters/dbSyncService.ts`, and it uses `ON DUPLICATE KEY UPDATE`.
-
-So re-running the same connector over the same window is a **harmless upsert**,
-not an error per row. The second consequence below is unaffected, and it is the
-one that matters. The destination unique keys are:
+`promotionEngine.ts:50` issues a plain `INSERT INTO ${targetTable} …`. The
+destination unique keys are:
 
 ```
 integration_biometric_daily  (integration_key, source_table, employee_code, activity_date)
@@ -56,17 +49,11 @@ dialer_session_log           (employee_code, session_date, integration_key)
 
 Two consequences, and the second is the dangerous one:
 
-- **Re-running the same connector** over the same window upserts. Harmless.
+- **Re-running the same connector** over the same window collides on the unique
+  key and errors per row. Wasteful, not corrupting.
 - **A different connector** writing the same employee and date does **not**
   collide, because `integration_key` differs. It inserts a parallel row. Any
   consumer that does not filter on `integration_key` then double-counts.
-
-**This is now guarded in code**, not only in this document — see
-`integration-hub/canonical-writer.ts`. `integration_biometric_daily` declares
-`cosec_sqlserver` as its single permitted writer, and `dbSyncService` refuses any
-other connector *before reading the source*. Disabled is a state someone can
-change in one click months from now; the safeguard has to live where the write
-happens rather than in a recommendation.
 
 Consumers of `integration_biometric_daily` in `break-management.service.ts`
 (five call sites), `dashboard-drilldown.service.ts` and `dashboard-metric.service.ts`
@@ -227,44 +214,6 @@ DELETE FROM <destination> WHERE integration_key = ? AND created_at >= '<enable t
 Because every promoted row carries its `integration_key` and `run_id`, a
 reactivation is fully reversible without touching another connector's data. That
 is the property that makes Stage 3 safe to attempt at all.
-
----
-
-## 4a. Classification, and what should happen to each
-
-Verified against production 2026-08-02: all six remain `enabled = 0`. Only
-`dialer_1` and `lms_sync` are enabled.
-
-| Connector | Class | Why | Disposition |
-|---|---|---|---|
-| `cosec_biometric` | **DUPLICATE** | Same source table as the live `cosec-sync` worker, which owns `integration_biometric_daily` under `cosec_sqlserver` | **Deprecate.** Blocked in code by `canonical-writer.ts`; delete the schedule once that is confirmed for a full cycle |
-| `Cosec` | **SUPERSEDED** | Same `NCOSEC` source, no table maps, replaced by the worker | Deprecate, then delete |
-| `dialer_db_sync` | **SUPERSEDED** | Same `dialer_db` as `dialer_1`, which is healthy and hourly; no maps | Deprecate, then delete |
-| `db_audit_sync` | **SUPERSEDED** | `db_audit` is already read directly by the nightly `quality_audit` connector | Deprecate, then delete |
-| `db_external_sync` | **SUPERSEDED** | `db_external` already read directly by `outbound_calls`; never ran once | Deprecate, then delete |
-| `shivamgiri_quality` | **LEGACY** | Points at a stalled pilot DB (`ci_manual_audit_result` ends 2026-05-23); no maps | Retire — the data behind it is dead, not merely routed elsewhere |
-| `dialer_1` | **REQUIRED** | 17 clean runs, 5,243 rows, current | Keep enabled |
-| `lms_sync` | **REQUIRED** | Enabled and scheduled | Keep enabled |
-
-**Nothing in the table above has been executed.** All six stay disabled, no
-schedule has been deleted, and no `DEPRECATED` flag has been written to the
-database — marking them needs a schema change and an approved production write,
-neither of which is in scope here.
-
-The one thing that *is* enforced today is the duplicate-write guard, because it
-is the only item that fails dangerously and silently if someone acts before the
-rest of this is decided.
-
-### The canonical biometric source, determined rather than chosen
-
-| integration_key | source_table | rows | latest | last write |
-|---|---|---|---|---|
-| `cosec_sqlserver` | `dbo.Mx_ATDEventTrn` | 34,620 | 2026-08-02 | 2026-08-02 13:16 |
-| `cosec_sqlserver` | `dbo.Mx_DATDTrn` | 790 | 2026-07-11 | 2026-07-12 10:04 |
-| `cosec_mysql` | `…integration_biometric…` | 1,036 | 2026-07-12 | 2026-07-13 00:08 |
-
-`cosec_sqlserver` is canonical on the evidence: it is the only writer still
-current, and it carries 97% of the rows. `cosec_mysql` stopped three weeks ago.
 
 ---
 

@@ -56,37 +56,18 @@ export async function checkBgvReadiness(
   const requirements = getBgvRequirementsByDesignation(designationName);
 
   // Get candidate data to check if lateral hire
-  // Derived from columns that exist. The original selected c.fresher,
-  // p.total_experience_years and p.previous_company — none of which are in the
-  // schema — so this query threw on every call and took employee creation with
-  // it.
-  //
-  // ats_candidate.experience is a varchar carrying 'Fresher' (15,318 rows),
-  // 'Experience' (2,838), '0-1 Year', '1-2 Years', '3+ Years' and similar.
-  // Prior employment detail lives in candidate_onboarding_experience.
   const [candidateRows] = await db.execute<RowDataPacket[]>(
     `SELECT
-       CASE WHEN LOWER(TRIM(COALESCE(c.experience, ''))) LIKE 'fresher%'
-            THEN 1 ELSE 0 END AS fresher,
-       (SELECT MAX(CAST(x.experience_year AS DECIMAL(5,2)))
-          FROM candidate_onboarding_experience x
-         WHERE x.candidate_id = c.id) AS total_experience_years,
-       (SELECT x.employer_name
-          FROM candidate_onboarding_experience x
-         WHERE x.candidate_id = c.id AND TRIM(COALESCE(x.employer_name,'')) <> ''
-         ORDER BY x.to_date DESC LIMIT 1) AS previous_company
+       c.fresher,
+       p.total_experience_years,
+       p.previous_company
      FROM ats_candidate c
+     LEFT JOIN candidate_onboarding_profile p ON p.candidate_id = c.id
      WHERE c.id = ? LIMIT 1`,
     [candidateId]
   );
   const candidateData = candidateRows[0] as any;
-  // isLateralHire tests fresher against true | 'yes' | '1'; MySQL returns 1/0.
-  const lateral = isLateralHire({
-    fresher: Number(candidateData?.fresher) === 1 ? '1' : null,
-    total_experience_years: candidateData?.total_experience_years == null
-      ? null : Number(candidateData.total_experience_years),
-    previous_company: candidateData?.previous_company ?? null,
-  });
+  const lateral = isLateralHire(candidateData);
 
   // Get BGV checks
   const [checks] = await db.execute<RowDataPacket[]>(

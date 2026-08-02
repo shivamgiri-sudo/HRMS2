@@ -20,8 +20,6 @@ const ExecutiveQualityDashboard      = lazy(() => import("@/pages/ExecutiveQuali
 const NativeProcessMetricConfig = lazy(() => import("@/pages/NativeProcessMetricConfig"));
 const NativeQAFileAudit = lazy(() => import("@/pages/NativeQAFileAudit"));
 const NativeQAFormBuilder = lazy(() => import("@/pages/NativeQAFormBuilder"));
-const NativeQualityTargetConfig = lazy(() => import("@/pages/NativeQualityTargetConfig"));
-const NativeQualityPipelineHealth = lazy(() => import("@/pages/NativeQualityPipelineHealth"));
 const ManagerQualityDashboard        = lazy(() => import("@/pages/ManagerQualityDashboard"));
 const AgentQualityDashboard          = lazy(() => import("@/pages/AgentQualityDashboard"));
 const NativeOperationsDashboard      = lazy(() => import("@/pages/NativeOperationsDashboard"));
@@ -94,14 +92,6 @@ export const performanceRouteElements = (
       <Route path="/kpi/process-metrics" element={<ProtectedRoute roles={['super_admin','admin','qa','tq_head','process_manager']}><Gate pageCode="KPI_CONFIG"><NativeProcessMetricConfig /></Gate></ProtectedRoute>} />
       <Route path="/quality/file-audit" element={<ProtectedRoute roles={['super_admin','admin','qa','quality_analyst','tq_head']}><Gate pageCode="QUALITY_DASHBOARD"><NativeQAFileAudit /></Gate></ProtectedRoute>} />
       <Route path="/quality/audit-forms" element={<ProtectedRoute roles={['super_admin','admin','qa','tq_head']}><Gate pageCode="QA_EVALUATION"><NativeQAFormBuilder /></Gate></ProtectedRoute>} />
-      {/* Same four roles as the backend's TARGET_ADMIN, and QA_EVALUATION is
-          granted to exactly those — so the page is reachable rather than
-          gated behind a code nobody holds. */}
-      <Route path="/quality/targets" element={<ProtectedRoute roles={['super_admin','admin','qa','tq_head']}><Gate pageCode="QA_EVALUATION"><NativeQualityTargetConfig /></Gate></ProtectedRoute>} />
-      {/* Health is readable by everyone who reads quality — the backend's
-          HEALTH_VIEWERS — because "is this quiet for a good reason" is a
-          question managers and the CEO ask, not just whoever configures it. */}
-      <Route path="/quality/pipeline-health" element={<ProtectedRoute roles={['super_admin','admin','qa','quality_analyst','tq_head','operations_manager','process_manager','branch_head','ceo','coo']}><Gate pageCode="QUALITY_DASHBOARD"><NativeQualityPipelineHealth /></Gate></ProtectedRoute>} />
       <Route path="/quality/team"      element={<ProtectedRoute roles={['super_admin','admin','manager','process_manager','branch_head','team_leader']}><Gate pageCode="QUALITY_TEAM"><ManagerQualityDashboard /></Gate></ProtectedRoute>} />
       <Route path="/quality/my-dashboard" element={<ProtectedRoute><AgentQualityDashboard /></ProtectedRoute>} />
 

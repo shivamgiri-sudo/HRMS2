@@ -3,7 +3,7 @@ const mysql = require('mysql2/promise');
 const db = mysql.createPool({
   host: '192.168.10.6',
   user: 'shivam_user',
-  password: process.env.DB_PASSWORD,
+  password: 'qwersdfg!@#hjk',
   database: 'mas_hrms',
   timezone: 'Z',
   waitForConnections: true,

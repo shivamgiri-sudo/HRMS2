@@ -23,31 +23,6 @@
 
 export type CoachingPriority = "low" | "medium" | "high" | "critical";
 
-/**
- * The bands, as fractions of target.
- *
- * These used to be module constants, which quietly made the per-process
- * thresholds a lie: process_quality_target stores warning_threshold_pct and
- * critical_threshold_pct per process, and the evaluator ignored both. A process
- * configured to warn at 85% of target was still evaluated at 90%.
- */
-export type CoachingThresholds = {
-  /** Below this fraction of target, a shortfall is material rather than noise. */
-  warningRatio: number;
-  criticalRatio: number;
-  /**
-   * One audit is an incident, not a pattern. Coaching off a single call
-   * generates noise that gets the whole signal ignored.
-   */
-  minSample: number;
-};
-
-export const DEFAULT_COACHING_THRESHOLDS: Readonly<CoachingThresholds> = {
-  warningRatio: 0.9,
-  criticalRatio: 0.75,
-  minSample: 3,
-};
-
 export type QualitySignal = {
   /** null when nothing was assessed. */
   qualityPercentage: number | null;
@@ -58,11 +33,6 @@ export type QualitySignal = {
   consecutiveShortfalls: number;
   /** Assessed audit count behind the score — one bad call is not a trend. */
   sampleSize: number;
-  /**
-   * The process's configured bands. Omitted falls back to the defaults above,
-   * which is what every caller did before these were configurable.
-   */
-  thresholds?: Partial<CoachingThresholds>;
 };
 
 export type CoachingTrigger = {
@@ -73,11 +43,18 @@ export type CoachingTrigger = {
   raiseTrainingNeed: boolean;
 };
 
-export function evaluateCoachingTrigger(signal: QualitySignal): CoachingTrigger | null {
-  const MATERIAL_SHORTFALL = signal.thresholds?.warningRatio ?? DEFAULT_COACHING_THRESHOLDS.warningRatio;
-  const SEVERE_SHORTFALL = signal.thresholds?.criticalRatio ?? DEFAULT_COACHING_THRESHOLDS.criticalRatio;
-  const MIN_SAMPLE_FOR_TREND = signal.thresholds?.minSample ?? DEFAULT_COACHING_THRESHOLDS.minSample;
+/** Below this fraction of target, a shortfall is material rather than noise. */
+const MATERIAL_SHORTFALL = 0.9;
+const SEVERE_SHORTFALL = 0.75;
 
+/**
+ * One audit is an incident, not a pattern. Coaching off a single call generates
+ * noise that gets the whole signal ignored — the same way an hourly connector
+ * alert would.
+ */
+const MIN_SAMPLE_FOR_TREND = 3;
+
+export function evaluateCoachingTrigger(signal: QualitySignal): CoachingTrigger | null {
   // A fatal breach is actionable on its own, regardless of sample size or
   // target: it is a compliance event, not a performance average.
   if (signal.fatalTriggered) {
