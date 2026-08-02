@@ -90,9 +90,32 @@ router.get("/audit-forms", requireRole(...AUDITOR_ROLES), h(async (req, res) => 
  * Score one interaction. The server computes the totals — see the service.
  */
 router.post("/audits", requireRole(...AUDITOR_ROLES), h(async (req, res) => {
-  const { formId, employeeId, auditDate, callReference, evidenceUrl, remarks, scores, submit } = req.body ?? {};
-  if (!formId || !employeeId || !auditDate) {
-    return res.status(400).json({ success: false, message: "formId, employeeId and auditDate are required" });
+  const { formId, employeeId, employeeCode, auditDate, callReference, evidenceUrl, remarks, scores, submit } = req.body ?? {};
+  if (!formId || (!employeeId && !employeeCode) || !auditDate) {
+    return res.status(400).json({
+      success: false, message: "formId, auditDate and one of employeeId or employeeCode are required",
+    });
+  }
+
+  // An auditor has the agent's code, not their UUID. Resolve it here rather than
+  // making every caller look it up — and refuse an ambiguous code rather than
+  // picking one, because attributing a quality score to the wrong person is
+  // worse than refusing to file it.
+  let resolvedEmployeeId = employeeId ? String(employeeId) : "";
+  if (!resolvedEmployeeId) {
+    const [matches] = await db.execute<RowDataPacket[]>(
+      `SELECT id FROM employees WHERE employee_code = ? LIMIT 2`,
+      [String(employeeCode).trim()],
+    );
+    if (matches.length === 0) {
+      return res.status(404).json({ success: false, message: `No employee with code ${employeeCode}` });
+    }
+    if (matches.length > 1) {
+      return res.status(409).json({
+        success: false, message: `More than one employee has the code ${employeeCode} — resolve the duplicate first`,
+      });
+    }
+    resolvedEmployeeId = String(matches[0].id);
   }
   if (!Array.isArray(scores)) {
     return res.status(400).json({ success: false, message: "scores must be an array" });
@@ -101,7 +124,7 @@ router.post("/audits", requireRole(...AUDITOR_ROLES), h(async (req, res) => {
   try {
     const result = await submitQaAudit({
       formId: String(formId),
-      employeeId: String(employeeId),
+      employeeId: resolvedEmployeeId,
       auditDate: String(auditDate).slice(0, 10),
       // Taken from the session, never from the body: an auditor cannot file an
       // audit under somebody else's name.

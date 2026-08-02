@@ -200,3 +200,45 @@ describe("form definition is narrower than filing an audit", () => {
     expect(res.status).toBe(400);
   });
 });
+
+describe("an auditor files by agent code, not UUID", () => {
+  it("resolves the code to an employee before filing", async () => {
+    execute.mockResolvedValueOnce([[{ id: "emp-9" }], []]);
+    submitQaAudit.mockResolvedValue({ id: "a1", status: "submitted" });
+
+    const res = await request(appAs("qa")).post("/api/qa/audits").send({
+      formId: "f1", employeeCode: "MAS57576", auditDate: "2026-07-15", scores: [],
+    });
+
+    expect(res.status).toBe(201);
+    expect(submitQaAudit.mock.calls[0][0].employeeId).toBe("emp-9");
+  });
+
+  it("refuses an ambiguous code rather than picking one", async () => {
+    // Attributing a quality score to the wrong person is worse than refusing
+    // to file it.
+    execute.mockResolvedValueOnce([[{ id: "a" }, { id: "b" }], []]);
+    const res = await request(appAs("qa")).post("/api/qa/audits").send({
+      formId: "f1", employeeCode: "DUPE", auditDate: "2026-07-15", scores: [],
+    });
+    expect(res.status).toBe(409);
+    expect(submitQaAudit).not.toHaveBeenCalled();
+  });
+
+  it("reports an unknown code as 404", async () => {
+    execute.mockResolvedValueOnce([[], []]);
+    const res = await request(appAs("qa")).post("/api/qa/audits").send({
+      formId: "f1", employeeCode: "NOBODY", auditDate: "2026-07-15", scores: [],
+    });
+    expect(res.status).toBe(404);
+  });
+
+  it("still accepts an explicit employeeId without a lookup", async () => {
+    submitQaAudit.mockResolvedValue({ id: "a1", status: "submitted" });
+    const res = await request(appAs("qa")).post("/api/qa/audits").send({
+      formId: "f1", employeeId: "emp-direct", auditDate: "2026-07-15", scores: [],
+    });
+    expect(res.status).toBe(201);
+    expect(submitQaAudit.mock.calls[0][0].employeeId).toBe("emp-direct");
+  });
+});

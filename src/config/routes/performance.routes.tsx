@@ -18,6 +18,7 @@ const NativeAgentPerformanceDashboard = lazy(() => import("@/pages/NativeAgentPe
 const NativeQualityDashboard         = lazy(() => import("@/pages/NativeQualityDashboard"));
 const ExecutiveQualityDashboard      = lazy(() => import("@/pages/ExecutiveQualityDashboard"));
 const NativeProcessMetricConfig = lazy(() => import("@/pages/NativeProcessMetricConfig"));
+const NativeQAFileAudit = lazy(() => import("@/pages/NativeQAFileAudit"));
 const NativeQAFormBuilder = lazy(() => import("@/pages/NativeQAFormBuilder"));
 const ManagerQualityDashboard        = lazy(() => import("@/pages/ManagerQualityDashboard"));
 const AgentQualityDashboard          = lazy(() => import("@/pages/AgentQualityDashboard"));
@@ -89,6 +90,7 @@ export const performanceRouteElements = (
       <Route path="/quality/audit"     element={<Navigate to="/quality/dashboard" replace />} />
       <Route path="/quality/executive" element={<ProtectedRoute roles={['super_admin','admin','ceo']}><Gate pageCode="QUALITY_EXECUTIVE"><ExecutiveQualityDashboard /></Gate></ProtectedRoute>} />
       <Route path="/kpi/process-metrics" element={<ProtectedRoute roles={['super_admin','admin','qa','tq_head','process_manager']}><Gate pageCode="KPI_CONFIG"><NativeProcessMetricConfig /></Gate></ProtectedRoute>} />
+      <Route path="/quality/file-audit" element={<ProtectedRoute roles={['super_admin','admin','qa','quality_analyst','tq_head']}><Gate pageCode="QUALITY_DASHBOARD"><NativeQAFileAudit /></Gate></ProtectedRoute>} />
       <Route path="/quality/audit-forms" element={<ProtectedRoute roles={['super_admin','admin','qa','tq_head']}><Gate pageCode="QA_EVALUATION"><NativeQAFormBuilder /></Gate></ProtectedRoute>} />
       <Route path="/quality/team"      element={<ProtectedRoute roles={['super_admin','admin','manager','process_manager','branch_head','team_leader']}><Gate pageCode="QUALITY_TEAM"><ManagerQualityDashboard /></Gate></ProtectedRoute>} />
       <Route path="/quality/my-dashboard" element={<ProtectedRoute><AgentQualityDashboard /></ProtectedRoute>} />
