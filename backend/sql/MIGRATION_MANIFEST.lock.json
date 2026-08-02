@@ -411,12 +411,12 @@
     "1057_process_quality_target.sql",
     "1054_branch_head_approval_pending_status.sql",
     "1054_alert_worker_governance.sql",
-    "1055_branch_head_approval_missing_columns.sql"
+    "1055_branch_head_approval_missing_columns.sql",
+    "1056_branch_head_approval_candidate_id.sql",
+    "1058_process_quality_target_state_machine.sql"
   ],
   "approvedDeletions": [],
-  "knownDangling": [
-    "543_cosec_exclusion_and_inactive_issue_type.sql"
-  ],
+  "knownDangling": [],
   "knownUnlisted": [
     "000_ai_supplemental.sql",
     "000_finance_supplemental.sql",

@@ -6,10 +6,14 @@ import {
   processBranchHeadApproval,
   getApprovalHistory,
   getBranchHeadStats,
+  listBranchHeadDecisions,
   type ApprovalInput,
 } from './branch-head-approval.service.js';
-import { db } from '../../db/mysql.js';
-import type { RowDataPacket } from 'mysql2/promise';
+import {
+  resolveEmployeeIdForAuthUser,
+  assertBranchHeadCanSeeCandidate,
+} from './branch-head-scope.js';
+import { getCandidateFullJourney } from './candidate-journey.service.js';
 
 export const branchHeadApprovalRouter = Router();
 
@@ -23,17 +27,19 @@ function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : 'Unexpected error';
 }
 
-async function resolveEmployeeIdForAuthUser(authUserId: string): Promise<string> {
-  const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT id FROM employees WHERE user_id = ? AND active_status = 1 LIMIT 1`,
-    [authUserId],
-  );
-  return rows[0]?.id ? String(rows[0].id) : authUserId;
-}
-
-// All routes require authentication and branch head role
+// All routes require authentication.
+//
+// The role list must be a superset of the roles granted ATS_OFFER_APPROVALS in
+// the UI, or a user can open the page and every request on it 403s. `hr` was
+// missing exactly that way. payroll_hr is included to match
+// ats.onboarding.routes.ts:206, which backs the same screen.
+//
+// Row scope — not this list — is the security boundary: every endpoint below
+// resolves the caller's branches and filters to them.
 branchHeadApprovalRouter.use(requireAuth);
-branchHeadApprovalRouter.use(requireRole('admin', 'manager', 'branch_head'));
+branchHeadApprovalRouter.use(
+  requireRole('super_admin', 'admin', 'hr', 'payroll_hr', 'manager', 'branch_head'),
+);
 
 // ── 1. Get pending approvals ──────────────────────────────────────────────────
 branchHeadApprovalRouter.get('/pending', h(async (req, res) => {
@@ -94,6 +100,9 @@ branchHeadApprovalRouter.post('/process', h(async (req, res) => {
 branchHeadApprovalRouter.get('/history/:candidateId', h(async (req: Request, res: Response) => {
   try {
     const { candidateId } = req.params;
+    // This endpoint shipped unscoped. Any candidate's trail was readable by any
+    // admin/manager/branch_head; it was simply never called.
+    await assertBranchHeadCanSeeCandidate((req as AuthenticatedRequest).authUser!.id, candidateId);
     const history = await getApprovalHistory(candidateId);
 
     return res.json({
@@ -123,5 +132,37 @@ branchHeadApprovalRouter.get('/stats', h(async (req, res) => {
       success: false,
       message: getErrorMessage(error),
     });
+  }
+}));
+
+
+// ── 5. Past decisions: what this branch head already approved or rejected ─────
+//
+// The queue only ever showed pending work; once a decision was made the row
+// vanished with no way to look it up again.
+branchHeadApprovalRouter.get('/decisions', h(async (req, res) => {
+  try {
+    const status = String(req.query.status ?? 'all');
+    const data = await listBranchHeadDecisions(req.authUser!.id, {
+      status: status === 'approved' || status === 'rejected' ? status : 'all',
+      search: typeof req.query.search === 'string' ? req.query.search : null,
+      limit: Math.min(Number(req.query.limit ?? 100) || 100, 500),
+      offset: Number(req.query.offset ?? 0) || 0,
+    });
+    return res.json({ success: true, ...data });
+  } catch (error: unknown) {
+    return res.status(500).json({ success: false, message: getErrorMessage(error) });
+  }
+}));
+
+// ── 6. One candidate's complete journey ──────────────────────────────────────
+branchHeadApprovalRouter.get('/journey/:candidateId', h(async (req, res) => {
+  try {
+    const { candidateId } = req.params;
+    await assertBranchHeadCanSeeCandidate(req.authUser!.id, candidateId);
+    return res.json({ success: true, data: await getCandidateFullJourney(candidateId) });
+  } catch (error: unknown) {
+    const status = (error as { statusCode?: number }).statusCode ?? 500;
+    return res.status(status).json({ success: false, message: getErrorMessage(error) });
   }
 }));

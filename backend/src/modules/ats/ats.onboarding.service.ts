@@ -3,6 +3,8 @@ import { RowDataPacket, PoolConnection } from 'mysql2/promise';
 import { db } from '../../db/mysql.js';
 import { env } from '../../config/env.js';
 import { hasScopedAccess } from '../../shared/scopeAccess.js';
+import { recordBranchHeadDecision, revertBranchHeadDecision } from './branch-head-approval.record.js';
+import { resolveEmployeeIdForAuthUser } from './branch-head-scope.js';
 import { calculateSalary, SalaryComponents } from './salary.calculator.js';
 import {
   sendOnboardingTokenEmail,
@@ -277,6 +279,96 @@ export async function listOnboardingRequests(scopeFilter: { sql: string; params:
 
 // ── HR: Save / Submit Employment Offer ───────────────────────────────────────
 
+/**
+ * Turn a submitted Employment Offer into the payroll validation record that
+ * employee creation requires.
+ *
+ * validateSalaryLock (employee-creation-orchestrator.service.ts:591-599) reads
+ * ats_payroll_hr_validation and demands validation_status='validated'. The offer
+ * carries every NOT NULL column that table needs — candidate_id,
+ * employment_type, gross_salary and joining_date — so no figure is invented
+ * here; they are copied from what Payroll HR just entered.
+ *
+ * Idempotent. An existing row is refreshed from the latest offer rather than
+ * duplicated, because Payroll HR revising an offer should move the validated
+ * salary with it, not leave a stale one behind for the gate to read.
+ */
+async function deriveSalaryValidationFromOffer(candidateId: string, actorUserId: string): Promise<void> {
+  const [offerRows] = await db.execute<RowDataPacket[]>(
+    `SELECT o.id, o.emp_type, o.gross, o.date_of_joining, o.date_of_salary,
+            o.department_id, o.designation_id, o.cost_centre, o.reporting_manager_id,
+            o.basic, o.hra, o.conveyance, o.special_allowance,
+            COALESCE(b.id, c.applied_for_branch) AS branch_id
+       FROM ats_employment_offer o
+       JOIN ats_candidate c ON c.id = o.candidate_id
+       LEFT JOIN branch_master b
+              ON b.id = c.applied_for_branch
+              OR b.branch_name = c.applied_for_branch
+              OR b.branch_code = c.applied_for_branch
+      WHERE o.candidate_id = ?
+      ORDER BY o.created_at DESC
+      LIMIT 1`,
+    [candidateId],
+  );
+  const o = offerRows[0];
+  // Without a gross or a joining date the row would violate NOT NULL; leave it
+  // absent so the branch head's queue keeps flagging it rather than failing here.
+  if (!o || o.gross == null || !o.date_of_joining) return;
+
+  // payroll_hr_id references employees; the caller gives us an auth user id.
+  const [empRows] = await db.execute<RowDataPacket[]>(
+    `SELECT id FROM employees WHERE user_id = ? AND active_status = 1 LIMIT 1`,
+    [actorUserId],
+  );
+  const payrollHrId = empRows[0]?.id ? String(empRows[0].id) : null;
+
+  const [existing] = await db.execute<RowDataPacket[]>(
+    `SELECT id FROM ats_payroll_hr_validation WHERE candidate_id = ?
+      ORDER BY COALESCE(validated_at, created_at) DESC LIMIT 1`,
+    [candidateId],
+  );
+
+  if (existing[0]) {
+    await db.execute(
+      `UPDATE ats_payroll_hr_validation
+          SET employment_type = ?, gross_salary = ?, joining_date = ?,
+              salary_start_date = COALESCE(?, joining_date),
+              department_id = ?, designation_id = ?, cost_centre_id = ?,
+              reporting_manager_id = ?, branch_id = ?,
+              basic_salary = ?, hra = ?, conveyance = ?, special_allowance = ?,
+              payroll_hr_id = COALESCE(?, payroll_hr_id),
+              validation_status = 'validated', validated_at = NOW(), updated_at = NOW()
+        WHERE id = ?`,
+      [o.emp_type ?? 'onroll', o.gross, o.date_of_joining, o.date_of_salary ?? null,
+       o.department_id ?? null, o.designation_id ?? null, o.cost_centre ?? null,
+       o.reporting_manager_id ?? null, o.branch_id ?? null,
+       o.basic ?? null, o.hra ?? null, o.conveyance ?? null, o.special_allowance ?? null,
+       payrollHrId, String(existing[0].id)],
+    );
+  } else {
+    await db.execute(
+      `INSERT INTO ats_payroll_hr_validation
+         (id, candidate_id, branch_id, payroll_hr_id, employment_type,
+          department_id, designation_id, cost_centre_id, reporting_manager_id,
+          gross_salary, basic_salary, hra, conveyance, special_allowance,
+          joining_date, salary_start_date, validation_status, validated_at)
+       VALUES (UUID(), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'validated', NOW())`,
+      [candidateId, o.branch_id ?? null, payrollHrId, o.emp_type ?? 'onroll',
+       o.department_id ?? null, o.designation_id ?? null, o.cost_centre ?? null,
+       o.reporting_manager_id ?? null,
+       o.gross, o.basic ?? null, o.hra ?? null, o.conveyance ?? null, o.special_allowance ?? null,
+       o.date_of_joining, o.date_of_salary ?? o.date_of_joining],
+    );
+  }
+
+  // The branch head queue also filters on this stage.
+  await db.execute(
+    `UPDATE ats_candidate SET current_stage = 'payroll_validated', updated_at = NOW()
+      WHERE id = ? AND COALESCE(current_stage, '') <> 'offer_approved'`,
+    [candidateId],
+  ).catch(() => undefined);
+}
+
 export async function saveOffer(
   requestId: string,
   offerData: Record<string, unknown>,
@@ -382,6 +474,18 @@ export async function saveOffer(
   }
 
   if (submit) {
+    // Submitting the offer IS the Payroll HR salary validation — the same
+    // person entered the same figures a moment ago. Deriving the record here
+    // keeps one source of truth; the alternative is a second screen asking for
+    // the salary again, which is what the old flow did and what its deprecation
+    // set out to remove.
+    //
+    // Not fatal if it fails: the offer is saved and the branch head can still
+    // see it. The queue shows a "payroll not validated" flag on the row, so the
+    // gap is visible rather than silent.
+    await deriveSalaryValidationFromOffer(String(req.candidate_id), createdBy)
+      .catch((e) => console.error('[saveOffer] could not derive payroll validation:', e));
+
     await db.execute(
       `UPDATE ats_onboarding_request SET status = 'offer_submitted', updated_at = NOW() WHERE id = ?`,
       [requestId],
@@ -414,7 +518,22 @@ export async function listPendingApprovals(scopeFilter: { sql: string; params: u
             r.id AS request_id, r.branch_id,
             c.id AS candidate_id, c.candidate_code, c.full_name, c.email, c.mobile,
             c.father_name, c.date_of_birth, c.profile_status,
-            b.branch_name
+            b.branch_name,
+            -- Whether Payroll HR has validated this salary. Employee creation
+            -- requires it (validateSalaryLock), so without this the branch head
+            -- clicks Approve and gets a failure they cannot act on. Surfaced on
+            -- the row so the blocker is visible before the click.
+            -- True when the salary can be established for this offer: either a
+            -- validation row already exists, or the offer carries the figures
+            -- to derive one at approve time. Reporting merely "does a row
+            -- exist" would warn about offers that approve perfectly well.
+            (
+              EXISTS (
+                SELECT 1 FROM ats_payroll_hr_validation pv
+                 WHERE pv.candidate_id = c.id AND pv.validation_status = 'validated'
+              )
+              OR (o.gross IS NOT NULL AND o.date_of_joining IS NOT NULL)
+            ) AS payroll_validated
      FROM ats_employment_offer o
      JOIN ats_onboarding_request r ON r.id = o.onboarding_request_id
      JOIN ats_candidate c ON c.id = r.candidate_id
@@ -444,6 +563,36 @@ export async function approveOffer(offerId: string, approverId: string, remarks?
 
   const candidateId = (offerRows[0] as any).candidate_id;
 
+  // approverId is an auth_user id here (ats.onboarding.routes.ts:208), while
+  // branch-head-approval.routes.ts:59 passes an employees.id. getApprovalHistory
+  // joins employees on branch_head_id, so storing the raw auth id would leave
+  // every approval made from this screen showing a blank approver.
+  const approverEmployeeId = await resolveEmployeeIdForAuthUser(approverId);
+
+  // Record the decision BEFORE creating the employee. validateSalaryLock
+  // (employee-creation-orchestrator.service.ts:572-600) requires this row and
+  // nothing on this path ever wrote one, so every approval from the nav-menu
+  // screen failed with "Branch Head approval pending".
+  //
+  // recorded:false means the candidate has no payroll validation. That is not
+  // an error to throw at the branch head — they cannot create one, and the
+  // orchestrator reports it accurately a moment later. The queue flags it on
+  // the row instead, before the click (listPendingApprovals.payrollValidated).
+  // Self-heal offers submitted before the derivation existed. There is no
+  // resubmit path — the offer form is hidden once submitted
+  // (NativeHROnboardingRequests.tsx:1472) — so without this an existing offer
+  // could only be unblocked by rejecting it first, purely to re-open the form.
+  // The offer already holds the salary Payroll HR entered; nothing is invented.
+  await deriveSalaryValidationFromOffer(candidateId, approverId)
+    .catch((e) => console.error('[approveOffer] could not derive payroll validation:', e));
+
+  const decision = await recordBranchHeadDecision({
+    candidateId,
+    branchHeadEmployeeId: approverEmployeeId,
+    decision: 'approved',
+    remarks: remarks ?? null,
+  });
+
   // Use orchestrator with all business rules
   const result = await createEmployeeFromCandidate({
     candidateId,
@@ -452,6 +601,14 @@ export async function approveOffer(offerId: string, approverId: string, remarks?
   });
 
   if (!result.success) {
+    // Undo our own write. Creation fails for reasons unrelated to the branch
+    // head's judgement — an inactive reporting manager, a missing statutory
+    // field — and leaving the row 'approved' would strand the offer as decided
+    // with no employee behind it and no way to decide it again.
+    if (decision.recorded && !decision.alreadyDecided && decision.payrollValidationId) {
+      await revertBranchHeadDecision({ payrollValidationId: decision.payrollValidationId })
+        .catch((e) => console.error('[approveOffer] could not revert branch head decision:', e));
+    }
     throw Object.assign(
       new Error(`Employee creation failed: ${result.blockers.map(b => b.reason).join(', ')}`),
       {
@@ -460,6 +617,40 @@ export async function approveOffer(offerId: string, approverId: string, remarks?
         warnings: result.warnings,
       }
     );
+  }
+
+  // The decision trail the Approved tab reads. Only rejectOffer wrote one of
+  // these before, so approvals left no entry at all. Skipped when the decision
+  // was already recorded elsewhere (processBranchHeadApproval writes at :186
+  // and then calls this function), so nothing is duplicated.
+  if (!decision.alreadyDecided) {
+    await db.execute(
+      `INSERT INTO ats_offer_approval (id, offer_id, approver_id, action, remarks)
+       VALUES (UUID(), ?, ?, 'approved', ?)`,
+      [offerId, approverId, remarks ?? null],
+    ).catch((e) => console.error('[approveOffer] offer approval trail insert failed:', e));
+
+    await db.execute(
+      `UPDATE ats_candidate SET current_stage = 'offer_approved', updated_at = NOW() WHERE id = ?`,
+      [candidateId],
+    ).catch(() => undefined);
+
+    await db.execute(
+      `INSERT INTO ats_candidate_stage_log
+         (id, candidate_id, from_stage, to_stage, remarks, updated_by)
+       VALUES (UUID(), ?, 'payroll_validated', 'offer_approved', ?, ?)`,
+      [candidateId, remarks || 'Branch Head approved final offer', approverEmployeeId],
+    ).catch(() => undefined);
+
+    if (result.employeeCode && decision.payrollValidationId) {
+      // employee_code_generated is absent under migration 138; guarded so a
+      // divergent environment cannot fail an otherwise successful approval.
+      await db.execute(
+        `UPDATE ats_branch_head_approval SET employee_code_generated = ?
+          WHERE payroll_validation_id = ?`,
+        [result.employeeCode, decision.payrollValidationId],
+      ).catch(() => undefined);
+    }
   }
 
   // Return result with metadata
@@ -508,6 +699,15 @@ export async function rejectOffer(offerId: string, approverId: string, remarks: 
      VALUES (UUID(), ?, ?, 'rejected', ?)`,
     [offerId, approverId, remarks],
   );
+
+  // Mirror the approve path, or everything rejected from this screen is missing
+  // from the Rejected tab and from the candidate's journey.
+  await recordBranchHeadDecision({
+    candidateId: String(row.candidate_id),
+    branchHeadEmployeeId: await resolveEmployeeIdForAuthUser(approverId),
+    decision: 'rejected',
+    remarks,
+  }).catch((e) => console.error('[rejectOffer] could not record branch head decision:', e));
 
   await db.execute(
     `UPDATE ats_onboarding_request SET status = 'rejected', updated_at = NOW() WHERE id = ?`,
