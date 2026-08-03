@@ -1273,7 +1273,37 @@ export function buildSchemaMigrationsInsertStatement(
   }
 
   const sql = `INSERT INTO schema_migrations (${columns.join(", ")}) VALUES (${values.join(", ")})`;
-  if (options.success) return sql;
+
+  if (options.success) {
+    // A success must be recordable over an existing row, for the mirror-image reason to the
+    // failure case below.
+    //
+    // Seven migrations write to schema_migrations themselves — 307 exists specifically to
+    // mark other migrations as applied, and 309, 520, 521, 522, 529 and 538 each register
+    // their own filename. When such a file runs, it inserts its row, and the runner's
+    // bookkeeping insert immediately afterwards hits the primary key:
+    //
+    //   Duplicate entry '309_super_admin_full_page_access.sql' for key
+    //   'schema_migrations.PRIMARY'
+    //
+    // which the runner then reports as that migration's own failure, and
+    // STOP_ON_FIRST_FAILURE halts everything behind it. The migration succeeded; only the
+    // bookkeeping collided.
+    //
+    // Upserting the real values over the self-registered stub is also more correct: the
+    // runner knows the checksum, timings and executor, and the migration's own row has none
+    // of them.
+    const successUpdates = [
+      ...(capabilities.hasChecksumSha256 ? ["checksum_sha256 = VALUES(checksum_sha256)"] : []),
+      ...(capabilities.hasEndTime ? ["end_time = VALUES(end_time)"] : []),
+      ...(capabilities.hasDurationMs ? ["duration_ms = VALUES(duration_ms)"] : []),
+      ...(capabilities.hasExecutor ? ["executor = VALUES(executor)"] : []),
+      ...(capabilities.hasSuccess ? ["success = 1"] : []),
+    ];
+    return `${sql} ON DUPLICATE KEY UPDATE ${
+      successUpdates.length > 0 ? successUpdates.join(", ") : "filename = filename"
+    }`;
+  }
 
   // A failure MUST be recordable more than once. Every `updates` entry above is conditional on an
   // optional column, so on a table without them the clause was omitted entirely — the first failure
