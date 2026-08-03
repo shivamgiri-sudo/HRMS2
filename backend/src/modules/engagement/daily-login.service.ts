@@ -12,7 +12,7 @@
 
 import { randomUUID } from 'crypto';
 import { db } from '../../db/mysql.js';
-import { addPoints } from './gamification.service.js';
+import { checkTierUpgrade } from './gamification.service.js';
 import { awardBadge, getBadges } from './badge.service.js';
 import type { RowDataPacket, ResultSetHeader } from 'mysql2/promise';
 
@@ -156,7 +156,7 @@ export async function claimDailyLogin(employeeId: string): Promise<LoginRewardRe
       [loginId, employeeId, today, pointsAwarded, currentStreak, multiplier]
     );
 
-    // Update tier status
+    // Update tier status (streak columns)
     if (tierRows.length > 0) {
       await conn.query<ResultSetHeader>(
         `UPDATE employee_tier_status
@@ -165,11 +165,12 @@ export async function claimDailyLogin(employeeId: string): Promise<LoginRewardRe
         [currentStreak, longestStreak, today, employeeId]
       );
     } else {
-      // Create tier status if doesn't exist — look up the lowest tier id to satisfy NOT NULL
+      // Create tier status if it doesn't exist yet
+      // Use gamification_tier_master (correct table; gamification_tier is a legacy table)
       const [tierIdRows] = await conn.query<RowDataPacket[]>(
-        `SELECT id FROM gamification_tier ORDER BY min_points ASC LIMIT 1`
+        `SELECT tier_id FROM gamification_tier_master WHERE is_active = 1 ORDER BY min_points ASC LIMIT 1`
       );
-      const defaultTierId = tierIdRows[0]?.id;
+      const defaultTierId = tierIdRows[0]?.tier_id;
       if (!defaultTierId) throw new Error('No gamification tiers configured');
       await conn.query<ResultSetHeader>(
         `INSERT INTO employee_tier_status (id, employee_id, current_tier_id, current_streak, longest_streak, last_login_date)
@@ -179,14 +180,27 @@ export async function claimDailyLogin(employeeId: string): Promise<LoginRewardRe
       );
     }
 
-    // Award points via gamification service
-    await addPoints(
-      employeeId,
-      pointsAwarded,
-      'daily_login',
-      `Daily login reward (Day ${currentStreak}, ${multiplier}x multiplier)`,
-      loginId
+    // Award points — inline within the same connection/transaction to avoid
+    // a nested-transaction deadlock (addPoints opens its own conn and tries to
+    // UPDATE employee_tier_status while we already hold a lock on that row).
+    const [balanceRows] = await conn.query<RowDataPacket[]>(
+      `SELECT COALESCE(SUM(points_delta), 0) AS total_points
+       FROM gamification_points_ledger WHERE employee_id = ?`,
+      [employeeId]
     );
+    const currentBalance = Number(balanceRows[0]?.total_points) || 0;
+    const newBalance = currentBalance + pointsAwarded;
+    const transactionId = randomUUID();
+    await conn.query<ResultSetHeader>(
+      `INSERT INTO gamification_points_ledger
+         (transaction_id, employee_id, points_delta, transaction_type,
+          reference_id, description, balance_after, created_at)
+       VALUES (?, ?, ?, 'daily_login', ?, ?, ?, NOW())`,
+      [transactionId, employeeId, pointsAwarded, loginId,
+       `Daily login reward (Day ${currentStreak}, ${multiplier}x multiplier)`, newBalance]
+    );
+    // checkTierUpgrade accepts an existing connection so it shares our transaction
+    await checkTierUpgrade(employeeId, newBalance, conn);
 
     // Check for streak badge awards
     let newBadgeEarned: { id: string; name: string; icon: string } | undefined;

@@ -16,6 +16,7 @@ import { startEsignReconciliationWorker, stopEsignReconciliationWorker } from ".
 import { legacySyncWorker } from "./legacy-sync-worker.js";
 import { startTenureBadgeScheduler, stopTenureBadgeScheduler } from "../modules/engagement/tenure.cron.js";
 import { startCelebrationScheduler, stopCelebrationScheduler } from "../modules/engagement/celebration.cron.js";
+import { startDailyGamesScheduler, stopDailyGamesScheduler } from "../modules/engagement/daily-games.cron.js";
 import { startCommunicationCleanup, stopCommunicationCleanup } from "../modules/communication/cleanup.cron.js";
 import { startAttendanceEngineScheduler, stopAttendanceEngineScheduler } from "../modules/wfm/attendance-engine.cron.js";
 import { startITProvisioningLockScheduler, stopITProvisioningLockScheduler } from "../modules/it-provisioning/it-provisioning.cron.js";
@@ -67,6 +68,10 @@ const WORKERS: Array<{ name: string; start: () => Promise<void> }> = [
   {
     name: "celebration",
     start: () => { startCelebrationScheduler(); return Promise.resolve(); },
+  },
+  {
+    name: "daily-games",
+    start: () => { startDailyGamesScheduler(); return Promise.resolve(); },
   },
   {
     name: "communication-cleanup",
@@ -251,6 +256,7 @@ function shutdown(): void {
   stopEsignReconciliationWorker();
   stopTenureBadgeScheduler();
   stopCelebrationScheduler();
+  stopDailyGamesScheduler();
   stopCommunicationCleanup();
   stopAttendanceEngineScheduler();
   stopCosecSyncWorker();
