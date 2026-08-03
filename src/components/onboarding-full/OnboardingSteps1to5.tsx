@@ -69,10 +69,16 @@ export function Step1Welcome({
   status,
   privacyConsentAccepted,
   onPrivacyConsent,
+  consentAccepted = false,
+  onConsent,
+  saving = false,
 }: {
   status: StatusData | null;
   privacyConsentAccepted: boolean;
   onPrivacyConsent: () => void;
+  consentAccepted?: boolean;
+  onConsent?: () => void;
+  saving?: boolean;
 }) {
   const t = status?.token;
   return (
@@ -177,6 +183,52 @@ export function Step1Welcome({
             <div className="flex items-center gap-2 text-sm font-bold text-emerald-700">
               <CheckCircle2 className="h-4 w-4 flex-shrink-0" />
               Privacy consent recorded — you may proceed
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/*
+        Background-verification consent, asked here rather than at the point of
+        use. Every verification the candidate meets later — DigiLocker on Step 3,
+        PAN / Aadhaar / UAN on Step 5, penny drop on Step 6 — is gated on this
+        server-side (ensureConsent, bgv-verification.service.ts), so asking for it
+        late is what breaks them: when DigiLocker moved to Step 3 and this consent
+        stayed on Step 5, /bgv/digilocker/start returned a flat 403 and no session
+        was created for months. Collecting it before the first API is reached
+        removes the ordering dependency instead of patching each screen, and it is
+        also the order the DPDP Act expects — consent before processing.
+
+        The prompts on Steps 3 and 5 are deliberately left in place as a fallback
+        for anyone whose consent was not recorded here; they render only while
+        consent is still missing.
+      */}
+      <Card className={`shadow-sm border ${consentAccepted ? "border-emerald-200 bg-emerald-50" : "border-indigo-200 bg-indigo-50"} rounded-xl overflow-hidden`}>
+        <CardContent className="pt-4 px-5 pb-5 space-y-3">
+          <p className={`font-bold text-sm flex items-center gap-2 ${consentAccepted ? "text-emerald-800" : "text-indigo-800"}`}>
+            <ShieldCheck className="h-4 w-4 flex-shrink-0" />
+            Background Verification Consent
+          </p>
+          <div className="text-xs text-slate-700 space-y-1.5">
+            <p><strong>What is checked:</strong> Identity (Aadhaar via DigiLocker, PAN), bank account ownership by penny drop, and previous employment via UAN.</p>
+            <p><strong>Why now:</strong> These checks run on the next few steps. Granting consent here means each one works when you reach it.</p>
+          </div>
+          {!consentAccepted ? (
+            <button
+              type="button"
+              onClick={onConsent}
+              disabled={saving}
+              className="w-full flex items-center gap-3 rounded-xl border-2 border-indigo-300 bg-white px-4 py-3 text-sm font-semibold text-indigo-800 hover:bg-indigo-100 hover:border-indigo-400 transition-colors active:scale-[0.99] disabled:opacity-60"
+            >
+              <span className="w-5 h-5 rounded border-2 border-indigo-400 flex-shrink-0 flex items-center justify-center">
+                <span className="w-2.5 h-2.5 rounded-sm bg-indigo-200" />
+              </span>
+              I authorise MAS Callnet to verify my identity documents, bank account and employment history for onboarding and statutory compliance
+            </button>
+          ) : (
+            <div className="flex items-center gap-2 text-sm font-bold text-emerald-700">
+              <CheckCircle2 className="h-4 w-4 flex-shrink-0" />
+              Verification consent recorded — DigiLocker and the later checks are now enabled
             </div>
           )}
         </CardContent>
@@ -1094,7 +1146,7 @@ export function Step5Bgv({
 // ── Step 6: Bank Details ───────────────────────────────────────────────────────
 
 export function Step6Bank({
-  bank, setBank, saving, onSave, onLookupIfsc, token,
+  bank, setBank, saving, onSave, onLookupIfsc, token, consentAccepted = false,
 }: {
   bank: BankForm;
   setBank: React.Dispatch<React.SetStateAction<BankForm>>;
@@ -1102,6 +1154,8 @@ export function Step6Bank({
   onSave: () => void;
   onLookupIfsc: (ifsc: string) => void;
   token?: string;
+  /** Penny drop calls verifyBankForCandidate, which enforces consent server-side. */
+  consentAccepted?: boolean;
 }) {
   const upd = (k: keyof BankForm, v: string) => setBank((p) => ({ ...p, [k]: v }));
   const mismatch = Boolean(bank.accountNo && bank.confirmAccountNo && bank.accountNo !== bank.confirmAccountNo);
@@ -1252,13 +1306,26 @@ export function Step6Bank({
               </p>
             </InfoBox>
             <div className="mt-3">
+              {/*
+                Penny drop was the last verification still ungated in the UI while
+                verifyBankForCandidate enforces consent server-side — the same
+                mismatch that made DigiLocker return 403 for months. Consent is
+                collected on Step 1, so this is normally already satisfied; the
+                notice below only appears if it somehow was not.
+              */}
               <PennyDropButton
                 token={token}
                 accountNo={bank.accountNo || ""}
                 ifscCode={bank.ifscCode || ""}
                 accountHolderName={bank.accountHolderName || ""}
-                disabled={!bank.accountNo || !bank.ifscCode || mismatch}
+                disabled={!bank.accountNo || !bank.ifscCode || mismatch || !consentAccepted}
               />
+              {!consentAccepted && (
+                <p className="mt-2 text-xs text-amber-700 font-semibold">
+                  Background verification consent is needed before we can verify your account.
+                  Please go back to Step 1 and accept it.
+                </p>
+              )}
             </div>
           </div>
         )}

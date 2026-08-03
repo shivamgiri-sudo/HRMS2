@@ -137,6 +137,9 @@ export default function CandidateOnboardingFullPage() {
           status={onb.status}
           privacyConsentAccepted={onb.privacyConsentAccepted}
           onPrivacyConsent={onb.recordPrivacyConsent}
+          consentAccepted={onb.consentAccepted}
+          onConsent={onb.grantConsent}
+          saving={onb.saving}
         />
       )}
 
@@ -205,6 +208,7 @@ export default function CandidateOnboardingFullPage() {
           onSave={onb.saveBank}
           onLookupIfsc={onb.lookupIfsc}
           token={token}
+          consentAccepted={onb.consentAccepted}
         />
       )}
 
