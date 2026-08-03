@@ -306,8 +306,30 @@ jobs:
             const text = await res.text();
             if (!res.ok) throw new Error(identifier + ' login failed: HTTP ' + res.status + ' ' + text);
             const json = JSON.parse(text);
-            if (!json?.data?.accessToken || !json?.data?.refreshToken) {
-              throw new Error(identifier + ' login response missing tokens: ' + text);
+            const data = json?.data ?? {};
+
+            if (!data.accessToken) {
+              throw new Error(identifier + ' login returned no access token: ' + text);
+            }
+
+            // refreshToken is deliberately null when 2FA is outstanding — issuing one before
+            // the second factor is exactly the bypass auth-security.test.ts guards against.
+            // Demanding a refresh token unconditionally, as this step used to, would fail on a
+            // correctly hardened login and pass on a broken one. So assert the rule, not the
+            // presence of a field.
+            if (data.user?.twoFactorRequired) {
+              if (data.refreshToken !== null) {
+                throw new Error(
+                  identifier + ' issued a refresh token while 2FA is still required — ' +
+                  'that is the bypass the hardening exists to prevent: ' + text
+                );
+              }
+              console.log('login ok (2FA pending, refresh token correctly withheld): ' + identifier);
+              return;
+            }
+
+            if (!data.refreshToken) {
+              throw new Error(identifier + ' completed login without 2FA but issued no refresh token: ' + text);
             }
             console.log('login ok: ' + identifier);
           }
