@@ -14,6 +14,46 @@ resignationRouter.use(requireAuth);
 const h = (fn: (req: AuthenticatedRequest, res: Response) => Promise<unknown>) =>
   (req: AuthenticatedRequest, res: Response, next: NextFunction) => fn(req, res).catch(next);
 
+/**
+ * Record an exit-request status change in the exit approval trail.
+ *
+ * The three lifecycle routes below used to insert into exit_retention_action. That statement
+ * could never have succeeded — five separate reasons, and the table's 0 rows confirm it:
+ *
+ *   - action_type is an ENUM of retention actions (manager_discussion, hr_discussion,
+ *     role_change, process_change, shift_change, compensation_review, location_change, other).
+ *     'status_change' is not a member.
+ *   - employee_id is NOT NULL with no default and was never supplied.
+ *   - created_by is NOT NULL with no default and was never supplied.
+ *   - performed_by and performed_at do not exist; the real columns are created_by / created_at.
+ *
+ * The fix is not to rename the columns. exit_retention_action models retention CONVERSATIONS —
+ * who spoke to the leaver, what was offered, whether it saved them. Forcing status transitions
+ * into it as action_type='other' would corrupt every future report over that table.
+ *
+ * exit_approval_log is where this belongs, and the rest of the system already assumes so:
+ *   - its 11 existing production rows use exactly this shape — stage='accepted',
+ *     action='status_update' — so these writes extend an established convention rather than
+ *     inventing one;
+ *   - journeyLog.service.ts:522-583 already reads exit_approval_log into the employee journey
+ *     timeline, so these events now surface there for free;
+ *   - the frontend AuditEntry contract (NativeMyResignation.tsx:40) is {action, performed_by,
+ *     performed_at, remarks} — which matches exit_approval_log field-for-field and matches
+ *     exit_retention_action on nothing at all.
+ */
+async function logExitStatusChange(
+  req: AuthenticatedRequest,
+  newStatus: string,
+  summary: string
+): Promise<void> {
+  await db.execute(
+    `INSERT INTO exit_approval_log
+       (id, exit_request_id, stage, action, action_by, action_by_role, discussion_remarks, created_at)
+     VALUES (?, ?, ?, 'status_update', ?, ?, ?, NOW())`,
+    [randomUUID(), req.params.exitId, newStatus, req.authUser!.id, req.authUser!.role ?? null, summary]
+  );
+}
+
 // ── Create Resignation (employee self-service) ────────────────────────────────
 
 resignationRouter.post(
@@ -261,12 +301,7 @@ resignationRouter.post(
       `UPDATE exit_request SET status = 'accepted', updated_at = NOW() WHERE id = ?`,
       [req.params.exitId]
     );
-    await db.execute(
-      `INSERT INTO exit_retention_action
-         (id, exit_request_id, action_type, action_summary, outcome, performed_by, performed_at)
-       VALUES (UUID(), ?, 'status_change', 'Resignation accepted', 'accepted', ?, NOW())`,
-      [req.params.exitId, req.authUser!.id]
-    );
+    await logExitStatusChange(req, "accepted", "Resignation accepted");
     return res.json({ success: true, message: "Resignation accepted" });
   })
 );
@@ -295,12 +330,7 @@ resignationRouter.post(
       `UPDATE exit_request SET status = 'withdrawn', updated_at = NOW() WHERE id = ?`,
       [req.params.exitId]
     );
-    await db.execute(
-      `INSERT INTO exit_retention_action
-         (id, exit_request_id, action_type, action_summary, outcome, performed_by, performed_at)
-       VALUES (UUID(), ?, 'status_change', 'Resignation withdrawn', 'withdrawn', ?, NOW())`,
-      [req.params.exitId, userId]
-    );
+    await logExitStatusChange(req, "withdrawn", "Resignation withdrawn");
     return res.json({ success: true, message: "Resignation withdrawn" });
   })
 );
@@ -342,12 +372,7 @@ resignationRouter.post(
        WHERE id = ?`,
       [req.authUser!.id, req.params.exitId]
     );
-    await db.execute(
-      `INSERT INTO exit_retention_action
-         (id, exit_request_id, action_type, action_summary, outcome, performed_by, performed_at)
-       VALUES (UUID(), ?, 'status_change', 'Exit request closed', 'closed', ?, NOW())`,
-      [req.params.exitId, req.authUser!.id]
-    );
+    await logExitStatusChange(req, "closed", "Exit request closed");
     return res.json({ success: true, message: "Exit request closed" });
   })
 );
@@ -359,19 +384,60 @@ resignationRouter.get(
   "/:exitId/audit",
   requireRole("admin", "hr", "manager"),
   h(async (req: AuthenticatedRequest, res: Response) => {
+    // Two corrections here, both proven against production:
+    //
+    // 1. This read exit_retention_action alone — a table that has 0 rows and, per
+    //    logExitStatusChange above, never could have had any. The approval trail actually
+    //    lives in exit_approval_log (11 rows). The timeline was empty for every exit request
+    //    in the system.
+    // 2. It selected era.* and aliased performed_by_name, but the page's AuditEntry type
+    //    (NativeMyResignation.tsx:40) reads action / performed_by / performed_at / remarks.
+    //    exit_retention_action has none of those four columns, so even a populated table would
+    //    have rendered a list of "Event" rows with no actor, no remark and an empty timestamp.
+    //    Both branches below are aliased into that contract explicitly.
+    //
+    // exit_retention_action is kept in the UNION rather than dropped: retention discussions are
+    // a genuine part of an exit's audit trail, and once something writes them they belong on
+    // this timeline alongside the status changes.
     const [rows] = await db.execute(
-      `SELECT era.*,
-              COALESCE(
-                NULLIF(performed_emp.full_name, ''),
-                NULLIF(TRIM(CONCAT(COALESCE(performed_emp.first_name, ''), ' ', COALESCE(performed_emp.last_name, ''))), ''),
-                performed_user.email
-              ) AS performed_by_name
-       FROM exit_retention_action era
-       LEFT JOIN auth_user performed_user ON performed_user.id = era.performed_by
-       LEFT JOIN employees performed_emp ON performed_emp.user_id = performed_user.id AND performed_emp.active_status = 1
-       WHERE era.exit_request_id = ?
-       ORDER BY era.performed_at ASC`,
-      [req.params.exitId]
+      `SELECT * FROM (
+         SELECT eal.id,
+                eal.action,
+                eal.stage,
+                eal.action_by                                     AS performed_by,
+                eal.created_at                                    AS performed_at,
+                COALESCE(eal.discussion_remarks, eal.internal_notes) AS remarks,
+                COALESCE(
+                  NULLIF(actor_emp.full_name, ''),
+                  NULLIF(TRIM(CONCAT(COALESCE(actor_emp.first_name, ''), ' ', COALESCE(actor_emp.last_name, ''))), ''),
+                  actor_user.email,
+                  eal.action_by_role
+                ) AS performed_by_name
+           FROM exit_approval_log eal
+           LEFT JOIN auth_user actor_user ON actor_user.id = eal.action_by
+           LEFT JOIN employees actor_emp  ON actor_emp.user_id = actor_user.id AND actor_emp.active_status = 1
+          WHERE eal.exit_request_id = ?
+
+         UNION ALL
+
+         SELECT era.id,
+                era.action_type                                   AS action,
+                'retention'                                       AS stage,
+                era.created_by                                    AS performed_by,
+                era.created_at                                    AS performed_at,
+                COALESCE(era.outcome_remarks, era.action_summary) AS remarks,
+                COALESCE(
+                  NULLIF(actor_emp.full_name, ''),
+                  NULLIF(TRIM(CONCAT(COALESCE(actor_emp.first_name, ''), ' ', COALESCE(actor_emp.last_name, ''))), ''),
+                  actor_user.email
+                ) AS performed_by_name
+           FROM exit_retention_action era
+           LEFT JOIN auth_user actor_user ON actor_user.id = era.created_by
+           LEFT JOIN employees actor_emp  ON actor_emp.user_id = actor_user.id AND actor_emp.active_status = 1
+          WHERE era.exit_request_id = ?
+       ) trail
+       ORDER BY performed_at ASC`,
+      [req.params.exitId, req.params.exitId]
     );
     return res.json({ success: true, data: rows });
   })
