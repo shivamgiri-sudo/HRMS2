@@ -427,13 +427,14 @@ export default function BranchBudgetManagementWorkspace() {
   useEffect(() => {
     if (!detailQuery.data || loadedDetailId === detailQuery.data.id) return;
     setSavedBudgetId(detailQuery.data.id);
+    const detailLines = detailQuery.data.lines ?? [];
     setLines(
-      detailQuery.data.lines.length
-        ? detailQuery.data.lines.map(budgetLineRecordToInput)
+      detailLines.length
+        ? detailLines.map(budgetLineRecordToInput)
         : [blankLine()]
     );
     setLoadedDetailId(detailQuery.data.id);
-    setSavedSnapshot(JSON.stringify(detailQuery.data.lines.map(budgetLineRecordToInput)));
+    setSavedSnapshot(JSON.stringify(detailLines.map(budgetLineRecordToInput)));
     setUndoStack([]);
   }, [detailQuery.data, loadedDetailId]);
 

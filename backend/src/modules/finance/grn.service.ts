@@ -622,8 +622,8 @@ export const grnService = {
          LEFT JOIN cost_centre_master ccm ON ccm.id = g.cost_centre_id
          LEFT JOIN finance_budget_header h ON h.id = g.budget_id
          LEFT JOIN finance_budget_line l ON l.id = g.budget_line_id
-         LEFT JOIN auth_user cb ON cb.id = g.created_by
-         LEFT JOIN auth_user rb ON rb.id = g.reviewed_by
+         LEFT JOIN employees cb ON cb.user_id = g.created_by
+         LEFT JOIN employees rb ON rb.user_id = g.reviewed_by
          ${where}
         ORDER BY g.created_at DESC
         LIMIT ? OFFSET ?`,
