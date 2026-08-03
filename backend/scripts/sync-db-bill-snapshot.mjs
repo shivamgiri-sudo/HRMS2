@@ -216,6 +216,12 @@ function toPeriodCode(financeYear, monthLabel) {
 function billingPattern(service, particulars, rate, qty, amount) {
   const hay = `${service ?? ''} ${particulars ?? ''}`.toLowerCase();
   if (/revenue share/.test(hay)) return 'revenue_share';
+  // A percentage of the client's own value is revenue share however it is worded. These do
+  // not say "revenue share" — they say "28% ( On delivered Ordered value of 695249/-" — and
+  // because the line is a single unit, rate x 1 == amount held and they were classified as
+  // unit_recurring. Seeding a cost-centre rate from one produced Rs 1,94,670 as a "seat
+  // rate" for a process whose real rate is Rs 35,000.
+  if (/\d\s*%/.test(hay)) return 'revenue_share';
   if (/set ?up cost|implementation|integration charge|customi[sz]ation|development cost/.test(hay))
     return 'one_time';
   if (/excess usage|top ?up|talktime|recharge|cloud telephony|\bcti\b|per (call|minute|transaction|lead|case)/.test(hay))
