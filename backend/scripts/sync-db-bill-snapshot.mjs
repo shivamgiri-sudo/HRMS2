@@ -160,6 +160,30 @@ function inScope(periodCode) {
 }
 
 /**
+ * A row created BEFORE its own finance year began has the wrong finance year on it.
+ *
+ * FY2026-27 starts 2026-04-01. Twelve budget rows carry that label but were created in
+ * December 2025 and January 2026 — eleven of them in one sitting on 16 Jan 2026, with
+ * objectives reading "nth", "nerf", "garg", "fgbrth", "huh". They are test entries filed
+ * against the wrong year, and they land in the P&L as Rs 7.27 lakh of budget for months that
+ * have not happened. The 102 real budgets created that same month sit correctly under
+ * FY2025-26.
+ *
+ * Safe as a rule here because budgets in this system are entered in the month they apply to:
+ * all 439 genuine FY2026-27 rows were created inside the year, in Apr-Jul. If the business
+ * ever starts budgeting a year ahead this must be revisited — hence the loud log rather than
+ * a silent drop.
+ *
+ * The real fix belongs in db_bill; this only stops the P&L inheriting the mistake.
+ */
+function createdBeforeFinanceYear(financeYear, sourceCreatedAt) {
+  if (!financeYear || !sourceCreatedAt) return false;
+  const start = String(financeYear).match(/^(\d{4})/);
+  if (!start) return false;
+  return String(sourceCreatedAt).slice(0, 10) < `${start[1]}-04-01`;
+}
+
+/**
  * One period_code ('2026-06') from db_bill's three different month dialects.
  *
  *   tbl_invoice.month            'Jun-26'
@@ -575,9 +599,32 @@ async function syncBudget(hrms, bill) {
     'finance_month','period_code','head_id','sub_head_id','amount','expense_status','entry_status',
     'approve_1_at','approve_2_at','approve_3_at','approve_4_at','approve_5_at','objective',
     'description_det','source_created_at','synced_at'];
-  const scoped = rows.filter(r => inScope(r.period_code));
+
+  const misfiled = rows.filter(r => createdBeforeFinanceYear(r.finance_year, r.source_created_at));
+  if (misfiled.length) {
+    const value = misfiled.reduce((sum, r) => sum + Number(r.amount), 0);
+    log(`  WARNING: ${misfiled.length} budget row(s) worth Rs ${(value / 100000).toFixed(2)} lakh carry a finance year that`);
+    log(`           began AFTER they were created — they are mis-filed and are being excluded.`);
+    for (const r of misfiled.slice(0, 12)) {
+      log(`           id=${r.bill_source_id} ${r.finance_year}/${r.finance_month} created ${String(r.source_created_at).slice(0, 10)} Rs ${r.amount} "${String(r.objective ?? '').slice(0, 20)}"`);
+    }
+    log(`           Fix them in db_bill.expense_master; this only stops the P&L inheriting the error.`);
+
+    // Excluding them from the write is not enough on its own. Every sync here is
+    // INSERT ... ON DUPLICATE KEY UPDATE, so a row mirrored by an earlier run stays until it
+    // is explicitly removed — the first run of this guard left all Rs 7.27 lakh sitting in
+    // the snapshot while reporting that it had skipped them. Delete by the exact ids just
+    // identified, so the mirror is corrected without touching anything else.
+    const ids = misfiled.map(r => r.bill_source_id);
+    const [res] = await hrms.query(
+      `DELETE FROM finance_budget_snapshot WHERE bill_source_id IN (${ids.map(() => '?').join(',')})`, ids);
+    if (res.affectedRows) log(`           removed ${res.affectedRows} previously-mirrored row(s) from the snapshot.`);
+  }
+
+  const scoped = rows.filter(r => inScope(r.period_code)
+                               && !createdBeforeFinanceYear(r.finance_year, r.source_created_at));
   const n = await insertBatch(hrms, 'finance_budget_snapshot', scoped, cols, cols.slice(1));
-  log(`  finance_budget_snapshot: ${n} rows (from ${FROM_PERIOD}; ${rows.length - scoped.length} older rows skipped)`);
+  log(`  finance_budget_snapshot: ${n} rows (from ${FROM_PERIOD}; ${rows.length - scoped.length} skipped as out of range or mis-filed)`);
 }
 
 // ── Sync 7: GRN / expense entries ─────────────────────────────────────────────
