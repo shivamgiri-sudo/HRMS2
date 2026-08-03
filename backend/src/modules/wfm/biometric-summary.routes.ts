@@ -116,34 +116,73 @@ biometricSummaryRouter.get("/adherence-summary", roleGuard, h(async (req: any, r
     []
   ).catch(() => [[{ on_leave: 0, working_remotely: 0 }]] as any);
 
-  // Regularization summary (pending/approved/rejected/cancelled)
+  // Regularization summary.
+  //
+  // This read `attendance_regularization_request`, which does not exist — the
+  // table is `attendance_regularization` (31 rows). The .catch() below turned
+  // the resulting error into an empty object, so the whole tile has always
+  // rendered blank.
+  //
+  // The breakdown columns were wrong too. There is no `request_type`; the real
+  // column is `dispute_type`. And the status vocabulary differs: the live values
+  // are approved / rejected / discarded, with no 'cancelled' at all, so the old
+  // categories could not have matched even against the right table.
   const [regRows] = await db.execute<RowDataPacket[]>(
     `SELECT
-       SUM(status = 'pending') AS pending,
-       SUM(status = 'approved') AS approved,
-       SUM(status = 'rejected') AS rejected,
-       SUM(status = 'cancelled') AS cancelled,
-       SUM(request_type = 'late_in') AS late_in,
-       SUM(request_type = 'early_out') AS early_out,
-       SUM(request_type IN ('missed_punch','missing_punch')) AS missed_punch
-     FROM attendance_regularization_request`,
+       SUM(status = 'pending')   AS pending,
+       SUM(status = 'approved')  AS approved,
+       SUM(status = 'rejected')  AS rejected,
+       SUM(status = 'discarded') AS discarded,
+       SUM(dispute_type = 'work_from_home')             AS work_from_home,
+       SUM(dispute_type IN ('late_in','early_out'))     AS timing,
+       SUM(dispute_type IN ('missed_punch','missing_punch')) AS missed_punch
+     FROM attendance_regularization`,
     []
   ).catch(() => [[{}]] as any);
 
-  // Shift summary — breakdown by shift timing
+  // Shift summary — breakdown by shift timing.
+  //
+  // This joined `shift_master` on `adr.shift_id`, and read `adr.shift_code`.
+  // None of the three exist: there is no shift_master table, and
+  // attendance_daily_record (114,593 rows) carries no shift column whatsoever.
+  // The .catch() below turned the error into an empty array, so this tile has
+  // rendered as "no shifts" for its entire life.
+  //
+  // The shift an employee was on comes from the roster, not the attendance row:
+  // wfm_roster_assignment links employee + date to a shift, and 412,032 of its
+  // 413,386 rows resolve through wfm_shift_master.
+  //
+  // Coverage is partial and deliberately visible rather than hidden — only
+  // ~4.5% of attendance rows currently have a matching roster row, so
+  // `rostered_employees` is returned alongside the counts. A caller that reads
+  // these as whole-workforce totals would overstate; the field is there so it
+  // does not have to guess.
+  //
+  // present/absent/late are counted per distinct employee, matching `total`.
+  // They were sums over rows against a DISTINCT-employee denominator, which
+  // could report more present than total.
   const [shiftRows] = await db.execute<RowDataPacket[]>(
     `SELECT
-       COALESCE(NULLIF(sm.shift_name, ''), adr.shift_code, 'Default') AS shift_name,
+       COALESCE(
+         NULLIF(sm.shift_name, ''),
+         CONCAT(TIME_FORMAT(ra.shift_start_time, '%H:%i'), '-', TIME_FORMAT(ra.shift_end_time, '%H:%i')),
+         'Unassigned'
+       ) AS shift_name,
        COUNT(DISTINCT adr.employee_id) AS total,
-       SUM(adr.attendance_status IN ('present','half_day')) AS present,
-       SUM(adr.attendance_status = 'absent') AS absent,
-       SUM(adr.late_mark = 1) AS late,
-       ROUND(SUM(adr.attendance_status IN ('present','half_day')) * 100.0 / NULLIF(COUNT(DISTINCT adr.employee_id), 0), 2) AS coverage_pct
+       COUNT(DISTINCT CASE WHEN adr.attendance_status IN ('present','half_day') THEN adr.employee_id END) AS present,
+       COUNT(DISTINCT CASE WHEN adr.attendance_status = 'absent' THEN adr.employee_id END) AS absent,
+       COUNT(DISTINCT CASE WHEN adr.late_mark = 1 THEN adr.employee_id END) AS late,
+       COUNT(DISTINCT adr.employee_id) AS rostered_employees,
+       ROUND(
+         COUNT(DISTINCT CASE WHEN adr.attendance_status IN ('present','half_day') THEN adr.employee_id END) * 100.0
+         / NULLIF(COUNT(DISTINCT adr.employee_id), 0), 2) AS coverage_pct
      FROM attendance_daily_record adr
      JOIN employees e ON e.id = adr.employee_id
-     LEFT JOIN shift_master sm ON sm.id = adr.shift_id
+     JOIN wfm_roster_assignment ra
+       ON ra.employee_id = adr.employee_id AND ra.roster_date = adr.record_date
+     LEFT JOIN wfm_shift_master sm ON sm.id = ra.shift_id
      WHERE ${where}
-     GROUP BY COALESCE(NULLIF(sm.shift_name, ''), adr.shift_code, 'Default')
+     GROUP BY shift_name
      ORDER BY total DESC
      LIMIT 10`,
     params,

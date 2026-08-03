@@ -909,19 +909,36 @@ router.get("/payslip/list/:employeeId", requireAuth, requireRole("super_admin", 
   const page = Math.max(1, Number(req.query.page ?? 1));
   const limit = Math.min(50, Math.max(1, Number(req.query.limit ?? 12)));
   const offset = (page - 1) * limit;
+  // `payroll_employee` and `payroll_run` do not exist. Neither query was
+  // error-wrapped, so this endpoint returned a 500 to every caller — admin, HR,
+  // finance, payroll and CEO alike — for as long as it has been mounted.
+  //
+  // The real tables are salary_prep_line (80,338 rows) and salary_prep_run (66),
+  // which is what the /payslip/history endpoint immediately below already uses
+  // successfully. Column names are aliased so the response shape is unchanged.
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT pr.id AS run_id, pr.run_label, pr.period_label, pr.pay_date,
-            pe.net_pay, pe.gross_pay, pe.total_deductions, pe.status
-       FROM payroll_employee pe
-       JOIN payroll_run pr ON pr.id = pe.run_id
-      WHERE pe.employee_id = ? AND pe.status != 'draft'
-      ORDER BY pr.pay_date DESC LIMIT ? OFFSET ?`,
-    [employeeId, limit, offset],
+    `SELECT spl.run_id            AS run_id,
+            spr.run_month         AS run_label,
+            spr.run_month         AS period_label,
+            spr.disbursed_at      AS pay_date,
+            spl.net_salary        AS net_pay,
+            spl.gross_salary      AS gross_pay,
+            spl.total_deductions  AS total_deductions,
+            spl.status            AS status
+       FROM salary_prep_line spl
+       JOIN salary_prep_run spr ON spr.id = spl.run_id
+      WHERE spl.employee_id = ?
+        AND spr.status NOT IN ('draft', 'cancelled')
+      ORDER BY spr.run_month DESC
+      LIMIT ${limit} OFFSET ${offset}`,
+    [employeeId],
   );
   const [[countRow]] = await db.execute<RowDataPacket[]>(
-    `SELECT COUNT(*) AS total FROM payroll_employee pe
-       JOIN payroll_run pr ON pr.id = pe.run_id
-      WHERE pe.employee_id = ? AND pe.status != 'draft'`,
+    `SELECT COUNT(*) AS total
+       FROM salary_prep_line spl
+       JOIN salary_prep_run spr ON spr.id = spl.run_id
+      WHERE spl.employee_id = ?
+        AND spr.status NOT IN ('draft', 'cancelled')`,
     [employeeId],
   );
   return res.json({ success: true, data: rows, total: Number(countRow.total), page, limit });

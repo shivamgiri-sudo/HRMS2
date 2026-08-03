@@ -596,7 +596,8 @@ wfmRouter.get("/manager/weekoff-review", requireAuth, requireRole("admin", "hr",
     const emp = await getEmployeeForUser(req.authUser!.id);
     if (!emp) return res.status(403).json({ error: "No employee record" });
     scopeWhere = `AND (e.reporting_manager_id = ? OR EXISTS (
-      SELECT 1 FROM user_process_scope ups WHERE ups.user_id = ? AND ups.process_id = pm.id
+      SELECT 1 FROM user_assignment_scope ups
+          WHERE ups.user_id = ? AND ups.process_id = pm.id AND ups.active_status = 1
     ))`;
     params.push(emp.id, req.authUser!.id);
   }
@@ -641,7 +642,8 @@ wfmRouter.post("/manager/weekoff-review/:assignmentId/realign", requireAuth, req
         JOIN employees e ON e.id = wra.employee_id
         JOIN process_master pm ON pm.process_name = wra.process_name
        WHERE wra.id = ? AND (e.reporting_manager_id = ? OR EXISTS (
-         SELECT 1 FROM user_process_scope ups WHERE ups.user_id = ? AND ups.process_id = pm.id
+         SELECT 1 FROM user_assignment_scope ups
+          WHERE ups.user_id = ? AND ups.process_id = pm.id AND ups.active_status = 1
        )) LIMIT 1`,
       [assignmentId, emp.id, req.authUser!.id]
     );
@@ -700,7 +702,8 @@ wfmRouter.post("/manager/weekoff-review/:assignmentId/force-approve", requireAut
         JOIN employees e ON e.id = wra.employee_id
         JOIN process_master pm ON pm.process_name = wra.process_name
        WHERE wra.id = ? AND (e.reporting_manager_id = ? OR EXISTS (
-         SELECT 1 FROM user_process_scope ups WHERE ups.user_id = ? AND ups.process_id = pm.id
+         SELECT 1 FROM user_assignment_scope ups
+          WHERE ups.user_id = ? AND ups.process_id = pm.id AND ups.active_status = 1
        )) LIMIT 1`,
       [assignmentId, emp.id, req.authUser!.id]
     );
@@ -749,7 +752,8 @@ wfmRouter.post("/manager/weekoff-review/:assignmentId/escalate", requireAuth, re
         JOIN employees e ON e.id = wra.employee_id
         JOIN process_master pm ON pm.process_name = wra.process_name
        WHERE wra.id = ? AND (e.reporting_manager_id = ? OR EXISTS (
-         SELECT 1 FROM user_process_scope ups WHERE ups.user_id = ? AND ups.process_id = pm.id
+         SELECT 1 FROM user_assignment_scope ups
+          WHERE ups.user_id = ? AND ups.process_id = pm.id AND ups.active_status = 1
        )) LIMIT 1`,
       [assignmentId, emp.id, req.authUser!.id]
     );
@@ -798,7 +802,8 @@ wfmRouter.post("/manager/weekoff-review/:assignmentId/reject-request", requireAu
         JOIN employees e ON e.id = wra.employee_id
         JOIN process_master pm ON pm.process_name = wra.process_name
        WHERE wra.id = ? AND (e.reporting_manager_id = ? OR EXISTS (
-         SELECT 1 FROM user_process_scope ups WHERE ups.user_id = ? AND ups.process_id = pm.id
+         SELECT 1 FROM user_assignment_scope ups
+          WHERE ups.user_id = ? AND ups.process_id = pm.id AND ups.active_status = 1
        )) LIMIT 1`,
       [assignmentId, emp.id, req.authUser!.id]
     );

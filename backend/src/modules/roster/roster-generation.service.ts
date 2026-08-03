@@ -284,13 +284,25 @@ async function loadApprovedWeekoffs(empIds: string[]): Promise<Map<string, Appro
 async function loadHolidays(from: string, to: string): Promise<Set<string>> {
   const set = new Set<string>();
   try {
+    // `company_events` does not exist. The query threw on every call and the
+    // catch below treated that as "no holidays", so every generated roster has
+    // scheduled staff straight through every public holiday. It is not a
+    // theoretical gap: leave_holiday_master currently holds Independence Day
+    // (2026-08-15), which rosters would have ignored.
+    //
+    // leave_holiday_master is the configured holiday calendar. branch_id is
+    // nullable and means "all branches"; branch-specific filtering is left to
+    // the caller rather than assumed here.
     const [rows] = await db.execute<HolidayRow[]>(
-      "SELECT holiday_date FROM company_events WHERE event_type = 'holiday' AND holiday_date BETWEEN ? AND ?",
+      `SELECT holiday_date FROM leave_holiday_master
+        WHERE active_status = 1 AND holiday_date BETWEEN ? AND ?`,
       [from, to]
     );
-    for (const r of rows) set.add(r.holiday_date.slice(0, 10));
-  } catch {
-    // company_events may not exist in all environments; treat as no holidays
+    for (const r of rows) set.add(String(r.holiday_date).slice(0, 10));
+  } catch (error) {
+    // Kept non-fatal so roster generation still produces a roster, but no longer
+    // silent — a swallowed failure here means people are rostered on holidays.
+    console.error("[roster] holiday calendar unavailable; generating without holidays:", (error as Error)?.message);
   }
   return set;
 }

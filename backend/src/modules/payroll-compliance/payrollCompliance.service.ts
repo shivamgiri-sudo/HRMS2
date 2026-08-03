@@ -160,7 +160,10 @@ export const payrollComplianceService = {
               ebd.verified_status AS bank_verified_status
          FROM employees e
          LEFT JOIN employee_salary_assignment esa ON esa.employee_id = e.id AND esa.active_status = 1
-         LEFT JOIN employee_bank_details ebd ON ebd.employee_id = e.id AND ebd.active_status = 1
+         -- employee_bank_detail, singular. See the matching note in
+         -- payrollCompliance.routes.ts; is_primary pins one row per employee.
+         LEFT JOIN employee_bank_detail ebd
+                ON ebd.employee_id = e.id AND ebd.active_status = 1 AND ebd.is_primary = 1
         WHERE e.active_status = 1
           AND LOWER(e.employment_status) = 'active'
           AND (e.date_of_joining IS NULL OR e.date_of_joining <= LAST_DAY(CONCAT(?, '-01')))

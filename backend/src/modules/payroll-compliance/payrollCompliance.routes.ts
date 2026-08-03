@@ -152,9 +152,38 @@ router.get("/runs/:runId/register/:registerType", requireRole("admin", "hr", "fi
             WHERE spl.run_id = ? AND spl.tds_amount > 0
             ORDER BY spl.employee_code`;
   } else if (registerType === "bank") {
-    sql = `SELECT spl.employee_code, e.full_name, ebd.bank_name, ebd.account_number, ebd.ifsc_code, spl.net_salary
+    // Bank advice file. Three separate faults were fixed here:
+    //
+    // 1. It joined `employee_bank_details` (plural), which does not exist, so
+    //    the file could never be produced at all.
+    // 2. account_number is varbinary(500). Selected raw it serialises to JSON
+    //    as {"type":"Buffer","data":[...]}, not a number — so even a perfectly
+    //    good account came out unusable. CAST to CHAR.
+    // 3. 6,070 of the 12,768 active accounts are stored in Excel scientific
+    //    notation ("3.03801E+13"), which is not a recoverable account number —
+    //    the significant digits are gone, not hidden. Exporting those into a
+    //    payment file would send money nowhere or, worse, somewhere wrong.
+    //    They are flagged rather than dropped: an employee silently missing
+    //    from a payment file is harder to notice than one marked unpayable.
+    //
+    // is_primary pins one row per employee. Today every active row is primary
+    // (12,768 of 12,768, none duplicated), but a second account added later
+    // would otherwise duplicate a payment line.
+    sql = `SELECT spl.employee_code, e.full_name, ebd.bank_name,
+                  CAST(ebd.account_number AS CHAR) AS account_number,
+                  ebd.ifsc_code, spl.net_salary,
+                  CASE
+                    WHEN ebd.account_number IS NULL OR CAST(ebd.account_number AS CHAR) = ''
+                      THEN 'missing'
+                    WHEN CAST(ebd.account_number AS CHAR) REGEXP '[Ee][+-]'
+                      THEN 'corrupt_scientific_notation'
+                    WHEN CAST(ebd.account_number AS CHAR) NOT REGEXP '^[0-9]{6,20}$'
+                      THEN 'unrecognised_format'
+                    ELSE 'ok'
+                  END AS account_number_status
              FROM salary_prep_line spl JOIN employees e ON e.id = spl.employee_id
-             LEFT JOIN employee_bank_details ebd ON ebd.employee_id = e.id AND ebd.active_status = 1
+             LEFT JOIN employee_bank_detail ebd
+                    ON ebd.employee_id = e.id AND ebd.active_status = 1 AND ebd.is_primary = 1
             WHERE spl.run_id = ?
             ORDER BY spl.employee_code`;
   } else {
@@ -170,6 +199,27 @@ router.get("/runs/:runId/register/:registerType", requireRole("admin", "hr", "fi
      VALUES (UUID(), ?, ?, ?, ?, ?)`,
     [req.params.runId, `${registerType}_register`, JSON.stringify(req.query ?? {}), req.authUser?.id ?? null, rows.length]
   );
+
+  // A bank advice file is only as good as the accounts in it. Surface the
+  // unpayable rows in the response rather than leaving whoever generates the
+  // file to discover them at the bank.
+  if (registerType === "bank") {
+    const unpayable = (rows as RowDataPacket[]).filter(
+      (r) => String(r.account_number_status ?? "ok") !== "ok",
+    );
+    if (unpayable.length) {
+      console.warn(
+        `[payroll] bank register for run ${req.params.runId}: ${unpayable.length} of ${rows.length} rows have an unusable account number`,
+      );
+    }
+    return res.json({
+      success: true,
+      data: rows,
+      count: rows.length,
+      unpayableCount: unpayable.length,
+      unpayableEmployeeCodes: unpayable.map((r) => String(r.employee_code)),
+    });
+  }
 
   return res.json({ success: true, data: rows, count: rows.length });
 }));
