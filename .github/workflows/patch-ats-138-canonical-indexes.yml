@@ -1,5 +1,6 @@
 name: Patch ATS 138 Canonical Indexes
 
+# One-time self-cleaning patch; this edit triggers the workflow after creation.
 on:
   push:
     branches:
