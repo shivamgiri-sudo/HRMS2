@@ -280,6 +280,30 @@ export async function syncDigilockerStatus(candidateId: string): Promise<SyncOut
     // Aadhaar is evidenced by the session completing at all, PAN only if a PAN
     // document is named. Crediting PAN off an Aadhaar-only pull would skip the
     // paid check that would have caught it.
+    // Fill the candidate's blank profile fields from what DigiLocker returned.
+    //
+    // status.sanitized carries documentList[0] (name, dob, gender, masked
+    // Aadhaar) and both address blocks — structured, from the issuing
+    // authority. This is the largest single reduction available in
+    // form-filling time, and it was sitting in the response all along; the
+    // stored PDF is a red herring, its text being a subset font behind a CMap.
+    //
+    // Blanks only: the candidate may have typed something before connecting,
+    // and overwriting what a person entered about themselves is how you get a
+    // form nobody trusts.
+    try {
+      const { extractDigilockerDemographics, applyDigilockerDemographics } =
+        await import("../../ats/digilocker-demographics.js");
+      const filled = await applyDigilockerDemographics(
+        db, candidateId, extractDigilockerDemographics(status.sanitized),
+      );
+      if (filled.length) {
+        console.info(`[DigiLocker] pre-filled ${filled.length} field(s) for ${candidateId}: ${filled.join(", ")}`);
+      }
+    } catch (error) {
+      console.error(`[DigiLocker] demographics pre-fill failed for ${candidateId}:`, (error as Error)?.message);
+    }
+
     await autoCreateDigilockerVerifiedChecks(candidateId, {
       fileName: documentMeta.fileName,
       downloadError: documentMeta.downloadError,
