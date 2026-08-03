@@ -1,48 +1,62 @@
 -- backend/sql/054_ats_onboarding_flow.sql
 -- ATS Onboarding Flow — all tables/alters for Phase 3 candidate-to-employee activation
--- Additive/idempotent: every compatibility column and index is guarded.
 
--- 1. Add candidate onboarding fields without aborting when an earlier migration
--- already supplied one of them. A single duplicate-column failure used to skip
--- the rest of this file in the production migration runner.
-ALTER TABLE ats_candidate ADD COLUMN IF NOT EXISTS address TEXT;
-ALTER TABLE ats_candidate ADD COLUMN IF NOT EXISTS education VARCHAR(100);
-ALTER TABLE ats_candidate ADD COLUMN IF NOT EXISTS experience VARCHAR(50);
-ALTER TABLE ats_candidate ADD COLUMN IF NOT EXISTS rotational_shift TINYINT(1);
-ALTER TABLE ats_candidate ADD COLUMN IF NOT EXISTS preferred_shift VARCHAR(50);
-ALTER TABLE ats_candidate ADD COLUMN IF NOT EXISTS night_shift_ok VARCHAR(50);
-ALTER TABLE ats_candidate ADD COLUMN IF NOT EXISTS leaves_in_3months TINYINT(1);
-ALTER TABLE ats_candidate ADD COLUMN IF NOT EXISTS owns_two_wheeler TINYINT(1);
-ALTER TABLE ats_candidate ADD COLUMN IF NOT EXISTS id_proof_available TINYINT(1);
-ALTER TABLE ats_candidate ADD COLUMN IF NOT EXISTS education_proof_available TINYINT(1);
-ALTER TABLE ats_candidate ADD COLUMN IF NOT EXISTS resume_url VARCHAR(500);
-ALTER TABLE ats_candidate ADD COLUMN IF NOT EXISTS selfie_url VARCHAR(500);
-ALTER TABLE ats_candidate ADD COLUMN IF NOT EXISTS recruiter_name VARCHAR(255);
-ALTER TABLE ats_candidate ADD COLUMN IF NOT EXISTS user_id CHAR(36);
-ALTER TABLE ats_candidate ADD COLUMN IF NOT EXISTS profile_status ENUM('registered','selected','onboarding_sent','profile_submitted','onboarded') NOT NULL DEFAULT 'registered';
-ALTER TABLE ats_candidate ADD COLUMN IF NOT EXISTS father_name VARCHAR(255);
-ALTER TABLE ats_candidate ADD COLUMN IF NOT EXISTS current_address TEXT;
-ALTER TABLE ats_candidate ADD COLUMN IF NOT EXISTS permanent_address TEXT;
-ALTER TABLE ats_candidate ADD COLUMN IF NOT EXISTS aadhar_number VARCHAR(20);
-ALTER TABLE ats_candidate ADD COLUMN IF NOT EXISTS pan_number VARCHAR(20);
-ALTER TABLE ats_candidate ADD COLUMN IF NOT EXISTS uan_number VARCHAR(50);
-ALTER TABLE ats_candidate ADD COLUMN IF NOT EXISTS aadhar_verified TINYINT(1) NOT NULL DEFAULT 0;
-ALTER TABLE ats_candidate ADD COLUMN IF NOT EXISTS pan_verified TINYINT(1) NOT NULL DEFAULT 0;
-ALTER TABLE ats_candidate ADD COLUMN IF NOT EXISTS bank_account_no VARCHAR(50);
-ALTER TABLE ats_candidate ADD COLUMN IF NOT EXISTS bank_ifsc VARCHAR(20);
-ALTER TABLE ats_candidate ADD COLUMN IF NOT EXISTS bank_name VARCHAR(100);
-ALTER TABLE ats_candidate ADD COLUMN IF NOT EXISTS emergency_contact_name VARCHAR(255);
-ALTER TABLE ats_candidate ADD COLUMN IF NOT EXISTS emergency_contact_mobile VARCHAR(20);
-ALTER TABLE ats_candidate ADD COLUMN IF NOT EXISTS profile_submitted_at DATETIME;
+-- 1. These candidate fields are absent in the canonical fresh sequence through
+-- migration 053. Keep normal MySQL DDL so type/definition errors remain visible.
+ALTER TABLE ats_candidate ADD COLUMN address TEXT;
+ALTER TABLE ats_candidate ADD COLUMN education VARCHAR(100);
+ALTER TABLE ats_candidate ADD COLUMN experience VARCHAR(50);
+ALTER TABLE ats_candidate ADD COLUMN rotational_shift TINYINT(1);
+ALTER TABLE ats_candidate ADD COLUMN preferred_shift VARCHAR(50);
+ALTER TABLE ats_candidate ADD COLUMN night_shift_ok VARCHAR(50);
+ALTER TABLE ats_candidate ADD COLUMN leaves_in_3months TINYINT(1);
+ALTER TABLE ats_candidate ADD COLUMN owns_two_wheeler TINYINT(1);
+ALTER TABLE ats_candidate ADD COLUMN id_proof_available TINYINT(1);
+ALTER TABLE ats_candidate ADD COLUMN education_proof_available TINYINT(1);
+ALTER TABLE ats_candidate ADD COLUMN resume_url VARCHAR(500);
+ALTER TABLE ats_candidate ADD COLUMN selfie_url VARCHAR(500);
+ALTER TABLE ats_candidate ADD COLUMN recruiter_name VARCHAR(255);
+ALTER TABLE ats_candidate ADD COLUMN user_id CHAR(36);
+ALTER TABLE ats_candidate ADD COLUMN profile_status ENUM('registered','selected','onboarding_sent','profile_submitted','onboarded') NOT NULL DEFAULT 'registered';
+ALTER TABLE ats_candidate ADD COLUMN father_name VARCHAR(255);
+ALTER TABLE ats_candidate ADD COLUMN current_address TEXT;
+ALTER TABLE ats_candidate ADD COLUMN permanent_address TEXT;
+ALTER TABLE ats_candidate ADD COLUMN aadhar_number VARCHAR(20);
+ALTER TABLE ats_candidate ADD COLUMN pan_number VARCHAR(20);
+ALTER TABLE ats_candidate ADD COLUMN uan_number VARCHAR(50);
+ALTER TABLE ats_candidate ADD COLUMN aadhar_verified TINYINT(1) NOT NULL DEFAULT 0;
+ALTER TABLE ats_candidate ADD COLUMN pan_verified TINYINT(1) NOT NULL DEFAULT 0;
+ALTER TABLE ats_candidate ADD COLUMN bank_account_no VARCHAR(50);
+ALTER TABLE ats_candidate ADD COLUMN bank_ifsc VARCHAR(20);
+ALTER TABLE ats_candidate ADD COLUMN bank_name VARCHAR(100);
+ALTER TABLE ats_candidate ADD COLUMN emergency_contact_name VARCHAR(255);
+ALTER TABLE ats_candidate ADD COLUMN emergency_contact_mobile VARCHAR(20);
+ALTER TABLE ats_candidate ADD COLUMN profile_submitted_at DATETIME;
 
--- 2. Force password change flag. Migration 050 may already have created it.
-ALTER TABLE auth_user ADD COLUMN IF NOT EXISTS must_change_password TINYINT(1) NOT NULL DEFAULT 0;
+-- 2. Migration 050 already creates must_change_password on a fresh schema.
+-- MySQL 8.4 does not support ADD COLUMN IF NOT EXISTS, so guard through
+-- INFORMATION_SCHEMA and execute only when the column is genuinely absent.
+SET @must_change_password_exists = (
+  SELECT COUNT(*)
+  FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'auth_user'
+    AND COLUMN_NAME = 'must_change_password'
+);
+SET @must_change_password_sql = IF(
+  @must_change_password_exists = 0,
+  'ALTER TABLE auth_user ADD COLUMN must_change_password TINYINT(1) NOT NULL DEFAULT 0',
+  'SELECT ''auth_user.must_change_password already exists'' AS status'
+);
+PREPARE stmt FROM @must_change_password_sql;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
 
 -- 3. Onboarding bridge token + approval tracking.
-ALTER TABLE ats_onboarding_bridge ADD COLUMN IF NOT EXISTS onboarding_token VARCHAR(100);
-ALTER TABLE ats_onboarding_bridge ADD COLUMN IF NOT EXISTS onboarding_token_expires_at DATETIME;
-ALTER TABLE ats_onboarding_bridge ADD COLUMN IF NOT EXISTS hr_approved_by CHAR(36);
-ALTER TABLE ats_onboarding_bridge ADD COLUMN IF NOT EXISTS hr_approved_at DATETIME;
+ALTER TABLE ats_onboarding_bridge ADD COLUMN onboarding_token VARCHAR(100);
+ALTER TABLE ats_onboarding_bridge ADD COLUMN onboarding_token_expires_at DATETIME;
+ALTER TABLE ats_onboarding_bridge ADD COLUMN hr_approved_by CHAR(36);
+ALTER TABLE ats_onboarding_bridge ADD COLUMN hr_approved_at DATETIME;
 
 SET @onboarding_token_index_exists = (
   SELECT COUNT(*)
@@ -175,6 +189,8 @@ ON DUPLICATE KEY UPDATE
   hra_pct = VALUES(hra_pct),
   active_status = 1;
 
--- 9. Salary snapshot fields used by approval flow.
-ALTER TABLE employee_salary_snapshot ADD COLUMN IF NOT EXISTS effective_date DATE NULL;
-ALTER TABLE employee_salary_snapshot ADD COLUMN IF NOT EXISTS offered_ctc DECIMAL(12,2) NULL;
+-- 9. Salary snapshot fields used by approval flow. These are absent in the
+-- canonical fresh sequence through migration 053; later migrations can evolve
+-- them after this file has been recorded.
+ALTER TABLE employee_salary_snapshot ADD COLUMN effective_date DATE NULL;
+ALTER TABLE employee_salary_snapshot ADD COLUMN offered_ctc DECIMAL(12,2) NULL;
