@@ -452,6 +452,11 @@ const MIGRATION_MANIFEST: string[] = [
   "1024_candidate_onboarding_document_rejected_status.sql", // document_status lacked 'rejected'; every secure-viewer reject hit ERROR 1265
   "1028_salary_certificate_request_collation.sql", // utf8mb4_0900_ai_ci vs employees' utf8mb4_unicode_ci — the join 500'd with ERROR 1267
   "1027_ceo_my_kpi_revoke.sql",                   // CEO is not measured on operational KPIs — remove the hollow /my-kpi page from that role only
+  // Added to the manifest 2026-08-03. It adds statutory_config.is_active, which 1030
+  // filters on and which payrollCalculate.service.ts queries directly, plus several other
+  // columns the payroll services require. It was in no manifest, so none of them existed
+  // on a fresh database. Every table it touches is created by 007_payroll.
+  "539_payroll_schema_gaps.sql",
   "1030_statutory_config_versioning.sql",
   "1031_statutory_filing_act_2025_forms.sql",   // Income-tax Act 2025 renumbered the quarterly salary TDS statement from Form 24Q to Form 138; the ENUM is widened, never narrowed, so filed rows keep meaning what they meant         // statutory_config keys are UNIQUE, so a Finance Act change overwrote the old rates and a prior month could no longer be recomputed at the rates it was actually deducted under
   "1032_tds_certificate_part_a.sql",           // Part A of the salary TDS certificate is issued by TRACES and cannot be generated here; this records which document belongs to which employee and year

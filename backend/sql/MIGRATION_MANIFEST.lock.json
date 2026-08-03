@@ -548,7 +548,6 @@
     "534_db_bill_snapshot_enrichment.sql",
     "537_visitor_roles_catalog.sql",
     "538_branch_master_address_contact.sql",
-    "539_payroll_schema_gaps.sql",
     "540_report_performance_indexes.sql",
     "541_employee_fulltext_search_index.sql",
     "544_splc_unique_key.sql",
