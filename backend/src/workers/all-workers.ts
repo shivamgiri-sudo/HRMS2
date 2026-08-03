@@ -10,6 +10,7 @@ import { startSLABreachWorker, stopSLABreachWorker } from "./sla-breach-worker.j
 import { startInterviewDelayAlertWorker, stopInterviewDelayAlertWorker } from "./interview-delay-alert.worker.js";
 import { startLmsSyncWorker, stopLmsSyncWorker } from "./lms-sync.worker.js";
 import { startPayrollNightlyRecalcWorker, stopPayrollNightlyRecalcWorker } from "./payroll-nightly-recalc.worker.js";
+import { startDbBillFinanceSyncWorker, stopDbBillFinanceSyncWorker } from "./db-bill-finance-sync.worker.js";
 import { startAprVicidialSyncWorker, stopAprVicidialSyncWorker } from "./apr-vicidial-sync.worker.js";
 import { startEsignComplianceWorker, stopEsignComplianceWorker } from "./esign-compliance.worker.js";
 import { startEsignReconciliationWorker, stopEsignReconciliationWorker } from "./esign-reconciliation.worker.js";
@@ -104,6 +105,14 @@ const WORKERS: Array<{ name: string; start: () => Promise<void> }> = [
   {
     name: "performance-ingestion",
     start: () => { startPerformanceIngestionScheduler(); return Promise.resolve(); },
+  },
+  {
+    // db_bill is where finance raises invoices, budgets and GRNs; mas_hrms mirrors them and the
+    // P&L reads the mirror. Nothing called the sync before, so it only advanced when someone ran
+    // it by hand — the invoice snapshot was nine days stale and no August rows would ever have
+    // appeared.
+    name: "db-bill-finance-sync",
+    start: () => { startDbBillFinanceSyncWorker(); return Promise.resolve(); },
   },
   {
     name: "payroll-nightly-recalc",
@@ -271,6 +280,7 @@ function shutdown(): void {
   stopInterviewDelayAlertWorker();
   stopLmsSyncWorker();
   stopPayrollNightlyRecalcWorker();
+  stopDbBillFinanceSyncWorker();
   stopPayrollPrepReminderWorker();
   stopAprVicidialSyncWorker();
   stopITProvisioningLockScheduler();

@@ -5,7 +5,7 @@ import { db } from "../../db/mysql.js";
 import { requireWriteAccess, type AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { billabilityService } from "./billability.service.js";
-import { getCostCentreActivity, activityWindow } from "./cost-centre-activity.service.js";
+import { getCostCentreActivity, getAttributionGaps, activityWindow } from "./cost-centre-activity.service.js";
 
 const router = Router();
 const h = (fn: (req: AuthenticatedRequest, res: any) => Promise<unknown>) =>
@@ -207,7 +207,10 @@ router.get("/cost-centre-activity", requireRole(...BILLABILITY_ROLES), h(async (
   const period = /^\d{4}-\d{2}$/.test(String(req.query.period ?? ""))
     ? String(req.query.period)
     : new Date().toISOString().slice(0, 7);
-  const rows = await getCostCentreActivity(period);
+  const [rows, attributionGaps] = await Promise.all([
+    getCostCentreActivity(period),
+    getAttributionGaps(period),
+  ]);
   const summary = rows.reduce<Record<string, number>>((acc, r) => {
     acc[r.activity] = (acc[r.activity] ?? 0) + 1;
     return acc;
@@ -220,6 +223,16 @@ router.get("/cost-centre-activity", requireRole(...BILLABILITY_ROLES), h(async (
     // Spend landing on centres nobody works at and no client pays for — it has to go
     // somewhere, and reporting only the active ones would make it disappear.
     spendOnlyValue: rows.filter((r) => r.activity === "spend_only").reduce((s, r) => s + r.spend, 0),
+    // Where revenue and the people earning it are posted to different cost centres. A cost
+    // centre that bills but has no payroll reports a 100% margin, which reads as the best line
+    // in the report rather than as a gap, so it is returned explicitly.
+    attributionGaps,
+    attributionGapValue: {
+      revenueWithoutPeople: attributionGaps.filter((g) => g.kind === "revenue_without_people")
+        .reduce((s, g) => s + g.revenue, 0),
+      peopleWithoutRevenue: attributionGaps.filter((g) => g.kind === "people_without_revenue")
+        .reduce((s, g) => s + g.salaryCost, 0),
+    },
     data: rows,
   });
 }));
