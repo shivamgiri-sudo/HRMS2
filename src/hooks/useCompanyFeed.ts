@@ -28,13 +28,18 @@ export interface CompanyPostMedia {
   moderation_reason?: string | null;
 }
 
+export type CompanyPostType = "user" | "birthday" | "anniversary";
+
 export interface CompanyPost {
   id: string;
   author_user_id: string;
-  author_employee_id: string;
+  author_employee_id: string | null;
   author_name: string | null;
   author_code: string | null;
   content_text: string | null;
+  post_type: CompanyPostType;
+  is_system_post: boolean;
+  celebrated_employee_id: string | null;
   status: CompanyPostStatus;
   moderation_state: CompanyPostModerationState;
   moderation_score: number | null;

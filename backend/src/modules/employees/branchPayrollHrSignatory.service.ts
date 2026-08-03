@@ -99,6 +99,35 @@ export async function getPayrollHrSignatoryForEmployee(
   return getBranchPayrollHrSignatory(branchId ? String(branchId) : null, options);
 }
 
+/**
+ * The seal to stamp on a document, preferring the branch's Payroll HR.
+ *
+ * applyCompanySeal already accepts a seal override, so nothing about the
+ * stamping logic changes — only which signature is handed to it. Two
+ * deliberate choices:
+ *
+ * The company stamp is always kept. A branch has its own signatory but not its
+ * own company stamp; that belongs to the organisation, and dropping it would
+ * remove something the statutory form expects.
+ *
+ * A branch with a name but no uploaded image still gets named, while the
+ * company signature is used for the mark. That is better than showing the
+ * company signatory's name, because the branch HR is who actually processed
+ * this joiner — and it means the document is never sent out unsigned merely
+ * because an image has not been uploaded yet.
+ */
+export function mergeBranchSignatureIntoSeal<
+  T extends { signature: Buffer | null; stamp: Buffer | null; signatoryName: string | null; signatoryDesignation: string | null },
+>(companySeal: T, branch: BranchPayrollHrSignatory | null): T {
+  if (!branch) return companySeal;
+  return {
+    ...companySeal,
+    signature: branch.signature ?? companySeal.signature,
+    signatoryName: branch.hrName || companySeal.signatoryName,
+    signatoryDesignation: branch.hrDesignation ?? companySeal.signatoryDesignation,
+  };
+}
+
 /** Every branch with its signatory, for the Super Admin configuration screen. */
 export async function listBranchPayrollHrSignatories(): Promise<Array<{
   branchId: string;

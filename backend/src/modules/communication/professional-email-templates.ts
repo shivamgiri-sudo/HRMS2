@@ -529,37 +529,138 @@ export function assetAssignmentEmail(data: AssetAssignmentData): string {
 
 export interface BirthdayGreetingData {
   employeeName: string;
+  photoUrl?: string;
+  branchName?: string;
 }
 
 export function birthdayGreetingEmail(data: BirthdayGreetingData): string {
+  const photoSection = data.photoUrl
+    ? `<img src="${data.photoUrl}" width="100" height="100"
+           alt="${data.employeeName}"
+           style="width:100px;height:100px;border-radius:50%;object-fit:cover;border:4px solid #3BAD49;display:block;margin:0 auto" />`
+    : `<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100" viewBox="0 0 100 100" style="display:block;margin:0 auto">
+         <!-- Cake base -->
+         <rect x="15" y="55" width="70" height="35" rx="8" fill="#fce7f3"/>
+         <rect x="15" y="42" width="70" height="18" rx="6" fill="#fbcfe8"/>
+         <!-- Frosting drips -->
+         <path d="M15 48 Q20 55 25 48 Q30 55 35 48 Q40 55 45 48 Q50 55 55 48 Q60 55 65 48 Q70 55 75 48 Q80 55 85 48" stroke="#f9a8d4" stroke-width="4" fill="none"/>
+         <!-- Candles -->
+         <rect x="30" y="32" width="6" height="14" rx="3" fill="#E8231A"/>
+         <rect x="47" y="28" width="6" height="18" rx="3" fill="#1B6AB5"/>
+         <rect x="64" y="32" width="6" height="14" rx="3" fill="#3BAD49"/>
+         <!-- Flames -->
+         <ellipse cx="33" cy="30" rx="3" ry="4" fill="#fbbf24"/>
+         <ellipse cx="50" cy="26" rx="3" ry="4" fill="#fbbf24"/>
+         <ellipse cx="67" cy="30" rx="3" ry="4" fill="#fbbf24"/>
+         <!-- Flowers -->
+         <circle cx="10" cy="20" r="5" fill="#f9a8d4" opacity=".8"/>
+         <circle cx="90" cy="15" r="4" fill="#fde68a" opacity=".8"/>
+         <circle cx="5" cy="40" r="3" fill="#fbcfe8" opacity=".7"/>
+         <circle cx="95" cy="38" r="3" fill="#fde68a" opacity=".7"/>
+       </svg>`;
+
+  const branchLine = data.branchName
+    ? `<p style="margin:4px 0 0;font-size:13px;color:rgba(255,255,255,.75)">${data.branchName} Team</p>`
+    : "";
+
   return `<!DOCTYPE html>
 <html lang="en">
-<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><style>${BASE_STYLES}</style></head>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<style>
+  ${BASE_STYLES}
+  @keyframes confetti { 0%{transform:translateY(0) rotate(0deg);opacity:1} 100%{transform:translateY(60px) rotate(360deg);opacity:0} }
+</style>
+</head>
 <body>
-  <div class="container">
-    <div class="card">
-      <div class="header" style="background:linear-gradient(135deg,#db2777 0%,#ec4899 60%,#f472b6 100%);padding:40px 32px">
-        <div style="font-size:64px;margin-bottom:16px">🎂</div>
-        <h1 style="margin:0;font-size:32px;font-weight:800;color:#fff">Happy Birthday!</h1>
-        <p style="margin:12px 0 0;font-size:18px;color:#fbcfe8">${data.employeeName}</p>
+<div class="container">
+  <div class="card">
+
+    <!-- Header: MCN Navy → Blue gradient -->
+    <div style="background:linear-gradient(135deg,#073f78 0%,#1B6AB5 100%);padding:36px 32px 28px;text-align:center;position:relative;overflow:hidden">
+      <!-- MCN Logo -->
+      <div style="position:absolute;top:16px;right:20px">
+        <img src="https://mcnhrms.teammas.in/mcn-logo.png" height="30" alt="MCN" style="height:30px;opacity:.9" />
       </div>
-      <div class="content" style="text-align:center">
-        <p style="margin:0 0 24px;font-size:18px;line-height:1.7;color:#475569">Wishing you a wonderful birthday filled with joy, laughter, and all the things that make you happy!</p>
-        <div style="background:linear-gradient(135deg,#fdf2f8,#fce7f3);border-radius:16px;padding:24px;margin:24px 0">
-          <p style="margin:0;font-size:16px;color:#9d174d;line-height:1.7">May this special day bring you endless happiness and may the year ahead be filled with success and new adventures.</p>
-        </div>
-        <p style="margin:24px 0;font-size:15px;color:#64748b">Thank you for being an amazing part of the MAS Callnet family!</p>
-        <div style="margin:32px 0;font-size:32px">🎈🎉🎁</div>
-        <div class="signature">
-          <p style="margin:0;font-size:14px;color:#64748b">Warm wishes,</p>
-          <p style="margin:4px 0 0;font-size:16px;font-weight:700;color:#0f172a">Your MAS Callnet Family</p>
-        </div>
+      <!-- Confetti dots (pure HTML/CSS) -->
+      <div style="position:absolute;top:0;left:0;right:0;height:100%;pointer-events:none;overflow:hidden">
+        <div style="position:absolute;top:8px;left:12%;width:8px;height:8px;border-radius:50%;background:#E8231A;animation:confetti 2.4s ease-in infinite"></div>
+        <div style="position:absolute;top:14px;left:28%;width:6px;height:6px;border-radius:50%;background:#3BAD49;animation:confetti 2.8s .4s ease-in infinite"></div>
+        <div style="position:absolute;top:6px;left:50%;width:7px;height:7px;border-radius:50%;background:#fbbf24;animation:confetti 2.2s .2s ease-in infinite"></div>
+        <div style="position:absolute;top:10px;left:68%;width:9px;height:9px;border-radius:50%;background:#f9a8d4;animation:confetti 3s .6s ease-in infinite"></div>
+        <div style="position:absolute;top:4px;left:82%;width:6px;height:6px;border-radius:50%;background:#1B6AB5;animation:confetti 2.6s .1s ease-in infinite"></div>
       </div>
-      <div class="footer" style="background:#fdf2f8;border-top:1px solid #fce7f3">
-        <p style="margin:0;font-size:11px;color:#9d174d">&copy; 2026 Mas Callnet India Pvt. Ltd. All rights reserved.</p>
+      <p style="margin:0 0 6px;font-size:11px;font-weight:800;letter-spacing:.15em;text-transform:uppercase;color:rgba(255,255,255,.65)">MAS CALLNET INDIA PVT. LTD.</p>
+      <h1 style="margin:0 0 4px;font-size:30px;font-weight:900;color:#fff;letter-spacing:-.5px">🎂 Happy Birthday!</h1>
+      ${branchLine}
+    </div>
+
+    <!-- Photo / Cake SVG avatar -->
+    <div style="text-align:center;margin-top:-20px;padding:0 32px">
+      <div style="display:inline-block;border:4px solid #fff;border-radius:50%;box-shadow:0 4px 16px rgba(7,63,120,.18);background:#fff;overflow:hidden">
+        ${photoSection}
       </div>
     </div>
+
+    <!-- Body -->
+    <div class="content" style="text-align:center;padding-top:16px">
+      <h2 style="margin:0 0 4px;font-size:22px;font-weight:800;color:#073f78">${data.employeeName}</h2>
+      ${data.branchName ? `<p style="margin:0 0 20px;font-size:13px;color:#64748b">${data.branchName}</p>` : `<div style="margin-bottom:20px"></div>`}
+
+      <p style="margin:0 0 20px;font-size:16px;line-height:1.75;color:#475569">
+        Wishing you a day as bright and joyful as the energy you bring to our team every day!
+        May this birthday mark the start of a wonderful new chapter.
+      </p>
+
+      <!-- Highlight box -->
+      <div style="background:linear-gradient(135deg,#fdf2f8,#eff6ff);border-radius:14px;padding:22px;margin:0 0 22px;border:1px solid #fce7f3">
+        <p style="margin:0;font-size:15px;color:#073f78;line-height:1.7;font-weight:600">
+          "You are not just a colleague — you are part of the MAS Callnet family. 💙"
+        </p>
+      </div>
+
+      <!-- Decoration row (SVG icons: balloon, flower, gift) -->
+      <div style="display:flex;justify-content:center;gap:20px;margin:20px 0">
+        <!-- Balloon -->
+        <svg xmlns="http://www.w3.org/2000/svg" width="36" height="48" viewBox="0 0 36 48">
+          <ellipse cx="18" cy="18" rx="14" ry="16" fill="#E8231A"/>
+          <path d="M18 34 L15 48" stroke="#64748b" stroke-width="1.5" fill="none"/>
+          <path d="M15 48 Q18 44 21 48" stroke="#64748b" stroke-width="1.5" fill="none"/>
+        </svg>
+        <!-- Flower -->
+        <svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 40 40">
+          <circle cx="20" cy="20" r="6" fill="#fbbf24"/>
+          <ellipse cx="20" cy="8" rx="5" ry="7" fill="#f9a8d4"/>
+          <ellipse cx="20" cy="32" rx="5" ry="7" fill="#f9a8d4"/>
+          <ellipse cx="8" cy="20" rx="7" ry="5" fill="#fbcfe8"/>
+          <ellipse cx="32" cy="20" rx="7" ry="5" fill="#fbcfe8"/>
+        </svg>
+        <!-- Gift -->
+        <svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 40 40">
+          <rect x="6" y="18" width="28" height="20" rx="3" fill="#3BAD49"/>
+          <rect x="4" y="13" width="32" height="8" rx="3" fill="#2a8f38"/>
+          <rect x="18" y="13" width="4" height="25" fill="#fbbf24"/>
+          <path d="M20 13 Q12 6 10 11 Q8 17 20 13Z" fill="#fbbf24"/>
+          <path d="M20 13 Q28 6 30 11 Q32 17 20 13Z" fill="#fbbf24"/>
+        </svg>
+      </div>
+
+      <div class="signature">
+        <p style="margin:0;font-size:14px;color:#64748b">With warmth &amp; celebration,</p>
+        <p style="margin:6px 0 0;font-size:16px;font-weight:800;color:#073f78">Your MAS Callnet Family 💙</p>
+      </div>
+    </div>
+
+    <!-- Red accent strip + footer -->
+    <div style="height:4px;background:#E8231A"></div>
+    <div class="footer" style="background:#f8fafc">
+      <img src="https://mcnhrms.teammas.in/mcn-logo.png" height="22" alt="MCN" style="height:22px;margin-bottom:8px;opacity:.7" />
+      <p class="footer-text">&copy; 2026 Mas Callnet India Pvt. Ltd. All rights reserved.</p>
+      <p class="footer-text" style="margin-top:4px">This is an automated birthday greeting from your HR team.</p>
+    </div>
   </div>
+</div>
 </body>
 </html>`;
 }
@@ -568,39 +669,127 @@ export interface WorkAnniversaryData {
   employeeName: string;
   yearsCompleted: number;
   joinDate: string;
+  photoUrl?: string;
+  branchName?: string;
 }
 
 export function workAnniversaryEmail(data: WorkAnniversaryData): string {
+  const photoSection = data.photoUrl
+    ? `<img src="${data.photoUrl}" width="100" height="100"
+           alt="${data.employeeName}"
+           style="width:100px;height:100px;border-radius:50%;object-fit:cover;border:4px solid #F59E0B;display:block;margin:0 auto" />`
+    : `<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100" viewBox="0 0 100 100" style="display:block;margin:0 auto">
+         <!-- Trophy body -->
+         <rect x="35" y="60" width="30" height="8" rx="3" fill="#e2e8f0"/>
+         <rect x="28" y="68" width="44" height="8" rx="4" fill="#cbd5e1"/>
+         <!-- Trophy cup -->
+         <path d="M25 20 L75 20 L68 55 Q50 65 32 55 Z" fill="#F59E0B"/>
+         <!-- Handles -->
+         <path d="M25 25 Q10 30 14 42 Q18 50 28 46" stroke="#F59E0B" stroke-width="6" fill="none" stroke-linecap="round"/>
+         <path d="M75 25 Q90 30 86 42 Q82 50 72 46" stroke="#F59E0B" stroke-width="6" fill="none" stroke-linecap="round"/>
+         <!-- Star shine lines -->
+         <line x1="50" y1="5" x2="50" y2="12" stroke="#fbbf24" stroke-width="2.5" stroke-linecap="round"/>
+         <line x1="62" y1="8" x2="58" y2="14" stroke="#fbbf24" stroke-width="2" stroke-linecap="round"/>
+         <line x1="38" y1="8" x2="42" y2="14" stroke="#fbbf24" stroke-width="2" stroke-linecap="round"/>
+         <line x1="72" y1="16" x2="66" y2="19" stroke="#fbbf24" stroke-width="2" stroke-linecap="round"/>
+         <line x1="28" y1="16" x2="34" y2="19" stroke="#fbbf24" stroke-width="2" stroke-linecap="round"/>
+       </svg>`;
+
+  const branchLine = data.branchName
+    ? `<p style="margin:4px 0 0;font-size:13px;color:rgba(255,255,255,.75)">${data.branchName} Team</p>`
+    : "";
+
+  const yearLabel = data.yearsCompleted === 1 ? "Year" : "Years";
+
   return `<!DOCTYPE html>
 <html lang="en">
-<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><style>${BASE_STYLES}</style></head>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<style>${BASE_STYLES}</style>
+</head>
 <body>
-  <div class="container">
-    <div class="card">
-      <div class="header" style="background:linear-gradient(135deg,#7c3aed 0%,#8b5cf6 60%,#a78bfa 100%);padding:40px 32px">
-        <div style="font-size:64px;margin-bottom:16px">🎊</div>
-        <h1 style="margin:0;font-size:32px;font-weight:800;color:#fff">Happy Work Anniversary!</h1>
-        <p style="margin:12px 0 0;font-size:18px;color:#ddd6fe">${data.employeeName}</p>
+<div class="container">
+  <div class="card">
+
+    <!-- Header: MCN deep navy gradient -->
+    <div style="background:linear-gradient(135deg,#073f78 0%,#0d5aa7 60%,#1B6AB5 100%);padding:36px 32px 28px;text-align:center;position:relative;overflow:hidden">
+      <!-- MCN Logo -->
+      <div style="position:absolute;top:16px;right:20px">
+        <img src="https://mcnhrms.teammas.in/mcn-logo.png" height="30" alt="MCN" style="height:30px;opacity:.9" />
       </div>
-      <div class="content" style="text-align:center">
-        <div style="background:linear-gradient(135deg,#f5f3ff,#ede9fe);border-radius:16px;padding:24px;margin:0 0 24px">
-          <p style="margin:0 0 8px;font-size:14px;font-weight:700;color:#6d28d9;text-transform:uppercase;letter-spacing:.5px">Celebrating</p>
-          <p style="margin:0;font-size:48px;font-weight:800;color:#5b21b6">${data.yearsCompleted}</p>
-          <p style="margin:4px 0 0;font-size:16px;color:#7c3aed">Years with MAS Callnet</p>
-        </div>
-        <p style="margin:0 0 24px;font-size:18px;line-height:1.7;color:#475569">Congratulations on this milestone! Your dedication, hard work, and contributions have made a real difference.</p>
-        <p style="margin:24px 0;font-size:15px;color:#64748b;line-height:1.7">Since joining us on <strong>${data.joinDate}</strong>, you have been an invaluable member of our team. Thank you for your commitment and loyalty!</p>
-        <div style="margin:32px 0;font-size:32px">🏆✨🌟</div>
-        <div class="signature">
-          <p style="margin:0;font-size:14px;color:#64748b">With appreciation,</p>
-          <p style="margin:4px 0 0;font-size:16px;font-weight:700;color:#0f172a">MAS Callnet Management</p>
-        </div>
-      </div>
-      <div class="footer" style="background:#f5f3ff;border-top:1px solid #ede9fe">
-        <p style="margin:0;font-size:11px;color:#6d28d9">&copy; 2026 Mas Callnet India Pvt. Ltd. All rights reserved.</p>
+      <!-- Star shimmer dots -->
+      <div style="position:absolute;top:10px;left:10%;font-size:16px;opacity:.5">★</div>
+      <div style="position:absolute;top:20px;left:30%;font-size:10px;opacity:.4">★</div>
+      <div style="position:absolute;top:8px;right:15%;font-size:12px;opacity:.4">★</div>
+      <div style="position:absolute;top:28px;right:35%;font-size:8px;opacity:.35">★</div>
+      <p style="margin:0 0 6px;font-size:11px;font-weight:800;letter-spacing:.15em;text-transform:uppercase;color:rgba(255,255,255,.65)">MAS CALLNET INDIA PVT. LTD.</p>
+      <h1 style="margin:0 0 4px;font-size:28px;font-weight:900;color:#fff;letter-spacing:-.5px">⭐ Work Anniversary!</h1>
+      ${branchLine}
+    </div>
+
+    <!-- Photo / Trophy SVG avatar -->
+    <div style="text-align:center;margin-top:-20px;padding:0 32px">
+      <div style="display:inline-block;border:4px solid #fff;border-radius:50%;box-shadow:0 4px 16px rgba(7,63,120,.18);background:#fff;overflow:hidden">
+        ${photoSection}
       </div>
     </div>
+
+    <!-- Body -->
+    <div class="content" style="text-align:center;padding-top:16px">
+      <h2 style="margin:0 0 4px;font-size:22px;font-weight:800;color:#073f78">${data.employeeName}</h2>
+      ${data.branchName ? `<p style="margin:0 0 20px;font-size:13px;color:#64748b">${data.branchName}</p>` : `<div style="margin-bottom:20px"></div>`}
+
+      <!-- Year milestone badge -->
+      <div style="display:inline-block;background:linear-gradient(135deg,#3BAD49,#2a8f38);border-radius:999px;padding:10px 28px;margin-bottom:22px;box-shadow:0 4px 14px rgba(59,173,73,.3)">
+        <span style="font-size:13px;font-weight:700;color:rgba(255,255,255,.85);text-transform:uppercase;letter-spacing:.1em">Celebrating</span>
+        <div style="font-size:42px;font-weight:900;color:#fff;line-height:1.1">${data.yearsCompleted}</div>
+        <span style="font-size:14px;font-weight:700;color:rgba(255,255,255,.9)">${yearLabel} of Excellence</span>
+      </div>
+
+      <p style="margin:0 0 20px;font-size:16px;line-height:1.75;color:#475569">
+        Congratulations on this incredible milestone! Your dedication, consistency, and commitment
+        have made a lasting impact on our entire team.
+      </p>
+
+      <!-- Timeline -->
+      <div style="background:linear-gradient(135deg,#eff6ff,#f0fdf4);border-radius:14px;padding:20px;margin:0 0 22px;border:1px solid #dbeafe">
+        <p style="margin:0 0 10px;font-size:12px;font-weight:700;color:#1B6AB5;text-transform:uppercase;letter-spacing:.08em">Your Journey</p>
+        <div style="display:flex;align-items:center;justify-content:center;gap:10px;font-size:14px;color:#0f172a;font-weight:600;flex-wrap:wrap">
+          <span>Joined ${data.joinDate}</span>
+          <span style="color:#3BAD49;font-size:20px;font-weight:900">→</span>
+          <span style="background:#073f78;color:#fff;border-radius:6px;padding:3px 10px">${data.yearsCompleted} ${yearLabel} Strong 🎉</span>
+        </div>
+      </div>
+
+      <p style="margin:0 0 24px;font-size:15px;color:#64748b;line-height:1.7">
+        Thank you for being a pillar of the MAS Callnet family. Your loyalty and hard work inspire everyone around you!
+      </p>
+
+      <!-- Stars decoration row -->
+      <div style="display:flex;justify-content:center;gap:12px;margin:16px 0">
+        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="#F59E0B"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
+        <svg xmlns="http://www.w3.org/2000/svg" width="30" height="30" viewBox="0 0 24 24" fill="#F59E0B"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
+        <svg xmlns="http://www.w3.org/2000/svg" width="36" height="36" viewBox="0 0 24 24" fill="#fbbf24"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
+        <svg xmlns="http://www.w3.org/2000/svg" width="30" height="30" viewBox="0 0 24 24" fill="#F59E0B"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
+        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="#F59E0B"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
+      </div>
+
+      <div class="signature">
+        <p style="margin:0;font-size:14px;color:#64748b">With pride &amp; appreciation,</p>
+        <p style="margin:6px 0 0;font-size:16px;font-weight:800;color:#073f78">MAS Callnet Management 🏆</p>
+      </div>
+    </div>
+
+    <!-- Green accent strip + footer -->
+    <div style="height:4px;background:#3BAD49"></div>
+    <div class="footer" style="background:#f8fafc">
+      <img src="https://mcnhrms.teammas.in/mcn-logo.png" height="22" alt="MCN" style="height:22px;margin-bottom:8px;opacity:.7" />
+      <p class="footer-text">&copy; 2026 Mas Callnet India Pvt. Ltd. All rights reserved.</p>
+      <p class="footer-text" style="margin-top:4px">This is an automated work anniversary greeting from your HR team.</p>
+    </div>
   </div>
+</div>
 </body>
 </html>`;
 }

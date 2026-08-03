@@ -4,6 +4,7 @@ import { AuthedImage } from "@/components/ui/AuthedImage";
 import { ImageLightbox } from "@/components/feed/ImageLightbox";
 import { PostEngagementBar } from "@/components/feed/PostEngagementBar";
 import { CommentThread } from "@/components/feed/CommentThread";
+import { CelebrationPostCard } from "@/components/feed/CelebrationPostCard";
 import { useReactToPost, type CompanyPost } from "@/hooks/useCompanyFeed";
 import { getCompanyFeedImageUrl, formatRelativeTime } from "@/lib/companyFeedUtils";
 
@@ -151,6 +152,17 @@ export function FeedPostCard({
   isModerator = false,
   showEngagement = true,
 }: FeedPostCardProps) {
+  // Delegate celebration posts to their own rich card
+  if (post.post_type === "birthday" || post.post_type === "anniversary") {
+    return (
+      <CelebrationPostCard
+        post={post}
+        currentUserId={currentUserId}
+        showEngagement={showEngagement}
+      />
+    );
+  }
+
   const [expanded, setExpanded] = useState(false);
   const [commentsOpen, setCommentsOpen] = useState(false);
   const [lightboxOpen, setLightboxOpen] = useState(false);

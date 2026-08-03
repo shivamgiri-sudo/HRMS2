@@ -273,6 +273,7 @@ async function listCompanyPosts(
     `SELECT cp.id, cp.author_user_id, cp.author_employee_id,
             e.full_name AS author_name, e.employee_code AS author_code,
             cp.content_text, cp.status,
+            cp.post_type, cp.is_system_post, cp.celebrated_employee_id,
             cp.moderation_state, cp.moderation_score, cp.auto_reject_reason, cp.review_notes,
             cp.submitted_at, cp.approved_at, cp.approved_by,
             ea.full_name AS approved_by_name,
@@ -300,6 +301,7 @@ async function listCompanyPosts(
 async function getCompanyPostById(postId: string, executor: QueryExecutor = db): Promise<CompanyPostDTO> {
   const [rows] = await executor.execute<RowDataPacket[]>(
     `SELECT id, author_user_id, author_employee_id, content_text, status,
+            post_type, is_system_post, celebrated_employee_id,
             moderation_state, moderation_score, auto_reject_reason, review_notes,
             submitted_at, approved_at, approved_by, rejected_at, rejected_by,
             rejection_reason, deleted_at, deleted_by, active_status,
