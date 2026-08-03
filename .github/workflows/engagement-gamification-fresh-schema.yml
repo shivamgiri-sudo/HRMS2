@@ -3,11 +3,7 @@ name: Performance Fresh Schema Certification
 on:
   pull_request:
     paths:
-      - "backend/sql/038_engagement_gamification.sql"
-      - "backend/sql/044_attendance_engine.sql"
-      - "backend/sql/520_performance_ingestion_platform.sql"
-      - "backend/sql/521_performance_multi_source_lineage.sql"
-      - "backend/sql/522_performance_governance_audit.sql"
+      - "backend/sql/**"
       - "backend/scripts/verify-engagement-gamification-migration.ts"
       - "backend/scripts/verify-performance-fresh-schema.ts"
       - "backend/scripts/migrate-fresh-test.ts"
@@ -22,11 +18,7 @@ on:
     branches:
       - codex/performance-staging-certification
     paths:
-      - "backend/sql/038_engagement_gamification.sql"
-      - "backend/sql/044_attendance_engine.sql"
-      - "backend/sql/520_performance_ingestion_platform.sql"
-      - "backend/sql/521_performance_multi_source_lineage.sql"
-      - "backend/sql/522_performance_governance_audit.sql"
+      - "backend/sql/**"
       - "backend/scripts/verify-engagement-gamification-migration.ts"
       - "backend/scripts/verify-performance-fresh-schema.ts"
       - "backend/scripts/migrate-fresh-test.ts"
