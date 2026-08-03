@@ -55,6 +55,7 @@ import { employeePhotoCompatRouter } from "./modules/employees/employee.photo.co
 import { rmChangeRouter } from "./modules/employees/rm-change.routes.js";
 import { employeeJoiningDocumentsRouter, hrDocumentTemplatesRouter, payrollEpfComplianceRouter, publicEmployeeDocumentRouter } from "./modules/employees/employee.compliance.routes.js";
 import companySealRouter from "./modules/employees/companySeal.routes.js";
+import branchPayrollHrSignatoryRouter from "./modules/employees/branchPayrollHrSignatory.routes.js";
 import { employeeBgvRouter } from "./modules/employees/employee-bgv.routes.js";
 import { kpiRouter } from "./modules/kpi/kpi.routes.js";
 import { kpiProcessRoleRouter } from "./modules/kpi/kpi.process-role.routes.js";
@@ -209,6 +210,7 @@ import { vendorPaymentRouter } from "./modules/finance/vendor-payment.routes.js"
 import { grnRouter } from "./modules/finance/grn.routes.js";
 import { costCentreManagementRouter } from "./modules/finance/cost-centre-management.routes.js";
 import { processPnlRouter } from "./modules/process-pnl/process-pnl.routes.js";
+import billabilityRouter from "./modules/process-pnl/billability.routes.js";
 import { onboardingDataRouter } from "./modules/onboarding/onboarding-data.routes.js";
 import { pennyDropRouter } from "./modules/onboarding/penny-drop.routes.js";
 import { nameValidationRouter } from "./modules/onboarding/name-validation.routes.js";
@@ -444,6 +446,10 @@ app.use("/api/assets-mgmt", assetsRouter);
 app.use("/api/employee-docs", employeeDocsRouter);
 app.use("/api/hr", hrDocumentTemplatesRouter);
 app.use("/api/company-seal", companySealRouter);
+// Per-branch Payroll HR signatory: the name printed on joining documents and
+// the signature applied to the employer block. Mounted beside the company seal
+// because it is the same concern scoped to a branch.
+app.use("/api/branch-payroll-hr", branchPayrollHrSignatoryRouter);
 app.use("/api/payroll", payrollEpfComplianceRouter);
 app.use("/api/helpdesk", helpdeskRouter);
 app.use("/api/letters", lettersRouter);
@@ -475,6 +481,10 @@ app.use("/api/finance", vendorPaymentRouter);
 app.use("/api/finance", grnRouter);
 app.use("/api/finance/cost-centres", costCentreManagementRouter);
 app.use("/api/finance", processPnlRouter);
+// Mounted on its own base, BEFORE nothing and after processPnlRouter deliberately: it
+// owns /api/finance/billability/* outright, so it cannot be shadowed by a wildcard on
+// the shared /api/finance base.
+app.use("/api/finance/billability", billabilityRouter);
 app.use("/api/inbox", inboxRouter);
 app.use("/api/it-provisioning", itProvisioningRouter);
 app.use("/api/onboarding-provisioning", itProvisioningRouter);

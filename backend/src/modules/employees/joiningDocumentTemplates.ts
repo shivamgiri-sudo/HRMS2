@@ -357,7 +357,16 @@ const CONTRACT: Block[] = [
   sp(),
   p("IN WITNESS WHEREOF, the Parties have caused this Agreement to be executed under seal as of the day, month and year first above written."),
   sp(),
+  // The employer block already existed; only the signatory was anonymous.
+  //
+  // The line carried a blank rule and nothing else, so a reader could not tell
+  // who signed for the company. It now names the Payroll HR of the branch the
+  // candidate joins — the same person who signs their EPF forms, so one
+  // configuration covers both — while keeping the rule for the wet signature.
+  // Blank where a branch has no signatory configured, which is how the line has
+  // always read.
   p("For and on behalf of Mas Callnet India (P) Ltd (First Party): ______________________"),
+  p("Name: {{payroll_hr_name}}          Designation: {{payroll_hr_designation}}"),
   sp(),
   p("Second Party: {{employee_name}}"),
   p("Employee Code: {{employee_code}}          Date of Joining: {{date_of_joining}}"),

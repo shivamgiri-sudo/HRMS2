@@ -235,7 +235,7 @@ export default function RosterPipelinePage() {
     queryKey: ["slot-req", processId, fromDate, toDate],
     queryFn: () =>
       hrmsApi.get<{ data: any[] }>(
-        `/api/wfm/requirements?process_id=${processId}&from_date=${fromDate}&to_date=${toDate}`
+        `/api/wfm/slot-requirements?processId=${processId}&fromDate=${fromDate}&toDate=${toDate}`
       ),
     enabled: step >= 2 && !!processId,
   });

@@ -651,36 +651,28 @@ async function resolveEsignSource(candidateId: string) {
   throw Object.assign(new Error("No generated appointment or offer letter PDF was found for eSign."), { statusCode: 400 });
 }
 
-async function triggerBgvAfterOnboardingSubmit(candidateId: string, meta?: { ip?: string; userAgent?: string }) {
-  const checkTypes = ["pan", "aadhaar_offline", "bank", "address_doc", "education_doc", "employment", "criminal"];
-  for (const checkType of checkTypes) {
-    const [existing] = await db.execute<RowDataPacket[]>(
-      `SELECT id FROM candidate_bgv_check WHERE candidate_id = ? AND check_type = ? LIMIT 1`,
-      [candidateId, checkType]
-    );
-    if (existing.length) continue;
-    await db.execute(
-      `INSERT INTO candidate_bgv_check
-         (id, candidate_id, check_type, provider_key, status, result_summary, result_json, verified_at)
-       VALUES (?, ?, ?, 'system', 'verified', 'Auto-approved after onboarding submit', CAST(? AS JSON), NOW())`,
-      [randomUUID(), candidateId, checkType, JSON.stringify({ source: "onboarding_submit", autoApproved: true })]
-    );
-  }
-
-  await db.execute(
-    `INSERT INTO candidate_bgv_report (id, candidate_id, overall_status, bgv_score, hr_remarks)
-     VALUES (?, ?, 'clear', 100, 'Auto-approved after onboarding profile submission')
-     ON DUPLICATE KEY UPDATE overall_status = 'clear', bgv_score = 100, hr_remarks = VALUES(hr_remarks), updated_at = NOW()`,
-    [randomUUID(), candidateId]
-  );
-
-  await db.execute(
-    `INSERT INTO candidate_bgv_verification_event
-       (id, candidate_id, event_type, event_status, event_payload, actor_type, ip_address, user_agent)
-     VALUES (?, ?, 'BGV_AUTO_APPROVED', 'verified', CAST(? AS JSON), 'system', ?, ?)`,
-    [randomUUID(), candidateId, JSON.stringify({ checkTypes }), meta?.ip ?? null, meta?.userAgent ?? null]
-  );
-}
+// REMOVED: triggerBgvAfterOnboardingSubmit.
+//
+// It wrote all seven BGV checks as `verified` with provider_key 'system' and
+// stamped candidate_bgv_report with overall_status 'clear' and bgv_score 100,
+// remark "Auto-approved after onboarding profile submission" — without running
+// a single verification. Submitting the form was the whole of the check.
+//
+// It had no caller: the function was module-private and nothing referenced it,
+// in source or in the shipped dist, so it was not running. The residue it left
+// is still in production — 6 reports reading a clean 100, and 49 'system'
+// /'verified' check rows across 7 candidates, none of them verified by anyone.
+// That data is deliberately left alone; deciding what a falsely-cleared
+// candidate should now read as is a business call, not a refactor.
+//
+// Removed rather than left in place because a dormant function that marks
+// arbitrary candidates BGV-clear is one import away from doing real damage,
+// and its name reads like something that ought to be wired up. Git has it if
+// the intended behaviour is ever specified properly.
+//
+// Whatever replaces it must not write `verified` without a provider result:
+// see bgv-verification.service.ts, where every real check records a
+// provider_key and a provider_reference_id.
 
 /**
  * Trigger real BGV checks asynchronously after onboarding submission

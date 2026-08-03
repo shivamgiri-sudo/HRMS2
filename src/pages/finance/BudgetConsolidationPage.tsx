@@ -1,15 +1,26 @@
 import { useMemo, useState } from "react";
-import { Building2, CheckCircle2, Layers3, Loader2, Pin, PinOff, ShieldCheck } from "lucide-react";
+import { Building2, CheckCircle2, Layers3, Loader2, Pin, PinOff } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { useBudgetConsolidation } from "@/hooks/useBudgetConsolidation";
+import { useBudgetConsolidation, type CompanyConsolidationGroup } from "@/hooks/useBudgetConsolidation";
 import { usePinnedOffsets, useColumnPinning } from "@/hooks/useColumnPinning";
 
 const ROW_LABEL_WIDTH = 280;
 const COLUMN_WIDTH = 150;
+const COMPANY_COLUMN_WIDTH = 130;
+/** Planned/Reserved/Consumed are the budget's own figures; Paid/Booked are actuals sourced from
+ *  GRN (see getCompanyBudgetConsolidation's grn_cost_allocation join) — same rupee, four states,
+ *  finally in one row instead of split across the Budget, GRN and P&L screens. */
+const COMPANY_TOTAL_COLUMNS: Array<{ key: string; label: string; hint: string; value: (group: CompanyConsolidationGroup) => number }> = [
+  { key: "planned", label: "Planned", hint: "Company-wide budgeted amount", value: (g) => g.companyGrossAmount },
+  { key: "reserved", label: "Reserved", hint: "Held against Branch Head-approved GRNs, not yet consumed", value: (g) => g.companyReservedAmount },
+  { key: "consumed", label: "Consumed", hint: "Finance Head-approved GRN spend against this budget", value: (g) => g.companyConsumedAmount },
+  { key: "paid", label: "Paid", hint: "GRNs whose payment has actually gone out", value: (g) => g.companyPaidAmount },
+  { key: "booked", label: "Booked to P&L", hint: "GRN cost actually recognised in Process P&L (lifecycle_status = consumed)", value: (g) => g.companyBookedToPnlAmount },
+];
 
 function currentPeriod() {
   const now = new Date();
@@ -38,6 +49,7 @@ export default function BudgetConsolidationPage() {
   const branchSummaries = data?.branchSummaries ?? [];
   const headBreakdown = data?.headBreakdown ?? [];
   const readiness = data?.readiness ?? [];
+  const isPeriodLocked = data?.isPeriodLocked ?? false;
 
   const { pinnedIds, togglePin } = useColumnPinning();
 
@@ -76,41 +88,55 @@ export default function BudgetConsolidationPage() {
 
   return (
     <DashboardLayout>
-      <div className="min-h-screen bg-[radial-gradient(circle_at_top_right,_rgba(16,185,129,0.14),_transparent_26%),linear-gradient(180deg,_#f8fafc_0%,_#ffffff_44%,_#f5f7fb_100%)]">
-        <div className="mx-auto max-w-[1680px] space-y-6 px-4 py-6 sm:px-6 lg:px-8">
-          <section className="relative overflow-hidden rounded-[32px] border border-slate-800 bg-slate-950 text-white shadow-[0_28px_90px_rgba(15,23,42,0.25)]">
-            <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_right,_rgba(59,130,246,0.28),_transparent_34%),radial-gradient(circle_at_bottom_left,_rgba(16,185,129,0.20),_transparent_30%)]" />
-            <div className="relative grid gap-8 p-6 lg:grid-cols-[1.35fr_0.9fr] lg:p-8">
+      <div className="min-h-screen bg-slate-50">
+        <div className="border-b border-slate-200 bg-white">
+          <div className="mx-auto max-w-[1680px] px-4 py-4 sm:px-6 lg:px-8">
+            <div className="flex flex-wrap items-end justify-between gap-4">
               <div>
-                <Badge className="border-emerald-400/30 bg-emerald-400/10 text-emerald-200 hover:bg-emerald-400/10">
-                  <ShieldCheck className="mr-1 h-3.5 w-3.5" />Company-wide, all branches
-                </Badge>
-                <h1 className="mt-5 max-w-4xl text-3xl font-black tracking-tight sm:text-4xl">Budget Consolidation</h1>
-                <p className="mt-3 max-w-3xl text-sm leading-6 text-slate-300">
-                  Every branch's budget rolled up into one company-wide view — branch summaries and a head/sub-head breakdown across every branch.
-                </p>
-                <div className="mt-6 max-w-xs space-y-2">
-                  <Label className="text-slate-200">Period</Label>
-                  <Input type="month" value={period} onChange={(event) => setPeriod(event.target.value)} className="bg-white text-slate-900" />
+                <div className="flex items-center gap-2">
+                  <h1 className="text-lg font-bold text-slate-950">Budget Consolidation</h1>
+                  {!isLoading && (
+                    <Badge
+                      variant="outline"
+                      className={
+                        isPeriodLocked
+                          ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                          : "border-amber-200 bg-amber-50 text-amber-700"
+                      }
+                      title={
+                        isPeriodLocked
+                          ? "This period's P&L has been signed off and locked, but this rollup still reads live budget data — figures can still move even though P&L is frozen."
+                          : "This period's P&L has not been signed off yet; both P&L and this rollup can still change."
+                      }
+                    >
+                      {isPeriodLocked ? "P&L locked · budget still live" : "Period open"}
+                    </Badge>
+                  )}
                 </div>
+                <p className="mt-0.5 max-w-xl text-xs text-slate-500">Every branch's budget rolled up company-wide — branch summaries and a head/sub-head breakdown.</p>
               </div>
-              <div className="grid grid-cols-3 gap-3">
-                <div className="rounded-2xl border border-white/15 bg-white/5 p-4">
-                  <p className="text-[10px] font-semibold uppercase tracking-[0.15em] text-slate-300">Branches</p>
-                  <p className="mt-2 text-lg font-black">{branchSummaries.length}</p>
-                </div>
-                <div className="rounded-2xl border border-white/15 bg-white/5 p-4">
-                  <p className="text-[10px] font-semibold uppercase tracking-[0.15em] text-slate-300">Company gross</p>
-                  <p className="mt-2 text-lg font-black">{money(grandTotals.gross)}</p>
-                </div>
-                <div className="rounded-2xl border border-white/15 bg-white/5 p-4">
-                  <p className="text-[10px] font-semibold uppercase tracking-[0.15em] text-slate-300">Consumed</p>
-                  <p className="mt-2 text-lg font-black">{money(grandTotals.consumed)}</p>
-                </div>
+              <div className="space-y-1">
+                <Label className="text-xs text-slate-500">Period</Label>
+                <Input type="month" value={period} onChange={(event) => setPeriod(event.target.value)} className="h-9 w-40" />
               </div>
             </div>
-          </section>
-
+            <div className="mt-4 grid grid-cols-3 gap-2 sm:max-w-md">
+              <div className="rounded-xl border border-slate-200 bg-white p-3">
+                <p className="text-[10px] font-semibold uppercase tracking-[0.1em] text-slate-500">Branches</p>
+                <p className="mt-1 text-base font-bold text-slate-950">{branchSummaries.length}</p>
+              </div>
+              <div className="rounded-xl border border-blue-200 bg-blue-50/80 p-3">
+                <p className="text-[10px] font-semibold uppercase tracking-[0.1em] text-slate-500">Company gross</p>
+                <p className="mt-1 text-base font-bold text-slate-950">{money(grandTotals.gross)}</p>
+              </div>
+              <div className="rounded-xl border border-emerald-200 bg-emerald-50/80 p-3">
+                <p className="text-[10px] font-semibold uppercase tracking-[0.1em] text-slate-500">Consumed</p>
+                <p className="mt-1 text-base font-bold text-slate-950">{money(grandTotals.consumed)}</p>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div className="mx-auto max-w-[1680px] space-y-6 px-4 py-6 sm:px-6 lg:px-8">
           {isError && (
             <div className="rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">
               {error instanceof Error ? error.message : "Consolidation data could not be loaded"}
@@ -226,7 +252,7 @@ export default function BudgetConsolidationPage() {
                     <div className="overflow-auto">
                       <table
                         className="w-full border-separate border-spacing-0 text-xs"
-                        style={{ minWidth: `${ROW_LABEL_WIDTH + orderedBranchColumns.length * COLUMN_WIDTH + COLUMN_WIDTH}px` }}
+                        style={{ minWidth: `${ROW_LABEL_WIDTH + orderedBranchColumns.length * COLUMN_WIDTH + COMPANY_TOTAL_COLUMNS.length * COMPANY_COLUMN_WIDTH}px` }}
                       >
                         <thead className="text-slate-600">
                           <tr className="sticky top-0 z-30 bg-slate-50 text-[10px] font-bold uppercase tracking-[0.12em]">
@@ -250,7 +276,16 @@ export default function BudgetConsolidationPage() {
                                 </th>
                               );
                             })}
-                            <th className="sticky right-0 z-40 min-w-[150px] border-b border-l-2 border-slate-300 bg-slate-100 px-3 py-3 text-right">Company Total</th>
+                            {COMPANY_TOTAL_COLUMNS.map((col, colIndex) => (
+                              <th
+                                key={col.key}
+                                className={`sticky z-40 border-b bg-slate-100 px-3 py-3 text-right ${colIndex === 0 ? "border-l-2 border-slate-300" : ""}`}
+                                style={{ right: (COMPANY_TOTAL_COLUMNS.length - 1 - colIndex) * COMPANY_COLUMN_WIDTH, minWidth: COMPANY_COLUMN_WIDTH }}
+                                title={col.hint}
+                              >
+                                {col.label}
+                              </th>
+                            ))}
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-100 bg-white">
@@ -276,9 +311,15 @@ export default function BudgetConsolidationPage() {
                                   </td>
                                 );
                               })}
-                              <td className="sticky right-0 z-10 min-w-[150px] border-l-2 border-slate-200 bg-slate-50/80 px-3 py-2 text-right font-semibold text-slate-900 group-hover:bg-slate-100">
-                                {money(group.companyGrossAmount)}
-                              </td>
+                              {COMPANY_TOTAL_COLUMNS.map((col, colIndex) => (
+                                <td
+                                  key={col.key}
+                                  className={`sticky z-10 bg-slate-50/80 px-3 py-2 text-right font-semibold text-slate-900 group-hover:bg-slate-100 ${colIndex === 0 ? "border-l-2 border-slate-200" : ""}`}
+                                  style={{ right: (COMPANY_TOTAL_COLUMNS.length - 1 - colIndex) * COMPANY_COLUMN_WIDTH, minWidth: COMPANY_COLUMN_WIDTH }}
+                                >
+                                  {money(col.value(group))}
+                                </td>
+                              ))}
                             </tr>
                           ))}
                         </tbody>

@@ -700,6 +700,8 @@ export const grnService = {
     // even for a trivial single-column, no-join query. limit/offset are
     // server-clamped numbers (Math.min/Math.max above), never raw user input,
     // so query()'s text protocol is safe here.
+    // Named per stage (not just the latest generic reviewed_by) so a history/timeline view can
+    // show who actually acted at Branch Head vs Finance Head, not just who touched it last.
     const [rows] = await db.query<RowDataPacket[]>(
       `SELECT g.*,
               bm.branch_name,
@@ -708,7 +710,9 @@ export const grnService = {
               h.budget_number,
               l.item_name AS budget_item_name,
               CONCAT(cb.first_name, ' ', cb.last_name) AS created_by_name,
-              CONCAT(rb.first_name, ' ', rb.last_name) AS reviewed_by_name
+              CONCAT(rb.first_name, ' ', rb.last_name) AS reviewed_by_name,
+              CONCAT(bhb.first_name, ' ', bhb.last_name) AS branch_head_reviewed_by_name,
+              CONCAT(fhb.first_name, ' ', fhb.last_name) AS finance_head_reviewed_by_name
          FROM grn_request g
          LEFT JOIN branch_master bm ON bm.id = g.branch_id
          LEFT JOIN process_master pm ON pm.id = g.process_id
@@ -717,6 +721,8 @@ export const grnService = {
          LEFT JOIN finance_budget_line l ON l.id = g.budget_line_id
          LEFT JOIN employees cb ON cb.user_id = g.created_by
          LEFT JOIN employees rb ON rb.user_id = g.reviewed_by
+         LEFT JOIN employees bhb ON bhb.user_id = g.branch_head_reviewed_by
+         LEFT JOIN employees fhb ON fhb.user_id = g.finance_head_reviewed_by
          ${where}
         ORDER BY g.created_at DESC
         LIMIT ? OFFSET ?`,

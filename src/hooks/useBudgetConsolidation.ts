@@ -11,6 +11,10 @@ export interface CompanyConsolidationBranchAmount {
   quantity: number;
   grossAmount: number;
   pnlCostAmount: number;
+  reservedAmount: number;
+  consumedAmount: number;
+  paidAmount: number;
+  bookedToPnlAmount: number;
 }
 
 export interface CompanyConsolidationGroup {
@@ -22,6 +26,10 @@ export interface CompanyConsolidationGroup {
   companyUnit: number;
   companyGrossAmount: number;
   companyPnlCostAmount: number;
+  companyReservedAmount: number;
+  companyConsumedAmount: number;
+  companyPaidAmount: number;
+  companyBookedToPnlAmount: number;
   branchCount: number;
   branches: CompanyConsolidationBranchAmount[];
 }
@@ -39,6 +47,11 @@ export interface BudgetConsolidationResponse {
   /** Branch Budget foundation (PR 13): per-branch Head/Sub-head Coverage completion, reusing
    *  budgetCoverageService.getCoverage() once per branch's budget — no new coverage logic. */
   readiness: BranchReadiness[];
+  /** True once this period's P&L has been signed off and locked (canonical-pnl.service.ts's
+   *  lock()). This rollup still reads live budget data either way — the flag only tells the
+   *  viewer whether the figures below can still move, since there is no frozen snapshot of
+   *  budget consolidation to fall back to yet. */
+  isPeriodLocked: boolean;
 }
 
 export function useBudgetConsolidation(period: string) {

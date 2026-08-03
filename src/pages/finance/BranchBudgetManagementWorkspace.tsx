@@ -20,7 +20,6 @@ import {
   Send,
   Settings2,
   ShieldCheck,
-  Sparkles,
   Trash2,
   TrendingUp,
   XCircle,
@@ -122,8 +121,40 @@ type BudgetCapabilities = {
 
 /** The only statuses in which the plan builder may be edited; every later status is read-only
  *  until a reviewer sends the budget back for revision. Mirrors the backend guard in
- *  branch-budget.service.ts saveDraft(). */
-const EDITABLE_BUDGET_STATUSES = ["draft", "revision_required"];
+ *  branch-budget.service.ts saveDraft() — 'submitted' is included because a branch admin
+ *  correcting a mistake before Branch Head has actually acted on it should not have to wait for
+ *  a reject/revision round trip first; saving pulls the budget back to 'draft' for
+ *  re-submission rather than rewriting the version Branch Head may already be reviewing. */
+const EDITABLE_BUDGET_STATUSES = ["draft", "revision_required", "submitted"];
+
+/** Per-status copy for the banner above the Plan Builder — shown for every non-draft status so
+ *  the branch admin always has a visible answer to "what state is this budget in right now,"
+ *  not just once it becomes read-only. */
+function budgetStatusBanner(status: string, budgetNumber: string | undefined) {
+  switch (status) {
+    case "submitted":
+      return {
+        tone: "border-blue-200 bg-blue-50 text-blue-900",
+        message: `${budgetNumber} is Submitted — pending Branch Head review. You can still edit it; `
+          + `saving will pull it back to Draft for re-submission.`,
+      };
+    case "revision_required":
+      return {
+        tone: "border-amber-200 bg-amber-50 text-amber-900",
+        message: `${budgetNumber} was sent back for revision. Editing and saving will resubmit it.`,
+      };
+    case "branch_head_approved":
+    case "finance_head_approved":
+    case "accounts_head_approved":
+    case "active":
+      return {
+        tone: "border-emerald-200 bg-emerald-50 text-emerald-900",
+        message: `${budgetNumber} is ${statusLabel(status)}. It is read-only until revision is requested.`,
+      };
+    default:
+      return null;
+  }
+}
 
 /** Whether a branch-common line spans the whole branch. An empty selection means "all", and so
  *  does an explicit selection naming every active cost centre — which is how a saved
@@ -391,6 +422,24 @@ export default function BranchBudgetManagementWorkspace() {
     });
     return map;
   }, [priorDetail.data]);
+  // Actual-vs-planned by Head/Sub-head: every line already carries its own reserved/consumed
+  // amount (populated as GRNs are branch-head/finance-head approved against it), just never
+  // grouped and surfaced above the single-line level anywhere in this workspace. Reuses
+  // detailQuery's already-fetched lines — no new endpoint.
+  const utilizationByHead = useMemo(() => {
+    const map = new Map<string, { head: string; subHead: string | null; planned: number; reserved: number; consumed: number; available: number }>();
+    (detailQuery.data?.lines ?? []).forEach((l) => {
+      const subHead = l.sub_head ?? null;
+      const key = `${l.head}|${subHead ?? ""}`;
+      const entry = map.get(key) ?? { head: l.head, subHead, planned: 0, reserved: 0, consumed: 0, available: 0 };
+      entry.planned += Number(l.gross_amount ?? 0);
+      entry.reserved += Number(l.reserved_amount ?? 0);
+      entry.consumed += Number(l.consumed_amount ?? 0);
+      entry.available += Number(l.available_gross_amount ?? 0);
+      map.set(key, entry);
+    });
+    return [...map.values()].sort((a, b) => a.head.localeCompare(b.head) || (a.subHead ?? "").localeCompare(b.subHead ?? ""));
+  }, [detailQuery.data]);
   const { coverageQuery, saveCoverage } = useBudgetCoverage(detailId);
   const { mastersQuery, saveHead, saveSubHead, deleteHead, deleteSubHead } =
     useFinanceExpenseMasters(Boolean(capabilities?.canManageExpenseMaster));
@@ -839,30 +888,38 @@ Reason:`
 
   return (
     <DashboardLayout>
-      <div className="min-h-screen bg-[radial-gradient(circle_at_top_right,_rgba(16,185,129,0.14),_transparent_26%),linear-gradient(180deg,_#f8fafc_0%,_#ffffff_44%,_#f5f7fb_100%)]">
-        <div className="mx-auto max-w-[1680px] space-y-6 px-4 py-6 sm:px-6 lg:px-8">
-          <section className="relative overflow-hidden rounded-[32px] border border-slate-800 bg-slate-950 text-white shadow-[0_28px_90px_rgba(15,23,42,0.25)]">
-            <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_right,_rgba(59,130,246,0.28),_transparent_34%),radial-gradient(circle_at_bottom_left,_rgba(16,185,129,0.20),_transparent_30%)]" />
-            <div className="relative grid gap-8 p-6 lg:grid-cols-[1.35fr_0.9fr] lg:p-8">
+      <div className="min-h-screen bg-slate-50">
+        <div className="border-b border-slate-200 bg-white">
+          <div className="mx-auto max-w-[1680px] px-4 py-4 sm:px-6 lg:px-8">
+            <div className="flex flex-wrap items-start justify-between gap-4">
               <div>
-                <div className="flex flex-wrap gap-2">
-                  <Badge className="border-emerald-400/30 bg-emerald-400/10 text-emerald-200 hover:bg-emerald-400/10"><ShieldCheck className="mr-1 h-3.5 w-3.5" />Controlled monthly planning</Badge>
-                  <Badge className="border-blue-400/30 bg-blue-400/10 text-blue-200 hover:bg-blue-400/10"><Sparkles className="mr-1 h-3.5 w-3.5" />100% catalogue review</Badge>
-                </div>
-                <h1 className="mt-5 max-w-4xl text-3xl font-black tracking-tight sm:text-4xl">Branch Budget Control Room</h1>
-                <p className="mt-3 max-w-3xl text-sm leading-6 text-slate-300">Create detailed tax-aware lines, classify every active Sub-head and control all downstream GRNs and P&L costs from one approved source.</p>
-                <div className="mt-6 flex flex-wrap gap-3">
-                  {capabilities?.canCreate && <><Button onClick={() => void save(false)} disabled={saveBudget.isPending || locked}><Save className="mr-2 h-4 w-4" />Save draft</Button><Button variant="outline" className="border-white/15 bg-white/5 text-white hover:bg-white/10" onClick={() => void save(true)} disabled={saveBudget.isPending || locked}><Send className="mr-2 h-4 w-4" />Submit to Branch Head</Button>{autoSaveStatus === "pending" && <span className="flex items-center gap-1 text-xs text-slate-300"><Loader2 className="h-3 w-3 animate-spin" />Auto-saving…</span>}{autoSaveStatus === "saved" && <span className="flex items-center gap-1 text-xs text-emerald-300"><CheckCircle2 className="h-3 w-3" />Saved</span>}</>}
-                  {/* The stage reviewer can correct the lines in place instead of bouncing the whole
-                      budget back. The budget does not move: they still have to Approve. */}
-                  {canReviewCurrent && <Button onClick={() => void saveReviewerEdit()} disabled={reviewerReviseBudget.isPending}><Save className="mr-2 h-4 w-4" />Save my corrections</Button>}
-                  <Button asChild variant="outline" className="border-white/15 bg-white/5 text-white hover:bg-white/10"><Link to="/finance/grn">Open Smart GRN</Link></Button>
-                </div>
+                <h1 className="text-lg font-bold text-slate-950">Branch Budget</h1>
+                <p className="mt-0.5 max-w-2xl text-xs text-slate-500">Tax-aware lines, Sub-head classification and the approved source for downstream GRNs and P&L costs.</p>
               </div>
-              <div className="grid grid-cols-2 gap-3"><Metric label="Without tax" value={money(totals.base)} /><Metric label="Tax" value={money(totals.tax)} tone="blue" /><Metric label="With tax" value={money(totals.gross)} tone="emerald" /><Metric label="P&L cost" value={money(totals.pnl)} tone="amber" /></div>
+              <div className="flex flex-wrap items-center gap-2">
+                {capabilities?.canCreate && (
+                  <>
+                    <Button size="sm" onClick={() => void save(false)} disabled={saveBudget.isPending || locked}><Save className="mr-1.5 h-3.5 w-3.5" />Save draft</Button>
+                    <Button size="sm" variant="outline" onClick={() => void save(true)} disabled={saveBudget.isPending || locked}><Send className="mr-1.5 h-3.5 w-3.5" />Submit to Branch Head</Button>
+                    {autoSaveStatus === "pending" && <span className="flex items-center gap-1 text-xs text-slate-500"><Loader2 className="h-3 w-3 animate-spin" />Auto-saving…</span>}
+                    {autoSaveStatus === "saved" && <span className="flex items-center gap-1 text-xs text-emerald-700"><CheckCircle2 className="h-3 w-3" />Saved</span>}
+                  </>
+                )}
+                {/* The stage reviewer can correct the lines in place instead of bouncing the whole
+                    budget back. The budget does not move: they still have to Approve. */}
+                {canReviewCurrent && <Button size="sm" onClick={() => void saveReviewerEdit()} disabled={reviewerReviseBudget.isPending}><Save className="mr-1.5 h-3.5 w-3.5" />Save my corrections</Button>}
+                <Button asChild size="sm" variant="outline"><Link to="/finance/grn">Open Smart GRN</Link></Button>
+              </div>
             </div>
-          </section>
-
+            <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
+              <Metric label="Without tax" value={money(totals.base)} />
+              <Metric label="Tax" value={money(totals.tax)} tone="blue" />
+              <Metric label="With tax" value={money(totals.gross)} tone="emerald" />
+              <Metric label="P&L cost" value={money(totals.pnl)} tone="amber" />
+            </div>
+          </div>
+        </div>
+        <div className="mx-auto max-w-[1680px] space-y-6 px-4 py-6 sm:px-6 lg:px-8">
           <Tabs value={tab} onValueChange={(value) => setTab(value as WorkspaceTab)} className="space-y-5">
             <TabsList className="h-auto w-full flex-wrap justify-start rounded-2xl border border-slate-200 bg-white p-1 shadow-sm">
               <TabsTrigger value="plan"><Layers3 className="mr-2 h-4 w-4" />Plan Builder</TabsTrigger>
@@ -885,7 +942,10 @@ Reason:`
                   selector, not a form to fill in, so it should not occupy a card's worth of height
                   above the grid that actually does the work. */}
               <Card className="rounded-2xl border-slate-200 shadow-sm"><CardContent className="flex flex-wrap items-end gap-3 p-3 [&_input]:h-9 [&_input]:min-h-0 [&_input]:py-1 [&_select]:h-9 [&_label]:text-xs [&_label]:text-slate-500"><div className="w-40 space-y-1"><Label>Period *</Label><Input type="month" value={period} onChange={(event) => { setPeriod(event.target.value); setSavedBudgetId(null); setLoadedDetailId(null); }} /></div><div className="w-56 space-y-1"><Label>{capabilities?.branchLocked ? "Assigned branch" : "Branch *"}</Label><select className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm disabled:bg-slate-100" value={branchId} disabled={Boolean(capabilities?.branchLocked)} onChange={(event) => { setBranchId(event.target.value); setSavedBudgetId(null); setLoadedDetailId(null); }}><option value="">Select branch</option>{branches.map((branch) => <option key={branch.id} value={branch.id}>{branch.branch_name ?? branch.name}</option>)}</select></div><div className="w-32 space-y-1"><Label>Financial year</Label><Input value={financialYear(period)} readOnly /></div></CardContent></Card>
-              {locked && <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">{currentBudget?.budget_number} is {statusLabel(currentBudget?.status ?? "locked")}. It is read-only until revision is requested.</div>}
+              {(() => {
+                const banner = budgetStatusBanner(currentBudget?.status ?? "", currentBudget?.budget_number);
+                return banner && <div className={`rounded-2xl border p-4 text-sm ${banner.tone}`}>{banner.message}</div>;
+              })()}
               {/* The table planner carries the drivers as its own pinned band, so showing this card
                   as well put the same seven editable rows on screen twice. */}
               {branchId && plannerMode === "cards" && (
@@ -1315,7 +1375,9 @@ Reason:`
               {canReviewCurrent && <p className="text-xs text-slate-500">Revision also needs a correction note against at least one head/sub-head — add those on the <span className="font-medium">Plan Builder</span> tab, where you can also correct the lines yourself and then approve.</p>}
               {Boolean(openCorrectionCount) && <div className="rounded-2xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900"><span className="font-semibold">{openCorrectionCount} open correction note(s)</span> against this budget. Each one is shown on its own budget line in the Plan Builder tab.</div>}
               {budgets.map((budget) => { const available = Number(budget.gross_budget_amount) - Number(budget.reserved_amount) - Number(budget.consumed_amount); return <div key={budget.id} className="grid gap-4 rounded-2xl border border-slate-200 p-4 xl:grid-cols-[1.2fr_1fr_1fr_auto]"><div><div className="flex gap-2"><p className="font-semibold">{budget.budget_number}</p><Badge variant="outline">{statusLabel(budget.status)}</Badge></div><p className="mt-1 text-xs text-slate-500">{budget.branch_name} · {budget.period_code} · Revision {budget.revision_no}</p></div><Metric label="Gross / P&L" value={`${money(Number(budget.gross_budget_amount))} / ${money(Number(budget.pnl_budget_amount))}`} /><Metric label="Reserved / Consumed / Available" value={`${money(Number(budget.reserved_amount))} / ${money(Number(budget.consumed_amount))} / ${money(available)}`} />{canReview(budget) && <div className="flex flex-wrap justify-end gap-2"><Button size="sm" onClick={() => void review(budget, "approve")}><CheckCircle2 className="mr-1 h-3.5 w-3.5" />Approve</Button><Button size="sm" variant="outline" onClick={() => void review(budget, "revision")}><Settings2 className="mr-1 h-3.5 w-3.5" />Revision</Button><Button size="sm" variant="destructive" onClick={() => void review(budget, "reject")}><XCircle className="mr-1 h-3.5 w-3.5" />Reject</Button></div>}
-                {capabilities?.roles?.includes("super_admin") && <div className="flex justify-end xl:col-span-4"><Button size="sm" variant="outline" className="border-rose-300 text-rose-700 hover:bg-rose-50" disabled={deleteBudget.isPending} onClick={() => void removeBudget(budget)}><Trash2 className="mr-1 h-3.5 w-3.5" />Delete / supersede (super admin)</Button></div>}</div>; })}{!budgets.length && <div className="py-12 text-center text-slate-500"><Building2 className="mx-auto mb-3 h-10 w-10" />No budget found.</div>}</CardContent></Card></TabsContent>
+                {capabilities?.roles?.includes("super_admin") && <div className="flex justify-end xl:col-span-4"><Button size="sm" variant="outline" className="border-rose-300 text-rose-700 hover:bg-rose-50" disabled={deleteBudget.isPending} onClick={() => void removeBudget(budget)}><Trash2 className="mr-1 h-3.5 w-3.5" />Delete / supersede (super admin)</Button></div>}</div>; })}{!budgets.length && <div className="py-12 text-center text-slate-500"><Building2 className="mx-auto mb-3 h-10 w-10" />No budget found.</div>}
+              <UtilizationBreakdown rows={utilizationByHead} loading={detailQuery.isLoading} />
+              </CardContent></Card></TabsContent>
 
             <TabsContent value="topups">
               {branchId ? (
@@ -1381,6 +1443,59 @@ function Field({ label, children, span = 1 }: { label: string; children: React.R
   return <div className={`space-y-2 ${spanClass}`}><Label>{label}</Label>{children}</div>;
 }
 
+/** Planned-vs-actual by Head/Sub-head for the budget currently loaded in this workspace — the
+ *  drilldown "Approval and utilization" only showed at the whole-budget level before this. */
+function UtilizationBreakdown({
+  rows,
+  loading,
+}: {
+  rows: { head: string; subHead: string | null; planned: number; reserved: number; consumed: number; available: number }[];
+  loading: boolean;
+}) {
+  if (loading) return null;
+  if (!rows.length) return null;
+  return (
+    <div className="xl:col-span-4">
+      <p className="mb-2 text-xs font-semibold uppercase tracking-[0.08em] text-slate-500">Utilization by Head / Sub-head</p>
+      <div className="overflow-x-auto rounded-xl border border-slate-200">
+        <table className="w-full min-w-[720px] text-xs">
+          <thead>
+            <tr className="border-b bg-slate-50">
+              <th className="h-8 px-3 text-left font-medium text-slate-500">Head</th>
+              <th className="h-8 px-3 text-left font-medium text-slate-500">Sub-head</th>
+              <th className="h-8 px-3 text-right font-medium text-slate-500">Planned</th>
+              <th className="h-8 px-3 text-right font-medium text-slate-500">Reserved</th>
+              <th className="h-8 px-3 text-right font-medium text-slate-500">Consumed</th>
+              <th className="h-8 px-3 text-right font-medium text-slate-500">Available</th>
+              <th className="h-8 px-3 text-right font-medium text-slate-500">Utilized</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y">
+            {rows.map((row) => {
+              const utilizedPct = row.planned > 0 ? Math.round((row.consumed / row.planned) * 100) : 0;
+              return (
+                <tr key={`${row.head}|${row.subHead ?? ""}`} className="hover:bg-slate-50/70">
+                  <td className="px-3 py-2 font-medium text-slate-800">{row.head}</td>
+                  <td className="px-3 py-2 text-slate-600">{row.subHead ?? "—"}</td>
+                  <td className="px-3 py-2 text-right text-slate-800">{money(row.planned)}</td>
+                  <td className="px-3 py-2 text-right text-amber-700">{money(row.reserved)}</td>
+                  <td className="px-3 py-2 text-right text-emerald-700">{money(row.consumed)}</td>
+                  <td className="px-3 py-2 text-right text-slate-800">{money(row.available)}</td>
+                  <td className="px-3 py-2 text-right">
+                    <Badge variant="outline" className={utilizedPct >= 100 ? "border-rose-200 bg-rose-50 text-rose-700" : utilizedPct >= 80 ? "border-amber-200 bg-amber-50 text-amber-700" : "border-slate-200 bg-slate-50 text-slate-600"}>
+                      {utilizedPct}%
+                    </Badge>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 const METER_READING_UNITS = ["kWh", "Unit", "KL", "Cu. M.", "Litre"];
 
 function MetersPanel({
@@ -1442,16 +1557,32 @@ function MetersPanel({
         </Card>
       )}
 
-      <Card className="rounded-3xl border-slate-200 shadow-sm">
+      <Card className="rounded-2xl border-slate-200 shadow-sm">
         <CardHeader className="border-b border-slate-100 bg-slate-50/70"><CardTitle className="text-base">Meters and readings — {period}</CardTitle><p className="mt-1 text-xs text-slate-500">Enter opening/closing readings per meter for this period. An Estimated reading requires a method and reason; a later Actual reading is reconciled against it automatically, not overwritten.</p></CardHeader>
-        <CardContent className="space-y-3 p-5">
-          {metersQuery.isLoading ? <Loader2 className="h-5 w-5 animate-spin" /> : !meters.length ? (
-            <p className="text-sm text-slate-500">No meters registered for this branch yet.</p>
+        <CardContent className="p-0">
+          {metersQuery.isLoading ? (
+            <div className="p-5"><Loader2 className="h-5 w-5 animate-spin" /></div>
+          ) : !meters.length ? (
+            <p className="p-5 text-sm text-slate-500">No meters registered for this branch yet.</p>
           ) : (
-            <div className="space-y-3">
-              {meters.map((meter) => (
-                <MeterReadingRow key={meter.id} meter={meter} costCentres={costCentres} period={period} canEdit={canEdit} />
-              ))}
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[760px] text-sm">
+                <thead>
+                  <tr className="border-b border-slate-200 text-left text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                    <th className="px-4 py-2">Meter</th>
+                    <th className="px-4 py-2">Cost centre</th>
+                    <th className="px-4 py-2 text-right">Rate / unit</th>
+                    <th className="px-4 py-2">Actual</th>
+                    <th className="px-4 py-2">Estimated</th>
+                    <th className="px-4 py-2" />
+                  </tr>
+                </thead>
+                <tbody>
+                  {meters.map((meter) => (
+                    <MeterReadingRow key={meter.id} meter={meter} costCentres={costCentres} period={period} canEdit={canEdit} />
+                  ))}
+                </tbody>
+              </table>
             </div>
           )}
         </CardContent>
@@ -1518,51 +1649,59 @@ function MeterReadingRow({
     }
   }
 
+  // Table columns: Meter, Cost centre, Rate/unit, Actual, Estimated, Action = 6. The edit form
+  // below, when open, must span all 6 or it grows the table by a phantom column — see the
+  // colSpan={4}-instead-of-{2} bug fixed earlier in BranchBudgetPlannerGrid for exactly this class
+  // of mistake.
+  const READING_COLUMN_COUNT = 6;
   return (
-    <div className="overflow-hidden rounded-2xl border border-slate-200">
-      <div className="flex flex-wrap items-center justify-between gap-3 bg-slate-50 px-4 py-3">
-        <div>
-          <p className="text-sm font-bold">{meter.meterName} <span className="font-normal text-slate-500">({meter.meterCode})</span></p>
-          <p className="text-[10px] text-slate-500">{costCentreName} · {meter.readingUnit} · Rate {money(meter.fixedRate)}/unit</p>
-        </div>
-        {canEdit && !editing && <Button size="sm" variant="outline" onClick={() => startEditing(actual ?? estimated)}>Enter reading</Button>}
-      </div>
-      <div className="grid gap-3 p-4 sm:grid-cols-2">
-        <div className="rounded-xl border border-slate-100 p-3">
-          <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Actual</p>
-          {actual ? (
-            <p className="mt-1 text-sm text-slate-700">{actual.openingReading} → {actual.closingReading} = {actual.consumption} {meter.readingUnit} · {money(actual.amount)}</p>
-          ) : (
-            <p className="mt-1 text-sm text-slate-400">Not recorded yet</p>
-          )}
-        </div>
-        <div className="rounded-xl border border-slate-100 p-3">
-          <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Estimated</p>
+    <>
+      <tr className="border-b border-slate-100 last:border-0 hover:bg-slate-50">
+        <td className="px-4 py-2.5 align-top">
+          <p className="font-medium text-slate-900">{meter.meterName}</p>
+          <p className="text-[11px] text-slate-500">{meter.meterCode}</p>
+        </td>
+        <td className="px-4 py-2.5 align-top text-slate-700">{costCentreName}</td>
+        <td className="px-4 py-2.5 align-top text-right text-slate-700">{money(meter.fixedRate)}/{meter.readingUnit}</td>
+        <td className="px-4 py-2.5 align-top text-slate-700">
+          {actual
+            ? <>{actual.openingReading} → {actual.closingReading} <span className="text-slate-400">·</span> {money(actual.amount)}</>
+            : <span className="text-slate-400">Not recorded</span>}
+        </td>
+        <td className="px-4 py-2.5 align-top text-slate-700">
           {estimated ? (
-            <p className="mt-1 text-sm text-slate-700">{estimated.openingReading} → {estimated.closingReading} = {estimated.consumption} {meter.readingUnit} · {money(estimated.amount)} {estimated.reconciliationStatus === "reconciled" && <Badge variant="outline" className="ml-1 text-[10px]">Reconciled</Badge>}</p>
-          ) : (
-            <p className="mt-1 text-sm text-slate-400">Not recorded yet</p>
-          )}
-        </div>
-      </div>
-      {editing && (
-        <div className="grid gap-3 border-t border-slate-100 p-4 md:grid-cols-2 xl:grid-cols-5">
-          <Field label="Reading type *"><select className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm" value={draft.readingType} onChange={(event) => setDraft((current) => ({ ...current, readingType: event.target.value as "actual" | "estimated" }))}><option value="actual">Actual</option><option value="estimated">Estimated</option></select></Field>
-          <Field label="Opening reading *"><Input type="number" min="0" step="0.0001" value={draft.openingReading} onChange={(event) => setDraft((current) => ({ ...current, openingReading: Number(event.target.value) }))} /></Field>
-          <Field label="Closing reading *"><Input type="number" min="0" step="0.0001" value={draft.closingReading} onChange={(event) => setDraft((current) => ({ ...current, closingReading: Number(event.target.value) }))} /></Field>
-          {draft.readingType === "estimated" && (
             <>
-              <Field label="Estimation method *"><Input value={draft.estimationMethod} onChange={(event) => setDraft((current) => ({ ...current, estimationMethod: event.target.value }))} placeholder="e.g. Prior month average" /></Field>
-              <Field label="Estimation reason *"><Input value={draft.estimationReason} onChange={(event) => setDraft((current) => ({ ...current, estimationReason: event.target.value }))} placeholder="e.g. Meter faulty" /></Field>
+              {estimated.openingReading} → {estimated.closingReading} <span className="text-slate-400">·</span> {money(estimated.amount)}
+              {estimated.reconciliationStatus === "reconciled" && <Badge variant="outline" className="ml-1.5 text-[10px]">Reconciled</Badge>}
             </>
-          )}
-          <div className="flex items-end gap-2">
-            <Button size="sm" disabled={saveReading.isPending} onClick={() => void submit()}>{saveReading.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}Save</Button>
-            <Button size="sm" variant="ghost" onClick={() => setEditing(false)}>Cancel</Button>
-          </div>
-        </div>
+          ) : <span className="text-slate-400">Not recorded</span>}
+        </td>
+        <td className="px-4 py-2.5 align-top text-right">
+          {canEdit && !editing && <Button size="sm" variant="outline" onClick={() => startEditing(actual ?? estimated)}>Enter reading</Button>}
+        </td>
+      </tr>
+      {editing && (
+        <tr className="border-b border-slate-100 bg-slate-50/60 last:border-0">
+          <td colSpan={READING_COLUMN_COUNT} className="p-0">
+            <div className="grid gap-3 p-4 md:grid-cols-2 xl:grid-cols-5">
+              <Field label="Reading type *"><select className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm" value={draft.readingType} onChange={(event) => setDraft((current) => ({ ...current, readingType: event.target.value as "actual" | "estimated" }))}><option value="actual">Actual</option><option value="estimated">Estimated</option></select></Field>
+              <Field label="Opening reading *"><Input type="number" min="0" step="0.0001" value={draft.openingReading} onChange={(event) => setDraft((current) => ({ ...current, openingReading: Number(event.target.value) }))} /></Field>
+              <Field label="Closing reading *"><Input type="number" min="0" step="0.0001" value={draft.closingReading} onChange={(event) => setDraft((current) => ({ ...current, closingReading: Number(event.target.value) }))} /></Field>
+              {draft.readingType === "estimated" && (
+                <>
+                  <Field label="Estimation method *"><Input value={draft.estimationMethod} onChange={(event) => setDraft((current) => ({ ...current, estimationMethod: event.target.value }))} placeholder="e.g. Prior month average" /></Field>
+                  <Field label="Estimation reason *"><Input value={draft.estimationReason} onChange={(event) => setDraft((current) => ({ ...current, estimationReason: event.target.value }))} placeholder="e.g. Meter faulty" /></Field>
+                </>
+              )}
+              <div className="flex items-end gap-2">
+                <Button size="sm" disabled={saveReading.isPending} onClick={() => void submit()}>{saveReading.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}Save</Button>
+                <Button size="sm" variant="ghost" onClick={() => setEditing(false)}>Cancel</Button>
+              </div>
+            </div>
+          </td>
+        </tr>
       )}
-    </div>
+    </>
   );
 }
 
@@ -1929,66 +2068,89 @@ function ExpenseMasterPanel({
                 </div>
               )}
 
-              <div className="mt-3 grid gap-2 md:grid-cols-2">
-                {head.subHeads.map((item) => (
-                  editingSubHead?.id === item.id ? (
-                    <div key={item.id} className="md:col-span-2">
-                      <SubHeadForm
-                        draft={editingSubHead.draft}
-                        saving={busy}
-                        submitLabel="Save sub-head"
-                        onChange={(draft) => setEditingSubHead({ ...editingSubHead, draft })}
-                        onCancel={() => setEditingSubHead(null)}
-                        onSubmit={async () => {
-                          await onSaveSubHead({
-                            id: item.id,
-                            headId: head.id,
-                            ...editingSubHead.draft,
-                            pnlTreatment: item.pnlTreatment,
-                            displayOrder: item.displayOrder,
-                            activeStatus: item.activeStatus,
-                          });
-                          setEditingSubHead(null);
-                        }}
-                      />
-                    </div>
-                  ) : (
-                    <div key={item.id} className={`flex items-start justify-between gap-2 rounded-xl p-3 ${item.activeStatus ? "bg-slate-50" : "bg-amber-50"}`}>
-                      <div className="min-w-0">
-                        <p className="truncate text-sm font-medium">{item.subHeadName}{!item.activeStatus && <span className="ml-2 text-[10px] uppercase text-amber-700">inactive</span>}</p>
-                        <p className="mt-1 text-xs text-slate-500">{item.defaultUnit} · {item.defaultTaxTreatment.replaceAll("_", " ")} · {item.defaultGstRate}%</p>
-                      </div>
-                      {canEdit && (
-                        <div className="flex shrink-0 gap-1">
-                          <Button size="sm" variant="ghost" className="h-7 px-2" aria-label={`Edit ${item.subHeadName}`}
-                            onClick={() => { setEditingSubHead({ id: item.id, headId: head.id, draft: draftFromSubHead(item) }); setAddingUnderHead(null); setEditingHead(null); }}>
-                            <Settings2 className="h-3.5 w-3.5" />
-                          </Button>
-                          {!item.activeStatus && (
-                            <Button size="sm" variant="ghost" className="h-7 px-2 text-[11px]" disabled={busy}
-                              aria-label={`Restore ${item.subHeadName}`}
-                              onClick={() => void onSaveSubHead({
-                                id: item.id,
-                                headId: head.id,
-                                ...draftFromSubHead(item),
-                                pnlTreatment: item.pnlTreatment,
-                                displayOrder: item.displayOrder,
-                                activeStatus: true,
-                              })}>
-                              Restore
-                            </Button>
-                          )}
-                          <Button size="sm" variant="ghost" className="h-7 px-2 text-rose-700 hover:bg-rose-50" disabled={busy}
-                            aria-label={`Delete ${item.subHeadName}`}
-                            onClick={() => void onDeleteSubHead(head, item)}>
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </Button>
-                        </div>
-                      )}
-                    </div>
-                  )
-                ))}
-              </div>
+              {head.subHeads.length > 0 && (
+                <div className="mt-3 overflow-hidden rounded-xl border border-slate-100">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-slate-100 bg-slate-50/70 text-left text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                        <th className="px-3 py-1.5">Sub-head</th>
+                        <th className="px-3 py-1.5">Unit</th>
+                        <th className="px-3 py-1.5">Tax</th>
+                        <th className="px-3 py-1.5 text-right">GST%</th>
+                        <th className="px-3 py-1.5" />
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {head.subHeads.map((item) => (
+                        editingSubHead?.id === item.id ? (
+                          <tr key={item.id} className="border-b border-slate-100 last:border-0">
+                            {/* SUB_HEAD_COLUMN_COUNT = 5, matching the header above. */}
+                            <td colSpan={5} className="p-3">
+                              <SubHeadForm
+                                draft={editingSubHead.draft}
+                                saving={busy}
+                                submitLabel="Save sub-head"
+                                onChange={(draft) => setEditingSubHead({ ...editingSubHead, draft })}
+                                onCancel={() => setEditingSubHead(null)}
+                                onSubmit={async () => {
+                                  await onSaveSubHead({
+                                    id: item.id,
+                                    headId: head.id,
+                                    ...editingSubHead.draft,
+                                    pnlTreatment: item.pnlTreatment,
+                                    displayOrder: item.displayOrder,
+                                    activeStatus: item.activeStatus,
+                                  });
+                                  setEditingSubHead(null);
+                                }}
+                              />
+                            </td>
+                          </tr>
+                        ) : (
+                          <tr key={item.id} className={`border-b border-slate-100 last:border-0 ${item.activeStatus ? "" : "bg-amber-50/60"}`}>
+                            <td className="px-3 py-2 font-medium text-slate-800">
+                              {item.subHeadName}
+                              {!item.activeStatus && <span className="ml-2 text-[10px] uppercase text-amber-700">inactive</span>}
+                            </td>
+                            <td className="px-3 py-2 text-slate-600">{item.defaultUnit}</td>
+                            <td className="px-3 py-2 text-slate-600">{item.defaultTaxTreatment.replaceAll("_", " ")}</td>
+                            <td className="px-3 py-2 text-right text-slate-600">{item.defaultGstRate}%</td>
+                            <td className="px-3 py-2">
+                              {canEdit && (
+                                <div className="flex justify-end gap-1">
+                                  <Button size="sm" variant="ghost" className="h-7 px-2" aria-label={`Edit ${item.subHeadName}`}
+                                    onClick={() => { setEditingSubHead({ id: item.id, headId: head.id, draft: draftFromSubHead(item) }); setAddingUnderHead(null); setEditingHead(null); }}>
+                                    <Settings2 className="h-3.5 w-3.5" />
+                                  </Button>
+                                  {!item.activeStatus && (
+                                    <Button size="sm" variant="ghost" className="h-7 px-2 text-[11px]" disabled={busy}
+                                      aria-label={`Restore ${item.subHeadName}`}
+                                      onClick={() => void onSaveSubHead({
+                                        id: item.id,
+                                        headId: head.id,
+                                        ...draftFromSubHead(item),
+                                        pnlTreatment: item.pnlTreatment,
+                                        displayOrder: item.displayOrder,
+                                        activeStatus: true,
+                                      })}>
+                                      Restore
+                                    </Button>
+                                  )}
+                                  <Button size="sm" variant="ghost" className="h-7 px-2 text-rose-700 hover:bg-rose-50" disabled={busy}
+                                    aria-label={`Delete ${item.subHeadName}`}
+                                    onClick={() => void onDeleteSubHead(head, item)}>
+                                    <Trash2 className="h-3.5 w-3.5" />
+                                  </Button>
+                                </div>
+                              )}
+                            </td>
+                          </tr>
+                        )
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </div>
           ))}
         </CardContent>

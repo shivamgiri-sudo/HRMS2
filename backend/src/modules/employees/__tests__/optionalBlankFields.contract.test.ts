@@ -20,12 +20,24 @@ const SRC = path.resolve(
 const src = fs.readFileSync(SRC, "utf8");
 
 describe("optional unsourced fields do not block a document", () => {
-  it("surveillance_hr_name is still defined optional and unsourced", () => {
-    // If this changes, the rest of this file is describing a field that no
-    // longer exists in that shape.
-    expect(src).toMatch(
-      /field_key: "surveillance_hr_name"[^}]*source_path: null, required: false/,
-    );
+  it("surveillance_hr_name is optional, and cannot block a document", () => {
+    // This field used to be `source_path: null, required: false`, and this
+    // canary caught the moment that changed. It is now sourced from
+    // payroll_hr.name so it stops printing blank on every NDA — but a branch
+    // with no configured signatory still resolves to nothing, so it must
+    // remain non-blocking or the document sticks at hr_fill_required forever.
+    // With no branch configured yet, that would have been every document.
+    expect(src).toMatch(/field_key: "surveillance_hr_name"[^}]*required: false/);
+    expect(src).toMatch(/OPTIONAL_SOURCED_FIELD_KEYS = \[[^\]]*"surveillance_hr_name"/);
+  });
+
+  it("the optional-but-sourced allowance stays narrow", () => {
+    // It exists for fields whose source can legitimately be empty. Widening it
+    // to the whole optional set would stop genuinely missing statutory data
+    // from blocking, which is what the derived rule below is protecting.
+    const list = src.match(/OPTIONAL_SOURCED_FIELD_KEYS = \[([^\]]*)\]/)?.[1] ?? "";
+    const entries = list.split(",").map((s) => s.trim()).filter(Boolean);
+    expect(entries.length).toBeLessThanOrEqual(3);
   });
 
   it("the non-blocking set is derived from the definitions, not hardcoded", () => {

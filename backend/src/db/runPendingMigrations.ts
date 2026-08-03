@@ -450,10 +450,20 @@ const MIGRATION_MANIFEST: string[] = [
   "1056_branch_head_approval_candidate_id.sql", // 138 and 141 each declare a column the other omits; production (141) has no candidate_id
   "1058_process_quality_target_state_machine.sql", // draft->simulated->pending->approved->active lifecycle; DB enforces the approver is not the author and that one open-ended active exists per process
   "1059_branch_notification_recipient.sql", // recipients were inferred from three tables with no stated intent; this is the intent
+  "1060_salary_verification.sql",            // salary_verification_flag + salary_employee_verification + payroll_branch_readiness verification columns (applied manually before runner registration)
   "1060_netlogin_half_day_floor_config.sql", // the net-login half-day floor was hardcoded at 240 while the biometric one was configurable; they agreed only by coincidence
   "1061_finance_budget_topup_request.sql", // GRN overspend was already hard-blocked, but there was no formal way to ask for more against a specific budget line short of re-running the whole budget through approval again; this is that request entity
   "1062_grn_consumption_reversal.sql", // once a GRN passed finance_head_approved, budget-consumption.consume() had moved its amount into consumed with no way back; adds the 'consumption_reversed' status the reversal action sets
   "1063_auto_roster_schedule_config.sql", // wfm_process_planning_rule gets auto_schedule_enabled + auto_schedule_day_of_week so the scheduler worker knows which processes to generate for, and on which day
+  // 1064 is deliberately NOT listed. It failed on invalid syntax (ADD COLUMN IF NOT EXISTS /
+  // CREATE INDEX IF NOT EXISTS, unsupported by this server's MySQL) and the runner had already
+  // written its filename into schema_migrations, so every retry hit a duplicate primary key and
+  // STOP_ON_FIRST_FAILURE then blocked every migration after it — same failure mode as 436.
+  // The file is kept for history and superseded by 1068, which carries the corrected statements.
+  "1065_billability_seat_cost.sql", // is_billable is 1 on all 58,626 rows and billable_status contradicts it on nearly every one; billability is really per (process x designation), and seat cost — what the client pays per person — was never modelled at all
+  "1066_billability_page_access.sql", // without a grant the screen is invisible to everyone but super_admin, which is exactly how FINANCE_COST_CENTRES ended up unreachable
+  "1067_missing_page_catalog_entries.sql", // MCNMEET, MODULE_LAUNCHER, PAYROLL_SALARY_VERIFICATION were referenced in routes/nav/rbacPageMatrix.ts but had no page_catalog row, failing page-access-deployment.contract.test.ts
+  "1068_celebration_post_type.sql", // supersedes 1064 with the same additive columns/index, written with the guarded INFORMATION_SCHEMA + PREPARE/EXECUTE pattern this server's MySQL actually accepts
   ];
 
 export type MigrationHealth = {

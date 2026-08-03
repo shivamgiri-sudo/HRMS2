@@ -35,13 +35,18 @@ export interface CreateCompanyPostMediaDTO {
   sort_order: number;
 }
 
+export type CompanyPostType = 'user' | 'birthday' | 'anniversary';
+
 export interface CompanyPostDTO {
   id: string;
   author_user_id: string;
-  author_employee_id: string;
+  author_employee_id: string | null;
   author_name: string | null;
   author_code: string | null;
   content_text: string | null;
+  post_type: CompanyPostType;
+  is_system_post: boolean;
+  celebrated_employee_id: string | null;
   status: CompanyPostStatus;
   moderation_state: CompanyPostModerationState;
   moderation_score: number | null;
@@ -74,10 +79,10 @@ export interface CreateCompanyPostDTO {
 
 export interface CompanyPostFeedItemDTO extends Pick<
   CompanyPostDTO,
-  'id' | 'content_text' | 'status' | 'created_at' | 'updated_at'
+  'id' | 'content_text' | 'status' | 'post_type' | 'is_system_post' | 'created_at' | 'updated_at'
 > {
   author_user_id: string;
-  author_employee_id: string;
+  author_employee_id: string | null;
   author_name: string | null;
   author_code: string | null;
   media: CompanyPostMediaDTO[];

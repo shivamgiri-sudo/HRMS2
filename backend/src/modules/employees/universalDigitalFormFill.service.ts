@@ -6,12 +6,13 @@ import pdfLib from "pdf-lib";
 const { PDFDocument, StandardFonts } = pdfLib;
 import PizZip from "pizzip";
 import { epfNominationFieldMaps } from "./epfNominationForm.js";
+import { getPayrollHrSignatoryForEmployee, mergeBranchSignatureIntoSeal } from "./branchPayrollHrSignatory.service.js";
 import { isOperationsExecutiveByRegex } from "../wfm/attendance-engine.service.js";
 import type { RowDataPacket } from "mysql2";
 
 import { db } from "../../db/mysql.js";
 import { fillAcroFormPdf, validateAcroFormTemplate } from "./pdfAcroFormFill.service.js";
-import { applyCompanySeal } from "./companySeal.service.js";
+import { applyCompanySeal, loadCompanySeal } from "./companySeal.service.js";
 import { resolveTemplateFile } from "./joiningDocumentTemplatePath.js";
 import { hasStructuredPdf, renderJoiningDocumentPdf } from "./joiningDocumentPdf.service.js";
 import { resolveEmployeeLetterhead } from "../org/branchAddress.service.js";
@@ -162,7 +163,9 @@ const COMMON_TEMPLATE_FIELDS: DefaultFieldMap[] = [
   { field_key: "it_employee_name", field_label: "IT Compliance - Employee Name", source_path: "employee.full_name", required: true, aliases: ["it_employee_name"] },
   { field_key: "it_signature_date", field_label: "IT Compliance - Signature Date", source_path: "system.current_date", required: true, field_type: "date", aliases: ["it_signature_date"] },
   { field_key: "surveillance_candidate_name", field_label: "Surveillance/Anti-Bribery - Candidate Name", source_path: "employee.full_name", required: true, aliases: ["surveillance_candidate_name"] },
-  { field_key: "surveillance_hr_name", field_label: "Surveillance/Anti-Bribery - HR Name", source_path: null, required: false, aliases: ["surveillance_hr_name"] },
+  // Was source_path: null, so this printed blank on every NDA ever issued. It
+  // is the Payroll HR of the branch the candidate joins, configured per branch.
+  { field_key: "surveillance_hr_name", field_label: "Surveillance/Anti-Bribery - HR Name", source_path: "payroll_hr.name", required: false, aliases: ["surveillance_hr_name"] },
   { field_key: "surveillance_signature_date", field_label: "Surveillance/Anti-Bribery - Signature Date", source_path: "system.current_date", required: true, field_type: "date", aliases: ["surveillance_signature_date"] },
   { field_key: "bams_employee_name", field_label: "BAMS Declaration - Employee Name", source_path: "employee.full_name", required: true, aliases: ["bams_employee_name"] },
   { field_key: "bams_employee_code", field_label: "BAMS Declaration - Employee Code", source_path: "employee.employee_code", required: false, aliases: ["bams_employee_code"] },
@@ -177,6 +180,11 @@ const COMMON_TEMPLATE_FIELDS: DefaultFieldMap[] = [
   // Resolves the agreement's "s/o | d/o" from gender. Not required: an unknown
   // gender legitimately yields both forms rather than a blank.
   { field_key: "relation_prefix", field_label: "Relation (s/o or d/o)", source_path: "employee.relation_prefix", required: false, aliases: ["relation_prefix"] },
+  // The employer block on the employment contract. Same person who signs the
+  // EPF forms — the Payroll HR of the branch the candidate joins. Optional:
+  // blank until a branch is configured, and must never block the document.
+  { field_key: "payroll_hr_name", field_label: "Payroll HR Name (employer signatory)", source_path: "payroll_hr.name", required: false, aliases: ["payroll_hr_name"] },
+  { field_key: "payroll_hr_designation", field_label: "Payroll HR Designation", source_path: "payroll_hr.designation", required: false, aliases: ["payroll_hr_designation"] },
   // The agreement's appendix states the remuneration, so figure and words are
   // both required; a contract that says one and not the other is defective.
   { field_key: "monthly_remuneration", field_label: "Monthly Remuneration", source_path: "salary.monthly_gross", required: false, aliases: ["monthly_remuneration", "remuneration"] },
@@ -216,7 +224,7 @@ const DEFAULT_FIELDS_BY_DOCUMENT: Record<string, string[]> = {
   PI_PROCESSING_CONSENT: ["employee_name", "employee_code", "mobile", "email", "current_date"],
   ZERO_TOLERANCE_ACK: ["employee_name", "employee_code", "date_of_joining", "branch", "current_date"],
   EPF_DECLARATION: ["employee_name", "father_name", "date_of_birth", "date_of_joining", "mobile", "email", "pan_masked", "aadhaar_masked", "uan", "current_date"],
-  EMPLOYMENT_CONTRACT: ["employee_name", "employee_code", "date_of_joining", "designation", "department", "branch", "process", "current_date", "father_name", "relation_prefix", "employee_address", "monthly_remuneration", "monthly_remuneration_words"],
+  EMPLOYMENT_CONTRACT: ["employee_name", "employee_code", "date_of_joining", "designation", "department", "branch", "process", "current_date", "father_name", "relation_prefix", "employee_address", "monthly_remuneration", "monthly_remuneration_words", "payroll_hr_name", "payroll_hr_designation"],
 };
 
 function normalizeToken(value: string) {
@@ -859,8 +867,18 @@ export async function buildSourceContext(employeeId: string, candidateId?: strin
     ? null
     : grossRaw;
 
+  // The Payroll HR who signs this candidate's joining documents. Resolved from
+  // the employee's branch; null where no signatory is configured yet, or where
+  // sql/1061 has not been applied, in which case the name prints blank exactly
+  // as it always has.
+  const payrollHr = await getPayrollHrSignatoryForEmployee(employeeId).catch(() => null);
+
   return {
     nominee,
+    payroll_hr: {
+      name: payrollHr?.hrName ?? null,
+      designation: payrollHr?.hrDesignation ?? null,
+    },
     employee: {
       full_name: employee?.full_name ?? null,
       employee_code: employee?.employee_code ?? null,
@@ -1122,9 +1140,28 @@ async function upsertFieldValue(params: {
  * HR can still enter a value by hand on the review screen; that sets
  * value_source = 'HR_ENTERED' and is unaffected.
  */
-const NON_BLOCKING_FIELD_KEYS: string[] = COMMON_TEMPLATE_FIELDS
-  .filter((f) => f.required === false && !f.source_path)
-  .map((f) => String(f.field_key));
+/**
+ * Optional fields whose source can legitimately resolve to nothing.
+ *
+ * The derivation below covers optional fields with no source at all. It does
+ * not cover a field that HAS a source which is simply empty for this employee —
+ * and surveillance_hr_name became exactly that when it was pointed at
+ * payroll_hr.name: a branch with no configured signatory yields null, the field
+ * stays at hr_fill_required, and the document can never complete. Since no
+ * branch is configured yet, that would have been every document.
+ *
+ * Listed explicitly rather than loosening the rule to `required === false`,
+ * which would also stop genuinely missing statutory data (EPF nominees) from
+ * blocking.
+ */
+const OPTIONAL_SOURCED_FIELD_KEYS = ["surveillance_hr_name", "payroll_hr_name", "payroll_hr_designation"];
+
+const NON_BLOCKING_FIELD_KEYS: string[] = [
+  ...COMMON_TEMPLATE_FIELDS
+    .filter((f) => f.required === false && !f.source_path)
+    .map((f) => String(f.field_key)),
+  ...OPTIONAL_SOURCED_FIELD_KEYS,
+];
 
 async function persistChecklistFillStatus(checklistId: string) {
   // `NOT IN ()` is a syntax error, so use a sentinel that never matches a key.
@@ -1847,8 +1884,23 @@ export async function generateChecklistDraft(
         // Both EPF forms carry an employer block the form itself requires to be
         // sealed. Stamping it here means HR no longer prints, signs, scans and
         // re-uploads every statutory form.
+        //
+        // Signed by the Payroll HR of the branch this joiner belongs to, rather
+        // than one company-wide signature for everyone. Where no branch
+        // signatory is configured — which is every branch until they are set up
+        // — this resolves to exactly the company seal used before, so the
+        // documents are unchanged.
+        const branchSignatory = await getPayrollHrSignatoryForEmployee(
+          String(checklist.employee_id), { withImage: true },
+        ).catch(() => null);
         content = Buffer.from(
-          await applyCompanySeal(content, String(checklist.document_code ?? "")),
+          await applyCompanySeal(
+            content,
+            String(checklist.document_code ?? ""),
+            branchSignatory
+              ? mergeBranchSignatureIntoSeal(await loadCompanySeal(), branchSignatory)
+              : undefined,
+          ),
         );
       } else if (fillMode === "fillable_pdf") {
         content = await renderFillablePdf(templatePath, fieldMaps, values);

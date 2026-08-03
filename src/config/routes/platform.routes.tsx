@@ -25,6 +25,7 @@ const NativeLetterPreview           = lazy(() => import("@/pages/NativeLetterPre
 const NativeCompanySigningCertificate = lazy(() => import("@/pages/NativeCompanySigningCertificate"));
 const NativeProvisioningRecipients   = lazy(() => import("@/pages/NativeProvisioningRecipients"));
 const NativeFraudAlertReview         = lazy(() => import("@/pages/NativeFraudAlertReview"));
+const NativeBranchPayrollHrSignatory = lazy(() => import("@/pages/NativeBranchPayrollHrSignatory"));
 const NativeDocumentVerification    = lazy(() => import("@/pages/NativeDocumentVerification"));
 const NativeOrgMasters              = lazy(() => import("@/pages/NativeOrgMasters"));
 const NativeLocationPolicyMasters   = lazy(() => import("@/pages/NativeLocationPolicyMasters"));
@@ -136,6 +137,10 @@ export const platformRouteElements = (
           lets an open alert be cleared — without it, the employee-creation gate
           would strand a candidate with no route out. */}
       <Route path="/settings/fraud-alerts" element={<ProtectedRoute><NativeFraudAlertReview /></ProtectedRoute>} />
+      {/* Per-branch Payroll HR signatory. Not page-gated for the same reason as
+          its neighbours: a Gate on a pageCode missing from page_catalog locks out
+          every role. The backend enforces super_admin. */}
+      <Route path="/settings/branch-payroll-hr" element={<ProtectedRoute><NativeBranchPayrollHrSignatory /></ProtectedRoute>} />
       {/* /employee/joining-documents/esign/:token and /employee/epf-compliance/review/:token are in public.routes */}
 
       {/* Helpdesk / Support */}

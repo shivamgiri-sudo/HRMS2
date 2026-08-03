@@ -22,6 +22,7 @@ import { savedViewService } from "./saved-view.service.js";
 import { gradeEngineService } from "./grade-engine.service.js";
 import { checkBudgetExceptions, checkSharingMethodReadiness } from "./budget-readiness.service.js";
 import { budgetCoverageService } from "./budget-coverage.service.js";
+import { isPeriodLocked } from "./finance-period-lock.js";
 import { pnlStatementService, type StatementViewBy } from "./pnl-statement.service.js";
 import { refreshRunningSalarySnapshot } from "./pnl-running-salary.service.js";
 import { processLobRouter } from "./process-lob.routes.js";
@@ -121,9 +122,10 @@ router.get(
   h(async (req, res) => {
     const periodCode = String(req.query.period ?? "");
     if (!/^\d{4}-\d{2}$/.test(periodCode)) throw new Error("A valid period (YYYY-MM) is required");
-    const [branchSummaries, headBreakdown] = await Promise.all([
+    const [branchSummaries, headBreakdown, periodLocked] = await Promise.all([
       branchBudgetService.list({ period: periodCode }),
       getCompanyBudgetConsolidation(periodCode),
+      isPeriodLocked(periodCode),
     ]);
     const readiness = await Promise.all(
       (branchSummaries as any[]).map(async (summary) => {
@@ -136,7 +138,13 @@ router.get(
         };
       })
     );
-    res.json({ success: true, data: { branchSummaries, headBreakdown, readiness } });
+    // Same transparency-flag pattern as bpo-pnl.routes.ts's read endpoints: this rollup still
+    // recomputes live from finance_budget_header/finance_budget_line even once the period's P&L
+    // has been signed and snapshotted (canonical-pnl.service.ts's lock()), so a number here can
+    // legitimately move after the period's official P&L is frozen. Surfacing the flag makes that
+    // visible instead of silent; serving the frozen figure itself is follow-up work, since budget
+    // consolidation has no snapshot table of its own to substitute in.
+    res.json({ success: true, data: { branchSummaries, headBreakdown, readiness, isPeriodLocked: periodLocked } });
   })
 );
 

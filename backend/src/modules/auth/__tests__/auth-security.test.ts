@@ -87,7 +87,12 @@ describe("Auth Security Hardening", () => {
 
     it("refreshAccess() should check employee status", () => {
       expect(authServiceCode).toContain("EMPLOYEE_INACTIVE");
-      expect(authServiceCode).toContain("employee_status");
+      // Not "employee_status" — that column never existed on `employees` (the query threw
+      // ER_BAD_FIELD_ERROR on every refresh). The fix checks the real active_status flag
+      // rather than matching employment_status strings, which are case-inconsistent
+      // ('Resigned' vs 'inactive') and would have missed thousands of separated employees.
+      // See the comment above the query in auth.service.ts for the full history.
+      expect(authServiceCode).toContain("active_status");
     });
 
     it("refreshAccess() should check password_changed_at", () => {

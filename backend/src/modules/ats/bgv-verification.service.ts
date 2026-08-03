@@ -4,6 +4,7 @@ import { db } from "../../db/mysql.js";
 import { getConfiguredBgvProviderAdapter, type AddressDocInput, type EducationVerificationInput } from "./bgv-provider.adapter.js";
 import { withProviderFailureLogged, getBgvApiCostReport } from "./bgv-api-log.service.js";
 import { receiptFlagsFromDocuments } from "./bgv-document-receipt.js";
+import { syncBridgePennyDropStatus } from "./onboarding-bridge-status.js";
 import { loadAsyncBgvTriggerContext, validateOnboardingToken } from "./onboarding-full.service.js";
 import { resolveBankNameVariance } from "./bank-name-corroboration.js";
 import { digilockerVerifiedCheckTypes, type DigilockerEvidence } from "./digilocker-evidence.js";
@@ -555,6 +556,10 @@ export async function verifyBankForCandidate(candidateId: string, input: { accou
     [randomUUID(), candidateId, checkId, result.providerKey, result.providerRequestId, accountNo ? hashValue(`${accountNo}|${ifscCode}`) : null, JSON.stringify(result.raw ?? result), Date.now() - started, result.status === "verified" ? 1 : 0]
   );
   await logEvent(candidateId, "BANK_VERIFICATION_COMPLETED", result, checkId, meta);
+  // Mirror onto the onboarding bridge, which nothing was writing — four
+  // candidates had a verified penny drop while all 304 bridge rows still read
+  // 'not_started'.
+  await syncBridgePennyDropStatus(db, candidateId, result.status, result.riskFlags);
   // A completed identity check is the moment there is something new to
   // reconcile across sources, so the cross-source name comparison runs here
   // rather than waiting for an HR user to press it.
