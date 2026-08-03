@@ -111,6 +111,19 @@ CREATE TABLE IF NOT EXISTS ats_candidate_portal_login (
   FOREIGN KEY (candidate_id) REFERENCES ats_candidate(id) ON DELETE CASCADE
 );
 
+-- ── 5B. Create candidate onboarding profile base table ───────────────────────
+-- Production installations may already have this table from an earlier manual
+-- rollout, but it was absent from the canonical migration manifest. Define the
+-- stable identity/timestamp base before section 6 adds the journey fields.
+CREATE TABLE IF NOT EXISTS candidate_onboarding_profile (
+  id CHAR(36) NOT NULL DEFAULT (UUID()) PRIMARY KEY,
+  candidate_id CHAR(36) NOT NULL UNIQUE,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  INDEX idx_candidate_onboarding_candidate (candidate_id),
+  FOREIGN KEY (candidate_id) REFERENCES ats_candidate(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 -- ── 6. Enhance candidate_onboarding_profile ───────────────────────────────────
 -- NOTE: Migration runner handles "Duplicate column" errors as idempotent
 ALTER TABLE candidate_onboarding_profile ADD COLUMN full_name_aadhaar VARCHAR(255) NULL COMMENT 'Name as per Aadhaar';
@@ -170,7 +183,7 @@ CREATE TABLE IF NOT EXISTS ats_bgv_initiation (
 CREATE TABLE IF NOT EXISTS ats_payroll_hr_validation (
   id CHAR(36) NOT NULL DEFAULT (UUID()) PRIMARY KEY,
   candidate_id CHAR(36) NOT NULL,
-  branch_id CHAR(36) NOT NULL,
+  branch_id VARCHAR(36) NOT NULL,
   payroll_hr_id CHAR(36) NULL COMMENT 'HR who validates',
   validation_status ENUM('pending','validated','rejected','correction_requested') DEFAULT 'pending',
   employment_type ENUM('onroll','offrole') NULL,
@@ -253,7 +266,7 @@ CREATE TABLE IF NOT EXISTS cost_centre_master (
   cost_centre_code VARCHAR(50) NOT NULL UNIQUE,
   cost_centre_name VARCHAR(255) NOT NULL,
   description TEXT NULL,
-  branch_id CHAR(36) NULL,
+  branch_id VARCHAR(36) NULL,
   process_id CHAR(36) NULL,
   company_id CHAR(36) NULL,
   active_status TINYINT(1) DEFAULT 1,
