@@ -78,5 +78,19 @@ SET nominee_distribution_status = CASE
 END
 WHERE nominee_distribution_status = 'not_applicable';
 
-INSERT INTO audit_log (action, module, details, created_at)
-VALUES ('nominee_gratuity_distribution_setup', 'exit', 'Created gratuity_distribution table, standardized address fields, added permanent address columns', NOW());
+-- audit_log has no action, module or details column. It is created as
+-- `CREATE TABLE IF NOT EXISTS audit_log LIKE audit_action_log` (218/220), so its shape is
+-- fully determined: action_type, module_key, metadata_json. This INSERT named three columns
+-- that have never existed and failed on any fresh database with "Unknown column 'action'".
+--
+-- Corrected rather than guarded, because unlike the other column mismatches on this branch
+-- there is nothing ambiguous here — LIKE fixes the shape exactly, and writing the audit row
+-- is the entire point of the statement. metadata_json is a JSON column, so the note is
+-- wrapped in JSON_OBJECT rather than passed as a bare string, which would be rejected.
+INSERT INTO audit_log (action_type, module_key, metadata_json, created_at)
+VALUES (
+  'nominee_gratuity_distribution_setup',
+  'exit',
+  JSON_OBJECT('note', 'Created gratuity_distribution table, standardized address fields, added permanent address columns'),
+  NOW()
+);
