@@ -807,7 +807,8 @@ export function BranchBudgetPlannerGrid({
               <td className="sticky bottom-0 z-30 border-r border-t-2 border-slate-300 bg-slate-100" colSpan={3} />
               <td className={`sticky bottom-0 z-30 border-r border-t-2 border-slate-300 bg-slate-100 px-2 py-2 ${num}`}>{money(branchTotal)}</td>
               <td className="sticky bottom-0 z-30 border-r border-t-2 border-slate-300 bg-slate-100" colSpan={2} />
-              <td className="sticky bottom-0 z-30 border-r border-t-2 border-slate-300 bg-slate-100" colSpan={4} />
+              {/* Sharing + ⇅ — 2 columns. Same colSpan={4} overflow as the head-group row above. */}
+              <td className="sticky bottom-0 z-30 border-r border-t-2 border-slate-300 bg-slate-100" colSpan={2} />
               {costCentres.flatMap((cc, ci) => {
                 const pct = branchTotal ? (columnTotal(ci) / branchTotal) * 100 : 0;
                 return [
