@@ -9,6 +9,7 @@ import {
   type BudgetTaxTreatment,
 } from "../process-pnl/branch-budget.service.js";
 import { budgetConsumptionService } from "../process-pnl/budget-consumption.service.js";
+import { isPeriodLocked } from "../process-pnl/finance-period-lock.js";
 import { allocateGrnNumber } from "./grn-number.service.js";
 import { vendorPaymentService } from "./vendor-payment.service.js";
 
@@ -149,6 +150,11 @@ export const grnService = {
     if (payload.billDate.slice(0, 7) !== String(budgetLine.period_code)) {
       throw new Error(
         `Bill date must fall within approved budget period ${budgetLine.period_code}`
+      );
+    }
+    if (await isPeriodLocked(budgetLine.period_code)) {
+      throw new Error(
+        `${budgetLine.period_code} is locked for P&L close. Raise this against the current open period.`
       );
     }
     if (payload.processId && payload.processId !== budgetLine.process_id) {

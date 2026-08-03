@@ -2,6 +2,7 @@ import { randomUUID } from "crypto";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { queryRows, tableExists } from "../../shared/dbHelpers.js";
+import { writeAuditLog } from "../../shared/auditLog.js";
 import {
   allocatePoolAmount,
   calculateBpoCostWaterfall,
@@ -1349,6 +1350,32 @@ function ratio(rows: BpoPnlRow[], numerator: keyof BpoPnlRow, denominator: keyof
   return pct(sum(rows, numerator), sum(rows, denominator));
 }
 
+/** Pre-read the row a config save is about to touch, so the audit entry can carry a real
+ *  before/after diff instead of just "something changed". Returns null for a genuine create
+ *  (no existing id) — that absence is itself meaningful, not a failure. */
+async function readExistingConfigRow(table: string, id: string): Promise<RowDataPacket | null> {
+  const [rows] = await db.execute<RowDataPacket[]>(`SELECT * FROM ${table} WHERE id = ?`, [id]);
+  return rows[0] ?? null;
+}
+
+async function auditConfigSave(
+  actionType: string,
+  table: string,
+  id: string,
+  before: RowDataPacket | null,
+  payload: Record<string, unknown>,
+  userId: string
+) {
+  await writeAuditLog({
+    actor_user_id: userId,
+    action_type: actionType,
+    module_key: "process_pnl_configuration",
+    entity_type: table,
+    entity_id: id,
+    metadata: { before, after: payload },
+  });
+}
+
 export const bpoPnlService = {
   async getSummary(filters: Partial<PnlQueryFilters>) {
     const bundle = await buildRows(filters);
@@ -1637,6 +1664,7 @@ export const bpoPnlService = {
   async saveRevenueRule(payload: Record<string, unknown>, userId: string) {
     const id = String(payload.id ?? randomUUID());
     const status = String(payload.status ?? "draft");
+    const before = await readExistingConfigRow("process_revenue_rule", id);
     await db.execute(
       `INSERT INTO process_revenue_rule
         (id, process_id, contract_id, rule_name, billing_model, metric_key, rate_amount, currency_code,
@@ -1679,6 +1707,7 @@ export const bpoPnlService = {
         userId,
       ]
     );
+    await auditConfigSave("revenue_rule_saved", "process_revenue_rule", id, before, payload, userId);
     return { id };
   },
 
@@ -1686,6 +1715,7 @@ export const bpoPnlService = {
     const id = String(payload.id ?? randomUUID());
     const status = String(payload.status ?? "draft");
     const validated = status === "validated" || status === "locked";
+    const before = await readExistingConfigRow("process_delivery_actual", id);
     await db.execute(
       `INSERT INTO process_delivery_actual
         (id, process_id, period_code, activity_date, metric_key, planned_units, delivered_units,
@@ -1724,12 +1754,14 @@ export const bpoPnlService = {
         userId,
       ]
     );
+    await auditConfigSave("delivery_actual_saved", "process_delivery_actual", id, before, payload, userId);
     return { id };
   },
 
   async saveRevenueComponent(payload: Record<string, unknown>, userId: string) {
     const id = String(payload.id ?? randomUUID());
     const status = String(payload.status ?? "draft");
+    const before = await readExistingConfigRow("process_revenue_component", id);
     await db.execute(
       `INSERT INTO process_revenue_component
         (id, process_id, period_code, component_type, direction, description, units, rate, amount_inr,
@@ -1759,12 +1791,14 @@ export const bpoPnlService = {
         userId,
       ]
     );
+    await auditConfigSave("revenue_component_saved", "process_revenue_component", id, before, payload, userId);
     return { id };
   },
 
   async saveCostComponent(payload: Record<string, unknown>, userId: string) {
     const id = String(payload.id ?? randomUUID());
     const status = String(payload.status ?? "draft");
+    const before = await readExistingConfigRow("process_pnl_cost_component", id);
     await db.execute(
       `INSERT INTO process_pnl_cost_component
         (id, process_id, branch_id, period_code, cost_type, description, amount_inr, allocation_driver,
@@ -1792,6 +1826,7 @@ export const bpoPnlService = {
         userId,
       ]
     );
+    await auditConfigSave("cost_component_saved", "process_pnl_cost_component", id, before, payload, userId);
     return { id };
   },
 
@@ -1807,6 +1842,7 @@ export const bpoPnlService = {
     }
     const id = String(payload.id ?? randomUUID());
     const status = String(payload.status ?? "draft");
+    const before = await readExistingConfigRow("pnl_allocation_policy", id);
     await db.execute(
       `INSERT INTO pnl_allocation_policy
         (id, branch_id, process_id, pool_type, allocation_driver, manual_allocation_pct,
@@ -1833,6 +1869,7 @@ export const bpoPnlService = {
         userId,
       ]
     );
+    await auditConfigSave("allocation_policy_saved", "pnl_allocation_policy", id, before, payload, userId);
     return { id };
   },
 };

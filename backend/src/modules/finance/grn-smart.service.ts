@@ -11,6 +11,7 @@ import {
   type BudgetTaxTreatment,
 } from "../process-pnl/branch-budget.service.js";
 import { budgetConsumptionService } from "../process-pnl/budget-consumption.service.js";
+import { isPeriodLocked } from "../process-pnl/finance-period-lock.js";
 import { vendorPaymentService } from "./vendor-payment.service.js";
 
 export interface SmartAllocationInput {
@@ -490,6 +491,11 @@ export const grnSmartService = {
         const line = await lockBudgetLine(connection, allocation.budgetLineId, String(grn.branch_id));
         if (String(grn.bill_date).slice(0, 7) !== String(line.period_code)) {
           throw new Error(`Allocation ${index + 1}: budget period ${line.period_code} does not match the invoice month`);
+        }
+        if (await isPeriodLocked(line.period_code)) {
+          throw new Error(
+            `Allocation ${index + 1}: ${line.period_code} is locked for P&L close. Raise this against the current open period.`
+          );
         }
         const quantity = Number(allocation.quantity);
         if (!Number.isFinite(quantity) || quantity <= 0) {
