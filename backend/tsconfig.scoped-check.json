@@ -27,7 +27,7 @@
 {
   "extends": "./tsconfig.json",
   "include": [
-    "src/modules/finance/grn.service.ts"
+    "src/modules/process-pnl/branch-budget.service.ts"
   ],
   "compilerOptions": { "noEmit": true }
 }
