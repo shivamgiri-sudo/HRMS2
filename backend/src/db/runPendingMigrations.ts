@@ -454,6 +454,7 @@ const MIGRATION_MANIFEST: string[] = [
   "1061_finance_budget_topup_request.sql", // GRN overspend was already hard-blocked, but there was no formal way to ask for more against a specific budget line short of re-running the whole budget through approval again; this is that request entity
   "1062_grn_consumption_reversal.sql", // once a GRN passed finance_head_approved, budget-consumption.consume() had moved its amount into consumed with no way back; adds the 'consumption_reversed' status the reversal action sets
   "1063_auto_roster_schedule_config.sql", // wfm_process_planning_rule gets auto_schedule_enabled + auto_schedule_day_of_week so the scheduler worker knows which processes to generate for, and on which day
+  "1064_celebration_post_type.sql", // company_posts gets post_type + is_system_post + celebrated_employee_id for auto birthday/anniversary feed posts; author_employee_id made nullable for system-generated posts
   ];
 
 export type MigrationHealth = {
