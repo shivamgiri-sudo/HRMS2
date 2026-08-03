@@ -159,6 +159,46 @@ export async function getCostCentreActivity(endPeriod: string): Promise<CostCent
   });
 }
 
+export interface AttributionGap {
+  costCentreCode: string;
+  costCentreName: string | null;
+  revenue: number;
+  salaryCost: number;
+  /** 'revenue_without_people' or 'people_without_revenue'. */
+  kind: "revenue_without_people" | "people_without_revenue";
+}
+
+/**
+ * Cost centres where revenue and the people who earn it are recorded in different places.
+ *
+ * This is the single largest threat to a per-cost-centre P&L, and it is invisible unless
+ * looked for: a cost centre that bills a client but has nobody posted to it reports a 100%
+ * margin, which reads as the best-performing line in the report rather than as a gap.
+ *
+ * Measured over Apr-Jul 2026: between 24% and 33% of monthly revenue sat on cost centres with
+ * no payroll (Rs 121 lakh in June alone), and Rs 52-140 lakh of salary sat on cost centres
+ * with no revenue. Godfrey Philips is the clearest case — 161 staff on BSS/OB/AHMH-JD/465
+ * while the billing lands on /474, so one shows pure cost and the other pure profit, and both
+ * are wrong.
+ *
+ * No code can decide where those people belong; that is a posting decision. What code can do
+ * is refuse to present the resulting margin as fact. Callers should show these alongside the
+ * figures, not filter them away.
+ */
+export async function getAttributionGaps(endPeriod: string): Promise<AttributionGap[]> {
+  const rows = await getCostCentreActivity(endPeriod);
+  return rows
+    .filter((r) => (r.revenue > 0 && r.salaryCost === 0) || (r.salaryCost > 0 && r.revenue === 0))
+    .map((r) => ({
+      costCentreCode: r.costCentreCode ?? "(unknown)",
+      costCentreName: r.costCentreName,
+      revenue: r.revenue,
+      salaryCost: r.salaryCost,
+      kind: r.revenue > 0 ? ("revenue_without_people" as const) : ("people_without_revenue" as const),
+    }))
+    .sort((a, b) => (b.revenue + b.salaryCost) - (a.revenue + a.salaryCost));
+}
+
 /** Just the ids that are active, for callers that only need to filter. */
 export async function getActiveCostCentreIds(endPeriod: string): Promise<Set<string>> {
   const rows = await getCostCentreActivity(endPeriod);
@@ -167,6 +207,7 @@ export async function getActiveCostCentreIds(endPeriod: string): Promise<Set<str
 
 export const costCentreActivityService = {
   getCostCentreActivity,
+  getAttributionGaps,
   getActiveCostCentreIds,
   activityWindow,
   ACTIVITY_WINDOW_MONTHS,

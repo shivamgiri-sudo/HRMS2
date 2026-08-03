@@ -26,21 +26,39 @@
  */
 
 import mysql from 'mysql2/promise';
+import fs from 'fs';
 
 // ── config ────────────────────────────────────────────────────────────────────
 
 const arg = (name, fallback) =>
   process.argv.find(a => a.startsWith(`--${name}=`))?.split('=')[1] ?? fallback;
 
+// backend/.env is the same configuration the application itself uses, so a scheduled run
+// reaches whichever host the app reaches. Without this the script hardcoded the office-LAN
+// address and failed with ETIMEDOUT whenever the machine was off-LAN — which reads like the
+// database being down rather than a wrong host. Explicit flags still win, for a manual run.
+// Quotes are stripped: backend/.env stores values wrapped in them, and a quoted password
+// produces "Access denied", which is indistinguishable from a real credential failure.
+function fromEnvFile(key) {
+  try {
+    const raw = fs.readFileSync(new URL('../.env', import.meta.url), 'utf8');
+    const line = raw.split(/\r?\n/).find(l => l.trim().startsWith(`${key}=`));
+    return line ? line.slice(line.indexOf('=') + 1).trim().replace(/^["']|["']$/g, '') : undefined;
+  } catch { return undefined; }
+}
+
+const DB_USER = process.env.DB_USER ?? fromEnvFile('DB_USER') ?? 'shivam_user';
+const DB_PASSWORD = process.env.DB_PASSWORD ?? fromEnvFile('DB_PASSWORD') ?? 'qwersdfg!@#hjk';
+
 const HRMS = {
-  host: arg('hrms-host', process.env.HRMS_DB_HOST ?? '192.168.10.6'), port: 3306,
-  user: 'shivam_user', password: 'qwersdfg!@#hjk',
+  host: arg('hrms-host', process.env.HRMS_DB_HOST ?? fromEnvFile('DB_HOST') ?? '192.168.10.6'),
+  port: 3306, user: DB_USER, password: DB_PASSWORD,
   database: 'mas_hrms', connectTimeout: 20000, multipleStatements: false,
 };
 
 const BILL = {
-  host: arg('bill-host', process.env.BILL_DB_HOST ?? '192.168.10.22'), port: 3306,
-  user: 'shivam_user', password: 'qwersdfg!@#hjk',
+  host: arg('bill-host', process.env.BILL_DB_HOST ?? fromEnvFile('BILL_DB_HOST') ?? '192.168.10.22'),
+  port: 3306, user: DB_USER, password: DB_PASSWORD,
   database: 'db_bill', connectTimeout: 20000,
   dateStrings: true,  // prevents mysql2 from throwing on 0000-00-00 dates
 };
@@ -634,19 +652,26 @@ async function syncGrnEntries(hrms, bill) {
   const now = new Date();
 
   const [src] = await bill.query(
-    `SELECT e.Id, e.GrnNo, e.BranchId, e.Vendor, e.FinanceYear, e.FinanceMonth,
+    `SELECT e.Id, e.GrnNo, e.BranchId, bm.branch_name, e.Vendor, e.FinanceYear, e.FinanceMonth,
             e.HeadId, e.SubHeadId, e.Amount, e.CGST, e.SGST, e.IGST,
             e.ExpenseDate, e.bill_no, e.bill_date, e.EntryStatus, e.grn_status,
             e.Reject, e.RejectDate, e.ApprovalDate, e.approved_by_ph_date, e.approved_by_fh_date,
             e.Description, e.createdate
-       FROM expense_entry_master e WHERE e.FinanceYear >= ? ORDER BY e.Id`, [FROM_FINANCE_YEAR]);
+       FROM expense_entry_master e
+       LEFT JOIN branch_master bm ON bm.id = e.BranchId
+      WHERE e.FinanceYear >= ? ORDER BY e.Id`, [FROM_FINANCE_YEAR]);
   log(`  db_bill.expense_entry_master rows from ${FROM_FINANCE_YEAR}: ${src.length}`);
 
   const rows = src.map(r => ({
     bill_source_id: r.Id,
     grn_no: trim(r.GrnNo),
     branch_source_id: r.BranchId ?? null,
-    branch_name: null, // resolved from branch_source_id at read time; not stored at source
+    // The branch NAME, resolved from db_bill's branch_master. Leaving this null meant a
+    // budget-vs-actual by branch matched nothing and reported every rupee of spend against a
+    // null branch: branch_source_id is db_bill's integer id and does not join to mas_hrms.
+    // Cost centre remains the more reliable route (it carries the mas_hrms branch_id); this is
+    // the fallback for lines whose cost centre does not resolve.
+    branch_name: trim(r.branch_name),
     vendor: trim(r.Vendor),
     finance_year: trim(r.FinanceYear),
     finance_month: trim(r.FinanceMonth),
