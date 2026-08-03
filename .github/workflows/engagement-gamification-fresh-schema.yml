@@ -68,6 +68,29 @@ jobs:
       - name: Install backend dependencies
         run: npm --prefix backend ci
 
+      # Put the expensive end-to-end schema rehearsal first after installation.
+      # Migration-only defects now fail fast; once this passes, all code and
+      # security gates below still run before the workflow can become green.
+      - name: Build canonical manifest through Performance migration 522
+        working-directory: backend
+        env:
+          DB_HOST: 127.0.0.1
+          DB_PORT: 3306
+          DB_USER: root
+          DB_PASSWORD: root
+          DB_NAME: hrms_migration_test_performance
+        run: npm exec -- tsx scripts/verify-performance-fresh-schema.ts
+
+      - name: Execute migration 038 twice in isolation
+        working-directory: backend
+        env:
+          DB_HOST: 127.0.0.1
+          DB_PORT: 3306
+          DB_USER: root
+          DB_PASSWORD: root
+          DB_NAME: hrms_migration_test_038
+        run: npm exec -- tsx scripts/verify-engagement-gamification-migration.ts
+
       - name: Backend typecheck
         run: npm --prefix backend run typecheck
 
@@ -105,23 +128,3 @@ jobs:
         run: npm --prefix backend run build
         env:
           NODE_OPTIONS: --max-old-space-size=4096
-
-      - name: Execute migration 038 twice in isolation
-        working-directory: backend
-        env:
-          DB_HOST: 127.0.0.1
-          DB_PORT: 3306
-          DB_USER: root
-          DB_PASSWORD: root
-          DB_NAME: hrms_migration_test_038
-        run: npm exec -- tsx scripts/verify-engagement-gamification-migration.ts
-
-      - name: Build canonical manifest through Performance migration 522
-        working-directory: backend
-        env:
-          DB_HOST: 127.0.0.1
-          DB_PORT: 3306
-          DB_USER: root
-          DB_PASSWORD: root
-          DB_NAME: hrms_migration_test_performance
-        run: npm exec -- tsx scripts/verify-performance-fresh-schema.ts
