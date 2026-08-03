@@ -906,6 +906,7 @@ function BranchAccordion({
 function HOGroupedView({ roleKeys, autoOpenProcessId }: { roleKeys: string[]; autoOpenProcessId?: string }) {
   const [month, setMonth] = useState(currentMonth());
   const [selected, setSelected] = useState<ProcessReadiness | null>(null);
+  const [activeTab, setActiveTab] = useState<"branches" | "flags">("branches");
 
   const { data, isLoading, refetch, isFetching } = useQuery({
     queryKey: ["process-readiness-grouped", month],
@@ -914,6 +915,32 @@ function HOGroupedView({ roleKeys, autoOpenProcessId }: { roleKeys: string[]; au
   });
 
   const groups: BranchGroup[] = data?.data ?? [];
+
+  const canOverride = roleKeys.some(r => ["payroll_head", "super_admin"].includes(r));
+
+  const { data: flagData, refetch: refetchFlags } = useQuery({
+    queryKey: ["salary-open-flags", month],
+    queryFn: () =>
+      apiFetch(`/api/payroll/salary-verification/open-flags?month=${month}`),
+    staleTime: 60_000,
+    enabled: canOverride,
+  });
+  const openFlags: Array<{
+    id: string; employee_code: string; employee_name: string; process_name: string;
+    branch_name: string; category: string; description: string;
+    expected_value: number | null; raised_at: string; status: string; raised_by_email: string;
+  }> = flagData?.data ?? [];
+  const openFlagCount = openFlags.length;
+
+  const resolveFlag = useMutation({
+    mutationFn: ({ flagId, status }: { flagId: string; status: string }) =>
+      apiFetch(`/api/payroll/salary-verification/flags/${flagId}`, {
+        method: "PATCH",
+        body: JSON.stringify({ status }),
+      }),
+    onSuccess: () => { toast.success("Flag updated"); refetchFlags(); },
+    onError: () => toast.error("Failed to update flag"),
+  });
 
   useEffect(() => {
     if (!autoOpenProcessId || !groups.length) return;
@@ -973,8 +1000,30 @@ function HOGroupedView({ roleKeys, autoOpenProcessId }: { roleKeys: string[]; au
         ))}
       </div>
 
+      {/* Tab bar */}
+      {canOverride && (
+        <div className="flex gap-1 rounded-xl border bg-white p-1 w-fit">
+          {[
+            { v: "branches", label: "Branches" },
+            { v: "flags",    label: `Salary Flags${openFlagCount > 0 ? ` (${openFlagCount})` : ""}` },
+          ].map(({ v, label }) => (
+            <button
+              key={v}
+              type="button"
+              onClick={() => setActiveTab(v as "branches" | "flags")}
+              className={cn(
+                "rounded-lg px-4 py-1.5 text-xs font-semibold transition-all",
+                activeTab === v ? "bg-[#1B6AB5] text-white shadow-sm" : "text-slate-500 hover:text-slate-700"
+              )}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      )}
+
       {/* Branch accordions */}
-      {isLoading ? (
+      {activeTab === "branches" && (isLoading ? (
         <div className="text-center py-10 text-slate-400">Loading…</div>
       ) : groups.length === 0 ? (
         <div className="text-center py-10 text-slate-400">No branches found.</div>
@@ -987,6 +1036,57 @@ function HOGroupedView({ roleKeys, autoOpenProcessId }: { roleKeys: string[]; au
               month={month}
               onProcessClick={setSelected}
             />
+          ))}
+        </div>
+      ))}
+
+      {/* Flag queue */}
+      {activeTab === "flags" && canOverride && (
+        <div className="space-y-3">
+          {openFlags.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-16 text-slate-400">
+              <CheckCircle2 className="h-8 w-8 mb-2" />
+              <p className="text-sm">No open salary flags for {month}</p>
+            </div>
+          ) : openFlags.map((flag) => (
+            <div key={flag.id} className="rounded-2xl border border-red-200 bg-white overflow-hidden">
+              <div className="flex items-start gap-3 p-4">
+                <AlertCircle className="h-5 w-5 text-red-500 flex-shrink-0 mt-0.5" />
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-sm font-bold text-slate-800">{flag.employee_name} ({flag.employee_code})</span>
+                    <span className="text-xs text-slate-400">{flag.branch_name} / {flag.process_name}</span>
+                    <Badge className="capitalize border text-[10px] bg-red-50 text-red-700 border-red-200">
+                      {flag.category.replace("_", " ")}
+                    </Badge>
+                  </div>
+                  <p className="mt-1 text-xs text-slate-600">{flag.description}</p>
+                  {flag.expected_value != null && (
+                    <p className="mt-0.5 text-xs text-slate-500">Expected: ₹{flag.expected_value.toLocaleString("en-IN")}</p>
+                  )}
+                  <p className="mt-1 text-[10px] text-slate-400">
+                    By {flag.raised_by_email} · {new Date(flag.raised_at).toLocaleDateString("en-IN")}
+                  </p>
+                </div>
+              </div>
+              <div className="flex gap-2 border-t px-4 py-2.5 bg-slate-50">
+                <Button size="sm" className="h-7 text-xs rounded-xl"
+                  disabled={resolveFlag.isPending}
+                  onClick={() => resolveFlag.mutate({ flagId: flag.id, status: "resolved" })}>
+                  Recalculate &amp; Resolve
+                </Button>
+                <Button size="sm" variant="outline" className="h-7 text-xs rounded-xl"
+                  disabled={resolveFlag.isPending}
+                  onClick={() => resolveFlag.mutate({ flagId: flag.id, status: "acknowledged" })}>
+                  Acknowledge — No Change
+                </Button>
+                <Button size="sm" variant="ghost" className="h-7 text-xs rounded-xl text-slate-500"
+                  disabled={resolveFlag.isPending}
+                  onClick={() => resolveFlag.mutate({ flagId: flag.id, status: "rejected" })}>
+                  Reject
+                </Button>
+              </div>
+            </div>
           ))}
         </div>
       )}
