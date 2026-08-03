@@ -331,6 +331,11 @@ const MIGRATION_MANIFEST: string[] = [
   "332_weekoff_fairness_score.sql",
   "333_cost_centre_master_ensure.sql",
   "334_process_master_branch_mapping.sql",
+  // Added to the manifest 2026-08-03. It creates holiday_work_policy_master, which 335
+  // takes a foreign key against and which nothing else creates — 335 died with
+  // "Failed to open the referenced table" on every fresh build. Four statements; its own
+  // foreign keys are to leave_holiday_master, created at 006.
+  "328_holiday_cost_centre_mapping.sql",
   "335_holiday_work_auto_log.sql",
   "335_offer_pf_esi_flags.sql",
   "336_dpdp_compliance_gaps.sql",
