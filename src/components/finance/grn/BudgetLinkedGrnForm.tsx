@@ -33,10 +33,24 @@ import {
 } from "@/components/ui/table";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
-import { calculateBudgetLine } from "@/hooks/useBranchBudget";
+import {
+  BRANCH_SHARING_METHODS,
+  calculateBudgetLine,
+  useBranchBudgetAllocations,
+} from "@/hooks/useBranchBudget";
 import { useToast } from "@/hooks/use-toast";
 import { hrmsApi } from "@/lib/hrmsApi";
+import { splitRupees, weightFor } from "@/lib/sharingWeights";
 import { cn } from "@/lib/utils";
+
+/** Methods offered for GRN's auto-split, restricted to what's computable from a single batched
+ *  driver fetch. "meter_wise" has no client formula (server-only). "grade_weighted_headcount"'s
+ *  real weight is a server-side blended-CTC calculation — the client stand-in branch-budget
+ *  planning uses for preview is a crude plannedHeadcount proxy, wrong enough to silently misinform
+ *  an actual invoice split. "manual" is the row-by-row editor itself, not an auto-split target. */
+const GRN_AUTO_SPLIT_METHODS = BRANCH_SHARING_METHODS.filter(
+  (method) => !["manual", "meter_wise", "grade_weighted_headcount"].includes(method.value)
+);
 
 type GrnType = "vendor" | "imprest";
 
@@ -335,6 +349,7 @@ export function BudgetLinkedGrnForm() {
   const attemptedLineIdRef = useRef<string | null>(null);
   const [form, setForm] = useState<GrnFormState>(EMPTY_FORM);
   const [splitMode, setSplitMode] = useState(false);
+  const [autoSplitMethod, setAutoSplitMethod] = useState<string>("equal_split");
   const [allocations, setAllocations] = useState<AllocationDraft[]>([newAllocation()]);
   const [files, setFiles] = useState<File[]>([]);
   const [created, setCreated] = useState<CreatedGrn | null>(null);
@@ -378,6 +393,14 @@ export function BudgetLinkedGrnForm() {
       ),
   });
   const budgetLines = unwrapList(lineResponse) as BudgetLine[];
+
+  // Same monthly-driver data Branch Budget planning already fetches for this branch+period —
+  // reused here so a split GRN's auto-split weighs cost centres the same way a budget line would.
+  const { monthlyDriversQuery } = useBranchBudgetAllocations(form.branchId || null, period || null);
+  const driversByCostCentre = useMemo(
+    () => Object.fromEntries((monthlyDriversQuery.data ?? []).map((driver) => [driver.costCentreId, driver])),
+    [monthlyDriversQuery.data]
+  );
 
   const workspaceQuery = useQuery({
     queryKey: ["smart-grn-workspace", created?.id],
@@ -691,6 +714,55 @@ export function BudgetLinkedGrnForm() {
       return;
     }
     updateAllocation(last.key, { unitRate: Math.max(0, Number(rate.toFixed(4))) });
+  }
+
+  /** Why "Auto-split by" is disabled right now, if it is — computed proactively so the reason is
+   *  visible before the click, not discovered from a toast after it. */
+  const autoSplitReadiness = useMemo((): { ready: boolean; reason: string } => {
+    if (allocations.length < 2) return { ready: false, reason: "Add at least 2 rows first." };
+    if (!(Number(form.amount) > 0)) return { ready: false, reason: "Enter the invoice total first." };
+    if (autoSplitMethod === "equal_split") return { ready: true, reason: "" };
+    const resolvedLines = allocations.map((a) => budgetLines.find((line) => line.id === a.budgetLineId));
+    if (resolvedLines.some((line) => !line)) {
+      return { ready: false, reason: "Pick a budget line for every row first." };
+    }
+    if (resolvedLines.some((line) => !line!.cost_centre_id)) {
+      return { ready: false, reason: "One or more rows' budget lines have no cost centre to weigh by — use Equal split instead." };
+    }
+    if (resolvedLines.some((line) => !driversByCostCentre[line!.cost_centre_id!])) {
+      return {
+        ready: false,
+        reason: "Set monthly drivers for every cost centre in this split first, in Branch Budget → Plan Builder.",
+      };
+    }
+    return { ready: true, reason: "" };
+  }, [allocations, form.amount, autoSplitMethod, budgetLines, driversByCostCentre]);
+
+  /** Redistributes the declared invoice total across the current allocation rows by the chosen
+   *  sharing method's weight, mirroring Branch Budget planning's split — but across rows that may
+   *  span different budget lines (heads/sub-heads), not one line's cost-centre breakdown, so the
+   *  weight lookup key is each row's own resolved cost centre rather than a shared line's. */
+  function applyAutoSplit() {
+    if (!autoSplitReadiness.ready) {
+      toast({ title: "Can't auto-split yet", description: autoSplitReadiness.reason, variant: "destructive" });
+      return;
+    }
+    const resolved = allocations.map((allocation) => ({
+      allocation,
+      line: budgetLines.find((item) => item.id === allocation.budgetLineId)!,
+    }));
+    const weights = resolved.map(({ line }) =>
+      autoSplitMethod === "equal_split" ? 1 : weightFor(autoSplitMethod, driversByCostCentre[line.cost_centre_id!])
+    );
+    const targets = splitRupees(Number(form.amount), weights);
+    resolved.forEach(({ allocation, line }, index) => {
+      const perUnit = computeLine(line, 1, line.unit_rate);
+      const grossPerUnit = Number(perUnit.gross);
+      const quantity = grossPerUnit > 0 ? Number((targets[index] / grossPerUnit).toFixed(4)) : 0;
+      // unitRate is left at the line's own approved rate — only quantity changes, so the
+      // max={line.unit_rate} constraint on the rate input can never be violated by auto-split.
+      updateAllocation(allocation.key, { quantity: Math.max(0, quantity), unitRate: Number(line.unit_rate) });
+    });
   }
 
   function resetForm() {
@@ -1334,6 +1406,10 @@ export function BudgetLinkedGrnForm() {
                   onRemove={removeAllocation}
                   onAutoBalance={autoBalanceLastRow}
                   canRemove={allocations.length > 1}
+                  autoSplitMethod={autoSplitMethod}
+                  onAutoSplitMethodChange={setAutoSplitMethod}
+                  onAutoSplit={applyAutoSplit}
+                  autoSplitReadiness={autoSplitReadiness}
                 />
               </div>
             ) : (
@@ -1731,6 +1807,10 @@ function SplitAllocationEditor({
   onRemove,
   onAutoBalance,
   canRemove,
+  autoSplitMethod,
+  onAutoSplitMethodChange,
+  onAutoSplit,
+  autoSplitReadiness,
 }: {
   budgetLines: BudgetLine[];
   rows: Array<{ allocation: AllocationDraft; line?: BudgetLine; calculation: any }>;
@@ -1742,6 +1822,10 @@ function SplitAllocationEditor({
   onRemove: (key: string) => void;
   onAutoBalance: () => void;
   canRemove: boolean;
+  autoSplitMethod: string;
+  onAutoSplitMethodChange: (method: string) => void;
+  onAutoSplit: () => void;
+  autoSplitReadiness: { ready: boolean; reason: string };
 }) {
   const lineOptions: SearchableOption[] = budgetLines.map((line) => ({
     value: line.id,
@@ -1752,14 +1836,39 @@ function SplitAllocationEditor({
 
   return (
     <div className="space-y-3">
-      <div className="flex flex-wrap gap-2">
+      <div className="flex flex-wrap items-center gap-2">
         <Button type="button" variant="outline" size="sm" onClick={onAutoBalance}>
           Auto-balance last row
         </Button>
         <Button type="button" size="sm" onClick={onAdd}>
           <Plus className="mr-1.5 h-3.5 w-3.5" /> Add row
         </Button>
+        <div className="ml-auto flex items-center gap-1.5" title={!autoSplitReadiness.ready ? autoSplitReadiness.reason : undefined}>
+          <Label className="text-[11px] text-slate-500">Split by</Label>
+          <select
+            aria-label="Auto-split method"
+            className="h-8 rounded-md border border-slate-300 bg-white px-2 text-xs font-medium text-slate-700"
+            value={autoSplitMethod}
+            onChange={(event) => onAutoSplitMethodChange(event.target.value)}
+          >
+            {GRN_AUTO_SPLIT_METHODS.map((method) => (
+              <option key={method.value} value={method.value}>{method.label}</option>
+            ))}
+          </select>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={!autoSplitReadiness.ready}
+            onClick={onAutoSplit}
+          >
+            <Split className="mr-1.5 h-3.5 w-3.5" /> Auto-split
+          </Button>
+        </div>
       </div>
+      {!autoSplitReadiness.ready && (
+        <p className="text-[11px] text-amber-700">{autoSplitReadiness.reason}</p>
+      )}
 
       {/* Stacked cards on phones. */}
       <div className="space-y-3 md:hidden">
