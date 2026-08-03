@@ -357,7 +357,16 @@ const CONTRACT: Block[] = [
   sp(),
   p("IN WITNESS WHEREOF, the Parties have caused this Agreement to be executed under seal as of the day, month and year first above written."),
   sp(),
+  // The employer block already existed; only the signatory was anonymous.
+  //
+  // The line carried a blank rule and nothing else, so a reader could not tell
+  // who signed for the company. It now names the Payroll HR of the branch the
+  // candidate joins — the same person who signs their EPF forms, so one
+  // configuration covers both — while keeping the rule for the wet signature.
+  // Blank where a branch has no signatory configured, which is how the line has
+  // always read.
   p("For and on behalf of Mas Callnet India (P) Ltd (First Party): ______________________"),
+  p("Name: {{payroll_hr_name}}          Designation: {{payroll_hr_designation}}"),
   sp(),
   p("Second Party: {{employee_name}}"),
   p("Employee Code: {{employee_code}}          Date of Joining: {{date_of_joining}}"),
@@ -379,25 +388,6 @@ const CONTRACT: Block[] = [
   p("3. In addition to the remuneration as stated above, the second party may be paid an incentive, at the sole discretion of the first party, reimbursed reasonable travelling, boarding and lodging expenses as per actuals provided prior approval thereof has been obtained from the first party."),
   p("4. All payments to be made by the first party to the second party shall be subject to deduction of applicable taxes at source at the rates in force. Payments shall also be subject to any future taxes that may be levied by any Government, whether Central or State or by any other Authority in future under any provisions of law. Thus, all taxes, present and future, shall be borne by the second party and the first party shall not be liable or be called upon to pay such taxes on behalf of the second party."),
   p("5. The second party shall be solely responsible for payment of the taxes on its incomes and the first party shall neither be liable nor be called upon to bear any part of these taxes, whether such taxes are applicable at present or are levied by any Government, whether Central or State or by any other Authority in future under any provisions of law."),
-
-  // The First Party had nowhere to sign.
-  //
-  // This agreement names a First Party and a Second Party and binds both, but
-  // carried only the candidate's signature — every contract ever issued was
-  // executed by one side. The employer block is added here, in the body flow,
-  // and deliberately NOT lower down: the last page's band below y=180 is
-  // reserved for the provider's Aadhaar eSign widget at [425,100,545,160], and
-  // reservedBand.contract.test.ts fails if anything is drawn into it.
-  //
-  // The name is the Payroll HR of the branch the candidate joins, the same
-  // person who signs their EPF forms. It stays blank where a branch has not
-  // been configured, exactly as the document reads today.
-  sp(),
-  p("IN WITNESS WHEREOF the parties have set their hands on the date first written above."),
-  sp(),
-  p("For Mas Callnet India (P) Ltd (First Party)"),
-  p("Name: {{payroll_hr_name}}          Designation: {{payroll_hr_designation}}"),
-  p("Signature: ______________________          Date: {{current_date}}"),
 ];
 
 const TEMPLATES: Array<{ code: string; blocks: Block[] }> = [
