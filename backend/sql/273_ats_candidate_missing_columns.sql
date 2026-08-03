@@ -30,14 +30,35 @@ BEGIN
         NOT NULL DEFAULT 'registered';
   END IF;
 
-  -- Backfill candidate_status for existing rows
-  UPDATE ats_candidate SET candidate_status = CASE
-    WHEN LOWER(COALESCE(final_decision, current_stage, '')) = 'selected' THEN 'selected'
-    WHEN LOWER(COALESCE(final_decision, current_stage, '')) IN ('rejected','no show','no_show') THEN 'rejected'
-    WHEN LOWER(current_stage) IN ('converted','onboarded','active_employee') THEN 'onboarded'
-    ELSE 'registered'
-  END
-  WHERE candidate_status IS NULL;
+  -- Backfill candidate_status for existing rows.
+  --
+  -- The file header states that final_decision "already existed from prior migrations".
+  -- On a database built from the manifest it does not — no migration adds it to
+  -- ats_candidate — so this UPDATE fails with "Unknown column 'final_decision' in 'field
+  -- list'" and takes the whole chain with it.
+  --
+  -- Two readings of the backfill, and the guard keeps both correct. Where final_decision
+  -- exists the statement runs exactly as written. Where it does not there are no rows to
+  -- backfill anyway — the column was just created NULL on a table with no history — so
+  -- skipping it loses nothing.
+  IF EXISTS (
+    SELECT 1 FROM information_schema.COLUMNS
+    WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'ats_candidate' AND COLUMN_NAME = 'final_decision'
+  ) THEN
+    UPDATE ats_candidate SET candidate_status = CASE
+      WHEN LOWER(COALESCE(final_decision, current_stage, '')) = 'selected' THEN 'selected'
+      WHEN LOWER(COALESCE(final_decision, current_stage, '')) IN ('rejected','no show','no_show') THEN 'rejected'
+      WHEN LOWER(current_stage) IN ('converted','onboarded','active_employee') THEN 'onboarded'
+      ELSE 'registered'
+    END
+    WHERE candidate_status IS NULL;
+  ELSE
+    UPDATE ats_candidate SET candidate_status = CASE
+      WHEN LOWER(current_stage) IN ('converted','onboarded','active_employee') THEN 'onboarded'
+      ELSE 'registered'
+    END
+    WHERE candidate_status IS NULL;
+  END IF;
 
   -- Add index if not present
   IF NOT EXISTS (
