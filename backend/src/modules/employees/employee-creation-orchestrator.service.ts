@@ -149,6 +149,25 @@ export async function createEmployeeFromCandidate(
       result.warnings.push('BGV manual review required before activation');
     }
 
+    // RULE 11: an unresolved fraud alert stops the conversion.
+    //
+    // This is the only place any fraud signal has a consequence. Everything
+    // else is advisory: the six alerts in production are all open with no
+    // reviewer, overall_status='hold' is computed and read by nobody, and BGV
+    // readiness above explicitly does not block. Detection without a
+    // consequence is not a control.
+    //
+    // It gates creation rather than onboarding submission on purpose. A false
+    // positive — a married-name change, an OCR misread — still lets the
+    // candidate finish all ten steps, and Payroll HR clears it before the offer
+    // converts. Blocking the form would strand real people with no way out.
+    const fraudCheck = await validateNoOpenFraudAlerts(conn, candidateId);
+    if (!fraudCheck.valid) {
+      result.blockers.push(...fraudCheck.blockers);
+      await conn.rollback();
+      return result;
+    }
+
     // RULE 10: Statutory Validation
     const statutoryValidation = await validateStatutoryInfo(conn, candidateId);
     if (!statutoryValidation.valid) {
@@ -648,6 +667,58 @@ async function validateConsents(
   }
 
   return { valid: blockers.filter(b => b.severity === 'critical').length === 0, blockers };
+}
+
+/**
+ * Refuse conversion while a fraud alert is still open against the candidate.
+ *
+ * Only `critical` and `high` block. `medium` covers FRAUD_CHECK_FAILED — a
+ * check that could not complete, which merits a look but is not evidence
+ * against the person, and blocking on it would punish candidates for our own
+ * outages.
+ *
+ * Clearing an alert is a reviewer action that sets its status away from 'open',
+ * so a resolved case simply stops matching here. Every blocking alert type is
+ * named in the message: a blocker nobody can act on gets overridden blindly.
+ *
+ * Exported so the gate can be tested directly; the orchestrator's own path is
+ * covered by a contract test that also checks this is not wrapped in a
+ * try/catch, which is how BGV readiness ended up unable to block anything.
+ */
+export async function validateNoOpenFraudAlerts(
+  conn: PoolConnection,
+  candidateId: string,
+): Promise<{ valid: boolean; blockers: Array<{ type: string; reason: string; severity: 'critical' | 'warning' }> }> {
+  const [rows] = await conn.execute<RowDataPacket[]>(
+    `SELECT id, alert_type, severity
+       FROM candidate_fraud_alert
+      WHERE candidate_id = ?
+        AND LOWER(COALESCE(status, 'open')) = 'open'
+        AND LOWER(COALESCE(severity, '')) IN ('critical', 'high')
+      ORDER BY created_at ASC`,
+    [candidateId],
+  );
+
+  // The severity filter is applied here as well as in the query. Leaving it
+  // only in the SQL means the rule that decides whether someone can be hired
+  // exists nowhere a reader or a test can see it, and a later edit to the
+  // WHERE clause would silently widen what blocks.
+  const BLOCKING_SEVERITIES = new Set(['critical', 'high']);
+  const open = (rows as RowDataPacket[]).filter((row) =>
+    BLOCKING_SEVERITIES.has(String(row.severity ?? '').toLowerCase()));
+  if (!open.length) return { valid: true, blockers: [] };
+
+  const types = [...new Set(open.map((row) => String(row.alert_type)))];
+  return {
+    valid: false,
+    blockers: [{
+      type: 'FRAUD_ALERT_OPEN',
+      severity: 'critical',
+      reason:
+        `${open.length} unresolved fraud alert(s) on this candidate: ${types.join(', ')}. `
+        + `Payroll HR must review and clear them before an employee record can be created.`,
+    }],
+  };
 }
 
 /**

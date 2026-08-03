@@ -203,12 +203,62 @@ export async function crossValidateDocument(
   return { matched: true };
 }
 
+/**
+ * Has this Aadhaar / PAN / bank account been used by a different candidate?
+ *
+ * Coverage is the thing to understand before trusting a clean result here. The
+ * lookup is only as good as the hash columns, and those are populated only for
+ * candidates who completed the current onboarding flow: 20 of 32,726 bank rows,
+ * and roughly 53 of 32,755 for Aadhaar and PAN. The remaining rows were migrated
+ * without the raw identifier, and since the raw values are deliberately not
+ * retained they cannot be backfilled. So "no duplicate found" means "none among
+ * the small population we can compare", not "none". Coverage grows on its own as
+ * new candidates join.
+ *
+ * Callers invoke this without awaiting, so a throw here disappears. It is
+ * therefore recorded rather than raised — a fraud check that silently failed is
+ * indistinguishable from one that passed, and that is the more dangerous of the
+ * two to leave invisible.
+ */
 export async function checkDuplicates(
   candidateId: string,
   type: "aadhaar" | "pan" | "bank",
   hash: string
 ): Promise<{ isDuplicate: boolean; matchedCandidateId?: string }> {
   if (!hash) return { isDuplicate: false };
+  try {
+    return await runDuplicateCheck(candidateId, type, hash);
+  } catch (error) {
+    await recordCheckFailure(candidateId, type, error).catch(() => {
+      // Recording the failure failed too; the console is all that is left.
+      console.error("[Fraud] could not record duplicate-check failure for", candidateId);
+    });
+    return { isDuplicate: false };
+  }
+}
+
+/** A fraud check that could not complete is itself worth a reviewer's attention. */
+async function recordCheckFailure(candidateId: string, type: string, error: unknown) {
+  await db.execute(
+    `INSERT INTO candidate_fraud_alert (id, candidate_id, alert_type, severity, details)
+     VALUES (?, ?, 'FRAUD_CHECK_FAILED', 'medium', ?)`,
+    [
+      randomUUID(),
+      candidateId,
+      JSON.stringify({
+        message: `The ${type} duplicate check did not complete, so no conclusion can be drawn for this candidate`,
+        check: type,
+        error: (error as Error)?.message ?? String(error),
+      }),
+    ],
+  );
+}
+
+async function runDuplicateCheck(
+  candidateId: string,
+  type: "aadhaar" | "pan" | "bank",
+  hash: string
+): Promise<{ isDuplicate: boolean; matchedCandidateId?: string }> {
 
   let query: string;
   if (type === "aadhaar") {

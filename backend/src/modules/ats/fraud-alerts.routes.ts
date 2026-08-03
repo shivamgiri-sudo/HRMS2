@@ -8,7 +8,7 @@ import type { RowDataPacket } from "mysql2";
 
 const router = Router();
 
-router.get("/", requireAuth, requireRole("super_admin", "admin", "hr"), async (req: AuthenticatedRequest, res: Response) => {
+router.get("/", requireAuth, requireRole("super_admin", "admin", "hr", "payroll_hr"), async (req: AuthenticatedRequest, res: Response) => {
   const status = req.query.status as string || "open";
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT fa.*, c.full_name AS candidate_name, c.applied_for_branch, c.applied_for_process,
@@ -32,11 +32,21 @@ router.get("/candidate/:candidateId", requireAuth, async (req: AuthenticatedRequ
   res.json({ alerts: rows });
 });
 
-router.patch("/:alertId/review", requireAuth, requireRole("super_admin", "admin", "hr"), async (req: AuthenticatedRequest, res: Response) => {
+router.patch("/:alertId/review", requireAuth, requireRole("super_admin", "admin", "hr", "payroll_hr"), async (req: AuthenticatedRequest, res: Response) => {
+  // Clearing an alert is what unblocks employee creation
+  // (validateNoOpenFraudAlerts in the creation orchestrator refuses while any
+  // critical or high alert is still open), so the reason is not optional. A
+  // free-text-only trail cannot be counted, and the whole point of reviewing
+  // these is learning which variances are genuine.
   const { status, notes } = req.body;
   const validStatuses = ["under_review", "resolved_fraud", "resolved_false_positive", "dismissed"];
   if (!validStatuses.includes(status)) {
     return res.status(400).json({ error: "Invalid status" });
+  }
+  if (status !== "under_review" && !String(notes ?? "").trim()) {
+    return res.status(400).json({
+      error: "A reason is required to resolve or dismiss a fraud alert, because doing so allows the employee record to be created.",
+    });
   }
   await db.execute(
     `UPDATE candidate_fraud_alert SET status = ?, review_notes = ?, reviewed_by = ?, reviewed_at = NOW() WHERE id = ?`,
@@ -45,7 +55,7 @@ router.patch("/:alertId/review", requireAuth, requireRole("super_admin", "admin"
   res.json({ success: true });
 });
 
-router.get("/stats", requireAuth, requireRole("super_admin", "admin", "hr"), async (_req: AuthenticatedRequest, res: Response) => {
+router.get("/stats", requireAuth, requireRole("super_admin", "admin", "hr", "payroll_hr"), async (_req: AuthenticatedRequest, res: Response) => {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT alert_type, status, COUNT(*) as count FROM candidate_fraud_alert GROUP BY alert_type, status`
   );
