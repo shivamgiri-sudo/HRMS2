@@ -44,6 +44,7 @@ import { cn } from "@/lib/utils";
 import { normalizeMediaUrl } from "@/lib/mediaUrl";
 import { APP_VERSION, isAutoUpdatingEnvironment } from "@/lib/version";
 import { flattenNavGroups, useAccessibleNavGroups } from "@/lib/navigationAccess";
+import { useNavBadges } from "@/hooks/useNavBadges";
 import {
   DASHBOARD_ACCESS_REGISTRY,
 } from "../../../backend/src/shared/dashboardAccessRegistry";
@@ -73,6 +74,20 @@ export function DashboardLayout({ children, subheader }: Props) {
   const filteredGroups = useAccessibleNavGroups(navGroups);
   const { roleKeys } = useWorkforceAccess();
   const { data: versionData } = useVersionCheck();
+  const navBadges = useNavBadges();
+
+  // Deep-clone filteredGroups and inject dynamic badge counts by href
+  const badgedGroups = useMemo(() => {
+    if (!navBadges.size) return filteredGroups;
+    return filteredGroups.map((group) => ({
+      ...group,
+      items: group.items.map((item) => {
+        const count = navBadges.get(item.href);
+        if (count === undefined) return item;
+        return { ...item, badge: count };
+      }),
+    }));
+  }, [filteredGroups, navBadges]);
 
   const displayVersion = isAutoUpdatingEnvironment()
     ? (versionData?.currentVersion ?? APP_VERSION)
@@ -157,7 +172,7 @@ export function DashboardLayout({ children, subheader }: Props) {
 
       {/* Nav */}
       <SidebarNav
-        groups={filteredGroups}
+        groups={badgedGroups}
         onNavigate={() => setSidebarOpen(false)}
       />
 
@@ -209,7 +224,7 @@ export function DashboardLayout({ children, subheader }: Props) {
       </div>
     </div>
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  ), [filteredGroups, logoError, companyLogo, myProfile, userInitials, displayVersion]);
+  ), [badgedGroups, logoError, companyLogo, myProfile, userInitials, displayVersion]);
 
   return (
     <div className="min-h-dvh" style={{ background: "var(--surface-page)" }}>

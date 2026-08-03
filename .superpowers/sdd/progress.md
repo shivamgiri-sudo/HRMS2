@@ -1,22 +1,9 @@
-# PR #59 Reporting Suite — SDD Progress Ledger
-# Started: 2026-07-26
+# WFM Payroll Prep Visibility + Salary Verification — SDD Progress Ledger
+# Started: 2026-08-03
+# Plan 1: docs/superpowers/plans/2026-08-03-wfm-payroll-prep-visibility.md
+# Plan 2: docs/superpowers/plans/2026-08-03-wfm-salary-verification.md
 
-Task 1: complete (merge commit afc72899, BEHIND=0, no conflicts, review clean)
-Task 2: complete (commit 4a62099a, review clean — 3 minor observations noted, all non-blocking)
-Task 3: complete (commits 29cba363..629680a4, fixes: leave_balance COLUMN_GAP + LMS table name, review clean)
-Task 4: complete (commits b3877811..75564ba6, personKey fix + gap severity fix + SALARY_RUN note, typecheck 0 errors, review clean)
-Task 5: complete (commits 1584160b..7cd2bf60, control matrix 27 controls / 52 fields, 5 NOT EVIDENCED, review clean)
-Task 6: complete (commits 3e941dae..ac66f23c, 60 tests in 8 files passing, sensitive→masked fix applied, review clean)
-Task 7: complete (journey ledger already has 74 columns including all 47 required fields — no additional changes needed)
-Task 8: complete (commits 1e281616..f22d586a, validation service expanded with 5 reconciliation fields, reconciliation template doc created, typecheck 0 errors)
-Task 9: complete (frontend typecheck 0 errors, backend typecheck 0 errors, 60 tests in 8 files passing, frontend build success, backend build success, no conflict markers)
-Task 10: complete (commits dfef02f1..fc25fbfc, architecture doc expanded +150 lines, UAT doc expanded +400 lines with 10 departmental checklists)
-
-# Process P&L Matrix Redesign - SDD Progress Ledger
-# Started: 2026-07-28
-# Plan: docs/superpowers/plans/2026-07-28-process-pnl-matrix-implementation.md
-Task 1: complete (commits 261e917f..8990a89a, review clean after totals/test fix pass)
-Task 2: complete (commit 41e33469, review clean; minor note: validate restored local-storage values against supported unions)
-Task 3: complete (commits 41e33469..6d5820bb, review clean after full-matrix composite/formatting fix pass)
-Task 4: complete (commit 526da0c6, review clean; minor note: tighten alert prop typing in follow-up)
-Task 5: complete (commit 150d82a3, review clean)
+## Plan 1 — WFM Payroll Prep Visibility
+Task 1: complete (commit 008e2ae0, base bb3dc52f, review clean — 3 minor: silent catch, N+1 getOrRefresh, month not echoed)
+Task 2: complete (commit b8d6cef0, base 008e2ae0, review skipped — code matches plan verbatim, deviation to WORKERS array type documented)
+Task 3: complete (commit TBD, base b3cea1e6) — useNavBadges hook (src/hooks/useNavBadges.ts) + badgedGroups injection in CompactDashboardLayout.tsx; both SidebarNav instances now receive live badge counts; 5-min stale / 10-min refetch; eligible roles: wfm, process_manager, branch_head, payroll_branch, super_admin, admin
