@@ -1,75 +1,129 @@
-name: Apply ATS Canonical Index Repair
+name: Performance Fresh Schema Certification
 
+# Canonical zero-to-Performance schema rehearsal. Migration execution runs first
+# so historical schema blockers surface before the slower code gates.
 on:
   pull_request:
     paths:
+      - "backend/sql/**"
+      - "backend/scripts/verify-engagement-gamification-migration.ts"
+      - "backend/scripts/verify-performance-fresh-schema.ts"
+      - "backend/scripts/migrate-fresh-test.ts"
+      - "backend/src/db/runPendingMigrations.ts"
+      - "backend/src/db/__tests__/engagement-gamification-fresh-schema.test.ts"
+      - "backend/src/config/env.ts"
+      - "backend/src/config/__tests__/env-precedence.test.ts"
+      - "backend/src/modules/performance-ingestion/performance-publication.service.ts"
+      - "backend/src/modules/performance-ingestion/__tests__/performance-publication.ratio-multiplier.test.ts"
       - ".github/workflows/engagement-gamification-fresh-schema.yml"
   push:
     branches:
       - codex/performance-staging-certification
     paths:
+      - "backend/sql/**"
+      - "backend/scripts/verify-engagement-gamification-migration.ts"
+      - "backend/scripts/verify-performance-fresh-schema.ts"
+      - "backend/scripts/migrate-fresh-test.ts"
+      - "backend/src/db/runPendingMigrations.ts"
+      - "backend/src/db/__tests__/engagement-gamification-fresh-schema.test.ts"
+      - "backend/src/config/env.ts"
+      - "backend/src/config/__tests__/env-precedence.test.ts"
+      - "backend/src/modules/performance-ingestion/performance-publication.service.ts"
+      - "backend/src/modules/performance-ingestion/__tests__/performance-publication.ratio-multiplier.test.ts"
       - ".github/workflows/engagement-gamification-fresh-schema.yml"
 
 permissions:
-  contents: write
+  contents: read
+
+concurrency:
+  group: performance-fresh-schema-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  patch:
+  verify:
+    name: Build canonical schema through migration 522
     runs-on: ubuntu-24.04
-    steps:
-      - name: Checkout source branch
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.ref || github.ref_name }}
-          fetch-depth: 0
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: root
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -proot"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=30
 
-      - name: Patch migration 138 and push
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install backend dependencies
+        run: npm --prefix backend ci
+
+      - name: Build canonical manifest through Performance migration 522
+        working-directory: backend
+        env:
+          DB_HOST: 127.0.0.1
+          DB_PORT: 3306
+          DB_USER: root
+          DB_PASSWORD: root
+          DB_NAME: hrms_migration_test_performance
+        run: npm exec -- tsx scripts/verify-performance-fresh-schema.ts
+
+      - name: Execute migration 038 twice in isolation
+        working-directory: backend
+        env:
+          DB_HOST: 127.0.0.1
+          DB_PORT: 3306
+          DB_USER: root
+          DB_PASSWORD: root
+          DB_NAME: hrms_migration_test_038
+        run: npm exec -- tsx scripts/verify-engagement-gamification-migration.ts
+
+      - name: Backend typecheck
+        run: npm --prefix backend run typecheck
+
+      - name: Certification safety regression tests
+        working-directory: backend
+        run: >-
+          npm exec -- vitest run
+          src/config/__tests__/env-precedence.test.ts
+          src/modules/performance-ingestion/__tests__/performance-publication.ratio-multiplier.test.ts
+          src/db/__tests__/engagement-gamification-fresh-schema.test.ts
+
+      - name: Fresh runner rejects non-loopback database hosts
+        working-directory: backend
         shell: bash
         run: |
-          python3 - <<'PY'
-          import re
-          from pathlib import Path
+          set +e
+          output=$(DB_HOST=192.0.2.10 DB_NAME=mas_hrms TEST_DB_NAME=hrms_migration_test_guard npm exec -- tsx scripts/migrate-fresh-test.ts 2>&1)
+          status=$?
+          set -e
+          test "$status" -ne 0
+          grep -q "is not loopback" <<<"$output"
 
-          path = Path('backend/sql/138_ats_complete_journey.sql')
-          text = path.read_text(encoding='utf-8')
-          start_marker = '-- ── 17. Add indexes for performance'
-          end_marker = '-- ── 18. Super admin employee access'
-          pattern = re.compile(re.escape(start_marker) + r'.*?(?=' + re.escape(end_marker) + r')', re.S)
-          replacement = '''-- ── 17. Add indexes for performance ───────────────────────────────────────────
-          -- Canonical ats_candidate uses applied_for_branch/current_stage; canonical
-          -- ats_queue_token uses status and stores no branch column. Reuse an existing
-          -- equivalent index when one already covers the same column.
-          SET @exists = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='ats_candidate' AND COLUMN_NAME='applied_for_branch');
-          SET @sql = IF(@exists=0, 'ALTER TABLE ats_candidate ADD INDEX idx_ats_candidate_branch (applied_for_branch)', 'SELECT ''ats_candidate branch index exists'' AS migration_note'); PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
-          SET @exists = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='ats_candidate' AND COLUMN_NAME='current_stage');
-          SET @sql = IF(@exists=0, 'ALTER TABLE ats_candidate ADD INDEX idx_ats_candidate_status (current_stage)', 'SELECT ''ats_candidate stage index exists'' AS migration_note'); PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
-          SET @exists = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='ats_candidate' AND COLUMN_NAME='created_at');
-          SET @sql = IF(@exists=0, 'ALTER TABLE ats_candidate ADD INDEX idx_ats_candidate_created (created_at)', 'SELECT ''ats_candidate created index exists'' AS migration_note'); PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
-          SET @exists = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='ats_queue_token' AND COLUMN_NAME='status');
-          SET @sql = IF(@exists=0, 'ALTER TABLE ats_queue_token ADD INDEX idx_ats_queue_status (status)', 'SELECT ''ats_queue_token status index exists'' AS migration_note'); PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
-          SELECT 'ats_queue_token has no branch column; branch filtering resolves through ats_candidate' AS migration_note;
+      - name: Fresh runner rejects non-disposable database names
+        working-directory: backend
+        shell: bash
+        run: |
+          set +e
+          output=$(DB_HOST=127.0.0.1 DB_NAME=mas_hrms TEST_DB_NAME=customer_database npm exec -- tsx scripts/migrate-fresh-test.ts 2>&1)
+          status=$?
+          set -e
+          test "$status" -ne 0
+          grep -q "does not contain an approved disposable marker" <<<"$output"
 
-          '''
-          text, count = pattern.subn(replacement, text, count=1)
-          if count != 1:
-              raise SystemExit(f'expected one section 17 block, replaced {count}')
-          start = text.index(start_marker)
-          end = text.index(end_marker, start)
-          section = text[start:end]
-          for token in ('(candidate_status)', '(queue_status)', 'idx_ats_queue_branch (branch_name)'):
-              if token in section:
-                  raise SystemExit(f'stale column reference remains in section 17: {token}')
-          path.write_text(text, encoding='utf-8', newline='\n')
-          PY
-
-          rm -f .github/workflows/patch-ats-138-canonical-indexes.yml
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add backend/sql/138_ats_complete_journey.sql .github/workflows/patch-ats-138-canonical-indexes.yml
-          if git diff --cached --quiet; then
-            echo "No source changes required"
-            exit 0
-          fi
-          git commit -m "fix(migrations): align ATS indexes with canonical columns"
-          target_branch="${GITHUB_HEAD_REF:-$GITHUB_REF_NAME}"
-          git push origin HEAD:"$target_branch"
+      - name: Backend production build
+        run: npm --prefix backend run build
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
