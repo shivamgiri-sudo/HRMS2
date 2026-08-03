@@ -168,6 +168,26 @@ CREATE TABLE IF NOT EXISTS visitor_configuration (
   updated_by_user_id CHAR(36),
   created_at   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  CONSTRAINT fk_visitor_config_branch FOREIGN KEY (branch_id) REFERENCES branch_master(id) ON DELETE CASCADE,
+  -- ON DELETE CASCADE removed — MySQL rejects it here, and this is why the whole file failed
+  -- with "Cannot add foreign key constraint" and no further detail.
+  --
+  -- A foreign key may not use CASCADE, SET NULL or SET DEFAULT as its referential action on a
+  -- column that a generated column is derived from. scope_key is
+  -- `COALESCE(branch_id, 'global')` STORED, so branch_id is exactly such a column. The rule
+  -- holds for virtual columns too, so making scope_key VIRTUAL would not help.
+  --
+  -- Of the two things in conflict, the generated column is the one worth keeping: it exists
+  -- because NULL is not distinct in a MySQL UNIQUE index, so without the 'global' sentinel
+  -- there could be any number of global rows per config_key. That is the same pattern
+  -- migration 1035 uses on kpi_master_config.
+  --
+  -- The cost is a behaviour change on branch deletion: previously a branch's configuration
+  -- would have been deleted with it, now the delete is refused while configuration rows
+  -- remain. That is the safer direction — configuration disappearing silently with a branch
+  -- is worse than being told to clear it first — but it is a change, and worth knowing.
+  --
+  -- Migration 410 exists to repair this same foreign key on visitor_configuration, which
+  -- suggests it has been hit before and patched downstream rather than at the source.
+  CONSTRAINT fk_visitor_config_branch FOREIGN KEY (branch_id) REFERENCES branch_master(id),
   UNIQUE KEY uq_visitor_config_scope (scope_key, config_key)
 );

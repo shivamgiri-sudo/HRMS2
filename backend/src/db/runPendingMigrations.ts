@@ -35,6 +35,11 @@ const MIGRATION_MANIFEST: string[] = [
   "003_access_control.sql",
   "004_ats.sql",
   "005_attendance_wfm.sql",
+  // Added 2026-08-03. Creates four candidate-onboarding child tables that eight
+  // migrations ALTER, twenty-five source files read, and nothing in sql/ ever created.
+  // Placed after 004_ats.sql, which creates the ats_candidate parent they key on, and
+  // long before 200 — the earliest migration that ALTERs any of them.
+  "005b_candidate_onboarding_child_tables.sql",
   "006_leave.sql",
   "007_payroll.sql",
   "008_integration_hub.sql",
