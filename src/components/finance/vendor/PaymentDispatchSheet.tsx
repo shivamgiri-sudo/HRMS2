@@ -1,6 +1,6 @@
 // src/components/finance/vendor/PaymentDispatchSheet.tsx
 import { useState, useEffect, Fragment } from "react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Loader2, Send, LockKeyhole } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -63,6 +63,18 @@ export function PaymentDispatchSheet({ payment, open, onOpenChange, onSaved }: P
   const [utr, setUtr] = useState("");
   const [remarks, setRemarks] = useState("");
   const [holdReason, setHoldReason] = useState("");
+
+  const banksQuery = useQuery({
+    queryKey: ["vendor-payment-banks"],
+    queryFn: async () => {
+      const res = await hrmsApi.get<{ success: boolean; data: Array<{ id: string; bank_name: string }> }>(
+        "/api/finance/vendor-payments/banks"
+      );
+      return res.data ?? [];
+    },
+    enabled: open,
+  });
+  const banks = banksQuery.data ?? [];
 
   useEffect(() => {
     if (payment) {
@@ -178,12 +190,16 @@ export function PaymentDispatchSheet({ payment, open, onOpenChange, onSaved }: P
               </div>
               <div>
                 <Label className="text-xs">Bank</Label>
-                <Input
-                  value={bank}
-                  onChange={e => setBank(e.target.value)}
-                  className="mt-1 h-8 text-sm"
-                  placeholder="Bank name"
-                />
+                <Select value={bank} onValueChange={setBank}>
+                  <SelectTrigger className="mt-1 h-8 text-sm">
+                    <SelectValue placeholder={banksQuery.isLoading ? "Loading…" : "Select bank"} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {banks.map(b => (
+                      <SelectItem key={b.id} value={b.id}>{b.bank_name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
               <div>
                 <Label className="text-xs">UTR / Cheque no.</Label>
