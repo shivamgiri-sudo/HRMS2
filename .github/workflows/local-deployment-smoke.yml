@@ -351,89 +351,62 @@ jobs:
           NODE
           echo "::endgroup::"
 
-      # The migration evidence the old health poll was reaching for, taken from the endpoint
-      # that actually publishes it. This is the step that makes the job a release gate rather
-      # than a liveness check: it fails the build on a pending or failed migration, and it
-      # prints the applied/pending counts into the run summary so a release can cite them.
+      # Migration evidence, read from the runner's own log rather than through an API.
+      #
+      # This step used to log in as admin and call /api/health/readiness. That endpoint is
+      # right to refuse the token it got: the demo admin has 2FA outstanding, so the reply is
+      # {"success":false,"message":"2FA verification required"}. Completing a second factor
+      # purely to read migration counts would tie the release evidence to the auth flow, and
+      # the first time someone changed 2FA the evidence would quietly disappear.
+      #
+      # runPendingMigrations already logs all of it, unauthenticated and unambiguous: a line
+      # per applied migration, a line per skipped one, an explicit FAILED line carrying the
+      # driver error, and the schema verifier's own verdict. That log is the primary record —
+      # the endpoint was only ever a view onto it.
       - name: Assert migration health and record it as release evidence
         run: |
           echo "::group::Migration health"
           node - <<'NODE'
           const fs = require('node:fs');
+          const log = fs.readFileSync('backend-smoke.log', 'utf8');
 
-          async function main() {
-            // Same password the seeder wrote. The literal that used to be here belonged to the
-            // same set of invented per-account passwords the login step above had, and 401'd
-            // for the same reason.
-            const loginRes = await fetch('http://localhost:5055/api/auth/login', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                identifier: 'admin@mascallnet.com',
-                password: process.env.DEMO_AUTH_PASSWORD,
-              }),
-            });
-            const loginText = await loginRes.text();
-            if (!loginRes.ok) throw new Error('admin login failed: HTTP ' + loginRes.status + ' ' + loginText);
-            const token = JSON.parse(loginText)?.data?.accessToken;
-            if (!token) throw new Error('admin login returned no access token');
+          const applied = [...log.matchAll(/^\[migration\] applied: (\S+)/gm)].map((m) => m[1]);
+          const skipped = [...log.matchAll(/^\[migration\] skipped[^:]*: (\S+)/gm)].map((m) => m[1]);
+          const failed = [...log.matchAll(/^\[migration\] FAILED: (\S+) . (.*)$/gm)].map((m) => ({ file: m[1], error: m[2] }));
+          const missing = [...log.matchAll(/^\[schema\] (\d+) required table\(s\) MISSING[^:]*: (.*)$/gm)];
+          const allPresent = /^\[schema\] all (\d+) required tables present/m.exec(log);
 
-            const res = await fetch('http://localhost:5055/api/health/readiness', {
-              headers: { Authorization: 'Bearer ' + token },
-            });
-            const text = await res.text();
-            let json;
-            try {
-              json = JSON.parse(text);
-            } catch {
-              throw new Error('readiness returned non-JSON: HTTP ' + res.status + ' ' + text.slice(0, 400));
-            }
+          console.log('applied ' + applied.length + ', skipped ' + skipped.length + ', failed ' + failed.length);
 
-            const m = json?.summary?.migrations ?? {};
-            console.log(JSON.stringify(json, null, 2));
-
-            const problems = [];
-            if (m.status !== 'ok') problems.push('schema verification status is "' + m.status + '", expected "ok"');
-            if ((m.pending_count ?? -1) !== 0) {
-              problems.push(m.pending_count + ' pending migration(s): ' + JSON.stringify(m.pending_files ?? []));
-            }
-            if ((m.failed_count ?? -1) !== 0) {
-              problems.push(m.failed_count + ' failed migration(s): ' + JSON.stringify(m.failed ?? []));
-            }
-
-            const summary = [
-              '### Migration health',
-              '',
-              '| Field | Value |',
-              '| --- | --- |',
-              '| schema status | `' + m.status + '` |',
-              '| applied | ' + m.applied_count + ' |',
-              '| pending | ' + m.pending_count + ' |',
-              '| failed | ' + m.failed_count + ' |',
-              '| runner status | `' + m.runner_status + '` |',
-              '',
-            ].join('\n');
-            if (process.env.GITHUB_STEP_SUMMARY) {
-              fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, summary + '\n');
-            }
-
-            if (problems.length) {
-              console.error('Migration health check failed:');
-              for (const p of problems) console.error('  - ' + p);
-              process.exit(1);
-            }
-            console.log('Migrations clean: ' + m.applied_count + ' applied, 0 pending, 0 failed.');
+          const problems = [];
+          for (const f of failed) problems.push(f.file + ' failed: ' + f.error);
+          for (const m of missing) problems.push(m[1] + ' required table(s) missing: ' + m[2]);
+          if (!allPresent && missing.length === 0) {
+            problems.push('the schema verifier printed no verdict — did the backend finish starting?');
           }
 
-          main().catch((error) => {
-            console.error(error);
-            try {
-              console.error('\n----- backend-smoke.log -----');
-              console.error(fs.readFileSync('backend-smoke.log', 'utf8').slice(-12000));
-              console.error('----- end backend-smoke.log -----\n');
-            } catch {}
+          const tables = allPresent ? 'all ' + allPresent[1] + ' present' : 'MISSING - see below';
+          const summary = [
+            '### Migration health',
+            '',
+            '| Field | Value |',
+            '| --- | --- |',
+            '| applied | ' + applied.length + ' |',
+            '| skipped (already applied) | ' + skipped.length + ' |',
+            '| failed | ' + failed.length + ' |',
+            '| required tables | ' + tables + ' |',
+            '',
+          ].join('\n');
+          if (process.env.GITHUB_STEP_SUMMARY) {
+            fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, summary + '\n');
+          }
+
+          if (problems.length) {
+            console.error('Migration health check failed:');
+            for (const p of problems) console.error('  - ' + p);
             process.exit(1);
-          });
+          }
+          console.log('Migrations clean: ' + applied.length + ' applied, 0 failed, ' + tables + '.');
           NODE
           echo "::endgroup::"
 
