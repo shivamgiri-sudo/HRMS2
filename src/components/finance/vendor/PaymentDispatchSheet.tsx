@@ -67,8 +67,10 @@ export function PaymentDispatchSheet({ payment, open, onOpenChange, onSaved }: P
   const banksQuery = useQuery({
     queryKey: ["vendor-payment-banks"],
     queryFn: async () => {
+      // Registered as /banks (mounted at /api/finance), not under /vendor-payments/*
+      // like every sibling route in vendor-payment.routes.ts — confirmed live.
       const res = await hrmsApi.get<{ success: boolean; data: Array<{ id: string; bank_name: string }> }>(
-        "/api/finance/vendor-payments/banks"
+        "/api/finance/banks"
       );
       return res.data ?? [];
     },
