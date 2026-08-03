@@ -79,16 +79,50 @@ CREATE TABLE IF NOT EXISTS attendance_daily_record (
 -- 3. SEED DATA
 -- =====================================================
 
--- AGENT designation → dialler (480/240 mins)
+-- Agent designation → dialler (480/240 mins).
+--
+-- The original migration hardcoded one production designation UUID. That UUID
+-- does not exist on a clean database and caused the foreign key insert to abort
+-- the complete migration chain. Resolve the designation through stable master
+-- data instead. If an environment has not seeded an Agent designation yet, this
+-- optional scoped rule is intentionally skipped and the global biometric rule
+-- below remains the safe default.
 INSERT INTO attendance_rule_config
-  (id, rule_name, scope_type, designation_id, attendance_source, full_day_minutes, half_day_minutes, grace_minutes, effective_from, active_status)
-VALUES
-  ('arc-agent-001',  'Agent Dialler Rule', 'designation', '775ef029-5caf-11f1-adb1-00155d0ab410', 'dialler', 480, 240, 15, CURDATE(), 1)
-ON DUPLICATE KEY UPDATE rule_name = VALUES(rule_name);
+  (id, rule_name, scope_type, designation_id, attendance_source,
+   full_day_minutes, half_day_minutes, grace_minutes, effective_from, active_status)
+SELECT
+  'arc-agent-001', 'Agent Dialler Rule', 'designation', d.id, 'dialler',
+  480, 240, 15, CURDATE(), 1
+FROM designation_master d
+WHERE d.active_status = 1
+  AND (
+    UPPER(TRIM(d.designation_code)) = 'AGENT'
+    OR UPPER(TRIM(d.designation_name)) = 'AGENT'
+  )
+ORDER BY
+  CASE WHEN UPPER(TRIM(d.designation_code)) = 'AGENT' THEN 0 ELSE 1 END,
+  d.created_at ASC,
+  d.id ASC
+LIMIT 1
+ON DUPLICATE KEY UPDATE
+  rule_name = VALUES(rule_name),
+  designation_id = VALUES(designation_id),
+  attendance_source = VALUES(attendance_source),
+  full_day_minutes = VALUES(full_day_minutes),
+  half_day_minutes = VALUES(half_day_minutes),
+  grace_minutes = VALUES(grace_minutes),
+  active_status = VALUES(active_status);
 
--- Global biometric default — catches ALL other designations
+-- Global biometric default — catches ALL other designations and is also the
+-- only rule on a clean installation until designation master data is loaded.
 INSERT INTO attendance_rule_config
   (id, rule_name, scope_type, designation_id, process_id, branch_id, attendance_source, full_day_minutes, half_day_minutes, grace_minutes, effective_from, active_status)
 VALUES
   ('arc-global-001', 'Global Biometric Default', 'global', NULL, NULL, NULL, 'biometric', 540, 270, 15, CURDATE(), 1)
-ON DUPLICATE KEY UPDATE rule_name = VALUES(rule_name);
+ON DUPLICATE KEY UPDATE
+  rule_name = VALUES(rule_name),
+  attendance_source = VALUES(attendance_source),
+  full_day_minutes = VALUES(full_day_minutes),
+  half_day_minutes = VALUES(half_day_minutes),
+  grace_minutes = VALUES(grace_minutes),
+  active_status = VALUES(active_status);
