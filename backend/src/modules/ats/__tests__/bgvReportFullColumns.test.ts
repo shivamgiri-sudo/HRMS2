@@ -63,6 +63,33 @@ describe("/report/full qualification query", () => {
   }
 });
 
+/**
+ * The same endpoint had a second, independent bad column: it filtered
+ * `candidate_bgv_check` on `deleted_at`, which that table does not have. Fixing
+ * only the qualifications ORDER BY would have left the PDF just as broken —
+ * found by running all nine queries together rather than one at a time.
+ *
+ * candidate_onboarding_document DOES have deleted_at, which is where the
+ * pattern came from and why it looked right.
+ */
+describe("/report/full soft-delete filters", () => {
+  it("does not filter candidate_bgv_check on deleted_at", () => {
+    const at = SOURCE.indexOf("FROM candidate_bgv_check WHERE candidate_id");
+    expect(at, "the bgv check query has moved or been removed").toBeGreaterThan(-1);
+    const statement = SOURCE.slice(at, SOURCE.indexOf("`", at));
+    expect(
+      statement,
+      "candidate_bgv_check has no deleted_at column; this rejects the whole Promise.all",
+    ).not.toContain("deleted_at");
+  });
+
+  it("still filters candidate_onboarding_document on deleted_at, which does have it", () => {
+    const at = SOURCE.indexOf("FROM candidate_onboarding_document");
+    const statement = SOURCE.slice(at, SOURCE.indexOf("`", at));
+    expect(statement).toContain("deleted_at IS NULL");
+  });
+});
+
 describe("/report/full is all-or-nothing", () => {
   it("still gathers its queries in a single Promise.all", () => {
     // If this ever stops being true the blast radius above changes, and the
