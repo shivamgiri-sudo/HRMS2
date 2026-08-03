@@ -164,6 +164,28 @@ DELIMITER ;
 CALL _add_offer_hr_fields();
 DROP PROCEDURE IF EXISTS _add_offer_hr_fields;
 
+-- ── 3B. Candidate onboarding bank-detail base table ─────────────────────────
+-- Earlier rollout code expected this table but no canonical migration created
+-- it. Define the stable candidate/account/proof fields before the validation
+-- procedure below adds reviewer evidence and decision status.
+CREATE TABLE IF NOT EXISTS candidate_onboarding_bank_detail (
+  id CHAR(36) NOT NULL DEFAULT (UUID()) PRIMARY KEY,
+  candidate_id CHAR(36) NOT NULL,
+  account_holder_name VARCHAR(255) NULL,
+  bank_name VARCHAR(255) NULL,
+  bank_branch VARCHAR(255) NULL,
+  account_number VARCHAR(100) NULL,
+  ifsc_code VARCHAR(20) NULL,
+  account_type ENUM('savings','current','salary','other') NULL,
+  cancelled_cheque_url VARCHAR(500) NULL,
+  bank_proof_url VARCHAR(500) NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY uq_candidate_onboarding_bank (candidate_id),
+  INDEX idx_candidate_onboarding_bank_ifsc (ifsc_code),
+  FOREIGN KEY (candidate_id) REFERENCES ats_candidate(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 -- ── 4. Add missing candidate onboarding profile fields ────────────────────────
 DROP PROCEDURE IF EXISTS _add_candidate_profile_fields;
 DELIMITER //
