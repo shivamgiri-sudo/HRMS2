@@ -31,6 +31,7 @@ const PayrollValidationScreen   = lazy(() => import("@/pages/payroll/PayrollVali
 const NocManagement             = lazy(() => import("@/pages/payroll/NocManagement"));
 const BranchPayrollReadiness    = lazy(() => import("@/pages/payroll/BranchPayrollReadiness"));
 const ProcessPayrollReadiness   = lazy(() => import("@/pages/payroll/ProcessPayrollReadiness"));
+const ProcessSalaryVerify       = lazy(() => import("@/pages/payroll/ProcessSalaryVerify"));
 const PayrollCalendar           = lazy(() => import("@/pages/payroll/PayrollCalendar"));
 // PayrollCostSummary moved into ReportsHub — route redirects to hub
 const StatutoryFilingTracker    = lazy(() => import("@/pages/payroll/StatutoryFilingTracker"));
@@ -116,6 +117,7 @@ export const payrollRouteElements = (
       <Route path="/payroll/noc"                 element={<ProtectedRoute roles={['super_admin','payroll_head','payroll_branch','payroll','admin']}><Gate pageCode="PAYROLL_NOC"><NocManagement /></Gate></ProtectedRoute>} />
       <Route path="/payroll/branch-readiness"    element={<ProtectedRoute roles={['super_admin','payroll_head','branch_head','payroll_branch','admin','hr','finance','payroll']}><Gate pageCode="PAYROLL_BRANCH_READINESS"><BranchPayrollReadiness /></Gate></ProtectedRoute>} />
       <Route path="/payroll/process-readiness"  element={<ProtectedRoute roles={['super_admin','payroll_head','branch_head','payroll_branch','admin','hr','finance','payroll','process_manager','wfm']}><Gate pageCode="PAYROLL_PROCESS_READINESS"><ProcessPayrollReadiness /></Gate></ProtectedRoute>} />
+      <Route path="/payroll/salary-verification" element={<ProtectedRoute roles={['super_admin','payroll_head','branch_head','payroll_branch','wfm','process_manager','admin']}><Gate pageCode="PAYROLL_SALARY_VERIFICATION"><ProcessSalaryVerify /></Gate></ProtectedRoute>} />
       <Route path="/payroll/calendar"            element={<ProtectedRoute roles={['super_admin','payroll_head','payroll_branch']}><Gate pageCode="PAYROLL_CALENDAR"><PayrollCalendar /></Gate></ProtectedRoute>} />
       <Route path="/payroll/cost-summary"        element={<Navigate to="/reports?view=library&report=payroll-cost-summary" replace />} />
       <Route path="/payroll/statutory-filing"    element={<ProtectedRoute roles={['super_admin','payroll_head','finance','admin']}><Gate pageCode="PAYROLL_STATUTORY_FILING"><StatutoryFilingTracker /></Gate></ProtectedRoute>} />

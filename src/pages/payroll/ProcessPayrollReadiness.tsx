@@ -59,6 +59,9 @@ interface ProcessReadiness {
   ho_override_by: string | null;
   ho_override_at: string | null;
   ho_override_reason: string | null;
+  salary_verification_done: number;
+  salary_verification_at: string | null;
+  salary_verification_by: string | null;
   readiness_score: number;
   readiness_status: "not_started" | "in_progress" | "ready" | "blocked";
   employee_count: number;
@@ -449,7 +452,7 @@ function ProcessDetailDrawer({
 
   const canToggleAttendance = isWFM;
   const canToggleOther = isPM || isWFM;
-  const canSignOff = isPM && process.attendance_frozen === 1 && process.process_manager_signoff === 0;
+  const canSignOff = isPM && process.attendance_frozen === 1 && process.salary_verification_done === 1 && process.process_manager_signoff === 0;
 
   return (
     <Sheet open={open} onOpenChange={(v) => { if (!v) onClose(); }}>
@@ -674,6 +677,30 @@ function ProcessDetailDrawer({
                     </span>
                   </div>
                 ))}
+              </div>
+            </StepItem>
+
+            {/* Step 6 — Salary Verification */}
+            <StepItem
+              number={6}
+              title="Salary Verification"
+              done={process.salary_verification_done === 1}
+              locked={process.attendance_frozen === 0}
+              doneAt={process.salary_verification_at ?? undefined}
+              doneBy={process.salary_verification_by ?? undefined}
+            >
+              <p className="text-xs text-slate-500">
+                Review each employee's estimated salary breakdown, flag discrepancies to
+                Payroll Head, and mark all clean rows verified before sign-off.
+              </p>
+              <div className="mt-2">
+                <Link
+                  to={`/payroll/salary-verification?processId=${process.process_id}&month=${month}`}
+                  className="inline-flex items-center gap-1 text-xs font-medium text-violet-600 hover:underline"
+                >
+                  <ChevronRight className="h-3 w-3" />
+                  Open Salary Verification Register
+                </Link>
               </div>
             </StepItem>
           </div>

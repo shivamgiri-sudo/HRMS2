@@ -37,6 +37,53 @@ async function getRunForMonth(month: string): Promise<{ id: string; status: stri
 }
 
 // ---------------------------------------------------------------------------
+// GET /processes — list processes the caller has salary-verification access to
+// ---------------------------------------------------------------------------
+salaryVerificationRouter.get(
+  "/processes",
+  requireAuth,
+  requireRole("wfm", "process_manager", "branch_head", "payroll_head", "super_admin", "payroll"),
+  async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const month = resolveMonth(req.query.month);
+      const userId = req.authUser!.id;
+      const roleKeys: string[] = (req.authUser as any)?.roleKeys ?? [];
+
+      const isAdmin = roleKeys.some((r) => ["super_admin", "payroll_head", "payroll"].includes(r));
+
+      let rows: RowDataPacket[];
+      if (isAdmin) {
+        [rows] = await db.execute<RowDataPacket[]>(
+          `SELECT pm.id AS process_id, pm.process_name,
+                  b.id AS branch_id, b.branch_name
+             FROM process_master pm
+             JOIN branch_master b ON b.id = pm.branch_id
+            WHERE pm.is_active = 1
+            ORDER BY b.branch_name, pm.process_name`
+        );
+      } else {
+        [rows] = await db.execute<RowDataPacket[]>(
+          `SELECT DISTINCT pm.id AS process_id, pm.process_name,
+                  b.id AS branch_id, b.branch_name
+             FROM employees e
+             JOIN process_master pm ON pm.id = e.process_id
+             JOIN branch_master b ON b.id = e.branch_id
+            WHERE e.user_id = ? OR pm.manager_user_id = ?
+            ORDER BY b.branch_name, pm.process_name`,
+          [userId, userId]
+        );
+      }
+
+      return res.json({ success: true, data: rows });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error("[SalaryVerification] GET /processes error:", msg);
+      return res.status(500).json({ success: false, message: "Failed to fetch processes" });
+    }
+  }
+);
+
+// ---------------------------------------------------------------------------
 // GET /employees
 // ---------------------------------------------------------------------------
 salaryVerificationRouter.get(
