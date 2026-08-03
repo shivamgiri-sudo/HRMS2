@@ -5,11 +5,22 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { useBudgetConsolidation } from "@/hooks/useBudgetConsolidation";
+import { useBudgetConsolidation, type CompanyConsolidationGroup } from "@/hooks/useBudgetConsolidation";
 import { usePinnedOffsets, useColumnPinning } from "@/hooks/useColumnPinning";
 
 const ROW_LABEL_WIDTH = 280;
 const COLUMN_WIDTH = 150;
+const COMPANY_COLUMN_WIDTH = 130;
+/** Planned/Reserved/Consumed are the budget's own figures; Paid/Booked are actuals sourced from
+ *  GRN (see getCompanyBudgetConsolidation's grn_cost_allocation join) — same rupee, four states,
+ *  finally in one row instead of split across the Budget, GRN and P&L screens. */
+const COMPANY_TOTAL_COLUMNS: Array<{ key: string; label: string; hint: string; value: (group: CompanyConsolidationGroup) => number }> = [
+  { key: "planned", label: "Planned", hint: "Company-wide budgeted amount", value: (g) => g.companyGrossAmount },
+  { key: "reserved", label: "Reserved", hint: "Held against Branch Head-approved GRNs, not yet consumed", value: (g) => g.companyReservedAmount },
+  { key: "consumed", label: "Consumed", hint: "Finance Head-approved GRN spend against this budget", value: (g) => g.companyConsumedAmount },
+  { key: "paid", label: "Paid", hint: "GRNs whose payment has actually gone out", value: (g) => g.companyPaidAmount },
+  { key: "booked", label: "Booked to P&L", hint: "GRN cost actually recognised in Process P&L (lifecycle_status = consumed)", value: (g) => g.companyBookedToPnlAmount },
+];
 
 function currentPeriod() {
   const now = new Date();
@@ -241,7 +252,7 @@ export default function BudgetConsolidationPage() {
                     <div className="overflow-auto">
                       <table
                         className="w-full border-separate border-spacing-0 text-xs"
-                        style={{ minWidth: `${ROW_LABEL_WIDTH + orderedBranchColumns.length * COLUMN_WIDTH + COLUMN_WIDTH}px` }}
+                        style={{ minWidth: `${ROW_LABEL_WIDTH + orderedBranchColumns.length * COLUMN_WIDTH + COMPANY_TOTAL_COLUMNS.length * COMPANY_COLUMN_WIDTH}px` }}
                       >
                         <thead className="text-slate-600">
                           <tr className="sticky top-0 z-30 bg-slate-50 text-[10px] font-bold uppercase tracking-[0.12em]">
@@ -265,7 +276,16 @@ export default function BudgetConsolidationPage() {
                                 </th>
                               );
                             })}
-                            <th className="sticky right-0 z-40 min-w-[150px] border-b border-l-2 border-slate-300 bg-slate-100 px-3 py-3 text-right">Company Total</th>
+                            {COMPANY_TOTAL_COLUMNS.map((col, colIndex) => (
+                              <th
+                                key={col.key}
+                                className={`sticky z-40 border-b bg-slate-100 px-3 py-3 text-right ${colIndex === 0 ? "border-l-2 border-slate-300" : ""}`}
+                                style={{ right: (COMPANY_TOTAL_COLUMNS.length - 1 - colIndex) * COMPANY_COLUMN_WIDTH, minWidth: COMPANY_COLUMN_WIDTH }}
+                                title={col.hint}
+                              >
+                                {col.label}
+                              </th>
+                            ))}
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-100 bg-white">
@@ -291,9 +311,15 @@ export default function BudgetConsolidationPage() {
                                   </td>
                                 );
                               })}
-                              <td className="sticky right-0 z-10 min-w-[150px] border-l-2 border-slate-200 bg-slate-50/80 px-3 py-2 text-right font-semibold text-slate-900 group-hover:bg-slate-100">
-                                {money(group.companyGrossAmount)}
-                              </td>
+                              {COMPANY_TOTAL_COLUMNS.map((col, colIndex) => (
+                                <td
+                                  key={col.key}
+                                  className={`sticky z-10 bg-slate-50/80 px-3 py-2 text-right font-semibold text-slate-900 group-hover:bg-slate-100 ${colIndex === 0 ? "border-l-2 border-slate-200" : ""}`}
+                                  style={{ right: (COMPANY_TOTAL_COLUMNS.length - 1 - colIndex) * COMPANY_COLUMN_WIDTH, minWidth: COMPANY_COLUMN_WIDTH }}
+                                >
+                                  {money(col.value(group))}
+                                </td>
+                              ))}
                             </tr>
                           ))}
                         </tbody>

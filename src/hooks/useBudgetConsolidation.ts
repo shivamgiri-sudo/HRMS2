@@ -11,6 +11,10 @@ export interface CompanyConsolidationBranchAmount {
   quantity: number;
   grossAmount: number;
   pnlCostAmount: number;
+  reservedAmount: number;
+  consumedAmount: number;
+  paidAmount: number;
+  bookedToPnlAmount: number;
 }
 
 export interface CompanyConsolidationGroup {
@@ -22,6 +26,10 @@ export interface CompanyConsolidationGroup {
   companyUnit: number;
   companyGrossAmount: number;
   companyPnlCostAmount: number;
+  companyReservedAmount: number;
+  companyConsumedAmount: number;
+  companyPaidAmount: number;
+  companyBookedToPnlAmount: number;
   branchCount: number;
   branches: CompanyConsolidationBranchAmount[];
 }

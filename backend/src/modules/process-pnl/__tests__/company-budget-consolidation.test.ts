@@ -5,6 +5,7 @@ interface FakeRow {
   branch_id: string;
   branch_name: string;
   budget_status: string;
+  line_id: string;
   head: string;
   sub_head: string | null;
   item_name: string;
@@ -12,9 +13,17 @@ interface FakeRow {
   quantity: number;
   gross_amount: number;
   pnl_cost_amount: number;
+  reserved_amount: number;
+  consumed_amount: number;
 }
 
-function fakeExecutor(rows: FakeRow[]) {
+interface FakeGrnActualRow {
+  budget_line_id: string;
+  paid_amount: number;
+  booked_amount: number;
+}
+
+function fakeExecutor(rows: FakeRow[], grnActuals: FakeGrnActualRow[] = []) {
   return {
     async execute(sql: string, params?: unknown[]) {
       if (sql.includes("FROM finance_budget_header")) {
@@ -24,16 +33,21 @@ function fakeExecutor(rows: FakeRow[]) {
         void periodCode;
         return [rows, []];
       }
+      if (sql.includes("FROM grn_cost_allocation")) {
+        return [grnActuals, []];
+      }
       throw new Error(`fakeExecutor: unexpected query — ${sql}`);
     },
   } as any;
 }
 
+let nextLineId = 1;
 function row(overrides: Partial<FakeRow>): FakeRow {
   return {
     branch_id: "b1",
     branch_name: "Noida",
     budget_status: "active",
+    line_id: `line-${nextLineId++}`,
     head: "IT",
     sub_head: "Software",
     item_name: "Process-specific software",
@@ -41,6 +55,8 @@ function row(overrides: Partial<FakeRow>): FakeRow {
     quantity: 5,
     gross_amount: 11800,
     pnl_cost_amount: 10000,
+    reserved_amount: 0,
+    consumed_amount: 0,
     ...overrides,
   };
 }
@@ -107,5 +123,36 @@ describe("getCompanyBudgetConsolidation", () => {
   it("returns an empty array when no branch has budget lines for the period", async () => {
     const result = await getCompanyBudgetConsolidation("2026-08", fakeExecutor([]));
     expect(result).toEqual([]);
+  });
+
+  it("rolls up reserved/consumed from the budget line and paid/booked from GRN actuals, per branch and company-wide", async () => {
+    const rows = [
+      row({ branch_id: "b1", line_id: "line-b1", reserved_amount: 2000, consumed_amount: 1500 }),
+      row({ branch_id: "b2", line_id: "line-b2", reserved_amount: 1000, consumed_amount: 800 }),
+    ];
+    const grnActuals = [
+      { budget_line_id: "line-b1", paid_amount: 900, booked_amount: 1500 },
+      { budget_line_id: "line-b2", paid_amount: 300, booked_amount: 800 },
+      // A row for a budget line outside this consolidation's result set must be ignored, not
+      // thrown or double-counted into whichever group happens to iterate last.
+      { budget_line_id: "line-unrelated", paid_amount: 5000, booked_amount: 5000 },
+    ];
+    const result = await getCompanyBudgetConsolidation("2026-08", fakeExecutor(rows, grnActuals));
+    expect(result).toHaveLength(1);
+    const group = result[0];
+    expect(group.companyReservedAmount).toBe(3000);
+    expect(group.companyConsumedAmount).toBe(2300);
+    expect(group.companyPaidAmount).toBe(1200);
+    expect(group.companyBookedToPnlAmount).toBe(2300);
+    const b1 = group.branches.find((b) => b.branchId === "b1");
+    expect(b1?.paidAmount).toBe(900);
+    expect(b1?.bookedToPnlAmount).toBe(1500);
+  });
+
+  it("treats a budget line with no matching GRN activity as zero paid/booked, not undefined", async () => {
+    const result = await getCompanyBudgetConsolidation("2026-08", fakeExecutor([row({ line_id: "line-x" })], []));
+    expect(result[0].companyPaidAmount).toBe(0);
+    expect(result[0].companyBookedToPnlAmount).toBe(0);
+    expect(result[0].branches[0].paidAmount).toBe(0);
   });
 });

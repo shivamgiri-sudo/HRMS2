@@ -414,6 +414,15 @@ export interface CompanyConsolidationBranchAmount {
   quantity: number;
   grossAmount: number;
   pnlCostAmount: number;
+  reservedAmount: number;
+  consumedAmount: number;
+  /** Sum of grn_cost_allocation.amount_with_tax for allocations whose GRN has reached
+   *  status='paid' — the same terminal status GrnHistoryTable.tsx already surfaces. */
+  paidAmount: number;
+  /** Sum of grn_cost_allocation.pnl_cost_amount for allocations at lifecycle_status='consumed'
+   *  — the same filter vw_process_lob_grn_allocation uses to source real (not planned) P&L cost,
+   *  so this lines up with what Process P&L actually booked, not what was budgeted. */
+  bookedToPnlAmount: number;
 }
 
 export interface CompanyConsolidationGroup {
@@ -425,6 +434,10 @@ export interface CompanyConsolidationGroup {
   companyUnit: number;
   companyGrossAmount: number;
   companyPnlCostAmount: number;
+  companyReservedAmount: number;
+  companyConsumedAmount: number;
+  companyPaidAmount: number;
+  companyBookedToPnlAmount: number;
   branchCount: number;
   branches: CompanyConsolidationBranchAmount[];
 }
@@ -440,14 +453,37 @@ export async function getCompanyBudgetConsolidation(
   periodCode: string,
   executor: ConsolidationExecutor = db
 ): Promise<CompanyConsolidationGroup[]> {
-  const [rows] = await executor.execute<RowDataPacket[]>(
-    `SELECT h.branch_id, bm.branch_name, h.status AS budget_status,
-            l.head, l.sub_head, l.item_name, l.unit, l.quantity, l.gross_amount, l.pnl_cost_amount
-       FROM finance_budget_header h
-       LEFT JOIN branch_master bm ON bm.id = h.branch_id
-       JOIN finance_budget_line l ON l.budget_id = h.id
-      WHERE h.period_code = ?`,
-    [periodCode]
+  const [[rows], [grnRows]] = await Promise.all([
+    executor.execute<RowDataPacket[]>(
+      `SELECT h.branch_id, bm.branch_name, h.status AS budget_status,
+              l.id AS line_id, l.head, l.sub_head, l.item_name, l.unit, l.quantity,
+              l.gross_amount, l.pnl_cost_amount, l.reserved_amount, l.consumed_amount
+         FROM finance_budget_header h
+         LEFT JOIN branch_master bm ON bm.id = h.branch_id
+         JOIN finance_budget_line l ON l.budget_id = h.id
+        WHERE h.period_code = ?`,
+      [periodCode]
+    ),
+    // Actuals, not plan: paid keys off grn_request.status the same way GrnHistoryTable.tsx
+    // does; booked-to-P&L keys off lifecycle_status='consumed' the same way
+    // vw_process_lob_grn_allocation does — so both figures agree with what the GRN and P&L
+    // screens themselves already call "paid" and "booked", rather than inventing a third
+    // definition here.
+    executor.execute<RowDataPacket[]>(
+      `SELECT a.budget_line_id,
+              SUM(CASE WHEN g.status = 'paid' THEN a.amount_with_tax ELSE 0 END) paid_amount,
+              SUM(CASE WHEN a.lifecycle_status = 'consumed' THEN a.pnl_cost_amount ELSE 0 END) booked_amount
+         FROM grn_cost_allocation a
+         JOIN grn_request g ON g.id = a.grn_request_id
+         JOIN finance_budget_line l ON l.id = a.budget_line_id
+         JOIN finance_budget_header h ON h.id = l.budget_id
+        WHERE h.period_code = ?
+        GROUP BY a.budget_line_id`,
+      [periodCode]
+    ),
+  ]);
+  const actualsByLineId = new Map(
+    grnRows.map((row) => [String(row.budget_line_id), { paid: Number(row.paid_amount ?? 0), booked: Number(row.booked_amount ?? 0) }])
   );
 
   const groups = new Map<
@@ -462,6 +498,7 @@ export async function getCompanyBudgetConsolidation(
     const unit = String(row.unit);
     const branchId = String(row.branch_id);
     const key = `${head}|${subHead ?? ""}|${itemName}`;
+    const actuals = actualsByLineId.get(String(row.line_id)) ?? { paid: 0, booked: 0 };
 
     let entry = groups.get(key);
     if (!entry) {
@@ -475,6 +512,10 @@ export async function getCompanyBudgetConsolidation(
           companyUnit: 0,
           companyGrossAmount: 0,
           companyPnlCostAmount: 0,
+          companyReservedAmount: 0,
+          companyConsumedAmount: 0,
+          companyPaidAmount: 0,
+          companyBookedToPnlAmount: 0,
           branchCount: 0,
           branches: [],
         },
@@ -487,12 +528,20 @@ export async function getCompanyBudgetConsolidation(
     entry.group.companyUnit += Number(row.quantity ?? 0);
     entry.group.companyGrossAmount = roundMoney(entry.group.companyGrossAmount + Number(row.gross_amount ?? 0));
     entry.group.companyPnlCostAmount = roundMoney(entry.group.companyPnlCostAmount + Number(row.pnl_cost_amount ?? 0));
+    entry.group.companyReservedAmount = roundMoney(entry.group.companyReservedAmount + Number(row.reserved_amount ?? 0));
+    entry.group.companyConsumedAmount = roundMoney(entry.group.companyConsumedAmount + Number(row.consumed_amount ?? 0));
+    entry.group.companyPaidAmount = roundMoney(entry.group.companyPaidAmount + actuals.paid);
+    entry.group.companyBookedToPnlAmount = roundMoney(entry.group.companyBookedToPnlAmount + actuals.booked);
 
     const existingBranch = entry.branchByBranchId.get(branchId);
     if (existingBranch) {
       existingBranch.quantity += Number(row.quantity ?? 0);
       existingBranch.grossAmount = roundMoney(existingBranch.grossAmount + Number(row.gross_amount ?? 0));
       existingBranch.pnlCostAmount = roundMoney(existingBranch.pnlCostAmount + Number(row.pnl_cost_amount ?? 0));
+      existingBranch.reservedAmount = roundMoney(existingBranch.reservedAmount + Number(row.reserved_amount ?? 0));
+      existingBranch.consumedAmount = roundMoney(existingBranch.consumedAmount + Number(row.consumed_amount ?? 0));
+      existingBranch.paidAmount = roundMoney(existingBranch.paidAmount + actuals.paid);
+      existingBranch.bookedToPnlAmount = roundMoney(existingBranch.bookedToPnlAmount + actuals.booked);
     } else {
       entry.branchByBranchId.set(branchId, {
         branchId,
@@ -501,6 +550,10 @@ export async function getCompanyBudgetConsolidation(
         quantity: Number(row.quantity ?? 0),
         grossAmount: Number(row.gross_amount ?? 0),
         pnlCostAmount: Number(row.pnl_cost_amount ?? 0),
+        reservedAmount: Number(row.reserved_amount ?? 0),
+        consumedAmount: Number(row.consumed_amount ?? 0),
+        paidAmount: actuals.paid,
+        bookedToPnlAmount: actuals.booked,
       });
     }
   }
