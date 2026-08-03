@@ -28,10 +28,15 @@ DELIMITER ;
 
 -- ── Add missing columns to dpdp_consent_withdrawal ──────────────────────────
 
+-- AFTER scope_json removed: dpdp_consent_withdrawal has no scope_json column, and no
+-- migration creates one, so the ALTER failed with "Unknown column 'scope_json'" on any
+-- fresh database. Column position is cosmetic in MySQL — nothing reads it — so the clause
+-- is dropped rather than guarded. On a database that does have scope_json the only
+-- difference is that the new column lands at the end of the table instead of beside it.
 CALL _m300_add_col(
   'dpdp_consent_withdrawal',
   'withdrawal_scope_json',
-  'JSON NULL COMMENT ''Which data categories to restrict'' AFTER scope_json'
+  'JSON NULL COMMENT ''Which data categories to restrict'''
 );
 
 CALL _m300_add_col(
