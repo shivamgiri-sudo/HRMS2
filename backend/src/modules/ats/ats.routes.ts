@@ -70,6 +70,16 @@ atsPublicRouter.post(
       return res.status(400).json({ success: false, message: "type must be 'resume' or 'selfie'" });
     }
 
+    // Ownership proof is required before anything is looked up. Checking it after
+    // the candidate query turned this public endpoint into an existence oracle: a
+    // caller with no proof at all could tell a real candidate id (404) from a fake
+    // one (404 vs 403). Validating first also matches the type check above — no DB
+    // hit for a request that cannot succeed.
+    const normalizedInput = String(mobile ?? "").replace(/\D/g, "").slice(-10);
+    if (!normalizedInput) {
+      return res.status(400).json({ success: false, message: "mobile is required to verify ownership of this candidate record" });
+    }
+
     // Verify candidate exists and was registered recently (within 1 hour of walk-in)
     // Use updated_at (not created_at) — pre-entered leads have old created_at but updated_at
     // is always stamped NOW() by the registration route when a candidate walks in.
@@ -85,13 +95,22 @@ atsPublicRouter.post(
 
     const candidate = rows[0] as { id: string; updated_at: string; mobile: string | null };
 
-    // Ownership check: mobile sent by caller must match the registered candidate mobile
-    if (mobile && candidate.mobile) {
-      const normalizedInput    = String(mobile).replace(/\D/g, "").slice(-10);
-      const normalizedStored   = String(candidate.mobile).replace(/\D/g, "").slice(-10);
-      if (normalizedInput !== normalizedStored) {
-        return res.status(403).json({ success: false, message: "Mobile number does not match candidate record" });
-      }
+    // Ownership check: mobile sent by caller must match the registered candidate mobile.
+    //
+    // This endpoint is public — no JWT — so this comparison is the ONLY thing tying
+    // the uploader to the candidate. It used to run under `if (mobile && candidate.mobile)`,
+    // which made the proof optional in both directions: omit the field and the check
+    // was skipped rather than failed, and any caller holding a candidate id could
+    // upload against it. A missing proof is rejected above, before the lookup.
+    if (!candidate.mobile) {
+      // Nothing to compare against, so ownership cannot be established. Denying is
+      // the only safe reading — the alternative lets a candidate row with no stored
+      // mobile accept an upload from anyone.
+      return res.status(403).json({ success: false, message: "Mobile number does not match candidate record" });
+    }
+    const normalizedStored = String(candidate.mobile).replace(/\D/g, "").slice(-10);
+    if (normalizedInput !== normalizedStored) {
+      return res.status(403).json({ success: false, message: "Mobile number does not match candidate record" });
     }
 
     // dateStrings:true returns bare "YYYY-MM-DD HH:mm:ss" — append T and Z for safe UTC parse

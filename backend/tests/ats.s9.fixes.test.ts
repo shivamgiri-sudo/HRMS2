@@ -9,6 +9,18 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import express from "express";
 import request from "supertest";
 
+// These suites are integration-shaped: vi.resetModules() in beforeEach forces a
+// fresh import of the whole ATS route graph — ats.routes alone pulls in dozens of
+// routers — and each test then builds an express app on top of it. That costs
+// seconds per test on a loaded machine, and vitest's 5s test / 10s hook defaults
+// are sized for unit tests. Running the file alone always passed; running it
+// inside the full 397-file suite timed out mid-import, which surfaced as
+// "vi.mocked(...).mockResolvedValue is not a function" when a hook died before
+// the module finished loading. Raising the limits fixes the timeouts without
+// weakening a single assertion.
+vi.setConfig({ testTimeout: 45_000, hookTimeout: 45_000 });
+
+
 // ── Mocks ──────────────────────────────────────────────────────────────────────
 
 const mockExecute = vi.fn();
