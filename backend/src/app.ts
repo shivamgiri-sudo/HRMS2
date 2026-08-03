@@ -210,6 +210,7 @@ import { vendorPaymentRouter } from "./modules/finance/vendor-payment.routes.js"
 import { grnRouter } from "./modules/finance/grn.routes.js";
 import { costCentreManagementRouter } from "./modules/finance/cost-centre-management.routes.js";
 import { processPnlRouter } from "./modules/process-pnl/process-pnl.routes.js";
+import billabilityRouter from "./modules/process-pnl/billability.routes.js";
 import { onboardingDataRouter } from "./modules/onboarding/onboarding-data.routes.js";
 import { pennyDropRouter } from "./modules/onboarding/penny-drop.routes.js";
 import { nameValidationRouter } from "./modules/onboarding/name-validation.routes.js";
@@ -480,6 +481,10 @@ app.use("/api/finance", vendorPaymentRouter);
 app.use("/api/finance", grnRouter);
 app.use("/api/finance/cost-centres", costCentreManagementRouter);
 app.use("/api/finance", processPnlRouter);
+// Mounted on its own base, BEFORE nothing and after processPnlRouter deliberately: it
+// owns /api/finance/billability/* outright, so it cannot be shadowed by a wildcard on
+// the shared /api/finance base.
+app.use("/api/finance/billability", billabilityRouter);
 app.use("/api/inbox", inboxRouter);
 app.use("/api/it-provisioning", itProvisioningRouter);
 app.use("/api/onboarding-provisioning", itProvisioningRouter);

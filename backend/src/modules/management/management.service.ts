@@ -848,9 +848,15 @@ export const managementService = {
     ).catch(() => [[{ count: 0 }]] as any);
 
     // Expired employee documents
+    //
+    // The table is employee_documents (plural) and has no active_status column.
+    // Both mistakes threw ER_BAD_FIELD_ERROR / ER_NO_SUCH_TABLE on every call,
+    // and the .catch below turned that into a hard-coded 0 — so this tile has
+    // always read "no expired documents" without ever looking at the 207,616
+    // rows that are actually there. A wrong number nobody can tell is wrong.
     const [expiredDocsResult] = await db.execute<RowDataPacket[]>(
-      `SELECT COUNT(*) AS count FROM employee_document
-       WHERE expiry_date IS NOT NULL AND expiry_date < CURDATE() AND active_status = 1`
+      `SELECT COUNT(*) AS count FROM employee_documents
+       WHERE expiry_date IS NOT NULL AND expiry_date < CURDATE()`
     ).catch(() => [[{ count: 0 }]] as any);
 
     // Pending policy acknowledgements

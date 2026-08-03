@@ -17,6 +17,7 @@ const ProcessPnlPage               = lazy(() => import("@/pages/finance/ProcessP
 const ProcessPnlDetailPage         = lazy(() => import("@/pages/finance/ProcessPnlDetailPage"));
 const ProcessPnlConfigurationPage  = lazy(() => import("@/pages/finance/ProcessPnlConfigurationPage"));
 const ProcessLobManagementPage     = lazy(() => import("@/pages/finance/ProcessLobManagementPage"));
+const BillabilitySeatCostPage      = lazy(() => import("@/pages/finance/BillabilitySeatCostPage"));
 const PnlPeriodClosePage           = lazy(() => import("@/pages/finance/PnlPeriodClosePage"));
 const MyExpenses                   = lazy(() => import("@/pages/expenses/MyExpenses"));
 const NewExpenseClaim              = lazy(() => import("@/pages/expenses/NewExpenseClaim"));
@@ -33,6 +34,9 @@ const grnRoles: string[] = [...financeRoles, 'branch_admin', 'branch_head'];
 const pnlRoles     = ['super_admin','admin','ceo','coo','finance','finance_head','accounts_head','payroll_head'] as const;
 const budgetConsolidationRoles = ['super_admin','admin','ceo','coo','finance_head','accounts_head'] as const;
 const costCentreRoles = ['super_admin','admin','finance','finance_head','accounts_head','branch_head','branch_admin'] as const;
+// Must stay identical to the grant in backend/sql/1066_billability_page_access.sql and to
+// BILLABILITY_ROLES in backend/src/modules/process-pnl/billability.routes.ts.
+const billabilityRoles = ['super_admin','finance','payroll_head','payroll_branch'] as const;
 
 export const financeRouteElements = (
   <>
@@ -47,6 +51,9 @@ export const financeRouteElements = (
       <Route path="/finance/branch-budget"           element={<ProtectedRoute roles={['super_admin','admin','branch_admin','branch_head','finance','finance_head','accounts_head']}><Gate pageCode="FINANCE_BRANCH_BUDGET"><BranchBudgetManagementPage /></Gate></ProtectedRoute>} />
       <Route path="/finance/budget-consolidation"    element={<ProtectedRoute roles={budgetConsolidationRoles}><Gate pageCode="FINANCE_BUDGET_CONSOLIDATION"><BudgetConsolidationPage /></Gate></ProtectedRoute>} />
       <Route path="/finance/cost-centres"            element={<ProtectedRoute roles={costCentreRoles}><Gate pageCode="FINANCE_COST_CENTRES"><CostCentreManagementPage /></Gate></ProtectedRoute>} />
+      {/* Roles here match the grant issued in migration 1064 exactly. If they drift, the page
+          either 403s for someone who was granted it, or shows for someone the API will refuse. */}
+      <Route path="/finance/billability"             element={<ProtectedRoute roles={billabilityRoles}><Gate pageCode="FINANCE_BILLABILITY_SEAT_COST"><BillabilitySeatCostPage /></Gate></ProtectedRoute>} />
       <Route path="/finance/process-pnl"             element={<ProtectedRoute roles={pnlRoles}><Gate pageCode="FINANCE_PROCESS_PNL"><ProcessPnlPage /></Gate></ProtectedRoute>} />
       <Route path="/finance/process-pnl/configuration" element={<ProtectedRoute roles={pnlRoles}><Gate pageCode="FINANCE_PNL_CONFIG"><ProcessPnlConfigurationPage /></Gate></ProtectedRoute>} />
       <Route path="/finance/process-pnl/lobs"          element={<ProtectedRoute roles={pnlRoles}><Gate pageCode="FINANCE_PNL_LOBS"><ProcessLobManagementPage /></Gate></ProtectedRoute>} />
