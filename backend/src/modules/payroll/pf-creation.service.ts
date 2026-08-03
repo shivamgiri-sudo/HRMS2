@@ -660,4 +660,104 @@ export const pfCreationService = {
     );
     return rows;
   },
+
+  async generateEcrFile(
+    month: string,
+    establishmentId: string
+  ): Promise<{ content: string; filename: string; employeeCount: number }> {
+    const [estRows] = await db.query<any[]>(
+      `SELECT establishment_code, establishment_name FROM pf_establishment_master WHERE id = ? AND active_status = 1`,
+      [establishmentId]
+    );
+    if (!estRows.length) throw Object.assign(new Error("Establishment not found"), { status: 404 });
+    const est = estRows[0];
+
+    const [runRows] = await db.query<any[]>(
+      `SELECT spr.id AS run_id
+       FROM salary_prep_run spr
+       JOIN pf_establishment_master pem ON pem.id = ?
+       WHERE spr.run_month = ?
+         AND (spr.branch_filter IS NULL OR spr.branch_filter = pem.branch_id OR spr.branch_filter = '')
+         AND spr.status NOT IN ('draft','cancelled')
+       ORDER BY spr.created_at DESC
+       LIMIT 1`,
+      [establishmentId, month]
+    );
+    if (!runRows.length) {
+      throw Object.assign(
+        new Error(`No finalised salary run found for ${month}`),
+        { status: 404 }
+      );
+    }
+    const runId = runRows[0].run_id;
+
+    const [rows] = await db.query<any[]>(
+      `SELECT
+         eecp.uan_masked              AS uan,
+         e.full_name                  AS member_name,
+         ROUND(spl.gross_salary)      AS gross_wages,
+         ROUND(spl.pf_employee / 0.12) AS epf_wages,
+         ROUND(spl.pf_employee)       AS epf_contri,
+         ROUND(spl.pf_employer * 8.33 / 12) AS eps_contri,
+         ROUND(spl.lwp_days)          AS ncp_days
+       FROM salary_prep_line spl
+       JOIN employees e ON e.id = spl.employee_id
+       JOIN employee_epf_compliance_profile eecp
+         ON eecp.employee_id = spl.employee_id
+        AND eecp.pf_applicable = 1
+        AND eecp.uan_masked IS NOT NULL
+        AND eecp.uan_masked != ''
+       WHERE spl.run_id = ?
+       ORDER BY e.employee_code`,
+      [runId]
+    );
+
+    if (!rows.length) {
+      throw Object.assign(
+        new Error("No EPF-applicable employees with UAN found for this run"),
+        { status: 404 }
+      );
+    }
+
+    const lines: string[] = [];
+    lines.push("#~#");
+    lines.push(
+      "UAN#MEMBER_NAME#GROSS_WAGES#EPF_WAGES#EPS_WAGES#EDLi_WAGES#EPF_CONTRI_REMITTED#EPS_CONTRI_REMITTED#EPF_EPS_DIFF_REMITTED#NCP_DAYS#REFUND_OF_ADVANCES"
+    );
+
+    let totalGross = 0, totalEpfWages = 0, totalEpfContri = 0, totalEpsContri = 0, totalNcp = 0;
+
+    for (const r of rows) {
+      const epfWages  = Number(r.epf_wages);
+      const epfContri = Number(r.epf_contri);
+      const epsContri = Math.round(Math.min(Number(r.eps_contri), 1250));
+      const diff      = epfContri - epsContri;
+      const gross     = Number(r.gross_wages);
+      const ncp       = Number(r.ncp_days);
+
+      totalGross    += gross;
+      totalEpfWages += epfWages;
+      totalEpfContri+= epfContri;
+      totalEpsContri+= epsContri;
+      totalNcp      += ncp;
+
+      const name = String(r.member_name).replace(/#/g, "").toUpperCase().substring(0, 80);
+      lines.push(
+        `${r.uan}#${name}#${gross}#${epfWages}#${epfWages}#${epfWages}#${epfContri}#${epsContri}#${diff}#${ncp}#0`
+      );
+    }
+
+    lines.push("#~#");
+    const [yr, mo] = month.split("-");
+    const mmyyyy = `${mo}${yr}`;
+    const totalDiff = totalEpfContri - totalEpsContri;
+    lines.push(
+      `${rows.length}#${mmyyyy}#${rows.length}#${totalGross}#${totalEpfWages}#${totalEpfWages}#${totalEpfWages}#${totalEpfContri}#${totalEpsContri}#${totalDiff}#${totalNcp}#0`
+    );
+
+    const content  = lines.join("\n");
+    const filename = `ECR_${est.establishment_code}_${month.replace("-", "")}.txt`;
+
+    return { content, filename, employeeCount: rows.length };
+  },
 };
