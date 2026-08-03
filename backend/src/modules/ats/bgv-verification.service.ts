@@ -4,6 +4,7 @@ import { db } from "../../db/mysql.js";
 import { getConfiguredBgvProviderAdapter, type AddressDocInput, type EducationVerificationInput } from "./bgv-provider.adapter.js";
 import { withProviderFailureLogged, getBgvApiCostReport } from "./bgv-api-log.service.js";
 import { loadAsyncBgvTriggerContext, validateOnboardingToken } from "./onboarding-full.service.js";
+import { resolveBankNameVariance } from "./bank-name-corroboration.js";
 
 const hashValue = (value: unknown) => {
   const normalized = String(value ?? "").trim().toUpperCase();
@@ -451,6 +452,48 @@ export async function verifyBankForCandidate(candidateId: string, input: { accou
       }
     }
   }
+  // Before troubling a human with a name variance, see whether the candidate's
+  // verified PAN already settles it.
+  //
+  // The adapter only knows the two names in front of it, so anything that
+  // disagrees with the candidate's record comes back as a divergence. Most of
+  // those are the same person written differently, and sending them all to
+  // Payroll HR produces a queue big enough to be rubber-stamped — a weaker
+  // control than a short queue read properly. A verified PAN is the strongest
+  // corroboration available and costs nothing: if the bank's registered owner
+  // matches the name on it, the account belongs to the person that PAN was
+  // issued to.
+  if (result.riskFlags?.includes("BANK_HOLDER_NAME_DIVERGENCE")) {
+    const [panRows] = await db.execute<RowDataPacket[]>(
+      `SELECT matched_name FROM candidate_bgv_check
+        WHERE candidate_id = ? AND check_type = 'pan' AND status = 'verified'
+          AND matched_name IS NOT NULL AND matched_name <> ''
+        ORDER BY COALESCE(verified_at, updated_at) DESC LIMIT 1`,
+      [candidateId],
+    ).catch(() => [[] as RowDataPacket[]]);
+
+    const resolution = resolveBankNameVariance({
+      candidateName: candidate.employee_name ?? candidate.full_name,
+      bankRegisteredName: result.matchedName,
+      verifiedPanName: (panRows as RowDataPacket[])[0]?.matched_name ?? null,
+    });
+
+    result = {
+      ...result,
+      status: resolution.status,
+      resultSummary: resolution.reason,
+      riskFlags: resolution.outcome === "auto_cleared"
+        ? []
+        : resolution.outcome === "third_party_account"
+          ? ["BANK_THIRD_PARTY_ACCOUNT"]
+          : result.riskFlags,
+    };
+    await logEvent(candidateId, "BANK_NAME_VARIANCE_RESOLVED", {
+      outcome: resolution.outcome,
+      reason: resolution.reason,
+    }, null, { actorType: "system" });
+  }
+
   const checkId = await createOrUpdateCheck(candidateId, "bank", result.status, {
     providerKey: result.providerKey,
     providerRequestId: result.providerRequestId,
