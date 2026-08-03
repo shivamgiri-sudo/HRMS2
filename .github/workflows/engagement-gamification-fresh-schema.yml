@@ -5,6 +5,7 @@ on:
     paths:
       - "backend/sql/038_engagement_gamification.sql"
       - "backend/scripts/verify-engagement-gamification-migration.ts"
+      - "backend/scripts/migrate-fresh-test.ts"
       - "backend/src/db/__tests__/engagement-gamification-fresh-schema.test.ts"
       - "backend/src/config/env.ts"
       - "backend/src/config/__tests__/env-precedence.test.ts"
@@ -17,6 +18,7 @@ on:
     paths:
       - "backend/sql/038_engagement_gamification.sql"
       - "backend/scripts/verify-engagement-gamification-migration.ts"
+      - "backend/scripts/migrate-fresh-test.ts"
       - "backend/src/db/__tests__/engagement-gamification-fresh-schema.test.ts"
       - "backend/src/config/env.ts"
       - "backend/src/config/__tests__/env-precedence.test.ts"
@@ -72,6 +74,28 @@ jobs:
           src/config/__tests__/env-precedence.test.ts
           src/modules/performance-ingestion/__tests__/performance-publication.ratio-multiplier.test.ts
           src/db/__tests__/engagement-gamification-fresh-schema.test.ts
+
+      - name: Fresh runner rejects non-loopback database hosts
+        working-directory: backend
+        shell: bash
+        run: |
+          set +e
+          output=$(DB_HOST=192.0.2.10 DB_NAME=mas_hrms TEST_DB_NAME=hrms_migration_test_guard npm exec -- tsx scripts/migrate-fresh-test.ts 2>&1)
+          status=$?
+          set -e
+          test "$status" -ne 0
+          grep -q "is not loopback" <<<"$output"
+
+      - name: Fresh runner rejects non-disposable database names
+        working-directory: backend
+        shell: bash
+        run: |
+          set +e
+          output=$(DB_HOST=127.0.0.1 DB_NAME=mas_hrms TEST_DB_NAME=customer_database npm exec -- tsx scripts/migrate-fresh-test.ts 2>&1)
+          status=$?
+          set -e
+          test "$status" -ne 0
+          grep -q "does not contain an approved disposable marker" <<<"$output"
 
       - name: Backend production build
         run: npm --prefix backend run build
