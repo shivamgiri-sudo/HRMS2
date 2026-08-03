@@ -529,11 +529,46 @@ export function assetAssignmentEmail(data: AssetAssignmentData): string {
 
 export interface BirthdayGreetingData {
   employeeName: string;
+  firstName?: string;
   photoUrl?: string;
-  branchName?: string;
+  branchName?: string;         // display_name from branch_master
+  designation?: string;
+  department?: string;
+  processName?: string;
+  yearsAtCompany?: number;
+  gender?: string;             // Male / Female / Other
+  bloodGroup?: string;
+  city?: string;
+  managerName?: string;
 }
 
 export function birthdayGreetingEmail(data: BirthdayGreetingData): string {
+  const firstName = data.firstName || data.employeeName.split(" ")[0];
+  const pronoun = data.gender === "Female" ? "her" : "his";
+  const pronounCap = data.gender === "Female" ? "Her" : "His";
+  const branchLabel = data.branchName || "MAS Callnet";
+
+  // Personalized sub-headline based on available context
+  const roleContext = data.designation && data.processName
+    ? `${data.designation} · ${data.processName}`
+    : data.designation || data.department || "MAS Callnet Team";
+
+  // Build personalized message
+  let personalPara = `Today, we celebrate <strong style="color:#E8231A">${firstName}</strong> — a valued ${roleContext.toLowerCase()} at our ${branchLabel} family.`;
+  if (data.yearsAtCompany && data.yearsAtCompany > 0) {
+    personalPara += ` Over the past <strong style="color:#1B6AB5">${data.yearsAtCompany} year${data.yearsAtCompany > 1 ? "s" : ""}</strong>, ${pronoun} dedication has been an inspiration to everyone around ${pronoun}.`;
+  }
+  if (data.managerName) {
+    personalPara += ` ${pronounCap} team and manager <strong style="color:#073f78">${data.managerName}</strong> join us in wishing ${pronoun} the very best on this special day!`;
+  }
+
+  // Info chips — rendered on dark navy bg so use transparent-white style
+  const chips: string[] = [];
+  if (data.designation) chips.push(`<td style="padding:6px 10px;background:rgba(255,255,255,.15);border-radius:8px;font-size:12px;font-weight:bold;color:#fff;white-space:nowrap;border:1px solid rgba(255,255,255,.2)">👔 ${data.designation}</td><td width="8"></td>`);
+  if (data.branchName) chips.push(`<td style="padding:6px 10px;background:rgba(255,255,255,.15);border-radius:8px;font-size:12px;font-weight:bold;color:#fff;white-space:nowrap;border:1px solid rgba(255,255,255,.2)">📍 ${data.branchName}</td><td width="8"></td>`);
+  if (data.processName || data.department) chips.push(`<td style="padding:6px 10px;background:rgba(255,255,255,.15);border-radius:8px;font-size:12px;font-weight:bold;color:#fff;white-space:nowrap;border:1px solid rgba(255,255,255,.2)">⚙️ ${data.processName || data.department}</td><td width="8"></td>`);
+  if (data.bloodGroup) chips.push(`<td style="padding:6px 10px;background:rgba(255,255,255,.15);border-radius:8px;font-size:12px;font-weight:bold;color:#fff;white-space:nowrap;border:1px solid rgba(255,255,255,.2)">🩸 ${data.bloodGroup}</td><td width="8"></td>`);
+
   const avatarSection = data.photoUrl
     ? `<img src="${data.photoUrl}" width="110" height="110" alt="${data.employeeName}"
            style="width:110px;height:110px;border-radius:50%;object-fit:cover;border:5px solid #3BAD49;box-shadow:0 0 0 4px rgba(59,173,73,.2);display:block;margin:0 auto" />`
@@ -578,213 +613,175 @@ export function birthdayGreetingEmail(data: BirthdayGreetingData): string {
         <circle cx="117" cy="35" r="2" fill="#fbbf24"/>
       </svg>`;
 
+  const MCN_LOGO = `<img src="https://mcnhrms.teammas.in/mas-logo.png" width="120" height="40" alt="MAS Callnet" style="display:block;max-width:120px;height:auto" />`;
+
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>Happy Birthday!</title>
-<style>
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { background: #fff0f6; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif; }
-  @keyframes float1 { 0%,100%{transform:translateY(0) rotate(-8deg)} 50%{transform:translateY(-14px) rotate(-8deg)} }
-  @keyframes float2 { 0%,100%{transform:translateY(0) rotate(5deg)} 50%{transform:translateY(-18px) rotate(5deg)} }
-  @keyframes float3 { 0%,100%{transform:translateY(0) rotate(-4deg)} 50%{transform:translateY(-10px) rotate(-4deg)} }
-  @keyframes shimmer { 0%,100%{opacity:.6} 50%{opacity:1} }
-  @media (prefers-reduced-motion:reduce) { * { animation:none !important; } }
-</style>
+<title>Happy Birthday, ${firstName}!</title>
 </head>
-<body>
-<table width="100%" cellpadding="0" cellspacing="0" style="background:#fff0f6;min-height:100vh">
-<tr><td align="center" style="padding:0">
-<table width="100%" style="max-width:640px;background:#fff;overflow:hidden" cellpadding="0" cellspacing="0">
+<body style="margin:0;padding:0;background:#f4f6fb;font-family:Arial,Helvetica,sans-serif">
+
+<table width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#f4f6fb">
+<tr><td align="center" style="padding:24px 8px">
+
+<table width="600" cellpadding="0" cellspacing="0" border="0" style="width:600px;max-width:600px;background:#ffffff;border-radius:16px;overflow:hidden;box-shadow:0 4px 24px rgba(7,63,120,.1)">
+
+  <!-- ═══ RAINBOW CONFETTI STRIP ═══ -->
+  <tr><td height="6" style="background:linear-gradient(90deg,#E8231A 0%,#fbbf24 20%,#3BAD49 40%,#1B6AB5 60%,#E8231A 80%,#fbbf24 100%);font-size:0;line-height:0">&nbsp;</td></tr>
 
   <!-- ═══ HERO HEADER ═══ -->
-  <tr><td style="background:linear-gradient(160deg,#073f78 0%,#1B6AB5 55%,#2563eb 100%);padding:0;position:relative;overflow:hidden">
-
-    <!-- Background pattern circles -->
-    <div style="position:absolute;top:-40px;left:-40px;width:200px;height:200px;border-radius:50%;background:rgba(255,255,255,.04)"></div>
-    <div style="position:absolute;bottom:-60px;right:-30px;width:240px;height:240px;border-radius:50%;background:rgba(255,255,255,.05)"></div>
-    <div style="position:absolute;top:20px;right:80px;width:80px;height:80px;border-radius:50%;background:rgba(255,255,255,.06)"></div>
-
-    <!-- Confetti strip at top -->
-    <div style="height:6px;background:linear-gradient(90deg,#E8231A 0%,#fbbf24 20%,#3BAD49 40%,#1B6AB5 60%,#E8231A 80%,#fbbf24 100%)"></div>
-
-    <table width="100%" cellpadding="0" cellspacing="0" style="padding:32px 32px 0">
+  <tr><td style="background:linear-gradient(145deg,#073f78 0%,#1B6AB5 100%);padding:32px 40px 0">
+    <table width="100%" cellpadding="0" cellspacing="0" border="0">
       <tr>
-        <td>
-          <p style="margin:0 0 6px;font-size:10px;font-weight:800;letter-spacing:.2em;text-transform:uppercase;color:rgba(255,255,255,.55)">MAS CALLNET INDIA PVT. LTD.</p>
-          <h1 style="margin:0;font-size:38px;font-weight:900;color:#fff;line-height:1.1;letter-spacing:-1px">🎂 Happy<br>Birthday!</h1>
-          ${data.branchName ? `<p style="margin:10px 0 0;font-size:13px;color:rgba(255,255,255,.7);font-weight:600">${data.branchName} Branch</p>` : ""}
+        <td valign="middle">
+          ${MCN_LOGO}
+          <p style="margin:16px 0 0;font-size:11px;font-weight:bold;letter-spacing:.15em;text-transform:uppercase;color:rgba(255,255,255,.6)">MAS CALLNET INDIA PVT. LTD.</p>
         </td>
-        <td align="right" valign="top" style="width:80px">
-          <!-- MCN brand monogram -->
-          <div style="width:52px;height:52px;border-radius:50%;background:rgba(255,255,255,.15);border:2px solid rgba(255,255,255,.3);display:flex;align-items:center;justify-content:center;text-align:center;line-height:52px;font-size:20px;font-weight:900;color:#fff">M</div>
+        <td align="right" valign="top">
+          <!-- Decorative balloon cluster SVG -->
+          <svg xmlns="http://www.w3.org/2000/svg" width="90" height="110" viewBox="0 0 90 110">
+            <!-- Left balloon — MCN Red -->
+            <ellipse cx="22" cy="38" rx="18" ry="22" fill="#E8231A"/>
+            <ellipse cx="17" cy="29" rx="5" ry="4" fill="rgba(255,255,255,.25)" transform="rotate(-20 17 29)"/>
+            <line x1="22" y1="60" x2="20" y2="80" stroke="#94a3b8" stroke-width="1.5"/>
+            <!-- Centre balloon — MCN Blue (tallest) -->
+            <ellipse cx="45" cy="28" rx="20" ry="26" fill="#1B6AB5"/>
+            <ellipse cx="39" cy="17" rx="6" ry="4.5" fill="rgba(255,255,255,.25)" transform="rotate(-25 39 17)"/>
+            <line x1="45" y1="54" x2="43" y2="82" stroke="#94a3b8" stroke-width="1.5"/>
+            <!-- Right balloon — MCN Green -->
+            <ellipse cx="68" cy="40" rx="17" ry="21" fill="#3BAD49"/>
+            <ellipse cx="63" cy="31" rx="5" ry="3.5" fill="rgba(255,255,255,.25)" transform="rotate(-22 63 31)"/>
+            <line x1="68" y1="61" x2="66" y2="80" stroke="#94a3b8" stroke-width="1.5"/>
+            <!-- Shared knot / string end -->
+            <line x1="20" y1="80" x2="43" y2="82" stroke="#94a3b8" stroke-width="1"/>
+            <line x1="43" y1="82" x2="66" y2="80" stroke="#94a3b8" stroke-width="1"/>
+            <circle cx="43" cy="84" r="3" fill="#64748b"/>
+            <!-- Confetti dots -->
+            <circle cx="8" cy="15" r="3" fill="#fbbf24" opacity=".8"/>
+            <circle cx="78" cy="10" r="4" fill="#E8231A" opacity=".7"/>
+            <circle cx="85" cy="55" r="3" fill="#fbbf24" opacity=".8"/>
+            <rect x="4" y="55" width="8" height="4" rx="2" fill="#3BAD49" transform="rotate(-30 8 57)" opacity=".8"/>
+          </svg>
         </td>
       </tr>
     </table>
 
-    <!-- Balloon scene: full-width SVG -->
-    <div style="padding:20px 0 0;overflow:hidden;line-height:0">
-      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 180" width="100%" height="180" preserveAspectRatio="xMidYMax meet" style="display:block">
-        <!-- Balloon 1 — Red -->
-        <g style="animation:float1 3.8s ease-in-out infinite" transform-origin="82 50">
-          <ellipse cx="82" cy="50" rx="28" ry="34" fill="#E8231A"/>
-          <ellipse cx="75" cy="38" rx="8" ry="6" fill="rgba(255,255,255,.25)" transform="rotate(-30 75 38)"/>
-          <path d="M82 84 Q79 100 82 115" stroke="#cbd5e1" stroke-width="1.5" fill="none"/>
-          <path d="M79 115 Q82 110 85 115" stroke="#cbd5e1" stroke-width="1.5" fill="none"/>
-        </g>
-        <!-- Balloon 2 — Yellow (tall, centre-left) -->
-        <g style="animation:float2 4.4s .6s ease-in-out infinite" transform-origin="185 35">
-          <ellipse cx="185" cy="35" rx="22" ry="27" fill="#fbbf24"/>
-          <ellipse cx="179" cy="26" rx="6" ry="4.5" fill="rgba(255,255,255,.3)" transform="rotate(-25 179 26)"/>
-          <path d="M185 62 Q182 78 183 95" stroke="#cbd5e1" stroke-width="1.5" fill="none"/>
-          <path d="M181 95 Q184 90 187 95" stroke="#cbd5e1" stroke-width="1.5" fill="none"/>
-        </g>
-        <!-- Balloon 3 — MCN Blue (large, centre) -->
-        <g style="animation:float1 5s 1s ease-in-out infinite" transform-origin="310 28">
-          <ellipse cx="310" cy="28" rx="34" ry="40" fill="#1B6AB5"/>
-          <ellipse cx="300" cy="14" rx="10" ry="8" fill="rgba(255,255,255,.22)" transform="rotate(-20 300 14)"/>
-          <path d="M310 68 Q307 88 308 110" stroke="#cbd5e1" stroke-width="1.5" fill="none"/>
-          <path d="M305 110 Q308 104 311 110" stroke="#cbd5e1" stroke-width="1.5" fill="none"/>
-        </g>
-        <!-- Balloon 4 — Green -->
-        <g style="animation:float3 3.5s .3s ease-in-out infinite" transform-origin="440 42">
-          <ellipse cx="440" cy="42" rx="25" ry="30" fill="#3BAD49"/>
-          <ellipse cx="433" cy="31" rx="7" ry="5.5" fill="rgba(255,255,255,.25)" transform="rotate(-28 433 31)"/>
-          <path d="M440 72 Q437 88 438 104" stroke="#cbd5e1" stroke-width="1.5" fill="none"/>
-          <path d="M436 104 Q439 99 442 104" stroke="#cbd5e1" stroke-width="1.5" fill="none"/>
-        </g>
-        <!-- Balloon 5 — Pink (far right) -->
-        <g style="animation:float2 4s 1.4s ease-in-out infinite" transform-origin="562 55">
-          <ellipse cx="562" cy="55" rx="26" ry="32" fill="#f472b6"/>
-          <ellipse cx="555" cy="43" rx="8" ry="6" fill="rgba(255,255,255,.25)" transform="rotate(-22 555 43)"/>
-          <path d="M562 87 Q559 103 560 118" stroke="#cbd5e1" stroke-width="1.5" fill="none"/>
-          <path d="M558 118 Q561 113 564 118" stroke="#cbd5e1" stroke-width="1.5" fill="none"/>
-        </g>
-        <!-- Confetti shapes scattered -->
-        <rect x="140" y="130" width="10" height="5" rx="2" fill="#E8231A" transform="rotate(-35 145 132)" opacity=".8"/>
-        <rect x="260" y="140" width="8" height="4" rx="2" fill="#3BAD49" transform="rotate(20 264 142)" opacity=".8"/>
-        <rect x="380" y="125" width="10" height="5" rx="2" fill="#fbbf24" transform="rotate(-15 385 127)" opacity=".8"/>
-        <rect x="510" y="138" width="8" height="4" rx="2" fill="#1B6AB5" transform="rotate(30 514 140)" opacity=".8"/>
-        <circle cx="60" cy="150" r="4" fill="#fbbf24" opacity=".6"/>
-        <circle cx="220" cy="158" r="3" fill="#f472b6" opacity=".6"/>
-        <circle cx="490" cy="152" r="4" fill="#E8231A" opacity=".6"/>
-        <circle cx="600" cy="145" r="3" fill="#3BAD49" opacity=".6"/>
-      </svg>
-    </div>
+    <!-- Big heading -->
+    <table width="100%" cellpadding="0" cellspacing="0" border="0" style="padding:20px 0 32px">
+      <tr>
+        <td>
+          <h1 style="margin:0;font-size:46px;font-weight:900;color:#ffffff;line-height:1;letter-spacing:-2px">🎂 Happy</h1>
+          <h1 style="margin:4px 0 0;font-size:46px;font-weight:900;color:#fbbf24;line-height:1;letter-spacing:-2px">Birthday!</h1>
+          ${data.branchName ? `<p style="margin:10px 0 0;font-size:14px;color:rgba(255,255,255,.75);font-weight:bold">${data.branchName}</p>` : ""}
+        </td>
+      </tr>
+    </table>
   </td></tr>
 
-  <!-- ═══ AVATAR ═══ -->
-  <tr><td style="background:linear-gradient(180deg,#1B6AB5 0%,#fff0f6 100%);padding:0;text-align:center">
-    <div style="display:inline-block;margin-top:-10px;border-radius:50%;border:5px solid #fff;box-shadow:0 8px 28px rgba(7,63,120,.22);background:#fff;overflow:visible">
-      ${avatarSection}
-    </div>
+  <!-- ═══ PHOTO + NAME BAND ═══ -->
+  <tr><td style="background:linear-gradient(180deg,#1B6AB5 0%,#073f78 100%);padding:0 40px 32px;text-align:center">
+    <table width="100%" cellpadding="0" cellspacing="0" border="0">
+      <tr><td align="center">
+        <!-- Avatar -->
+        <table cellpadding="0" cellspacing="0" border="0" style="margin:0 auto">
+          <tr><td style="border-radius:50%;border:5px solid #fbbf24;box-shadow:0 0 0 4px rgba(251,191,36,.25);overflow:hidden;width:120px;height:120px;display:block">
+            ${avatarSection}
+          </td></tr>
+        </table>
+        <h2 style="margin:16px 0 4px;font-size:28px;font-weight:900;color:#ffffff;letter-spacing:-.5px">${data.employeeName}</h2>
+        ${chips.length > 0 ? `
+        <table cellpadding="0" cellspacing="0" border="0" style="margin:10px auto 0">
+          <tr>${chips.join("")}</tr>
+        </table>` : ""}
+      </td></tr>
+    </table>
   </td></tr>
 
-  <!-- ═══ MAIN BODY ═══ -->
-  <tr><td style="background:#fff;padding:28px 40px 0;text-align:center">
-    <h2 style="margin:0 0 6px;font-size:26px;font-weight:900;color:#073f78;letter-spacing:-.5px">${data.employeeName}</h2>
-    ${data.branchName ? `<p style="margin:0 0 24px;font-size:13px;color:#94a3b8;font-weight:600;text-transform:uppercase;letter-spacing:.08em">${data.branchName}</p>` : `<div style="height:24px"></div>`}
-
-    <p style="margin:0 0 24px;font-size:17px;line-height:1.8;color:#334155">
-      May your birthday be as <strong style="color:#E8231A">joyful</strong>, <strong style="color:#3BAD49">bright</strong>, and
-      <strong style="color:#1B6AB5">beautiful</strong> as the energy you bring to our team every single day! 🎉
+  <!-- ═══ PERSONALIZED MESSAGE ═══ -->
+  <tr><td style="padding:32px 40px 0">
+    <p style="margin:0 0 20px;font-size:17px;line-height:1.85;color:#334155">
+      ${personalPara}
     </p>
 
     <!-- Quote card -->
-    <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:24px">
-      <tr><td style="background:linear-gradient(135deg,#fdf2f8 0%,#eff6ff 100%);border-radius:16px;padding:24px 28px;border-left:5px solid #E8231A">
-        <p style="margin:0;font-size:16px;font-weight:700;color:#073f78;line-height:1.7;font-style:italic">
-          "You're not just an employee — you're a vital spark in the MAS Callnet family flame. 💙"
+    <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:24px">
+      <tr><td style="background:linear-gradient(135deg,#fdf2f8,#eff6ff);border-radius:14px;padding:22px 24px;border-left:5px solid #E8231A">
+        <p style="margin:0;font-size:16px;font-weight:bold;color:#073f78;line-height:1.75;font-style:italic">
+          "Every day you walk in, you bring more than just your skills — you bring energy, care, and a smile that lifts the entire floor. That is what makes you truly irreplaceable. 💙"
         </p>
-        <p style="margin:10px 0 0;font-size:12px;color:#94a3b8;font-weight:600">— MAS Callnet HR Team</p>
+        <p style="margin:10px 0 0;font-size:12px;color:#94a3b8;font-weight:bold">— MAS Callnet HR &amp; Management</p>
       </td></tr>
     </table>
 
-    <!-- 3-icon decorations: balloon, flowers, gift -->
-    <table align="center" cellpadding="0" cellspacing="0" style="margin:0 auto 28px">
+    <!-- Decoration row: balloon · flower · gift -->
+    <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:8px">
       <tr>
-        <td style="padding:0 12px;text-align:center;vertical-align:bottom">
-          <!-- Big balloon -->
-          <svg xmlns="http://www.w3.org/2000/svg" width="52" height="72" viewBox="0 0 52 72" style="display:block;margin:0 auto">
-            <ellipse cx="26" cy="26" rx="22" ry="26" fill="#E8231A"/>
-            <ellipse cx="19" cy="16" rx="7" ry="5" fill="rgba(255,255,255,.28)" transform="rotate(-25 19 16)"/>
-            <path d="M26 52 Q24 60 22 72" stroke="#94a3b8" stroke-width="1.5" fill="none"/>
-            <path d="M20 72 Q23 66 26 72" stroke="#94a3b8" stroke-width="1.5" fill="none"/>
+        <td align="center" width="33%">
+          <svg xmlns="http://www.w3.org/2000/svg" width="48" height="64" viewBox="0 0 48 64">
+            <ellipse cx="24" cy="24" rx="20" ry="24" fill="#E8231A"/>
+            <ellipse cx="18" cy="14" rx="6" ry="4.5" fill="rgba(255,255,255,.28)" transform="rotate(-25 18 14)"/>
+            <path d="M24 48 Q22 56 20 64" stroke="#94a3b8" stroke-width="1.5" fill="none"/>
+            <path d="M18 64 Q21 58 24 64" stroke="#94a3b8" stroke-width="1.5" fill="none"/>
           </svg>
-          <p style="margin:4px 0 0;font-size:10px;color:#94a3b8;font-weight:700">Celebrate!</p>
+          <p style="margin:4px 0 0;font-size:11px;color:#94a3b8;font-weight:bold">Celebrate!</p>
         </td>
-        <td style="padding:0 12px;text-align:center;vertical-align:bottom">
-          <!-- Flower cluster -->
-          <svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64" style="display:block;margin:0 auto">
-            <!-- Centre flower big -->
-            <circle cx="32" cy="32" r="8" fill="#fbbf24"/>
-            <ellipse cx="32" cy="14" rx="7" ry="10" fill="#f9a8d4"/>
-            <ellipse cx="32" cy="50" rx="7" ry="10" fill="#f9a8d4"/>
-            <ellipse cx="14" cy="32" rx="10" ry="7" fill="#fbcfe8"/>
-            <ellipse cx="50" cy="32" rx="10" ry="7" fill="#fbcfe8"/>
-            <!-- Diagonal petals -->
-            <ellipse cx="19" cy="19" rx="6" ry="9" fill="#fde68a" transform="rotate(-45 19 19)"/>
-            <ellipse cx="45" cy="19" rx="6" ry="9" fill="#fde68a" transform="rotate(45 45 19)"/>
-            <ellipse cx="19" cy="45" rx="6" ry="9" fill="#fde68a" transform="rotate(45 19 45)"/>
-            <ellipse cx="45" cy="45" rx="6" ry="9" fill="#fde68a" transform="rotate(-45 45 45)"/>
-            <circle cx="32" cy="32" r="6" fill="#f59e0b"/>
+        <td align="center" width="33%">
+          <svg xmlns="http://www.w3.org/2000/svg" width="56" height="56" viewBox="0 0 56 56">
+            <circle cx="28" cy="28" r="7" fill="#f59e0b"/>
+            <ellipse cx="28" cy="12" rx="6" ry="9" fill="#f9a8d4"/>
+            <ellipse cx="28" cy="44" rx="6" ry="9" fill="#f9a8d4"/>
+            <ellipse cx="12" cy="28" rx="9" ry="6" fill="#fbcfe8"/>
+            <ellipse cx="44" cy="28" rx="9" ry="6" fill="#fbcfe8"/>
+            <ellipse cx="17" cy="17" rx="5.5" ry="8" fill="#fde68a" transform="rotate(-45 17 17)"/>
+            <ellipse cx="39" cy="17" rx="5.5" ry="8" fill="#fde68a" transform="rotate(45 39 17)"/>
+            <ellipse cx="17" cy="39" rx="5.5" ry="8" fill="#fde68a" transform="rotate(45 17 39)"/>
+            <ellipse cx="39" cy="39" rx="5.5" ry="8" fill="#fde68a" transform="rotate(-45 39 39)"/>
+            <circle cx="28" cy="28" r="5.5" fill="#f59e0b"/>
           </svg>
-          <p style="margin:4px 0 0;font-size:10px;color:#94a3b8;font-weight:700">Bloom!</p>
+          <p style="margin:4px 0 0;font-size:11px;color:#94a3b8;font-weight:bold">Bloom!</p>
         </td>
-        <td style="padding:0 12px;text-align:center;vertical-align:bottom">
-          <!-- Gift box -->
-          <svg xmlns="http://www.w3.org/2000/svg" width="56" height="60" viewBox="0 0 56 60" style="display:block;margin:0 auto">
-            <rect x="6" y="22" width="44" height="32" rx="4" fill="#3BAD49"/>
-            <rect x="4" y="16" width="48" height="10" rx="3" fill="#2a8f38"/>
-            <rect x="25" y="16" width="6" height="38" fill="#fbbf24"/>
-            <rect x="4" y="20" width="48" height="6" fill="rgba(0,0,0,.05)"/>
-            <!-- Bow -->
-            <path d="M28 16 Q20 6 16 10 Q12 14 20 16Z" fill="#fbbf24"/>
-            <path d="M28 16 Q36 6 40 10 Q44 14 36 16Z" fill="#fbbf24"/>
-            <circle cx="28" cy="16" r="4" fill="#f59e0b"/>
-            <!-- Dots on box -->
-            <circle cx="14" cy="34" r="2" fill="rgba(255,255,255,.4)"/>
-            <circle cx="42" cy="34" r="2" fill="rgba(255,255,255,.4)"/>
+        <td align="center" width="33%">
+          <svg xmlns="http://www.w3.org/2000/svg" width="52" height="56" viewBox="0 0 52 56">
+            <rect x="4" y="20" width="44" height="30" rx="4" fill="#3BAD49"/>
+            <rect x="2" y="14" width="48" height="10" rx="3" fill="#2a8f38"/>
+            <rect x="23" y="14" width="6" height="36" fill="#fbbf24"/>
+            <path d="M26 14 Q18 4 14 8 Q10 12 18 14Z" fill="#fbbf24"/>
+            <path d="M26 14 Q34 4 38 8 Q42 12 34 14Z" fill="#fbbf24"/>
+            <circle cx="26" cy="14" r="4" fill="#f59e0b"/>
           </svg>
-          <p style="margin:4px 0 0;font-size:10px;color:#94a3b8;font-weight:700">Surprise!</p>
+          <p style="margin:4px 0 0;font-size:11px;color:#94a3b8;font-weight:bold">Surprise!</p>
         </td>
       </tr>
     </table>
   </td></tr>
 
   <!-- ═══ WISHES BANNER ═══ -->
-  <tr><td style="padding:0 40px 32px">
-    <table width="100%" cellpadding="0" cellspacing="0">
-      <tr><td style="background:linear-gradient(135deg,#073f78 0%,#1B6AB5 100%);border-radius:16px;padding:22px 28px;text-align:center">
-        <p style="margin:0 0 6px;font-size:20px">🌸🎈🎁🎊🌼</p>
-        <p style="margin:0;font-size:15px;color:#fff;line-height:1.7">
-          Wishing you a year full of new adventures, growth, and happiness.<br>
-          <strong>Many happy returns of the day!</strong>
+  <tr><td style="padding:20px 40px 36px">
+    <table width="100%" cellpadding="0" cellspacing="0" border="0">
+      <tr><td style="background:linear-gradient(135deg,#073f78,#1B6AB5);border-radius:14px;padding:24px 28px;text-align:center">
+        <p style="margin:0 0 6px;font-size:22px">🌸 🎈 🎁 🎊 🌼</p>
+        <p style="margin:0 0 6px;font-size:16px;color:#ffffff;line-height:1.75;font-weight:bold">
+          Wishing you, ${firstName}, a year full of joy,<br>growth, new adventures, and every happiness!
         </p>
-        <p style="margin:12px 0 0;font-size:14px;font-weight:800;color:rgba(255,255,255,.85)">
-          — Your MAS Callnet Family 💙
-        </p>
+        <p style="margin:0;font-size:14px;color:rgba(255,255,255,.75)">Many happy returns of the day!</p>
+        <p style="margin:14px 0 0;font-size:14px;font-weight:bold;color:rgba(255,255,255,.85)">— Your MAS Callnet Family 💙</p>
       </td></tr>
     </table>
   </td></tr>
 
   <!-- ═══ FOOTER ═══ -->
-  <tr><td>
-    <div style="height:5px;background:linear-gradient(90deg,#E8231A 0%,#1B6AB5 50%,#3BAD49 100%)"></div>
-    <table width="100%" cellpadding="0" cellspacing="0" style="background:#f8fafc;padding:20px 32px">
-      <tr>
-        <td align="center">
-          <div style="width:36px;height:36px;border-radius:50%;background:#073f78;display:inline-block;line-height:36px;text-align:center;font-size:14px;font-weight:900;color:#fff;margin-bottom:8px">M</div>
-          <p style="margin:0;font-size:11px;color:#94a3b8">&copy; 2026 Mas Callnet India Pvt. Ltd. All rights reserved.</p>
-          <p style="margin:4px 0 0;font-size:11px;color:#cbd5e1">Automated birthday greeting from your HR team. Please do not reply.</p>
-        </td>
-      </tr>
-    </table>
+  <tr><td height="5" style="background:linear-gradient(90deg,#E8231A,#1B6AB5 50%,#3BAD49);font-size:0;line-height:0">&nbsp;</td></tr>
+  <tr><td style="background:#f8fafc;padding:20px 40px;text-align:center">
+    ${MCN_LOGO.replace('style="display:block;max-width:120px;height:auto"', 'style="display:inline-block;max-width:100px;height:auto;opacity:.65;margin-bottom:8px"')}
+    <p style="margin:0;font-size:11px;color:#94a3b8">&copy; 2026 Mas Callnet India Pvt. Ltd. All rights reserved.</p>
+    <p style="margin:4px 0 0;font-size:11px;color:#cbd5e1">Automated birthday greeting from your HR team. Please do not reply to this email.</p>
   </td></tr>
 
 </table>
+
 </td></tr>
 </table>
 </body>
@@ -793,37 +790,83 @@ export function birthdayGreetingEmail(data: BirthdayGreetingData): string {
 
 export interface WorkAnniversaryData {
   employeeName: string;
+  firstName?: string;
   yearsCompleted: number;
   joinDate: string;
   photoUrl?: string;
-  branchName?: string;
+  branchName?: string;        // display_name from branch_master
+  designation?: string;
+  department?: string;
+  processName?: string;
+  employeeCode?: string;
+  band?: string;
+  managerName?: string;
+  gender?: string;
+  city?: string;
+  employmentType?: string;
 }
 
 export function workAnniversaryEmail(data: WorkAnniversaryData): string {
-  const yearLabel = data.yearsCompleted === 1 ? "Year" : "Years";
+  const yearLabel = data.yearsCompleted === 1 ? "year" : "years";
+  const YearLabel = data.yearsCompleted === 1 ? "Year" : "Years";
+  const firstName = data.firstName || data.employeeName.split(" ")[0];
+  const pronoun = data.gender === "Female" ? "her" : "his";
+  const branchLabel = data.branchName || "MAS Callnet";
+  const MCN_LOGO = `<img src="https://mcnhrms.teammas.in/mas-logo.png" width="120" height="40" alt="MAS Callnet" style="display:block;max-width:120px;height:auto" />`;
+
+  // ── Journey narrative paragraphs ──
+  const joinYear = data.joinDate ? data.joinDate.split(" ").pop() || data.joinDate : "";
+
+  let journeyOpener = `${data.yearsCompleted === 1
+    ? `One year ago, <strong style="color:#073f78">${firstName}</strong> walked through the doors of MAS Callnet and everything changed — for the better.`
+    : data.yearsCompleted <= 3
+    ? `${data.yearsCompleted} years ago, <strong style="color:#073f78">${firstName}</strong> joined the MAS Callnet family${joinYear ? ` in ${joinYear}` : ""}, and since that first day, every chapter has been remarkable.`
+    : `${data.yearsCompleted} incredible years. When <strong style="color:#073f78">${firstName}</strong> first joined MAS Callnet${joinYear ? ` in ${joinYear}` : ""}, few could have predicted just how far this journey would go.`
+  }`;
+
+  let journeyRole = "";
+  if (data.designation && data.processName) {
+    journeyRole = ` Starting out in the <strong style="color:#1B6AB5">${data.processName}</strong> space and rising to the role of <strong style="color:#073f78">${data.designation}</strong>, ${pronoun} path has been defined by one thing: <em>relentless commitment</em>.`;
+  } else if (data.designation) {
+    journeyRole = ` Today, as a <strong style="color:#073f78">${data.designation}</strong> at our ${branchLabel} office, ${firstName} continues to raise the bar every single day.`;
+  } else if (data.processName) {
+    journeyRole = ` Deeply embedded in the <strong style="color:#1B6AB5">${data.processName}</strong> team at ${branchLabel}, ${pronoun} contribution has been nothing short of exceptional.`;
+  } else if (data.department) {
+    journeyRole = ` As a proud member of the <strong style="color:#1B6AB5">${data.department}</strong> team at ${branchLabel}, ${firstName} has built a legacy of hard work and results.`;
+  }
+
+  let journeyManager = data.managerName
+    ? ` ${firstName}'s supervisor <strong style="color:#073f78">${data.managerName}</strong> and the entire ${branchLabel} leadership team stand proud of this milestone.`
+    : "";
+
+  let journeyClose = ` ${data.yearsCompleted === 1
+    ? "This is just the beginning — and what a beginning it has been!"
+    : data.yearsCompleted <= 5
+    ? `${data.yearsCompleted} years of showing up, growing, and giving your absolute best. We are honoured to have you.`
+    : `${data.yearsCompleted} years of loyalty, leadership, and love for this organisation. You are the soul of MAS Callnet.`
+  }`;
+
+  // Info chips
+  const chips: string[] = [];
+  if (data.employeeCode) chips.push(`<td style="padding:6px 10px;background:rgba(255,255,255,.15);border-radius:8px;font-size:12px;font-weight:bold;color:#fff;white-space:nowrap;border:1px solid rgba(255,255,255,.2)">🆔 ${data.employeeCode}</td><td width="8"></td>`);
+  if (data.designation) chips.push(`<td style="padding:6px 10px;background:rgba(255,255,255,.15);border-radius:8px;font-size:12px;font-weight:bold;color:#fff;white-space:nowrap;border:1px solid rgba(255,255,255,.2)">👔 ${data.designation}</td><td width="8"></td>`);
+  if (data.branchName) chips.push(`<td style="padding:6px 10px;background:rgba(255,255,255,.15);border-radius:8px;font-size:12px;font-weight:bold;color:#fff;white-space:nowrap;border:1px solid rgba(255,255,255,.2)">📍 ${data.branchName}</td><td width="8"></td>`);
+  if (data.band) chips.push(`<td style="padding:6px 10px;background:rgba(255,255,255,.15);border-radius:8px;font-size:12px;font-weight:bold;color:#fff;white-space:nowrap;border:1px solid rgba(255,255,255,.2)">🏷️ Band ${data.band}</td><td width="8"></td>`);
 
   const avatarSection = data.photoUrl
-    ? `<img src="${data.photoUrl}" width="110" height="110" alt="${data.employeeName}"
-           style="width:110px;height:110px;border-radius:50%;object-fit:cover;border:5px solid #F59E0B;box-shadow:0 0 0 4px rgba(245,158,11,.2);display:block;margin:0 auto" />`
-    : `<svg xmlns="http://www.w3.org/2000/svg" width="110" height="110" viewBox="0 0 120 120" style="display:block;margin:0 auto">
+    ? `<img src="${data.photoUrl}" width="120" height="120" alt="${data.employeeName}" style="width:120px;height:120px;border-radius:50%;object-fit:cover;display:block" />`
+    : `<svg xmlns="http://www.w3.org/2000/svg" width="120" height="120" viewBox="0 0 120 120" style="display:block">
         <circle cx="60" cy="60" r="60" fill="#fef3c7"/>
-        <!-- Trophy base -->
-        <rect x="46" y="88" width="28" height="9" rx="3" fill="#d1d5db"/>
-        <rect x="36" y="97" width="48" height="9" rx="5" fill="#e5e7eb"/>
-        <!-- Trophy cup -->
-        <path d="M30 28 L90 28 L82 72 Q60 84 38 72 Z" fill="#F59E0B"/>
-        <path d="M36 28 L84 28 L78 66 Q60 76 42 66 Z" fill="#fbbf24"/>
-        <!-- Handles -->
-        <path d="M30 34 Q12 38 16 54 Q20 64 34 60" stroke="#F59E0B" stroke-width="7" fill="none" stroke-linecap="round"/>
-        <path d="M90 34 Q108 38 104 54 Q100 64 86 60" stroke="#F59E0B" stroke-width="7" fill="none" stroke-linecap="round"/>
-        <!-- Star on cup -->
-        <path d="M60 42 l2.5 7.5h7.8l-6.3 4.6 2.5 7.5L60 57.4l-6.5 4.6 2.5-7.5-6.3-4.6h7.8Z" fill="#fff" opacity=".85"/>
-        <!-- Rays above -->
+        <rect x="46" y="90" width="28" height="8" rx="3" fill="#d1d5db"/>
+        <rect x="36" y="98" width="48" height="8" rx="4" fill="#e5e7eb"/>
+        <path d="M28 28 L92 28 L84 72 Q60 84 36 72 Z" fill="#F59E0B"/>
+        <path d="M34 28 L86 28 L79 66 Q60 76 41 66 Z" fill="#fbbf24"/>
+        <path d="M28 34 Q10 38 14 54 Q18 64 32 60" stroke="#F59E0B" stroke-width="7" fill="none" stroke-linecap="round"/>
+        <path d="M92 34 Q110 38 106 54 Q102 64 88 60" stroke="#F59E0B" stroke-width="7" fill="none" stroke-linecap="round"/>
+        <path d="M60 44 l2.5 7.5h7.8l-6.3 4.6 2.5 7.5L60 59.4l-6.5 4.6 2.5-7.5-6.3-4.6h7.8Z" fill="#fff" opacity=".85"/>
         <line x1="60" y1="8" x2="60" y2="16" stroke="#fbbf24" stroke-width="3" stroke-linecap="round"/>
         <line x1="74" y1="11" x2="70" y2="18" stroke="#fbbf24" stroke-width="2.5" stroke-linecap="round"/>
         <line x1="46" y1="11" x2="50" y2="18" stroke="#fbbf24" stroke-width="2.5" stroke-linecap="round"/>
-        <line x1="84" y1="18" x2="79" y2="23" stroke="#fbbf24" stroke-width="2" stroke-linecap="round"/>
-        <line x1="36" y1="18" x2="41" y2="23" stroke="#fbbf24" stroke-width="2" stroke-linecap="round"/>
       </svg>`;
 
   return `<!DOCTYPE html>
@@ -831,169 +874,156 @@ export function workAnniversaryEmail(data: WorkAnniversaryData): string {
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>Work Anniversary!</title>
-<style>
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { background: #f0f4ff; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif; }
-  @keyframes starPulse { 0%,100%{transform:scale(1);opacity:.8} 50%{transform:scale(1.3);opacity:1} }
-  @keyframes floatTrophy { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-8px)} }
-  @media (prefers-reduced-motion:reduce) { * { animation:none !important; } }
-</style>
+<title>${data.yearsCompleted}-Year Work Anniversary — ${firstName}!</title>
 </head>
-<body>
-<table width="100%" cellpadding="0" cellspacing="0" style="background:#f0f4ff;min-height:100vh">
-<tr><td align="center" style="padding:0">
-<table width="100%" style="max-width:640px;background:#fff;overflow:hidden" cellpadding="0" cellspacing="0">
+<body style="margin:0;padding:0;background:#f0f4ff;font-family:Arial,Helvetica,sans-serif">
+
+<table width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#f0f4ff">
+<tr><td align="center" style="padding:24px 8px">
+
+<table width="600" cellpadding="0" cellspacing="0" border="0" style="width:600px;max-width:600px;background:#ffffff;border-radius:16px;overflow:hidden;box-shadow:0 4px 24px rgba(7,63,120,.12)">
+
+  <!-- ═══ GOLD TOP STRIP ═══ -->
+  <tr><td height="6" style="background:linear-gradient(90deg,#F59E0B,#fbbf24 30%,#3BAD49 60%,#F59E0B);font-size:0;line-height:0">&nbsp;</td></tr>
 
   <!-- ═══ HERO HEADER ═══ -->
-  <tr><td style="background:linear-gradient(160deg,#042656 0%,#073f78 45%,#0d5aa7 100%);padding:0;position:relative;overflow:hidden">
-
-    <!-- Gold shimmer circles -->
-    <div style="position:absolute;top:-50px;right:-50px;width:220px;height:220px;border-radius:50%;background:rgba(245,158,11,.07)"></div>
-    <div style="position:absolute;bottom:-40px;left:-30px;width:180px;height:180px;border-radius:50%;background:rgba(245,158,11,.05)"></div>
-
-    <!-- Gold accent strip at top -->
-    <div style="height:6px;background:linear-gradient(90deg,#F59E0B 0%,#fbbf24 30%,#3BAD49 60%,#F59E0B 100%)"></div>
-
-    <table width="100%" cellpadding="0" cellspacing="0" style="padding:32px 32px 0">
+  <tr><td style="background:linear-gradient(145deg,#042656 0%,#073f78 55%,#0d5aa7 100%);padding:32px 40px 0">
+    <table width="100%" cellpadding="0" cellspacing="0" border="0">
       <tr>
-        <td>
-          <p style="margin:0 0 6px;font-size:10px;font-weight:800;letter-spacing:.2em;text-transform:uppercase;color:rgba(255,255,255,.5)">MAS CALLNET INDIA PVT. LTD.</p>
-          <h1 style="margin:0;font-size:36px;font-weight:900;color:#fff;line-height:1.1;letter-spacing:-1px">⭐ Work<br>Anniversary!</h1>
-          ${data.branchName ? `<p style="margin:10px 0 0;font-size:13px;color:rgba(255,255,255,.65);font-weight:600">${data.branchName} Branch</p>` : ""}
+        <td valign="middle">
+          ${MCN_LOGO}
+          <p style="margin:16px 0 0;font-size:11px;font-weight:bold;letter-spacing:.15em;text-transform:uppercase;color:rgba(255,255,255,.55)">MAS CALLNET INDIA PVT. LTD.</p>
         </td>
-        <td align="right" valign="top" style="width:80px">
-          <div style="width:52px;height:52px;border-radius:50%;background:rgba(245,158,11,.25);border:2px solid rgba(245,158,11,.5);text-align:center;line-height:52px;font-size:20px;font-weight:900;color:#fbbf24">M</div>
+        <td align="right" valign="top">
+          <!-- Trophy + stars SVG -->
+          <svg xmlns="http://www.w3.org/2000/svg" width="90" height="110" viewBox="0 0 90 110">
+            <!-- Trophy -->
+            <path d="M25 22 L65 22 L59 58 Q45 68 31 58 Z" fill="#F59E0B"/>
+            <path d="M29 22 L61 22 L56 52 Q45 60 34 52 Z" fill="#fbbf24"/>
+            <path d="M25 27 Q10 31 13 44 Q16 52 27 49" stroke="#F59E0B" stroke-width="5" fill="none" stroke-linecap="round"/>
+            <path d="M65 27 Q80 31 77 44 Q74 52 63 49" stroke="#F59E0B" stroke-width="5" fill="none" stroke-linecap="round"/>
+            <rect x="38" y="66" width="14" height="6" rx="2" fill="#d1d5db"/>
+            <rect x="32" y="72" width="26" height="6" rx="3" fill="#e5e7eb"/>
+            <!-- Star burst on trophy -->
+            <path d="M45 32 l1.8 5.5h5.7l-4.6 3.4 1.8 5.5L45 43l-4.7 3.4 1.8-5.5-4.6-3.4h5.7Z" fill="#fff" opacity=".8"/>
+            <!-- Stars above -->
+            <path d="M10 12 l1.2 3.6h3.8l-3 2.2 1.2 3.6L10 19l-3.2 2.4 1.2-3.6-3-2.2h3.8Z" fill="#fbbf24" opacity=".9"/>
+            <path d="M76 8 l1.2 3.6h3.8l-3 2.2 1.2 3.6L76 15l-3.2 2.4 1.2-3.6-3-2.2h3.8Z" fill="#F59E0B" opacity=".9"/>
+            <path d="M82 45 l1 3h3.2l-2.5 1.8 1 3L82 51l-2.7 1.8 1-3-2.5-1.8h3.2Z" fill="#fbbf24" opacity=".8"/>
+            <circle cx="6" cy="55" r="3" fill="#3BAD49" opacity=".7"/>
+            <circle cx="84" cy="25" r="2.5" fill="#E8231A" opacity=".7"/>
+          </svg>
         </td>
       </tr>
     </table>
 
-    <!-- Star + Trophy scene -->
-    <div style="padding:16px 0 0;overflow:hidden;line-height:0">
-      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 160" width="100%" height="160" preserveAspectRatio="xMidYMax meet" style="display:block">
-        <!-- Large central trophy silhouette -->
-        <g style="animation:floatTrophy 4s ease-in-out infinite" transform-origin="320 80">
-          <path d="M296 40 L344 40 L336 90 Q320 100 304 90 Z" fill="rgba(245,158,11,.18)"/>
-          <path d="M296 46 Q280 50 284 64 Q288 72 300 68" stroke="rgba(245,158,11,.22)" stroke-width="5" fill="none" stroke-linecap="round"/>
-          <path d="M344 46 Q360 50 356 64 Q352 72 340 68" stroke="rgba(245,158,11,.22)" stroke-width="5" fill="none" stroke-linecap="round"/>
-        </g>
-        <!-- Stars scattered -->
-        <g style="animation:starPulse 2s ease-in-out infinite">
-          <path d="M80 55 l4 12h13l-10.5 7.5 4 12L80 79l-10.5 7.5 4-12L63 67h13Z" fill="#F59E0B" opacity=".9"/>
-        </g>
-        <g style="animation:starPulse 2.4s .5s ease-in-out infinite">
-          <path d="M180 30 l3 9h9l-7.5 5.5 3 9-7.5-5.5-7.5 5.5 3-9L168 39h9Z" fill="#fbbf24" opacity=".8"/>
-        </g>
-        <g style="animation:starPulse 1.8s .3s ease-in-out infinite">
-          <path d="M460 40 l4 12h13l-10.5 7.5 4 12L460 64l-10.5 7.5 4-12L443 52h13Z" fill="#F59E0B" opacity=".9"/>
-        </g>
-        <g style="animation:starPulse 2.6s .8s ease-in-out infinite">
-          <path d="M560 25 l3 9h9l-7.5 5.5 3 9-7.5-5.5-7.5 5.5 3-9L548 34h9Z" fill="#fbbf24" opacity=".7"/>
-        </g>
-        <!-- Confetti rectangles -->
-        <rect x="120" y="120" width="12" height="6" rx="2" fill="#3BAD49" transform="rotate(-30 126 123)" opacity=".7"/>
-        <rect x="240" y="130" width="10" height="5" rx="2" fill="#E8231A" transform="rotate(20 245 132)" opacity=".7"/>
-        <rect x="400" y="118" width="12" height="6" rx="2" fill="#1B6AB5" transform="rotate(-18 406 121)" opacity=".7"/>
-        <rect x="510" y="128" width="10" height="5" rx="2" fill="#fbbf24" transform="rotate(25 515 130)" opacity=".7"/>
-        <!-- Dot sparkles -->
-        <circle cx="60" cy="140" r="4" fill="#F59E0B" opacity=".5"/>
-        <circle cx="220" cy="148" r="3" fill="#3BAD49" opacity=".5"/>
-        <circle cx="430" cy="142" r="4" fill="#F59E0B" opacity=".5"/>
-        <circle cx="590" cy="135" r="3" fill="#E8231A" opacity=".5"/>
-        <!-- Year badge (large) -->
-        <rect x="264" y="110" width="112" height="44" rx="22" fill="rgba(59,173,73,.9)"/>
-        <text x="320" y="138" text-anchor="middle" font-family="Arial,sans-serif" font-size="22" font-weight="900" fill="#fff">${data.yearsCompleted} ${yearLabel}</text>
-      </svg>
-    </div>
+    <!-- Heading + year badge -->
+    <table width="100%" cellpadding="0" cellspacing="0" border="0" style="padding:20px 0 0">
+      <tr>
+        <td valign="bottom">
+          <h1 style="margin:0;font-size:40px;font-weight:900;color:#ffffff;line-height:1;letter-spacing:-1.5px">⭐ Work</h1>
+          <h1 style="margin:4px 0 0;font-size:40px;font-weight:900;color:#fbbf24;line-height:1;letter-spacing:-1.5px">Anniversary!</h1>
+          ${data.branchName ? `<p style="margin:10px 0 0;font-size:14px;color:rgba(255,255,255,.7);font-weight:bold">${data.branchName}</p>` : ""}
+        </td>
+        <td align="right" valign="bottom" style="padding-bottom:4px">
+          <!-- Big year number badge -->
+          <table cellpadding="0" cellspacing="0" border="0">
+            <tr><td align="center" style="background:linear-gradient(135deg,#3BAD49,#2a8f38);border-radius:16px;padding:12px 20px;box-shadow:0 4px 16px rgba(59,173,73,.4)">
+              <p style="margin:0;font-size:10px;font-weight:bold;color:rgba(255,255,255,.8);text-transform:uppercase;letter-spacing:.1em">Celebrating</p>
+              <p style="margin:2px 0;font-size:54px;font-weight:900;color:#fff;line-height:1">${data.yearsCompleted}</p>
+              <p style="margin:0;font-size:12px;font-weight:bold;color:rgba(255,255,255,.9)">${YearLabel} of Excellence</p>
+            </td></tr>
+          </table>
+        </td>
+      </tr>
+    </table>
   </td></tr>
 
-  <!-- ═══ AVATAR ═══ -->
-  <tr><td style="background:linear-gradient(180deg,#0d5aa7 0%,#f0f4ff 100%);text-align:center;padding:0">
-    <div style="display:inline-block;margin-top:-10px;border-radius:50%;border:5px solid #fff;box-shadow:0 8px 30px rgba(245,158,11,.3);background:#fff">
-      ${avatarSection}
-    </div>
+  <!-- ═══ PHOTO + NAME BAND ═══ -->
+  <tr><td style="background:linear-gradient(180deg,#0d5aa7 0%,#073f78 100%);padding:0 40px 32px;text-align:center">
+    <table width="100%" cellpadding="0" cellspacing="0" border="0">
+      <tr><td align="center" style="padding-top:28px">
+        <table cellpadding="0" cellspacing="0" border="0" style="margin:0 auto">
+          <tr><td style="border-radius:50%;border:5px solid #F59E0B;box-shadow:0 0 0 4px rgba(245,158,11,.25),0 8px 28px rgba(0,0,0,.25);overflow:hidden;width:120px;height:120px">
+            ${avatarSection}
+          </td></tr>
+        </table>
+        <h2 style="margin:16px 0 4px;font-size:26px;font-weight:900;color:#ffffff">${data.employeeName}</h2>
+        ${chips.length > 0 ? `
+        <table cellpadding="0" cellspacing="0" border="0" style="margin:10px auto 0">
+          <tr>${chips.join("")}</tr>
+        </table>` : ""}
+      </td></tr>
+    </table>
   </td></tr>
 
-  <!-- ═══ MAIN BODY ═══ -->
-  <tr><td style="background:#fff;padding:28px 40px 0;text-align:center">
-    <h2 style="margin:0 0 6px;font-size:26px;font-weight:900;color:#073f78;letter-spacing:-.5px">${data.employeeName}</h2>
-    ${data.branchName ? `<p style="margin:0 0 24px;font-size:13px;color:#94a3b8;font-weight:600;text-transform:uppercase;letter-spacing:.08em">${data.branchName}</p>` : `<div style="height:24px"></div>`}
+  <!-- ═══ JOURNEY STORY ═══ -->
+  <tr><td style="padding:32px 40px 0">
 
-    <!-- Year milestone badge -->
-    <div style="display:inline-block;background:linear-gradient(135deg,#3BAD49,#2a8f38);border-radius:20px;padding:16px 36px;margin-bottom:24px;box-shadow:0 6px 20px rgba(59,173,73,.3)">
-      <p style="margin:0;font-size:12px;font-weight:800;color:rgba(255,255,255,.8);text-transform:uppercase;letter-spacing:.12em">Celebrating</p>
-      <p style="margin:4px 0;font-size:52px;font-weight:900;color:#fff;line-height:1">${data.yearsCompleted}</p>
-      <p style="margin:0;font-size:15px;font-weight:700;color:rgba(255,255,255,.92)">${yearLabel} of Excellence 🏆</p>
-    </div>
+    <!-- Star row decoration -->
+    <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:20px">
+      <tr><td align="center">
+        <svg xmlns="http://www.w3.org/2000/svg" width="140" height="28" viewBox="0 0 140 28">
+          <path d="M14 2l3 6.5h7l-5.5 4 2 6.5L14 15l-6.5 4 2-6.5L4 8.5h7Z" fill="#F59E0B"/>
+          <path d="M42 2l3 6.5h7l-5.5 4 2 6.5L42 15l-6.5 4 2-6.5L32 8.5h7Z" fill="#F59E0B"/>
+          <path d="M70 0l3.5 7.5h8l-6.5 4.5 2.5 7.5L70 15.5l-7.5 4 2.5-7.5L58 8h8Z" fill="#fbbf24"/>
+          <path d="M98 2l3 6.5h7l-5.5 4 2 6.5L98 15l-6.5 4 2-6.5L88 8.5h7Z" fill="#F59E0B"/>
+          <path d="M126 2l3 6.5h7l-5.5 4 2 6.5L126 15l-6.5 4 2-6.5L116 8.5h7Z" fill="#F59E0B"/>
+        </svg>
+      </td></tr>
+    </table>
 
-    <p style="margin:0 0 24px;font-size:17px;line-height:1.8;color:#334155">
-      Congratulations on this incredible milestone! Your <strong style="color:#3BAD49">dedication</strong>,
-      <strong style="color:#1B6AB5">consistency</strong>, and <strong style="color:#F59E0B">commitment</strong>
-      are the foundation of our success. 🌟
-    </p>
-
-    <!-- Timeline journey -->
-    <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:24px">
-      <tr><td style="background:linear-gradient(135deg,#eff6ff 0%,#f0fdf4 100%);border-radius:16px;padding:22px 28px;border-left:5px solid #3BAD49">
-        <p style="margin:0 0 12px;font-size:11px;font-weight:800;color:#3BAD49;text-transform:uppercase;letter-spacing:.12em">Your Journey with MAS Callnet</p>
-        <table width="100%" cellpadding="0" cellspacing="0">
+    <!-- Journey narrative -->
+    <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:24px">
+      <tr><td style="background:linear-gradient(135deg,#eff6ff,#f0fdf4);border-radius:14px;padding:26px 28px;border-left:5px solid #3BAD49">
+        <p style="margin:0 0 6px;font-size:10px;font-weight:bold;color:#3BAD49;text-transform:uppercase;letter-spacing:.12em">Your MAS Callnet Journey</p>
+        <p style="margin:0 0 14px;font-size:16px;line-height:1.85;color:#1e293b">
+          ${journeyOpener}${journeyRole}${journeyManager}${journeyClose}
+        </p>
+        <!-- Timeline bar -->
+        <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top:16px">
           <tr>
-            <td align="center" style="width:40%">
-              <p style="margin:0;font-size:12px;color:#64748b;font-weight:600">JOINED</p>
-              <p style="margin:4px 0 0;font-size:15px;font-weight:800;color:#073f78">${data.joinDate}</p>
+            <td align="center" width="38%" style="background:#073f78;border-radius:10px 0 0 10px;padding:10px 14px">
+              <p style="margin:0;font-size:10px;font-weight:bold;color:rgba(255,255,255,.7);text-transform:uppercase">Joined</p>
+              <p style="margin:2px 0 0;font-size:14px;font-weight:900;color:#fff">${data.joinDate}</p>
             </td>
-            <td align="center" style="font-size:28px;color:#3BAD49;font-weight:900;width:20%">→</td>
-            <td align="center" style="width:40%">
-              <div style="background:#073f78;border-radius:10px;padding:6px 12px;display:inline-block">
-                <p style="margin:0;font-size:13px;font-weight:900;color:#fff">${data.yearsCompleted} ${yearLabel} Strong 🎉</p>
-              </div>
+            <td align="center" width="24%" style="background:#1B6AB5;padding:10px 8px">
+              <p style="margin:0;font-size:22px;color:#fff;font-weight:900">→</p>
+            </td>
+            <td align="center" width="38%" style="background:#3BAD49;border-radius:0 10px 10px 0;padding:10px 14px">
+              <p style="margin:0;font-size:10px;font-weight:bold;color:rgba(255,255,255,.8);text-transform:uppercase">Today</p>
+              <p style="margin:2px 0 0;font-size:14px;font-weight:900;color:#fff">${data.yearsCompleted} ${YearLabel} Strong 🎉</p>
             </td>
           </tr>
         </table>
       </td></tr>
     </table>
-
-    <!-- Stars row -->
-    <div style="margin:0 0 24px;text-align:center">
-      <svg xmlns="http://www.w3.org/2000/svg" width="160" height="32" viewBox="0 0 160 32" style="display:inline-block">
-        <path d="M16 2l3.5 7h7.5l-6 4.5 2.5 7.5L16 17l-7.5 4-2.5-7.5-6-4.5h7.5Z" fill="#F59E0B"/>
-        <path d="M48 2l3.5 7h7.5l-6 4.5 2.5 7.5L48 17l-7.5 4-2.5-7.5-6-4.5h7.5Z" fill="#F59E0B"/>
-        <path d="M80 0l4 8h9l-7 5.5 3 8.5L80 17.5l-9 4.5 3-8.5-7-5.5h9Z" fill="#fbbf24"/>
-        <path d="M112 2l3.5 7h7.5l-6 4.5 2.5 7.5L112 17l-7.5 4-2.5-7.5-6-4.5h7.5Z" fill="#F59E0B"/>
-        <path d="M144 2l3.5 7h7.5l-6 4.5 2.5 7.5L144 17l-7.5 4-2.5-7.5-6-4.5h7.5Z" fill="#F59E0B"/>
-      </svg>
-    </div>
   </td></tr>
 
   <!-- ═══ CLOSING BANNER ═══ -->
-  <tr><td style="padding:0 40px 32px">
-    <table width="100%" cellpadding="0" cellspacing="0">
-      <tr><td style="background:linear-gradient(135deg,#042656 0%,#073f78 60%,#0d5aa7 100%);border-radius:16px;padding:24px 28px;text-align:center">
+  <tr><td style="padding:0 40px 36px">
+    <table width="100%" cellpadding="0" cellspacing="0" border="0">
+      <tr><td style="background:linear-gradient(135deg,#042656,#073f78 60%,#0d5aa7);border-radius:14px;padding:24px 28px;text-align:center">
         <p style="margin:0 0 8px;font-size:22px">🌟 ✨ 🏆 ✨ 🌟</p>
-        <p style="margin:0;font-size:15px;color:#fff;line-height:1.8">
-          Thank you for being a pillar of our family.<br>
-          <strong>Here's to many more years of excellence!</strong>
+        <p style="margin:0 0 6px;font-size:17px;color:#ffffff;font-weight:bold;line-height:1.7">
+          Thank you, ${firstName}, for ${data.yearsCompleted} extraordinary ${yearLabel}.<br>
+          Here's to many more years of achievement!
         </p>
-        <p style="margin:14px 0 0;font-size:14px;font-weight:800;color:rgba(255,255,255,.8)">
-          — MAS Callnet Management 🏆
-        </p>
+        <p style="margin:14px 0 0;font-size:14px;color:rgba(255,255,255,.75);font-weight:bold">— MAS Callnet Management &amp; HR Team 🏆</p>
       </td></tr>
     </table>
   </td></tr>
 
   <!-- ═══ FOOTER ═══ -->
-  <tr><td>
-    <div style="height:5px;background:linear-gradient(90deg,#F59E0B 0%,#073f78 50%,#3BAD49 100%)"></div>
-    <table width="100%" cellpadding="0" cellspacing="0" style="background:#f8fafc;padding:20px 32px">
-      <tr><td align="center">
-        <div style="width:36px;height:36px;border-radius:50%;background:#073f78;display:inline-block;line-height:36px;text-align:center;font-size:14px;font-weight:900;color:#fff;margin-bottom:8px">M</div>
-        <p style="margin:0;font-size:11px;color:#94a3b8">&copy; 2026 Mas Callnet India Pvt. Ltd. All rights reserved.</p>
-        <p style="margin:4px 0 0;font-size:11px;color:#cbd5e1">Automated work anniversary greeting from your HR team. Please do not reply.</p>
-      </td></tr>
-    </table>
+  <tr><td height="5" style="background:linear-gradient(90deg,#F59E0B,#073f78 50%,#3BAD49);font-size:0;line-height:0">&nbsp;</td></tr>
+  <tr><td style="background:#f8fafc;padding:20px 40px;text-align:center">
+    ${MCN_LOGO.replace('style="display:block;max-width:120px;height:auto"', 'style="display:inline-block;max-width:100px;height:auto;opacity:.65;margin-bottom:8px"')}
+    <p style="margin:0;font-size:11px;color:#94a3b8">&copy; 2026 Mas Callnet India Pvt. Ltd. All rights reserved.</p>
+    <p style="margin:4px 0 0;font-size:11px;color:#cbd5e1">Automated work anniversary greeting from your HR team. Please do not reply to this email.</p>
   </td></tr>
 
 </table>
+
 </td></tr>
 </table>
 </body>

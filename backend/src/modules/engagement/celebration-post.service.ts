@@ -13,12 +13,20 @@ type CelebrationEmployee = {
   id: string;
   full_name: string;
   official_email: string | null;
-  email: string | null; // personal email
+  email: string | null;
   avatar_url: string | null;
-  branch_name: string | null;
+  branch_display: string | null;   // display_name from branch_master
   branch_id: string | null;
   date_of_joining: string;
   years_completed?: number;
+  designation_name: string | null;
+  dept_name: string | null;
+  process_name: string | null;
+  gender: string | null;
+  blood_group: string | null;
+  band: string | null;
+  manager_name: string | null;
+  employee_code: string | null;
 };
 
 function resolvePhotoUrl(avatarUrl: string | null): string | undefined {
@@ -69,13 +77,24 @@ async function resolveBranchHrBccEmails(branchId: string | null): Promise<string
   return (rows as Array<{ email: string }>).map((r) => r.email).filter(Boolean);
 }
 
+const CELEBRATION_SELECT = `
+  SELECT e.id, e.full_name, e.official_email, e.email,
+         e.avatar_url, e.branch_id, e.date_of_joining,
+         e.gender, e.blood_group, e.band, e.employee_code,
+         COALESCE(bm.display_name, bm.branch_name) AS branch_display,
+         dm.designation_name,
+         NULL AS dept_name,
+         pm.process_name,
+         mgr.full_name AS manager_name
+    FROM employees e
+    LEFT JOIN branch_master bm      ON bm.id  = e.branch_id
+    LEFT JOIN designation_master dm ON dm.id  = e.designation_id
+    LEFT JOIN process_master pm     ON pm.id  = e.process_id
+    LEFT JOIN employees mgr         ON mgr.id = e.reporting_manager_id`;
+
 export async function queryTodayBirthdays(): Promise<CelebrationEmployee[]> {
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT e.id, e.full_name, e.official_email, e.email,
-            e.avatar_url, bm.branch_name, e.branch_id,
-            e.date_of_joining
-       FROM employees e
-       LEFT JOIN branch_master bm ON bm.id = e.branch_id
+    `${CELEBRATION_SELECT}
       WHERE e.active_status = 1
         AND e.date_of_birth IS NOT NULL
         AND MONTH(e.date_of_birth) = MONTH(CURDATE())
@@ -86,12 +105,8 @@ export async function queryTodayBirthdays(): Promise<CelebrationEmployee[]> {
 
 export async function queryTodayAnniversaries(): Promise<CelebrationEmployee[]> {
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT e.id, e.full_name, e.official_email, e.email,
-            e.avatar_url, bm.branch_name, e.branch_id,
-            e.date_of_joining,
+    `${CELEBRATION_SELECT},
             TIMESTAMPDIFF(YEAR, e.date_of_joining, CURDATE()) AS years_completed
-       FROM employees e
-       LEFT JOIN branch_master bm ON bm.id = e.branch_id
       WHERE e.active_status = 1
         AND e.date_of_joining IS NOT NULL
         AND MONTH(e.date_of_joining) = MONTH(CURDATE())
@@ -136,9 +151,9 @@ export async function sendBirthdayGreeting(emp: CelebrationEmployee): Promise<vo
 
   const photoUrl = resolvePhotoUrl(emp.avatar_url);
   const name = emp.full_name?.trim() || "Colleague";
-  const branch = emp.branch_name ?? undefined;
+  const firstName = name.split(" ")[0];
+  const branch = emp.branch_display ?? undefined;
 
-  // TO = official (company) email; BCC = personal + branch HR + admins
   const toEmail = emp.official_email;
   if (toEmail) {
     try {
@@ -147,23 +162,33 @@ export async function sendBirthdayGreeting(emp: CelebrationEmployee): Promise<vo
         resolveBranchHrBccEmails(emp.branch_id),
       ]);
       const bccEmails = uniqueEmails(
-        [emp.email],         // personal email in BCC
-        branchHrEmails,      // branch HR / branch head
-        adminEmails,         // super_admin + admin
-      ).filter((e) => e !== toEmail); // don't BCC same address as TO
+        [emp.email],
+        branchHrEmails,
+        adminEmails,
+      ).filter((e) => e !== toEmail);
 
       await emailService.send({
         to: toEmail,
         bcc: bccEmails.length ? bccEmails.join(",") : undefined,
-        subject: `🎂 Happy Birthday, ${name}! 🎉`,
-        html: birthdayGreetingEmail({ employeeName: name, photoUrl, branchName: branch }),
+        subject: `🎂 Happy Birthday, ${firstName}! 🎉`,
+        html: birthdayGreetingEmail({
+          employeeName: name,
+          firstName,
+          photoUrl,
+          branchName: branch,
+          designation: emp.designation_name ?? undefined,
+          department: emp.dept_name ?? undefined,
+          processName: emp.process_name ?? undefined,
+          gender: emp.gender ?? undefined,
+          bloodGroup: emp.blood_group ?? undefined,
+          managerName: emp.manager_name ?? undefined,
+        }),
       });
     } catch (err) {
       console.error(`[celebration] Birthday email failed for ${emp.id}:`, err);
     }
   }
 
-  // Auto-post to Company Feed
   const sysUserId = await resolveSystemUserId();
   if (!sysUserId) {
     console.warn("[celebration] No system user — skipping feed post for birthday:", emp.id);
@@ -188,7 +213,8 @@ export async function sendAnniversaryGreeting(emp: CelebrationEmployee): Promise
 
   const photoUrl = resolvePhotoUrl(emp.avatar_url);
   const name = emp.full_name?.trim() || "Colleague";
-  const branch = emp.branch_name ?? undefined;
+  const firstName = name.split(" ")[0];
+  const branch = emp.branch_display ?? undefined;
   const years = Number(emp.years_completed ?? 1);
 
   const joinDateDisplay = emp.date_of_joining
@@ -215,13 +241,21 @@ export async function sendAnniversaryGreeting(emp: CelebrationEmployee): Promise
       await emailService.send({
         to: toEmail,
         bcc: bccEmails.length ? bccEmails.join(",") : undefined,
-        subject: `⭐ Happy ${years}-Year Work Anniversary, ${name}!`,
+        subject: `⭐ Happy ${years}-Year Work Anniversary, ${firstName}!`,
         html: workAnniversaryEmail({
           employeeName: name,
+          firstName,
           yearsCompleted: years,
           joinDate: joinDateDisplay,
           photoUrl,
           branchName: branch,
+          designation: emp.designation_name ?? undefined,
+          department: emp.dept_name ?? undefined,
+          processName: emp.process_name ?? undefined,
+          gender: emp.gender ?? undefined,
+          band: emp.band ?? undefined,
+          managerName: emp.manager_name ?? undefined,
+          employeeCode: emp.employee_code ?? undefined,
         }),
       });
     } catch (err) {
