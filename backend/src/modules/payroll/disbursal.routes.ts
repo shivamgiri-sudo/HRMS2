@@ -173,4 +173,112 @@ router.post(
   })
 );
 
+// GET /api/payroll/runs/:runId/bank-export?format=generic|sbi
+router.get(
+  "/runs/:runId/bank-export",
+  requireRole("payroll_head", "finance", "super_admin"),
+  async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const { runId } = req.params;
+      const format = (req.query.format as string) || "generic";
+
+      if (!["generic", "sbi"].includes(format)) {
+        return res.status(400).json({ success: false, error: "format must be generic or sbi" });
+      }
+
+      // Verify run exists and get month for narration
+      const [runRows] = await db.query<any[]>(
+        `SELECT id, run_month FROM salary_prep_run WHERE id = ?`,
+        [runId]
+      );
+      if (!runRows.length) {
+        return res.status(404).json({ success: false, error: "Run not found" });
+      }
+      const runMonth = runRows[0].run_month as string; // YYYY-MM
+      const [yr, mo] = runMonth.split("-");
+      const monthNames = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+      const monthLabel = `${monthNames[parseInt(mo, 10) - 1]} ${yr}`;
+
+      // Fetch employees: must have disbursal record with NEFT/IMPS/RTGS, a salary line, and a primary bank account
+      const [rows] = await db.query<any[]>(
+        `SELECT
+           e.full_name,
+           e.employee_code,
+           srd.payment_mode,
+           spl.net_salary,
+           CAST(ebd.account_number AS CHAR) AS account_number,
+           ebd.ifsc_code,
+           ebd.bank_name
+         FROM salary_run_disbursal srd
+         JOIN salary_prep_line spl
+           ON spl.run_id = srd.run_id AND spl.employee_id = srd.employee_id
+         JOIN employees e ON e.id = srd.employee_id
+         INNER JOIN employee_bank_detail ebd
+           ON ebd.employee_id = srd.employee_id
+          AND ebd.is_primary = 1
+          AND ebd.active_status = 1
+         WHERE srd.run_id = ?
+           AND UPPER(srd.payment_mode) IN ('NEFT','IMPS','RTGS')
+         ORDER BY e.employee_code`,
+        [runId]
+      );
+
+      if (!rows.length) {
+        return res.status(404).json({
+          success: false,
+          error: "No NEFT/IMPS/RTGS disbursal records found for this run",
+        });
+      }
+
+      // Build CSV
+      const csvLines: string[] = [];
+
+      if (format === "sbi") {
+        csvLines.push("TransactionType,BeneficiaryName,BeneficiaryAccountNumber,IFSCCode,Amount,Narration");
+        for (const r of rows) {
+          const name    = String(r.full_name).toUpperCase().replace(/,/g, " ");
+          const acct    = String(r.account_number ?? "").replace(/,/g, "");
+          const ifsc    = String(r.ifsc_code ?? "").replace(/,/g, "");
+          const amount  = Number(r.net_salary).toFixed(2);
+          const narr    = `Salary ${monthLabel}`;
+          csvLines.push(`P,${name},${acct},${ifsc},${amount},${narr}`);
+        }
+      } else {
+        // Generic format
+        csvLines.push("Serial,Employee Name,Account Number,IFSC Code,Bank Name,Amount,Purpose,Narration");
+        rows.forEach((r, i) => {
+          const name    = `"${String(r.full_name).toUpperCase().replace(/"/g, "'")}"`;
+          const acct    = String(r.account_number ?? "").replace(/,/g, "");
+          const ifsc    = String(r.ifsc_code ?? "").replace(/,/g, "");
+          const bank    = `"${String(r.bank_name ?? "").replace(/"/g, "'")}"`;
+          const amount  = Number(r.net_salary).toFixed(2);
+          const narr    = `Salary ${monthLabel} - ${r.employee_code}`;
+          csvLines.push(`${i + 1},${name},${acct},${ifsc},${bank},${amount},Salary,${narr}`);
+        });
+      }
+
+      const csvContent  = csvLines.join("\r\n");
+
+      void logSensitiveAction({
+        actor_user_id: (req as any).authUser?.id ?? (req as any).user?.id ?? "unknown",
+        action_type: "BANK_EXPORT_DOWNLOAD",
+        module_key: "payroll",
+        entity_type: "salary_prep_run",
+        entity_id: runId,
+        change_summary: { format, row_count: rows.length, run_month: runMonth },
+      });
+
+      const formatLabel = format === "sbi" ? "SBI" : "Generic";
+      const filename    = `BankBatch_${formatLabel}_${runMonth.replace("-", "")}_${runId.substring(0, 8)}.csv`;
+
+      res.setHeader("Content-Type", "text/csv; charset=utf-8");
+      res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+      // BOM for Excel UTF-8 compatibility
+      res.send("﻿" + csvContent);
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  }
+);
+
 export { router as disbursalRouter };

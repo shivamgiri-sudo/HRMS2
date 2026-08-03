@@ -312,15 +312,35 @@ const maskAccount = (value: unknown) => {
   return `XXXXXX${account.slice(-4)}`;
 };
 
+/**
+ * Records that the comparison could not be made, and why.
+ *
+ * Every path out of triggerFaceMatch used to be a silent `return`, so a
+ * candidate nobody could check looked exactly like a candidate who passed —
+ * and the readiness score awarded points for a photo_match row that was never
+ * written. A recorded manual_review is the honest state: a human still has to
+ * look at this person.
+ */
+async function recordFaceMatchSkipped(candidateId: string, reason: string) {
+  await db.execute(
+    `INSERT INTO candidate_bgv_check
+       (id, candidate_id, check_type, provider_key, status, result_summary, result_json)
+     VALUES (?, ?, 'photo_match', 'system', 'manual_review', ?, CAST(? AS JSON))`,
+    [randomUUID(), candidateId, reason.slice(0, 240), JSON.stringify({ skipped: true, reason })],
+  ).catch((error) => {
+    console.error("[FaceMatch] could not record a skipped comparison for", candidateId, (error as Error)?.message);
+  });
+}
+
 async function triggerFaceMatch(candidateId: string, selfiePath: string, selfieDocId: string) {
   const faceMatch = await getFaceMatch();
   if (!faceMatch) {
-    console.warn("[FaceMatch] Module not available — skipping for", candidateId);
+    await recordFaceMatchSkipped(candidateId, "The face-match module could not be loaded on the server.");
     return;
   }
   const available = await faceMatch.isModelAvailable();
   if (!available) {
-    console.warn("[FaceMatch] Models not loaded — skipping face match for", candidateId);
+    await recordFaceMatchSkipped(candidateId, "The face-recognition models are not available on the server.");
     return;
   }
   // Find an uploaded Aadhaar or PAN image to compare against
@@ -328,16 +348,54 @@ async function triggerFaceMatch(candidateId: string, selfiePath: string, selfieD
     `SELECT id, file_path, doc_type FROM candidate_onboarding_document
      WHERE candidate_id = ? AND deleted_at IS NULL
        AND mime_type LIKE 'image/%'
-       AND LOWER(doc_type) IN ('aadhaar', 'pan card', 'passport photo')
-     ORDER BY FIELD(LOWER(doc_type), 'aadhaar', 'pan card', 'passport photo')
+       AND LOWER(doc_type) IN ('aadhaar', 'pan card')
+       AND id <> ?
+     ORDER BY FIELD(LOWER(doc_type), 'aadhaar', 'pan card')
      LIMIT 1`,
-    [candidateId]
+    [candidateId, selfieDocId]
   );
-  if (!docs[0]) return;
-  const idDoc = docs[0] as { id: string; file_path: string; doc_type: string };
+  const idDoc = docs[0] as { id: string; file_path: string; doc_type: string } | undefined;
+  if (!idDoc) {
+    // Not necessarily permanent: the candidate may upload their Aadhaar next,
+    // and faceMatchOnIdDocumentUpload will pick it up then.
+    await recordFaceMatchSkipped(
+      candidateId,
+      "No Aadhaar or PAN image was available to compare the photograph against when it was uploaded.",
+    );
+    return;
+  }
   const idDocPath = resolveOnboardingDocumentFile(idDoc.file_path);
-  if (!idDocPath) return;
+  if (!idDocPath) {
+    await recordFaceMatchSkipped(candidateId, `The stored ${idDoc.doc_type} file could not be located on disk.`);
+    return;
+  }
   await faceMatch.compareFaces(candidateId, selfiePath, idDocPath, selfieDocId, idDoc.id);
+}
+
+/**
+ * Runs the comparison when the ID document arrives after the photograph.
+ *
+ * The original trigger only fired on the photo upload and required the Aadhaar
+ * or PAN to already exist, so the outcome depended on the order the candidate
+ * happened to upload in — something they have no way of knowing. 33 candidates
+ * hold both documents today and not one was ever compared.
+ */
+async function faceMatchOnIdDocumentUpload(candidateId: string, idDocId: string) {
+  const [selfies] = await db.execute<RowDataPacket[]>(
+    `SELECT id, file_path FROM candidate_onboarding_document
+      WHERE candidate_id = ? AND deleted_at IS NULL
+        AND mime_type LIKE 'image/%'
+        AND (LOWER(doc_type) LIKE '%selfie%' OR LOWER(doc_type) LIKE '%live%' OR LOWER(doc_type) LIKE '%photo%')
+        AND id <> ?
+      ORDER BY created_at DESC
+      LIMIT 1`,
+    [candidateId, idDocId]
+  );
+  const selfie = selfies[0] as { id: string; file_path: string } | undefined;
+  if (!selfie) return;
+  const selfiePath = resolveOnboardingDocumentFile(selfie.file_path);
+  if (!selfiePath) return;
+  await triggerFaceMatch(candidateId, selfiePath, selfie.id);
 }
 
 async function logCandidateAction(candidateId: string, actionType: string, payload?: unknown, meta?: { ip?: string; userAgent?: string; actorType?: ActorType; actorId?: string | null }) {
@@ -1290,26 +1348,31 @@ export async function saveEmployeeDetails(token: string, input: Record<string, u
       candidateId,
     ]
   );
-  // Update extra identity/statutory fields on ats_candidate if columns exist
-  // These are safe UPDATE SET with COALESCE to not overwrite non-null existing values
+  // Mirror the UAN onto ats_candidate, which is the only one of these columns
+  // that table actually has.
+  //
+  // This used to set passport_no, driving_license_no, epf_number and
+  // esic_number here too. Those four live on candidate_onboarding_profile, so
+  // MySQL rejected the whole statement with "Unknown column 'passport_no' in
+  // 'field list'" on every candidate who reached this step — taking uan_number,
+  // which is valid, down with it. An empty `.catch()` carrying the comment
+  // "columns may not exist on older schema — safe to ignore" made a rejected
+  // write look exactly like a successful one.
+  //
+  // Nothing is lost by narrowing it: the candidate_onboarding_profile upsert
+  // directly above already stores all five, including in its ON DUPLICATE KEY
+  // UPDATE clause.
   await db.execute(
     `UPDATE ats_candidate SET
-       passport_no = COALESCE(?, passport_no),
-       driving_license_no = COALESCE(?, driving_license_no),
        uan_number = COALESCE(?, uan_number),
-       epf_number = COALESCE(?, epf_number),
-       esic_number = COALESCE(?, esic_number),
        updated_at = NOW()
      WHERE id = ?`,
-    [
-      input.passportNo ?? input["passportNumber"] ?? input["passport_number"] ?? null,
-      input.drivingLicenseNo ?? input["dlNumber"] ?? input["dl_number"] ?? null,
-      input.uanNumber ?? null,
-      input.epfNumber ?? null,
-      input.esicNumber ?? null,
-      candidateId,
-    ]
-  ).catch(() => { /* columns may not exist on older schema — safe to ignore */ });
+    [input.uanNumber ?? null, candidateId]
+  ).catch((error) => {
+    // Still non-fatal — a candidate must not lose their whole submission over
+    // a mirrored field — but no longer silent.
+    console.error(`[Onboarding] could not mirror UAN onto ats_candidate for ${candidateId}:`, (error as Error)?.message);
+  });
 
   // Fraud detection: check for duplicates (non-blocking)
   if (panHash) {
@@ -1725,12 +1788,31 @@ export async function uploadOnboardingDocument(token: string, file: Express.Mult
       });
   }
 
-  // Face matching: when a live selfie is uploaded, compare against Aadhaar/PAN photo
-  const isLiveSelfie = docType.includes("selfie") || docType.includes("live");
-  if (isLiveSelfie && file.mimetype.startsWith("image/")) {
-    triggerFaceMatch(candidateId, file.path, id).catch(e =>
-      console.error("[FaceMatch] Failed for candidate", candidateId, ":", e.message)
-    );
+  // Face matching, in whichever order the candidate uploads.
+  //
+  // This used to fire only on a document typed "selfie" or "live". Production
+  // holds 3 such documents against 34 typed "Passport Photo", so for 92% of the
+  // face images candidates actually send, no comparison was ever attempted —
+  // which is most of why there is not a single photo_match result on record.
+  // A passport photo is a photograph of the candidate's face; it is exactly
+  // what this check wants.
+  //
+  // The second call handles the reverse order. The comparison needs a face
+  // image and an ID image, and previously only ran if the ID already existed
+  // when the face arrived. Which document a candidate uploads first is not
+  // something they know matters.
+  const isFaceImage = docType.includes("selfie") || docType.includes("live") || docType.includes("photo");
+  const isIdImage = docType.includes("aadhaar") || docType.includes("pan");
+  if (file.mimetype.startsWith("image/")) {
+    if (isFaceImage) {
+      triggerFaceMatch(candidateId, file.path, id).catch(e =>
+        console.error("[FaceMatch] Failed for candidate", candidateId, ":", e.message)
+      );
+    } else if (isIdImage) {
+      faceMatchOnIdDocumentUpload(candidateId, id).catch(e =>
+        console.error("[FaceMatch] Retry on ID upload failed for candidate", candidateId, ":", e.message)
+      );
+    }
   }
 
   return {
