@@ -422,6 +422,24 @@ export default function BranchBudgetManagementWorkspace() {
     });
     return map;
   }, [priorDetail.data]);
+  // Actual-vs-planned by Head/Sub-head: every line already carries its own reserved/consumed
+  // amount (populated as GRNs are branch-head/finance-head approved against it), just never
+  // grouped and surfaced above the single-line level anywhere in this workspace. Reuses
+  // detailQuery's already-fetched lines — no new endpoint.
+  const utilizationByHead = useMemo(() => {
+    const map = new Map<string, { head: string; subHead: string | null; planned: number; reserved: number; consumed: number; available: number }>();
+    (detailQuery.data?.lines ?? []).forEach((l) => {
+      const subHead = l.sub_head ?? null;
+      const key = `${l.head}|${subHead ?? ""}`;
+      const entry = map.get(key) ?? { head: l.head, subHead, planned: 0, reserved: 0, consumed: 0, available: 0 };
+      entry.planned += Number(l.gross_amount ?? 0);
+      entry.reserved += Number(l.reserved_amount ?? 0);
+      entry.consumed += Number(l.consumed_amount ?? 0);
+      entry.available += Number(l.available_gross_amount ?? 0);
+      map.set(key, entry);
+    });
+    return [...map.values()].sort((a, b) => a.head.localeCompare(b.head) || (a.subHead ?? "").localeCompare(b.subHead ?? ""));
+  }, [detailQuery.data]);
   const { coverageQuery, saveCoverage } = useBudgetCoverage(detailId);
   const { mastersQuery, saveHead, saveSubHead, deleteHead, deleteSubHead } =
     useFinanceExpenseMasters(Boolean(capabilities?.canManageExpenseMaster));
@@ -1357,7 +1375,9 @@ Reason:`
               {canReviewCurrent && <p className="text-xs text-slate-500">Revision also needs a correction note against at least one head/sub-head — add those on the <span className="font-medium">Plan Builder</span> tab, where you can also correct the lines yourself and then approve.</p>}
               {Boolean(openCorrectionCount) && <div className="rounded-2xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900"><span className="font-semibold">{openCorrectionCount} open correction note(s)</span> against this budget. Each one is shown on its own budget line in the Plan Builder tab.</div>}
               {budgets.map((budget) => { const available = Number(budget.gross_budget_amount) - Number(budget.reserved_amount) - Number(budget.consumed_amount); return <div key={budget.id} className="grid gap-4 rounded-2xl border border-slate-200 p-4 xl:grid-cols-[1.2fr_1fr_1fr_auto]"><div><div className="flex gap-2"><p className="font-semibold">{budget.budget_number}</p><Badge variant="outline">{statusLabel(budget.status)}</Badge></div><p className="mt-1 text-xs text-slate-500">{budget.branch_name} · {budget.period_code} · Revision {budget.revision_no}</p></div><Metric label="Gross / P&L" value={`${money(Number(budget.gross_budget_amount))} / ${money(Number(budget.pnl_budget_amount))}`} /><Metric label="Reserved / Consumed / Available" value={`${money(Number(budget.reserved_amount))} / ${money(Number(budget.consumed_amount))} / ${money(available)}`} />{canReview(budget) && <div className="flex flex-wrap justify-end gap-2"><Button size="sm" onClick={() => void review(budget, "approve")}><CheckCircle2 className="mr-1 h-3.5 w-3.5" />Approve</Button><Button size="sm" variant="outline" onClick={() => void review(budget, "revision")}><Settings2 className="mr-1 h-3.5 w-3.5" />Revision</Button><Button size="sm" variant="destructive" onClick={() => void review(budget, "reject")}><XCircle className="mr-1 h-3.5 w-3.5" />Reject</Button></div>}
-                {capabilities?.roles?.includes("super_admin") && <div className="flex justify-end xl:col-span-4"><Button size="sm" variant="outline" className="border-rose-300 text-rose-700 hover:bg-rose-50" disabled={deleteBudget.isPending} onClick={() => void removeBudget(budget)}><Trash2 className="mr-1 h-3.5 w-3.5" />Delete / supersede (super admin)</Button></div>}</div>; })}{!budgets.length && <div className="py-12 text-center text-slate-500"><Building2 className="mx-auto mb-3 h-10 w-10" />No budget found.</div>}</CardContent></Card></TabsContent>
+                {capabilities?.roles?.includes("super_admin") && <div className="flex justify-end xl:col-span-4"><Button size="sm" variant="outline" className="border-rose-300 text-rose-700 hover:bg-rose-50" disabled={deleteBudget.isPending} onClick={() => void removeBudget(budget)}><Trash2 className="mr-1 h-3.5 w-3.5" />Delete / supersede (super admin)</Button></div>}</div>; })}{!budgets.length && <div className="py-12 text-center text-slate-500"><Building2 className="mx-auto mb-3 h-10 w-10" />No budget found.</div>}
+              <UtilizationBreakdown rows={utilizationByHead} loading={detailQuery.isLoading} />
+              </CardContent></Card></TabsContent>
 
             <TabsContent value="topups">
               {branchId ? (
@@ -1421,6 +1441,59 @@ Reason:`
 function Field({ label, children, span = 1 }: { label: string; children: React.ReactNode; span?: number }) {
   const spanClass = span === 4 ? "md:col-span-2 xl:col-span-4" : span === 2 ? "xl:col-span-2" : "";
   return <div className={`space-y-2 ${spanClass}`}><Label>{label}</Label>{children}</div>;
+}
+
+/** Planned-vs-actual by Head/Sub-head for the budget currently loaded in this workspace — the
+ *  drilldown "Approval and utilization" only showed at the whole-budget level before this. */
+function UtilizationBreakdown({
+  rows,
+  loading,
+}: {
+  rows: { head: string; subHead: string | null; planned: number; reserved: number; consumed: number; available: number }[];
+  loading: boolean;
+}) {
+  if (loading) return null;
+  if (!rows.length) return null;
+  return (
+    <div className="xl:col-span-4">
+      <p className="mb-2 text-xs font-semibold uppercase tracking-[0.08em] text-slate-500">Utilization by Head / Sub-head</p>
+      <div className="overflow-x-auto rounded-xl border border-slate-200">
+        <table className="w-full min-w-[720px] text-xs">
+          <thead>
+            <tr className="border-b bg-slate-50">
+              <th className="h-8 px-3 text-left font-medium text-slate-500">Head</th>
+              <th className="h-8 px-3 text-left font-medium text-slate-500">Sub-head</th>
+              <th className="h-8 px-3 text-right font-medium text-slate-500">Planned</th>
+              <th className="h-8 px-3 text-right font-medium text-slate-500">Reserved</th>
+              <th className="h-8 px-3 text-right font-medium text-slate-500">Consumed</th>
+              <th className="h-8 px-3 text-right font-medium text-slate-500">Available</th>
+              <th className="h-8 px-3 text-right font-medium text-slate-500">Utilized</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y">
+            {rows.map((row) => {
+              const utilizedPct = row.planned > 0 ? Math.round((row.consumed / row.planned) * 100) : 0;
+              return (
+                <tr key={`${row.head}|${row.subHead ?? ""}`} className="hover:bg-slate-50/70">
+                  <td className="px-3 py-2 font-medium text-slate-800">{row.head}</td>
+                  <td className="px-3 py-2 text-slate-600">{row.subHead ?? "—"}</td>
+                  <td className="px-3 py-2 text-right text-slate-800">{money(row.planned)}</td>
+                  <td className="px-3 py-2 text-right text-amber-700">{money(row.reserved)}</td>
+                  <td className="px-3 py-2 text-right text-emerald-700">{money(row.consumed)}</td>
+                  <td className="px-3 py-2 text-right text-slate-800">{money(row.available)}</td>
+                  <td className="px-3 py-2 text-right">
+                    <Badge variant="outline" className={utilizedPct >= 100 ? "border-rose-200 bg-rose-50 text-rose-700" : utilizedPct >= 80 ? "border-amber-200 bg-amber-50 text-amber-700" : "border-slate-200 bg-slate-50 text-slate-600"}>
+                      {utilizedPct}%
+                    </Badge>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
 }
 
 const METER_READING_UNITS = ["kWh", "Unit", "KL", "Cu. M.", "Litre"];

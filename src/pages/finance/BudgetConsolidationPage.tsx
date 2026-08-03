@@ -38,6 +38,7 @@ export default function BudgetConsolidationPage() {
   const branchSummaries = data?.branchSummaries ?? [];
   const headBreakdown = data?.headBreakdown ?? [];
   const readiness = data?.readiness ?? [];
+  const isPeriodLocked = data?.isPeriodLocked ?? false;
 
   const { pinnedIds, togglePin } = useColumnPinning();
 
@@ -81,7 +82,26 @@ export default function BudgetConsolidationPage() {
           <div className="mx-auto max-w-[1680px] px-4 py-4 sm:px-6 lg:px-8">
             <div className="flex flex-wrap items-end justify-between gap-4">
               <div>
-                <h1 className="text-lg font-bold text-slate-950">Budget Consolidation</h1>
+                <div className="flex items-center gap-2">
+                  <h1 className="text-lg font-bold text-slate-950">Budget Consolidation</h1>
+                  {!isLoading && (
+                    <Badge
+                      variant="outline"
+                      className={
+                        isPeriodLocked
+                          ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                          : "border-amber-200 bg-amber-50 text-amber-700"
+                      }
+                      title={
+                        isPeriodLocked
+                          ? "This period's P&L has been signed off and locked, but this rollup still reads live budget data — figures can still move even though P&L is frozen."
+                          : "This period's P&L has not been signed off yet; both P&L and this rollup can still change."
+                      }
+                    >
+                      {isPeriodLocked ? "P&L locked · budget still live" : "Period open"}
+                    </Badge>
+                  )}
+                </div>
                 <p className="mt-0.5 max-w-xl text-xs text-slate-500">Every branch's budget rolled up company-wide — branch summaries and a head/sub-head breakdown.</p>
               </div>
               <div className="space-y-1">
