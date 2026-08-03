@@ -1,59 +1,62 @@
 -- backend/sql/139_ats_enhanced_journey_safe.sql
--- Safe migration: adds only missing columns, creates only missing tables
+-- Safe migration: adds only missing columns, creates only missing tables.
+-- Every compatibility check uses the active database rather than the historical
+-- hard-coded `mas_hrms` schema so disposable, staging and tenant schemas behave
+-- correctly.
 USE mas_hrms;
 
 -- ── 1. Add columns to ats_queue_token (safe checks) ───────────────────────────
 SET @sql = IF(
-  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA='mas_hrms' AND TABLE_NAME='ats_queue_token' AND COLUMN_NAME='token_number') = 0,
+  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='ats_queue_token' AND COLUMN_NAME='token_number') = 0,
   'ALTER TABLE ats_queue_token ADD COLUMN token_number VARCHAR(50) NULL COMMENT ''Human-readable token number''',
   'SELECT ''token_number already exists'' AS note'
 );
 PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 SET @sql = IF(
-  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA='mas_hrms' AND TABLE_NAME='ats_queue_token' AND COLUMN_NAME='branch_name') = 0,
+  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='ats_queue_token' AND COLUMN_NAME='branch_name') = 0,
   'ALTER TABLE ats_queue_token ADD COLUMN branch_name VARCHAR(255) NULL COMMENT ''Branch for this queue entry''',
   'SELECT ''branch_name already exists'' AS note'
 );
 PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 SET @sql = IF(
-  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA='mas_hrms' AND TABLE_NAME='ats_queue_token' AND COLUMN_NAME='queue_status') = 0,
+  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='ats_queue_token' AND COLUMN_NAME='queue_status') = 0,
   'ALTER TABLE ats_queue_token ADD COLUMN queue_status ENUM(''waiting'',''called'',''in_interview'',''completed'',''no_show'') NULL DEFAULT ''waiting'' COMMENT ''Current queue status''',
   'SELECT ''queue_status already exists'' AS note'
 );
 PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 SET @sql = IF(
-  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA='mas_hrms' AND TABLE_NAME='ats_queue_token' AND COLUMN_NAME='recruiter_id') = 0,
+  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='ats_queue_token' AND COLUMN_NAME='recruiter_id') = 0,
   'ALTER TABLE ats_queue_token ADD COLUMN recruiter_id CHAR(36) NULL COMMENT ''Assigned recruiter''',
   'SELECT ''recruiter_id already exists'' AS note'
 );
 PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 SET @sql = IF(
-  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA='mas_hrms' AND TABLE_NAME='ats_queue_token' AND COLUMN_NAME='estimated_wait_time') = 0,
+  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='ats_queue_token' AND COLUMN_NAME='estimated_wait_time') = 0,
   'ALTER TABLE ats_queue_token ADD COLUMN estimated_wait_time INT NULL COMMENT ''Estimated wait time in minutes''',
   'SELECT ''estimated_wait_time already exists'' AS note'
 );
 PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 SET @sql = IF(
-  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA='mas_hrms' AND TABLE_NAME='ats_queue_token' AND COLUMN_NAME='called_at') = 0,
+  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='ats_queue_token' AND COLUMN_NAME='called_at') = 0,
   'ALTER TABLE ats_queue_token ADD COLUMN called_at DATETIME NULL COMMENT ''When candidate was called''',
   'SELECT ''called_at already exists'' AS note'
 );
 PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 SET @sql = IF(
-  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA='mas_hrms' AND TABLE_NAME='ats_queue_token' AND COLUMN_NAME='interview_started_at') = 0,
+  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='ats_queue_token' AND COLUMN_NAME='interview_started_at') = 0,
   'ALTER TABLE ats_queue_token ADD COLUMN interview_started_at DATETIME NULL COMMENT ''Interview start time''',
   'SELECT ''interview_started_at already exists'' AS note'
 );
 PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 SET @sql = IF(
-  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA='mas_hrms' AND TABLE_NAME='ats_queue_token' AND COLUMN_NAME='interview_completed_at') = 0,
+  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='ats_queue_token' AND COLUMN_NAME='interview_completed_at') = 0,
   'ALTER TABLE ats_queue_token ADD COLUMN interview_completed_at DATETIME NULL COMMENT ''Interview completion time''',
   'SELECT ''interview_completed_at already exists'' AS note'
 );
@@ -119,7 +122,6 @@ CREATE TABLE IF NOT EXISTS employee_code_sequence (
   UNIQUE KEY unique_sequence (company_prefix, is_offrole)
 );
 
--- Initialize sequences
 INSERT IGNORE INTO employee_code_sequence (company_prefix, is_offrole, current_sequence) VALUES
 ('MAS', FALSE, 47814),
 ('MAS', TRUE, 0),
@@ -141,7 +143,6 @@ CREATE TABLE IF NOT EXISTS module_access_control (
   UNIQUE KEY unique_access (module_name, employee_code)
 );
 
--- Grant super admin access to MAS47814
 INSERT INTO module_access_control (module_name, employee_code, has_access, granted_by, remarks) VALUES
 ('ATS_DASHBOARD', 'MAS47814', TRUE, 'SYSTEM', 'Super admin full access'),
 ('PAYROLL_HR_VALIDATION', 'MAS47814', TRUE, 'SYSTEM', 'Super admin full access'),
@@ -181,24 +182,24 @@ CREATE TABLE IF NOT EXISTS cost_centre_master (
 
 -- ── 8. Add indexes for performance ────────────────────────────────────────────
 SET @sql = IF(
-  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS WHERE TABLE_SCHEMA='mas_hrms' AND TABLE_NAME='ats_queue_token' AND INDEX_NAME='idx_queue_branch_status') = 0,
+  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='ats_queue_token' AND INDEX_NAME='idx_queue_branch_status') = 0,
   'CREATE INDEX idx_queue_branch_status ON ats_queue_token(branch_name, queue_status)',
   'SELECT ''idx_queue_branch_status already exists'' AS note'
 );
 PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 SET @sql = IF(
-  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS WHERE TABLE_SCHEMA='mas_hrms' AND TABLE_NAME='ats_queue_token' AND INDEX_NAME='idx_queue_created_at') = 0,
+  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='ats_queue_token' AND INDEX_NAME='idx_queue_created_at') = 0,
   'CREATE INDEX idx_queue_created_at ON ats_queue_token(created_at)',
   'SELECT ''idx_queue_created_at already exists'' AS note'
 );
 PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 SET @sql = IF(
-  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS WHERE TABLE_SCHEMA='mas_hrms' AND TABLE_NAME='ats_interview_result' AND INDEX_NAME='idx_interview_date') = 0,
+  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='ats_interview_result' AND INDEX_NAME='idx_interview_date') = 0,
   'CREATE INDEX idx_interview_date ON ats_interview_result(interviewed_at)',
   'SELECT ''idx_interview_date already exists'' AS note'
 );
 PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
-SELECT '✅ Migration 139 complete: ATS Enhanced Journey tables created' AS result;
+SELECT 'Migration 139 complete: ATS Enhanced Journey tables created' AS result;
