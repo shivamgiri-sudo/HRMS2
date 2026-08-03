@@ -688,8 +688,10 @@ export function useOnboardingFull(token: string) {
     if (!token) return;
     setDigilockerSyncing(true);
     try {
-      const res = await hrmsApi.post<{ data?: { state?: string } }>(`${API}/digilocker/sync`, { token });
-      const state = ((res.data as any)?.data ?? res.data)?.state;
+      // hrmsApi returns the parsed body, so the API envelope's `data` is one
+      // level in — not res.data.data as an axios response would be.
+      const res = await hrmsApi.post<{ data?: { state?: string }; state?: string }>(`${API}/digilocker/sync`, { token });
+      const state = (res as any)?.data?.state ?? (res as any)?.state;
       if (state === "completed") await load();
     } catch {
       // Nothing to tell the candidate: they can still continue, and the next
