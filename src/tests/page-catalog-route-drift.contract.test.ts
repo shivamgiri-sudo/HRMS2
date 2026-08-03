@@ -96,6 +96,29 @@ const KNOWN_UNMAPPED_PAGE_CODES = [
   "SALARY_REGISTER",
   "TEAM_ATTENDANCE",
   "WFM_ROSTER_MANAGER_QUEUE",
+
+  // Investigated and resolved to a real, currently-mounted page — but that page's route is
+  // already the key for a DIFFERENT, currently-mapped code (PAGE_CODE_BY_ROUTE only holds one
+  // code per path). Adding these as literal new entries would silently overwrite the existing
+  // mapping and make THAT code invisible instead — the same failure mode this test exists to
+  // catch, just moved one code sideways. Each is a duplicate/stale grant for a page that
+  // already has a canonical code; the real fix is consolidating the grant in
+  // rbacPageMatrix.ts onto the canonical code, not a second route-map entry. Left for a
+  // follow-up since that touches live role grants and deserves its own review.
+  "ATS_COMMAND_CENTER",           // -> /ats/command-center, already ATS_DASHBOARD
+  "ATS_INTERVIEW_APPROVALS",      // -> /ats/recruiter/my-candidates, already ATS_RECRUITER_QUEUE
+  "ATS_INTERVIEW_QUEUE",          // -> /ats/recruiter/my-candidates, already ATS_RECRUITER_QUEUE
+  "ATS_INTERVIEW_SUBMIT",         // -> /ats/recruiter/my-candidates, already ATS_RECRUITER_QUEUE
+  "ATS_STATUTORY_ONBOARDING",     // -> /ats/joining-control-room, already ATS_JOINING_CONTROL_ROOM
+  "EMPLOYEE_DASHBOARD",           // -> /employees, already EMPLOYEE_MANAGEMENT
+  "ONBOARDING_REQUESTS",          // -> /ats/onboarding-requests, already ATS_ONBOARDING_REQUESTS
+  "ONBOARDING_REVIEW",            // -> /ats/onboarding-requests, already ATS_ONBOARDING_REQUESTS
+  "ONBOARDING_SECTION_STATUS",    // -> /ats/onboarding-requests, already ATS_ONBOARDING_REQUESTS
+  "PAYROLL_ATTENDANCE_OVERRIDES", // -> /payroll/attendance-control-tower, already PAYROLL_ATTENDANCE_CONTROL_TOWER
+  "PAYROLL_DASHBOARD",            // -> /payroll, already PAYROLL
+  "PAYROLL_DEDUCTION_TYPES",      // -> /payroll/ho-queues, already PAYROLL_HO_QUEUES
+  "PAYROLL_DEDUCTION_UPLOAD",     // -> /payroll/ho-queues, already PAYROLL_HO_QUEUES
+  "PROVISIONING_APPOINTMENT",     // -> /provisioning/appointment-letter, already PROVISIONING_APPOINTMENT_LETTER
 ].sort();
 
 describe("page catalog / router drift", () => {

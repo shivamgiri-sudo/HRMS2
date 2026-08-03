@@ -166,12 +166,41 @@ export const PAGE_CODE_BY_ROUTE: Record<string, string> = {
   "/work-inbox": "WORK_INBOX",
   "/workflow-admin": "WORKFLOW_ADMIN",
   "/workforce-planning": "WFM_AUTO_ROSTER",
+
+  // Added closing the page-catalog-route-drift ratchet (see that test file's docstring for
+  // the WORKFORCE_COMMAND_CENTER history this guards against). Each of these was granted in
+  // rbacPageMatrix.ts with no route mapping at all, so nothing verified the page it pointed at
+  // actually existed. Resolved per-code by finding the real, currently-mounted route — see
+  // that test's KNOWN_UNMAPPED_PAGE_CODES comment for the codes that could NOT be added here
+  // because their real route is already claimed by a different, currently-mapped code.
+  "/ats/branch-head-approval": "ATS_BRANCH_HEAD_APPROVAL",
+  "/business-actions": "BUSINESS_ACTION_QUEUE",
+  "/business-command-center": "BUSINESS_COMMAND_CENTER",
+  "/call-master": "CALL_MASTER",
+  "/call-master/inbound": "CALL_MASTER_INBOUND",
+  "/candidate-onboarding-full": "CANDIDATE_ONBOARDING_FULL",
+  "/admin/configuration": "CONFIGURATION_CENTER",
+  "/engagement/command-center": "ENGAGEMENT_COMMAND_CENTER",
+  // /helpdesk itself has no grant/mapping of its own (HELPDESK is in the drift test's known-
+  // unmapped list) — Knowledge Base is a tab inside the one mounted /helpdesk page, not a
+  // separate route, so this is the correct existing page for the grant to point at.
+  "/helpdesk": "HELPDESK_KB",
+  "/jobs": "JOBS",
+  "/modules": "MODULE_LAUNCHER",
+  "/onboard-full": "ONBOARDING_FULL",
+  "/performance-hub": "PERFORMANCE_HUB",
+  "/quality/executive": "QUALITY_EXECUTIVE",
+  "/quality/team": "QUALITY_TEAM",
+  "/sales/brand-analytics": "SALES_BRAND_ANALYTICS",
+  "/my-team": "TEAM_ROSTER",
+  "/week-off-preferences": "WEEK_OFF_PREFERENCES",
 };
 
 export const PAGE_CODE_BY_ROUTE_PATTERN: Record<string, string> = {
   "/employee-stat-card/:id": "EMPLOYEE_STAT_CARD",
   "/employees/:id": "EMPLOYEE_MANAGEMENT",
   "/employees/:id/360": "EMPLOYEE_MANAGEMENT",
+  "/employees/:employeeId/joining-documents": "EMPLOYEE_JOINING_DOCUMENTS",
   "/letters/:id/preview": "LETTERS",
 };
 
