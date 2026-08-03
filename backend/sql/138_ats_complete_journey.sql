@@ -307,12 +307,16 @@ CREATE TABLE IF NOT EXISTS module_access_audit_log (
 );
 
 -- ── 15. Enhance notification systems ──────────────────────────────────────────
-ALTER TABLE ats_notification_log
-ADD COLUMN IF NOT EXISTS notification_type VARCHAR(50) NULL COMMENT 'Type of notification',
-ADD COLUMN IF NOT EXISTS recipient_type ENUM('candidate','recruiter','hr','branch_head','admin') NULL,
-ADD COLUMN IF NOT EXISTS recipient_id CHAR(36) NULL,
-ADD COLUMN IF NOT EXISTS read_status TINYINT(1) DEFAULT 0,
-ADD COLUMN IF NOT EXISTS read_at DATETIME NULL;
+SET @exists = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='ats_notification_log' AND COLUMN_NAME='notification_type');
+SET @sql = IF(@exists=0, 'ALTER TABLE ats_notification_log ADD COLUMN notification_type VARCHAR(50) NULL COMMENT ''Type of notification''', 'SELECT ''ats_notification_log.notification_type exists'' AS migration_note'); PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+SET @exists = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='ats_notification_log' AND COLUMN_NAME='recipient_type');
+SET @sql = IF(@exists=0, 'ALTER TABLE ats_notification_log ADD COLUMN recipient_type ENUM(''candidate'',''recruiter'',''hr'',''branch_head'',''admin'') NULL', 'SELECT ''ats_notification_log.recipient_type exists'' AS migration_note'); PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+SET @exists = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='ats_notification_log' AND COLUMN_NAME='recipient_id');
+SET @sql = IF(@exists=0, 'ALTER TABLE ats_notification_log ADD COLUMN recipient_id CHAR(36) NULL', 'SELECT ''ats_notification_log.recipient_id exists'' AS migration_note'); PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+SET @exists = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='ats_notification_log' AND COLUMN_NAME='read_status');
+SET @sql = IF(@exists=0, 'ALTER TABLE ats_notification_log ADD COLUMN read_status TINYINT(1) DEFAULT 0', 'SELECT ''ats_notification_log.read_status exists'' AS migration_note'); PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+SET @exists = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='ats_notification_log' AND COLUMN_NAME='read_at');
+SET @sql = IF(@exists=0, 'ALTER TABLE ats_notification_log ADD COLUMN read_at DATETIME NULL', 'SELECT ''ats_notification_log.read_at exists'' AS migration_note'); PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 -- ── 16. Create in-portal notification table ───────────────────────────────────
 CREATE TABLE IF NOT EXISTS portal_notification (
