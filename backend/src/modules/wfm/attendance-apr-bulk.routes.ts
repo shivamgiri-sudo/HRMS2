@@ -5,7 +5,7 @@ import { requireAuth } from '../../middleware/authMiddleware.js';
 import { requireRole } from '../../middleware/requireRole.js';
 import { db } from '../../db/mysql.js';
 import type { RowDataPacket } from 'mysql2';
-import { isOperationsExecutiveByRegex as isOperationsExecutive, classifyOperationsNetLogin } from './attendance-engine.service.js';
+import { isOperationsExecutiveByRegex as isOperationsExecutive, classifyOperationsNetLogin, resolveHalfDayFloorMinutes } from './attendance-engine.service.js';
 
 const router = Router();
 router.use(requireAuth);
@@ -172,6 +172,11 @@ router.post(
     let uploaded = 0;
     let skippedLocked = 0;
 
+    // Resolved once for the whole upload, not per row: a bulk file can carry
+    // thousands of rows and this is a database read. Resolving it inside the loop
+    // would also let the floor change midway through a single upload.
+    const netLoginHalfDayFloor = await resolveHalfDayFloorMinutes('netlogin_half_day_floor_minutes');
+
     for (const row of csvRows) {
       const emp = empMap.get(row.employee_code);
       if (!emp) {
@@ -195,7 +200,7 @@ router.post(
         continue;
       }
 
-      const { status, lwpValue } = classifyOperationsNetLogin(row.net_login_minutes);
+      const { status, lwpValue } = classifyOperationsNetLogin(row.net_login_minutes, netLoginHalfDayFloor);
 
       await db.execute(
         `INSERT INTO attendance_daily_record

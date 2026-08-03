@@ -13,7 +13,7 @@
  */
 import type { RowDataPacket } from 'mysql2';
 import { db } from '../../db/mysql.js';
-import { classifyOperationsNetLogin } from './attendance-engine.service.js';
+import { classifyOperationsNetLogin, resolveHalfDayFloorMinutes } from './attendance-engine.service.js';
 
 /** Employee identity columns that may carry the ViciDial agent id (`apr.UserID`). */
 export interface AprEmployeeKeys {
@@ -137,9 +137,13 @@ export async function getAprMonthly(
     [...userIds, fromDate, toDate],
   );
 
+  // Resolved once, before the map — this is a database read, and the classifier
+  // is synchronous precisely so it can run per row without a query each time.
+  const netLoginHalfDayFloor = await resolveHalfDayFloorMinutes('netlogin_half_day_floor_minutes');
+
   return (rows as any[]).map((r) => {
     const netMinutes = Math.round(Number(r.net_seconds ?? 0) / 60);
-    const { status, lwpValue } = classifyOperationsNetLogin(netMinutes);
+    const { status, lwpValue } = classifyOperationsNetLogin(netMinutes, netLoginHalfDayFloor);
     return {
       record_date: String(r.record_date),
       login_time: r.login_time ?? null,

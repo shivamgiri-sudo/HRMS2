@@ -56,6 +56,12 @@ function setupAprNightShiftBase() {
     .mockResolvedValueOnce([[], []])
     .mockResolvedValueOnce([[], []])
     .mockResolvedValueOnce([[], []])
+    .mockResolvedValueOnce([[], []])
+    // The engine resolves TWO half-day floors before classifying — biometric and
+    // net-login — and they are adjacent reads of attendance_feature_config.
+    // Verified by logging the statement sequence: they are calls 11 and 12. An
+    // empty result means "unset", which resolves to the 240 default the engine
+    // has always applied, so this adds a slot without changing any outcome.
     .mockResolvedValueOnce([[], []]);
 }
 
@@ -470,6 +476,9 @@ describe("attendance engine night-shift process flow", () => {
       .mockResolvedValueOnce([[], []])
       .mockResolvedValueOnce([[], []])
       .mockResolvedValueOnce([[], []])
+      .mockResolvedValueOnce([[], []])
+      // Same extra slot as the shared base: both half-day floors are resolved
+      // before the APR/biometric branch, so this path reads them too.
       .mockResolvedValueOnce([[], []]);
 
     const result = await attendanceEngineService.processEmployee("emp-1", "2026-07-25");

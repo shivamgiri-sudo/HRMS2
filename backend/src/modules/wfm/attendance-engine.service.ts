@@ -3,6 +3,7 @@ import { randomUUID } from 'crypto';
 import { db } from '../../db/mysql.js';
 import type { RowDataPacket } from 'mysql2';
 import { toIST, minutesOfDay } from '../../shared/timezone.js';
+import { logger } from '../../logger.js';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -175,11 +176,62 @@ async function getFeatureFlagBool(key: string, defaultVal = false): Promise<bool
   return v === '1' || v.toLowerCase() === 'true';
 }
 
+/** Half-day floor used when none is configured, or when the configured value is unusable. */
+export const DEFAULT_HALF_DAY_FLOOR_MINUTES = 240;
+
+/**
+ * Resolve a half-day floor from attendance_feature_config.
+ *
+ * A floor qualifies: a day reaching exactly this many minutes earns the half
+ * day. Production holds 240 for both sources today.
+ *
+ * A malformed value is never applied. Silently coercing "" or "abc" would give
+ * NaN — and `minutes >= NaN` is false for every input, quietly turning every
+ * short day into an absence. Coercing to 0 would be worse still, marking every
+ * day at least a half day. So anything non-finite or non-positive is refused,
+ * logged, and the default stands.
+ *
+ * Call this ONCE per processing operation and pass the result down. It is a
+ * database read, and the classifiers are deliberately synchronous so they can be
+ * used inside a map or loop without a query per row.
+ */
+export async function resolveHalfDayFloorMinutes(
+  key: 'netlogin_half_day_floor_minutes' | 'biometric_half_day_floor_minutes',
+): Promise<number> {
+  const raw = await getFeatureFlag(key);
+  if (raw === null || String(raw).trim() === '') return DEFAULT_HALF_DAY_FLOOR_MINUTES;
+
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    logger.error(
+      { key, configuredValue: raw, applied: DEFAULT_HALF_DAY_FLOOR_MINUTES },
+      `[attendance] ${key} is not a usable number of minutes — refusing it and applying ` +
+      `${DEFAULT_HALF_DAY_FLOOR_MINUTES}. Attendance is being classified against the default, ` +
+      `not against this setting.`,
+    );
+    return DEFAULT_HALF_DAY_FLOOR_MINUTES;
+  }
+  return parsed;
+}
+
+/**
+ * Classify an Operations/APR day from net login minutes.
+ *
+ * halfDayFloor is a parameter rather than a lookup so this stays synchronous and
+ * safe to call per row; callers resolve it once via resolveHalfDayFloorMinutes.
+ * It mirrors classifyCosecMinutes, which has taken its floor this way already —
+ * the two paths measure different things (dialler net login vs biometric
+ * presence) and so read separate configuration keys.
+ *
+ * The 480-minute full-day threshold is deliberately still fixed. Making it
+ * configurable moves full-day pay and is a separate decision.
+ */
 export function classifyOperationsNetLogin(
-  netLoginMinutes: number
+  netLoginMinutes: number,
+  halfDayFloor: number = DEFAULT_HALF_DAY_FLOOR_MINUTES,
 ): { status: 'present' | 'half_day' | 'absent'; lwpValue: number } {
   if (netLoginMinutes >= 480) return { status: 'present', lwpValue: 0.0 };
-  if (netLoginMinutes >= 240) return { status: 'half_day', lwpValue: 0.5 };
+  if (netLoginMinutes >= halfDayFloor) return { status: 'half_day', lwpValue: 0.5 };
   return { status: 'absent', lwpValue: 1.0 };
 }
 
@@ -701,8 +753,19 @@ export const attendanceEngineService = {
     }
 
     // Read feature-flagged half-day floor for biometric
+    // Both floors resolved once here, before any per-row classification. The two
+    // sources measure different things — biometric presence vs dialler net login
+    // — so they read separate keys and can be set independently.
+    //
+    // The biometric line keeps its original inline parsing deliberately: this
+    // change is scoped to the net-login path. Note it yields NaN for a malformed
+    // value, and `minutes >= NaN` is false for every input, so a bad biometric
+    // setting would mark every day absent. resolveHalfDayFloorMinutes already
+    // guards against that and accepts the biometric key — switching this line to
+    // it is a one-line follow-up, raised separately.
     const halfDayFloorStr = await getFeatureFlag('biometric_half_day_floor_minutes');
     const halfDayFloor = halfDayFloorStr ? Number(halfDayFloorStr) : 240;
+    const netLoginHalfDayFloor = await resolveHalfDayFloorMinutes('netlogin_half_day_floor_minutes');
 
     let diallerMinutes: number | null = null;
     let rawMinutes: number;
@@ -731,7 +794,7 @@ export const attendanceEngineService = {
       rawMinutes = diallerMinutes ?? 0;
       rule = { ...rule, attendance_source: 'dialler', full_day_minutes: 480, half_day_minutes: 240 };
 
-      aprStatusRaw = classifyOperationsNetLogin(rawMinutes).status;
+      aprStatusRaw = classifyOperationsNetLogin(rawMinutes, netLoginHalfDayFloor).status;
 
       // G4: flag mismatch when both sources have data and they disagree
       if (biometricStatusRaw !== null && biometricStatusRaw !== aprStatusRaw) {
@@ -768,7 +831,7 @@ export const attendanceEngineService = {
 
     // Classify
     const classification = isAprEmployee
-      ? classifyOperationsNetLogin(rawMinutes)
+      ? classifyOperationsNetLogin(rawMinutes, netLoginHalfDayFloor)
       : classifyCosecMinutes(rawMinutes, halfDayFloor);
 
     // Late arrival
