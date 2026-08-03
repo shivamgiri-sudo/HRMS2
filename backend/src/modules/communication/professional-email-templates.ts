@@ -613,7 +613,7 @@ export function birthdayGreetingEmail(data: BirthdayGreetingData): string {
         <circle cx="117" cy="35" r="2" fill="#fbbf24"/>
       </svg>`;
 
-  const MCN_LOGO = `<img src="https://mcnhrms.teammas.in/mas-logo.png" width="120" height="40" alt="MAS Callnet" style="display:block;max-width:120px;height:auto" />`;
+  const MCN_LOGO = `<img src="https://mcnhrms.teammas.in/mcn-logo.png" width="120" height="40" alt="MAS Callnet" style="display:block;max-width:120px;height:auto" />`;
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -812,7 +812,7 @@ export function workAnniversaryEmail(data: WorkAnniversaryData): string {
   const firstName = data.firstName || data.employeeName.split(" ")[0];
   const pronoun = data.gender === "Female" ? "her" : "his";
   const branchLabel = data.branchName || "MAS Callnet";
-  const MCN_LOGO = `<img src="https://mcnhrms.teammas.in/mas-logo.png" width="120" height="40" alt="MAS Callnet" style="display:block;max-width:120px;height:auto" />`;
+  const MCN_LOGO = `<img src="https://mcnhrms.teammas.in/mcn-logo.png" width="120" height="40" alt="MAS Callnet" style="display:block;max-width:120px;height:auto" />`;
 
   // ── Journey narrative paragraphs ──
   const joinYear = data.joinDate ? data.joinDate.split(" ").pop() || data.joinDate : "";
