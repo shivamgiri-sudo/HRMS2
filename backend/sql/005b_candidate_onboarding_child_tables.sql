@@ -48,6 +48,10 @@ CREATE TABLE IF NOT EXISTS candidate_onboarding_experience (
   employer_name     VARCHAR(255)     NULL,
   designation       VARCHAR(255)     NULL,
   experience_year   DECIMAL(5,2)     NULL COMMENT 'Years at this employer',
+  -- Migration 361 widens working_experience to VARCHAR(50) for longer UI labels, so it must
+  -- exist here and must start narrower than that or 361 becomes a no-op that hides a
+  -- regression. VARCHAR(20) is the width the label set outgrew.
+  working_experience VARCHAR(20)     NULL COMMENT 'Free-text experience band shown in the UI',
   created_at        DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at        DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   INDEX idx_coe_candidate (candidate_id),
