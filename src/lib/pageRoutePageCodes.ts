@@ -51,6 +51,7 @@ export const PAGE_CODE_BY_ROUTE: Record<string, string> = {
   "/expenses": "MY_EXPENSES",
   "/expenses/approvals": "EXPENSE_APPROVALS",
   "/expenses/finance": "EXPENSE_FINANCE",
+  "/finance/billability": "FINANCE_BILLABILITY_SEAT_COST",
   "/expenses/new": "EXPENSE_CREATE",
   "/expenses/reports": "EXPENSE_REPORTS",
   "/goals": "GOALS",
