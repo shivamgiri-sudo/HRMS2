@@ -52,19 +52,37 @@ vi.mock("../src/config/env.js", () => ({
 // and every request ran as demo-user-id/employee regardless of which actor the
 // case was about. requireAuth is mounted on the router, so it runs after the
 // factory middleware and won.
-vi.mock("../src/middleware/authMiddleware.js", () => ({
-  requireAuth: (req: any, _res: any, next: any) => {
-    if (!req.authUser) {
-      req.authUser = { id: "demo-user-id", role: "employee", roles: ["employee"] };
-      req.user = { id: "demo-user-id", email: "demo@mascallnet.com", role: "employee" };
-    }
-    next();
-  },
-}));
+// Spread the real module and override only requireAuth. Replacing the module
+// wholesale left every other export undefined, so any router in the import graph
+// that used one died at load: ats.routes imports ats.joiningDocumentsTracker.routes,
+// which mounts requireWriteAccess, and router.post(path, undefined, handler) throws
+// before a single test runs. Keeping the real requireWriteAccess is also the
+// faithful thing — it only 403s when authUser.isReadOnly is set, which no case here
+// does, so it passes through exactly as production would.
+vi.mock("../src/middleware/authMiddleware.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/middleware/authMiddleware.js")>();
+  return {
+    ...actual,
+    requireAuth: (req: any, _res: any, next: any) => {
+      if (!req.authUser) {
+        req.authUser = { id: "demo-user-id", role: "employee", roles: ["employee"] };
+        req.user = { id: "demo-user-id", email: "demo@mascallnet.com", role: "employee" };
+      }
+      next();
+    },
+  };
+});
 
-vi.mock("../src/middleware/requireRole.js", () => ({
-  requireRole: (..._roles: string[]) => (_req: any, _res: any, next: any) => next(),
-}));
+// requireRole is deliberately NOT mocked. The routes under test dispatch on
+// req.userRoles — which requireRole sets on every path that reaches next() — and
+// a bare pass-through stub called next() without setting it. userRoles was then
+// [] for every request, so isPrivileged and isRecruiterUser were both false, the
+// route filtered by nobody, and getMyPendingCandidates(undefined) returned 200
+// with an unfiltered list. The stub was quietly asserting the opposite of what
+// these ownership tests exist to prove.
+//
+// The real middleware needs no database here: makeApp puts roles on req.authUser,
+// so it takes the "roles already fetched by requireAuth" branch at requireRole.ts:42.
 
 // Mocked recruiterInterview dependencies used by atsFullParity.routes
 vi.mock("../src/modules/ats-full-parity/recruiterInterview.service.js", async (importOriginal) => {
@@ -101,7 +119,41 @@ vi.mock("../src/modules/ats-full-parity/atsFullParity.service.js", async (import
 
 // ── App factory ───────────────────────────────────────────────────────────────
 
+/**
+ * The role each test actor was created with, keyed by user id.
+ *
+ * The full-parity routes do not read req.userRoles — they call
+ * getUserRoleContext(userId), which queries user_roles. Against the mocked db
+ * that query returns nothing, so every actor collapsed to "employee"
+ * ("[roleResolver] Could not resolve roles for user …; using employee access")
+ * and an admin was treated as unprivileged. That is what made TC-S12-10 a 403
+ * and left the journey scope check running for an admin in TC-S12-11.
+ *
+ * This registry lets the resolver answer with the actor the factory actually
+ * created, rather than hardcoding a userId→role guess inside the mock.
+ */
+const ACTOR_ROLES = new Map<string, string>();
+
+vi.mock("../src/shared/roleResolver.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/shared/roleResolver.js")>();
+  return {
+    ...actual,
+    getUserRoleContext: vi.fn(async (userId: string) => {
+      const role = ACTOR_ROLES.get(userId) ?? "employee";
+      // Mirrors the real derivation at roleResolver.ts:151-158 — notably that
+      // isSuperAdmin is true for "admin" as well as "super_admin".
+      return {
+        roleKeys: [role],
+        primaryRole: role,
+        isSuperAdmin: role === "super_admin" || role === "admin",
+        isHO: false,
+      };
+    }),
+  };
+});
+
 async function makeApp(userId: string, role: string) {
+  ACTOR_ROLES.set(userId, role);
   const app = express();
   app.use(express.json());
   app.use((req: any, _res: any, next) => {
@@ -114,6 +166,7 @@ async function makeApp(userId: string, role: string) {
 }
 
 async function makeFpApp(userId: string, role: string) {
+  ACTOR_ROLES.set(userId, role);
   const app = express();
   app.use(express.json());
   app.use((req: any, _res: any, next) => {
@@ -192,8 +245,13 @@ describe("GET /api/ats/recruiter/submission-history — JWT ownership", () => {
       .get("/api/ats/recruiter/submission-history?recruiterCode=EVIL_RC999");
     expect(res.status).toBe(200);
     const svc = await import("../src/modules/ats-full-parity/recruiterInterview.service.js");
-    expect(vi.mocked(svc.getSubmissionHistory)).toHaveBeenCalledWith("RC001");
-    expect(vi.mocked(svc.getSubmissionHistory)).not.toHaveBeenCalledWith("EVIL_RC999");
+    // Assert on the recruiter-code argument alone. The route calls
+    // getSubmissionHistory(recruiterCode, rosterId, userId); a whole-call match
+    // against one argument fails on the signature rather than on the ownership
+    // rule this case is about, and would keep failing every time the signature grows.
+    const [code] = vi.mocked(svc.getSubmissionHistory).mock.calls[0]!;
+    expect(code).toBe("RC001");
+    expect(code).not.toBe("EVIL_RC999");
   });
 
   it("TC-S12-05: recruiter with no profile → 403", async () => {
@@ -209,7 +267,8 @@ describe("GET /api/ats/recruiter/submission-history — JWT ownership", () => {
     const res = await request(app).get("/api/ats/recruiter/submission-history?recruiterCode=RC_OTHER");
     expect(res.status).toBe(200);
     const svc = await import("../src/modules/ats-full-parity/recruiterInterview.service.js");
-    expect(vi.mocked(svc.getSubmissionHistory)).toHaveBeenCalledWith("RC_OTHER");
+    const [code] = vi.mocked(svc.getSubmissionHistory).mock.calls[0]!;
+    expect(code).toBe("RC_OTHER");
   });
 });
 

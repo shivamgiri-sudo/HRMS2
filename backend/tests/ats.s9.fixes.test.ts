@@ -74,6 +74,20 @@ vi.mock("../src/modules/ats/ats.convert.service.js", () => ({
   convertCandidateToEmployee: vi.fn(),
 }));
 
+// send-token also resolves the actor's recruiter profile, to let a recruiter who
+// is assigned to the candidate through even when hasScopedAccess says no. That
+// lookup is real and hits the db, so it silently ate the mock slot the candidate
+// row was queued in and shifted every response by one. These cases are about the
+// scope decision alone, so the actor is deliberately not a linked recruiter —
+// leaving hasScopedAccess as the only thing that decides the outcome.
+vi.mock("../src/modules/ats-full-parity/recruiterInterview.service.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/modules/ats-full-parity/recruiterInterview.service.js")>();
+  return {
+    ...actual,
+    resolveRecruiterForActor: vi.fn().mockResolvedValue(null),
+  };
+});
+
 vi.mock("../src/modules/ats/salary.calculator.js", () => ({
   calculateSalary: vi.fn().mockReturnValue({}),
 }));
@@ -100,8 +114,41 @@ vi.mock("../src/middleware/requireRole.js", () => ({
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
+/**
+ * Drain the db mock between tests and leave a benign default.
+ *
+ * vi.clearAllMocks() resets call history but does NOT drain the
+ * mockResolvedValueOnce queue. Values queued by a test that never consumed them
+ * — every upload case did exactly that while the routes were 404ing — stayed at
+ * the head of the queue and were handed to the NEXT test instead. That is what
+ * inverted the send-token results: TC-S9-06 asked for "no candidate" and got a
+ * leftover candidate row (200 instead of 404), while the cases that queued a row
+ * got someone else's leftovers.
+ *
+ * mockReset() drops both the queue and the implementation, so the default is
+ * re-established here: no rows, which makes getCandidate throw its 404.
+ */
+function resetDbQueue() {
+  vi.clearAllMocks();
+  mockExecute.mockReset();
+  mockExecute.mockResolvedValue([[]]);
+}
+
 const ONE_HOUR_AGO = new Date(Date.now() - 61 * 60 * 1000); // 61 min ago
 const JUST_NOW = new Date(Date.now() - 5 * 60 * 1000);       // 5 min ago
+
+/**
+ * Render a timestamp the way the driver hands it to the route.
+ *
+ * The pool runs with dateStrings:true, so the column arrives as a bare
+ * "YYYY-MM-DD HH:mm:ss" and the route parses it as UTC by swapping the space for
+ * a T and appending Z. Handing it a JS Date instead produced
+ * "Mon Aug 03 2026 ..." → replace(" ", "T") → an unparseable string → an Invalid
+ * Date, and NaN > 1 is false, so an expired window read as still open.
+ */
+function asDriverTimestamp(d: Date): string {
+  return d.toISOString().slice(0, 19).replace("T", " ");
+}
 
 // ── Upload ownership tests ─────────────────────────────────────────────────────
 
@@ -109,10 +156,16 @@ describe("POST /api/ats/candidates/:id/upload — ownership via mobile", () => {
   let app: express.Express;
 
   beforeEach(async () => {
-    vi.clearAllMocks();
+    resetDbQueue();
     app = express();
     app.use(express.json());
-    const { atsRouter } = await import("../src/modules/ats/ats.routes.js");
+    // The upload endpoint lives on atsPublicRouter, not atsRouter — it is public
+    // by design (a candidate uploading within an hour of registering has no JWT).
+    // Mounting only atsRouter meant every request 404'd, so the ownership rules
+    // these cases are about were never reached. app.ts mounts the public router
+    // first, at the same base; this mirrors it.
+    const { atsRouter, atsPublicRouter } = await import("../src/modules/ats/ats.routes.js");
+    app.use("/api/ats", atsPublicRouter);
     app.use("/api/ats", atsRouter);
   });
 
@@ -125,7 +178,7 @@ describe("POST /api/ats/candidates/:id/upload — ownership via mobile", () => {
   });
 
   it("TC-S9-02: wrong mobile → 403 even within time window", async () => {
-    mockExecute.mockResolvedValueOnce([[{ id: "cand-1", mobile: "9999999999", created_at: JUST_NOW }]]);
+    mockExecute.mockResolvedValueOnce([[{ id: "cand-1", mobile: "9999999999", updated_at: asDriverTimestamp(JUST_NOW) }]]);
     const res = await request(app)
       .post("/api/ats/candidates/cand-1/upload")
       .field("type", "resume")
@@ -135,7 +188,7 @@ describe("POST /api/ats/candidates/:id/upload — ownership via mobile", () => {
   });
 
   it("TC-S9-03: correct mobile but expired window → 403", async () => {
-    mockExecute.mockResolvedValueOnce([[{ id: "cand-1", mobile: "9999999999", created_at: ONE_HOUR_AGO }]]);
+    mockExecute.mockResolvedValueOnce([[{ id: "cand-1", mobile: "9999999999", updated_at: asDriverTimestamp(ONE_HOUR_AGO) }]]);
     const res = await request(app)
       .post("/api/ats/candidates/cand-1/upload")
       .field("type", "resume")
@@ -170,7 +223,7 @@ describe("POST /api/ats/onboarding/send-token/:id — row-scope via hasScopedAcc
   let app: express.Express;
 
   beforeEach(async () => {
-    vi.clearAllMocks();
+    resetDbQueue();
     app = express();
     app.use(express.json());
     const onboardingRouter = (await import("../src/modules/ats/ats.onboarding.routes.js")).default;

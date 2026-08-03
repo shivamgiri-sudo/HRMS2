@@ -742,7 +742,7 @@ export async function providerCallback(input: Record<string, unknown>) {
   return getBgvStatusForCandidate(check.candidate_id);
 }
 
-async function autoCreateDigilockerVerifiedChecks(candidateId: string) {
+export async function autoCreateDigilockerVerifiedChecks(candidateId: string) {
   // Digilocker fetched Aadhaar + PAN from government = already verified
   // Create verified check records to avoid redundant separate API calls
   const checkTypes = ['aadhaar', 'pan'];

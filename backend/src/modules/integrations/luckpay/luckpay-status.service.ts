@@ -258,6 +258,31 @@ export async function syncDigilockerStatus(candidateId: string): Promise<SyncOut
     raw: { ...status.sanitized, ...documentMeta },
   });
 
+  // DigiLocker fetched Aadhaar and PAN from the issuing authority, so mark both
+  // verified and stop the paid checks being offered for them.
+  //
+  // autoCreateDigilockerVerifiedChecks has existed for this since the start —
+  // "to avoid redundant separate API calls" — but was only reachable from
+  // providerCallback(). This sync path is how a session actually completes, so
+  // without this call no candidate has ever had those rows written, and every
+  // one of them was billed for a Befisc/Luckpay Aadhaar and PAN check that
+  // repeated what the government had already confirmed.
+  //
+  // Imported dynamically to keep this integration module free of a static edge
+  // into modules/ats, matching how the OTP sender and face-match module are
+  // loaded elsewhere. Non-fatal: the documents are already fetched and stored by
+  // this point, and losing that over a convenience row would be a far worse
+  // outcome than the row being missing.
+  try {
+    const { autoCreateDigilockerVerifiedChecks } = await import("../../ats/bgv-verification.service.js");
+    await autoCreateDigilockerVerifiedChecks(candidateId);
+  } catch (error) {
+    console.error(
+      `[DigiLocker] completed for ${candidateId} but Aadhaar/PAN could not be auto-verified:`,
+      (error as Error)?.message,
+    );
+  }
+
   // Mirror onto the BGV report immediately so HR sees it without a manual sync.
   await db.execute(
     `UPDATE candidate_bgv_report

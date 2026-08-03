@@ -53,13 +53,54 @@ function makeAuthMiddleware(userId: string, role: string) {
   });
 }
 
-vi.mock("../src/middleware/authMiddleware.js", () => ({
-  requireAuth: (req: any, _res: any, next: any) => {
-    req.authUser = { id: "demo-user-id", role: "employee" };
-    req.user = { id: "demo-user-id", email: "demo@mascallnet.com", role: "employee" };
-    next();
-  },
-}));
+// Only fills in an identity when the test has not already provided one, and
+// spreads the real module so exports it does not override still exist.
+//
+// Assigning req.authUser unconditionally overwrote whatever makeApp had just set:
+// requireAuth is mounted on the router, so it runs after the factory middleware
+// and won. Every request then ran as demo-user-id regardless of the actor the case
+// was about, which is why the scope clause was built for "demo-user-id" instead of
+// "user-bh-1".
+vi.mock("../src/middleware/authMiddleware.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/middleware/authMiddleware.js")>();
+  return {
+    ...actual,
+    requireAuth: (req: any, _res: any, next: any) => {
+      if (!req.authUser) {
+        req.authUser = { id: "demo-user-id", role: "employee" };
+        req.user = { id: "demo-user-id", email: "demo@mascallnet.com", role: "employee" };
+      }
+      next();
+    },
+  };
+});
+
+/**
+ * The role each test actor was created with, keyed by user id.
+ *
+ * These routes decide bypassScope from getUserRoleContext(userId), which queries
+ * user_roles. Against the mocked db that returns nothing, so admin and hr both
+ * collapsed to "employee", bypassScope stayed false, and the scope clause was
+ * built for actors who are supposed to skip it.
+ */
+const ACTOR_ROLES = new Map<string, string>();
+
+vi.mock("../src/shared/roleResolver.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/shared/roleResolver.js")>();
+  return {
+    ...actual,
+    getUserRoleContext: vi.fn(async (userId: string) => {
+      const role = ACTOR_ROLES.get(userId) ?? "employee";
+      // Mirrors roleResolver.ts:151-158 — isSuperAdmin covers "admin" too.
+      return {
+        roleKeys: [role],
+        primaryRole: role,
+        isSuperAdmin: role === "super_admin" || role === "admin",
+        isHO: false,
+      };
+    }),
+  };
+});
 
 vi.mock("../src/middleware/requireRole.js", () => ({
   requireRole: (..._roles: string[]) => (_req: any, _res: any, next: any) => next(),
@@ -97,6 +138,7 @@ const configRows = [{ setting: "Org_Name", value_text: "Test Org" }];
 // ── Helper — build a test app from the atsFullParity router ──────────────────
 
 async function makeApp(userId: string, role: string) {
+  ACTOR_ROLES.set(userId, role);
   const app = express();
   app.use(express.json());
   // Inject authUser before the router picks it up
