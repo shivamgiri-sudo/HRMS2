@@ -480,6 +480,13 @@ const MIGRATION_MANIFEST: string[] = [
   "1056_branch_head_approval_candidate_id.sql", // 138 and 141 each declare a column the other omits; production (141) has no candidate_id
   "1058_process_quality_target_state_machine.sql", // draft->simulated->pending->approved->active lifecycle; DB enforces the approver is not the author and that one open-ended active exists per process
   "1059_branch_notification_recipient.sql", // recipients were inferred from three tables with no stated intent; this is the intent
+  // Added 2026-08-03. All three create tables the schema verifier lists as required and
+  // that no manifest migration created: notification_event_config and
+  // notification_dispatch_claim (their files existed but were never listed), and
+  // employee_geofence_alerts (no definition anywhere).
+  "1022_notification_event_registry.sql",
+  "1023_notification_dispatch_claim.sql",
+  "1065_employee_geofence_alerts.sql",
   ];
 
 export type MigrationHealth = {

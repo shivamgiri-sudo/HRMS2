@@ -459,8 +459,6 @@
     "1019_login_announcements.sql",
     "101_client_master_enhancement.sql",
     "1020_branch_master_address_backfill.sql",
-    "1022_notification_event_registry.sql",
-    "1023_notification_dispatch_claim.sql",
     "1024_tat_escalation_fix_and_seed.sql",
     "1025_page_catalog_completeness_and_module_normalisation.sql",
     "1025_report_subscription.sql",
