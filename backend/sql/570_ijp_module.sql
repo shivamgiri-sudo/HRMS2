@@ -153,8 +153,9 @@ CREATE TABLE IF NOT EXISTS ijp_notification_queue (
   CONSTRAINT fk_ijp_notif_employee FOREIGN KEY (employee_id) REFERENCES employees(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- Add IJP pages to page catalog
-INSERT INTO page_master (id, page_code, page_name, page_path, module, description, active_status, created_at)
+-- Add IJP pages to page catalog.
+-- page_master does not exist; the registry is page_catalog. Same correction as 523.
+INSERT INTO page_catalog (id, page_code, page_name, page_path, module, description, active_status, created_at)
 VALUES
   (UUID(), 'ijp_admin', 'IJP Administration', '/ijp/admin', 'recruitment', 'Create and manage internal job postings', 1, NOW()),
   (UUID(), 'ijp_my_applications', 'My IJP Applications', '/ijp/my-applications', 'people', 'View and manage my internal job applications', 1, NOW()),

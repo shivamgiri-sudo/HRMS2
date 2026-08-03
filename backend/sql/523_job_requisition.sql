@@ -238,18 +238,28 @@ WHERE @wf_id IS NOT NULL
 -- ---------------------------------------------------------------------------
 -- Seed page access for Job Requisition
 -- ---------------------------------------------------------------------------
-INSERT INTO page_master (id, page_code, page_name, page_path, module_key, description, active_status)
+-- page_master does not exist and never has. The page registry in this schema is
+-- page_catalog, created by 100_user_page_access.sql as
+-- (id, page_code, page_name, page_path, module, description, active_status, created_at) —
+-- note `module`, not `module_key`.
+--
+-- Corrected rather than guarded. Unlike the genuinely ambiguous mismatches elsewhere on this
+-- branch, there is only one page registry here, every other migration seeds it, and skipping
+-- these two rows would leave Job Requisition invisible to ModuleLauncher and to every access
+-- review — which is exactly the defect that sent eight roles to a 404 from their own
+-- launcher.
+INSERT INTO page_catalog (id, page_code, page_name, page_path, module, description, active_status)
 SELECT UUID(), 'JOB_REQUISITION', 'Job Requisition', '/recruitment/job-requisition', 'recruitment', 'Manage hiring demands and requisitions', 1
 FROM DUAL
 WHERE NOT EXISTS (
-  SELECT 1 FROM page_master WHERE page_code = 'JOB_REQUISITION'
+  SELECT 1 FROM page_catalog WHERE page_code = 'JOB_REQUISITION'
 );
 
-INSERT INTO page_master (id, page_code, page_name, page_path, module_key, description, active_status)
+INSERT INTO page_catalog (id, page_code, page_name, page_path, module, description, active_status)
 SELECT UUID(), 'JOB_REQUISITION_APPROVAL', 'Job Requisition Approvals', '/recruitment/job-requisition/approvals', 'recruitment', 'Approve or reject hiring requests', 1
 FROM DUAL
 WHERE NOT EXISTS (
-  SELECT 1 FROM page_master WHERE page_code = 'JOB_REQUISITION_APPROVAL'
+  SELECT 1 FROM page_catalog WHERE page_code = 'JOB_REQUISITION_APPROVAL'
 );
 
 -- Grant access to HR and management roles
