@@ -291,12 +291,12 @@ export default function RosterWorkspace() {
         {/* Filters + Plan status tabs */}
         <div className="flex flex-wrap gap-3 items-center">
           {processes.length > 0 && (
-            <Select value={processId} onValueChange={setProcessId}>
+            <Select value={processId || "__all__"} onValueChange={(v) => setProcessId(v === "__all__" ? "" : v)}>
               <SelectTrigger className="w-52">
                 <SelectValue placeholder="All processes" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="">All processes</SelectItem>
+                <SelectItem value="__all__">All processes</SelectItem>
                 {processes.map((p) => (
                   <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
                 ))}
