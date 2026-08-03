@@ -211,6 +211,27 @@ jobs:
           mv "$STAGE_DIR" "$LIVE_DIR"
           echo "Backend SQL synced: $(find "$LIVE_DIR" -type f -name '*.sql' | wc -l) files"
 
+      # SKIP_MIGRATIONS=true in backend/.env made every deploy apply zero schema change —
+      # migrations queued up silently until a health check finally caught the drift (11 of them,
+      # one masking a genuine cross-MySQL-version syntax bug). runPendingMigrations() is a no-op
+      # whenever SKIP_MIGRATIONS==='true' (backend/src/db/runPendingMigrations.ts), so removing the
+      # line — rather than setting it to false — is what actually re-enables the runner; dotenv
+      # loads backend/.env with override:true (backend/src/config/env.ts), so this is the one place
+      # that can actually flip it. /api/health already gates on zero pending migrations, so this is
+      # a no-op for schema *right now*; it only starts mattering for migrations added after this.
+      # Idempotent: a run with the line already gone does nothing.
+      - name: Stop skipping migrations at boot
+        shell: bash
+        run: |
+          set -euo pipefail
+          ENV_FILE="/var/www/HRMS2/backend/.env"
+          if [[ -f "$ENV_FILE" ]] && grep -qE '^SKIP_MIGRATIONS=' "$ENV_FILE"; then
+            sed -i -E '/^SKIP_MIGRATIONS=/d' "$ENV_FILE"
+            echo "Removed SKIP_MIGRATIONS from $ENV_FILE — migrations will now auto-apply at boot."
+          else
+            echo "SKIP_MIGRATIONS not present in $ENV_FILE (or file missing) — nothing to change."
+          fi
+
       - name: Deploy backend dist atomically
         shell: bash
         run: |
