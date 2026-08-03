@@ -588,6 +588,11 @@
       "filename": "500_ai_provider_foundation.sql",
       "reason": "Moved ahead of 425, which ALTERs ai_provider_config while this is the only file that creates it. Same shape as the 373 move: the CREATE was ordered after its dependants.",
       "approvedBy": "release stabilisation 2026-08-03"
+    },
+    {
+      "filename": "337_employee_deduction_entries.sql",
+      "reason": "Moved ahead of 365, which ALTERs employee_deduction_entries while this is the only file that creates it, 45 manifest entries later. A fresh database died on that ALTER. Single CREATE TABLE, only FK is to employees at 002.",
+      "approvedBy": "release stabilisation 2026-08-03"
     }
   ]
 }

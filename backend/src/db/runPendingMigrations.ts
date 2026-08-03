@@ -276,6 +276,10 @@ const MIGRATION_MANIFEST: string[] = [
   "362_provisioning_task_fields.sql",
   "363_joining_document_assigned_hr.sql",
   "364_incentive_bulk_upload_schema.sql",
+  // Moved ahead of 365 on 2026-08-03. 365 ALTERs employee_deduction_entries and this is
+  // the only file that creates it, 45 entries later. Single CREATE TABLE whose only
+  // foreign key is to employees, created at 002.
+  "337_employee_deduction_entries.sql",
   "365_payroll_deduction_type.sql",
   "366_page_codes_incentive_deduction.sql",
   "367_dpdp_compliance_role_access.sql",
@@ -326,7 +330,6 @@ const MIGRATION_MANIFEST: string[] = [
   "335_offer_pf_esi_flags.sql",
   "336_dpdp_compliance_gaps.sql",
   "336_leave_weekoff_reconciliation.sql",
-  "337_employee_deduction_entries.sql",
   "337_noc_workflow.sql",
   "338_leave_reversal_log.sql",
   "338_tax_declaration_page_access.sql",
