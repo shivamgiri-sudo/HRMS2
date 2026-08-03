@@ -1036,9 +1036,15 @@ export const branchBudgetService = {
    *
    * A hard delete is only safe while no GRN has ever touched the budget: grn_cost_allocation and
    * finance_budget_line's reserved/consumed columns record real spend against these line ids, and
-   * deleting the budget would cascade those away or orphan them. So the caller's intent is honoured
-   * where it is safe and converted to a supersede where it is not, and the outcome is reported back
-   * rather than silently chosen.
+   * deleting the budget would violate the (non-cascading) FK from grn_cost_allocation, or orphan
+   * consumed/reserved figures. That guard is unconditional, for every role — the database itself
+   * would refuse it regardless.
+   *
+   * A merely-approved-but-untouched budget is a softer case: normally superseded instead, so the
+   * approval trail survives, but super_admin may explicitly hard-delete it — e.g. a budget approved
+   * in error, with nothing yet spent against it. Every other role still gets the supersede path.
+   * So the caller's intent is honoured where it is safe and converted to a supersede where it is
+   * not, and the outcome is reported back rather than silently chosen.
    */
   async deleteOrSupersede(id: string, actorId: string, actorRole: string, reason: string) {
     if (!reason?.trim()) {
@@ -1073,9 +1079,12 @@ export const branchBudgetService = {
 
       // Once branch_head/finance_head has signed off (or the budget is active), a hard delete
       // would erase an approval decision even if no GRN has spent against it yet — supersede
-      // instead, same as the GRN-touched case, so the approval trail always survives.
+      // instead, same as the GRN-touched case, so the approval trail always survives. super_admin
+      // is the one role trusted to override that and truly delete an approved-but-untouched budget;
+      // touchedByGrn is NOT overridable by anyone — real spend history is never deletable.
       const APPROVED_STATUSES = ["branch_head_approved", "finance_head_approved", "active"];
-      const requiresSupersede = touchedByGrn || APPROVED_STATUSES.includes(status);
+      const isSuperAdmin = actorRole.toLowerCase() === "super_admin";
+      const requiresSupersede = touchedByGrn || (APPROVED_STATUSES.includes(status) && !isSuperAdmin);
 
       if (requiresSupersede) {
         await connection.execute(

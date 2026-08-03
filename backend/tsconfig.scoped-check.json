@@ -27,11 +27,7 @@
 {
   "extends": "./tsconfig.json",
   "include": [
-    "src/modules/finance/grn.service.ts",
-    "src/modules/finance/grn.routes.ts",
-    "src/modules/finance/grn-smart.service.ts",
-    "src/modules/process-pnl/budget-consumption.service.ts",
-    "src/db/runPendingMigrations.ts"
+    "src/modules/process-pnl/branch-budget.service.ts"
   ],
   "compilerOptions": { "noEmit": true }
 }
