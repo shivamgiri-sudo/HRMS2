@@ -219,19 +219,27 @@ BEGIN
     ALTER TABLE candidate_onboarding_profile ADD COLUMN nominee1_share_pct TINYINT UNSIGNED NULL COMMENT 'Share % for nominee 1';
   END IF;
   -- Bank validation
-  IF NOT EXISTS (SELECT 1 FROM information_schema.COLUMNS
+  IF EXISTS (SELECT 1 FROM information_schema.TABLES
+    WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='candidate_onboarding_bank_detail')
+    AND NOT EXISTS (SELECT 1 FROM information_schema.COLUMNS
     WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='candidate_onboarding_bank_detail' AND COLUMN_NAME='validated_by') THEN
     ALTER TABLE candidate_onboarding_bank_detail ADD COLUMN validated_by CHAR(36) NULL;
   END IF;
-  IF NOT EXISTS (SELECT 1 FROM information_schema.COLUMNS
+  IF EXISTS (SELECT 1 FROM information_schema.TABLES
+    WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='candidate_onboarding_bank_detail')
+    AND NOT EXISTS (SELECT 1 FROM information_schema.COLUMNS
     WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='candidate_onboarding_bank_detail' AND COLUMN_NAME='validated_at') THEN
     ALTER TABLE candidate_onboarding_bank_detail ADD COLUMN validated_at DATETIME NULL;
   END IF;
-  IF NOT EXISTS (SELECT 1 FROM information_schema.COLUMNS
+  IF EXISTS (SELECT 1 FROM information_schema.TABLES
+    WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='candidate_onboarding_bank_detail')
+    AND NOT EXISTS (SELECT 1 FROM information_schema.COLUMNS
     WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='candidate_onboarding_bank_detail' AND COLUMN_NAME='validation_status') THEN
     ALTER TABLE candidate_onboarding_bank_detail ADD COLUMN validation_status ENUM('pending','verified','rejected') NOT NULL DEFAULT 'pending';
   END IF;
-  IF NOT EXISTS (SELECT 1 FROM information_schema.COLUMNS
+  IF EXISTS (SELECT 1 FROM information_schema.TABLES
+    WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='candidate_onboarding_bank_detail')
+    AND NOT EXISTS (SELECT 1 FROM information_schema.COLUMNS
     WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='candidate_onboarding_bank_detail' AND COLUMN_NAME='rejection_remarks') THEN
     ALTER TABLE candidate_onboarding_bank_detail ADD COLUMN rejection_remarks TEXT NULL;
   END IF;

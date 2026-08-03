@@ -8,7 +8,10 @@ DELIMITER $$
 DROP PROCEDURE IF EXISTS _m202_profile $$
 CREATE PROCEDURE _m202_profile()
 BEGIN
-  IF NOT EXISTS (
+  IF EXISTS (
+    SELECT 1 FROM information_schema.TABLES
+    WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'candidate_onboarding_profile'
+  ) AND NOT EXISTS (
     SELECT 1 FROM information_schema.COLUMNS
     WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'candidate_onboarding_profile' AND COLUMN_NAME = 'current_step_idx'
   ) THEN
@@ -24,7 +27,10 @@ DROP PROCEDURE IF EXISTS _m202_profile $$
 DROP PROCEDURE IF EXISTS _m202_profile_docs $$
 CREATE PROCEDURE _m202_profile_docs()
 BEGIN
-  IF NOT EXISTS (
+  IF EXISTS (
+    SELECT 1 FROM information_schema.TABLES
+    WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'candidate_onboarding_profile'
+  ) AND NOT EXISTS (
     SELECT 1 FROM information_schema.COLUMNS
     WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'candidate_onboarding_profile' AND COLUMN_NAME = 'passport_number'
   ) THEN
@@ -42,7 +48,10 @@ DROP PROCEDURE IF EXISTS _m202_profile_docs $$
 DROP PROCEDURE IF EXISTS _m202_profile_statutory $$
 CREATE PROCEDURE _m202_profile_statutory()
 BEGIN
-  IF NOT EXISTS (
+  IF EXISTS (
+    SELECT 1 FROM information_schema.TABLES
+    WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'candidate_onboarding_profile'
+  ) AND NOT EXISTS (
     SELECT 1 FROM information_schema.COLUMNS
     WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'candidate_onboarding_profile' AND COLUMN_NAME = 'epf_number'
   ) THEN
@@ -62,7 +71,10 @@ DROP PROCEDURE IF EXISTS _m202_profile_statutory $$
 DROP PROCEDURE IF EXISTS _m202_profile_nominee2 $$
 CREATE PROCEDURE _m202_profile_nominee2()
 BEGIN
-  IF NOT EXISTS (
+  IF EXISTS (
+    SELECT 1 FROM information_schema.TABLES
+    WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'candidate_onboarding_profile'
+  ) AND NOT EXISTS (
     SELECT 1 FROM information_schema.COLUMNS
     WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'candidate_onboarding_profile' AND COLUMN_NAME = 'nominee2_name'
   ) THEN
@@ -79,7 +91,10 @@ DROP PROCEDURE IF EXISTS _m202_profile_nominee2 $$
 DROP PROCEDURE IF EXISTS _m202_profile_work $$
 CREATE PROCEDURE _m202_profile_work()
 BEGIN
-  IF NOT EXISTS (
+  IF EXISTS (
+    SELECT 1 FROM information_schema.TABLES
+    WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'candidate_onboarding_profile'
+  ) AND NOT EXISTS (
     SELECT 1 FROM information_schema.COLUMNS
     WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'candidate_onboarding_profile' AND COLUMN_NAME = 'emp_location_type'
   ) THEN
@@ -96,7 +111,10 @@ DROP PROCEDURE IF EXISTS _m202_profile_work $$
 DROP PROCEDURE IF EXISTS _m202_experience_mgr $$
 CREATE PROCEDURE _m202_experience_mgr()
 BEGIN
-  IF NOT EXISTS (
+  IF EXISTS (
+    SELECT 1 FROM information_schema.TABLES
+    WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'candidate_onboarding_experience'
+  ) AND NOT EXISTS (
     SELECT 1 FROM information_schema.COLUMNS
     WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'candidate_onboarding_experience' AND COLUMN_NAME = 'reporting_manager_name'
   ) THEN
@@ -112,7 +130,10 @@ DROP PROCEDURE IF EXISTS _m202_experience_mgr $$
 DROP PROCEDURE IF EXISTS _m202_qual_board $$
 CREATE PROCEDURE _m202_qual_board()
 BEGIN
-  IF NOT EXISTS (
+  IF EXISTS (
+    SELECT 1 FROM information_schema.TABLES
+    WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'candidate_onboarding_qualification'
+  ) AND NOT EXISTS (
     SELECT 1 FROM information_schema.COLUMNS
     WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'candidate_onboarding_qualification' AND COLUMN_NAME = 'institution_name'
   ) THEN
