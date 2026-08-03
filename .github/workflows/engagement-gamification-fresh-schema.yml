@@ -1,5 +1,7 @@
 name: Performance Fresh Schema Certification
 
+# Canonical zero-to-Performance schema rehearsal. Keep migration execution first
+# so historical schema blockers are reported before the slower code gates.
 on:
   pull_request:
     paths:
@@ -68,9 +70,6 @@ jobs:
       - name: Install backend dependencies
         run: npm --prefix backend ci
 
-      # Put the expensive end-to-end schema rehearsal first after installation.
-      # Migration-only defects now fail fast; once this passes, all code and
-      # security gates below still run before the workflow can become green.
       - name: Build canonical manifest through Performance migration 522
         working-directory: backend
         env:
