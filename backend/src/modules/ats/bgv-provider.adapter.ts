@@ -12,6 +12,7 @@ import {
   type LuckpayResolvedConfig,
 } from "../integrations/luckpay/luckpay.transport.js";
 import { resolveLuckpayConfigFrom } from "../integrations/luckpay/luckpay.config.js";
+import { classifyNameMatch } from "./indian-name-match.js";
 import {
   loadBgvDbConfig,
   resetBgvDbConfigCache,
@@ -155,6 +156,73 @@ export interface ESignSession {
 
 const normalizeName = (name?: string | null) =>
   String(name ?? "").trim().toLowerCase().replace(/[^a-z ]/g, "").replace(/\s+/g, " ");
+
+/**
+ * What a penny-drop result actually means, judged against the candidate's
+ * registered identity.
+ *
+ * The provider decides its own status by comparing the account against a name
+ * WE send it, and the name previously sent was `accountHolderName` — a free-text
+ * field the candidate fills in. So the provider's verdict answers "does this
+ * account belong to the person named in this request", never "does it belong to
+ * the candidate". Someone entering another person's account and that person's
+ * name is confirmed by the provider and always has been: all 11 verified bank
+ * checks in production carry match_score exactly 100.
+ *
+ * This re-judges the result against `ats_candidate`, the one name in the
+ * exchange the candidate cannot edit, and downgrades to manual review when the
+ * bank's registered owner is not plausibly the candidate. It only ever
+ * downgrades: a result the provider rejected is never talked back up.
+ *
+ * Ordinary name variance is not treated as fraud — see indian-name-match.ts,
+ * which is why a bank holding "DHAVAL R PATEL" for "DHAVAL RAMESHBHAI PATEL"
+ * passes without troubling anyone.
+ */
+export function resolveBankVerificationOutcome(input: {
+  providerStatus: VerificationStatus;
+  candidateName?: string | null;
+  typedAccountHolderName?: string | null;
+  bankRegisteredName?: string | null;
+}): { status: VerificationStatus; matchScore: number; riskFlags: string[]; reason: string } {
+  const { providerStatus, candidateName, typedAccountHolderName, bankRegisteredName } = input;
+
+  if (providerStatus !== "verified") {
+    return { status: providerStatus, matchScore: 0, riskFlags: [], reason: `provider returned ${providerStatus}` };
+  }
+
+  if (!safeName(bankRegisteredName)) {
+    return {
+      status: "manual_review",
+      matchScore: 0,
+      riskFlags: ["BANK_NAME_NOT_RETURNED"],
+      reason: "the bank confirmed the account but returned no registered name, so ownership cannot be checked",
+    };
+  }
+
+  const identity = classifyNameMatch(candidateName, bankRegisteredName);
+  if (!identity.suspicious) {
+    return {
+      status: "verified",
+      matchScore: identity.score,
+      riskFlags: [],
+      reason: `bank registered name matches the candidate (${identity.tier}: ${identity.reason})`,
+    };
+  }
+
+  // Worth recording separately: a candidate who typed the true owner's name knew
+  // whose account it was, which reads differently from a typo.
+  const typedMatchesBank = !classifyNameMatch(typedAccountHolderName, bankRegisteredName).suspicious;
+  return {
+    status: "manual_review",
+    matchScore: identity.score,
+    riskFlags: ["BANK_HOLDER_NAME_DIVERGENCE"],
+    reason: typedMatchesBank
+      ? `the account belongs to "${bankRegisteredName}", which is who the candidate typed, but not the candidate (${identity.reason})`
+      : `the account belongs to "${bankRegisteredName}", which matches neither the candidate nor the typed holder name (${identity.reason})`,
+  };
+}
+
+const safeName = (value?: string | null) => String(value ?? "").trim();
 
 export function roughNameMatchScore(a?: string | null, b?: string | null): number {
   const left = normalizeName(a);
@@ -381,16 +449,23 @@ export class InfinityAiBgvAdapter implements BgvProviderAdapter {
       : apiStatus === "name_mismatch" || apiStatus === "mismatch" ? "mismatch"
       : "failed";
     const matchedName = d.registered_name ?? d.account_holder_name ?? null;
-    const score = roughNameMatchScore(input.accountHolderName ?? input.candidateName, matchedName);
+    const outcome = resolveBankVerificationOutcome({
+      providerStatus: status,
+      candidateName: input.candidateName,
+      typedAccountHolderName: input.accountHolderName,
+      bankRegisteredName: matchedName,
+    });
     return {
-      status,
+      status: outcome.status,
       providerKey: "infinity_ai",
       providerRequestId: requestId,
       providerReferenceId: String(d.reference_id ?? d.utr ?? requestId),
-      matchScore: score,
+      matchScore: outcome.matchScore,
       matchedName,
-      resultSummary: d.message ?? `Bank check: ${status}`,
-      riskFlags: status === "verified" ? [] : [String(d.failure_reason ?? "BANK_CHECK_FAILED").toUpperCase()],
+      resultSummary: outcome.riskFlags.length ? outcome.reason : (d.message ?? `Bank check: ${outcome.status}`),
+      riskFlags: outcome.riskFlags.length
+        ? outcome.riskFlags
+        : status === "verified" ? [] : [String(d.failure_reason ?? "BANK_CHECK_FAILED").toUpperCase()],
       raw: d,
     };
   }
@@ -646,16 +721,21 @@ export class DigioBgvAdapter implements BgvProviderAdapter {
       : d.name_match === false ? "mismatch"
       : "failed";
     const matchedName = d.registered_name ?? d.account_holder_name ?? null;
-    const score = roughNameMatchScore(input.accountHolderName ?? input.candidateName, matchedName);
+    const outcome = resolveBankVerificationOutcome({
+      providerStatus: status,
+      candidateName: input.candidateName,
+      typedAccountHolderName: input.accountHolderName,
+      bankRegisteredName: matchedName,
+    });
     return {
-      status,
+      status: outcome.status,
       providerKey: "digio",
       providerRequestId: requestId,
       providerReferenceId: String(d.id ?? requestId),
-      matchScore: score,
+      matchScore: outcome.matchScore,
       matchedName,
-      resultSummary: d.message ?? `Bank check: ${status}`,
-      riskFlags: status === "verified" ? [] : [code || "BANK_FAILED"],
+      resultSummary: outcome.riskFlags.length ? outcome.reason : (d.message ?? `Bank check: ${outcome.status}`),
+      riskFlags: outcome.riskFlags.length ? outcome.riskFlags : status === "verified" ? [] : [code || "BANK_FAILED"],
       raw: d,
     };
   }
@@ -1045,22 +1125,32 @@ class CompositeBgvProviderAdapter implements BgvProviderAdapter {
       details.beneficiaryNameWithBank ?? details.beneficiaryName ??
       d.registered_name ?? d.account_holder_name ?? d.name
     );
-    const score = roughNameMatchScore(input.accountHolderName ?? input.candidateName, matchedName);
-    const fuzzyScore = Number(details.fuzzyMatchScore ?? score);
+    // The provider's own fuzzyMatchScore grades the name WE sent it, which is
+    // the candidate-supplied holder name — so it cannot be used to decide
+    // ownership. It is kept only to reproduce the provider's own verdict.
+    const providerFuzzyScore = Number(details.fuzzyMatchScore ?? 0);
     const message = this.providerString(d.message);
     const failureReason = this.providerString(d.failure_reason);
-    const status: VerificationStatus = (detailsVerified || ["valid", "verified", "success", "active"].includes(apiStatus))
+    const providerStatus: VerificationStatus = (detailsVerified || ["valid", "verified", "success", "active"].includes(apiStatus))
       ? "verified"
-      : apiStatus.includes("mismatch") || fuzzyScore < 60 ? "mismatch" : "failed";
+      : apiStatus.includes("mismatch") || providerFuzzyScore < 60 ? "mismatch" : "failed";
+    const outcome = resolveBankVerificationOutcome({
+      providerStatus,
+      candidateName: input.candidateName,
+      typedAccountHolderName: input.accountHolderName,
+      bankRegisteredName: matchedName,
+    });
     return {
-      status,
+      status: outcome.status,
       providerKey: this.providerKey,
       providerRequestId: requestId,
       providerReferenceId: String(d.reference_id ?? d.utr ?? d.transaction_id ?? requestId),
-      matchScore: fuzzyScore,
+      matchScore: outcome.matchScore,
       matchedName,
-      resultSummary: message ?? `Bank check: ${status}`,
-      riskFlags: status === "verified" ? [] : [String(failureReason ?? "BANK_CHECK_FAILED").toUpperCase()],
+      resultSummary: outcome.riskFlags.length ? outcome.reason : (message ?? `Bank check: ${outcome.status}`),
+      riskFlags: outcome.riskFlags.length
+        ? outcome.riskFlags
+        : providerStatus === "verified" ? [] : [String(failureReason ?? "BANK_CHECK_FAILED").toUpperCase()],
       raw: this.sanitizedRaw(d),
     };
   }
