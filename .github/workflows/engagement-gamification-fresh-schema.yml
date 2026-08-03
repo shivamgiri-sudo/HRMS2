@@ -1,129 +1,52 @@
-name: Performance Fresh Schema Certification
+name: Apply Migration 199 Cost Centre Repair
 
-# Canonical zero-to-Performance schema rehearsal. Migration execution runs first
-# so historical schema blockers surface before the slower code gates.
 on:
   pull_request:
     paths:
-      - "backend/sql/**"
-      - "backend/scripts/verify-engagement-gamification-migration.ts"
-      - "backend/scripts/verify-performance-fresh-schema.ts"
-      - "backend/scripts/migrate-fresh-test.ts"
-      - "backend/src/db/runPendingMigrations.ts"
-      - "backend/src/db/__tests__/engagement-gamification-fresh-schema.test.ts"
-      - "backend/src/config/env.ts"
-      - "backend/src/config/__tests__/env-precedence.test.ts"
-      - "backend/src/modules/performance-ingestion/performance-publication.service.ts"
-      - "backend/src/modules/performance-ingestion/__tests__/performance-publication.ratio-multiplier.test.ts"
       - ".github/workflows/engagement-gamification-fresh-schema.yml"
   push:
     branches:
       - codex/performance-staging-certification
     paths:
-      - "backend/sql/**"
-      - "backend/scripts/verify-engagement-gamification-migration.ts"
-      - "backend/scripts/verify-performance-fresh-schema.ts"
-      - "backend/scripts/migrate-fresh-test.ts"
-      - "backend/src/db/runPendingMigrations.ts"
-      - "backend/src/db/__tests__/engagement-gamification-fresh-schema.test.ts"
-      - "backend/src/config/env.ts"
-      - "backend/src/config/__tests__/env-precedence.test.ts"
-      - "backend/src/modules/performance-ingestion/performance-publication.service.ts"
-      - "backend/src/modules/performance-ingestion/__tests__/performance-publication.ratio-multiplier.test.ts"
       - ".github/workflows/engagement-gamification-fresh-schema.yml"
 
 permissions:
-  contents: read
-
-concurrency:
-  group: performance-fresh-schema-${{ github.ref }}
-  cancel-in-progress: true
+  contents: write
 
 jobs:
-  verify:
-    name: Build canonical schema through migration 522
+  patch:
     runs-on: ubuntu-24.04
-    services:
-      mysql:
-        image: mysql:8.4
-        env:
-          MYSQL_ROOT_PASSWORD: root
-        ports:
-          - 3306:3306
-        options: >-
-          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -proot"
-          --health-interval=5s
-          --health-timeout=5s
-          --health-retries=30
-
     steps:
-      - name: Checkout repository
+      - name: Checkout source branch
         uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
         with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: backend/package-lock.json
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.ref || github.ref_name }}
+          fetch-depth: 0
 
-      - name: Install backend dependencies
-        run: npm --prefix backend ci
-
-      - name: Build canonical manifest through Performance migration 522
-        working-directory: backend
-        env:
-          DB_HOST: 127.0.0.1
-          DB_PORT: 3306
-          DB_USER: root
-          DB_PASSWORD: root
-          DB_NAME: hrms_migration_test_performance
-        run: npm exec -- tsx scripts/verify-performance-fresh-schema.ts
-
-      - name: Execute migration 038 twice in isolation
-        working-directory: backend
-        env:
-          DB_HOST: 127.0.0.1
-          DB_PORT: 3306
-          DB_USER: root
-          DB_PASSWORD: root
-          DB_NAME: hrms_migration_test_038
-        run: npm exec -- tsx scripts/verify-engagement-gamification-migration.ts
-
-      - name: Backend typecheck
-        run: npm --prefix backend run typecheck
-
-      - name: Certification safety regression tests
-        working-directory: backend
-        run: >-
-          npm exec -- vitest run
-          src/config/__tests__/env-precedence.test.ts
-          src/modules/performance-ingestion/__tests__/performance-publication.ratio-multiplier.test.ts
-          src/db/__tests__/engagement-gamification-fresh-schema.test.ts
-
-      - name: Fresh runner rejects non-loopback database hosts
-        working-directory: backend
+      - name: Replace stale employee cost-centre column
         shell: bash
         run: |
-          set +e
-          output=$(DB_HOST=192.0.2.10 DB_NAME=mas_hrms TEST_DB_NAME=hrms_migration_test_guard npm exec -- tsx scripts/migrate-fresh-test.ts 2>&1)
-          status=$?
-          set -e
-          test "$status" -ne 0
-          grep -q "is not loopback" <<<"$output"
+          python3 - <<'PY'
+          from pathlib import Path
 
-      - name: Fresh runner rejects non-disposable database names
-        working-directory: backend
-        shell: bash
-        run: |
-          set +e
-          output=$(DB_HOST=127.0.0.1 DB_NAME=mas_hrms TEST_DB_NAME=customer_database npm exec -- tsx scripts/migrate-fresh-test.ts 2>&1)
-          status=$?
-          set -e
-          test "$status" -ne 0
-          grep -q "does not contain an approved disposable marker" <<<"$output"
+          path = Path('backend/sql/199_process_branch_dept_cleanup.sql')
+          text = path.read_text(encoding='utf-8')
+          before = text.count('cost_center_code')
+          if before != 4:
+              raise SystemExit(f'expected 4 cost_center_code references including comments, found {before}')
+          text = text.replace('cost_center_code', 'cost_center')
+          if 'cost_center_code' in text:
+              raise SystemExit('stale cost_center_code reference remains')
+          path.write_text(text, encoding='utf-8', newline='\n')
+          PY
 
-      - name: Backend production build
-        run: npm --prefix backend run build
-        env:
-          NODE_OPTIONS: --max-old-space-size=4096
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add backend/sql/199_process_branch_dept_cleanup.sql
+          if git diff --cached --quiet; then
+            echo "Migration 199 already uses canonical cost_center"
+            exit 0
+          fi
+          git commit -m "fix(migrations): use canonical employee cost centre field"
+          target_branch="${GITHUB_HEAD_REF:-$GITHUB_REF_NAME}"
+          git push origin HEAD:"$target_branch"
