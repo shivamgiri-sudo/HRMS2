@@ -2,7 +2,8 @@
 -- Safe migration: adds only missing columns, creates only missing tables.
 -- Every compatibility check uses the active database rather than the historical
 -- hard-coded `mas_hrms` schema so disposable, staging and tenant schemas behave
--- correctly.
+-- correctly. Where migration 138 already owns a canonical table, this migration
+-- extends or seeds that canonical shape instead of defining a competing model.
 USE mas_hrms;
 
 -- ── 1. Add columns to ats_queue_token (safe checks) ───────────────────────────
@@ -62,95 +63,115 @@ SET @sql = IF(
 );
 PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
--- ── 2. Create interview_result table ──────────────────────────────────────────
+-- ── 2. Create interview_result table when migration 138 is absent ─────────────
+-- The fallback definition matches migration 138 so later indexes and services
+-- see one stable schema.
 CREATE TABLE IF NOT EXISTS ats_interview_result (
   id CHAR(36) NOT NULL DEFAULT (UUID()) PRIMARY KEY,
   candidate_id CHAR(36) NOT NULL,
   recruiter_id CHAR(36) NOT NULL,
-  interview_status ENUM('selected', 'rejected', 'hold', 'callback', 'no_show', 'walkout') NOT NULL,
-  communication_rating INT NULL CHECK (communication_rating BETWEEN 1 AND 5),
-  stability_rating INT NULL CHECK (stability_rating BETWEEN 1 AND 5),
-  salary_fit BOOLEAN DEFAULT TRUE,
-  shift_fit BOOLEAN DEFAULT TRUE,
-  location_fit BOOLEAN DEFAULT TRUE,
-  role_fit BOOLEAN DEFAULT TRUE,
+  interview_status ENUM('selected','rejected','hold','callback','no_show','walkout') NOT NULL,
+  communication_rating INT NULL COMMENT '1-5 rating',
+  stability_rating INT NULL COMMENT '1-5 rating',
+  salary_fit TINYINT(1) DEFAULT 0,
+  shift_fit TINYINT(1) DEFAULT 0,
+  location_fit TINYINT(1) DEFAULT 0,
+  role_fit TINYINT(1) DEFAULT 0,
   remarks TEXT NULL,
   rejection_reason VARCHAR(255) NULL,
-  next_step VARCHAR(500) NULL,
-  interviewed_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  next_step VARCHAR(255) NULL,
+  documents_pending TINYINT(1) DEFAULT 0,
+  joining_interest TINYINT(1) DEFAULT 0,
+  expected_joining_date DATE NULL,
+  recruiter_recommendation TEXT NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   INDEX idx_candidate (candidate_id),
   INDEX idx_recruiter (recruiter_id),
   INDEX idx_status (interview_status),
   FOREIGN KEY (candidate_id) REFERENCES ats_candidate(id) ON DELETE CASCADE
-);
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- ── 3. Create payroll_hr_validation table ─────────────────────────────────────
+-- ── 3. Create payroll_hr_validation when migration 138 is absent ──────────────
 CREATE TABLE IF NOT EXISTS ats_payroll_hr_validation (
   id CHAR(36) NOT NULL DEFAULT (UUID()) PRIMARY KEY,
   candidate_id CHAR(36) NOT NULL,
-  employment_type ENUM('onroll', 'offrole') NOT NULL,
-  gross_salary DECIMAL(10,2) NOT NULL,
-  joining_date DATE NOT NULL,
-  salary_start_date DATE NULL COMMENT 'If NULL, defaults to joining_date',
-  basic_salary DECIMAL(10,2) NULL,
-  hra DECIMAL(10,2) NULL,
-  conveyance DECIMAL(10,2) NULL,
-  special_allowance DECIMAL(10,2) NULL,
-  pf_amount DECIMAL(10,2) NULL,
-  esic_amount DECIMAL(10,2) NULL,
-  training_period_days INT DEFAULT 0,
-  training_end_date DATE NULL,
-  validated_by CHAR(36) NULL,
-  validation_status ENUM('pending', 'approved', 'rejected') DEFAULT 'pending',
-  validated_at DATETIME NULL,
+  branch_id VARCHAR(36) NOT NULL,
+  payroll_hr_id CHAR(36) NULL,
+  validation_status ENUM('pending','validated','rejected','correction_requested') DEFAULT 'pending',
+  employment_type ENUM('onroll','offrole') NULL,
+  company_id CHAR(36) NULL,
+  designation_id CHAR(36) NULL,
+  department_id CHAR(36) NULL,
+  process_id CHAR(36) NULL,
+  cost_centre_id CHAR(36) NULL,
+  reporting_manager_id CHAR(36) NULL,
+  salary_slab_id CHAR(36) NULL,
+  gross_salary DECIMAL(10,2) NULL,
+  salary_components JSON NULL,
+  joining_date DATE NULL,
+  salary_start_date DATE NULL,
+  shift_id CHAR(36) NULL,
   remarks TEXT NULL,
+  validated_at DATETIME NULL,
+  notified_at DATETIME NULL,
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   INDEX idx_candidate (candidate_id),
+  INDEX idx_payroll_hr (payroll_hr_id),
   INDEX idx_status (validation_status),
-  FOREIGN KEY (candidate_id) REFERENCES ats_candidate(id) ON DELETE CASCADE
-);
+  FOREIGN KEY (candidate_id) REFERENCES ats_candidate(id) ON DELETE CASCADE,
+  FOREIGN KEY (branch_id) REFERENCES branch_master(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- ── 4. Create employee_code_sequence table ────────────────────────────────────
+-- ── 4. Reuse the canonical employee_code_sequence from migration 138 ──────────
 CREATE TABLE IF NOT EXISTS employee_code_sequence (
-  id INT AUTO_INCREMENT PRIMARY KEY,
-  company_prefix ENUM('MAS', 'IDC') NOT NULL,
-  is_offrole BOOLEAN DEFAULT FALSE,
-  current_sequence INT NOT NULL DEFAULT 0,
-  last_generated_code VARCHAR(50) NULL,
-  last_generated_at DATETIME NULL,
-  UNIQUE KEY unique_sequence (company_prefix, is_offrole)
-);
+  id CHAR(36) NOT NULL DEFAULT (UUID()) PRIMARY KEY,
+  company_prefix VARCHAR(10) NOT NULL UNIQUE COMMENT 'MAS, IDC',
+  last_sequence_number INT NOT NULL DEFAULT 0,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
-INSERT IGNORE INTO employee_code_sequence (company_prefix, is_offrole, current_sequence) VALUES
-('MAS', FALSE, 47814),
-('MAS', TRUE, 0),
-('IDC', FALSE, 0),
-('IDC', TRUE, 0);
+INSERT INTO employee_code_sequence (company_prefix, last_sequence_number) VALUES
+  ('MAS', 99999),
+  ('IDC', 99999)
+ON DUPLICATE KEY UPDATE last_sequence_number = last_sequence_number;
 
--- ── 5. Create module_access_control table ─────────────────────────────────────
+-- ── 5. Reuse canonical module_access_control from migration 138 ────────────────
 CREATE TABLE IF NOT EXISTS module_access_control (
   id CHAR(36) NOT NULL DEFAULT (UUID()) PRIMARY KEY,
-  module_name VARCHAR(100) NOT NULL,
-  employee_code VARCHAR(50) NOT NULL,
-  has_access BOOLEAN DEFAULT TRUE,
+  employee_id CHAR(36) NOT NULL,
+  module_code VARCHAR(100) NOT NULL,
+  module_name VARCHAR(255) NOT NULL,
+  access_granted TINYINT(1) DEFAULT 1,
   granted_by CHAR(36) NULL,
   granted_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   revoked_at DATETIME NULL,
-  remarks TEXT NULL,
-  INDEX idx_module (module_name),
-  INDEX idx_employee (employee_code),
-  UNIQUE KEY unique_access (module_name, employee_code)
-);
+  INDEX idx_employee (employee_id),
+  INDEX idx_module (module_code),
+  UNIQUE KEY uk_emp_module (employee_id, module_code)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
-INSERT INTO module_access_control (module_name, employee_code, has_access, granted_by, remarks) VALUES
-('ATS_DASHBOARD', 'MAS47814', TRUE, 'SYSTEM', 'Super admin full access'),
-('PAYROLL_HR_VALIDATION', 'MAS47814', TRUE, 'SYSTEM', 'Super admin full access'),
-('RECRUITER_PORTAL', 'MAS47814', TRUE, 'SYSTEM', 'Super admin full access'),
-('COMMAND_CENTRE', 'MAS47814', TRUE, 'SYSTEM', 'Super admin full access')
-ON DUPLICATE KEY UPDATE has_access=TRUE;
+-- Seed only when the configured super-admin employee exists. Fresh schemas have
+-- no employee rows, so this remains a deterministic no-op instead of inserting
+-- an employee code into an employee-ID column.
+INSERT INTO module_access_control
+  (id, employee_id, module_code, module_name, access_granted, granted_by)
+SELECT UUID(), e.id, seed.module_code, seed.module_name, 1, NULL
+FROM employees e
+JOIN (
+  SELECT 'ATS_DASHBOARD' AS module_code, 'ATS Dashboard' AS module_name
+  UNION ALL SELECT 'PAYROLL_HR_VALIDATION', 'Payroll HR Validation'
+  UNION ALL SELECT 'RECRUITER_PORTAL', 'Recruiter Portal'
+  UNION ALL SELECT 'COMMAND_CENTRE', 'ATS Command Centre'
+) seed
+WHERE e.employee_code = 'MAS47814'
+ON DUPLICATE KEY UPDATE
+  module_name = VALUES(module_name),
+  access_granted = 1,
+  revoked_at = NULL;
 
--- ── 6. Create recruiter_assignment_log table ──────────────────────────────────
+-- ── 6. Create recruiter_assignment_log when migration 138 is absent ───────────
 CREATE TABLE IF NOT EXISTS ats_recruiter_assignment_log (
   id CHAR(36) NOT NULL DEFAULT (UUID()) PRIMARY KEY,
   candidate_id CHAR(36) NOT NULL,
@@ -162,23 +183,25 @@ CREATE TABLE IF NOT EXISTS ats_recruiter_assignment_log (
   INDEX idx_candidate (candidate_id),
   INDEX idx_recruiter (new_recruiter_id),
   FOREIGN KEY (candidate_id) REFERENCES ats_candidate(id) ON DELETE CASCADE
-);
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- ── 7. Create cost_centre_master table ────────────────────────────────────────
+-- ── 7. Reuse canonical cost_centre_master from migration 138 ──────────────────
 CREATE TABLE IF NOT EXISTS cost_centre_master (
   id CHAR(36) NOT NULL DEFAULT (UUID()) PRIMARY KEY,
   cost_centre_code VARCHAR(50) NOT NULL UNIQUE,
   cost_centre_name VARCHAR(255) NOT NULL,
-  branch_name VARCHAR(255) NULL,
-  process_name VARCHAR(255) NULL,
-  is_active BOOLEAN DEFAULT TRUE,
+  description TEXT NULL,
+  branch_id VARCHAR(36) NULL,
+  process_id CHAR(36) NULL,
+  company_id CHAR(36) NULL,
+  active_status TINYINT(1) DEFAULT 1,
   created_by CHAR(36) NULL,
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   INDEX idx_code (cost_centre_code),
-  INDEX idx_branch (branch_name),
-  INDEX idx_process (process_name)
-);
+  INDEX idx_active (active_status),
+  FOREIGN KEY (branch_id) REFERENCES branch_master(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ── 8. Add indexes for performance ────────────────────────────────────────────
 SET @sql = IF(
@@ -195,11 +218,12 @@ SET @sql = IF(
 );
 PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
+-- Migration 138 names the interview timestamp `created_at`, not `interviewed_at`.
 SET @sql = IF(
   (SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='ats_interview_result' AND INDEX_NAME='idx_interview_date') = 0,
-  'CREATE INDEX idx_interview_date ON ats_interview_result(interviewed_at)',
+  'CREATE INDEX idx_interview_date ON ats_interview_result(created_at)',
   'SELECT ''idx_interview_date already exists'' AS note'
 );
 PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
-SELECT 'Migration 139 complete: ATS Enhanced Journey tables created' AS result;
+SELECT 'Migration 139 complete: ATS enhanced journey reconciled' AS result;
