@@ -15,7 +15,6 @@ on:
       - "backend/src/config/__tests__/env-precedence.test.ts"
       - "backend/src/modules/performance-ingestion/performance-publication.service.ts"
       - "backend/src/modules/performance-ingestion/__tests__/performance-publication.ratio-multiplier.test.ts"
-      - ".github/workflows/performance-fresh-schema-certification.yml"
       - ".github/workflows/engagement-gamification-fresh-schema.yml"
   push:
     branches:
@@ -31,7 +30,6 @@ on:
       - "backend/src/config/__tests__/env-precedence.test.ts"
       - "backend/src/modules/performance-ingestion/performance-publication.service.ts"
       - "backend/src/modules/performance-ingestion/__tests__/performance-publication.ratio-multiplier.test.ts"
-      - ".github/workflows/performance-fresh-schema-certification.yml"
       - ".github/workflows/engagement-gamification-fresh-schema.yml"
 
 permissions:
@@ -59,13 +57,13 @@ jobs:
           --health-retries=30
 
     steps:
-      - name: Checkout repository
+      - name: Checkout source branch
         uses: actions/checkout@v4
         with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.ref || github.ref_name }}
           fetch-depth: 0
 
       - name: Apply one-time canonical ATS index repair
-        if: github.event_name == 'push'
         shell: bash
         run: |
           python3 - <<'PY'
@@ -94,11 +92,12 @@ jobs:
           SELECT 'ats_queue_token has no branch column; branch filtering resolves through ats_candidate' AS migration_note;
 
           '''
-          if 'candidate_status' in text or 'queue_status' in text or 'ats_queue_token ADD INDEX idx_ats_queue_branch' in text:
+          stale = ('candidate_status', 'queue_status', 'ats_queue_token ADD INDEX idx_ats_queue_branch')
+          if any(token in text for token in stale):
               text, count = pattern.subn(replacement, text, count=1)
               if count != 1:
                   raise SystemExit(f'expected one section 17 block, replaced {count}')
-          if 'candidate_status' in text or 'queue_status' in text or 'ats_queue_token ADD INDEX idx_ats_queue_branch' in text:
+          if any(token in text for token in stale):
               raise SystemExit('stale ATS index definitions remain')
           path.write_text(text, encoding='utf-8', newline='\n')
           PY
@@ -111,7 +110,8 @@ jobs:
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
             git add backend/sql/138_ats_complete_journey.sql .github/workflows/patch-ats-138-canonical-indexes.yml
             git commit -m "fix(migrations): align ATS indexes with canonical columns"
-            git push origin HEAD:${GITHUB_REF_NAME}
+            target_branch="${GITHUB_HEAD_REF:-$GITHUB_REF_NAME}"
+            git push origin HEAD:"$target_branch"
           fi
 
       - name: Setup Node.js
