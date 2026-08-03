@@ -11,20 +11,35 @@
  *   node backend/scripts/sync-db-bill-snapshot.mjs --only=clients
  *   node backend/scripts/sync-db-bill-snapshot.mjs --only=provision
  *   node backend/scripts/sync-db-bill-snapshot.mjs --only=invoices
+ *   node backend/scripts/sync-db-bill-snapshot.mjs --only=expense_heads
+ *   node backend/scripts/sync-db-bill-snapshot.mjs --only=budget
+ *   node backend/scripts/sync-db-bill-snapshot.mjs --only=grn
+ *   node backend/scripts/sync-db-bill-snapshot.mjs --only=particulars
+ *
+ * Budget, GRN and invoice lines mirror the CURRENT financial year from April by default.
+ * Override with --from=YYYY-MM.
+ *
+ * Hosts default to the office LAN. Off-LAN, pass the public addresses — which one works
+ * flips with the network the machine is on, and the wrong one gives ETIMEDOUT rather than
+ * an auth error, so it reads like the database is down when it is not:
+ *   --hrms-host=122.184.128.90 --bill-host=14.97.30.236
  */
 
 import mysql from 'mysql2/promise';
 
 // ── config ────────────────────────────────────────────────────────────────────
 
+const arg = (name, fallback) =>
+  process.argv.find(a => a.startsWith(`--${name}=`))?.split('=')[1] ?? fallback;
+
 const HRMS = {
-  host: '192.168.10.6', port: 3306,
+  host: arg('hrms-host', process.env.HRMS_DB_HOST ?? '192.168.10.6'), port: 3306,
   user: 'shivam_user', password: 'qwersdfg!@#hjk',
   database: 'mas_hrms', connectTimeout: 20000, multipleStatements: false,
 };
 
 const BILL = {
-  host: '192.168.10.22', port: 3306,
+  host: arg('bill-host', process.env.BILL_DB_HOST ?? '192.168.10.22'), port: 3306,
   user: 'shivam_user', password: 'qwersdfg!@#hjk',
   database: 'db_bill', connectTimeout: 20000,
   dateStrings: true,  // prevents mysql2 from throwing on 0000-00-00 dates
@@ -80,6 +95,109 @@ function safeDate(v) {
 
 function trim(v) {
   return v ? String(v).trim() || null : null;
+}
+
+/**
+ * Money and quantities, kept exact.
+ *
+ * safeInt() is right for tbl_invoice, which genuinely holds whole rupees as strings. It is
+ * WRONG for the tables added below: expense_entry_master.Amount carries decimals on 6,500
+ * rows (Rs 2.15 up to Rs 33,17,122.54) and inv_particulars.qty is fractional on 91 of 540
+ * recent rows, because a seat can be billed for part of a month. Using safeInt there would
+ * truncate paise on every one of them, silently.
+ */
+function safeDec(v) {
+  if (v === null || v === undefined) return 0;
+  const n = Number(String(v).replace(/,/g, '').trim());
+  return Number.isFinite(n) ? n : 0;
+}
+
+/** Full datetime, not the date-only value safeDate() returns — approval times matter. */
+function safeDateTime(v) {
+  if (!v) return null;
+  const s = v instanceof Date ? v.toISOString().slice(0, 19).replace('T', ' ') : String(v).trim();
+  return (!s || s.startsWith('0000-00-00')) ? null : s.slice(0, 19);
+}
+
+const MONTH_NUM = {
+  jan: '01', feb: '02', mar: '03', apr: '04', may: '05', jun: '06',
+  jul: '07', aug: '08', sep: '09', oct: '10', nov: '11', dec: '12',
+};
+
+/**
+ * How far back the budget / GRN / invoice-line mirror reaches.
+ *
+ * Scoped to the current financial year from April rather than all history: db_bill holds
+ * 85,463 GRN entries and 18,433 budget rows going back years, and the P&L only works the
+ * open year. Override with --from=YYYY-MM.
+ *
+ * Both a finance-year filter (pushed to db_bill, so the rows never cross the network) and
+ * a period_code floor (applied here, because the two systems disagree about month labels)
+ * are used. The finance-year filter alone would let Jan-Mar of the SAME finance year
+ * through, which are calendar months BEFORE the April start.
+ */
+function financeYearOf(periodCode) {
+  const [y, m] = String(periodCode).split('-').map(Number);
+  const startYear = m >= 4 ? y : y - 1;
+  return `${startYear}-${String((startYear + 1) % 100).padStart(2, '0')}`;
+}
+
+function currentFinanceYearStart() {
+  const now = new Date();
+  const year = now.getUTCMonth() + 1 >= 4 ? now.getUTCFullYear() : now.getUTCFullYear() - 1;
+  return `${year}-04`;
+}
+
+const FROM_PERIOD = process.argv.find(a => a.startsWith('--from='))?.split('=')[1]
+  ?? currentFinanceYearStart();
+const FROM_FINANCE_YEAR = financeYearOf(FROM_PERIOD);
+
+/** True when a row belongs on or after the cutoff. Rows with no derivable period are kept
+ *  and flagged by period_code IS NULL rather than dropped — losing them silently would be
+ *  worse than carrying them. */
+function inScope(periodCode) {
+  return periodCode === null || periodCode >= FROM_PERIOD;
+}
+
+/**
+ * One period_code ('2026-06') from db_bill's three different month dialects.
+ *
+ *   tbl_invoice.month            'Jun-26'
+ *   inv_particulars.month_for    'Jun'
+ *   expense_master               FinanceYear '2026-27' + FinanceMonth 'Jun'
+ *
+ * Deriving it once here means nothing downstream has to guess which dialect a row speaks.
+ * An Indian finance year starts in April, so Jan-Mar belong to the SECOND calendar year of
+ * '2026-27' — getting that wrong would file three months against the wrong year.
+ */
+function toPeriodCode(financeYear, monthLabel) {
+  const raw = String(monthLabel ?? '').trim().toLowerCase();
+  if (!raw) return null;
+  const mon = MONTH_NUM[raw.slice(0, 3)];
+  if (!mon) return null;
+
+  // 'Jun-26' carries its own year; trust it over the finance year.
+  const suffix = raw.match(/-(\d{2})$/);
+  if (suffix) return `20${suffix[1]}-${mon}`;
+
+  const fy = String(financeYear ?? '').trim();
+  const start = fy.match(/^(\d{4})/);
+  if (!start) return null;
+  const startYear = Number(start[1]);
+  const monthNum = Number(mon);
+  return `${monthNum >= 4 ? startYear : startYear + 1}-${mon}`;
+}
+
+/**
+ * Lines the source itself calls seat-priced.
+ *
+ * Only these may be read as a seat rate. Even here `rate` is not reliably per-seat —
+ * BSS/OB/NOIDA-DD/993 billed 38,000 x 2 in June and 76,000 x 1 in July for the same value —
+ * so this marks candidates for the P&L to use, not a guarantee.
+ */
+function isSeatLine(service, particulars) {
+  const hay = `${service ?? ''} ${particulars ?? ''}`.toLowerCase();
+  return /seat/.test(hay) ? 1 : 0;
 }
 
 function log(msg) {
@@ -333,6 +451,187 @@ async function syncInvoices(hrms, bill) {
 
 // ── main ──────────────────────────────────────────────────────────────────────
 
+// ── Sync 5: expense head / sub-head masters ───────────────────────────────────
+
+/**
+ * Without these, head_id on the budget and GRN snapshots is an opaque string.
+ *
+ * The ids are copied VERBATIM as text. They are unique as strings (52 of 52) but collapse
+ * to 31 as integers, because zero-padded and unpadded forms coexist and mean different
+ * heads: '000001' is Communication & Connectivity while '1' is Security Service Charges.
+ * Any numeric cast merges them and mislabels every cost posted against them.
+ */
+async function syncExpenseHeads(hrms, bill) {
+  log('Sync 5: populating finance_expense_head_snapshot from db_bill.tbl_bgt_expense*master ...');
+  const now = new Date();
+
+  const [heads] = await bill.query(
+    'SELECT HeadingId, HeadingDesc, close_status FROM tbl_bgt_expenseheadingmaster');
+  const [subs] = await bill.query(
+    'SELECT SubHeadingId, HeadingId, SubHeadingDesc, sub_close_status FROM tbl_bgt_expensesubheadingmaster');
+
+  const rows = [
+    ...heads.map(r => ({
+      bill_source_id: String(r.HeadingId), head_type: 'head', parent_head_id: null,
+      head_name: trim(r.HeadingDesc), active_status: r.close_status === 1 ? 1 : 0, synced_at: now,
+    })),
+    ...subs.map(r => ({
+      bill_source_id: String(r.SubHeadingId), head_type: 'subhead', parent_head_id: String(r.HeadingId),
+      head_name: trim(r.SubHeadingDesc), active_status: r.sub_close_status === 1 ? 1 : 0, synced_at: now,
+    })),
+  ];
+
+  const n = await insertBatch(hrms, 'finance_expense_head_snapshot', rows,
+    ['bill_source_id', 'head_type', 'parent_head_id', 'head_name', 'active_status', 'synced_at'],
+    ['parent_head_id', 'head_name', 'active_status', 'synced_at']);
+  log(`  finance_expense_head_snapshot: ${n} rows (${heads.length} heads, ${subs.length} sub-heads)`);
+}
+
+// ── Sync 6: budget ────────────────────────────────────────────────────────────
+
+async function syncBudget(hrms, bill) {
+  log('Sync 6: populating finance_budget_snapshot from db_bill.expense_master ...');
+  const now = new Date();
+
+  const [src] = await bill.query(
+    `SELECT m.Id, m.BranchId, m.Branch, m.EntryNo, m.FinanceYear, m.FinanceMonth,
+            m.HeadId, m.SubHeadId, m.Amount, m.expense_status, m.EntryStatus,
+            m.ApproveDate1, m.ApproveDate2, m.ApproveDate3, m.ApproveDate4, m.ApproveDate5,
+            m.objective, m.Description_Det, m.createdate
+       FROM expense_master m WHERE m.FinanceYear >= ? ORDER BY m.Id`, [FROM_FINANCE_YEAR]);
+  log(`  db_bill.expense_master rows from ${FROM_FINANCE_YEAR}: ${src.length}`);
+
+  const rows = src.map(r => ({
+    bill_source_id: r.Id,
+    branch_source_id: r.BranchId ?? null,
+    branch_name: trim(r.Branch),
+    entry_no: trim(r.EntryNo),
+    finance_year: trim(r.FinanceYear),
+    finance_month: trim(r.FinanceMonth),
+    period_code: toPeriodCode(r.FinanceYear, r.FinanceMonth),
+    head_id: trim(r.HeadId),
+    sub_head_id: trim(r.SubHeadId),
+    amount: safeDec(r.Amount),
+    expense_status: trim(r.expense_status),
+    entry_status: trim(r.EntryStatus),
+    approve_1_at: safeDateTime(r.ApproveDate1),
+    approve_2_at: safeDateTime(r.ApproveDate2),
+    approve_3_at: safeDateTime(r.ApproveDate3),
+    approve_4_at: safeDateTime(r.ApproveDate4),
+    approve_5_at: safeDateTime(r.ApproveDate5),
+    objective: trim(r.objective),
+    description_det: trim(r.Description_Det),
+    source_created_at: safeDateTime(r.createdate),
+    synced_at: now,
+  }));
+
+  const cols = ['bill_source_id','branch_source_id','branch_name','entry_no','finance_year',
+    'finance_month','period_code','head_id','sub_head_id','amount','expense_status','entry_status',
+    'approve_1_at','approve_2_at','approve_3_at','approve_4_at','approve_5_at','objective',
+    'description_det','source_created_at','synced_at'];
+  const scoped = rows.filter(r => inScope(r.period_code));
+  const n = await insertBatch(hrms, 'finance_budget_snapshot', scoped, cols, cols.slice(1));
+  log(`  finance_budget_snapshot: ${n} rows (from ${FROM_PERIOD}; ${rows.length - scoped.length} older rows skipped)`);
+}
+
+// ── Sync 7: GRN / expense entries ─────────────────────────────────────────────
+
+async function syncGrnEntries(hrms, bill) {
+  log('Sync 7: populating grn_entry_snapshot from db_bill.expense_entry_master ...');
+  const now = new Date();
+
+  const [src] = await bill.query(
+    `SELECT e.Id, e.GrnNo, e.BranchId, e.Vendor, e.FinanceYear, e.FinanceMonth,
+            e.HeadId, e.SubHeadId, e.Amount, e.CGST, e.SGST, e.IGST,
+            e.ExpenseDate, e.bill_no, e.bill_date, e.EntryStatus, e.grn_status,
+            e.Reject, e.RejectDate, e.ApprovalDate, e.approved_by_ph_date, e.approved_by_fh_date,
+            e.Description, e.createdate
+       FROM expense_entry_master e WHERE e.FinanceYear >= ? ORDER BY e.Id`, [FROM_FINANCE_YEAR]);
+  log(`  db_bill.expense_entry_master rows from ${FROM_FINANCE_YEAR}: ${src.length}`);
+
+  const rows = src.map(r => ({
+    bill_source_id: r.Id,
+    grn_no: trim(r.GrnNo),
+    branch_source_id: r.BranchId ?? null,
+    branch_name: null, // resolved from branch_source_id at read time; not stored at source
+    vendor: trim(r.Vendor),
+    finance_year: trim(r.FinanceYear),
+    finance_month: trim(r.FinanceMonth),
+    period_code: toPeriodCode(r.FinanceYear, r.FinanceMonth),
+    head_id: trim(r.HeadId),
+    sub_head_id: trim(r.SubHeadId),
+    amount: safeDec(r.Amount),
+    cgst: safeDec(r.CGST),
+    sgst: safeDec(r.SGST),
+    igst: safeDec(r.IGST),
+    expense_date: trim(r.ExpenseDate),
+    bill_no: trim(r.bill_no),
+    bill_date: trim(r.bill_date),
+    entry_status: trim(r.EntryStatus),
+    grn_status: trim(r.grn_status),
+    reject_flag_raw: r.Reject ?? null,
+    // NOT r.Reject. That flag is 1 on 85,255 of 85,463 rows while only 1,894 carry a
+    // RejectDate and 80,074 carry an ApprovalDate — it is the default state, not a
+    // rejection. Reading the flag would mark 99.8% of GRNs rejected.
+    is_rejected: safeDateTime(r.RejectDate) ? 1 : 0,
+    rejected_at: safeDateTime(r.RejectDate),
+    approved_at: safeDateTime(r.ApprovalDate),
+    approved_by_ph_at: safeDateTime(r.approved_by_ph_date),
+    approved_by_fh_at: safeDateTime(r.approved_by_fh_date),
+    description: trim(r.Description),
+    source_created_at: safeDateTime(r.createdate),
+    synced_at: now,
+  }));
+
+  const cols = ['bill_source_id','grn_no','branch_source_id','branch_name','vendor','finance_year',
+    'finance_month','period_code','head_id','sub_head_id','amount','cgst','sgst','igst',
+    'expense_date','bill_no','bill_date','entry_status','grn_status','reject_flag_raw',
+    'is_rejected','rejected_at','approved_at','approved_by_ph_at','approved_by_fh_at',
+    'description','source_created_at','synced_at'];
+  const scoped = rows.filter(r => inScope(r.period_code));
+  const n = await insertBatch(hrms, 'grn_entry_snapshot', scoped, cols, cols.slice(1));
+  log(`  grn_entry_snapshot: ${n} rows from ${FROM_PERIOD} (${scoped.filter(r => r.is_rejected).length} genuinely rejected)`);
+}
+
+// ── Sync 8: invoice line items — the cost-centre-wise seat rate ────────────────
+
+async function syncInvoiceParticulars(hrms, bill) {
+  log('Sync 8: populating billing_invoice_particular_snapshot from db_bill.inv_particulars ...');
+  const now = new Date();
+
+  const [src] = await bill.query(
+    `SELECT p.id, p.cost_center_id, p.cost_center, p.branch_name, p.fin_year, p.month_for,
+            p.service, p.sub_category, p.particulars, p.rate, p.qty, p.amount, p.createdate
+       FROM inv_particulars p WHERE p.fin_year >= ? ORDER BY p.id`, [FROM_FINANCE_YEAR]);
+  log(`  db_bill.inv_particulars rows from ${FROM_FINANCE_YEAR}: ${src.length}`);
+
+  const rows = src.map(r => ({
+    bill_source_id: r.id,
+    cost_centre_source_id: r.cost_center_id ?? null,
+    cost_centre_code: trim(r.cost_center),
+    branch_name: trim(r.branch_name),
+    finance_year: trim(r.fin_year),
+    month_for: trim(r.month_for),
+    period_code: toPeriodCode(r.fin_year, r.month_for),
+    service: trim(r.service),
+    sub_category: trim(r.sub_category),
+    particulars: trim(r.particulars),
+    rate: safeDec(r.rate),
+    qty: safeDec(r.qty),
+    amount: safeDec(r.amount),
+    is_seat_line: isSeatLine(r.service, r.particulars),
+    source_created_at: safeDateTime(r.createdate),
+    synced_at: now,
+  }));
+
+  const cols = ['bill_source_id','cost_centre_source_id','cost_centre_code','branch_name',
+    'finance_year','month_for','period_code','service','sub_category','particulars',
+    'rate','qty','amount','is_seat_line','source_created_at','synced_at'];
+  const scoped = rows.filter(r => inScope(r.period_code));
+  const n = await insertBatch(hrms, 'billing_invoice_particular_snapshot', scoped, cols, cols.slice(1));
+  log(`  billing_invoice_particular_snapshot: ${n} rows from ${FROM_PERIOD} (${scoped.filter(r => r.is_seat_line).length} seat-priced lines)`);
+}
+
 async function main() {
   const only = process.argv.find(a => a.startsWith('--only='))?.split('=')[1] ?? 'all';
 
@@ -346,6 +645,11 @@ async function main() {
     if (only === 'all' || only === 'clients')      await syncClients(hrms, bill);
     if (only === 'all' || only === 'provision')    await syncProvision(hrms, bill);
     if (only === 'all' || only === 'invoices')     await syncInvoices(hrms, bill);
+    // Heads first: the budget and GRN snapshots reference them.
+    if (only === 'all' || only === 'expense_heads') await syncExpenseHeads(hrms, bill);
+    if (only === 'all' || only === 'budget')        await syncBudget(hrms, bill);
+    if (only === 'all' || only === 'grn')           await syncGrnEntries(hrms, bill);
+    if (only === 'all' || only === 'particulars')   await syncInvoiceParticulars(hrms, bill);
 
     log('Done.');
   } finally {
