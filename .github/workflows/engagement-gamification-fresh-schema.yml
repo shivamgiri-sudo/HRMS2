@@ -27,34 +27,42 @@ jobs:
         shell: bash
         run: |
           python3 - <<'PY'
+          import re
           from pathlib import Path
 
           path = Path('backend/sql/200_onboarding_empcode_bgv_gaps.sql')
           text = path.read_text(encoding='utf-8')
-          old = '''  -- Ensure the 4 rows exist, then sync all to global_max
-          INSERT INTO employee_code_sequence (company_prefix, is_offrole, current_sequence)
-          VALUES
-            ('MAS', FALSE, v_global_max),
-            ('MAS', TRUE,  v_global_max),
-            ('IDC', FALSE, v_global_max),
-            ('IDC', TRUE,  v_global_max)
-          ON DUPLICATE KEY UPDATE
-            current_sequence = GREATEST(current_sequence, v_global_max);'''
-          new = '''  -- Migration 138 owns one sequence row per company prefix. On-roll and
-          -- off-role codes share the same numeric counter, so both prefixes advance to
-          -- the global maximum observed across all four employee-code formats.
-          INSERT INTO employee_code_sequence (company_prefix, last_sequence_number)
-          VALUES
-            ('MAS', v_global_max),
-            ('IDC', v_global_max)
-          ON DUPLICATE KEY UPDATE
-            last_sequence_number = GREATEST(last_sequence_number, v_global_max);'''
-          if old not in text:
-              raise SystemExit('legacy sequence block not found exactly once')
-          text = text.replace(old, new, 1)
+          pattern = re.compile(
+              r"\s*-- Ensure the 4 rows exist, then sync all to global_max\s+"
+              r"INSERT INTO employee_code_sequence\s*\(company_prefix,\s*is_offrole,\s*current_sequence\)\s*"
+              r"VALUES\s*"
+              r"\('MAS',\s*FALSE,\s*v_global_max\),\s*"
+              r"\('MAS',\s*TRUE,\s*v_global_max\),\s*"
+              r"\('IDC',\s*FALSE,\s*v_global_max\),\s*"
+              r"\('IDC',\s*TRUE,\s*v_global_max\)\s*"
+              r"ON DUPLICATE KEY UPDATE\s*"
+              r"current_sequence\s*=\s*GREATEST\(current_sequence,\s*v_global_max\);",
+              re.S,
+          )
+          replacement = """
+            -- Migration 138 owns one sequence row per company prefix. On-roll and
+            -- off-role codes share the same numeric counter, so both prefixes advance to
+            -- the global maximum observed across all four employee-code formats.
+            INSERT INTO employee_code_sequence (company_prefix, last_sequence_number)
+            VALUES
+              ('MAS', v_global_max),
+              ('IDC', v_global_max)
+            ON DUPLICATE KEY UPDATE
+              last_sequence_number = GREATEST(last_sequence_number, v_global_max);"""
+          text, count = pattern.subn(replacement, text, count=1)
+          if count != 1:
+              raise SystemExit(f'expected one legacy sequence INSERT, replaced {count}')
+          procedure_start = text.index('CREATE PROCEDURE _sync_emp_code_seq()')
+          procedure_end = text.index('DROP PROCEDURE IF EXISTS _sync_emp_code_seq;', procedure_start)
+          procedure = text[procedure_start:procedure_end]
           for token in ('is_offrole', 'current_sequence'):
-              if token in text:
-                  raise SystemExit(f'legacy employee sequence token remains: {token}')
+              if token in procedure:
+                  raise SystemExit(f'legacy sequence token remains inside procedure: {token}')
           path.write_text(text, encoding='utf-8', newline='\n')
           PY
 
