@@ -54,6 +54,42 @@ function makeDeps(rows: any[], overrides: Partial<StatementDependencies> = {}): 
 }
 
 describe("pnl-statement.service — transposed statement", () => {
+
+  /**
+   * Which people-cost source a period uses decides reported profit, so it is pinned here.
+   *
+   * The snapshot only holds employees computeRunningSalary can still produce a figure for, and it
+   * cannot for a leaver. April 2026 paid 1,085 people Rs 211.57 lakh; the snapshot held 790 at
+   * Rs 141.23 lakh. Preferring it on a closed month put the missing Rs 70 lakh straight into
+   * operating profit as margin.
+   */
+  describe("people cost source depends on whether the period is closed", () => {
+    const snapshotPeople = {
+      byBranch: new Map(),
+      byProcess: new Map([["p1", { agent_salary: 1, dsc_people: 1, bmc_people: 1 }]]),
+      coverageByProcess: new Map(),
+      coverageByBranch: new Map(),
+    } as any;
+
+    const openPeriod = () => new Date(Date.now() + 5.5 * 60 * 60 * 1000).toISOString().slice(0, 7);
+
+    it("uses the snapshot while the month is still running", async () => {
+      const deps = makeDeps([processRow({})], { getPeopleCost: async () => snapshotPeople });
+      const result = await getStatement({ period: openPeriod() }, "process", deps);
+      const agent = result.rows.find((r) => r.componentKey === "agent_salary");
+      // The snapshot's 1, not the row's 400000.
+      expect(agent?.values.p1).toBe(1);
+    });
+
+    it("ignores the snapshot once the month has closed, using actual payroll instead", async () => {
+      const deps = makeDeps([processRow({})], { getPeopleCost: async () => snapshotPeople });
+      const result = await getStatement({ period: "2026-04" }, "process", deps);
+      const agent = result.rows.find((r) => r.componentKey === "agent_salary");
+      // The row's actual payroll figure, NOT the snapshot's token 1.
+      expect(agent?.values.p1).toBe(400000);
+    });
+  });
+
   it("builds one column per process by default, deriving dsc/ebitda-margin from constituent fields", async () => {
     const rows = [processRow({})];
     const result = await getStatement({ period: "2026-08" }, "process", makeDeps(rows));

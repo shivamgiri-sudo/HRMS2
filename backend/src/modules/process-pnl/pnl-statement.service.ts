@@ -156,12 +156,25 @@ async function buildLobColumns(
  *   Operating Profit = Revenue - Total Cost
  * Percentages are all of revenue, matching the workbook.
  */
+/**
+ * Is this period still running?
+ *
+ * Compared in IST, matching how running-salary.service.ts resolves month boundaries — an hour
+ * either side of midnight UTC would otherwise flip a month a day early and switch the people
+ * cost source under a report someone is reading.
+ */
+function isOpenPeriod(periodCode: string): boolean {
+  const nowIst = new Date(Date.now() + 5.5 * 60 * 60 * 1000);
+  return periodCode >= nowIst.toISOString().slice(0, 7);
+}
+
 function enrichColumn(
   data: Record<string, unknown>,
   key: { branchId?: string | null; processId?: string | null },
   idc: ActualsByKey,
   revenue: ActualsByKey,
-  people: PeopleCostByKey
+  people: PeopleCostByKey,
+  periodOpen: boolean
 ): Record<string, unknown> {
   const pick = (source: ActualsByKey) =>
     (key.processId ? source.byProcess.get(key.processId) : undefined)
@@ -174,13 +187,30 @@ function enrichColumn(
   const recognizedRevenue = existingRevenue > 0 ? existingRevenue : pick(revenue);
   out.recognizedRevenue = recognizedRevenue;
 
-  // The snapshot is authoritative when it has been refreshed for this period: it is the only
-  // source that splits Agent / DSC / BMC from real per-employee running salary. Without it the
-  // upstream row reports the whole people cost as Agent, because a residual rule dumps everything
-  // there when no payroll person matched a process.
+  /*
+   * People cost: the snapshot for an OPEN period, actual payroll for a CLOSED one.
+   *
+   * While a month is running, only the snapshot can answer the question — it holds
+   * earned-till-date per employee, split Agent / DSC / BMC. Without it the upstream row reports
+   * the whole people cost as Agent, because a residual rule dumps everything there when no
+   * payroll person matched a process. That is why it was preferred unconditionally.
+   *
+   * Once a month closes, preferring it is backwards. The snapshot only covers employees
+   * computeRunningSalary can still produce a figure for, and it cannot for a leaver: April 2026
+   * paid 1,085 people Rs 211.57 lakh, and the snapshot held 790 of them at Rs 141.23 lakh. The
+   * missing Rs 70 lakh — a third of the month's people cost — landed in operating profit as if
+   * it were margin. July had the same hole, 1,000 rows against 1,464 people paid. Widening the
+   * snapshot's population recovered only Rs 1.19 lakh of it, because the shortfall is in what
+   * can be recomputed, not in who is considered.
+   *
+   * For a closed month there is no need to recompute anything: salary_prep_line is what was
+   * actually paid, and bpo-pnl.service.ts already reads it. So the snapshot's job ends when the
+   * month does.
+   */
   const snapshot = (key.processId ? people.byProcess.get(key.processId) : undefined)
     ?? (key.branchId ? people.byBranch.get(key.branchId) : undefined);
-  const hasSnapshot = Boolean(snapshot)
+  const hasSnapshot = periodOpen
+    && Boolean(snapshot)
     && (snapshot!.agent_salary + snapshot!.dsc_people + snapshot!.bmc_people) > 0;
 
   const agentSalary = hasSnapshot ? snapshot!.agent_salary : n(out.agentSalary);
@@ -286,6 +316,9 @@ export async function getStatement(
 
   // Indirect cost and driver revenue are keyed by cost centre at source; resolve them per column.
   const periodCode = String(filters.period ?? summary.generatedAt).slice(0, 7);
+  // Resolved once for the whole statement: every column in it belongs to the same period, and
+  // deciding per column would let two columns of one report use different cost sources.
+  const periodOpen = isOpenPeriod(periodCode);
   const [idc, revenue, people] = await Promise.all([
     (deps.getIndirectCost ?? getIndirectCostActuals)(periodCode),
     (deps.getDriverRevenue ?? getDriverRevenueActuals)(periodCode),
@@ -300,7 +333,8 @@ export async function getStatement(
       },
       idc,
       revenue,
-      people
+      people,
+      periodOpen
     );
     // Coverage belongs on the column, not among the money rows: it qualifies how far the whole
     // column can be trusted, and a consumer must be able to see that before reading any figure in it.

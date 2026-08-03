@@ -74,6 +74,20 @@ function makeDeps(rows: any[], overrides: Partial<StatementDependencies> = {}): 
   };
 }
 
+
+/**
+ * The month that is currently open, computed rather than hardcoded.
+ *
+ * These tests used the literal "2026-07", which was the open month when they were written. The
+ * statement now takes people cost from the snapshot only while a period is still running — a
+ * closed month uses actual payroll, because the snapshot cannot produce a figure for anyone who
+ * has since left. So a hardcoded month silently becomes a closed one as time passes and the
+ * assertions invert. IST, matching how the service decides.
+ */
+function openPeriod(): string {
+  return new Date(Date.now() + 5.5 * 60 * 60 * 1000).toISOString().slice(0, 7);
+}
+
 describe("resolveBucket — which P&L line a person's salary belongs to", () => {
   it("honours a seeded classification rule over any inference", () => {
     // The rule is the business's own statement of intent; a designation heuristic must not overrule it.
@@ -134,7 +148,7 @@ describe("pnl-statement — running salary snapshot", () => {
         asOfDate: "2026-07-31",
       }),
     });
-    const result = await getStatement({ period: "2026-07" }, "branch", deps);
+    const result = await getStatement({ period: openPeriod() }, "branch", deps);
     const value = (k: string) => result.rows.find((r) => r.componentKey === k)!.values.b1;
 
     expect(value("agent_salary")).toBe(322_479);
@@ -148,7 +162,7 @@ describe("pnl-statement — running salary snapshot", () => {
   it("keeps the upstream figure when no snapshot has been refreshed for the period", async () => {
     // An un-refreshed period must not silently zero the people cost — that would report the
     // branch's entire revenue as profit.
-    const result = await getStatement({ period: "2026-07" }, "branch", makeDeps([branchRow()]));
+    const result = await getStatement({ period: openPeriod() }, "branch", makeDeps([branchRow()]));
     expect(result.rows.find((r) => r.componentKey === "agent_salary")!.values.b1).toBe(600_000);
   });
 
@@ -163,7 +177,7 @@ describe("pnl-statement — running salary snapshot", () => {
       }),
       getIndirectCost: async () => ({ byBranch: new Map([["b1", 66_500]]), byProcess: new Map() }) as any,
     });
-    const result = await getStatement({ period: "2026-07" }, "branch", deps);
+    const result = await getStatement({ period: openPeriod() }, "branch", deps);
     const value = (k: string) => result.rows.find((r) => r.componentKey === k)!.values.b1;
 
     expect(value("total_cost")).toBe(322_479 + 118_207 + 81_414 + 66_500);
@@ -183,7 +197,7 @@ describe("pnl-statement — running salary snapshot", () => {
         asOfDate: "2026-07-31",
       }),
     });
-    const result = await getStatement({ period: "2026-07" }, "branch", deps);
+    const result = await getStatement({ period: openPeriod() }, "branch", deps);
     const column = result.columns.find((c) => c.id === "b2") as any;
 
     expect(column.peopleCostCoveragePct).toBe(0);
@@ -203,7 +217,7 @@ describe("pnl-statement — running salary snapshot", () => {
         asOfDate: null,
       }),
     });
-    const result = await getStatement({ period: "2026-08" }, "branch", deps);
+    const result = await getStatement({ period: openPeriod() }, "branch", deps);
     expect((result.columns.find((c) => c.id === "b1") as any).peopleCostCoveragePct).toBeUndefined();
   });
 
@@ -217,7 +231,7 @@ describe("pnl-statement — running salary snapshot", () => {
         asOfDate: "2026-07-31",
       }),
     });
-    const result = await getStatement({ period: "2026-07" }, "branch", deps);
+    const result = await getStatement({ period: openPeriod() }, "branch", deps);
     expect((result.columns.find((c) => c.id === "b1") as any).peopleCostCoveragePct).toBe(100);
   });
 });

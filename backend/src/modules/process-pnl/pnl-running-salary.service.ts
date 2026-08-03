@@ -74,7 +74,24 @@ export function resolveBucket(row: {
   return isSupportRole(row.department_name, row.designation_name) ? "dsc_people" : "agent_salary";
 }
 
-async function loadEmployees(branchId?: string, employeeId?: string): Promise<EmployeeRow[]> {
+/**
+ * Everyone whose cost belongs to this period.
+ *
+ * Active headcount alone is wrong, and gets more wrong the older the period. April 2026 paid
+ * 1,085 people; 317 of them had left by August, so filtering on active_status captured 693 and
+ * reported Rs 140.04 lakh of gross against Rs 211.57 lakh actually paid — a third of the cost
+ * missing, which lands directly in operating profit as if it were margin. July's snapshot had
+ * the same hole: 1,000 rows against 1,464 people paid.
+ *
+ * A leaver's salary is still that month's cost. So the set is: currently active, OR paid in
+ * the period being snapshotted. The first half keeps a new joiner with no payroll line yet
+ * visible (they snapshot as zero rather than vanishing); the second recovers the leavers.
+ */
+async function loadEmployees(
+  periodCode: string,
+  branchId?: string,
+  employeeId?: string,
+): Promise<EmployeeRow[]> {
   const params: unknown[] = [];
   let branchClause = "";
   if (branchId) {
@@ -104,8 +121,13 @@ async function loadEmployees(branchId?: string, employeeId?: string): Promise<Em
        FROM employees e
        LEFT JOIN department_master dep ON dep.id = e.department_id
        LEFT JOIN designation_master des ON des.id = e.designation_id
-      WHERE e.active_status = 1 ${branchClause}`,
-    params
+      WHERE (e.active_status = 1
+             OR EXISTS (SELECT 1
+                          FROM salary_prep_line spl
+                          JOIN salary_prep_run spr ON spr.id = spl.run_id
+                         WHERE spl.employee_id = e.id AND spr.run_month = ?))
+        ${branchClause}`,
+    [periodCode, ...params]
   );
   return rows;
 }
@@ -199,7 +221,7 @@ export async function refreshRunningSalarySnapshot(
   const asOfDate = options.asOfDate
     ?? new Date(Date.now() + 5.5 * 60 * 60 * 1000).toISOString().slice(0, 10);
 
-  const employees = await loadEmployees(options.branchId, options.employeeId);
+  const employees = await loadEmployees(periodCode, options.branchId, options.employeeId);
   const byBucket: Record<PnlPeopleBucket, number> = {
     agent_salary: 0,
     dsc_people: 0,
