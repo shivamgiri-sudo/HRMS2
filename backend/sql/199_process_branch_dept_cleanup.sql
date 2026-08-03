@@ -372,14 +372,31 @@ WHERE NOT EXISTS (
 -- -------------------------------------------------------
 -- STEP 5: Backfill employees.process_id from cost_center_code
 -- -------------------------------------------------------
-UPDATE employees e
-JOIN integration_process_alias ipa ON ipa.source_value = e.cost_center_code
-SET e.process_id = ipa.process_id, e.updated_at = NOW()
-WHERE e.employment_status = 'active'
-  AND e.process_id IS NULL
-  AND e.cost_center_code IS NOT NULL
-  AND e.cost_center_code != ''
-  AND ipa.active_status = 1;
+-- employees.cost_center_code does not exist. The American spelling appears nowhere else in
+-- sql/ — every other reference in this schema is cost_centre_id, cost_centre_master,
+-- cost_centre_name — and no migration ever creates a cost_center_code column. This backfill
+-- has therefore never run anywhere, and on a fresh database it stops the chain outright:
+--
+--   Unknown column 'e.cost_center_code' in 'where clause'
+--
+-- Guarded rather than re-spelled. cost_centre_id is a CHAR(36) foreign key into
+-- cost_centre_master, not a code string that would match integration_process_alias.source_value,
+-- so pointing the join at it would be a guess about intent rather than a fix. Whether this
+-- backfill was meant to read a code column that was never added, or was superseded, is an
+-- owner question — recorded in docs/release/migration-reconciliation.md.
+SET @has_ccc = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+                 WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='employees' AND COLUMN_NAME='cost_center_code');
+SET @sql = IF(@has_ccc > 0,
+  'UPDATE employees e
+   JOIN integration_process_alias ipa ON ipa.source_value = e.cost_center_code
+   SET e.process_id = ipa.process_id, e.updated_at = NOW()
+   WHERE e.employment_status = ''active''
+     AND e.process_id IS NULL
+     AND e.cost_center_code IS NOT NULL
+     AND e.cost_center_code != ''''
+     AND ipa.active_status = 1',
+  'SELECT ''employees.cost_center_code does not exist; process_id backfill skipped'' AS n');
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 -- -------------------------------------------------------
 -- STEP 6: Deactivate zero-employee duplicate branch_master rows
