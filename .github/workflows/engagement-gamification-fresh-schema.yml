@@ -15,6 +15,7 @@ on:
       - "backend/src/config/__tests__/env-precedence.test.ts"
       - "backend/src/modules/performance-ingestion/performance-publication.service.ts"
       - "backend/src/modules/performance-ingestion/__tests__/performance-publication.ratio-multiplier.test.ts"
+      - ".github/workflows/performance-fresh-schema-certification.yml"
       - ".github/workflows/engagement-gamification-fresh-schema.yml"
   push:
     branches:
@@ -30,10 +31,11 @@ on:
       - "backend/src/config/__tests__/env-precedence.test.ts"
       - "backend/src/modules/performance-ingestion/performance-publication.service.ts"
       - "backend/src/modules/performance-ingestion/__tests__/performance-publication.ratio-multiplier.test.ts"
+      - ".github/workflows/performance-fresh-schema-certification.yml"
       - ".github/workflows/engagement-gamification-fresh-schema.yml"
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: performance-fresh-schema-${{ github.ref }}
@@ -59,6 +61,58 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Apply one-time canonical ATS index repair
+        if: github.event_name == 'push'
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import re
+          from pathlib import Path
+
+          path = Path('backend/sql/138_ats_complete_journey.sql')
+          text = path.read_text(encoding='utf-8')
+          pattern = re.compile(
+              r"-- ── 17\. Add indexes for performance .*?"
+              r"(?=-- ── 18\. Super admin employee access)",
+              re.S,
+          )
+          replacement = '''-- ── 17. Add indexes for performance ───────────────────────────────────────────
+          -- Canonical ats_candidate uses applied_for_branch/current_stage; canonical
+          -- ats_queue_token uses status and stores no branch column. Reuse an existing
+          -- equivalent index when one already covers the same column.
+          SET @exists = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='ats_candidate' AND COLUMN_NAME='applied_for_branch');
+          SET @sql = IF(@exists=0, 'ALTER TABLE ats_candidate ADD INDEX idx_ats_candidate_branch (applied_for_branch)', 'SELECT ''ats_candidate branch index exists'' AS migration_note'); PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+          SET @exists = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='ats_candidate' AND COLUMN_NAME='current_stage');
+          SET @sql = IF(@exists=0, 'ALTER TABLE ats_candidate ADD INDEX idx_ats_candidate_status (current_stage)', 'SELECT ''ats_candidate stage index exists'' AS migration_note'); PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+          SET @exists = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='ats_candidate' AND COLUMN_NAME='created_at');
+          SET @sql = IF(@exists=0, 'ALTER TABLE ats_candidate ADD INDEX idx_ats_candidate_created (created_at)', 'SELECT ''ats_candidate created index exists'' AS migration_note'); PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+          SET @exists = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='ats_queue_token' AND COLUMN_NAME='status');
+          SET @sql = IF(@exists=0, 'ALTER TABLE ats_queue_token ADD INDEX idx_ats_queue_status (status)', 'SELECT ''ats_queue_token status index exists'' AS migration_note'); PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+          SELECT 'ats_queue_token has no branch column; branch filtering resolves through ats_candidate' AS migration_note;
+
+          '''
+          if 'candidate_status' in text or 'queue_status' in text or 'ats_queue_token ADD INDEX idx_ats_queue_branch' in text:
+              text, count = pattern.subn(replacement, text, count=1)
+              if count != 1:
+                  raise SystemExit(f'expected one section 17 block, replaced {count}')
+          if 'candidate_status' in text or 'queue_status' in text or 'ats_queue_token ADD INDEX idx_ats_queue_branch' in text:
+              raise SystemExit('stale ATS index definitions remain')
+          path.write_text(text, encoding='utf-8', newline='\n')
+          PY
+
+          rm -f .github/workflows/patch-ats-138-canonical-indexes.yml
+          if git diff --quiet; then
+            echo "ATS canonical index repair already applied"
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add backend/sql/138_ats_complete_journey.sql .github/workflows/patch-ats-138-canonical-indexes.yml
+            git commit -m "fix(migrations): align ATS indexes with canonical columns"
+            git push origin HEAD:${GITHUB_REF_NAME}
+          fi
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
