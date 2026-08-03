@@ -193,8 +193,11 @@ resignationRouter.post(
     }
     const id = randomUUID();
     await db.execute(
+      // offered_at does not exist; the column is offer_date. Every retention offer therefore
+      // threw ER_BAD_FIELD_ERROR and none was ever recorded (the table holds 0 rows).
+      // Verified against production: this form succeeds where the previous one throws.
       `INSERT INTO retention_offer
-         (id, exit_request_id, offer_type, offer_details, offered_by, offered_at, employee_response)
+         (id, exit_request_id, offer_type, offer_details, offered_by, offer_date, employee_response)
        VALUES (?, ?, ?, ?, ?, NOW(), 'pending')`,
       [id, req.params.exitId, offer_type, JSON.stringify(offer_details ?? {}), req.authUser!.id]
     );
