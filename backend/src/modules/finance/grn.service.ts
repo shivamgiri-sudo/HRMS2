@@ -607,7 +607,12 @@ export const grnService = {
     const limit = Math.min(100, Math.max(1, filters.limit ?? 30));
     const offset = (page - 1) * limit;
 
-    const [rows] = await db.execute<RowDataPacket[]>(
+    // mysql2 3.22.3 throws ER_WRONG_ARGUMENTS (errno 1210) binding LIMIT/OFFSET
+    // via execute()'s prepared-statement protocol on this server — reproduced
+    // even for a trivial single-column, no-join query. limit/offset are
+    // server-clamped numbers (Math.min/Math.max above), never raw user input,
+    // so query()'s text protocol is safe here.
+    const [rows] = await db.query<RowDataPacket[]>(
       `SELECT g.*,
               bm.branch_name,
               pm.process_name,

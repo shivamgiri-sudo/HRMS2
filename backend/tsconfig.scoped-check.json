@@ -27,12 +27,7 @@
 {
   "extends": "./tsconfig.json",
   "include": [
-    "src/modules/quality-dashboard/quality-target-transition.ts",
-    "src/modules/quality-dashboard/quality-target.service.ts",
-    "src/modules/quality-dashboard/quality-target-simulation.ts",
-    "src/modules/quality-dashboard/quality-governance.routes.ts",
-    "src/modules/quality-dashboard/weekly-coaching.service.ts",
-    "src/db/runPendingMigrations.ts"
+    "src/modules/finance/grn.service.ts"
   ],
   "compilerOptions": { "noEmit": true }
 }
