@@ -603,7 +603,10 @@ router.get("/report/full", requireAuth, requireRole("admin", "hr"), h(async (req
       [candidateId]
     ),
     db.execute<RowDataPacket[]>(
-      `SELECT * FROM candidate_onboarding_qualification WHERE candidate_id = ? ORDER BY year_of_passing DESC`,
+      // passed_out_year, not year_of_passing. This query sits in the Promise.all
+      // below, so a bad column here 500s the whole endpoint and the BGV report
+      // PDF never downloads for anyone.
+      `SELECT * FROM candidate_onboarding_qualification WHERE candidate_id = ? ORDER BY passed_out_year DESC`,
       [candidateId]
     ),
     db.execute<RowDataPacket[]>(

@@ -79,6 +79,35 @@ const safeText = (value: any): string => {
   return String(value);
 };
 
+/**
+ * One row of the Educational Qualifications table.
+ *
+ * `candidate_onboarding_qualification` does not use the names this report
+ * originally reached for. The real columns are `qualification`,
+ * `specialization_course_name`, `passed_out_year`, `passed_out_percentage` and
+ * `board_type` — so Degree, Board, Field, Year and Marks printed blank on every
+ * report while Institution, the one name that happened to match, printed fine.
+ *
+ * The legacy names are kept as fallbacks: they cost nothing, and this report is
+ * also rendered from data assembled elsewhere.
+ *
+ * Shared with NativeBGVReportView so the on-screen report and the PDF cannot
+ * drift apart — they are meant to be the same document.
+ */
+export function qualificationRow(q: any): {
+  degree: string; institution: string; board: string;
+  field: string; year: string; marks: string;
+} {
+  return {
+    degree: safeText(q?.qualification ?? q?.degree_type),
+    institution: safeText(q?.institution_name),
+    board: safeText(q?.board_type ?? q?.board_university),
+    field: safeText(q?.specialization_course_name ?? q?.field_of_study),
+    year: safeText(q?.passed_out_year ?? q?.year_of_passing),
+    marks: safeText(q?.passed_out_percentage ?? q?.marks_percentage ?? q?.marks_cgpa),
+  };
+}
+
 const boolText = (value: any): string => {
   return value ? "Yes" : "No";
 };
@@ -449,14 +478,12 @@ export async function generateBGVReportPDF(data: BGVReportData): Promise<jsPDF> 
   doc.text("Educational Qualifications", 15, currentY);
   currentY += 2;
 
-  const qualRows = qualifications.length > 0 ? qualifications.map((q: any) => [
-    safeText(q.degree_type),
-    safeText(q.institution_name),
-    safeText(q.board_university),
-    safeText(q.field_of_study),
-    safeText(q.year_of_passing),
-    safeText(q.marks_percentage || q.marks_cgpa),
-  ]) : [["No qualifications recorded", "-", "-", "-", "-", "-"]];
+  const qualRows = qualifications.length > 0
+    ? qualifications.map((q: any) => {
+        const row = qualificationRow(q);
+        return [row.degree, row.institution, row.board, row.field, row.year, row.marks];
+      })
+    : [["No qualifications recorded", "-", "-", "-", "-", "-"]];
 
   autoTable(doc, {
     startY: currentY,
