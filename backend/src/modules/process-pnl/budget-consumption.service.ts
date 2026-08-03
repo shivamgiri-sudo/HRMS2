@@ -9,7 +9,7 @@ function roundQuantity(value: number) {
   return Math.round((Number(value) + Number.EPSILON) * 10_000) / 10_000;
 }
 
-async function lockActiveBudgetLine(connection: PoolConnection, lineId: string) {
+export async function lockActiveBudgetLine(connection: PoolConnection, lineId: string) {
   const [rows] = await connection.execute<RowDataPacket[]>(
     `SELECT l.*, h.status AS budget_status, h.branch_id, h.period_code
        FROM finance_budget_line l

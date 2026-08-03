@@ -14,6 +14,7 @@ import { bpoPnlRouter } from "./bpo-pnl.routes.js";
 import { canonicalPnlService } from "./canonical-pnl.service.js";
 import { pnlBulkUploadRouter } from "./pnl-bulk-upload.routes.js";
 import { branchBudgetService, getCompanyBudgetConsolidation } from "./branch-budget.service.js";
+import { budgetTopupService } from "./budget-topup.service.js";
 import { branchBudgetAllocationService } from "./branch-budget-allocation.service.js";
 import { meterService } from "./meter.service.js";
 import { costCentreMappingService } from "./cost-centre-mapping.service.js";
@@ -66,6 +67,10 @@ const BUDGET_REVIEW_ROLES = ["branch_head", "finance_head", "accounts_head", "su
 // Company-wide, all-branches budget consolidation (PR 11) — deliberately excludes
 // branch_admin/branch_head/finance (branch-scoped roles that shouldn't see all-branch data).
 const BUDGET_CONSOLIDATION_ROLES = ["super_admin", "admin", "ceo", "coo", "finance_head", "accounts_head"] as const;
+// Whoever hits "exceeds available budget" while raising/approving a GRN — the branch side
+// of budget work, not the review side.
+const TOPUP_CREATE_ROLES = ["super_admin", "admin", "branch_admin", "branch_head"] as const;
+const TOPUP_REVIEW_ROLES = ["branch_head", "finance_head", "accounts_head", "super_admin"] as const;
 
 function actor(req: AuthenticatedRequest) {
   return {
@@ -257,6 +262,104 @@ router.post(
     // Keep head/sub-head coverage in step with the edited line set, exactly as the create path does.
     await budgetCoverageService.syncPlannedFromLines(req.params.id, user.id);
     res.json({ success: true, data: await branchBudgetService.get(req.params.id) });
+  })
+);
+
+// Budget top-up requests: the formal "ask for more against this exact line" path, gated by
+// the same branch_head -> finance_head chain as everything else here. See budget-topup.service.ts.
+router.get(
+  "/pnl/budget-topups",
+  requireRole(...TOPUP_REVIEW_ROLES, ...TOPUP_CREATE_ROLES),
+  h(async (req, res) => {
+    const user = actor(req);
+    const branchId = await resolveFinanceBranchScope({
+      userId: user.id,
+      primaryRole: user.role,
+      userRoles: user.roles,
+      requestedBranchId: req.query.branchId ? String(req.query.branchId) : undefined,
+    });
+    const data = await budgetTopupService.list({
+      branchId,
+      status: req.query.status ? String(req.query.status) : undefined,
+    });
+    res.json({ success: true, data });
+  })
+);
+
+router.get(
+  "/pnl/budget-topups/:id",
+  requireRole(...TOPUP_REVIEW_ROLES, ...TOPUP_CREATE_ROLES),
+  h(async (req, res) => {
+    const user = actor(req);
+    const data = await budgetTopupService.get(req.params.id);
+    await assertFinanceRecordBranch({
+      userId: user.id,
+      primaryRole: user.role,
+      userRoles: user.roles,
+      recordBranchId: String((data as any).branch_id),
+    });
+    res.json({ success: true, data });
+  })
+);
+
+router.post(
+  "/pnl/budget-topups",
+  requireWriteAccess,
+  requireRole(...TOPUP_CREATE_ROLES),
+  h(async (req, res) => {
+    const user = actor(req);
+    const budgetLineId = String(req.body?.budgetLineId ?? "");
+    if (!budgetLineId) throw new Error("A budget line is required");
+    const lineBranchId = await budgetTopupService.getLineBranch(budgetLineId);
+    await assertFinanceRecordBranch({
+      userId: user.id,
+      primaryRole: user.role,
+      userRoles: user.roles,
+      recordBranchId: lineBranchId,
+    });
+    const data = await budgetTopupService.create(
+      {
+        budgetLineId,
+        requestedAmount: Number(req.body?.requestedAmount ?? 0),
+        requestedQuantity: Number(req.body?.requestedQuantity ?? 0),
+        reason: String(req.body?.reason ?? ""),
+      },
+      user.id,
+      user.role
+    );
+    res.status(201).json({ success: true, data });
+  })
+);
+
+router.post(
+  "/pnl/budget-topups/:id/review",
+  requireWriteAccess,
+  requireRole(...TOPUP_REVIEW_ROLES),
+  h(async (req, res) => {
+    const user = actor(req);
+    const request = await budgetTopupService.get(req.params.id);
+    await assertFinanceRecordBranch({
+      userId: user.id,
+      primaryRole: user.role,
+      userRoles: user.roles,
+      recordBranchId: String((request as any).branch_id),
+    });
+    const decision = String(req.body?.decision ?? "") as "approve" | "reject";
+    if (!["approve", "reject"].includes(decision)) throw new Error("Invalid top-up decision");
+    const effectiveRole = resolveFinanceStageRole({
+      primaryRole: user.role,
+      userRoles: user.roles,
+      currentStatus: String((request as any).status ?? ""),
+      workflow: "grn", // same two-stage shape: submitted -> branch_head -> finance_head
+    });
+    const data = await budgetTopupService.review(
+      req.params.id,
+      decision,
+      user.id,
+      effectiveRole,
+      req.body?.remarks ? String(req.body.remarks) : undefined
+    );
+    res.json({ success: true, data });
   })
 );
 
