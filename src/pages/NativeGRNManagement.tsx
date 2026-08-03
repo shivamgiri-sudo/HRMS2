@@ -1,4 +1,5 @@
 import { BudgetLinkedGrnForm } from "@/components/finance/grn/BudgetLinkedGrnForm";
+import { GrnHistoryTable } from "@/components/finance/grn/GrnHistoryTable";
 import { GrnLobAttributionQueue } from "@/components/finance/grn/GrnLobAttributionQueue";
 import { SmartGrnApprovalQueue } from "@/components/finance/grn/SmartGrnApprovalQueue";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
@@ -38,6 +39,7 @@ export default function NativeGRNManagement() {
             {canReview && (
               <TabsTrigger value="queue" className="h-7 text-xs">Approval Queue</TabsTrigger>
             )}
+            <TabsTrigger value="history" className="h-7 text-xs">History</TabsTrigger>
           </TabsList>
           <TabsContent value="create" className="m-0 flex-1 overflow-auto p-0">
             <BudgetLinkedGrnForm />
@@ -50,6 +52,9 @@ export default function NativeGRNManagement() {
               <SmartGrnApprovalQueue />
             </TabsContent>
           )}
+          <TabsContent value="history" className="m-0 flex-1 overflow-auto">
+            <GrnHistoryTable />
+          </TabsContent>
         </Tabs>
       </div>
     </DashboardLayout>
