@@ -40,7 +40,23 @@ CREATE TABLE IF NOT EXISTS salary_employee_verification (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- Add salary verification completion tracking to the readiness table
-ALTER TABLE payroll_branch_readiness
-  ADD COLUMN IF NOT EXISTS salary_verification_done TINYINT(1) NOT NULL DEFAULT 0,
-  ADD COLUMN IF NOT EXISTS salary_verification_at   DATETIME,
-  ADD COLUMN IF NOT EXISTS salary_verification_by   VARCHAR(36);
+-- MySQL 8.0 does not support ADD COLUMN IF NOT EXISTS; use conditional procedure
+DROP PROCEDURE IF EXISTS _add_salary_verify_cols;
+DELIMITER $$
+CREATE PROCEDURE _add_salary_verify_cols()
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = 'payroll_branch_readiness'
+       AND COLUMN_NAME = 'salary_verification_done'
+  ) THEN
+    ALTER TABLE payroll_branch_readiness
+      ADD COLUMN salary_verification_done TINYINT(1) NOT NULL DEFAULT 0,
+      ADD COLUMN salary_verification_at   DATETIME,
+      ADD COLUMN salary_verification_by   VARCHAR(36);
+  END IF;
+END$$
+DELIMITER ;
+CALL _add_salary_verify_cols();
+DROP PROCEDURE IF EXISTS _add_salary_verify_cols;
