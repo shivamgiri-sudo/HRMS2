@@ -164,4 +164,26 @@ router.get("/export-templates", requireRole("admin", "super_admin", "payroll_hr"
   return res.json({ success: true, data });
 }));
 
+// GET /api/payroll/pf/ecr-monthly?month=YYYY-MM&establishmentId=<uuid>
+router.get(
+  "/ecr-monthly",
+  requireRole("admin", "super_admin", "payroll_hr", "payroll", "payroll_head", "finance"),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const { month, establishmentId } = req.query as Record<string, string>;
+    if (!month || !/^\d{4}-\d{2}$/.test(month)) {
+      return res.status(400).json({ success: false, error: "month must be YYYY-MM" });
+    }
+    if (!establishmentId) {
+      return res.status(400).json({ success: false, error: "establishmentId is required" });
+    }
+    const result = await pfCreationService.generateEcrFile(month, establishmentId);
+    res.setHeader("Content-Type", "text/plain; charset=utf-8");
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="${result.filename}"`
+    );
+    return res.send(result.content);
+  })
+);
+
 export { router as pfCreationRouter };
