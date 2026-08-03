@@ -9,7 +9,17 @@ CREATE PROCEDURE _289_add_col(
   IN col_def TEXT
 )
 BEGIN
-  IF NOT EXISTS (
+  -- The table must exist as well as the column being absent. A column count of zero is
+  -- also what a missing table looks like, so without the first condition this helper fires
+  -- an ALTER at a table that is not there and stops the whole migration chain — which is
+  -- what candidate_onboarding_experience did here on every fresh build.
+  --
+  -- Fixing the helper covers all 60-odd CALL sites at once, which is the advantage of the
+  -- pattern; the same blind spot written inline would need each one edited.
+  IF EXISTS (
+    SELECT 1 FROM INFORMATION_SCHEMA.TABLES
+    WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = tbl
+  ) AND NOT EXISTS (
     SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS
     WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = tbl AND COLUMN_NAME = col
   ) THEN
