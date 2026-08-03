@@ -18,6 +18,7 @@ import { db } from "../../../db/mysql.js";
 import { luckpayClient, type LuckpayStatusResult, type LuckpayDocumentResult } from "./luckpay.client.js";
 import { sanitizeProviderPayload } from "./luckpay.transport.js";
 import { withProviderFailureLogged, writeBgvApiLog } from "../../ats/bgv-api-log.service.js";
+import { syncBridgeDigilockerStatus } from "../../ats/onboarding-bridge-status.js";
 
 /** Same private (never web-served) location the onboarding uploader writes to. */
 const STORAGE_DIR = path.resolve(process.cwd(), "private-storage/onboarding-documents");
@@ -325,6 +326,12 @@ export async function syncDigilockerStatus(candidateId: string): Promise<SyncOut
       WHERE candidate_id = ?`,
     [JSON.stringify({ count: storedFiles.length, ...documentMeta }), candidateId],
   ).catch(() => undefined);
+
+  // And onto the onboarding bridge, which uses its own vocabulary
+  // ('documents_received', not 'passed'). Nothing wrote this column before, so
+  // the digilockerDone gate in onboarding-full.service.ts could never open no
+  // matter how many candidates finished.
+  await syncBridgeDigilockerStatus(db, candidateId, "completed");
 
   return {
     state: "completed",

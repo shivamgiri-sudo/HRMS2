@@ -457,9 +457,14 @@ export const managementService = {
            SUM(active_status = 1) AS active
          FROM integration_config`
       ),
+      // auth_user has no 2FA column at all — two-factor is not implemented, so
+      // this cannot be counted. It used to fall into `.catch(() => 0)`, which
+      // rendered as "0 users without 2FA", i.e. the strongest possible security
+      // reassurance produced by a query that had never run. null so the tile
+      // reads as unavailable rather than as good news.
       db.execute<RowDataPacket[]>(
         `SELECT COUNT(*) AS count FROM auth_user WHERE two_fa_enabled = 0 OR two_fa_enabled IS NULL`
-      ).catch(() => [[{ count: 0 }]] as any),
+      ).catch(() => [[{ count: null }]] as any),
       db.execute<RowDataPacket[]>(
         `SELECT 'ATS' AS module_name, COUNT(*) AS record_count, MAX(updated_at) AS last_activity, 0 AS error_count
            FROM ats_candidate
@@ -528,7 +533,11 @@ export const managementService = {
         configuredIntegrations: numberValue(integrationRows[0][0]?.configured),
         systemHealth: modules.some((module) => module.status === "degraded") ? "warning" : "healthy",
         uptime: uptimeFormatted,
-        usersWithout2fa: numberValue((twoFaRows as any)[0]?.[0]?.count ?? 0),
+        // null, not 0 — see the query above. 2FA is not implemented, and a 0
+        // here is read as "everyone is covered".
+        usersWithout2fa: (twoFaRows as any)[0]?.[0]?.count == null
+          ? null
+          : numberValue((twoFaRows as any)[0][0].count),
       },
       modules,
       activities: activityRows[0],
@@ -859,11 +868,16 @@ export const managementService = {
        WHERE expiry_date IS NOT NULL AND expiry_date < CURDATE()`
     ).catch(() => [[{ count: 0 }]] as any);
 
-    // Pending policy acknowledgements
+    // Pending policy acknowledgements.
+    //
+    // `policy_acknowledgement` does not exist — there is no acknowledgement
+    // table in the schema at all. Falling back to 0 rendered as "no pending
+    // acknowledgements", which is indistinguishable from a fully compliant
+    // workforce. null so the tile reads as unavailable.
     const [pendingPolicyResult] = await db.execute<RowDataPacket[]>(
       `SELECT COUNT(*) AS count FROM policy_acknowledgement
        WHERE acknowledged = 0`
-    ).catch(() => [[{ count: 0 }]] as any);
+    ).catch(() => [[{ count: null }]] as any);
 
     // Appraisal completion percentage
     const [appraisalResult] = await db.execute<RowDataPacket[]>(
@@ -959,7 +973,10 @@ export const managementService = {
       })),
       pending_timesheets: numberValue((timesheetResult as any)[0]?.[0]?.count ?? 0),
       expired_documents: numberValue((expiredDocsResult as any)[0]?.[0]?.count ?? 0),
-      pending_policy_acknowledgements: numberValue((pendingPolicyResult as any)[0]?.[0]?.count ?? 0),
+      // null, not 0 — the table does not exist. See the query above.
+      pending_policy_acknowledgements: (pendingPolicyResult as any)[0]?.[0]?.count == null
+        ? null
+        : numberValue((pendingPolicyResult as any)[0][0].count),
       appraisal_completion_pct: (appraisalResult as any)[0]?.[0]?.completion_pct !== null
         ? Number(Number((appraisalResult as any)[0]?.[0]?.completion_pct ?? 0).toFixed(2))
         : null,
