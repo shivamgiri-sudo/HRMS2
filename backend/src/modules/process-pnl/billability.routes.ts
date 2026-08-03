@@ -5,6 +5,7 @@ import { db } from "../../db/mysql.js";
 import { requireWriteAccess, type AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { billabilityService } from "./billability.service.js";
+import { getCostCentreActivity, activityWindow } from "./cost-centre-activity.service.js";
 
 const router = Router();
 const h = (fn: (req: AuthenticatedRequest, res: any) => Promise<unknown>) =>
@@ -156,21 +157,71 @@ router.get("/seat-rates", requireRole(...BILLABILITY_ROLES), h(async (_req, res)
 }));
 
 /**
- * Cost centres that can carry a rate: only those with active staff.
+ * Cost centres that can carry a rate.
  *
- * 927 cost centres exist and 166 are flagged active, but only 35 actually have anyone
- * posted to them. Offering all 927 would bury the real ones.
+ * Uses the one agreed definition of active — a client paid us for it, or people posted to it
+ * were paid — rather than any of the three stored flags, which disagree: mas_hrms says 166
+ * active, db_bill says 580, and only 95 are actually trading. Filtering on the mas_hrms flag
+ * would hide 36 cost centres that are still earning money.
+ *
+ * `spend_only` centres are returned too, marked as such: no client pays and nobody works
+ * there, but GRN spend is still landing on them and somebody has to decide where it goes.
  */
-router.get("/cost-centres", requireRole(...BILLABILITY_ROLES), h(async (_req, res) => {
-  const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT cc.id, cc.cost_centre_code, cc.cost_centre_name, cc.client_name,
-            COUNT(e.id) AS active_headcount
-       FROM cost_centre_master cc
-       JOIN employees e ON e.cost_centre_id = cc.id AND e.active_status = 1
-      GROUP BY cc.id, cc.cost_centre_code, cc.cost_centre_name, cc.client_name
-      ORDER BY active_headcount DESC`,
+router.get("/cost-centres", requireRole(...BILLABILITY_ROLES), h(async (req, res) => {
+  const period = /^\d{4}-\d{2}$/.test(String(req.query.period ?? ""))
+    ? String(req.query.period)
+    : new Date().toISOString().slice(0, 7);
+
+  const activity = await getCostCentreActivity(period);
+  const [headcounts] = await db.execute<RowDataPacket[]>(
+    `SELECT cost_centre_id AS id, COUNT(*) AS n
+       FROM employees WHERE active_status = 1 AND cost_centre_id IS NOT NULL
+      GROUP BY cost_centre_id`,
   );
-  res.json({ success: true, data: rows });
+  const staffById = new Map(headcounts.map((r) => [String(r.id), Number(r.n)]));
+
+  const data = activity
+    .filter((c) => c.activity !== "inactive")
+    .map((c) => ({
+      id: c.costCentreId,
+      cost_centre_code: c.costCentreCode,
+      cost_centre_name: c.costCentreName,
+      activity: c.activity,
+      active_headcount: staffById.get(c.costCentreId) ?? 0,
+      revenue: c.revenue,
+      people_paid: c.peoplePaid,
+      spend: c.spend,
+    }))
+    .sort((a, b) => b.revenue - a.revenue || b.active_headcount - a.active_headcount);
+
+  res.json({ success: true, data, period, rule: "revenue or salary paid in the trailing 3 months" });
+}));
+
+/**
+ * GET /api/finance/billability/cost-centre-activity
+ *
+ * The full classification, including the inactive ones, so the register can be reviewed
+ * rather than only filtered.
+ */
+router.get("/cost-centre-activity", requireRole(...BILLABILITY_ROLES), h(async (req, res) => {
+  const period = /^\d{4}-\d{2}$/.test(String(req.query.period ?? ""))
+    ? String(req.query.period)
+    : new Date().toISOString().slice(0, 7);
+  const rows = await getCostCentreActivity(period);
+  const summary = rows.reduce<Record<string, number>>((acc, r) => {
+    acc[r.activity] = (acc[r.activity] ?? 0) + 1;
+    return acc;
+  }, {});
+  res.json({
+    success: true,
+    period,
+    window: activityWindow(period),
+    summary,
+    // Spend landing on centres nobody works at and no client pays for — it has to go
+    // somewhere, and reporting only the active ones would make it disappear.
+    spendOnlyValue: rows.filter((r) => r.activity === "spend_only").reduce((s, r) => s + r.spend, 0),
+    data: rows,
+  });
 }));
 
 router.post("/seat-rates", requireRole(...BILLABILITY_ROLES), requireWriteAccess, h(async (req, res) => {
