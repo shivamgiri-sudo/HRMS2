@@ -180,6 +180,11 @@ const COMMON_TEMPLATE_FIELDS: DefaultFieldMap[] = [
   // Resolves the agreement's "s/o | d/o" from gender. Not required: an unknown
   // gender legitimately yields both forms rather than a blank.
   { field_key: "relation_prefix", field_label: "Relation (s/o or d/o)", source_path: "employee.relation_prefix", required: false, aliases: ["relation_prefix"] },
+  // The employer block on the employment contract. Same person who signs the
+  // EPF forms — the Payroll HR of the branch the candidate joins. Optional:
+  // blank until a branch is configured, and must never block the document.
+  { field_key: "payroll_hr_name", field_label: "Payroll HR Name (employer signatory)", source_path: "payroll_hr.name", required: false, aliases: ["payroll_hr_name"] },
+  { field_key: "payroll_hr_designation", field_label: "Payroll HR Designation", source_path: "payroll_hr.designation", required: false, aliases: ["payroll_hr_designation"] },
   // The agreement's appendix states the remuneration, so figure and words are
   // both required; a contract that says one and not the other is defective.
   { field_key: "monthly_remuneration", field_label: "Monthly Remuneration", source_path: "salary.monthly_gross", required: false, aliases: ["monthly_remuneration", "remuneration"] },
@@ -219,7 +224,7 @@ const DEFAULT_FIELDS_BY_DOCUMENT: Record<string, string[]> = {
   PI_PROCESSING_CONSENT: ["employee_name", "employee_code", "mobile", "email", "current_date"],
   ZERO_TOLERANCE_ACK: ["employee_name", "employee_code", "date_of_joining", "branch", "current_date"],
   EPF_DECLARATION: ["employee_name", "father_name", "date_of_birth", "date_of_joining", "mobile", "email", "pan_masked", "aadhaar_masked", "uan", "current_date"],
-  EMPLOYMENT_CONTRACT: ["employee_name", "employee_code", "date_of_joining", "designation", "department", "branch", "process", "current_date", "father_name", "relation_prefix", "employee_address", "monthly_remuneration", "monthly_remuneration_words"],
+  EMPLOYMENT_CONTRACT: ["employee_name", "employee_code", "date_of_joining", "designation", "department", "branch", "process", "current_date", "father_name", "relation_prefix", "employee_address", "monthly_remuneration", "monthly_remuneration_words", "payroll_hr_name", "payroll_hr_designation"],
 };
 
 function normalizeToken(value: string) {
@@ -1149,7 +1154,7 @@ async function upsertFieldValue(params: {
  * which would also stop genuinely missing statutory data (EPF nominees) from
  * blocking.
  */
-const OPTIONAL_SOURCED_FIELD_KEYS = ["surveillance_hr_name"];
+const OPTIONAL_SOURCED_FIELD_KEYS = ["surveillance_hr_name", "payroll_hr_name", "payroll_hr_designation"];
 
 const NON_BLOCKING_FIELD_KEYS: string[] = [
   ...COMMON_TEMPLATE_FIELDS
