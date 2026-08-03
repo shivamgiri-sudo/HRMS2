@@ -5,6 +5,7 @@ import { env } from "../../config/env.js";
 import { sendSelectedEmail, sendRejectedEmail, sendSelectionLetterOfIntent } from "./ats.email.service.js";
 import { sendOnboardingToken } from "./ats.onboarding.service.js";
 import { transitionCandidateState } from "./ats.status-machine.js";
+import { hasScopedAccess } from "../../shared/scopeAccess.js";
 import type {
   AtsCandidate,
   AtsCandidateStageLog,
@@ -332,7 +333,9 @@ export const atsService = {
     input: CreateOnboardingBridgeInput,
     userId: string
   ): Promise<AtsOnboardingBridge> {
-    await this.getCandidate(input.candidateId);
+    const candidate = await this.getCandidate(input.candidateId);
+    const allowed = await hasScopedAccess(userId, ["admin", "hr"], { branchId: candidate.applied_for_branch ?? undefined, processId: candidate.applied_for_process ?? undefined }, { allowAdminBypass: true });
+    if (!allowed) throw Object.assign(new Error("Access denied"), { statusCode: 403 });
     const [existing] = await db.execute<RowDataPacket[]>(
       "SELECT id FROM ats_onboarding_bridge WHERE candidate_id = ? LIMIT 1",
       [input.candidateId]
@@ -353,8 +356,14 @@ export const atsService = {
   async updateOnboardingBridge(
     id: string,
     input: { employeeId?: string | null; joiningDate?: string | null; status?: string; offerLetterUrl?: string | null; notes?: string | null },
-    _userId: string
+    userId: string
   ): Promise<AtsOnboardingBridge> {
+    const [bridgeRows] = await db.execute<RowDataPacket[]>("SELECT candidate_id FROM ats_onboarding_bridge WHERE id = ? LIMIT 1", [id]);
+    const bridge = (bridgeRows as RowDataPacket[])[0];
+    if (!bridge) throw Object.assign(new Error("Onboarding bridge not found"), { statusCode: 404 });
+    const candidate = await this.getCandidate(bridge.candidate_id as string);
+    const allowed = await hasScopedAccess(userId, ["admin", "hr"], { branchId: candidate.applied_for_branch ?? undefined, processId: candidate.applied_for_process ?? undefined }, { allowAdminBypass: true });
+    if (!allowed) throw Object.assign(new Error("Access denied"), { statusCode: 403 });
     const sets: string[] = [];
     const params: unknown[] = [];
     if (input.employeeId     !== undefined) { sets.push("employee_id = ?");      params.push(input.employeeId ?? null); }

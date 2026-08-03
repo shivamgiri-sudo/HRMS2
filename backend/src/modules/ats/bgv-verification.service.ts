@@ -5,6 +5,7 @@ import { getConfiguredBgvProviderAdapter, type AddressDocInput, type EducationVe
 import { withProviderFailureLogged, getBgvApiCostReport } from "./bgv-api-log.service.js";
 import { loadAsyncBgvTriggerContext, validateOnboardingToken } from "./onboarding-full.service.js";
 import { resolveBankNameVariance } from "./bank-name-corroboration.js";
+import { digilockerVerifiedCheckTypes, type DigilockerEvidence } from "./digilocker-evidence.js";
 
 const hashValue = (value: unknown) => {
   const normalized = String(value ?? "").trim().toUpperCase();
@@ -742,10 +743,20 @@ export async function providerCallback(input: Record<string, unknown>) {
   return getBgvStatusForCandidate(check.candidate_id);
 }
 
-export async function autoCreateDigilockerVerifiedChecks(candidateId: string) {
-  // Digilocker fetched Aadhaar + PAN from government = already verified
-  // Create verified check records to avoid redundant separate API calls
-  const checkTypes = ['aadhaar', 'pan'];
+export async function autoCreateDigilockerVerifiedChecks(
+  candidateId: string,
+  evidence: DigilockerEvidence = {},
+) {
+  // Mark verified only what the session actually returned.
+  //
+  // This used to credit both Aadhaar and PAN unconditionally. That assumption
+  // does not hold: the ["AADHAAR","PAN"] request never reaches Luckpay (their
+  // API takes only a transaction id, a name and a mobile), and
+  // downloadKycDocument returns ONE document chosen by what the candidate
+  // consented to share. Crediting PAN off an Aadhaar-only pull would record a
+  // verification that never happened and skip the paid check that would have
+  // caught it — worse than simply paying for that check.
+  const checkTypes = digilockerVerifiedCheckTypes(evidence);
 
   for (const checkType of checkTypes) {
     const [existing] = await db.execute<RowDataPacket[]>(

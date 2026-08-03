@@ -517,7 +517,10 @@ export function BranchBudgetPlannerGrid({
                     <td className="border-b border-r border-slate-200 bg-slate-50" colSpan={3} />
                     <td className={`border-b border-r border-slate-200 bg-slate-50 px-2 py-1.5 ${num}`}>{headTotal ? money(headTotal) : "—"}</td>
                     <td className="border-b border-r border-slate-200 bg-slate-50" colSpan={2} />
-                    <td className="border-b border-r border-slate-200 bg-slate-50" colSpan={4} />
+                    {/* Sharing + ⇅ — 2 columns, matching every other row. This was colSpan={4},
+                        which made the head-group row 2 columns wider than the colgroup declares,
+                        forcing the table to grow 2 unlabeled phantom columns at the end. */}
+                    <td className="border-b border-r border-slate-200 bg-slate-50" colSpan={2} />
                     {costCentres.flatMap((cc, ci) => {
                       const v = rows.reduce((a, r) => a + (preview.get(r.index)?.cells[ci]?.amount ?? 0), 0);
                       return [
@@ -804,7 +807,8 @@ export function BranchBudgetPlannerGrid({
               <td className="sticky bottom-0 z-30 border-r border-t-2 border-slate-300 bg-slate-100" colSpan={3} />
               <td className={`sticky bottom-0 z-30 border-r border-t-2 border-slate-300 bg-slate-100 px-2 py-2 ${num}`}>{money(branchTotal)}</td>
               <td className="sticky bottom-0 z-30 border-r border-t-2 border-slate-300 bg-slate-100" colSpan={2} />
-              <td className="sticky bottom-0 z-30 border-r border-t-2 border-slate-300 bg-slate-100" colSpan={4} />
+              {/* Sharing + ⇅ — 2 columns. Same colSpan={4} overflow as the head-group row above. */}
+              <td className="sticky bottom-0 z-30 border-r border-t-2 border-slate-300 bg-slate-100" colSpan={2} />
               {costCentres.flatMap((cc, ci) => {
                 const pct = branchTotal ? (columnTotal(ci) / branchTotal) * 100 : 0;
                 return [
