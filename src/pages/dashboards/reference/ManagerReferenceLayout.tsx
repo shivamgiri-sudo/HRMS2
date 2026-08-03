@@ -36,6 +36,7 @@ import {
   statusCount,
 } from "../reference-dashboard-model";
 import { useReferenceDashboardShell } from "./ReferenceDashboardShell";
+import { TodayCelebrationsWidget } from "@/components/dashboard/TodayCelebrationsWidget";
 import {
   AttendanceBreakdownPanel,
   TrainingProgressPanel,
@@ -89,6 +90,7 @@ export function ManagerReferenceLayout({ data, managerName, filters }: { data: R
   return (
     <div className="reference-dashboard-page">
       <ReferenceHeader title="Manager Dashboard 👋" subtitle={`Overview of ${managerName}'s team and key management insights.`} right={filters ?? productHeaderControls} />
+      <TodayCelebrationsWidget />
 
       <ReferenceMetricGrid
         columns={6}

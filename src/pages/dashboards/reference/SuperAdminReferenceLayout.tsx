@@ -40,6 +40,7 @@ import {
   read,
 } from "../reference-dashboard-model";
 import { useReferenceDashboardShell } from "./ReferenceDashboardShell";
+import { TodayCelebrationsWidget } from "@/components/dashboard/TodayCelebrationsWidget";
 import {
   AttendanceBreakdownPanel,
   ExitPipelinePanel,
@@ -76,6 +77,7 @@ export function SuperAdminReferenceLayout({ data, filters }: { data: ReferenceDa
   return (
     <div className="reference-dashboard-page">
       <ReferenceHeader title="Super Admin Dashboard 👋" subtitle="Monitor your entire HR ecosystem and system health" right={filters ?? productHeaderControls} />
+      <TodayCelebrationsWidget />
 
       <ReferenceMetricGrid columns={7} loading={data.loading} metrics={[
         { label: "Total Employees", value: active, helper: "vs last month", icon: Users, tone: "blue", unavailableReason: metricUnavailableReason(m, "hc"), ...drill("hc") },

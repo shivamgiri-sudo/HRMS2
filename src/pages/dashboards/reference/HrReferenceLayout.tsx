@@ -15,6 +15,7 @@ import {
 import type { ReferenceDashboardData } from "../reference-dashboard-model";
 import { asNumber, metricDetail, metricUnavailableReason, metricValue } from "../reference-dashboard-model";
 import { ReferenceAIBrief, ReferenceWorkInbox } from "./ReferenceOperationalPanels";
+import { TodayCelebrationsWidget } from "@/components/dashboard/TodayCelebrationsWidget";
 import {
   AttendanceBreakdownPanel,
   EsignVerificationPanel,
@@ -61,6 +62,7 @@ export function HrReferenceLayout({ data, filters }: { data: ReferenceDashboardD
   return (
     <div className="reference-dashboard-page">
       <ReferenceHeader title="HR Dashboard" subtitle="Recruitment, onboarding, BGV and exit management" badge="HR View" right={filters} />
+      <TodayCelebrationsWidget />
 
       <ReferenceMetricGrid columns={5} loading={data.loading} metrics={[
         { label: "Selected Candidates", value: selected, helper: previousSelected === null ? "Current reporting window" : "Vs Last 30 Days", icon: UserCheck, tone: "blue", trend: variance(selected, previousSelected), href: "/ats/dashboard" },

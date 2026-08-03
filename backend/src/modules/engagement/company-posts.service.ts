@@ -911,3 +911,26 @@ export async function deleteComment(input: {
     }
   });
 }
+
+export async function listTodayCelebrations(
+  actorUserId?: string,
+): Promise<CompanyPostListResult> {
+  const result = await listCompanyPosts(
+    `cp.status = 'approved' AND cp.active_status = 1
+     AND cp.post_type IN ('birthday', 'anniversary')
+     AND DATE(cp.created_at) = CURDATE()`,
+    [],
+    { page: 1, limit: 50 },
+  );
+
+  if (!actorUserId || result.posts.length === 0) return result;
+
+  const reactionMap = await getMyReactions(actorUserId, result.posts.map((p) => p.id));
+  return {
+    ...result,
+    posts: result.posts.map((p) => ({
+      ...p,
+      my_reaction: reactionMap.get(p.id) ?? null,
+    })),
+  };
+}

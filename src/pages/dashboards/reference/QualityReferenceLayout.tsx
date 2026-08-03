@@ -32,6 +32,7 @@ import {
 import {
   AttendanceBreakdownPanel,
 } from "./ReferenceSharedPanels";
+import { TodayCelebrationsWidget } from "@/components/dashboard/TodayCelebrationsWidget";
 
 export function QualityReferenceLayout({ data, filters }: { data: ReferenceDashboardData; filters?: ReactNode }) {
   const m = data.metrics;
@@ -75,6 +76,7 @@ export function QualityReferenceLayout({ data, filters }: { data: ReferenceDashb
         badge="QA View"
         right={filters}
       />
+      <TodayCelebrationsWidget />
 
       {qualityUnavailable ? (
         <div className="rounded-lg border border-[#fee3c5] bg-[#fff9f2] px-4 py-3 text-sm text-[#b45309]">

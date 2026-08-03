@@ -35,6 +35,7 @@ import {
   read,
 } from "../reference-dashboard-model";
 import { ReferenceAIBrief, ReferenceWorkInbox } from "./ReferenceOperationalPanels";
+import { TodayCelebrationsWidget } from "@/components/dashboard/TodayCelebrationsWidget";
 import {
   AttendanceBreakdownPanel,
   LiveVsProcessedPanel,
@@ -86,6 +87,7 @@ export function CeoReferenceLayout({ data, filters }: { data: ReferenceDashboard
   return (
     <div className="reference-dashboard-page px-1 sm:px-0">
       <ReferenceHeader title="CEO Dashboard" subtitle="Organisation-wide summary" badge="CEO View" right={filters} />
+      <TodayCelebrationsWidget />
 
       {/*
         TAT Breached, Name Mismatch and Incentive Pending were removed 31-Jul-2026.

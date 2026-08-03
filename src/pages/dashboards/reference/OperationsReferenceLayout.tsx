@@ -30,6 +30,7 @@ import {
   AttendanceBreakdownPanel,
   LiveVsProcessedPanel,
 } from "./ReferenceSharedPanels";
+import { TodayCelebrationsWidget } from "@/components/dashboard/TodayCelebrationsWidget";
 
 export function OperationsReferenceLayout({ data, filters }: { data: ReferenceDashboardData; filters?: ReactNode }) {
   const m = data.metrics;
@@ -69,6 +70,7 @@ export function OperationsReferenceLayout({ data, filters }: { data: ReferenceDa
         badge="Ops View"
         right={filters}
       />
+      <TodayCelebrationsWidget />
 
       <ReferenceMetricGrid
         columns={4}

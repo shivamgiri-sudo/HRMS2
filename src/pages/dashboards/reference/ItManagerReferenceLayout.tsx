@@ -45,6 +45,7 @@ import {
   ExitPipelinePanel,
   OnboardingFunnelPanel,
 } from "./ReferenceSharedPanels";
+import { TodayCelebrationsWidget } from "@/components/dashboard/TodayCelebrationsWidget";
 
 type Tab = "provisioning" | "helpdesk" | "employees" | "bulk_upload";
 
@@ -764,6 +765,7 @@ export function ItManagerReferenceLayout({ data, filters }: { data: ReferenceDas
         badge="IT Manager View"
         right={filters}
       />
+      <TodayCelebrationsWidget />
 
       <ReferenceMetricGrid
         columns={4}

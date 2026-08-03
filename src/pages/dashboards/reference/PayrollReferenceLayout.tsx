@@ -35,6 +35,7 @@ import {
   stringAt,
 } from "../reference-dashboard-model";
 import { useReferenceDashboardShell } from "./ReferenceDashboardShell";
+import { TodayCelebrationsWidget } from "@/components/dashboard/TodayCelebrationsWidget";
 import {
   AttendanceExceptionPanel,
   SalaryComponentPanel,
@@ -124,6 +125,7 @@ export function PayrollReferenceLayout({ data, filters }: { data: ReferenceDashb
     return (
       <div className="reference-dashboard-page">
         <ReferenceHeader title="Finance / Payroll Dashboard" subtitle="Manage payroll operations and financial compliance" right={filters ?? productHeaderControls} />
+        <TodayCelebrationsWidget />
         <ReferencePanel title="Run Selection">
           {runSelector}
           <p className="mt-4 text-sm text-[#71809a]">

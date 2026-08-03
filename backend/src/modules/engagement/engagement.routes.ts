@@ -137,6 +137,7 @@ router.post(
 );
 
 router.get("/company-posts/feed", h(companyPosts.listFeed));
+router.get("/company-posts/today-celebrations", h(companyPosts.todayCelebrations));
 router.post("/company-posts", h(companyPosts.create));
 router.get("/company-posts/mine", h(companyPosts.listMine));
 router.get("/company-posts/approvals", h(companyPosts.listApprovals));

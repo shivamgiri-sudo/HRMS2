@@ -26,6 +26,7 @@ import { asNumber, formatValue, stringAt } from "../reference-dashboard-model";
 import { ReferenceAIBrief, ReferenceWorkInbox } from "./ReferenceOperationalPanels";
 import { LeaveApprovalPanel } from "./ReferenceSharedPanels";
 import { CompanyFeedSidePanel } from "@/components/dashboard/CompanyFeedSidePanel";
+import { TodayCelebrationsWidget } from "@/components/dashboard/TodayCelebrationsWidget";
 import { SocialFeedWidget } from "@/components/social/SocialFeedWidget";
 import { VideoModal } from "@/components/social/VideoModal";
 import { MyMeetingsWidget } from "@/components/mcnmeet/MyMeetingsWidget";
@@ -99,6 +100,8 @@ export function EmployeeReferenceLayout({ data, employeeName }: { data: Referenc
     <div className="grid gap-4 md:gap-6 xl:grid-cols-[minmax(0,1fr)_22rem]">
     <div className="reference-dashboard-page min-w-0">
       <ReferenceHeader title={`Welcome, ${employeeName}`} subtitle="Your personal dashboard" badge="Self Service" />
+
+      <TodayCelebrationsWidget />
 
       <ReferencePanel title="My Attendance This Month" bodyClassName="p-2 sm:p-3">
         <ReferenceMetricGrid columns={5} loading={data.loading} metrics={[

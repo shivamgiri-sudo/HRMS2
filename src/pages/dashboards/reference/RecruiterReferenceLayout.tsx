@@ -31,6 +31,7 @@ import {
   OnboardingFunnelPanel,
   RecruiterFunnelPanel,
 } from "./ReferenceSharedPanels";
+import { TodayCelebrationsWidget } from "@/components/dashboard/TodayCelebrationsWidget";
 
 export function RecruiterReferenceLayout({ data, filters }: { data: ReferenceDashboardData; filters?: ReactNode }) {
   const m = data.metrics;
@@ -67,6 +68,7 @@ export function RecruiterReferenceLayout({ data, filters }: { data: ReferenceDas
         badge="Recruiter View"
         right={filters}
       />
+      <TodayCelebrationsWidget />
 
       <ReferenceMetricGrid
         columns={4}

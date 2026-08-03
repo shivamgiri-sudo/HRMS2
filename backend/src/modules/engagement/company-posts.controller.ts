@@ -8,6 +8,7 @@ import {
   deleteCompanyPost,
   grantCompanyPostCreator,
   listApprovedCompanyFeed,
+  listTodayCelebrations,
   listComments,
   listCompanyPostApprovals,
   listCompanyPostCreators,
@@ -68,6 +69,17 @@ export const companyPostsController = {
         limit: parseLimit(req.query.limit),
         actorUserId,
       });
+      return res.json({ success: true, ...result });
+    } catch (err: unknown) {
+      const e = err as { statusCode?: number; message?: string };
+      return res.status(e.statusCode ?? 500).json({ success: false, error: e.message ?? "Server error" });
+    }
+  },
+
+  async todayCelebrations(req: AuthenticatedRequest, res: Response) {
+    try {
+      const { actorUserId } = getActorContext(req);
+      const result = await listTodayCelebrations(actorUserId);
       return res.json({ success: true, ...result });
     } catch (err: unknown) {
       const e = err as { statusCode?: number; message?: string };

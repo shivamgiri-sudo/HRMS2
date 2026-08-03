@@ -20,6 +20,7 @@ import {
 } from "./ReferenceSharedPanels";
 import type { ReferenceDashboardData } from "../reference-dashboard-model";
 import { PayrollPrepWidget } from "@/components/dashboard/widgets/PayrollPrepWidget";
+import { TodayCelebrationsWidget } from "@/components/dashboard/TodayCelebrationsWidget";
 import {
   arrayAt,
   asNumber,
@@ -90,6 +91,7 @@ export function WfmReferenceLayout({
         right={filters}
       />
 
+      <TodayCelebrationsWidget />
       <PayrollPrepWidget month={currentMonth} />
 
       <ReferenceMetricGrid
