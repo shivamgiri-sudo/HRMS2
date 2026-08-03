@@ -19,6 +19,7 @@ import {
   BiometricCoveragePanel,
 } from "./ReferenceSharedPanels";
 import type { ReferenceDashboardData } from "../reference-dashboard-model";
+import { PayrollPrepWidget } from "@/components/dashboard/widgets/PayrollPrepWidget";
 import {
   arrayAt,
   asNumber,
@@ -34,6 +35,11 @@ export function WfmReferenceLayout({
   data: ReferenceDashboardData;
   filters: React.ReactNode;
 }) {
+  const currentMonth = (() => {
+    const now = new Date(Date.now() + 5.5 * 60 * 60 * 1000);
+    return `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, "0")}`;
+  })();
+
   const m = data.metrics;
   const drill = data.drilldownFor ?? (() => ({}));
   const required = metricDetail(m, "hc", "required");
@@ -83,6 +89,8 @@ export function WfmReferenceLayout({
         badge="WFM View"
         right={filters}
       />
+
+      <PayrollPrepWidget month={currentMonth} />
 
       <ReferenceMetricGrid
         columns={5}
