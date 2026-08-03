@@ -13,6 +13,7 @@ import {
 } from "../integrations/luckpay/luckpay.transport.js";
 import { resolveLuckpayConfigFrom } from "../integrations/luckpay/luckpay.config.js";
 import { classifyNameMatch } from "./indian-name-match.js";
+import { compactProviderReference } from "./luckpay-reference.js";
 import {
   loadBgvDbConfig,
   resetBgvDbConfigCache,
@@ -51,6 +52,15 @@ export interface DigilockerSession {
   state: string;
   authUrl: string;
   expiresAt: Date;
+  /**
+   * The provider's own transaction id — Luckpay's `gatewayId`.
+   *
+   * checkKycStatus and downloadKycDocument both require it back as
+   * `transactionId`, so without it the completion half of the flow has nothing
+   * to poll or download with. Optional because the mock and legacy adapters do
+   * not issue one.
+   */
+  providerReferenceId?: string | null;
 }
 
 export interface VerificationResult {
@@ -1109,7 +1119,13 @@ class CompositeBgvProviderAdapter implements BgvProviderAdapter {
   }
 
   async verifyBank(input: BankVerificationInput): Promise<VerificationResult> {
-    const requestId = randomUUID();
+    // A raw randomUUID() here was rejected by Luckpay's banking rail with
+    // "Customer Reference number is invalid" — 36 characters against their own
+    // examples of 4164564, CTN_5612, TXN456789. A penny drop moves real money,
+    // so this reference travels onto the banking network where references are
+    // short. Only the banking call is changed; DigiLocker and eSign keep the
+    // identifiers they already use successfully.
+    const requestId = compactProviderReference("PD");
     const d = await this.postLuckpay("/verifyPennyDrop", {
       clientTransactionId: requestId,
       customerAccountNumber: input.accountNo.replace(/\s/g, ""),
@@ -1393,6 +1409,13 @@ class CompositeBgvProviderAdapter implements BgvProviderAdapter {
         "auth_url", "redirect_url", "access_link", "redirectUrl", "verificationUrl", "verification_url",
       ]) ?? "",
       expiresAt: expiresAt ? new Date(expiresAt) : new Date(Date.now() + 30 * 60 * 1000),
+      // Luckpay's transaction id, returned as `gatewayId`. Every status and
+      // download call expects it back as `transactionId`; dropping it is why no
+      // DigiLocker session has ever advanced past 'created'. The same field
+      // list luckpay.client.ts already uses, rather than a second extractor.
+      providerReferenceId: pickLuckpayField(response, [
+        "gatewayId", "referenceId", "reference_id", "transactionId", "transaction_id",
+      ]) ?? null,
     };
   }
 

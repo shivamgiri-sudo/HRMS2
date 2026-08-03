@@ -631,6 +631,36 @@ export async function startDigilockerByToken(token: string, requestedDocuments: 
      VALUES (?, ?, ?, ?, ?, 'created', ?, ?)`,
     [randomUUID(), candidateId, session.state, adapter.providerKey, authUrl, JSON.stringify(requestedDocuments), session.expiresAt]
   );
+  // syncDigilockerStatus reads ats_provider_transaction_log and needs BOTH the
+  // client transaction id and the provider's own reference to poll. Writing the
+  // session row alone is why 30 sessions exist and none ever completed: the
+  // sync path looked here, found nothing pollable, and returned 'not_started'.
+  //
+  // Non-fatal. The candidate already has a working authorisation URL by this
+  // point, and failing the whole start because a log row could not be written
+  // would take away a flow that otherwise works.
+  if (session.providerReferenceId) {
+    await db.execute(
+      `INSERT INTO ats_provider_transaction_log
+         (id, candidate_id, provider, service_type, client_transaction_id, provider_reference_id, status, initiated_by_type)
+       VALUES (?, ?, 'luckpay', 'digilocker', ?, ?, 'initiated', 'candidate')`,
+      [randomUUID(), candidateId, session.state, session.providerReferenceId],
+    ).catch(async (error) => {
+      await logEvent(candidateId, "DIGILOCKER_LOG_WRITE_FAILED", {
+        state: session.state,
+        error: (error as Error)?.message ?? String(error),
+      }, null, { actorType: "system" });
+    });
+  } else {
+    // Without it the candidate can still authorise, but we will never be able
+    // to fetch the result — worth recording rather than discovering later from
+    // a session stuck at 'created'.
+    await logEvent(candidateId, "DIGILOCKER_NO_PROVIDER_REFERENCE", {
+      state: session.state,
+      providerKey: adapter.providerKey,
+    }, null, { actorType: "system" });
+  }
+
   await logEvent(candidateId, "DIGILOCKER_SESSION_CREATED", { state: session.state, requestedDocuments }, null, { actorType: "candidate", ip: meta?.ip, userAgent: meta?.userAgent });
   return session;
 }

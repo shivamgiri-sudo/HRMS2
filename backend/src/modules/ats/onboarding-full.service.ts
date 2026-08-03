@@ -439,11 +439,19 @@ async function getLatestDigilockerStatus(candidateId: string) {
     };
   }
 
+  // Reads the table that is actually written to.
+  //
+  // This selected from candidate_digilocker_session*s* (plural), which holds 0
+  // rows and does not even have a session_status column, while every write goes
+  // to the singular table, which holds 30. The .catch() below turned the
+  // resulting SQL error into an empty result, so the form always concluded no
+  // session existed — which is exactly why a candidate who has already
+  // completed DigiLocker is invited to do it again.
   const [sessionRows] = await db.execute<RowDataPacket[]>(
-    `SELECT session_id, status, auth_url, completed_at, initiated_at
-       FROM candidate_digilocker_sessions
+    `SELECT state_token, session_status, auth_url, updated_at, created_at
+       FROM candidate_digilocker_session
       WHERE candidate_id = ?
-      ORDER BY initiated_at DESC
+      ORDER BY created_at DESC
       LIMIT 1`,
     [candidateId]
   ).catch(() => [[] as RowDataPacket[]]);
@@ -452,10 +460,10 @@ async function getLatestDigilockerStatus(candidateId: string) {
     const row = (sessionRows as RowDataPacket[])[0];
     return {
       provider: "existing",
-      status: row.status ?? "not_started",
+      status: row.session_status ?? "not_started",
       verification_url: row.auth_url ?? null,
-      client_transaction_id: row.session_id ?? null,
-      updated_at: row.completed_at ?? row.initiated_at ?? null,
+      client_transaction_id: row.state_token ?? null,
+      updated_at: row.updated_at ?? row.created_at ?? null,
     };
   }
 

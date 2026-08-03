@@ -160,7 +160,9 @@ export default function CandidateOnboardingFullPage() {
           setEmployee={onb.setEmployee}
           saving={onb.saving}
           onSave={onb.saveEmployee}
-          digilockerStatus={onb.status?.digilocker?.status}
+          digilockerStatus={onb.digilockerSessionState}
+          onSyncDigilocker={onb.syncDigilocker}
+          digilockerSyncing={onb.digilockerSyncing}
           onDigilocker={onb.startDigilocker}
           digilockerRedirectUrl={onb.redirectUrl}
           consentAccepted={onb.consentAccepted}
@@ -195,7 +197,9 @@ export default function CandidateOnboardingFullPage() {
           onVerifyUan={onb.verifyUan}
           onDigilocker={onb.startDigilocker}
           digilockerRedirectUrl={onb.redirectUrl}
-          digilockerStatus={onb.status?.digilocker?.status}
+          digilockerStatus={onb.digilockerSessionState}
+          onSyncDigilocker={onb.syncDigilocker}
+          digilockerSyncing={onb.digilockerSyncing}
         />
       )}
 

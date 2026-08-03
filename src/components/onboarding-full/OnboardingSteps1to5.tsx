@@ -383,7 +383,7 @@ export function Step2Personal({
 
 export function Step3AddressKyc({
   employee, setEmployee, saving, onSave, digilockerStatus, onDigilocker, digilockerRedirectUrl,
-  consentAccepted = false, onConsent,
+  consentAccepted = false, onConsent, onSyncDigilocker, digilockerSyncing = false,
 }: {
   employee: EmployeeForm;
   setEmployee: React.Dispatch<React.SetStateAction<EmployeeForm>>;
@@ -395,7 +395,17 @@ export function Step3AddressKyc({
   digilockerRedirectUrl?: string | null;
   consentAccepted?: boolean;
   onConsent?: () => void;
+  /** Re-asks the provider whether the documents are ready. */
+  onSyncDigilocker?: () => void;
+  digilockerSyncing?: boolean;
 }) {
+  // The session table records 'created' | 'completed' | 'failed' | 'expired',
+  // while the BGV bridge uses 'documents_received' / 'passed'. Both feed this
+  // prop depending on which record answers first, so all of them are accepted —
+  // matching only one is how a connected candidate was still shown the button.
+  const digilockerDone = ["completed", "documents_received", "passed"].includes(String(digilockerStatus ?? ""));
+  const digilockerStarted = Boolean(digilockerStatus) && !digilockerDone
+    && !["not_started", "failed", "expired"].includes(String(digilockerStatus));
   const upd = (k: keyof EmployeeForm, v: string) => setEmployee((p) => ({ ...p, [k]: v }));
   const [sameAddr, setSameAddr] = useState(() =>
     Boolean(employee.permanentAddress && employee.presentAddress &&
@@ -456,17 +466,65 @@ export function Step3AddressKyc({
             <strong>🚀 Fast Track:</strong> Connect to government DigiLocker to automatically fetch your
             Aadhaar and PAN documents. This will pre-fill your KYC details below and save you time!
             <br /><br />
-            <strong>How it works:</strong> Click the button → Redirected to government portal →
-            Authenticate → Return here with Aadhaar + PAN auto-filled.
+            {/*
+              The old copy promised "Return here with Aadhaar + PAN
+              auto-filled". DigiLocker is reached through Luckpay, whose API
+              takes only a transaction id, a name and a mobile number — it has
+              no redirect parameter, so the provider finishes on its own success
+              page and cannot send anyone back. Candidates were waiting for a
+              redirect that was never coming. They are told the truth instead:
+              come back here yourself, and we will collect the documents.
+            */}
+            <strong>How it works:</strong> Click the button → authenticate on the government portal →
+            <strong> come back to this page</strong>. Your documents are collected automatically when you return.
           </p>
         </InfoBox>
 
-        {digilockerStatus === "documents_received" ? (
+        {digilockerDone ? (
           <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 p-4 flex items-center gap-3">
             <CheckCircle2 className="h-5 w-5 text-emerald-700 flex-shrink-0" />
             <div>
               <p className="text-sm font-bold text-emerald-900">DigiLocker Connected ✓</p>
               <p className="text-xs text-emerald-700">Aadhaar and PAN fetched successfully. Check KYC fields below!</p>
+            </div>
+          </div>
+        ) : digilockerStarted ? (
+          /*
+            A session is already open for this candidate.
+
+            Without this the form looked identical before and after a DigiLocker
+            attempt, so anyone returning to the page — which they must, since the
+            provider cannot redirect them back — was invited to start again, and
+            a second attempt abandons the first session's transaction id.
+          */
+          <div className="mt-3 rounded-lg border-2 border-amber-300 bg-amber-50 p-4 space-y-2">
+            <p className="text-sm font-bold text-amber-900 flex items-center gap-2">
+              <AlertCircle className="h-4 w-4 flex-shrink-0" />
+              You have already started DigiLocker
+            </p>
+            <p className="text-xs text-amber-800 leading-relaxed">
+              {digilockerSyncing
+                ? "Checking with DigiLocker for your documents…"
+                : "If you finished on the government portal, your documents are collected automatically — there is no need to start again. If you did not finish, use the link below to continue where you left off."}
+            </p>
+            <div className="flex flex-wrap gap-2 pt-1">
+              <Button
+                onClick={onSyncDigilocker}
+                disabled={digilockerSyncing}
+                size="sm"
+                variant="outline"
+                className="border-amber-400 text-amber-900 hover:bg-amber-100"
+              >
+                {digilockerSyncing ? "Checking…" : "Check for my documents"}
+              </Button>
+              {digilockerRedirectUrl && (
+                <a
+                  href={digilockerRedirectUrl}
+                  className="inline-flex items-center rounded-md border border-amber-400 px-3 py-1.5 text-xs font-semibold text-amber-900 hover:bg-amber-100"
+                >
+                  Continue on DigiLocker
+                </a>
+              )}
             </div>
           </div>
         ) : (
@@ -952,6 +1010,13 @@ export function Step5Bgv({
   digilockerStatus?: string;
   /** Set once a redirect has been issued, so it stays reachable as a link. */
   digilockerRedirectUrl?: string | null;
+  /**
+   * Accepted so the page can pass the same DigiLocker props to both steps
+   * without them drifting apart. Step 3 owns the connect flow; this step shows
+   * the resulting check status.
+   */
+  onSyncDigilocker?: () => void;
+  digilockerSyncing?: boolean;
 }) {
   return (
     <Card className="border-t-4 border-t-indigo-500 shadow-sm border border-slate-200 rounded-xl overflow-hidden">
