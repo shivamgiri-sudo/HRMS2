@@ -879,7 +879,25 @@ async function runFileOnConnection(
     try {
       await conn.query(stmt);
     } catch (error) {
-      if (!isIdempotentMigrationError(error)) throw error;
+      if (!isIdempotentMigrationError(error)) {
+        // Some MySQL errors say almost nothing on their own. "Cannot add foreign key
+        // constraint" (errno 1215) names no constraint, no column and no reason, and
+        // SHOW ENGINE INNODB STATUS does not help either — its LATEST FOREIGN KEY ERROR
+        // section records DML violations, not a DDL that failed to create a constraint.
+        //
+        // MySQL does explain it, in SHOW WARNINGS, on the same connection, immediately
+        // after the failure and nowhere else. Reading it here is the difference between
+        // "409 failed, it has eight foreign keys, good luck" and being told which one.
+        try {
+          const [warnings] = await conn.query<RowDataPacket[]>("SHOW WARNINGS");
+          for (const w of warnings) {
+            console.error(`[migration]   ${w.Level} ${w.Code}: ${w.Message}`);
+          }
+        } catch {
+          // A diagnostic must never replace the error it is diagnosing.
+        }
+        throw error;
+      }
       skipped++;
       const preview = stmt.replace(/\s+/g, " ").slice(0, 100);
       console.log(
