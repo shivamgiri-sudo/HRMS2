@@ -46,18 +46,29 @@ PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 -- Backfill: one open-ended history row per existing cost centre, matching its current mapping.
 -- Nothing changes behaviorally until someone records a real change via recordMappingChange().
-INSERT INTO finance_cost_centre_mapping_history
-  (id, cost_centre_id, branch_id, process_id, effective_from, effective_to, change_reason, created_by)
-SELECT
-  UUID(),
-  ccm.id,
-  ccm.branch_id,
-  ccm.process_id,
-  COALESCE(ccm.go_live_date, '2000-01-01'),
-  NULL,
-  'Backfilled from existing cost_centre_master mapping',
-  NULL
-FROM cost_centre_master ccm
-WHERE NOT EXISTS (
-  SELECT 1 FROM finance_cost_centre_mapping_history h WHERE h.cost_centre_id = ccm.id
+--
+-- cost_centre_master.go_live_date is added by migration 534, which runs 100-odd entries
+-- AFTER this one, so on a fresh database the column does not exist yet and this SELECT fails
+-- with "Unknown column 'ccm.go_live_date' in 'field list'". On production the column is
+-- already there, which is why this has never been noticed.
+--
+-- Written as dynamic SQL with two branches rather than reordered. Moving 534 ahead of 428
+-- would drag a large unrelated migration forward; the only thing 428 needs from it is one
+-- nullable date, and the backfill is well defined without it — effective_from simply falls
+-- back to the same sentinel the COALESCE already uses.
+SET @has_go_live = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+   WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'cost_centre_master' AND COLUMN_NAME = 'go_live_date'
 );
+SET @sql = CONCAT(
+  'INSERT INTO finance_cost_centre_mapping_history
+     (id, cost_centre_id, branch_id, process_id, effective_from, effective_to, change_reason, created_by)
+   SELECT UUID(), ccm.id, ccm.branch_id, ccm.process_id, ',
+  IF(@has_go_live > 0, 'COALESCE(ccm.go_live_date, ''2000-01-01'')', '''2000-01-01'''),
+  ', NULL, ''Backfilled from existing cost_centre_master mapping'', NULL
+     FROM cost_centre_master ccm
+    WHERE NOT EXISTS (
+      SELECT 1 FROM finance_cost_centre_mapping_history h WHERE h.cost_centre_id = ccm.id
+    )'
+);
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
