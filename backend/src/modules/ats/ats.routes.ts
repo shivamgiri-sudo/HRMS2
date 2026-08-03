@@ -766,10 +766,28 @@ atsRouter.get("/my-onboarding-status", requireAuth, h(async (req: AuthenticatedR
   }
 
   const { db } = await import("../../db/mysql.js");
-  // Check if employee has an onboarding record — table may not exist yet
-  const [rows] = await db.execute(
-    `SELECT onboarding_status, offer_accepted_at, documents_submitted_at, bgv_cleared_at, joining_date
-     FROM ats_onboarding WHERE employee_id = ? LIMIT 1`,
+  // `ats_onboarding` does not exist and never has. The query threw on every
+  // call, the .catch() turned that into "no rows", and the branch below reads
+  // no rows as "already onboarded" — so this endpoint told every employee they
+  // were 100% complete, four of four steps done, regardless of the truth. It
+  // also logged an ER_NO_SUCH_TABLE on each request.
+  //
+  // The real milestones live across the bridge, the onboarding profile and the
+  // BGV report, so read those. Response shape is unchanged.
+  const [rows] = await db.execute<import("mysql2").RowDataPacket[]>(
+    `SELECT b.status              AS bridge_status,
+            b.joining_date,
+            b.converted_at,
+            b.joining_document_status,
+            p.profile_status,
+            r.overall_status      AS bgv_status,
+            EXISTS(SELECT 1 FROM ats_employment_offer o
+                    WHERE o.candidate_id = b.candidate_id) AS has_offer
+       FROM ats_onboarding_bridge b
+       LEFT JOIN candidate_onboarding_profile p ON p.candidate_id = b.candidate_id
+       LEFT JOIN candidate_bgv_report r        ON r.candidate_id = b.candidate_id
+      WHERE b.employee_id = ?
+      LIMIT 1`,
     [emp.id]
   ).catch(() => [[]] as any);
 
@@ -793,18 +811,25 @@ atsRouter.get("/my-onboarding-status", requireAuth, h(async (req: AuthenticatedR
     });
   }
 
+  const offerAccepted = Boolean(record.has_offer);
+  const documentsSubmitted = String(record.profile_status ?? "") === "submitted"
+    || String(record.joining_document_status ?? "") === "completed";
+  // Only 'clear' counts. 'pending' and 'refer' are explicitly not cleared —
+  // see migration 1070, where six reports were reset off a fabricated 'clear'.
+  const bgvCleared = String(record.bgv_status ?? "") === "clear";
+
   return res.json({
     success: true,
     generatedAt: new Date().toISOString(),
     data: {
-      status: record.onboarding_status,
+      status: record.converted_at ? "completed" : String(record.bridge_status ?? "in_progress"),
       stage: "Joining Completion",
-      percentComplete: record.bgv_cleared_at ? 100 : record.documents_submitted_at ? 75 : record.offer_accepted_at ? 50 : 25,
-      completedSteps: [record.offer_accepted_at, record.documents_submitted_at, record.bgv_cleared_at].filter(Boolean).length + 1,
+      percentComplete: bgvCleared ? 100 : documentsSubmitted ? 75 : offerAccepted ? 50 : 25,
+      completedSteps: [offerAccepted, documentsSubmitted, bgvCleared].filter(Boolean).length + 1,
       totalSteps: 4,
-      offer_accepted: !!record.offer_accepted_at,
-      documents_submitted: !!record.documents_submitted_at,
-      bgv_cleared: !!record.bgv_cleared_at,
+      offer_accepted: offerAccepted,
+      documents_submitted: documentsSubmitted,
+      bgv_cleared: bgvCleared,
       joining_date: record.joining_date
     }
   });

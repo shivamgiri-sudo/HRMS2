@@ -131,7 +131,12 @@ export const navGroups: NavGroup[] = [
           { label: "Form Config",       href: "/ats/form-config",              icon: ic(Settings2),                                               roles: ["admin","hr","super_admin"], description: "Interview form & branch aliases" },
           { label: "Enhanced Registration", href: "/ats/registration-enhanced", icon: ic(UserPlus), roles: ["admin","hr","recruiter","super_admin"], description: "Extended candidate registration" },
           { label: "ATS Extensions", href: "/ats/extensions", icon: ic(Settings2), pageCode: "ATS_EXTENSIONS", roles: ["admin","hr","super_admin"], description: "ATS extension workspace" },
-          { label: "Payroll HR Validation", href: "/ats/payroll-hr-validation", icon: ic(FileCheck), roles: ["admin","hr","payroll_hr","super_admin"], description: "Payroll onboarding validation" },
+          // /ats/payroll-hr-validation is a redirect to /ats/onboarding-requests
+          // (the dedicated page was retired in 49efe7fd and the capability moved
+          // to Joining Control). Pointing straight at the destination, because a
+          // menu item labelled "Payroll HR Validation" that lands on a page which
+          // does not validate is how people conclude the feature is missing.
+          { label: "Onboarding Requests", href: "/ats/onboarding-requests", icon: ic(FileCheck), roles: ["admin","hr","payroll_hr","super_admin"], description: "Onboarding requests and payroll validation intake" },
           // Jobs Portal removed per business requirement
         ],
       },

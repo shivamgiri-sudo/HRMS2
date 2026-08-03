@@ -295,7 +295,9 @@ const BgvProviderSettings = () => {
         { key: "luckpay_digilocker_basic_token", label: "DigiLocker/eSign Basic Token", type: "password" },
         { key: "luckpay_digilocker_client_id", label: "DigiLocker/eSign Client ID" },
       ],
-      callback: "/api/onboarding/digilocker/callback",
+      // See the webhook list below — the /api/onboarding/digilocker/ route
+      // writes to an empty duplicate table that nothing reads.
+      callback: "/api/ats/bgv/provider/callback",
       note: "Leave blank to use same credentials as PAN/Bank/UAN below.",
     },
     {
@@ -456,9 +458,17 @@ const BgvProviderSettings = () => {
               method: "POST",
             },
             {
+              // /api/onboarding/digilocker/callback is a second, older
+              // implementation that writes to candidate_digilocker_sessions
+              // (plural) — a table holding zero rows that nothing else reads.
+              // The live flow uses candidate_digilocker_session (singular) via
+              // the Luckpay path, and completions are picked up by polling
+              // rather than by this callback. Advertising the dead URL here is
+              // how a completed DigiLocker would end up somewhere no report
+              // ever looks.
               label: "DigiLocker Callback",
-              desc: "DigiLocker sends authorized documents here",
-              path: "/api/onboarding/digilocker/callback",
+              desc: "DigiLocker sends authorized documents here. Status is confirmed by polling, so this is a supplement, not the source of truth.",
+              path: "/api/ats/bgv/provider/callback",
               method: "POST",
             },
             {
