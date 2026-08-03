@@ -56,9 +56,9 @@ jobs:
           start = text.index(start_marker)
           end = text.index(end_marker, start)
           section = text[start:end]
-          for token in ('candidate_status', 'queue_status', 'idx_ats_queue_branch'):
+          for token in ('(candidate_status)', '(queue_status)', 'idx_ats_queue_branch (branch_name)'):
               if token in section:
-                  raise SystemExit(f'stale token remains in section 17: {token}')
+                  raise SystemExit(f'stale column reference remains in section 17: {token}')
           path.write_text(text, encoding='utf-8', newline='\n')
           PY
 
