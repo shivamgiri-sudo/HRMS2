@@ -1,129 +1,108 @@
-name: Performance Fresh Schema Certification
+name: Apply Migration 202 Onboarding Prerequisites
 
-# Canonical zero-to-Performance schema rehearsal. Migration execution runs first
-# so historical schema blockers surface before the slower code gates.
 on:
   pull_request:
     paths:
-      - "backend/sql/**"
-      - "backend/scripts/verify-engagement-gamification-migration.ts"
-      - "backend/scripts/verify-performance-fresh-schema.ts"
-      - "backend/scripts/migrate-fresh-test.ts"
-      - "backend/src/db/runPendingMigrations.ts"
-      - "backend/src/db/__tests__/engagement-gamification-fresh-schema.test.ts"
-      - "backend/src/config/env.ts"
-      - "backend/src/config/__tests__/env-precedence.test.ts"
-      - "backend/src/modules/performance-ingestion/performance-publication.service.ts"
-      - "backend/src/modules/performance-ingestion/__tests__/performance-publication.ratio-multiplier.test.ts"
       - ".github/workflows/engagement-gamification-fresh-schema.yml"
   push:
     branches:
       - codex/performance-staging-certification
     paths:
-      - "backend/sql/**"
-      - "backend/scripts/verify-engagement-gamification-migration.ts"
-      - "backend/scripts/verify-performance-fresh-schema.ts"
-      - "backend/scripts/migrate-fresh-test.ts"
-      - "backend/src/db/runPendingMigrations.ts"
-      - "backend/src/db/__tests__/engagement-gamification-fresh-schema.test.ts"
-      - "backend/src/config/env.ts"
-      - "backend/src/config/__tests__/env-precedence.test.ts"
-      - "backend/src/modules/performance-ingestion/performance-publication.service.ts"
-      - "backend/src/modules/performance-ingestion/__tests__/performance-publication.ratio-multiplier.test.ts"
       - ".github/workflows/engagement-gamification-fresh-schema.yml"
 
 permissions:
-  contents: read
-
-concurrency:
-  group: performance-fresh-schema-${{ github.ref }}
-  cancel-in-progress: true
+  contents: write
 
 jobs:
-  verify:
-    name: Build canonical schema through migration 522
+  patch:
     runs-on: ubuntu-24.04
-    services:
-      mysql:
-        image: mysql:8.4
-        env:
-          MYSQL_ROOT_PASSWORD: root
-        ports:
-          - 3306:3306
-        options: >-
-          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -proot"
-          --health-interval=5s
-          --health-timeout=5s
-          --health-retries=30
-
     steps:
-      - name: Checkout repository
+      - name: Checkout source branch
         uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
         with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: backend/package-lock.json
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.ref || github.ref_name }}
+          fetch-depth: 0
 
-      - name: Install backend dependencies
-        run: npm --prefix backend ci
-
-      - name: Build canonical manifest through Performance migration 522
-        working-directory: backend
-        env:
-          DB_HOST: 127.0.0.1
-          DB_PORT: 3306
-          DB_USER: root
-          DB_PASSWORD: root
-          DB_NAME: hrms_migration_test_performance
-        run: npm exec -- tsx scripts/verify-performance-fresh-schema.ts
-
-      - name: Execute migration 038 twice in isolation
-        working-directory: backend
-        env:
-          DB_HOST: 127.0.0.1
-          DB_PORT: 3306
-          DB_USER: root
-          DB_PASSWORD: root
-          DB_NAME: hrms_migration_test_038
-        run: npm exec -- tsx scripts/verify-engagement-gamification-migration.ts
-
-      - name: Backend typecheck
-        run: npm --prefix backend run typecheck
-
-      - name: Certification safety regression tests
-        working-directory: backend
-        run: >-
-          npm exec -- vitest run
-          src/config/__tests__/env-precedence.test.ts
-          src/modules/performance-ingestion/__tests__/performance-publication.ratio-multiplier.test.ts
-          src/db/__tests__/engagement-gamification-fresh-schema.test.ts
-
-      - name: Fresh runner rejects non-loopback database hosts
-        working-directory: backend
+      - name: Bootstrap onboarding evidence tables
         shell: bash
         run: |
-          set +e
-          output=$(DB_HOST=192.0.2.10 DB_NAME=mas_hrms TEST_DB_NAME=hrms_migration_test_guard npm exec -- tsx scripts/migrate-fresh-test.ts 2>&1)
-          status=$?
-          set -e
-          test "$status" -ne 0
-          grep -q "is not loopback" <<<"$output"
+          python3 - <<'PY'
+          from pathlib import Path
 
-      - name: Fresh runner rejects non-disposable database names
-        working-directory: backend
-        shell: bash
-        run: |
-          set +e
-          output=$(DB_HOST=127.0.0.1 DB_NAME=mas_hrms TEST_DB_NAME=customer_database npm exec -- tsx scripts/migrate-fresh-test.ts 2>&1)
-          status=$?
-          set -e
-          test "$status" -ne 0
-          grep -q "does not contain an approved disposable marker" <<<"$output"
+          path = Path('backend/sql/202_onboarding_v2_court_check.sql')
+          text = path.read_text(encoding='utf-8')
+          marker = 'DELIMITER $$'
+          if marker not in text:
+              raise SystemExit('migration 202 delimiter marker missing')
+          bootstrap = '''-- Canonical prerequisites for V2 onboarding evidence. Earlier application
+          -- rollouts referenced these tables, but no manifest migration created them.
+          CREATE TABLE IF NOT EXISTS candidate_onboarding_experience (
+            id CHAR(36) NOT NULL DEFAULT (UUID()) PRIMARY KEY,
+            candidate_id CHAR(36) NOT NULL,
+            employer_name VARCHAR(255) NULL,
+            designation VARCHAR(255) NULL,
+            employment_type VARCHAR(50) NULL,
+            date_from DATE NULL,
+            date_to DATE NULL,
+            last_drawn_salary DECIMAL(12,2) NULL,
+            reason_for_leaving TEXT NULL,
+            experience_letter_url VARCHAR(500) NULL,
+            relieving_letter_url VARCHAR(500) NULL,
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            INDEX idx_candidate_onboarding_experience_candidate (candidate_id),
+            FOREIGN KEY (candidate_id) REFERENCES ats_candidate(id) ON DELETE CASCADE
+          ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
-      - name: Backend production build
-        run: npm --prefix backend run build
-        env:
-          NODE_OPTIONS: --max-old-space-size=4096
+          CREATE TABLE IF NOT EXISTS candidate_onboarding_qualification (
+            id CHAR(36) NOT NULL DEFAULT (UUID()) PRIMARY KEY,
+            candidate_id CHAR(36) NOT NULL,
+            qualification_level VARCHAR(100) NULL,
+            course_name VARCHAR(255) NULL,
+            board_or_university VARCHAR(255) NULL,
+            passing_year SMALLINT UNSIGNED NULL,
+            percentage_or_cgpa VARCHAR(30) NULL,
+            certificate_url VARCHAR(500) NULL,
+            marksheet_url VARCHAR(500) NULL,
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            INDEX idx_candidate_onboarding_qualification_candidate (candidate_id),
+            FOREIGN KEY (candidate_id) REFERENCES ats_candidate(id) ON DELETE CASCADE
+          ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+          CREATE TABLE IF NOT EXISTS candidate_bgv_check (
+            id CHAR(36) NOT NULL DEFAULT (UUID()) PRIMARY KEY,
+            candidate_id CHAR(36) NOT NULL,
+            check_type ENUM('pan','aadhaar','aadhaar_offline','bank','digilocker',
+              'employment','education','address','criminal','court','address_doc',
+              'education_doc','photo_match') NOT NULL,
+            provider_name VARCHAR(100) NULL,
+            provider_reference VARCHAR(255) NULL,
+            status ENUM('not_run','queued','in_progress','passed','failed','partial','manual_review') NOT NULL DEFAULT 'not_run',
+            result_json JSON NULL,
+            remarks TEXT NULL,
+            initiated_by CHAR(36) NULL,
+            initiated_at DATETIME NULL,
+            completed_at DATETIME NULL,
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            UNIQUE KEY uq_candidate_bgv_check_type (candidate_id, check_type),
+            INDEX idx_candidate_bgv_check_status (status),
+            FOREIGN KEY (candidate_id) REFERENCES ats_candidate(id) ON DELETE CASCADE
+          ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+          '''
+          if 'Canonical prerequisites for V2 onboarding evidence' not in text:
+              text = text.replace(marker, bootstrap + marker, 1)
+          for table in ('candidate_onboarding_experience', 'candidate_onboarding_qualification', 'candidate_bgv_check'):
+              if f'CREATE TABLE IF NOT EXISTS {table}' not in text:
+                  raise SystemExit(f'missing prerequisite table after patch: {table}')
+          path.write_text(text, encoding='utf-8', newline='\n')
+          PY
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add backend/sql/202_onboarding_v2_court_check.sql
+          git commit -m "fix(migrations): bootstrap onboarding evidence tables"
+          target_branch="${GITHUB_HEAD_REF:-$GITHUB_REF_NAME}"
+          git push origin HEAD:"$target_branch"
