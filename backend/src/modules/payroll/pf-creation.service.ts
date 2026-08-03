@@ -722,13 +722,14 @@ export const pfCreationService = {
     const lines: string[] = [];
     lines.push("#~#");
     lines.push(
-      "UAN#MEMBER_NAME#GROSS_WAGES#EPF_WAGES#EPS_WAGES#EDLi_WAGES#EPF_CONTRI_REMITTED#EPS_CONTRI_REMITTED#EPF_EPS_DIFF_REMITTED#NCP_DAYS#REFUND_OF_ADVANCES"
+      "UAN#MEMBER_NAME#GROSS_WAGES#EPF_WAGES#EPS_WAGES#EDLI_WAGES#EPF_CONTRI_REMITTED#EPS_CONTRI_REMITTED#EPF_EPS_DIFF_REMITTED#NCP_DAYS#REFUND_OF_ADVANCES"
     );
 
-    let totalGross = 0, totalEpfWages = 0, totalEpfContri = 0, totalEpsContri = 0, totalNcp = 0;
+    let totalGross = 0, totalEpfWages = 0, totalEpsWages = 0, totalEpfContri = 0, totalEpsContri = 0, totalNcp = 0;
 
     for (const r of rows) {
       const epfWages  = Number(r.epf_wages);
+      const epsWages  = Math.min(epfWages, 15000);
       const epfContri = Number(r.epf_contri);
       const epsContri = Math.round(Math.min(Number(r.eps_contri), 1250));
       const diff      = epfContri - epsContri;
@@ -737,13 +738,14 @@ export const pfCreationService = {
 
       totalGross    += gross;
       totalEpfWages += epfWages;
+      totalEpsWages += epsWages;
       totalEpfContri+= epfContri;
       totalEpsContri+= epsContri;
       totalNcp      += ncp;
 
       const name = String(r.member_name).replace(/#/g, "").toUpperCase().substring(0, 80);
       lines.push(
-        `${r.uan}#${name}#${gross}#${epfWages}#${epfWages}#${epfWages}#${epfContri}#${epsContri}#${diff}#${ncp}#0`
+        `${r.uan}#${name}#${gross}#${epfWages}#${epsWages}#${epsWages}#${epfContri}#${epsContri}#${diff}#${ncp}#0`
       );
     }
 
@@ -752,7 +754,7 @@ export const pfCreationService = {
     const mmyyyy = `${mo}${yr}`;
     const totalDiff = totalEpfContri - totalEpsContri;
     lines.push(
-      `${rows.length}#${mmyyyy}#${rows.length}#${totalGross}#${totalEpfWages}#${totalEpfWages}#${totalEpfWages}#${totalEpfContri}#${totalEpsContri}#${totalDiff}#${totalNcp}#0`
+      `${rows.length}#${mmyyyy}#${rows.length}#${totalGross}#${totalEpfWages}#${totalEpsWages}#${totalEpsWages}#${totalEpfContri}#${totalEpsContri}#${totalDiff}#${totalNcp}#0`
     );
 
     const content  = lines.join("\n");
