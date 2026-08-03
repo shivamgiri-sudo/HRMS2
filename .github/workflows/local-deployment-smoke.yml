@@ -362,10 +362,16 @@ jobs:
           const fs = require('node:fs');
 
           async function main() {
+            // Same password the seeder wrote. The literal that used to be here belonged to the
+            // same set of invented per-account passwords the login step above had, and 401'd
+            // for the same reason.
             const loginRes = await fetch('http://localhost:5055/api/auth/login', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ identifier: 'admin@mascallnet.com', password: 'Admin@123' }),
+              body: JSON.stringify({
+                identifier: 'admin@mascallnet.com',
+                password: process.env.DEMO_AUTH_PASSWORD,
+              }),
             });
             const loginText = await loginRes.text();
             if (!loginRes.ok) throw new Error('admin login failed: HTTP ' + loginRes.status + ' ' + loginText);
