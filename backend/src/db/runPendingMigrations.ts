@@ -463,7 +463,8 @@ const MIGRATION_MANIFEST: string[] = [
   "1066_billability_page_access.sql", // without a grant the screen is invisible to everyone but super_admin, which is exactly how FINANCE_COST_CENTRES ended up unreachable
   "1067_missing_page_catalog_entries.sql", // MCNMEET, MODULE_LAUNCHER, PAYROLL_SALARY_VERIFICATION were referenced in routes/nav/rbacPageMatrix.ts but had no page_catalog row, failing page-access-deployment.contract.test.ts
   "1068_celebration_post_type.sql", // supersedes 1064 with the same additive columns/index, written with the guarded INFORMATION_SCHEMA + PREPARE/EXECUTE pattern this server's MySQL actually accepts
-  "1069_db_bill_budget_grn_snapshot.sql", // db_bill is the live finance system and mas_hrms mirrored none of its budget (18,433 rows), GRN (85,463) or invoice line items (21,055) — the last of which carry the cost-centre-wise seat rate the P&L needs
+  "1069_db_bill_budget_grn_snapshot.sql",
+  "1070_db_bill_expense_particulars.sql", // the budget and GRN LINE tables — expense_entry_particular carries CostCenterId, which is the only place cost is attributed below branch; expense_particular records each budget amount twice, so expense_type must be filtered when aggregating // db_bill is the live finance system and mas_hrms mirrored none of its budget (18,433 rows), GRN (85,463) or invoice line items (21,055) — the last of which carry the cost-centre-wise seat rate the P&L needs
   ];
 
 export type MigrationHealth = {
