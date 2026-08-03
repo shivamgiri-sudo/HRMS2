@@ -62,20 +62,40 @@ export class SalarySnapshotSyncHandler extends DomainSyncBase {
 
       try {
         const [res] = await db.execute<any>(
+          // Five of this statement's column names did not exist, so the legacy salary sync
+          // has never written a row. The correct names were established from the codebase
+          // and the data, not guessed:
+          //
+          //   ctc            -> ctc_offered   employee-creation-orchestrator writes BOTH
+          //                                   ctc_offered and offered_ctc with the same
+          //                                   value, a legacy duplicate pair. Production
+          //                                   settles which is real: ctc_offered is populated
+          //                                   on 31,142 of 33,443 rows, offered_ctc on 1.
+          //   net_inhand     -> net_in_hand   underscore; 17,124 rows populated.
+          //   ta             -> conveyance    TA is the legacy name for the conveyance
+          //                                   component. Seven read sites use s.conveyance
+          //                                   and none reads a column called ta.
+          //   snapshot_month -> snapshot_date the column is a DATE, not a '%Y-%m' string, so
+          //                                   the month is stored as its first day.
+          //   updated_at                      does not exist on this table at all; dropped
+          //                                   from the upsert rather than invented.
+          //
+          // ON DUPLICATE KEY is genuine here — employee_id carries its own UNIQUE index, so
+          // one snapshot per employee is the intended shape and the clause really fires.
           `INSERT INTO employee_salary_snapshot
-             (id, employee_id, ctc, gross, net_inhand, basic, hra, da, ta,
-              other_allowance, snapshot_month, created_at)
-           VALUES (UUID(), ?, ?, ?, ?, ?, ?, ?, ?, ?, DATE_FORMAT(NOW(), '%Y-%m'), NOW())
+             (id, employee_id, ctc_offered, gross, net_in_hand, basic, hra, da, conveyance,
+              other_allowance, snapshot_date, created_at)
+           VALUES (UUID(), ?, ?, ?, ?, ?, ?, ?, ?, ?, DATE_FORMAT(NOW(), '%Y-%m-01'), NOW())
            ON DUPLICATE KEY UPDATE
-             ctc             = IF(VALUES(ctc) > 0, VALUES(ctc), ctc),
+             ctc_offered     = IF(VALUES(ctc_offered) > 0, VALUES(ctc_offered), ctc_offered),
              gross           = IF(VALUES(gross) > 0, VALUES(gross), gross),
-             net_inhand      = IF(VALUES(net_inhand) > 0, VALUES(net_inhand), net_inhand),
+             net_in_hand     = IF(VALUES(net_in_hand) > 0, VALUES(net_in_hand), net_in_hand),
              basic           = IF(VALUES(basic) > 0, VALUES(basic), basic),
              hra             = IF(VALUES(hra) > 0, VALUES(hra), hra),
              da              = IF(VALUES(da) > 0, VALUES(da), da),
-             ta              = IF(VALUES(ta) > 0, VALUES(ta), ta),
+             conveyance      = IF(VALUES(conveyance) > 0, VALUES(conveyance), conveyance),
              other_allowance = IF(VALUES(other_allowance) > 0, VALUES(other_allowance), other_allowance),
-             updated_at      = NOW()`,
+             snapshot_date   = VALUES(snapshot_date)`,
           [
             empId, ctc, gross,
             Number(row.NetInHand ?? 0),
