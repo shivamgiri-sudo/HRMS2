@@ -22,97 +22,124 @@
 --   );
 -- ============================================================
 
+-- Every UPDATE below is conditional on its branch existing.
+--
+-- The branch ids are production rows. On a freshly built database branch_master is
+-- empty, so the first UPDATE violates process_master_ibfk_1 and stops the chain:
+--
+--   Cannot add or update a child row: a foreign key constraint fails
+--   (mas_hrms.process_master, CONSTRAINT process_master_ibfk_1 FOREIGN KEY (branch_id)
+--    REFERENCES branch_master (id))
+--
+-- The EXISTS makes each statement check its own foreign key. Where the branch exists
+-- this maps exactly the processes it always did; where it does not, it maps nothing,
+-- which is correct — a process cannot belong to a branch that is not there.
+-- Same fix as 044, which hardcoded a designation id.
+
 -- ── NOIDA (Trapezoid) processes ────────────────────────────────────────────────
 UPDATE process_master
   SET branch_id  = '77769026-5e88-11f1-adb1-00155d0ab410',
       client_name = 'Bella-Vita',
       updated_at  = NOW()
 WHERE process_name = 'Bella-Vita Organic'
-  AND branch_id IS NULL;
+  AND branch_id IS NULL
+  AND EXISTS (SELECT 1 FROM branch_master b WHERE b.id = '77769026-5e88-11f1-adb1-00155d0ab410');
 
 UPDATE process_master
   SET branch_id  = '77769026-5e88-11f1-adb1-00155d0ab410',
       client_name = 'Birla Nu',
       updated_at  = NOW()
 WHERE process_name = 'BirlaNu Limited'
-  AND branch_id IS NULL;
+  AND branch_id IS NULL
+  AND EXISTS (SELECT 1 FROM branch_master b WHERE b.id = '77769026-5e88-11f1-adb1-00155d0ab410');
 
 UPDATE process_master
   SET branch_id  = '77769026-5e88-11f1-adb1-00155d0ab410',
       client_name = 'Clovia',
       updated_at  = NOW()
 WHERE process_name = 'Clovia'
-  AND branch_id IS NULL;
+  AND branch_id IS NULL
+  AND EXISTS (SELECT 1 FROM branch_master b WHERE b.id = '77769026-5e88-11f1-adb1-00155d0ab410');
 
 UPDATE process_master
   SET branch_id  = '77769026-5e88-11f1-adb1-00155d0ab410',
       client_name = 'DU Digital',
       updated_at  = NOW()
 WHERE process_name = 'DU Digital'
-  AND branch_id IS NULL;
+  AND branch_id IS NULL
+  AND EXISTS (SELECT 1 FROM branch_master b WHERE b.id = '77769026-5e88-11f1-adb1-00155d0ab410');
 
 UPDATE process_master
   SET branch_id  = '77769026-5e88-11f1-adb1-00155d0ab410',
       client_name = 'Exicom',
       updated_at  = NOW()
 WHERE process_name = 'Exicom'
-  AND branch_id IS NULL;
+  AND branch_id IS NULL
+  AND EXISTS (SELECT 1 FROM branch_master b WHERE b.id = '77769026-5e88-11f1-adb1-00155d0ab410');
 
 UPDATE process_master
   SET branch_id  = '77769026-5e88-11f1-adb1-00155d0ab410',
       client_name = 'GNC',
       updated_at  = NOW()
 WHERE process_name = 'GNC'
-  AND branch_id IS NULL;
+  AND branch_id IS NULL
+  AND EXISTS (SELECT 1 FROM branch_master b WHERE b.id = '77769026-5e88-11f1-adb1-00155d0ab410');
 
 UPDATE process_master
   SET branch_id  = '77769026-5e88-11f1-adb1-00155d0ab410',
       client_name = 'Housing.com',
       updated_at  = NOW()
 WHERE process_name = 'Housing.com'
-  AND branch_id IS NULL;
+  AND branch_id IS NULL
+  AND EXISTS (SELECT 1 FROM branch_master b WHERE b.id = '77769026-5e88-11f1-adb1-00155d0ab410');
 
 UPDATE process_master
   SET branch_id  = '77769026-5e88-11f1-adb1-00155d0ab410',
       client_name = 'Neemans',
       updated_at  = NOW()
 WHERE process_name = 'Neemans Private Limited'
-  AND branch_id IS NULL;
+  AND branch_id IS NULL
+  AND EXISTS (SELECT 1 FROM branch_master b WHERE b.id = '77769026-5e88-11f1-adb1-00155d0ab410');
 
 UPDATE process_master
   SET branch_id  = '77769026-5e88-11f1-adb1-00155d0ab410',
       client_name = 'Viega',
       updated_at  = NOW()
 WHERE process_name = 'Viega'
-  AND branch_id IS NULL;
+  AND branch_id IS NULL
+  AND EXISTS (SELECT 1 FROM branch_master b WHERE b.id = '77769026-5e88-11f1-adb1-00155d0ab410');
 
 UPDATE process_master
   SET branch_id  = '77769026-5e88-11f1-adb1-00155d0ab410',
       client_name = 'VST',
       updated_at  = NOW()
 WHERE process_name = 'VST'
-  AND branch_id IS NULL;
+  AND branch_id IS NULL
+  AND EXISTS (SELECT 1 FROM branch_master b WHERE b.id = '77769026-5e88-11f1-adb1-00155d0ab410');
 
 UPDATE process_master
   SET branch_id  = '77769026-5e88-11f1-adb1-00155d0ab410',
       client_name = 'SolveEasy',
       updated_at  = NOW()
 WHERE process_name = 'SolveEasy'
-  AND branch_id IS NULL;
+  AND branch_id IS NULL
+  AND EXISTS (SELECT 1 FROM branch_master b WHERE b.id = '77769026-5e88-11f1-adb1-00155d0ab410');
 
 UPDATE process_master
   SET branch_id  = '77769026-5e88-11f1-adb1-00155d0ab410',
       client_name = 'Dalmia Cement',
       updated_at  = NOW()
 WHERE process_name = 'Dalmia Cement'
-  AND branch_id IS NULL;
+  AND branch_id IS NULL
+  AND EXISTS (SELECT 1 FROM branch_master b WHERE b.id = '77769026-5e88-11f1-adb1-00155d0ab410');
 
 UPDATE process_master
   SET branch_id  = '77769026-5e88-11f1-adb1-00155d0ab410',
       client_name = 'Appriciate Wealth',
       updated_at  = NOW()
 WHERE process_name = 'Appriciate Wealth'
-  AND branch_id IS NULL;
+  AND branch_id IS NULL
+  AND EXISTS (SELECT 1 FROM branch_master b WHERE b.id = '77769026-5e88-11f1-adb1-00155d0ab410');
 
 -- ── NOIDA-2 (Okaya) processes ──────────────────────────────────────────────────
 UPDATE process_master
@@ -120,7 +147,8 @@ UPDATE process_master
       client_name = 'Reginald Men',
       updated_at  = NOW()
 WHERE process_name = 'Reginald'
-  AND branch_id IS NULL;
+  AND branch_id IS NULL
+  AND EXISTS (SELECT 1 FROM branch_master b WHERE b.id = 'febd8777-6583-11f1-adb1-00155d0ab410');
 
 -- ── AHMEDABAD-JALDARSHAN processes ─────────────────────────────────────────────
 UPDATE process_master
@@ -128,7 +156,8 @@ UPDATE process_master
       client_name = 'Finfort',
       updated_at  = NOW()
 WHERE process_name = 'Finfort'
-  AND branch_id IS NULL;
+  AND branch_id IS NULL
+  AND EXISTS (SELECT 1 FROM branch_master b WHERE b.id = 'fea10538-6583-11f1-adb1-00155d0ab410');
 
 -- ── Verify results ─────────────────────────────────────────────────────────────
 SELECT
