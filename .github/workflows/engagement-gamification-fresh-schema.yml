@@ -32,8 +32,8 @@ jobs:
           path = Path('backend/sql/199_process_branch_dept_cleanup.sql')
           text = path.read_text(encoding='utf-8')
           before = text.count('cost_center_code')
-          if before != 4:
-              raise SystemExit(f'expected 4 cost_center_code references including comments, found {before}')
+          if before != 6:
+              raise SystemExit(f'expected 6 cost_center_code references including comments, found {before}')
           text = text.replace('cost_center_code', 'cost_center')
           if 'cost_center_code' in text:
               raise SystemExit('stale cost_center_code reference remains')
