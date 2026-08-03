@@ -10,13 +10,13 @@
 Everything you asked for in §1, §3, §4, §7, §8, §9 and §10 is done. **§5 and §6 are not**, and
 the reason is the single most important thing to come out of this session:
 
-> **The repository cannot build its own database.** Twenty-seven CI builds against an empty
-> MySQL 8.0 found **twenty-one distinct defect classes** in the migration chain. Production
+> **The repository cannot build its own database.** Twenty-nine CI builds against an empty
+> MySQL 8.0 found **twenty-four distinct defect classes** in the migration chain. Production
 > has never hit any of them because it runs `SKIP_MIGRATIONS=true` — its schema accumulated
 > over three years by hand, not from the manifest.
 
-The chain started at migration **18 of 414**. It now reaches roughly **250**. Required tables
-still missing fell from **10 to 5**. That is real, measurable progress, and it is not finished.
+The chain started at migration **18 of 414**. It now reaches roughly **320**. Required tables
+still missing fell from **10 to 4**. That is real, measurable progress, and it is not finished.
 
 **This was never a blocker for the CEO's UAT and is not one now.** It is a disaster-recovery
 and new-environment blocker — the sort that surfaces at the worst possible moment.
@@ -147,7 +147,7 @@ does not exist.** Found by widening the INSERT audit to scan unmanifested files.
 | Item | State |
 | --- | --- |
 | Two consecutive green smoke runs (§6) | **None yet.** Every run has found a real defect. |
-| Fresh-database build (§5) | ~250 of 414, 5 required tables still missing |
+| Fresh-database build (§5) | ~320 of 414, 4 required tables still missing. Currently stuck on 409_visitor_management_foundation: MySQL errno 1215 "Cannot add foreign key constraint", which names no constraint. Types and collations all look correct on inspection; diagnosing it needs SHOW ENGINE INNODB STATUS against a live MySQL, or bisecting the eight FKs across CI runs. |
 | `/reports` root cause | Unknown. Interaction test written, never run against a real environment. |
 | Test-data exclusion predicates | Migration 1063 adds `is_test_data`; no query filters on it. One contract test deliberately skipped with the un-skip condition recorded. |
 | 7 staged INSERT mismatches | In unmanifested files that never run. Reported, untriaged. |
