@@ -30,6 +30,7 @@ const GRN_WRITE_ROLES: RoleKey[] = [
 ];
 const GRN_READ_ROLES: RoleKey[] = [...GRN_WRITE_ROLES, "finance", "hr", "hr_admin"];
 const GRN_REVIEW_ROLES: RoleKey[] = ["branch_head", "finance_head", "accounts_head", "super_admin"];
+const GRN_REVERSAL_ROLES: RoleKey[] = ["finance_head", "super_admin"];
 const EXPENSE_MASTER_READ_ROLES: RoleKey[] = [
   "super_admin",
   "admin",
@@ -407,6 +408,29 @@ grnRouter.post(
       res.json(result);
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : "Failed to cancel GRN";
+      res.status(400).json({ error: message });
+    }
+  }
+);
+
+grnRouter.post(
+  "/grns/:id/reverse-consumption",
+  requireWriteAccess,
+  requireRole(...GRN_REVERSAL_ROLES),
+  authorizeGrnBranch,
+  async (req: ScopedGrnRequest, res) => {
+    try {
+      const user = actor(req);
+      const reason = typeof req.body?.reason === "string" ? req.body.reason : "";
+      const result = await grnService.reverseConsumption(
+        req.params.id,
+        reason,
+        user.id,
+        user.role
+      );
+      res.json(result);
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : "Failed to reverse GRN consumption";
       res.status(400).json({ error: message });
     }
   }
