@@ -355,6 +355,19 @@ export async function createEmployeeFromCandidate(
     result.employeeId = employeeId;
     result.employeeCode = employeeCode;
 
+    // AML screening, once the employee code exists and the hire is committed.
+    //
+    // Deliberately here rather than during onboarding: this screens someone who
+    // has been hired, and a slow or failing provider must never be able to
+    // reverse that. Which designations need it is decided by the existing
+    // per-role policy, so an executive role is skipped without a new rule being
+    // written for it.
+    await queueAmlScreening({ candidateId, employeeId, designationId: offer.designation_id ?? null })
+      .catch((error) => {
+        result.warnings.push('AML screening could not be queued — raise it with Payroll HR');
+        console.error(`[EmployeeOrchestrator] AML screening not queued for ${employeeCode}:`, (error as Error)?.message);
+      });
+
     // Promote ATS candidate selfie to employee avatar_url/photo_url (non-blocking)
     // NOTE: selfie_url from ATS is /api/files/candidate/{uuid} — an auth-gated endpoint.
     // We only promote it if it is already a public employee-photos path; otherwise we skip
@@ -685,6 +698,81 @@ async function validateConsents(
  * covered by a contract test that also checks this is not wrapped in a
  * try/catch, which is how BGV readiness ended up unable to block anything.
  */
+/**
+ * Screen the new employee for AML, if their designation calls for it.
+ *
+ * Runs after the employee record exists, never inside the creation
+ * transaction. AML is slow and provider-dependent, and this is screening for
+ * someone already hired — letting a provider outage unwind a completed hire
+ * would be the wrong trade in every case.
+ *
+ * The decision is not invented here. getBgvRequirementsByDesignation() already
+ * returns an `aml` flag per role, already read by the readiness service, true
+ * for six designations and false by default — so an executive role is skipped
+ * exactly as intended, and the policy stays in one place.
+ *
+ * There is no AML provider configured today (nothing in org_settings matches
+ * `aml` or `prescreen`). Rather than pass quietly, that records a manual_review
+ * check saying so — the same rule applied to face match, because an
+ * unconfigured provider must never look like a clean candidate.
+ */
+async function queueAmlScreening(input: {
+  candidateId: string;
+  employeeId: string;
+  designationId: string | null;
+}): Promise<void> {
+  if (!input.designationId) return;
+
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT designation_name FROM designation_master WHERE id = ? LIMIT 1`,
+    [input.designationId],
+  );
+  const designationName = String((rows as RowDataPacket[])[0]?.designation_name ?? "").trim();
+  if (!designationName) return;
+
+  const { getBgvRequirementsByDesignation } = await import("../ats/bgv-config.js");
+  if (!getBgvRequirementsByDesignation(designationName).aml) return;
+
+  const [cfg] = await db.execute<RowDataPacket[]>(
+    `SELECT setting_value FROM org_settings
+      WHERE setting_key IN ('aml_api_url', 'prescreening_api_url')
+        AND setting_value IS NOT NULL AND setting_value <> ''
+      LIMIT 1`,
+  ).catch(() => [[] as RowDataPacket[]]);
+
+  const configured = (cfg as RowDataPacket[]).length > 0;
+  try {
+    await db.execute(
+      `INSERT INTO candidate_bgv_check
+         (id, candidate_id, check_type, provider_key, status, result_summary, result_json)
+       VALUES (?, ?, 'aml', ?, 'manual_review', ?, CAST(? AS JSON))`,
+      [
+        randomUUID(),
+        input.candidateId,
+        configured ? "prescreening" : "system",
+        configured
+          ? `AML screening required for ${designationName} — queued.`
+          : `AML screening is required for ${designationName}, but no AML provider is configured. A human must clear this.`,
+        JSON.stringify({ designation: designationName, providerConfigured: configured, employeeId: input.employeeId }),
+      ],
+    );
+  } catch (error) {
+    // check_type is an ENUM and does not list 'aml' until sql/1060 is applied,
+    // and production runs SKIP_MIGRATIONS=true. Under STRICT mode that INSERT
+    // throws. Named explicitly rather than left as a generic SQL error,
+    // because "AML silently recorded nothing" is precisely the failure this
+    // whole change exists to stop.
+    const message = (error as Error)?.message ?? String(error);
+    if (/check_type/i.test(message) || /Data truncated/i.test(message)) {
+      throw new Error(
+        `AML screening could not be recorded for ${designationName}: candidate_bgv_check.check_type `
+        + `does not accept 'aml' yet. Apply backend/sql/1060_bgv_check_type_aml.sql. (${message})`,
+      );
+    }
+    throw error;
+  }
+}
+
 export async function validateNoOpenFraudAlerts(
   conn: PoolConnection,
   candidateId: string,
