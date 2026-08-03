@@ -452,6 +452,39 @@ jobs:
           npx playwright test --config=playwright.config.ts --project=page-smoke
           echo "::endgroup::"
 
+      # "Cannot add foreign key constraint" (errno 1215) names no constraint, no column and no
+      # reason. InnoDB records the actual diagnosis — which constraint, which columns, and
+      # whether it was a type, collation, index or engine mismatch — and discards it on the
+      # next FK error. Reading it here turns a guessing game into one line.
+      #
+      # 409_visitor_management_foundation failed this way with eight foreign keys and no
+      # indication which; every referenced table existed and every type matched on inspection.
+      - name: InnoDB foreign key diagnosis
+        if: failure()
+        continue-on-error: true
+        working-directory: backend
+        run: |
+          echo "::group::LATEST FOREIGN KEY ERROR"
+          node -e "
+          const mysql = require('mysql2/promise');
+          (async () => {
+            const conn = await mysql.createConnection({
+              host: '127.0.0.1', port: 3306, user: 'root', password: 'rootpass', database: 'mas_hrms',
+            });
+            const [rows] = await conn.query('SHOW ENGINE INNODB STATUS');
+            const status = rows?.[0]?.Status ?? '';
+            const start = status.indexOf('LATEST FOREIGN KEY ERROR');
+            if (start === -1) {
+              console.log('No foreign key error recorded — this failure was not an FK problem.');
+            } else {
+              const end = status.indexOf('---------', start + 40);
+              console.log(status.slice(start, end === -1 ? start + 4000 : end));
+            }
+            await conn.end();
+          })().catch((e) => { console.error('could not read InnoDB status:', e.message); });
+          "
+          echo "::endgroup::"
+
       - name: Failure summary
         if: failure()
         run: |
