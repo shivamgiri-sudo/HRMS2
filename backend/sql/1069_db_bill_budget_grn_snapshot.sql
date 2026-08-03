@@ -151,15 +151,26 @@ CREATE TABLE IF NOT EXISTS billing_invoice_particular_snapshot (
   rate              DECIMAL(18,2) NOT NULL DEFAULT 0,
   qty               DECIMAL(18,4) NOT NULL DEFAULT 0, -- fractional: part-month seats
   amount            DECIMAL(18,2) NOT NULL DEFAULT 0,
-  -- True only where the service label says this line is priced per seat. Everywhere else
-  -- `rate` is a line price, not a seat rate, and must not be read as one.
+  -- How this line is billed, derived from the line itself because the declared fields
+  -- cannot answer it (revenueType blank on 595 of 970 cost centres; service blank on the
+  -- 183 recent lines carrying Rs 611 lakh). By value across FY2026-27:
+  --   unit_recurring  Rs 935 lakh -- a fixed monthly rate per unit against a varying,
+  --                   usually fractional, unit count (Onfido 49,910 x 195 then x 175;
+  --                   BirlaNu 29,702 x 0.21 / 1.04 / 0.04). The fractions are part-month
+  --                   FTEs prorated by deployed days.
+  --   usage / one_time / revenue_share / fixed -- the rest
+  billing_pattern   VARCHAR(30)   NOT NULL DEFAULT 'fixed',
+  -- True only for unit_recurring lines, and a candidate rather than a guarantee: the
+  -- rate/qty split is not always the per-person one (BSS/OB/NOIDA-DD/993 billed
+  -- 38,000 x 2 in June and 76,000 x 1 in July for the same value).
   is_seat_line      TINYINT(1)    NOT NULL DEFAULT 0,
   source_created_at DATETIME      NULL,
   synced_at         DATETIME      NOT NULL,
   PRIMARY KEY (bill_source_id),
   KEY idx_bips_cc     (cost_centre_code, period_code),
   KEY idx_bips_period (period_code),
-  KEY idx_bips_seat   (is_seat_line, period_code)
+  KEY idx_bips_seat   (is_seat_line, period_code),
+  KEY idx_bips_pattern (billing_pattern, period_code)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ---------------------------------------------------------------------------

@@ -67,6 +67,18 @@ describe("db_bill budget / GRN / invoice-line snapshot", () => {
     }
   });
 
+  it("classifies the billing pattern by shape, not just the word 'seat'", () => {
+    const sync = read(SYNC);
+    // Matching only /seat/ caught Rs 88 lakh of lines literally labelled "seat" and missed
+    // Rs 837 lakh billed as "FTE", "Telecalling" or "Service Charges" — the same per-unit
+    // model in different words, and the bulk of the revenue.
+    expect(sync).toContain("function billingPattern");
+    for (const word of ["fte", "manpower", "telecalling", "service charges"]) {
+      expect(sync, `the classifier must recognise "${word}"`).toContain(word);
+    }
+    expect(sync).toContain("billing_pattern: billingPattern(");
+  });
+
   it("collates every new table explicitly", () => {
     const sql = read(MIGRATION);
     const creates = sql.match(/CREATE TABLE IF NOT EXISTS/g) ?? [];

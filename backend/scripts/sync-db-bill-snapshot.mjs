@@ -189,15 +189,55 @@ function toPeriodCode(financeYear, monthLabel) {
 }
 
 /**
- * Lines the source itself calls seat-priced.
+ * How a line is billed.
  *
- * Only these may be read as a seat rate. Even here `rate` is not reliably per-seat —
- * BSS/OB/NOIDA-DD/993 billed 38,000 x 2 in June and 76,000 x 1 in July for the same value —
- * so this marks candidates for the P&L to use, not a guarantee.
+ * Derived from the line itself, because the declared field cannot answer it:
+ * cost_master.revenueType is blank on 595 of 970 cost centres, and inv_particulars.service
+ * is blank on 183 of 356 recent lines carrying Rs 611 lakh — precisely the biggest contracts.
+ *
+ * What the FY2026-27 invoices actually show, by value:
+ *
+ *   unit_recurring   Rs 935 lakh over 77 recurring rate lines. A fixed monthly rate per
+ *                    unit against a VARYING, usually FRACTIONAL, unit count — Onfido at
+ *                    49,910 x 195 then x 175, Bluevine at 27,000 x 64.80 / 66.20 / 62.90,
+ *                    BirlaNu at 29,702 x 0.21 / 1.04 / 0.04. The fractions are part-month
+ *                    FTEs prorated by deployed days, which is the same proration the seat
+ *                    rate resolver applies.
+ *   usage            excess usage, talktime top-ups, CTI — varies with volume
+ *   one_time         setup, implementation, customisation — must never be annualised
+ *   revenue_share    a percentage of the client's own revenue
+ *   fixed            same amount every month, qty 1
+ *
+ * An earlier version of this matched only /seat/. That caught Rs 88 lakh of lines literally
+ * labelled "seat" and MISSED the Rs 837 lakh billed as "FTE", "Telecalling" or "Service
+ * Charges" — the same per-unit model in different words, and the bulk of the revenue.
+ * Matching on the word rather than the shape is why.
  */
-function isSeatLine(service, particulars) {
+function billingPattern(service, particulars, rate, qty, amount) {
   const hay = `${service ?? ''} ${particulars ?? ''}`.toLowerCase();
-  return /seat/.test(hay) ? 1 : 0;
+  if (/revenue share/.test(hay)) return 'revenue_share';
+  if (/set ?up cost|implementation|integration charge|customi[sz]ation|development cost/.test(hay))
+    return 'one_time';
+  if (/excess usage|top ?up|talktime|recharge|cloud telephony|\bcti\b|per (call|minute|transaction|lead|case)/.test(hay))
+    return 'usage';
+  if (/retainer|subscription/.test(hay)) return 'fixed';
+  // Shape beats vocabulary: a rate against a real unit count is per-unit billing whatever
+  // the line happens to be called.
+  if (/seat|fte|manpower|deployment|resource|telecalling|service charges/.test(hay)) return 'unit_recurring';
+  const r = safeDec(rate), q = safeDec(qty), a = safeDec(amount);
+  if (r > 0 && q > 0 && a > 0 && Math.abs(r * q - a) < 1) return 'unit_recurring';
+  return 'fixed';
+}
+
+/**
+ * True where `rate` may be read as a monthly rate per person.
+ *
+ * Only unit_recurring lines qualify, and even then it is a candidate rather than a
+ * guarantee: BSS/OB/NOIDA-DD/993 billed 38,000 x 2 in June and 76,000 x 1 in July for the
+ * same invoice value, so the rate/qty split is not always the per-person one.
+ */
+function isSeatLine(service, particulars, rate, qty, amount) {
+  return billingPattern(service, particulars, rate, qty, amount) === 'unit_recurring' ? 1 : 0;
 }
 
 function log(msg) {
@@ -619,14 +659,15 @@ async function syncInvoiceParticulars(hrms, bill) {
     rate: safeDec(r.rate),
     qty: safeDec(r.qty),
     amount: safeDec(r.amount),
-    is_seat_line: isSeatLine(r.service, r.particulars),
+    billing_pattern: billingPattern(r.service, r.particulars, r.rate, r.qty, r.amount),
+    is_seat_line: isSeatLine(r.service, r.particulars, r.rate, r.qty, r.amount),
     source_created_at: safeDateTime(r.createdate),
     synced_at: now,
   }));
 
   const cols = ['bill_source_id','cost_centre_source_id','cost_centre_code','branch_name',
     'finance_year','month_for','period_code','service','sub_category','particulars',
-    'rate','qty','amount','is_seat_line','source_created_at','synced_at'];
+    'rate','qty','amount','billing_pattern','is_seat_line','source_created_at','synced_at'];
   const scoped = rows.filter(r => inScope(r.period_code));
   const n = await insertBatch(hrms, 'billing_invoice_particular_snapshot', scoped, cols, cols.slice(1));
   log(`  billing_invoice_particular_snapshot: ${n} rows from ${FROM_PERIOD} (${scoped.filter(r => r.is_seat_line).length} seat-priced lines)`);
