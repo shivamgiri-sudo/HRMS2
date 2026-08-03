@@ -6,6 +6,10 @@ on:
       - "backend/sql/038_engagement_gamification.sql"
       - "backend/scripts/verify-engagement-gamification-migration.ts"
       - "backend/src/db/__tests__/engagement-gamification-fresh-schema.test.ts"
+      - "backend/src/config/env.ts"
+      - "backend/src/config/__tests__/env-precedence.test.ts"
+      - "backend/src/modules/performance-ingestion/performance-publication.service.ts"
+      - "backend/src/modules/performance-ingestion/__tests__/performance-publication.ratio-multiplier.test.ts"
       - ".github/workflows/engagement-gamification-fresh-schema.yml"
   push:
     branches:
@@ -14,6 +18,10 @@ on:
       - "backend/sql/038_engagement_gamification.sql"
       - "backend/scripts/verify-engagement-gamification-migration.ts"
       - "backend/src/db/__tests__/engagement-gamification-fresh-schema.test.ts"
+      - "backend/src/config/env.ts"
+      - "backend/src/config/__tests__/env-precedence.test.ts"
+      - "backend/src/modules/performance-ingestion/performance-publication.service.ts"
+      - "backend/src/modules/performance-ingestion/__tests__/performance-publication.ratio-multiplier.test.ts"
       - ".github/workflows/engagement-gamification-fresh-schema.yml"
 
 permissions:
@@ -25,7 +33,7 @@ concurrency:
 
 jobs:
   verify:
-    name: Execute migration 038 twice on clean MySQL
+    name: Safety fixes and migration 038 on clean MySQL
     runs-on: ubuntu-24.04
     services:
       mysql:
@@ -54,9 +62,21 @@ jobs:
       - name: Install backend dependencies
         run: npm --prefix backend ci
 
-      - name: Static ordering and canonical-column contract
+      - name: Backend typecheck
+        run: npm --prefix backend run typecheck
+
+      - name: Certification safety regression tests
         working-directory: backend
-        run: npm exec -- vitest run src/db/__tests__/engagement-gamification-fresh-schema.test.ts
+        run: >-
+          npm exec -- vitest run
+          src/config/__tests__/env-precedence.test.ts
+          src/modules/performance-ingestion/__tests__/performance-publication.ratio-multiplier.test.ts
+          src/db/__tests__/engagement-gamification-fresh-schema.test.ts
+
+      - name: Backend production build
+        run: npm --prefix backend run build
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
 
       - name: Execute clean-schema and idempotency verification
         working-directory: backend
