@@ -403,6 +403,16 @@ export const navGroups: NavGroup[] = [
           { label: "DPDP Withdrawal Admin", href: "/compliance/dpdp-withdrawal-admin", icon: ic(ShieldCheck), pageCode: "DPDP_WITHDRAWAL_ADMIN", description: "Review privacy withdrawal requests" },
           { label: "Audit Log",        href: "/audit-log",                  icon: ic(FileText),   roles: ["admin","super_admin","payroll_head","hr","wfm"], description: "Audit trail" },
           { label: "Document Templates", href: "/settings/document-templates", icon: ic(FileText), roles: ["admin","super_admin","hr"], description: "Joining document templates" },
+          // Reachable from the sidebar on purpose. An open critical or high
+          // alert blocks the candidate becoming an employee, so if the only way
+          // in were a URL somebody knew, a false positive would sit there with
+          // nobody able to clear it. Both role spellings are listed because the
+          // nav uses payroll_head and the backend route grants payroll_hr.
+          { label: "Fraud Alert Review", href: "/settings/fraud-alerts", icon: ic(ShieldCheck), roles: ["admin","super_admin","hr","payroll_head","payroll_hr"], description: "Clear onboarding fraud alerts" },
+          // This screen was built and never linked, so the only way to reach it
+          // was to be told the URL. Same omission as the one above, found by the
+          // same routing contract test.
+          { label: "Provisioning Recipients", href: "/settings/provisioning-recipients", icon: ic(Settings2), roles: ["super_admin"], description: "Who receives each branch's provisioning email" },
           { label: "Email Template Import", href: "/settings/email-templates/bulk-import", icon: ic(Upload), roles: ["admin","super_admin"], description: "Bulk import communication templates" },
         ],
       },

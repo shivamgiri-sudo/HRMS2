@@ -382,9 +382,14 @@ router.post("/otp/send", h(async (req, res) => {
   });
 
   if (!deliveryResult.success) {
-    console.error(`[OTP] Delivery failed via ${deliveryResult.channel}: ${deliveryResult.error}`);
-    // Log OTP for dev debugging
-    console.info(`[OTP-DEV] ${mobile}: ${otp}`);
+    // The OTP itself is deliberately not logged. It was, in plaintext alongside
+    // the mobile number, which put a working second factor into any log file,
+    // log shipper or support screen-share for its full 10-minute life. The
+    // channel and the provider's error are what a failed delivery actually
+    // needs diagnosing.
+    console.error(
+      `[OTP] Delivery failed via ${deliveryResult.channel} for candidate ${tokenData.candidate_id}: ${deliveryResult.error}`,
+    );
     return res.status(500).json({
       success: false,
       message: "Failed to send OTP. Please try again or contact support."

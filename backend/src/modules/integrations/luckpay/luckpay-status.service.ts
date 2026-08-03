@@ -225,10 +225,18 @@ export async function syncDigilockerStatus(candidateId: string): Promise<SyncOut
   }
 
   await db.execute(
+    // The columns here must exist on the table, which is: id, candidate_id,
+    // state_token, provider_key, auth_url, session_status,
+    // requested_documents_json, returned_documents_json, expires_at,
+    // created_at, updated_at.
+    //
+    // This previously set fetched_documents_json and completed_at — neither of
+    // which exists — under a .catch(() => undefined). So every completion write
+    // failed silently and no session could ever leave 'created', which is a
+    // large part of why DigiLocker appeared to do nothing at all.
     `UPDATE candidate_digilocker_session
         SET session_status = 'completed',
-            fetched_documents_json = CAST(? AS JSON),
-            completed_at = NOW(),
+            returned_documents_json = CAST(? AS JSON),
             updated_at = NOW()
       WHERE candidate_id = ? AND state_token = ?`,
     [JSON.stringify({ files: storedFiles, ...documentMeta }), candidateId, clientTransactionId],

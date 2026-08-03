@@ -665,6 +665,58 @@ export function useOnboardingFull(token: string) {
   // redirect above is prevented for any reason. A dead button with no
   // explanation is what this whole fix is about.
   const [redirectUrl, setRedirectUrl] = useState<string | null>(null);
+  const [digilockerSyncing, setDigilockerSyncing] = useState(false);
+
+  /**
+   * Ask the server to fetch the DigiLocker result from the provider.
+   *
+   * Luckpay's verifyDigilockerWithURL takes only clientTransactionId,
+   * customerName and mobileNumber — there is no redirect or callback parameter
+   * anywhere in their API. The candidate therefore finishes on the provider's
+   * own success page and is never sent back here; that is by design, not a
+   * misconfiguration, so there is no return URL to fix.
+   *
+   * Polling on return is the only way to close the loop: whenever the candidate
+   * comes back to this form — reopening the link, switching tabs, or returning
+   * to the window — we ask the server whether the provider has the documents
+   * yet. syncDigilockerStatus() on the backend does the rest.
+   *
+   * Deliberately quiet: this runs on its own, so a failure must not throw an
+   * error banner over a form the candidate is happily filling in.
+   */
+  const syncDigilocker = useCallback(async () => {
+    if (!token) return;
+    setDigilockerSyncing(true);
+    try {
+      // hrmsApi returns the parsed body, so the API envelope's `data` is one
+      // level in — not res.data.data as an axios response would be.
+      const res = await hrmsApi.post<{ data?: { state?: string }; state?: string }>(`${API}/digilocker/sync`, { token });
+      const state = (res as any)?.data?.state ?? (res as any)?.state;
+      if (state === "completed") await load();
+    } catch {
+      // Nothing to tell the candidate: they can still continue, and the next
+      // return to this page tries again.
+    } finally {
+      setDigilockerSyncing(false);
+    }
+  }, [token, load]);
+
+  // A session that was started but never resolved is the only case worth
+  // polling for. Checking on mount covers reopening the emailed link; the
+  // visibility and focus listeners cover coming back from another tab.
+  useEffect(() => {
+    const sessionState = String(status?.digilocker?.status ?? "");
+    const started = Boolean(sessionState) && !["completed", "not_started"].includes(sessionState);
+    if (!started) return;
+    void syncDigilocker();
+    const onReturn = () => { if (document.visibilityState === "visible") void syncDigilocker(); };
+    document.addEventListener("visibilitychange", onReturn);
+    window.addEventListener("focus", onReturn);
+    return () => {
+      document.removeEventListener("visibilitychange", onReturn);
+      window.removeEventListener("focus", onReturn);
+    };
+  }, [status?.digilocker?.status, syncDigilocker]);
 
   const startDigilocker = async () => {
     setSaving(true);
@@ -821,6 +873,13 @@ export function useOnboardingFull(token: string) {
     sendOtp, verifyOtp, grantConsent, verifyPan, verifyBank, verifyAadhaar, verifyUan,
     startDigilocker, startEsign, lookupIfsc, uploadDoc, deleteDoc, submit,
     redirectUrl,
+    // Lets Step 3 say "already connected" instead of inviting a second attempt.
+    // Documents are through when the session completes; the session itself
+    // being open is enough to stop offering the button again.
+    syncDigilocker,
+    digilockerSyncing,
+    digilockerSessionState: String(status?.digilocker?.status ?? "not_started"),
+    digilockerConnected: String(status?.digilocker?.status ?? "") === "completed",
     updateSectionStatus, getBlockers, saveFamily, saveNominees, recordPrivacyConsent,
     autosaveStatus, sectionComplete,
   };
