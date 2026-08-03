@@ -55,6 +55,7 @@ import { employeePhotoCompatRouter } from "./modules/employees/employee.photo.co
 import { rmChangeRouter } from "./modules/employees/rm-change.routes.js";
 import { employeeJoiningDocumentsRouter, hrDocumentTemplatesRouter, payrollEpfComplianceRouter, publicEmployeeDocumentRouter } from "./modules/employees/employee.compliance.routes.js";
 import companySealRouter from "./modules/employees/companySeal.routes.js";
+import branchPayrollHrSignatoryRouter from "./modules/employees/branchPayrollHrSignatory.routes.js";
 import { employeeBgvRouter } from "./modules/employees/employee-bgv.routes.js";
 import { kpiRouter } from "./modules/kpi/kpi.routes.js";
 import { kpiProcessRoleRouter } from "./modules/kpi/kpi.process-role.routes.js";
@@ -444,6 +445,10 @@ app.use("/api/assets-mgmt", assetsRouter);
 app.use("/api/employee-docs", employeeDocsRouter);
 app.use("/api/hr", hrDocumentTemplatesRouter);
 app.use("/api/company-seal", companySealRouter);
+// Per-branch Payroll HR signatory: the name printed on joining documents and
+// the signature applied to the employer block. Mounted beside the company seal
+// because it is the same concern scoped to a branch.
+app.use("/api/branch-payroll-hr", branchPayrollHrSignatoryRouter);
 app.use("/api/payroll", payrollEpfComplianceRouter);
 app.use("/api/helpdesk", helpdeskRouter);
 app.use("/api/letters", lettersRouter);

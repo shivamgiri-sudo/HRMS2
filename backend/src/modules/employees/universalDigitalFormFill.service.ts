@@ -6,6 +6,7 @@ import pdfLib from "pdf-lib";
 const { PDFDocument, StandardFonts } = pdfLib;
 import PizZip from "pizzip";
 import { epfNominationFieldMaps } from "./epfNominationForm.js";
+import { getPayrollHrSignatoryForEmployee } from "./branchPayrollHrSignatory.service.js";
 import { isOperationsExecutiveByRegex } from "../wfm/attendance-engine.service.js";
 import type { RowDataPacket } from "mysql2";
 
@@ -162,7 +163,9 @@ const COMMON_TEMPLATE_FIELDS: DefaultFieldMap[] = [
   { field_key: "it_employee_name", field_label: "IT Compliance - Employee Name", source_path: "employee.full_name", required: true, aliases: ["it_employee_name"] },
   { field_key: "it_signature_date", field_label: "IT Compliance - Signature Date", source_path: "system.current_date", required: true, field_type: "date", aliases: ["it_signature_date"] },
   { field_key: "surveillance_candidate_name", field_label: "Surveillance/Anti-Bribery - Candidate Name", source_path: "employee.full_name", required: true, aliases: ["surveillance_candidate_name"] },
-  { field_key: "surveillance_hr_name", field_label: "Surveillance/Anti-Bribery - HR Name", source_path: null, required: false, aliases: ["surveillance_hr_name"] },
+  // Was source_path: null, so this printed blank on every NDA ever issued. It
+  // is the Payroll HR of the branch the candidate joins, configured per branch.
+  { field_key: "surveillance_hr_name", field_label: "Surveillance/Anti-Bribery - HR Name", source_path: "payroll_hr.name", required: false, aliases: ["surveillance_hr_name"] },
   { field_key: "surveillance_signature_date", field_label: "Surveillance/Anti-Bribery - Signature Date", source_path: "system.current_date", required: true, field_type: "date", aliases: ["surveillance_signature_date"] },
   { field_key: "bams_employee_name", field_label: "BAMS Declaration - Employee Name", source_path: "employee.full_name", required: true, aliases: ["bams_employee_name"] },
   { field_key: "bams_employee_code", field_label: "BAMS Declaration - Employee Code", source_path: "employee.employee_code", required: false, aliases: ["bams_employee_code"] },
@@ -859,8 +862,18 @@ export async function buildSourceContext(employeeId: string, candidateId?: strin
     ? null
     : grossRaw;
 
+  // The Payroll HR who signs this candidate's joining documents. Resolved from
+  // the employee's branch; null where no signatory is configured yet, or where
+  // sql/1061 has not been applied, in which case the name prints blank exactly
+  // as it always has.
+  const payrollHr = await getPayrollHrSignatoryForEmployee(employeeId).catch(() => null);
+
   return {
     nominee,
+    payroll_hr: {
+      name: payrollHr?.hrName ?? null,
+      designation: payrollHr?.hrDesignation ?? null,
+    },
     employee: {
       full_name: employee?.full_name ?? null,
       employee_code: employee?.employee_code ?? null,
@@ -1122,9 +1135,28 @@ async function upsertFieldValue(params: {
  * HR can still enter a value by hand on the review screen; that sets
  * value_source = 'HR_ENTERED' and is unaffected.
  */
-const NON_BLOCKING_FIELD_KEYS: string[] = COMMON_TEMPLATE_FIELDS
-  .filter((f) => f.required === false && !f.source_path)
-  .map((f) => String(f.field_key));
+/**
+ * Optional fields whose source can legitimately resolve to nothing.
+ *
+ * The derivation below covers optional fields with no source at all. It does
+ * not cover a field that HAS a source which is simply empty for this employee —
+ * and surveillance_hr_name became exactly that when it was pointed at
+ * payroll_hr.name: a branch with no configured signatory yields null, the field
+ * stays at hr_fill_required, and the document can never complete. Since no
+ * branch is configured yet, that would have been every document.
+ *
+ * Listed explicitly rather than loosening the rule to `required === false`,
+ * which would also stop genuinely missing statutory data (EPF nominees) from
+ * blocking.
+ */
+const OPTIONAL_SOURCED_FIELD_KEYS = ["surveillance_hr_name"];
+
+const NON_BLOCKING_FIELD_KEYS: string[] = [
+  ...COMMON_TEMPLATE_FIELDS
+    .filter((f) => f.required === false && !f.source_path)
+    .map((f) => String(f.field_key)),
+  ...OPTIONAL_SOURCED_FIELD_KEYS,
+];
 
 async function persistChecklistFillStatus(checklistId: string) {
   // `NOT IN ()` is a syntax error, so use a sentinel that never matches a key.
