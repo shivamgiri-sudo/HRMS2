@@ -362,16 +362,18 @@ CREATE TABLE IF NOT EXISTS portal_notification (
 );
 
 -- ── 17. Add indexes for performance ───────────────────────────────────────────
-SET @exists = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='ats_candidate' AND INDEX_NAME='idx_ats_candidate_branch');
-SET @sql = IF(@exists=0, 'ALTER TABLE ats_candidate ADD INDEX idx_ats_candidate_branch (branch_name)', 'SELECT ''idx_ats_candidate_branch exists'' AS migration_note'); PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
-SET @exists = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='ats_candidate' AND INDEX_NAME='idx_ats_candidate_status');
-SET @sql = IF(@exists=0, 'ALTER TABLE ats_candidate ADD INDEX idx_ats_candidate_status (candidate_status)', 'SELECT ''idx_ats_candidate_status exists'' AS migration_note'); PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
-SET @exists = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='ats_candidate' AND INDEX_NAME='idx_ats_candidate_created');
-SET @sql = IF(@exists=0, 'ALTER TABLE ats_candidate ADD INDEX idx_ats_candidate_created (created_at)', 'SELECT ''idx_ats_candidate_created exists'' AS migration_note'); PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
-SET @exists = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='ats_queue_token' AND INDEX_NAME='idx_ats_queue_status');
-SET @sql = IF(@exists=0, 'ALTER TABLE ats_queue_token ADD INDEX idx_ats_queue_status (queue_status)', 'SELECT ''idx_ats_queue_status exists'' AS migration_note'); PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
-SET @exists = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='ats_queue_token' AND INDEX_NAME='idx_ats_queue_branch');
-SET @sql = IF(@exists=0, 'ALTER TABLE ats_queue_token ADD INDEX idx_ats_queue_branch (branch_name)', 'SELECT ''idx_ats_queue_branch exists'' AS migration_note'); PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+-- Canonical ats_candidate uses applied_for_branch/current_stage; canonical
+-- ats_queue_token uses status and stores no branch column. Reuse an existing
+-- equivalent index when one already covers the same column.
+SET @exists = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='ats_candidate' AND COLUMN_NAME='applied_for_branch');
+SET @sql = IF(@exists=0, 'ALTER TABLE ats_candidate ADD INDEX idx_ats_candidate_branch (applied_for_branch)', 'SELECT ''ats_candidate branch index exists'' AS migration_note'); PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+SET @exists = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='ats_candidate' AND COLUMN_NAME='current_stage');
+SET @sql = IF(@exists=0, 'ALTER TABLE ats_candidate ADD INDEX idx_ats_candidate_status (current_stage)', 'SELECT ''ats_candidate stage index exists'' AS migration_note'); PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+SET @exists = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='ats_candidate' AND COLUMN_NAME='created_at');
+SET @sql = IF(@exists=0, 'ALTER TABLE ats_candidate ADD INDEX idx_ats_candidate_created (created_at)', 'SELECT ''ats_candidate created index exists'' AS migration_note'); PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+SET @exists = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='ats_queue_token' AND COLUMN_NAME='status');
+SET @sql = IF(@exists=0, 'ALTER TABLE ats_queue_token ADD INDEX idx_ats_queue_status (status)', 'SELECT ''ats_queue_token status index exists'' AS migration_note'); PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+SELECT 'ats_queue_token has no branch column; branch filtering resolves through ats_candidate' AS migration_note;
 
 -- ── 18. Super admin employee access ───────────────────────────────────────────
 -- Grant super admin access to MAS47814
