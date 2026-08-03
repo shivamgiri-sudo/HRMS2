@@ -13,7 +13,13 @@ BEGIN
     WHERE TABLE_SCHEMA = DATABASE()
       AND TABLE_NAME   = 'attendance_daily_record'
       AND INDEX_NAME   = 'idx_adr_record_date_status'
-  ) THEN
+  ) AND (
+    -- The index guard alone is not enough on a fresh database: a missing index and a
+    -- missing column look the same to it. Require every indexed column to exist.
+    SELECT COUNT(*) FROM information_schema.COLUMNS
+    WHERE TABLE_SCHEMA = DATABASE()
+      AND TABLE_NAME = 'attendance_daily_record' AND COLUMN_NAME IN ('record_date', 'attendance_status')
+  ) = 2 THEN
     ALTER TABLE attendance_daily_record
       ADD INDEX idx_adr_record_date_status (record_date, attendance_status);
   END IF;
@@ -32,7 +38,13 @@ BEGIN
     WHERE TABLE_SCHEMA = DATABASE()
       AND TABLE_NAME   = 'ats_candidate'
       AND INDEX_NAME   = 'idx_ats_candidate_created_status'
-  ) THEN
+  ) AND (
+    -- The index guard alone is not enough on a fresh database: a missing index and a
+    -- missing column look the same to it. Require every indexed column to exist.
+    SELECT COUNT(*) FROM information_schema.COLUMNS
+    WHERE TABLE_SCHEMA = DATABASE()
+      AND TABLE_NAME = 'ats_candidate' AND COLUMN_NAME IN ('created_at', 'status')
+  ) = 2 THEN
     ALTER TABLE ats_candidate
       ADD INDEX idx_ats_candidate_created_status (created_at, status);
   END IF;
@@ -52,7 +64,13 @@ BEGIN
     WHERE TABLE_SCHEMA = DATABASE()
       AND TABLE_NAME   = 'leave_request'
       AND INDEX_NAME   = 'idx_lr_employee_status_from'
-  ) THEN
+  ) AND (
+    -- The index guard alone is not enough on a fresh database: a missing index and a
+    -- missing column look the same to it. Require every indexed column to exist.
+    SELECT COUNT(*) FROM information_schema.COLUMNS
+    WHERE TABLE_SCHEMA = DATABASE()
+      AND TABLE_NAME = 'leave_request' AND COLUMN_NAME IN ('employee_id', 'status', 'from_date')
+  ) = 3 THEN
     ALTER TABLE leave_request
       ADD INDEX idx_lr_employee_status_from (employee_id, status, from_date);
   END IF;
@@ -71,7 +89,13 @@ BEGIN
     WHERE TABLE_SCHEMA = DATABASE()
       AND TABLE_NAME   = 'workforce_mandate'
       AND INDEX_NAME   = 'idx_wm_process_active'
-  ) THEN
+  ) AND (
+    -- The index guard alone is not enough on a fresh database: a missing index and a
+    -- missing column look the same to it. Require every indexed column to exist.
+    SELECT COUNT(*) FROM information_schema.COLUMNS
+    WHERE TABLE_SCHEMA = DATABASE()
+      AND TABLE_NAME = 'workforce_mandate' AND COLUMN_NAME IN ('process_id', 'active_status', 'effective_from', 'effective_to')
+  ) = 4 THEN
     ALTER TABLE workforce_mandate
       ADD INDEX idx_wm_process_active (process_id, active_status, effective_from, effective_to);
   END IF;

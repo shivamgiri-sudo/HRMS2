@@ -19,11 +19,17 @@ BEGIN
   END IF;
 
   IF NOT EXISTS (
-    SELECT 1 FROM INFORMATION_SCHEMA.STATISTICS
+    SELECT 1 FROM information_schema.STATISTICS
     WHERE TABLE_SCHEMA = DATABASE()
-      AND TABLE_NAME = 'ats_recruiter_hiring_activity'
-      AND INDEX_NAME = 'idx_arha_followup'
-  ) THEN
+      AND TABLE_NAME   = 'ats_recruiter_hiring_activity'
+      AND INDEX_NAME   = 'idx_arha_followup'
+  ) AND (
+    -- The index guard alone is not enough on a fresh database: a missing index and a
+    -- missing column look the same to it. Require every indexed column to exist.
+    SELECT COUNT(*) FROM information_schema.COLUMNS
+    WHERE TABLE_SCHEMA = DATABASE()
+      AND TABLE_NAME = 'ats_recruiter_hiring_activity' AND COLUMN_NAME IN ('followup_required', 'followup_date')
+  ) = 2 THEN
     ALTER TABLE ats_recruiter_hiring_activity
       ADD INDEX idx_arha_followup (followup_required, followup_date);
   END IF;
