@@ -450,6 +450,7 @@ const MIGRATION_MANIFEST: string[] = [
   "1056_branch_head_approval_candidate_id.sql", // 138 and 141 each declare a column the other omits; production (141) has no candidate_id
   "1058_process_quality_target_state_machine.sql", // draft->simulated->pending->approved->active lifecycle; DB enforces the approver is not the author and that one open-ended active exists per process
   "1059_branch_notification_recipient.sql", // recipients were inferred from three tables with no stated intent; this is the intent
+  "1061_finance_budget_topup_request.sql", // GRN overspend was already hard-blocked, but there was no formal way to ask for more against a specific budget line short of re-running the whole budget through approval again; this is that request entity
   ];
 
 export type MigrationHealth = {

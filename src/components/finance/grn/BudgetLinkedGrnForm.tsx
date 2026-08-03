@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useNavigate } from "react-router-dom";
 import {
   AlertCircle,
   BadgeCheck,
@@ -326,7 +327,12 @@ const inputClass = "h-11 md:h-10";
 
 export function BudgetLinkedGrnForm() {
   const { toast } = useToast();
+  const navigate = useNavigate();
   const queryClient = useQueryClient();
+  // The budget line a save attempt targeted, captured just before the risky API calls so
+  // onError can still read it — an "exceeds available budget" failure needs to know which
+  // line to pre-fill on the "Request a budget increase" action.
+  const attemptedLineIdRef = useRef<string | null>(null);
   const [form, setForm] = useState<GrnFormState>(EMPTY_FORM);
   const [splitMode, setSplitMode] = useState(false);
   const [allocations, setAllocations] = useState<AllocationDraft[]>([newAllocation()]);
@@ -734,6 +740,7 @@ export function BudgetLinkedGrnForm() {
       const firstLine = splitMode
         ? budgetLines.find((line) => line.id === rows[0].budgetLineId)!
         : resolvedLine!;
+      attemptedLineIdRef.current = firstLine.id;
 
       let current = created;
       if (!current) {
@@ -827,8 +834,25 @@ export function BudgetLinkedGrnForm() {
       void queryClient.invalidateQueries({ queryKey: ["available-budget-lines"] });
       void queryClient.invalidateQueries({ queryKey: ["smart-grn-workspace", result.id] });
     },
-    onError: (error: Error) =>
-      toast({ title: "GRN could not be saved", description: error.message, variant: "destructive" }),
+    onError: (error: Error) => {
+      const overBudget = /exceeds (the )?available budget/i.test(error.message);
+      const lineId = attemptedLineIdRef.current;
+      toast({
+        title: "GRN could not be saved",
+        description: error.message,
+        variant: "destructive",
+        action: overBudget && lineId
+          ? {
+              label: "Request a budget increase",
+              onClick: () =>
+                navigate(
+                  `/finance/branch-budget?tab=topups&topupLine=${lineId}`
+                  + `&branchId=${form.branchId}&period=${form.billDate ? form.billDate.slice(0, 7) : ""}`
+                ),
+            }
+          : undefined,
+      });
+    },
   });
 
   const analyzeMutation = useMutation({

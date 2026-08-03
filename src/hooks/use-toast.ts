@@ -12,13 +12,15 @@ interface ToastInput {
   description?: string;
   variant?: ToastVariant;
   duration?: number;
+  action?: { label: string; onClick: () => void };
 }
 
-function toast({ title, description, variant, duration }: ToastInput) {
+function toast({ title, description, variant, duration, action }: ToastInput) {
   const message = title ?? "";
   const opts = {
     description,
     duration: duration ?? 4000,
+    action,
   };
   if (variant === "destructive") {
     sonnerToast.error(message, opts);

@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import {
   AlertCircle,
   AlertTriangle,
@@ -22,6 +22,7 @@ import {
   ShieldCheck,
   Sparkles,
   Trash2,
+  TrendingUp,
   XCircle,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -68,6 +69,7 @@ import {
 } from "@/hooks/useFinanceExpenseMasters";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { BranchBudgetMatrixPanel } from "@/components/finance/pnl/BranchBudgetMatrixPanel";
+import { BudgetTopupPanel } from "@/components/finance/budget/BudgetTopupPanel";
 import { BranchBudgetImportDialog } from "@/components/finance/pnl/BranchBudgetImportDialog";
 import { BranchBudgetPlannerGrid } from "@/components/finance/pnl/BranchBudgetPlannerGrid";
 
@@ -103,7 +105,7 @@ const ALLOCATION_DRIVERS = [
   ["direct_tagging", "Direct tagging"],
 ] as const;
 
-type WorkspaceTab = "plan" | "coverage" | "rollup" | "matrix" | "meters" | "readiness" | "approval" | "master";
+type WorkspaceTab = "plan" | "coverage" | "rollup" | "matrix" | "meters" | "readiness" | "approval" | "topups" | "master";
 type CoverageDraft = Record<string, { status: BudgetPlanningStatus | ""; reason: string }>;
 type BudgetCapabilities = {
   roles: string[];
@@ -315,9 +317,17 @@ function CoverageDecision({
 }
 
 export default function BranchBudgetManagementWorkspace() {
-  const [tab, setTab] = useState<WorkspaceTab>("plan");
-  const [period, setPeriod] = useState(currentPeriod());
-  const [branchId, setBranchId] = useState("");
+  // A blocked GRN's "Request a budget increase" action deep-links here with
+  // ?tab=topups&topupLine=<id>&branchId=<id>&period=<yyyy-mm>, pre-selecting everything
+  // so the raiser doesn't have to re-find the exact line that blocked them.
+  const [searchParams] = useSearchParams();
+  const [tab, setTab] = useState<WorkspaceTab>(() => {
+    const requested = searchParams.get("tab");
+    return requested === "topups" ? "topups" : "plan";
+  });
+  const [period, setPeriod] = useState(() => searchParams.get("period") || currentPeriod());
+  const [branchId, setBranchId] = useState(() => searchParams.get("branchId") || "");
+  const [topupPresetLineId, setTopupPresetLineId] = useState(() => searchParams.get("topupLine") || "");
   const [lines, setLines] = useState<BranchBudgetLineInput[]>([blankLine()]);
   const [savedBudgetId, setSavedBudgetId] = useState<string | null>(null);
   const [loadedDetailId, setLoadedDetailId] = useState<string | null>(null);
@@ -862,6 +872,7 @@ Reason:`
               <TabsTrigger value="meters"><Gauge className="mr-2 h-4 w-4" />Meters</TabsTrigger>
               <TabsTrigger value="readiness"><AlertTriangle className="mr-2 h-4 w-4" />Exceptions & Readiness</TabsTrigger>
               <TabsTrigger value="approval"><ShieldCheck className="mr-2 h-4 w-4" />Approval & Utilization</TabsTrigger>
+              <TabsTrigger value="topups"><TrendingUp className="mr-2 h-4 w-4" />Top-up Requests</TabsTrigger>
               <TabsTrigger value="master"><Settings2 className="mr-2 h-4 w-4" />Expense Master</TabsTrigger>
             </TabsList>
 
@@ -1305,6 +1316,23 @@ Reason:`
               {Boolean(openCorrectionCount) && <div className="rounded-2xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900"><span className="font-semibold">{openCorrectionCount} open correction note(s)</span> against this budget. Each one is shown on its own budget line in the Plan Builder tab.</div>}
               {budgets.map((budget) => { const available = Number(budget.gross_budget_amount) - Number(budget.reserved_amount) - Number(budget.consumed_amount); return <div key={budget.id} className="grid gap-4 rounded-2xl border border-slate-200 p-4 xl:grid-cols-[1.2fr_1fr_1fr_auto]"><div><div className="flex gap-2"><p className="font-semibold">{budget.budget_number}</p><Badge variant="outline">{statusLabel(budget.status)}</Badge></div><p className="mt-1 text-xs text-slate-500">{budget.branch_name} · {budget.period_code} · Revision {budget.revision_no}</p></div><Metric label="Gross / P&L" value={`${money(Number(budget.gross_budget_amount))} / ${money(Number(budget.pnl_budget_amount))}`} /><Metric label="Reserved / Consumed / Available" value={`${money(Number(budget.reserved_amount))} / ${money(Number(budget.consumed_amount))} / ${money(available)}`} />{canReview(budget) && <div className="flex flex-wrap justify-end gap-2"><Button size="sm" onClick={() => void review(budget, "approve")}><CheckCircle2 className="mr-1 h-3.5 w-3.5" />Approve</Button><Button size="sm" variant="outline" onClick={() => void review(budget, "revision")}><Settings2 className="mr-1 h-3.5 w-3.5" />Revision</Button><Button size="sm" variant="destructive" onClick={() => void review(budget, "reject")}><XCircle className="mr-1 h-3.5 w-3.5" />Reject</Button></div>}
                 {capabilities?.roles?.includes("super_admin") && <div className="flex justify-end xl:col-span-4"><Button size="sm" variant="outline" className="border-rose-300 text-rose-700 hover:bg-rose-50" disabled={deleteBudget.isPending} onClick={() => void removeBudget(budget)}><Trash2 className="mr-1 h-3.5 w-3.5" />Delete / supersede (super admin)</Button></div>}</div>; })}{!budgets.length && <div className="py-12 text-center text-slate-500"><Building2 className="mx-auto mb-3 h-10 w-10" />No budget found.</div>}</CardContent></Card></TabsContent>
+
+            <TabsContent value="topups">
+              {branchId ? (
+                <BudgetTopupPanel
+                  branchId={branchId}
+                  period={period}
+                  canCreate
+                  canReview={Boolean(capabilities?.canReviewBranchStage || capabilities?.canReviewFinanceStage)}
+                  presetLineId={topupPresetLineId || null}
+                  onConsumedPreset={() => setTopupPresetLineId("")}
+                />
+              ) : (
+                <div className="py-12 text-center text-slate-500">
+                  <Building2 className="mx-auto mb-3 h-10 w-10" />Select a branch first.
+                </div>
+              )}
+            </TabsContent>
 
             <TabsContent value="master">
               <ExpenseMasterPanel

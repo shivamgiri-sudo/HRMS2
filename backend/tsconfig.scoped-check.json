@@ -27,7 +27,10 @@
 {
   "extends": "./tsconfig.json",
   "include": [
-    "src/modules/process-pnl/branch-budget.service.ts"
+    "src/modules/process-pnl/process-pnl.routes.ts",
+    "src/modules/process-pnl/budget-topup.service.ts",
+    "src/modules/process-pnl/budget-consumption.service.ts",
+    "src/db/runPendingMigrations.ts"
   ],
   "compilerOptions": { "noEmit": true }
 }
