@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { Download } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -34,6 +35,7 @@ export default function DisbursalManagement() {
   const qc = useQueryClient();
   const [selectedRunId, setSelectedRunId] = useState<string>("");
   const [tab, setTab] = useState("status");
+  const [bankExportFormat, setBankExportFormat] = useState<"generic" | "sbi">("generic");
   const [csvText, setCsvText] = useState("");
   const [manualRow, setManualRow] = useState({
     employee_code: "",
@@ -281,6 +283,51 @@ export default function DisbursalManagement() {
                   </tbody>
                 </table>
               </div>
+              {/* Bank batch file export */}
+              {selectedRunId && (
+                <div className="mt-6 rounded-xl border border-slate-200 bg-slate-50 p-4">
+                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                    <div>
+                      <h3 className="text-sm font-semibold text-slate-800">Export Bank Batch File</h3>
+                      <p className="text-xs text-slate-500 mt-0.5">
+                        Downloads NEFT/IMPS/RTGS employees only. Cash and Cheque are excluded.
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <div className="flex rounded-md border overflow-hidden text-xs">
+                        <button
+                          onClick={() => setBankExportFormat("generic")}
+                          className={`px-3 py-1.5 transition-colors ${
+                            bankExportFormat === "generic"
+                              ? "bg-indigo-600 text-white"
+                              : "bg-white text-slate-600 hover:bg-slate-100"
+                          }`}
+                        >
+                          Generic CSV
+                        </button>
+                        <button
+                          onClick={() => setBankExportFormat("sbi")}
+                          className={`px-3 py-1.5 transition-colors ${
+                            bankExportFormat === "sbi"
+                              ? "bg-indigo-600 text-white"
+                              : "bg-white text-slate-600 hover:bg-slate-100"
+                          }`}
+                        >
+                          SBI NEFT
+                        </button>
+                      </div>
+                      <a
+                        href={`/api/payroll/runs/${selectedRunId}/bank-export?format=${bankExportFormat}`}
+                        download
+                        className="inline-flex items-center gap-1.5 rounded-md bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white shadow-sm hover:bg-emerald-700 transition-colors"
+                      >
+                        <Download className="h-3.5 w-3.5" />
+                        Download Bank File
+                      </a>
+                    </div>
+                  </div>
+                </div>
+              )}
             </TabsContent>
 
             {/* CSV Upload Tab */}
