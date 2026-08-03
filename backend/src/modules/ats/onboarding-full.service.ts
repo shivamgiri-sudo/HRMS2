@@ -1290,26 +1290,31 @@ export async function saveEmployeeDetails(token: string, input: Record<string, u
       candidateId,
     ]
   );
-  // Update extra identity/statutory fields on ats_candidate if columns exist
-  // These are safe UPDATE SET with COALESCE to not overwrite non-null existing values
+  // Mirror the UAN onto ats_candidate, which is the only one of these columns
+  // that table actually has.
+  //
+  // This used to set passport_no, driving_license_no, epf_number and
+  // esic_number here too. Those four live on candidate_onboarding_profile, so
+  // MySQL rejected the whole statement with "Unknown column 'passport_no' in
+  // 'field list'" on every candidate who reached this step — taking uan_number,
+  // which is valid, down with it. An empty `.catch()` carrying the comment
+  // "columns may not exist on older schema — safe to ignore" made a rejected
+  // write look exactly like a successful one.
+  //
+  // Nothing is lost by narrowing it: the candidate_onboarding_profile upsert
+  // directly above already stores all five, including in its ON DUPLICATE KEY
+  // UPDATE clause.
   await db.execute(
     `UPDATE ats_candidate SET
-       passport_no = COALESCE(?, passport_no),
-       driving_license_no = COALESCE(?, driving_license_no),
        uan_number = COALESCE(?, uan_number),
-       epf_number = COALESCE(?, epf_number),
-       esic_number = COALESCE(?, esic_number),
        updated_at = NOW()
      WHERE id = ?`,
-    [
-      input.passportNo ?? input["passportNumber"] ?? input["passport_number"] ?? null,
-      input.drivingLicenseNo ?? input["dlNumber"] ?? input["dl_number"] ?? null,
-      input.uanNumber ?? null,
-      input.epfNumber ?? null,
-      input.esicNumber ?? null,
-      candidateId,
-    ]
-  ).catch(() => { /* columns may not exist on older schema — safe to ignore */ });
+    [input.uanNumber ?? null, candidateId]
+  ).catch((error) => {
+    // Still non-fatal — a candidate must not lose their whole submission over
+    // a mirrored field — but no longer silent.
+    console.error(`[Onboarding] could not mirror UAN onto ats_candidate for ${candidateId}:`, (error as Error)?.message);
+  });
 
   // Fraud detection: check for duplicates (non-blocking)
   if (panHash) {

@@ -377,6 +377,10 @@ export async function verifyPanForCandidate(candidateId: string, input: { panNum
     [maskLast4(pan, "XXX-"), hashValue(pan), candidateId]
   );
   await logEvent(candidateId, "PAN_VERIFICATION_COMPLETED", result, checkId, meta);
+  // A completed identity check is the moment there is something new to
+  // reconcile across sources, so the cross-source name comparison runs here
+  // rather than waiting for an HR user to press it.
+  await reconcileNamesAfterVerification(candidateId);
   return getBgvStatusForCandidate(candidateId);
 }
 
@@ -506,6 +510,10 @@ export async function verifyBankForCandidate(candidateId: string, input: { accou
     [randomUUID(), candidateId, checkId, result.providerKey, result.providerRequestId, accountNo ? hashValue(`${accountNo}|${ifscCode}`) : null, JSON.stringify(result.raw ?? result), Date.now() - started, result.status === "verified" ? 1 : 0]
   );
   await logEvent(candidateId, "BANK_VERIFICATION_COMPLETED", result, checkId, meta);
+  // A completed identity check is the moment there is something new to
+  // reconcile across sources, so the cross-source name comparison runs here
+  // rather than waiting for an HR user to press it.
+  await reconcileNamesAfterVerification(candidateId);
   return getBgvStatusForCandidate(candidateId);
 }
 
@@ -595,6 +603,10 @@ export async function verifyAadhaarOfflineForCandidate(candidateId: string, inpu
     );
   }
   await logEvent(candidateId, "AADHAAR_OFFLINE_VERIFICATION_COMPLETED", result, checkId, meta);
+  // A completed identity check is the moment there is something new to
+  // reconcile across sources, so the cross-source name comparison runs here
+  // rather than waiting for an HR user to press it.
+  await reconcileNamesAfterVerification(candidateId);
   return getBgvStatusForCandidate(candidateId);
 }
 
@@ -1153,6 +1165,26 @@ function nameMatches(expected: string, actual: string): boolean {
   return left === right || left.split(" ").sort().join(" ") === right.split(" ").sort().join(" ");
 }
 
+/**
+ * Reconcile the candidate's names across sources, triggered by the system.
+ *
+ * runNameMatchCheck is correct and was unreachable from the candidate journey —
+ * only HR-authenticated routes called it, so it ran only if someone thought to
+ * press it, and nobody did: production holds zero name_match rows. A completed
+ * verification is exactly when there is something new to compare, so it runs
+ * from there now.
+ *
+ * Never allowed to fail the verification that triggered it. A candidate must
+ * not lose a successful PAN check because a follow-up comparison threw.
+ */
+async function reconcileNamesAfterVerification(candidateId: string): Promise<void> {
+  try {
+    await runNameMatchCheck(candidateId, "system");
+  } catch (error) {
+    console.error(`[BGV] name reconciliation failed for ${candidateId}:`, (error as Error)?.message);
+  }
+}
+
 export async function runNameMatchCheck(candidateId: string, actorUserId: string): Promise<{
   success: boolean;
   status: "verified" | "manual_review";
@@ -1192,7 +1224,13 @@ export async function runNameMatchCheck(candidateId: string, actorUserId: string
   const checks = [
     { source: "aadhaar", value: row.aadhaar_name ?? row.full_name_aadhaar },
     { source: "pan", value: row.pan_name },
-    { source: "bank", value: row.bank_verified_name ?? row.account_holder_name },
+    // Only the name the BANK returned counts here. Falling back to
+    // account_holder_name would compare the candidate against a value the
+    // candidate typed, so anyone submitting another person's account and
+    // typing that person's name would reconcile perfectly against themselves —
+    // the same hole closed in the bank adapter. No verified name means no
+    // bank evidence, which is a truthful gap rather than a false match.
+    { source: "bank", value: row.bank_verified_name },
     { source: "education", value: row.education_name },
   ].map((item) => {
     const value = String(item.value ?? "").trim();
