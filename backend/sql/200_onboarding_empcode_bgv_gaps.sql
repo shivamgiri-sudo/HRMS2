@@ -99,16 +99,15 @@ BEGIN
    WHERE employee_code REGEXP '^IDC[0-9]+C$';
 
   SET v_global_max = GREATEST(v_max_onroll_mas, v_max_onroll_idc, v_max_offrole_mas, v_max_offrole_idc);
-
-  -- Ensure the 4 rows exist, then sync all to global_max
-  INSERT INTO employee_code_sequence (company_prefix, is_offrole, current_sequence)
+  -- Migration 138 owns one sequence row per company prefix. On-roll and
+  -- off-role codes share the same numeric counter, so both prefixes advance to
+  -- the global maximum observed across all four employee-code formats.
+  INSERT INTO employee_code_sequence (company_prefix, last_sequence_number)
   VALUES
-    ('MAS', FALSE, v_global_max),
-    ('MAS', TRUE,  v_global_max),
-    ('IDC', FALSE, v_global_max),
-    ('IDC', TRUE,  v_global_max)
+    ('MAS', v_global_max),
+    ('IDC', v_global_max)
   ON DUPLICATE KEY UPDATE
-    current_sequence = GREATEST(current_sequence, v_global_max);
+    last_sequence_number = GREATEST(last_sequence_number, v_global_max);
 
 END //
 DELIMITER ;
