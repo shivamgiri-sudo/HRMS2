@@ -1,4 +1,4 @@
-import type { RowDataPacket } from "mysql2/promise";
+import type { RowDataPacket, ResultSetHeader } from "mysql2/promise";
 import { randomUUID } from "crypto";
 import { db } from "../../db/mysql.js";
 import { convertCandidateToEmployee } from "./ats.convert.service.js";
@@ -302,7 +302,17 @@ export async function savePayrollControlRoomDetails(candidateId: string, input: 
     );
     const branchId = branchRows[0]?.branch_id || null;
 
-    await db.execute(
+    // INSERT ... SELECT FROM ats_employment_offer: with no offer row for this
+    // candidate the SELECT returns nothing and the INSERT writes nothing — no
+    // error, no row. Payroll HR fills the form, saves, is told it worked, and
+    // no validation record exists. Since validation is a hard gate on employee
+    // creation, the candidate then sits in the queue indefinitely with nothing
+    // to show why.
+    //
+    // 31 of the 44 submitted candidates in production have no employment offer,
+    // so this is the common case, not the edge one. affectedRows is checked
+    // below and the failure is raised.
+    const [seedResult] = await db.execute<ResultSetHeader>(
       `INSERT INTO ats_payroll_hr_validation
          (id, candidate_id, branch_id, payroll_hr_id, validation_status,
           employment_type, department_id, designation_id, cost_centre_id, reporting_manager_id,
@@ -330,6 +340,16 @@ export async function savePayrollControlRoomDetails(candidateId: string, input: 
         candidateId,
       ],
     );
+
+    if (seedResult.affectedRows === 0) {
+      throw Object.assign(
+        new Error(
+          "Payroll validation could not be created because this candidate has no employment offer. " +
+          "Raise and approve the offer first — the validation record is seeded from it."
+        ),
+        { statusCode: 400 },
+      );
+    }
   } else {
     // Update only JCR-specific effective date fields
     await db.execute(
