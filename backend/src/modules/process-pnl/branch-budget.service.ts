@@ -1071,7 +1071,13 @@ export const branchBudgetService = {
         || Number(usage?.consumed ?? 0) > 0
         || Number(grn?.n ?? 0) > 0;
 
-      if (touchedByGrn) {
+      // Once branch_head/finance_head has signed off (or the budget is active), a hard delete
+      // would erase an approval decision even if no GRN has spent against it yet — supersede
+      // instead, same as the GRN-touched case, so the approval trail always survives.
+      const APPROVED_STATUSES = ["branch_head_approved", "finance_head_approved", "active"];
+      const requiresSupersede = touchedByGrn || APPROVED_STATUSES.includes(status);
+
+      if (requiresSupersede) {
         await connection.execute(
           `UPDATE finance_budget_header
               SET status = 'closed', rejection_reason = ?
@@ -1079,13 +1085,18 @@ export const branchBudgetService = {
           [reason.trim(), id]
         );
         await auditInTransaction(connection, id, "SUPERSEDE", status, "closed", actorId, actorRole,
-          `${reason.trim()} — kept because GRN activity exists against it`);
+          touchedByGrn
+            ? `${reason.trim()} — kept because GRN activity exists against it`
+            : `${reason.trim()} — kept because it was already approved (${status})`);
         await connection.commit();
         return {
           outcome: "superseded" as const,
           budgetNumber,
-          message: `${budgetNumber} has GRN activity against it, so it was closed rather than deleted. `
-            + `A new budget can now be created for this branch and month.`,
+          message: touchedByGrn
+            ? `${budgetNumber} has GRN activity against it, so it was closed rather than deleted. `
+              + `A new budget can now be created for this branch and month.`
+            : `${budgetNumber} was already approved, so it was closed rather than deleted. `
+              + `A new budget can now be created for this branch and month.`,
         };
       }
 
