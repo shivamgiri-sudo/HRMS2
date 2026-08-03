@@ -7,7 +7,7 @@ import {
   Target, TrendingUp, Upload, User, UserMinus, UserPlus, Users, Users2, Wallet,
   Zap, DollarSign, ShoppingCart, LayoutDashboard, Crown, Receipt, CheckCircle,
   Plus, Send, Lock, Shield, ShieldAlert, PenSquare, Eye, UsersRound, RotateCcw, Mail, Share2,
-  Video,
+  Video, PenLine, Workflow
 } from "lucide-react";
 import type { NavGroup } from "./SidebarNav";
 
@@ -192,6 +192,7 @@ export const navGroups: NavGroup[] = [
         children: [
           { label: "Roster Planning",        href: "/wfm/roster",                icon: ic(Clock),         pageCode: "WFM_ROSTER",      description: "Roster" },
           { label: "Roster Workspace",       href: "/wfm/roster-workspace",      icon: ic(CalendarDays),  pageCode: "WFM_ROSTER",      description: "Weekly shift grid and acknowledgement tracker" },
+          { label: "Roster Pipeline",        href: "/wfm/roster-pipeline",       icon: ic(Workflow),      pageCode: "WFM_ROSTER",      description: "End-to-end roster planning wizard" },
           { label: "Auto Roster",            href: "/wfm/auto-roster",           icon: ic(Calendar),      pageCode: "WFM_AUTO_ROSTER", description: "Auto roster" },
           { label: "Roster Master Builder",  href: "/roster-master-builder",     icon: ic(Calendar),      pageCode: "ROSTER_MASTER",   description: "Build roster masters" },
           { label: "Roster Capacity Config", href: "/roster-capacity-config",    icon: ic(Settings2),     pageCode: "ROSTER_MASTER",   description: "Capacity settings" },
@@ -418,6 +419,9 @@ export const navGroups: NavGroup[] = [
           // but a URL. Not my page, but the routing contract test lists it and
           // a link costs nothing.
           { label: "Signing Certificate", href: "/settings/signing-certificate", icon: ic(FileText), roles: ["super_admin"], description: "Company Class-3 signing certificate" },
+          // The name and signature that appear on every joiner's documents, per
+          // branch. Linked from the start rather than left URL-only.
+          { label: "Branch Payroll HR Signatory", href: "/settings/branch-payroll-hr", icon: ic(PenLine), roles: ["super_admin"], description: "Who signs each branch's joining documents" },
           { label: "Email Template Import", href: "/settings/email-templates/bulk-import", icon: ic(Upload), roles: ["admin","super_admin"], description: "Bulk import communication templates" },
         ],
       },

@@ -43,6 +43,7 @@ import { startTatEscalationWorker, stopTatEscalationWorker } from "./tat-escalat
 import { startReportSubscriptionWorker, stopReportSubscriptionWorker } from "./report-subscription.worker.js";
 import { registerNotificationDeliverer } from "../modules/communication/notification.deliverer.js";
 import { startPayrollPrepReminderWorker, stopPayrollPrepReminderWorker } from "./payroll-prep-reminder.worker.js";
+import { startAutoRosterSchedulerWorker, stopAutoRosterSchedulerWorker } from "./auto-roster-scheduler.worker.js";
 import { clearAllTimers } from "./worker-utils.js";
 
 const WORKERS: Array<{ name: string; start: () => Promise<void> }> = [
@@ -205,6 +206,10 @@ const WORKERS: Array<{ name: string; start: () => Promise<void> }> = [
     name: "payroll-prep-reminder",
     start: startPayrollPrepReminderWorker,
   },
+  {
+    name: "auto-roster-scheduler",
+    start: () => { startAutoRosterSchedulerWorker(); return Promise.resolve(); },
+  },
 ];
 
 async function startAllWorkers(): Promise<void> {
@@ -266,6 +271,7 @@ function shutdown(): void {
   stopReportStaleRecoveryWorker();
   stopTatEscalationWorker();
   stopReportSubscriptionWorker();
+  stopAutoRosterSchedulerWorker();
   clearAllTimers();
   console.log("[workers] Clean shutdown complete.");
   process.exit(0);

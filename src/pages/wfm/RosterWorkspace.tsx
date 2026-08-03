@@ -20,6 +20,8 @@ import {
   Lock,
   Users,
   AlertTriangle,
+  Zap,
+  CheckCircle2,
 } from "lucide-react";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -29,36 +31,43 @@ interface Process {
   name: string;
 }
 
+// Fields returned by GET /api/wfm/auto-roster/plans (listPlans JOIN plan_control)
 interface RosterPlan {
   id: string;
+  plan_name: string | null;
   process_id: string | null;
   branch_id: string | null;
   plan_status: string;
   from_date: string;
   to_date: string;
   created_at: string;
+  // from wfm_roster_plan_control JOIN:
+  approval_status: string | null;
+  last_coverage_score: number | null;
+  publish_lock_status: string | null;
 }
 
-interface ActualAssignment {
+// Fields returned by GET /api/wfm/auto-roster/plans/:id/assignments
+interface AutoRosterAssignment {
   id: string;
   employee_id: string;
   employee_code: string;
-  full_name: string;
-  work_date: string;
+  employee_name: string;        // auto-roster uses employee_name (not full_name)
+  roster_date: string;          // auto-roster uses roster_date (not work_date)
   shift_code: string | null;
   shift_name: string | null;
   shift_start_time: string | null;
   shift_end_time: string | null;
   roster_status: string;
   publish_status: string;
-  final_roster_status: string | null;
+  acknowledgement_status: string | null; // from wfm_roster_assignment_control
   branch_name: string | null;
   process_name: string | null;
 }
 
 interface ProcessListResponse { data: { id: string; name: string }[] }
 interface PlanListResponse    { data: RosterPlan[] }
-interface AssignmentListResponse { data: ActualAssignment[] }
+interface AssignmentResponse  { data: AutoRosterAssignment[] }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -86,10 +95,14 @@ function toYMD(d: Date): string {
 
 const DAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
+// approval_status lifecycle: draft → generated → submitted → approved → published
 const STATUS_BADGE: Record<string, { label: string; cls: string }> = {
-  draft:          { label: "Draft",     cls: "bg-slate-100 text-slate-600" },
-  published:      { label: "Published", cls: "bg-blue-100 text-blue-700"  },
-  approved_final: { label: "Approved",  cls: "bg-emerald-100 text-emerald-700" },
+  draft:          { label: "Draft",      cls: "bg-slate-100 text-slate-600"   },
+  generated:      { label: "Generated",  cls: "bg-sky-100 text-sky-700"       },
+  submitted:      { label: "Submitted",  cls: "bg-amber-100 text-amber-700"   },
+  approved:       { label: "Approved",   cls: "bg-emerald-100 text-emerald-700" },
+  published:      { label: "Published",  cls: "bg-blue-100 text-blue-700"     },
+  rejected:       { label: "Rejected",   cls: "bg-red-100 text-red-700"       },
 };
 
 const SHIFT_COLORS: Record<string, string> = {
@@ -97,7 +110,7 @@ const SHIFT_COLORS: Record<string, string> = {
   "default":  "bg-indigo-50 text-indigo-800 border border-indigo-200",
 };
 
-function ShiftCell({ assignment }: { assignment: ActualAssignment | undefined }) {
+function ShiftCell({ assignment }: { assignment: AutoRosterAssignment | undefined }) {
   if (!assignment) {
     return <td className="border border-slate-100 px-1 py-1 text-center text-slate-300 text-xs">—</td>;
   }
@@ -115,7 +128,7 @@ function ShiftCell({ assignment }: { assignment: ActualAssignment | undefined })
       <span className={`inline-block rounded px-1.5 py-0.5 text-xs font-medium ${cls}`}>
         {label}
       </span>
-      {assignment.final_roster_status === "acknowledged" && (
+      {assignment.acknowledgement_status === "acknowledged" && (
         <span className="block text-[9px] text-emerald-500 mt-0.5">✓ ack</span>
       )}
     </td>
@@ -127,7 +140,10 @@ function ShiftCell({ assignment }: { assignment: ActualAssignment | undefined })
 export default function RosterWorkspace() {
   const qc = useQueryClient();
   const { roleKeys } = useWorkforceAccess();
-  const canPublish = roleKeys.some((r) => ["admin", "wfm", "process_manager", "super_admin"].includes(r));
+
+  const canGenerate = roleKeys.some((r) => ["admin", "wfm", "super_admin"].includes(r));
+  const canApprove  = roleKeys.some((r) => ["process_manager", "admin", "super_admin"].includes(r));
+  const canPublish  = roleKeys.some((r) => ["process_manager", "admin", "super_admin"].includes(r));
 
   const [weekOf, setWeekOf] = useState<Date>(() => weekStart(new Date()));
   const weekDates = useMemo(() => Array.from({ length: 7 }, (_, i) => toYMD(addDays(weekOf, i))), [weekOf]);
@@ -137,6 +153,8 @@ export default function RosterWorkspace() {
   const [processId, setProcessId] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
 
+  // ── Queries ──────────────────────────────────────────────────────────────
+
   const { data: procResp } = useQuery<ProcessListResponse>({
     queryKey: ["processes"],
     queryFn: () => hrmsApi.get<ProcessListResponse>("/api/processes"),
@@ -144,11 +162,12 @@ export default function RosterWorkspace() {
   });
   const processes: Process[] = (procResp?.data ?? []).map((p) => ({ id: p.id, name: p.name }));
 
+  // auto-roster namespace: snake_case query params, returns approval_status from plan_control JOIN
   const { data: planResp, isLoading: plansLoading, refetch: refetchPlans } = useQuery<PlanListResponse>({
     queryKey: ["roster-plans", fromDate, toDate, processId],
     queryFn: () =>
       hrmsApi.get<PlanListResponse>(
-        `/api/wfm/roster/plans?fromDate=${fromDate}&toDate=${toDate}${processId ? `&processId=${processId}` : ""}`
+        `/api/wfm/auto-roster/plans?from_date=${fromDate}&to_date=${toDate}${processId ? `&process_id=${processId}` : ""}`
       ),
     staleTime: 2 * 60 * 1000,
   });
@@ -156,29 +175,71 @@ export default function RosterWorkspace() {
 
   const filteredPlans = useMemo(() => {
     if (statusFilter === "all") return plans;
-    return plans.filter((p) => p.plan_status === statusFilter);
+    // Filter on approval_status (from plan_control), not plan_status
+    return plans.filter((p) => (p.approval_status ?? p.plan_status) === statusFilter);
   }, [plans, statusFilter]);
 
-  const planIds = filteredPlans.map((p) => p.id);
-  const { data: assignResp, isLoading: assignLoading } = useQuery<AssignmentListResponse>({
-    queryKey: ["roster-actual", fromDate, toDate, processId],
-    queryFn: () =>
-      hrmsApi.get<AssignmentListResponse>(
-        `/api/wfm/roster/actual-assignments?fromDate=${fromDate}&toDate=${toDate}${processId ? `&processId=${processId}` : ""}&limit=2000`
-      ),
+  // Per-plan assignment fetch (auto-roster has per-plan endpoints, not a flat list)
+  const { data: assignData, isLoading: assignLoading } = useQuery<AutoRosterAssignment[]>({
+    queryKey: ["roster-actual", fromDate, toDate, processId, filteredPlans.map((p) => p.id).join(",")],
+    queryFn: async () => {
+      const results = await Promise.all(
+        filteredPlans.slice(0, 10).map((p) =>
+          hrmsApi.get<AssignmentResponse>(`/api/wfm/auto-roster/plans/${p.id}/assignments`)
+            .then((r) => r.data ?? [])
+            .catch(() => [] as AutoRosterAssignment[])
+        )
+      );
+      return results.flat();
+    },
     enabled: filteredPlans.length > 0,
     staleTime: 2 * 60 * 1000,
   });
-  const assignments: ActualAssignment[] = assignResp?.data ?? [];
+  const assignments: AutoRosterAssignment[] = assignData ?? [];
+
+  // ── Mutations ────────────────────────────────────────────────────────────
+
+  const invalidate = () => {
+    qc.invalidateQueries({ queryKey: ["roster-plans"] });
+    qc.invalidateQueries({ queryKey: ["roster-actual"] });
+  };
+
+  const generateMutation = useMutation({
+    mutationFn: (planId: string) =>
+      hrmsApi.post<{ success: boolean }>(`/api/wfm/auto-roster/plans/${planId}/generate`, {}),
+    onSuccess: invalidate,
+  });
+  const submitMutation = useMutation({
+    mutationFn: (planId: string) =>
+      hrmsApi.post<{ success: boolean }>(`/api/wfm/auto-roster/plans/${planId}/submit`, {}),
+    onSuccess: invalidate,
+  });
+  const approveMutation = useMutation({
+    mutationFn: (planId: string) =>
+      hrmsApi.post<{ success: boolean }>(`/api/wfm/auto-roster/plans/${planId}/approve`, {}),
+    onSuccess: invalidate,
+  });
+  const publishMutation = useMutation({
+    mutationFn: (planId: string) =>
+      hrmsApi.post<{ success: boolean }>(`/api/wfm/auto-roster/plans/${planId}/publish`, {}),
+    onSuccess: invalidate,
+  });
+
+  const anyPending =
+    generateMutation.isPending || submitMutation.isPending ||
+    approveMutation.isPending  || publishMutation.isPending;
+
+  // ── Grid builder ─────────────────────────────────────────────────────────
 
   type EmployeeRow = {
     employee_id: string;
     employee_code: string;
-    full_name: string;
+    employee_name: string;
     branch_name: string | null;
     process_name: string | null;
-    days: Record<string, ActualAssignment>;
+    days: Record<string, AutoRosterAssignment>;
   };
+
   const grid = useMemo<EmployeeRow[]>(() => {
     const map = new Map<string, EmployeeRow>();
     for (const a of assignments) {
@@ -186,34 +247,27 @@ export default function RosterWorkspace() {
         map.set(a.employee_id, {
           employee_id: a.employee_id,
           employee_code: a.employee_code,
-          full_name: a.full_name,
+          employee_name: a.employee_name,
           branch_name: a.branch_name,
           process_name: a.process_name,
           days: {},
         });
       }
-      map.get(a.employee_id)!.days[a.work_date] = a;
+      map.get(a.employee_id)!.days[a.roster_date] = a;
     }
     return Array.from(map.values()).sort((a, b) =>
       a.employee_code.localeCompare(b.employee_code)
     );
   }, [assignments]);
 
-  const publishMutation = useMutation({
-    mutationFn: (planId: string) =>
-      hrmsApi.patch<{ success: boolean }>(`/api/wfm/roster/plans/${planId}/publish`, {}),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["roster-plans"] });
-      qc.invalidateQueries({ queryKey: ["roster-actual"] });
-    },
-  });
+  const ackedCount   = assignments.filter((a) => a.acknowledgement_status === "acknowledged").length;
+  const pendingCount = assignments.filter(
+    (a) => a.publish_status === "published" && a.acknowledgement_status !== "acknowledged"
+  ).length;
 
   const isLoading = plansLoading || assignLoading;
 
-  const ackedCount   = assignments.filter((a) => a.final_roster_status === "acknowledged").length;
-  const pendingCount = assignments.filter(
-    (a) => a.publish_status === "published" && a.final_roster_status !== "acknowledged"
-  ).length;
+  // ── Render ────────────────────────────────────────────────────────────────
 
   return (
     <DashboardLayout>
@@ -228,7 +282,7 @@ export default function RosterWorkspace() {
                 Roster Workspace
               </h1>
               <p className="text-teal-200 text-sm mt-0.5">
-                Weekly shift assignment grid — manage, publish and track acknowledgements
+                Weekly shift assignment grid — generate, approve, publish and track acknowledgements
               </p>
             </div>
             <Button
@@ -288,7 +342,7 @@ export default function RosterWorkspace() {
           ))}
         </div>
 
-        {/* Filters + Plan status tabs */}
+        {/* Filters + status tabs */}
         <div className="flex flex-wrap gap-3 items-center">
           {processes.length > 0 && (
             <Select value={processId || "__all__"} onValueChange={(v) => setProcessId(v === "__all__" ? "" : v)}>
@@ -304,7 +358,7 @@ export default function RosterWorkspace() {
             </Select>
           )}
           <div className="flex rounded-lg border overflow-hidden text-sm">
-            {(["all", "draft", "published", "approved_final"] as const).map((s) => (
+            {(["all", "draft", "generated", "submitted", "approved", "published"] as const).map((s) => (
               <button
                 key={s}
                 onClick={() => setStatusFilter(s)}
@@ -324,25 +378,79 @@ export default function RosterWorkspace() {
         {filteredPlans.length > 0 && (
           <div className="flex flex-wrap gap-2">
             {filteredPlans.map((plan) => {
-              const badge = STATUS_BADGE[plan.plan_status] ?? { label: plan.plan_status, cls: "bg-slate-100 text-slate-600" };
+              const status = plan.approval_status ?? plan.plan_status;
+              const badge = STATUS_BADGE[status] ?? { label: status, cls: "bg-slate-100 text-slate-600" };
+              const isLocked = plan.publish_lock_status === "locked" || status === "published";
+
               return (
-                <div key={plan.id} className="flex items-center gap-2 rounded-lg border bg-white px-3 py-2 text-sm shadow-sm">
+                <div key={plan.id} className="flex flex-wrap items-center gap-2 rounded-lg border bg-white px-3 py-2 text-sm shadow-sm">
                   <span className="font-mono text-xs text-slate-400">{plan.id.substring(0, 8)}</span>
-                  <span className="text-slate-600">{plan.from_date} → {plan.to_date}</span>
+                  {plan.plan_name && <span className="text-slate-700 font-medium">{plan.plan_name}</span>}
+                  <span className="text-slate-500">{plan.from_date} → {plan.to_date}</span>
                   <Badge className={badge.cls}>{badge.label}</Badge>
-                  {canPublish && plan.plan_status === "draft" && (
+                  {plan.last_coverage_score !== null && (
+                    <Badge className={plan.last_coverage_score >= 80 ? "bg-emerald-50 text-emerald-700 border border-emerald-200" : "bg-amber-50 text-amber-700 border border-amber-200"}>
+                      {plan.last_coverage_score}% cov
+                    </Badge>
+                  )}
+
+                  {/* Generate: draft plans */}
+                  {canGenerate && status === "draft" && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="h-6 px-2 text-xs border-sky-400 text-sky-700 hover:bg-sky-50"
+                      disabled={anyPending}
+                      onClick={() => generateMutation.mutate(plan.id)}
+                    >
+                      <Zap className="h-3 w-3 mr-1" />
+                      Generate
+                    </Button>
+                  )}
+
+                  {/* Submit: generated plans */}
+                  {canGenerate && status === "generated" && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="h-6 px-2 text-xs border-amber-400 text-amber-700 hover:bg-amber-50"
+                      disabled={anyPending}
+                      onClick={() => submitMutation.mutate(plan.id)}
+                    >
+                      <Send className="h-3 w-3 mr-1" />
+                      Submit
+                    </Button>
+                  )}
+
+                  {/* Approve: submitted plans */}
+                  {canApprove && status === "submitted" && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="h-6 px-2 text-xs border-emerald-400 text-emerald-700 hover:bg-emerald-50"
+                      disabled={anyPending}
+                      onClick={() => approveMutation.mutate(plan.id)}
+                    >
+                      <CheckCircle2 className="h-3 w-3 mr-1" />
+                      Approve
+                    </Button>
+                  )}
+
+                  {/* Publish: approved plans */}
+                  {canPublish && status === "approved" && (
                     <Button
                       size="sm"
                       variant="outline"
                       className="h-6 px-2 text-xs border-teal-400 text-teal-700 hover:bg-teal-50"
-                      disabled={publishMutation.isPending}
+                      disabled={anyPending}
                       onClick={() => publishMutation.mutate(plan.id)}
                     >
                       <Send className="h-3 w-3 mr-1" />
-                      Publish
+                      Publish + Lock
                     </Button>
                   )}
-                  {plan.plan_status === "approved_final" && (
+
+                  {isLocked && (
                     <span className="flex items-center gap-1 text-xs text-slate-400">
                       <Lock className="h-3 w-3" /> Locked
                     </span>
@@ -366,8 +474,8 @@ export default function RosterWorkspace() {
             <p className="font-medium">No roster assignments found for this week.</p>
             <p className="text-sm mt-1">
               {filteredPlans.length === 0
-                ? "No plans exist for this week. Create a plan in Roster Planning first."
-                : "No employees are assigned in the visible plans."}
+                ? "No plans exist for this week. Use Roster Pipeline to create and generate one."
+                : "Generate a draft in the plan card above, or check the process filter."}
             </p>
           </div>
         ) : (
@@ -393,7 +501,7 @@ export default function RosterWorkspace() {
                 {grid.map((emp) => (
                   <tr key={emp.employee_id} className="hover:bg-teal-50/30 transition-colors">
                     <td className="sticky left-0 z-10 bg-white border border-slate-100 px-3 py-1.5">
-                      <div className="font-medium text-slate-800">{emp.full_name}</div>
+                      <div className="font-medium text-slate-800">{emp.employee_name}</div>
                       <div className="text-slate-400">{emp.employee_code}</div>
                     </td>
                     <td className="border border-slate-100 px-2 py-1.5 text-slate-500">

@@ -44,6 +44,7 @@ const BreakDeskDevices             = lazy(() => import("@/pages/BreakDeskDevices
 const WeekoffFairness              = lazy(() => import("@/pages/wfm/WeekoffFairness"));
 const NativeBranchWFMSpocConfig    = lazy(() => import("@/pages/NativeBranchWFMSpocConfig"));
 const RosterWorkspace              = lazy(() => import("@/pages/wfm/RosterWorkspace"));
+const RosterPipelinePage           = lazy(() => import("@/pages/wfm/RosterPipelinePage"));
 
 export const workforceRouteElements = (
   <>
@@ -80,6 +81,7 @@ export const workforceRouteElements = (
       <Route path="/wfm/roster"        element={<ProtectedRoute><Gate pageCode="WFM_ROSTER"><NativeWFMRoster /></Gate></ProtectedRoute>} />
       <Route path="/wfm-roster"        element={<Navigate to="/wfm/roster" replace />} />
       <Route path="/wfm/roster-workspace" element={<ProtectedRoute><Gate pageCode="WFM_ROSTER"><RosterWorkspace /></Gate></ProtectedRoute>} />
+      <Route path="/wfm/roster-pipeline"   element={<ProtectedRoute><Gate pageCode="WFM_ROSTER"><RosterPipelinePage /></Gate></ProtectedRoute>} />
       <Route path="/wfm/extensions"    element={<ProtectedRoute><Gate pageCode="WFM_EXTENSIONS"><NativeWFMExtensions /></Gate></ProtectedRoute>} />
       <Route path="/wfm-manager-approvals" element={<ProtectedRoute><Gate pageCode="WFM_ROSTER"><NativeWFMManagerApproval /></Gate></ProtectedRoute>} />
       <Route path="/wfm/planning-rules"  element={<ProtectedRoute roles={['super_admin','admin','wfm']}><Gate pageCode="WFM_PLANNING_RULES"><NativeWFMPlanningRules /></Gate></ProtectedRoute>} />

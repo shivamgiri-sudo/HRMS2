@@ -276,4 +276,26 @@ router.get(
   h(async (_req, res) => res.json({ success: true, data: await s.getHealthSummary() }))
 );
 
+// GET /api/wfm/auto-roster/schedule-config — list per-process auto-schedule settings
+router.get(
+  "/schedule-config",
+  requireRole("admin", "wfm", "super_admin"),
+  h(async (_req, res) => res.json({ success: true, data: await s.getScheduleConfig() }))
+);
+
+// PATCH /api/wfm/auto-roster/schedule-config/:processId — enable/disable auto-schedule for a process
+router.patch(
+  "/schedule-config/:processId",
+  requireRole("admin", "wfm", "super_admin"),
+  h(async (req, res) => {
+    const { processId } = req.params;
+    const body = z.object({
+      auto_schedule_enabled: z.union([z.boolean(), z.number()]),
+      auto_schedule_day_of_week: z.number().min(0).max(6).optional().default(0),
+    }).parse(req.body ?? {});
+    await s.setScheduleConfig(processId, Boolean(body.auto_schedule_enabled), body.auto_schedule_day_of_week);
+    res.json({ success: true });
+  })
+);
+
 export { router as autoRosterSyncedRouter };

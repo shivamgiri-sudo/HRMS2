@@ -1199,6 +1199,28 @@ export const autoRosterSyncedService = {
     return (rows[0] as AnyRow | undefined) ?? null;
   },
 
+  async getScheduleConfig(): Promise<{ process_id: string; auto_schedule_enabled: number; auto_schedule_day_of_week: number }[]> {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT DISTINCT process_id, auto_schedule_enabled, auto_schedule_day_of_week
+       FROM wfm_process_planning_rule WHERE is_active = 1`
+    ).catch(() => [[]] as any);
+    return (rows as RowDataPacket[]).map((r) => ({
+      process_id: r.process_id as string,
+      auto_schedule_enabled: Number(r.auto_schedule_enabled ?? 0),
+      auto_schedule_day_of_week: Number(r.auto_schedule_day_of_week ?? 0),
+    }));
+  },
+
+  async setScheduleConfig(processId: string, enabled: boolean, dayOfWeek: number): Promise<void> {
+    const dow = Math.max(0, Math.min(6, Math.floor(dayOfWeek)));
+    await db.execute(
+      `UPDATE wfm_process_planning_rule
+       SET auto_schedule_enabled = ?, auto_schedule_day_of_week = ?
+       WHERE process_id = ? AND is_active = 1`,
+      [enabled ? 1 : 0, dow, processId]
+    );
+  },
+
   async getHealthSummary(): Promise<{ total_plans: number; pending_approval: number; best_coverage_score: number | null; open_critical_gaps: number }> {
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT
@@ -1220,3 +1242,14 @@ export const autoRosterSyncedService = {
     };
   },
 };
+
+export async function logAutoScheduleEvent(input: {
+  plan_id?: string | null;
+  process_id?: string | null;
+  event_type: string;
+  event_title: string;
+  event_message: string;
+  severity?: "info" | "medium" | "high" | "critical";
+}): Promise<void> {
+  await logEvent({ ...input });
+}
