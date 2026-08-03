@@ -61,10 +61,15 @@ jobs:
       # SAME password on every demo account, so the login check below must use it too rather
       # than the three different per-account passwords it used to assume.
       DEMO_AUTH_PASSWORD: local-ci-demo-password-2026
-      # Silences the startup warning that external-DB connector credentials would be encrypted
-      # with an all-zero key. Nothing in this job connects to a real source system, but a
-      # warning that is always present is a warning nobody reads.
-      ENCRYPTION_KEY: local-ci-encryption-key-32-characters-x
+      # Must be a 64-character hex string — env validation rejects anything else and the
+      # backend then exits before binding a listener. An earlier attempt here used a readable
+      # passphrase and took the whole run down; the health poll correctly reported it as a
+      # boot failure rather than a schema problem, which is what that split is for.
+      #
+      # Silences the startup warning that external-DB connector credentials would otherwise be
+      # encrypted with an all-zero key. Nothing in this job connects to a real source system,
+      # but a warning present in every run is a warning nobody reads.
+      ENCRYPTION_KEY: "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff"
       PAYROLL_BANK_KEY: local-ci-bank-key-32-characters
       COMM_SECRET: local-ci-comm-secret-32-characters
       ENABLE_SCHEDULERS: "false"
