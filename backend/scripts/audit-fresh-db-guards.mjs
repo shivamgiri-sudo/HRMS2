@@ -45,6 +45,34 @@ function readManifest() {
 const CREATE_RE = /CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?`?(\w+)`?/gi;
 
 // Two SET statements and an IF, tolerant of comments and newlines between them.
+/**
+ * Four syntaxes in this repository express "add the column if it is missing", and every one
+ * of them has the same blind spot. Each was found the hard way, one twelve-minute CI run at
+ * a time, so all four are checked here now.
+ *
+ *   1. SET @col = (SELECT COUNT(*) ... COLUMNS ...);
+ *      SET @sql = IF(@col = 0, 'ALTER TABLE t ...', ...);
+ *   2. IF NOT EXISTS (SELECT 1 FROM information_schema.COLUMNS ...) THEN ALTER TABLE t ...
+ *      (procedural, inside a stored procedure)
+ *   3. IF NOT EXISTS (SELECT 1 FROM information_schema.STATISTICS ...) THEN
+ *        ALTER TABLE t ADD INDEX ...   (index name checked, indexed columns not)
+ *   4. SET @sql = (SELECT IF(COUNT(*) = 0, 'ALTER TABLE t ...', 'SELECT 1') FROM ... COLUMNS ...);
+ *
+ * A column count of zero is also what a missing table looks like, and an absent index says
+ * nothing about whether the columns it names exist. On production both distinctions are
+ * invisible because the table and columns have always been there.
+ */
+const EXTRA_GUARD_FORMS = [
+  {
+    name: "procedural column guard",
+    re: /IF\s+NOT\s+EXISTS\s*\(\s*SELECT[\s\S]{0,300}?information_schema\.COLUMNS[\s\S]{0,300}?TABLE_NAME\s*=\s*'(\w+)'/gi,
+  },
+  {
+    name: "SELECT-wrapped column guard",
+    re: /SET\s+@sql\s*=\s*\(\s*SELECT\s+IF\(\s*COUNT\(\*\)\s*=\s*0\s*,[\s\S]{0,600}?FROM\s+information_schema\.COLUMNS\s+WHERE\s+TABLE_SCHEMA\s*=\s*DATABASE\(\)\s+AND\s+TABLE_NAME\s*=\s*'(\w+)'/gi,
+  },
+];
+
 const GUARD_RE = new RegExp(
   String.raw`SET\s+@(\w+)\s*=\s*\(\s*SELECT\s+COUNT\(\*\)\s+FROM\s+INFORMATION_SCHEMA\.COLUMNS` +
     String.raw`[\s\S]*?\)\s*;[\s\S]{0,200}?SET\s+@sql\s*=\s*IF\(\s*@\1\s*=\s*0\s*,\s*'\s*ALTER\s+TABLE\s+` +
@@ -108,6 +136,28 @@ manifest.forEach((file, fileIndex) => {
   for (const m of sql.matchAll(CREATE_RE)) {
     const table = m[1].toLowerCase();
     if (!createdAt.has(table)) createdAt.set(table, [fileIndex, m.index]);
+  }
+
+  // The three later-discovered syntaxes. Each captures the table name in group 1.
+  for (const { name, re } of EXTRA_GUARD_FORMS) {
+    for (const m of sql.matchAll(re)) {
+      totalGuards++;
+      const table = m[1].toLowerCase();
+      const created = createdAt.get(table);
+      const point = [fileIndex, m.index];
+      if (created && (created[0] < point[0] || (created[0] === point[0] && created[1] < point[1]))) continue;
+      findings.push({
+        file,
+        order: fileIndex + 1,
+        line: sql.slice(0, m.index).split("\n").length,
+        table,
+        reason:
+          `${name}: ` +
+          (created
+            ? `created later, in ${manifest[created[0]]} (manifest #${created[0] + 1})`
+            : orphanNote(table)),
+      });
+    }
   }
 
   for (const m of sql.matchAll(GUARD_RE)) {
