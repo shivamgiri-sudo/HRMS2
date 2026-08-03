@@ -365,6 +365,10 @@ SELECT roles.role_key, pages.page_code, 1, 1, 1, 0, 1, 1
     SELECT 'PROVISIONING_ADMIN' UNION ALL
     SELECT 'PROVISIONING_APPOINTMENT_LETTER'
   ) pages
+ON 1=1
+-- ON 1=1 is load-bearing. Without a join condition MySQL parses the following
+-- ON DUPLICATE as this JOIN's ON clause and fails with a syntax error at
+-- 'KEY UPDATE'. The cross join is intentional; this only makes it explicit.
 ON DUPLICATE KEY UPDATE
   can_view = VALUES(can_view),
   can_create = VALUES(can_create),

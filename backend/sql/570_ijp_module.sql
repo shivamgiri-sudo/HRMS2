@@ -178,4 +178,8 @@ INSERT INTO role_page_access (id, role_key, page_code, can_view, can_create, can
 SELECT UUID(), role_key, page_code, 1, 1, 0, 0, NOW()
 FROM (SELECT 'employee' AS role_key UNION SELECT 'team_leader' UNION SELECT 'tl' UNION SELECT 'trainer' UNION SELECT 'qa') r
 CROSS JOIN (SELECT 'ijp_my_applications' AS page_code UNION SELECT 'ijp_opportunities') p
+ON 1=1
+-- ON 1=1 is load-bearing. Without a join condition MySQL parses the following
+-- ON DUPLICATE as this JOIN's ON clause and fails with a syntax error at
+-- 'KEY UPDATE'. The cross join is intentional; this only makes it explicit.
 ON DUPLICATE KEY UPDATE can_view = 1, can_create = 1;
