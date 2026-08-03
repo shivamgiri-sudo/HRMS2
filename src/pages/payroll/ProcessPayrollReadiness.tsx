@@ -1,4 +1,5 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
+import { useSearchParams, Link } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
 import { useWorkforceAccess } from "@/hooks/useUserRole";
@@ -308,6 +309,99 @@ function ChecklistToggle({
 }
 
 // ---------------------------------------------------------------------------
+// StepItem — collapsible step in the guided stepper
+// ---------------------------------------------------------------------------
+
+function StepItem({
+  number,
+  title,
+  done,
+  locked = false,
+  doneAt,
+  doneBy,
+  children,
+}: {
+  number: number;
+  title: string;
+  done: boolean;
+  locked?: boolean;
+  doneAt?: string | null;
+  doneBy?: string | null;
+  children: React.ReactNode;
+}) {
+  const [expanded, setExpanded] = useState(!done && !locked);
+
+  return (
+    <div
+      className={cn(
+        "rounded-xl border transition-colors",
+        done
+          ? "border-emerald-200 bg-emerald-50/40"
+          : locked
+          ? "border-slate-200 bg-slate-50/60 opacity-60"
+          : "border-amber-200 bg-white"
+      )}
+    >
+      <button
+        type="button"
+        className="w-full flex items-center gap-3 px-3 py-2.5 text-left"
+        onClick={() => !locked && setExpanded((v) => !v)}
+        disabled={locked}
+      >
+        {/* Step number / status indicator */}
+        <span
+          className={cn(
+            "flex-shrink-0 h-6 w-6 rounded-full flex items-center justify-center text-[11px] font-bold",
+            done
+              ? "bg-emerald-500 text-white"
+              : locked
+              ? "bg-slate-300 text-slate-500"
+              : "bg-amber-500 text-white"
+          )}
+        >
+          {done ? "✓" : number}
+        </span>
+
+        <div className="min-w-0 flex-1">
+          <span
+            className={cn(
+              "text-sm font-semibold leading-tight",
+              done ? "text-emerald-800" : locked ? "text-slate-400" : "text-slate-800"
+            )}
+          >
+            {title}
+          </span>
+          {done && (doneAt || doneBy) && (
+            <p className="text-[10px] text-emerald-600 mt-0.5">
+              {doneAt ? `Done ${fmtDate(doneAt)}` : ""}
+              {doneBy ? ` by ${doneBy}` : ""}
+            </p>
+          )}
+          {locked && (
+            <p className="text-[10px] text-slate-400 mt-0.5">Complete previous step first</p>
+          )}
+        </div>
+
+        {!locked && (
+          <ChevronDown
+            className={cn(
+              "h-4 w-4 flex-shrink-0 text-slate-400 transition-transform",
+              expanded && "rotate-180"
+            )}
+          />
+        )}
+      </button>
+
+      {expanded && !locked && (
+        <div className="px-4 pb-3 pt-0 space-y-2">
+          {children}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // ProcessDetailDrawer — full checklist + actions for one process
 // ---------------------------------------------------------------------------
 
@@ -397,114 +491,191 @@ function ProcessDetailDrawer({
             )}
           </div>
 
-          {/* Checklist */}
-          <div className="rounded-lg border p-3 space-y-0.5">
-            <p className="text-xs font-semibold text-slate-500 uppercase mb-2">Checklist</p>
+          {/* ── Guided Stepper ── */}
+          <div className="space-y-2">
+            <p className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-1">
+              Payroll Prep Steps
+            </p>
 
-            {/* Attendance Data Ready — WFM toggleable */}
-            <ChecklistToggle
-              label="Attendance Data Ready (WFM)"
-              checked={process.attendance_data_ready === 1}
-              disabled={!canToggleAttendance}
-              onToggle={(v) => checklistMutation.mutate({ item: "attendance_data_ready", value: v })}
-            />
-
-            {/* Attendance Frozen — read-only; show Request Freeze if not frozen */}
-            <div className="flex items-center justify-between gap-2 py-2 border-b">
-              <div className="flex items-center gap-2 text-sm">
-                {process.attendance_frozen
-                  ? <CheckCircle2 className="h-4 w-4 text-emerald-500 shrink-0" />
-                  : <AlertCircle className="h-4 w-4 text-rose-400 shrink-0" />}
-                <span className={process.attendance_frozen ? "text-slate-700" : "text-slate-500"}>
-                  Attendance Frozen (Payroll)
-                </span>
+            {/* Step 1 — Verify Attendance Data */}
+            <StepItem
+              number={1}
+              title="Verify Attendance Data"
+              done={process.attendance_data_ready === 1}
+              locked={false}
+            >
+              <p className="text-xs text-slate-500">
+                Confirm all punch logs, regularisations, and attendance exceptions for this
+                process have been reviewed and resolved for the month.
+              </p>
+              <div className="flex flex-wrap gap-x-3 gap-y-1 mt-1.5">
+                <Link to="/attendance/disputes" className="text-xs font-medium text-blue-600 hover:underline">
+                  → Disputes
+                </Link>
               </div>
-              {!process.attendance_frozen && isWFM && (
+              {canToggleAttendance && process.attendance_data_ready === 0 && (
+                <Button
+                  size="sm"
+                  className="mt-3 w-full bg-emerald-600 hover:bg-emerald-700 text-white"
+                  disabled={checklistMutation.isPending}
+                  onClick={() => checklistMutation.mutate({ item: "attendance_data_ready", value: 1 })}
+                >
+                  <CheckCircle2 className="h-3.5 w-3.5 mr-1.5" />
+                  Mark Attendance Data Ready
+                </Button>
+              )}
+              {canToggleAttendance && process.attendance_data_ready === 1 && (
+                <button
+                  type="button"
+                  className="mt-1 text-xs text-slate-400 hover:text-slate-600"
+                  disabled={checklistMutation.isPending}
+                  onClick={() => checklistMutation.mutate({ item: "attendance_data_ready", value: 0 })}
+                >
+                  Undo
+                </button>
+              )}
+            </StepItem>
+
+            {/* Step 2 — Request Attendance Freeze */}
+            <StepItem
+              number={2}
+              title="Request Attendance Freeze"
+              done={process.attendance_frozen === 1}
+              locked={process.attendance_data_ready === 0}
+            >
+              <p className="text-xs text-slate-500">
+                Signal to the Payroll Head that your attendance data is final. They will freeze it
+                before salary calculation begins.
+              </p>
+              {process.attendance_frozen === 1 ? (
+                <p className="mt-1.5 text-xs text-emerald-700 font-medium">
+                  ✓ Frozen{process.attendance_frozen_at ? ` on ${fmtDate(process.attendance_frozen_at)}` : ""}
+                </p>
+              ) : isWFM ? (
                 <Button
                   size="sm"
                   variant="outline"
-                  className="h-6 px-2 text-xs text-amber-700 border-amber-300 hover:bg-amber-50"
-                  disabled={freezeRequestMutation.isPending}
+                  className="mt-3 w-full border-amber-300 text-amber-800 hover:bg-amber-50"
+                  disabled={freezeRequestMutation.isPending || process.attendance_data_ready === 0}
                   onClick={() => freezeRequestMutation.mutate()}
                 >
-                  <Bell className="h-3 w-3 mr-1" />
-                  Request
+                  <Bell className="h-3.5 w-3.5 mr-1.5" />
+                  {freezeRequestMutation.isPending ? "Requesting…" : "Request Attendance Freeze"}
+                </Button>
+              ) : (
+                <p className="mt-1.5 text-xs text-slate-400 italic">
+                  Awaiting Payroll Head to freeze attendance
+                </p>
+              )}
+            </StepItem>
+
+            {/* Step 3 — Custom Deductions */}
+            <StepItem
+              number={3}
+              title="Upload Custom Deductions"
+              done={process.custom_deductions_uploaded === 1}
+              locked={false}
+            >
+              <p className="text-xs text-slate-500">
+                Upload loan recoveries, salary advances, or penalty deductions for employees in
+                this process.
+              </p>
+              <div className="flex flex-wrap gap-x-3 gap-y-1 mt-1.5">
+                <Link to="/payroll/loans" className="text-xs font-medium text-blue-600 hover:underline">
+                  → Loan Management
+                </Link>
+              </div>
+              {canToggleOther && process.custom_deductions_uploaded === 0 && (
+                <Button
+                  size="sm"
+                  className="mt-3 w-full bg-blue-600 hover:bg-blue-700 text-white"
+                  disabled={checklistMutation.isPending}
+                  onClick={() => checklistMutation.mutate({ item: "custom_deductions_uploaded", value: 1 })}
+                >
+                  <CheckCircle2 className="h-3.5 w-3.5 mr-1.5" />
+                  Mark Custom Deductions Done
                 </Button>
               )}
-            </div>
+              {canToggleOther && process.custom_deductions_uploaded === 1 && (
+                <button
+                  type="button"
+                  className="mt-1 text-xs text-slate-400 hover:text-slate-600"
+                  disabled={checklistMutation.isPending}
+                  onClick={() => checklistMutation.mutate({ item: "custom_deductions_uploaded", value: 0 })}
+                >
+                  Undo
+                </button>
+              )}
+            </StepItem>
 
-            {/* Incentives — read-only */}
-            <div className="flex items-center justify-between gap-2 py-2 border-b">
-              <div className="flex items-center gap-2 text-sm">
-                {process.incentives_status === "approved"
-                  ? <CheckCircle2 className="h-4 w-4 text-emerald-500 shrink-0" />
-                  : <Clock className="h-4 w-4 text-slate-400 shrink-0" />}
-                <span className={process.incentives_status === "approved" ? "text-slate-700" : "text-slate-500"}>
-                  Incentives Approved
-                </span>
+            {/* Step 4 — Overtime */}
+            <StepItem
+              number={4}
+              title="Enter Overtime"
+              done={process.overtime_entered === 1}
+              locked={false}
+            >
+              <p className="text-xs text-slate-500">
+                Enter approved overtime hours for all employees in this process for the month.
+              </p>
+              {canToggleOther && process.overtime_entered === 0 && (
+                <Button
+                  size="sm"
+                  className="mt-3 w-full bg-indigo-600 hover:bg-indigo-700 text-white"
+                  disabled={checklistMutation.isPending}
+                  onClick={() => checklistMutation.mutate({ item: "overtime_entered", value: 1 })}
+                >
+                  <CheckCircle2 className="h-3.5 w-3.5 mr-1.5" />
+                  Mark Overtime Done
+                </Button>
+              )}
+              {canToggleOther && process.overtime_entered === 1 && (
+                <button
+                  type="button"
+                  className="mt-1 text-xs text-slate-400 hover:text-slate-600"
+                  disabled={checklistMutation.isPending}
+                  onClick={() => checklistMutation.mutate({ item: "overtime_entered", value: 0 })}
+                >
+                  Undo
+                </button>
+              )}
+            </StepItem>
+
+            {/* Step 5 — Compliance checks (read-only) */}
+            <StepItem
+              number={5}
+              title="Compliance Checks"
+              done={
+                process.bank_details_pct >= 95 &&
+                process.uan_complete_pct >= 95 &&
+                process.noc_resolved &&
+                process.holiday_work_approved &&
+                process.incentives_status === "approved"
+              }
+              locked={false}
+            >
+              <div className="space-y-1.5 text-xs">
+                {[
+                  { label: "Bank Details", value: `${process.bank_details_pct}%`, ok: process.bank_details_pct >= 95 },
+                  { label: "UAN / PF",     value: `${process.uan_complete_pct}%`, ok: process.uan_complete_pct >= 95 },
+                  { label: "NOC Resolved", value: process.noc_resolved ? "Yes" : "No", ok: !!process.noc_resolved },
+                  { label: "Holiday Work", value: process.holiday_work_approved ? "Approved" : "Pending", ok: !!process.holiday_work_approved },
+                  { label: "Incentives",   value: process.incentives_status.replace("_", " "), ok: process.incentives_status === "approved" },
+                ].map(({ label, value, ok }) => (
+                  <div key={label} className="flex items-center justify-between">
+                    <div className="flex items-center gap-1.5">
+                      {ok
+                        ? <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500 shrink-0" />
+                        : <AlertCircle className="h-3.5 w-3.5 text-amber-400 shrink-0" />}
+                      <span className={ok ? "text-slate-600" : "text-slate-500"}>{label}</span>
+                    </div>
+                    <span className={cn("font-medium tabular-nums", ok ? "text-emerald-700" : "text-amber-700")}>
+                      {value}
+                    </span>
+                  </div>
+                ))}
               </div>
-              <Badge variant="outline" className="text-xs capitalize">
-                {process.incentives_status.replace("_", " ")}
-              </Badge>
-            </div>
-
-            {/* Custom Deductions — PM/WFM toggleable */}
-            <ChecklistToggle
-              label="Custom Deductions Uploaded"
-              checked={process.custom_deductions_uploaded === 1}
-              disabled={!canToggleOther}
-              onToggle={(v) => checklistMutation.mutate({ item: "custom_deductions_uploaded", value: v })}
-            />
-
-            {/* Overtime — PM/WFM toggleable */}
-            <ChecklistToggle
-              label="Overtime Entered"
-              checked={process.overtime_entered === 1}
-              disabled={!canToggleOther}
-              onToggle={(v) => checklistMutation.mutate({ item: "overtime_entered", value: v })}
-            />
-
-            {/* Bank Details % */}
-            <div className="flex items-center justify-between gap-2 py-2 border-b">
-              <div className="flex items-center gap-2 text-sm">
-                {process.bank_details_pct >= 95
-                  ? <CheckCircle2 className="h-4 w-4 text-emerald-500 shrink-0" />
-                  : <AlertCircle className="h-4 w-4 text-amber-400 shrink-0" />}
-                <span className="text-slate-700">Bank Details Complete</span>
-              </div>
-              <span className="text-sm font-medium tabular-nums">{process.bank_details_pct}%</span>
-            </div>
-
-            {/* UAN % */}
-            <div className="flex items-center justify-between gap-2 py-2 border-b">
-              <div className="flex items-center gap-2 text-sm">
-                {process.uan_complete_pct >= 95
-                  ? <CheckCircle2 className="h-4 w-4 text-emerald-500 shrink-0" />
-                  : <AlertCircle className="h-4 w-4 text-amber-400 shrink-0" />}
-                <span className="text-slate-700">UAN / PF Complete</span>
-              </div>
-              <span className="text-sm font-medium tabular-nums">{process.uan_complete_pct}%</span>
-            </div>
-
-            {/* NOC */}
-            <div className="flex items-center gap-2 py-2 border-b text-sm">
-              {process.noc_resolved
-                ? <CheckCircle2 className="h-4 w-4 text-emerald-500 shrink-0" />
-                : <XCircle className="h-4 w-4 text-rose-400 shrink-0" />}
-              <span className={process.noc_resolved ? "text-slate-700" : "text-rose-600"}>
-                NOC Resolved
-              </span>
-            </div>
-
-            {/* Holiday Work */}
-            <div className="flex items-center gap-2 py-2 text-sm">
-              {process.holiday_work_approved
-                ? <CheckCircle2 className="h-4 w-4 text-emerald-500 shrink-0" />
-                : <XCircle className="h-4 w-4 text-rose-400 shrink-0" />}
-              <span className={process.holiday_work_approved ? "text-slate-700" : "text-rose-600"}>
-                Holiday Work Approved
-              </span>
-            </div>
+            </StepItem>
           </div>
 
           {/* Sign-off status */}
@@ -705,7 +876,7 @@ function BranchAccordion({
 // HOGroupedView
 // ---------------------------------------------------------------------------
 
-function HOGroupedView({ roleKeys }: { roleKeys: string[] }) {
+function HOGroupedView({ roleKeys, autoOpenProcessId }: { roleKeys: string[]; autoOpenProcessId?: string }) {
   const [month, setMonth] = useState(currentMonth());
   const [selected, setSelected] = useState<ProcessReadiness | null>(null);
 
@@ -716,6 +887,14 @@ function HOGroupedView({ roleKeys }: { roleKeys: string[] }) {
   });
 
   const groups: BranchGroup[] = data?.data ?? [];
+
+  useEffect(() => {
+    if (!autoOpenProcessId || !groups.length) return;
+    for (const group of groups) {
+      const proc = group.processes.find((p) => p.process_id === autoOpenProcessId);
+      if (proc) { setSelected(proc); break; }
+    }
+  }, [autoOpenProcessId, groups]);
   const summary = data?.summary ?? { totalBranches: 0, totalProcesses: 0, readyProcesses: 0, avgScore: 0 };
 
   const csvUrl = `/api/payroll/process-readiness/export?month=${month}&format=csv`;
@@ -800,7 +979,7 @@ function HOGroupedView({ roleKeys }: { roleKeys: string[] }) {
 // BranchProcessView — branch_head sees their branch's processes
 // ---------------------------------------------------------------------------
 
-function BranchProcessView({ branchId, roleKeys }: { branchId: string; roleKeys: string[] }) {
+function BranchProcessView({ branchId, roleKeys, autoOpenProcessId }: { branchId: string; roleKeys: string[]; autoOpenProcessId?: string }) {
   const [month, setMonth] = useState(currentMonth());
   const [selected, setSelected] = useState<ProcessReadiness | null>(null);
 
@@ -811,6 +990,12 @@ function BranchProcessView({ branchId, roleKeys }: { branchId: string; roleKeys:
   });
 
   const processes: ProcessReadiness[] = data?.data ?? [];
+
+  useEffect(() => {
+    if (!autoOpenProcessId || !processes.length) return;
+    const proc = processes.find((p) => p.process_id === autoOpenProcessId);
+    if (proc) setSelected(proc);
+  }, [autoOpenProcessId, processes]);
   const summary = data?.summary ?? { total: 0, ready: 0, in_progress: 0, blocked: 0, avg_score: 0 };
 
   return (
@@ -877,7 +1062,7 @@ function BranchProcessView({ branchId, roleKeys }: { branchId: string; roleKeys:
 // SingleProcessView — process_manager/wfm see their assigned process(es)
 // ---------------------------------------------------------------------------
 
-function SingleProcessView({ userId, roleKeys }: { userId: string; roleKeys: string[] }) {
+function SingleProcessView({ userId, roleKeys, autoOpenProcessId }: { userId: string; roleKeys: string[]; autoOpenProcessId?: string }) {
   const [month, setMonth] = useState(currentMonth());
   const [selected, setSelected] = useState<ProcessReadiness | null>(null);
 
@@ -909,6 +1094,12 @@ function SingleProcessView({ userId, roleKeys }: { userId: string; roleKeys: str
   });
 
   const processes: ProcessReadiness[] = readinessQueries.data ?? [];
+
+  useEffect(() => {
+    if (!autoOpenProcessId || !processes.length) return;
+    const proc = processes.find((p) => p.process_id === autoOpenProcessId);
+    if (proc) setSelected(proc);
+  }, [autoOpenProcessId, processes]);
 
   if (assignedProcesses.length === 0) {
     return (
@@ -973,6 +1164,8 @@ function SingleProcessView({ userId, roleKeys }: { userId: string; roleKeys: str
 export default function ProcessPayrollReadiness() {
   const { user } = useAuth();
   const { roleKeys, isLoading: roleLoading } = useWorkforceAccess();
+  const [searchParams] = useSearchParams();
+  const autoOpenProcessId = searchParams.get("open") ?? undefined;
 
   const isHO = roleKeys.some(r => ["payroll_head", "super_admin", "admin", "payroll"].includes(r));
   const isBranchHead = !isHO && roleKeys.some(r => ["branch_head", "payroll_branch", "hr"].includes(r));
@@ -1024,9 +1217,9 @@ export default function ProcessPayrollReadiness() {
           </Collapsible>
 
           {/* View based on role */}
-          {isHO && <HOGroupedView roleKeys={roleKeys} />}
-          {isBranchHead && branchId && <BranchProcessView branchId={branchId} roleKeys={roleKeys} />}
-          {isPMorWFM && user?.id && <SingleProcessView userId={user.id} roleKeys={roleKeys} />}
+          {isHO && <HOGroupedView roleKeys={roleKeys} autoOpenProcessId={autoOpenProcessId} />}
+          {isBranchHead && branchId && <BranchProcessView branchId={branchId} roleKeys={roleKeys} autoOpenProcessId={autoOpenProcessId} />}
+          {isPMorWFM && user?.id && <SingleProcessView userId={user.id} roleKeys={roleKeys} autoOpenProcessId={autoOpenProcessId} />}
           {!isHO && !isBranchHead && !isPMorWFM && (
             <div className="text-center py-16 text-slate-400 text-sm">
               Your role does not have access to process readiness.
