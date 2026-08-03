@@ -306,6 +306,30 @@ CREATE TABLE IF NOT EXISTS module_access_audit_log (
   INDEX idx_performed_by (performed_by)
 );
 
+-- ── 14B. Create ATS notification log base table ─────────────────────────────
+-- The general notification migration creates `notification_log`, while this
+-- ATS journey historically enhanced a separate `ats_notification_log` that
+-- was never present in the canonical manifest. Define its stable delivery
+-- fields before adding journey-specific recipient/read metadata below.
+CREATE TABLE IF NOT EXISTS ats_notification_log (
+  id CHAR(36) NOT NULL DEFAULT (UUID()) PRIMARY KEY,
+  candidate_id CHAR(36) NULL,
+  template_code VARCHAR(100) NULL,
+  channel ENUM('email','sms','portal','push') NOT NULL DEFAULT 'email',
+  recipient_email VARCHAR(255) NULL,
+  recipient_mobile VARCHAR(20) NULL,
+  subject VARCHAR(500) NULL,
+  body TEXT NULL,
+  status VARCHAR(50) NOT NULL DEFAULT 'pending',
+  error_message TEXT NULL,
+  sent_at DATETIME NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  INDEX idx_ats_notification_candidate (candidate_id),
+  INDEX idx_ats_notification_status (status),
+  INDEX idx_ats_notification_created (created_at),
+  FOREIGN KEY (candidate_id) REFERENCES ats_candidate(id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 -- ── 15. Enhance notification systems ──────────────────────────────────────────
 SET @exists = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='ats_notification_log' AND COLUMN_NAME='notification_type');
 SET @sql = IF(@exists=0, 'ALTER TABLE ats_notification_log ADD COLUMN notification_type VARCHAR(50) NULL COMMENT ''Type of notification''', 'SELECT ''ats_notification_log.notification_type exists'' AS migration_note'); PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
@@ -338,11 +362,16 @@ CREATE TABLE IF NOT EXISTS portal_notification (
 );
 
 -- ── 17. Add indexes for performance ───────────────────────────────────────────
-CREATE INDEX IF NOT EXISTS idx_ats_candidate_branch ON ats_candidate(branch_name);
-CREATE INDEX IF NOT EXISTS idx_ats_candidate_status ON ats_candidate(candidate_status);
-CREATE INDEX IF NOT EXISTS idx_ats_candidate_created ON ats_candidate(created_at);
-CREATE INDEX IF NOT EXISTS idx_ats_queue_status ON ats_queue_token(queue_status);
-CREATE INDEX IF NOT EXISTS idx_ats_queue_branch ON ats_queue_token(branch_name);
+SET @exists = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='ats_candidate' AND INDEX_NAME='idx_ats_candidate_branch');
+SET @sql = IF(@exists=0, 'ALTER TABLE ats_candidate ADD INDEX idx_ats_candidate_branch (branch_name)', 'SELECT ''idx_ats_candidate_branch exists'' AS migration_note'); PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+SET @exists = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='ats_candidate' AND INDEX_NAME='idx_ats_candidate_status');
+SET @sql = IF(@exists=0, 'ALTER TABLE ats_candidate ADD INDEX idx_ats_candidate_status (candidate_status)', 'SELECT ''idx_ats_candidate_status exists'' AS migration_note'); PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+SET @exists = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='ats_candidate' AND INDEX_NAME='idx_ats_candidate_created');
+SET @sql = IF(@exists=0, 'ALTER TABLE ats_candidate ADD INDEX idx_ats_candidate_created (created_at)', 'SELECT ''idx_ats_candidate_created exists'' AS migration_note'); PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+SET @exists = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='ats_queue_token' AND INDEX_NAME='idx_ats_queue_status');
+SET @sql = IF(@exists=0, 'ALTER TABLE ats_queue_token ADD INDEX idx_ats_queue_status (queue_status)', 'SELECT ''idx_ats_queue_status exists'' AS migration_note'); PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+SET @exists = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='ats_queue_token' AND INDEX_NAME='idx_ats_queue_branch');
+SET @sql = IF(@exists=0, 'ALTER TABLE ats_queue_token ADD INDEX idx_ats_queue_branch (branch_name)', 'SELECT ''idx_ats_queue_branch exists'' AS migration_note'); PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 -- ── 18. Super admin employee access ───────────────────────────────────────────
 -- Grant super admin access to MAS47814
