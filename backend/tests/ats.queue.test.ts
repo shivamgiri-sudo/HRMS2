@@ -41,11 +41,20 @@ describe("atsQueueService.createToken", () => {
     mockExecute
       .mockResolvedValueOnce([[{ id: "cand-1", active_status: 1 }]]) // candidate exists
       .mockResolvedValueOnce([[]])                      // no existing active token
+      .mockResolvedValueOnce([[{ branch_name: "Branch One" }]]) // candidate → branch_master name
       .mockResolvedValueOnce([{ affectedRows: 1 }])    // INSERT
       .mockResolvedValueOnce([[fakeToken]]);            // re-fetch
     const result = await atsQueueService.createToken("cand-1", "2026-06-10 09:00:00");
     expect(result.candidate_id).toBe("cand-1");
     expect(result.status).toBe("active");
+
+    // Pin the branch-resolution slot to the INSERT that consumes it. Without this
+    // the queue only has to be the right length: a response landing on the wrong
+    // query still passes, which is how the earlier drift went unnoticed until the
+    // final re-fetch happened to come back empty.
+    const insert = mockExecute.mock.calls.find(([sql]) => String(sql).includes("INSERT INTO ats_queue_token"));
+    expect(insert, "createToken never issued the INSERT").toBeDefined();
+    expect(insert![1]).toContain("Branch One");
   });
 
   it("throws 404 when candidate does not exist", async () => {
@@ -102,6 +111,7 @@ describe("atsQueueService.reEntry", () => {
       .mockResolvedValueOnce([[]])                      // no active token
       .mockResolvedValueOnce([[{ id: "cand-1", active_status: 1 }]]) // candidate exists
       .mockResolvedValueOnce([[]])                      // no active token (inside createToken)
+      .mockResolvedValueOnce([[{ branch_name: "Branch One" }]]) // candidate → branch_master name
       .mockResolvedValueOnce([{ affectedRows: 1 }])    // INSERT
       .mockResolvedValueOnce([[{ ...fakeToken, id: "tok-2" }]]); // re-fetch
     const result = await atsQueueService.reEntry("cand-1", "2026-06-10 11:00:00");
