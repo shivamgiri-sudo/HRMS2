@@ -452,6 +452,7 @@ const MIGRATION_MANIFEST: string[] = [
   "1059_branch_notification_recipient.sql", // recipients were inferred from three tables with no stated intent; this is the intent
   "1060_netlogin_half_day_floor_config.sql", // the net-login half-day floor was hardcoded at 240 while the biometric one was configurable; they agreed only by coincidence
   "1061_finance_budget_topup_request.sql", // GRN overspend was already hard-blocked, but there was no formal way to ask for more against a specific budget line short of re-running the whole budget through approval again; this is that request entity
+  "1062_grn_consumption_reversal.sql", // once a GRN passed finance_head_approved, budget-consumption.consume() had moved its amount into consumed with no way back; adds the 'consumption_reversed' status the reversal action sets
   ];
 
 export type MigrationHealth = {

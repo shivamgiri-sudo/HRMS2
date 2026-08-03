@@ -27,7 +27,11 @@
 {
   "extends": "./tsconfig.json",
   "include": [
-    "src/modules/process-pnl/bpo-pnl-allocation-overlay.service.ts"
+    "src/modules/finance/grn.service.ts",
+    "src/modules/finance/grn.routes.ts",
+    "src/modules/finance/grn-smart.service.ts",
+    "src/modules/process-pnl/budget-consumption.service.ts",
+    "src/db/runPendingMigrations.ts"
   ],
   "compilerOptions": { "noEmit": true }
 }

@@ -11,6 +11,7 @@ import {
 import { budgetConsumptionService } from "../process-pnl/budget-consumption.service.js";
 import { isPeriodLocked } from "../process-pnl/finance-period-lock.js";
 import { allocateGrnNumber } from "./grn-number.service.js";
+import { grnSmartService } from "./grn-smart.service.js";
 import { vendorPaymentService } from "./vendor-payment.service.js";
 
 export type GrnType = "vendor" | "imprest";
@@ -25,7 +26,19 @@ export type GrnStatus =
   | "paid"
   | "approved"
   | "rejected"
-  | "cancelled";
+  | "cancelled"
+  | "consumption_reversed";
+
+/** Statuses reached only after Finance Head approval actually moved budget from reserved
+ *  into consumed via budgetConsumptionService.consume(). The only statuses eligible for
+ *  reverseConsumption(). */
+const CONSUMED_GRN_STATUSES: GrnStatus[] = [
+  "pending_accounts_payment",
+  "payment_scheduled",
+  "partially_paid",
+  "paid",
+  "approved",
+];
 
 export interface CreateGrnPayload {
   grnType: GrnType;
@@ -555,6 +568,75 @@ export const grnService = {
     }
 
     await writeGrnAudit("CANCEL", grnId, actorUserId, actorRole, {});
+    return { success: true };
+  },
+
+  /** Corrects a Finance-Head-approved GRN that should not have consumed budget — releases the
+   *  consumed_amount/consumed_quantity back onto the budget line and moves the GRN to a
+   *  terminal 'consumption_reversed' status. Symmetric to the release() already used when a
+   *  GRN is rejected before reaching this stage; there was previously no way back once a GRN
+   *  passed finance_head_approved (cancelGrn explicitly refuses at that point). */
+  async reverseConsumption(
+    grnId: string,
+    reason: string,
+    actorUserId: string,
+    actorRole: string
+  ) {
+    const trimmedReason = reason?.trim();
+    if (!trimmedReason) {
+      throw new Error("A reason is required to reverse a GRN's budget consumption");
+    }
+
+    const connection = await db.getConnection();
+    try {
+      await connection.beginTransaction();
+      const [rows] = await connection.execute<RowDataPacket[]>(
+        `SELECT * FROM grn_request WHERE id = ? FOR UPDATE`,
+        [grnId]
+      );
+      const grn = rows[0] as any;
+      if (!grn) throw new Error("GRN not found");
+      if (!CONSUMED_GRN_STATUSES.includes(grn.status)) {
+        throw new Error(
+          `Cannot reverse consumption for a GRN with status '${grn.status}' — it has not consumed budget, or has already been reversed`
+        );
+      }
+
+      if (await grnSmartService.hasAllocations(grnId)) {
+        await grnSmartService.reverseConsumption(connection, grnId);
+      } else {
+        await budgetConsumptionService.reverseConsumption(
+          connection,
+          grn.budget_line_id,
+          Number(grn.amount_with_tax || grn.amount),
+          Number(grn.quantity)
+        );
+      }
+
+      const [result] = await connection.execute<ResultSetHeader>(
+        `UPDATE grn_request
+            SET status = 'consumption_reversed',
+                reviewed_by = ?,
+                reviewed_at = NOW(),
+                review_note = ?,
+                rejection_reason = ?
+          WHERE id = ? AND status = ?`,
+        [actorUserId, trimmedReason, trimmedReason, grnId, grn.status]
+      );
+      if (result.affectedRows !== 1) {
+        throw new Error("GRN status changed before reversal; refresh and try again");
+      }
+      await connection.commit();
+    } catch (error) {
+      await connection.rollback();
+      throw error;
+    } finally {
+      connection.release();
+    }
+
+    await writeGrnAudit("CONSUMPTION_REVERSED", grnId, actorUserId, actorRole, {
+      reason: trimmedReason,
+    });
     return { success: true };
   },
 

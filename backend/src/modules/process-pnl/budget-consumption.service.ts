@@ -163,4 +163,34 @@ export const budgetConsumptionService = {
       [amount, quantity, lineId]
     );
   },
+
+  /** Symmetric to release(), but against consumed_* rather than reserved_* — for correcting
+   *  a GRN that already cleared Finance Head approval (and so already moved from reserved
+   *  into consumed via consume()). */
+  async reverseConsumption(
+    connection: PoolConnection,
+    lineId: string,
+    amountInput: number,
+    quantityInput: number
+  ) {
+    const amount = roundMoney(amountInput);
+    const quantity = roundQuantity(quantityInput);
+    validatePositive(amount, quantity);
+
+    const line = await lockActiveBudgetLine(connection, lineId);
+    if (Number(line.consumed_amount ?? 0) + 0.01 < amount) {
+      throw new Error("Cannot reverse more budget amount than is consumed");
+    }
+    if (Number(line.consumed_quantity ?? 0) + 0.0001 < quantity) {
+      throw new Error("Cannot reverse more budget quantity than is consumed");
+    }
+
+    await connection.execute(
+      `UPDATE finance_budget_line
+          SET consumed_amount = GREATEST(0, consumed_amount - ?),
+              consumed_quantity = GREATEST(0, consumed_quantity - ?)
+        WHERE id = ?`,
+      [amount, quantity, lineId]
+    );
+  },
 };

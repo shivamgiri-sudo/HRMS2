@@ -455,6 +455,29 @@ async function releaseAllocations(connection: PoolConnection, allocations: any[]
   }
 }
 
+/** Symmetric to releaseAllocations(), but against allocation rows already 'consumed' — for
+ *  correcting a smart GRN whose Finance Head approval already moved every split allocation
+ *  from reserved into consumed. */
+async function reverseConsumedAllocations(connection: PoolConnection, allocations: any[]) {
+  for (const allocation of allocations) {
+    if (String(allocation.lifecycle_status) !== "consumed") continue;
+    await budgetConsumptionService.reverseConsumption(
+      connection,
+      String(allocation.budget_line_id),
+      Number(allocation.amount_with_tax),
+      Number(allocation.quantity)
+    );
+  }
+  if (allocations.length) {
+    await connection.execute(
+      `UPDATE grn_cost_allocation
+          SET lifecycle_status = 'reversed'
+        WHERE grn_request_id = ? AND lifecycle_status = 'consumed'`,
+      [allocations[0].grn_request_id]
+    );
+  }
+}
+
 export const grnSmartService = {
   async hasAllocations(grnId: string) {
     const [rows] = await db.execute<RowDataPacket[]>(
@@ -462,6 +485,14 @@ export const grnSmartService = {
       [grnId]
     );
     return Number(rows[0]?.total ?? 0) > 0;
+  },
+
+  /** Called by grnService.reverseConsumption() once it has confirmed the GRN is a smart
+   *  (split-allocation) GRN and already holds the row lock on grn_request. */
+  async reverseConsumption(connection: PoolConnection, grnId: string) {
+    const allocations = await loadAllocations(connection, grnId, true);
+    if (!allocations.length) throw new Error("Smart GRN has no saved cost allocations");
+    await reverseConsumedAllocations(connection, allocations);
   },
 
   async saveAllocations(
