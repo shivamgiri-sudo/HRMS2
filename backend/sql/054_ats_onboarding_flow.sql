@@ -1,50 +1,66 @@
 -- backend/sql/054_ats_onboarding_flow.sql
 -- ATS Onboarding Flow — all tables/alters for Phase 3 candidate-to-employee activation
--- NOTE: This migration is idempotent - columns and tables created with IF NOT EXISTS will be skipped if they exist
+-- Additive/idempotent: every compatibility column and index is guarded.
 
--- 1. Check and create columns in ats_candidate if table exists
-ALTER TABLE ats_candidate ADD COLUMN address TEXT;
-ALTER TABLE ats_candidate ADD COLUMN education VARCHAR(100);
-ALTER TABLE ats_candidate ADD COLUMN experience VARCHAR(50);
-ALTER TABLE ats_candidate ADD COLUMN rotational_shift TINYINT(1);
-ALTER TABLE ats_candidate ADD COLUMN preferred_shift VARCHAR(50);
-ALTER TABLE ats_candidate ADD COLUMN night_shift_ok VARCHAR(50);
-ALTER TABLE ats_candidate ADD COLUMN leaves_in_3months TINYINT(1);
-ALTER TABLE ats_candidate ADD COLUMN owns_two_wheeler TINYINT(1);
-ALTER TABLE ats_candidate ADD COLUMN id_proof_available TINYINT(1);
-ALTER TABLE ats_candidate ADD COLUMN education_proof_available TINYINT(1);
-ALTER TABLE ats_candidate ADD COLUMN resume_url VARCHAR(500);
-ALTER TABLE ats_candidate ADD COLUMN selfie_url VARCHAR(500);
-ALTER TABLE ats_candidate ADD COLUMN recruiter_name VARCHAR(255);
-ALTER TABLE ats_candidate ADD COLUMN user_id CHAR(36);
-ALTER TABLE ats_candidate ADD COLUMN profile_status ENUM('registered','selected','onboarding_sent','profile_submitted','onboarded') NOT NULL DEFAULT 'registered';
-ALTER TABLE ats_candidate ADD COLUMN father_name VARCHAR(255);
-ALTER TABLE ats_candidate ADD COLUMN current_address TEXT;
-ALTER TABLE ats_candidate ADD COLUMN permanent_address TEXT;
-ALTER TABLE ats_candidate ADD COLUMN aadhar_number VARCHAR(20);
-ALTER TABLE ats_candidate ADD COLUMN pan_number VARCHAR(20);
-ALTER TABLE ats_candidate ADD COLUMN uan_number VARCHAR(50);
-ALTER TABLE ats_candidate ADD COLUMN aadhar_verified TINYINT(1) NOT NULL DEFAULT 0;
-ALTER TABLE ats_candidate ADD COLUMN pan_verified TINYINT(1) NOT NULL DEFAULT 0;
-ALTER TABLE ats_candidate ADD COLUMN bank_account_no VARCHAR(50);
-ALTER TABLE ats_candidate ADD COLUMN bank_ifsc VARCHAR(20);
-ALTER TABLE ats_candidate ADD COLUMN bank_name VARCHAR(100);
-ALTER TABLE ats_candidate ADD COLUMN emergency_contact_name VARCHAR(255);
-ALTER TABLE ats_candidate ADD COLUMN emergency_contact_mobile VARCHAR(20);
-ALTER TABLE ats_candidate ADD COLUMN profile_submitted_at DATETIME;
+-- 1. Add candidate onboarding fields without aborting when an earlier migration
+-- already supplied one of them. A single duplicate-column failure used to skip
+-- the rest of this file in the production migration runner.
+ALTER TABLE ats_candidate ADD COLUMN IF NOT EXISTS address TEXT;
+ALTER TABLE ats_candidate ADD COLUMN IF NOT EXISTS education VARCHAR(100);
+ALTER TABLE ats_candidate ADD COLUMN IF NOT EXISTS experience VARCHAR(50);
+ALTER TABLE ats_candidate ADD COLUMN IF NOT EXISTS rotational_shift TINYINT(1);
+ALTER TABLE ats_candidate ADD COLUMN IF NOT EXISTS preferred_shift VARCHAR(50);
+ALTER TABLE ats_candidate ADD COLUMN IF NOT EXISTS night_shift_ok VARCHAR(50);
+ALTER TABLE ats_candidate ADD COLUMN IF NOT EXISTS leaves_in_3months TINYINT(1);
+ALTER TABLE ats_candidate ADD COLUMN IF NOT EXISTS owns_two_wheeler TINYINT(1);
+ALTER TABLE ats_candidate ADD COLUMN IF NOT EXISTS id_proof_available TINYINT(1);
+ALTER TABLE ats_candidate ADD COLUMN IF NOT EXISTS education_proof_available TINYINT(1);
+ALTER TABLE ats_candidate ADD COLUMN IF NOT EXISTS resume_url VARCHAR(500);
+ALTER TABLE ats_candidate ADD COLUMN IF NOT EXISTS selfie_url VARCHAR(500);
+ALTER TABLE ats_candidate ADD COLUMN IF NOT EXISTS recruiter_name VARCHAR(255);
+ALTER TABLE ats_candidate ADD COLUMN IF NOT EXISTS user_id CHAR(36);
+ALTER TABLE ats_candidate ADD COLUMN IF NOT EXISTS profile_status ENUM('registered','selected','onboarding_sent','profile_submitted','onboarded') NOT NULL DEFAULT 'registered';
+ALTER TABLE ats_candidate ADD COLUMN IF NOT EXISTS father_name VARCHAR(255);
+ALTER TABLE ats_candidate ADD COLUMN IF NOT EXISTS current_address TEXT;
+ALTER TABLE ats_candidate ADD COLUMN IF NOT EXISTS permanent_address TEXT;
+ALTER TABLE ats_candidate ADD COLUMN IF NOT EXISTS aadhar_number VARCHAR(20);
+ALTER TABLE ats_candidate ADD COLUMN IF NOT EXISTS pan_number VARCHAR(20);
+ALTER TABLE ats_candidate ADD COLUMN IF NOT EXISTS uan_number VARCHAR(50);
+ALTER TABLE ats_candidate ADD COLUMN IF NOT EXISTS aadhar_verified TINYINT(1) NOT NULL DEFAULT 0;
+ALTER TABLE ats_candidate ADD COLUMN IF NOT EXISTS pan_verified TINYINT(1) NOT NULL DEFAULT 0;
+ALTER TABLE ats_candidate ADD COLUMN IF NOT EXISTS bank_account_no VARCHAR(50);
+ALTER TABLE ats_candidate ADD COLUMN IF NOT EXISTS bank_ifsc VARCHAR(20);
+ALTER TABLE ats_candidate ADD COLUMN IF NOT EXISTS bank_name VARCHAR(100);
+ALTER TABLE ats_candidate ADD COLUMN IF NOT EXISTS emergency_contact_name VARCHAR(255);
+ALTER TABLE ats_candidate ADD COLUMN IF NOT EXISTS emergency_contact_mobile VARCHAR(20);
+ALTER TABLE ats_candidate ADD COLUMN IF NOT EXISTS profile_submitted_at DATETIME;
 
--- 2. ALTER auth_user — force password change flag
-ALTER TABLE auth_user ADD COLUMN must_change_password TINYINT(1) NOT NULL DEFAULT 0;
+-- 2. Force password change flag. Migration 050 may already have created it.
+ALTER TABLE auth_user ADD COLUMN IF NOT EXISTS must_change_password TINYINT(1) NOT NULL DEFAULT 0;
 
--- 3. ALTER ats_onboarding_bridge — token + approval tracking
-ALTER TABLE ats_onboarding_bridge ADD COLUMN onboarding_token VARCHAR(100);
-ALTER TABLE ats_onboarding_bridge ADD COLUMN onboarding_token_expires_at DATETIME;
-ALTER TABLE ats_onboarding_bridge ADD COLUMN hr_approved_by CHAR(36);
-ALTER TABLE ats_onboarding_bridge ADD COLUMN hr_approved_at DATETIME;
+-- 3. Onboarding bridge token + approval tracking.
+ALTER TABLE ats_onboarding_bridge ADD COLUMN IF NOT EXISTS onboarding_token VARCHAR(100);
+ALTER TABLE ats_onboarding_bridge ADD COLUMN IF NOT EXISTS onboarding_token_expires_at DATETIME;
+ALTER TABLE ats_onboarding_bridge ADD COLUMN IF NOT EXISTS hr_approved_by CHAR(36);
+ALTER TABLE ats_onboarding_bridge ADD COLUMN IF NOT EXISTS hr_approved_at DATETIME;
 
-CREATE UNIQUE INDEX IF NOT EXISTS uq_onb_token ON ats_onboarding_bridge (onboarding_token);
+SET @onboarding_token_index_exists = (
+  SELECT COUNT(*)
+  FROM INFORMATION_SCHEMA.STATISTICS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'ats_onboarding_bridge'
+    AND INDEX_NAME = 'uq_onb_token'
+);
+SET @onboarding_token_index_sql = IF(
+  @onboarding_token_index_exists = 0,
+  'ALTER TABLE ats_onboarding_bridge ADD UNIQUE KEY uq_onb_token (onboarding_token)',
+  'SELECT ''uq_onb_token already exists'' AS status'
+);
+PREPARE stmt FROM @onboarding_token_index_sql;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
 
--- 4. NEW: ats_onboarding_request
+-- 4. Onboarding request.
 CREATE TABLE IF NOT EXISTS ats_onboarding_request (
   id           CHAR(36)   NOT NULL DEFAULT (UUID()) PRIMARY KEY,
   candidate_id CHAR(36)   NOT NULL UNIQUE,
@@ -58,9 +74,9 @@ CREATE TABLE IF NOT EXISTS ats_onboarding_request (
   FOREIGN KEY (branch_id)    REFERENCES branch_master(id) ON DELETE SET NULL,
   INDEX idx_onb_req_branch (branch_id),
   INDEX idx_onb_req_status (status)
-);
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- 5. NEW: ats_employment_offer
+-- 5. Employment offer.
 CREATE TABLE IF NOT EXISTS ats_employment_offer (
   id                    CHAR(36)      NOT NULL DEFAULT (UUID()) PRIMARY KEY,
   onboarding_request_id CHAR(36)      NOT NULL UNIQUE,
@@ -102,9 +118,9 @@ CREATE TABLE IF NOT EXISTS ats_employment_offer (
   FOREIGN KEY (department_id)         REFERENCES department_master(id)       ON DELETE SET NULL,
   FOREIGN KEY (designation_id)        REFERENCES designation_master(id)      ON DELETE SET NULL,
   FOREIGN KEY (reporting_manager_id)  REFERENCES employees(id)               ON DELETE SET NULL
-);
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- 6. NEW: ats_offer_approval
+-- 6. Offer approval.
 CREATE TABLE IF NOT EXISTS ats_offer_approval (
   id          CHAR(36)   NOT NULL DEFAULT (UUID()) PRIMARY KEY,
   offer_id    CHAR(36)   NOT NULL,
@@ -114,23 +130,23 @@ CREATE TABLE IF NOT EXISTS ats_offer_approval (
   action_at   DATETIME   NOT NULL DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (offer_id) REFERENCES ats_employment_offer(id) ON DELETE CASCADE,
   INDEX idx_offer_approval_offer (offer_id)
-);
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- 7. NEW: ats_email_log
+-- 7. Email log.
 CREATE TABLE IF NOT EXISTS ats_email_log (
-  id           CHAR(36)    NOT NULL DEFAULT (UUID()) PRIMARY KEY,
-  candidate_id CHAR(36)    NOT NULL,
-  email_type   ENUM('registration','selected','rejected','token_sent','offer_review','approved','welcome') NOT NULL,
-  sent_to      VARCHAR(255) NOT NULL,
-  status       ENUM('sent','failed','skipped') NOT NULL DEFAULT 'sent',
+  id            CHAR(36)     NOT NULL DEFAULT (UUID()) PRIMARY KEY,
+  candidate_id  CHAR(36)     NOT NULL,
+  email_type    ENUM('registration','selected','rejected','token_sent','offer_review','approved','welcome') NOT NULL,
+  sent_to       VARCHAR(255) NOT NULL,
+  status        ENUM('sent','failed','skipped') NOT NULL DEFAULT 'sent',
   error_message TEXT,
-  sent_at      DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  sent_at       DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (candidate_id) REFERENCES ats_candidate(id) ON DELETE CASCADE,
   INDEX idx_email_log_cand (candidate_id),
   INDEX idx_email_log_type (email_type)
-);
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- 8. NEW: salary_band_master
+-- 8. Salary band master.
 CREATE TABLE IF NOT EXISTS salary_band_master (
   id            CHAR(36)      NOT NULL DEFAULT (UUID()) PRIMARY KEY,
   band_code     VARCHAR(50)   NOT NULL UNIQUE,
@@ -141,16 +157,24 @@ CREATE TABLE IF NOT EXISTS salary_band_master (
   hra_pct       DECIMAL(5,2)  NOT NULL DEFAULT 40.00,
   active_status TINYINT(1)    NOT NULL DEFAULT 1,
   created_at    DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
-INSERT INTO salary_band_master (band_code, band_name, min_ctc, max_ctc, basic_pct, hra_pct) VALUES
+INSERT INTO salary_band_master
+  (band_code, band_name, min_ctc, max_ctc, basic_pct, hra_pct)
+VALUES
   ('D', 'Band D — Entry',        80000,   150000,  40.00, 40.00),
   ('C', 'Band C — Junior',      150001,   300000,  40.00, 40.00),
   ('B', 'Band B — Mid',         300001,   600000,  45.00, 40.00),
   ('A', 'Band A — Senior',      600001,  1200000,  50.00, 50.00),
   ('M', 'Band M — Management', 1200001, 99999999,  50.00, 50.00)
-ON DUPLICATE KEY UPDATE band_name = VALUES(band_name);
+ON DUPLICATE KEY UPDATE
+  band_name = VALUES(band_name),
+  min_ctc = VALUES(min_ctc),
+  max_ctc = VALUES(max_ctc),
+  basic_pct = VALUES(basic_pct),
+  hra_pct = VALUES(hra_pct),
+  active_status = 1;
 
--- 9. Ensure employee_salary_snapshot has columns used by approval flow
-ALTER TABLE employee_salary_snapshot ADD COLUMN effective_date DATE NULL;
-ALTER TABLE employee_salary_snapshot ADD COLUMN offered_ctc DECIMAL(12,2) NULL;
+-- 9. Salary snapshot fields used by approval flow.
+ALTER TABLE employee_salary_snapshot ADD COLUMN IF NOT EXISTS effective_date DATE NULL;
+ALTER TABLE employee_salary_snapshot ADD COLUMN IF NOT EXISTS offered_ctc DECIMAL(12,2) NULL;
