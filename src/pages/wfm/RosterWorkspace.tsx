@@ -78,7 +78,10 @@ function addDays(d: Date, n: number): Date {
 }
 
 function toYMD(d: Date): string {
-  return d.toISOString().substring(0, 10);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${dd}`;
 }
 
 const DAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
@@ -158,7 +161,7 @@ export default function RosterWorkspace() {
 
   const planIds = filteredPlans.map((p) => p.id);
   const { data: assignResp, isLoading: assignLoading } = useQuery<AssignmentListResponse>({
-    queryKey: ["roster-actual", fromDate, toDate, processId, planIds.join(",")],
+    queryKey: ["roster-actual", fromDate, toDate, processId],
     queryFn: () =>
       hrmsApi.get<AssignmentListResponse>(
         `/api/wfm/roster/actual-assignments?fromDate=${fromDate}&toDate=${toDate}${processId ? `&processId=${processId}` : ""}&limit=2000`
