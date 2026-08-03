@@ -259,19 +259,16 @@ export const payrollBranchReadinessService = {
           return Number((rows[0] as any).attendance_snapshot_locked ?? 0);
         }
 
-        // Fallback: check payroll_attendance_snapshot table
-        try {
-          const [snapRows] = await db.execute<RowDataPacket[]>(
-            `SELECT COUNT(*) AS cnt
-               FROM payroll_attendance_snapshot
-              WHERE pay_month = ? AND branch_id = ? AND is_locked = 1
-              LIMIT 1`,
-            [month, branchId]
-          );
-          return Number((snapRows[0] as any)?.cnt ?? 0) > 0 ? 1 : 0;
-        } catch {
-          return 0;
-        }
+        // There is no payroll_attendance_snapshot table — not in this database and not in
+        // any migration. This fallback therefore threw ER_NO_SUCH_TABLE on every call and
+        // the catch below turned it into 0, which is the value it would have returned
+        // anyway. It ran once per branch per poll purely to fail.
+        //
+        // Kept as an explicit 0 rather than deleted so the intent (no snapshot evidence
+        // found) stays legible. If a snapshot table is ever introduced, this is where it
+        // plugs in — the nearest existing tables are attendance_state_snapshot and
+        // payroll_attendance_conflict_review, neither of which carries pay_month/is_locked.
+        return 0;
       },
       0,
       "attendance_frozen"
@@ -361,7 +358,10 @@ export const payrollBranchReadinessService = {
         const [rows] = await db.execute<RowDataPacket[]>(
           `SELECT
              COUNT(*) AS total,
-             SUM(CASE WHEN COALESCE(pf_uan, uan_number, '') != '' AND TRIM(COALESCE(pf_uan, uan_number, '')) != '' THEN 1 ELSE 0 END) AS with_uan
+             -- pf_uan does not exist on employees (nor anywhere in the schema); the column
+             -- is uan_number. Its presence in this COALESCE made the whole statement throw
+             -- ER_BAD_FIELD_ERROR on every branch, every poll.
+             SUM(CASE WHEN TRIM(COALESCE(uan_number, '')) != '' THEN 1 ELSE 0 END) AS with_uan
            FROM employees
            WHERE branch_id = ?
              AND active_status = 1
@@ -431,7 +431,12 @@ export const payrollBranchReadinessService = {
             WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'holiday_work_request'
             AND COLUMN_NAME IN ('work_date','date','holiday_date','request_date') LIMIT 1`
         );
-        const dateCol = (cols[0] as any)?.COLUMN_NAME ?? 'work_date';
+        // The lookup above is defensive, but falling back to 'work_date' when it finds
+        // nothing defeats the point: holiday_work_request has no such column, so the query
+        // below then threw on every branch. If no known date column exists there is nothing
+        // to count — return 0 rather than guessing a name.
+        const dateCol = (cols[0] as any)?.COLUMN_NAME as string | undefined;
+        if (!dateCol) return 0;
         const [rows] = await db.execute<RowDataPacket[]>(
           `SELECT COUNT(*) AS cnt
              FROM holiday_work_request
@@ -609,13 +614,14 @@ export const payrollBranchReadinessService = {
         `SELECT COUNT(*) AS left_count FROM employees
           WHERE branch_id = ?
             AND LOWER(COALESCE(employment_status, 'active')) IN ('resigned','terminated','absconded','separated')
-            AND (
-              (last_working_day IS NOT NULL AND last_working_day >= ? AND last_working_day <= ?)
-              OR (resignation_date IS NOT NULL AND resignation_date >= ? AND resignation_date <= ?
-                  AND last_working_day IS NULL)
-            )
+            -- employees has no last_working_day column. The real dates live on exit_request
+            -- as last_working_day_confirmed / _proposed, which this query does not join, so
+            -- resignation_date on employees is the only usable signal here. Referencing the
+            -- non-existent column made the statement throw for every branch.
+            AND (resignation_date IS NOT NULL AND resignation_date >= ? AND resignation_date <= ?)
             ${processFilterPlain}`,
-        [branchId, monthStart, monthEnd, monthStart, monthEnd, ...processParams]
+        // Two date placeholders now, not four — the last_working_day branch above is gone.
+        [branchId, monthStart, monthEnd, ...processParams]
       );
       employeeCountLeft = Number((leftRows[0] as any)?.left_count ?? 0);
     } catch {
