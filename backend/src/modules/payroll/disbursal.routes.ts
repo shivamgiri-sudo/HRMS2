@@ -213,7 +213,7 @@ router.get(
          JOIN salary_prep_line spl
            ON spl.run_id = srd.run_id AND spl.employee_id = srd.employee_id
          JOIN employees e ON e.id = srd.employee_id
-         LEFT JOIN employee_bank_detail ebd
+         INNER JOIN employee_bank_detail ebd
            ON ebd.employee_id = srd.employee_id
           AND ebd.is_primary = 1
           AND ebd.active_status = 1
@@ -258,6 +258,16 @@ router.get(
       }
 
       const csvContent  = csvLines.join("\r\n");
+
+      void logSensitiveAction({
+        actor_user_id: (req as any).authUser?.id ?? (req as any).user?.id ?? "unknown",
+        action_type: "BANK_EXPORT_DOWNLOAD",
+        module_key: "payroll",
+        entity_type: "salary_prep_run",
+        entity_id: runId,
+        change_summary: { format, row_count: rows.length, run_month: runMonth },
+      });
+
       const formatLabel = format === "sbi" ? "SBI" : "Generic";
       const filename    = `BankBatch_${formatLabel}_${runMonth.replace("-", "")}_${runId.substring(0, 8)}.csv`;
 
