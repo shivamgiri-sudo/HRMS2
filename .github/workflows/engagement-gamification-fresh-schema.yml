@@ -1,11 +1,17 @@
-name: Engagement Gamification Fresh Schema
+name: Performance Fresh Schema Certification
 
 on:
   pull_request:
     paths:
       - "backend/sql/038_engagement_gamification.sql"
+      - "backend/sql/044_attendance_engine.sql"
+      - "backend/sql/520_performance_ingestion_platform.sql"
+      - "backend/sql/521_performance_multi_source_lineage.sql"
+      - "backend/sql/522_performance_governance_audit.sql"
       - "backend/scripts/verify-engagement-gamification-migration.ts"
+      - "backend/scripts/verify-performance-fresh-schema.ts"
       - "backend/scripts/migrate-fresh-test.ts"
+      - "backend/src/db/runPendingMigrations.ts"
       - "backend/src/db/__tests__/engagement-gamification-fresh-schema.test.ts"
       - "backend/src/config/env.ts"
       - "backend/src/config/__tests__/env-precedence.test.ts"
@@ -17,8 +23,14 @@ on:
       - codex/performance-staging-certification
     paths:
       - "backend/sql/038_engagement_gamification.sql"
+      - "backend/sql/044_attendance_engine.sql"
+      - "backend/sql/520_performance_ingestion_platform.sql"
+      - "backend/sql/521_performance_multi_source_lineage.sql"
+      - "backend/sql/522_performance_governance_audit.sql"
       - "backend/scripts/verify-engagement-gamification-migration.ts"
+      - "backend/scripts/verify-performance-fresh-schema.ts"
       - "backend/scripts/migrate-fresh-test.ts"
+      - "backend/src/db/runPendingMigrations.ts"
       - "backend/src/db/__tests__/engagement-gamification-fresh-schema.test.ts"
       - "backend/src/config/env.ts"
       - "backend/src/config/__tests__/env-precedence.test.ts"
@@ -30,12 +42,12 @@ permissions:
   contents: read
 
 concurrency:
-  group: engagement-gamification-fresh-schema-${{ github.ref }}
+  group: performance-fresh-schema-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   verify:
-    name: Safety fixes and migration 038 on clean MySQL
+    name: Build canonical schema through migration 522
     runs-on: ubuntu-24.04
     services:
       mysql:
@@ -102,7 +114,7 @@ jobs:
         env:
           NODE_OPTIONS: --max-old-space-size=4096
 
-      - name: Execute clean-schema and idempotency verification
+      - name: Execute migration 038 twice in isolation
         working-directory: backend
         env:
           DB_HOST: 127.0.0.1
@@ -111,3 +123,13 @@ jobs:
           DB_PASSWORD: root
           DB_NAME: hrms_migration_test_038
         run: npm exec -- tsx scripts/verify-engagement-gamification-migration.ts
+
+      - name: Build canonical manifest through Performance migration 522
+        working-directory: backend
+        env:
+          DB_HOST: 127.0.0.1
+          DB_PORT: 3306
+          DB_USER: root
+          DB_PASSWORD: root
+          DB_NAME: hrms_migration_test_performance
+        run: npm exec -- tsx scripts/verify-performance-fresh-schema.ts
