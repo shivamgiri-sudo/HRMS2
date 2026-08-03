@@ -275,7 +275,15 @@ export async function syncDigilockerStatus(candidateId: string): Promise<SyncOut
   // outcome than the row being missing.
   try {
     const { autoCreateDigilockerVerifiedChecks } = await import("../../ats/bgv-verification.service.js");
-    await autoCreateDigilockerVerifiedChecks(candidateId);
+    // Only what the session actually returned is credited. documentMeta carries
+    // the downloaded file's name, or a downloadError if nothing came back —
+    // Aadhaar is evidenced by the session completing at all, PAN only if a PAN
+    // document is named. Crediting PAN off an Aadhaar-only pull would skip the
+    // paid check that would have caught it.
+    await autoCreateDigilockerVerifiedChecks(candidateId, {
+      fileName: documentMeta.fileName,
+      downloadError: documentMeta.downloadError,
+    });
   } catch (error) {
     console.error(
       `[DigiLocker] completed for ${candidateId} but Aadhaar/PAN could not be auto-verified:`,
