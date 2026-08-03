@@ -57,6 +57,21 @@
 --   UPDATE kpi_master_config SET effective_from = NULL WHERE effective_from = '1970-01-01';
 --   (safe only while no scope holds more than one version)
 
+-- 0. Ensure the columns exist.
+--
+-- The note above says effective_from and effective_to "ALREADY EXIST ... added by an earlier
+-- change". That is true of production and of nothing else: no migration in the manifest adds
+-- them, so the change was applied to the live database directly and never written down. On a
+-- database built from the manifest this file failed at step 1 with
+-- "Unknown column 'effective_from' in 'where clause'".
+--
+-- Adding them here makes the file self-contained without changing what it does anywhere the
+-- columns are already present: a duplicate ADD COLUMN raises errno 1060, which the runner
+-- treats as idempotent per statement and skips. Nullable on the way in because step 2 is what
+-- deliberately promotes effective_from to NOT NULL, and step 1 has to see the NULLs first.
+ALTER TABLE kpi_master_config ADD COLUMN effective_from DATE NULL;
+ALTER TABLE kpi_master_config ADD COLUMN effective_to   DATE NULL;
+
 -- 1. Date the undated rows. Scoped to NULL so a row someone has already dated
 --    deliberately is left exactly as it is.
 UPDATE kpi_master_config
