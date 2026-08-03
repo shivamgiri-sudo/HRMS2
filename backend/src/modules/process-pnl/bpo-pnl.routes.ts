@@ -7,6 +7,7 @@ import { requireRole } from "../../middleware/requireRole.js";
 import { resolveFinanceBranchScope } from "../finance/finance-access-scope.js";
 import { bpoPnlAllocationOverlayService } from "./bpo-pnl-allocation-overlay.service.js";
 import { bpoPnlConfigurationService } from "./bpo-pnl.configuration.service.js";
+import { isPeriodLocked } from "./finance-period-lock.js";
 
 const router = Router();
 const h = (fn: (req: AuthenticatedRequest, res: any) => Promise<unknown>) =>
@@ -42,23 +43,44 @@ async function scopedFilters(req: AuthenticatedRequest) {
   return filters(req, branchId);
 }
 
+// isPeriodLocked here is a transparency flag, not (yet) a snapshot substitution: these three
+// handlers still recompute live even for a "locked" period. Only /pnl/period-close
+// (canonical-pnl.service.ts getPeriodClose) actually serves the frozen pnl_period_snapshot,
+// and only for its own unscoped, all-branch summary shape — the snapshot has no branch-filtered
+// reconstruction today, so silently substituting it here for a branchId-scoped request would
+// return the wrong (unfiltered) total, which is worse than an honestly-live number. Surfacing
+// the flag at least makes the drift visible instead of silent; closing it fully is follow-up
+// work, not bundled into this phase.
 router.get("/summary", h(async (req, res) => {
-  const data = await bpoPnlAllocationOverlayService.getSummary(await scopedFilters(req));
-  res.json({ success: true, data });
+  const scoped = await scopedFilters(req);
+  const [data, periodLocked] = await Promise.all([
+    bpoPnlAllocationOverlayService.getSummary(scoped),
+    isPeriodLocked(scoped.period),
+  ]);
+  res.json({ success: true, data, isPeriodLocked: periodLocked });
 }));
 
 router.get("/processes/:processId", h(async (req, res) => {
-  const data = await bpoPnlAllocationOverlayService.getProcessDetail(req.params.processId, await scopedFilters(req));
-  res.json({ success: true, data });
+  const scoped = await scopedFilters(req);
+  const [data, periodLocked] = await Promise.all([
+    bpoPnlAllocationOverlayService.getProcessDetail(req.params.processId, scoped),
+    isPeriodLocked(scoped.period),
+  ]);
+  res.json({ success: true, data, isPeriodLocked: periodLocked });
 }));
 
 router.get("/export", h(async (req, res) => {
-  const csv = await bpoPnlAllocationOverlayService.exportCsv(await scopedFilters(req));
+  const scoped = await scopedFilters(req);
+  const [csv, periodLocked] = await Promise.all([
+    bpoPnlAllocationOverlayService.exportCsv(scoped),
+    isPeriodLocked(scoped.period),
+  ]);
   res.setHeader("Content-Type", "text/csv");
   res.setHeader(
     "Content-Disposition",
     `attachment; filename="bpo-process-pnl-${req.query.period ?? "current"}.csv"`
   );
+  res.setHeader("X-Period-Locked", periodLocked ? "true" : "false");
   res.send(csv);
 }));
 

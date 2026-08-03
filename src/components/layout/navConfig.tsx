@@ -413,6 +413,10 @@ export const navGroups: NavGroup[] = [
           // was to be told the URL. Same omission as the one above, found by the
           // same routing contract test.
           { label: "Provisioning Recipients", href: "/settings/provisioning-recipients", icon: ic(Settings2), roles: ["super_admin"], description: "Who receives each branch's provisioning email" },
+          // The last of the three settings screens that existed with no way in
+          // but a URL. Not my page, but the routing contract test lists it and
+          // a link costs nothing.
+          { label: "Signing Certificate", href: "/settings/signing-certificate", icon: ic(FileText), roles: ["super_admin"], description: "Company Class-3 signing certificate" },
           { label: "Email Template Import", href: "/settings/email-templates/bulk-import", icon: ic(Upload), roles: ["admin","super_admin"], description: "Bulk import communication templates" },
         ],
       },

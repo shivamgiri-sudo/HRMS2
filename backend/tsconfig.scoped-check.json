@@ -27,10 +27,12 @@
 {
   "extends": "./tsconfig.json",
   "include": [
-    "src/modules/process-pnl/process-pnl.routes.ts",
-    "src/modules/process-pnl/budget-topup.service.ts",
-    "src/modules/process-pnl/budget-consumption.service.ts",
-    "src/db/runPendingMigrations.ts"
+    "src/modules/process-pnl/bpo-pnl.service.ts",
+    "src/modules/process-pnl/bpo-pnl.configuration.service.ts",
+    "src/modules/process-pnl/bpo-pnl.routes.ts",
+    "src/modules/process-pnl/finance-period-lock.ts",
+    "src/modules/finance/grn.service.ts",
+    "src/modules/finance/grn-smart.service.ts"
   ],
   "compilerOptions": { "noEmit": true }
 }

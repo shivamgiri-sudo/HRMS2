@@ -2,6 +2,7 @@ import { randomUUID } from "crypto";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { queryRows, tableExists } from "../../shared/dbHelpers.js";
+import { writeAuditLog } from "../../shared/auditLog.js";
 import { bpoPnlService } from "./bpo-pnl.service.js";
 
 const safeRows = async <T extends RowDataPacket>(sql: string, params: unknown[] = []): Promise<T[]> => {
@@ -220,6 +221,11 @@ export const bpoPnlConfigurationService = {
     }
 
     const id = String(payload.id ?? randomUUID());
+    const [beforeRows] = await db.execute<RowDataPacket[]>(
+      "SELECT * FROM pnl_cost_classification_rule WHERE id = ?",
+      [id]
+    );
+    const before = beforeRows[0] ?? null;
     await db.execute(
       `INSERT INTO pnl_cost_classification_rule
         (id, rule_name, scope_type, scope_key, process_id, branch_id, pnl_bucket, priority,
@@ -246,6 +252,14 @@ export const bpoPnlConfigurationService = {
         userId,
       ]
     );
+    await writeAuditLog({
+      actor_user_id: userId,
+      action_type: "classification_rule_saved",
+      module_key: "process_pnl_configuration",
+      entity_type: "pnl_cost_classification_rule",
+      entity_id: id,
+      metadata: { before, after: payload },
+    });
     return { id };
   },
 };

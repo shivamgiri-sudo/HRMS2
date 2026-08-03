@@ -3,6 +3,7 @@ import path from "path";
 import { createHash, randomUUID } from "crypto";
 import { db } from "../../db/mysql.js";
 import { extractDobFromText } from "./ageVerification.service.js";
+import { classifyDuplicateIdentity } from "./duplicate-identity.js";
 
 const AADHAAR_REGEX = /\b(\d{4}\s?\d{4}\s?\d{4})\b/;
 const PAN_REGEX = /\b([A-Z]{3}[PCHFATBLJG][A-Z]\d{4}[A-Z])\b/;
@@ -270,22 +271,51 @@ async function runDuplicateCheck(
   }
 
   const [rows] = await db.execute<any[]>(query, [hash, candidateId]);
-  if (rows.length > 0) {
-    const alertId = randomUUID();
-    const alertType = type === "aadhaar" ? "DUPLICATE_AADHAAR" : type === "pan" ? "DUPLICATE_PAN" : "DUPLICATE_BANK_ACCOUNT";
-    await db.execute(
-      `INSERT INTO candidate_fraud_alert (id, candidate_id, alert_type, severity, matched_candidate_id, details)
-       VALUES (?, ?, ?, 'critical', ?, ?)`,
-      [
-        alertId,
-        candidateId,
-        alertType,
-        rows[0].candidate_id,
-        JSON.stringify({ message: `Same ${type} already used by another candidate` }),
-      ]
-    );
-    return { isDuplicate: true, matchedCandidateId: rows[0].candidate_id };
-  }
+  if (!rows.length) return { isDuplicate: false };
 
-  return { isDuplicate: false };
+  const matchedCandidateId = rows[0].candidate_id as string;
+
+  // A shared identifier is only fraud if it is shared by two different people.
+  //
+  // The match is deliberately NOT filtered by candidate status. Excluding
+  // rejected or ex-employee records would be the wrong fix: a departed
+  // employee's PAN turning up on someone else is one of the more likely places
+  // to find real fraud. What matters is whether these two records describe the
+  // same human being — a rejoiner, or someone who simply applied twice, is not
+  // committing anything.
+  const [parties] = await db.execute<any[]>(
+    `SELECT id, full_name, date_of_birth FROM ats_candidate WHERE id IN (?, ?)`,
+    [candidateId, matchedCandidateId],
+  );
+  const partyFor = (id: string) => (parties as any[]).find((row) => String(row.id) === String(id));
+  const verdict = classifyDuplicateIdentity(
+    { fullName: partyFor(candidateId)?.full_name, dateOfBirth: partyFor(candidateId)?.date_of_birth },
+    { fullName: partyFor(matchedCandidateId)?.full_name, dateOfBirth: partyFor(matchedCandidateId)?.date_of_birth },
+  );
+
+  const scope = type === "aadhaar" ? "Aadhaar" : type === "pan" ? "PAN" : "bank account";
+  await db.execute(
+    `INSERT INTO candidate_fraud_alert (id, candidate_id, alert_type, severity, matched_candidate_id, details)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+    [
+      randomUUID(),
+      candidateId,
+      // Same person: recorded so a reviewer can see the history, at a severity
+      // that does not block the hire. Different people: the original signal.
+      verdict.samePerson
+        ? "REPEAT_APPLICANT"
+        : type === "aadhaar" ? "DUPLICATE_AADHAAR" : type === "pan" ? "DUPLICATE_PAN" : "DUPLICATE_BANK_ACCOUNT",
+      verdict.severity,
+      matchedCandidateId,
+      JSON.stringify({
+        message: verdict.samePerson
+          ? `This ${scope} matches an earlier record for the same person — ${verdict.reason}. Not treated as fraud.`
+          : `The same ${scope} is used by another candidate — ${verdict.reason}`,
+        scope,
+        samePerson: verdict.samePerson,
+      }),
+    ]
+  );
+
+  return { isDuplicate: !verdict.samePerson, matchedCandidateId };
 }
