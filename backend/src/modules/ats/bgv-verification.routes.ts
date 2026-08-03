@@ -624,8 +624,11 @@ router.get("/report/full", requireAuth, requireRole("admin", "hr"), h(async (req
       [candidateId]
     ),
     db.execute<RowDataPacket[]>(
+      // candidate_bgv_check has no deleted_at column — checks are not soft
+      // deleted. (candidate_onboarding_document does, which is where the
+      // pattern came from.) Filtering on it here 500'd the whole endpoint.
       `SELECT check_type, status, provider_key, provider_reference_id, verified_at, result_summary
-         FROM candidate_bgv_check WHERE candidate_id = ? AND deleted_at IS NULL`,
+         FROM candidate_bgv_check WHERE candidate_id = ?`,
       [candidateId]
     ),
     db.execute<RowDataPacket[]>(
