@@ -101,22 +101,25 @@ BEGIN
   SET v_global_max = GREATEST(v_max_onroll_mas, v_max_onroll_idc, v_max_offrole_mas, v_max_offrole_idc);
 
   -- Ensure the 4 rows exist, then sync all to global_max
-  SET @has_is_offrole_1 = (
-  SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
-   WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'employee_code_sequence' AND COLUMN_NAME = 'is_offrole'
-);
-SET @sql = IF(@has_is_offrole_1 > 0,
-  'INSERT INTO employee_code_sequence (company_prefix, is_offrole, current_sequence)
+  -- Deliberately NOT wrapped in a PREPARE guard.
+  --
+  -- An earlier revision guarded this on employee_code_sequence.is_offrole existing, while
+  -- 138 and 139 still defined that table with two incompatible shapes. Two problems with
+  -- that: the conflict is now resolved — 139 owns the table and this is its shape — and
+  -- more importantly a PREPARE'd statement cannot see v_global_max. Procedure locals are
+  -- not in scope inside dynamic SQL, so the guard turned a working seed into
+  -- "Unknown column 'v_global_max' in 'field list'".
+  --
+  -- Guarding is the right tool for a statement whose target may not exist. It is the wrong
+  -- tool inside a stored procedure that depends on local variables.
+  INSERT INTO employee_code_sequence (company_prefix, is_offrole, current_sequence)
   VALUES
-    (''MAS'', FALSE, v_global_max),
-    (''MAS'', TRUE,  v_global_max),
-    (''IDC'', FALSE, v_global_max),
-    (''IDC'', TRUE,  v_global_max)
+    ('MAS', FALSE, v_global_max),
+    ('MAS', TRUE,  v_global_max),
+    ('IDC', FALSE, v_global_max),
+    ('IDC', TRUE,  v_global_max)
   ON DUPLICATE KEY UPDATE
-    current_sequence = GREATEST(current_sequence, v_global_max)',
-  'SELECT ''employee_code_sequence.is_offrole absent on this database; seed skipped'' AS n'
-);
-PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+    current_sequence = GREATEST(current_sequence, v_global_max);
 END //
 DELIMITER ;
 CALL _sync_emp_code_seq();
