@@ -3,6 +3,7 @@ import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { getConfiguredBgvProviderAdapter, type AddressDocInput, type EducationVerificationInput } from "./bgv-provider.adapter.js";
 import { withProviderFailureLogged, getBgvApiCostReport } from "./bgv-api-log.service.js";
+import { receiptFlagsFromDocuments } from "./bgv-document-receipt.js";
 import { loadAsyncBgvTriggerContext, validateOnboardingToken } from "./onboarding-full.service.js";
 import { resolveBankNameVariance } from "./bank-name-corroboration.js";
 import { digilockerVerifiedCheckTypes, type DigilockerEvidence } from "./digilocker-evidence.js";
@@ -1115,12 +1116,23 @@ export async function listBgvQueueScoped(status: string | undefined, scopeClause
  * locked reports or manually set remarks.
  */
 export async function syncBgvChecksToReport(candidateId: string): Promise<{ synced: number }> {
-  const [checks] = await db.execute<RowDataPacket[]>(
-    `SELECT check_type, status FROM candidate_bgv_check WHERE candidate_id = ?`,
-    [candidateId]
-  );
+  const [[checks], [docs]] = await Promise.all([
+    db.execute<RowDataPacket[]>(
+      `SELECT check_type, status FROM candidate_bgv_check WHERE candidate_id = ?`,
+      [candidateId]
+    ),
+    // Drives the report's "Documents Received" checklist. Nothing used to write
+    // those nine flags at all, so the checklist printed entirely unticked even
+    // for candidates who had uploaded eight documents — which reads as "not
+    // provided" rather than "never recorded".
+    db.execute<RowDataPacket[]>(
+      `SELECT doc_type FROM candidate_onboarding_document
+        WHERE candidate_id = ? AND deleted_at IS NULL`,
+      [candidateId]
+    ),
+  ]);
 
-  if (!checks.length) return { synced: 0 };
+  if (!checks.length && !docs.length) return { synced: 0 };
 
   const columnMap: Record<string, string> = {
     pan:        "pan_status",
@@ -1169,6 +1181,15 @@ export async function syncBgvChecksToReport(candidateId: string): Promise<{ sync
   for (const [col, mapped] of bestByColumn) {
     setClauses.push(`${col} = IF(locked = 1, ${col}, ?)`);
     updateParams.push(mapped);
+  }
+
+  // Only ever tick a box, never clear one: `flag OR ?`. A signed-off report is
+  // left alone entirely, same as the status columns above.
+  const receipts = receiptFlagsFromDocuments(docs.map((d) => d.doc_type));
+  for (const [flag, received] of Object.entries(receipts)) {
+    if (!received) continue;
+    setClauses.push(`${flag} = IF(locked = 1, ${flag}, ${flag} OR ?)`);
+    updateParams.push(1);
   }
 
   if (!setClauses.length) return { synced: 0 };

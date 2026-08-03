@@ -321,6 +321,12 @@ export default function BGVReportTab({ candidateId, candidateEmail, candidateNam
                 : <><Send className="w-4 h-4 mr-1" /> Initiate BGV (InfinitiAI)</>}
             </Button>
           )}
+          {/* The full report page had a route but no link anywhere in the app,
+              so it could only be reached by typing a candidate UUID into the
+              address bar. */}
+          <Button variant="outline" onClick={() => window.open(`/bgv-report-view/${candidateId}`, '_blank')}>
+            <FileText className="w-4 h-4 mr-1" /> View Full Report
+          </Button>
           <Button variant="outline" onClick={() => void exportPDF()} disabled={exporting}>
             <Download className="w-4 h-4 mr-1" /> {exporting ? 'Generating...' : 'Download PDF'}
           </Button>

@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Printer, Download } from 'lucide-react';
 import { formatISTDate, formatISTTime } from '@/lib/utils';
 import QRCode from 'qrcode';
-import { downloadBGVReportPDF } from '@/lib/bgvReportPdfGenerator';
+import { downloadBGVReportPDF, qualificationRow } from '@/lib/bgvReportPdfGenerator';
 
 export default function NativeBGVReportView() {
   const { candidateId } = useParams<{ candidateId: string }>();
@@ -318,16 +318,19 @@ export default function NativeBGVReportView() {
                 </tr>
               </thead>
               <tbody>
-                {qualifications.length > 0 ? qualifications.map((q: any, i: number) => (
+                {qualifications.length > 0 ? qualifications.map((q: any, i: number) => {
+                  const row = qualificationRow(q);
+                  return (
                   <tr key={i} className="border-b border-slate-200">
-                    <td className="py-2 px-3">{safeText(q.degree_type)}</td>
-                    <td className="py-2 px-3">{safeText(q.institution_name)}</td>
-                    <td className="py-2 px-3">{safeText(q.board_university)}</td>
-                    <td className="py-2 px-3">{safeText(q.field_of_study)}</td>
-                    <td className="py-2 px-3">{safeText(q.year_of_passing)}</td>
-                    <td className="py-2 px-3">{safeText(q.marks_percentage || q.marks_cgpa)}</td>
+                    <td className="py-2 px-3">{row.degree}</td>
+                    <td className="py-2 px-3">{row.institution}</td>
+                    <td className="py-2 px-3">{row.board}</td>
+                    <td className="py-2 px-3">{row.field}</td>
+                    <td className="py-2 px-3">{row.year}</td>
+                    <td className="py-2 px-3">{row.marks}</td>
                   </tr>
-                )) : (
+                  );
+                }) : (
                   <tr><td colSpan={6} className="py-4 px-3 text-center text-slate-500">No qualifications recorded</td></tr>
                 )}
               </tbody>
