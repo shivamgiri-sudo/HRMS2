@@ -726,6 +726,93 @@ async function syncInvoiceParticulars(hrms, bill) {
   log(`  billing_invoice_particular_snapshot: ${n} rows from ${FROM_PERIOD} (${scoped.filter(r => r.is_seat_line).length} seat-priced lines)`);
 }
 
+
+// ── Sync 9: budget LINES ──────────────────────────────────────────────────────
+
+/**
+ * The line level of the budget. Carries expense_type, which decides whether a line is
+ * attributed to a cost centre or is a manual particular — and which MUST be filtered on when
+ * aggregating, because the two types are the same money recorded twice (Rs 375.75 lakh as
+ * 'CostCenter' plus Rs 374.54 lakh as 'Particular' against a Rs 375.14 lakh header total).
+ */
+async function syncBudgetLines(hrms, bill) {
+  log('Sync 9: populating finance_budget_line_snapshot from db_bill.expense_particular ...');
+  const now = new Date();
+  const [src] = await bill.query(
+    `SELECT p.Id, p.ExpenseId, p.BranchId, p.FinanceYear, p.FinanceMonth, p.HeadId, p.SubHeadId,
+            p.ExpenseType, p.ExpenseTypeName, p.Amount, p.AmountPercent, p.createdate
+       FROM expense_particular p
+       JOIN expense_master m ON m.Id = p.ExpenseId
+      WHERE m.FinanceYear >= ? AND m.createdate >= ?
+      ORDER BY p.Id`, [FROM_FINANCE_YEAR, `${FROM_FINANCE_YEAR.slice(0, 4)}-04-01`]);
+  log(`  db_bill.expense_particular rows from ${FROM_FINANCE_YEAR}: ${src.length}`);
+
+  const rows = src.map(r => ({
+    bill_source_id: r.Id,
+    budget_source_id: r.ExpenseId ?? null,
+    branch_source_id: r.BranchId ?? null,
+    finance_year: trim(r.FinanceYear),
+    finance_month: trim(r.FinanceMonth),
+    period_code: toPeriodCode(r.FinanceYear, r.FinanceMonth),
+    head_id: trim(r.HeadId),
+    sub_head_id: trim(r.SubHeadId),
+    expense_type: trim(r.ExpenseType),
+    expense_type_name: trim(r.ExpenseTypeName),
+    amount: safeDec(r.Amount),
+    amount_percent: trim(r.AmountPercent),
+    source_created_at: safeDateTime(r.createdate),
+    synced_at: now,
+  }));
+  const cols = ['bill_source_id','budget_source_id','branch_source_id','finance_year','finance_month',
+    'period_code','head_id','sub_head_id','expense_type','expense_type_name','amount','amount_percent',
+    'source_created_at','synced_at'];
+  const scoped = rows.filter(r => inScope(r.period_code));
+  const n = await insertBatch(hrms, 'finance_budget_line_snapshot', scoped, cols, cols.slice(1));
+  const cc = scoped.filter(r => r.expense_type === 'CostCenter').length;
+  log(`  finance_budget_line_snapshot: ${n} rows (${cc} cost-centre attributed, ${scoped.length - cc} manual particulars)`);
+}
+
+// ── Sync 10: GRN LINES — the cost-centre attribution ──────────────────────────
+
+async function syncGrnLines(hrms, bill) {
+  log('Sync 10: populating grn_entry_line_snapshot from db_bill.expense_entry_particular ...');
+  const now = new Date();
+  const [src] = await bill.query(
+    `SELECT p.Id, p.ExpenseEntry, p.BranchId, p.CostCenterId, cm.cost_center,
+            p.ExpenseEntryType, p.Particular, p.Amount, p.Rate, p.Tax, p.Total, p.createdate,
+            m.FinanceYear, m.FinanceMonth
+       FROM expense_entry_particular p
+       JOIN expense_entry_master m ON m.Id = p.ExpenseEntry
+       LEFT JOIN cost_master cm ON cm.id = p.CostCenterId
+      WHERE m.FinanceYear >= ?
+      ORDER BY p.Id`, [FROM_FINANCE_YEAR]);
+  log(`  db_bill.expense_entry_particular rows from ${FROM_FINANCE_YEAR}: ${src.length}`);
+
+  const rows = src.map(r => ({
+    bill_source_id: r.Id,
+    grn_source_id: r.ExpenseEntry ? Number(r.ExpenseEntry) : null,
+    branch_source_id: r.BranchId ?? null,
+    cost_centre_source_id: r.CostCenterId ? Number(r.CostCenterId) : null,
+    cost_centre_code: trim(r.cost_center),
+    entry_type: trim(r.ExpenseEntryType),
+    particular: trim(r.Particular),
+    amount: safeDec(r.Amount),
+    tax_rate: safeDec(r.Rate),
+    tax: safeDec(r.Tax),
+    total: safeDec(r.Total),
+    source_created_at: safeDateTime(r.createdate),
+    synced_at: now,
+    _period: toPeriodCode(r.FinanceYear, r.FinanceMonth),
+  }));
+  const cols = ['bill_source_id','grn_source_id','branch_source_id','cost_centre_source_id',
+    'cost_centre_code','entry_type','particular','amount','tax_rate','tax','total',
+    'source_created_at','synced_at'];
+  const scoped = rows.filter(r => inScope(r._period));
+  const n = await insertBatch(hrms, 'grn_entry_line_snapshot', scoped, cols, cols.slice(1));
+  const withCc = scoped.filter(r => r.cost_centre_source_id).length;
+  log(`  grn_entry_line_snapshot: ${n} rows (${withCc} carry a cost centre, ${scoped.length - withCc} do not)`);
+}
+
 async function main() {
   const only = process.argv.find(a => a.startsWith('--only='))?.split('=')[1] ?? 'all';
 
@@ -744,6 +831,8 @@ async function main() {
     if (only === 'all' || only === 'budget')        await syncBudget(hrms, bill);
     if (only === 'all' || only === 'grn')           await syncGrnEntries(hrms, bill);
     if (only === 'all' || only === 'particulars')   await syncInvoiceParticulars(hrms, bill);
+    if (only === 'all' || only === 'budget_lines')  await syncBudgetLines(hrms, bill);
+    if (only === 'all' || only === 'grn_lines')     await syncGrnLines(hrms, bill);
 
     log('Done.');
   } finally {
