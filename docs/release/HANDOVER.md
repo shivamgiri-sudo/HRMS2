@@ -7,21 +7,45 @@
 
 ## Read this first
 
-Everything you asked for in §1, §3, §4, §7, §8, §9 and §10 is done. **§5 and §6 are not**, and
-the reason is the single most important thing to come out of this session:
+**The migration chain now builds a database from scratch, and the smoke gate runs end to
+end for the first time.**
 
-> **The repository cannot build its own database.** Twenty-nine CI builds against an empty
-> MySQL 8.0 found **twenty-four distinct defect classes** in the migration chain. Production
-> has never hit any of them because it runs `SKIP_MIGRATIONS=true` — its schema accumulated
-> over three years by hand, not from the manifest.
+  Backend healthy after 24 attempt(s)
+  [schema] all 14 required tables present
+  Migrations clean: 0 failed
+  Playwright page smoke: 25 passed, 4 failed
 
-The chain started at migration **18 of 414**. It now reaches roughly **320**. Required tables
-still missing fell from **10 to 4**. That is real, measurable progress, and it is not finished.
+Everything you asked for in §1, §3, §4, §5, §7, §8, §9 and §10 is done. §6 is one step short:
+the gate is green through build, migrate, seed, login, migration-evidence and frontend, and
+red on the final browser sweep — which is the gate working, not failing.
 
-**This was never a blocker for the CEO's UAT and is not one now.** It is a disaster-recovery
-and new-environment blocker — the sort that surfaces at the worst possible moment.
+Getting here took 46 CI builds against an empty MySQL 8.0 and **thirty distinct defect
+classes** in the migration chain. Production had never hit any of them because it runs
+`SKIP_MIGRATIONS=true` — its schema accumulated by hand over years, not from the manifest. The
+chain started at migration **18 of 419** and now completes all of them.
 
----
+## The four browser failures, and why they matter
+
+All four fail the same way: `waitForAppShell` times out on a hidden
+`flex min-h-screen items-center justify-center` container — a full-page loading or redirect
+state that never resolves.
+
+| Page | Note |
+| --- | --- |
+| `/expenses` | Sidebar nav renders but never becomes visible |
+| `/expenses/new` | **The CEO reported this as "'New Claim' fully inert" in Round 2** |
+| manager login → dashboard | Only the hidden container ever appears |
+| manager → management dashboard | Same |
+
+I previously assessed `/expenses/new` as "believed already correct on main" because the
+handler and dialog binding are correct in source. The browser disagrees. That does not prove
+the CEO's exact complaint, but it is the same page, the same symptom, and it is now
+reproducible in CI on demand — which is the first time that has been true of any Round 2
+finding.
+
+**I have not diagnosed these four.** They are either a real rendering failure or an
+over-broad selector in the test helper (`.min-h-screen` matches loading wrappers). Those need
+different fixes and I will not guess between them.
 
 ## What I would do first when you read this
 
