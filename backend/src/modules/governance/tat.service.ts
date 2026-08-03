@@ -31,18 +31,25 @@ export async function createTatInstance(
   const id = randomUUID();
 
   await db.execute(
+    // INTERVAL ? HOUR silently ROUNDS a fractional value: INTERVAL 0.50 HOUR is 60 minutes,
+    // not 30. Migration 1042 widened default_tat_hours to DECIMAL so a 30-minute SLA could
+    // be stored, but storing it was only half the job — this expression rounded it straight
+    // back to an hour, so the walk-in queue SLA was still firing at 60 minutes. Converting to
+    // whole minutes is what actually makes a sub-hour TAT take effect.
     `INSERT INTO task_tat_instance
        (id, task_type, entity_type, entity_id, assigned_to, branch_id, process_id, due_at, status, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, DATE_ADD(NOW(), INTERVAL ? HOUR), 'open', NOW(), NOW())`,
-    [id, taskType, entityType, entityId, assignedTo, branchId ?? null, processId ?? null, tatHours]
+     VALUES (?, ?, ?, ?, ?, ?, ?, DATE_ADD(NOW(), INTERVAL ? MINUTE), 'open', NOW(), NOW())`,
+    [id, taskType, entityType, entityId, assignedTo, branchId ?? null, processId ?? null, Math.round(tatHours * 60)]
   );
 
   // Insert a work item for the assignee
   await db.execute(
+    // Same rounding trap as the TAT instance above — the work item must expire on the same
+    // clock as the SLA it represents, or a 30-minute SLA shows the assignee an hour.
     `INSERT INTO work_item
        (id, item_type, entity_type, entity_id, assigned_to_user_id, due_at, priority, status, created_at, updated_at)
-     VALUES (UUID(), ?, ?, ?, ?, DATE_ADD(NOW(), INTERVAL ? HOUR), 'high', 'pending', NOW(), NOW())`,
-    [taskType, entityType, entityId, assignedTo, tatHours]
+     VALUES (UUID(), ?, ?, ?, ?, DATE_ADD(NOW(), INTERVAL ? MINUTE), 'high', 'pending', NOW(), NOW())`,
+    [taskType, entityType, entityId, assignedTo, Math.round(tatHours * 60)]
   );
 
   return id;
