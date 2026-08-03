@@ -619,6 +619,7 @@ export function splitSql(raw: string): string[] {
   let i = 0;
   const len = raw.length;
   let beginDepth = 0; // tracks BEGIN...END nesting depth
+  let caseDepth = 0;  // tracks CASE...END expression nesting, which also closes with END
 
   const isWordChar = (c: string | undefined): boolean =>
     c !== undefined && /\w/.test(c);
@@ -691,6 +692,29 @@ export function splitSql(raw: string): string[] {
         continue;
       }
 
+      // A CASE expression also closes with END, and its END is followed by whatever comes
+      // next in the surrounding statement — WHERE, AS, a comma, a closing paren. Without
+      // tracking it, that END is mistaken for the one closing the procedure's BEGIN:
+      //
+      //   UPDATE ats_candidate SET candidate_status = CASE
+      //     WHEN ... THEN 'selected'
+      //     ELSE 'registered'
+      //   END
+      //   WHERE candidate_status IS NULL;
+      //
+      // beginDepth drops to 0 at that END, the following semicolon then splits the
+      // statement, and the procedure is cut in half. MySQL reports a syntax error "near ''"
+      // pointing at the truncation, not at the CASE. Migration 273 died exactly this way.
+      //
+      // END CASE (the statement form) is already handled below by the follow-word check, so
+      // only the expression form needs a counter.
+      if (word === "CASE") {
+        caseDepth++;
+        current += raw.slice(i, j);
+        i = j;
+        continue;
+      }
+
       if (word === "END") {
         // Peek past whitespace to find the next word
         let k = j;
@@ -706,7 +730,13 @@ export function splitSql(raw: string): string[] {
           followWord === "WHILE" ||
           followWord === "CASE" ||
           followWord === "REPEAT";
-        if (!isControlEnd && beginDepth > 0) {
+        if (isControlEnd) {
+          // `END CASE` closes a CASE statement, which incremented caseDepth on the way in.
+          if (followWord === "CASE" && caseDepth > 0) caseDepth--;
+        } else if (caseDepth > 0) {
+          // Closing a CASE expression, not the enclosing BEGIN.
+          caseDepth--;
+        } else if (beginDepth > 0) {
           beginDepth--;
         }
         current += raw.slice(i, j);
