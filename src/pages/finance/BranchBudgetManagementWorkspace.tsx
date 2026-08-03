@@ -122,8 +122,40 @@ type BudgetCapabilities = {
 
 /** The only statuses in which the plan builder may be edited; every later status is read-only
  *  until a reviewer sends the budget back for revision. Mirrors the backend guard in
- *  branch-budget.service.ts saveDraft(). */
-const EDITABLE_BUDGET_STATUSES = ["draft", "revision_required"];
+ *  branch-budget.service.ts saveDraft() — 'submitted' is included because a branch admin
+ *  correcting a mistake before Branch Head has actually acted on it should not have to wait for
+ *  a reject/revision round trip first; saving pulls the budget back to 'draft' for
+ *  re-submission rather than rewriting the version Branch Head may already be reviewing. */
+const EDITABLE_BUDGET_STATUSES = ["draft", "revision_required", "submitted"];
+
+/** Per-status copy for the banner above the Plan Builder — shown for every non-draft status so
+ *  the branch admin always has a visible answer to "what state is this budget in right now,"
+ *  not just once it becomes read-only. */
+function budgetStatusBanner(status: string, budgetNumber: string | undefined) {
+  switch (status) {
+    case "submitted":
+      return {
+        tone: "border-blue-200 bg-blue-50 text-blue-900",
+        message: `${budgetNumber} is Submitted — pending Branch Head review. You can still edit it; `
+          + `saving will pull it back to Draft for re-submission.`,
+      };
+    case "revision_required":
+      return {
+        tone: "border-amber-200 bg-amber-50 text-amber-900",
+        message: `${budgetNumber} was sent back for revision. Editing and saving will resubmit it.`,
+      };
+    case "branch_head_approved":
+    case "finance_head_approved":
+    case "accounts_head_approved":
+    case "active":
+      return {
+        tone: "border-emerald-200 bg-emerald-50 text-emerald-900",
+        message: `${budgetNumber} is ${statusLabel(status)}. It is read-only until revision is requested.`,
+      };
+    default:
+      return null;
+  }
+}
 
 /** Whether a branch-common line spans the whole branch. An empty selection means "all", and so
  *  does an explicit selection naming every active cost centre — which is how a saved
@@ -885,7 +917,10 @@ Reason:`
                   selector, not a form to fill in, so it should not occupy a card's worth of height
                   above the grid that actually does the work. */}
               <Card className="rounded-2xl border-slate-200 shadow-sm"><CardContent className="flex flex-wrap items-end gap-3 p-3 [&_input]:h-9 [&_input]:min-h-0 [&_input]:py-1 [&_select]:h-9 [&_label]:text-xs [&_label]:text-slate-500"><div className="w-40 space-y-1"><Label>Period *</Label><Input type="month" value={period} onChange={(event) => { setPeriod(event.target.value); setSavedBudgetId(null); setLoadedDetailId(null); }} /></div><div className="w-56 space-y-1"><Label>{capabilities?.branchLocked ? "Assigned branch" : "Branch *"}</Label><select className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm disabled:bg-slate-100" value={branchId} disabled={Boolean(capabilities?.branchLocked)} onChange={(event) => { setBranchId(event.target.value); setSavedBudgetId(null); setLoadedDetailId(null); }}><option value="">Select branch</option>{branches.map((branch) => <option key={branch.id} value={branch.id}>{branch.branch_name ?? branch.name}</option>)}</select></div><div className="w-32 space-y-1"><Label>Financial year</Label><Input value={financialYear(period)} readOnly /></div></CardContent></Card>
-              {locked && <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">{currentBudget?.budget_number} is {statusLabel(currentBudget?.status ?? "locked")}. It is read-only until revision is requested.</div>}
+              {(() => {
+                const banner = budgetStatusBanner(currentBudget?.status ?? "", currentBudget?.budget_number);
+                return banner && <div className={`rounded-2xl border p-4 text-sm ${banner.tone}`}>{banner.message}</div>;
+              })()}
               {/* The table planner carries the drivers as its own pinned band, so showing this card
                   as well put the same seven editable rows on screen twice. */}
               {branchId && plannerMode === "cards" && (

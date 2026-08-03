@@ -786,9 +786,15 @@ export const branchBudgetService = {
         if (existing) budgetId = String(existing.id);
       }
 
+      // 'submitted' is editable too — a branch admin correcting a mistake right after submitting,
+      // before Branch Head has acted on it, should not have to wait for a reject/revision round
+      // trip first. The save below always resets status back to 'draft' regardless of which of
+      // these three it came from, so editing a submitted budget pulls it back for re-submission
+      // rather than silently rewriting the version Branch Head may already be reviewing. Once
+      // Branch Head has actually approved, the status leaves this list and edits are refused again.
       if (
         existing
-        && !["draft", "revision_required"].includes(String(existing.status))
+        && !["draft", "revision_required", "submitted"].includes(String(existing.status))
       ) {
         throw new Error(
           `A ${existing.status} budget already exists for this branch and month`
