@@ -1,0 +1,69 @@
+name: Engagement Gamification Fresh Schema
+
+on:
+  pull_request:
+    paths:
+      - "backend/sql/038_engagement_gamification.sql"
+      - "backend/scripts/verify-engagement-gamification-migration.ts"
+      - "backend/src/db/__tests__/engagement-gamification-fresh-schema.test.ts"
+      - ".github/workflows/engagement-gamification-fresh-schema.yml"
+  push:
+    branches:
+      - codex/performance-staging-certification
+    paths:
+      - "backend/sql/038_engagement_gamification.sql"
+      - "backend/scripts/verify-engagement-gamification-migration.ts"
+      - "backend/src/db/__tests__/engagement-gamification-fresh-schema.test.ts"
+      - ".github/workflows/engagement-gamification-fresh-schema.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: engagement-gamification-fresh-schema-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Execute migration 038 twice on clean MySQL
+    runs-on: ubuntu-24.04
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: root
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -proot"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install backend dependencies
+        run: npm --prefix backend ci
+
+      - name: Static ordering and canonical-column contract
+        working-directory: backend
+        run: npm exec -- vitest run src/db/__tests__/engagement-gamification-fresh-schema.test.ts
+
+      - name: Execute clean-schema and idempotency verification
+        working-directory: backend
+        env:
+          DB_HOST: 127.0.0.1
+          DB_PORT: 3306
+          DB_USER: root
+          DB_PASSWORD: root
+          DB_NAME: hrms_migration_test_038
+        run: npm exec -- tsx scripts/verify-engagement-gamification-migration.ts
