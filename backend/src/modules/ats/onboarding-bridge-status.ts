@@ -126,16 +126,24 @@ async function advance(
   column: "digilocker_status" | "penny_drop_status",
   next: string,
   rank: Record<string, number>,
+  stamp: { column: string; whenStatusIs: string },
 ): Promise<void> {
   // FIELD() gives each enum value its position; comparing ranks in SQL keeps
   // this a single statement, so a concurrent update cannot land between a read
   // and a write.
   const order = Object.keys(rank).sort((a, b) => rank[a] - rank[b]);
   const list = order.map(() => "?").join(", ");
+  // ats_onboarding_bridge has NO updated_at column — it carries created_at and
+  // then a purpose-built timestamp per milestone. Setting updated_at here threw
+  // ER_BAD_FIELD_ERROR, and because this whole call is deliberately swallowed
+  // (below), it failed silently: the bridge simply never moved. Caught by
+  // migration 1070, which made the same mistake and could not hide it.
+  const setStamp = next === stamp.whenStatusIs ? `, ${stamp.column} = NOW()` : "";
+
   try {
     await db.execute(
       `UPDATE ats_onboarding_bridge
-          SET ${column} = ?, updated_at = NOW()
+          SET ${column} = ?${setStamp}
         WHERE candidate_id = ?
           AND FIELD(?, ${list}) > FIELD(COALESCE(${column}, 'not_started'), ${list})`,
       [next, candidateId, next, ...order, ...order],
@@ -151,7 +159,10 @@ async function advance(
 export async function syncBridgeDigilockerStatus(
   db: Executor, candidateId: string, state: unknown,
 ): Promise<void> {
-  await advance(db, candidateId, "digilocker_status", bridgeDigilockerStatus(state), DIGILOCKER_RANK);
+  await advance(
+    db, candidateId, "digilocker_status", bridgeDigilockerStatus(state), DIGILOCKER_RANK,
+    { column: "digilocker_completed_at", whenStatusIs: "documents_received" },
+  );
 }
 
 export async function syncBridgePennyDropStatus(
@@ -161,5 +172,6 @@ export async function syncBridgePennyDropStatus(
   await advance(
     db, candidateId, "penny_drop_status",
     bridgePennyDropStatus(checkStatus, riskFlags), PENNY_DROP_RANK,
+    { column: "penny_drop_verified_at", whenStatusIs: "verified" },
   );
 }

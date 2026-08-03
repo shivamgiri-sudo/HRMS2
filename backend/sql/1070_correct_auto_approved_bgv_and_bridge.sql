@@ -91,12 +91,19 @@ UPDATE candidate_bgv_report
 
 -- ── PART B ────────────────────────────────────────────────────────────────────
 
+-- ats_onboarding_bridge has NO updated_at column. It carries created_at and a
+-- purpose-built timestamp per milestone: digilocker_completed_at and
+-- penny_drop_verified_at. An earlier run of this migration set updated_at and
+-- failed with ER_BAD_FIELD_ERROR here at Part B — which is how the identical
+-- bug was found in the application code, where it had been failing silently
+-- because that call is intentionally swallowed.
+
 -- DigiLocker: only where a session genuinely reached 'completed'.
 -- Note the bridge's vocabulary is 'documents_received' — 'passed' belongs to
 -- candidate_bgv_report and would throw here under STRICT mode.
 UPDATE ats_onboarding_bridge b
    SET b.digilocker_status = 'documents_received',
-       b.updated_at = NOW()
+       b.digilocker_completed_at = COALESCE(b.digilocker_completed_at, NOW())
  WHERE b.digilocker_status <> 'documents_received'
    AND EXISTS (
      SELECT 1 FROM candidate_digilocker_session s
@@ -107,7 +114,7 @@ UPDATE ats_onboarding_bridge b
 -- seven 'system' rows that must not be credited.
 UPDATE ats_onboarding_bridge b
    SET b.penny_drop_status = 'verified',
-       b.updated_at = NOW()
+       b.penny_drop_verified_at = COALESCE(b.penny_drop_verified_at, NOW())
  WHERE b.penny_drop_status <> 'verified'
    AND EXISTS (
      SELECT 1 FROM candidate_bgv_check k

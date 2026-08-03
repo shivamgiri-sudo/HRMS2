@@ -13,6 +13,8 @@
  * only started working today. Hence the exhaustive check.
  */
 import { describe, it, expect } from "vitest";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import {
   bridgeDigilockerStatus,
   bridgePennyDropStatus,
@@ -30,6 +32,56 @@ describe("the declared values match the live columns", () => {
   });
   it("penny_drop_status", () => {
     expect([...BRIDGE_PENNY_DROP_VALUES].sort()).toEqual([...LIVE_PENNY_DROP_ENUM].sort());
+  });
+});
+
+/**
+ * The UPDATE must only name columns ats_onboarding_bridge actually has.
+ *
+ * The first version set `updated_at`. That table has no such column — it uses
+ * created_at plus a purpose-built timestamp per milestone. Because the whole
+ * call is deliberately swallowed so a mirror failure can never lose a
+ * verification, the error was logged and the bridge silently never moved: the
+ * fix looked deployed and did nothing. Migration 1070 made the identical
+ * mistake and failed loudly, which is how it was found.
+ *
+ * Column list read from production, 2026-08-03.
+ */
+describe("the bridge UPDATE names only real columns", () => {
+  const SOURCE = readFileSync(
+    resolve(process.cwd(), "src/modules/ats/onboarding-bridge-status.ts"),
+    "utf8",
+  );
+
+  const REAL_COLUMNS = [
+    "id", "candidate_id", "employee_id", "bridge_date", "offer_letter_url",
+    "joining_date", "status", "notes", "created_by", "created_at",
+    "onboarding_token", "onboarding_token_expires_at", "hr_approved_by",
+    "hr_approved_at", "penny_drop_status", "penny_drop_verified_at",
+    "digilocker_status", "digilocker_session_id", "digilocker_completed_at",
+    "joining_document_status", "joining_document_completion_pct",
+    "joining_document_completed_at", "employee_code", "converted_at",
+  ];
+
+  it("does not set updated_at, which does not exist on this table", () => {
+    expect(REAL_COLUMNS).not.toContain("updated_at");
+    expect(
+      SOURCE,
+      "ats_onboarding_bridge has no updated_at; this throws and the bridge never moves",
+    ).not.toMatch(/updated_at\s*=\s*NOW\(\)/);
+  });
+
+  it("stamps the milestone columns that do exist", () => {
+    for (const column of ["digilocker_completed_at", "penny_drop_verified_at"]) {
+      expect(REAL_COLUMNS).toContain(column);
+      expect(SOURCE).toContain(column);
+    }
+  });
+
+  it("only ever stamps a timestamp on reaching the terminal status", () => {
+    // A timestamp written while still 'initiated' would claim a completion
+    // that has not happened.
+    expect(SOURCE).toMatch(/next === stamp\.whenStatusIs/);
   });
 });
 
