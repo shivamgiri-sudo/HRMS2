@@ -2,6 +2,7 @@ name: Performance Fresh Schema Certification
 
 # Canonical zero-to-Performance schema rehearsal. Migration execution runs first
 # so historical schema blockers surface before the slower code gates.
+# Gate revision: onboarding evidence prerequisites included.
 on:
   pull_request:
     paths:
