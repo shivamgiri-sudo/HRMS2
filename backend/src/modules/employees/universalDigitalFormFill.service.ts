@@ -830,7 +830,22 @@ export async function buildSourceContext(employeeId: string, candidateId?: strin
   ].reduce<number>((total, part) => total + num(part), 0);
 
   const snapshotGross = num(salary?.gross);
-  const offeredMonthly = num(salary?.ctc_offered);
+
+  // Last resort, and the one that needs a guard. ctc_offered is monthly on
+  // 31,100 of the 31,142 rows that carry one — but five hold 110,000 to
+  // 625,000, which on this workforce can only be an annual CTC typed into a
+  // monthly column. With no components to corroborate the figure there is no
+  // way to tell the two apart, and printing an annual CTC as the monthly
+  // remuneration overstates it twelvefold on a document someone signs.
+  //
+  // So an uncorroborated figure at or above this ceiling is refused. It is not
+  // a cap on what may be printed: where the components agree, they are used
+  // and no ceiling applies, so a genuine senior salary is unaffected. The
+  // largest value that actually reaches this branch today is 32,966.
+  const UNCORROBORATED_MONTHLY_CEILING = 200_000;
+  const offered = num(salary?.ctc_offered);
+  const offeredMonthly = offered > 0 && offered < UNCORROBORATED_MONTHLY_CEILING ? offered : 0;
+
   // 594 rows carry no figure anywhere. A blank on the contract is honest; a
   // fabricated one is not, so nothing is invented for them.
   const grossRaw = snapshotGross > 0
