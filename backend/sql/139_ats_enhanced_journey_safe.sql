@@ -120,19 +120,11 @@ CREATE TABLE IF NOT EXISTS employee_code_sequence (
 );
 
 -- Initialize sequences
-SET @has_is_offrole_1 = (
-  SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
-   WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'employee_code_sequence' AND COLUMN_NAME = 'is_offrole'
-);
-SET @sql = IF(@has_is_offrole_1 > 0,
-  'INSERT IGNORE INTO employee_code_sequence (company_prefix, is_offrole, current_sequence) VALUES
-(''MAS'', FALSE, 47814),
-(''MAS'', TRUE, 0),
-(''IDC'', FALSE, 0),
-(''IDC'', TRUE, 0)',
-  'SELECT ''employee_code_sequence.is_offrole absent on this database; seed skipped'' AS n'
-);
-PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+INSERT IGNORE INTO employee_code_sequence (company_prefix, is_offrole, current_sequence) VALUES
+('MAS', FALSE, 47814),
+('MAS', TRUE, 0),
+('IDC', FALSE, 0),
+('IDC', TRUE, 0);
 -- ── 5. Create module_access_control table ─────────────────────────────────────
 CREATE TABLE IF NOT EXISTS module_access_control (
   id CHAR(36) NOT NULL DEFAULT (UUID()) PRIMARY KEY,
@@ -150,41 +142,27 @@ CREATE TABLE IF NOT EXISTS module_access_control (
 
 -- Grant super admin access to MAS47814.
 --
--- UNRESOLVED SCHEMA CONFLICT — read before changing this.
+-- The duplicate-definition conflict with 138 is resolved: 138 no longer creates
+-- module_access_control or employee_code_sequence, and this file owns both. The application
+-- decided it —
 --
--- Two migrations define module_access_control with incompatible shapes:
+--   JOIN module_access_control mac ON mac.employee_code = e.employee_code
+--   UPDATE employee_code_sequence SET last_generated_code = ?
+--    WHERE company_prefix = 'MAS' AND is_offrole = 0
 --
---   138_ats_complete_journey.sql   id, employee_id, module_code, module_name,
---                                  access_granted, granted_by, granted_at, revoked_at
---   139 (this file, just above)    module_name, employee_code, has_access, granted_by,
---                                  remarks
+-- both of which are this file's shape, not 138's. Migration 200 also maintains
+-- employee_code_sequence as (company_prefix, is_offrole).
 --
--- 138 runs first, so its CREATE wins and the CREATE TABLE IF NOT EXISTS above is a silent
--- no-op. The seed below then names employee_code, has_access and remarks — none of which
--- exist on the table that was actually created — and fails with "Unknown column" on any
--- fresh database.
---
--- Which shape is correct is a design decision, not a chain repair, and it is not made here:
--- picking one would either orphan the rows production holds or change what the ATS
--- authorisation code reads. Whichever shape a given database has, the seed now runs only if
--- that database can accept it, so the chain proceeds and the conflict stays visible instead
--- of being papered over by a rewritten column list.
-SET @has_employee_code = (
-  SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
-   WHERE TABLE_SCHEMA = DATABASE()
-     AND TABLE_NAME = 'module_access_control'
-     AND COLUMN_NAME = 'employee_code'
-);
-SET @sql = IF(@has_employee_code > 0,
-  "INSERT INTO module_access_control (module_name, employee_code, has_access, granted_by, remarks) VALUES
-   ('ATS_DASHBOARD', 'MAS47814', TRUE, 'SYSTEM', 'Super admin full access'),
-   ('PAYROLL_HR_VALIDATION', 'MAS47814', TRUE, 'SYSTEM', 'Super admin full access'),
-   ('RECRUITER_PORTAL', 'MAS47814', TRUE, 'SYSTEM', 'Super admin full access'),
-   ('COMMAND_CENTRE', 'MAS47814', TRUE, 'SYSTEM', 'Super admin full access')
-   ON DUPLICATE KEY UPDATE has_access=TRUE",
-  "SELECT 'module_access_control uses the 138 shape; skipping the 139 seed' AS n"
-);
-PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+-- The seed is therefore unguarded again. Guarding it was correct while the shape was in
+-- doubt; leaving the guard in place now would mean the super-admin grant silently does not
+-- happen if anything ever recreates the table wrongly, which is worse than failing loudly.
+INSERT INTO module_access_control (module_name, employee_code, has_access, granted_by, remarks) VALUES
+('ATS_DASHBOARD', 'MAS47814', TRUE, 'SYSTEM', 'Super admin full access'),
+('PAYROLL_HR_VALIDATION', 'MAS47814', TRUE, 'SYSTEM', 'Super admin full access'),
+('RECRUITER_PORTAL', 'MAS47814', TRUE, 'SYSTEM', 'Super admin full access'),
+('COMMAND_CENTRE', 'MAS47814', TRUE, 'SYSTEM', 'Super admin full access'),
+('SUPER_ADMIN_PORTAL', 'MAS47814', TRUE, 'SYSTEM', 'Moved here from 138 with the table')
+ON DUPLICATE KEY UPDATE has_access=TRUE;
 
 -- ── 6. Create recruiter_assignment_log table ──────────────────────────────────
 CREATE TABLE IF NOT EXISTS ats_recruiter_assignment_log (

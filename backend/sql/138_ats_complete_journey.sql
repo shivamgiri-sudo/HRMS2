@@ -233,19 +233,21 @@ CREATE TABLE IF NOT EXISTS employee_code_generation_log (
   INDEX idx_company (company_prefix)
 );
 
--- ── 11. Create employee_code_sequence table ───────────────────────────────────
-CREATE TABLE IF NOT EXISTS employee_code_sequence (
-  id CHAR(36) NOT NULL DEFAULT (UUID()) PRIMARY KEY,
-  company_prefix VARCHAR(10) NOT NULL UNIQUE COMMENT 'MAS, IDC',
-  last_sequence_number INT NOT NULL DEFAULT 0,
-  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-);
-
--- Seed initial sequences if not exist
-INSERT INTO employee_code_sequence (company_prefix, last_sequence_number) VALUES
-  ('MAS', 99999),
-  ('IDC', 99999)
-ON DUPLICATE KEY UPDATE last_sequence_number = last_sequence_number;
+-- ── 11. employee_code_sequence — defined by 139, not here ─────────────────────
+--
+-- Same conflict as module_access_control below. This file created it as
+-- (company_prefix UNIQUE, last_sequence_number); 139 creates it as
+-- (company_prefix, is_offrole) with current_sequence and last_generated_code, keyed on the
+-- pair so on-roll and off-role sequences are independent. 138 won by running first and 139's
+-- seed then failed.
+--
+-- The application settles it again:
+--
+--   UPDATE employee_code_sequence SET last_generated_code = ?
+--    WHERE company_prefix = 'MAS' AND is_offrole = 0
+--
+-- which is 139's shape, and 200 also maintains it as (company_prefix, is_offrole). The
+-- definition and seed live in 139.
 
 -- ── 12. Create cost_centre_master table ───────────────────────────────────────
 CREATE TABLE IF NOT EXISTS cost_centre_master (
@@ -265,20 +267,21 @@ CREATE TABLE IF NOT EXISTS cost_centre_master (
   FOREIGN KEY (branch_id) REFERENCES branch_master(id)
 );
 
--- ── 13. Create module_access_control table (Super Admin) ──────────────────────
-CREATE TABLE IF NOT EXISTS module_access_control (
-  id CHAR(36) NOT NULL DEFAULT (UUID()) PRIMARY KEY,
-  employee_id CHAR(36) NOT NULL,
-  module_code VARCHAR(100) NOT NULL COMMENT 'Page/module code',
-  module_name VARCHAR(255) NOT NULL,
-  access_granted TINYINT(1) DEFAULT 1,
-  granted_by CHAR(36) NULL COMMENT 'Super admin who granted',
-  granted_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  revoked_at DATETIME NULL,
-  INDEX idx_employee (employee_id),
-  INDEX idx_module (module_code),
-  UNIQUE KEY uk_emp_module (employee_id, module_code)
-);
+-- ── 13. module_access_control — defined by 139, not here ──────────────────────
+--
+-- This file used to create module_access_control as (employee_id, module_code,
+-- access_granted). 139 creates it as (employee_code, has_access, remarks). Both used
+-- CREATE TABLE IF NOT EXISTS, so 138 won by running first and 139's seed then failed on
+-- columns that did not exist.
+--
+-- The application settles it. role/module access is read as:
+--
+--   JOIN module_access_control mac ON mac.employee_code = e.employee_code
+--
+-- which is 139's shape. So the definition and the seed both live in 139 now, and this file
+-- no longer creates the table. Removing a CREATE TABLE IF NOT EXISTS cannot affect a
+-- database that already has the table, so this changes fresh builds only — which is exactly
+-- where the wrong shape was being created.
 
 -- ── 14. Create module_access_audit_log ────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS module_access_audit_log (
@@ -406,16 +409,10 @@ SET @sql = IF(@idx_idx_ats_queue_branch = 0 AND @col_idx_ats_queue_branch = 1,
 );
 PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
--- ── 18. Super admin employee access ───────────────────────────────────────────
--- Grant super admin access to MAS47814
-INSERT INTO module_access_control (employee_id, module_code, module_name, granted_by)
-SELECT
-  e.id,
-  'SUPER_ADMIN_PORTAL',
-  'Super Admin Portal',
-  e.id
-FROM employees e
-WHERE e.employee_code = 'MAS47814'
-ON DUPLICATE KEY UPDATE access_granted = 1;
+-- ── 18. Super admin employee access — moved to 139 with the table ─────────────
+--
+-- This seed used the (employee_id, module_code, access_granted) shape this file no longer
+-- creates. 139 owns both the table and its seeds, and grants MAS47814 the same super-admin
+-- access there, so nothing is lost by removing it here.
 
 COMMIT;

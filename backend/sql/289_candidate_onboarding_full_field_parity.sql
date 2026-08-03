@@ -29,7 +29,7 @@ ALTER TABLE candidate_onboarding_profile
 SET @tbl_candidate_on_1 = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES
                    WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='candidate_onboarding_experience');
 SET @sql = IF(@tbl_candidate_on_1 > 0,
-  'ALTER TABLE candidate_onboarding_experience ADD COLUMN from_date DATE NULL AFTER employer_name, ADD COLUMN to_date DATE NULL AFTER from_date, ADD COLUMN reason_for_leaving VARCHAR(500) NULL',
+  'ALTER TABLE candidate_onboarding_experience ADD COLUMN from_date DATE NULL, ADD COLUMN to_date DATE NULL, ADD COLUMN reason_for_leaving VARCHAR(500) NULL',
   'SELECT ''candidate_onboarding_experience does not exist on this database; statement skipped'' AS n');
 PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 

@@ -52,8 +52,8 @@ CALL _289_add_col('candidate_onboarding_profile', 'otp_verified_at',            
 CALL _289_add_col('candidate_onboarding_profile', 'otp_mobile',                   "VARCHAR(20) NULL COMMENT 'Mobile used for OTP'");
 
 -- ── candidate_onboarding_experience additions ─────────────────────────────────
-CALL _289_add_col('candidate_onboarding_experience', 'from_date',          "DATE NULL AFTER employer_name");
-CALL _289_add_col('candidate_onboarding_experience', 'to_date',            "DATE NULL AFTER from_date");
+CALL _289_add_col('candidate_onboarding_experience', 'from_date',          "DATE NULL");
+CALL _289_add_col('candidate_onboarding_experience', 'to_date',            "DATE NULL");
 CALL _289_add_col('candidate_onboarding_experience', 'reason_for_leaving', "VARCHAR(500) NULL");
 
 -- ── candidate_onboarding_otp ─────────────────────────────────────────────────
