@@ -1,8 +1,8 @@
 -- backend/sql/054_ats_onboarding_flow.sql
 -- ATS Onboarding Flow — all tables/alters for Phase 3 candidate-to-employee activation
--- NOTE: This migration is idempotent - columns and tables created with IF NOT EXISTS will be skipped if they exist
 
--- 1. Check and create columns in ats_candidate if table exists
+-- 1. These candidate fields are absent in the canonical fresh sequence through
+-- migration 053. Keep normal MySQL DDL so type/definition errors remain visible.
 ALTER TABLE ats_candidate ADD COLUMN address TEXT;
 ALTER TABLE ats_candidate ADD COLUMN education VARCHAR(100);
 ALTER TABLE ats_candidate ADD COLUMN experience VARCHAR(50);
@@ -33,18 +33,48 @@ ALTER TABLE ats_candidate ADD COLUMN emergency_contact_name VARCHAR(255);
 ALTER TABLE ats_candidate ADD COLUMN emergency_contact_mobile VARCHAR(20);
 ALTER TABLE ats_candidate ADD COLUMN profile_submitted_at DATETIME;
 
--- 2. ALTER auth_user — force password change flag
-ALTER TABLE auth_user ADD COLUMN must_change_password TINYINT(1) NOT NULL DEFAULT 0;
+-- 2. Migration 050 already creates must_change_password on a fresh schema.
+-- MySQL 8.4 does not support ADD COLUMN IF NOT EXISTS, so guard through
+-- INFORMATION_SCHEMA and execute only when the column is genuinely absent.
+SET @must_change_password_exists = (
+  SELECT COUNT(*)
+  FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'auth_user'
+    AND COLUMN_NAME = 'must_change_password'
+);
+SET @must_change_password_sql = IF(
+  @must_change_password_exists = 0,
+  'ALTER TABLE auth_user ADD COLUMN must_change_password TINYINT(1) NOT NULL DEFAULT 0',
+  'SELECT ''auth_user.must_change_password already exists'' AS status'
+);
+PREPARE stmt FROM @must_change_password_sql;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
 
--- 3. ALTER ats_onboarding_bridge — token + approval tracking
+-- 3. Onboarding bridge token + approval tracking.
 ALTER TABLE ats_onboarding_bridge ADD COLUMN onboarding_token VARCHAR(100);
 ALTER TABLE ats_onboarding_bridge ADD COLUMN onboarding_token_expires_at DATETIME;
 ALTER TABLE ats_onboarding_bridge ADD COLUMN hr_approved_by CHAR(36);
 ALTER TABLE ats_onboarding_bridge ADD COLUMN hr_approved_at DATETIME;
 
-CREATE UNIQUE INDEX IF NOT EXISTS uq_onb_token ON ats_onboarding_bridge (onboarding_token);
+SET @onboarding_token_index_exists = (
+  SELECT COUNT(*)
+  FROM INFORMATION_SCHEMA.STATISTICS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'ats_onboarding_bridge'
+    AND INDEX_NAME = 'uq_onb_token'
+);
+SET @onboarding_token_index_sql = IF(
+  @onboarding_token_index_exists = 0,
+  'ALTER TABLE ats_onboarding_bridge ADD UNIQUE KEY uq_onb_token (onboarding_token)',
+  'SELECT ''uq_onb_token already exists'' AS status'
+);
+PREPARE stmt FROM @onboarding_token_index_sql;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
 
--- 4. NEW: ats_onboarding_request
+-- 4. Onboarding request.
 CREATE TABLE IF NOT EXISTS ats_onboarding_request (
   id           CHAR(36)   NOT NULL DEFAULT (UUID()) PRIMARY KEY,
   candidate_id CHAR(36)   NOT NULL UNIQUE,
@@ -58,9 +88,9 @@ CREATE TABLE IF NOT EXISTS ats_onboarding_request (
   FOREIGN KEY (branch_id)    REFERENCES branch_master(id) ON DELETE SET NULL,
   INDEX idx_onb_req_branch (branch_id),
   INDEX idx_onb_req_status (status)
-);
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- 5. NEW: ats_employment_offer
+-- 5. Employment offer.
 CREATE TABLE IF NOT EXISTS ats_employment_offer (
   id                    CHAR(36)      NOT NULL DEFAULT (UUID()) PRIMARY KEY,
   onboarding_request_id CHAR(36)      NOT NULL UNIQUE,
@@ -102,9 +132,9 @@ CREATE TABLE IF NOT EXISTS ats_employment_offer (
   FOREIGN KEY (department_id)         REFERENCES department_master(id)       ON DELETE SET NULL,
   FOREIGN KEY (designation_id)        REFERENCES designation_master(id)      ON DELETE SET NULL,
   FOREIGN KEY (reporting_manager_id)  REFERENCES employees(id)               ON DELETE SET NULL
-);
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- 6. NEW: ats_offer_approval
+-- 6. Offer approval.
 CREATE TABLE IF NOT EXISTS ats_offer_approval (
   id          CHAR(36)   NOT NULL DEFAULT (UUID()) PRIMARY KEY,
   offer_id    CHAR(36)   NOT NULL,
@@ -114,23 +144,23 @@ CREATE TABLE IF NOT EXISTS ats_offer_approval (
   action_at   DATETIME   NOT NULL DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (offer_id) REFERENCES ats_employment_offer(id) ON DELETE CASCADE,
   INDEX idx_offer_approval_offer (offer_id)
-);
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- 7. NEW: ats_email_log
+-- 7. Email log.
 CREATE TABLE IF NOT EXISTS ats_email_log (
-  id           CHAR(36)    NOT NULL DEFAULT (UUID()) PRIMARY KEY,
-  candidate_id CHAR(36)    NOT NULL,
-  email_type   ENUM('registration','selected','rejected','token_sent','offer_review','approved','welcome') NOT NULL,
-  sent_to      VARCHAR(255) NOT NULL,
-  status       ENUM('sent','failed','skipped') NOT NULL DEFAULT 'sent',
+  id            CHAR(36)     NOT NULL DEFAULT (UUID()) PRIMARY KEY,
+  candidate_id  CHAR(36)     NOT NULL,
+  email_type    ENUM('registration','selected','rejected','token_sent','offer_review','approved','welcome') NOT NULL,
+  sent_to       VARCHAR(255) NOT NULL,
+  status        ENUM('sent','failed','skipped') NOT NULL DEFAULT 'sent',
   error_message TEXT,
-  sent_at      DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  sent_at       DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (candidate_id) REFERENCES ats_candidate(id) ON DELETE CASCADE,
   INDEX idx_email_log_cand (candidate_id),
   INDEX idx_email_log_type (email_type)
-);
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- 8. NEW: salary_band_master
+-- 8. Salary band master.
 CREATE TABLE IF NOT EXISTS salary_band_master (
   id            CHAR(36)      NOT NULL DEFAULT (UUID()) PRIMARY KEY,
   band_code     VARCHAR(50)   NOT NULL UNIQUE,
@@ -141,16 +171,26 @@ CREATE TABLE IF NOT EXISTS salary_band_master (
   hra_pct       DECIMAL(5,2)  NOT NULL DEFAULT 40.00,
   active_status TINYINT(1)    NOT NULL DEFAULT 1,
   created_at    DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
-INSERT INTO salary_band_master (band_code, band_name, min_ctc, max_ctc, basic_pct, hra_pct) VALUES
+INSERT INTO salary_band_master
+  (band_code, band_name, min_ctc, max_ctc, basic_pct, hra_pct)
+VALUES
   ('D', 'Band D — Entry',        80000,   150000,  40.00, 40.00),
   ('C', 'Band C — Junior',      150001,   300000,  40.00, 40.00),
   ('B', 'Band B — Mid',         300001,   600000,  45.00, 40.00),
   ('A', 'Band A — Senior',      600001,  1200000,  50.00, 50.00),
   ('M', 'Band M — Management', 1200001, 99999999,  50.00, 50.00)
-ON DUPLICATE KEY UPDATE band_name = VALUES(band_name);
+ON DUPLICATE KEY UPDATE
+  band_name = VALUES(band_name),
+  min_ctc = VALUES(min_ctc),
+  max_ctc = VALUES(max_ctc),
+  basic_pct = VALUES(basic_pct),
+  hra_pct = VALUES(hra_pct),
+  active_status = 1;
 
--- 9. Ensure employee_salary_snapshot has columns used by approval flow
+-- 9. Salary snapshot fields used by approval flow. These are absent in the
+-- canonical fresh sequence through migration 053; later migrations can evolve
+-- them after this file has been recorded.
 ALTER TABLE employee_salary_snapshot ADD COLUMN effective_date DATE NULL;
 ALTER TABLE employee_salary_snapshot ADD COLUMN offered_ctc DECIMAL(12,2) NULL;

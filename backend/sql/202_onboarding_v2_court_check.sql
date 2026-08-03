@@ -2,6 +2,63 @@
 -- Adds step-resume index, court/address/education check columns, recruiter feedback fields
 -- Also adds legacy masjclrentry fields missing from V1 profile table
 
+-- Canonical prerequisites for V2 onboarding evidence. Earlier application
+-- rollouts referenced these tables, but no manifest migration created them.
+CREATE TABLE IF NOT EXISTS candidate_onboarding_experience (
+  id CHAR(36) NOT NULL DEFAULT (UUID()) PRIMARY KEY,
+  candidate_id CHAR(36) NOT NULL,
+  employer_name VARCHAR(255) NULL,
+  designation VARCHAR(255) NULL,
+  employment_type VARCHAR(50) NULL,
+  date_from DATE NULL,
+  date_to DATE NULL,
+  last_drawn_salary DECIMAL(12,2) NULL,
+  reason_for_leaving TEXT NULL,
+  experience_letter_url VARCHAR(500) NULL,
+  relieving_letter_url VARCHAR(500) NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  INDEX idx_candidate_onboarding_experience_candidate (candidate_id),
+  FOREIGN KEY (candidate_id) REFERENCES ats_candidate(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS candidate_onboarding_qualification (
+  id CHAR(36) NOT NULL DEFAULT (UUID()) PRIMARY KEY,
+  candidate_id CHAR(36) NOT NULL,
+  qualification_level VARCHAR(100) NULL,
+  course_name VARCHAR(255) NULL,
+  board_or_university VARCHAR(255) NULL,
+  passing_year SMALLINT UNSIGNED NULL,
+  percentage_or_cgpa VARCHAR(30) NULL,
+  certificate_url VARCHAR(500) NULL,
+  marksheet_url VARCHAR(500) NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  INDEX idx_candidate_onboarding_qualification_candidate (candidate_id),
+  FOREIGN KEY (candidate_id) REFERENCES ats_candidate(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS candidate_bgv_check (
+  id CHAR(36) NOT NULL DEFAULT (UUID()) PRIMARY KEY,
+  candidate_id CHAR(36) NOT NULL,
+  check_type ENUM('pan','aadhaar','aadhaar_offline','bank','digilocker',
+    'employment','education','address','criminal','court','address_doc',
+    'education_doc','photo_match') NOT NULL,
+  provider_name VARCHAR(100) NULL,
+  provider_reference VARCHAR(255) NULL,
+  status ENUM('not_run','queued','in_progress','passed','failed','partial','manual_review') NOT NULL DEFAULT 'not_run',
+  result_json JSON NULL,
+  remarks TEXT NULL,
+  initiated_by CHAR(36) NULL,
+  initiated_at DATETIME NULL,
+  completed_at DATETIME NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY uq_candidate_bgv_check_type (candidate_id, check_type),
+  INDEX idx_candidate_bgv_check_status (status),
+  FOREIGN KEY (candidate_id) REFERENCES ats_candidate(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 DELIMITER $$
 
 -- 1. candidate_onboarding_profile: last visited section for refresh-resume
