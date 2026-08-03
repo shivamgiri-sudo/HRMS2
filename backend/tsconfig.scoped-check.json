@@ -27,12 +27,7 @@
 {
   "extends": "./tsconfig.json",
   "include": [
-    "src/modules/process-pnl/bpo-pnl.service.ts",
-    "src/modules/process-pnl/bpo-pnl.configuration.service.ts",
-    "src/modules/process-pnl/bpo-pnl.routes.ts",
-    "src/modules/process-pnl/finance-period-lock.ts",
-    "src/modules/finance/grn.service.ts",
-    "src/modules/finance/grn-smart.service.ts"
+    "src/modules/process-pnl/bpo-pnl-allocation-overlay.service.ts"
   ],
   "compilerOptions": { "noEmit": true }
 }

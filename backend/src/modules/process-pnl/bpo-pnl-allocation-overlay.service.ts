@@ -522,7 +522,7 @@ export const bpoPnlAllocationOverlayService = {
       "Recognized Revenue", "Invoiced Revenue", "Collected Revenue", "Outstanding", "Unbilled Revenue",
       "Agent Salary", "Agent Salary %", "DSC", "DSC %", "BMC", "BMC %", "GRN Allocation Actual",
       "EBITDA", "EBITDA %", "EBIT", "Operating Profit %", "PBT", "PAT", "Approved Budget",
-      "Reserved Budget", "Consumed Budget", "Available Budget", "Status",
+      "Reserved Budget", "Consumed Budget", "Available Budget", "Status", "Revenue Data Status",
     ];
     const escape = (value: unknown) => `"${String(value ?? "").replace(/"/g, '""')}"`;
     return [
@@ -538,7 +538,7 @@ export const bpoPnlAllocationOverlayService = {
         row.grnVendorActual.toFixed(2), row.ebitda.toFixed(2), row.ebitdaMarginPct?.toFixed(2),
         row.ebit.toFixed(2), row.operatingProfitPct?.toFixed(2), row.pbt.toFixed(2), row.pat.toFixed(2),
         row.approvedBudget.toFixed(2), row.reservedBudget.toFixed(2), row.consumedBudget.toFixed(2),
-        row.availableBudget.toFixed(2), row.processStatus,
+        row.availableBudget.toFixed(2), row.processStatus, row.revenueDataStatus,
       ].map(escape).join(",")),
     ].join("\n");
   },

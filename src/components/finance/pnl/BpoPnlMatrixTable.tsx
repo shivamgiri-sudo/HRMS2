@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { ArrowDown, ArrowUp, ArrowUpDown, CircleDollarSign, PanelRightOpen } from "lucide-react";
+import { AlertTriangle, ArrowDown, ArrowUp, ArrowUpDown, CircleDollarSign, PanelRightOpen } from "lucide-react";
 import { Link } from "react-router-dom";
 import type { BpoPnlRow, BpoPnlSummary } from "@/hooks/useBpoProcessPnl";
 import { ProcessPnlMatrixTotals } from "@/components/finance/pnl/ProcessPnlMatrixTotals";
@@ -148,12 +148,25 @@ export function BpoPnlMatrixTable({
                   const content =
                     column.key === "processName" ? (
                       <div className="flex items-center justify-between gap-2">
-                        <Link
-                          to={`/finance/process-pnl/${row.processId}?period=${period}`}
-                          className="font-bold text-slate-950 hover:text-emerald-700"
-                        >
-                          {column.render(row)}
-                        </Link>
+                        <span className="flex items-center gap-1.5">
+                          {row.revenueDataStatus === "accounting_fallback" && (
+                            <span
+                              className="shrink-0"
+                              title="Revenue logic not configured — this row uses invoice/accounting revenue as a fallback estimate, not an approved BPO revenue rule"
+                            >
+                              <AlertTriangle
+                                className="h-3.5 w-3.5 text-amber-600"
+                                aria-label="Revenue logic not configured — showing invoice/accounting revenue as a fallback estimate, not an approved BPO revenue rule"
+                              />
+                            </span>
+                          )}
+                          <Link
+                            to={`/finance/process-pnl/${row.processId}?period=${period}`}
+                            className="font-bold text-slate-950 hover:text-emerald-700"
+                          >
+                            {column.render(row)}
+                          </Link>
+                        </span>
                         <Button
                           type="button"
                           variant="ghost"
