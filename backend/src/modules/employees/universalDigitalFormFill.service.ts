@@ -6,13 +6,13 @@ import pdfLib from "pdf-lib";
 const { PDFDocument, StandardFonts } = pdfLib;
 import PizZip from "pizzip";
 import { epfNominationFieldMaps } from "./epfNominationForm.js";
-import { getPayrollHrSignatoryForEmployee } from "./branchPayrollHrSignatory.service.js";
+import { getPayrollHrSignatoryForEmployee, mergeBranchSignatureIntoSeal } from "./branchPayrollHrSignatory.service.js";
 import { isOperationsExecutiveByRegex } from "../wfm/attendance-engine.service.js";
 import type { RowDataPacket } from "mysql2";
 
 import { db } from "../../db/mysql.js";
 import { fillAcroFormPdf, validateAcroFormTemplate } from "./pdfAcroFormFill.service.js";
-import { applyCompanySeal } from "./companySeal.service.js";
+import { applyCompanySeal, loadCompanySeal } from "./companySeal.service.js";
 import { resolveTemplateFile } from "./joiningDocumentTemplatePath.js";
 import { hasStructuredPdf, renderJoiningDocumentPdf } from "./joiningDocumentPdf.service.js";
 import { resolveEmployeeLetterhead } from "../org/branchAddress.service.js";
@@ -1879,8 +1879,23 @@ export async function generateChecklistDraft(
         // Both EPF forms carry an employer block the form itself requires to be
         // sealed. Stamping it here means HR no longer prints, signs, scans and
         // re-uploads every statutory form.
+        //
+        // Signed by the Payroll HR of the branch this joiner belongs to, rather
+        // than one company-wide signature for everyone. Where no branch
+        // signatory is configured — which is every branch until they are set up
+        // — this resolves to exactly the company seal used before, so the
+        // documents are unchanged.
+        const branchSignatory = await getPayrollHrSignatoryForEmployee(
+          String(checklist.employee_id), { withImage: true },
+        ).catch(() => null);
         content = Buffer.from(
-          await applyCompanySeal(content, String(checklist.document_code ?? "")),
+          await applyCompanySeal(
+            content,
+            String(checklist.document_code ?? ""),
+            branchSignatory
+              ? mergeBranchSignatureIntoSeal(await loadCompanySeal(), branchSignatory)
+              : undefined,
+          ),
         );
       } else if (fillMode === "fillable_pdf") {
         content = await renderFillablePdf(templatePath, fieldMaps, values);
