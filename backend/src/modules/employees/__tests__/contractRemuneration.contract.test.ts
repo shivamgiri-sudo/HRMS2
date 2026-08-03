@@ -79,6 +79,31 @@ describe("monthly remuneration on the employment contract", () => {
     expect(String(salary.monthly_gross)).toContain("16,588");
   });
 
+  it("refuses an uncorroborated ctc_offered large enough to be an annual figure", async () => {
+    // Five rows on this table hold 110,000-625,000 in a column that is monthly
+    // on 31,100 of 31,142 rows. Those are almost certainly annual CTCs entered
+    // in the wrong column. With no components to corroborate the figure there
+    // is no way to tell, and printing one as a monthly salary overstates it
+    // twelvefold on a document someone signs. A blank is the safe failure.
+    state.salary = {
+      ...MAS63085_SNAPSHOT,
+      basic: 0, hra: 0, conveyance: 0, special_allowance: 0, ctc_offered: 625000,
+    };
+    const ctx = await buildSourceContext("emp-annual");
+    expect((ctx as Record<string, Record<string, unknown>>).salary.monthly_gross).toBeNull();
+  });
+
+  it("still trusts a large figure when the components corroborate it", async () => {
+    // A genuine senior salary must not be suppressed. Here the components say
+    // the same thing, so there is nothing ambiguous about it.
+    state.salary = {
+      ...MAS63085_SNAPSHOT,
+      basic: 250000, hra: 100000, conveyance: 0, special_allowance: 0, ctc_offered: 400000,
+    };
+    const ctx = await buildSourceContext("emp-senior");
+    expect(String((ctx as Record<string, Record<string, unknown>>).salary.monthly_gross)).toContain("3,50,000");
+  });
+
   it("prefers a real gross over the component sum when one is written", async () => {
     state.salary = { ...MAS63085_SNAPSHOT, gross: 20000 };
     const ctx = await buildSourceContext("emp-3");
