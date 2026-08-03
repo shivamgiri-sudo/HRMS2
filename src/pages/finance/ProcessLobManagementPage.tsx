@@ -315,8 +315,8 @@ export default function ProcessLobManagementPage() {
               <span>/</span>
               <span>LOB workspace</span>
             </div>
-            <h1 className="mt-1 text-2xl font-bold text-slate-950">Process &amp; LOB Profitability</h1>
-            <p className="mt-1 text-sm text-slate-500">
+            <h1 className="mt-1 text-lg font-bold text-slate-950">Process &amp; LOB Profitability</h1>
+            <p className="mt-0.5 text-xs text-slate-500">
               Configure separate seats, rates and delivery for every LOB while keeping the process total reconciled.
             </p>
           </div>
@@ -379,11 +379,11 @@ export default function ProcessLobManagementPage() {
               </div>
             ) : (
               <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
-                <Card><CardContent className="p-4"><Layers3 className="h-5 w-5 text-sky-600" /><p className="mt-3 text-xs font-semibold uppercase text-slate-500">Active LOBs</p><p className="text-2xl font-bold">{diagnostics?.activeLobCount ?? lobs.length}</p></CardContent></Card>
-                <Card><CardContent className="p-4"><IndianRupee className="h-5 w-5 text-emerald-600" /><p className="mt-3 text-xs font-semibold uppercase text-slate-500">Recognised revenue</p><p className="text-xl font-bold">{currency(summary?.totals.recognizedRevenue)}</p></CardContent></Card>
-                <Card><CardContent className="p-4"><GitBranch className="h-5 w-5 text-violet-600" /><p className="mt-3 text-xs font-semibold uppercase text-slate-500">EBITDA</p><p className={`text-xl font-bold ${(summary?.totals.ebitda ?? 0) < 0 ? "text-rose-600" : "text-emerald-700"}`}>{currency(summary?.totals.ebitda)}</p></CardContent></Card>
-                <Card><CardContent className="p-4"><UsersRound className="h-5 w-5 text-indigo-600" /><p className="mt-3 text-xs font-semibold uppercase text-slate-500">Plan coverage</p><p className="text-2xl font-bold">{percent(diagnostics?.planCoveragePct)}</p></CardContent></Card>
-                <Card><CardContent className="p-4">{diagnostics?.readyForClose ? <CheckCircle2 className="h-5 w-5 text-emerald-600" /> : <ShieldAlert className="h-5 w-5 text-amber-600" />}<p className="mt-3 text-xs font-semibold uppercase text-slate-500">Close readiness</p><p className="text-xl font-bold">{diagnostics?.readyForClose ? "Ready" : `${diagnostics?.blockers.length ?? 0} blocker(s)`}</p></CardContent></Card>
+                <Card><CardContent className="p-4"><Layers3 className="h-5 w-5 text-slate-400" /><p className="mt-3 text-xs font-semibold uppercase text-slate-500">Active LOBs</p><p className="text-2xl font-bold">{diagnostics?.activeLobCount ?? lobs.length}</p></CardContent></Card>
+                <Card><CardContent className="p-4"><IndianRupee className="h-5 w-5 text-slate-400" /><p className="mt-3 text-xs font-semibold uppercase text-slate-500">Recognised revenue</p><p className="text-xl font-bold">{currency(summary?.totals.recognizedRevenue)}</p></CardContent></Card>
+                <Card><CardContent className="p-4"><GitBranch className={`h-5 w-5 ${(summary?.totals.ebitda ?? 0) < 0 ? "text-rose-500" : "text-emerald-500"}`} /><p className="mt-3 text-xs font-semibold uppercase text-slate-500">EBITDA</p><p className={`text-xl font-bold ${(summary?.totals.ebitda ?? 0) < 0 ? "text-rose-600" : "text-emerald-700"}`}>{currency(summary?.totals.ebitda)}</p></CardContent></Card>
+                <Card><CardContent className="p-4"><UsersRound className="h-5 w-5 text-slate-400" /><p className="mt-3 text-xs font-semibold uppercase text-slate-500">Plan coverage</p><p className="text-2xl font-bold">{percent(diagnostics?.planCoveragePct)}</p></CardContent></Card>
+                <Card><CardContent className="p-4">{diagnostics?.readyForClose ? <CheckCircle2 className="h-5 w-5 text-emerald-500" /> : <ShieldAlert className="h-5 w-5 text-amber-500" />}<p className="mt-3 text-xs font-semibold uppercase text-slate-500">Close readiness</p><p className="text-xl font-bold">{diagnostics?.readyForClose ? "Ready" : `${diagnostics?.blockers.length ?? 0} blocker(s)`}</p></CardContent></Card>
               </div>
             )}
 

@@ -158,26 +158,33 @@ export default function PnlPeriodClosePage() {
                 <CardHeader>
                   <CardTitle className="text-base font-semibold text-slate-950">Most urgent loss-makers</CardTitle>
                 </CardHeader>
-                <CardContent className="space-y-3">
-                  {(closeData?.lossMakingProcesses ?? []).length === 0 && (
-                    <div className="rounded-2xl border border-emerald-100 bg-emerald-50 px-4 py-4 text-sm text-emerald-800">
-                      No loss-making processes were flagged for this period.
+                <CardContent className="p-0">
+                  {(closeData?.lossMakingProcesses ?? []).length === 0 ? (
+                    <p className="px-6 py-4 text-sm text-emerald-800">No loss-making processes were flagged for this period.</p>
+                  ) : (
+                    <div className="overflow-x-auto">
+                      <table className="w-full min-w-[520px] text-sm">
+                        <thead>
+                          <tr className="border-b border-slate-100 text-left text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                            <th className="px-4 py-2">Process</th>
+                            <th className="px-4 py-2">Client / Branch</th>
+                            <th className="px-4 py-2 text-right">Operating profit</th>
+                            <th className="px-4 py-2 text-right">Margin</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {(closeData?.lossMakingProcesses ?? []).map((row) => (
+                            <tr key={row.processId} className="border-b border-rose-100 bg-rose-50/40 last:border-0">
+                              <td className="px-4 py-2 font-medium text-slate-900">{row.processName}</td>
+                              <td className="px-4 py-2 text-slate-600">{row.clientName ?? "No client"} / {row.branchName ?? "No branch"}</td>
+                              <td className="px-4 py-2 text-right font-semibold text-rose-900">{formatCurrency(row.operatingProfit)}</td>
+                              <td className="px-4 py-2 text-right text-rose-700">{(row.operatingMarginPct ?? 0).toFixed(1)}%</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
                     </div>
                   )}
-                  {(closeData?.lossMakingProcesses ?? []).map((row) => (
-                    <div key={row.processId} className="rounded-2xl border border-rose-100 bg-rose-50 px-4 py-4">
-                      <div className="flex items-start justify-between gap-4">
-                        <div>
-                          <p className="text-sm font-semibold text-slate-950">{row.processName}</p>
-                          <p className="mt-1 text-sm text-slate-600">{row.clientName ?? "No client"} / {row.branchName ?? "No branch"}</p>
-                        </div>
-                        <div className="text-right">
-                          <p className="text-sm font-semibold text-rose-900">{formatCurrency(row.operatingProfit)}</p>
-                          <p className="mt-1 text-xs text-rose-700">{(row.operatingMarginPct ?? 0).toFixed(1)}% margin</p>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
                 </CardContent>
               </Card>
             </div>

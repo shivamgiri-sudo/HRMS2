@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { Building2, CheckCircle2, Layers3, Loader2, Pin, PinOff, ShieldCheck } from "lucide-react";
+import { Building2, CheckCircle2, Layers3, Loader2, Pin, PinOff } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -76,41 +76,36 @@ export default function BudgetConsolidationPage() {
 
   return (
     <DashboardLayout>
-      <div className="min-h-screen bg-[radial-gradient(circle_at_top_right,_rgba(16,185,129,0.14),_transparent_26%),linear-gradient(180deg,_#f8fafc_0%,_#ffffff_44%,_#f5f7fb_100%)]">
-        <div className="mx-auto max-w-[1680px] space-y-6 px-4 py-6 sm:px-6 lg:px-8">
-          <section className="relative overflow-hidden rounded-[32px] border border-slate-800 bg-slate-950 text-white shadow-[0_28px_90px_rgba(15,23,42,0.25)]">
-            <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_right,_rgba(59,130,246,0.28),_transparent_34%),radial-gradient(circle_at_bottom_left,_rgba(16,185,129,0.20),_transparent_30%)]" />
-            <div className="relative grid gap-8 p-6 lg:grid-cols-[1.35fr_0.9fr] lg:p-8">
+      <div className="min-h-screen bg-slate-50">
+        <div className="border-b border-slate-200 bg-white">
+          <div className="mx-auto max-w-[1680px] px-4 py-4 sm:px-6 lg:px-8">
+            <div className="flex flex-wrap items-end justify-between gap-4">
               <div>
-                <Badge className="border-emerald-400/30 bg-emerald-400/10 text-emerald-200 hover:bg-emerald-400/10">
-                  <ShieldCheck className="mr-1 h-3.5 w-3.5" />Company-wide, all branches
-                </Badge>
-                <h1 className="mt-5 max-w-4xl text-3xl font-black tracking-tight sm:text-4xl">Budget Consolidation</h1>
-                <p className="mt-3 max-w-3xl text-sm leading-6 text-slate-300">
-                  Every branch's budget rolled up into one company-wide view — branch summaries and a head/sub-head breakdown across every branch.
-                </p>
-                <div className="mt-6 max-w-xs space-y-2">
-                  <Label className="text-slate-200">Period</Label>
-                  <Input type="month" value={period} onChange={(event) => setPeriod(event.target.value)} className="bg-white text-slate-900" />
-                </div>
+                <h1 className="text-lg font-bold text-slate-950">Budget Consolidation</h1>
+                <p className="mt-0.5 max-w-xl text-xs text-slate-500">Every branch's budget rolled up company-wide — branch summaries and a head/sub-head breakdown.</p>
               </div>
-              <div className="grid grid-cols-3 gap-3">
-                <div className="rounded-2xl border border-white/15 bg-white/5 p-4">
-                  <p className="text-[10px] font-semibold uppercase tracking-[0.15em] text-slate-300">Branches</p>
-                  <p className="mt-2 text-lg font-black">{branchSummaries.length}</p>
-                </div>
-                <div className="rounded-2xl border border-white/15 bg-white/5 p-4">
-                  <p className="text-[10px] font-semibold uppercase tracking-[0.15em] text-slate-300">Company gross</p>
-                  <p className="mt-2 text-lg font-black">{money(grandTotals.gross)}</p>
-                </div>
-                <div className="rounded-2xl border border-white/15 bg-white/5 p-4">
-                  <p className="text-[10px] font-semibold uppercase tracking-[0.15em] text-slate-300">Consumed</p>
-                  <p className="mt-2 text-lg font-black">{money(grandTotals.consumed)}</p>
-                </div>
+              <div className="space-y-1">
+                <Label className="text-xs text-slate-500">Period</Label>
+                <Input type="month" value={period} onChange={(event) => setPeriod(event.target.value)} className="h-9 w-40" />
               </div>
             </div>
-          </section>
-
+            <div className="mt-4 grid grid-cols-3 gap-2 sm:max-w-md">
+              <div className="rounded-xl border border-slate-200 bg-white p-3">
+                <p className="text-[10px] font-semibold uppercase tracking-[0.1em] text-slate-500">Branches</p>
+                <p className="mt-1 text-base font-bold text-slate-950">{branchSummaries.length}</p>
+              </div>
+              <div className="rounded-xl border border-blue-200 bg-blue-50/80 p-3">
+                <p className="text-[10px] font-semibold uppercase tracking-[0.1em] text-slate-500">Company gross</p>
+                <p className="mt-1 text-base font-bold text-slate-950">{money(grandTotals.gross)}</p>
+              </div>
+              <div className="rounded-xl border border-emerald-200 bg-emerald-50/80 p-3">
+                <p className="text-[10px] font-semibold uppercase tracking-[0.1em] text-slate-500">Consumed</p>
+                <p className="mt-1 text-base font-bold text-slate-950">{money(grandTotals.consumed)}</p>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div className="mx-auto max-w-[1680px] space-y-6 px-4 py-6 sm:px-6 lg:px-8">
           {isError && (
             <div className="rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">
               {error instanceof Error ? error.message : "Consolidation data could not be loaded"}

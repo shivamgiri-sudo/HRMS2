@@ -282,12 +282,12 @@ export function GrnLobAttributionQueue() {
               <table className="w-full min-w-[1000px] text-sm">
                 <thead className="sticky top-0 z-10 bg-slate-50 text-left text-[11px] uppercase tracking-wide text-slate-500">
                   <tr>
-                    <th className="px-4 py-3">#</th>
-                    <th className="px-4 py-3">Budget item</th>
-                    <th className="px-4 py-3">Process / cost centre</th>
-                    <th className="px-4 py-3">P&amp;L cost</th>
-                    <th className="px-4 py-3">Gross</th>
-                    <th className="px-4 py-3">LOB attribution</th>
+                    <th className="px-4 py-2">#</th>
+                    <th className="px-4 py-2">Budget item</th>
+                    <th className="px-4 py-2">Process / cost centre</th>
+                    <th className="px-4 py-2">P&amp;L cost</th>
+                    <th className="px-4 py-2">Gross</th>
+                    <th className="px-4 py-2">LOB attribution</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y">
@@ -297,20 +297,20 @@ export function GrnLobAttributionQueue() {
                     );
                     return (
                       <tr key={allocation.id} className="align-top hover:bg-slate-50/70">
-                        <td className="px-4 py-4 font-mono text-xs text-slate-500">{allocation.sequence_no}</td>
-                        <td className="px-4 py-4">
+                        <td className="px-4 py-2 font-mono text-xs text-slate-500">{allocation.sequence_no}</td>
+                        <td className="px-4 py-2">
                           <p className="font-semibold text-slate-900">{allocation.item_name}</p>
                           <p className="mt-1 text-xs text-slate-500">
                             {allocation.head}{allocation.sub_head ? ` / ${allocation.sub_head}` : ""}
                           </p>
                         </td>
-                        <td className="px-4 py-4">
+                        <td className="px-4 py-2">
                           <p className="font-medium text-slate-800">{allocation.process_name || "Shared branch cost"}</p>
                           <p className="mt-1 text-xs text-slate-500">{allocation.cost_centre_name || "No cost centre"}</p>
                         </td>
-                        <td className="px-4 py-4 font-semibold">{money(allocation.pnl_cost_amount)}</td>
-                        <td className="px-4 py-4">{money(allocation.amount_with_tax)}</td>
-                        <td className="px-4 py-4">
+                        <td className="px-4 py-2 font-semibold">{money(allocation.pnl_cost_amount)}</td>
+                        <td className="px-4 py-2">{money(allocation.amount_with_tax)}</td>
+                        <td className="px-4 py-2">
                           {allocation.process_id ? (
                             <div className="space-y-1.5">
                               <select

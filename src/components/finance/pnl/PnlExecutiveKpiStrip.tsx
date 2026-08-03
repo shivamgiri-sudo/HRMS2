@@ -55,14 +55,17 @@ export function PnlExecutiveKpiStrip({ items, compact = false }: { items: Kpi[];
   return (
     <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
       {items.map((item) => {
-        const tone =
+        // Every tile shares the same flat white surface — only the left accent stripe and icon
+        // carry the tone, so a row of good/warning/danger/neutral tiles reads as one consistent
+        // set rather than a row of differently-colored cards.
+        const accent =
           item.tone === "good"
-            ? "border-emerald-200 bg-emerald-50/80"
+            ? "border-l-emerald-400"
             : item.tone === "warning"
-            ? "border-amber-200 bg-amber-50/80"
+            ? "border-l-amber-400"
             : item.tone === "danger"
-            ? "border-rose-200 bg-rose-50/80"
-            : "border-slate-200 bg-white/90";
+            ? "border-l-rose-400"
+            : "border-l-slate-300";
 
         const icon =
           item.tone === "good" ? (
@@ -70,7 +73,7 @@ export function PnlExecutiveKpiStrip({ items, compact = false }: { items: Kpi[];
           ) : item.tone === "danger" ? (
             <ArrowDownRight className="h-4 w-4 text-rose-600" />
           ) : (
-            <Minus className="h-4 w-4 text-slate-500" />
+            <Minus className="h-4 w-4 text-slate-400" />
           );
 
         const renderedValue =
@@ -81,15 +84,15 @@ export function PnlExecutiveKpiStrip({ items, compact = false }: { items: Kpi[];
             : formatNumber(item.value ?? 0);
 
         return (
-          <Card key={item.label} className={`overflow-hidden border ${tone} shadow-sm`}>
-            <CardContent className="space-y-3 p-4">
+          <Card key={item.label} className={`overflow-hidden border border-slate-200 border-l-4 ${accent} shadow-sm`}>
+            <CardContent className="space-y-2 p-4">
               <div className="flex items-center justify-between">
-                <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-slate-500">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">
                   {item.label}
                 </p>
                 {icon}
               </div>
-              <div className="text-2xl font-black tracking-tight text-slate-950">{renderedValue}</div>
+              <div className="text-2xl font-bold tracking-tight text-slate-950">{renderedValue}</div>
             </CardContent>
           </Card>
         );
