@@ -182,18 +182,31 @@ export async function getModuleAccessList(moduleName?: string): Promise<ModuleAc
  */
 export async function getEmployeesWithAccess(): Promise<EmployeeWithAccess[]> {
   const [employees] = await db.execute<RowDataPacket[]>(
+    // Three of this query's columns do not exist on `employees`, so it raised
+    // ER_BAD_FIELD_ERROR on every call and this endpoint returned 500:
+    //
+    //   e.designation  -> the table holds designation_id; the name lives on
+    //                     designation_master
+    //   e.branch_name  -> likewise branch_id -> branch_master
+    //   e.status       -> the column is employment_status, and its values are
+    //                     lowercase, so 'Active' would not have matched either
+    //
+    // Compared case-insensitively for the same reason as elsewhere here: nothing
+    // constrains the column's casing.
     `SELECT
       e.employee_code,
-      CONCAT(e.first_name, ' ', e.last_name) as employee_name,
-      e.designation,
-      e.branch_name as branch,
+      CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')) as employee_name,
+      dm.designation_name as designation,
+      bm.branch_name as branch,
       GROUP_CONCAT(DISTINCT mac.module_name ORDER BY mac.module_name SEPARATOR ',') as modules,
       COUNT(DISTINCT mac.module_name) as total_access
     FROM employees e
+    LEFT JOIN designation_master dm ON dm.id = e.designation_id
+    LEFT JOIN branch_master bm ON bm.id = e.branch_id
     LEFT JOIN module_access_control mac ON mac.employee_code = e.employee_code
       AND mac.has_access = TRUE AND mac.revoked_at IS NULL
-    WHERE e.status = 'Active'
-    GROUP BY e.employee_code, e.first_name, e.last_name, e.designation, e.branch_name
+    WHERE LOWER(COALESCE(e.employment_status, 'active')) = 'active'
+    GROUP BY e.employee_code, e.first_name, e.last_name, dm.designation_name, bm.branch_name
     HAVING total_access > 0
     ORDER BY total_access DESC, employee_name ASC`
   );
