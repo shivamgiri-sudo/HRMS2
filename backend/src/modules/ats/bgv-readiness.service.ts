@@ -7,7 +7,7 @@
 
 import { RowDataPacket } from 'mysql2';
 import { db } from '../../db/mysql.js';
-import { getBgvRequirementsByDesignation, BgvRequirements, isLateralHire, DOCUMENT_TYPE_MAPPINGS } from './bgv-config.js';
+import { getBgvRequirementsByDesignation, BgvRequirements, isLateralFromExperienceLabel, DOCUMENT_TYPE_MAPPINGS } from './bgv-config.js';
 
 export interface BgvCheck {
   check_type: string;
@@ -55,19 +55,18 @@ export async function checkBgvReadiness(
   const designationName = (designationRows[0] as any)?.designation_name ?? 'Unknown';
   const requirements = getBgvRequirementsByDesignation(designationName);
 
-  // Get candidate data to check if lateral hire
+  // Get candidate data to check if lateral hire.
+  //
+  // Reads `experience` — the only prior-employment column that exists. The
+  // previous query selected c.fresher, p.total_experience_years and
+  // p.previous_company, none of which are columns anywhere, so it threw
+  // ER_BAD_FIELD_ERROR every single time it ran. See
+  // isLateralFromExperienceLabel for what that error did to offer approvals.
   const [candidateRows] = await db.execute<RowDataPacket[]>(
-    `SELECT
-       c.fresher,
-       p.total_experience_years,
-       p.previous_company
-     FROM ats_candidate c
-     LEFT JOIN candidate_onboarding_profile p ON p.candidate_id = c.id
-     WHERE c.id = ? LIMIT 1`,
+    `SELECT c.experience FROM ats_candidate c WHERE c.id = ? LIMIT 1`,
     [candidateId]
   );
-  const candidateData = candidateRows[0] as any;
-  const lateral = isLateralHire(candidateData);
+  const lateral = isLateralFromExperienceLabel((candidateRows[0] as any)?.experience);
 
   // Get BGV checks
   const [checks] = await db.execute<RowDataPacket[]>(

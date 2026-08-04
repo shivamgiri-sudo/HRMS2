@@ -141,12 +141,32 @@ export async function getCandidateFullJourney(candidateId: string): Promise<Jour
   // ── INTERVIEW ──────────────────────────────────────────────────────────
   await source("Stage history", "ats_candidate_stage_log", async () => {
     // updated_by holds an employees.id from some writers and an auth user id
-    // from others, so join on both.
+    // from others, so both have to be tried — but as TWO joins, never as
+    // `ON e.id = s.updated_by OR e.user_id = s.updated_by`.
+    //
+    // Speed: an OR across two columns disqualifies both indexes. EXPLAIN
+    // degraded to type=ALL over all 57,498 employees, once per stage-log row —
+    // 8,087 ms for one candidate, most of the ~10 s the drawer took to open.
+    // Split across PRIMARY and idx_emp_user it returns in 12 ms.
+    //
+    // Correctness: the OR also FANNED OUT. 69 of the 1,746 stage rows with an
+    // actor match an employees.id AND a different employee's user_id, so the
+    // join emitted the same event twice under two different names. The dedupe
+    // at the bottom of this file collapsed them by source_record_id, keeping
+    // whichever row MySQL happened to return first — the duplicate was
+    // invisible, but which name won was luck.
+    //
+    // user_id is preferred deliberately. In every observed collision the
+    // id-match is a defunct seed row (ADMIN001, active_status=0) whose primary
+    // key equals the real person's auth user id, while the user_id match is
+    // their live record (MAS47814, active). Preferring user_id names the person
+    // who acted and preserves what the drawer shows today.
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT s.id, s.from_stage, s.to_stage, s.stage_date, s.created_at, s.remarks,
-              e.full_name AS actor_name
+              COALESCE(e_user.full_name, e_id.full_name) AS actor_name
          FROM ats_candidate_stage_log s
-         LEFT JOIN employees e ON e.id = s.updated_by OR e.user_id = s.updated_by
+         LEFT JOIN employees e_user ON e_user.user_id = s.updated_by
+         LEFT JOIN employees e_id   ON e_id.id = s.updated_by
         WHERE s.candidate_id = ?
         ORDER BY COALESCE(s.stage_date, s.created_at)`,
       [candidateId],
@@ -166,12 +186,15 @@ export async function getCandidateFullJourney(candidateId: string): Promise<Jour
   // 3 in ats_interview_result.
   await source("Interview rounds", "ats_interview_submission", async () => {
     const [rows] = await db.execute<RowDataPacket[]>(
+      // Two joins, not an OR — see the note on the stage-history query above.
+      // This one cost 1,057 ms as a single OR-join.
       `SELECT i.id, i.submitted_at, i.walkin_end_stage, i.final_decision,
               i.round1_result, i.round2_result, i.round3_result,
               i.interviewed_for_process, i.recruiter_code,
-              e.full_name AS actor_name
+              COALESCE(e_user.full_name, e_id.full_name) AS actor_name
          FROM ats_interview_submission i
-         LEFT JOIN employees e ON e.user_id = i.recruiter_user_id OR e.id = i.recruiter_user_id
+         LEFT JOIN employees e_user ON e_user.user_id = i.recruiter_user_id
+         LEFT JOIN employees e_id   ON e_id.id = i.recruiter_user_id
         WHERE i.candidate_id = ? ORDER BY i.submitted_at`,
       [candidateId],
     );
@@ -209,10 +232,15 @@ export async function getCandidateFullJourney(candidateId: string): Promise<Jour
 
   await source("Offer decisions", "ats_offer_approval", async () => {
     const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT a.id, a.action, a.remarks, a.action_at, e.full_name AS actor_name
+      // Two joins, not an OR — see the note on the stage-history query above.
+      // approver_id is written from req.authUser.id (ats.onboarding.routes.ts),
+      // so the user_id match is the intended one and is tried first.
+      `SELECT a.id, a.action, a.remarks, a.action_at,
+              COALESCE(e_user.full_name, e_id.full_name) AS actor_name
          FROM ats_offer_approval a
          JOIN ats_employment_offer o ON o.id = a.offer_id
-         LEFT JOIN employees e ON e.id = a.approver_id OR e.user_id = a.approver_id
+         LEFT JOIN employees e_user ON e_user.user_id = a.approver_id
+         LEFT JOIN employees e_id   ON e_id.id = a.approver_id
         WHERE o.candidate_id = ? ORDER BY a.action_at`,
       [candidateId],
     );
@@ -229,10 +257,15 @@ export async function getCandidateFullJourney(candidateId: string): Promise<Jour
   // ── PAYROLL ────────────────────────────────────────────────────────────
   await source("Payroll validation", "ats_payroll_hr_validation", async () => {
     const [rows] = await db.execute<RowDataPacket[]>(
+      // Two joins, not an OR. Both sides target employees.id here, but the OR
+      // still made the key unusable — 1,102 ms for one candidate. validated_by
+      // is preferred over payroll_hr_id, the order the OR resolved in.
       `SELECT p.id, p.validation_status, p.gross_salary, p.joining_date,
-              p.validated_at, p.created_at, e.full_name AS actor_name
+              p.validated_at, p.created_at,
+              COALESCE(e_val.full_name, e_hr.full_name) AS actor_name
          FROM ats_payroll_hr_validation p
-         LEFT JOIN employees e ON e.id = p.validated_by OR e.id = p.payroll_hr_id
+         LEFT JOIN employees e_val ON e_val.id = p.validated_by
+         LEFT JOIN employees e_hr  ON e_hr.id = p.payroll_hr_id
         WHERE p.candidate_id = ? ORDER BY COALESCE(p.validated_at, p.created_at)`,
       [candidateId],
     );
@@ -367,10 +400,12 @@ export async function getCandidateFullJourney(candidateId: string): Promise<Jour
   if (emp?.id) {
     await source("Provisioning tasks", "it_provisioning_request", async () => {
       const [rows] = await db.execute<RowDataPacket[]>(
+        // Two joins, not an OR — see the note on the stage-history query above.
         `SELECT r.id, r.task_code, r.assigned_role, r.status, r.requested_at, r.actioned_at,
-                e.full_name AS actor_name
+                COALESCE(e_user.full_name, e_id.full_name) AS actor_name
            FROM it_provisioning_request r
-           LEFT JOIN employees e ON e.id = r.actioned_by OR e.user_id = r.actioned_by
+           LEFT JOIN employees e_user ON e_user.user_id = r.actioned_by
+           LEFT JOIN employees e_id   ON e_id.id = r.actioned_by
           WHERE r.employee_id = ? ORDER BY r.requested_at`,
         [emp.id],
       );
