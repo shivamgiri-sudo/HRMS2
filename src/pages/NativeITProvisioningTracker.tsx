@@ -1309,22 +1309,24 @@ export default function NativeITProvisioningTracker() {
                           <span>Employee has not uploaded a profile photo. The ID card cannot be printed until a photo is available. Ask the employee to upload their photo from their Profile page first.</span>
                         </div>
                       )}
-                      <EmployeeIDCard
-                        employeeId={actionDialog.request!.employee_id}
-                        employeeCode={statCardData.employee_code}
-                        fullName={statCardData.full_name}
-                        designation={statCardData.designation_name ?? "—"}
-                        department={statCardData.dept_name ?? undefined}
-                        branchName={statCardData.branch_name ?? undefined}
-                        branchAddress={statCardData.branch_address || undefined}
-                        branchCity={statCardData.branch_city ?? undefined}
-                        branchState={statCardData.branch_state ?? undefined}
-                        hrContact={statCardData.branch_hr_contact || "hr@teammas.in"}
-                        photoUrl={statCardPhotoUrl ?? undefined}
-                        emergencyContact={statCardData.emergency_contact?.mobile ?? "Contact HR"}
-                        bloodGroup={statCardData.blood_group ?? "—"}
-                        printMode={false}
-                      />
+                      <div className="w-full max-h-[340px] overflow-y-auto rounded-lg border bg-muted/20">
+                        <EmployeeIDCard
+                          employeeId={actionDialog.request!.employee_id}
+                          employeeCode={statCardData.employee_code}
+                          fullName={statCardData.full_name}
+                          designation={statCardData.designation_name ?? "—"}
+                          department={statCardData.dept_name ?? undefined}
+                          branchName={statCardData.branch_name ?? undefined}
+                          branchAddress={statCardData.branch_address || undefined}
+                          branchCity={statCardData.branch_city ?? undefined}
+                          branchState={statCardData.branch_state ?? undefined}
+                          hrContact={statCardData.branch_hr_contact || "hr@teammas.in"}
+                          photoUrl={statCardPhotoUrl ?? undefined}
+                          emergencyContact={statCardData.emergency_contact?.mobile ?? "Contact HR"}
+                          bloodGroup={statCardData.blood_group ?? "—"}
+                          printMode={false}
+                        />
+                      </div>
                       <button
                         type="button"
                         onClick={() => window.print()}

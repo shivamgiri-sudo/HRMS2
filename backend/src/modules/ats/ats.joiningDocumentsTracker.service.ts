@@ -282,13 +282,14 @@ export async function getJoiningDocumentsTracker(
       SUM(CASE WHEN c.status LIKE '%needs_correction%' THEN 1 ELSE 0 END) AS needs_correction_count,
       SUM(CASE WHEN c.due_at < NOW() AND c.verification_status IS NULL THEN 1 ELSE 0 END) AS overdue_count,
       MAX(c.updated_at) AS last_document_update,
-      u.full_name AS assigned_hr_name
+      emp_hr.full_name AS assigned_hr_name
 
     FROM employees e
     LEFT JOIN branch_master b ON e.branch_id = b.id
     LEFT JOIN process_master p ON e.process_id = p.id
     LEFT JOIN employee_joining_document_checklist c ON e.id = c.employee_id
     LEFT JOIN auth_user u ON c.assigned_hr_user_id = u.id
+    LEFT JOIN employees emp_hr ON emp_hr.user_id = u.id
 
     WHERE ${whereSQL}
     GROUP BY e.id
