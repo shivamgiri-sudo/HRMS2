@@ -48,9 +48,12 @@ export default function NativeGRNManagement() {
     <DashboardLayout>
       {/* grn-scope carries this page's palette and IBM Plex face (src/styles/grn.css). The
           grn-* utilities used throughout the GRN components resolve to nothing outside it. */}
-      <div className="grn-scope flex h-full min-h-0 flex-col overflow-hidden">
-        <Tabs defaultValue="create" className="flex min-h-0 flex-1 flex-col">
-          <div className="mx-auto w-full max-w-[1360px] shrink-0">
+      {/* Document flow, not an app shell: the page scrolls inside the layout's #main-content-area
+          so the Create tab's action bar can actually stick. Any overflow ancestor here would
+          silently disable that. */}
+      <div className="grn-scope mx-auto w-full max-w-[1360px] pb-16">
+        <Tabs defaultValue="create">
+          <div>
             <nav className="mb-2.5 flex items-center gap-1.5 text-[11.5px] text-grn-ink-soft" aria-label="Breadcrumb">
               <Link to="/" className="hover:text-grn-brand">Home</Link>
               <span aria-hidden>›</span>
@@ -100,23 +103,19 @@ export default function NativeGRNManagement() {
             </TabsList>
           </div>
 
-          {/* Each tab still owns its own scroll for now. The page moves to document flow in the
-              next step, together with the LOB pane that depends on this height chain. */}
-          <TabsContent value="create" className="m-0 min-h-0 flex-1 overflow-auto p-0">
+          <TabsContent value="create" className="mt-4">
             <BudgetLinkedGrnForm />
           </TabsContent>
-          <TabsContent value="attribution" className="m-0 min-h-0 flex-1 overflow-hidden">
+          <TabsContent value="attribution" className="mt-4">
             <GrnLobAttributionQueue />
           </TabsContent>
           {canReview && (
-            <TabsContent value="queue" className="m-0 min-h-0 flex-1 overflow-hidden">
+            <TabsContent value="queue" className="mt-4">
               <SmartGrnApprovalQueue />
             </TabsContent>
           )}
-          <TabsContent value="history" className="m-0 min-h-0 flex-1 overflow-auto">
-            <div className="mx-auto w-full max-w-[1360px] py-4">
-              <GrnHistoryTable />
-            </div>
+          <TabsContent value="history" className="mt-4">
+            <GrnHistoryTable />
           </TabsContent>
         </Tabs>
       </div>

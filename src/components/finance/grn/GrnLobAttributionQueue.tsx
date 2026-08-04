@@ -1,21 +1,23 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import {
-  AlertTriangle,
-  CheckCircle2,
-  GitBranch,
-  Loader2,
-  RefreshCw,
-  Save,
-} from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { CheckCircle2, GitBranch, Loader2, RefreshCw, Save } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { StatusStamp } from "@/components/finance/grn/StatusStamp";
+import { dateLabel, money } from "@/components/finance/grn/grn-format";
+import {
+  GRN_TR,
+  GrnButton,
+  GrnCard,
+  GrnCardHeader,
+  GrnCellSub,
+  GrnEmptyState,
+  GrnIconButton,
+  GrnSelect,
+  GrnTable,
+  GrnTd,
+  GrnTh,
+} from "@/components/finance/grn/grn-ui";
 import { hrmsApi } from "@/lib/hrmsApi";
-
-const selectClass =
-  "flex h-9 w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring";
 
 interface PendingGrn {
   id: string;
@@ -67,29 +69,12 @@ function dataOf<T>(response: any): T {
   return (response?.data ?? response) as T;
 }
 
-function money(value: unknown) {
-  return new Intl.NumberFormat("en-IN", {
-    style: "currency",
-    currency: "INR",
-    maximumFractionDigits: 2,
-  }).format(Number(value ?? 0));
-}
-
-function dateLabel(value: unknown) {
-  const text = String(value ?? "").slice(0, 10);
-  if (!text) return "—";
-  return new Date(`${text}T00:00:00`).toLocaleDateString("en-IN", {
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-  });
-}
-
 export function GrnLobAttributionQueue() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [selectedGrnId, setSelectedGrnId] = useState("");
   const [selections, setSelections] = useState<Record<string, string>>( {} );
+  const selectedCardRef = useRef<HTMLButtonElement | null>(null);
 
   const pendingQuery = useQuery({
     queryKey: ["pending-grn-lob-attribution"],
@@ -106,6 +91,12 @@ export function GrnLobAttributionQueue() {
       setSelectedGrnId(pendingQuery.data[0].id);
     }
   }, [pendingQuery.data, selectedGrnId]);
+
+  // The list is capped at 520px and scrolls internally, so the GRN auto-selected after a save
+  // can easily be below the fold. Without this the queue looks like it did nothing.
+  useEffect(() => {
+    selectedCardRef.current?.scrollIntoView({ block: "nearest" });
+  }, [selectedGrnId]);
 
   const workspaceQuery = useQuery({
     queryKey: ["grn-lob-attribution-workspace", selectedGrnId],
@@ -167,6 +158,7 @@ export function GrnLobAttributionQueue() {
         queryClient.invalidateQueries({ queryKey: ["pending-grn-lob-attribution"] }),
         queryClient.invalidateQueries({ queryKey: ["grn-lob-attribution-workspace"] }),
         queryClient.invalidateQueries({ queryKey: ["smart-grn-workspace"] }),
+        queryClient.invalidateQueries({ queryKey: ["grn-summary"] }),
       ]);
       const remaining = pendingQuery.data?.filter((item) => item.id !== selectedGrnId) ?? [];
       setSelectedGrnId(remaining[0]?.id ?? "");
@@ -181,188 +173,191 @@ export function GrnLobAttributionQueue() {
   });
 
   return (
-    <div className="grid min-h-0 flex-1 gap-4 overflow-hidden p-4 lg:grid-cols-[360px_minmax(0,1fr)]">
-      <Card className="flex min-h-0 flex-col overflow-hidden">
-        <CardHeader className="border-b pb-3">
-          <div className="flex items-center justify-between gap-2">
-            <CardTitle className="flex items-center gap-2 text-sm">
-              <AlertTriangle className="h-4 w-4 text-amber-600" /> Pending attribution
-            </CardTitle>
-            <Button
-              size="sm"
-              variant="ghost"
+    <div className="grid items-start gap-4 min-[900px]:grid-cols-[320px_minmax(0,1fr)]">
+      <GrnCard>
+        <GrnCardHeader
+          title="Pending attribution"
+          description="Draft GRNs with process-linked allocation rows that do not yet have an exact LOB."
+          action={
+            <GrnIconButton
               onClick={() => void pendingQuery.refetch()}
               disabled={pendingQuery.isFetching}
+              title="Refresh"
+              aria-label="Refresh"
             >
-              <RefreshCw className={`h-4 w-4 ${pendingQuery.isFetching ? "animate-spin" : ""}`} />
-            </Button>
+              <RefreshCw className={`h-3.5 w-3.5 ${pendingQuery.isFetching ? "animate-spin" : ""}`} />
+            </GrnIconButton>
+          }
+        />
+        {pendingQuery.isLoading ? (
+          <div className="flex items-center justify-center py-12 text-[12.5px] text-grn-ink-soft">
+            <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Loading GRNs
           </div>
-          <p className="text-xs text-slate-500">
-            Draft GRNs with process-linked allocation rows that do not yet have an exact LOB.
-          </p>
-        </CardHeader>
-        <CardContent className="min-h-0 flex-1 overflow-y-auto p-2">
-          {pendingQuery.isLoading ? (
-            <div className="flex items-center justify-center py-12 text-sm text-slate-500">
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Loading GRNs
-            </div>
-          ) : (pendingQuery.data ?? []).length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-14 text-center">
-              <CheckCircle2 className="mb-3 h-9 w-9 text-emerald-500" />
-              <p className="font-semibold text-slate-800">No pending LOB mappings</p>
-              <p className="mt-1 text-xs text-slate-500">All process-linked draft allocations are attributed.</p>
-            </div>
-          ) : (
-            <div className="space-y-2">
-              {(pendingQuery.data ?? []).map((item) => (
+        ) : (pendingQuery.data ?? []).length === 0 ? (
+          <GrnEmptyState
+            icon={<CheckCircle2 className="h-9 w-9 text-grn-ok" />}
+            title="No pending LOB mappings"
+            description="All process-linked draft allocations are attributed."
+          />
+        ) : (
+          // Capped rather than full-height: the right pane grows with the page, and a list that
+          // grew with it would push the allocation table off screen.
+          <div className="flex max-h-[520px] flex-col gap-2 overflow-y-auto p-3.5">
+            {(pendingQuery.data ?? []).map((item) => {
+              const selected = selectedGrnId === item.id;
+              return (
                 <button
                   type="button"
                   key={item.id}
+                  ref={selected ? selectedCardRef : undefined}
                   onClick={() => setSelectedGrnId(item.id)}
-                  className={`w-full rounded-xl border p-3 text-left transition ${
-                    selectedGrnId === item.id
-                      ? "border-[#073f78] bg-[#eaf1fa]"
-                      : "border-slate-200 bg-white hover:border-[#073f78]/40 hover:bg-slate-50"
+                  className={`w-full rounded-[10px] border px-3 py-[11px] text-left transition-colors ${
+                    selected
+                      ? "border-grn-brand bg-grn-brand-soft"
+                      : "border-grn-line bg-grn-card hover:border-grn-brand"
                   }`}
                 >
                   <div className="flex items-start justify-between gap-2">
-                    <div>
-                      <p className="font-mono text-sm font-bold text-[#073f78]">{item.grn_number}</p>
-                      <p className="text-xs text-slate-500">{item.vendor_name || "Imprest / no vendor"}</p>
-                    </div>
+                    <span className="font-grn-mono text-[12.5px] font-bold text-grn-brand">{item.grn_number}</span>
                     <StatusStamp tone="warn">{item.missing_lob_count} missing</StatusStamp>
                   </div>
-                  <p className="mt-2 line-clamp-2 text-xs text-slate-600">{item.process_names || "Shared branch allocation"}</p>
-                  <div className="mt-2 flex items-center justify-between text-xs text-slate-500">
-                    <span>{dateLabel(item.bill_date)}</span>
-                    <span className="font-mono font-semibold text-slate-700">{money(item.amount_with_tax ?? item.amount)}</span>
-                  </div>
+                  <p className="mt-[3px] text-[11px] text-grn-ink-soft">
+                    {item.vendor_name || "Imprest / no vendor"}
+                  </p>
+                  <p className="mt-[3px] line-clamp-2 text-[11px] text-grn-ink-soft">
+                    {item.process_names || "Shared branch allocation"} · {dateLabel(item.bill_date)}
+                  </p>
+                  <p className="mt-1.5 font-grn-mono text-[12px] font-semibold text-grn-ink">
+                    {money(item.amount_with_tax ?? item.amount)}
+                  </p>
                 </button>
-              ))}
-            </div>
-          )}
-        </CardContent>
-      </Card>
+              );
+            })}
+          </div>
+        )}
+      </GrnCard>
 
-      <Card className="flex min-h-0 flex-col overflow-hidden">
+      <GrnCard>
         {!selectedGrnId ? (
-          <CardContent className="flex flex-1 flex-col items-center justify-center text-center">
-            <GitBranch className="mb-3 h-10 w-10 text-slate-400" />
-            <p className="font-semibold text-slate-800">Select a pending GRN</p>
-            <p className="mt-1 max-w-md text-sm text-slate-500">
-              Map each process-linked budget allocation to the correct LOB.
-            </p>
-          </CardContent>
+          <GrnEmptyState
+            icon={<GitBranch className="h-9 w-9" />}
+            title="Select a pending GRN"
+            description="Map each process-linked budget allocation to the correct LOB."
+          />
         ) : workspaceQuery.isLoading ? (
-          <CardContent className="flex flex-1 items-center justify-center text-sm text-slate-500">
+          <div className="flex items-center justify-center py-16 text-[12.5px] text-grn-ink-soft">
             <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Loading allocation workspace
-          </CardContent>
+          </div>
         ) : workspace ? (
           <>
-            <CardHeader className="border-b pb-3">
-              <div className="flex flex-col justify-between gap-3 md:flex-row md:items-start">
-                <div>
-                  <CardTitle className="font-mono text-base text-[#073f78]">{workspace.grn.grn_number}</CardTitle>
-                  <p className="mt-1 text-sm text-slate-500">
-                    {workspace.grn.vendor_name || "Imprest / no vendor"} · {workspace.grn.branch_name || "Branch unavailable"}
-                  </p>
-                  <p className="mt-1 text-xs text-slate-500">
-                    Recognition reference date: {dateLabel(workspace.effectiveDate)}
-                  </p>
+            <GrnCardHeader
+              title={<span className="font-grn-mono text-grn-brand">{workspace.grn.grn_number}</span>}
+              description={
+                <>
+                  {workspace.grn.vendor_name || "Imprest / no vendor"} ·{" "}
+                  {workspace.grn.branch_name || "Branch unavailable"} · recognition date{" "}
+                  {dateLabel(workspace.effectiveDate)}
+                </>
+              }
+              action={
+                <div className="text-right">
+                  <div className="font-grn-mono text-[15px] font-bold text-grn-ink">
+                    {money(workspace.grn.amount_with_tax ?? workspace.grn.amount)}
+                  </div>
+                  <GrnCellSub>Gross amount</GrnCellSub>
                 </div>
-                <div className="text-left md:text-right">
-                  <p className="font-mono text-lg font-bold text-slate-950">{money(workspace.grn.amount_with_tax ?? workspace.grn.amount)}</p>
-                  <p className="text-xs text-slate-500">GRN gross amount</p>
-                </div>
-              </div>
-            </CardHeader>
-            <CardContent className="min-h-0 flex-1 overflow-auto p-0">
-              <table className="w-full min-w-[1000px] text-sm">
-                <thead className="sticky top-0 z-10 bg-slate-50 text-left text-[11px] uppercase tracking-wide text-slate-500">
-                  <tr>
-                    <th className="px-4 py-2">#</th>
-                    <th className="px-4 py-2">Budget item</th>
-                    <th className="px-4 py-2">Process / cost centre</th>
-                    <th className="px-4 py-2">P&amp;L cost</th>
-                    <th className="px-4 py-2">Gross</th>
-                    <th className="px-4 py-2">LOB attribution</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y">
-                  {workspace.allocations.map((allocation) => {
-                    const options = workspace.lobs.filter(
-                      (lob) => lob.process_id === allocation.process_id
-                    );
-                    return (
-                      <tr key={allocation.id} className="align-top hover:bg-slate-50/70">
-                        <td className="px-4 py-2 font-mono text-xs text-slate-500">{allocation.sequence_no}</td>
-                        <td className="px-4 py-2">
-                          <p className="font-semibold text-slate-900">{allocation.item_name}</p>
-                          <p className="mt-1 text-xs text-slate-500">
-                            {allocation.head}{allocation.sub_head ? ` / ${allocation.sub_head}` : ""}
-                          </p>
-                        </td>
-                        <td className="px-4 py-2">
-                          <p className="font-medium text-slate-800">{allocation.process_name || "Shared branch cost"}</p>
-                          <p className="mt-1 text-xs text-slate-500">{allocation.cost_centre_name || "No cost centre"}</p>
-                        </td>
-                        <td className="px-4 py-2 font-semibold">{money(allocation.pnl_cost_amount)}</td>
-                        <td className="px-4 py-2">{money(allocation.amount_with_tax)}</td>
-                        <td className="px-4 py-2">
-                          {allocation.process_id ? (
-                            <div className="space-y-1.5">
-                              <select
-                                className={selectClass}
-                                value={selections[allocation.id] ?? ""}
-                                onChange={(event) => setSelections((current) => ({
-                                  ...current,
-                                  [allocation.id]: event.target.value,
-                                }))}
-                              >
-                                <option value="">Select exact LOB</option>
-                                {options.map((lob) => (
-                                  <option key={lob.id} value={lob.id}>
-                                    {lob.lob_code} — {lob.lob_name}
-                                  </option>
-                                ))}
-                              </select>
-                              {!options.length ? (
-                                <p className="text-xs font-medium text-rose-600">
-                                  No approved effective LOB exists for this process.
-                                </p>
-                              ) : null}
-                            </div>
-                          ) : (
-                            <StatusStamp tone="neutral">Shared branch pool</StatusStamp>
-                          )}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </CardContent>
-            <div className="flex items-center justify-between gap-3 border-t bg-white p-4">
-              <p className={`text-sm ${unresolved.length ? "text-amber-700" : "text-emerald-700"}`}>
+              }
+            />
+            <GrnTable minWidth={960}>
+              <thead>
+                <tr>
+                  <GrnTh sticky={false}>#</GrnTh>
+                  <GrnTh sticky={false}>Budget item</GrnTh>
+                  <GrnTh sticky={false}>Process / cost centre</GrnTh>
+                  <GrnTh sticky={false} align="right">P&amp;L cost</GrnTh>
+                  <GrnTh sticky={false} align="right">Gross</GrnTh>
+                  <GrnTh sticky={false}>LOB attribution</GrnTh>
+                </tr>
+              </thead>
+              <tbody>
+                {workspace.allocations.map((allocation) => {
+                  const options = workspace.lobs.filter(
+                    (lob) => lob.process_id === allocation.process_id
+                  );
+                  return (
+                    <tr key={allocation.id} className={GRN_TR}>
+                      <GrnTd className="font-grn-mono text-grn-ink-soft">{allocation.sequence_no}</GrnTd>
+                      <GrnTd>
+                        <p className="font-semibold">{allocation.item_name}</p>
+                        <GrnCellSub>
+                          {allocation.head}{allocation.sub_head ? ` / ${allocation.sub_head}` : ""}
+                        </GrnCellSub>
+                      </GrnTd>
+                      <GrnTd>
+                        <p className="font-semibold">{allocation.process_name || "Shared branch cost"}</p>
+                        <GrnCellSub>{allocation.cost_centre_name || "No cost centre"}</GrnCellSub>
+                      </GrnTd>
+                      <GrnTd align="right" className="font-semibold">{money(allocation.pnl_cost_amount)}</GrnTd>
+                      <GrnTd align="right">{money(allocation.amount_with_tax)}</GrnTd>
+                      <GrnTd className="min-w-[240px]">
+                        {allocation.process_id ? (
+                          <div className="space-y-1.5">
+                            <GrnSelect
+                              small
+                              className="w-full"
+                              value={selections[allocation.id] ?? ""}
+                              aria-label={`LOB for ${allocation.item_name}`}
+                              onChange={(event) => setSelections((current) => ({
+                                ...current,
+                                [allocation.id]: event.target.value,
+                              }))}
+                            >
+                              <option value="">Select exact LOB</option>
+                              {options.map((lob) => (
+                                <option key={lob.id} value={lob.id}>
+                                  {lob.lob_code} — {lob.lob_name}
+                                </option>
+                              ))}
+                            </GrnSelect>
+                            {!options.length ? (
+                              <p className="text-[10.5px] font-semibold text-grn-crit">
+                                No approved effective LOB exists for this process.
+                              </p>
+                            ) : null}
+                          </div>
+                        ) : (
+                          <StatusStamp tone="neutral">Shared branch pool</StatusStamp>
+                        )}
+                      </GrnTd>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </GrnTable>
+            {/* Pinned to the viewport bottom while the card is taller than it: with the page in
+                document flow a long allocation table would otherwise push Save out of reach. */}
+            <div className="sticky bottom-0 flex items-center justify-between gap-3 border-t border-grn-line-soft bg-grn-card px-4 py-3">
+              <p className={`text-[11.5px] font-semibold ${unresolved.length ? "text-grn-warn" : "text-grn-ok"}`}>
                 {unresolved.length
                   ? `${unresolved.length} process-linked allocation(s) still require a LOB.`
                   : "All process-linked allocations are ready."}
               </p>
-              <Button
+              <GrnButton
+                variant="primary"
                 disabled={saveMutation.isPending || unresolved.length > 0}
                 onClick={() => saveMutation.mutate()}
               >
-                {saveMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
+                {saveMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
                 Save attribution
-              </Button>
+              </GrnButton>
             </div>
           </>
         ) : (
-          <CardContent className="flex flex-1 items-center justify-center text-sm text-rose-600">
+          <div className="px-4 py-16 text-center text-[12.5px] font-semibold text-grn-crit">
             The selected GRN attribution workspace could not be loaded.
-          </CardContent>
+          </div>
         )}
-      </Card>
+      </GrnCard>
     </div>
   );
 }

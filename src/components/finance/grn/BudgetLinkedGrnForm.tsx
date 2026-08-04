@@ -1052,7 +1052,9 @@ export function BudgetLinkedGrnForm() {
     <div className="flex h-full flex-col bg-slate-50/60">
       {/* Header — sticky on every size; actions move to a bottom bar on phones. Contained card
        *  (not a full-bleed bar) to match the rest of the page's card language. */}
-      <div className="sticky top-0 z-20 shrink-0 px-3 pt-3 md:px-4 md:pt-4">
+      {/* top offset, not top-0: the page now scrolls in #main-content-area, whose first 64px are
+       *  the layout's own sticky TopBar (z-30). At top-0 this bar parks underneath it. */}
+      <div className="sticky top-[var(--topbar-height)] z-20 shrink-0 px-3 pt-3 md:px-4 md:pt-4">
         <div className="rounded-xl border border-slate-200 bg-white px-4 py-2.5">
           <div className="flex items-center justify-between gap-4">
             {totalStrip}
