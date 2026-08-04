@@ -15,6 +15,8 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from "recharts";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { useUserRole } from "@/hooks/useUserRole";
+import { DashboardLevelSummary, type HeroTile } from "@/components/dashboards/DashboardLevelSummary";
+import { DashboardInsights, computeOpsInsights } from "@/components/dashboards/DashboardInsights";
 
 interface OperationsApiNode {
   id: string;
@@ -77,7 +79,7 @@ async function fetchOperationsLevel(level: DrillLevel, parentId: string | null):
   const res = await hrmsApi.get<{ success: boolean; data: OperationsApiResponse }>(
     `/api/operations-dashboard-v2/summary?${params.toString()}`,
   );
-  return { ...res.data, nodes: res.data.nodes.map(toDrillNode) };
+  return { ...res.data, nodes: res.data.nodes.map(toDrillNode), raw: res.data.nodes };
 }
 
 interface AttendanceDay {
@@ -219,22 +221,39 @@ function SelfOperationsScorecard({ employeeId }: { employeeId: string }) {
 
 const SELF_ONLY_ROLES = new Set(["employee", "agent", "trainee"]);
 
+function operationsHeroTiles(nodes: OperationsApiNode[]): HeroTile[] {
+  const headcount = nodes.reduce((s, n) => s + n.headcount, 0);
+  const withRate = nodes.filter((n) => n.presentRatePct !== null);
+  const avgPresent = withRate.length
+    ? Math.round((withRate.reduce((s, n) => s + (n.presentRatePct ?? 0) * n.headcount, 0) / withRate.reduce((s, n) => s + n.headcount, 0)) * 10) / 10
+    : null;
+  const withAbsent = nodes.filter((n) => n.absentRatePct !== null);
+  const avgAbsent = withAbsent.length
+    ? Math.round((withAbsent.reduce((s, n) => s + (n.absentRatePct ?? 0) * n.headcount, 0) / withAbsent.reduce((s, n) => s + n.headcount, 0)) * 10) / 10
+    : null;
+  return [
+    { label: nodes.length === 1 ? "Headcount" : "Headcount (combined)", value: headcount.toLocaleString() },
+    { label: "Avg present", value: avgPresent !== null ? `${avgPresent}%` : "—", tone: presentTone(avgPresent) },
+    { label: "Avg absent", value: avgAbsent !== null ? `${avgAbsent}%` : "—", tone: avgAbsent !== null && avgAbsent > 20 ? "bad" : "neutral" },
+    { label: nodes.length === 1 ? "In view" : "Shown here", value: String(nodes.length) },
+  ];
+}
+
 export default function OperationsDashboard() {
   const { data: roleData } = useUserRole();
   const [selectedAnalyst, setSelectedAnalyst] = useState<DrillNode | null>(null);
+  const [levelData, setLevelData] = useState<DrillLevelResponse | null>(null);
   const isSelfOnly = !!roleData?.primaryRole && SELF_ONLY_ROLES.has(roleData.primaryRole);
+
+  const rawNodes = (levelData?.raw as OperationsApiNode[] | undefined) ?? [];
+  const levelNoun = levelData ? { branch: "branch", process: "process", team: "team", analyst: "analyst" }[levelData.level] : "branch";
 
   return (
     <DashboardLayout
       subheader={
         <div className="flex items-center gap-2">
           <Activity className="h-5 w-5 text-primary" />
-          <div>
-            <p className="font-semibold">Operations</p>
-            <p className="text-xs text-muted-foreground">
-              Attendance &amp; punctuality from <span className="font-medium">attendance_daily_record</span> — last 30 days
-            </p>
-          </div>
+          <p className="font-semibold">Operations</p>
         </div>
       }
     >
@@ -242,17 +261,31 @@ export default function OperationsDashboard() {
         {isSelfOnly && roleData?.employeeId ? (
           <SelfOperationsScorecard employeeId={roleData.employeeId} />
         ) : (
-          <DrillDownDashboardShell
-            queryKeyPrefix="operations-dashboard-v2"
-            accentClassName="from-sky-500/10 via-primary/5 to-transparent"
-            fetchLevel={fetchOperationsLevel}
-            onSelectAnalyst={setSelectedAnalyst}
-            headerRight={
-              <Badge variant="outline" className="gap-1.5">
-                <Clock className="h-3 w-3" /> Attendance &amp; punctuality <TrendingUp className="h-3 w-3" />
-              </Badge>
-            }
-          />
+          <div className="space-y-6">
+            <DashboardLevelSummary
+              title="Operations"
+              subtitle={
+                <>Attendance &amp; punctuality from <span className="font-medium">attendance_daily_record</span> — last {levelData?.rangeDays ?? 30} days</>
+              }
+              heroTiles={rawNodes.length > 0 ? operationsHeroTiles(rawNodes) : []}
+              chartData={rawNodes.map((n) => ({ name: n.name, value: n.presentRatePct }))}
+              chartTitle={`Present rate by ${levelNoun}`}
+              chartValueSuffix="%"
+            />
+            {rawNodes.length > 0 && <DashboardInsights data={computeOpsInsights(rawNodes, levelNoun)} />}
+            <DrillDownDashboardShell
+              queryKeyPrefix="operations-dashboard-v2"
+              accentClassName="from-sky-500/10 via-primary/5 to-transparent"
+              fetchLevel={fetchOperationsLevel}
+              onSelectAnalyst={setSelectedAnalyst}
+              onData={setLevelData}
+              headerRight={
+                <Badge variant="outline" className="gap-1.5">
+                  <Clock className="h-3 w-3" /> Attendance &amp; punctuality <TrendingUp className="h-3 w-3" />
+                </Badge>
+              }
+            />
+          </div>
         )}
       </div>
 

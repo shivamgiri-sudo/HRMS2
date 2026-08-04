@@ -15,6 +15,8 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { useUserRole } from "@/hooks/useUserRole";
+import { DashboardLevelSummary, type HeroTile } from "@/components/dashboards/DashboardLevelSummary";
+import { DashboardInsights, computeQualityInsights } from "@/components/dashboards/DashboardInsights";
 
 interface QualityApiNode {
   id: string;
@@ -66,7 +68,7 @@ async function fetchQualityLevel(level: DrillLevel, parentId: string | null): Pr
   const res = await hrmsApi.get<{ success: boolean; data: QualityApiResponse }>(
     `/api/quality-dashboard-v2/summary?${params.toString()}`,
   );
-  return { ...res.data, nodes: res.data.nodes.map(toDrillNode) };
+  return { ...res.data, nodes: res.data.nodes.map(toDrillNode), raw: res.data.nodes };
 }
 
 interface AnalystCall {
@@ -204,23 +206,36 @@ function SelfQualityScorecard({ employeeId }: { employeeId: string }) {
 
 const SELF_ONLY_ROLES = new Set(["employee", "agent", "trainee"]);
 
+function qualityHeroTiles(nodes: QualityApiNode[]): HeroTile[] {
+  const agentCount = nodes.reduce((s, n) => s + n.agentCount, 0);
+  const callsAudited = nodes.reduce((s, n) => s + n.callsAudited, 0);
+  const scored = nodes.filter((n) => n.avgQualityPct !== null);
+  const avg = scored.length
+    ? Math.round((scored.reduce((s, n) => s + (n.avgQualityPct ?? 0) * n.callsAudited, 0) / scored.reduce((s, n) => s + n.callsAudited, 0)) * 10) / 10
+    : null;
+  return [
+    { label: nodes.length === 1 ? "Agents" : "Agents (combined)", value: agentCount.toLocaleString() },
+    { label: "Calls audited", value: callsAudited.toLocaleString() },
+    { label: "Avg quality", value: avg !== null ? `${avg}%` : "—", tone: qualityTone(avg) },
+    { label: nodes.length === 1 ? "In view" : "Shown here", value: String(nodes.length) },
+  ];
+}
+
 export default function QualityDashboard() {
   const { data: roleData } = useUserRole();
   const [selectedAnalyst, setSelectedAnalyst] = useState<DrillNode | null>(null);
+  const [levelData, setLevelData] = useState<DrillLevelResponse | null>(null);
   const isSelfOnly = !!roleData?.primaryRole && SELF_ONLY_ROLES.has(roleData.primaryRole);
+
+  const rawNodes = (levelData?.raw as QualityApiNode[] | undefined) ?? [];
+  const levelNoun = levelData ? { branch: "branch", process: "process", team: "team", analyst: "analyst" }[levelData.level] : "branch";
 
   return (
     <DashboardLayout
       subheader={
         <div className="flex items-center gap-2">
           <ShieldCheck className="h-5 w-5 text-primary" />
-          <div>
-            <p className="font-semibold">Quality</p>
-            <p className="text-xs text-muted-foreground">
-              Call quality scored from {" "}
-              <span className="font-medium">db_audit.call_quality_assessment</span> — last 30 days
-            </p>
-          </div>
+          <p className="font-semibold">Quality</p>
         </div>
       }
     >
@@ -228,17 +243,31 @@ export default function QualityDashboard() {
         {isSelfOnly && roleData?.employeeId ? (
           <SelfQualityScorecard employeeId={roleData.employeeId} />
         ) : (
-          <DrillDownDashboardShell
-            queryKeyPrefix="quality-dashboard-v2"
-            accentClassName="from-emerald-500/10 via-primary/5 to-transparent"
-            fetchLevel={fetchQualityLevel}
-            onSelectAnalyst={setSelectedAnalyst}
-            headerRight={
-              <Badge variant="outline" className="gap-1.5">
-                <PhoneCall className="h-3 w-3" /> Live call audits <TrendingUp className="h-3 w-3" />
-              </Badge>
-            }
-          />
+          <div className="space-y-6">
+            <DashboardLevelSummary
+              title="Quality"
+              subtitle={
+                <>Call quality scored from <span className="font-medium">db_audit.call_quality_assessment</span> — last {levelData?.rangeDays ?? 30} days</>
+              }
+              heroTiles={rawNodes.length > 0 ? qualityHeroTiles(rawNodes) : []}
+              chartData={rawNodes.map((n) => ({ name: n.name, value: n.avgQualityPct }))}
+              chartTitle={`Avg quality by ${levelNoun}`}
+              chartValueSuffix="%"
+            />
+            {rawNodes.length > 0 && <DashboardInsights data={computeQualityInsights(rawNodes, levelNoun)} />}
+            <DrillDownDashboardShell
+              queryKeyPrefix="quality-dashboard-v2"
+              accentClassName="from-emerald-500/10 via-primary/5 to-transparent"
+              fetchLevel={fetchQualityLevel}
+              onSelectAnalyst={setSelectedAnalyst}
+              onData={setLevelData}
+              headerRight={
+                <Badge variant="outline" className="gap-1.5">
+                  <PhoneCall className="h-3 w-3" /> Live call audits <TrendingUp className="h-3 w-3" />
+                </Badge>
+              }
+            />
+          </div>
         )}
       </div>
 
