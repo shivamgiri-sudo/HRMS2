@@ -2,6 +2,7 @@
 @import url('https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600;700&family=Fira+Sans:wght@300;400;500;600;700&display=swap');
 @import "./styles/smarthr-tokens.css";
 @import "./styles/hrms-design-system.css";
+@import "./styles/grn.css";
 
 @tailwind base;
 @tailwind components;

@@ -57,6 +57,34 @@ export default {
   				'accent-foreground': 'hsl(var(--sidebar-accent-foreground))',
   				border: 'hsl(var(--sidebar-border))',
   				ring: 'hsl(var(--sidebar-ring))'
+  			},
+  			/* GRN Management (/finance/grn) only. Backed by the CSS variables in
+  			 * src/styles/grn.css, which are scoped to `.grn-scope` — these utilities
+  			 * resolve to nothing outside that wrapper, which is intentional. Channel
+  			 * triplets so `/15`-style opacity modifiers keep working. */
+  			grn: {
+  				ink: 'rgb(var(--grn-ink) / <alpha-value>)',
+  				'ink-soft': 'rgb(var(--grn-ink-soft) / <alpha-value>)',
+  				paper: 'rgb(var(--grn-paper) / <alpha-value>)',
+  				card: 'rgb(var(--grn-card) / <alpha-value>)',
+  				line: 'rgb(var(--grn-line) / <alpha-value>)',
+  				'line-soft': 'rgb(var(--grn-line-soft) / <alpha-value>)',
+  				brand: 'rgb(var(--grn-brand) / <alpha-value>)',
+  				'brand-ink': 'rgb(var(--grn-brand-ink) / <alpha-value>)',
+  				'brand-soft': 'rgb(var(--grn-brand-soft) / <alpha-value>)',
+  				'brand-soft2': 'rgb(var(--grn-brand-soft2) / <alpha-value>)',
+  				ok: 'rgb(var(--grn-ok) / <alpha-value>)',
+  				'ok-bg': 'rgb(var(--grn-ok-bg) / <alpha-value>)',
+  				'ok-line': 'rgb(var(--grn-ok-line) / <alpha-value>)',
+  				warn: 'rgb(var(--grn-warn) / <alpha-value>)',
+  				'warn-bg': 'rgb(var(--grn-warn-bg) / <alpha-value>)',
+  				'warn-line': 'rgb(var(--grn-warn-line) / <alpha-value>)',
+  				crit: 'rgb(var(--grn-crit) / <alpha-value>)',
+  				'crit-bg': 'rgb(var(--grn-crit-bg) / <alpha-value>)',
+  				'crit-line': 'rgb(var(--grn-crit-line) / <alpha-value>)',
+  				info: 'rgb(var(--grn-info) / <alpha-value>)',
+  				'info-bg': 'rgb(var(--grn-info-bg) / <alpha-value>)',
+  				'info-line': 'rgb(var(--grn-info-line) / <alpha-value>)'
   			}
   		},
   		borderRadius: {
@@ -117,6 +145,18 @@ export default {
   				'Times New Roman',
   				'Times',
   				'serif'
+  			],
+  			/* GRN Management only. `mono` below resolves to Space Mono, which is
+  			 * loaded nowhere in this app, so `font-mono` silently falls through to
+  			 * ui-monospace. IBM Plex Mono IS loaded (index.html) — this gives the GRN
+  			 * page its numerals without changing `font-mono` for every other page. */
+  			'grn-mono': [
+  				'IBM Plex Mono',
+  				'ui-monospace',
+  				'SFMono-Regular',
+  				'Menlo',
+  				'Consolas',
+  				'monospace'
   			],
   			mono: [
   				'Space Mono',

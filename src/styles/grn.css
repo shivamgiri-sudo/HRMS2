@@ -1,0 +1,70 @@
+/* ── GRN Management (/finance/grn) — page-scoped design tokens ────────────────
+ *
+ * The palette of the approved redesign artifact, verbatim. Scoped to `.grn-scope`
+ * rather than :root so it cannot leak into the rest of HRMS, which runs on the
+ * shadcn/slate token set defined in index.css.
+ *
+ * Values are RGB channel triplets, not hex, because tailwind.config.ts wraps each
+ * one as `rgb(var(--grn-x) / <alpha-value>)`. That is what keeps Tailwind's opacity
+ * modifiers working — `ring-grn-brand/15`, `hover:border-grn-brand/40` — which a
+ * full-colour var() silently breaks.
+ *
+ * Adding dark mode later is one `.dark .grn-scope { … }` block here and nothing
+ * else, for the plain-element parts of the page. The Radix pieces the page still
+ * uses (Sheet, Tabs, SearchableSelect) follow the app's own tokens and would need
+ * their own pass.
+ */
+
+.grn-scope {
+  /* Text */
+  --grn-ink: 10 31 61;          /* #0a1f3d */
+  --grn-ink-soft: 91 100 114;   /* #5b6472 */
+
+  /* Surfaces */
+  --grn-paper: 245 246 248;     /* #f5f6f8 — page background, inset fields */
+  --grn-card: 255 255 255;      /* #ffffff */
+  --grn-line: 226 230 236;      /* #e2e6ec — card borders, table header rule */
+  --grn-line-soft: 237 240 243; /* #edf0f3 — card headers, row hairlines, row hover */
+
+  /* Brand */
+  --grn-brand: 7 63 120;        /* #073f78 */
+  --grn-brand-ink: 5 44 86;     /* #052c56 — hover/pressed */
+  --grn-brand-soft: 234 241 250;/* #eaf1fa */
+  --grn-brand-soft2: 219 232 246;/* #dbe8f6 */
+
+  /* Status tones — each is text / background / border */
+  --grn-ok: 15 122 77;          /* #0f7a4d */
+  --grn-ok-bg: 232 246 238;     /* #e8f6ee */
+  --grn-ok-line: 191 227 207;   /* #bfe3cf */
+
+  --grn-warn: 165 104 12;       /* #a5680c */
+  --grn-warn-bg: 251 241 222;   /* #fbf1de */
+  --grn-warn-line: 238 207 148; /* #eecf94 */
+
+  --grn-crit: 178 58 58;        /* #b23a3a */
+  --grn-crit-bg: 251 234 234;   /* #fbeaea */
+  --grn-crit-line: 239 195 195; /* #efc3c3 */
+
+  --grn-info: 107 79 160;       /* #6b4fa0 */
+  --grn-info-bg: 241 236 249;   /* #f1ecf9 */
+  --grn-info-line: 217 204 237; /* #d9cced */
+
+  /* The artifact's body rules. IBM Plex Sans/Mono are fetched in index.html; the
+   * rest of the app stays on Inter, so this must not move to :root. */
+  font-family: "IBM Plex Sans", var(--font-sans, ui-sans-serif), sans-serif;
+  font-variant-numeric: tabular-nums;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* GrnFieldRow's label/control split. It lives here rather than as a Tailwind class because the
+ * label column width is a prop (--grn-label-w) and the two-column rule is behind a media query —
+ * neither can be expressed in an inline style. Below 768px the row stacks. */
+.grn-field-row {
+  display: grid;
+}
+
+@media (min-width: 768px) {
+  .grn-field-row {
+    grid-template-columns: var(--grn-label-w, 170px) minmax(0, 1fr);
+  }
+}
