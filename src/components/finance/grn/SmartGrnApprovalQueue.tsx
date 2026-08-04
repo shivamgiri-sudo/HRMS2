@@ -9,7 +9,6 @@ import {
   FileText,
   Loader2,
   RefreshCw,
-  Search,
   Send,
   ShieldCheck,
   Split,
@@ -18,7 +17,6 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
   Select,
@@ -29,9 +27,30 @@ import {
 } from "@/components/ui/select";
 import { Sheet, SheetContent, SheetFooter, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { StatusStamp, type StampTone } from "@/components/finance/grn/StatusStamp";
+import {
+  dateLabel,
+  grnStatusTone,
+  labelStatus,
+  money,
+} from "@/components/finance/grn/grn-format";
+import {
+  GRN_TR,
+  GrnButton,
+  GrnCard,
+  GrnCardHeader,
+  GrnChip,
+  GrnEmptyState,
+  GrnIconButton,
+  GrnSearchInput,
+  GrnSelect,
+  GrnTable,
+  GrnTd,
+  GrnTh,
+} from "@/components/finance/grn/grn-ui";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
+import { useGrnSummary } from "@/hooks/useGrnSummary";
 import { hrmsApi } from "@/lib/hrmsApi";
 
 type GrnRow = {
@@ -79,35 +98,6 @@ const STATUS_TABS = [
   ["rejected", "Rejected"],
   ["cancelled", "Cancelled"],
 ] as const;
-
-function labelStatus(value: string) {
-  return value.replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
-}
-
-function grnStatusTone(status: string): StampTone {
-  if (["paid", "approved", "pending_accounts_payment", "partially_paid"].includes(status)) return "ok";
-  if (["rejected", "cancelled"].includes(status)) return "crit";
-  if (["submitted", "branch_head_approved"].includes(status)) return "warn";
-  return "neutral";
-}
-
-function money(value: unknown) {
-  return new Intl.NumberFormat("en-IN", {
-    style: "currency",
-    currency: "INR",
-    maximumFractionDigits: 2,
-  }).format(Number(value ?? 0));
-}
-
-function date(value: unknown) {
-  if (!value) return "—";
-  return new Date(String(value)).toLocaleDateString("en-IN", {
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-    timeZone: "Asia/Kolkata",
-  });
-}
 
 function tone(value: string) {
   if (["passed", "completed", "matched", "overridden", "cleared"].includes(value)) {
@@ -172,6 +162,10 @@ export function SmartGrnApprovalQueue() {
   });
   const capabilities = capabilitiesQuery.data;
 
+  // Per-status counts for the filter chips. Aggregated server-side, so a chip's number is the
+  // true total rather than however many of that status happened to fit in the 100-row list.
+  const summary = useGrnSummary().data;
+
   const listQuery = useQuery({
     queryKey: ["grn-list", status, grnType, search],
     queryFn: async () => {
@@ -210,6 +204,8 @@ export function SmartGrnApprovalQueue() {
     onSuccess: () => {
       toast({ title: "GRN submitted to Branch Head" });
       void queryClient.invalidateQueries({ queryKey: ["grn-list"] });
+      // Chip counts and the page header read the summary aggregate, not this list.
+      void queryClient.invalidateQueries({ queryKey: ["grn-summary"] });
     },
     onError: (error: Error) =>
       toast({ title: "Submission failed", description: error.message, variant: "destructive" }),
@@ -226,6 +222,8 @@ export function SmartGrnApprovalQueue() {
       setTarget(null);
       setReviewNote("");
       void queryClient.invalidateQueries({ queryKey: ["grn-list"] });
+      // Chip counts and the page header read the summary aggregate, not this list.
+      void queryClient.invalidateQueries({ queryKey: ["grn-summary"] });
     },
     onError: (error: Error) =>
       toast({ title: "Review failed", description: error.message, variant: "destructive" }),
@@ -236,6 +234,8 @@ export function SmartGrnApprovalQueue() {
     onSuccess: () => {
       toast({ title: "GRN cancelled" });
       void queryClient.invalidateQueries({ queryKey: ["grn-list"] });
+      // Chip counts and the page header read the summary aggregate, not this list.
+      void queryClient.invalidateQueries({ queryKey: ["grn-summary"] });
     },
     onError: (error: Error) =>
       toast({ title: "Cancellation failed", description: error.message, variant: "destructive" }),
@@ -299,136 +299,129 @@ export function SmartGrnApprovalQueue() {
   const rows = listQuery.data ?? [];
 
   return (
-    <div className="space-y-5">
-      {/* Header + filters */}
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-        <div>
-          <h2 className="text-base font-bold text-slate-950">GRN Approval &amp; Control Queue</h2>
-          <p className="mt-1 text-xs text-slate-500">Inspect documents, allocation splits, duplicate matches and server validation before approval.</p>
+    <>
+      <GrnCard>
+        <GrnCardHeader
+          title="GRN Approval & Control Queue"
+          description="Inspect documents, allocation splits, duplicate matches and server validation before approval."
+        />
+
+        <div className="flex flex-wrap items-center gap-2 px-4 py-3">
+          <GrnSearchInput
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            // Names what the API actually searches — grn_number, vendor_name, head, description.
+            // Branch is not a searchable column, so promising it would be a lie.
+            placeholder="Search GRN, vendor, head or description"
+          />
+          <GrnSelect small value={grnType} onChange={(e) => setGrnType(e.target.value)} aria-label="GRN type">
+            <option value="_all">All types</option>
+            <option value="vendor">Vendor</option>
+            <option value="imprest">Imprest</option>
+          </GrnSelect>
+          <GrnIconButton onClick={() => void listQuery.refetch()} title="Refresh" aria-label="Refresh">
+            <RefreshCw className={`h-3.5 w-3.5 ${listQuery.isFetching ? "animate-spin" : ""}`} />
+          </GrnIconButton>
         </div>
-        <div className="flex flex-wrap gap-2">
-          <div className="relative">
-            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-            <Input className="w-56 pl-9" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search GRN, vendor, Head…" />
+
+        <div className="flex flex-wrap gap-1.5 border-b border-grn-line-soft px-4 pb-3">
+          {STATUS_TABS.map(([value, label]) => (
+            <GrnChip
+              key={value}
+              active={status === value}
+              onClick={() => setStatus(value)}
+              // Counts come from the summary aggregate, so they reflect every matching GRN
+              // rather than whatever fitted in the 100-row list response.
+              count={value === "_all" ? undefined : summary?.byStatus[value]?.count}
+            >
+              {label}
+            </GrnChip>
+          ))}
+        </div>
+
+        {listQuery.isLoading ? (
+          <div className="flex justify-center py-20">
+            <Loader2 className="h-7 w-7 animate-spin text-grn-ink-soft" />
           </div>
-          <Select value={grnType} onValueChange={setGrnType}>
-            <SelectTrigger className="w-36"><SelectValue /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="_all">All types</SelectItem>
-              <SelectItem value="vendor">Vendor</SelectItem>
-              <SelectItem value="imprest">Imprest</SelectItem>
-            </SelectContent>
-          </Select>
-          <Button variant="outline" size="icon" onClick={() => void listQuery.refetch()}>
-            <RefreshCw className={`h-4 w-4 ${listQuery.isFetching ? "animate-spin" : ""}`} />
-          </Button>
-        </div>
-      </div>
-
-      {/* Status pills */}
-      <div className="flex flex-wrap gap-1.5">
-        {STATUS_TABS.map(([value, label]) => (
-          <button
-            type="button"
-            key={value}
-            onClick={() => setStatus(value)}
-            className={`rounded-full border px-3 py-1.5 text-xs font-semibold transition-colors ${status === value ? "border-[#073f78] bg-[#073f78] text-white" : "border-slate-200 bg-white text-slate-600 hover:border-[#073f78]/40 hover:text-[#073f78]"}`}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
-
-      {/* Queue table — compact 8-column layout */}
-      {listQuery.isLoading ? (
-        <div className="flex justify-center rounded-3xl border border-slate-200 bg-white py-20">
-          <Loader2 className="h-7 w-7 animate-spin" />
-        </div>
-      ) : !rows.length ? (
-        <div className="rounded-3xl border border-slate-200 bg-white py-16 text-center">
-          <FileText className="mx-auto h-10 w-10 text-slate-300" />
-          <p className="mt-3 text-sm font-semibold text-slate-700">No GRNs match the filters</p>
-        </div>
-      ) : (
-        <div className="overflow-x-auto rounded-3xl border border-slate-200 bg-white shadow-sm">
-          <table className="w-full text-xs">
-            <thead className="sticky top-0 bg-white">
-              <tr className="border-b">
-                <th className="h-8 px-3 text-left font-medium text-slate-500 w-[110px]">GRN</th>
-                <th className="h-8 px-3 text-left font-medium text-slate-500">Type</th>
-                <th className="h-8 px-3 text-left font-medium text-slate-500">Branch</th>
-                <th className="h-8 px-3 text-left font-medium text-slate-500">Vendor</th>
-                <th className="h-8 px-3 text-right font-medium text-slate-500">Amount</th>
-                <th className="h-8 px-3 text-left font-medium text-slate-500">Due</th>
-                <th className="h-8 px-3 text-left font-medium text-slate-500">Status</th>
-                <th className="h-8 px-3 text-left font-medium text-slate-500">Review</th>
+        ) : !rows.length ? (
+          <GrnEmptyState icon={<FileText className="h-9 w-9" />} title="No GRNs match the filters" />
+        ) : (
+          <GrnTable minWidth={980}>
+            <thead>
+              <tr>
+                <GrnTh sticky={false} className="w-[120px]">GRN</GrnTh>
+                <GrnTh sticky={false}>Type</GrnTh>
+                <GrnTh sticky={false}>Branch</GrnTh>
+                <GrnTh sticky={false}>Vendor</GrnTh>
+                <GrnTh sticky={false} align="right">Amount</GrnTh>
+                <GrnTh sticky={false}>Due</GrnTh>
+                <GrnTh sticky={false}>Status</GrnTh>
+                <GrnTh sticky={false} />
               </tr>
             </thead>
             <tbody>
               {rows.map((row) => (
                 <tr
                   key={row.id}
-                  className="h-9 border-b hover:bg-slate-50 cursor-pointer"
+                  className={`${GRN_TR} cursor-pointer`}
                   onClick={() => { setTarget(row); setDecision("approved"); setReviewNote(""); setOverrideCode(null); setOverrideReason(""); }}
                 >
-                  <td className="px-3 py-1 font-mono text-xs font-bold text-[#073f78]">{row.grn_number}</td>
-                  <td className="px-3 py-1">
-                    <Badge variant="outline" className="text-xs capitalize">{row.grn_type}</Badge>
-                  </td>
-                  <td className="px-3 py-1 truncate max-w-[100px]">
+                  <GrnTd className="font-grn-mono font-bold text-grn-brand">{row.grn_number}</GrnTd>
+                  <GrnTd>
+                    <StatusStamp tone="neutral">{row.grn_type}</StatusStamp>
+                  </GrnTd>
+                  <GrnTd className="max-w-[140px] truncate">
                     <span className="inline-flex items-center gap-1.5">
-                      <Building2 className="h-3 w-3 text-slate-400 shrink-0" />
+                      <Building2 className="h-3 w-3 shrink-0 text-grn-ink-soft" />
                       {row.branch_name ?? row.branch_id}
                     </span>
-                  </td>
-                  <td className="px-3 py-1 truncate max-w-[100px]">{row.vendor_name ?? (row.grn_type === "imprest" ? "Imprest" : "—")}</td>
-                  <td className="px-3 py-1 text-right font-mono font-medium">{money(row.amount_with_tax ?? row.amount)}</td>
-                  <td className="px-3 py-1">{row.due_date ? date(row.due_date) : "—"}</td>
-                  <td className="px-3 py-1">
+                  </GrnTd>
+                  <GrnTd className="max-w-[160px] truncate">
+                    {row.vendor_name ?? (row.grn_type === "imprest" ? "Imprest" : "—")}
+                  </GrnTd>
+                  <GrnTd align="right" className="font-semibold">{money(row.amount_with_tax ?? row.amount)}</GrnTd>
+                  <GrnTd>{row.due_date ? dateLabel(row.due_date) : "—"}</GrnTd>
+                  <GrnTd>
                     <StatusStamp tone={grnStatusTone(row.status)}>{labelStatus(row.status)}</StatusStamp>
-                  </td>
-                  <td className="px-3 py-1">
-                    <div className="flex gap-1">
-                      <Button
+                  </GrnTd>
+                  <GrnTd>
+                    <div className="flex justify-end gap-1.5">
+                      <GrnButton
+                        variant="primary"
                         size="sm"
-                        variant="ghost"
-                        className="h-6 px-2 text-xs"
                         onClick={(e) => { e.stopPropagation(); setTarget(row); setDecision("approved"); setReviewNote(""); setOverrideCode(null); setOverrideReason(""); }}
                       >
                         Review
-                      </Button>
+                      </GrnButton>
+                      {/* Not in the redesign mock, but a real capability: a draft only leaves the
+                          branch when someone submits it. */}
                       {row.status === "draft" && capabilities?.canCreate && (
-                        <Button
-                          size="sm"
-                          className="h-6 px-2 text-xs"
+                        <GrnIconButton
+                          title="Submit to Branch Head"
+                          aria-label="Submit to Branch Head"
                           onClick={(e) => { e.stopPropagation(); submitMutation.mutate(row.id); }}
                         >
-                          <Send className="h-3 w-3" />
-                        </Button>
+                          <Send className="h-3.5 w-3.5" />
+                        </GrnIconButton>
                       )}
                       {["draft", "submitted"].includes(row.status) && capabilities?.canCreate && (
-                        <Button
-                          size="icon"
-                          variant="ghost"
-                          className="h-6 w-6 text-rose-500"
+                        <GrnIconButton
+                          title="Cancel this GRN"
+                          aria-label="Cancel this GRN"
+                          className="hover:border-grn-crit hover:text-grn-crit"
                           onClick={(e) => { e.stopPropagation(); cancelMutation.mutate(row.id); }}
                         >
                           <XCircle className="h-3.5 w-3.5" />
-                        </Button>
+                        </GrnIconButton>
                       )}
                     </div>
-                  </td>
+                  </GrnTd>
                 </tr>
               ))}
-              {rows.length === 0 && (
-                <tr>
-                  <td colSpan={8} className="py-8 text-center text-slate-400">No GRNs in queue</td>
-                </tr>
-              )}
             </tbody>
-          </table>
-        </div>
-      )}
+          </GrnTable>
+        )}
+      </GrnCard>
 
       {/* Tabbed Sheet — replaces the 1180px Dialog */}
       <Sheet open={Boolean(target)} onOpenChange={(open) => !open && setTarget(null)}>
@@ -726,6 +719,6 @@ export function SmartGrnApprovalQueue() {
           </SheetFooter>
         </SheetContent>
       </Sheet>
-    </div>
+    </>
   );
 }
