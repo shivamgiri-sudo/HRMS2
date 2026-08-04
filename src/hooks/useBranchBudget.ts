@@ -436,6 +436,34 @@ export function useBranchBudgets(filters: {
   return { budgetsQuery, saveBudget, submitBudget, reviewBudget, reviewerReviseBudget, deleteBudget };
 }
 
+export interface PriorMirrorLine {
+  head: string;
+  subHead: string;
+  amount: number;
+}
+
+/**
+ * The previous month's budget from the db_bill mirror, for months that were never created in the
+ * workspace. July 2026 is the case in hand: it exists only as a mirrored snapshot, so the
+ * Prev/Variance columns read zero and Copy-forward stays disabled against a month that does have
+ * a budget.
+ *
+ * Only enabled when there is no workspace budget for that month — the workspace copy is always
+ * the better source when it exists, because it is what was actually approved here.
+ */
+export function usePriorBudgetMirror(period?: string | null, branchId?: string | null, enabled = true) {
+  return useQuery({
+    queryKey: ["branch-budget-prior-mirror", period, branchId],
+    enabled: Boolean(enabled && period && branchId),
+    queryFn: async () => {
+      const response = await hrmsApi.get<{ success: boolean; data: PriorMirrorLine[] }>(
+        `/api/finance/pnl/budgets/prior-mirror${queryString({ period: period ?? undefined, branchId: branchId ?? undefined })}`
+      );
+      return response.data;
+    },
+  });
+}
+
 export function useBranchBudgetDetail(id?: string | null) {
   return useQuery({
     queryKey: ["branch-budget-detail", id],

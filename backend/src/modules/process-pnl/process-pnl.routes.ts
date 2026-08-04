@@ -117,6 +117,35 @@ router.get(
 );
 
 router.get(
+  "/pnl/budgets/prior-mirror",
+  requireRole(...BUDGET_READ_ROLES),
+  h(async (req, res) => {
+    /*
+     * The previous month's budget, for the workspace's Prev/Variance columns and Copy-forward,
+     * when that month exists only in the db_bill mirror. Read-only and branch-scoped through the
+     * same resolveFinanceBranchScope every other budget read uses, so a branch user cannot read
+     * another branch's budget through the mirror any more than through the workspace.
+     *
+     * Declared BEFORE /pnl/budgets/:id — Express matches in order, and ":id" would otherwise
+     * swallow "prior-mirror" and try to load a budget with that id.
+     */
+    const user = actor(req);
+    const branchId = await resolveFinanceBranchScope({
+      userId: user.id,
+      primaryRole: user.role,
+      userRoles: user.roles,
+      requestedBranchId: req.query.branchId ? String(req.query.branchId) : undefined,
+    });
+    if (!branchId || !req.query.period) {
+      res.json({ success: true, data: [] });
+      return;
+    }
+    const data = await branchBudgetService.getPriorBudgetFromMirror(String(req.query.period), branchId);
+    res.json({ success: true, data });
+  })
+);
+
+router.get(
   "/pnl/budgets/consolidation",
   requireRole(...BUDGET_CONSOLIDATION_ROLES),
   h(async (req, res) => {

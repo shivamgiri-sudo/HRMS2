@@ -2,6 +2,7 @@ import { randomUUID } from "crypto";
 import type { ResultSetHeader, RowDataPacket } from "mysql2";
 import type { PoolConnection } from "mysql2/promise";
 import { db } from "../../db/mysql.js";
+import { tableExists } from "../../shared/dbHelpers.js";
 import {
   computeLineAllocations,
   getLineAllocations,
@@ -697,7 +698,71 @@ async function replaceBudgetLines(
   }
 }
 
+/**
+ * Last month's budget for a branch, read from the db_bill mirror.
+ *
+ * The workspace's Prev/Variance columns and its Copy-forward button both read the PREVIOUS
+ * month's budget out of finance_budget_header. For July 2026 there is no such row — the July
+ * budget was only ever mirrored from db_bill into finance_budget_snapshot — so the Copy button
+ * sits disabled and the Variance column reads zero against a month that really does have a
+ * budget. This supplies that month from the mirror, read-only: nothing here creates a budget,
+ * changes a status, or touches GRN.
+ *
+ * THREE THINGS THE MIRROR WILL GET WRONG IF COPIED NAIVELY
+ * -------------------------------------------------------
+ * 1. Every amount is stored TWICE, once as expense_type 'CostCenter' and once as 'Particular'
+ *    (July: 101 rows and Rs 81.52 lakh under each). Summing both doubles the budget. We take
+ *    'CostCenter', which carries the real cost-centre code; 'Particular' holds free text such
+ *    as "mannual".
+ * 2. head_id and sub_head_id are drawn from SEPARATE id sequences that collide —
+ *    bill_source_id '000001' is both the head "Communication & Connectivity" and the sub-head
+ *    "Performance Incentives". Joining on the id alone fans every row out threefold and pairs
+ *    heads with unrelated sub-heads ("Tea, Coffee & Refreshment / Office Rent"). Both joins are
+ *    therefore qualified by head_type.
+ * 3. Branch is matched by NAME, and branch_master holds three rows for Head Office ("HEAD
+ *    OFFICE" twice plus "Head Office"). Joining outward from the mirror would triple it, so the
+ *    lookup runs the other way: the caller's branch id resolves to a name, and mirror rows are
+ *    filtered to it.
+ *
+ * Keys are `head|sub_head` lower-cased, matching how the workspace builds priorByKey, because
+ * saveDraft replaces the line set with fresh UUIDs on every save and ids cannot be matched.
+ */
+export async function getPriorBudgetFromMirror(
+  periodCode: string,
+  branchId: string,
+): Promise<{ head: string; subHead: string; amount: number }[]> {
+  if (!/^\d{4}-\d{2}$/.test(periodCode) || !branchId) return [];
+  for (const table of ["finance_budget_snapshot", "finance_budget_line_snapshot", "finance_expense_head_snapshot"]) {
+    if (!(await tableExists(table))) return [];
+  }
+
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT hh.head_name AS head, sh.head_name AS sub_head, SUM(l.amount) AS amount
+       FROM finance_budget_line_snapshot l
+       JOIN finance_budget_snapshot b
+         ON b.bill_source_id = l.budget_source_id AND b.period_code = l.period_code
+       JOIN branch_master bm
+         ON UPPER(TRIM(bm.branch_name)) COLLATE utf8mb4_unicode_ci
+          = UPPER(TRIM(b.branch_name)) COLLATE utf8mb4_unicode_ci
+       LEFT JOIN finance_expense_head_snapshot hh
+              ON hh.bill_source_id = l.head_id AND hh.head_type = 'head'
+       LEFT JOIN finance_expense_head_snapshot sh
+              ON sh.bill_source_id = l.sub_head_id AND sh.head_type = 'subhead'
+      WHERE l.period_code = ? AND bm.id = ? AND l.expense_type = 'CostCenter'
+        AND hh.head_name IS NOT NULL
+      GROUP BY hh.head_name, sh.head_name`,
+    [periodCode, branchId],
+  );
+
+  return rows.map((r) => ({
+    head: String(r.head),
+    subHead: r.sub_head ? String(r.sub_head) : "",
+    amount: Number(r.amount ?? 0),
+  }));
+}
+
 export const branchBudgetService = {
+  getPriorBudgetFromMirror,
   async list(filters: { period?: string; branchId?: string; status?: string }) {
     const where: string[] = [];
     const params: unknown[] = [];

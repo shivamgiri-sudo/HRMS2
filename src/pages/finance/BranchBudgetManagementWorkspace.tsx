@@ -46,6 +46,7 @@ import {
   type MonthlyDriverInput,
   useBranchBudgetAllocations,
   useBranchBudgetDetail,
+  usePriorBudgetMirror,
   useBranchBudgetGradeDrivers,
   useBranchBudgetMeters,
   useBranchBudgets,
@@ -414,14 +415,27 @@ export default function BranchBudgetManagementWorkspace() {
   const priorList = useBranchBudgets({ period: priorPeriod, branchId: branchId || undefined });
   const priorBudgetId = priorList.budgetsQuery.data?.[0]?.id ?? null;
   const priorDetail = useBranchBudgetDetail(priorBudgetId);
+  // July 2026 exists only in the db_bill mirror, never as a workspace budget, so the Prev/Var
+  // columns read zero and Copy-forward stays disabled against a month that does have a budget.
+  // Only fetched when the workspace has no budget for that month — an approved workspace budget
+  // is always the better source, being what was actually signed off here.
+  const priorMirror = usePriorBudgetMirror(priorPeriod, branchId || undefined, !priorBudgetId);
   const priorByKey = useMemo(() => {
     const map = new Map<string, number>();
-    (priorDetail.data?.lines ?? []).forEach((l) => {
-      const key = `${l.head}|${(l.sub_head ?? (l as any).subHead ?? "").toLowerCase()}`;
-      map.set(key, (map.get(key) ?? 0) + Number(l.gross_amount ?? 0));
+    const workspaceLines = priorDetail.data?.lines ?? [];
+    if (workspaceLines.length > 0) {
+      workspaceLines.forEach((l) => {
+        const key = `${l.head}|${(l.sub_head ?? (l as any).subHead ?? "").toLowerCase()}`;
+        map.set(key, (map.get(key) ?? 0) + Number(l.gross_amount ?? 0));
+      });
+      return map;
+    }
+    (priorMirror.data ?? []).forEach((l) => {
+      const key = `${l.head}|${(l.subHead ?? "").toLowerCase()}`;
+      map.set(key, (map.get(key) ?? 0) + Number(l.amount ?? 0));
     });
     return map;
-  }, [priorDetail.data]);
+  }, [priorDetail.data, priorMirror.data]);
   // Actual-vs-planned by Head/Sub-head: every line already carries its own reserved/consumed
   // amount (populated as GRNs are branch-head/finance-head approved against it), just never
   // grouped and surfaced above the single-line level anywhere in this workspace. Reuses
