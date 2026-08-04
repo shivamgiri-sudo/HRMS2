@@ -1122,3 +1122,95 @@ export function managerResignationNoticeEmail(data: ManagerResignationNoticeData
 </body>
 </html>`;
 }
+
+// ─── Festival Greeting ────────────────────────────────────────────────────────
+
+export interface FestivalGreetingData {
+  festivalName: string;
+  emoji: string;
+  greetingBody: string;       // plain-text body from festival_calendar
+  recipientName?: string;     // if sending to a specific employee; blank = all-staff
+}
+
+export function festivalGreetingEmail(data: FestivalGreetingData): string {
+  const MCN_LOGO = `<img src="https://mcnhrms.teammas.in/mcn-logo.png" width="120" height="40" alt="MAS Callnet" style="display:block;max-width:120px;height:auto" />`;
+  const salutation = data.recipientName ? `Dear ${data.recipientName},` : "Dear Team,";
+
+  // Pick gradient based on festival name for variety
+  const name = data.festivalName.toLowerCase();
+  let gradient = "linear-gradient(135deg,#073f78 0%,#1B6AB5 60%,#3BAD49 100%)";
+  let accentColor = "#073f78";
+  if (name.includes("diwali") || name.includes("deepawali")) {
+    gradient = "linear-gradient(135deg,#92400e 0%,#d97706 50%,#fbbf24 100%)";
+    accentColor = "#92400e";
+  } else if (name.includes("holi")) {
+    gradient = "linear-gradient(135deg,#7c3aed 0%,#e8231a 40%,#16a34a 70%,#d97706 100%)";
+    accentColor = "#7c3aed";
+  } else if (name.includes("eid") || name.includes("ramadan")) {
+    gradient = "linear-gradient(135deg,#065f46 0%,#059669 60%,#34d399 100%)";
+    accentColor = "#065f46";
+  } else if (name.includes("christmas")) {
+    gradient = "linear-gradient(135deg,#14532d 0%,#16a34a 50%,#dc2626 100%)";
+    accentColor = "#14532d";
+  } else if (name.includes("new year")) {
+    gradient = "linear-gradient(135deg,#1e1b4b 0%,#4f46e5 50%,#818cf8 100%)";
+    accentColor = "#1e1b4b";
+  } else if (name.includes("independence") || name.includes("republic")) {
+    gradient = "linear-gradient(135deg,#ff6600 0%,#ffffff 50%,#138808 100%)";
+    accentColor = "#ff6600";
+  } else if (name.includes("ganesh") || name.includes("navratri") || name.includes("dussehra")) {
+    gradient = "linear-gradient(135deg,#7c2d12 0%,#ea580c 50%,#fbbf24 100%)";
+    accentColor = "#7c2d12";
+  }
+
+  // HTML-encode the greeting body (newlines → <br>)
+  const bodyHtml = data.greetingBody
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/\n/g, "<br>");
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <style>
+    body{margin:0;padding:0;background:#f0f4f8;font-family:'Segoe UI',Arial,sans-serif}
+    .wrap{max-width:600px;margin:32px auto;background:#fff;border-radius:16px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,.10)}
+    .hero{background:${gradient};padding:48px 32px 40px;text-align:center}
+    .emoji-big{font-size:72px;line-height:1;display:block;margin-bottom:12px}
+    .festival-name{font-size:28px;font-weight:800;color:#fff;letter-spacing:.5px;margin:0 0 6px}
+    .festival-sub{font-size:14px;color:rgba(255,255,255,.8);margin:0}
+    .logo-wrap{margin:0 auto 16px;display:block;text-align:center}
+    .body{padding:36px 32px 28px}
+    .salutation{font-size:16px;color:#1e293b;margin:0 0 16px;font-weight:600}
+    .message{font-size:15px;color:#374151;line-height:1.7;margin:0 0 28px}
+    .divider{border:none;border-top:1px solid #e2e8f0;margin:0 0 24px}
+    .tagline{font-size:13px;color:#64748b;text-align:center;margin:0 0 8px}
+    .footer{background:#f8fafc;border-top:1px solid #e2e8f0;padding:20px 32px;text-align:center}
+    .footer-logo{margin:0 auto 8px}
+    .footer-text{font-size:11px;color:#94a3b8;margin:0}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="hero">
+      <div class="logo-wrap">${MCN_LOGO}</div>
+      <span class="emoji-big">${data.emoji}</span>
+      <h1 class="festival-name">${data.festivalName}</h1>
+      <p class="festival-sub">From the MAS Callnet Family</p>
+    </div>
+    <div class="body">
+      <p class="salutation">${salutation}</p>
+      <p class="message">${bodyHtml}</p>
+      <hr class="divider" />
+      <p class="tagline">Warm wishes from the entire <strong style="color:${accentColor}">MAS Callnet</strong> leadership &amp; HR team.</p>
+    </div>
+    <div class="footer">
+      <p class="footer-text">This is an automated festive greeting from MAS Callnet HRMS.</p>
+    </div>
+  </div>
+</body>
+</html>`;
+}
