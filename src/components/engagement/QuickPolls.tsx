@@ -50,7 +50,7 @@ function PollCard({ poll }: { poll: PollWithResults }) {
   const voteMutation = useMutation({
     mutationFn: async (option: number) => {
       const res = await hrmsApi.post<{ data: { alreadyVoted: boolean; pointsAwarded: number; poll: PollWithResults } }>(
-        `/engagement/polls/${localPoll.id}/vote`,
+        `/api/engagement/polls/${localPoll.id}/vote`,
         { selectedOption: option }
       );
       return res.data;
@@ -153,7 +153,7 @@ export function QuickPolls({ compact = false }: { compact?: boolean }) {
   const { data: polls, isLoading, error } = useQuery<PollWithResults[]>({
     queryKey: ["quick-polls"],
     queryFn: async () => {
-      const res = await hrmsApi.get<{ data: PollWithResults[] }>("/engagement/polls");
+      const res = await hrmsApi.get<{ data: PollWithResults[] }>("/api/engagement/polls");
       return res.data ?? [];
     },
     staleTime: 30_000,

@@ -62,7 +62,7 @@ export function DailyRewardClaim({ compact = false }: { compact?: boolean }) {
   const { data: status, isLoading } = useQuery<StreakStatus>({
     queryKey: ["daily-login-status"],
     queryFn: async () => {
-      const res = await hrmsApi.get<{ data: StreakStatus }>("/engagement/daily-login/status");
+      const res = await hrmsApi.get<{ data: StreakStatus }>("/api/engagement/daily-login/status");
       return res.data;
     },
     staleTime: 30_000,
@@ -70,7 +70,7 @@ export function DailyRewardClaim({ compact = false }: { compact?: boolean }) {
 
   const claimMutation = useMutation({
     mutationFn: async () => {
-      const res = await hrmsApi.post<{ data: ClaimResult }>("/engagement/daily-login/claim");
+      const res = await hrmsApi.post<{ data: ClaimResult }>("/api/engagement/daily-login/claim");
       return res.data;
     },
     onSuccess: (data) => {

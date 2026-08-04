@@ -87,7 +87,7 @@ export function DailyTrivia({ compact = false }: { compact?: boolean }) {
   const { data, isLoading, error } = useQuery<TodayTriviaResult | null>({
     queryKey: ["daily-trivia-today"],
     queryFn: async () => {
-      const res = await hrmsApi.get<{ data: TodayTriviaResult | null }>("/engagement/trivia/today");
+      const res = await hrmsApi.get<{ data: TodayTriviaResult | null }>("/api/engagement/trivia/today");
       return res.data;
     },
     staleTime: 60_000,
@@ -109,7 +109,7 @@ export function DailyTrivia({ compact = false }: { compact?: boolean }) {
     mutationFn: async (option: string) => {
       if (timerRef.current) clearInterval(timerRef.current);
       const timeTaken = Math.floor((Date.now() - startedAt.current) / 1000);
-      const res = await hrmsApi.post<{ data: AnswerResult }>("/engagement/trivia/answer", {
+      const res = await hrmsApi.post<{ data: AnswerResult }>("/api/engagement/trivia/answer", {
         questionId: data!.question.id,
         selectedOption: option,
         timeTakenSeconds: timeTaken,

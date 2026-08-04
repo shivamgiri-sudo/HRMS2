@@ -84,7 +84,7 @@ export function WordPuzzle({ compact = false }: { compact?: boolean }) {
   const { data, isLoading, error } = useQuery<TodayPuzzleResult | null>({
     queryKey: ["word-puzzle-today"],
     queryFn: async () => {
-      const res = await hrmsApi.get<{ data: TodayPuzzleResult | null }>("/engagement/word-puzzle/today");
+      const res = await hrmsApi.get<{ data: TodayPuzzleResult | null }>("/api/engagement/word-puzzle/today");
       return res.data;
     },
     staleTime: 60_000,
@@ -106,7 +106,7 @@ export function WordPuzzle({ compact = false }: { compact?: boolean }) {
 
   const submitMutation = useMutation({
     mutationFn: async (guess: string) => {
-      const res = await hrmsApi.post<{ data: SubmitGuessResult }>("/engagement/word-puzzle/guess", {
+      const res = await hrmsApi.post<{ data: SubmitGuessResult }>("/api/engagement/word-puzzle/guess", {
         puzzleId: data!.puzzle.id,
         guess,
       });

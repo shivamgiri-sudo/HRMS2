@@ -98,7 +98,7 @@ export function BrainTeaser({ compact = false }: { compact?: boolean }) {
   const { data, isLoading, error } = useQuery<TodayTeaserResult | null>({
     queryKey: ["brain-teaser-today"],
     queryFn: async () => {
-      const res = await hrmsApi.get<{ data: TodayTeaserResult | null }>("/engagement/brain-teaser/today");
+      const res = await hrmsApi.get<{ data: TodayTeaserResult | null }>("/api/engagement/brain-teaser/today");
       return res.data;
     },
     staleTime: 60_000,
@@ -118,7 +118,7 @@ export function BrainTeaser({ compact = false }: { compact?: boolean }) {
 
   const hintMutation = useMutation({
     mutationFn: async (hintNumber: 1 | 2) => {
-      const res = await hrmsApi.post<{ data: HintResult }>("/engagement/brain-teaser/hint", {
+      const res = await hrmsApi.post<{ data: HintResult }>("/api/engagement/brain-teaser/hint", {
         teaserId: data!.teaser.id,
         hintNumber,
       });
@@ -137,7 +137,7 @@ export function BrainTeaser({ compact = false }: { compact?: boolean }) {
     mutationFn: async (ans: string) => {
       if (timerRef.current) clearInterval(timerRef.current);
       const timeTaken = Math.floor((Date.now() - startedAt.current) / 1000);
-      const res = await hrmsApi.post<{ data: SubmitResult }>("/engagement/brain-teaser/answer", {
+      const res = await hrmsApi.post<{ data: SubmitResult }>("/api/engagement/brain-teaser/answer", {
         teaserId: data!.teaser.id,
         submittedAnswer: ans,
         timeTakenSecs: timeTaken,

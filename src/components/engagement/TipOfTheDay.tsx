@@ -65,7 +65,7 @@ export function TipOfTheDay({ compact = false }: { compact?: boolean }) {
   const { data, isLoading, error } = useQuery<TipReadStatus | null>({
     queryKey: ["daily-tip-today"],
     queryFn: async () => {
-      const res = await hrmsApi.get<{ data: TipReadStatus | null }>("/engagement/tips/today");
+      const res = await hrmsApi.get<{ data: TipReadStatus | null }>("/api/engagement/tips/today");
       return res.data;
     },
     staleTime: 60_000,
@@ -73,7 +73,7 @@ export function TipOfTheDay({ compact = false }: { compact?: boolean }) {
 
   const markReadMutation = useMutation({
     mutationFn: async (tipId: string) => {
-      const res = await hrmsApi.post<{ data: ReadTipResult }>(`/engagement/tips/${tipId}/read`);
+      const res = await hrmsApi.post<{ data: ReadTipResult }>(`/api/engagement/tips/${tipId}/read`);
       return res.data;
     },
     onSuccess: () => {
