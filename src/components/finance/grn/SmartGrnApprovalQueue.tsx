@@ -276,7 +276,7 @@ export function SmartGrnApprovalQueue() {
           description="Inspect documents, allocation splits, duplicate matches and server validation before approval."
         />
 
-        <div className="flex flex-wrap items-center gap-2 px-4 py-3">
+        <div className="flex flex-wrap items-center gap-2 px-[16px] py-[12px]">
           <GrnSearchInput
             value={search}
             onChange={(e) => setSearch(e.target.value)}
@@ -397,7 +397,7 @@ export function SmartGrnApprovalQueue() {
       <Sheet open={Boolean(target)} onOpenChange={(open) => !open && setTarget(null)}>
         {/* Full width below 560px — a fixed 560 overflowed the viewport on a phone. */}
         <SheetContent side="right" className="flex w-full flex-col gap-0 p-0 sm:w-[560px] sm:max-w-[560px]">
-          <SheetHeader className="border-b border-grn-line bg-grn-line-soft px-4 py-3">
+          <SheetHeader className="border-b border-grn-line bg-grn-line-soft px-[16px] py-[12px]">
             <SheetTitle className="font-grn-mono text-[13px] font-bold text-grn-brand">
               {target?.grn_number} — Review
             </SheetTitle>
@@ -699,7 +699,7 @@ export function SmartGrnApprovalQueue() {
             </TabsContent>
           </Tabs>
 
-          <SheetFooter className="gap-2 border-t border-grn-line-soft px-4 py-3 sm:justify-end">
+          <SheetFooter className="gap-2 border-t border-grn-line-soft px-[16px] py-[12px] sm:justify-end">
             <GrnButton onClick={() => setTarget(null)}>Close</GrnButton>
             {canReview && (
               <>

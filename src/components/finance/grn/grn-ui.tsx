@@ -18,6 +18,11 @@ import { cn } from "@/lib/utils";
  * Radix is deliberately kept for the three places behaviour beats markup: the review Sheet, the
  * page/sheet Tabs, and SearchableSelect. Those get the class constants at the bottom of this
  * file instead of a replacement component.
+ *
+ * Sizes are written as explicit pixels, not Tailwind's rem-based scale. index.css sets
+ * `html { font-size: 14px }`, so every rem utility computes to 87.5% of its nominal value —
+ * `rounded-lg` lands on 12.6px and `px-4` on 14px. Measured in the browser against the approved
+ * design, which specifies 8px and 16px. Spacing that is already an arbitrary value is left alone.
  */
 
 /* ── Surfaces ─────────────────────────────────────────────────────────────── */
@@ -36,7 +41,7 @@ export function GrnCard({
   return (
     <section
       id={id}
-      className={cn("overflow-hidden rounded-xl border border-grn-line bg-grn-card", className)}
+      className={cn("overflow-hidden rounded-[12px] border border-grn-line bg-grn-card", className)}
       style={style}
     >
       {children}
@@ -58,7 +63,7 @@ export function GrnCardHeader({
   return (
     <header
       className={cn(
-        "flex flex-wrap items-center justify-between gap-3 border-b border-grn-line bg-grn-line-soft px-4 py-3",
+        "flex flex-wrap items-center justify-between gap-[12px] border-b border-grn-line bg-grn-line-soft px-[16px] py-[12px]",
         className
       )}
     >
@@ -94,8 +99,8 @@ export const GrnButton = forwardRef<
     // the GRN form and would submit it on click.
     type={type ?? "button"}
     className={cn(
-      "inline-flex items-center justify-center gap-1.5 whitespace-nowrap rounded-lg border text-[11.5px] font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-50",
-      size === "sm" ? "h-7 px-2.5" : "h-8 px-[11px]",
+      "inline-flex items-center justify-center gap-1.5 whitespace-nowrap rounded-[8px] border text-[11.5px] font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-50",
+      size === "sm" ? "h-[26px] px-[10px]" : "h-[30px] px-[11px]",
       BUTTON_VARIANTS[variant],
       className
     )}
@@ -114,7 +119,7 @@ export const GrnIconButton = forwardRef<
     ref={ref}
     type={type ?? "button"}
     className={cn(
-      "inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-grn-line bg-grn-card text-grn-ink-soft transition-colors hover:border-grn-brand hover:text-grn-brand disabled:cursor-not-allowed disabled:opacity-50",
+      "inline-flex h-[32px] w-[32px] shrink-0 items-center justify-center rounded-[8px] border border-grn-line bg-grn-card text-grn-ink-soft transition-colors hover:border-grn-brand hover:text-grn-brand disabled:cursor-not-allowed disabled:opacity-50",
       className
     )}
     {...props}
@@ -132,7 +137,7 @@ export const GrnInput = forwardRef<
     ref={ref}
     aria-invalid={invalid || undefined}
     className={cn(
-      "h-[34px] w-full rounded-lg border px-2.5 text-[12.5px] text-grn-ink placeholder:text-grn-ink-soft/70",
+      "h-[34px] w-full rounded-[8px] border px-[10px] text-[12.5px] text-grn-ink placeholder:text-grn-ink-soft/70",
       "focus:outline-none focus:ring-2 focus:ring-grn-brand/15",
       "disabled:cursor-not-allowed disabled:bg-grn-line-soft disabled:text-grn-ink-soft",
       invalid
@@ -153,7 +158,7 @@ export const GrnTextarea = forwardRef<
     ref={ref}
     aria-invalid={invalid || undefined}
     className={cn(
-      "w-full rounded-lg border px-2.5 py-2 text-[12.5px] text-grn-ink placeholder:text-grn-ink-soft/70",
+      "w-full rounded-[8px] border px-[10px] py-[8px] text-[12.5px] text-grn-ink placeholder:text-grn-ink-soft/70",
       "focus:outline-none focus:ring-2 focus:ring-grn-brand/15",
       "disabled:cursor-not-allowed disabled:bg-grn-line-soft disabled:text-grn-ink-soft",
       invalid
@@ -173,8 +178,8 @@ export const GrnSelect = forwardRef<
   <select
     ref={ref}
     className={cn(
-      "rounded-lg border border-grn-line bg-grn-card px-2.5 text-grn-ink",
-      small ? "h-8 text-[11.5px]" : "h-[34px] text-[12.5px]",
+      "rounded-[8px] border border-grn-line bg-grn-card px-[10px] text-grn-ink",
+      small ? "h-[32px] text-[11.5px]" : "h-[34px] text-[12.5px]",
       "focus:border-grn-brand focus:outline-none focus:ring-2 focus:ring-grn-brand/15",
       "disabled:cursor-not-allowed disabled:bg-grn-line-soft disabled:text-grn-ink-soft",
       className
@@ -248,7 +253,7 @@ export const GrnSearchInput = forwardRef<
     <input
       ref={ref}
       className={cn(
-        "h-8 w-full rounded-lg border border-grn-line bg-grn-paper pl-8 pr-3 text-[12.5px] text-grn-ink placeholder:text-grn-ink-soft/70",
+        "h-[32px] w-full rounded-[8px] border border-grn-line bg-grn-paper pl-[32px] pr-[12px] text-[12.5px] text-grn-ink placeholder:text-grn-ink-soft/70",
         "focus:border-grn-brand focus:outline-none focus:ring-2 focus:ring-grn-brand/15",
         className
       )}
@@ -276,7 +281,7 @@ export function GrnChip({
       onClick={onClick}
       aria-pressed={active}
       className={cn(
-        "inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border px-3 py-[5px] text-[11.5px] font-semibold transition-colors",
+        "inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border px-[12px] py-[5px] text-[11.5px] font-semibold transition-colors",
         active
           ? "border-grn-brand bg-grn-brand text-white"
           : "border-grn-line bg-grn-card text-grn-ink-soft hover:border-grn-brand/40 hover:text-grn-brand"
@@ -323,7 +328,7 @@ export function GrnSegmented<T extends string>({
             disabled={disabled}
             onClick={() => onChange(opt.value)}
             className={cn(
-              "inline-flex items-center gap-1.5 whitespace-nowrap rounded-lg px-4 py-2 text-[13px] font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-50",
+              "inline-flex items-center gap-1.5 whitespace-nowrap rounded-[8px] px-[16px] py-[8px] text-[13px] font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-50",
               selected ? "bg-grn-card text-grn-brand" : "text-grn-ink-soft hover:text-grn-ink"
             )}
           >
@@ -379,7 +384,7 @@ export function GrnTh({
   return (
     <th
       className={cn(
-        "whitespace-nowrap border-b border-grn-line bg-grn-card px-3.5 py-2 text-[10px] font-bold uppercase tracking-[0.05em] text-grn-ink-soft",
+        "whitespace-nowrap border-b border-grn-line bg-grn-card px-[14px] py-[8px] text-[10px] font-bold uppercase tracking-[0.05em] text-grn-ink-soft",
         sticky && "sticky top-0 z-10",
         align === "right" ? "text-right" : align === "center" ? "text-center" : "text-left",
         className
@@ -408,7 +413,7 @@ export function GrnTd({
       colSpan={colSpan}
       title={title}
       className={cn(
-        "px-3.5 py-[9px] align-middle text-grn-ink",
+        "px-[14px] py-[9px] align-middle text-grn-ink",
         align === "right"
           ? "text-right font-grn-mono tabular-nums"
           : align === "center"
@@ -470,7 +475,7 @@ export function GrnMetric({
             ? "text-grn-info"
             : "text-grn-ink";
   return (
-    <div className="bg-grn-card px-4 py-3.5">
+    <div className="bg-grn-card px-[16px] py-[14px]">
       <div className="text-[10.5px] uppercase tracking-[0.05em] text-grn-ink-soft">{label}</div>
       <div className={cn("mt-[3px] font-grn-mono text-[19px] font-bold tabular-nums", toneClass)}>{value}</div>
     </div>
@@ -479,7 +484,7 @@ export function GrnMetric({
 
 export function GrnKvList({ children, className }: { children: React.ReactNode; className?: string }) {
   return (
-    <dl className={cn("grid grid-cols-1 gap-x-5 gap-y-2.5 p-4 text-[12px] sm:grid-cols-2", className)}>
+    <dl className={cn("grid grid-cols-1 gap-x-[20px] gap-y-[10px] p-[16px] text-[12px] sm:grid-cols-2", className)}>
       {children}
     </dl>
   );
@@ -513,7 +518,7 @@ export function GrnAlert({
   className?: string;
 }) {
   return (
-    <div className={cn("rounded-[10px] border px-3.5 py-3 text-[12px] text-grn-ink", ALERT_TONES[tone], className)}>
+    <div className={cn("rounded-[10px] border px-[14px] py-[12px] text-[12px] text-grn-ink", ALERT_TONES[tone], className)}>
       {children}
     </div>
   );
@@ -549,7 +554,7 @@ export const GRN_TABS_LIST =
   "h-auto w-full justify-start gap-0.5 overflow-x-auto rounded-none border-0 border-b border-grn-line bg-transparent p-0 shadow-none";
 
 export const GRN_TAB_TRIGGER =
-  "group -mb-px !rounded-t-[10px] !rounded-b-none gap-1.5 border border-transparent px-[18px] pb-2.5 pt-[9px] text-[13px] font-semibold text-grn-ink-soft hover:bg-grn-line-soft hover:text-grn-ink data-[state=active]:border-grn-line data-[state=active]:border-b-grn-card data-[state=active]:bg-grn-card data-[state=active]:text-grn-brand data-[state=active]:shadow-none";
+  "group -mb-px !rounded-t-[10px] !rounded-b-none gap-1.5 border border-transparent px-[18px] pb-[10px] pt-[9px] text-[13px] font-semibold text-grn-ink-soft hover:bg-grn-line-soft hover:text-grn-ink data-[state=active]:border-grn-line data-[state=active]:border-b-grn-card data-[state=active]:bg-grn-card data-[state=active]:text-grn-brand data-[state=active]:shadow-none";
 
 /** Count pill inside a page tab. Reads the trigger's data-state via `group`, so it needs no
  *  knowledge of which tab is selected — the Tabs root stays uncontrolled. */
