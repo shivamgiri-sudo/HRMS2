@@ -60,6 +60,8 @@ export const updateEmployeeSchema = z.object({
   photoUrl: z.string().trim().url().nullable().optional(),
   userId: z.string().uuid().nullable().optional(),
   ctc: z.coerce.number().nonnegative().nullable().optional(),
+  annualIncome: z.coerce.number().nonnegative().nullable().optional(),
+  countOfDependents: z.coerce.number().int().nonnegative().nullable().optional(),
 });
 
 export const employeeFiltersSchema = z.object({

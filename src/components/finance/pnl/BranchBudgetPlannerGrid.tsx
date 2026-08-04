@@ -64,6 +64,94 @@ export function budgetLineKey(head: string | null | undefined, subHead: string |
   return `${(head ?? "").trim().toLowerCase()}|${(subHead ?? "").trim().toLowerCase()}`;
 }
 
+/** One head/sub-head from last month, carrying the original casing a new row needs. */
+export interface PriorBudgetRow {
+  head: string;
+  subHead: string;
+  /** Gross for the month. The mirror supplies only this; a workspace budget also has qty x rate. */
+  amount: number;
+  quantity?: number | null;
+  unitRate?: number | null;
+}
+
+/**
+ * Copy last month's budget forward into this month's draft.
+ *
+ * WHAT WAS WRONG. This lived inline in the workspace and only ever `.map()`ed over rows that
+ * already existed — it never created one. A branch opening a fresh month gets a single starter
+ * row with `head: ""`, whose key matches nothing, so the button did nothing at all when clicked
+ * and the Prev/Var cells on that row stayed blank. Both reported symptoms, one cause. Extracted
+ * here as a pure function because a reducer that silently does nothing is exactly the kind that
+ * needs a test.
+ *
+ * Rules, in order:
+ *   1. An existing row with a matching prior key and no figure yet is FILLED. A row that already
+ *      carries a figure is never overwritten — the branch's own planning wins over last month's.
+ *   2. Every prior key with no row is CREATED.
+ *   3. The untouched starter row is dropped once anything was created, so the branch is not left
+ *      with a stray empty line above its budget.
+ *
+ * `makeLine` is injected rather than imported so the caller supplies the same preset the
+ * "add from masters" path uses — notably non-GST, since blankLine()'s own default is 18%
+ * exclusive and the branch would have to clear it on every copied row.
+ */
+export function applyCopyForward(
+  lines: BranchBudgetLineInput[],
+  priorRows: PriorBudgetRow[],
+  makeLine: (preset: Partial<BranchBudgetLineInput>) => BranchBudgetLineInput,
+): BranchBudgetLineInput[] {
+  if (priorRows.length === 0) return lines;
+
+  // Duplicate head/sub-head pairs occur in real prior data (2026-09 NOIDA-2 carries several
+  // twice), so collapse to one row per key and sum, matching how the Prev column totals them.
+  const byKey = new Map<string, PriorBudgetRow>();
+  for (const row of priorRows) {
+    const key = budgetLineKey(row.head, row.subHead);
+    const existing = byKey.get(key);
+    if (existing) {
+      // Summed rows can no longer claim a single qty x rate; fall back to the total.
+      byKey.set(key, { ...existing, amount: existing.amount + row.amount, quantity: null, unitRate: null });
+    } else {
+      byKey.set(key, row);
+    }
+  }
+
+  const seen = new Set<string>();
+  const filled = lines.map((line) => {
+    const key = budgetLineKey(line.head, line.subHead);
+    seen.add(key);
+    const prior = byKey.get(key);
+    if (!prior || prior.amount <= 0) return line;
+    const already = (Number(line.quantity) || 0) * (Number(line.unitRate) || 0);
+    if (already !== 0) return line;
+    return { ...line, ...splitAmount(prior) };
+  });
+
+  const created: BranchBudgetLineInput[] = [];
+  for (const [key, prior] of byKey.entries()) {
+    if (seen.has(key) || prior.amount <= 0) continue;
+    created.push(makeLine({
+      head: prior.head,
+      subHead: prior.subHead,
+      itemName: prior.subHead || prior.head,
+      ...splitAmount(prior),
+    }));
+  }
+
+  if (created.length === 0) return filled;
+  // Drop the starter row only if it is still untouched — an empty head with nothing priced on it.
+  const kept = filled.filter((line) => !(!line.head && !line.subHead && !(Number(line.unitRate) || 0)));
+  return [...kept, ...created];
+}
+
+/** Prefer the real quantity x rate when the prior month has one; the mirror carries only a total. */
+function splitAmount(prior: PriorBudgetRow): { quantity: number; unitRate: number } {
+  const qty = Number(prior.quantity) || 0;
+  const rate = Number(prior.unitRate) || 0;
+  if (qty > 0 && rate > 0) return { quantity: qty, unitRate: rate };
+  return { quantity: 1, unitRate: prior.amount };
+}
+
 export interface PlannerRow {
   index: number;
   line: BranchBudgetLineInput;
@@ -89,6 +177,9 @@ export interface BranchBudgetPlannerGridProps {
    *  replaces the line set with fresh UUIDs every save. */
   priorByKey?: Map<string, number>;
   priorLabel?: string;
+  /** How many head/sub-head rows last month had — shown on the button so a copy that legitimately
+   *  changes nothing is distinguishable from one that silently failed. */
+  priorRowCount?: number;
   onCopyForward?: () => void;
   dirtyCount?: number;
   canUndo?: boolean;
@@ -99,7 +190,7 @@ export function BranchBudgetPlannerGrid({
   lines, masters, costCentres, drivers, canEdit, period,
   onUpdateLine, onAddLine, onRemoveLine, onDriverChange,
   onSaveDrivers, onSaveDraft, saving,
-  priorByKey, priorLabel, onCopyForward, dirtyCount = 0, canUndo, onUndo,
+  priorByKey, priorLabel, priorRowCount, onCopyForward, dirtyCount = 0, canUndo, onUndo,
 }: BranchBudgetPlannerGridProps) {
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [pickerHead, setPickerHead] = useState<string | null>(null);
@@ -292,9 +383,13 @@ export function BranchBudgetPlannerGrid({
         <span className="flex items-center gap-1.5"><span className="h-3 w-5 rounded border border-slate-300 bg-slate-100" />Calculated</span>
         {onCopyForward && (
           <button type="button" disabled={!canEdit || !priorByKey?.size}
-            title={priorByKey?.size ? "Fill every empty sub-head from last month's budget" : "No previous month budget to copy from"}
+            title={priorByKey?.size
+              ? `Adds every head and sub-head ${priorLabel ?? "last month"} budgeted that is missing here, and fills any empty row, using last month's amount. Rows you have already priced are left alone.`
+              : "No previous month budget to copy from"}
             className="h-8 rounded-md border border-slate-300 bg-white px-2 hover:bg-slate-100 disabled:opacity-40"
-            onClick={onCopyForward}>Copy {priorLabel ?? "previous"} →</button>
+            onClick={onCopyForward}>
+            Copy {priorRowCount ? `${priorRowCount} lines` : ""} from {priorLabel ?? "previous"} →
+          </button>
         )}
         {onUndo && (
           <button type="button" disabled={!canUndo} title="Undo the last change"
