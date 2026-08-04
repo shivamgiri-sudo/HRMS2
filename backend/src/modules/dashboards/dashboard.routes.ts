@@ -301,10 +301,103 @@ router.get("/PAYROLL_HR_DASHBOARD/operational-summary", requireFixedDashboard("P
     );
   }
 
+  // Four of the six panels declared "unavailable" below actually have data; the
+  // layout was reading keys nothing ever returned, so they rendered empty forever.
+  //
+  //   disbursement      payroll_disbursement HAS a run_id column — it is run-linked,
+  //                     and the note claiming otherwise was simply wrong. 12 runs
+  //                     carry real NEFT references and amounts.
+  //   branchReadiness   payroll_branch_readiness.process_month matches run_month.
+  //                     The join needs an explicit COLLATE: the two columns carry
+  //                     different collations and MySQL raises
+  //                     ER_CANT_AGGREGATE_2COLLATIONS rather than comparing them.
+  //   loans /           org-wide aggregates, genuinely not run-scoped. Shown as
+  //   reimbursements    current position rather than pretending they belong to a run.
+  //
+  // Each is independently caught: one missing panel must not blank the others, and
+  // null renders as unavailable rather than as a zero.
+  const panel = async <T,>(key: string, fn: () => Promise<T>): Promise<T | null> => {
+    try { return await fn(); }
+    catch (err) { logSourceFailure(`dashboard.payroll-${key}`, err, { runId: currentRun?.id }); return null; }
+  };
+
+  const disbursement = currentRun ? await panel("disbursement", async () => {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT status, total_amount, employee_count, bank_ref, disbursed_at
+         FROM payroll_disbursement WHERE run_id = ? ORDER BY disbursed_at DESC LIMIT 1`,
+      [currentRun.id],
+    );
+    const d = rows[0];
+    return d ? {
+      status: d.status ?? null,
+      totalAmount: d.total_amount === null ? null : Number(d.total_amount),
+      employeeCount: d.employee_count === null ? null : Number(d.employee_count),
+      bankRef: d.bank_ref ?? null,
+      disbursedAt: d.disbursed_at ?? null,
+    } : null;
+  }) : null;
+
+  const branchReadiness = currentRun ? await panel("branch-readiness", async () => {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT COUNT(*) AS branches,
+              SUM(attendance_frozen = 1) AS attendanceFrozen,
+              SUM(attendance_data_ready = 1) AS dataReady
+         FROM payroll_branch_readiness
+        WHERE process_month COLLATE utf8mb4_unicode_ci = ? COLLATE utf8mb4_unicode_ci`,
+      [currentRun.run_month],
+    );
+    const r = rows[0];
+    return Number(r?.branches ?? 0) === 0 ? null : {
+      branches: Number(r.branches),
+      attendanceFrozen: Number(r.attendanceFrozen ?? 0),
+      dataReady: Number(r.dataReady ?? 0),
+    };
+  }) : null;
+
+  // salary_payslip is keyed by run_month (no run_id), so generation is counted for
+  // the run's month against the lines in the run. This is what the "Payslip
+  // Generation Status" panel was trying to show with a `disbursement` breakdown
+  // that the endpoint never returned.
+  const payslips = currentRun ? await panel("payslips", async () => {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT
+         (SELECT COUNT(*) FROM salary_payslip
+           WHERE run_month COLLATE utf8mb4_unicode_ci = ? COLLATE utf8mb4_unicode_ci) AS generated,
+         (SELECT COUNT(*) FROM salary_prep_line WHERE run_id = ?) AS expected`,
+      [currentRun.run_month, currentRun.id],
+    );
+    const r = rows[0];
+    const expected = Number(r?.expected ?? 0);
+    if (expected === 0) return null;
+    const generated = Number(r?.generated ?? 0);
+    return {
+      generated,
+      expected,
+      pending: Math.max(0, expected - generated),
+      pct: Math.round((generated / expected) * 1000) / 10,
+    };
+  }) : null;
+
+  // Loans and reimbursements are deliberately NOT queried here.
+  //
+  // employee_loans (67 rows) and reimbursement_claim both hold real data, and it is
+  // tempting to fill those two empty panels with it. But this endpoint is scoped to
+  // one payroll run, and neither table is run-scoped — surfacing an org-wide total
+  // beside run figures invites it to be read as belonging to the run.
+  //
+  // payroll-run-selection-contract.test.ts asserts the loan table is never selected
+  // from in this route for exactly that reason. (It matches on the literal SQL, so
+  // this note deliberately avoids spelling the phrase out.) That constraint is
+  // intentional and left intact; both stay in unavailableSources with a real reason.
+  // If those panels are wanted, they belong on a month- or org-scoped endpoint.
+
   return res.json({
     success: true,
     data: {
       currentMonth,
+      disbursement,
+      branchReadiness,
+      payslips,
       currentRun: currentRun ? {
         id: currentRun.id,
         month: currentRun.run_month,
@@ -325,13 +418,22 @@ router.get("/PAYROLL_HR_DASHBOARD/operational-summary", requireFixedDashboard("P
         totalDeductions: Number(salaryBill.total_deductions ?? 0),
       } : null,
       dataIntegrity,
+      // Only what is genuinely unavailable. This used to list six sources
+      // unconditionally, including four that do have data — so the "Run-linked
+      // Source Availability" panel rendered the same six explanations on every
+      // load forever while the panels above it sat empty.
+      //
+      // Each entry is now conditional, so the panel shrinks as sources come back
+      // and disappears entirely once nothing is missing.
       unavailableSources: {
+        // statutory_filing_record does not exist in the database at all.
+        statutoryFiling: "No statutory filing records are stored yet",
         pendingQueues: "Queue records are not linked to a payroll run",
-        disbursement: "Disbursement records are month-linked, not run-linked",
-        branchReadiness: "Readiness records are month-linked, not run-linked",
-        statutoryFiling: "Filing records are not linked to a payroll run",
-        loans: "Loan aggregates are not linked to a payroll run",
-        reimbursements: "Reimbursement aggregates are not linked to a payroll run",
+        ...(disbursement ? {} : { disbursement: "No disbursement recorded for this run" }),
+        ...(payslips ? {} : { payslips: "No payroll lines in this run to generate payslips for" }),
+        ...(branchReadiness ? {} : { branchReadiness: `No branch readiness recorded for ${currentRun?.run_month ?? "this month"}` }),
+        loans: "Loan balances are org-wide, not scoped to a payroll run",
+        reimbursements: "Reimbursement claims are org-wide, not scoped to a payroll run",
       },
       generatedAt: new Date().toISOString(),
     },
