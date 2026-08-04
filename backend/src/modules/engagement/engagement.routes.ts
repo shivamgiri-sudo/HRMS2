@@ -233,5 +233,10 @@ router.post("/polls/:pollId/vote", h(c.voteOnPoll));
 router.post("/polls/:pollId/approve", requireRole("admin", "hr", "super_admin"), h(c.approvePoll));
 router.post("/polls/:pollId/close", requireRole("admin", "hr", "super_admin"), h(c.closePoll));
 
+// =========================================================================
+// Admin Export
+// =========================================================================
+router.get("/admin/export/csv", requireRole("admin", "hr", "super_admin"), h(c.exportEngagementCsv));
+
 export { router as engagementRouter };
 

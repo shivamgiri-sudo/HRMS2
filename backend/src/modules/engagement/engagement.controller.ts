@@ -505,5 +505,94 @@ export const engagementController = {
     const result = await quickPollService.getAllPolls({ status, limit, offset });
     return res.json({ success: true, data: result });
   },
+
+  // =========================================================================
+  // Admin Export
+  // =========================================================================
+
+  async exportEngagementCsv(_req: AuthenticatedRequest, res: Response) {
+    const { db } = await import('../../db/mysql.js');
+    type Row = {
+      employee_id: string;
+      employee_name: string;
+      branch: string;
+      department: string;
+      designation: string;
+      total_points: number;
+      current_tier: string;
+      current_streak: number;
+      longest_streak: number;
+      last_login_date: string | null;
+      badges_count: number;
+      kudos_received: number;
+      surveys_completed: number;
+      trivia_correct: number;
+      trivia_participate: number;
+      puzzle_solved: number;
+      brain_teaser_correct: number;
+      tip_reads: number;
+      poll_votes: number;
+    };
+
+    const [rows] = await db.execute<any[]>(`
+      SELECT
+        e.id                                                    AS employee_id,
+        CONCAT(e.first_name, ' ', e.last_name)                 AS employee_name,
+        COALESCE(b.name, '')                                    AS branch,
+        COALESCE(d.name, '')                                    AS department,
+        COALESCE(e.designation, '')                             AS designation,
+        COALESCE(ts.total_points, 0)                           AS total_points,
+        COALESCE(tm.tier_name, 'Bronze')                       AS current_tier,
+        COALESCE(ts.current_streak, 0)                         AS current_streak,
+        COALESCE(ts.longest_streak, 0)                         AS longest_streak,
+        ts.last_login_date,
+        (SELECT COUNT(*) FROM employee_badge eb WHERE eb.employee_id = e.id) AS badges_count,
+        (SELECT COUNT(*) FROM kudos k WHERE k.receiver_id = e.id)            AS kudos_received,
+        (SELECT COUNT(DISTINCT survey_id) FROM survey_response sr WHERE sr.employee_id = e.id) AS surveys_completed,
+        (SELECT COUNT(*) FROM gamification_points_ledger l WHERE l.employee_id = e.id AND l.transaction_type = 'trivia_correct') AS trivia_correct,
+        (SELECT COUNT(*) FROM gamification_points_ledger l WHERE l.employee_id = e.id AND l.transaction_type = 'trivia_participate') AS trivia_participate,
+        (SELECT COUNT(*) FROM gamification_points_ledger l WHERE l.employee_id = e.id AND l.transaction_type = 'puzzle_solved') AS puzzle_solved,
+        (SELECT COUNT(*) FROM gamification_points_ledger l WHERE l.employee_id = e.id AND l.transaction_type = 'brain_teaser_correct') AS brain_teaser_correct,
+        (SELECT COUNT(*) FROM gamification_points_ledger l WHERE l.employee_id = e.id AND l.transaction_type = 'tip_read') AS tip_reads,
+        (SELECT COUNT(*) FROM gamification_points_ledger l WHERE l.employee_id = e.id AND l.transaction_type = 'poll_voted') AS poll_votes
+      FROM employees e
+      LEFT JOIN employee_tier_status ts ON ts.employee_id = e.id
+      LEFT JOIN gamification_tier_master tm ON tm.tier_id = ts.current_tier_id
+      LEFT JOIN branches b ON b.id = e.branch_id
+      LEFT JOIN departments d ON d.id = e.department_id
+      WHERE e.status = 'active'
+      ORDER BY total_points DESC
+    `);
+
+    const header = [
+      'Employee ID', 'Name', 'Branch', 'Department', 'Designation',
+      'Total Points', 'Tier', 'Current Streak', 'Longest Streak', 'Last Login Date',
+      'Badges Earned', 'Kudos Received', 'Surveys Completed',
+      'Trivia Correct', 'Trivia Participated', 'Puzzles Solved',
+      'Brain Teasers Correct', 'Tips Read', 'Polls Voted',
+    ].join(',');
+
+    const escape = (v: string | number | null) => {
+      if (v == null) return '';
+      const s = String(v);
+      return s.includes(',') || s.includes('"') || s.includes('\n')
+        ? `"${s.replace(/"/g, '""')}"` : s;
+    };
+
+    const lines = (rows as Row[]).map(r => [
+      r.employee_id, r.employee_name, r.branch, r.department, r.designation,
+      r.total_points, r.current_tier, r.current_streak, r.longest_streak,
+      r.last_login_date ?? '',
+      r.badges_count, r.kudos_received, r.surveys_completed,
+      r.trivia_correct, r.trivia_participate, r.puzzle_solved,
+      r.brain_teaser_correct, r.tip_reads, r.poll_votes,
+    ].map(escape).join(','));
+
+    const csv = [header, ...lines].join('\r\n');
+    const today = new Date().toISOString().slice(0, 10);
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', `attachment; filename="engagement-export-${today}.csv"`);
+    return res.send(csv);
+  },
 };
 

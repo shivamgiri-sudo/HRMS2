@@ -4,6 +4,7 @@ import {
   Award,
   ClipboardList,
   Crown,
+  Download,
   Heart,
   Medal,
   Sparkles,
@@ -13,6 +14,7 @@ import {
   Trophy,
   Zap,
 } from "lucide-react";
+import { useIsAdminOrHR } from "@/hooks/useUserRole";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { KudosCard } from "@/components/engagement/KudosCard";
 import { PointsDisplay } from "@/components/engagement/PointsDisplay";
@@ -39,6 +41,29 @@ export default function NativeEngagement() {
   const [leaders, setLeaders] = useState<LeaderboardEntry[]>([]);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
+  const [exporting, setExporting] = useState(false);
+  const { isAdminOrHR } = useIsAdminOrHR();
+
+  async function handleExport() {
+    setExporting(true);
+    try {
+      const res = await fetch("/api/engagement/admin/export/csv", {
+        headers: { Authorization: `Bearer ${localStorage.getItem("hrms_token")}` },
+      });
+      if (!res.ok) throw new Error("Export failed");
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `engagement-export-${new Date().toISOString().slice(0, 10)}.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      alert("Export failed. Please try again.");
+    } finally {
+      setExporting(false);
+    }
+  }
 
   useEffect(() => {
     Promise.all([
@@ -75,12 +100,25 @@ export default function NativeEngagement() {
                 place.
               </p>
             </div>
-            <Button
-              asChild
-              className="rounded-2xl bg-white text-indigo-700 shadow-lg hover:bg-indigo-50 hover:text-indigo-800 font-bold"
-            >
-              <Link to="/engagement/kudos">Give Kudos</Link>
-            </Button>
+            <div className="flex items-center gap-2 flex-wrap">
+              {isAdminOrHR && (
+                <Button
+                  onClick={handleExport}
+                  disabled={exporting}
+                  className="rounded-2xl bg-white/20 border border-white/30 text-white shadow-lg hover:bg-white/30 font-bold backdrop-blur-sm"
+                  variant="outline"
+                >
+                  <Download className="h-4 w-4 mr-1.5" />
+                  {exporting ? "Exporting…" : "Export All"}
+                </Button>
+              )}
+              <Button
+                asChild
+                className="rounded-2xl bg-white text-indigo-700 shadow-lg hover:bg-indigo-50 hover:text-indigo-800 font-bold"
+              >
+                <Link to="/engagement/kudos">Give Kudos</Link>
+              </Button>
+            </div>
           </div>
         </div>
 
