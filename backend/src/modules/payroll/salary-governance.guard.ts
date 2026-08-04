@@ -174,9 +174,14 @@ export async function assertSalaryAssignmentAllowed(
       };
     }
 
-    // Fall back to salary_grade_master (code-based lookup)
+    // Fall back to the grade master (code-based lookup).
+    //
+    // This read `salary_grade_master`, which does not exist — so the query threw
+    // on every call, the .catch() turned that into "no rows", and this branch
+    // could never match. The grade-based path has therefore never once been
+    // taken. The real table is grade_band_master (6 active rows).
     const [gradeRows] = await db.execute<RowDataPacket[]>(
-      `SELECT id FROM salary_grade_master WHERE id = ? AND active_status = 1 LIMIT 1`,
+      `SELECT id FROM grade_band_master WHERE id = ? AND active_status = 1 LIMIT 1`,
       [effectiveSlabId]
     ).catch(() => [[]] as any);
 
@@ -205,7 +210,10 @@ export async function assertSalaryAssignmentAllowed(
       ctc_annual: ctcAnnual,
     });
     return BLOCKED(
-      `Salary slab '${effectiveSlabId}' not found in payroll_salary_slabs or salary_grade_master. ` +
+      // Named the tables actually consulted above. It previously said
+      // salary_grade_master, which does not exist, sending anyone who read the
+      // message looking for a table they would never find.
+      `Salary slab '${effectiveSlabId}' not found in payroll_salary_slabs or grade_band_master. ` +
       `Add the slab to the salary master before assigning.`
     );
   }

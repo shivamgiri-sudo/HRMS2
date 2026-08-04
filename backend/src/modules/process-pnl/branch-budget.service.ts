@@ -416,8 +416,9 @@ export interface CompanyConsolidationBranchAmount {
   pnlCostAmount: number;
   reservedAmount: number;
   consumedAmount: number;
-  /** Sum of grn_cost_allocation.amount_with_tax for allocations whose GRN has reached
-   *  status='paid' — the same terminal status GrnHistoryTable.tsx already surfaces. */
+  /** vendor_payment_tracking.paid_amount (the AP team's actual running-total disbursed so far),
+   *  prorated across this GRN's allocation rows by each row's share of the GRN total — so a
+   *  partially_paid GRN contributes its real paid-so-far amount, not zero. */
   paidAmount: number;
   /** Sum of grn_cost_allocation.pnl_cost_amount for allocations at lifecycle_status='consumed'
    *  — the same filter vw_process_lob_grn_allocation uses to source real (not planned) P&L cost,
@@ -464,19 +465,30 @@ export async function getCompanyBudgetConsolidation(
         WHERE h.period_code = ?`,
       [periodCode]
     ),
-    // Actuals, not plan: paid keys off grn_request.status the same way GrnHistoryTable.tsx
-    // does; booked-to-P&L keys off lifecycle_status='consumed' the same way
-    // vw_process_lob_grn_allocation does — so both figures agree with what the GRN and P&L
-    // screens themselves already call "paid" and "booked", rather than inventing a third
-    // definition here.
+    // Actuals, not plan. Booked-to-P&L keys off lifecycle_status='consumed', the same filter
+    // vw_process_lob_grn_allocation already uses to source real P&L cost.
+    //
+    // Paid is real cash, prorated across this GRN's allocation rows by each row's share of the
+    // GRN total — NOT grn_request.status='paid', which only fires once the GRN is FULLY settled.
+    // vendor_payment_tracking.paid_amount is the actual running total the AP team records as
+    // installments land, so a partially_paid GRN (real money already out the door) was showing
+    // Paid=0 under the status-only version of this query. grn_totals guards the divide against a
+    // GRN whose allocation rows happen to sum to 0 (NULLIF), and the LEFT JOIN means an imprest
+    // GRN — which never gets a vendor_payment_tracking row at all — correctly contributes 0, not
+    // an error.
     executor.execute<RowDataPacket[]>(
       `SELECT a.budget_line_id,
-              SUM(CASE WHEN g.status = 'paid' THEN a.amount_with_tax ELSE 0 END) paid_amount,
+              SUM(COALESCE(vpt.paid_amount, 0) * a.amount_with_tax / NULLIF(grn_totals.total_amount, 0)) paid_amount,
               SUM(CASE WHEN a.lifecycle_status = 'consumed' THEN a.pnl_cost_amount ELSE 0 END) booked_amount
          FROM grn_cost_allocation a
-         JOIN grn_request g ON g.id = a.grn_request_id
          JOIN finance_budget_line l ON l.id = a.budget_line_id
          JOIN finance_budget_header h ON h.id = l.budget_id
+         LEFT JOIN vendor_payment_tracking vpt ON vpt.grn_request_id = a.grn_request_id
+         JOIN (
+           SELECT grn_request_id, SUM(amount_with_tax) total_amount
+             FROM grn_cost_allocation
+            GROUP BY grn_request_id
+         ) grn_totals ON grn_totals.grn_request_id = a.grn_request_id
         WHERE h.period_code = ?
         GROUP BY a.budget_line_id`,
       [periodCode]

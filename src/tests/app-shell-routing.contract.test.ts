@@ -51,7 +51,6 @@ describe("application shell routing contracts", () => {
       ["Name Consistency", "/ats/name-consistency"],
       ["ATS Reconciliation", "/ats/reconciliation"],
       ["ATS Extensions", "/ats/extensions"],
-      ["Payroll HR Validation", "/ats/payroll-hr-validation"],
       ["Enhanced BGV", "/ats/bgv-enhanced"],
       ["Attendance Mismatch", "/wfm/mismatch-queue"],
       ["Attendance Billing", "/attendance/billing-config"],
@@ -136,6 +135,10 @@ describe("application shell routing contracts", () => {
       "/ats/dashboard",
       "/ats/dashboard-v2",
       "/ats/payroll-hr",
+      // Consolidated into /ats/onboarding-requests (commit 49efe7fd, "remove duplicate
+      // payroll-hr-validation page") — this path is now only a <Navigate> redirect for old
+      // links/bookmarks, not a real destination, so it no longer belongs in the sidebar.
+      "/ats/payroll-hr-validation",
       "/ats/recruiter/calling-dashboard",
       "/ats/recruiter/calling-entry",
       "/ats/recruiter/workspace",

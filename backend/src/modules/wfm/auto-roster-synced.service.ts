@@ -1232,7 +1232,10 @@ export const autoRosterSyncedService = {
        LEFT JOIN wfm_roster_plan_control c  ON c.plan_id  = p.id
        LEFT JOIN wfm_roster_conflict_log cl ON cl.plan_id = p.id
        WHERE p.from_date >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)`
-    ).catch(() => [[{ total_plans: 0, pending_approval: 0, best_coverage_score: null, open_critical_gaps: 0 }]] as any);
+      // open_critical_gaps falls back to null, not 0. The query works today,
+      // but if it ever stops, "0 open critical gaps" asserts that roster
+      // coverage is sound at exactly the moment nothing is known about it.
+    ).catch(() => [[{ total_plans: null, pending_approval: null, best_coverage_score: null, open_critical_gaps: null }]] as any);
     const r = rows[0] as AnyRow;
     return {
       total_plans: Number(r.total_plans ?? 0),
