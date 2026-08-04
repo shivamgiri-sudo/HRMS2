@@ -10,6 +10,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { downloadBpoPnlExport, useBpoProcessPnl } from "@/hooks/useBpoProcessPnl";
 import { usePnlStatement, type PnlStatementViewBy } from "@/hooks/usePnlStatement";
+import { CeoOverviewPanel } from "@/components/finance/pnl/CeoOverviewPanel";
 import { PnlStatementView } from "@/components/finance/pnl/PnlStatementView";
 import { PnlExecutiveKpiStrip } from "@/components/finance/pnl/PnlExecutiveKpiStrip";
 import { BpoPnlMatrixTable } from "@/components/finance/pnl/BpoPnlMatrixTable";
@@ -321,13 +322,42 @@ export default function ProcessPnlPage() {
                 <Skeleton className="h-56 rounded-2xl" />
                 <Skeleton className="h-96 rounded-2xl" />
               </div>
-            ) : summary ? (
-              <CeoCommandCenter
-                summary={summary}
-                period={period}
-                onViewAllProcesses={() => setActiveTab("matrix")}
-              />
-            ) : null}
+            ) : (
+              <div className="flex flex-col gap-5">
+                {/*
+                  The CEO view, read from what actually happened — invoiced revenue, the payroll
+                  run and GRN spend. It leads because the tiles below are fed by bpoPnlService,
+                  whose four input tables hold no rows, so they reported Rs 0 for revenue, EBITDA
+                  and PAT in every month while the statement showed Rs 344 lakh for the same one.
+                  Kept beneath rather than deleted: they come back to life on their own once the
+                  process-level configuration is populated.
+                */}
+                <CeoOverviewPanel
+                  period={period}
+                  branchId={branchId || undefined}
+                  onBranchChange={(id) => updateFilters({ branchId: id })}
+                />
+                {summary ? (
+                  <details className="rounded-2xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
+                    <summary className="cursor-pointer px-5 py-3 text-sm font-semibold text-slate-600 dark:text-slate-400">
+                      Process-level command centre
+                      {!bpoHasMoney && (
+                        <span className="ml-2 rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-800 dark:bg-amber-950/40 dark:text-amber-300">
+                          awaiting process configuration
+                        </span>
+                      )}
+                    </summary>
+                    <div className="border-t border-slate-100 p-4 dark:border-slate-800">
+                      <CeoCommandCenter
+                        summary={summary}
+                        period={period}
+                        onViewAllProcesses={() => setActiveTab("matrix")}
+                      />
+                    </div>
+                  </details>
+                ) : null}
+              </div>
+            )}
           </TabsContent>
 
           <TabsContent value="matrix" className="flex-1 overflow-auto px-4 py-3 m-0">

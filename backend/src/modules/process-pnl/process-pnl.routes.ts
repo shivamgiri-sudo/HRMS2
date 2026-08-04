@@ -14,6 +14,7 @@ import { bpoPnlRouter } from "./bpo-pnl.routes.js";
 import { canonicalPnlService } from "./canonical-pnl.service.js";
 import { pnlBulkUploadRouter } from "./pnl-bulk-upload.routes.js";
 import { branchBudgetService, getCompanyBudgetConsolidation } from "./branch-budget.service.js";
+import { getCeoOverview } from "./ceo-overview.service.js";
 import { budgetTopupService } from "./budget-topup.service.js";
 import { branchBudgetAllocationService } from "./branch-budget-allocation.service.js";
 import { meterService } from "./meter.service.js";
@@ -769,6 +770,29 @@ async function scopedFilters(req: AuthenticatedRequest) {
 }
 
 // Canonical endpoints: summary/trend/export/close all use the same allocation-aware engine.
+router.get(
+  "/pnl/ceo-overview",
+  requireRole(...PNL_READ_ROLES),
+  h(async (req, res) => {
+    /*
+     * Branch-scoped through the same resolveFinanceBranchScope every other P&L read uses, so a
+     * branch-restricted user sees their own branch and cannot request another. Declared before
+     * "/pnl/budgets/:id" style routes for the same reason as prior-mirror: Express matches in
+     * order and a ":id" pattern would otherwise swallow this path.
+     */
+    const user = actor(req);
+    const branchId = await resolveFinanceBranchScope({
+      userId: user.id,
+      primaryRole: user.role,
+      userRoles: req.userRoles,
+      requestedBranchId: req.query.branchId ? String(req.query.branchId) : undefined,
+    });
+    const period = req.query.period ? String(req.query.period) : "";
+    const data = await getCeoOverview(period, branchId ?? undefined);
+    res.json({ success: true, data });
+  })
+);
+
 router.get("/pnl/summary", h(async (req, res) => {
   const data = await canonicalPnlService.getSummary(await scopedFilters(req));
   res.json({ success: true, data });
