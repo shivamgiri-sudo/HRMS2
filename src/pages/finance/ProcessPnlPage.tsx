@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { CeoCommandCenter } from "@/components/finance/pnl/CeoCommandCenter";
 import { Download } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -326,36 +325,24 @@ export default function ProcessPnlPage() {
               <div className="flex flex-col gap-5">
                 {/*
                   The CEO view, read from what actually happened — invoiced revenue, the payroll
-                  run and GRN spend. It leads because the tiles below are fed by bpoPnlService,
-                  whose four input tables hold no rows, so they reported Rs 0 for revenue, EBITDA
-                  and PAT in every month while the statement showed Rs 344 lakh for the same one.
-                  Kept beneath rather than deleted: they come back to life on their own once the
-                  process-level configuration is populated.
+                  run and GRN spend.
+
+                  The process-level command centre that used to render here was removed on the
+                  user's instruction: it is fed by bpoPnlService, whose four input tables
+                  (process_revenue_rule, process_delivery_actual, process_revenue_component,
+                  process_monthly_plan) hold no rows, so it reported Rs 0 for revenue, EBITDA and
+                  PAT in every month.
+
+                  CeoCommandCenter.tsx is left in place, unedited and no longer imported here, so
+                  it can be remounted unchanged once those tables carry data. Deleting the
+                  component would be the part that is hard to undo.
                 */}
                 <CeoOverviewPanel
                   period={period}
                   branchId={branchId || undefined}
                   onBranchChange={(id) => updateFilters({ branchId: id })}
                 />
-                {summary ? (
-                  <details className="rounded-2xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
-                    <summary className="cursor-pointer px-5 py-3 text-sm font-semibold text-slate-600 dark:text-slate-400">
-                      Process-level command centre
-                      {!bpoHasMoney && (
-                        <span className="ml-2 rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-800 dark:bg-amber-950/40 dark:text-amber-300">
-                          awaiting process configuration
-                        </span>
-                      )}
-                    </summary>
-                    <div className="border-t border-slate-100 p-4 dark:border-slate-800">
-                      <CeoCommandCenter
-                        summary={summary}
-                        period={period}
-                        onViewAllProcesses={() => setActiveTab("matrix")}
-                      />
-                    </div>
-                  </details>
-                ) : null}
+
               </div>
             )}
           </TabsContent>

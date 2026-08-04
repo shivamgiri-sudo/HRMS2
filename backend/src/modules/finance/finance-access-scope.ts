@@ -74,3 +74,56 @@ export async function assertFinanceRecordBranch(input: {
     throw new Error("You cannot access a finance record from another branch");
   }
 }
+
+/**
+ * Roles whose finance view is limited to a single PROCESS, not merely a branch.
+ *
+ * A process manager runs one process inside a branch that may hold several. Branch scoping alone
+ * would show them every process their branch runs, including other managers' cost and revenue.
+ */
+const PROCESS_SCOPED_ROLES = new Set(["process_manager"]);
+
+async function getUserProcessId(userId: string) {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT process_id
+       FROM employees
+      WHERE user_id = ?
+        AND active_status = 1
+        AND process_id IS NOT NULL
+      ORDER BY updated_at DESC, created_at DESC
+      LIMIT 1`,
+    [userId],
+  );
+  const processId = rows[0]?.process_id ? String(rows[0].process_id) : null;
+  if (!processId) {
+    throw new Error("Your user account is not mapped to an active employee process");
+  }
+  return processId;
+}
+
+/**
+ * The process a finance read must be confined to, or undefined when the caller may see all.
+ *
+ * Mirrors resolveFinanceBranchScope exactly, including its refusal: asking for someone else's
+ * process is an error rather than a silently ignored parameter, because a filter that is quietly
+ * dropped looks like data the user is entitled to.
+ */
+export async function resolveFinanceProcessScope(input: {
+  userId: string;
+  primaryRole?: string;
+  userRoles?: string[];
+  requestedProcessId?: string | null;
+}) {
+  const requested = input.requestedProcessId?.trim() || undefined;
+  if (hasGlobalFinanceScope(input.primaryRole, input.userRoles)) return requested;
+
+  const roles = normalizedRoles(input.primaryRole, input.userRoles);
+  const restricted = Array.from(roles).some((role) => PROCESS_SCOPED_ROLES.has(role));
+  if (!restricted) return requested;
+
+  const assignedProcessId = await getUserProcessId(input.userId);
+  if (requested && requested !== assignedProcessId) {
+    throw new Error("You can only access finance records for your assigned process");
+  }
+  return assignedProcessId;
+}

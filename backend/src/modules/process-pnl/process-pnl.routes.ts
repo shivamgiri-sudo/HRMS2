@@ -8,6 +8,7 @@ import { requireRole } from "../../middleware/requireRole.js";
 import {
   assertFinanceRecordBranch,
   resolveFinanceBranchScope,
+  resolveFinanceProcessScope,
 } from "../finance/finance-access-scope.js";
 import { resolveFinanceStageRole } from "../finance/finance-workflow-role.js";
 import { bpoPnlRouter } from "./bpo-pnl.routes.js";
@@ -43,6 +44,12 @@ const PNL_READ_ROLES = [
   "finance_head",
   "accounts_head",
   "payroll_head",
+  // Row-scoped, not unrestricted: neither role appears in GLOBAL_FINANCE_ROLES, so
+  // resolveFinanceBranchScope pins a branch head to their own branch and
+  // resolveFinanceProcessScope pins a process manager to their own process. Both refuse a
+  // request for someone else's rather than silently ignoring the parameter.
+  "branch_head",
+  "process_manager",
 ] as const;
 
 const PNL_WRITE_ROLES = [
@@ -788,9 +795,15 @@ router.get(
       requestedBranchId: req.query.branchId ? String(req.query.branchId) : undefined,
     });
     const period = req.query.period ? String(req.query.period) : "";
+    const processId = await resolveFinanceProcessScope({
+      userId: user.id,
+      primaryRole: user.role,
+      userRoles: req.userRoles,
+      requestedProcessId: req.query.processId ? String(req.query.processId) : undefined,
+    });
     const data = await getCeoOverview(period, {
       branchId: branchId ?? undefined,
-      processId: req.query.processId ? String(req.query.processId) : undefined,
+      processId: processId ?? undefined,
       costCentreId: req.query.costCentreId ? String(req.query.costCentreId) : undefined,
     });
     res.json({ success: true, data });
