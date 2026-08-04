@@ -73,7 +73,10 @@ export const weekoffAllocationService = {
         WHERE e.process_id = ?
           AND e.active_status = 1
           AND erp.status = 'approved'
-          AND (erp.week_start_date = ? OR erp.week_start_date IS NULL)`,
+          -- employee_roster_preference records effective_from, not
+          -- week_start_date. The wrong name raised ER_BAD_FIELD_ERROR, so no
+          -- approved week-off preference was ever picked up by allocation.
+          AND (erp.effective_from <= ? OR erp.effective_from IS NULL)`,
       [processId, cycle.week_start_date]
     );
 
