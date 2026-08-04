@@ -1,3 +1,10 @@
+/**
+ * @deprecated Use `AttendanceDonutChart` (the canonical attendance donut) instead.
+ *
+ * Verified 2026-08-04: this component has **zero** import sites — it is not rendered
+ * anywhere, so it issues no duplicate API call. It is kept rather than deleted per the
+ * repo rule against removing existing components; do not add new usages.
+ */
 import { useQuery } from "@tanstack/react-query";
 import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from "recharts";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";

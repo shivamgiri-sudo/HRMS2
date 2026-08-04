@@ -4,12 +4,14 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { hrmsApi } from "@/lib/hrmsApi";
 
-const SEGMENTS = [
-  { key: "basic",    label: "Basic Pay",        pct: 0.436, color: "#1B6AB5" },
-  { key: "allow",    label: "Allowances",        pct: 0.265, color: "#3BAD49" },
-  { key: "ded",      label: "Deductions",        pct: 0.177, color: "#F59E0B" },
-  { key: "employer", label: "Employer Cont.",    pct: 0.122, color: "#8B5CF6" },
-];
+// Segment colours only. Values are derived from the API — never hardcoded.
+// /api/management/ceo-metrics returns total_gross, total_net and employer_statutory;
+// it does NOT break gross into basic vs allowances, so this widget must not claim to.
+const SEGMENT_COLORS = {
+  net: "#1B6AB5",
+  deductions: "#F59E0B",
+  employer: "#8B5CF6",
+} as const;
 
 function fmt(n: number) {
   if (n >= 10000000) return `₹${(n / 10000000).toFixed(2)} Cr`;
@@ -25,10 +27,25 @@ export function PayrollSummaryDonut({ runMonth }: { runMonth?: string }) {
   });
 
   const payroll = data?.data?.payroll_liability ?? {};
-  const gross = payroll.total_gross ?? 0;
+  const gross = Number(payroll.total_gross) || 0;
+  const net = Number(payroll.total_net) || 0;
+  const employerStatutory = Number(payroll.employer_statutory) || 0;
   const month = payroll.run_month ?? runMonth ?? "Latest";
 
-  const chartData = SEGMENTS.map((s) => ({ ...s, value: Math.round(gross * s.pct) }));
+  // Employee deductions are the gross-to-net delta. Clamped at 0 because a
+  // snapshot with net > gross (or gross missing entirely) is a known data defect
+  // and must not render as a negative slice.
+  const deductions = Math.max(0, gross - net);
+  // Total employer cost = what employees are paid gross, plus employer-side statutory.
+  const totalCost = gross + employerStatutory;
+
+  const chartData = [
+    { key: "net", label: "Net Pay", value: net, color: SEGMENT_COLORS.net },
+    { key: "deductions", label: "Employee Deductions", value: deductions, color: SEGMENT_COLORS.deductions },
+    { key: "employer", label: "Employer Statutory", value: employerStatutory, color: SEGMENT_COLORS.employer },
+  ].filter((s) => s.value > 0);
+
+  const hasData = chartData.length > 0;
 
   return (
     <Card className="rounded-2xl border border-slate-200 shadow-sm bg-white">
@@ -41,6 +58,15 @@ export function PayrollSummaryDonut({ runMonth }: { runMonth?: string }) {
       <CardContent className="p-5">
         {isLoading ? (
           <Skeleton className="h-40 w-full rounded-xl" />
+        ) : !hasData ? (
+          <div className="flex h-40 flex-col items-center justify-center text-center">
+            <span className="text-xs font-medium text-slate-500">
+              No payroll figures published for this period
+            </span>
+            <span className="mt-1 text-[11px] text-slate-400">
+              This card shows values only once a payroll run reports gross and net.
+            </span>
+          </div>
         ) : (
           <div className="flex items-center gap-4">
             <div className="relative flex-shrink-0">
@@ -76,7 +102,7 @@ export function PayrollSummaryDonut({ runMonth }: { runMonth?: string }) {
                   className="text-xs font-bold text-slate-900"
                   style={{ fontFamily: "'Fira Code', monospace" }}
                 >
-                  {fmt(gross)}
+                  {fmt(totalCost)}
                 </span>
                 <span className="text-[8px] text-slate-500">Total Cost</span>
               </div>
@@ -99,7 +125,7 @@ export function PayrollSummaryDonut({ runMonth }: { runMonth?: string }) {
                       {fmt(s.value)}
                     </span>
                     <span className="text-[10px] text-slate-400">
-                      ({(s.pct * 100).toFixed(1)}%)
+                      ({totalCost > 0 ? ((s.value / totalCost) * 100).toFixed(1) : "0.0"}%)
                     </span>
                   </div>
                 </div>

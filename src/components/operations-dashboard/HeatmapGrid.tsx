@@ -33,7 +33,19 @@ export const HeatmapGrid: React.FC<HeatmapGridProps> = ({ agents, onAgentClick }
   }, {} as Record<string, AgentStatus[]>);
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+    <div className="space-y-3">
+      {/* Legend — the colour coding is otherwise unexplained. Driven off the same
+          statusColors map as the tiles so the two can never drift apart. */}
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+        {Object.entries(statusColors).map(([status, colorClass]) => (
+          <div key={status} className="flex items-center gap-1.5">
+            <span className={`h-2.5 w-2.5 rounded-sm ${colorClass}`} aria-hidden="true" />
+            <span className="text-xs text-slate-600">{status}</span>
+          </div>
+        ))}
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
       {Object.entries(groupedByProcess).map(([processName, processAgents]) => (
         <Card key={processName}>
           <CardHeader>
@@ -63,6 +75,7 @@ export const HeatmapGrid: React.FC<HeatmapGridProps> = ({ agents, onAgentClick }
           </CardContent>
         </Card>
       ))}
+      </div>
     </div>
   );
 };

@@ -129,13 +129,10 @@
   transform: translateY(-2px);
 }
 
-.role-dashboard-reference .rounded-2xl {
-  border-radius: 14px !important;
-}
-
-.role-dashboard-reference .rounded-xl {
-  border-radius: 12px !important;
-}
+/* Removed: `.rounded-2xl { 14px !important }` and `.rounded-xl { 12px !important }`.
+   They collapsed the 3-step radius hierarchy app-wide inside this scope — KpiMetricCard
+   rendered at 14px instead of its intended 20px — and !important made it unoverridable
+   at the component level. Cards now use the design-system scale directly. */
 
 .role-dashboard-reference .shadow-sm,
 .role-dashboard-reference [class*="shadow-["] {
