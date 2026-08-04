@@ -63,7 +63,7 @@ describe("pnl-statement.service — transposed statement", () => {
    * Rs 141.23 lakh. Preferring it on a closed month put the missing Rs 70 lakh straight into
    * operating profit as margin.
    */
-  describe("people cost source depends on whether the period is closed", () => {
+  describe("people cost source", () => {
     const snapshotPeople = {
       byBranch: new Map(),
       byProcess: new Map([["p1", { agent_salary: 1, dsc_people: 1, bmc_people: 1 }]]),
@@ -81,12 +81,34 @@ describe("pnl-statement.service — transposed statement", () => {
       expect(agent?.values.p1).toBe(1);
     });
 
-    it("ignores the snapshot once the month has closed, using actual payroll instead", async () => {
+    it("uses the snapshot on a CLOSED month too", async () => {
+      /*
+       * This once asserted the opposite — that a closed month should ignore the snapshot and use
+       * "actual payroll" from the row instead. The row has no actual payroll to use:
+       * canonicalPnlService returns 0.00 for every people field in every month measured. Shipping
+       * that rule deleted Rs 112.11 lakh of April salary and Rs 141.23 lakh of June salary from
+       * the statement and reported an operating margin of 81-82%.
+       *
+       * The snapshot is also the only source of the Agent/DSC/BMC split, so preferring the row
+       * whenever it holds a figure would discard the split as well.
+       */
       const deps = makeDeps([processRow({})], { getPeopleCost: async () => snapshotPeople });
       const result = await getStatement({ period: "2026-04" }, "process", deps);
       const agent = result.rows.find((r) => r.componentKey === "agent_salary");
-      // The row's actual payroll figure, NOT the snapshot's token 1.
-      expect(agent?.values.p1).toBe(400000);
+      expect(agent?.values.p1, "a closed month must not lose its people cost").toBe(1);
+    });
+
+    it("falls back to the upstream figure when no snapshot exists", async () => {
+      // Never zero: an un-refreshed period reporting no people cost would show the branch's
+      // entire revenue as profit.
+      const deps = makeDeps([processRow({})], {
+        getPeopleCost: async () => ({
+          byBranch: new Map(), byProcess: new Map(),
+          coverageByProcess: new Map(), coverageByBranch: new Map(),
+        }) as any,
+      });
+      const result = await getStatement({ period: "2026-04" }, "process", deps);
+      expect(result.rows.find((r) => r.componentKey === "agent_salary")?.values.p1).toBe(400000);
     });
   });
 
