@@ -137,16 +137,15 @@ export function PnlStatementView({
           No data available for this period and view.
         </div>
       ) : (
-        <>
-          {statement.revenueBasis && (
-            // Without this the Revenue block is a puzzle: Recognised and Invoiced agree exactly
-            // on a closed month and diverge sharply on an open one, and nothing says why.
-            <p className="px-4 pb-2 text-[11px] text-slate-500">
-              {statement.revenueBasis === "invoiced"
-                ? "Revenue basis: this month is closed, so Recognised Revenue is what was actually invoiced."
-                : "Revenue basis: this month is still running, so Recognised Revenue is the planned figure — invoicing lags delivery and is shown separately below it."}
-            </p>
-          )}
+        {statement.revenueBasis && (
+  // Without this the Revenue block is a puzzle: Recognised and Invoiced agree exactly on a
+  // closed month and diverge sharply on an open one, and nothing on screen says why.
+  <p className="px-4 pb-2 text-[11px] text-slate-500">
+    {statement.revenueBasis === "invoiced"
+      ? "Revenue basis: this month is closed, so Recognised Revenue is what was actually invoiced."
+      : "Revenue basis: this month is still running, so Recognised Revenue is the planned figure — invoicing lags delivery and is shown separately below it."}
+  </p>
+)}
         <div className="overflow-auto rounded-3xl border border-slate-200 bg-white">
           <table className="w-full min-w-max text-sm">
             <thead>
@@ -231,7 +230,6 @@ export function PnlStatementView({
             </tbody>
           </table>
         </div>
-        </>
       )}
     </div>
   );
