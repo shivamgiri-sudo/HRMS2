@@ -33,6 +33,7 @@ function mockDb(f: Fixture) {
   tableExists.mockResolvedValue(true);
   execute.mockImplementation(async (sql: string) => {
     const q = String(sql);
+    if (q.includes("process_master")) return [[], []];
     if (q.includes("FROM branch_master") && !q.includes("JOIN")) return [f.branches, []];
     if (q.includes("billing_invoice_particular_snapshot")) return [f.revenue ?? [], []];
     if (q.includes("salary_prep_line")) return [f.people ?? [], []];
@@ -172,7 +173,7 @@ describe("CEO overview", () => {
       people: [{ branch_id: "a", staff: 496, cost: L(102.22) }, { branch_id: "b", staff: 448, cost: L(76.24) }],
     });
     const { getCeoOverview } = await import("../ceo-overview.service.js");
-    const out = await getCeoOverview("2026-06", "a");
+    const out = await getCeoOverview("2026-06", { branchId: "a" });
     expect(out.branches).toHaveLength(1);
     expect(out.branches[0].branchName).toBe("NOIDA");
     expect(out.opportunities).toHaveLength(0);

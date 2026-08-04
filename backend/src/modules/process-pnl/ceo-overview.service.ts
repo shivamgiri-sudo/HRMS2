@@ -57,6 +57,20 @@ export interface CeoOpportunity {
   action: string;
 }
 
+export interface CeoFilters {
+  branchId?: string | null;
+  processId?: string | null;
+  costCentreId?: string | null;
+}
+
+/** A month on the margin trend line. */
+export interface CeoTrendPoint {
+  period: string;
+  revenue: number;
+  operatingProfit: number;
+  marginPct: number | null;
+}
+
 export interface CeoOverview {
   period: string;
   revenue: number;
@@ -68,6 +82,9 @@ export interface CeoOverview {
   revenuePerHead: number | null;
   branches: CeoBranchRow[];
   opportunities: CeoOpportunity[];
+  trend: CeoTrendPoint[];
+  /** Distinct values for the filter controls, so the UI never invents an option that has no data. */
+  options: { processes: { id: string; name: string }[]; costCentres: { id: string; code: string }[] };
 }
 
 const n = (v: unknown): number => {
@@ -83,18 +100,28 @@ const lakh = (v: number): string => `Rs ${(v / 100000).toFixed(2)} L`;
  * utf8mb4_0900_ai_ci and cost_centre_master is utf8mb4_unicode_ci — so the join needs an explicit
  * COLLATE or it dies with ER_CANT_AGGREGATE_2COLLATIONS.
  */
-async function revenueByBranch(period: string): Promise<Map<string, number>> {
+async function revenueByBranch(period: string, f: CeoFilters): Promise<Map<string, number>> {
   const out = new Map<string, number>();
   if (!(await tableExists("billing_invoice_particular_snapshot"))) return out;
+  const where: string[] = ["p.period_code = ?"];
+  const params: unknown[] = [period];
+  if (f.costCentreId) { where.push("ccm.id = ?"); params.push(f.costCentreId); }
+  // Cost centre carries no process_id on any live row, so a process narrows revenue through the
+  // employees actually posted to that cost centre — the same modal rule the actuals use.
+  if (f.processId) {
+    where.push(`ccm.id IN (SELECT DISTINCT e.cost_centre_id FROM employees e
+                            WHERE e.process_id = ? AND e.cost_centre_id IS NOT NULL)`);
+    params.push(f.processId);
+  }
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT ccm.branch_id AS branch_id, SUM(p.amount) AS amount
        FROM billing_invoice_particular_snapshot p
        LEFT JOIN cost_centre_master ccm
               ON ccm.cost_centre_code COLLATE utf8mb4_unicode_ci
                = p.cost_centre_code COLLATE utf8mb4_unicode_ci
-      WHERE p.period_code = ?
+      WHERE ${where.join(" AND ")}
       GROUP BY ccm.branch_id`,
-    [period],
+    params,
   );
   for (const r of rows) out.set(r.branch_id ? String(r.branch_id) : "", n(r.amount));
   return out;
@@ -107,9 +134,13 @@ async function revenueByBranch(period: string): Promise<Map<string, number>> {
  * unreadable in the first place: information_schema returns COLUMN_NAME uppercased, so every
  * column probe answered false and every person came back costing nothing.
  */
-async function peopleByBranch(period: string): Promise<Map<string, { cost: number; staff: number }>> {
+async function peopleByBranch(period: string, f: CeoFilters): Promise<Map<string, { cost: number; staff: number }>> {
   const out = new Map<string, { cost: number; staff: number }>();
   if (!(await tableExists("salary_prep_line"))) return out;
+  const where: string[] = ["r.run_month = ?"];
+  const params: unknown[] = [period];
+  if (f.processId) { where.push("e.process_id = ?"); params.push(f.processId); }
+  if (f.costCentreId) { where.push("e.cost_centre_id = ?"); params.push(f.costCentreId); }
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT e.branch_id AS branch_id,
             COUNT(*) AS staff,
@@ -117,10 +148,11 @@ async function peopleByBranch(period: string): Promise<Map<string, { cost: numbe
               + COALESCE(l.pf_employer, 0)
               + COALESCE(l.esic_employer, 0)) AS cost
        FROM salary_prep_line l
-       JOIN salary_prep_run r ON r.id = l.run_id AND r.run_month = ?
+       JOIN salary_prep_run r ON r.id = l.run_id
        JOIN employees e ON e.id = l.employee_id
+      WHERE ${where.join(" AND ")}
       GROUP BY e.branch_id`,
-    [period],
+    params,
   );
   for (const r of rows) {
     out.set(r.branch_id ? String(r.branch_id) : "", { cost: n(r.cost), staff: n(r.staff) });
@@ -130,9 +162,17 @@ async function peopleByBranch(period: string): Promise<Map<string, { cost: numbe
 
 /** GRN spend by branch. Rejections excluded via RejectDate, never the Reject flag — that flag is
  *  1 on 85,255 of 85,463 source rows and means nothing. */
-async function spendByBranch(period: string): Promise<Map<string, number>> {
+async function spendByBranch(period: string, f: CeoFilters): Promise<Map<string, number>> {
   const out = new Map<string, number>();
   if (!(await tableExists("grn_entry_line_snapshot"))) return out;
+  const where: string[] = ["g.period_code = ?", "g.is_rejected = 0"];
+  const params: unknown[] = [period];
+  if (f.costCentreId) { where.push("ccm.id = ?"); params.push(f.costCentreId); }
+  if (f.processId) {
+    where.push(`ccm.id IN (SELECT DISTINCT e.cost_centre_id FROM employees e
+                            WHERE e.process_id = ? AND e.cost_centre_id IS NOT NULL)`);
+    params.push(f.processId);
+  }
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT ccm.branch_id AS branch_id, SUM(l.total) AS amount
        FROM grn_entry_line_snapshot l
@@ -140,9 +180,9 @@ async function spendByBranch(period: string): Promise<Map<string, number>> {
        LEFT JOIN cost_centre_master ccm
               ON ccm.cost_centre_code COLLATE utf8mb4_unicode_ci
                = l.cost_centre_code COLLATE utf8mb4_unicode_ci
-      WHERE g.period_code = ? AND g.is_rejected = 0
+      WHERE ${where.join(" AND ")}
       GROUP BY ccm.branch_id`,
-    [period],
+    params,
   );
   for (const r of rows) out.set(r.branch_id ? String(r.branch_id) : "", n(r.amount));
   return out;
@@ -326,18 +366,80 @@ function findOpportunities(branches: CeoBranchRow[], unbranchedPeople: number): 
   return found.sort((a, b) => rank[a.severity] - rank[b.severity]);
 }
 
-export async function getCeoOverview(period: string, branchId?: string | null): Promise<CeoOverview> {
+/**
+ * Four months of margin for the sparkline, in three aggregate queries rather than four full
+ * overview passes — the trend is a shape, not a drill-down, and paying 1.7s per point for it
+ * would make the page slower than the engine it replaced.
+ */
+async function marginTrend(endPeriod: string, f: CeoFilters): Promise<CeoTrendPoint[]> {
+  const [year, month] = endPeriod.split("-").map(Number);
+  const periods: string[] = [];
+  for (let back = 3; back >= 0; back--) {
+    const d = new Date(Date.UTC(year, month - 1 - back, 1));
+    periods.push(`${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`);
+  }
+  const points: CeoTrendPoint[] = [];
+  for (const period of periods) {
+    const [rev, ppl, spend] = await Promise.all([
+      revenueByBranch(period, f), peopleByBranch(period, f), spendByBranch(period, f),
+    ]);
+    const sum = (m: Map<string, number>) => [...m.values()].reduce((a, b) => a + b, 0);
+    const revenue = sum(rev);
+    const people = [...ppl.values()].reduce((a, b) => a + b.cost, 0);
+    const operatingProfit = revenue - people - sum(spend);
+    points.push({
+      period, revenue, operatingProfit,
+      marginPct: revenue > 0 ? (operatingProfit / revenue) * 100 : null,
+    });
+  }
+  return points;
+}
+
+/** Only offer a filter value that has data behind it — an option that returns an empty page is
+ *  indistinguishable from a broken one. */
+async function filterOptions(period: string) {
+  const [processes] = await db.execute<RowDataPacket[]>(
+    `SELECT DISTINCT pm.id AS id, pm.process_name AS name
+       FROM salary_prep_line l
+       JOIN salary_prep_run r ON r.id = l.run_id AND r.run_month = ?
+       JOIN employees e ON e.id = l.employee_id
+       JOIN process_master pm ON pm.id = e.process_id
+      WHERE pm.active_status = 1
+      ORDER BY pm.process_name`,
+    [period],
+  );
+  const [costCentres] = await db.execute<RowDataPacket[]>(
+    `SELECT DISTINCT ccm.id AS id, ccm.cost_centre_code AS code
+       FROM billing_invoice_particular_snapshot p
+       JOIN cost_centre_master ccm
+         ON ccm.cost_centre_code COLLATE utf8mb4_unicode_ci
+          = p.cost_centre_code COLLATE utf8mb4_unicode_ci
+      WHERE p.period_code = ?
+      ORDER BY ccm.cost_centre_code`,
+    [period],
+  );
+  return {
+    processes: processes.map((r) => ({ id: String(r.id), name: String(r.name) })),
+    costCentres: costCentres.map((r) => ({ id: String(r.id), code: String(r.code) })),
+  };
+}
+
+export async function getCeoOverview(period: string, filters: CeoFilters = {}): Promise<CeoOverview> {
+  const branchId = filters.branchId ?? null;
   const empty: CeoOverview = {
     period, revenue: 0, peopleCost: 0, indirectCost: 0, operatingProfit: 0,
     marginPct: null, staffPaid: 0, revenuePerHead: null, branches: [], opportunities: [],
+    trend: [], options: { processes: [], costCentres: [] },
   };
   if (!/^\d{4}-\d{2}$/.test(period)) return empty;
 
   const [branchRows] = await db.execute<RowDataPacket[]>(
     `SELECT id, branch_name, active_status FROM branch_master`,
   );
-  const [revenue, people, spend, budget] = await Promise.all([
-    revenueByBranch(period), peopleByBranch(period), spendByBranch(period), budgetByBranch(period),
+  const [revenue, people, spend, budget, trend, options] = await Promise.all([
+    revenueByBranch(period, filters), peopleByBranch(period, filters),
+    spendByBranch(period, filters), budgetByBranch(period),
+    marginTrend(period, filters), filterOptions(period),
   ]);
 
   /*
@@ -424,7 +526,23 @@ export async function getCeoOverview(period: string, branchId?: string | null): 
     marginPct: totals.revenue > 0 ? (operatingProfit / totals.revenue) * 100 : null,
     revenuePerHead: totals.staffPaid > 0 ? totals.revenue / totals.staffPaid : null,
     branches,
-    opportunities: branchId ? [] : findOpportunities(branches, unbranched),
+    // A narrowed view compares nothing against nothing, and a branch-scoped user must not be shown
+    // findings computed across branches they cannot see.
+    opportunities: branchId || filters.processId || filters.costCentreId
+      ? []
+      : findOpportunities(branches, unbranched),
+    /*
+     * The trend sums its source maps directly, while the headline is built from the branch rows —
+     * which drop any branch where nothing happened at all. That left the last bar reading 18.1%
+     * beside a headline of 17.8%: the same figure, on the same card, twice. The current month is
+     * replaced with the headline so the two can never disagree.
+     */
+    trend: trend.map((point) =>
+      point.period === period
+        ? { ...point, revenue: totals.revenue, operatingProfit, marginPct: totals.revenue > 0 ? (operatingProfit / totals.revenue) * 100 : null }
+        : point,
+    ),
+    options,
   };
 }
 
