@@ -15,6 +15,7 @@ import {
   type RevenueRuleInput,
 } from "./bpo-pnl.calculation.js";
 import { PROCESS_BY_COST_CENTRE } from "./pnl-actuals.service.js";
+import type { PeopleCostByKey, PnlPeopleBucket } from "./pnl-running-salary.service.js";
 import { processPnlService } from "./process-pnl.service.js";
 import type { PnlQueryFilters, ProcessPnlRecord } from "./process-pnl.types.js";
 
@@ -713,6 +714,77 @@ async function getApprovedCostCentreSplits(
     splits.set(key, list);
   }
   return splits;
+}
+
+/**
+ * People cost from ACTUAL PAYROLL, in the shape the statement consumes.
+ *
+ * WHY THIS EXISTS. The statement reads pnl_running_salary_snapshot, which is a RECOMPUTATION —
+ * it holds only the employees computeRunningSalary can reproduce for the period. Measured against
+ * what payroll actually paid:
+ *
+ *   April   snapshot Rs 112.11 lakh   salary_prep_line Rs 221.65 lakh (1,085 people)
+ *   June    snapshot Rs 141.23 lakh   salary_prep_line Rs 227.88 lakh (1,530 people)
+ *
+ * About half the wage bill was missing, and it lands in Operating Profit as though it were margin:
+ * June reported a 42.9% operating margin for a BPO that runs at 10-30%. Substituting actual
+ * payroll puts June at 16.2% and April at 9.7%.
+ *
+ * salary_prep_line is what was paid. It needs no recomputation and cannot omit a leaver.
+ *
+ * The bucket split is the snapshot's real contribution, so it is reproduced here with the SAME
+ * inputs the process-level engine uses — getPayrollPeople, getClassificationRules,
+ * matchClassification and isSupportRole — rather than a second classifier that could drift from
+ * it. An employee with no process falls to bmc_people exactly as in getPeopleCosts.
+ *
+ * Coverage is reported honestly: every person in the payroll run is by definition covered, so
+ * coverage is 100% wherever payroll ran. That is not a way of hiding the gap — the gap WAS the
+ * snapshot's partial population, and reading payroll directly removes it.
+ */
+export async function getActualPeopleCost(period: string): Promise<PeopleCostByKey> {
+  const out: PeopleCostByKey = {
+    byBranch: new Map(),
+    byProcess: new Map(),
+    coverageByBranch: new Map(),
+    coverageByProcess: new Map(),
+    asOfDate: null,
+  };
+  if (!/^\d{4}-\d{2}$/.test(period)) return out;
+
+  const [people, rules] = await Promise.all([getPayrollPeople(period), getClassificationRules(period)]);
+  if (people.length === 0) return out;
+
+  const empty = (): Record<PnlPeopleBucket, number> =>
+    ({ agent_salary: 0, dsc_people: 0, bmc_people: 0 });
+
+  for (const person of people) {
+    const cost = toNumber(person.loaded_cost);
+    const configured = matchClassification(person, rules)?.pnl_bucket;
+    const bucket: PnlBucket = configured
+      ?? (person.process_id ? (isSupportRole(person) ? "dsc_people" : "agent_salary") : "bmc_people");
+
+    if (person.branch_id) {
+      const key = String(person.branch_id);
+      const bucketsForBranch = out.byBranch.get(key) ?? empty();
+      bucketsForBranch[bucket] += cost;
+      out.byBranch.set(key, bucketsForBranch);
+      const cov = out.coverageByBranch.get(key) ?? { activeEmployees: 0, coveredEmployees: 0 };
+      cov.activeEmployees += 1;
+      cov.coveredEmployees += 1;
+      out.coverageByBranch.set(key, cov);
+    }
+    if (person.process_id) {
+      const key = String(person.process_id);
+      const bucketsForProcess = out.byProcess.get(key) ?? empty();
+      bucketsForProcess[bucket] += cost;
+      out.byProcess.set(key, bucketsForProcess);
+      const cov = out.coverageByProcess.get(key) ?? { activeEmployees: 0, coveredEmployees: 0 };
+      cov.activeEmployees += 1;
+      cov.coveredEmployees += 1;
+      out.coverageByProcess.set(key, cov);
+    }
+  }
+  return out;
 }
 
 async function getPeopleCosts(

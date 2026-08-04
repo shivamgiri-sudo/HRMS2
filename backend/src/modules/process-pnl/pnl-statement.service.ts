@@ -7,6 +7,7 @@ import {
 } from "./pnl-actuals.service.js";
 import { getRunningPeopleCost, type PeopleCostByKey } from "./pnl-running-salary.service.js";
 import { processLobService } from "./process-lob.service.js";
+import { getActualPeopleCost } from "./bpo-pnl.service.js";
 import type { BpoPnlRow } from "./bpo-pnl.service.js";
 import type { PnlQueryFilters } from "./process-pnl.types.js";
 
@@ -373,7 +374,23 @@ const defaultDependencies: StatementDependencies = {
   getDriverRevenue: (period) => getDriverRevenueActuals(period),
   getInvoicedRevenue: (period) => getInvoicedRevenueActuals(period),
   getSeatRevenue: (period) => getSeatRevenueActuals(period),
-  getPeopleCost: (period) => getRunningPeopleCost(period),
+  /*
+   * Actual payroll first; the recomputed snapshot only if payroll has nothing for the period.
+   *
+   * The snapshot holds only the employees computeRunningSalary can reproduce, which was about
+   * half the wage bill — April Rs 112.11 lakh against Rs 221.65 lakh actually paid, June
+   * Rs 141.23 lakh against Rs 227.88 lakh. The missing half landed in Operating Profit as
+   * margin, reporting 42.9% for June against the 10-30% this business actually runs at. Reading
+   * salary_prep_line puts June at 16.2% and April at 9.7%.
+   *
+   * The snapshot is kept as the fallback rather than deleted: it still answers for a period whose
+   * payroll run has not happened yet, where it is the only estimate available.
+   */
+  getPeopleCost: async (period) => {
+    const actual = await getActualPeopleCost(period);
+    if (actual.byBranch.size > 0 || actual.byProcess.size > 0) return actual;
+    return getRunningPeopleCost(period);
+  },
 };
 
 export async function getStatement(
