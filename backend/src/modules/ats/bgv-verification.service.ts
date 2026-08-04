@@ -1156,20 +1156,23 @@ export async function syncBgvChecksToReport(candidateId: string): Promise<{ sync
     digilocker: "digilocker_status",
   };
 
+  // Report columns use ENUM('not_run','passed','failed','partial') — map check
+  // statuses to those values only. 'discrepancy' is not a valid ENUM value.
   const statusMap: Record<string, string> = {
     verified:      "passed",
     mismatch:      "failed",
     failed:        "failed",
-    manual_review: "discrepancy",
-    pending:       "pending",
-    initiated:     "pending",
+    manual_review: "partial",
+    not_started:   "not_run",
+    pending:       "not_run",
+    initiated:     "not_run",
   };
 
   // Several check types can feed one report column (e.g. aadhaar and
   // aadhaar_offline both prove identity). Collapse them per column instead of
   // emitting duplicate SET clauses, where evaluation order would silently decide
   // the winner and could let a 'pending' overwrite a 'passed'.
-  const precedence: Record<string, number> = { passed: 4, discrepancy: 3, failed: 2, pending: 1 };
+  const precedence: Record<string, number> = { passed: 4, partial: 3, failed: 2, not_run: 1 };
   const bestByColumn = new Map<string, string>();
   for (const row of checks as RowDataPacket[]) {
     const col = columnMap[String(row.check_type)];
