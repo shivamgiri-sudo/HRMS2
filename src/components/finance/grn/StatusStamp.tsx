@@ -29,7 +29,7 @@ export function StatusStamp({
   return (
     <span
       className={cn(
-        "inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border px-2.5 py-0.5 text-[10.5px] font-bold uppercase tracking-wide",
+        "inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border-[1.5px] px-2.5 py-0.5 text-[10.5px] font-bold uppercase tracking-[.03em]",
         TONE_CLASSES[tone],
         className
       )}

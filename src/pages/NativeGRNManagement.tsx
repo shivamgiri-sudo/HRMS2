@@ -12,8 +12,12 @@ import { useHasRole } from "@/hooks/useUserRole";
  *  Tabs sit on the content's top border like real document tabs, instead of a pill switcher. */
 const TAB_LIST_CLASS =
   "h-auto w-full justify-start gap-0.5 rounded-none border-0 border-b border-slate-200 bg-transparent p-0 shadow-none";
+// !-prefixed radius utilities: tailwind-merge (default config) does not recognize rounded-t-lg/
+// rounded-b-none as conflicting with the base component's rounded-xl shorthand — verified by
+// running twMerge directly, rounded-xl survives in the merged string either way. The !important
+// these compile to is what actually wins in the browser regardless of merge/source order.
 const TAB_TRIGGER_CLASS =
-  "-mb-px rounded-t-lg rounded-b-none border border-b-0 border-transparent px-4 py-2 text-xs font-bold text-slate-500 data-[state=active]:border-slate-200 data-[state=active]:bg-white data-[state=active]:text-[#073f78] data-[state=active]:shadow-none";
+  "-mb-px !rounded-t-lg !rounded-b-none border border-b-0 border-transparent px-4 py-2 text-xs font-bold text-slate-500 data-[state=active]:border-slate-200 data-[state=active]:bg-white data-[state=active]:text-[#073f78] data-[state=active]:shadow-none";
 
 export default function NativeGRNManagement() {
   // Branch admins raise GRNs but cannot review them — the backend's
