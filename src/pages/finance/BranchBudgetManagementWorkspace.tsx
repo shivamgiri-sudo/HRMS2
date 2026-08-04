@@ -206,6 +206,58 @@ function financialYear(period: string) {
     : `${year - 1}-${String(year).slice(-2)}`;
 }
 
+const MONTH_NAMES = [
+  "January", "February", "March", "April", "May", "June",
+  "July", "August", "September", "October", "November", "December",
+];
+
+/** A native `<input type="month">` renders as a working calendar picker in Chrome/Edge/Firefox,
+ *  but Safari has never implemented it — it falls back to a plain text box with no picker UI at
+ *  all, which reads as "the month dropdown doesn't work" rather than as a browser gap. Two plain
+ *  `<select>`s behave identically everywhere, so there's no browser-dependent path here. */
+function MonthYearPicker({
+  value,
+  onChange,
+  yearsBack = 3,
+  yearsForward = 2,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  yearsBack?: number;
+  yearsForward?: number;
+}) {
+  const [yearPart, monthPart] = value.split("-");
+  const year = Number(yearPart) || new Date().getFullYear();
+  const month = Number(monthPart) || 1;
+  const currentYear = new Date().getFullYear();
+  const years = Array.from(
+    { length: yearsBack + yearsForward + 1 },
+    (_, index) => currentYear - yearsBack + index
+  );
+  return (
+    <div className="flex gap-1.5">
+      <select
+        aria-label="Month"
+        className="h-9 flex-1 rounded-md border border-input bg-background px-2 text-sm"
+        value={month}
+        onChange={(event) => onChange(`${year}-${String(Number(event.target.value)).padStart(2, "0")}`)}
+      >
+        {MONTH_NAMES.map((name, index) => (
+          <option key={name} value={index + 1}>{name}</option>
+        ))}
+      </select>
+      <select
+        aria-label="Year"
+        className="h-9 w-24 rounded-md border border-input bg-background px-2 text-sm"
+        value={year}
+        onChange={(event) => onChange(`${event.target.value}-${String(month).padStart(2, "0")}`)}
+      >
+        {years.map((y) => <option key={y} value={y}>{y}</option>)}
+      </select>
+    </div>
+  );
+}
+
 function money(value: number) {
   return new Intl.NumberFormat("en-IN", {
     style: "currency",
@@ -955,7 +1007,7 @@ Reason:`
               {/* Compacted: three tall stacked blocks became one inline row. This is a context
                   selector, not a form to fill in, so it should not occupy a card's worth of height
                   above the grid that actually does the work. */}
-              <Card className="rounded-2xl border-slate-200 shadow-sm"><CardContent className="flex flex-wrap items-end gap-3 p-3 [&_input]:h-9 [&_input]:min-h-0 [&_input]:py-1 [&_select]:h-9 [&_label]:text-xs [&_label]:text-slate-500"><div className="w-40 space-y-1"><Label>Period *</Label><Input type="month" value={period} onChange={(event) => { setPeriod(event.target.value); setSavedBudgetId(null); setLoadedDetailId(null); }} /></div><div className="w-56 space-y-1"><Label>{capabilities?.branchLocked ? "Assigned branch" : "Branch *"}</Label><select className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm disabled:bg-slate-100" value={branchId} disabled={Boolean(capabilities?.branchLocked)} onChange={(event) => { setBranchId(event.target.value); setSavedBudgetId(null); setLoadedDetailId(null); }}><option value="">Select branch</option>{branches.map((branch) => <option key={branch.id} value={branch.id}>{branch.branch_name ?? branch.name}</option>)}</select></div><div className="w-32 space-y-1"><Label>Financial year</Label><Input value={financialYear(period)} readOnly /></div></CardContent></Card>
+              <Card className="rounded-2xl border-slate-200 shadow-sm"><CardContent className="flex flex-wrap items-end gap-3 p-3 [&_input]:h-9 [&_input]:min-h-0 [&_input]:py-1 [&_select]:h-9 [&_label]:text-xs [&_label]:text-slate-500"><div className="w-52 space-y-1"><Label>Period *</Label><MonthYearPicker value={period} onChange={(value) => { setPeriod(value); setSavedBudgetId(null); setLoadedDetailId(null); }} /></div><div className="w-56 space-y-1"><Label>{capabilities?.branchLocked ? "Assigned branch" : "Branch *"}</Label><select className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm disabled:bg-slate-100" value={branchId} disabled={Boolean(capabilities?.branchLocked)} onChange={(event) => { setBranchId(event.target.value); setSavedBudgetId(null); setLoadedDetailId(null); }}><option value="">Select branch</option>{branches.map((branch) => <option key={branch.id} value={branch.id}>{branch.branch_name ?? branch.name}</option>)}</select></div><div className="w-28 space-y-1"><Label>Financial year</Label><div className="flex h-9 items-center rounded-md border border-dashed border-slate-300 bg-slate-50 px-3 text-sm font-medium text-slate-600" title="Set by Period — April to March. Not independently editable.">{financialYear(period)}</div></div></CardContent></Card>
               {(() => {
                 const banner = budgetStatusBanner(currentBudget?.status ?? "", currentBudget?.budget_number);
                 return banner && <div className={`rounded-2xl border p-4 text-sm ${banner.tone}`}>{banner.message}</div>;
