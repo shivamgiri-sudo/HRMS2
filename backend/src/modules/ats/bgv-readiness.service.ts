@@ -256,11 +256,15 @@ async function checkMandatoryDocuments(
 ): Promise<Array<{ check_type: string; reason: string; severity: 'critical' | 'warning' }>> {
   const blockers: Array<{ check_type: string; reason: string; severity: 'critical' | 'warning' }> = [];
 
-  // Get uploaded documents
+  // Get uploaded documents.
+  //
+  // ats_candidate_documents has no deleted_at column — it does not soft-delete —
+  // so the filter was ER_BAD_FIELD_ERROR: Unknown column 'deleted_at' in 'where
+  // clause' on every call, which took the whole readiness check down with it.
   const [docs] = await db.execute<RowDataPacket[]>(
     `SELECT document_type, file_url
      FROM ats_candidate_documents
-     WHERE candidate_id = ? AND deleted_at IS NULL`,
+     WHERE candidate_id = ?`,
     [candidateId]
   );
 
