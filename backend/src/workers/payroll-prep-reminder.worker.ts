@@ -26,8 +26,11 @@ function previousMonthIST(): string {
   return `${y}-${String(m).padStart(2, "0")}`;
 }
 
-/** ms until next 1st of month at 08:00 IST (02:30 UTC). */
+/** ms until next 1st of month at 08:00 IST (02:30 UTC). Capped at 24 days so
+ *  Node's setTimeout 32-bit limit (~24.8 days) is never exceeded; the scheduler
+ *  re-evaluates on each wake and skips months it isn't due. */
 function msUntilNext1st(): number {
+  const MAX_TIMEOUT_MS = 24 * 60 * 60 * 1000 * 24; // 24 days in ms
   const now = new Date();
   const istNow = new Date(now.getTime() + 5.5 * 60 * 60 * 1000);
   const nextFirst = new Date(
@@ -37,7 +40,15 @@ function msUntilNext1st(): number {
   if (nextFirst.getTime() <= now.getTime()) {
     nextFirst.setUTCMonth(nextFirst.getUTCMonth() + 1);
   }
-  return nextFirst.getTime() - now.getTime();
+  const ms = nextFirst.getTime() - now.getTime();
+  // If the target is more than 24 days away, sleep 24 days then re-evaluate
+  return Math.min(ms, MAX_TIMEOUT_MS);
+}
+
+/** Returns true only when today (IST) is the 1st of the month. */
+function isTodayThe1st(): boolean {
+  const istNow = new Date(Date.now() + 5.5 * 60 * 60 * 1000);
+  return istNow.getUTCDate() === 1;
 }
 
 async function runReminders(): Promise<void> {
@@ -114,13 +125,17 @@ export async function startPayrollPrepReminderWorker(): Promise<void> {
   );
 
   scheduledTimer = setTimeout(async () => {
-    try {
-      await runReminders();
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      console.error(`[${WORKER_NAME}] Error:`, msg);
+    // Guard: only run on the actual 1st — wakeup may be an intermediate
+    // 24-day sleep rather than the real target date.
+    if (isTodayThe1st()) {
+      try {
+        await runReminders();
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error(`[${WORKER_NAME}] Error:`, msg);
+      }
     }
-    // Reschedule for next month
+    // Reschedule — re-evaluates next target after each wakeup
     await startPayrollPrepReminderWorker();
   }, delay);
 
