@@ -540,6 +540,7 @@ export interface BirthdayGreetingData {
   bloodGroup?: string;
   city?: string;
   managerName?: string;
+  employeeCode?: string;
 }
 
 export function birthdayGreetingEmail(data: BirthdayGreetingData): string {
@@ -564,6 +565,7 @@ export function birthdayGreetingEmail(data: BirthdayGreetingData): string {
 
   // Info chips — rendered on dark navy bg so use transparent-white style
   const chips: string[] = [];
+  if (data.employeeCode) chips.push(`<td style="padding:6px 10px;background:rgba(255,255,255,.15);border-radius:8px;font-size:12px;font-weight:bold;color:#fff;white-space:nowrap;border:1px solid rgba(255,255,255,.2)">🆔 ${data.employeeCode}</td><td width="8"></td>`);
   if (data.designation) chips.push(`<td style="padding:6px 10px;background:rgba(255,255,255,.15);border-radius:8px;font-size:12px;font-weight:bold;color:#fff;white-space:nowrap;border:1px solid rgba(255,255,255,.2)">👔 ${data.designation}</td><td width="8"></td>`);
   if (data.branchName) chips.push(`<td style="padding:6px 10px;background:rgba(255,255,255,.15);border-radius:8px;font-size:12px;font-weight:bold;color:#fff;white-space:nowrap;border:1px solid rgba(255,255,255,.2)">📍 ${data.branchName}</td><td width="8"></td>`);
   if (data.processName || data.department) chips.push(`<td style="padding:6px 10px;background:rgba(255,255,255,.15);border-radius:8px;font-size:12px;font-weight:bold;color:#fff;white-space:nowrap;border:1px solid rgba(255,255,255,.2)">⚙️ ${data.processName || data.department}</td><td width="8"></td>`);

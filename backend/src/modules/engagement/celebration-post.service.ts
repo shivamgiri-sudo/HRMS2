@@ -182,6 +182,7 @@ export async function sendBirthdayGreeting(emp: CelebrationEmployee): Promise<vo
           gender: emp.gender ?? undefined,
           bloodGroup: emp.blood_group ?? undefined,
           managerName: emp.manager_name ?? undefined,
+          employeeCode: emp.employee_code ?? undefined,
         }),
       });
     } catch (err) {
@@ -196,7 +197,8 @@ export async function sendBirthdayGreeting(emp: CelebrationEmployee): Promise<vo
   }
 
   const branchTag = branch ? ` The ${branch} family is celebrating with you today! 🥳` : "";
-  const contentText = `🎂 Wishing ${name} a very Happy Birthday! 🎉${branchTag} May your day be filled with joy, laughter, and everything wonderful! 🌸🎈🎁`;
+  const masidTag = emp.employee_code ? ` [${emp.employee_code}]` : "";
+  const contentText = `🎂 Wishing ${name}${masidTag} a very Happy Birthday! 🎉${branchTag} May your day be filled with joy, laughter, and everything wonderful! 🌸🎈🎁`;
 
   await db.execute(
     `INSERT INTO company_posts
@@ -271,7 +273,8 @@ export async function sendAnniversaryGreeting(emp: CelebrationEmployee): Promise
 
   const yearLabel = years === 1 ? "year" : "years";
   const branchTag = branch ? ` The entire ${branch} team is proud of you!` : "";
-  const contentText = `🌟 Congratulations ${name} on completing ${years} wonderful ${yearLabel} with MAS Callnet! 🏆${branchTag} Your dedication, consistency, and contributions inspire everyone around you. Thank you for being an incredible part of our family! ✨`;
+  const masidTag = emp.employee_code ? ` [${emp.employee_code}]` : "";
+  const contentText = `🌟 Congratulations ${name}${masidTag} on completing ${years} wonderful ${yearLabel} with MAS Callnet! 🏆${branchTag} Your dedication, consistency, and contributions inspire everyone around you. Thank you for being an incredible part of our family! ✨`;
 
   await db.execute(
     `INSERT INTO company_posts
