@@ -38,6 +38,13 @@ export interface CeoOpportunity {
   action: string;
 }
 
+export interface CeoTrendPoint {
+  period: string;
+  revenue: number;
+  operatingProfit: number;
+  marginPct: number | null;
+}
+
 export interface CeoOverview {
   period: string;
   revenue: number;
@@ -49,15 +56,27 @@ export interface CeoOverview {
   revenuePerHead: number | null;
   branches: CeoBranchRow[];
   opportunities: CeoOpportunity[];
+  trend: CeoTrendPoint[];
+  /** Only values that have data behind them — an option leading to an empty page reads as broken. */
+  options: { processes: { id: string; name: string }[]; costCentres: { id: string; code: string }[] };
 }
 
-export function useCeoOverview(period: string, branchId?: string) {
+export interface CeoOverviewFilters {
+  branchId?: string;
+  processId?: string;
+  costCentreId?: string;
+}
+
+export function useCeoOverview(period: string, filters: CeoOverviewFilters = {}) {
+  const { branchId, processId, costCentreId } = filters;
   return useQuery({
-    queryKey: ["ceo-overview", period, branchId ?? ""],
+    queryKey: ["ceo-overview", period, branchId ?? "", processId ?? "", costCentreId ?? ""],
     enabled: Boolean(period),
     queryFn: async () => {
       const params = new URLSearchParams({ period });
       if (branchId) params.set("branchId", branchId);
+      if (processId) params.set("processId", processId);
+      if (costCentreId) params.set("costCentreId", costCentreId);
       const response = await hrmsApi.get<{ success: boolean; data: CeoOverview }>(
         `/api/finance/pnl/ceo-overview?${params.toString()}`,
       );

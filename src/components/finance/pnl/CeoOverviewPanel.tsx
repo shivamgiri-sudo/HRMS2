@@ -58,8 +58,11 @@ export interface CeoOverviewPanelProps {
 }
 
 export function CeoOverviewPanel({ period, branchId, onBranchChange }: CeoOverviewPanelProps) {
-  const { data, isLoading, error } = useCeoOverview(period, branchId);
+  const [processId, setProcessId] = useState("");
+  const [costCentreId, setCostCentreId] = useState("");
   const [compare, setCompare] = useState<"avg" | "budget">("avg");
+  const { data, isLoading, error } = useCeoOverview(period, { branchId, processId, costCentreId });
+  const narrowed = Boolean(branchId || processId || costCentreId);
 
   /** Company-average margin, used as the comparison baseline. Excludes the rows that would skew
    *  it: cost centres, closed branches, and any branch flagged as missing a cost line. */
@@ -89,8 +92,73 @@ export function CeoOverviewPanel({ period, branchId, onBranchChange }: CeoOvervi
   const { revenue, peopleCost, indirectCost, operatingProfit, marginPct, staffPaid, revenuePerHead } = data;
   const width = (part: number) => (revenue > 0 ? Math.max(0, Math.min(100, (part / revenue) * 100)) : 0);
 
+  const trendMax = Math.max(1, ...data.trend.map((t) => Math.abs(t.marginPct ?? 0)));
+
   return (
     <div className="flex flex-col gap-4">
+
+      {/* Filters. Every option is drawn from data that exists for this period — an option that
+          leads to an empty page is indistinguishable from a broken one. */}
+      <section className="flex flex-wrap items-end gap-2.5 rounded-2xl border border-slate-200 bg-white p-3.5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+        <Filter label="Branch" id="ceoBranch" value={branchId ?? ""} onChange={(v) => onBranchChange?.(v)}>
+          <option value="">All branches</option>
+          {data.branches.map((b) => (
+            <option key={b.branchId ?? b.branchName} value={b.branchId ?? ""}>{b.branchName}</option>
+          ))}
+        </Filter>
+        <Filter label="Process" id="ceoProcess" value={processId} onChange={setProcessId}>
+          <option value="">All processes</option>
+          {data.options.processes.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+        </Filter>
+        <Filter label="Cost centre" id="ceoCc" value={costCentreId} onChange={setCostCentreId}>
+          <option value="">All cost centres</option>
+          {data.options.costCentres.map((c) => <option key={c.id} value={c.id}>{c.code}</option>)}
+        </Filter>
+        <Filter label="Compare with" id="ceoCompare" value={compare} onChange={(v) => setCompare(v as "avg" | "budget")}>
+          <option value="avg">Company average</option>
+          <option value="budget">Budget</option>
+        </Filter>
+        {narrowed && (
+          <button
+            type="button"
+            onClick={() => { setProcessId(""); setCostCentreId(""); onBranchChange?.(""); }}
+            className="ml-auto rounded-md border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-600 hover:border-slate-400 hover:text-slate-900 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-400"
+          >
+            Clear filters
+          </button>
+        )}
+      </section>
+
+      {/* Headline figures */}
+      <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+        <article className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+          <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">Operating margin</div>
+          <div className={`mt-1 text-[26px] font-semibold leading-tight tabular-nums ${marginTone(marginPct, false)}`}>
+            {marginPct === null ? "—" : `${marginPct.toFixed(1)}%`}
+          </div>
+          <div className="mt-1 text-xs text-slate-500">{lakh(operatingProfit)} operating profit</div>
+          <div className="mt-2 flex h-7 items-end gap-1" aria-hidden="true">
+            {data.trend.map((t) => (
+              <span
+                key={t.period}
+                title={`${t.period}: ${t.marginPct === null ? "—" : t.marginPct.toFixed(1) + "%"}`}
+                className={`flex-1 rounded-t ${t.period === period ? "bg-teal-700" : "bg-slate-200 dark:bg-slate-700"}`}
+                style={{ height: `${Math.max(8, (Math.abs(t.marginPct ?? 0) / trendMax) * 100)}%` }}
+              />
+            ))}
+          </div>
+          <div className="mt-1 text-[11px] text-slate-500">
+            {data.trend.map((t) => `${t.period.slice(5)} ${t.marginPct === null ? "—" : t.marginPct.toFixed(0) + "%"}`).join(" · ")}
+          </div>
+        </article>
+        <Kpi label="Invoiced revenue" value={lakh(revenue)} detail={`${data.branches.length} branch${data.branches.length === 1 ? "" : "es"}`} />
+        <Kpi label="People cost" value={lakh(peopleCost)}
+          detail={`${revenue > 0 ? ((peopleCost / revenue) * 100).toFixed(1) : "—"}% of revenue · ${staffPaid.toLocaleString("en-IN")} paid`} />
+        <Kpi label="Indirect cost" value={lakh(indirectCost)}
+          detail={`${revenue > 0 ? ((indirectCost / revenue) * 100).toFixed(1) : "—"}% of revenue`} />
+        <Kpi label="Revenue per head" value={revenuePerHead === null ? "—" : thousand(revenuePerHead)}
+          detail="per paid employee, per month" />
+      </section>
 
       {/* Verdict: the number a CEO reads first, with the waterfall that explains it */}
       <section className="grid gap-6 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm md:grid-cols-[minmax(200px,0.9fr)_2fr] dark:border-slate-800 dark:bg-slate-900">
@@ -139,20 +207,7 @@ export function CeoOverviewPanel({ period, branchId, onBranchChange }: CeoOvervi
       <section className="rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
         <header className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 px-5 py-3 dark:border-slate-800">
           <h3 className="text-sm font-semibold">Branch comparison</h3>
-          <div className="flex items-center gap-3">
-            <label className="text-[11px] font-semibold uppercase tracking-wider text-slate-500" htmlFor="ceoCompare">
-              Compare with
-            </label>
-            <select
-              id="ceoCompare"
-              value={compare}
-              onChange={(e) => setCompare(e.target.value as "avg" | "budget")}
-              className="rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-xs dark:border-slate-700 dark:bg-slate-800"
-            >
-              <option value="avg">Company average</option>
-              <option value="budget">Budget</option>
-            </select>
-          </div>
+          <span className="text-[12.5px] text-slate-500">ranked by operating profit</span>
         </header>
 
         <div className="overflow-x-auto">
@@ -184,8 +239,14 @@ export function CeoOverviewPanel({ period, branchId, onBranchChange }: CeoOvervi
         </div>
       </section>
 
-      {/* Where profit is recoverable */}
-      {data.opportunities.length > 0 && (
+      {/* Where profit is recoverable. Suppressed under a filter: comparing one branch against
+          itself finds nothing, and an empty panel would read as a clean bill of health. */}
+      {narrowed && (
+        <p className="rounded-2xl border border-slate-200 bg-white px-5 py-3 text-[13px] text-slate-500 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+          Opportunities are ranked across the whole company. Clear the filters to see them.
+        </p>
+      )}
+      {!narrowed && data.opportunities.length > 0 && (
         <section className="rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
           <header className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 px-5 py-3 dark:border-slate-800">
             <h3 className="text-sm font-semibold">Where operating profit can be lifted</h3>
@@ -222,6 +283,37 @@ export function CeoOverviewPanel({ period, branchId, onBranchChange }: CeoOvervi
         this month, not a recomputed snapshot. Revenue per head is monthly, per paid employee.
       </p>
     </div>
+  );
+}
+
+function Filter({
+  label, id, value, onChange, children,
+}: {
+  label: string; id: string; value: string;
+  onChange: (value: string) => void; children: React.ReactNode;
+}) {
+  return (
+    <div className="flex min-w-[150px] flex-col gap-1">
+      <label className="text-[11px] font-semibold uppercase tracking-wider text-slate-500" htmlFor={id}>{label}</label>
+      <select
+        id={id}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="rounded-md border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-[13px] dark:border-slate-700 dark:bg-slate-800"
+      >
+        {children}
+      </select>
+    </div>
+  );
+}
+
+function Kpi({ label, value, detail }: { label: string; value: string; detail: string }) {
+  return (
+    <article className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+      <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">{label}</div>
+      <div className="mt-1 text-[26px] font-semibold leading-tight tabular-nums">{value}</div>
+      <div className="mt-1 text-xs text-slate-500">{detail}</div>
+    </article>
   );
 }
 

@@ -788,7 +788,11 @@ router.get(
       requestedBranchId: req.query.branchId ? String(req.query.branchId) : undefined,
     });
     const period = req.query.period ? String(req.query.period) : "";
-    const data = await getCeoOverview(period, branchId ?? undefined);
+    const data = await getCeoOverview(period, {
+      branchId: branchId ?? undefined,
+      processId: req.query.processId ? String(req.query.processId) : undefined,
+      costCentreId: req.query.costCentreId ? String(req.query.costCentreId) : undefined,
+    });
     res.json({ success: true, data });
   })
 );
