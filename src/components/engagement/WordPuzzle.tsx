@@ -4,7 +4,7 @@ import { hrmsApi } from "@/lib/hrmsApi";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Delete, Sparkles, Trophy, Users, ChevronRight, Check, X } from "lucide-react";
+import { Delete, Sparkles, Trophy, Users, ChevronRight, Check, X, HelpCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 type LetterState = "correct" | "present" | "absent" | "empty" | "tbd";
@@ -78,6 +78,7 @@ export function WordPuzzle({ compact = false }: { compact?: boolean }) {
   const [gameWord, setGameWord] = useState<string | undefined>();
   const [finalPoints, setFinalPoints] = useState(0);
   const [finalSolved, setFinalSolved] = useState(false);
+  const [showHelp, setShowHelp] = useState(false);
   const queryClient = useQueryClient();
   const boardRef = useRef<HTMLDivElement>(null);
 
@@ -261,11 +262,49 @@ export function WordPuzzle({ compact = false }: { compact?: boolean }) {
               </div>
             </div>
           </div>
-          <div className="flex items-center gap-1 text-slate-400">
-            <Users className="h-3.5 w-3.5" />
-            <span className="text-xs">{solvedCount}/{participantCount}</span>
+          <div className="flex items-center gap-2">
+            <div className="flex items-center gap-1 text-slate-400">
+              <Users className="h-3.5 w-3.5" />
+              <span className="text-xs">{solvedCount}/{participantCount}</span>
+            </div>
+            <button
+              onClick={() => setShowHelp(h => !h)}
+              className="flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-medium text-indigo-600 bg-indigo-50 hover:bg-indigo-100 transition-colors"
+            >
+              <HelpCircle className="h-3.5 w-3.5" />
+              How to play
+            </button>
           </div>
         </div>
+
+        {/* How to play panel */}
+        {showHelp && (
+          <div className="rounded-xl bg-slate-50 border border-slate-200 p-4 space-y-3 text-sm">
+            <p className="font-bold text-slate-800">How to play Word Puzzle</p>
+            <p className="text-slate-600">Guess the hidden <span className="font-bold">5-letter word</span> in 6 tries.</p>
+            <ul className="space-y-1.5 text-slate-600">
+              <li>• Type any 5-letter word using the keyboard below (or your physical keyboard)</li>
+              <li>• Press <span className="font-bold">ENTER</span> to submit your guess</li>
+              <li>• Press <span className="font-bold">⌫</span> to delete a letter</li>
+            </ul>
+            <div className="space-y-1.5">
+              <p className="font-semibold text-slate-700">After each guess, tiles change colour:</p>
+              <div className="flex items-center gap-2">
+                <div className="flex h-8 w-8 items-center justify-center rounded-md bg-green-500 text-white text-xs font-black">A</div>
+                <span className="text-slate-600"><span className="font-bold text-green-700">Green</span> — correct letter, correct position</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="flex h-8 w-8 items-center justify-center rounded-md bg-amber-500 text-white text-xs font-black">B</div>
+                <span className="text-slate-600"><span className="font-bold text-amber-700">Yellow</span> — letter is in the word, but wrong position</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="flex h-8 w-8 items-center justify-center rounded-md bg-slate-500 text-white text-xs font-black">C</div>
+                <span className="text-slate-600"><span className="font-bold text-slate-600">Grey</span> — letter is not in the word at all</span>
+              </div>
+            </div>
+            <p className="text-xs text-slate-400">💡 The hint above helps you narrow down the theme (e.g. "HR Terms")</p>
+          </div>
+        )}
 
         {/* Hint */}
         {puzzle.hint && (
