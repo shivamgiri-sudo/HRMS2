@@ -12,6 +12,7 @@ import {
   HALF_DAY_STATUS,
   LATEST_COMPLETE_ATTENDANCE_DATE_SQL,
   LEAVE_STATUSES,
+  PRESENT_SESSION_STATUSES,
   attendedDaysSql,
   expectedToWorkSql,
   presentSql,
@@ -157,7 +158,7 @@ export async function getHeadcountMetrics(scope: DashboardScope): Promise<Metric
        FROM wfm_attendance_session s
        JOIN employees e ON e.id = s.employee_id
        WHERE DATE(CONVERT_TZ(s.session_date, '+00:00', '+05:30')) = ${IST_DATE_EXPR}
-         AND s.current_status IN ('Rostered', 'Active', 'Login')
+         AND s.current_status IN (${statusList(PRESENT_SESSION_STATUSES)})
          AND ${availScopeSql}`,
       availScopeParams
     );
@@ -248,7 +249,7 @@ export async function getAttendanceMetrics(scope: DashboardScope): Promise<Metri
        FROM wfm_attendance_session s
        JOIN employees e ON e.id = s.employee_id
        WHERE DATE(s.session_date) = ${IST_DATE_EXPR}
-         AND s.current_status IN ('Logged In', 'Active', 'Login', 'Rostered')
+         AND s.current_status IN (${statusList(PRESENT_SESSION_STATUSES)})
          AND ${buildScopeWhereEmployees(scope, "e").sql}`,
       buildScopeWhereEmployees(scope, "e").params
     );
@@ -487,15 +488,34 @@ export async function getResignationMetrics(scope: DashboardScope): Promise<Metr
     // shows resignations. Scope routes through the employee instead.
     const { sql: scopeSql, params: scopeParams } = buildScopeWhere(scope, "e.branch_id", "e.process_id");
 
+    // `status` is varchar(50) with no declared vocabulary, so the named buckets are a
+    // guess at what it holds. They were wrong: the only value in production is
+    // 'exited' (all 2 rows), which is terminal — someone who has left is not an active
+    // exit — yet it was excluded only from 'completed'/'cancelled' and so counted as
+    // active. The panel therefore read "2 active, 0 pending, 0 accepted, 0 withdrawn":
+    // a total that contradicts its own breakdown.
+    //
+    // Two changes. 'exited' joins the terminal list, compared case-insensitively
+    // because nothing constrains the column's casing. And an `other` bucket catches
+    // any active status not otherwise named, so totalActive always equals the sum of
+    // the buckets — a value nobody anticipated shows up as "other" instead of
+    // silently inflating the headline.
+    // sourceRows counts every exit in scope regardless of status, so an empty table
+    // renders "No data recorded yet" rather than four confident zeros. Filtering in
+    // the SELECT rather than the WHERE is what makes both numbers available at once.
+    const ACTIVE = `LOWER(er.status) NOT IN ('completed','cancelled','exited')`;
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT
-         COUNT(*) AS totalActive,
-         SUM(CASE WHEN er.status = 'pending_discussion' THEN 1 ELSE 0 END) AS pendingDiscussion,
-         SUM(CASE WHEN er.status = 'accepted' THEN 1 ELSE 0 END) AS accepted,
-         SUM(CASE WHEN er.status = 'withdrawn' THEN 1 ELSE 0 END) AS withdrawn
+         COUNT(*) AS sourceRows,
+         SUM(CASE WHEN ${ACTIVE} THEN 1 ELSE 0 END) AS totalActive,
+         SUM(CASE WHEN ${ACTIVE} AND LOWER(er.status) = 'pending_discussion' THEN 1 ELSE 0 END) AS pendingDiscussion,
+         SUM(CASE WHEN ${ACTIVE} AND LOWER(er.status) = 'accepted' THEN 1 ELSE 0 END) AS accepted,
+         SUM(CASE WHEN ${ACTIVE} AND LOWER(er.status) = 'withdrawn' THEN 1 ELSE 0 END) AS withdrawn,
+         SUM(CASE WHEN ${ACTIVE} AND LOWER(er.status)
+                  NOT IN ('pending_discussion','accepted','withdrawn') THEN 1 ELSE 0 END) AS other
        FROM exit_request er
        LEFT JOIN employees e ON e.id = er.employee_id
-       WHERE er.status NOT IN ('completed','cancelled') AND ${scopeSql}`,
+       WHERE ${scopeSql}`,
       scopeParams
     );
 
@@ -504,6 +524,7 @@ export async function getResignationMetrics(scope: DashboardScope): Promise<Metr
     const pendingDiscussion = Number(r.pendingDiscussion ?? 0);
     const accepted = Number(r.accepted ?? 0);
     const withdrawn = Number(r.withdrawn ?? 0);
+    const other = Number(r.other ?? 0);
 
     const status: MetricResult["status"] =
       pendingDiscussion > 5 ? "critical" : pendingDiscussion > 0 ? "warn" : "ok";
@@ -511,8 +532,9 @@ export async function getResignationMetrics(scope: DashboardScope): Promise<Metr
     return wrapEnriched(
       "RESIGNATION",
       totalActive,
-      { pendingDiscussion, accepted, withdrawn, totalActive },
-      status, false, scope.branchIds[0], scope.processIds[0]
+      { pendingDiscussion, accepted, withdrawn, other, totalActive },
+      status, false, scope.branchIds[0], scope.processIds[0],
+      Number(r.sourceRows ?? 0)
     );
   } catch (err) {
     return nullResult("RESIGNATION", err);

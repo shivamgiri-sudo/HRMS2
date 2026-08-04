@@ -474,6 +474,18 @@ export const atsService = {
       return [[{ cnt: 0 }]] as any;
     });
 
+    // The Super Admin approval queue renders `pending_requisitions`, and nothing has
+    // ever produced it — the field appeared in exactly one place in the repo, the line
+    // that read it, so the row was a permanent em dash.
+    //
+    // job_requisition.approval_status holds draft / approved / closed. "Pending" is a
+    // requisition still awaiting approval: raised but neither approved nor closed.
+    // null on failure, so a broken lookup cannot read as an empty queue.
+    const [pendingReqRows] = await db.execute<RowDataPacket[]>(
+      `SELECT COUNT(*) AS cnt FROM job_requisition
+        WHERE LOWER(COALESCE(approval_status, 'draft')) NOT IN ('approved', 'closed', 'rejected')`
+    ).catch(() => [[{ cnt: null }]] as any);
+
     return {
       total_candidates: totalCount,
       by_stage,
@@ -484,6 +496,7 @@ export const atsService = {
       selected_candidates: selectedCount,
       previous_selected: Number(prevRows[0]?.cnt ?? 0),
       previous_submitted: Number(prevSubmittedRows[0]?.cnt ?? 0),
+      pending_requisitions: pendingReqRows[0]?.cnt == null ? null : Number(pendingReqRows[0].cnt),
     };
   },
 
