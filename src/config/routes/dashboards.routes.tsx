@@ -32,8 +32,11 @@ const WfmDashboard             = lazy(() => import("@/pages/dashboards/WfmDashbo
 const HrDashboard              = lazy(() => import("@/pages/dashboards/HrDashboard"));
 const EmployeeSelfDashboard    = lazy(() => import("@/pages/dashboards/EmployeeSelfDashboard"));
 const ManagerDashboard         = lazy(() => import("@/pages/dashboards/ManagerDashboard"));
-const QualityDashboardRole     = lazy(() => import("@/pages/dashboards/QualityDashboardRole"));
-const OperationsDashboardRole  = lazy(() => import("@/pages/dashboards/OperationsDashboardRole"));
+// Unified drill-down dashboards (branch → process → team → analyst), replacing the
+// per-role QualityDashboardRole / OperationsDashboardRole pages at these same routes.
+// See docs/superpowers/specs/2026-08-04-unified-quality-operations-dashboards-design.md
+const QualityDashboard         = lazy(() => import("@/pages/QualityDashboard"));
+const OperationsDashboard      = lazy(() => import("@/pages/OperationsDashboard"));
 const RecruiterDashboard       = lazy(() => import("@/pages/dashboards/RecruiterDashboard"));
 const WfmAttendanceDashboard   = lazy(() => import("@/pages/dashboards/WfmAttendanceDashboard"));
 const ItManagerDashboard       = lazy(() => import("@/pages/dashboards/ItManagerDashboard"));
@@ -52,8 +55,8 @@ export const dashboardRouteElements = (
       <Route path="/my-dashboard"       element={<DashboardRouteGate code="EMPLOYEE_SELF_DASHBOARD"><EmployeeSelfDashboard /></DashboardRouteGate>} />
 
       {/* New role-specific dashboards (from reference layouts) */}
-      <Route path="/quality-dashboard"      element={<DashboardRouteGate code="QUALITY_DASHBOARD"><QualityDashboardRole /></DashboardRouteGate>} />
-      <Route path="/operations-dashboard"   element={<DashboardRouteGate code="OPERATIONS_DASHBOARD"><OperationsDashboardRole /></DashboardRouteGate>} />
+      <Route path="/quality-dashboard"      element={<DashboardRouteGate code="QUALITY_DASHBOARD"><QualityDashboard /></DashboardRouteGate>} />
+      <Route path="/operations-dashboard"   element={<DashboardRouteGate code="OPERATIONS_DASHBOARD"><OperationsDashboard /></DashboardRouteGate>} />
       <Route path="/recruiter-dashboard"    element={<DashboardRouteGate code="RECRUITER_DASHBOARD"><RecruiterDashboard /></DashboardRouteGate>} />
       <Route path="/wfm-attendance"         element={<DashboardRouteGate code="WFM_ATTENDANCE_DASHBOARD"><WfmAttendanceDashboard /></DashboardRouteGate>} />
       <Route path="/it/dashboard"           element={<DashboardRouteGate code="IT_MANAGER_DASHBOARD"><ItManagerDashboard /></DashboardRouteGate>} />

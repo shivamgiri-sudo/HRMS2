@@ -10,19 +10,13 @@ const Gate = ({ pageCode, children }: { pageCode: string; children: React.ReactN
 const Performance                    = lazy(() => import("@/pages/Performance"));
 const UnifiedPerformanceCommandCenter = lazy(() => import("@/pages/UnifiedPerformanceCommandCenter"));
 const NativeKPIConfiguration         = lazy(() => import("@/pages/NativeKPIConfiguration"));
-const NativeOperationsKPI            = lazy(() => import("@/pages/NativeOperationsKPI"));
 const KpiMasterConfig                = lazy(() => import("@/pages/KpiMasterConfig"));
 const KpiTargetMatrix                = lazy(() => import("@/pages/KpiTargetMatrix"));
 const MyKpiDashboard                 = lazy(() => import("@/pages/MyKpiDashboard"));
 const NativeAgentPerformanceDashboard = lazy(() => import("@/pages/NativeAgentPerformanceDashboard"));
-const NativeQualityDashboard         = lazy(() => import("@/pages/NativeQualityDashboard"));
-const ExecutiveQualityDashboard      = lazy(() => import("@/pages/ExecutiveQualityDashboard"));
 const NativeProcessMetricConfig = lazy(() => import("@/pages/NativeProcessMetricConfig"));
 const NativeQAFileAudit = lazy(() => import("@/pages/NativeQAFileAudit"));
 const NativeQAFormBuilder = lazy(() => import("@/pages/NativeQAFormBuilder"));
-const ManagerQualityDashboard        = lazy(() => import("@/pages/ManagerQualityDashboard"));
-const AgentQualityDashboard          = lazy(() => import("@/pages/AgentQualityDashboard"));
-const NativeOperationsDashboard      = lazy(() => import("@/pages/NativeOperationsDashboard"));
 const NativeCallMasterDashboard      = lazy(() => import("@/pages/NativeCallMasterDashboard"));
 const NativeInboundDashboard         = lazy(() => import("@/pages/NativeInboundDashboard"));
 const NativeSalesDashboard           = lazy(() => import("@/pages/NativeSalesDashboard"));
@@ -76,7 +70,7 @@ export const performanceRouteElements = (
 
       {/* KPI */}
       <Route path="/kpi-config"   element={<ProtectedRoute><Gate pageCode="KPI_CONFIG"><NativeKPIConfiguration /></Gate></ProtectedRoute>} />
-      <Route path="/operations-kpi" element={<ProtectedRoute><Gate pageCode="OPERATIONS_KPI"><NativeOperationsKPI /></Gate></ProtectedRoute>} />
+      <Route path="/operations-kpi" element={<Navigate to="/operations-dashboard" replace />} />
       <Route path="/kpi-master"   element={<ProtectedRoute><Gate pageCode="KPI_MASTER"><KpiMasterConfig /></Gate></ProtectedRoute>} />
       <Route path="/kpi-targets"  element={<ProtectedRoute><Gate pageCode="KPI_MASTER"><KpiTargetMatrix /></Gate></ProtectedRoute>} />
       <Route path="/my-kpi"       element={<ProtectedRoute><Gate pageCode="MY_KPI"><DashboardLayout><MyKpiDashboard /></DashboardLayout></Gate></ProtectedRoute>} />
@@ -84,19 +78,22 @@ export const performanceRouteElements = (
       <Route path="/pip-management" element={<ProtectedRoute roles={['admin','hr','super_admin','manager']}><Gate pageCode="PIP_MANAGEMENT"><NativePIPManagement /></Gate></ProtectedRoute>} />
       <Route path="/career-planning" element={<ProtectedRoute><Gate pageCode="CAREER_PLANNING"><NativeCareerPlanning /></Gate></ProtectedRoute>} />
 
-      {/* Quality */}
-      <Route path="/quality/dashboard" element={<ProtectedRoute roles={['super_admin','admin','ceo','manager','process_manager','branch_head','operations_manager','qa','quality_analyst']}><Gate pageCode="QUALITY_DASHBOARD"><NativeQualityDashboard /></Gate></ProtectedRoute>} />
-      {/* Duplicate eliminated — redirect to canonical */}
-      <Route path="/quality/audit"     element={<Navigate to="/quality/dashboard" replace />} />
-      <Route path="/quality/executive" element={<ProtectedRoute roles={['super_admin','admin','ceo']}><Gate pageCode="QUALITY_EXECUTIVE"><ExecutiveQualityDashboard /></Gate></ProtectedRoute>} />
+      {/* Quality — consolidated into one role-based drill-down page at /quality-dashboard.
+          Old role-specific routes below now redirect there instead of rendering their own
+          page; the underlying page components are left on disk per CLAUDE.md (never delete
+          existing routes/pages solely to simplify) but are no longer reachable by route.
+          See docs/superpowers/specs/2026-08-04-unified-quality-operations-dashboards-design.md */}
+      <Route path="/quality/dashboard"    element={<Navigate to="/quality-dashboard" replace />} />
+      <Route path="/quality/audit"        element={<Navigate to="/quality-dashboard" replace />} />
+      <Route path="/quality/executive"    element={<Navigate to="/quality-dashboard" replace />} />
+      <Route path="/quality/team"         element={<Navigate to="/quality-dashboard" replace />} />
+      <Route path="/quality/my-dashboard" element={<Navigate to="/quality-dashboard" replace />} />
       <Route path="/kpi/process-metrics" element={<ProtectedRoute roles={['super_admin','admin','qa','tq_head','process_manager']}><Gate pageCode="KPI_CONFIG"><NativeProcessMetricConfig /></Gate></ProtectedRoute>} />
       <Route path="/quality/file-audit" element={<ProtectedRoute roles={['super_admin','admin','qa','quality_analyst','tq_head']}><Gate pageCode="QUALITY_DASHBOARD"><NativeQAFileAudit /></Gate></ProtectedRoute>} />
       <Route path="/quality/audit-forms" element={<ProtectedRoute roles={['super_admin','admin','qa','tq_head']}><Gate pageCode="QA_EVALUATION"><NativeQAFormBuilder /></Gate></ProtectedRoute>} />
-      <Route path="/quality/team"      element={<ProtectedRoute roles={['super_admin','admin','manager','process_manager','branch_head','team_leader']}><Gate pageCode="QUALITY_TEAM"><ManagerQualityDashboard /></Gate></ProtectedRoute>} />
-      <Route path="/quality/my-dashboard" element={<ProtectedRoute><AgentQualityDashboard /></ProtectedRoute>} />
 
-      {/* Operations */}
-      <Route path="/operations/dashboard" element={<ProtectedRoute><Gate pageCode="OPERATIONS_DASHBOARD"><NativeOperationsDashboard /></Gate></ProtectedRoute>} />
+      {/* Operations — consolidated into one role-based drill-down page at /operations-dashboard. */}
+      <Route path="/operations/dashboard" element={<Navigate to="/operations-dashboard" replace />} />
       <Route path="/call-master" element={<ProtectedRoute roles={['super_admin','admin','ceo','manager','process_manager','operations_manager','qa','quality_analyst']}><Gate pageCode="CALL_MASTER"><NativeCallMasterDashboard /></Gate></ProtectedRoute>} />
       <Route path="/call-master/inbound" element={<ProtectedRoute roles={['super_admin','admin','ceo','manager','process_manager','operations_manager','qa','quality_analyst']}><Gate pageCode="CALL_MASTER_INBOUND"><NativeInboundDashboard /></Gate></ProtectedRoute>} />
       <Route path="/call-master/inbound/:projectKey" element={<ProtectedRoute roles={['super_admin','admin','ceo','manager','process_manager','operations_manager','qa','quality_analyst']}><Gate pageCode="CALL_MASTER_INBOUND"><NativeInboundDashboard /></Gate></ProtectedRoute>} />
