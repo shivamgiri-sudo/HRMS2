@@ -1,5 +1,8 @@
 @import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap");
-@import url('https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600;700&family=Fira+Sans:wght@300;400;500;600;700&display=swap');
+/* Fira Code only. Fira Sans had 0 references and was dropped from this request.
+   Fira Code is NOT unused — 59 references across 21 dashboard files render metric
+   numbers with it; removing it regresses typography app-wide. */
+@import url('https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600;700&display=swap');
 @import "./styles/smarthr-tokens.css";
 @import "./styles/hrms-design-system.css";
 @import "./styles/grn.css";
@@ -132,14 +135,14 @@
   }
 
   html {
-    font-size: 14px;
+    font-size: 16px;
     scroll-behavior: auto;
     overscroll-behavior: none;
   }
 
   body {
     @apply bg-background text-foreground;
-    min-height: 100vh;
+    min-height: 100dvh;
     overscroll-behavior: none;
     background:
       radial-gradient(ellipse at top left, rgba(27, 106, 181, 0.12), transparent 40%),
@@ -273,26 +276,28 @@
 button,
 [role="button"] {
   transition:
-    transform 160ms ease,
-    box-shadow 160ms ease,
-    background-color 160ms ease,
-    border-color 160ms ease,
-    color 160ms ease;
+    transform var(--dur-fast) var(--ease-out-quart),
+    box-shadow var(--dur-fast) var(--ease-out-quart),
+    background-color var(--dur-fast) var(--ease-out-quart),
+    border-color var(--dur-fast) var(--ease-out-quart),
+    color var(--dur-fast) var(--ease-out-quart);
 }
 
-button:hover,
-[role="button"]:hover {
-  transform: translateY(-0.5px);
+@media (hover: hover) and (pointer: fine) {
+  button:hover,
+  [role="button"]:hover {
+    transform: translateY(-0.5px);
+  }
 }
 
 input,
 textarea,
 select {
-  font-size: 0.85rem;
+  font-size: 1rem; /* 16px — prevents iOS auto-zoom on focus */
 }
 
 label {
-  font-size: 0.78rem;
+  font-size: 0.875rem;
   font-weight: 600;
   color: #334155;
 }
@@ -310,7 +315,7 @@ table {
 
 thead th {
   color: #64748b;
-  font-size: 0.72rem;
+  font-size: 0.75rem;
   font-weight: 800;
   letter-spacing: 0.06em;
   text-transform: uppercase;
@@ -318,4 +323,20 @@ thead th {
 
 tbody td {
   color: #475569;
+}
+
+/* Accessibility: respect reduced-motion preference */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    /* Zeroed alongside duration: a staggered entrance with animation-fill-mode
+       backwards would otherwise hold content invisible for the delay. */
+    animation-delay: 0ms !important;
+    transition-duration: 0.01ms !important;
+    transition-delay: 0ms !important;
+    scroll-behavior: auto !important;
+  }
 }

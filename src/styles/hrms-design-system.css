@@ -188,7 +188,6 @@
 
     /* ── Animation ───────────────────────────────────────── */
     --ease-out-quart: cubic-bezier(0.25, 1, 0.5, 1);
-    --ease-in-quart:  cubic-bezier(0.5, 0, 0.75, 0);
     --ease-spring:    cubic-bezier(0.34, 1.56, 0.64, 1);
     --dur-fast:   120ms;
     --dur-base:   200ms;
@@ -257,9 +256,11 @@
                 transform var(--dur-base) var(--ease-out-quart);
     cursor: pointer;
   }
-  .hrms-stat-card:hover {
-    box-shadow: var(--shadow-md);
-    transform: translateY(-2px);
+  @media (hover: hover) and (pointer: fine) {
+    .hrms-stat-card:hover {
+      box-shadow: var(--shadow-md);
+      transform: translateY(-2px);
+    }
   }
   .hrms-stat-value {
     font-size: var(--fs-3xl);
@@ -306,8 +307,7 @@
     font-weight: 500;
     color: var(--sidebar-ink-muted);
     text-decoration: none;
-    transition: background var(--dur-fast) var(--ease-out-quart),
-                color var(--dur-fast) var(--ease-out-quart);
+    /* no transition — instant hover response (high-frequency target) */
     position: relative;
   }
   .nav-item:hover {
@@ -341,7 +341,7 @@
     flex-shrink: 0;
     background: rgba(255,255,255,0.04);
     color: var(--sidebar-ink-subtle);
-    transition: background var(--dur-fast), color var(--dur-fast);
+    /* no transition — instant hover response (high-frequency target) */
   }
   .nav-item:hover .nav-icon {
     background: rgba(255,255,255,0.08);
@@ -458,7 +458,7 @@
     vertical-align: middle;
   }
   .hrms-table tbody tr {
-    transition: background var(--dur-fast);
+    /* no transition — instant hover response (high-frequency target) */
   }
   .hrms-table tbody tr:hover {
     background: var(--surface-1);
@@ -550,7 +550,7 @@
     font-weight: 500;
     color: var(--text-secondary);
     cursor: pointer;
-    transition: all var(--dur-fast);
+    transition: transform var(--dur-fast), box-shadow var(--dur-fast), opacity var(--dur-fast), background-color var(--dur-fast), border-color var(--dur-fast);
     user-select: none;
   }
   .filter-pill:hover {
@@ -609,9 +609,11 @@
     transition: box-shadow var(--dur-base), transform var(--dur-base);
     cursor: pointer;
   }
-  .module-card:hover {
-    box-shadow: var(--shadow-md);
-    transform: translateY(-2px);
+  @media (hover: hover) and (pointer: fine) {
+    .module-card:hover {
+      box-shadow: var(--shadow-md);
+      transform: translateY(-2px);
+    }
   }
   .module-card.hr       { background: var(--tint-hr);      border-color: #fed7aa; color: var(--tint-hr-text); }
   .module-card.attend   { background: var(--tint-attend);  border-color: #a7f3d0; color: var(--tint-attend-text); }
@@ -639,6 +641,15 @@
     background-size: 200% 100%;
     animation: shimmer 1.4s ease infinite;
     border-radius: var(--r-md);
+  }
+}
+
+/* Accessibility: static skeletons when the user asks for reduced motion.
+   Also sidesteps the cross-sibling shimmer desync (see plan 024). */
+@media (prefers-reduced-motion: reduce) {
+  .skeleton {
+    animation: none;
+    background: var(--surface-2);
   }
 }
 
@@ -682,10 +693,12 @@
     min-width: 32px;
     min-height: 32px;
   }
-  .cal-day:hover {
-    transform: scale(1.1);
-    box-shadow: var(--shadow-sm);
-    z-index: 1;
+  @media (hover: hover) and (pointer: fine) {
+    .cal-day:hover {
+      transform: scale(1.1);
+      box-shadow: var(--shadow-sm);
+      z-index: 1;
+    }
   }
   .cal-day.present  { background: var(--status-present-bg);  color: var(--status-present); }
   .cal-day.half-day { background: var(--status-halfday-bg);  color: var(--status-halfday); }
@@ -767,11 +780,13 @@
     border: 1px solid var(--glass-border);
     border-radius: var(--r-xl);
     box-shadow: var(--glass-shadow);
-    transition: all var(--dur-base) var(--ease-out-quart);
+    transition: transform var(--dur-base) var(--ease-out-quart), box-shadow var(--dur-base) var(--ease-out-quart), opacity var(--dur-base) var(--ease-out-quart);
   }
-  .glass-card:hover {
-    box-shadow: var(--glass-shadow-lg);
-    transform: translateY(-2px);
+  @media (hover: hover) and (pointer: fine) {
+    .glass-card:hover {
+      box-shadow: var(--glass-shadow-lg);
+      transform: translateY(-2px);
+    }
   }
   .glass-panel {
     background: var(--glass-bg-strong);
@@ -789,12 +804,14 @@
     border-radius: var(--r-xl);
     box-shadow: var(--glass-shadow);
     padding: var(--sp-4);
-    transition: all var(--dur-base) var(--ease-out-quart);
+    transition: transform var(--dur-base) var(--ease-out-quart), box-shadow var(--dur-base) var(--ease-out-quart), opacity var(--dur-base) var(--ease-out-quart);
   }
-  .glass-widget:hover {
-    background: var(--glass-bg-strong);
-    box-shadow: var(--glass-shadow-lg);
-    transform: translateY(-3px);
+  @media (hover: hover) and (pointer: fine) {
+    .glass-widget:hover {
+      background: var(--glass-bg-strong);
+      box-shadow: var(--glass-shadow-lg);
+      transform: translateY(-3px);
+    }
   }
   .glass-stat {
     background: linear-gradient(135deg, var(--glass-bg-strong) 0%, var(--glass-bg) 100%);
@@ -806,11 +823,13 @@
     padding: var(--sp-5);
     position: relative;
     overflow: hidden;
-    transition: all var(--dur-base) var(--ease-out-quart);
+    transition: transform var(--dur-base) var(--ease-out-quart), box-shadow var(--dur-base) var(--ease-out-quart), opacity var(--dur-base) var(--ease-out-quart);
   }
-  .glass-stat:hover {
-    box-shadow: var(--glass-shadow-lg), inset 0 1px 0 rgba(255,255,255,0.6);
-    transform: translateY(-2px);
+  @media (hover: hover) and (pointer: fine) {
+    .glass-stat:hover {
+      box-shadow: var(--glass-shadow-lg), inset 0 1px 0 rgba(255,255,255,0.6);
+      transform: translateY(-2px);
+    }
   }
   .glass-amber {
     background: linear-gradient(135deg, rgba(254, 243, 199, 0.85) 0%, rgba(253, 230, 138, 0.65) 100%);
@@ -819,11 +838,13 @@
     border: 1px solid rgba(251, 191, 36, 0.35);
     border-radius: var(--r-xl);
     box-shadow: 0 8px 32px var(--amber-glow);
-    transition: all var(--dur-base) var(--ease-out-quart);
+    transition: transform var(--dur-base) var(--ease-out-quart), box-shadow var(--dur-base) var(--ease-out-quart), opacity var(--dur-base) var(--ease-out-quart);
   }
-  .glass-amber:hover {
-    box-shadow: 0 12px 40px var(--amber-glow);
-    transform: translateY(-2px);
+  @media (hover: hover) and (pointer: fine) {
+    .glass-amber:hover {
+      box-shadow: 0 12px 40px var(--amber-glow);
+      transform: translateY(-2px);
+    }
   }
   .glass-blue {
     background: linear-gradient(135deg, rgba(232, 242, 252, 0.85) 0%, rgba(196, 220, 245, 0.65) 100%);
@@ -832,11 +853,13 @@
     border: 1px solid rgba(27, 106, 181, 0.25);
     border-radius: var(--r-xl);
     box-shadow: 0 8px 32px rgba(27, 106, 181, 0.15);
-    transition: all var(--dur-base) var(--ease-out-quart);
+    transition: transform var(--dur-base) var(--ease-out-quart), box-shadow var(--dur-base) var(--ease-out-quart), opacity var(--dur-base) var(--ease-out-quart);
   }
-  .glass-blue:hover {
-    box-shadow: 0 12px 40px rgba(27, 106, 181, 0.22);
-    transform: translateY(-2px);
+  @media (hover: hover) and (pointer: fine) {
+    .glass-blue:hover {
+      box-shadow: 0 12px 40px rgba(27, 106, 181, 0.22);
+      transform: translateY(-2px);
+    }
   }
   .glass-green {
     background: linear-gradient(135deg, rgba(232, 247, 234, 0.85) 0%, rgba(167, 243, 208, 0.65) 100%);
