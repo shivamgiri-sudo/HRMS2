@@ -111,6 +111,22 @@ export function metricDetail(
 }
 
 /**
+ * The date a metric actually describes, when that is not "now".
+ *
+ * Attendance is anchored on the last substantially-processed day — two days back
+ * today — because today is partial and reads as ~0%. A tile that shows that figure
+ * without saying which day it is presents stale data as current, and a low reading
+ * then looks like a fault rather than an old number.
+ */
+export function metricAsOf(
+  metrics: Record<string, MetricResult>,
+  key: string,
+): string | null {
+  const value = (metrics[key] as { asOf?: unknown } | undefined)?.asOf;
+  return typeof value === "string" && value ? value : null;
+}
+
+/**
  * Metrics whose query actually failed. A source that simply holds no rows is NOT
  * included — it reports `available: true` with errorCode NO_DATA_IN_SOURCE, because
  * listing empty tables next to genuine failures is what made real breakage invisible.

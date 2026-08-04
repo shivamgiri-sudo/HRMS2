@@ -54,6 +54,16 @@ export interface MetricResult {
    * a confident "0". `null` means the metric does not report it.
    */
   sourceRowCount?: number | null;
+  /**
+   * The date the metric actually describes, when that is not "now".
+   *
+   * Processed attendance trails real time, so the attendance metrics anchor on the
+   * last substantially-processed day — currently two days back. Without saying so,
+   * a tile presents a two-day-old figure as today's, and a low reading looks like a
+   * broken panel rather than an old one. `detail` cannot carry it: it is typed to
+   * numbers.
+   */
+  asOf?: string | null;
 }
 
 async function wrapEnriched(
@@ -345,7 +355,20 @@ export async function getAttendanceMetrics(scope: DashboardScope): Promise<Metri
     const status: MetricResult["status"] =
       attendanceRate === null ? "unknown" : attendanceRate < 70 ? "critical" : attendanceRate < 85 ? "warn" : "ok";
 
-    return wrapEnriched("ATTENDANCE", attendanceRate, {
+    // Share of the anchored day that is still unreconciled.
+    //
+    // The anchor picks the last substantially-processed day, but "has rows" is not
+    // "has been reconciled": 2026-08-02 carries 1,123 rows of which 845 are
+    // missing_punch, giving 19% present, where 2026-07-30 has 1 missing punch and
+    // 78%. Both are real, and the rule deliberately does not skip the bad day —
+    // 2026-07-27 genuinely had 541 missing punches and that is operational badness
+    // worth seeing. But a 19% reading with no explanation looks like a broken panel,
+    // so the reason is reported alongside it and the tile can say why.
+    const unreconciledPct = totalRecords > 0
+      ? Math.round((missedPunch / totalRecords) * 100)
+      : null;
+
+    const result = await wrapEnriched("ATTENDANCE", attendanceRate, {
       present,
       halfDay,
       livePresent,
@@ -357,7 +380,12 @@ export async function getAttendanceMetrics(scope: DashboardScope): Promise<Metri
       totalRecords,
       attendanceRate,
       noAttendanceSource,
+      unreconciledPct,
     }, status, true, scope.branchIds[0], scope.processIds[0], totalRecords);
+
+    // The day this actually describes — two days back today. Presenting it as
+    // "now" is what makes an old figure look like a broken one.
+    return { ...result, asOf: String(anchorDate).slice(0, 10) };
   } catch (err) {
     return nullResult("ATTENDANCE", err);
   }

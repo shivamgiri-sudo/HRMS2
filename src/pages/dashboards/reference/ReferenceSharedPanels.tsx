@@ -29,7 +29,7 @@ import {
 
 import { ReferenceListRow, ReferencePanel } from "../ReferenceDashboardUI";
 import type { ReferenceDashboardData } from "../reference-dashboard-model";
-import { formatValue, metricDetail, metricUnavailableReason } from "../reference-dashboard-model";
+import { formatValue, metricAsOf, metricDetail, metricUnavailableReason } from "../reference-dashboard-model";
 
 /**
  * `drilldownFor` is optional on the model, and an inline `() => ({})` fallback types as
@@ -55,6 +55,13 @@ export function AttendanceBreakdownPanel({ data }: { data: ReferenceDashboardDat
   const expected = metricDetail(m, "att", "expectedToWork");
   const rate = metricDetail(m, "att", "attendanceRate");
   const noSource = metricDetail(m, "att", "noAttendanceSource");
+  // The day this actually describes, and how much of it is still unreconciled.
+  // Without both, a 19% reading looks like a broken panel rather than a day whose
+  // punches have not been processed yet.
+  const asOf = metricAsOf(m, "att");
+  const unreconciledPct = metricDetail(m, "att", "unreconciledPct");
+  const missedPunch = metricDetail(m, "att", "missedPunch");
+  const totalRecords = metricDetail(m, "att", "totalRecords");
 
   return (
     <ReferencePanel
@@ -65,11 +72,17 @@ export function AttendanceBreakdownPanel({ data }: { data: ReferenceDashboardDat
             ? reason
             : expected === null
               ? "denominator unavailable"
-              : `${formatValue(rate, "%")} of ${formatValue(expected)} expected to work`}
+              : `${formatValue(rate, "%")} of ${formatValue(expected)} expected to work${asOf ? ` · as of ${asOf}` : ""}`}
         </span>
       }
       bodyClassName="p-0"
     >
+      {!reason && unreconciledPct !== null && unreconciledPct >= 40 ? (
+        <div className="border-b border-[#fde68a] bg-[#fffbeb] px-4 py-2 text-xs text-[#92400e]">
+          {formatValue(missedPunch)} of {formatValue(totalRecords)} punches on {asOf ?? "this day"} are
+          still unreconciled, so the present figure understates actual attendance.
+        </div>
+      ) : null}
       {reason ? (
         <p className="px-4 py-8 text-center text-sm text-[#a0aec0]">{reason}</p>
       ) : (
