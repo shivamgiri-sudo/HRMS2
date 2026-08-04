@@ -215,13 +215,13 @@ async function listColumns(tableName: string): Promise<Set<string>> {
     columnListCache.set(
       tableName,
       queryRows<RowDataPacket>(
-        `SELECT column_name
+        `SELECT column_name AS column_name
            FROM information_schema.columns
           WHERE table_schema = DATABASE()
             AND table_name = ?`,
         [tableName]
       )
-        .then((rows) => new Set(rows.map((row) => String(row.column_name))))
+        .then((rows) => new Set(rows.map((row) => String(row.column_name ?? (row as any).COLUMN_NAME))))
         .catch((error) => {
           columnListCache.delete(tableName);
           throw error;

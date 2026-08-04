@@ -7,10 +7,10 @@ import { tableExists } from "../../shared/dbHelpers.js";
 
 async function columnsFor(tableName: string): Promise<Set<string>> {
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT column_name FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = ?`,
+    `SELECT column_name AS column_name FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = ?`,
     [tableName]
   );
-  return new Set((rows as any[]).map((r) => String(r.column_name)));
+  return new Set((rows as any[]).map((r) => String(r.column_name ?? r.COLUMN_NAME)));
 }
 
 function pickColumns(available: Set<string>, desired: string[]): string[] {

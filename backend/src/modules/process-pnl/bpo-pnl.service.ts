@@ -297,18 +297,32 @@ function monthRange(period: string) {
   };
 }
 
+/*
+ * information_schema returns its keys UPPERCASED — a row arrives as { COLUMN_NAME: 'id' }, not
+ * { column_name: 'id' }, however the SELECT is written. Reading row.column_name yielded undefined
+ * for every row, String(undefined) made the set literally {"undefined"}, and every has() answered
+ * false.
+ *
+ * Nothing errored. Callers simply took their "column missing" branch: gross_salary, pf_employer
+ * and esic_employer collapsed to the literal "0" and branch_id/process_id to "NULL", so every
+ * payroll person came back costing nothing and attributed nowhere. That is why the Process P&L
+ * grid reported Rs 0 for agent salary, DSC and BMC in every month, and why reading actual payroll
+ * returned an empty result and silently fell back to the snapshot.
+ *
+ * Aliased in the SQL so the casing is fixed at source, with a defensive read as well.
+ */
 async function listColumns(tableName: string): Promise<Set<string>> {
   if (!columnCache.has(tableName)) {
     columnCache.set(
       tableName,
       queryRows<RowDataPacket>(
-        `SELECT column_name
+        `SELECT column_name AS column_name
            FROM information_schema.columns
           WHERE table_schema = DATABASE()
             AND table_name = ?`,
         [tableName]
       )
-        .then((rows) => new Set(rows.map((row) => String(row.column_name))))
+        .then((rows) => new Set(rows.map((row) => String(row.column_name ?? (row as any).COLUMN_NAME))))
         .catch((error) => {
           columnCache.delete(tableName);
           throw error;
