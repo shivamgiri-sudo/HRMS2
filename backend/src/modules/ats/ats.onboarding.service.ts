@@ -593,22 +593,38 @@ export async function approveOffer(offerId: string, approverId: string, remarks?
     remarks: remarks ?? null,
   });
 
-  // Use orchestrator with all business rules
-  const result = await createEmployeeFromCandidate({
-    candidateId,
-    offerId,
-    approverId,
-  });
-
-  if (!result.success) {
-    // Undo our own write. Creation fails for reasons unrelated to the branch
-    // head's judgement — an inactive reporting manager, a missing statutory
-    // field — and leaving the row 'approved' would strand the offer as decided
-    // with no employee behind it and no way to decide it again.
+  // Undo our own write. Creation fails for reasons unrelated to the branch
+  // head's judgement — an inactive reporting manager, a missing statutory
+  // field — and leaving the row 'approved' would strand the offer as decided
+  // with no employee behind it and no way to decide it again.
+  const undoOwnDecision = async () => {
     if (decision.recorded && !decision.alreadyDecided && decision.payrollValidationId) {
       await revertBranchHeadDecision({ payrollValidationId: decision.payrollValidationId })
         .catch((e) => console.error('[approveOffer] could not revert branch head decision:', e));
     }
+  };
+
+  // Use orchestrator with all business rules.
+  //
+  // A THROW has to undo the decision too, not just a returned blocker. Only the
+  // blocker path was covered, so when checkBgvReadiness raised
+  // ER_BAD_FIELD_ERROR the row stayed 'approved' with no employee behind it and
+  // nothing pending for anyone to decide again — the state SOFIYA SULTAN /
+  // MAS62457 was left in on 2026-08-04.
+  let result: Awaited<ReturnType<typeof createEmployeeFromCandidate>>;
+  try {
+    result = await createEmployeeFromCandidate({
+      candidateId,
+      offerId,
+      approverId,
+    });
+  } catch (err) {
+    await undoOwnDecision();
+    throw err;
+  }
+
+  if (!result.success) {
+    await undoOwnDecision();
     throw Object.assign(
       new Error(`Employee creation failed: ${result.blockers.map(b => b.reason).join(', ')}`),
       {

@@ -137,16 +137,38 @@ export async function createEmployeeFromCandidate(
     }
 
     // RULE 1: BGV Validation (manual review workflow - doesn't block)
-    const bgvReadiness = await checkBgvReadiness(candidateId, offer.designation_id);
-    result.bgvStatus = getBgvReadinessSummary(bgvReadiness);
+    //
+    // Failing to COMPUTE readiness must not be more blocking than a negative
+    // readiness result, which only ever warns. It was: the query inside read
+    // three columns that exist in no schema, and the ER_BAD_FIELD_ERROR
+    // travelled out of this transaction, past approveOffer's blocker handling
+    // (which only reacts to a returned result, never a throw) and into the
+    // generic 500 handler. Every branch head approving on /ats/offer-approvals
+    // got "An unexpected server error occurred. Please quote reference …", with
+    // the decision row already written and no employee behind it.
+    //
+    // The query is fixed; this catch is here so the next missing column costs a
+    // warning rather than the whole hire. It cannot hide a *negative* readiness
+    // verdict — that path still runs below and is still surfaced.
+    try {
+      const bgvReadiness = await checkBgvReadiness(candidateId, offer.designation_id);
+      result.bgvStatus = getBgvReadinessSummary(bgvReadiness);
 
-    if (!bgvReadiness.ready) {
-      result.warnings.push(`BGV not complete: ${bgvReadiness.blockers.map(b => b.reason).join(', ')}`);
-      // Employee creation proceeds - manual review workflow
-    }
+      if (!bgvReadiness.ready) {
+        result.warnings.push(`BGV not complete: ${bgvReadiness.blockers.map(b => b.reason).join(', ')}`);
+        // Employee creation proceeds - manual review workflow
+      }
 
-    if (bgvReadiness.manualReviewRequired) {
-      result.warnings.push('BGV manual review required before activation');
+      if (bgvReadiness.manualReviewRequired) {
+        result.warnings.push('BGV manual review required before activation');
+      }
+    } catch (bgvErr) {
+      const message = bgvErr instanceof Error ? bgvErr.message : String(bgvErr);
+      console.error('[EmployeeOrchestrator] BGV readiness could not be evaluated:', { candidateId, message });
+      result.bgvStatus = 'unknown';
+      result.warnings.push(
+        `BGV readiness could not be evaluated (${message}) — verify the candidate's checks manually before activation.`,
+      );
     }
 
     // RULE 11: an unresolved fraud alert stops the conversion.

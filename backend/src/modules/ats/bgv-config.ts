@@ -295,6 +295,11 @@ export function getBgvRequirementsByDesignation(designationName: string): BgvReq
 
 /**
  * Check if candidate is lateral hire (has previous employment)
+ *
+ * NOT reachable from any live query: none of the three fields it reads exist as
+ * columns in `ats_candidate` or `candidate_onboarding_profile`. Kept because it
+ * is exported API, but callers must use isLateralFromExperienceLabel() below,
+ * which reads the column that is actually there.
  */
 export function isLateralHire(candidateData: {
   fresher?: boolean | string | null;
@@ -318,6 +323,35 @@ export function isLateralHire(candidateData: {
 
   // Default: assume fresher (previous employment letters not mandatory)
   return false;
+}
+
+/**
+ * Whether the candidate has prior employment, decided from the one column that
+ * exists.
+ *
+ * `ats_candidate.fresher`, `candidate_onboarding_profile.total_experience_years`
+ * and `.previous_company` — the three fields isLateralHire was written against —
+ * are in no production schema. Selecting them raised ER_BAD_FIELD_ERROR on every
+ * call, and because checkBgvReadiness is awaited unguarded inside
+ * createEmployeeFromCandidate, that error left the transaction and reached the
+ * branch head as a bare "An unexpected server error occurred", failing every
+ * approval on /ats/offer-approvals.
+ *
+ * The real column is `experience VARCHAR(50)`, a free-text label: 'Fresher'
+ * (16,967 rows), NULL (15,424), 'Experience' (2,838), then a long tail of ranges
+ * — '1-2 years', '0-6 months', '3+ Years'. Anything not explicitly fresher,
+ * blank or a stated zero counts as lateral. That direction is the safe one:
+ * readiness is advisory (the orchestrator only ever warns on it), so leaning
+ * towards "verify the employment history" costs a warning, while leaning the
+ * other way silently drops a check that should have run.
+ */
+export function isLateralFromExperienceLabel(experience: unknown): boolean {
+  const label = String(experience ?? '').trim().toLowerCase();
+  if (!label) return false;
+  if (/^(fresher|fresh|fresher's|na|n\/a|none|nil|no|null)$/.test(label)) return false;
+  // A stated zero — '0', '0 years', '0 yrs', '0 months' — is not experience.
+  if (/^0+\s*(years?|yrs?|months?|mos?)?$/.test(label)) return false;
+  return true;
 }
 
 /**
