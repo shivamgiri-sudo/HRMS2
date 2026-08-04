@@ -217,7 +217,12 @@ export async function executeReportForWorker(
                 COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
                 b.branch_name, p.process_name, d.dept_name AS department_name,
                 des.designation_name,
-                COALESCE(spl.basic_pay,0) AS basic_pay,
+                -- salary_prep_line stores basic, net_salary and
+                -- final_payable_days. The names used here exist on no table, so
+                -- this payroll register raised ER_BAD_FIELD_ERROR and produced
+                -- nothing. Output aliases are unchanged, so the report's columns
+                -- stay as they were.
+                COALESCE(spl.basic,0) AS basic_pay,
                 COALESCE(spl.hra,0) AS hra,
                 COALESCE(spl.gross_salary,0) AS gross_salary,
                 COALESCE(spl.pf_employee,0) AS pf_employee,
@@ -226,8 +231,8 @@ export async function executeReportForWorker(
                 COALESCE(spl.tds,0) AS tds,
                 COALESCE(spl.lwp_deduction,0) AS lwp_deduction,
                 COALESCE(spl.total_deductions,0) AS total_deductions,
-                COALESCE(spl.net_pay,0) AS net_pay,
-                COALESCE(spl.payable_days,0) AS payable_days,
+                COALESCE(spl.net_salary,0) AS net_pay,
+                COALESCE(spl.final_payable_days,0) AS payable_days,
                 COALESCE(spl.lwp_days,0) AS lwp_days
            FROM salary_prep_line spl
            JOIN salary_prep_run spr ON spr.id = spl.run_id

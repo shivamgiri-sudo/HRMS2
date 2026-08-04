@@ -61,13 +61,20 @@ async function getEmployeeRecord(employeeId: string) {
        e.id,
        e.employee_code,
        COALESCE(NULLIF(TRIM(e.full_name),''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-       e.designation,
-       e.department_name,
-       e.branch_name,
+       -- employees holds designation_id / department_id / branch_id; the names
+       -- live on their masters. Selecting the names directly raised
+       -- ER_BAD_FIELD_ERROR, so every salary and employment certificate failed
+       -- to generate. Aliases keep the downstream shape unchanged.
+       dm.designation_name AS designation,
+       dept.dept_name      AS department_name,
+       bm.branch_name      AS branch_name,
        e.date_of_joining,
        e.employment_status,
        e.user_id
      FROM employees e
+     LEFT JOIN designation_master dm  ON dm.id   = e.designation_id
+     LEFT JOIN department_master  dept ON dept.id = e.department_id
+     LEFT JOIN branch_master      bm   ON bm.id   = e.branch_id
      WHERE e.id = ?
      LIMIT 1`,
     [employeeId]

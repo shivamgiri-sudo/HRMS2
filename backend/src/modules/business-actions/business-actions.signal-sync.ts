@@ -163,7 +163,7 @@ export const businessActionSignalSync = {
               px.top_risk_drivers_json,
               e.employee_code,
               e.full_name,
-              e.reporting_manager_user_id,
+              e.reporting_manager_id AS reporting_manager_user_id,
               mgr.full_name AS manager_name
          FROM people_experience_health_snapshot px
          JOIN (
@@ -356,7 +356,7 @@ export const businessActionSignalSync = {
       `SELECT adr.employee_id,
               e.employee_code,
               e.full_name,
-              e.reporting_manager_user_id,
+              e.reporting_manager_id AS reporting_manager_user_id,
               COUNT(*) as unreconciled_count,
               MAX(DATEDIFF(CURDATE(), adr.record_date)) as max_age
        FROM attendance_daily_record adr

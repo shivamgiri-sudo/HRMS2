@@ -158,7 +158,10 @@ export const workflowService = {
        LEFT JOIN auth_user au ON au.id = al.actor_user_id
        LEFT JOIN employees e ON e.user_id = au.id AND e.active_status = 1
        WHERE al.request_id = ?
-       ORDER BY al.created_at ASC`,
+       -- approval_action_log records acted_at, not created_at, so ordering the
+       -- approval trail by it raised ER_BAD_FIELD_ERROR and the history could
+       -- never be read.
+       ORDER BY al.acted_at ASC`,
       [requestId]
     );
     return rows as RowDataPacket[];

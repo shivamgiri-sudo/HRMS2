@@ -262,7 +262,7 @@ resignationRouter.get(
        LEFT JOIN auth_user offered_user ON offered_user.id = ro.offered_by
        LEFT JOIN employees offered_emp ON offered_emp.user_id = offered_user.id AND offered_emp.active_status = 1
        WHERE ro.exit_request_id = ?
-       ORDER BY ro.offered_at DESC`,
+       ORDER BY ro.offer_date DESC`,
       [req.params.exitId]
     );
     return res.json({ success: true, data: rows });

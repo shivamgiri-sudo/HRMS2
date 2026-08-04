@@ -534,7 +534,7 @@ export async function getEngagementCommandCenter(filters?: {
             e.employee_code,
             b.branch_name,
             p.process_name,
-            d.department_name,
+            d.dept_name AS department_name,
             hs.engagement_score,
             hs.risk_label,
             hs.pulse_score,
