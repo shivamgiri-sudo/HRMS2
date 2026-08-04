@@ -253,7 +253,7 @@ export default function NativeEmployeeBGVStatus() {
 
   const { data, isFetching, refetch, error } = useQuery<EmployeeBgvData>({
     queryKey: ["employee-bgv", isSelfView ? "me" : activeEmployeeId],
-    queryFn: () => hrmsApi.get<EmployeeBgvData>(apiPath),
+    queryFn: () => hrmsApi.get<{ success: boolean; data: EmployeeBgvData }>(apiPath).then(r => r.data),
     enabled: isSelfView || !!activeEmployeeId,
     retry: false,
   });
