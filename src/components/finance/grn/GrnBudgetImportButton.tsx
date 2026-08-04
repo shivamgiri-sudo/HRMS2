@@ -1,7 +1,11 @@
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { FileSpreadsheet, Loader2 } from "lucide-react";
-import { BranchBudgetImportDialog } from "@/components/finance/pnl/BranchBudgetImportDialog";
+import {
+  BranchBudgetImportDialog,
+  type ExpenseHeadOption,
+} from "@/components/finance/pnl/BranchBudgetImportDialog";
+import { useFinanceExpenseMasters } from "@/hooks/useFinanceExpenseMasters";
 import { GrnButton } from "@/components/finance/grn/grn-ui";
 import {
   budgetLineRecordToInput,
@@ -90,7 +94,19 @@ export function GrnBudgetImportButton({
     .filter((item) => Number(item.is_active ?? item.active_status ?? 1) === 1)
     .map((r) => ({ id: r.id, code: r.vendor_code ?? r.code ?? "", name: r.vendor_name ?? r.name ?? "" }));
 
-  const lookupsLoading = costCentreQuery.isLoading || processQuery.isLoading || vendorQuery.isLoading;
+  // The expense master, so Head and Sub-head are resolved rather than taken on trust. Only the
+  // active heads and sub-heads: importing against a retired head would recreate spend under
+  // something finance has deliberately closed.
+  const { mastersQuery } = useFinanceExpenseMasters(false);
+  const heads: ExpenseHeadOption[] = (mastersQuery.data ?? [])
+    .filter((head) => head.activeStatus)
+    .map((head) => ({
+      headName: head.headName,
+      subHeads: head.subHeads.filter((sub) => sub.activeStatus).map((sub) => sub.subHeadName),
+    }));
+
+  const lookupsLoading =
+    costCentreQuery.isLoading || processQuery.isLoading || vendorQuery.isLoading || mastersQuery.isLoading;
 
   const { saveBudget } = useBranchBudgets({ branchId, period });
 
@@ -187,6 +203,7 @@ export function GrnBudgetImportButton({
           costCentres={costCentres}
           processes={processes}
           vendors={vendors}
+          heads={heads}
           onImport={(lines) => void handleImport(lines)}
         />
       )}

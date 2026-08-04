@@ -124,6 +124,32 @@ export interface LookupOption {
   name: string;
 }
 
+/**
+ * A head from the expense master, with the sub-heads that belong to it.
+ *
+ * Head and Sub-head used to be the only two columns taken as free text while Cost Centre, Process
+ * and Vendor were all resolved against a list. That meant a typo — "Facilties" — silently created
+ * a budget line under a head that does not exist, and a case difference — "facilities" vs
+ * "Facilities" — created a second head that looks identical in a spreadsheet and counts as two
+ * everywhere downstream.
+ */
+export interface ExpenseHeadOption {
+  headName: string;
+  subHeads: string[];
+}
+
+export interface ImportLookups {
+  costCentres: LookupOption[];
+  processes: LookupOption[];
+  vendors: LookupOption[];
+  /**
+   * Optional. When absent, Head and Sub-head keep the old free-text behaviour — so a caller that
+   * has not been given the master yet degrades to what it did before rather than rejecting
+   * every row.
+   */
+  heads?: ExpenseHeadOption[];
+}
+
 export interface ResolvedRow {
   rowNumber: number;
   line: BranchBudgetLineInput | null;
@@ -140,7 +166,7 @@ function findByCodeOrName(options: LookupOption[], query: string): LookupOption 
 export function resolveRow(
   raw: Record<string, unknown>,
   rowNumber: number,
-  lookups: { costCentres: LookupOption[]; processes: LookupOption[]; vendors: LookupOption[] }
+  lookups: ImportLookups
 ): ResolvedRow {
   const fail = (message: string): ResolvedRow => ({ rowNumber, line: null, error: message });
 
@@ -148,8 +174,31 @@ export function resolveRow(
     if (!str(raw[column])) return fail(`"${column}" is required`);
   }
 
-  const head = str(raw["Head"]);
-  const subHead = str(raw["Sub-head"]) || null;
+  let head = str(raw["Head"]);
+  let subHead = str(raw["Sub-head"]) || null;
+
+  // Resolved against the expense master when one was supplied, exactly as cost centres, processes
+  // and vendors already are. Both names are rewritten to the master's own spelling on success:
+  // budget lines store head and sub-head as text, and everything downstream — the GRN form's
+  // cascading selects, coverage, P&L grouping — groups on that text, so "facilities" and
+  // "Facilities" would otherwise be two heads that look like one.
+  if (lookups.heads?.length) {
+    const headNeedle = head.toLowerCase();
+    const masterHead = lookups.heads.find((h) => h.headName.trim().toLowerCase() === headNeedle);
+    if (!masterHead) {
+      return fail(`Head "${head}" was not found in the expense master`);
+    }
+    head = masterHead.headName;
+
+    if (subHead) {
+      const subNeedle = subHead.toLowerCase();
+      const masterSubHead = masterHead.subHeads.find((s) => s.trim().toLowerCase() === subNeedle);
+      if (!masterSubHead) {
+        return fail(`Sub-head "${subHead}" is not under head "${masterHead.headName}"`);
+      }
+      subHead = masterSubHead;
+    }
+  }
   const itemName = str(raw["Item / Service"]);
   const itemDescription = str(raw["Description"]) || null;
   const quantity = num(raw["Quantity"]);
@@ -284,6 +333,7 @@ export function BranchBudgetImportDialog({
   costCentres,
   processes,
   vendors,
+  heads,
   onImport,
 }: {
   open: boolean;
@@ -291,6 +341,8 @@ export function BranchBudgetImportDialog({
   costCentres: LookupOption[];
   processes: LookupOption[];
   vendors: LookupOption[];
+  /** Expense master. Omit to keep Head/Sub-head as free text — see ImportLookups. */
+  heads?: ExpenseHeadOption[];
   onImport: (lines: BranchBudgetLineInput[]) => void;
 }) {
   const [step, setStep] = useState<Step>("select");
@@ -320,7 +372,7 @@ export function BranchBudgetImportDialog({
       setParseError("No data rows found.");
       return;
     }
-    const resolved = rawRows.map((raw, index) => resolveRow(raw, index + 2, { costCentres, processes, vendors }));
+    const resolved = rawRows.map((raw, index) => resolveRow(raw, index + 2, { costCentres, processes, vendors, heads }));
     setResolvedRows(resolved);
     setStep("preview");
   }
@@ -390,6 +442,14 @@ export function BranchBudgetImportDialog({
                   </Badge>
                 ))}
               </div>
+              {heads?.length ? (
+                <p className="text-xs leading-5 text-slate-500">
+                  <b>Head</b> and <b>Sub-head</b> must match the expense master
+                  ({heads.length} head{heads.length === 1 ? "" : "s"}). Spelling is matched
+                  case-insensitively and rewritten to the master's, so the same head never lands
+                  twice under two spellings.
+                </p>
+              ) : null}
               <Button size="sm" variant="outline" className="gap-2" onClick={() => void downloadTemplate()}>
                 <Download className="h-4 w-4" />Download template (.xlsx)
               </Button>

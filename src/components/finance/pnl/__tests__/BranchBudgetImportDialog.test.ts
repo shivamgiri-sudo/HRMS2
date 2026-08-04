@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { parsePastedText, resolveRow, type LookupOption } from "../BranchBudgetImportDialog";
+import {
+  parsePastedText,
+  resolveRow,
+  type ExpenseHeadOption,
+  type LookupOption,
+} from "../BranchBudgetImportDialog";
 
 const COST_CENTRES: LookupOption[] = [
   { id: "cc1", code: "CC-NOI-01", name: "Noida Back Office" },
@@ -173,5 +178,58 @@ describe("resolveRow — required fields and ranges", () => {
     const result = resolveRow(baseRow({ "Preferred Vendor Code": "UNKNOWN" }), 2, LOOKUPS);
     expect(result.line).toBeNull();
     expect(result.error).toMatch(/Vendor "UNKNOWN" was not found/);
+  });
+});
+
+describe("resolveRow — Head / Sub-head against the expense master", () => {
+  const HEADS: ExpenseHeadOption[] = [
+    { headName: "Facilities", subHeads: ["Rent", "Housekeeping"] },
+    { headName: "Business Promotion Expenses", subHeads: [] },
+  ];
+  const WITH_MASTER = { ...LOOKUPS, heads: HEADS };
+
+  it("keeps Head and Sub-head as free text when no master is supplied", () => {
+    // The Branch Budget page shipped for months without this list. A caller that has not been
+    // updated must keep working, not start rejecting every row.
+    const result = resolveRow(baseRow({ Head: "Anything At All", "Sub-head": "Whatever" }), 2, LOOKUPS);
+    expect(result.error).toBeNull();
+    expect(result.line?.head).toBe("Anything At All");
+  });
+
+  it("accepts a head and sub-head that exist in the master", () => {
+    const result = resolveRow(baseRow(), 2, WITH_MASTER);
+    expect(result.error).toBeNull();
+    expect(result.line).toMatchObject({ head: "Facilities", subHead: "Rent" });
+  });
+
+  it("rejects a head that is not in the master", () => {
+    const result = resolveRow(baseRow({ Head: "Facilties" }), 2, WITH_MASTER);
+    expect(result.line).toBeNull();
+    expect(result.error).toMatch(/Head "Facilties" was not found in the expense master/);
+  });
+
+  it("rejects a sub-head that belongs to a different head", () => {
+    const result = resolveRow(
+      baseRow({ Head: "Business Promotion Expenses", "Sub-head": "Rent" }),
+      2,
+      WITH_MASTER
+    );
+    expect(result.line).toBeNull();
+    expect(result.error).toMatch(/Sub-head "Rent" is not under head "Business Promotion Expenses"/);
+  });
+
+  it("allows a blank sub-head even when the head has some", () => {
+    const result = resolveRow(baseRow({ "Sub-head": "" }), 2, WITH_MASTER);
+    expect(result.error).toBeNull();
+    expect(result.line?.subHead).toBeNull();
+  });
+
+  it("rewrites casing and padding to the master's own spelling", () => {
+    // The whole point of resolving these. Budget lines store head/sub-head as text and the GRN
+    // form groups its cascading selects on that text, so "  facilities " left as typed would
+    // count as a second head everywhere downstream.
+    const result = resolveRow(baseRow({ Head: "  facilities ", "Sub-head": "RENT" }), 2, WITH_MASTER);
+    expect(result.error).toBeNull();
+    expect(result.line).toMatchObject({ head: "Facilities", subHead: "Rent" });
   });
 });

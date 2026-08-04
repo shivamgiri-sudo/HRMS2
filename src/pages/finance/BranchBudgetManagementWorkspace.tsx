@@ -1636,6 +1636,13 @@ Reason:`
         costCentres={costCentres.map((item: any) => ({ id: item.id, code: item.cost_centre_code, name: item.cost_centre_name ?? item.name }))}
         processes={processes.map((item: any) => ({ id: item.id, code: item.process_code, name: item.process_name ?? item.name }))}
         vendors={vendors.map((item: any) => ({ id: item.id, code: item.vendor_code, name: item.vendor_name ?? item.name }))}
+        // The same expense master the Plan Builder's Head/Sub-head selects use, so an imported
+        // row can only name a head you could have picked by hand. Active entries only —
+        // importing against a retired head would recreate spend finance has closed.
+        heads={activeMasters.map((head) => ({
+          headName: head.headName,
+          subHeads: head.subHeads.filter((sub) => sub.activeStatus).map((sub) => sub.subHeadName),
+        }))}
         onImport={(newLines) => {
           setLines((current) => [...current, ...newLines]);
           setTab("plan");
