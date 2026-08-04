@@ -27,6 +27,7 @@ import { Label } from "@/components/ui/label";
 // the DOM. It is restyled through the className it already forwards instead.
 import { SearchableSelect, type SearchableOption } from "@/components/ui/searchable-select";
 import { StatusStamp } from "@/components/finance/grn/StatusStamp";
+import { GrnBudgetImportButton } from "@/components/finance/grn/GrnBudgetImportButton";
 import { checkTone } from "@/components/finance/grn/grn-format";
 // Aliased rather than renamed at the ~40 call sites: same props, same forwarded refs, so this is
 // a swap of appearance only.
@@ -1387,10 +1388,16 @@ export function BudgetLinkedGrnForm() {
             title="Where this spend belongs"
             description="Cost centre, head and sub-head together identify the approved budget."
             action={
-              <Button onClick={() => setSplitMode((value) => !value)}>
-                <Split className="h-3 w-3" />
-                {splitMode ? "Use a single budget line" : "Split this invoice across budget lines"}
-              </Button>
+              <div className="flex flex-wrap items-center gap-1.5">
+                {/* Placed here rather than in a tab of its own: this is the card that tells you
+                    there is no approved budget line to charge to, so it is where someone
+                    discovers they need one. */}
+                <GrnBudgetImportButton branchId={form.branchId} period={period} disabled={locked} />
+                <Button onClick={() => setSplitMode((value) => !value)}>
+                  <Split className="h-3 w-3" />
+                  {splitMode ? "Use a single budget line" : "Split this invoice across budget lines"}
+                </Button>
+              </div>
             }
           >
             {!form.branchId || !period ? (
