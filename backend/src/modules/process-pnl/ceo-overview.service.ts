@@ -378,21 +378,28 @@ async function marginTrend(endPeriod: string, f: CeoFilters): Promise<CeoTrendPo
     const d = new Date(Date.UTC(year, month - 1 - back, 1));
     periods.push(`${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`);
   }
-  const points: CeoTrendPoint[] = [];
-  for (const period of periods) {
-    const [rev, ppl, spend] = await Promise.all([
-      revenueByBranch(period, f), peopleByBranch(period, f), spendByBranch(period, f),
-    ]);
-    const sum = (m: Map<string, number>) => [...m.values()].reduce((a, b) => a + b, 0);
-    const revenue = sum(rev);
-    const people = [...ppl.values()].reduce((a, b) => a + b.cost, 0);
-    const operatingProfit = revenue - people - sum(spend);
-    points.push({
-      period, revenue, operatingProfit,
-      marginPct: revenue > 0 ? (operatingProfit / revenue) * 100 : null,
-    });
-  }
-  return points;
+  /*
+   * All four months at once, not one after another.
+   *
+   * Written as a sequential loop first, which cost 8.5-11.3s on production: four round trips of
+   * three queries each, every one waiting on the last for no reason — the months are independent.
+   * Issuing them together brings the page back to roughly the cost of a single month.
+   */
+  const sum = (m: Map<string, number>) => [...m.values()].reduce((a, b) => a + b, 0);
+  return Promise.all(
+    periods.map(async (period) => {
+      const [rev, ppl, spend] = await Promise.all([
+        revenueByBranch(period, f), peopleByBranch(period, f), spendByBranch(period, f),
+      ]);
+      const revenue = sum(rev);
+      const people = [...ppl.values()].reduce((a, b) => a + b.cost, 0);
+      const operatingProfit = revenue - people - sum(spend);
+      return {
+        period, revenue, operatingProfit,
+        marginPct: revenue > 0 ? (operatingProfit / revenue) * 100 : null,
+      };
+    }),
+  );
 }
 
 /** Only offer a filter value that has data behind it — an option that returns an empty page is
