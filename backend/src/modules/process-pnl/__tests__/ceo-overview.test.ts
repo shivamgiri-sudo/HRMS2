@@ -256,3 +256,50 @@ describe("focus panel — the caveats are the point", () => {
     expect((await getCeoOverview("2026-06")).focus).toBeNull();
   });
 });
+
+describe("legal entity — this page is one company's P&L, not a consolidation", () => {
+  /*
+   * cost_centre_master.company_name carries the entity, and the page had been consolidating three:
+   * Mas Callnet, IDC and (via NOIDA-DIALDESK) Ispark Dataconnect. IDC contributed Rs 76.32 lakh of
+   * June revenue across 38 cost centres and NOT ONE employee, which lifted the reported margin to
+   * 17.8% when MAS Callnet standalone was running at minus 1.6%.
+   */
+  it("confines revenue and indirect cost to this company's cost centres", async () => {
+    mockDb({ branches: [{ id: "b", branch_name: "NOIDA", active_status: 1 }] });
+    const { getCeoOverview } = await import("../ceo-overview.service.js");
+    await getCeoOverview("2026-06");
+    const sql = execute.mock.calls.map((c) => String(c[0]));
+    const revenue = sql.find((q) => q.includes("billing_invoice_particular_snapshot") && q.includes("GROUP BY"));
+    const spend = sql.find((q) => q.includes("grn_entry_line_snapshot") && q.includes("GROUP BY"));
+    expect(revenue, "revenue must be filtered to our own company").toMatch(/mascallnet/i);
+    expect(spend, "indirect cost must be filtered to our own company").toMatch(/mascallnet/i);
+  });
+
+  it("does NOT filter payroll by company", async () => {
+    /*
+     * Every employee in this system is MAS Callnet's — all 937 active staff with a cost centre map
+     * to it and IDC has none at all — while 368 paid employees carry no cost centre and sit in MAS
+     * Callnet branches. Filtering payroll the same way would silently drop Rs 17.60 lakh of real
+     * wages for want of a mapping, and understate the loss.
+     */
+    mockDb({ branches: [{ id: "b", branch_name: "NOIDA", active_status: 1 }] });
+    const { getCeoOverview } = await import("../ceo-overview.service.js");
+    await getCeoOverview("2026-06");
+    const payroll = execute.mock.calls.map((c) => String(c[0]))
+      .find((q) => q.includes("salary_prep_line") && q.includes("GROUP BY e.branch_id"));
+    expect(payroll).toBeDefined();
+    expect(payroll, "payroll must not be confined by cost-centre company").not.toMatch(/mascallnet/i);
+  });
+
+  it("matches the company however the source spells it", async () => {
+    // The source uses four spellings: "MAS Call Net India Pvt Ltd", "Mas Callnet India Pvt. Ltd.",
+    // "Mas Callnet India Pvt Ltd", "MAS CALLNET INDIA PVT LTD."
+    mockDb({ branches: [{ id: "b", branch_name: "NOIDA", active_status: 1 }] });
+    const { getCeoOverview } = await import("../ceo-overview.service.js");
+    await getCeoOverview("2026-06");
+    const revenue = execute.mock.calls.map((c) => String(c[0]))
+      .find((q) => q.includes("billing_invoice_particular_snapshot") && q.includes("GROUP BY"))!;
+    expect(revenue).toContain("LOWER(");
+    expect(revenue, "spaces and full stops must be stripped before matching").toContain("REPLACE(");
+  });
+});

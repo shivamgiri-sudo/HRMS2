@@ -127,6 +127,30 @@ const n = (v: unknown): number => {
 const lakh = (v: number): string => `Rs ${(v / 100000).toFixed(2)} L`;
 
 /**
+ * Only this company's own trading.
+ *
+ * cost_centre_master.company_name carries the legal entity, and the P&L had been consolidating
+ * three of them. June 2026, before this filter:
+ *
+ *   Mas Callnet   revenue Rs 295.75 L   payroll Rs 210.28 L (1,162)   indirect Rs 72.62 L
+ *   IDC           revenue Rs  76.32 L   payroll Rs   0.00 L (    0)   indirect Rs  4.38 L
+ *   unmapped      revenue Rs   0.00 L   payroll Rs  17.60 L (  368)
+ *
+ * IDC contributed Rs 76.32 lakh of revenue across 38 cost centres and NOT ONE employee, which is
+ * what lifted the consolidated margin to 17.8%. NOIDA-DIALDESK is a third entity again, Ispark
+ * Dataconnect. Confirmed with the user: IDC is a separate company and this page is MAS Callnet's.
+ *
+ * Payroll is NOT filtered by company, deliberately. Every employee in this system belongs to MAS
+ * Callnet — all 937 active staff with a cost centre map to it, IDC has none at all, and the 368
+ * without a cost centre sit in MAS Callnet branches. Filtering payroll by cost centre would drop
+ * Rs 17.60 lakh of real MAS wages simply because those employees lack a mapping.
+ *
+ * Matched on a normalised name because the source spells it four ways ("MAS Call Net India Pvt
+ * Ltd", "Mas Callnet India Pvt. Ltd.", "Mas Callnet India Pvt Ltd", "MAS CALLNET INDIA PVT LTD.").
+ */
+const OWN_COMPANY_SQL = `REPLACE(REPLACE(REPLACE(LOWER(COALESCE(ccm.company_name, '')), '.', ''), ' ', ''), ',', '') LIKE '%mascallnet%'`;
+
+/**
  * Revenue by branch, resolved through the cost centre.
  *
  * The collation differs between the two tables — billing_invoice_particular_snapshot is
@@ -136,7 +160,7 @@ const lakh = (v: number): string => `Rs ${(v / 100000).toFixed(2)} L`;
 async function revenueByBranch(period: string, f: CeoFilters): Promise<Map<string, number>> {
   const out = new Map<string, number>();
   if (!(await tableExists("billing_invoice_particular_snapshot"))) return out;
-  const where: string[] = ["p.period_code = ?"];
+  const where: string[] = ["p.period_code = ?", OWN_COMPANY_SQL];
   const params: unknown[] = [period];
   if (f.costCentreId) { where.push("ccm.id = ?"); params.push(f.costCentreId); }
   // Cost centre carries no process_id on any live row, so a process narrows revenue through the
@@ -198,7 +222,7 @@ async function peopleByBranch(period: string, f: CeoFilters): Promise<Map<string
 async function spendByBranch(period: string, f: CeoFilters): Promise<Map<string, number>> {
   const out = new Map<string, number>();
   if (!(await tableExists("grn_entry_line_snapshot"))) return out;
-  const where: string[] = ["g.period_code = ?", "g.is_rejected = 0"];
+  const where: string[] = ["g.period_code = ?", "g.is_rejected = 0", OWN_COMPANY_SQL];
   const params: unknown[] = [period];
   if (f.costCentreId) { where.push("ccm.id = ?"); params.push(f.costCentreId); }
   if (f.processId) {
