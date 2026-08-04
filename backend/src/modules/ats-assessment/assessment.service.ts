@@ -1003,6 +1003,21 @@ async function loadSessionData(attempt: AttemptRow) {
      FROM ats_typing_test_attempt WHERE assessment_id = ? ORDER BY attempt_no ASC`,
     [attempt.id],
   );
+  // Auto-expire zombie typing attempts: unsubmitted rows where elapsed > duration.
+  // These cause the candidate page to auto-submit on load (remaining=0 from first tick).
+  for (const typing of typingAttempts) {
+    if (!typing.submitted_at && Number(typing.elapsed_since_start_seconds ?? 0) > Number(typing.duration_limit_seconds)) {
+      await db.execute(
+        `UPDATE ats_typing_test_attempt
+            SET submitted_at = NOW(),
+                elapsed_seconds = duration_limit_seconds,
+                typed_text = COALESCE(typed_text, '')
+          WHERE id = ? AND submitted_at IS NULL`,
+        [typing.id],
+      );
+      typing.submitted_at = new Date().toISOString() as unknown as Date;
+    }
+  }
   const candidates = await rows<CandidateRow>(
     db,
     `SELECT
