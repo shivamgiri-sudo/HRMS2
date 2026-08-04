@@ -173,7 +173,7 @@ export async function claimDailyLogin(employeeId: string): Promise<LoginRewardRe
       const defaultTierId = tierIdRows[0]?.tier_id;
       if (!defaultTierId) throw new Error('No gamification tiers configured');
       await conn.query<ResultSetHeader>(
-        `INSERT INTO employee_tier_status (id, employee_id, current_tier_id, current_streak, longest_streak, last_login_date)
+        `INSERT INTO employee_tier_status (status_id, employee_id, current_tier_id, current_streak, longest_streak, last_login_date)
          VALUES (?, ?, ?, ?, ?, ?)
          ON DUPLICATE KEY UPDATE current_streak = ?, longest_streak = ?, last_login_date = ?`,
         [randomUUID(), employeeId, defaultTierId, currentStreak, longestStreak, today, currentStreak, longestStreak, today]
