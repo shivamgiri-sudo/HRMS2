@@ -23,6 +23,7 @@ import { DailyTrivia } from "@/components/engagement/DailyTrivia";
 import { BrainTeaser } from "@/components/engagement/BrainTeaser";
 import { WordPuzzle } from "@/components/engagement/WordPuzzle";
 import { QuickPolls } from "@/components/engagement/QuickPolls";
+import { WeeklyWinnersWidget } from "@/components/engagement/WeeklyWinnersWidget";
 import type {
   ApiResponse,
   EngagementSummary,
@@ -196,6 +197,9 @@ export default function NativeEngagement() {
               </div>
             </CardContent>
           </Card>
+
+          {/* Weekly Winners */}
+          <WeeklyWinnersWidget />
 
           {/* Leaderboard */}
           <Card className="rounded-[2rem] border-0 shadow-xl shadow-slate-200/40 bg-white">

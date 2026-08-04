@@ -38,7 +38,7 @@ export function PointsLeaderboard({ currentEmployeeId }: { currentEmployeeId?: s
     queryKey: ["engagement-leaderboard", period],
     queryFn: async () => {
       const res = await hrmsApi.get<{ data: LeaderboardEntry[] }>(
-        `/engagement/leaderboard?period=${period}&limit=5`
+        `/api/engagement/leaderboard?period=${period}&limit=5`
       );
       return res.data ?? [];
     },

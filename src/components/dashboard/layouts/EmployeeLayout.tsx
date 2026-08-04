@@ -10,6 +10,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { canAccessDashboard } from "../../../../backend/src/shared/dashboardAccessRegistry";
 import { PointsLeaderboard } from "@/components/engagement/PointsLeaderboard";
+import { WeeklyWinnersWidget } from "@/components/engagement/WeeklyWinnersWidget";
+import { EngagementPromoBanner } from "@/components/engagement/EngagementPromoBanner";
 
 export function EmployeeLayout() {
   const { firstName } = useDashboardUser();
@@ -111,8 +113,8 @@ export function EmployeeLayout() {
   const quickLinks = [
     { label: "Apply Leave",    subtitle: "Request time off",       href: "/leaves",       icon: <Umbrella className="w-5 h-5 text-[#1B6AB5]" />,  bg: "bg-blue-50"   },
     { label: "View Payslip",   subtitle: "Check your salary details", href: "/payroll/payslips",   icon: <FileText className="w-5 h-5 text-emerald-600" />,  bg: "bg-emerald-50"},
-    { label: "Raise Helpdesk", subtitle: "Get support for issues",   href: "/helpdesk",   icon: <Clock className="w-5 h-5 text-amber-600" />,     bg: "bg-amber-50"  },
-    { label: "View Documents", subtitle: "Access your documents",    href: "/profile",  icon: <FileText className="w-5 h-5 text-violet-600" />,  bg: "bg-violet-50" },
+    { label: "My Engagement",  subtitle: "Points, badges & games",  href: "/engagement",  icon: <Sparkles className="w-5 h-5 text-violet-600" />,  bg: "bg-violet-50" },
+    { label: "View Documents", subtitle: "Access your documents",    href: "/profile",  icon: <FileText className="w-5 h-5 text-indigo-600" />,  bg: "bg-indigo-50" },
   ];
 
   return (
@@ -130,6 +132,9 @@ export function EmployeeLayout() {
         </div>
         <p className="text-xs text-slate-400 flex-shrink-0 mt-1">Data as of {dataTimestamp} ↺</p>
       </div>
+
+      {/* ── ENGAGEMENT PROMO BANNER ── */}
+      <EngagementPromoBanner />
 
       {/* ── ROW 1: My Attendance This Month (4 flat stat tiles) ── */}
       <div>
@@ -359,8 +364,13 @@ export function EmployeeLayout() {
         </Card>
       </div>
 
-      {/* ── ROW 4: Points Leaderboard ── */}
-      <PointsLeaderboard currentEmployeeId={employeeId} />
+      {/* ── ROW 4: Leaderboard + Weekly Winners ── */}
+      <div className="grid gap-6 lg:grid-cols-3">
+        <div className="lg:col-span-2">
+          <PointsLeaderboard currentEmployeeId={employeeId} />
+        </div>
+        <WeeklyWinnersWidget currentEmployeeId={employeeId} />
+      </div>
 
       {/* ── ROW 5: Quick Links (horizontal rows with arrows) ── */}
       <Card className="rounded-2xl border border-slate-200 shadow-sm bg-white">
