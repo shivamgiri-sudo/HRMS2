@@ -114,6 +114,11 @@ export default {
   			'accordion-down': 'accordion-down 0.2s ease-out',
   			'accordion-up': 'accordion-up 0.2s ease-out'
   		},
+  		transitionDuration: {
+  			fast: 'var(--dur-fast)',
+  			base: 'var(--dur-base)',
+  			slow: 'var(--dur-slow)'
+  		},
   		boxShadow: {
   			'2xs': 'var(--shadow-2xs)',
   			xs: 'var(--shadow-xs)',
@@ -172,5 +177,16 @@ export default {
   		}
   	}
   },
-  plugins: [tailwindcssAnimate],
+  plugins: [
+    tailwindcssAnimate,
+    // Transform-based hover effects must not latch on touch: Tailwind's bare
+    // `hover:` fires on tap. Use `hover-pointer:` for translate/scale/rotate.
+    function ({ addVariant }: { addVariant: (name: string, def: string) => void }) {
+      addVariant('hover-pointer', '@media (hover: hover) and (pointer: fine) { &:hover }');
+      addVariant(
+        'group-hover-pointer',
+        '@media (hover: hover) and (pointer: fine) { :merge(.group):hover & }',
+      );
+    },
+  ],
 } satisfies Config;

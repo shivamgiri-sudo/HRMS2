@@ -42,11 +42,14 @@ export function KpiMetricGrid({
   return (
     <div className={cn("grid gap-4", COLUMN_CLASSES[columns])}>
       {displayMetrics.map((metric, idx) => (
-        <KpiMetricCard
+        // Wrapper carries the stagger: KpiMetricCard does not forward style/className.
+        <div
           key={metric.id ?? idx}
-          {...metric}
-          loading={loading || metric.loading}
-        />
+          className="animate-in fade-in duration-base"
+          style={{ animationDelay: `${idx * 40}ms`, animationFillMode: "backwards" }}
+        >
+          <KpiMetricCard {...metric} loading={loading || metric.loading} />
+        </div>
       ))}
     </div>
   );

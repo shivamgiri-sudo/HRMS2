@@ -317,7 +317,7 @@ export default function AuthClean() {
                 target="_blank"
                 rel="noopener noreferrer"
                 title={label}
-                className="flex h-10 w-10 items-center justify-center rounded-xl transition-all duration-200 hover:scale-125"
+                className="flex h-10 w-10 items-center justify-center rounded-xl transition-all duration-base hover-pointer:scale-125"
                 style={{ background: "rgba(255,255,255,0.08)", color }}
                 onMouseEnter={e => {
                   (e.currentTarget as HTMLAnchorElement).style.background = "rgba(255,255,255,0.18)";

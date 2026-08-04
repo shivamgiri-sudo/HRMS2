@@ -229,7 +229,7 @@ const css = `
   .native-ats-hdr-sub { font-size:12px; opacity:.88; margin-top:1px; }
   .native-ats-prog-strip { margin-top:12px; }
   .native-ats-prog-track { height:5px; background:rgba(255,255,255,.25); border-radius:99px; overflow:hidden; }
-  .native-ats-prog-fill { height:100%; border-radius:99px; background:#22c55e; transition:width .4s cubic-bezier(.4,0,.2,1); }
+  .native-ats-prog-fill { height:100%; border-radius:99px; background:#22c55e; transition:width .4s cubic-bezier(0.25, 1, 0.5, 1); }
 
   .native-ats-body { flex:1 1 auto; min-height:0; overflow-y:auto; -webkit-overflow-scrolling:touch; }
   .native-ats-body::-webkit-scrollbar { width:3px; }
@@ -238,7 +238,7 @@ const css = `
   .native-ats-welcome { display:flex; flex-direction:column; align-items:center; justify-content:center; min-height:100%; padding:36px 24px; text-align:center; }
   .native-ats-welcome-icon { width:88px; height:88px; border-radius:26px; background:var(--ats-grad); display:flex; align-items:center; justify-content:center; font-size:40px; box-shadow:0 14px 40px rgba(109,40,217,.38); margin-bottom:24px; animation:nativeAtsFloat 3s ease-in-out infinite; }
   @keyframes nativeAtsFloat { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-7px)} }
-  @keyframes nativeAtsPop { 0%{transform:scale(0);opacity:0} 50%{transform:scale(1.15)} 100%{transform:scale(1);opacity:1} }
+  @keyframes nativeAtsPop { 0%{transform:scale(0.95);opacity:0} 100%{transform:scale(1);opacity:1} }
   .native-ats-welcome-title { font-family:'Nunito',sans-serif; font-weight:900; font-size:30px; letter-spacing:-.5px; margin-bottom:10px; }
   .native-ats-welcome-desc { font-size:15px; color:var(--ats-muted); line-height:1.65; max-width:300px; margin-bottom:32px; }
   .native-ats-btn-start { background:var(--ats-grad); color:#fff; border:none; border-radius:var(--ats-r); padding:15px 36px; font-family:'Nunito',sans-serif; font-size:16px; font-weight:800; cursor:pointer; box-shadow:0 8px 24px rgba(109,40,217,.42); display:flex; align-items:center; gap:8px; }
@@ -1722,7 +1722,7 @@ export default function NativeATSCandidateRegistration() {
           alignItems: "center",
           justifyContent: "center",
           fontSize: 14,
-          animation: "nativeAtsPop .6s cubic-bezier(.68,-.55,.265,1.55)"
+          animation: "nativeAtsPop .3s cubic-bezier(0.25, 1, 0.5, 1)"
         }}>✓</div>
       </div>
       <h1 className="native-ats-welcome-title">Welcome to MAS! 👋</h1>

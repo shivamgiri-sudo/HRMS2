@@ -40,7 +40,7 @@ const PageLoader = () => (
 
 const App = () => (
   <QueryClientProvider client={queryClient}>
-    <TooltipProvider>
+    <TooltipProvider delayDuration={400} skipDelayDuration={300}>
       <Sonner />
       <BrowserRouter>
         <AuthProvider>

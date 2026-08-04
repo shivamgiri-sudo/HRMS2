@@ -492,6 +492,15 @@ export default function WaitingRoomDisplay() {
   const waitingQueue = queue.filter((q) => q.queue_status === "waiting").slice(0, 7);
   const inInterviewQueue = queue.filter((q) => q.queue_status === "in_interview").slice(0, 4);
   const nextUpEntry = waitingQueue[0];
+
+  // Only genuinely new rows slide in — a poll refresh must not re-animate rows
+  // that were already on screen.
+  const seenQueueTokensRef = useRef<Set<string>>(new Set());
+  const seenAtRenderRef = useRef<Set<string>>(new Set());
+  seenAtRenderRef.current = seenQueueTokensRef.current;
+  useEffect(() => {
+    seenQueueTokensRef.current = new Set(waitingQueue.map((q) => q.token_number));
+  });
   const digits3 = displayToken ? last3(displayToken.token).split("") : ["—", "—", "—"];
 
   return (
@@ -546,7 +555,7 @@ export default function WaitingRoomDisplay() {
           position: absolute;
           border-radius: 50%;
           pointer-events: none;
-          filter: blur(90px);
+          filter: blur(20px);
           will-change: transform;
         }
         .wr-blob-1 {
@@ -847,7 +856,6 @@ export default function WaitingRoomDisplay() {
           background: rgba(255,255,255,0.1);
           border: 1px solid rgba(255,255,255,0.2);
           border-radius: 14px; padding: 10px 16px;
-          animation: wr-slide-in 0.35s ease-out both;
           backdrop-filter: blur(6px); flex-shrink: 0;
           transition: background 0.3s ease, border-color 0.3s ease;
         }
@@ -856,13 +864,17 @@ export default function WaitingRoomDisplay() {
           border-color: rgba(255,213,79,0.45);
           border-left: 3px solid #FFD54F;
         }
-        .wr-queue-row:nth-child(1) { animation-delay: 0ms; }
-        .wr-queue-row:nth-child(2) { animation-delay: 40ms; }
-        .wr-queue-row:nth-child(3) { animation-delay: 80ms; }
-        .wr-queue-row:nth-child(4) { animation-delay: 120ms; }
-        .wr-queue-row:nth-child(5) { animation-delay: 160ms; }
-        .wr-queue-row:nth-child(6) { animation-delay: 200ms; }
-        .wr-queue-row:nth-child(7) { animation-delay: 240ms; }
+        /* Only rows that were not on screen at the previous render animate in. */
+        .wr-queue-row-new {
+          animation: wr-slide-in 0.35s ease-out both;
+        }
+        .wr-queue-row-new:nth-child(1) { animation-delay: 0ms; }
+        .wr-queue-row-new:nth-child(2) { animation-delay: 40ms; }
+        .wr-queue-row-new:nth-child(3) { animation-delay: 80ms; }
+        .wr-queue-row-new:nth-child(4) { animation-delay: 120ms; }
+        .wr-queue-row-new:nth-child(5) { animation-delay: 160ms; }
+        .wr-queue-row-new:nth-child(6) { animation-delay: 200ms; }
+        .wr-queue-row-new:nth-child(7) { animation-delay: 240ms; }
         @keyframes wr-slide-in {
           from { transform: translateX(28px); opacity: 0; }
           to   { transform: translateX(0); opacity: 1; }
@@ -936,7 +948,8 @@ export default function WaitingRoomDisplay() {
         .wr-metric-number {
           font-size: clamp(22px, 2.8vw, 36px);
           font-weight: 900; line-height: 1; display: block;
-          animation: wr-odometer 0.35s cubic-bezier(0.22, 1, 0.36, 1) both;
+          /* No entrance animation: metrics repoll frequently, and the keyframe
+             restarted mid-flight on every poll. Live numbers update instantly. */
         }
         @keyframes wr-odometer {
           from { transform: translateY(-100%); opacity: 0; }
@@ -1181,7 +1194,12 @@ export default function WaitingRoomDisplay() {
                 </div>
               ) : (
                 waitingQueue.map((entry, idx) => (
-                  <div key={entry.token_number} className={`wr-queue-row${idx === 0 ? " is-next" : ""}`}>
+                  <div
+                    key={entry.token_number}
+                    className={`wr-queue-row${idx === 0 ? " is-next" : ""}${
+                      seenAtRenderRef.current.has(entry.token_number) ? "" : " wr-queue-row-new"
+                    }`}
+                  >
                     <span className={`wr-row-pos${idx === 0 ? " is-next" : ""}`}>{idx + 1}</span>
                     {idx === 0 && <span className="wr-next-badge">Next</span>}
                     <span className={`wr-row-indicator ${entry.queue_status}`} />

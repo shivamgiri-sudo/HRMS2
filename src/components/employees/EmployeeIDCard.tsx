@@ -475,7 +475,7 @@ export function EmployeeIDCard({
           style={{
             width: "100%", height: "100%", position: "relative",
             transformStyle: "preserve-3d",
-            transition: "transform 0.55s cubic-bezier(0.4, 0, 0.2, 1)",
+            transition: "transform 0.55s cubic-bezier(0.25, 1, 0.5, 1)",
             transform: flipped ? "rotateY(180deg)" : "rotateY(0deg)",
           }}
         >

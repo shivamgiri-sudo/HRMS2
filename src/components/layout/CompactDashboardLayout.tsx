@@ -444,20 +444,20 @@ export function DashboardLayout({ children, subheader }: Props) {
               key={tab.href}
               to={tab.href}
               className={cn(
-                "flex min-h-[44px] min-w-[44px] flex-col items-center justify-center gap-1 rounded-2xl px-3 py-2 text-[10px] font-bold transition-all duration-200",
-                active ? "scale-105 text-[#1B6AB5]" : "text-slate-400 hover:text-slate-600",
+                "flex min-h-[44px] min-w-[44px] flex-col items-center justify-center gap-1 rounded-2xl px-3 py-2 text-[10px] font-bold",
+                active ? "text-[#1B6AB5]" : "text-slate-400",
               )}
               aria-current={active ? "page" : undefined}
             >
               <span
                 className={cn(
-                  "flex h-8 w-8 items-center justify-center rounded-xl transition-all duration-200",
+                  "flex h-8 w-8 items-center justify-center rounded-xl",
                   active ? "bg-gradient-to-br from-[#e8f2fc] to-[#d1e6f9] shadow-sm" : "",
                 )}
               >
                 {tab.icon}
               </span>
-              <span className={cn("transition-opacity duration-200", active ? "opacity-100" : "opacity-70")}>
+              <span className={cn(active ? "opacity-100" : "opacity-70")}>
                 {tab.label}
               </span>
             </Link>

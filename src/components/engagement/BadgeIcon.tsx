@@ -39,7 +39,7 @@ export function BadgeIcon({
         <TooltipTrigger asChild>
           <div
             className={cn(
-              "group relative flex flex-col items-center gap-2 p-4 rounded-xl cursor-pointer transition-all duration-300 hover:scale-110 hover:shadow-xl",
+              "group relative flex flex-col items-center gap-2 p-4 rounded-xl cursor-pointer transition-all duration-slow hover-pointer:scale-110 hover:shadow-xl",
               "bg-gradient-to-br from-white to-slate-50 border-2 border-slate-200 hover:border-slate-300",
               className
             )}

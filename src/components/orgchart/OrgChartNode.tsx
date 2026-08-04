@@ -49,13 +49,13 @@ export const OrgChartNodeCard = memo(function OrgChartNodeCard({
     <div className="flex flex-col items-center">
       {/* ── The Card ─────────────────────────────────────────────── */}
       <motion.div
-        initial={{ opacity: 0, scale: 0.92 }}
-        animate={{ opacity: dimmed ? 0.25 : 1, scale: 1 }}
+        initial={{ opacity: 0, transform: "scale(0.92)" }}
+        animate={{ opacity: dimmed ? 0.25 : 1, transform: "scale(1)" }}
         transition={{ duration: 0.3, ease: "easeOut" }}
         className={[
           "relative w-[210px] rounded-2xl border overflow-hidden",
           "shadow-[0_2px_12px_rgba(0,0,0,0.06)]",
-          "transition-all duration-200 hover:shadow-[0_6px_24px_rgba(0,0,0,0.1)] hover:-translate-y-0.5",
+          "transition-all duration-base hover:shadow-[0_6px_24px_rgba(0,0,0,0.1)] hover-pointer:-translate-y-0.5",
           "bg-white",
           isMe ? "ring-2 ring-[#1B3A5C] ring-offset-2" : "border-slate-200/80",
         ].join(" ")}
