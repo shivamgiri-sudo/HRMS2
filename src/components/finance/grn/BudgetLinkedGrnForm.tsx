@@ -1049,48 +1049,53 @@ export function BudgetLinkedGrnForm() {
   );
 
   return (
-    <div className="flex h-full flex-col bg-slate-50/60">
-      {/* Header — sticky on every size; actions move to a bottom bar on phones. Contained card
-       *  (not a full-bleed bar) to match the rest of the page's card language. */}
-      {/* top offset, not top-0: the page now scrolls in #main-content-area, whose first 64px are
-       *  the layout's own sticky TopBar (z-30). At top-0 this bar parks underneath it. */}
-      <div className="sticky top-[var(--topbar-height)] z-20 shrink-0 px-3 pt-3 md:px-4 md:pt-4">
-        <div className="rounded-xl border border-slate-200 bg-white px-4 py-2.5">
-          <div className="flex items-center justify-between gap-4">
+    <div>
+      {/* Sticky on every size, and now the only action bar — the fixed bottom bar this used to
+       *  share the job with collided with the layout's own fixed bottom nav (both z-30, the nav
+       *  later in the DOM), so on a phone it was already losing.
+       *  top offset, not top-0: the page scrolls in #main-content-area, whose first 64px are the
+       *  layout's sticky TopBar at z-30. At top-0 this parks underneath it. */}
+      <div className="sticky top-[var(--topbar-height)] z-20 mb-4">
+        <div className="rounded-xl border border-grn-line bg-grn-card px-4 py-2.5">
+          <div className="flex flex-wrap items-center justify-between gap-3">
             {totalStrip}
-            <div className="hidden md:block">{actionButtons}</div>
+            {actionButtons}
           </div>
         </div>
       </div>
 
       {submitted && (
-        <div className="flex shrink-0 items-center gap-3 border-b border-emerald-200 bg-emerald-50 px-4 py-2 text-xs">
-          <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600" />
-          <p className="font-medium text-emerald-800">
+        <div className="mb-4 flex items-center gap-3 rounded-[10px] border border-grn-ok-line bg-grn-ok-bg px-3.5 py-3 text-[12px]">
+          <CheckCircle2 className="h-4 w-4 shrink-0 text-grn-ok" />
+          <p className="font-semibold text-grn-ok">
             Submitted to Branch Head with allocation-aware budget controls.
           </p>
         </div>
       )}
 
-      <div className="flex min-h-0 flex-1 overflow-hidden">
-        <div className="min-w-0 flex-1 space-y-4 overflow-y-auto px-3 pb-32 pt-4 md:px-4 md:pb-8">
-          {/* ── Mode ── */}
-          <Tabs
-            value={form.grnType}
-            onValueChange={(value) =>
-              !locked && setForm((current) => ({ ...current, grnType: value as GrnType }))
-            }
-          >
-            <TabsList className="grid h-auto w-full grid-cols-2 md:w-auto md:inline-grid">
-              <TabsTrigger value="vendor" disabled={locked} className="h-9 gap-2 px-4 text-sm">
-                <IndianRupee className="h-4 w-4" /> Vendor GRN
-              </TabsTrigger>
-              <TabsTrigger value="imprest" disabled={locked} className="h-9 gap-2 px-4 text-sm">
-                <UploadCloud className="h-4 w-4" /> Imprest
-              </TabsTrigger>
-            </TabsList>
-          </Tabs>
+      {/* ── Mode ── spans both columns; it decides what the whole form asks for, so it does not
+          belong inside the left one. */}
+      <Tabs
+        value={form.grnType}
+        onValueChange={(value) =>
+          !locked && setForm((current) => ({ ...current, grnType: value as GrnType }))
+        }
+      >
+        <TabsList className="grid h-auto w-full grid-cols-2 md:w-auto md:inline-grid">
+          <TabsTrigger value="vendor" disabled={locked} className="h-9 gap-2 px-4 text-sm">
+            <IndianRupee className="h-4 w-4" /> Vendor GRN
+          </TabsTrigger>
+          <TabsTrigger value="imprest" disabled={locked} className="h-9 gap-2 px-4 text-sm">
+            <UploadCloud className="h-4 w-4" /> Imprest
+          </TabsTrigger>
+        </TabsList>
+      </Tabs>
 
+      {/* Side rail collapses at 900px, matching the rest of the page, rather than at 1280px
+          where it left a 380px gap unused. items-start so the rail does not stretch to the
+          form's height. */}
+      <div className="mt-4 grid items-start gap-4 min-[900px]:grid-cols-[minmax(0,1fr)_300px]">
+        <div className="min-w-0 space-y-4">
           {showErrors && hasErrors && (
             <div
               role="alert"
@@ -1705,8 +1710,9 @@ export function BudgetLinkedGrnForm() {
             </FormSection>
           )}
 
-          {/* Summary for screens without the sidebar. */}
-          <div className="xl:hidden">
+          {/* Summary for screens without the side rail. Must track the rail's own breakpoint or
+              both render at once. */}
+          <div className="min-[900px]:hidden">
             <FormSection title="Readiness">
               <ul className="divide-y divide-slate-100">
                 {checklist.map((item) => (
@@ -1727,8 +1733,9 @@ export function BudgetLinkedGrnForm() {
           </div>
         </div>
 
-        {/* Desktop sidebar */}
-        <aside className="hidden w-72 shrink-0 overflow-y-auto border-l bg-white p-4 xl:block">
+        {/* Side rail — a card in its own grid column now, not a bordered panel bolted to the
+            right edge of a full-height flex row. */}
+        <aside className="hidden rounded-xl border border-grn-line bg-grn-card p-4 min-[900px]:block">
           <div className="flex items-center justify-between">
             <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-400">Readiness</h3>
             <span
@@ -1820,15 +1827,6 @@ export function BudgetLinkedGrnForm() {
             })}
           </ol>
         </aside>
-      </div>
-
-      {/* Mobile action bar — thumb reach, Total always visible. */}
-      <div className="fixed inset-x-0 bottom-0 z-30 border-t bg-white px-3 py-2.5 shadow-[0_-2px_8px_rgba(0,0,0,0.06)] md:hidden">
-        <div className="mb-2 flex items-center justify-between text-xs">
-          <span className="text-slate-500">Total payable</span>
-          <b className="text-base tabular-nums text-slate-900">{money(totals.gross)}</b>
-        </div>
-        {actionButtons}
       </div>
     </div>
   );
