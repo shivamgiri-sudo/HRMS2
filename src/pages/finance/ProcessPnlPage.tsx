@@ -31,9 +31,21 @@ const matrixIssueFilters: ProcessPnlIssueFilter[] = [
 ];
 const matrixDensities: ProcessPnlDensity[] = ["comfortable", "compact"];
 
-function currentPeriod() {
+/**
+ * The month the page opens on.
+ *
+ * It used to open on the CURRENT calendar month, which on 4 August meant August 2026: Rs 6.05 lakh
+ * of invoicing, no payroll run at all, Rs 2.00 lakh of GRN. A CEO opening the P&L saw revenue
+ * against no cost and concluded the arithmetic was broken, when the month had simply barely
+ * started — payroll runs at month end and invoicing lags delivery.
+ *
+ * Opens on the previous month instead, which is the month a finance review is actually about.
+ * The picker is unchanged, so any month is still one click away.
+ */
+function defaultPeriod() {
   const now = new Date();
-  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+  const previous = new Date(Date.UTC(now.getFullYear(), now.getMonth() - 1, 1));
+  return `${previous.getUTCFullYear()}-${String(previous.getUTCMonth() + 1).padStart(2, "0")}`;
 }
 
 function formatCurrency(value: number | null | undefined, compact = false) {
@@ -47,7 +59,7 @@ function formatCurrency(value: number | null | undefined, compact = false) {
 
 export default function ProcessPnlPage() {
   const [searchParams, setSearchParams] = useSearchParams();
-  const period = searchParams.get("period") ?? currentPeriod();
+  const period = searchParams.get("period") ?? defaultPeriod();
   const branchId = searchParams.get("branchId") ?? "";
   const clientId = searchParams.get("clientId") ?? "";
   const search = searchParams.get("search") ?? "";
@@ -314,14 +326,14 @@ export default function ProcessPnlPage() {
           </TabsList>
 
           <TabsContent value="overview" className="flex-1 overflow-auto px-4 py-3 m-0">
-            {bpoQuery.isLoading ? (
-              <div className="space-y-4">
-                <Skeleton className="h-20 rounded-2xl" />
-                <Skeleton className="h-56 rounded-2xl" />
-                <Skeleton className="h-56 rounded-2xl" />
-                <Skeleton className="h-96 rounded-2xl" />
-              </div>
-            ) : (
+            {/*
+              NOT gated on bpoQuery. That query takes 16-23 seconds and this tab no longer reads a
+              single field from it — but it was still waiting on it, so the whole view sat behind
+              skeletons for twenty seconds and looked like it had never been rebuilt at all.
+              CeoOverviewPanel fetches its own data in about two seconds and renders its own
+              loading state.
+            */}
+            {(
               <div className="flex flex-col gap-5">
                 {/*
                   The CEO view, read from what actually happened — invoiced revenue, the payroll
