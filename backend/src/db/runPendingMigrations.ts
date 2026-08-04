@@ -468,6 +468,8 @@ const MIGRATION_MANIFEST: string[] = [
   "1070_db_bill_expense_particulars.sql", // the budget and GRN LINE tables — expense_entry_particular carries CostCenterId, which is the only place cost is attributed below branch; expense_particular records each budget amount twice, so expense_type must be filtered when aggregating // db_bill is the live finance system and mas_hrms mirrored none of its budget (18,433 rows), GRN (85,463) or invoice line items (21,055) — the last of which carry the cost-centre-wise seat rate the P&L needs
   "1071_pnl_revenue_basis_components.sql", // the statement renders only what finance_pnl_component_master lists, so invoicedRevenue/plannedRevenue/seatRevenueEarned/seatShortfall were computed on every request and dropped before any reader saw them
   "1072_festival_greetings.sql", // festival_calendar table + 2026 seed data (Diwali, Holi, Eid, Independence Day, Christmas, etc.) + worker_config row
+  "1070_correct_auto_approved_bgv_and_bridge.sql", // never registered despite the 1070 number being reused by db-bill; applied by hand on 2026-08-03 (42 candidate_bgv_check + 6 candidate_bgv_report rows reset from fake system-verified/clear, ats_onboarding_bridge backfilled from real evidence) — listed here so a fresh environment picks it up; both halves are idempotent no-ops against data that is already corrected
+  "1073_employee_profile_parity.sql", // manual HR "Add Employee" only ever captured 8 fields against the candidate journey's ~60; adds employee_education, employee_experience, employees.annual_income/count_of_dependents, employee_statutory_info declaration columns
   ];
 
 export type MigrationHealth = {

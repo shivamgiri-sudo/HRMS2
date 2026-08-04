@@ -263,6 +263,8 @@ export const employeeService = {
     if (input.email             !== undefined) { sets.push("email = ?");                params.push(input.email ?? null); }
     if (input.officialEmail     !== undefined) { sets.push("official_email = ?");       params.push(input.officialEmail ?? null); }
     if (input.mobile            !== undefined) { sets.push("mobile = ?");               params.push(input.mobile ?? null); }
+    if (input.personalEmail     !== undefined) { sets.push("personal_email = ?");       params.push(input.personalEmail ?? null); }
+    if (input.personalMobile    !== undefined) { sets.push("personal_phone = ?");       params.push(input.personalMobile ?? null); }
     if (input.gender            !== undefined) { sets.push("gender = ?");               params.push(input.gender); }
     if (input.dateOfBirth       !== undefined) { sets.push("date_of_birth = ?");        params.push(input.dateOfBirth ?? null); }
     if (input.dateOfJoining     !== undefined) { sets.push("date_of_joining = ?");      params.push(input.dateOfJoining); }
@@ -278,6 +280,14 @@ export const employeeService = {
     if (input.reportingManagerId !== undefined) { sets.push("reporting_manager_id = ?"); params.push(input.reportingManagerId ?? null); }
     if (input.photoUrl          !== undefined) { sets.push("photo_url = ?");            params.push(input.photoUrl ?? null); }
     if (input.userId            !== undefined) { sets.push("user_id = ?");              params.push(input.userId ?? null); }
+    if (input.designationName   !== undefined) { sets.push("designation = ?");          params.push(input.designationName ?? null); }
+    if (input.address1          !== undefined) { sets.push("address1 = ?");             params.push(input.address1 ?? null); }
+    if (input.city              !== undefined) { sets.push("city = ?");                 params.push(input.city ?? null); }
+    if (input.workingHoursStart !== undefined) { sets.push("working_hours_start = ?");  params.push(input.workingHoursStart ?? null); }
+    if (input.workingHoursEnd   !== undefined) { sets.push("working_hours_end = ?");    params.push(input.workingHoursEnd ?? null); }
+    if (input.workingDays       !== undefined) { sets.push("working_days = ?");         params.push(input.workingDays ? JSON.stringify(input.workingDays) : null); }
+    if (input.annualIncome      !== undefined) { sets.push("annual_income = ?");        params.push(input.annualIncome ?? null); }
+    if (input.countOfDependents !== undefined) { sets.push("count_of_dependents = ?");  params.push(input.countOfDependents ?? null); }
 
     if (sets.length > 0) {
       params.push(id);

@@ -17,6 +17,7 @@ const JoiningDocumentTemplateAdmin  = lazy(() => import("@/pages/JoiningDocument
 const EmployeeEpfCompliancePage     = lazy(() => import("@/pages/EmployeeEpfCompliancePage"));
 const NativeEmployeeReactivation    = lazy(() => import("@/pages/NativeEmployeeReactivation"));
 const NativeEmployeeBGVStatus       = lazy(() => import("@/pages/NativeEmployeeBGVStatus"));
+const EmployeeProfileCompletion     = lazy(() => import("@/pages/EmployeeProfileCompletion"));
 const NativeLifecycle               = lazy(() => import("@/pages/NativeLifecycle"));
 const NativeEmployeeLifecycle       = lazy(() => import("@/pages/NativeEmployeeLifecycle"));
 const NativePeopleExperienceCommandCenter = lazy(() => import("@/pages/NativePeopleExperienceCommandCenter"));
@@ -76,6 +77,14 @@ export const peopleRouteElements = (
       <Route path="/employees/bgv-status/:employeeId" element={
         <ProtectedRoute roles={['admin','hr','payroll','super_admin']}>
           <NativeEmployeeBGVStatus />
+        </ProtectedRoute>
+      } />
+
+      {/* Profile completion — manual HR onboarding only captures a handful of fields;
+          this guided flow closes the gap against the 10-step candidate journey */}
+      <Route path="/employees/:employeeId/complete-profile" element={
+        <ProtectedRoute roles={['admin','super_admin','hr']}>
+          <EmployeeProfileCompletion />
         </ProtectedRoute>
       } />
 

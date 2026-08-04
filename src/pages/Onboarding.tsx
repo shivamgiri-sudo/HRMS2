@@ -400,8 +400,17 @@ const Onboarding = () => {
       });
       const employee = createRes.data;
 
-      // Set employment status to Onboarding via PATCH (updateEmployeeSchema accepts employmentStatus)
-      await hrmsApi.patch(`/api/employees/${employee.id}`, { employmentStatus: "Onboarding" }).catch(() => {});
+      // Set employment status plus the fields the create schema doesn't accept
+      // (designationId needs a UUID we don't collect here; updateEmployeeSchema
+      // takes a free-text designationName instead, alongside address/working hours)
+      await hrmsApi.patch(`/api/employees/${employee.id}`, {
+        employmentStatus: "Onboarding",
+        designationName: data.designation.trim() || null,
+        address1: data.address.trim() || null,
+        workingHoursStart: data.workingHoursStart || null,
+        workingHoursEnd: data.workingHoursEnd || null,
+        workingDays: data.workingDays,
+      }).catch(() => {});
 
       // Upload documents
       const docsToUpload = Object.entries(documents).filter(([_, doc]) => doc.file);
@@ -449,10 +458,16 @@ const Onboarding = () => {
       setActiveTab('pending');
       toast({
         title: "Employee Added",
-        description: result.inviteSent 
+        description: result.inviteSent
           ? "New employee has been added and an email invite has been sent to set up their account."
           : "New employee has been added to the onboarding queue.",
       });
+      // The manual form above only captures a handful of fields — send HR straight
+      // to the guided flow that fills in the rest (bank/education/family/documents/BGV),
+      // the same data the 10-step candidate journey collects.
+      if (result.employee?.id) {
+        navigate(`/employees/${result.employee.id}/complete-profile`);
+      }
     },
     onError: (error: Error) => {
       toast({

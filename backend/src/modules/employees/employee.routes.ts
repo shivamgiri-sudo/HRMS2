@@ -14,6 +14,7 @@ import { getEmployeeForUser, hasRole } from "../../shared/accessGuard.js";
 import { profileApprovalService } from "./profile-approval.service.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
 import { isOfficialEmail } from "../../shared/officialEmail.js";
+import { bootstrapCandidateForEmployee } from "./employee-bgv-bootstrap.service.js";
 
 const router = Router();
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -614,6 +615,237 @@ router.put("/me/nominee", h(async (req: any, res: any) => {
     );
   }
   return res.json({ success: true, message: "Nominee saved" });
+}));
+
+// Shared scope resolver for the HR-facing :employeeId profile-completion routes below —
+// same shape requireScopedRole already uses on PATCH /:id, extracted so each route doesn't
+// re-derive it.
+async function resolveEmployeeScope(req: any) {
+  const [rows] = await db.execute(
+    "SELECT branch_id, process_id, department_id FROM employees WHERE id = ? LIMIT 1",
+    [req.params.employeeId]
+  ) as any[];
+  const emp = rows[0];
+  return { branchId: emp?.branch_id, processId: emp?.process_id, departmentId: emp?.department_id };
+}
+const hrProfileGate = [requireRole("super_admin", "admin", "hr"), requireScopedRole(["hr"], resolveEmployeeScope)];
+
+// PUT /api/employees/:employeeId/bank-details — HR entry for a manually-onboarded employee.
+// Same direct-write/pending-verification shape as PUT /me/bank-details (no penny-drop here —
+// that's candidate-journey-specific verification infra, out of scope for field parity).
+router.put("/:employeeId/bank-details", ...hrProfileGate, h(async (req: any, res: any) => {
+  const empId = req.params.employeeId;
+  const { bank_name, account_holder_name, bank_branch, ifsc_code, account_type, account_number } = req.body;
+
+  const fields: string[] = ["employee_id", "bank_name", "account_holder_name", "bank_branch", "ifsc_code", "account_type", "verification_status"];
+  const vals: any[] = [empId, bank_name, account_holder_name, bank_branch, ifsc_code, account_type, "pending"];
+  const onDup: string[] = ["bank_name = VALUES(bank_name)", "account_holder_name = VALUES(account_holder_name)", "bank_branch = VALUES(bank_branch)", "ifsc_code = VALUES(ifsc_code)", "account_type = VALUES(account_type)", "verification_status = 'pending'"];
+
+  if (account_number) {
+    const masked = "****" + String(account_number).slice(-4);
+    fields.push("account_number", "masked_account_number");
+    vals.push(account_number, masked);
+    onDup.push("account_number = VALUES(account_number)", "masked_account_number = VALUES(masked_account_number)");
+  }
+
+  const placeholders = fields.map(() => "?").join(", ");
+  await db.execute(
+    `INSERT INTO employee_bank_detail (${fields.join(", ")}) VALUES (${placeholders}) ON DUPLICATE KEY UPDATE ${onDup.join(", ")}`,
+    vals
+  );
+
+  void logSensitiveAction({
+    actor_user_id: req.authUser!.id,
+    action_type: "BANK_DETAILS_HR_ENTRY",
+    module_key: "employees",
+    entity_type: "employee",
+    entity_id: empId,
+    change_summary: { fields_updated: fields.filter((f) => f !== "employee_id") },
+    req,
+  });
+
+  return res.json({ success: true, message: "Bank details saved" });
+}));
+
+// PUT /api/employees/:employeeId/statutory-details — HR entry, mirrors PUT /me/statutory-details
+router.put("/:employeeId/statutory-details", ...hrProfileGate, h(async (req: any, res: any) => {
+  const empId = req.params.employeeId;
+  const { epf_number, esi_number, uan_number, pan_number, aadhaar_id, pf_eligible, esi_eligible, epf_date,
+          previous_pf_member, eps_member, international_worker, declaration_accepted } = req.body;
+
+  const STAT_FIELDS: string[] = ["employee_id"];
+  const statVals: any[] = [empId];
+  const statOnDup: string[] = [];
+
+  const addStat = (col: string, val: any) => {
+    if (val !== undefined) {
+      STAT_FIELDS.push(col);
+      statVals.push(val);
+      statOnDup.push(`${col} = VALUES(${col})`);
+    }
+  };
+  addStat("epf_number", epf_number);
+  addStat("esi_number", esi_number);
+  addStat("uan_number", uan_number);
+  addStat("pan_number", pan_number);
+  addStat("aadhaar_id", aadhaar_id);
+  addStat("pf_eligible", pf_eligible);
+  addStat("esi_eligible", esi_eligible);
+  addStat("epf_date", epf_date);
+  addStat("previous_pf_member", previous_pf_member);
+  addStat("eps_member", eps_member);
+  addStat("international_worker", international_worker);
+  addStat("declaration_accepted", declaration_accepted);
+
+  if (STAT_FIELDS.length > 1) {
+    const placeholders = STAT_FIELDS.map(() => "?").join(", ");
+    const dupClause = statOnDup.length ? `ON DUPLICATE KEY UPDATE ${statOnDup.join(", ")}` : "";
+    await db.execute(
+      `INSERT INTO employee_statutory_info (${STAT_FIELDS.join(", ")}) VALUES (${placeholders}) ${dupClause}`,
+      statVals
+    ).catch(() => {});
+  }
+
+  if (uan_number !== undefined) {
+    await db.execute("UPDATE employees SET uan_number = ? WHERE id = ?", [uan_number, empId]).catch(() => {});
+  }
+
+  void logSensitiveAction({
+    actor_user_id: req.authUser!.id,
+    action_type: "STATUTORY_HR_ENTRY",
+    module_key: "employees",
+    entity_type: "employee",
+    entity_id: empId,
+    change_summary: { fields_updated: STAT_FIELDS.filter((f) => f !== "employee_id") },
+    req,
+  });
+
+  return res.json({ success: true, message: "Statutory details saved" });
+}));
+
+// PUT /api/employees/:employeeId/emergency-contact — HR entry, mirrors PUT /me/emergency-contact
+router.put("/:employeeId/emergency-contact", ...hrProfileGate, h(async (req: any, res: any) => {
+  const empId = req.params.employeeId;
+  const { name, relationship, mobile, address } = req.body;
+  if (!name || !relationship || !mobile) {
+    return res.status(400).json({ success: false, error: "name, relationship, and mobile are required" });
+  }
+
+  await db.execute(
+    `INSERT INTO employee_emergency_contact (employee_id, contact_seq, is_primary, name, relationship, mobile, address)
+     VALUES (?, 1, 1, ?, ?, ?, ?)
+     ON DUPLICATE KEY UPDATE name = VALUES(name), relationship = VALUES(relationship), mobile = VALUES(mobile), address = VALUES(address)`,
+    [empId, name, relationship, mobile, address ?? null]
+  );
+  return res.json({ success: true, message: "Emergency contact saved" });
+}));
+
+// PUT /api/employees/:employeeId/nominee — HR entry, mirrors PUT /me/nominee
+router.put("/:employeeId/nominee", ...hrProfileGate, h(async (req: any, res: any) => {
+  const empId = req.params.employeeId;
+  const { nominee_name, relationship, date_of_birth, mobile, address } = req.body;
+  if (!nominee_name || !relationship) {
+    return res.status(400).json({ success: false, error: "nominee_name and relationship are required" });
+  }
+
+  try {
+    const [existingRows] = await db.execute(
+      "SELECT id FROM employee_nominee WHERE employee_id = ? ORDER BY created_at ASC LIMIT 1",
+      [empId]
+    ) as any[];
+
+    if (existingRows.length) {
+      await db.execute(
+        `UPDATE employee_nominee SET nominee_name = ?, relationship = ?, date_of_birth = ?, mobile = ?, address = ? WHERE id = ?`,
+        [nominee_name, relationship, date_of_birth ?? null, mobile ?? null, address ?? null, existingRows[0].id]
+      );
+    } else {
+      await db.execute(
+        `INSERT INTO employee_nominee (employee_id, nominee_name, relationship, date_of_birth, mobile, address) VALUES (?, ?, ?, ?, ?, ?)`,
+        [empId, nominee_name, relationship, date_of_birth ?? null, mobile ?? null, address ?? null]
+      );
+    }
+  } catch (_e) {
+    await db.execute(
+      "UPDATE employees SET nominee_name = ?, nominee_relation = ? WHERE id = ?",
+      [nominee_name, relationship, empId]
+    );
+  }
+  return res.json({ success: true, message: "Nominee saved" });
+}));
+
+// GET/POST/DELETE /api/employees/:employeeId/education — repeater, mirrors candidate journey's Step7Education
+router.get("/:employeeId/education", ...hrProfileGate, h(async (req: any, res: any) => {
+  const [rows] = await db.execute(
+    "SELECT * FROM employee_education WHERE employee_id = ? ORDER BY created_at ASC",
+    [req.params.employeeId]
+  );
+  return res.json({ success: true, data: rows });
+}));
+
+router.post("/:employeeId/education", ...hrProfileGate, h(async (req: any, res: any) => {
+  const empId = req.params.employeeId;
+  const { qualification, specialization_course_name, institution_name, board_type,
+          passed_out_state, passed_out_city, passed_out_year, passed_out_percentage } = req.body;
+  if (!qualification) return res.status(400).json({ success: false, error: "qualification is required" });
+
+  await db.execute(
+    `INSERT INTO employee_education
+       (employee_id, qualification, specialization_course_name, institution_name, board_type,
+        passed_out_state, passed_out_city, passed_out_year, passed_out_percentage)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [empId, qualification, specialization_course_name ?? null, institution_name ?? null, board_type ?? null,
+     passed_out_state ?? null, passed_out_city ?? null, passed_out_year ?? null, passed_out_percentage ?? null]
+  );
+  return res.status(201).json({ success: true, message: "Education entry added" });
+}));
+
+router.delete("/:employeeId/education/:educationId", ...hrProfileGate, h(async (req: any, res: any) => {
+  await db.execute(
+    "DELETE FROM employee_education WHERE id = ? AND employee_id = ?",
+    [req.params.educationId, req.params.employeeId]
+  );
+  return res.status(204).send();
+}));
+
+// GET/PUT /api/employees/:employeeId/experience — single latest-employer entry, mirrors candidate Step8Experience
+router.get("/:employeeId/experience", ...hrProfileGate, h(async (req: any, res: any) => {
+  const [rows] = await db.execute(
+    "SELECT * FROM employee_experience WHERE employee_id = ? LIMIT 1",
+    [req.params.employeeId]
+  ) as any[];
+  return res.json({ success: true, data: rows[0] ?? null });
+}));
+
+router.put("/:employeeId/experience", ...hrProfileGate, h(async (req: any, res: any) => {
+  const empId = req.params.employeeId;
+  const { is_fresher, employer_name, last_designation, last_ctc, experience_years, from_date, to_date, reason_for_leaving } = req.body;
+
+  await db.execute(
+    `INSERT INTO employee_experience
+       (employee_id, is_fresher, employer_name, last_designation, last_ctc, experience_years, from_date, to_date, reason_for_leaving)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON DUPLICATE KEY UPDATE
+       is_fresher = VALUES(is_fresher), employer_name = VALUES(employer_name),
+       last_designation = VALUES(last_designation), last_ctc = VALUES(last_ctc),
+       experience_years = VALUES(experience_years), from_date = VALUES(from_date),
+       to_date = VALUES(to_date), reason_for_leaving = VALUES(reason_for_leaving)`,
+    [empId, is_fresher ? 1 : 0, employer_name ?? null, last_designation ?? null, last_ctc ?? null,
+     experience_years ?? null, from_date ?? null, to_date ?? null, reason_for_leaving ?? null]
+  );
+  return res.json({ success: true, message: "Experience saved" });
+}));
+
+// POST /api/employees/:employeeId/bgv/start — bootstraps the ats_candidate + consent record
+// a manually-onboarded employee needs to enter the existing BGV pipeline (see
+// employee-bgv-bootstrap.service.ts). Requires the caller to confirm consent was recorded
+// in the UI first — this never runs BGV on someone silently.
+router.post("/:employeeId/bgv/start", ...hrProfileGate, h(async (req: any, res: any) => {
+  if (req.body?.consentConfirmed !== true) {
+    return res.status(400).json({ success: false, error: "consentConfirmed must be true — record the employee's consent before starting BGV" });
+  }
+  const result = await bootstrapCandidateForEmployee(req.params.employeeId, req.authUser!.id);
+  return res.json({ success: true, data: result });
 }));
 
 // GET /api/employees/org-tree — role-scoped hierarchical org chart (must be before /:id)
