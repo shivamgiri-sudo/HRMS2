@@ -305,6 +305,49 @@ function scopeOf(line: BranchBudgetLineInput): BudgetAttributionScope {
     ?? (line.costCentreId ? "cost_centre" : line.processId ? "process" : "branch_common");
 }
 
+/** Whether a line carries anything worth protecting — a single untouched blankLine() must not
+ *  trip the local-draft mirror or the beforeunload warning on every fresh page load. */
+export function lineHasContent(line: BranchBudgetLineInput): boolean {
+  return Boolean(line.head || line.itemName.trim() || line.justification.trim() || Number(line.unitRate) > 0);
+}
+
+export const LOCAL_DRAFT_MAX_AGE_MS = 14 * 24 * 60 * 60 * 1000;
+
+export interface LocalBudgetDraft {
+  lines: BranchBudgetLineInput[];
+  savedAt: number;
+}
+
+/**
+ * Pure decision function for whether a stored local draft is worth offering back to the user —
+ * extracted from the recovery useEffect so it can be unit-tested without a DOM. `raw` is exactly
+ * what localStorage.getItem(draftKey) would return; `currentLines` is whatever the workspace has
+ * already loaded (from the server, or the untouched blankLine() default) at the moment the check
+ * runs; `now` is the caller's Date.now() so a fixed clock can be used in tests.
+ *
+ * Returns null (nothing to recover) when: there is no stored value, it is corrupt, it is older
+ * than LOCAL_DRAFT_MAX_AGE_MS, it holds no real content, or it is identical to what is already
+ * loaded — recovering a draft that matches the current state would just be noise.
+ */
+export function resolveRecoverableDraft(
+  raw: string | null,
+  currentLines: BranchBudgetLineInput[],
+  now: number
+): LocalBudgetDraft | null {
+  if (!raw) return null;
+  let parsed: { lines?: BranchBudgetLineInput[]; savedAt?: number };
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (!parsed?.lines?.length || !parsed.savedAt) return null;
+  if (now - parsed.savedAt > LOCAL_DRAFT_MAX_AGE_MS) return null;
+  if (!parsed.lines.some(lineHasContent)) return null;
+  if (JSON.stringify(parsed.lines) === JSON.stringify(currentLines)) return null;
+  return { lines: parsed.lines, savedAt: parsed.savedAt };
+}
+
 function Metric({ label, value, tone = "slate" }: {
   label: string;
   value: string;
@@ -735,11 +778,7 @@ export default function BranchBudgetManagementWorkspace() {
   // browser itself: every edit is also mirrored to localStorage, scoped to this exact branch and
   // period, so a reload can offer it back instead of losing it outright.
   const draftKey = branchId && period ? `hrms_branch_budget_draft:${branchId}:${period}` : null;
-  const [recoverableDraft, setRecoverableDraft] = useState<{ lines: BranchBudgetLineInput[]; savedAt: number } | null>(null);
-
-  function lineHasContent(line: BranchBudgetLineInput) {
-    return Boolean(line.head || line.itemName.trim() || line.justification.trim() || Number(line.unitRate) > 0);
-  }
+  const [recoverableDraft, setRecoverableDraft] = useState<LocalBudgetDraft | null>(null);
 
   useEffect(() => {
     if (!draftKey || !canEdit) return;
@@ -759,21 +798,7 @@ export default function BranchBudgetManagementWorkspace() {
   useEffect(() => {
     setRecoverableDraft(null);
     if (!draftKey || budgetsQuery.isLoading || (detailId && detailQuery.isLoading)) return;
-    try {
-      const raw = localStorage.getItem(draftKey);
-      if (!raw) return;
-      const parsed = JSON.parse(raw) as { lines?: BranchBudgetLineInput[]; savedAt?: number };
-      if (!parsed?.lines?.length || !parsed.savedAt) return;
-      if (Date.now() - parsed.savedAt > 14 * 24 * 60 * 60 * 1000) {
-        localStorage.removeItem(draftKey);
-        return;
-      }
-      if (!parsed.lines.some(lineHasContent)) return;
-      if (JSON.stringify(parsed.lines) === JSON.stringify(lines)) return;
-      setRecoverableDraft({ lines: parsed.lines, savedAt: parsed.savedAt });
-    } catch {
-      localStorage.removeItem(draftKey);
-    }
+    setRecoverableDraft(resolveRecoverableDraft(localStorage.getItem(draftKey), lines, Date.now()));
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [draftKey, budgetsQuery.isLoading, detailQuery.isLoading, loadedDetailId]);
 
