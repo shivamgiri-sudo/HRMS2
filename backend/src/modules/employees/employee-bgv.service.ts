@@ -143,8 +143,8 @@ export async function getEmployeeBgvStatus(employeeId: string): Promise<Employee
   // Get BGV report
   const [reportRows] = await db.execute<RowDataPacket[]>(
     `SELECT
-       overall_verdict,
-       report_date,
+       overall_status AS overall_verdict,
+       completed_at AS report_date,
        hr_remarks AS hr_comments,
        aadhaar_status,
        pan_status,
@@ -152,7 +152,7 @@ export async function getEmployeeBgvStatus(employeeId: string): Promise<Employee
        education_status,
        employment_status,
        court_status,
-       locked_at,
+       IF(locked=1, completed_at, NULL) AS locked_at,
        bgv_score
      FROM candidate_bgv_report
      WHERE candidate_id = ?
