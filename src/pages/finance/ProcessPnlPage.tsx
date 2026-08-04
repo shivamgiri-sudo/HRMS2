@@ -9,7 +9,6 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { downloadBpoPnlExport, useBpoProcessPnl } from "@/hooks/useBpoProcessPnl";
 import { usePnlStatement, type PnlStatementViewBy } from "@/hooks/usePnlStatement";
-import { CeoCommandCenter } from "@/components/finance/pnl/CeoCommandCenter";
 import { CeoOverviewPanel } from "@/components/finance/pnl/CeoOverviewPanel";
 import { PnlStatementView } from "@/components/finance/pnl/PnlStatementView";
 import { PnlExecutiveKpiStrip } from "@/components/finance/pnl/PnlExecutiveKpiStrip";
@@ -328,50 +327,33 @@ export default function ProcessPnlPage() {
                   The CEO view, read from what actually happened — invoiced revenue, the payroll
                   run and GRN spend.
 
-                  The process-level command centre that used to render here was removed on the
-                  user's instruction: it is fed by bpoPnlService, whose four input tables
-                  (process_revenue_rule, process_delivery_actual, process_revenue_component,
-                  process_monthly_plan) hold no rows, so it reported Rs 0 for revenue, EBITDA and
-                  PAT in every month.
+                  The process-level command centre is deliberately NOT rendered here, after being
+                  measured rather than assumed.
 
-                  CeoCommandCenter.tsx is left in place, unedited and no longer imported here, so
-                  it can be remounted unchanged once those tables carry data. Deleting the
-                  component would be the part that is hard to undo.
+                  bpoPnlService now falls back to invoiced revenue, which fixed a real artefact —
+                  it had been reporting Rs 242 lakh of cost against Rs 0 revenue once the
+                  information_schema fix revived the cost side. But PROCESS is not a grain this
+                  data supports yet:
+
+                    revenue   Rs 249.30L of Rs 370.84L, across 18 of 66 processes
+                    indirect  Rs  62.02L of Rs  77.00L
+                    people    most processes, but zero-paid and no-process staff fall outside
+
+                  Three lines each covering a different subset of the business subtract to a figure
+                  belonging to no real entity, and it would sit on this page disagreeing with the
+                  branch view by Rs 121 lakh. Branch works as a grain precisely because revenue,
+                  payroll and spend each resolve to a branch for essentially all of their value.
+
+                  The fix is process_id mapping on cost centres and employees — data, not more
+                  plumbing. CeoCommandCenter.tsx is untouched and still mounted nowhere else, so
+                  remounting it here is a one-line change once that mapping exists.
                 */}
                 <CeoOverviewPanel
                   period={period}
                   branchId={branchId || undefined}
                   onBranchChange={(id) => updateFilters({ branchId: id })}
                 />
-                {summary ? (
-                  <details className="rounded-2xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
-                    <summary className="cursor-pointer px-5 py-3 text-sm font-semibold text-slate-600 dark:text-slate-400">
-                      Process-level command centre
-                      <span className="ml-2 rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-800 dark:bg-amber-950/40 dark:text-amber-300">
-                        revenue from invoices
-                      </span>
-                    </summary>
-                    <div className="border-t border-slate-100 p-4 dark:border-slate-800">
-                      {/*
-                        Its revenue is lower than the figure above, deliberately. This view
-                        attributes revenue to a PROCESS, and about Rs 121 lakh of June's invoicing
-                        sits on cost centres with no process mapping — so it reports Rs 249.30 lakh
-                        against the branch view's Rs 370.84 lakh. Saying so is the point: two tabs
-                        quietly disagreeing is how an 82% margin survived a week.
-                      */}
-                      <p className="mb-3 text-[12.5px] text-slate-500">
-                        Revenue here is attributed per process, so it excludes invoicing on cost
-                        centres that map to no process — about ₹121 lakh in June. The branch view
-                        above counts every invoice and is the company figure.
-                      </p>
-                      <CeoCommandCenter
-                        summary={summary}
-                        period={period}
-                        onViewAllProcesses={() => setActiveTab("matrix")}
-                      />
-                    </div>
-                  </details>
-                ) : null}
+
               </div>
             )}
           </TabsContent>
