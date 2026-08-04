@@ -220,7 +220,11 @@ biometricSummaryRouter.get("/adherence-summary", roleGuard, h(async (req: any, r
        GROUP BY e.process_id
      ) process_pcts`,
     [],
-  ).catch(() => [[{ fully_covered: 0, partially_covered: 0, understaffed: 0 }]] as any);
+    // null, not 0. This query works today, but the fallback decides what is
+    // shown if it ever stops working — and `understaffed: 0` is a claim that
+    // no process is short-staffed, which is the single most reassuring thing
+    // this tile can say. null renders as unavailable instead.
+  ).catch(() => [[{ fully_covered: null, partially_covered: null, understaffed: null }]] as any);
 
   const summary = rows[0] ?? {};
   const live = liveRows[0] ?? {};

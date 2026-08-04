@@ -30,7 +30,16 @@ import type {
   UpdateRunStatusInput,
 } from "./payroll.validation.js";
 
-const LOCKED_STATUSES = new Set(["locked", "disbursed"]);
+/**
+ * Currently unused, but kept correct rather than left as a trap.
+ *
+ * "locked" and "disbursed" alone match none of the 66 runs in production — the
+ * closed marker is FINALIZED (51 runs). See the matching set in
+ * payroll-compliance/payrollCalculate.service.ts, where the same values were
+ * guarding recalculation and never once fired. Compare case-insensitively:
+ * MySQL's collation hides the case difference, Set.has() does not.
+ */
+const LOCKED_STATUSES = new Set(["locked", "disbursed", "finalized"]);
 
 /**
  * `created_by` values that mean "this run was not produced by a payroll process".

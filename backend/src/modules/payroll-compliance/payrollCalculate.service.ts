@@ -13,7 +13,29 @@ interface TaxDeclarationRow {
   regime: string;
 }
 
-const LOCKED_STATUSES = new Set(["locked", "disbursed"]);
+/**
+ * Run statuses that must never be recalculated.
+ *
+ * This was {"locked", "disbursed"} — neither of which any run has ever held.
+ * The live values are FINALIZED (51 runs), approved (12), processing (2) and
+ * draft (1), so the guard below matched nothing and a finalised payroll run
+ * could be recalculated at will. Those 51 runs cover 61,091 employee payments
+ * and about 72.6 crore of net pay.
+ *
+ * Compared case-insensitively: MySQL's collation is case-insensitive, so the
+ * column mixes FINALIZED with lowercase values, but Set.has() is not — which is
+ * how a status could look correct in SQL and still miss here.
+ *
+ * 'approved' is deliberately NOT included. It is an advanced state, but whether
+ * an approved-but-not-finalised run may still be recalculated is a payroll
+ * policy decision rather than a bug fix, and blocking it could stop legitimate
+ * work. Flagged for the payroll owner instead of decided here.
+ */
+const LOCKED_STATUSES = new Set(["locked", "disbursed", "finalized"]);
+
+function isLockedRunStatus(status: unknown): boolean {
+  return LOCKED_STATUSES.has(String(status ?? "").trim().toLowerCase());
+}
 const r2 = (n: number) => Math.round((Number(n) || 0) * 100) / 100;
 
 export interface GratuityResult {
@@ -135,7 +157,7 @@ export async function calculatePayrollRun(runId: string, userId: string): Promis
   const [runRows] = await db.execute<RowDataPacket[]>("SELECT * FROM salary_prep_run WHERE id = ? LIMIT 1", [runId]);
   const run = (runRows as SalaryPrepRun[])[0] as any;
   if (!run) throw new Error("Run not found");
-  if (LOCKED_STATUSES.has(run.status)) throw new Error(`Cannot recalculate a ${run.status} run`);
+  if (isLockedRunStatus(run.status)) throw new Error(`Cannot recalculate a ${run.status} run`);
 
   const financialYear = run.financial_year || financialYearFromRunMonth(run.run_month);
   const monthsRemaining = calculateMonthsRemaining(run.run_month);
