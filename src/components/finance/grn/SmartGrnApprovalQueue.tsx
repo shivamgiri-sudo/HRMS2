@@ -1,50 +1,48 @@
-import { Fragment, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertCircle,
   BadgeCheck,
   Building2,
   CheckCircle2,
-  FileSearch,
   FileText,
   Loader2,
   RefreshCw,
   Send,
-  ShieldCheck,
   Split,
   XCircle,
 } from "lucide-react";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { Sheet, SheetContent, SheetFooter, SheetHeader, SheetTitle } from "@/components/ui/sheet";
-import { StatusStamp, type StampTone } from "@/components/finance/grn/StatusStamp";
+import { StatusStamp } from "@/components/finance/grn/StatusStamp";
 import {
+  checkTone,
   dateLabel,
   grnStatusTone,
   labelStatus,
   money,
 } from "@/components/finance/grn/grn-format";
 import {
+  GRN_SHEET_TAB_TRIGGER,
+  GRN_SHEET_TABS_LIST,
   GRN_TR,
+  GrnAlert,
   GrnButton,
   GrnCard,
   GrnCardHeader,
+  GrnCellSub,
   GrnChip,
   GrnEmptyState,
   GrnIconButton,
+  GrnKv,
+  GrnKvList,
+  GrnMetric,
+  GrnMetricStrip,
   GrnSearchInput,
   GrnSelect,
   GrnTable,
   GrnTd,
+  GrnTextarea,
   GrnTh,
 } from "@/components/finance/grn/grn-ui";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -99,44 +97,8 @@ const STATUS_TABS = [
   ["cancelled", "Cancelled"],
 ] as const;
 
-function tone(value: string) {
-  if (["passed", "completed", "matched", "overridden", "cleared"].includes(value)) {
-    return "border-emerald-200 bg-emerald-50 text-emerald-800";
-  }
-  if (["warning", "manual_review", "near_match", "pending", "processing"].includes(value)) {
-    return "border-amber-200 bg-amber-50 text-amber-800";
-  }
-  return "border-rose-200 bg-rose-50 text-rose-800";
-}
-
-function stampTone(value: string): StampTone {
-  if (["passed", "completed", "matched", "overridden", "cleared"].includes(value)) return "ok";
-  if (["warning", "manual_review", "near_match", "pending", "processing"].includes(value)) return "warn";
-  return "crit";
-}
-
 function unwrap<T>(value: any): T {
   return (value?.data ?? value) as T;
-}
-
-function Metric({ label, value, toneName = "slate" }: {
-  label: string;
-  value: string;
-  toneName?: "slate" | "blue" | "emerald" | "amber" | "rose";
-}) {
-  const styles = {
-    slate: "border-slate-200 bg-white",
-    blue: "border-blue-200 bg-blue-50",
-    emerald: "border-emerald-200 bg-emerald-50",
-    amber: "border-amber-200 bg-amber-50",
-    rose: "border-rose-200 bg-rose-50",
-  };
-  return (
-    <div className={`rounded-2xl border p-3 ${styles[toneName]}`}>
-      <p className="text-[9px] font-semibold uppercase tracking-[0.12em] text-slate-500">{label}</p>
-      <p className="mt-1 text-sm font-bold text-slate-950">{value}</p>
-    </div>
-  );
 }
 
 export function SmartGrnApprovalQueue() {
@@ -279,7 +241,12 @@ export function SmartGrnApprovalQueue() {
     }
   }
 
-  function submitDecision() {
+  /**
+   * Takes the decision explicitly rather than reading it from state. The footer now has separate
+   * Reject and Approve buttons, and `setDecision(x); submitDecision()` would have submitted the
+   * *previous* decision — setState is asynchronous and submitDecision closes over the old value.
+   */
+  function submitDecision(decision: "approved" | "rejected") {
     if (!target) return;
     if (decision === "rejected" && !reviewNote.trim()) {
       toast({ title: "Rejection reason is mandatory", variant: "destructive" });
@@ -425,42 +392,53 @@ export function SmartGrnApprovalQueue() {
 
       {/* Tabbed Sheet — replaces the 1180px Dialog */}
       <Sheet open={Boolean(target)} onOpenChange={(open) => !open && setTarget(null)}>
-        <SheetContent side="right" className="flex w-[560px] flex-col gap-0 p-0">
-          <SheetHeader className="border-b px-4 py-3">
-            <SheetTitle className="font-mono text-sm font-bold text-[#073f78]">
+        {/* Full width below 560px — a fixed 560 overflowed the viewport on a phone. */}
+        <SheetContent side="right" className="flex w-full flex-col gap-0 p-0 sm:w-[560px] sm:max-w-[560px]">
+          <SheetHeader className="border-b border-grn-line bg-grn-line-soft px-4 py-3">
+            <SheetTitle className="font-grn-mono text-[13px] font-bold text-grn-brand">
               {target?.grn_number} — Review
             </SheetTitle>
-            <div className="flex flex-wrap items-center gap-1.5 pt-1">
-              {target?.branch_name && <Badge variant="outline" className="text-xs">{target.branch_name}</Badge>}
-              {target?.vendor_name && <Badge variant="outline" className="text-xs">{target.vendor_name}</Badge>}
+            <div className="flex flex-wrap items-center gap-2 pt-0.5">
+              <span className="text-[11px] text-grn-ink-soft">
+                {[target?.vendor_name, target?.branch_name].filter(Boolean).join(" · ") || "—"}
+              </span>
               {target && <StatusStamp tone={grnStatusTone(target.status)}>{labelStatus(target.status)}</StatusStamp>}
             </div>
           </SheetHeader>
 
           <Tabs defaultValue="details" className="flex flex-1 flex-col overflow-hidden">
-            <TabsList className="mx-4 mt-3 w-fit shrink-0">
-              <TabsTrigger value="details">Details</TabsTrigger>
-              <TabsTrigger value="allocations">Allocations</TabsTrigger>
-              <TabsTrigger value="validation">Validation</TabsTrigger>
-              <TabsTrigger value="decision">Decision</TabsTrigger>
+            <TabsList className={`${GRN_SHEET_TABS_LIST} shrink-0`}>
+              <TabsTrigger value="details" className={GRN_SHEET_TAB_TRIGGER}>Details</TabsTrigger>
+              <TabsTrigger value="allocations" className={GRN_SHEET_TAB_TRIGGER}>Allocations</TabsTrigger>
+              <TabsTrigger value="validation" className={GRN_SHEET_TAB_TRIGGER}>
+                Validation
+                {blockers.length > 0 && (
+                  <span className="rounded-full bg-grn-warn-bg px-1.5 font-grn-mono text-[9.5px] font-bold text-grn-warn">
+                    {blockers.length}
+                  </span>
+                )}
+              </TabsTrigger>
+              <TabsTrigger value="decision" className={GRN_SHEET_TAB_TRIGGER}>Decision</TabsTrigger>
             </TabsList>
 
             {/* Details tab */}
-            <TabsContent value="details" className="flex-1 overflow-y-auto px-4 py-3 m-0">
+            <TabsContent value="details" className="m-0 flex-1 overflow-y-auto">
               {workspaceQuery.isLoading ? (
-                <div className="flex justify-center py-10"><Loader2 className="h-6 w-6 animate-spin" /></div>
+                <div className="flex justify-center py-10"><Loader2 className="h-6 w-6 animate-spin text-grn-ink-soft" /></div>
               ) : (
                 <>
-                  {/* Metrics row */}
-                  <div className="grid grid-cols-3 gap-2 mb-4">
-                    <Metric label="Without tax" value={money(parent?.amount_without_tax)} />
-                    <Metric label="With tax" value={money(parent?.amount_with_tax ?? parent?.amount)} toneName="emerald" />
-                    <Metric label="Validation" value={`${Number(parent?.validation_score ?? 0).toFixed(0)}%`} toneName={blockers.length ? "rose" : "emerald"} />
-                  </div>
+                  <GrnMetricStrip className="border-b border-grn-line-soft">
+                    <GrnMetric label="Without tax" value={money(parent?.amount_without_tax)} />
+                    <GrnMetric label="With tax" value={money(parent?.amount_with_tax ?? parent?.amount)} />
+                    <GrnMetric
+                      label="Validation"
+                      value={`${Number(parent?.validation_score ?? 0).toFixed(0)}%`}
+                      tone={blockers.length ? "crit" : "ok"}
+                    />
+                  </GrnMetricStrip>
 
-                  {/* GRN facts */}
                   {target && (
-                    <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-xs">
+                    <GrnKvList>
                       {([
                         ["GRN Number", target.grn_number],
                         ["Type", target.grn_type],
@@ -470,8 +448,8 @@ export function SmartGrnApprovalQueue() {
                         ["Sub-head", target.sub_head],
                         ["Amount", money(target.amount)],
                         ["With tax", money(target.amount_with_tax)],
-                        ["Bill date", date(target.bill_date)],
-                        ["Due date", date(target.due_date)],
+                        ["Bill date", dateLabel(target.bill_date)],
+                        ["Due date", dateLabel(target.due_date)],
                         ["Allocation", target.allocation_mode ?? "single"],
                         ["Validation score", target.validation_score != null ? `${target.validation_score}%` : "—"],
                         ["Invoice", parent?.invoice_number ?? "—"],
@@ -479,242 +457,268 @@ export function SmartGrnApprovalQueue() {
                         ["PO / Contract", parent?.purchase_reference ?? "—"],
                         ["GSTIN", parent?.vendor_gstin ?? "—"],
                       ] as [string, string | null | undefined][]).map(([label, val]) => (
-                        <Fragment key={label}>
-                          <dt className="text-slate-500">{label}</dt>
-                          <dd className="font-medium text-slate-900 truncate">{val ?? "—"}</dd>
-                        </Fragment>
+                        <GrnKv key={label} label={label}>
+                          <span className="block truncate">{val ?? "—"}</span>
+                        </GrnKv>
                       ))}
-                    </dl>
+                    </GrnKvList>
                   )}
 
-                  {/* Documents */}
-                  <div className="mt-4">
-                    <Card className="rounded-2xl">
-                      <CardHeader className="py-2 px-3">
-                        <CardTitle className="flex items-center gap-2 text-xs">
-                          <FileSearch className="h-3.5 w-3.5 text-violet-700" />Documents
-                        </CardTitle>
-                      </CardHeader>
-                      <CardContent className="space-y-1.5 px-3 pb-3">
-                        {(workspace?.documents ?? []).map((doc) => (
-                          <button
-                            key={doc.id}
-                            type="button"
-                            onClick={() => void openDocument(String(doc.id))}
-                            className="flex w-full items-center gap-2 rounded-xl border border-slate-200 p-2 text-left hover:bg-slate-50"
-                          >
-                            <FileText className="h-4 w-4 text-blue-600 shrink-0" />
-                            <div className="min-w-0 flex-1">
-                              <p className="truncate text-xs font-semibold">{doc.original_name}</p>
-                              <p className="text-[10px] text-slate-500">{String(doc.extraction_status ?? "pending").replaceAll("_", " ")}</p>
-                            </div>
-                            <StatusStamp tone={stampTone(String(doc.extraction_status ?? "pending"))} className="text-[9.5px]">
-                              {Number(doc.is_primary) === 1 ? "Primary" : "Support"}
-                            </StatusStamp>
-                          </button>
-                        ))}
-                        {!workspace?.documents?.length && (
-                          <Button className="w-full" variant="outline" size="sm" onClick={() => void openDocument()}>
-                            <FileText className="mr-2 h-3.5 w-3.5" />Open legacy attachment
-                          </Button>
-                        )}
-                      </CardContent>
-                    </Card>
+                  <div className="border-t border-grn-line-soft px-4 py-4">
+                    <p className="mb-2 text-[10.5px] font-bold uppercase tracking-[0.06em] text-grn-ink-soft">
+                      Documents
+                    </p>
+                    <div className="space-y-1.5">
+                      {(workspace?.documents ?? []).map((doc) => (
+                        <button
+                          key={doc.id}
+                          type="button"
+                          onClick={() => void openDocument(String(doc.id))}
+                          className="flex w-full items-center gap-2 rounded-lg border border-grn-line bg-grn-card p-2 text-left transition-colors hover:border-grn-brand"
+                        >
+                          <FileText className="h-4 w-4 shrink-0 text-grn-brand" />
+                          <div className="min-w-0 flex-1">
+                            <p className="truncate text-[12px] font-semibold text-grn-ink">{doc.original_name}</p>
+                            <p className="text-[10.5px] text-grn-ink-soft">
+                              {String(doc.extraction_status ?? "pending").replace(/_/g, " ")}
+                            </p>
+                          </div>
+                          <StatusStamp tone={checkTone(String(doc.extraction_status ?? "pending"))}>
+                            {Number(doc.is_primary) === 1 ? "Primary" : "Support"}
+                          </StatusStamp>
+                        </button>
+                      ))}
+                      {!workspace?.documents?.length && (
+                        <GrnButton className="w-full" onClick={() => void openDocument()}>
+                          <FileText className="h-3.5 w-3.5" />Open legacy attachment
+                        </GrnButton>
+                      )}
+                    </div>
                   </div>
                 </>
               )}
             </TabsContent>
 
             {/* Allocations tab */}
-            <TabsContent value="allocations" className="flex-1 overflow-y-auto px-4 py-3 m-0">
+            <TabsContent value="allocations" className="m-0 flex-1 overflow-y-auto">
               {workspaceQuery.isLoading ? (
-                <div className="flex justify-center py-10"><Loader2 className="h-6 w-6 animate-spin" /></div>
+                <div className="flex justify-center py-10"><Loader2 className="h-6 w-6 animate-spin text-grn-ink-soft" /></div>
               ) : workspace?.allocations?.length ? (
-                <div className="overflow-x-auto">
-                  <table className="w-full text-xs">
-                    <thead>
-                      <tr className="border-b bg-slate-50">
-                        {["#", "Budget / Item", "Cost Centre", "Without Tax", "With Tax", "%"].map((h) => (
-                          <th key={h} className="px-2 py-2 text-left font-medium text-slate-500 text-[10px] uppercase tracking-wide">{h}</th>
-                        ))}
+                <GrnTable minWidth={620}>
+                  <thead>
+                    <tr>
+                      <GrnTh sticky={false}>#</GrnTh>
+                      <GrnTh sticky={false}>Budget / item</GrnTh>
+                      <GrnTh sticky={false}>Cost centre</GrnTh>
+                      <GrnTh sticky={false} align="right">Without tax</GrnTh>
+                      <GrnTh sticky={false} align="right">With tax</GrnTh>
+                      <GrnTh sticky={false} align="right">%</GrnTh>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {workspace.allocations.map((alloc, index) => (
+                      <tr key={alloc.id} className={GRN_TR}>
+                        <GrnTd className="font-grn-mono text-grn-ink-soft">{index + 1}</GrnTd>
+                        <GrnTd className="max-w-[160px]">
+                          <p className="truncate font-semibold">{alloc.budget_number}</p>
+                          <GrnCellSub className="truncate">{alloc.budget_head} / {alloc.budget_sub_head}</GrnCellSub>
+                        </GrnTd>
+                        <GrnTd>{alloc.cost_centre_name ?? "Branch common"}</GrnTd>
+                        <GrnTd align="right">{money(alloc.amount_without_tax)}</GrnTd>
+                        <GrnTd align="right" className="font-semibold">{money(alloc.amount_with_tax)}</GrnTd>
+                        <GrnTd align="right">{Number(alloc.allocation_percentage).toFixed(2)}%</GrnTd>
                       </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100">
-                      {workspace.allocations.map((alloc, index) => (
-                        <tr key={alloc.id}>
-                          <td className="px-2 py-2 font-bold">{index + 1}</td>
-                          <td className="px-2 py-2 max-w-[140px]">
-                            <p className="truncate font-semibold">{alloc.budget_number}</p>
-                            <p className="truncate text-[10px] text-slate-500">{alloc.budget_head} / {alloc.budget_sub_head}</p>
-                          </td>
-                          <td className="px-2 py-2">{alloc.cost_centre_name ?? "Branch common"}</td>
-                          <td className="px-2 py-2">{money(alloc.amount_without_tax)}</td>
-                          <td className="px-2 py-2 font-bold">{money(alloc.amount_with_tax)}</td>
-                          <td className="px-2 py-2">{Number(alloc.allocation_percentage).toFixed(2)}%</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+                    ))}
+                  </tbody>
+                </GrnTable>
               ) : (
-                <p className="text-xs text-slate-400">Legacy single-attribution GRN — no split allocations.</p>
+                <p className="px-4 py-6 text-[12px] text-grn-ink-soft">
+                  Legacy single-attribution GRN — no split allocations.
+                </p>
               )}
             </TabsContent>
 
             {/* Validation tab */}
-            <TabsContent value="validation" className="flex-1 overflow-y-auto px-4 py-3 m-0">
+            <TabsContent value="validation" className="m-0 flex-1 overflow-y-auto">
               {workspaceQuery.isLoading ? (
-                <div className="flex justify-center py-10"><Loader2 className="h-6 w-6 animate-spin" /></div>
+                <div className="flex justify-center py-10"><Loader2 className="h-6 w-6 animate-spin text-grn-ink-soft" /></div>
               ) : (
-                <div className="space-y-3">
-                  {/* Validation controls */}
-                  <Card className="rounded-2xl">
-                    <CardHeader className="py-2 px-3">
-                      <CardTitle className="flex items-center gap-2 text-xs">
-                        <ShieldCheck className="h-3.5 w-3.5 text-amber-700" />Validation controls
-                      </CardTitle>
-                    </CardHeader>
-                    <CardContent className="space-y-2 px-3 pb-3">
-                      {(workspace?.validations ?? []).map((v) => (
-                        <div key={v.id} className={`rounded-xl border p-2.5 text-xs ${tone(String(v.validation_status))}`}>
-                          <div className="flex items-start gap-2">
-                            {v.validation_status === "passed" || v.validation_status === "overridden"
-                              ? <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-                              : <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />}
-                            <div className="min-w-0 flex-1">
-                              <p className="text-[10px] font-bold uppercase tracking-wide">{labelStatus(String(v.validation_code))}</p>
-                              <p className="mt-0.5 text-[10px] leading-4">{v.message}</p>
-                              {v.override_reason && (
-                                <p className="mt-1.5 rounded-lg bg-white/70 p-1.5 text-[10px]">Override: {v.override_reason}</p>
-                              )}
-                              {Number(v.is_blocking) === 1 && v.validation_status === "failed" && capabilities?.canReviewFinanceStage && (
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  className="mt-2 h-6 px-2 text-[10px]"
-                                  onClick={() => { setOverrideCode(String(v.validation_code)); setOverrideReason(""); }}
-                                >
-                                  <BadgeCheck className="mr-1 h-3 w-3" />Finance override
-                                </Button>
-                              )}
+                <div className="space-y-2.5 p-4">
+                  {(workspace?.validations ?? []).map((v) => {
+                    const resolved = v.validation_status === "passed" || v.validation_status === "overridden";
+                    return (
+                      <GrnAlert key={v.id} tone={checkTone(String(v.validation_status))}>
+                        <div className="flex items-start gap-2">
+                          {resolved
+                            ? <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                            : <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />}
+                          <div className="min-w-0 flex-1">
+                            <StatusStamp tone={checkTone(String(v.validation_status))}>
+                              {String(v.validation_code)}
+                            </StatusStamp>
+                            <p className="mt-1.5 text-[12px] leading-5">{v.message}</p>
+                            {v.override_reason && (
+                              <p className="mt-1.5 rounded-lg bg-grn-card/70 p-1.5 text-[11px]">
+                                Override: {v.override_reason}
+                              </p>
+                            )}
+                            {Number(v.is_blocking) === 1 && v.validation_status === "failed" && capabilities?.canReviewFinanceStage && (
+                              <GrnButton
+                                size="sm"
+                                className="mt-2"
+                                onClick={() => { setOverrideCode(String(v.validation_code)); setOverrideReason(""); }}
+                              >
+                                <BadgeCheck className="h-3 w-3" />Finance override
+                              </GrnButton>
+                            )}
+                          </div>
+                        </div>
+                        {overrideCode === v.validation_code && (
+                          <div className="mt-2.5 space-y-2">
+                            <GrnTextarea
+                              value={overrideReason}
+                              onChange={(e) => setOverrideReason(e.target.value)}
+                              placeholder="Mandatory detailed exception reason (at least 10 characters)"
+                              className="min-h-[60px] bg-grn-card"
+                            />
+                            <div className="flex gap-2">
+                              <GrnButton
+                                variant="primary"
+                                size="sm"
+                                onClick={() => overrideMutation.mutate()}
+                                disabled={overrideMutation.isPending}
+                              >
+                                {overrideMutation.isPending
+                                  ? <Loader2 className="h-3 w-3 animate-spin" />
+                                  : <BadgeCheck className="h-3 w-3" />}
+                                Approve exception
+                              </GrnButton>
+                              <GrnButton
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => { setOverrideCode(null); setOverrideReason(""); }}
+                              >
+                                Cancel
+                              </GrnButton>
                             </div>
                           </div>
-                          {overrideCode === v.validation_code && (
-                            <div className="mt-2.5 space-y-2">
-                              <Textarea
-                                value={overrideReason}
-                                onChange={(e) => setOverrideReason(e.target.value)}
-                                placeholder="Mandatory detailed exception reason"
-                                className="text-xs min-h-[60px]"
-                              />
-                              <div className="flex gap-2">
-                                <Button
-                                  size="sm"
-                                  className="h-6 px-2 text-xs"
-                                  onClick={() => overrideMutation.mutate()}
-                                  disabled={overrideMutation.isPending}
-                                >
-                                  {overrideMutation.isPending ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : <BadgeCheck className="mr-1 h-3 w-3" />}
-                                  Approve exception
-                                </Button>
-                                <Button size="sm" variant="ghost" className="h-6 px-2 text-xs" onClick={() => { setOverrideCode(null); setOverrideReason(""); }}>
-                                  Cancel
-                                </Button>
-                              </div>
-                            </div>
-                          )}
-                        </div>
-                      ))}
-                      {!(workspace?.validations ?? []).length && (
-                        <p className="text-xs text-slate-400">No validation records found.</p>
-                      )}
-                    </CardContent>
-                  </Card>
-
-                  {/* Duplicates */}
-                  <Card className="rounded-2xl">
-                    <CardHeader className="py-2 px-3">
-                      <CardTitle className="flex items-center gap-2 text-xs">
-                        <BadgeCheck className="h-3.5 w-3.5 text-rose-700" />Duplicate matches
-                        {(workspace?.duplicates?.length ?? 0) > 0 && (
-                          <Badge variant="destructive" className="ml-auto text-[10px]">{workspace!.duplicates.length}</Badge>
                         )}
-                      </CardTitle>
-                    </CardHeader>
-                    <CardContent className="space-y-1.5 px-3 pb-3">
+                      </GrnAlert>
+                    );
+                  })}
+                  {!(workspace?.validations ?? []).length && (
+                    <p className="text-[12px] text-grn-ink-soft">No validation records found.</p>
+                  )}
+
+                  {/* Not in the redesign mock, and not droppable: a duplicate invoice is the one
+                      thing a reviewer most needs told before approving a payment. */}
+                  <div className="pt-1">
+                    <p className="mb-2 text-[10.5px] font-bold uppercase tracking-[0.06em] text-grn-ink-soft">
+                      Duplicate matches
+                    </p>
+                    <div className="space-y-1.5">
                       {(workspace?.duplicates ?? []).map((dup) => (
-                        <div key={dup.id} className="rounded-xl border border-rose-200 bg-rose-50 p-2.5 text-xs">
-                          <div className="flex justify-between">
+                        <GrnAlert key={dup.id} tone="crit">
+                          <div className="flex items-center justify-between gap-2">
                             <p className="font-semibold">{labelStatus(String(dup.match_type))}</p>
-                            <Badge variant="outline" className="text-[10px]">{Number(dup.confidence_score).toFixed(0)}%</Badge>
+                            <span className="font-grn-mono text-[11px]">
+                              {Number(dup.confidence_score).toFixed(0)}%
+                            </span>
                           </div>
-                          <p className="mt-0.5 text-[10px] text-slate-600">Matched GRN: {dup.matched_grn_number ?? "Document hash"}</p>
-                        </div>
+                          <p className="mt-0.5 text-[11px] text-grn-ink-soft">
+                            Matched GRN: {dup.matched_grn_number ?? "Document hash"}
+                          </p>
+                        </GrnAlert>
                       ))}
                       {!workspace?.duplicates?.length && (
-                        <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-2.5 text-xs text-emerald-800">
-                          No duplicate match found.
-                        </div>
+                        <GrnAlert tone="ok">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="font-semibold text-grn-ok">Duplicate check — no match found</span>
+                            <StatusStamp tone="ok">Clear</StatusStamp>
+                          </div>
+                        </GrnAlert>
                       )}
-                    </CardContent>
-                  </Card>
+                    </div>
+                  </div>
                 </div>
               )}
             </TabsContent>
 
             {/* Decision tab */}
-            <TabsContent value="decision" className="flex-1 overflow-y-auto px-4 py-3 m-0">
+            <TabsContent value="decision" className="m-0 flex-1 overflow-y-auto">
               {canReview ? (
-                <div className="space-y-3">
+                <div className="space-y-3 p-4">
                   {decision === "approved" && blockers.length > 0 && (
-                    <div className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs text-rose-800">
-                      Approval is blocked by {blockers.length} unresolved server validation(s). Resolve or obtain Finance override first.
-                    </div>
+                    <GrnAlert tone="warn">
+                      <div className="flex items-start gap-2">
+                        <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                        <span>
+                          {blockers.length} unresolved blocking validation(s) — resolve them on the
+                          Validation tab, or obtain a Finance override, before this can be approved.
+                        </span>
+                      </div>
+                    </GrnAlert>
                   )}
                   <div>
-                    <Label className="text-xs">Decision *</Label>
-                    <Select value={decision} onValueChange={(v: "approved" | "rejected") => setDecision(v)}>
-                      <SelectTrigger className="mt-1 h-8 text-sm">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="approved">Approve GRN</SelectItem>
-                        <SelectItem value="rejected">Reject GRN</SelectItem>
-                      </SelectContent>
-                    </Select>
+                    <Label className="text-[11.5px] font-semibold text-grn-ink">
+                      Decision <span className="text-grn-crit">*</span>
+                    </Label>
+                    {/* Mirrors the footer buttons rather than competing with them: clicking
+                        Reject or Approve below submits that decision explicitly, whatever this
+                        says. It drives the required-note marker and the banner above. */}
+                    <GrnSelect
+                      className="mt-1 w-full"
+                      value={decision}
+                      onChange={(e) => setDecision(e.target.value as "approved" | "rejected")}
+                    >
+                      <option value="approved">Approve GRN</option>
+                      <option value="rejected">Reject GRN</option>
+                    </GrnSelect>
                   </div>
                   <div>
-                    <Label className="text-xs">Review note {decision === "rejected" ? "*" : ""}</Label>
-                    <Textarea
+                    <Label className="text-[11.5px] font-semibold text-grn-ink">
+                      Review note{" "}
+                      <span className="font-normal text-grn-ink-soft">(required on reject)</span>
+                    </Label>
+                    <GrnTextarea
                       value={reviewNote}
                       onChange={(e) => setReviewNote(e.target.value)}
-                      className="mt-1 min-h-[80px] text-sm"
-                      placeholder="Add review notes..."
+                      className="mt-1 min-h-[80px]"
+                      placeholder="Why this decision"
                     />
                   </div>
                 </div>
               ) : (
-                <div className="rounded-2xl border border-blue-200 bg-blue-50 p-4 text-xs text-blue-800">
-                  Read-only access at the current workflow stage.
+                <div className="p-4">
+                  <GrnAlert tone="info">Read-only access at the current workflow stage.</GrnAlert>
                 </div>
               )}
             </TabsContent>
           </Tabs>
 
-          <SheetFooter className="border-t px-4 py-3">
-            <Button variant="outline" size="sm" onClick={() => setTarget(null)}>Close</Button>
+          <SheetFooter className="gap-2 border-t border-grn-line-soft px-4 py-3 sm:justify-end">
+            <GrnButton onClick={() => setTarget(null)}>Close</GrnButton>
             {canReview && (
-              <Button
-                size="sm"
-                className={decision === "approved" ? "bg-emerald-600 hover:bg-emerald-700" : "bg-rose-600 hover:bg-rose-700"}
-                disabled={reviewMutation.isPending || workspaceQuery.isLoading}
-                onClick={submitDecision}
-              >
-                {reviewMutation.isPending && <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />}
-                {decision === "approved"
-                  ? <><CheckCircle2 className="mr-1.5 h-3.5 w-3.5" />Approve GRN</>
-                  : <><XCircle className="mr-1.5 h-3.5 w-3.5" />Reject GRN</>}
-              </Button>
+              <>
+                <GrnButton
+                  variant="destructive"
+                  disabled={reviewMutation.isPending || workspaceQuery.isLoading}
+                  onClick={() => submitDecision("rejected")}
+                >
+                  <XCircle className="h-3.5 w-3.5" />Reject
+                </GrnButton>
+                <GrnButton
+                  variant="ok"
+                  disabled={reviewMutation.isPending || workspaceQuery.isLoading || blockers.length > 0}
+                  title={blockers.length ? `Blocked by ${blockers.length} unresolved validation(s)` : undefined}
+                  onClick={() => submitDecision("approved")}
+                >
+                  {reviewMutation.isPending
+                    ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    : <CheckCircle2 className="h-3.5 w-3.5" />}
+                  Approve
+                </GrnButton>
+              </>
             )}
           </SheetFooter>
         </SheetContent>
