@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { Loader2 } from "lucide-react";
-import { useCeoOverview, type CeoBranchRow, type CeoOpportunity } from "@/hooks/useCeoOverview";
+import { useCeoOverview, type CeoBranchRow, type CeoFocus, type CeoOpportunity } from "@/hooks/useCeoOverview";
 
 /**
  * The CEO view of the P&L.
@@ -239,6 +239,59 @@ export function CeoOverviewPanel({ period, branchId, onBranchChange }: CeoOvervi
         </div>
       </section>
 
+      {/* The P&L for whatever the filter narrowed to, with its caveats attached.
+
+          Process is not a grain the data supports across the board — only 18 of 66 processes carry
+          revenue — which is why the company view stays at branch level. But for a well-mapped one
+          it holds up completely, and withholding a real answer because other rows are incomplete
+          would be its own kind of dishonesty. So it is shown WITH what qualifies it. */}
+      {data.focus && (
+        <section className="rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
+          <header className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 px-5 py-3 dark:border-slate-800">
+            <h3 className="text-sm font-semibold">
+              {data.focus.label}
+              <span className="ml-2 font-normal text-slate-500">
+                {data.focus.kind === "process" ? "process" : "cost centre"} P&amp;L
+              </span>
+            </h3>
+            <span className="text-[12.5px] text-slate-500">{period}</span>
+          </header>
+          <div className="p-5">
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+              <FocusCell label="Invoiced revenue" value={lakh(data.focus.revenue)}
+                detail={`${data.focus.invoiceLines} invoice line${data.focus.invoiceLines === 1 ? "" : "s"}`} />
+              <FocusCell label="People cost" value={lakh(data.focus.peopleCost)}
+                detail={`${data.focus.staffPaid.toLocaleString("en-IN")} paid${data.focus.staffZeroPaid > 0 ? ` · ${data.focus.staffZeroPaid} at zero` : ""}`} />
+              <FocusCell label="Indirect cost" value={lakh(data.focus.indirectCost)}
+                detail={data.focus.budget > 0
+                  ? `${lakh(Math.abs(data.focus.budget - data.focus.indirectCost))} ${data.focus.budget >= data.focus.indirectCost ? "under" : "over"} budget`
+                  : "no budget recorded"} />
+              <FocusCell label="Operating profit" value={lakh(data.focus.operatingProfit)}
+                detail={data.focus.marginPct === null ? "no revenue to measure against" : `${data.focus.marginPct.toFixed(1)}% margin`}
+                tone={marginTone(data.focus.marginPct, false)} />
+            </div>
+
+            <div className="mt-3 grid gap-3 sm:grid-cols-2">
+              <FocusCell label="Revenue per head" value={data.focus.revenuePerHead === null ? "—" : thousand(data.focus.revenuePerHead)}
+                detail="per paid employee, per month" />
+              <FocusCell label="Cost per head" value={data.focus.costPerHead === null ? "—" : thousand(data.focus.costPerHead)}
+                detail="loaded, including employer PF and ESIC" />
+            </div>
+
+            {data.focus.notes.length > 0 && (
+              <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50/60 p-3.5 dark:border-amber-900/50 dark:bg-amber-950/20">
+                <div className="text-[11px] font-semibold uppercase tracking-wider text-amber-800 dark:text-amber-300">
+                  Before you read the margin
+                </div>
+                <ul className="mt-1.5 flex list-disc flex-col gap-1.5 pl-4 text-[13px] text-slate-700 dark:text-slate-300">
+                  {data.focus.notes.map((note) => <li key={note}>{note}</li>)}
+                </ul>
+              </div>
+            )}
+          </div>
+        </section>
+      )}
+
       {/* Where profit is recoverable. Suppressed under a filter: comparing one branch against
           itself finds nothing, and an empty panel would read as a clean bill of health. */}
       {narrowed && (
@@ -282,6 +335,18 @@ export function CeoOverviewPanel({ period, branchId, onBranchChange }: CeoOvervi
         Invoiced revenue and GRN spend from the db_bill mirror; people cost from the payroll run for
         this month, not a recomputed snapshot. Revenue per head is monthly, per paid employee.
       </p>
+    </div>
+  );
+}
+
+function FocusCell({
+  label, value, detail, tone,
+}: { label: string; value: string; detail: string; tone?: string }) {
+  return (
+    <div className="rounded-xl border border-slate-200 bg-slate-50/60 p-3.5 dark:border-slate-800 dark:bg-slate-800/40">
+      <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">{label}</div>
+      <div className={`mt-1 text-[22px] font-semibold leading-tight tabular-nums ${tone ?? ""}`}>{value}</div>
+      <div className="mt-0.5 text-[11.5px] text-slate-500">{detail}</div>
     </div>
   );
 }
