@@ -273,10 +273,10 @@ function FieldRow({
   children: React.ReactNode;
 }) {
   return (
-    <div className="grid gap-1.5 px-4 py-3 md:grid-cols-[210px_minmax(0,1fr)] md:items-start md:gap-4">
+    <div className="grid gap-1 px-4 py-2 md:grid-cols-[190px_minmax(0,1fr)] md:items-start md:gap-4">
       <Label
         htmlFor={htmlFor}
-        className="text-xs font-semibold text-slate-700 md:pt-2.5"
+        className="text-xs font-semibold text-slate-700 md:pt-2"
       >
         {label}
         {required && <span className="ml-0.5 text-rose-500">*</span>}
@@ -308,11 +308,11 @@ function FormSection({
   children: React.ReactNode;
 }) {
   return (
-    <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-      <header className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 px-4 py-3">
+    <section className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+      <header className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 bg-slate-50/60 px-4 py-2.5">
         <div>
-          <h2 className="text-sm font-semibold text-slate-900">{title}</h2>
-          {description && <p className="mt-0.5 text-xs text-slate-500">{description}</p>}
+          <h2 className="text-[13px] font-bold text-slate-900">{title}</h2>
+          {description && <p className="mt-0.5 text-[11px] text-slate-500">{description}</p>}
         </div>
         {action}
       </header>
@@ -326,7 +326,7 @@ function StaticValue({ children, muted }: { children: React.ReactNode; muted?: b
   return (
     <div
       className={cn(
-        "flex h-11 items-center text-sm font-medium md:h-10",
+        "flex h-9 items-center text-sm font-medium",
         muted ? "text-slate-400" : "text-slate-900"
       )}
     >
@@ -335,7 +335,7 @@ function StaticValue({ children, muted }: { children: React.ReactNode; muted?: b
   );
 }
 
-const inputClass = "h-11 md:h-10";
+const inputClass = "h-9";
 
 // ─── Component ──────────────────────────────────────────────────────────────
 
@@ -1077,10 +1077,10 @@ export function BudgetLinkedGrnForm() {
             }
           >
             <TabsList className="grid h-auto w-full grid-cols-2 md:w-auto md:inline-grid">
-              <TabsTrigger value="vendor" disabled={locked} className="h-10 gap-2 px-4">
+              <TabsTrigger value="vendor" disabled={locked} className="h-9 gap-2 px-4 text-sm">
                 <IndianRupee className="h-4 w-4" /> Vendor GRN
               </TabsTrigger>
-              <TabsTrigger value="imprest" disabled={locked} className="h-10 gap-2 px-4">
+              <TabsTrigger value="imprest" disabled={locked} className="h-9 gap-2 px-4 text-sm">
                 <UploadCloud className="h-4 w-4" /> Imprest
               </TabsTrigger>
             </TabsList>
@@ -1106,8 +1106,8 @@ export function BudgetLinkedGrnForm() {
             description="Attach the invoice or receipt. At least one file is required to submit."
           >
             <div className="px-4 py-3">
-              <label className="flex cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-slate-300 bg-slate-50 px-4 py-6 text-center transition-colors hover:border-slate-400 hover:bg-slate-100">
-                <UploadCloud className="h-6 w-6 text-slate-400" />
+              <label className="flex cursor-pointer flex-col items-center justify-center gap-1.5 rounded-xl border border-dashed border-slate-300 bg-slate-50 px-4 py-4 text-center transition-colors hover:border-[#073f78]/40 hover:bg-slate-100">
+                <UploadCloud className="h-5 w-5 text-slate-400" />
                 <span className="text-sm font-medium text-slate-700">
                   Tap to attach invoice or receipt
                 </span>
@@ -1724,7 +1724,26 @@ export function BudgetLinkedGrnForm() {
 
         {/* Desktop sidebar */}
         <aside className="hidden w-72 shrink-0 overflow-y-auto border-l bg-white p-4 xl:block">
-          <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-400">Readiness</h3>
+          <div className="flex items-center justify-between">
+            <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-400">Readiness</h3>
+            <span
+              className={cn(
+                "text-xs font-bold tabular-nums",
+                readiness >= 80 ? "text-emerald-600" : readiness >= 50 ? "text-amber-600" : "text-slate-400"
+              )}
+            >
+              {readiness}%
+            </span>
+          </div>
+          <div className="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
+            <div
+              className={cn(
+                "h-full rounded-full transition-[width]",
+                readiness >= 80 ? "bg-emerald-500" : readiness >= 50 ? "bg-amber-500" : "bg-slate-300"
+              )}
+              style={{ width: `${Math.max(4, readiness)}%` }}
+            />
+          </div>
           <ul className="mt-3 space-y-2">
             {checklist.map((item) => (
               <li key={item.label} className="flex items-center gap-2 text-xs">
@@ -1737,7 +1756,7 @@ export function BudgetLinkedGrnForm() {
           </ul>
 
           <h3 className="mt-6 text-xs font-semibold uppercase tracking-wide text-slate-400">Cost</h3>
-          <dl className="mt-3 space-y-1.5 text-xs">
+          <dl className="mt-3 space-y-1.5 rounded-lg border border-slate-100 bg-slate-50/60 p-3 text-xs">
             <div className="flex justify-between">
               <dt className="text-slate-500">Taxable</dt>
               <dd className="tabular-nums font-medium">{money(totals.base)}</dd>
@@ -1746,9 +1765,9 @@ export function BudgetLinkedGrnForm() {
               <dt className="text-slate-500">GST</dt>
               <dd className="tabular-nums font-medium">{money(totals.tax)}</dd>
             </div>
-            <div className="flex justify-between border-t pt-1.5">
+            <div className="flex justify-between border-t border-slate-200 pt-1.5">
               <dt className="font-semibold text-slate-700">Total</dt>
-              <dd className="tabular-nums font-bold">{money(totals.gross)}</dd>
+              <dd className="tabular-nums text-sm font-bold text-slate-900">{money(totals.gross)}</dd>
             </div>
             <div className="flex justify-between">
               <dt className="text-slate-500">P&amp;L impact</dt>
@@ -1766,8 +1785,8 @@ export function BudgetLinkedGrnForm() {
               "Finance Head reviews",
               isVendor ? "Accounts Head → payment" : "Imprest closure",
             ].map((step, index) => (
-              <li key={step} className="flex gap-2">
-                <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-slate-100 text-[9px] font-bold text-slate-500">
+              <li key={step} className="flex items-center gap-2">
+                <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-[#073f78]/10 text-[9px] font-bold text-[#073f78]">
                   {index + 1}
                 </span>
                 {step}
