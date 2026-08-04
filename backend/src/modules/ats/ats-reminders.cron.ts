@@ -14,6 +14,7 @@ import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { inboxService } from "../inbox/inbox.service.js";
 import { sendOnboardingTokenEmail } from "./ats.email.service.js";
+import { env } from "../../config/env.js";
 
 const HOUR_MS = 60 * 60 * 1000;
 
@@ -28,7 +29,10 @@ async function runOnboardingIncompleteReminders(): Promise<void> {
        c.applied_for_branch,
        c.branch_display_name,
        ob.id AS bridge_id,
-       ob.onboarding_link,
+       -- There is no onboarding_link column; the bridge stores the raw token and
+       -- the link is composed from it, the same way ats.onboarding.service.ts
+       -- does when the link is first issued.
+       ob.onboarding_token,
        ob.created_at AS bridge_created,
        -- find the recruiter user id to notify
        r.employee_id AS recruiter_employee_id
@@ -36,22 +40,36 @@ async function runOnboardingIncompleteReminders(): Promise<void> {
      JOIN ats_onboarding_bridge ob ON ob.candidate_id = c.id
      LEFT JOIN ats_recruiter_roster r ON r.id = c.preferred_recruiter_id
      WHERE c.current_stage IN ('Selected','Offered')
-       AND ob.joining_status NOT IN ('joined','documents_complete','employee_created')
+       -- The column is status, not joining_status.
+       AND ob.status NOT IN ('joined','documents_complete','employee_created')
+       AND ob.onboarding_token IS NOT NULL
+       -- Do not chase a link that has already expired — the candidate cannot use it.
+       AND (ob.onboarding_token_expires_at IS NULL OR ob.onboarding_token_expires_at > NOW())
        AND DATEDIFF(NOW(), ob.created_at) >= 3
-       AND ob.reminder_sent_at IS NULL
-       OR (ob.reminder_sent_at IS NOT NULL AND DATEDIFF(NOW(), ob.reminder_sent_at) >= 3)
+       -- Parenthesised. Without the brackets the trailing OR bound to the whole
+       -- WHERE, so any row reminded 3+ days ago matched regardless of stage or
+       -- onboarding state — it would have mailed people who had already joined.
+       AND (
+         ob.reminder_sent_at IS NULL
+         OR DATEDIFF(NOW(), ob.reminder_sent_at) >= 3
+       )
      LIMIT 100`
   );
 
   for (const row of rows) {
     try {
-      // Email to candidate if onboarding link exists
-      if (row.email && row.onboarding_link) {
+      // Compose the link from the stored raw token, matching how it is built
+      // when first issued (ats.onboarding.service.ts).
+      const onboardingLink = row.onboarding_token
+        ? `${env.FRONTEND_URL || 'http://localhost:5173'}/onboard-full?token=${row.onboarding_token}`
+        : null;
+
+      if (row.email && onboardingLink) {
         await sendOnboardingTokenEmail({
           candidateId: row.candidate_id as string,
           to: row.email as string,
           candidateName: (row.full_name ?? 'Candidate') as string,
-          onboardingLink: row.onboarding_link as string,
+          onboardingLink,
         }).catch((e: unknown) => console.warn('[onboarding-reminder email]', e));
       }
 
