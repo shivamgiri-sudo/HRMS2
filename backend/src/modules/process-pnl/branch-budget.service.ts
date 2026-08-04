@@ -5,6 +5,7 @@ import { db } from "../../db/mysql.js";
 import { tableExists } from "../../shared/dbHelpers.js";
 import {
   computeLineAllocations,
+  createAllocationLookupCache,
   getLineAllocations,
   replaceLineAllocations,
   type ManualAllocationInput,
@@ -632,6 +633,11 @@ async function replaceBudgetLines(
     [budgetId]
   );
 
+  // One cache for the whole save. Every allocation lookup below is keyed on branchId/periodCode,
+  // which do not vary across lines, so without this a 58-line budget re-read the same cost
+  // centres and monthly drivers 58 times each — sequentially, inside this transaction.
+  const lookupCache = createAllocationLookupCache();
+
   for (const item of calculated) {
     const line = item.line;
     const value = item.values;
@@ -691,7 +697,8 @@ async function replaceBudgetLines(
         line.manualAllocations,
         connection,
         undefined,
-        line.includedCostCentreIds
+        line.includedCostCentreIds,
+        lookupCache
       );
       await replaceLineAllocations(connection, lineId, allocations, actorId);
     }
@@ -1198,12 +1205,30 @@ export const branchBudgetService = {
     try {
       await connection.beginTransaction();
       const [rows] = await connection.execute<RowDataPacket[]>(
-        `SELECT id, budget_number, status FROM finance_budget_header WHERE id = ? FOR UPDATE`,
+        `SELECT id, budget_number, status, created_by FROM finance_budget_header WHERE id = ? FOR UPDATE`,
         [id]
       );
       if (!rows[0]) throw new Error("Budget not found");
       const status = String(rows[0].status);
       const budgetNumber = String(rows[0].budget_number);
+      const createdBy = rows[0].created_by == null ? null : String(rows[0].created_by);
+
+      // Who may delete at all. super_admin may act on any budget; everyone else may only remove a
+      // budget they raised themselves and only while it is still a draft. This is the real gate —
+      // the route's requireRole only narrows the field to roles that can create budgets, and UI
+      // gating is not security.
+      const isSuperAdminActor = actorRole.toLowerCase() === "super_admin";
+      if (!isSuperAdminActor) {
+        if (createdBy !== actorId) {
+          throw new Error("Only the person who raised this budget can delete it");
+        }
+        if (status !== "draft") {
+          throw new Error(
+            `This budget is ${status}, so it can no longer be deleted by its creator. `
+            + "Ask a super admin to supersede it."
+          );
+        }
+      }
 
       const [[usage]] = await connection.execute<RowDataPacket[]>(
         `SELECT COALESCE(SUM(reserved_amount),0) AS reserved,
@@ -1227,8 +1252,7 @@ export const branchBudgetService = {
       // is the one role trusted to override that and truly delete an approved-but-untouched budget;
       // touchedByGrn is NOT overridable by anyone — real spend history is never deletable.
       const APPROVED_STATUSES = ["branch_head_approved", "finance_head_approved", "active"];
-      const isSuperAdmin = actorRole.toLowerCase() === "super_admin";
-      const requiresSupersede = touchedByGrn || (APPROVED_STATUSES.includes(status) && !isSuperAdmin);
+      const requiresSupersede = touchedByGrn || (APPROVED_STATUSES.includes(status) && !isSuperAdminActor);
 
       if (requiresSupersede) {
         await connection.execute(

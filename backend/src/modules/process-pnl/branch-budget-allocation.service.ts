@@ -21,6 +21,45 @@ interface Executor {
   execute<T extends RowDataPacket[] = RowDataPacket[]>(sql: string, params?: unknown[]): Promise<[T, unknown]>;
 }
 
+/**
+ * Per-save memo for the reference data an allocation needs.
+ *
+ * computeLineAllocations is called once per branch-level budget line, and every lookup it makes is
+ * keyed on the branch and the period — which are identical for every line in a save. Saving a
+ * 58-line budget therefore issued ~58 identical cost-centre queries, ~58 identical monthly-driver
+ * queries, and for grade-weighted lines 58 × (cost centres) grade queries, all sequentially inside
+ * one transaction. That is what pushed Save draft past the client's 30s abort.
+ *
+ * Caching is safe within a save because none of this reference data is written by that
+ * transaction — saveDraft only touches finance_budget_line and finance_budget_line_allocation.
+ * Pass one cache per save; omit it and every call behaves exactly as before.
+ */
+export interface AllocationLookupCache {
+  costCentres: Map<string, Promise<CostCentreOption[]>>;
+  monthlyDrivers: Map<string, Promise<MonthlyDriverRecord[]>>;
+  meterConsumption: Map<string, Promise<Awaited<ReturnType<typeof getBranchMeterConsumption>>>>;
+  gradeCost: Map<string, Promise<Awaited<ReturnType<typeof getCostCentreGradeWeightedCost>>>>;
+}
+
+export function createAllocationLookupCache(): AllocationLookupCache {
+  return {
+    costCentres: new Map(),
+    monthlyDrivers: new Map(),
+    meterConsumption: new Map(),
+    gradeCost: new Map(),
+  };
+}
+
+/** Memoises the in-flight promise, not just the result, so concurrent callers share one query. */
+function memo<T>(store: Map<string, Promise<T>> | undefined, key: string, run: () => Promise<T>): Promise<T> {
+  if (!store) return run();
+  const existing = store.get(key);
+  if (existing) return existing;
+  const started = run();
+  store.set(key, started);
+  return started;
+}
+
 export type SharingMethod =
   | "total_manpower"
   | "agent_headcount"
@@ -350,7 +389,9 @@ export async function computeLineAllocations(
    *  active cost centre, which is the long-standing behaviour. Real costs are rarely branch-wide —
    *  air-conditioner maintenance touches only the floors a few processes occupy — and without this
    *  the only way to exclude a cost centre was a manual split giving it 0%. */
-  includedCostCentreIds?: string[] | null
+  includedCostCentreIds?: string[] | null,
+  /** Share one cache across every line of a save — see AllocationLookupCache. */
+  cache?: AllocationLookupCache
 ): Promise<LineAllocationRow[]> {
   const method = (SEEDED_DRIVER_ALIASES[(sharingMethod ?? "").trim()]
     ?? (sharingMethod ?? "").trim()) as SharingMethod;
@@ -361,7 +402,9 @@ export async function computeLineAllocations(
     );
   }
 
-  const allActive = await listActiveCostCentres(branchId, executor);
+  const allActive = await memo(cache?.costCentres, branchId, () =>
+    listActiveCostCentres(branchId, executor)
+  );
   if (allActive.length === 0) {
     throw new Error("This branch has no active cost centres to allocate a branch-level line to");
   }
@@ -416,7 +459,11 @@ export async function computeLineAllocations(
   } else if (method === "meter_wise") {
     // Resolved for the whole branch in one pass: a shared meter belongs to no single cost centre,
     // so it cannot be found by asking each cost centre in turn.
-    const branchConsumption = await getBranchMeterConsumption(branchId, periodCode, executor, utilityType);
+    const branchConsumption = await memo(
+      cache?.meterConsumption,
+      `${branchId}|${periodCode}|${utilityType ?? "*"}`,
+      () => getBranchMeterConsumption(branchId, periodCode, executor, utilityType)
+    );
     const consumptionByCostCentre = new Map(
       costCentres
         .filter((cc) => branchConsumption.has(cc.id))
@@ -445,8 +492,12 @@ export async function computeLineAllocations(
     mode = "weighted";
   } else if (method === "grade_weighted_headcount") {
     const costByCostCentre = new Map<string, { totalHeadcount: number; blendedMonthlyCost: number }>();
+    // Sequential per cost centre, but memoised across lines: the same cost centre's grade cost was
+    // otherwise re-read once per branch-level line.
     for (const cc of costCentres) {
-      const cost = await getCostCentreGradeWeightedCost(cc.id, periodCode, executor);
+      const cost = await memo(cache?.gradeCost, `${cc.id}|${periodCode}`, () =>
+        getCostCentreGradeWeightedCost(cc.id, periodCode, executor)
+      );
       if (cost) costByCostCentre.set(cc.id, cost);
     }
     const missingGradeData = costCentres.filter((cc) => !costByCostCentre.has(cc.id));
@@ -471,7 +522,9 @@ export async function computeLineAllocations(
     // carries no share of the pool, the same treatment meter_wise already gives an unmetered cost
     // centre. The gap is still surfaced as a non-blocking caution via checkSharingMethodReadiness
     // (Exceptions & Readiness tab), which is where "add revenue" belongs — not a save-time throw.
-    const drivers = await getMonthlyDrivers(branchId, periodCode, executor);
+    const drivers = await memo(cache?.monthlyDrivers, `${branchId}|${periodCode}`, () =>
+      getMonthlyDrivers(branchId, periodCode, executor)
+    );
     const driverByCostCentre = new Map(drivers.map((d) => [d.costCentreId, d]));
     shares = costCentres.map((cc) => ({
       key: cc.id,
@@ -483,7 +536,9 @@ export async function computeLineAllocations(
     driverValueByCostCentre = new Map(shares.map((s) => [s.key, s.weight]));
     mode = "weighted";
   } else {
-    const drivers = await getMonthlyDrivers(branchId, periodCode, executor);
+    const drivers = await memo(cache?.monthlyDrivers, `${branchId}|${periodCode}`, () =>
+      getMonthlyDrivers(branchId, periodCode, executor)
+    );
     const driverByCostCentre = new Map(drivers.map((d) => [d.costCentreId, d]));
     const missingDrivers = costCentres.filter((cc) => {
       const driver = driverByCostCentre.get(cc.id);
@@ -549,30 +604,35 @@ export async function replaceLineAllocations(
   actorUserId: string
 ): Promise<void> {
   await connection.execute(`DELETE FROM finance_budget_line_allocation WHERE budget_line_id = ?`, [budgetLineId]);
-  for (const row of rows) {
-    await connection.execute(
-      `INSERT INTO finance_budget_line_allocation
-        (id, budget_line_id, cost_centre_id, driver_value, allocation_percentage,
-         planned_unit, base_amount, tax_amount, gross_amount, pnl_cost_amount,
-         rounding_adjustment, entry_source, created_by, updated_by)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,'calculated',?,?)`,
-      [
-        randomUUID(),
-        budgetLineId,
-        row.costCentreId,
-        row.driverValue,
-        row.allocationPercentage,
-        row.plannedUnit,
-        row.baseAmount,
-        row.taxAmount,
-        row.grossAmount,
-        row.pnlCostAmount,
-        row.roundingAdjustment,
-        actorUserId,
-        actorUserId,
-      ]
-    );
-  }
+  if (rows.length === 0) return;
+
+  // One multi-row INSERT rather than one per cost centre. Every row here is generated by
+  // computeLineAllocations above — no user-supplied text reaches the SQL, and the values are still
+  // bound as parameters; only the placeholder list is built from rows.length.
+  const placeholders = rows.map(() => "(?,?,?,?,?,?,?,?,?,?,?,'calculated',?,?)").join(",");
+  const params = rows.flatMap((row) => [
+    randomUUID(),
+    budgetLineId,
+    row.costCentreId,
+    row.driverValue,
+    row.allocationPercentage,
+    row.plannedUnit,
+    row.baseAmount,
+    row.taxAmount,
+    row.grossAmount,
+    row.pnlCostAmount,
+    row.roundingAdjustment,
+    actorUserId,
+    actorUserId,
+  ]);
+  await connection.execute(
+    `INSERT INTO finance_budget_line_allocation
+      (id, budget_line_id, cost_centre_id, driver_value, allocation_percentage,
+       planned_unit, base_amount, tax_amount, gross_amount, pnl_cost_amount,
+       rounding_adjustment, entry_source, created_by, updated_by)
+     VALUES ${placeholders}`,
+    params
+  );
 }
 
 export async function getLineAllocations(budgetLineId: string): Promise<RowDataPacket[]> {

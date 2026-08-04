@@ -265,12 +265,17 @@ router.post(
 // A reviewer correcting the lines in place at their own stage, rather than sending the whole budget
 // back for a small fix. Status is unchanged by this call — the reviewer must still Approve — so it
 // cannot be used to bypass a stage. Same review roles and row scope as the review endpoint.
-// Super admin only. Deletes a budget outright when nothing has consumed against it, and closes it
-// instead when GRN activity exists, because deleting then would take real spend history with it.
+// Deletes a budget outright when nothing has consumed against it, and closes it instead when GRN
+// activity exists, because deleting then would take real spend history with it.
+//
+// The role list here only narrows the field to roles that can raise a budget at all. The real
+// authority check is in deleteOrSupersede: super_admin may act on any budget, anyone else only on
+// a draft they created themselves. Keeping it there means the rule holds for every caller, not
+// just this route.
 router.delete(
   "/pnl/budgets/:id",
   requireWriteAccess,
-  requireRole("super_admin"),
+  requireRole("super_admin", "admin", "branch_admin"),
   h(async (req, res) => {
     const user = actor(req);
     await scopedBudget(req, req.params.id);

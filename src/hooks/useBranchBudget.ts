@@ -93,6 +93,9 @@ export interface BranchBudgetSummary {
   reserved_amount: number;
   consumed_amount: number;
   line_count: number;
+  /** The user who raised it. Returned by the list query's `SELECT h.*` all along, but undeclared —
+   *  needed to show a creator their own draft's delete action. */
+  created_by?: string | null;
 }
 
 export interface BranchBudgetAllocationRecord {

@@ -59,6 +59,7 @@ import {
   type BudgetPlanningStatus,
   useBudgetCoverage,
 } from "@/hooks/useBudgetCoverage";
+import { useAuth } from "@/contexts/AuthContext";
 import {
   type DeleteExpenseMasterResult,
   type FinanceExpenseHead,
@@ -492,11 +493,20 @@ export default function BranchBudgetManagementWorkspace() {
     if (capabilities?.scopedBranchId) setBranchId(capabilities.scopedBranchId);
   }, [capabilities?.scopedBranchId]);
 
+  const { user } = useAuth();
   const { budgetsQuery, saveBudget, submitBudget, reviewBudget, reviewerReviseBudget, deleteBudget } = useBranchBudgets({
     period,
     branchId: branchId || undefined,
   });
   const budgets = budgetsQuery.data ?? [];
+
+  // Who sees a delete action. Mirrors deleteOrSupersede on the backend, which is the actual gate:
+  // super_admin on anything, everyone else only on a draft they raised themselves. Showing it to
+  // someone the server would refuse is just a worse error message.
+  const isSuperAdmin = Boolean(capabilities?.roles?.includes("super_admin"));
+  const canDeleteBudget = (budget: BranchBudgetSummary) =>
+    isSuperAdmin || (budget.status === "draft" && Boolean(user?.id) && budget.created_by === user?.id);
+
   const currentBudget = budgets[0];
   const editableBudget = EDITABLE_BUDGET_STATUSES.includes(currentBudget?.status ?? "")
     ? currentBudget
@@ -1607,7 +1617,7 @@ Reason:`
               {canReviewCurrent && <p className="text-xs text-slate-500">Revision also needs a correction note against at least one head/sub-head — add those on the <span className="font-medium">Plan Builder</span> tab, where you can also correct the lines yourself and then approve.</p>}
               {Boolean(openCorrectionCount) && <div className="rounded-2xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900"><span className="font-semibold">{openCorrectionCount} open correction note(s)</span> against this budget. Each one is shown on its own budget line in the Plan Builder tab.</div>}
               {budgets.map((budget) => { const available = Number(budget.gross_budget_amount) - Number(budget.reserved_amount) - Number(budget.consumed_amount); return <div key={budget.id} className="grid gap-4 rounded-2xl border border-slate-200 p-4 xl:grid-cols-[1.2fr_1fr_1fr_auto]"><div><div className="flex gap-2"><p className="font-semibold">{budget.budget_number}</p><Badge variant="outline">{statusLabel(budget.status)}</Badge></div><p className="mt-1 text-xs text-slate-500">{budget.branch_name} · {budget.period_code} · Revision {budget.revision_no}</p></div><Metric label="Gross / P&L" value={`${money(Number(budget.gross_budget_amount))} / ${money(Number(budget.pnl_budget_amount))}`} /><Metric label="Reserved / Consumed / Available" value={`${money(Number(budget.reserved_amount))} / ${money(Number(budget.consumed_amount))} / ${money(available)}`} />{canReview(budget) && <div className="flex flex-wrap justify-end gap-2"><Button size="sm" onClick={() => void review(budget, "approve")}><CheckCircle2 className="mr-1 h-3.5 w-3.5" />Approve</Button><Button size="sm" variant="outline" onClick={() => void review(budget, "revision")}><Settings2 className="mr-1 h-3.5 w-3.5" />Revision</Button><Button size="sm" variant="destructive" onClick={() => void review(budget, "reject")}><XCircle className="mr-1 h-3.5 w-3.5" />Reject</Button></div>}
-                {capabilities?.roles?.includes("super_admin") && <div className="flex justify-end xl:col-span-4"><Button size="sm" variant="outline" className="border-rose-300 text-rose-700 hover:bg-rose-50" disabled={deleteBudget.isPending} onClick={() => void removeBudget(budget)}><Trash2 className="mr-1 h-3.5 w-3.5" />Delete / supersede (super admin)</Button></div>}</div>; })}{!budgets.length && <div className="py-12 text-center text-slate-500"><Building2 className="mx-auto mb-3 h-10 w-10" />No budget found.</div>}
+                {canDeleteBudget(budget) && <div className="flex justify-end xl:col-span-4"><Button size="sm" variant="outline" className="border-rose-300 text-rose-700 hover:bg-rose-50" disabled={deleteBudget.isPending} onClick={() => void removeBudget(budget)}><Trash2 className="mr-1 h-3.5 w-3.5" />{isSuperAdmin ? "Delete / supersede (super admin)" : "Delete draft"}</Button></div>}</div>; })}{!budgets.length && <div className="py-12 text-center text-slate-500"><Building2 className="mx-auto mb-3 h-10 w-10" />No budget found.</div>}
               <UtilizationBreakdown rows={utilizationByHead} loading={detailQuery.isLoading} />
               </CardContent></Card></TabsContent>
 
