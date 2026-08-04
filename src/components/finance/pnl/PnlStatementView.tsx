@@ -137,8 +137,7 @@ export function PnlStatementView({
           No data available for this period and view.
         </div>
       ) : (
-        <>
-          {statement.revenueBasis && (
+        {statement.revenueBasis && (
   // Without this the Revenue block is a puzzle: Recognised and Invoiced agree exactly on a
   // closed month and diverge sharply on an open one, and nothing on screen says why.
   <p className="px-4 pb-2 text-[11px] text-slate-500">
@@ -231,7 +230,6 @@ export function PnlStatementView({
             </tbody>
           </table>
         </div>
-        </>
       )}
     </div>
   );

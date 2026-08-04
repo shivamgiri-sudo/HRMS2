@@ -119,69 +119,15 @@ export default function ProcessPnlPage() {
     setSearchParams(params);
   }
 
-  /*
-   * FALLBACK: use the statement's figures when the process engine has nothing to say.
-   *
-   * The headline KPIs come from bpoPnlService, which is driven by process_revenue_rule,
-   * process_delivery_actual, process_revenue_component and process_monthly_plan. All four hold
-   * ZERO rows today, so it returns headcount and nothing else — 975 active staff in June against
-   * Rs 0 revenue, Rs 0 EBITDA, Rs 0 PAT — identically in every month, including the open one.
-   *
-   * Rs 0 is not the cautious answer here, it is a false one: June invoiced Rs 344.26 lakh, and
-   * the statement knows it. A tab named "CEO Overview" that reports no revenue for a company
-   * with 975 people on payroll is worse than one that reports the real figure from a second
-   * source, so when the process engine returns nothing we fall back to the statement.
-   *
-   * Never silently: `kpiSource` drives a badge saying where the numbers came from. Otherwise
-   * this quietly hides that the process-level configuration was never done, and nobody ever
-   * fills those four tables in.
-   */
-  const statementTotal = (componentKey: string): number | null => {
-    const rows = statementQuery.data?.rows;
-    const columns = statementQuery.data?.columns;
-    if (!rows || !columns) return null;
-    const row = rows.find((r) => r.componentKey === componentKey);
-    if (!row) return null;
-    return columns.reduce((total, column) => total + Number(row.values[column.id] ?? 0), 0);
-  };
-
-  const bpoHasMoney = Boolean(summary) && [
-    summary?.kpis.recognizedRevenue, summary?.kpis.agentSalary,
-    summary?.kpis.dsc, summary?.kpis.bmc,
-  ].some((v) => Math.abs(Number(v ?? 0)) > 0.5);
-
-  const fallbackRevenue = statementTotal("recognized_revenue");
-  const useStatementFallback = Boolean(summary) && !bpoHasMoney
-    && fallbackRevenue !== null && Math.abs(fallbackRevenue) > 0.5;
-  const kpiSource: "process" | "statement" = useStatementFallback ? "statement" : "process";
-
-  const pct = (part: number | null, whole: number | null) =>
-    part !== null && whole !== null && whole !== 0 ? (part / whole) * 100 : 0;
-
-  /*
-   * Component keys, verified against finance_pnl_component_master rather than assumed. The cost
-   * lines are total_dsc / total_bmc — there is no plain "dsc" or "bmc" component, and reading
-   * those would have yielded 0, showing full revenue against no support cost and a hugely
-   * overstated Operating Profit. Operating Profit uses total_cost, which already includes IDC,
-   * instead of adding the three people lines and quietly dropping it.
-   */
-  const agentSalaryV = useStatementFallback ? (statementTotal("agent_salary") ?? 0) : summary?.kpis.agentSalary ?? 0;
-  const dscV = useStatementFallback ? (statementTotal("total_dsc") ?? 0) : summary?.kpis.dsc ?? 0;
-  const bmcV = useStatementFallback ? (statementTotal("total_bmc") ?? 0) : summary?.kpis.bmc ?? 0;
-  const revenueV = useStatementFallback ? (fallbackRevenue ?? 0) : summary?.kpis.recognizedRevenue ?? 0;
-  const opV = useStatementFallback
-    ? revenueV - (statementTotal("total_cost") ?? 0)
-    : summary?.kpis.operatingProfit ?? 0;
-
   const kpiItems = summary
     ? [
-        { label: "Recognized revenue", value: revenueV, kind: "currency" as const, tone: "good" as const },
-        { label: "Agent salary", value: agentSalaryV, kind: "currency" as const },
-        { label: "Agent salary / revenue", value: useStatementFallback ? pct(agentSalaryV, revenueV) : summary.kpis.agentSalaryPctRevenue ?? 0, kind: "percent" as const },
-        { label: "Direct Service Cost", value: dscV, kind: "currency" as const, tone: "warning" as const },
-        { label: "DSC / revenue", value: useStatementFallback ? pct(dscV, revenueV) : summary.kpis.dscPctRevenue ?? 0, kind: "percent" as const },
-        { label: "Branch Management Cost", value: bmcV, kind: "currency" as const, tone: "warning" as const },
-        { label: "BMC / revenue", value: useStatementFallback ? pct(bmcV, revenueV) : summary.kpis.bmcPctRevenue ?? 0, kind: "percent" as const },
+        { label: "Recognized revenue", value: summary.kpis.recognizedRevenue, kind: "currency" as const, tone: "good" as const },
+        { label: "Agent salary", value: summary.kpis.agentSalary, kind: "currency" as const },
+        { label: "Agent salary / revenue", value: summary.kpis.agentSalaryPctRevenue ?? 0, kind: "percent" as const },
+        { label: "Direct Service Cost", value: summary.kpis.dsc, kind: "currency" as const, tone: "warning" as const },
+        { label: "DSC / revenue", value: summary.kpis.dscPctRevenue ?? 0, kind: "percent" as const },
+        { label: "Branch Management Cost", value: summary.kpis.bmc, kind: "currency" as const, tone: "warning" as const },
+        { label: "BMC / revenue", value: summary.kpis.bmcPctRevenue ?? 0, kind: "percent" as const },
         {
           label: "EBITDA",
           value: summary.kpis.ebitda,
@@ -196,17 +142,12 @@ export default function ProcessPnlPage() {
         },
         {
           label: "Operating profit",
-          value: opV,
+          value: summary.kpis.operatingProfit,
           kind: "currency" as const,
-          tone: opV >= 0 ? ("good" as const) : ("danger" as const),
+          tone: summary.kpis.operatingProfit >= 0 ? ("good" as const) : ("danger" as const),
         },
-        // PBT and PAT need finance cost and tax, which the statement fallback has no source for.
-        // Showing them as Rs 0 beside a real Operating Profit would read as "we made a profit and
-        // then lost all of it", so they are omitted entirely when the fallback is in use.
-        ...(useStatementFallback ? [] : [
-          { label: "PBT", value: summary.kpis.pbt, kind: "currency" as const },
-          { label: "PAT", value: summary.kpis.pat, kind: "currency" as const },
-        ]),
+        { label: "PBT", value: summary.kpis.pbt, kind: "currency" as const },
+        { label: "PAT", value: summary.kpis.pat, kind: "currency" as const },
       ]
     : [];
 
@@ -223,18 +164,8 @@ export default function ProcessPnlPage() {
             {summary && (
               <>
                 <span className="text-xs text-slate-500">
-                  Revenue: <b className="text-slate-900">{formatCurrency(revenueV, true)}</b>
+                  Revenue: <b className="text-slate-900">{formatCurrency(summary.kpis.recognizedRevenue, true)}</b>
                 </span>
-                {kpiSource === "statement" && (
-                  // Never switch engines silently: without this the process-level configuration
-                  // looks complete because the numbers look right.
-                  <span
-                    className="rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-medium text-amber-700 ring-1 ring-amber-200"
-                    title="Process-level revenue rules, delivery actuals, revenue components and monthly plans hold no rows, so the process engine reports zero. These figures come from the P&L Statement (invoiced revenue and payroll) instead. Configure the process tables to drive them from delivery."
-                  >
-                    from P&amp;L Statement
-                  </span>
-                )}
                 {(summary.kpis.lossMakingProcesses ?? 0) > 0 && (
                   <Badge variant="destructive" className="text-xs">
                     At risk: {summary.kpis.lossMakingProcesses}

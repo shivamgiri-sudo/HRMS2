@@ -95,13 +95,8 @@ export async function buildPersonalDataExport(principalId: string): Promise<Pers
   let payrollComponents: unknown[] = [];
   if (employeeId) {
     const [prRows] = await db.execute<RowDataPacket[]>(
-      // `employee_salary_component` does not exist. The real table is
-      // payroll_employee_component_snapshot, whose amount column is
-      // amount_monthly. This query threw on every call and nothing here catches
-      // it, so the whole access export failed — see the note in the attendance
-      // block below.
-      `SELECT component_name, amount_monthly AS amount, effective_from, effective_to
-       FROM payroll_employee_component_snapshot
+      `SELECT component_name, amount, effective_from, effective_to
+       FROM employee_salary_component
        WHERE employee_id = ?
        ORDER BY effective_from DESC
        LIMIT 50`,
@@ -114,23 +109,14 @@ export async function buildPersonalDataExport(principalId: string): Promise<Pers
   let attendanceSummary: Record<string, unknown> | null = null;
   if (employeeId) {
     const [attRows] = await db.execute<RowDataPacket[]>(
-      // Three of this function's four queries named tables that do not exist:
-      // employee_salary_component, `attendance`, and employee_leave. None is
-      // wrapped, so a data-subject access request under the DPDP Act failed
-      // outright rather than returning a partial record — the one obligation
-      // where silently returning nothing is least acceptable.
-      //
-      // The real table is attendance_daily_record (114,593 rows), keyed on
-      // record_date with attendance_status. 'late' is not an attendance_status
-      // value; lateness is the separate late_mark flag.
       `SELECT
          COUNT(*) AS total_sessions,
-         SUM(CASE WHEN attendance_status = 'present' THEN 1 ELSE 0 END) AS present_days,
-         SUM(CASE WHEN attendance_status = 'absent' THEN 1 ELSE 0 END) AS absent_days,
-         SUM(CASE WHEN late_mark = 1 THEN 1 ELSE 0 END) AS late_days,
-         MIN(record_date) AS earliest_date,
-         MAX(record_date) AS latest_date
-       FROM attendance_daily_record
+         SUM(CASE WHEN status = 'present' THEN 1 ELSE 0 END) AS present_days,
+         SUM(CASE WHEN status = 'absent' THEN 1 ELSE 0 END) AS absent_days,
+         SUM(CASE WHEN status = 'late' THEN 1 ELSE 0 END) AS late_days,
+         MIN(date) AS earliest_date,
+         MAX(date) AS latest_date
+       FROM attendance
        WHERE employee_id = ?`,
       [employeeId]
     );
@@ -141,16 +127,10 @@ export async function buildPersonalDataExport(principalId: string): Promise<Pers
   let leaveSummary: unknown[] = [];
   if (employeeId) {
     const [lvRows] = await db.execute<RowDataPacket[]>(
-      // `employee_leave` does not exist; leave lives in leave_request, which
-      // stores leave_type_id rather than a name. Joined to leave_type_master so
-      // the exported record stays readable to the person receiving it — "Casual
-      // Leave", not a UUID.
-      `SELECT lt.leave_name AS leave_type, lr.status, lr.from_date, lr.to_date,
-              lr.total_days, lr.reason
-       FROM leave_request lr
-       LEFT JOIN leave_type_master lt ON lt.id = lr.leave_type_id
-       WHERE lr.employee_id = ?
-       ORDER BY lr.from_date DESC
+      `SELECT leave_type, status, from_date, to_date, total_days, reason
+       FROM employee_leave
+       WHERE employee_id = ?
+       ORDER BY from_date DESC
        LIMIT 100`,
       [employeeId]
     );

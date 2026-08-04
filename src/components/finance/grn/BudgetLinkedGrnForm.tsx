@@ -1778,41 +1778,20 @@ export function BudgetLinkedGrnForm() {
           <h3 className="mt-6 text-xs font-semibold uppercase tracking-wide text-slate-400">
             Approval path
           </h3>
-          <ol className="mt-3">
+          <ol className="mt-3 space-y-2 text-xs text-slate-600">
             {[
-              { label: "Branch Admin submits", note: submitted ? undefined : "This form" },
-              { label: "Branch Head reviews", note: submitted ? "Awaiting action" : undefined },
-              { label: "Finance Head reviews" },
-              { label: isVendor ? "Accounts Head → payment" : "Imprest closure" },
-            ].map((step, index) => {
-              // Only step 1 (this form) has a real status to report — the rest genuinely aren't
-              // known here, since this screen never fetches the GRN's post-submission state.
-              const stepState = index === 0 ? (submitted ? "done" : "current") : index === 1 && submitted ? "current" : "upcoming";
-              return (
-                <li key={step.label} className="relative flex gap-2.5 pb-4 last:pb-0">
-                  {index < 3 && (
-                    <span
-                      className={`absolute left-[9px] top-[19px] h-full w-px ${stepState === "done" ? "bg-emerald-200" : "bg-slate-200"}`}
-                    />
-                  )}
-                  <span
-                    className={`z-10 flex h-[19px] w-[19px] shrink-0 items-center justify-center rounded-full border text-[9px] font-bold ${
-                      stepState === "done"
-                        ? "border-emerald-500 bg-emerald-500 text-white"
-                        : stepState === "current"
-                          ? "border-[#073f78] bg-[#073f78] text-white"
-                          : "border-slate-300 bg-white text-slate-400"
-                    }`}
-                  >
-                    {stepState === "done" ? "✓" : index + 1}
-                  </span>
-                  <div className="pt-px">
-                    <p className={`text-xs font-medium ${stepState === "upcoming" ? "text-slate-400" : "text-slate-800"}`}>{step.label}</p>
-                    {step.note && <p className="mt-0.5 text-[10.5px] text-slate-500">{step.note}</p>}
-                  </div>
-                </li>
-              );
-            })}
+              "Branch Admin submits",
+              "Branch Head reviews",
+              "Finance Head reviews",
+              isVendor ? "Accounts Head → payment" : "Imprest closure",
+            ].map((step, index) => (
+              <li key={step} className="flex items-center gap-2">
+                <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-[#073f78]/10 text-[9px] font-bold text-[#073f78]">
+                  {index + 1}
+                </span>
+                {step}
+              </li>
+            ))}
           </ol>
         </aside>
       </div>

@@ -642,13 +642,6 @@ export default function BranchBudgetManagementWorkspace() {
    *  in-place edit is scoped to the budget lines themselves. */
   const canEditDrivers = Boolean(capabilities?.canCreate) && !locked;
   const canEdit = canEditDrivers || canReviewCurrent;
-  /** Meters record physical utility readings — an operational fact, not a budget-line edit — so
-   *  unlike canEdit above, this deliberately drops the `!locked` condition. A meter reading for
-   *  this month must stay enterable even once this month's budget draft has moved past
-   *  editable status (submitted/approved/closed); otherwise every meter on the branch goes fully
-   *  read-only the moment the unrelated budget gets approved. Same "canCreate stranded them"
-   *  class of bug already fixed for the Period/Branch selectors above. */
-  const canEditMeters = Boolean(capabilities?.canCreate) || canReviewCurrent;
 
   /** Unresolved correction notes grouped by the head/sub-head/item they were raised against. */
   const openCorrectionsByKey = useMemo(() => {
@@ -1380,7 +1373,7 @@ Reason:`
               {!branchId ? (
                 <div className="rounded-3xl border border-blue-200 bg-blue-50 p-10 text-center"><Gauge className="mx-auto h-10 w-10 text-blue-700" /><p className="mt-3 font-bold text-blue-950">Select a branch first</p><Button className="mt-4" onClick={() => setTab("plan")}>Open Plan Builder</Button></div>
               ) : (
-                <MetersPanel branchId={branchId} costCentres={activeCostCentres} period={period} canEdit={canEditMeters} />
+                <MetersPanel branchId={branchId} costCentres={activeCostCentres} period={period} canEdit={canEdit} />
               )}
             </TabsContent>
 
