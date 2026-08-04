@@ -114,7 +114,7 @@ export async function submitAnswer(
   if (existing.length > 0) {
     const prev = existing[0];
     const [rankRow] = await db.execute<RowDataPacket[]>(
-      `SELECT COUNT(*) + 1 as rank FROM daily_trivia_response
+      `SELECT COUNT(*) + 1 as \`rank\` FROM daily_trivia_response
        WHERE question_id = ? AND is_correct = 1 AND answered_at < ?`,
       [questionId, prev.answered_at]
     );
@@ -150,7 +150,7 @@ export async function submitAnswer(
   let rank: number | null = null;
   if (isCorrect) {
     const [rankRow] = await db.execute<RowDataPacket[]>(
-      `SELECT COUNT(*) as rank FROM daily_trivia_response
+      `SELECT COUNT(*) as \`rank\` FROM daily_trivia_response
        WHERE question_id = ? AND is_correct = 1 AND answered_at <= NOW()`,
       [questionId]
     );
