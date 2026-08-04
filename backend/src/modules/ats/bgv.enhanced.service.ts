@@ -230,12 +230,20 @@ export async function initiateBGVVerification(input: BGVRequest): Promise<{
       ]
     );
 
-    // Update specific status column in BGV record
+    // Update specific status column in BGV record.
+    // name_match_status does NOT exist on ats_bgv_verification — only the six
+    // doc-check columns do. name_match writes via runNameMatchCheck() instead.
     const statusColumn = `${input.verification_type}_status`;
-    await conn.execute(
-      `UPDATE ats_bgv_verification SET ${statusColumn} = ? WHERE id = ?`,
-      ['in_progress', bgvId]
-    );
+    const VALID_BGV_STATUS_COLUMNS = [
+      'aadhaar_status', 'pan_status', 'education_status',
+      'employment_status', 'address_status', 'criminal_status',
+    ];
+    if (VALID_BGV_STATUS_COLUMNS.includes(statusColumn)) {
+      await conn.execute(
+        `UPDATE ats_bgv_verification SET ${statusColumn} = ? WHERE id = ?`,
+        ['in_progress', bgvId]
+      );
+    }
 
     await conn.commit();
 

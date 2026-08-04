@@ -3,6 +3,8 @@ import type { Response, NextFunction } from 'express';
 import { requireAuth, requireWriteAccess } from '../../middleware/authMiddleware.js';
 import { requireRole } from '../../middleware/requireRole.js';
 import type { AuthenticatedRequest } from '../../middleware/authMiddleware.js';
+import type { RowDataPacket } from 'mysql2';
+import { db } from '../../db/mysql.js';
 import {
   getJoiningDocumentsTracker,
   sendBulkReminders,
@@ -13,6 +15,7 @@ import {
   streamBulkDocumentsZip,
   type TrackerQueryParams,
 } from './ats.joiningDocumentsTracker.service.js';
+import { sendPayrollHrJoiningDocNotification } from './ats.email.service.js';
 
 export const joiningDocumentsTrackerRouter = Router();
 
@@ -164,6 +167,58 @@ joiningDocumentsTrackerRouter.post('/bulk-verify', requireWriteAccess, h(async (
     console.error('[tracker] POST /bulk-verify error:', error);
     return res.status(500).json({ success: false, message: 'Failed to verify documents' });
   }
+}));
+
+// POST /api/ats/joining-documents-tracker/resend-notification
+joiningDocumentsTrackerRouter.post('/resend-notification', requireWriteAccess, h(async (req: AuthenticatedRequest, res: Response) => {
+  const { employee_id } = req.body as { employee_id?: string };
+  if (!employee_id) {
+    return res.status(400).json({ success: false, message: 'employee_id is required' });
+  }
+
+  const [empRows] = await db.execute<RowDataPacket[]>(
+    `SELECT e.id, e.employee_code, e.full_name, e.branch_id,
+            aob.candidate_id
+       FROM employees e
+       LEFT JOIN ats_onboarding_bridge aob ON aob.employee_id = e.id
+      WHERE e.id = ? LIMIT 1`,
+    [employee_id],
+  );
+  const emp = (empRows as RowDataPacket[])[0];
+  if (!emp) {
+    return res.status(404).json({ success: false, message: 'Employee not found' });
+  }
+
+  const baseUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
+  const [hrRows] = await db.execute<RowDataPacket[]>(
+    `SELECT u.email, e2.full_name
+       FROM auth_user u
+       JOIN user_roles ur ON ur.user_id = u.id
+       JOIN employees e2 ON e2.user_id = u.id AND e2.active_status = 1
+      WHERE ur.role_key = 'payroll_hr'
+        AND (? IS NULL OR e2.branch_id = ?)
+      LIMIT 3`,
+    [emp.branch_id, emp.branch_id],
+  );
+
+  if (!(hrRows as RowDataPacket[]).length) {
+    return res.status(404).json({ success: false, message: 'No Payroll HR users found for this branch' });
+  }
+
+  let sent = 0;
+  for (const hr of hrRows as RowDataPacket[]) {
+    await sendPayrollHrJoiningDocNotification({
+      to: hr.email,
+      hrName: hr.full_name,
+      employeeCode: emp.employee_code,
+      employeeName: emp.full_name,
+      joiningDocUrl: `${baseUrl}/employees/${emp.id}/joining-documents`,
+      candidateId: emp.candidate_id ?? null,
+    }).catch((err: unknown) => console.error('[tracker] resend-notification email failed:', err));
+    sent++;
+  }
+
+  return res.json({ success: true, sent, message: `Notification resent to ${sent} Payroll HR user(s)` });
 }));
 
 // POST /api/ats/joining-documents-tracker/bulk-download

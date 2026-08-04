@@ -68,7 +68,8 @@ export interface TrackerQueryParams {
 }
 
 export interface TrackerResponse {
-  employees: EmployeeDocumentRow[];
+  rows: EmployeeDocumentRow[];
+  total: number;
   summary: TrackerSummary;
 }
 
@@ -183,8 +184,11 @@ export async function getJoiningDocumentsTracker(
   // needs documents, so it admits pre-joiners without admitting leavers, and it
   // needs no interpretation of employment_status.
   const whereClauses: string[] = [
-    `(e.active_status = 1 OR EXISTS (
-        SELECT 1 FROM employee_joining_document_checklist k WHERE k.employee_id = e.id))`,
+    `(
+      e.active_status = 1
+      OR EXISTS (SELECT 1 FROM employee_joining_document_checklist k WHERE k.employee_id = e.id)
+      OR (LOWER(COALESCE(e.employment_status,'')) = 'preboarding' AND e.date_of_joining >= DATE_SUB(NOW(), INTERVAL 120 DAY))
+    )`,
     `LOWER(COALESCE(e.employment_status, '')) NOT IN ('resigned', 'terminated')`,
     'e.employee_code IS NOT NULL',
   ];
@@ -205,7 +209,7 @@ export async function getJoiningDocumentsTracker(
     if (!actorBranchId) {
       // Cannot resolve a branch for this branch_head — return empty rather than
       // falling through to an unrestricted query.
-      return { employees: [], summary: calculateTrackerSummary([]) };
+      return { rows: [], total: 0, summary: calculateTrackerSummary([]) };
     }
     whereClauses.push('e.branch_id = ?');
     params.push(actorBranchId);
@@ -315,7 +319,7 @@ export async function getJoiningDocumentsTracker(
 
   const summary = calculateTrackerSummary(employees);
 
-  return { employees, summary };
+  return { rows: employees, total: employees.length, summary };
 }
 
 // ─── Bulk Action Types ────────────────────────────────────────────────────────

@@ -898,4 +898,63 @@ router.get('/it-dashboard-summary', requireRole('admin', 'super_admin', 'it', 'b
   });
 }));
 
+// ── POST /api/it-provisioning/redispatch/:employeeId ─────────────────────────
+// Recovery endpoint: re-dispatch join provisioning tasks for an employee whose
+// tasks were lost (e.g., failed fire-and-forget during employee creation).
+// Only dispatches task codes that have NO existing row — idempotent.
+router.post('/redispatch/:employeeId', requireRole('hr', 'super_admin', 'admin'), h(async (req: AuthenticatedRequest, res: Response) => {
+  const { employeeId } = req.params;
+
+  const [empRows] = await db.execute<RowDataPacket[]>(
+    `SELECT e.id, e.employee_code, e.full_name, e.branch_id, e.date_of_joining
+       FROM employees e WHERE e.id = ? LIMIT 1`,
+    [employeeId],
+  );
+  const emp = (empRows as RowDataPacket[])[0];
+  if (!emp) return res.status(404).json({ success: false, message: 'Employee not found' });
+  if (!emp.employee_code) return res.status(400).json({ success: false, message: 'Employee has no employee_code — cannot dispatch provisioning' });
+
+  // Find which task codes already exist so we skip them
+  const [existingRows] = await db.execute<RowDataPacket[]>(
+    `SELECT task_code FROM it_provisioning_request WHERE employee_id = ? AND request_type = 'join'`,
+    [employeeId],
+  );
+  const existingCodes = new Set((existingRows as RowDataPacket[]).map(r => String(r.task_code)));
+
+  const JOIN_TASK_CODES = ['WFM_PROCESS_ALIGNMENT', 'IT_EMAIL_DOMAIN_ASSET', 'ADMIN_BIOMETRIC_ID_CARD', 'APPOINTMENT_LETTER_ESIGN'];
+  const missingCodes = JOIN_TASK_CODES.filter(code => !existingCodes.has(code));
+
+  if (missingCodes.length === 0) {
+    return res.json({ success: true, dispatched: 0, skipped: JOIN_TASK_CODES.length, message: 'All provisioning tasks already exist — nothing to redispatch' });
+  }
+
+  const { dispatchJoinProvisioningTasks } = await import('./it-provisioning.service.js');
+  await dispatchJoinProvisioningTasks({
+    employeeId: emp.id,
+    employeeCode: emp.employee_code,
+    employeeName: emp.full_name,
+    branchId: emp.branch_id ?? null,
+    actorUserId: req.authUser!.id,
+    joiningDate: emp.date_of_joining ?? null,
+  });
+
+  await logSensitiveAction({
+    actor_user_id: req.authUser!.id,
+    action_type: 'provisioning_redispatched',
+    module_key: 'it_provisioning',
+    entity_type: 'employee',
+    entity_id: employeeId,
+    employee_id: employeeId,
+    change_summary: { redispatched_codes: missingCodes, skipped_codes: Array.from(existingCodes) },
+  });
+
+  return res.json({
+    success: true,
+    dispatched: missingCodes.length,
+    skipped: existingCodes.size,
+    redispatched_codes: missingCodes,
+    message: `Provisioning redispatched for ${missingCodes.length} task(s)`,
+  });
+}));
+
 export { router as itProvisioningRouter };

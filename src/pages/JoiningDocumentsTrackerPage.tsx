@@ -186,6 +186,15 @@ export default function JoiningDocumentsTrackerPage() {
     onError: (err: any) => toast({ title: "Failed to verify documents", description: err?.message, variant: "destructive" }),
   });
 
+  const resendNotificationMutation = useMutation({
+    mutationFn: (employee_id: string) =>
+      hrmsApi.post("/api/ats/joining-documents-tracker/resend-notification", { employee_id }),
+    onSuccess: (res: any) => {
+      toast({ title: res.data?.message ?? "Notification resent to Payroll HR" });
+    },
+    onError: (err: any) => toast({ title: "Failed to resend notification", description: err?.response?.data?.message ?? err?.message, variant: "destructive" }),
+  });
+
   const handleBulkDownload = async () => {
     try {
       const token = getAuthToken();
@@ -427,17 +436,28 @@ export default function JoiningDocumentsTrackerPage() {
                           )}
                         </td>
                         <td className="px-4 py-3">
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={e => {
-                              e.stopPropagation();
-                              navigate(`/employees/${row.employee_id}/joining-documents`);
-                            }}
-                            className="min-h-[36px]"
-                          >
-                            View
-                          </Button>
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button size="sm" variant="outline" className="min-h-[36px]" onClick={e => e.stopPropagation()}>
+                                Actions
+                              </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end">
+                              <DropdownMenuItem onClick={() => navigate(`/employees/${row.employee_id}/joining-documents`)}>
+                                View Documents
+                              </DropdownMenuItem>
+                              <DropdownMenuSeparator />
+                              <DropdownMenuItem
+                                onClick={e => {
+                                  e.stopPropagation();
+                                  resendNotificationMutation.mutate(row.employee_id);
+                                }}
+                              >
+                                <Bell className="h-3.5 w-3.5 mr-2" />
+                                Resend Payroll HR Notification
+                              </DropdownMenuItem>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
                         </td>
                       </tr>
                     ))}
