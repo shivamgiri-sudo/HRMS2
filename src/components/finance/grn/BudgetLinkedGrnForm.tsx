@@ -308,7 +308,7 @@ function FormSection({
   children: React.ReactNode;
 }) {
   return (
-    <section className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+    <section className="overflow-hidden rounded-xl border border-slate-200 bg-white">
       <header className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 bg-slate-50/60 px-4 py-2.5">
         <div>
           <h2 className="text-[13px] font-bold text-slate-900">{title}</h2>
@@ -1050,11 +1050,14 @@ export function BudgetLinkedGrnForm() {
 
   return (
     <div className="flex h-full flex-col bg-slate-50/60">
-      {/* Header — sticky on every size; actions move to a bottom bar on phones. */}
-      <div className="sticky top-0 z-20 shrink-0 border-b bg-white px-4 py-2">
-        <div className="flex items-center justify-between gap-4">
-          {totalStrip}
-          <div className="hidden md:block">{actionButtons}</div>
+      {/* Header — sticky on every size; actions move to a bottom bar on phones. Contained card
+       *  (not a full-bleed bar) to match the rest of the page's card language. */}
+      <div className="sticky top-0 z-20 shrink-0 px-3 pt-3 md:px-4 md:pt-4">
+        <div className="rounded-xl border border-slate-200 bg-white px-4 py-2.5">
+          <div className="flex items-center justify-between gap-4">
+            {totalStrip}
+            <div className="hidden md:block">{actionButtons}</div>
+          </div>
         </div>
       </div>
 
