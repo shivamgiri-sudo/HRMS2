@@ -199,9 +199,27 @@ export function normalizeDashboardRole(value: unknown): string {
   return DASHBOARD_ROLE_ALIASES[normalized] ?? normalized;
 }
 
+// Lazy-built map from variant name → DashboardCode for backward-compat aliases
+// e.g. "hr" → "HR_DASHBOARD", "wfm" → "WFM_DASHBOARD"
+let _variantIndex: Map<string, DashboardCode> | null = null;
+function variantIndex(): Map<string, DashboardCode> {
+  if (!_variantIndex) {
+    _variantIndex = new Map();
+    for (const def of Object.values(DASHBOARD_ACCESS_REGISTRY)) {
+      if (def.variant) _variantIndex.set(def.variant.toLowerCase(), def.code);
+    }
+  }
+  return _variantIndex;
+}
+
 export function getDashboardDefinition(code: unknown): DashboardAccessDefinition | null {
-  const normalized = String(code ?? "").trim().toUpperCase() as DashboardCode;
-  return DASHBOARD_ACCESS_REGISTRY[normalized] ?? null;
+  const raw = String(code ?? "").trim();
+  const upper = raw.toUpperCase() as DashboardCode;
+  // Direct match (e.g. "HR_DASHBOARD")
+  if (DASHBOARD_ACCESS_REGISTRY[upper]) return DASHBOARD_ACCESS_REGISTRY[upper];
+  // Variant alias (e.g. "hr" → HR_DASHBOARD, "wfm" → WFM_DASHBOARD)
+  const byVariant = variantIndex().get(raw.toLowerCase());
+  return byVariant ? DASHBOARD_ACCESS_REGISTRY[byVariant] : null;
 }
 
 export function canAccessDashboard(code: unknown, roleKeys: readonly string[]): boolean {
