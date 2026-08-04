@@ -25,28 +25,25 @@ import { Label } from "@/components/ui/label";
 // <select> has no search callback, so swapping it would mean dumping the whole vendor list into
 // the DOM. It is restyled through the className it already forwards instead.
 import { SearchableSelect, type SearchableOption } from "@/components/ui/searchable-select";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { StatusStamp } from "@/components/finance/grn/StatusStamp";
 import { checkTone } from "@/components/finance/grn/grn-format";
 // Aliased rather than renamed at the ~40 call sites: same props, same forwarded refs, so this is
 // a swap of appearance only.
 import {
+  GRN_TR,
   GrnButton as Button,
   GrnCard,
   GrnCardHeader,
+  GrnCellSub,
   GrnFieldRow,
   GrnIconButton,
   GrnInput as Input,
   GrnSegmented,
+  GrnSelect,
+  GrnTable,
+  GrnTd,
   GrnTextarea as Textarea,
+  GrnTh,
 } from "@/components/finance/grn/grn-ui";
 import {
   BRANCH_SHARING_METHODS,
@@ -1076,21 +1073,16 @@ export function BudgetLinkedGrnForm() {
 
       {/* ── Mode ── spans both columns; it decides what the whole form asks for, so it does not
           belong inside the left one. */}
-      <Tabs
+      <GrnSegmented
+        label="GRN type"
         value={form.grnType}
-        onValueChange={(value) =>
-          !locked && setForm((current) => ({ ...current, grnType: value as GrnType }))
-        }
-      >
-        <TabsList className="grid h-auto w-full grid-cols-2 md:w-auto md:inline-grid">
-          <TabsTrigger value="vendor" disabled={locked} className="h-9 gap-2 px-4 text-sm">
-            <IndianRupee className="h-4 w-4" /> Vendor GRN
-          </TabsTrigger>
-          <TabsTrigger value="imprest" disabled={locked} className="h-9 gap-2 px-4 text-sm">
-            <UploadCloud className="h-4 w-4" /> Imprest
-          </TabsTrigger>
-        </TabsList>
-      </Tabs>
+        disabled={locked}
+        onChange={(value) => setForm((current) => ({ ...current, grnType: value }))}
+        options={[
+          { value: "vendor" as GrnType, label: <><IndianRupee className="h-4 w-4" /> Vendor GRN</> },
+          { value: "imprest" as GrnType, label: <><UploadCloud className="h-4 w-4" /> Imprest</> },
+        ]}
+      />
 
       {/* Side rail collapses at 900px, matching the rest of the page, rather than at 1280px
           where it left a 380px gap unused. items-start so the rail does not stretch to the
@@ -1401,23 +1393,8 @@ export function BudgetLinkedGrnForm() {
                 Accounts Head approval must be completed first.
               </div>
             ) : splitMode ? (
-              <div className="px-4 py-3">
-                <SplitAllocationEditor
-                  budgetLines={budgetLines}
-                  rows={calculatedAllocations}
-                  totals={splitTotals}
-                  difference={splitDifference}
-                  error={err("split")}
-                  onUpdate={updateAllocation}
-                  onAdd={addAllocation}
-                  onRemove={removeAllocation}
-                  onAutoBalance={autoBalanceLastRow}
-                  canRemove={allocations.length > 1}
-                  autoSplitMethod={autoSplitMethod}
-                  onAutoSplitMethodChange={setAutoSplitMethod}
-                  onAutoSplit={applyAutoSplit}
-                  autoSplitReadiness={autoSplitReadiness}
-                />
+              <div className="px-4 py-4 text-[12px] text-grn-ink-soft">
+                Budget lines are chosen per row in the split editor below.
               </div>
             ) : (
               <>
@@ -1507,7 +1484,7 @@ export function BudgetLinkedGrnForm() {
                 {resolvedLine && (
                   <FieldRow label="Approved budget">
                     <StaticValue>
-                      <span className="text-xs font-normal text-slate-600">
+                      <span className="text-[12px] font-normal text-grn-ink-soft">
                         {resolvedLine.budget_number} · {money(Number(resolvedLine.available_gross_amount))}{" "}
                         available · {decimal(Number(resolvedLine.available_quantity))}{" "}
                         {resolvedLine.unit} left
@@ -1518,6 +1495,28 @@ export function BudgetLinkedGrnForm() {
               </>
             )}
           </FormSection>
+
+          {/* Its own card, not a block nested inside the one above: it has its own toolbar and
+              its own reconciliation footer, which a section body has nowhere to put. */}
+          {splitMode && Boolean(form.branchId) && Boolean(period) && !linesLoading && budgetLines.length > 0 && (
+            <SplitAllocationEditor
+              budgetLines={budgetLines}
+              rows={calculatedAllocations}
+              totals={splitTotals}
+              difference={splitDifference}
+              invoiceGross={Number(form.amount || 0)}
+              error={err("split")}
+              onUpdate={updateAllocation}
+              onAdd={addAllocation}
+              onRemove={removeAllocation}
+              onAutoBalance={autoBalanceLastRow}
+              canRemove={allocations.length > 1}
+              autoSplitMethod={autoSplitMethod}
+              onAutoSplitMethodChange={setAutoSplitMethod}
+              onAutoSplit={applyAutoSplit}
+              autoSplitReadiness={autoSplitReadiness}
+            />
+          )}
 
           {/* ── Amount ── */}
           <FormSection
@@ -1835,6 +1834,7 @@ function SplitAllocationEditor({
   rows,
   totals,
   difference,
+  invoiceGross,
   error,
   onUpdate,
   onAdd,
@@ -1850,6 +1850,9 @@ function SplitAllocationEditor({
   rows: Array<{ allocation: AllocationDraft; line?: BudgetLine; calculation: any }>;
   totals: { base: number; tax: number; gross: number; pnl: number };
   difference: number;
+  /** The invoice amount the rows have to add up to — shown beside the split total so the
+   *  reconciliation names both figures rather than only their difference. */
+  invoiceGross: number;
   error?: string;
   onUpdate: (key: string, patch: Partial<AllocationDraft>) => void;
   onAdd: () => void;
@@ -1868,53 +1871,59 @@ function SplitAllocationEditor({
     keywords: `${line.budget_number} ${line.cost_centre_name ?? ""}`,
   }));
 
+  const reconciled = Math.abs(difference) <= 0.01;
+
   return (
-    <div className="space-y-3">
-      <div className="flex flex-wrap items-center gap-2">
-        <Button onClick={onAutoBalance}>
-          Auto-balance last row
-        </Button>
-        <Button onClick={onAdd}>
-          <Plus className="h-3.5 w-3.5" /> Add row
-        </Button>
-        <div className="ml-auto flex items-center gap-1.5" title={!autoSplitReadiness.ready ? autoSplitReadiness.reason : undefined}>
-          <Label className="text-[11px] text-slate-500">Split by</Label>
-          <select
-            aria-label="Auto-split method"
-            className="h-8 rounded-md border border-slate-300 bg-white px-2 text-xs font-medium text-slate-700"
-            value={autoSplitMethod}
-            onChange={(event) => onAutoSplitMethodChange(event.target.value)}
+    <GrnCard>
+      <GrnCardHeader
+        title="Split across budget lines"
+        description="Each row consumes its own approved budget line. The rows must add up to the invoice."
+        action={
+          <div
+            className="flex flex-wrap items-center gap-1.5"
+            title={!autoSplitReadiness.ready ? autoSplitReadiness.reason : undefined}
           >
-            {GRN_AUTO_SPLIT_METHODS.map((method) => (
-              <option key={method.value} value={method.value}>{method.label}</option>
-            ))}
-          </select>
-          <Button disabled={!autoSplitReadiness.ready} onClick={onAutoSplit}>
-            <Split className="h-3.5 w-3.5" /> Auto-split
-          </Button>
-        </div>
-      </div>
+            <Label className="sr-only" htmlFor="grn-autosplit-method">Auto-split method</Label>
+            <GrnSelect
+              small
+              id="grn-autosplit-method"
+              value={autoSplitMethod}
+              onChange={(event) => onAutoSplitMethodChange(event.target.value)}
+            >
+              {GRN_AUTO_SPLIT_METHODS.map((method) => (
+                <option key={method.value} value={method.value}>{method.label}</option>
+              ))}
+            </GrnSelect>
+            <Button disabled={!autoSplitReadiness.ready} onClick={onAutoSplit}>
+              <Split className="h-3.5 w-3.5" /> Auto-split
+            </Button>
+            <Button onClick={onAutoBalance}>Auto-balance last row</Button>
+            <Button onClick={onAdd}>
+              <Plus className="h-3.5 w-3.5" /> Add row
+            </Button>
+          </div>
+        }
+      />
       {!autoSplitReadiness.ready && (
-        <p className="text-[11px] text-amber-700">{autoSplitReadiness.reason}</p>
+        <p className="border-b border-grn-line-soft px-4 py-2 text-[11px] text-grn-warn">
+          {autoSplitReadiness.reason}
+        </p>
       )}
 
       {/* Stacked cards on phones. */}
-      <div className="space-y-3 md:hidden">
+      <div className="space-y-3 p-4 md:hidden">
         {rows.map(({ allocation, line, calculation }, index) => (
           <div key={allocation.key} className="rounded-xl border border-slate-200 p-3">
             <div className="mb-2 flex items-center justify-between">
               <span className="text-xs font-bold text-slate-500">Row {index + 1}</span>
               {canRemove && (
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  className="h-11 w-11 p-0"
+                <GrnIconButton
+                  className="h-11 w-11"
                   aria-label={`Remove row ${index + 1}`}
                   onClick={() => onRemove(allocation.key)}
                 >
-                  <Trash2 className="h-4 w-4 text-slate-400" />
-                </Button>
+                  <Trash2 className="h-4 w-4" />
+                </GrnIconButton>
               )}
             </div>
             <div className="space-y-2">
@@ -1974,25 +1983,26 @@ function SplitAllocationEditor({
 
       {/* Table from md up. */}
       <div className="hidden md:block">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead className="w-8">#</TableHead>
-              <TableHead>Budget line</TableHead>
-              <TableHead className="w-24 text-center">Qty</TableHead>
-              <TableHead className="w-28 text-right">Unit rate</TableHead>
-              <TableHead className="w-28 text-right">Gross</TableHead>
-              <TableHead className="w-12" />
-            </TableRow>
-          </TableHeader>
-          <TableBody>
+        <GrnTable minWidth={720}>
+          <thead>
+            <tr>
+              <GrnTh sticky={false} className="w-8">#</GrnTh>
+              <GrnTh sticky={false}>Budget line</GrnTh>
+              <GrnTh sticky={false}>Cost centre</GrnTh>
+              <GrnTh sticky={false} align="right" className="w-24">Qty</GrnTh>
+              <GrnTh sticky={false} align="right" className="w-32">Unit rate</GrnTh>
+              <GrnTh sticky={false} align="right" className="w-32">Gross</GrnTh>
+              <GrnTh sticky={false} className="w-12" />
+            </tr>
+          </thead>
+          <tbody>
             {rows.map(({ allocation, line, calculation }, index) => (
-              <TableRow key={allocation.key}>
-                <TableCell className="text-xs text-slate-400">{index + 1}</TableCell>
-                <TableCell className="min-w-[260px]">
+              <tr key={allocation.key} className={GRN_TR}>
+                <GrnTd className="font-grn-mono text-grn-ink-soft">{index + 1}</GrnTd>
+                <GrnTd className="min-w-[260px]">
                   <SearchableSelect
                     aria-label={`Budget line for row ${index + 1}`}
-                    className="h-9"
+                    className="h-[34px]"
                     options={lineOptions}
                     value={allocation.budgetLineId}
                     onChange={(value) => {
@@ -2005,90 +2015,93 @@ function SplitAllocationEditor({
                     }}
                     placeholder="Select budget line"
                   />
-                  {line && (
-                    <p className="mt-0.5 truncate text-[10px] text-slate-400">
-                      {line.cost_centre_name ?? "Branch"} · avail{" "}
-                      {decimal(Number(line.available_quantity))} {line.unit}
-                    </p>
+                </GrnTd>
+                {/* Its own column now. As a caption under the select it read as part of the
+                    line's name, when it is the other half of what identifies the budget. */}
+                <GrnTd className="max-w-[180px]">
+                  {line ? (
+                    <>
+                      <p className="truncate">{line.cost_centre_name ?? "Branch"}</p>
+                      <GrnCellSub>
+                        avail {decimal(Number(line.available_quantity))} {line.unit}
+                      </GrnCellSub>
+                    </>
+                  ) : (
+                    <span className="text-grn-ink-soft">—</span>
                   )}
-                </TableCell>
-                <TableCell>
+                </GrnTd>
+                <GrnTd>
                   <Input
                     type="number"
                     inputMode="decimal"
                     min="0.0001"
                     step="0.0001"
-                    className="h-9 text-center"
+                    className="text-right"
                     value={allocation.quantity}
                     onChange={(event) =>
                       onUpdate(allocation.key, { quantity: Number(event.target.value) })
                     }
                   />
-                </TableCell>
-                <TableCell>
+                </GrnTd>
+                <GrnTd>
                   <Input
                     type="number"
                     inputMode="decimal"
                     min="0"
                     step="0.0001"
                     max={line ? Number(line.unit_rate) : undefined}
-                    className="h-9 text-right"
+                    className="text-right"
                     value={allocation.unitRate}
                     onChange={(event) =>
                       onUpdate(allocation.key, { unitRate: Number(event.target.value) })
                     }
                   />
-                </TableCell>
-                <TableCell className="text-right text-xs font-semibold tabular-nums">
+                </GrnTd>
+                <GrnTd align="right" className="font-semibold">
                   {money(Number(calculation?.gross ?? 0))}
-                </TableCell>
-                <TableCell>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    className="h-8 w-8 p-0"
+                </GrnTd>
+                <GrnTd>
+                  <GrnIconButton
                     disabled={!canRemove}
                     aria-label={`Remove row ${index + 1}`}
                     onClick={() => onRemove(allocation.key)}
                   >
-                    <Trash2 className="h-3.5 w-3.5 text-slate-400" />
-                  </Button>
-                </TableCell>
-              </TableRow>
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </GrnIconButton>
+                </GrnTd>
+              </tr>
             ))}
-          </TableBody>
-        </Table>
+          </tbody>
+        </GrnTable>
       </div>
 
-      <div
-        className={cn(
-          "flex flex-wrap items-center justify-between gap-2 rounded-xl border px-3 py-2 text-xs",
-          Math.abs(difference) <= 0.01
-            ? "border-emerald-200 bg-emerald-50"
-            : "border-rose-200 bg-rose-50"
-        )}
-      >
-        <span className="font-semibold text-slate-700">
-          Allocated {money(totals.gross)}
+      {/* Reconciliation, stated as the two figures that have to agree rather than as a signed
+          difference — "Difference +₹250" left the reader to work out against what. */}
+      <div className="flex flex-wrap items-center justify-between gap-2 border-t border-grn-line-soft px-4 py-2.5 text-[12px]">
+        <span className="text-grn-ink-soft">
+          {rows.length} {rows.length === 1 ? "row" : "rows"}
         </span>
-        <span
-          className={cn(
-            "font-bold tabular-nums",
-            Math.abs(difference) <= 0.01 ? "text-emerald-700" : "text-rose-700"
+        <span className="flex flex-wrap items-center gap-2">
+          <span className="text-grn-ink-soft">
+            Split total <b className="font-grn-mono text-grn-ink">{money(totals.gross)}</b> · Invoice{" "}
+            <b className="font-grn-mono text-grn-ink">{money(invoiceGross)}</b>
+          </span>
+          {reconciled ? (
+            <StatusStamp tone="ok">Reconciled</StatusStamp>
+          ) : (
+            <StatusStamp tone="crit">
+              Out by {difference >= 0 ? "+" : ""}{money(difference)}
+            </StatusStamp>
           )}
-        >
-          Difference {difference >= 0 ? "+" : ""}
-          {money(difference)}
         </span>
       </div>
 
       {error && (
-        <p className="flex items-start gap-1 text-[11px] font-medium text-rose-600">
+        <p className="flex items-start gap-1 border-t border-grn-line-soft px-4 py-2.5 text-[11px] font-semibold text-grn-crit">
           <AlertCircle className="mt-px h-3 w-3 shrink-0" />
           {error}
         </p>
       )}
-    </div>
+    </GrnCard>
   );
 }
