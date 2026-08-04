@@ -3,11 +3,11 @@ import { cn } from "@/lib/utils";
 export type StampTone = "ok" | "warn" | "crit" | "info" | "neutral";
 
 const TONE_CLASSES: Record<StampTone, string> = {
-  ok: "text-emerald-700 bg-emerald-50 border-emerald-200",
-  warn: "text-amber-700 bg-amber-50 border-amber-200",
-  crit: "text-rose-700 bg-rose-50 border-rose-200",
-  info: "text-violet-700 bg-violet-50 border-violet-200",
-  neutral: "text-slate-600 bg-slate-50 border-slate-200",
+  ok: "text-grn-ok bg-grn-ok-bg border-grn-ok-line",
+  warn: "text-grn-warn bg-grn-warn-bg border-grn-warn-line",
+  crit: "text-grn-crit bg-grn-crit-bg border-grn-crit-line",
+  info: "text-grn-info bg-grn-info-bg border-grn-info-line",
+  neutral: "text-grn-ink-soft bg-grn-line-soft border-grn-line",
 };
 
 /**

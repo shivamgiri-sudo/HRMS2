@@ -5,6 +5,7 @@ import {
   AlertCircle,
   BadgeCheck,
   CheckCircle2,
+  Circle,
   IndianRupee,
   Loader2,
   Plus,
@@ -336,6 +337,25 @@ function StaticValue({ children, muted }: { children: React.ReactNode; muted?: b
 /** GrnInput already carries its own height; this exists only so the call sites that append to it
  *  (`cn(inputClass, "text-right …")`) keep working. */
 const inputClass = "";
+
+/**
+ * One readiness checklist row.
+ *
+ * An outstanding item gets a hollow ring, not a greyed-out tick — a faded checkmark reads as
+ * "done, but disabled", which is the opposite of what it means here.
+ */
+function ReadyRow({ label, done, className }: { label: string; done: boolean; className?: string }) {
+  return (
+    <li className={cn("flex items-center gap-2 text-[12px]", className)}>
+      {done ? (
+        <CheckCircle2 className="h-[15px] w-[15px] shrink-0 text-grn-ok" strokeWidth={2.4} />
+      ) : (
+        <Circle className="h-[15px] w-[15px] shrink-0 text-grn-line" strokeWidth={2.4} />
+      )}
+      <span className={done ? "text-grn-ink" : "text-grn-ink-soft"}>{label}</span>
+    </li>
+  );
+}
 
 // ─── Component ──────────────────────────────────────────────────────────────
 
@@ -1024,25 +1044,19 @@ export function BudgetLinkedGrnForm() {
   );
 
   const totalStrip = (
-    <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs">
-      {created && (
-        <span className="font-mono text-sm font-bold text-[#073f78]">{created.grnNumber}</span>
-      )}
-      <span className="text-slate-500">
-        Total: <b className="text-sm text-slate-900">{totals.gross ? money(totals.gross) : "—"}</b>
+    <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[12.5px]">
+      <span className="font-grn-mono text-[14px] font-bold text-grn-brand">
+        {created ? created.grnNumber : "Draft — not yet submitted"}
       </span>
-      <span
-        className={cn(
-          "rounded-full px-2 py-0.5 text-[10px] font-bold",
-          readiness >= 80
-            ? "bg-emerald-100 text-emerald-700"
-            : readiness >= 50
-              ? "bg-amber-100 text-amber-700"
-              : "bg-slate-100 text-slate-600"
-        )}
-      >
+      <span className="text-grn-ink-soft">
+        Total:{" "}
+        <b className="font-grn-mono text-[13.5px] text-grn-ink">
+          {totals.gross ? money(totals.gross) : "—"}
+        </b>
+      </span>
+      <StatusStamp tone={readiness >= 80 ? "ok" : readiness >= 50 ? "warn" : "neutral"}>
         {readiness}% ready
-      </span>
+      </StatusStamp>
     </div>
   );
 
@@ -1092,7 +1106,7 @@ export function BudgetLinkedGrnForm() {
           {showErrors && hasErrors && (
             <div
               role="alert"
-              className="flex items-start gap-2 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-xs text-rose-800"
+              className="flex items-start gap-2 rounded-[10px] border border-grn-crit-line bg-grn-crit-bg px-3.5 py-3 text-[12px] text-grn-crit"
             >
               <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
               <p>
@@ -1109,12 +1123,12 @@ export function BudgetLinkedGrnForm() {
             description="Attach the invoice or receipt. At least one file is required to submit."
           >
             <div className="px-4 py-3">
-              <label className="flex cursor-pointer flex-col items-center justify-center gap-1.5 rounded-xl border border-dashed border-slate-300 bg-slate-50 px-4 py-4 text-center transition-colors hover:border-[#073f78]/40 hover:bg-slate-100">
-                <UploadCloud className="h-5 w-5 text-slate-400" />
-                <span className="text-sm font-medium text-slate-700">
+              <label className="flex cursor-pointer flex-col items-center justify-center gap-2 rounded-[10px] border-[1.5px] border-dashed border-grn-line bg-grn-paper px-4 py-[22px] text-center transition-colors hover:border-grn-brand">
+                <UploadCloud className="h-[26px] w-[26px] text-grn-ink-soft" strokeWidth={1.6} />
+                <span className="text-[13px] font-bold text-grn-ink">
                   Tap to attach invoice or receipt
                 </span>
-                <span className="text-[11px] text-slate-500">
+                <span className="text-[11px] text-grn-ink-soft">
                   PDF, JPG, PNG or WEBP · up to 10 files, 20 MB each
                 </span>
                 <input
@@ -1162,7 +1176,7 @@ export function BudgetLinkedGrnForm() {
               )}
 
               <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
-                <label className="flex items-center gap-2 text-xs text-slate-600">
+                <label className="flex items-center gap-2 text-[11.5px] text-grn-ink-soft">
                   <input
                     type="checkbox"
                     className="h-4 w-4"
@@ -1380,15 +1394,15 @@ export function BudgetLinkedGrnForm() {
             }
           >
             {!form.branchId || !period ? (
-              <div className="px-4 py-4 text-xs text-amber-800">
+              <div className="px-4 py-4 text-[12px] text-grn-warn">
                 Select the branch and date first to load approved budgets.
               </div>
             ) : linesLoading ? (
-              <div className="flex items-center gap-2 px-4 py-6 text-xs text-slate-500">
+              <div className="flex items-center gap-2 px-4 py-6 text-[12px] text-grn-ink-soft">
                 <Loader2 className="h-4 w-4 animate-spin" /> Loading approved budgets…
               </div>
             ) : !budgetLines.length ? (
-              <div className="px-4 py-4 text-xs text-amber-800">
+              <div className="px-4 py-4 text-[12px] text-grn-warn">
                 No approved budget line is available for {period}. Branch Head, Finance Head and
                 Accounts Head approval must be completed first.
               </div>
@@ -1564,19 +1578,19 @@ export function BudgetLinkedGrnForm() {
               </FieldRow>
             )}
 
-            <div className="bg-slate-50 px-4 py-3">
-              <dl className="ml-auto w-full space-y-1.5 text-sm md:max-w-sm">
+            <div className="border-b border-grn-line-soft bg-grn-paper px-4 py-3">
+              <dl className="ml-auto w-full space-y-1.5 text-[12px] md:max-w-sm">
                 <div className="flex justify-between gap-4">
-                  <dt className="text-slate-500">Taxable value</dt>
-                  <dd className="tabular-nums font-medium text-slate-700">{money(totals.base)}</dd>
+                  <dt className="text-grn-ink-soft">Taxable value</dt>
+                  <dd className="font-grn-mono font-semibold text-grn-ink">{money(totals.base)}</dd>
                 </div>
                 <div className="flex justify-between gap-4">
-                  <dt className="text-slate-500">GST</dt>
-                  <dd className="tabular-nums font-medium text-slate-700">{money(totals.tax)}</dd>
+                  <dt className="text-grn-ink-soft">GST</dt>
+                  <dd className="font-grn-mono font-semibold text-grn-ink">{money(totals.tax)}</dd>
                 </div>
-                <div className="flex justify-between gap-4 border-t border-slate-200 pt-1.5">
-                  <dt className="font-semibold text-slate-900">Total payable</dt>
-                  <dd className="tabular-nums text-base font-bold text-slate-900">
+                <div className="flex justify-between gap-4 border-t border-grn-line pt-1.5">
+                  <dt className="font-bold text-grn-ink">Total payable</dt>
+                  <dd className="font-grn-mono text-[13px] font-bold text-grn-ink">
                     {money(totals.gross)}
                   </dd>
                 </div>
@@ -1642,9 +1656,9 @@ export function BudgetLinkedGrnForm() {
                       : "—",
                   ],
                 ].map(([label, value]) => (
-                  <div key={String(label)} className="rounded-lg bg-slate-50 p-2.5">
-                    <p className="text-[10px] uppercase tracking-wide text-slate-500">{label}</p>
-                    <p className="mt-0.5 truncate text-xs font-semibold text-slate-900">
+                  <div key={String(label)} className="rounded-lg border border-grn-line bg-grn-paper p-2.5">
+                    <p className="text-[10px] uppercase tracking-[0.05em] text-grn-ink-soft">{label}</p>
+                    <p className="mt-0.5 truncate text-[12px] font-semibold text-grn-ink">
                       {String(value ?? "—")}
                     </p>
                   </div>
@@ -1704,19 +1718,14 @@ export function BudgetLinkedGrnForm() {
               both render at once. */}
           <div className="min-[900px]:hidden">
             <FormSection title="Readiness">
-              <ul className="divide-y divide-slate-100">
+              <ul>
                 {checklist.map((item) => (
-                  <li key={item.label} className="flex items-center gap-2 px-4 py-2.5 text-xs">
-                    <CheckCircle2
-                      className={cn(
-                        "h-4 w-4 shrink-0",
-                        item.done ? "text-emerald-600" : "text-slate-300"
-                      )}
-                    />
-                    <span className={item.done ? "text-slate-700" : "text-slate-400"}>
-                      {item.label}
-                    </span>
-                  </li>
+                  <ReadyRow
+                    key={item.label}
+                    label={item.label}
+                    done={item.done}
+                    className="border-b border-grn-line-soft px-4 py-2.5 last:border-b-0"
+                  />
                 ))}
               </ul>
             </FormSection>
@@ -1726,58 +1735,44 @@ export function BudgetLinkedGrnForm() {
         {/* Side rail — a card in its own grid column now, not a bordered panel bolted to the
             right edge of a full-height flex row. */}
         <aside className="hidden rounded-xl border border-grn-line bg-grn-card p-4 min-[900px]:block">
-          <div className="flex items-center justify-between">
-            <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-400">Readiness</h3>
-            <span
-              className={cn(
-                "text-xs font-bold tabular-nums",
-                readiness >= 80 ? "text-emerald-600" : readiness >= 50 ? "text-amber-600" : "text-slate-400"
-              )}
-            >
-              {readiness}%
-            </span>
-          </div>
-          <div className="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
+          <h3 className="text-[10.5px] font-bold uppercase tracking-[0.06em] text-grn-ink-soft">
+            Readiness — {readiness}%
+          </h3>
+          <div className="mb-3 mt-2 h-1.5 w-full overflow-hidden rounded-full bg-grn-line-soft">
             <div
-              className={cn(
-                "h-full rounded-full transition-[width]",
-                readiness >= 80 ? "bg-emerald-500" : readiness >= 50 ? "bg-amber-500" : "bg-slate-300"
-              )}
+              className="h-full rounded-full bg-grn-ok transition-[width]"
               style={{ width: `${Math.max(4, readiness)}%` }}
             />
           </div>
-          <ul className="mt-3 space-y-2">
+          <ul className="space-y-1">
             {checklist.map((item) => (
-              <li key={item.label} className="flex items-center gap-2 text-xs">
-                <CheckCircle2
-                  className={cn("h-4 w-4 shrink-0", item.done ? "text-emerald-600" : "text-slate-300")}
-                />
-                <span className={item.done ? "text-slate-700" : "text-slate-400"}>{item.label}</span>
-              </li>
+              <ReadyRow key={item.label} label={item.label} done={item.done} className="py-1" />
             ))}
           </ul>
 
-          <h3 className="mt-6 text-xs font-semibold uppercase tracking-wide text-slate-400">Cost</h3>
-          <dl className="mt-3 space-y-1.5 rounded-lg border border-slate-100 bg-slate-50/60 p-3 text-xs">
+          <h3 className="mt-[18px] text-[10.5px] font-bold uppercase tracking-[0.06em] text-grn-ink-soft">
+            Cost
+          </h3>
+          <dl className="mt-2.5 space-y-1 rounded-[10px] border border-grn-line bg-grn-paper p-3 text-[12px]">
             <div className="flex justify-between">
-              <dt className="text-slate-500">Taxable</dt>
-              <dd className="tabular-nums font-medium">{money(totals.base)}</dd>
+              <dt className="text-grn-ink-soft">Taxable</dt>
+              <dd className="font-grn-mono">{money(totals.base)}</dd>
             </div>
             <div className="flex justify-between">
-              <dt className="text-slate-500">GST</dt>
-              <dd className="tabular-nums font-medium">{money(totals.tax)}</dd>
+              <dt className="text-grn-ink-soft">GST</dt>
+              <dd className="font-grn-mono">{money(totals.tax)}</dd>
             </div>
-            <div className="flex justify-between border-t border-slate-200 pt-1.5">
-              <dt className="font-semibold text-slate-700">Total</dt>
-              <dd className="tabular-nums text-sm font-bold text-slate-900">{money(totals.gross)}</dd>
+            <div className="mt-1 flex justify-between border-t border-grn-line pt-[7px] text-[13px] font-bold">
+              <dt>Total</dt>
+              <dd className="font-grn-mono">{money(totals.gross)}</dd>
             </div>
-            <div className="flex justify-between">
-              <dt className="text-slate-500">P&amp;L impact</dt>
-              <dd className="tabular-nums font-medium text-amber-700">{money(totals.pnl)}</dd>
+            <div className="flex justify-between text-grn-warn">
+              <dt>P&amp;L impact</dt>
+              <dd className="font-grn-mono">{money(totals.pnl)}</dd>
             </div>
           </dl>
 
-          <h3 className="mt-6 text-xs font-semibold uppercase tracking-wide text-slate-400">
+          <h3 className="mt-[18px] text-[10.5px] font-bold uppercase tracking-[0.06em] text-grn-ink-soft">
             Approval path
           </h3>
           <ol className="mt-3">
@@ -1791,26 +1786,26 @@ export function BudgetLinkedGrnForm() {
               // known here, since this screen never fetches the GRN's post-submission state.
               const stepState = index === 0 ? (submitted ? "done" : "current") : index === 1 && submitted ? "current" : "upcoming";
               return (
-                <li key={step.label} className="relative flex gap-2.5 pb-4 last:pb-0">
+                <li key={step.label} className="relative flex gap-2.5 pb-5 last:pb-0">
                   {index < 3 && (
                     <span
-                      className={`absolute left-[9px] top-[19px] h-full w-px ${stepState === "done" ? "bg-emerald-200" : "bg-slate-200"}`}
+                      className={`absolute left-[11px] top-6 h-full w-[1.5px] ${stepState === "done" ? "bg-grn-ok-line" : "bg-grn-line"}`}
                     />
                   )}
                   <span
-                    className={`z-10 flex h-[19px] w-[19px] shrink-0 items-center justify-center rounded-full border text-[9px] font-bold ${
+                    className={`z-10 flex h-[23px] w-[23px] shrink-0 items-center justify-center rounded-full border-[1.5px] text-[10px] font-bold ${
                       stepState === "done"
-                        ? "border-emerald-500 bg-emerald-500 text-white"
+                        ? "border-grn-ok bg-grn-ok text-white"
                         : stepState === "current"
-                          ? "border-[#073f78] bg-[#073f78] text-white"
-                          : "border-slate-300 bg-white text-slate-400"
+                          ? "border-grn-brand bg-grn-brand text-white"
+                          : "border-grn-line bg-grn-card text-grn-ink-soft"
                     }`}
                   >
                     {stepState === "done" ? "✓" : index + 1}
                   </span>
                   <div className="pt-px">
-                    <p className={`text-xs font-medium ${stepState === "upcoming" ? "text-slate-400" : "text-slate-800"}`}>{step.label}</p>
-                    {step.note && <p className="mt-0.5 text-[10.5px] text-slate-500">{step.note}</p>}
+                    <p className={`text-[12px] font-semibold ${stepState === "upcoming" ? "text-grn-ink-soft" : "text-grn-ink"}`}>{step.label}</p>
+                    {step.note && <p className="mt-px text-[10.5px] text-grn-ink-soft">{step.note}</p>}
                   </div>
                 </li>
               );
@@ -1913,9 +1908,9 @@ function SplitAllocationEditor({
       {/* Stacked cards on phones. */}
       <div className="space-y-3 p-4 md:hidden">
         {rows.map(({ allocation, line, calculation }, index) => (
-          <div key={allocation.key} className="rounded-xl border border-slate-200 p-3">
+          <div key={allocation.key} className="rounded-[10px] border border-grn-line p-3">
             <div className="mb-2 flex items-center justify-between">
-              <span className="text-xs font-bold text-slate-500">Row {index + 1}</span>
+              <span className="font-grn-mono text-[12px] font-bold text-grn-ink-soft">Row {index + 1}</span>
               {canRemove && (
                 <GrnIconButton
                   className="h-11 w-11"
@@ -1943,7 +1938,7 @@ function SplitAllocationEditor({
               />
               <div className="grid grid-cols-2 gap-2">
                 <div>
-                  <Label className="text-[11px] text-slate-500">Qty</Label>
+                  <Label className="text-[11px] text-grn-ink-soft">Qty</Label>
                   <Input
                     type="number"
                     inputMode="decimal"
@@ -1957,7 +1952,7 @@ function SplitAllocationEditor({
                   />
                 </div>
                 <div>
-                  <Label className="text-[11px] text-slate-500">Unit rate</Label>
+                  <Label className="text-[11px] text-grn-ink-soft">Unit rate</Label>
                   <Input
                     type="number"
                     inputMode="decimal"
@@ -1972,9 +1967,9 @@ function SplitAllocationEditor({
                   />
                 </div>
               </div>
-              <div className="flex justify-between rounded-lg bg-slate-50 px-3 py-2 text-xs">
-                <span className="text-slate-500">Gross</span>
-                <b className="tabular-nums">{money(Number(calculation?.gross ?? 0))}</b>
+              <div className="flex justify-between rounded-lg border border-grn-line bg-grn-paper px-3 py-2 text-[12px]">
+                <span className="text-grn-ink-soft">Gross</span>
+                <b className="font-grn-mono">{money(Number(calculation?.gross ?? 0))}</b>
               </div>
             </div>
           </div>
