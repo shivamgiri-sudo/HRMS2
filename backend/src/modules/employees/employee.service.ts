@@ -222,6 +222,10 @@ export const employeeService = {
            e.designation_id, e.department_id, e.branch_id, e.process_id, e.cost_centre_id,
            e.reporting_manager_id,
            COALESCE(NULLIF(TRIM(e.official_email),''), e.email) AS email,
+           -- gender is captured by both onboarding paths' first step (candidate journey's
+           -- EmployeeForm and the new EmployeeProfileCompletion flow) and by nothing else,
+           -- so its absence is a cheap, join-free proxy for "never completed a profile step"
+           (e.gender IS NULL) AS profile_incomplete,
            desig.designation_name,
            dept.dept_name        AS department_name,
            cc.cost_centre_name,

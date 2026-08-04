@@ -1,3 +1,4 @@
+import { Link } from "react-router-dom";
 import {
   Table,
   TableBody,
@@ -7,6 +8,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -28,7 +30,8 @@ import {
   Download,
   UserCog,
   Trash2,
-  KeyRound
+  KeyRound,
+  AlertTriangle,
 } from "lucide-react";
 import { SortableTableHead } from "@/components/ui/sortable-table-head";
 import { SortDirection } from "@/hooks/useSorting";
@@ -50,6 +53,7 @@ export interface Employee {
   designation: string;
   joinDate: string;
   status: "active" | "inactive" | "onboarding" | "offboarded";
+  profileIncomplete?: boolean;
 }
 
 interface EmployeeTableProps {
@@ -175,7 +179,17 @@ export function EmployeeTable({
             key={employee.id}
             title={employee.name}
             subtitle={`${employee.employeeCode} · ${employee.designation || "Employee"}`}
-            status={<StatusBadgeV2 status={employee.status} />}
+            status={
+              <div className="flex items-center gap-1.5">
+                <StatusBadgeV2 status={employee.status} />
+                {employee.profileIncomplete && (
+                  <Badge variant="outline" className="gap-1 border-amber-300 text-amber-700">
+                    <AlertTriangle className="h-3 w-3" />
+                    Profile incomplete
+                  </Badge>
+                )}
+              </div>
+            }
             actions={
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
@@ -198,6 +212,12 @@ export function EmployeeTable({
                       <DropdownMenuItem onClick={() => onManageDocuments?.(employee)}>
                         <FileText className="mr-2 h-4 w-4" />
                         Documents
+                      </DropdownMenuItem>
+                      <DropdownMenuItem asChild>
+                        <Link to={`/employees/${employee.id}/complete-profile`}>
+                          <UserCog className="mr-2 h-4 w-4" />
+                          Complete Profile
+                        </Link>
                       </DropdownMenuItem>
                     </>
                   )}
@@ -361,7 +381,15 @@ export function EmployeeTable({
                       </AvatarFallback>
                     </Avatar>
                     <div>
-                      <p className="font-medium text-foreground">{employee.name}</p>
+                      <div className="flex items-center gap-1.5">
+                        <p className="font-medium text-foreground">{employee.name}</p>
+                        {employee.profileIncomplete && (
+                          <Badge variant="outline" className="gap-1 border-amber-300 text-[10px] text-amber-700">
+                            <AlertTriangle className="h-3 w-3" />
+                            Incomplete
+                          </Badge>
+                        )}
+                      </div>
                       <p className="text-sm text-muted-foreground">{employee.email}</p>
                     </div>
                   </div>
@@ -403,6 +431,12 @@ export function EmployeeTable({
                           <DropdownMenuItem onClick={() => onManageDocuments?.(employee)}>
                             <FileText className="mr-2 h-4 w-4" />
                             Documents
+                          </DropdownMenuItem>
+                          <DropdownMenuItem asChild>
+                            <Link to={`/employees/${employee.id}/complete-profile`}>
+                              <UserCog className="mr-2 h-4 w-4" />
+                              Complete Profile
+                            </Link>
                           </DropdownMenuItem>
                         </>
                       )}

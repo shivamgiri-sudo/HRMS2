@@ -67,6 +67,7 @@ export interface RawEmployee {
   process_name?: string | null;
   branch_name?: string | null;
   cost_centre_name?: string | null;
+  profile_incomplete?: boolean | number | null;
 }
 
 export interface EmployeeDirectoryFilters {
@@ -175,6 +176,7 @@ function mapEmployee(emp: RawEmployee): Employee {
     designation: emp.designation_name || emp.designation || "",
     joinDate: formatEmployeeDate(emp.date_of_joining),
     status: normalizeEmployeeStatus(emp.employment_status),
+    profileIncomplete: Boolean(emp.profile_incomplete),
   };
 }
 
