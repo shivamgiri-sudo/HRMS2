@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Activity, Clock, TrendingUp } from "lucide-react";
+import { Activity, Clock, TrendingUp, Users2, UserCheck, UserX, Layers } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import {
   DrillDownDashboardShell,
@@ -232,10 +232,10 @@ function operationsHeroTiles(nodes: OperationsApiNode[]): HeroTile[] {
     ? Math.round((withAbsent.reduce((s, n) => s + (n.absentRatePct ?? 0) * n.headcount, 0) / withAbsent.reduce((s, n) => s + n.headcount, 0)) * 10) / 10
     : null;
   return [
-    { label: nodes.length === 1 ? "Headcount" : "Headcount (combined)", value: headcount.toLocaleString() },
-    { label: "Avg present", value: avgPresent !== null ? `${avgPresent}%` : "—", tone: presentTone(avgPresent) },
-    { label: "Avg absent", value: avgAbsent !== null ? `${avgAbsent}%` : "—", tone: avgAbsent !== null && avgAbsent > 20 ? "bad" : "neutral" },
-    { label: nodes.length === 1 ? "In view" : "Shown here", value: String(nodes.length) },
+    { label: nodes.length === 1 ? "Headcount" : "Headcount (combined)", value: headcount.toLocaleString(), icon: <Users2 className="h-4 w-4" /> },
+    { label: "Avg present", value: avgPresent !== null ? `${avgPresent}%` : "—", tone: presentTone(avgPresent), icon: <UserCheck className="h-4 w-4" /> },
+    { label: "Avg absent", value: avgAbsent !== null ? `${avgAbsent}%` : "—", tone: avgAbsent !== null && avgAbsent > 20 ? "bad" : "neutral", icon: <UserX className="h-4 w-4" /> },
+    { label: nodes.length === 1 ? "In view" : "Shown here", value: String(nodes.length), icon: <Layers className="h-4 w-4" /> },
   ];
 }
 
@@ -257,7 +257,11 @@ export default function OperationsDashboard() {
         </div>
       }
     >
-      <div className="p-4 sm:p-6">
+      <div className="relative p-4 sm:p-6">
+        <div
+          aria-hidden
+          className="pointer-events-none absolute inset-x-0 top-0 -z-10 h-[420px] bg-[radial-gradient(60%_50%_at_20%_0%,hsl(var(--primary)/0.10),transparent_70%),radial-gradient(45%_40%_at_85%_10%,hsl(var(--primary)/0.07),transparent_70%)]"
+        />
         {isSelfOnly && roleData?.employeeId ? (
           <SelfOperationsScorecard employeeId={roleData.employeeId} />
         ) : (

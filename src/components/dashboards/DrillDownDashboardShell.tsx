@@ -46,7 +46,7 @@ const TONE_CLASSES: Record<NonNullable<DrillNodeMetric["tone"]>, string> = {
   good: "text-emerald-600 dark:text-emerald-400",
   warn: "text-amber-600 dark:text-amber-400",
   bad: "text-rose-600 dark:text-rose-400",
-  neutral: "text-slate-900 dark:text-slate-100",
+  neutral: "text-foreground",
 };
 
 interface BreadcrumbStep {
@@ -117,13 +117,15 @@ export function DrillDownDashboardShell({
 
   const jumpTo = (index: number) => setTrail(trail.slice(0, index + 1));
 
+  const isSingle = !!data && data.nodes.length === 1;
+
   return (
     <div className="space-y-5" data-testid="drilldown-shell">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <nav className="flex items-center gap-1.5 text-sm" aria-label="Drill-down breadcrumb">
           {trail.map((step, index) => (
             <span key={`${step.level}-${step.id ?? "root"}`} className="flex items-center gap-1.5">
-              {index > 0 && <ChevronRight className="h-3.5 w-3.5 text-slate-400" aria-hidden />}
+              {index > 0 && <ChevronRight className="h-3.5 w-3.5 text-muted-foreground/50" aria-hidden />}
               <button
                 onClick={() => jumpTo(index)}
                 disabled={index === trail.length - 1}
@@ -132,8 +134,8 @@ export function DrillDownDashboardShell({
                   "rounded-2xl px-3 py-1.5 text-sm font-medium transition-colors",
                   "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2",
                   index === trail.length - 1
-                    ? "bg-primary/10 text-primary cursor-default"
-                    : "text-slate-500 hover:bg-slate-100 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-100 cursor-pointer",
+                    ? "bg-primary/12 text-primary cursor-default"
+                    : "text-muted-foreground hover:bg-muted hover:text-foreground cursor-pointer",
                 )}
               >
                 {index === 0 && <Home className="mr-1 inline h-3.5 w-3.5 -mt-0.5" aria-hidden />}
@@ -141,7 +143,7 @@ export function DrillDownDashboardShell({
               </button>
             </span>
           ))}
-          {isFetching && !isLoading && <Loader2 className="h-3.5 w-3.5 animate-spin text-slate-400" aria-label="Refreshing" />}
+          {isFetching && !isLoading && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" aria-label="Refreshing" />}
         </nav>
         {headerRight}
       </div>
@@ -171,7 +173,7 @@ export function DrillDownDashboardShell({
       )}
 
       {!isLoading && !isError && data && data.nodes.length > 0 && (
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+        <div className={cn("grid grid-cols-1 gap-4", isSingle ? "sm:grid-cols-1" : "sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4")}>
           {data.nodes.map((node) => {
             const summary = node.metrics.map((m) => `${m.label} ${m.value}`).join(", ");
             return (
@@ -186,34 +188,37 @@ export function DrillDownDashboardShell({
               >
                 <Card
                   className={cn(
-                    "relative overflow-hidden rounded-3xl border border-slate-200 dark:border-slate-800",
-                    "bg-gradient-to-br backdrop-blur-md shadow-sm transition-all duration-200",
-                    "group-hover:-translate-y-0.5 group-hover:shadow-lg group-hover:border-primary/40",
+                    "relative overflow-hidden rounded-3xl border border-primary/15",
+                    "bg-gradient-to-br backdrop-blur-xl shadow-[0_1px_1px_rgba(0,0,0,0.03),0_18px_36px_-24px_hsl(var(--primary)/0.4)]",
+                    "transition-all duration-200 ease-out",
+                    "group-hover:-translate-y-1 group-hover:scale-[1.01] group-hover:border-primary/40",
+                    "group-hover:shadow-[0_1px_1px_rgba(0,0,0,0.04),0_26px_44px_-20px_hsl(var(--primary)/0.55)]",
                     accentClassName,
                   )}
                 >
-                  <CardContent className="p-5">
+                  <div className="pointer-events-none absolute -right-8 -top-8 h-24 w-24 rounded-full bg-primary/10 blur-2xl transition-opacity duration-200 group-hover:opacity-80" />
+                  <CardContent className={cn("relative p-5", isSingle && "sm:p-7")}>
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0">
-                        <p className="truncate text-base font-bold text-slate-900 dark:text-slate-100">{node.name}</p>
+                        <p className={cn("truncate font-serif font-semibold", isSingle ? "text-xl sm:text-2xl" : "text-base")}>{node.name}</p>
                         {node.secondaryLabel && (
-                          <p className="truncate text-xs text-slate-500 dark:text-slate-400">{node.secondaryLabel}</p>
+                          <p className="truncate text-xs text-muted-foreground">{node.secondaryLabel}</p>
                         )}
                       </div>
                       {node.hasChildren && (
                         <ChevronRight
-                          className="h-4 w-4 shrink-0 text-slate-400 transition-transform group-hover:translate-x-0.5 group-hover:text-primary"
+                          className="h-4 w-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:text-primary"
                           aria-hidden
                         />
                       )}
                     </div>
-                    <div className="mt-4 grid grid-cols-2 gap-x-3 gap-y-3">
+                    <div className={cn("mt-4 grid gap-x-4 gap-y-3", isSingle ? "grid-cols-2 sm:grid-cols-4" : "grid-cols-2")}>
                       {node.metrics.map((m) => (
                         <div key={m.label}>
-                          <p className="text-[11px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                          <p className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
                             {m.label}
                           </p>
-                          <p className={cn("text-sm font-bold", m.tone ? TONE_CLASSES[m.tone] : TONE_CLASSES.neutral)}>
+                          <p className={cn("font-semibold", isSingle ? "text-xl sm:text-2xl" : "text-sm", m.tone ? TONE_CLASSES[m.tone] : TONE_CLASSES.neutral)}>
                             {m.value}
                           </p>
                         </div>

@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { ShieldCheck, PhoneCall, TrendingUp } from "lucide-react";
+import { ShieldCheck, PhoneCall, TrendingUp, Users2, Headphones, Gauge, Layers } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import {
   DrillDownDashboardShell,
@@ -214,10 +214,10 @@ function qualityHeroTiles(nodes: QualityApiNode[]): HeroTile[] {
     ? Math.round((scored.reduce((s, n) => s + (n.avgQualityPct ?? 0) * n.callsAudited, 0) / scored.reduce((s, n) => s + n.callsAudited, 0)) * 10) / 10
     : null;
   return [
-    { label: nodes.length === 1 ? "Agents" : "Agents (combined)", value: agentCount.toLocaleString() },
-    { label: "Calls audited", value: callsAudited.toLocaleString() },
-    { label: "Avg quality", value: avg !== null ? `${avg}%` : "—", tone: qualityTone(avg) },
-    { label: nodes.length === 1 ? "In view" : "Shown here", value: String(nodes.length) },
+    { label: nodes.length === 1 ? "Agents" : "Agents (combined)", value: agentCount.toLocaleString(), icon: <Users2 className="h-4 w-4" /> },
+    { label: "Calls audited", value: callsAudited.toLocaleString(), icon: <Headphones className="h-4 w-4" /> },
+    { label: "Avg quality", value: avg !== null ? `${avg}%` : "—", tone: qualityTone(avg), icon: <Gauge className="h-4 w-4" /> },
+    { label: nodes.length === 1 ? "In view" : "Shown here", value: String(nodes.length), icon: <Layers className="h-4 w-4" /> },
   ];
 }
 
@@ -239,7 +239,11 @@ export default function QualityDashboard() {
         </div>
       }
     >
-      <div className="p-4 sm:p-6">
+      <div className="relative p-4 sm:p-6">
+        <div
+          aria-hidden
+          className="pointer-events-none absolute inset-x-0 top-0 -z-10 h-[420px] bg-[radial-gradient(60%_50%_at_20%_0%,hsl(var(--primary)/0.10),transparent_70%),radial-gradient(45%_40%_at_85%_10%,hsl(var(--primary)/0.07),transparent_70%)]"
+        />
         {isSelfOnly && roleData?.employeeId ? (
           <SelfQualityScorecard employeeId={roleData.employeeId} />
         ) : (
