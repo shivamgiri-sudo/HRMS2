@@ -1,10 +1,10 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Clock, FileClock, RefreshCw, Search } from "lucide-react";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { hrmsApi } from "@/lib/hrmsApi";
+import { StatusStamp, type StampTone } from "@/components/finance/grn/StatusStamp";
 
 type GrnHistoryRow = {
   id: string;
@@ -44,14 +44,14 @@ function labelStatus(value: string) {
   return value.replace(/_/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
-function statusTone(status: string) {
+function statusTone(status: string): StampTone {
   if (["paid", "approved", "pending_accounts_payment", "payment_scheduled", "partially_paid"].includes(status)) {
-    return "border-emerald-200 bg-emerald-50 text-emerald-700";
+    return "ok";
   }
-  if (["rejected", "cancelled"].includes(status)) return "border-rose-200 bg-rose-50 text-rose-700";
-  if (status === "consumption_reversed") return "border-violet-200 bg-violet-50 text-violet-700";
-  if (["submitted", "branch_head_approved"].includes(status)) return "border-amber-200 bg-amber-50 text-amber-700";
-  return "border-slate-200 bg-slate-50 text-slate-600";
+  if (["rejected", "cancelled"].includes(status)) return "crit";
+  if (status === "consumption_reversed") return "info";
+  if (["submitted", "branch_head_approved"].includes(status)) return "warn";
+  return "neutral";
 }
 
 function money(value: unknown) {
@@ -133,7 +133,7 @@ export function GrnHistoryTable() {
             type="button"
             key={value}
             onClick={() => setStatus(value)}
-            className={`rounded-full border px-3 py-1.5 text-xs font-medium ${status === value ? "border-[#073f78] bg-[#073f78] text-white" : "border-slate-200 bg-white text-slate-600"}`}
+            className={`rounded-full border px-3 py-1.5 text-xs font-semibold transition-colors ${status === value ? "border-[#073f78] bg-[#073f78] text-white" : "border-slate-200 bg-white text-slate-600 hover:border-[#073f78]/40 hover:text-[#073f78]"}`}
           >
             {label}
           </button>
@@ -168,18 +168,18 @@ export function GrnHistoryTable() {
                 return (
                   <tr key={row.id} className="align-top hover:bg-slate-50/70">
                     <td className="px-3 py-2.5">
-                      <p className="font-mono font-semibold text-slate-900">{row.grn_number}</p>
+                      <p className="font-mono font-semibold text-[#073f78]">{row.grn_number}</p>
                       <p className="mt-0.5 text-[11px] uppercase tracking-wide text-slate-400">{row.grn_type}</p>
                     </td>
                     <td className="px-3 py-2.5">
                       <p className="text-slate-800">{row.branch_name ?? "—"}</p>
                       <p className="mt-0.5 text-[11px] text-slate-500">{row.vendor_name || "Imprest / no vendor"}</p>
                     </td>
-                    <td className="px-3 py-2.5 text-right font-medium text-slate-900">
+                    <td className="px-3 py-2.5 text-right font-mono font-medium text-slate-900">
                       {money(row.amount_with_tax ?? row.amount)}
                     </td>
                     <td className="px-3 py-2.5">
-                      <Badge variant="outline" className={statusTone(row.status)}>{labelStatus(row.status)}</Badge>
+                      <StatusStamp tone={statusTone(row.status)}>{labelStatus(row.status)}</StatusStamp>
                       {row.status === "rejected" && row.rejection_reason && (
                         <p className="mt-1 max-w-[160px] text-[11px] text-rose-600" title={row.rejection_reason}>
                           {row.rejection_reason}

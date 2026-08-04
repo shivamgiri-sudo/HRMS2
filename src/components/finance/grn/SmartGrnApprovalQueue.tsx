@@ -28,6 +28,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Sheet, SheetContent, SheetFooter, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { StatusStamp, type StampTone } from "@/components/finance/grn/StatusStamp";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
@@ -83,6 +84,13 @@ function labelStatus(value: string) {
   return value.replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
+function grnStatusTone(status: string): StampTone {
+  if (["paid", "approved", "pending_accounts_payment", "partially_paid"].includes(status)) return "ok";
+  if (["rejected", "cancelled"].includes(status)) return "crit";
+  if (["submitted", "branch_head_approved"].includes(status)) return "warn";
+  return "neutral";
+}
+
 function money(value: unknown) {
   return new Intl.NumberFormat("en-IN", {
     style: "currency",
@@ -109,6 +117,12 @@ function tone(value: string) {
     return "border-amber-200 bg-amber-50 text-amber-800";
   }
   return "border-rose-200 bg-rose-50 text-rose-800";
+}
+
+function stampTone(value: string): StampTone {
+  if (["passed", "completed", "matched", "overridden", "cleared"].includes(value)) return "ok";
+  if (["warning", "manual_review", "near_match", "pending", "processing"].includes(value)) return "warn";
+  return "crit";
 }
 
 function unwrap<T>(value: any): T {
@@ -318,7 +332,7 @@ export function SmartGrnApprovalQueue() {
             type="button"
             key={value}
             onClick={() => setStatus(value)}
-            className={`rounded-full border px-3 py-1.5 text-xs font-medium ${status === value ? "border-[#073f78] bg-[#073f78] text-white" : "border-slate-200 bg-white text-slate-600"}`}
+            className={`rounded-full border px-3 py-1.5 text-xs font-semibold transition-colors ${status === value ? "border-[#073f78] bg-[#073f78] text-white" : "border-slate-200 bg-white text-slate-600 hover:border-[#073f78]/40 hover:text-[#073f78]"}`}
           >
             {label}
           </button>
@@ -368,10 +382,10 @@ export function SmartGrnApprovalQueue() {
                     </span>
                   </td>
                   <td className="px-3 py-1 truncate max-w-[100px]">{row.vendor_name ?? (row.grn_type === "imprest" ? "Imprest" : "—")}</td>
-                  <td className="px-3 py-1 text-right font-medium">{money(row.amount_with_tax ?? row.amount)}</td>
+                  <td className="px-3 py-1 text-right font-mono font-medium">{money(row.amount_with_tax ?? row.amount)}</td>
                   <td className="px-3 py-1">{row.due_date ? date(row.due_date) : "—"}</td>
                   <td className="px-3 py-1">
-                    <Badge variant="secondary" className="text-xs">{labelStatus(row.status)}</Badge>
+                    <StatusStamp tone={grnStatusTone(row.status)}>{labelStatus(row.status)}</StatusStamp>
                   </td>
                   <td className="px-3 py-1">
                     <div className="flex gap-1">
@@ -420,13 +434,13 @@ export function SmartGrnApprovalQueue() {
       <Sheet open={Boolean(target)} onOpenChange={(open) => !open && setTarget(null)}>
         <SheetContent side="right" className="flex w-[560px] flex-col gap-0 p-0">
           <SheetHeader className="border-b px-4 py-3">
-            <SheetTitle className="text-sm font-semibold">
+            <SheetTitle className="font-mono text-sm font-bold text-[#073f78]">
               {target?.grn_number} — Review
             </SheetTitle>
-            <div className="flex flex-wrap gap-1.5 pt-1">
+            <div className="flex flex-wrap items-center gap-1.5 pt-1">
               {target?.branch_name && <Badge variant="outline" className="text-xs">{target.branch_name}</Badge>}
               {target?.vendor_name && <Badge variant="outline" className="text-xs">{target.vendor_name}</Badge>}
-              <Badge variant="secondary" className="text-xs">{target ? labelStatus(target.status) : ""}</Badge>
+              {target && <StatusStamp tone={grnStatusTone(target.status)}>{labelStatus(target.status)}</StatusStamp>}
             </div>
           </SheetHeader>
 
@@ -501,9 +515,9 @@ export function SmartGrnApprovalQueue() {
                               <p className="truncate text-xs font-semibold">{doc.original_name}</p>
                               <p className="text-[10px] text-slate-500">{String(doc.extraction_status ?? "pending").replaceAll("_", " ")}</p>
                             </div>
-                            <Badge className={`border text-[10px] ${tone(String(doc.extraction_status ?? "pending"))}`}>
+                            <StatusStamp tone={stampTone(String(doc.extraction_status ?? "pending"))} className="text-[9.5px]">
                               {Number(doc.is_primary) === 1 ? "Primary" : "Support"}
-                            </Badge>
+                            </StatusStamp>
                           </button>
                         ))}
                         {!workspace?.documents?.length && (

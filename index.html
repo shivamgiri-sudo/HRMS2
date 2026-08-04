@@ -17,6 +17,16 @@
     <link rel="shortcut icon" type="image/png" href="/mcn-icon.png?v=7" />
     <link rel="apple-touch-icon" href="/mcn-icon.png?v=7" />
 
+    <!-- GRN Management (/finance/grn) opts into IBM Plex Sans/Mono for its own components only —
+         font-sans elsewhere still resolves to Inter/system fonts; loading the family here doesn't
+         change anything outside the GRN page since nothing else references it by name. -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+
     <meta name="theme-color" content="#0F172A" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />

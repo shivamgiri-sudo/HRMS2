@@ -8,10 +8,10 @@ import {
   RefreshCw,
   Save,
 } from "lucide-react";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
+import { StatusStamp } from "@/components/finance/grn/StatusStamp";
 import { hrmsApi } from "@/lib/hrmsApi";
 
 const selectClass =
@@ -221,23 +221,21 @@ export function GrnLobAttributionQueue() {
                   onClick={() => setSelectedGrnId(item.id)}
                   className={`w-full rounded-xl border p-3 text-left transition ${
                     selectedGrnId === item.id
-                      ? "border-blue-300 bg-blue-50"
-                      : "border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50"
+                      ? "border-[#073f78] bg-[#eaf1fa]"
+                      : "border-slate-200 bg-white hover:border-[#073f78]/40 hover:bg-slate-50"
                   }`}
                 >
                   <div className="flex items-start justify-between gap-2">
                     <div>
-                      <p className="text-sm font-bold text-slate-900">{item.grn_number}</p>
+                      <p className="font-mono text-sm font-bold text-[#073f78]">{item.grn_number}</p>
                       <p className="text-xs text-slate-500">{item.vendor_name || "Imprest / no vendor"}</p>
                     </div>
-                    <Badge variant="outline" className="border-amber-200 bg-amber-50 text-amber-700">
-                      {item.missing_lob_count} missing
-                    </Badge>
+                    <StatusStamp tone="warn">{item.missing_lob_count} missing</StatusStamp>
                   </div>
                   <p className="mt-2 line-clamp-2 text-xs text-slate-600">{item.process_names || "Shared branch allocation"}</p>
                   <div className="mt-2 flex items-center justify-between text-xs text-slate-500">
                     <span>{dateLabel(item.bill_date)}</span>
-                    <span className="font-semibold text-slate-700">{money(item.amount_with_tax ?? item.amount)}</span>
+                    <span className="font-mono font-semibold text-slate-700">{money(item.amount_with_tax ?? item.amount)}</span>
                   </div>
                 </button>
               ))}
@@ -264,7 +262,7 @@ export function GrnLobAttributionQueue() {
             <CardHeader className="border-b pb-3">
               <div className="flex flex-col justify-between gap-3 md:flex-row md:items-start">
                 <div>
-                  <CardTitle className="text-base">{workspace.grn.grn_number}</CardTitle>
+                  <CardTitle className="font-mono text-base text-[#073f78]">{workspace.grn.grn_number}</CardTitle>
                   <p className="mt-1 text-sm text-slate-500">
                     {workspace.grn.vendor_name || "Imprest / no vendor"} · {workspace.grn.branch_name || "Branch unavailable"}
                   </p>
@@ -273,7 +271,7 @@ export function GrnLobAttributionQueue() {
                   </p>
                 </div>
                 <div className="text-left md:text-right">
-                  <p className="text-lg font-bold text-slate-950">{money(workspace.grn.amount_with_tax ?? workspace.grn.amount)}</p>
+                  <p className="font-mono text-lg font-bold text-slate-950">{money(workspace.grn.amount_with_tax ?? workspace.grn.amount)}</p>
                   <p className="text-xs text-slate-500">GRN gross amount</p>
                 </div>
               </div>
@@ -335,7 +333,7 @@ export function GrnLobAttributionQueue() {
                               ) : null}
                             </div>
                           ) : (
-                            <Badge variant="outline">Shared branch pool</Badge>
+                            <StatusStamp tone="neutral">Shared branch pool</StatusStamp>
                           )}
                         </td>
                       </tr>
