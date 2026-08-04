@@ -847,8 +847,16 @@ export const branchBudgetService = {
             FOR UPDATE`,
           [input.branchId, input.periodCode]
         );
-        existing = byPeriod[0];
-        if (existing) budgetId = String(existing.id);
+        const found = byPeriod[0];
+        // deleteOrSupersede() closes a budget instead of deleting it specifically to keep
+        // GRN-touched history intact — reusing that same row here (and letting the code below
+        // wipe its lines via replaceBudgetLines) would erase exactly what that was protecting.
+        // A closed budget is retired, not resumable: treat it as if nothing exists yet, so a
+        // genuinely new budget gets created instead, exactly as the close message promises.
+        if (found && String(found.status) !== "closed") {
+          existing = found;
+          budgetId = String(existing.id);
+        }
       }
 
       // 'submitted' is editable too — a branch admin correcting a mistake right after submitting,
