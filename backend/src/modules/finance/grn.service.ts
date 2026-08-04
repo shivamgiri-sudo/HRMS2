@@ -741,6 +741,65 @@ export const grnService = {
     };
   },
 
+  /**
+   * Counts and rupee totals per status, for the GRN page header and its filter chips.
+   *
+   * This exists because listGrns clamps limit to 100 (see above), so summing amounts from a
+   * fetched page silently under-reports on any branch with more than 100 GRNs — and a wrong
+   * money figure on a finance screen is worse than no figure. Aggregating in SQL is exact at
+   * any volume and costs one query instead of one per chip.
+   *
+   * Branch scope is applied by the caller via resolveFinanceBranchScope, exactly as the list
+   * endpoint does; this method never widens what the caller may see.
+   */
+  async getGrnSummary(filters: { branchId?: string; financialYear?: string }) {
+    const conditions: string[] = [];
+    const params: unknown[] = [];
+    if (filters.branchId) {
+      conditions.push("g.branch_id = ?");
+      params.push(filters.branchId);
+    }
+    if (filters.financialYear) {
+      conditions.push("g.financial_year = ?");
+      params.push(filters.financialYear);
+    }
+    const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT g.status AS status,
+              COUNT(*) AS count,
+              COALESCE(SUM(COALESCE(g.amount_with_tax, g.amount)), 0) AS value
+         FROM grn_request g
+         ${where}
+        GROUP BY g.status`,
+      params
+    );
+
+    const byStatus: Record<string, { count: number; value: number }> = {};
+    for (const row of rows) {
+      byStatus[String(row.status)] = {
+        count: Number(row.count ?? 0),
+        value: Number(row.value ?? 0),
+      };
+    }
+
+    // "In queue" spans both review stages: a GRN waiting on the Branch Head and one already
+    // through it and waiting on Finance are both awaiting a decision from someone.
+    const inQueue = ["submitted", "branch_head_approved"].reduce(
+      (acc, status) => {
+        const bucket = byStatus[status];
+        if (bucket) {
+          acc.count += bucket.count;
+          acc.value += bucket.value;
+        }
+        return acc;
+      },
+      { count: 0, value: 0 }
+    );
+
+    return { byStatus, inQueue };
+  },
+
   async getGrn(grnId: string) {
     return getGrnOrThrow(grnId);
   },

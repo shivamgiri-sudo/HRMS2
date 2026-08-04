@@ -300,6 +300,32 @@ grnRouter.get(
   }
 );
 
+// Must stay above /grns/:id — Express matches in declaration order, and :id would otherwise
+// capture "summary" and go looking for a GRN with that id.
+grnRouter.get(
+  "/grns/summary",
+  requireRole(...GRN_READ_ROLES),
+  async (req: AuthenticatedRequest, res) => {
+    try {
+      const user = actor(req);
+      const branchId = await resolveFinanceBranchScope({
+        userId: user.id,
+        primaryRole: user.role,
+        userRoles: user.roles,
+        requestedBranchId: req.query.branchId ? String(req.query.branchId) : undefined,
+      });
+      const result = await grnService.getGrnSummary({
+        branchId,
+        financialYear: req.query.financialYear ? String(req.query.financialYear) : undefined,
+      });
+      res.json({ data: result });
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : "Failed to summarise GRNs";
+      res.status(errorStatus(error, 400)).json({ error: message });
+    }
+  }
+);
+
 grnRouter.get(
   "/grns/:id",
   requireRole(...GRN_READ_ROLES),
