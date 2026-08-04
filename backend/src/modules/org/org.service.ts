@@ -436,7 +436,7 @@ export const costCentreService = {
 
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT cc.*,
-              cl.client_name,
+              COALESCE(cl.client_name, cc.client_name) AS client_name,
               cl.client_code,
               l.lob_name,
               l.lob_code,
