@@ -33,6 +33,9 @@ router.get(
       if (!VALID_LEVELS.has(level)) {
         return res.status(400).json({ success: false, message: "Invalid level. Use branch|process|team|analyst." });
       }
+      if (level !== "branch" && !id) {
+        return res.status(400).json({ success: false, message: `id is required for level=${level}` });
+      }
 
       const ctx = await getUserRoleContext(userId);
       // Security boundary is enforced inside the service (scope clause applied to every
