@@ -9,6 +9,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { downloadBpoPnlExport, useBpoProcessPnl } from "@/hooks/useBpoProcessPnl";
 import { usePnlStatement, type PnlStatementViewBy } from "@/hooks/usePnlStatement";
+import { CeoCommandCenter } from "@/components/finance/pnl/CeoCommandCenter";
 import { CeoOverviewPanel } from "@/components/finance/pnl/CeoOverviewPanel";
 import { PnlStatementView } from "@/components/finance/pnl/PnlStatementView";
 import { PnlExecutiveKpiStrip } from "@/components/finance/pnl/PnlExecutiveKpiStrip";
@@ -342,7 +343,35 @@ export default function ProcessPnlPage() {
                   branchId={branchId || undefined}
                   onBranchChange={(id) => updateFilters({ branchId: id })}
                 />
-
+                {summary ? (
+                  <details className="rounded-2xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
+                    <summary className="cursor-pointer px-5 py-3 text-sm font-semibold text-slate-600 dark:text-slate-400">
+                      Process-level command centre
+                      <span className="ml-2 rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-800 dark:bg-amber-950/40 dark:text-amber-300">
+                        revenue from invoices
+                      </span>
+                    </summary>
+                    <div className="border-t border-slate-100 p-4 dark:border-slate-800">
+                      {/*
+                        Its revenue is lower than the figure above, deliberately. This view
+                        attributes revenue to a PROCESS, and about Rs 121 lakh of June's invoicing
+                        sits on cost centres with no process mapping — so it reports Rs 249.30 lakh
+                        against the branch view's Rs 370.84 lakh. Saying so is the point: two tabs
+                        quietly disagreeing is how an 82% margin survived a week.
+                      */}
+                      <p className="mb-3 text-[12.5px] text-slate-500">
+                        Revenue here is attributed per process, so it excludes invoicing on cost
+                        centres that map to no process — about ₹121 lakh in June. The branch view
+                        above counts every invoice and is the company figure.
+                      </p>
+                      <CeoCommandCenter
+                        summary={summary}
+                        period={period}
+                        onViewAllProcesses={() => setActiveTab("matrix")}
+                      />
+                    </div>
+                  </details>
+                ) : null}
               </div>
             )}
           </TabsContent>
