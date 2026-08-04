@@ -519,6 +519,40 @@ export async function listPendingApprovals(scopeFilter: { sql: string; params: u
             c.id AS candidate_id, c.candidate_code, c.full_name, c.email, c.mobile,
             c.father_name, c.date_of_birth, c.profile_status,
             b.branch_name,
+            -- Cost centre and process, so the branch head can see WHAT they are
+            -- approving a head against and not just who. The offer already
+            -- carries the cost centre; nothing surfaced it.
+            cc.cost_centre_code, cc.cost_centre_name, cc.client_name,
+            -- Process is not on the offer and not on the cost centre either —
+            -- cost_centre_master.process_id is NULL on every row in production,
+            -- so it cannot be the source. It comes from the candidate, where
+            -- applied_for_process is VARCHAR holding a process_master id on some
+            -- rows and a process name on others; resolve both.
+            -- Scalar subqueries, not joins. Both masters hold duplicate names —
+            -- 'Team Leader' is in designation_master twice, and process_master
+            -- has two 'BSS-OTHERS', two 'C-SAT', two 'CMG -OTHERS' — so a join
+            -- returns the candidate once per duplicate and the branch head sees
+            -- the same person listed twice. A scalar subquery cannot fan out.
+            -- Both tables are ~130 rows, so the OR costs nothing here.
+            (SELECT p.process_name FROM process_master p
+              WHERE p.id = c.applied_for_process OR p.process_name = c.applied_for_process
+              ORDER BY (p.id = c.applied_for_process) DESC, p.process_name
+              LIMIT 1) AS process_name,
+            -- 93 candidates hold a DESIGNATION in applied_for_process rather
+            -- than a process — 'Quality Analyst' (62), 'Team Leader' (26),
+            -- 'Operations' (5). Echoing that as the process is worse than
+            -- showing nothing: it reads as a real mapping and the branch head
+            -- has no way to tell. Flagged so the UI can say what is wrong.
+            EXISTS (SELECT 1 FROM designation_master d
+                     WHERE d.designation_name = c.applied_for_process) AS process_is_designation,
+            -- The raw label, only when it is neither an unresolved id nor a
+            -- designation. Values like 'Housing' and 'GPI' are real campaigns
+            -- that simply are not in process_master, and are worth showing as
+            -- unverified rather than hiding.
+            CASE
+              WHEN c.applied_for_process REGEXP '^[0-9a-f]{8}-[0-9a-f]{4}-' THEN NULL
+              ELSE NULLIF(TRIM(c.applied_for_process), '')
+            END AS process_raw,
             -- Whether Payroll HR has validated this salary. Employee creation
             -- requires it (validateSalaryLock), so without this the branch head
             -- clicks Approve and gets a failure they cannot act on. Surfaced on
@@ -538,6 +572,7 @@ export async function listPendingApprovals(scopeFilter: { sql: string; params: u
      JOIN ats_onboarding_request r ON r.id = o.onboarding_request_id
      JOIN ats_candidate c ON c.id = r.candidate_id
      LEFT JOIN branch_master b ON b.id = r.branch_id
+     LEFT JOIN cost_centre_master cc ON cc.id = o.cost_centre
      WHERE o.status = 'submitted'
        AND (${scopeFilter.sql})
      ORDER BY o.submitted_at ASC`,

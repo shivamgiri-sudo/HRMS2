@@ -585,8 +585,12 @@ async function notifyPayrollHrToIssueJoiningDocuments(params: {
 }): Promise<void> {
   try {
     const baseUrl = env.FRONTEND_URL || 'http://localhost:5173';
+    // The name comes from employees, not auth_user: auth_user has no full_name
+    // column (id, email, password_hash, …), so selecting u.full_name threw
+    // ER_BAD_FIELD_ERROR and no Payroll HR was ever told a pack was ready. The
+    // employees row is already joined here, and it is where the name lives.
     const [hrRows] = await db.execute<RowDataPacket[]>(
-      `SELECT u.email, u.full_name
+      `SELECT u.email, e.full_name
          FROM auth_user u
          JOIN user_roles ur ON ur.user_id = u.id
          JOIN employees e ON e.user_id = u.id AND e.active_status = 1
@@ -840,12 +844,20 @@ async function validateStatutoryInfo(
 ): Promise<{ valid: boolean; blockers: Array<{ type: string; reason: string; severity: 'critical' }> }> {
   const blockers: Array<{ type: string; reason: string; severity: 'critical' }> = [];
 
+  // PAN and Aadhaar come from the candidate only — the same rule the employee
+  // INSERT above already follows. candidate_onboarding_profile has no
+  // pan_number or aadhar_number column at all; it stores pan_number_masked,
+  // pan_number_hash, pan_number_encrypted and aadhaar_number_masked. So
+  // COALESCE(p.pan_number, ...) was not a fallback, it was
+  // ER_BAD_FIELD_ERROR: Unknown column 'p.pan_number' in 'field list' on every
+  // approval — the same 500 as c.fresher, one query further along the path.
+  //
+  // Reading the masked column instead would be worse than reading nothing: a
+  // masked PAN passes the format check, gets stored as though it were real, and
+  // cannot be filed with anyone.
   const [candRows] = await conn.execute<RowDataPacket[]>(
-    `SELECT
-       COALESCE(p.pan_number, c.pan_number) AS pan_number,
-       COALESCE(p.aadhar_number, c.aadhar_number) AS aadhar_number
+    `SELECT c.pan_number, c.aadhar_number
      FROM ats_candidate c
-     LEFT JOIN candidate_onboarding_profile p ON p.candidate_id = c.id
      WHERE c.id = ? LIMIT 1`,
     [candidateId]
   );

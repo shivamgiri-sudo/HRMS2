@@ -6,7 +6,7 @@ import { useWorkforceAccess } from "@/hooks/useUserRole";
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
-import { Loader2, CheckCircle2, XCircle, X, AlertCircle, RefreshCw, Users, History, Ban } from 'lucide-react';
+import { Loader2, CheckCircle2, XCircle, X, AlertCircle, RefreshCw, Users, History, Ban, Search } from 'lucide-react';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { CandidateJourneyDrawer } from '@/components/ats/CandidateJourneyDrawer';
 import { useSearchParams } from 'react-router-dom';
@@ -33,6 +33,16 @@ interface PendingOffer {
   date_of_joining: string;
   salary_band: string;
   branch_name: string;
+  /** Cost centre the head is being approved against. Null when the offer carries none. */
+  cost_centre_code?: string | null;
+  cost_centre_name?: string | null;
+  client_name?: string | null;
+  /** Process resolved against process_master. Null when it could not be. */
+  process_name?: string | null;
+  /** The raw applied_for_process label, minus unresolved UUIDs. */
+  process_raw?: string | null;
+  /** 1 when applied_for_process holds a designation, not a process. */
+  process_is_designation?: number | boolean;
   profile_status: string;
   offer_status: string;
   /** 1 when Payroll HR has validated this salary. Employee creation requires it. */
@@ -52,6 +62,47 @@ type DecisionRow = {
   employee_code: string | null;
   gross: string | null;
 };
+
+const inr = (n: number | null | undefined) =>
+  n == null ? '—' : `₹${Number(n).toLocaleString('en-IN', { maximumFractionDigits: 0 })}`;
+
+/** "2026-08-04T18:30:00Z" -> "04 Aug 2026". Never throws on a bad value. */
+function shortDate(v: string | null | undefined): string {
+  if (!v) return '—';
+  const d = new Date(v);
+  if (Number.isNaN(d.getTime())) return String(v).slice(0, 10);
+  return d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+}
+
+/**
+ * What to print in the Process column.
+ *
+ * A designation is never shown as a process. 93 candidates carry one in
+ * applied_for_process — 'Team Leader', 'Quality Analyst', 'Operations' — and
+ * printing it produced a Process column that confidently stated the wrong
+ * thing. Saying it is not mapped, and naming the value that was found instead,
+ * is the honest reading and is also what gets it fixed.
+ */
+function processCell(offer: PendingOffer): { text: string; tone: string; title?: string } {
+  if (offer.process_name) {
+    return { text: offer.process_name, tone: 'text-slate-700' };
+  }
+  if (offer.process_is_designation === 1 || offer.process_is_designation === true) {
+    return {
+      text: 'Not mapped',
+      tone: 'text-amber-700',
+      title: `"${offer.process_raw}" is a designation, not a process. This candidate's process was never recorded — ask Recruitment to set it before conversion.`,
+    };
+  }
+  if (offer.process_raw) {
+    return {
+      text: offer.process_raw,
+      tone: 'text-slate-500 italic',
+      title: `"${offer.process_raw}" is not in the process master, so it could not be verified.`,
+    };
+  }
+  return { text: '—', tone: 'text-slate-400' };
+}
 
 function offersFrom(payload: unknown): PendingOffer[] {
   if (Array.isArray(payload)) return payload as PendingOffer[];
@@ -79,6 +130,7 @@ function OfferRow({
   onOpenJourney: (candidateId: string) => void;
 }) {
   const isActing = acting === offer.offer_id;
+  const proc = processCell(offer);
   // Employee creation needs a validated salary (validateSalaryLock). Without
   // it Approve throws "Branch Head approval pending", which the branch head
   // cannot act on — so the blocker is shown here instead.
@@ -91,73 +143,114 @@ function OfferRow({
       tabIndex={0}
       role="button"
       aria-label={`Open journey for ${offer.full_name}`}
-      className="cursor-pointer transition-colors hover:bg-slate-50 focus:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-500"
+      className="group cursor-pointer border-slate-100 transition-colors even:bg-slate-50/40 hover:bg-blue-50/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-500"
     >
-      <TableCell>
+      {/* Candidate — sticky, so identity stays visible while the row is scrolled. */}
+      <TableCell className="sticky left-0 z-10 bg-inherit py-3">
         <div className="flex flex-col gap-1">
-          <span className="font-medium">{offer.full_name}</span>
-          <Badge variant="outline" className="w-fit">{offer.candidate_code}</Badge>
+          <span className="font-semibold text-slate-900">{offer.full_name}</span>
+          <span className="flex items-center gap-2">
+            <span className="font-mono text-[11px] text-slate-500">{offer.candidate_code}</span>
+            <span className="text-[11px] text-slate-400">
+              {offer.mobile ? offer.mobile.slice(0, 3) + 'XXXXX' + offer.mobile.slice(-3) : '—'}
+            </span>
+          </span>
         </div>
       </TableCell>
-      <TableCell>
-        <div className="flex flex-col gap-0.5 text-sm">
-          <span>{offer.branch_name}</span>
-          <span className="text-slate-500">{offer.emp_type}</span>
+
+      <TableCell className="py-3">
+        <div className="flex flex-col gap-0.5">
+          <span className="text-sm text-slate-800">{offer.branch_name}</span>
+          <span className="text-[11px] uppercase tracking-wide text-slate-400">{offer.emp_type}</span>
         </div>
       </TableCell>
-      <TableCell className="text-sm">{offer.date_of_joining}</TableCell>
-      <TableCell className="text-sm">{offer.salary_band}</TableCell>
-      <TableCell className="text-right font-medium">
-        ₹{offer.offered_ctc?.toLocaleString('en-IN')}
+
+      {/* Cost centre code and the client it bills to, both off the offer's
+          cost_centre. An em-dash where the offer carries none — a blank cell
+          reads as "no cost centre exists" rather than "not set". */}
+      <TableCell className="py-3">
+        <div className="flex flex-col gap-0.5">
+          <span className="font-mono text-xs text-slate-700">{offer.cost_centre_code ?? '—'}</span>
+          {offer.client_name && (
+            <span className="text-[11px] text-slate-400">{offer.client_name}</span>
+          )}
+        </div>
       </TableCell>
-      <TableCell className="text-right">
-        ₹{offer.gross?.toLocaleString('en-IN')}
+
+      <TableCell className="py-3">
+        <span className={`text-sm ${proc.tone}`} title={proc.title}>{proc.text}</span>
       </TableCell>
-      <TableCell className="text-right">
-        ₹{offer.net_in_hand?.toLocaleString('en-IN')}
+
+      <TableCell className="py-3 text-sm whitespace-nowrap text-slate-700">
+        {shortDate(offer.date_of_joining)}
       </TableCell>
-      <TableCell className="text-sm">
-        {offer.mobile ? offer.mobile.slice(0, 3) + 'XXXXX' + offer.mobile.slice(-3) : '—'}
+
+      <TableCell className="py-3">
+        <span className="inline-flex h-6 min-w-6 items-center justify-center rounded-md border border-slate-200 bg-slate-50 px-1.5 font-mono text-xs text-slate-600">
+          {offer.salary_band || '—'}
+        </span>
       </TableCell>
-      <TableCell>
+
+      {/* Money right-aligned with tabular figures so the columns line up
+          digit-for-digit — the point of a salary table. */}
+      <TableCell className="py-3 text-right font-semibold tabular-nums text-slate-900 whitespace-nowrap">
+        {inr(offer.offered_ctc)}
+      </TableCell>
+      <TableCell className="py-3 text-right tabular-nums text-slate-600 whitespace-nowrap">
+        {inr(offer.gross)}
+      </TableCell>
+      <TableCell className="py-3 text-right tabular-nums text-slate-600 whitespace-nowrap">
+        {inr(offer.net_in_hand)}
+      </TableCell>
+
+      <TableCell className="py-3">
         <Input
           value={remark}
           onChange={e => onRemarkChange(offer.offer_id, e.target.value)}
-          placeholder="Enter remarks…"
+          placeholder="Add remarks…"
           disabled={isActing}
-          className="min-h-[36px] text-sm"
+          className="h-9 min-w-[9rem] text-sm"
           onClick={(e) => e.stopPropagation()}
         />
       </TableCell>
-      <TableCell onClick={(e) => e.stopPropagation()}>
+
+      {/* Actions — sticky right, so they never scroll out of reach on a wide table. */}
+      <TableCell
+        className="sticky right-0 z-10 bg-inherit py-3"
+        onClick={(e) => e.stopPropagation()}
+      >
         {!payrollReady && (
-          <p className="mb-1.5 text-[11px] font-medium text-amber-700">
-            Payroll HR has not validated this salary yet
+          <p className="mb-1.5 flex items-center gap-1 text-[11px] font-medium text-amber-700">
+            <AlertCircle className="h-3 w-3 shrink-0" aria-hidden="true" />
+            Salary not validated
           </p>
         )}
-        <div className="flex gap-2 flex-nowrap">
+        <div className="flex flex-nowrap gap-2">
           <Button
             size="sm"
-            className="bg-emerald-600 hover:bg-emerald-700 text-white"
+            className="h-9 cursor-pointer bg-emerald-600 px-3 text-white shadow-sm transition-colors hover:bg-emerald-700"
             disabled={isActing || !payrollReady}
             title={payrollReady ? undefined : 'Payroll HR must validate the salary before this can be approved'}
             onClick={() => onAct(offer.offer_id, 'approve', remark)}
             aria-label={`Approve and activate ${offer.full_name}`}
           >
             {isActing ? (
-              <Loader2 className="animate-spin h-4 w-4" aria-hidden="true" />
+              <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
             ) : (
               <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
             )}
+            <span className="ml-1.5">Approve</span>
           </Button>
           <Button
             size="sm"
-            variant="destructive"
+            variant="outline"
+            className="h-9 cursor-pointer border-rose-200 px-3 text-rose-700 transition-colors hover:border-rose-300 hover:bg-rose-50 hover:text-rose-800"
             disabled={isActing}
             onClick={() => onAct(offer.offer_id, 'reject', remark)}
             aria-label={`Reject offer for ${offer.full_name}`}
           >
             <XCircle className="h-4 w-4" aria-hidden="true" />
+            <span className="ml-1.5">Reject</span>
           </Button>
         </div>
       </TableCell>
@@ -177,6 +270,15 @@ export default function NativeBranchHeadApproval() {
   const [actionError, setActionError] = useState<string | null>(null);
   const [approvalSuccess, setApprovalSuccess] = useState<{ employeeCode: string; employeeName: string } | null>(null);
   const [remarks, setRemarks]         = useState<Record<string, string>>({});
+  const [query, setQuery]             = useState('');
+
+  // Client-side filter: the queue is a handful of rows, so a round trip per
+  // keystroke would be slower and no more correct.
+  const q = query.trim().toLowerCase();
+  const visibleOffers = !q ? offers : offers.filter((o) =>
+    [o.full_name, o.candidate_code, o.branch_name, o.cost_centre_code, o.client_name,
+     o.process_name, o.process_raw, o.emp_type, o.salary_band]
+      .some((f) => String(f ?? '').toLowerCase().includes(q)));
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -288,10 +390,16 @@ export default function NativeBranchHeadApproval() {
 
   return (
     <DashboardLayout>
-      <div className="p-6 space-y-4">
-        <div className="flex items-center justify-between gap-4">
-          <h1 className="text-3xl font-black tracking-tight text-slate-950">Offer Approvals</h1>
-          <Button variant="outline" size="sm" onClick={load} disabled={loading} aria-label="Refresh offer list" className="min-h-[44px]">
+      <div className="space-y-5 p-6">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <h1 className="text-2xl font-bold tracking-tight text-slate-900">Offer Approvals</h1>
+            <p className="mt-1 text-sm text-slate-500">
+              Salaries validated by Payroll HR, waiting on your decision. Select a row to see the
+              candidate's full journey.
+            </p>
+          </div>
+          <Button variant="outline" size="sm" onClick={load} disabled={loading} aria-label="Refresh offer list" className="min-h-[44px] cursor-pointer">
             <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} aria-hidden="true" />
             <span className="ml-2">Refresh</span>
           </Button>
@@ -403,36 +511,77 @@ export default function NativeBranchHeadApproval() {
             )}
 
             {tab === 'pending' && offers.length > 0 && (
-              <div className="rounded-lg border border-slate-200 bg-white overflow-x-auto">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Candidate</TableHead>
-                      <TableHead>Branch & Type</TableHead>
-                      <TableHead>Joining Date</TableHead>
-                      <TableHead>Salary Band</TableHead>
-                      <TableHead className="text-right">Monthly CTC</TableHead>
-                      <TableHead className="text-right">Gross</TableHead>
-                      <TableHead className="text-right">Net in Hand</TableHead>
-                      <TableHead>Mobile</TableHead>
-                      <TableHead>Remarks</TableHead>
-                      <TableHead>Actions</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {offers.map(o => (
-                      <OfferRow
-                        key={o.offer_id}
-                        offer={o}
-                        acting={acting}
-                        onAct={act}
-                        remark={remarks[o.offer_id] || ''}
-                        onRemarkChange={handleRemarkChange}
-                        onOpenJourney={openJourney}
-                      />
-                    ))}
-                  </TableBody>
-                </Table>
+              <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+                {/* Toolbar: what is in the table, and a way to cut it down. */}
+                <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 px-4 py-3">
+                  <p className="text-sm text-slate-500">
+                    <span className="font-semibold text-slate-900">{visibleOffers.length}</span>
+                    {visibleOffers.length === offers.length
+                      ? ` offer${offers.length === 1 ? '' : 's'} awaiting your approval`
+                      : ` of ${offers.length} shown`}
+                  </p>
+                  <div className="relative w-full sm:w-72">
+                    <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" aria-hidden="true" />
+                    <Input
+                      value={query}
+                      onChange={(e) => setQuery(e.target.value)}
+                      placeholder="Filter by name, code, branch, cost centre…"
+                      aria-label="Filter pending approvals"
+                      className="h-9 pl-8 text-sm"
+                    />
+                  </div>
+                </div>
+
+                <div className="overflow-x-auto">
+                  <Table>
+                    <TableHeader className="[&_tr]:border-slate-200">
+                      <TableRow className="bg-slate-50 hover:bg-slate-50">
+                        {[
+                          ['Candidate', 'sticky left-0 z-20 bg-slate-50'],
+                          ['Branch & Type', ''],
+                          ['Cost Centre', ''],
+                          ['Process', ''],
+                          ['Joining', ''],
+                          ['Band', ''],
+                          ['Monthly CTC', 'text-right'],
+                          ['Gross', 'text-right'],
+                          ['Net in Hand', 'text-right'],
+                          ['Remarks', ''],
+                          ['Actions', 'sticky right-0 z-20 bg-slate-50'],
+                        ].map(([label, cls]) => (
+                          <TableHead
+                            key={label}
+                            className={`h-10 whitespace-nowrap text-[11px] font-semibold uppercase tracking-wider text-slate-500 ${cls}`}
+                          >
+                            {label}
+                          </TableHead>
+                        ))}
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {visibleOffers.map(o => (
+                        <OfferRow
+                          key={o.offer_id}
+                          offer={o}
+                          acting={acting}
+                          onAct={act}
+                          remark={remarks[o.offer_id] || ''}
+                          onRemarkChange={handleRemarkChange}
+                          onOpenJourney={openJourney}
+                        />
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+
+                {visibleOffers.length === 0 && (
+                  <div className="px-4 py-12 text-center">
+                    <p className="text-sm font-medium text-slate-700">No offer matches “{query}”</p>
+                    <Button variant="outline" size="sm" className="mt-3 cursor-pointer" onClick={() => setQuery('')}>
+                      Clear filter
+                    </Button>
+                  </div>
+                )}
               </div>
             )}
           </>

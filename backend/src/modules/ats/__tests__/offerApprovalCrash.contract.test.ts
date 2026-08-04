@@ -31,14 +31,21 @@ import { isLateralFromExperienceLabel } from "../bgv-config.js";
 const read = (p: string) => readFileSync(resolve(process.cwd(), p), "utf8");
 
 /**
- * Source with comments removed. The phantom columns have to stay nameable in
- * prose — the comment explaining why they are gone names all three — so only
- * executable code may be scanned for them.
+ * Source with comments removed — JS block, JS line, and SQL line comments,
+ * the last because the queries here are template literals carrying their own
+ * `--` commentary.
+ *
+ * The phantom columns have to stay nameable in prose: the comments explaining
+ * why each one is gone name all of them. Only executable code may be scanned.
  */
 const codeOnly = (src: string) =>
-  src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+  src
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/^\s*\/\/.*$/gm, "")
+    .replace(/^\s*--.*$/gm, "");
 
 const readiness = codeOnly(read("src/modules/ats/bgv-readiness.service.ts"));
+const orchestratorCode = codeOnly(read("src/modules/employees/employee-creation-orchestrator.service.ts"));
 const orchestrator = read("src/modules/employees/employee-creation-orchestrator.service.ts");
 const onboarding = read("src/modules/ats/ats.onboarding.service.ts");
 
@@ -56,6 +63,43 @@ describe("BGV readiness reads columns that exist", () => {
 
   it("reads ats_candidate.experience, the column that is actually there", () => {
     expect(readiness).toMatch(/SELECT c\.experience FROM ats_candidate/);
+  });
+
+  it("does not filter ats_candidate_documents on deleted_at", () => {
+    // That table does not soft-delete and has no deleted_at column, so the
+    // filter was ER_BAD_FIELD_ERROR on every readiness check.
+    expect(readiness).not.toMatch(/deleted_at/);
+  });
+});
+
+/**
+ * The rest of the approval path, swept query by query against the live schema
+ * on 2026-08-04. Fixing only the first missing column just moved the 500 one
+ * query further along -- c.fresher, then p.pan_number -- so all of them are
+ * pinned here.
+ */
+describe("the rest of the approval path reads columns that exist", () => {
+  it("validateStatutoryInfo takes PAN and Aadhaar from the candidate only", () => {
+    // candidate_onboarding_profile has no pan_number / aadhar_number. It stores
+    // pan_number_masked, pan_number_hash, pan_number_encrypted and
+    // aadhaar_number_masked -- and a masked value would be worse than none,
+    // because it passes the format check and cannot be filed.
+    expect(orchestratorCode).not.toMatch(/p\.pan_number/);
+    expect(orchestratorCode).not.toMatch(/p\.aadhar_number/);
+    expect(orchestratorCode).toMatch(/SELECT c\.pan_number,\s*c\.aadhar_number/);
+  });
+
+  it("never reads a masked identifier as if it were the real one", () => {
+    for (const masked of ["pan_number_masked", "aadhaar_number_masked", "pan_number_hash"]) {
+      expect(orchestratorCode, `orchestrator reads ${masked}`).not.toMatch(new RegExp(masked));
+    }
+  });
+
+  it("takes the Payroll HR name from employees, not auth_user", () => {
+    // auth_user is (id, email, password_hash, ...) -- it has no full_name, so
+    // this threw and no Payroll HR was ever told a joining pack was ready.
+    expect(orchestratorCode).not.toMatch(/u\.full_name/);
+    expect(orchestratorCode).toMatch(/SELECT u\.email, e\.full_name/);
   });
 });
 
