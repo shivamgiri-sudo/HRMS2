@@ -1,7 +1,10 @@
 import type { RowDataPacket } from "mysql2";
 import { queryRows, tableExists } from "../../shared/dbHelpers.js";
 import { canonicalPnlService } from "./canonical-pnl.service.js";
-import { getDriverRevenueActuals, getIndirectCostActuals, type ActualsByKey } from "./pnl-actuals.service.js";
+import {
+  getDriverRevenueActuals, getIndirectCostActuals, getInvoicedRevenueActuals, getSeatRevenueActuals,
+  type ActualsByKey, type SeatRevenueActuals,
+} from "./pnl-actuals.service.js";
 import { getRunningPeopleCost, type PeopleCostByKey } from "./pnl-running-salary.service.js";
 import { processLobService } from "./process-lob.service.js";
 import type { BpoPnlRow } from "./bpo-pnl.service.js";
@@ -173,6 +176,8 @@ function enrichColumn(
   key: { branchId?: string | null; processId?: string | null },
   idc: ActualsByKey,
   revenue: ActualsByKey,
+  invoicedRevenue: ActualsByKey,
+  seat: SeatRevenueActuals,
   people: PeopleCostByKey,
   periodOpen: boolean
 ): Record<string, unknown> {
@@ -182,10 +187,54 @@ function enrichColumn(
     ?? 0;
 
   const out = { ...data };
-  // Revenue comes from the drivers unless the row already carries a recognised figure.
+
+  /*
+   * Revenue: what was invoiced for a CLOSED period, what was planned for an OPEN one.
+   *
+   * Same reasoning as people cost below. planned_headcount x revenue_rate_per_head is a
+   * budgeting figure — it exists for only three periods in production (2026-07/08/09) while
+   * real invoicing runs from April, and its July value of Rs 119 lakh does not match the
+   * Rs 77.05 lakh actually billed. Once a month closes, what the client was invoiced is the
+   * answer and nothing needs estimating.
+   *
+   * Mid-month the reverse holds: invoicing lags delivery, so July showed Rs 77 lakh against a
+   * Rs 325-372 lakh run rate. Using it live would report a collapse that is really just an
+   * unfinished billing cycle, so an open period keeps the planned figure.
+   *
+   * Both are published either way — contracted against earned is the seat-shortfall view, and
+   * a reader cannot judge one without seeing the other.
+   */
+  const plannedRevenue = pick(revenue);
+  const invoiced = pick(invoicedRevenue);
   const existingRevenue = n(out.recognizedRevenue);
-  const recognizedRevenue = existingRevenue > 0 ? existingRevenue : pick(revenue);
+  const recognizedRevenue = existingRevenue > 0
+    ? existingRevenue
+    : (!periodOpen && invoiced > 0 ? invoiced : plannedRevenue);
   out.recognizedRevenue = recognizedRevenue;
+  out.plannedRevenue = plannedRevenue;
+  out.invoicedRevenue = invoiced;
+  out.revenueBasis = existingRevenue > 0
+    ? "row"
+    : (!periodOpen && invoiced > 0 ? "invoiced" : "planned");
+
+  /*
+   * Seat revenue: what the billable people actually on the floor are worth, as against the
+   * planned seat count. The gap between them is the seat shortfall — unfilled seats — which no
+   * per-head rate can reveal on its own.
+   *
+   * The shortfall is published ONLY where every billable person in the column resolved to a
+   * rate. Rates exist for 7 cost centres out of ~95 trading today, so a blanket subtraction
+   * would report about Rs 290 lakh of "lost revenue" that is really unconfigured rates. Where
+   * the count is non-zero the shortfall is null and the count is shown instead, so the reader
+   * sees an incomplete setup rather than a fictitious loss.
+   */
+  const seatEarned = pick(seat);
+  const seatRateMissing = pick(seat.rateMissingByKey);
+  out.seatRevenueEarned = seatEarned;
+  out.seatRateMissingEmployees = seatRateMissing;
+  out.seatShortfall = seatRateMissing === 0 && plannedRevenue > 0 && seatEarned > 0
+    ? plannedRevenue - seatEarned
+    : null;
 
   /*
    * People cost: the snapshot for an OPEN period, actual payroll for a CLOSED one.
@@ -267,6 +316,8 @@ export interface StatementDependencies {
    *  they fall back to the live readers. */
   getIndirectCost?: (period: string) => Promise<ActualsByKey>;
   getDriverRevenue?: (period: string) => Promise<ActualsByKey>;
+  getInvoicedRevenue?: (period: string) => Promise<ActualsByKey>;
+  getSeatRevenue?: (period: string) => Promise<SeatRevenueActuals>;
   getPeopleCost?: (period: string) => Promise<PeopleCostByKey>;
 }
 
@@ -276,6 +327,8 @@ const defaultDependencies: StatementDependencies = {
   getProcessSummary: (processId, period) => processLobService.getProcessSummary(processId, period),
   getIndirectCost: (period) => getIndirectCostActuals(period),
   getDriverRevenue: (period) => getDriverRevenueActuals(period),
+  getInvoicedRevenue: (period) => getInvoicedRevenueActuals(period),
+  getSeatRevenue: (period) => getSeatRevenueActuals(period),
   getPeopleCost: (period) => getRunningPeopleCost(period),
 };
 
@@ -319,9 +372,11 @@ export async function getStatement(
   // Resolved once for the whole statement: every column in it belongs to the same period, and
   // deciding per column would let two columns of one report use different cost sources.
   const periodOpen = isOpenPeriod(periodCode);
-  const [idc, revenue, people] = await Promise.all([
+  const [idc, revenue, invoicedRevenue, seat, people] = await Promise.all([
     (deps.getIndirectCost ?? getIndirectCostActuals)(periodCode),
     (deps.getDriverRevenue ?? getDriverRevenueActuals)(periodCode),
+    (deps.getInvoicedRevenue ?? getInvoicedRevenueActuals)(periodCode),
+    (deps.getSeatRevenue ?? getSeatRevenueActuals)(periodCode),
     (deps.getPeopleCost ?? getRunningPeopleCost)(periodCode),
   ]);
   columnData = columnData.map((item) => {
@@ -333,6 +388,8 @@ export async function getStatement(
       },
       idc,
       revenue,
+      invoicedRevenue,
+      seat,
       people,
       periodOpen
     );

@@ -65,7 +65,7 @@ const PROCESS_FROM_EMPLOYEES = `
  *
  * Identical result: same GROUP BY, same ORDER BY COUNT(*) DESC, same tie-break by LIMIT 1.
  */
-const PROCESS_BY_COST_CENTRE = `
+export const PROCESS_BY_COST_CENTRE = `
   (SELECT x.cost_centre_id, x.process_id FROM (
      SELECT e.cost_centre_id, e.process_id,
             ROW_NUMBER() OVER (PARTITION BY e.cost_centre_id ORDER BY COUNT(*) DESC) rn
@@ -210,8 +210,144 @@ export async function getInvoicedRevenueActuals(periodCode: string): Promise<Act
   return accumulate(rows);
 }
 
+/**
+ * Seat revenue actually earned in a period: what the client owes for the people who really
+ * worked, as against `planned_headcount x rate`, which is what we hoped to bill.
+ *
+ * The difference between the two is the seat shortfall — unfilled or part-filled seats — and it
+ * is the number the whole billability model exists to expose. A seat budgeted at 30 heads and
+ * staffed by 26 for half a month is not a rate problem, and no per-head rate will reveal it.
+ *
+ * WHY THIS IS ONE QUERY AND NOT resolveSeatRate() IN A LOOP
+ * --------------------------------------------------------
+ * billability.service.ts resolves one employee at a time and issues up to four queries doing it.
+ * Over the ~1,400 people paid in a month that is ~5,600 round trips per period, and the statement
+ * asks for several periods at once. The precedence encoded below is the same four levels in the
+ * same order; `seat-revenue.precedence.test.ts` drives both paths over identical fixtures so the
+ * two cannot drift apart silently.
+ *
+ * WHAT IS DELIBERATELY EXCLUDED
+ * -----------------------------
+ * - `billing_model = 'not_seat_billed'` cost centres. Roughly 70% of active cost centres bill on
+ *   outcome or volume, not seats (db_bill `cost_master.Billing = 0` on 408 of 579 active). A seat
+ *   figure for them would be arithmetic without meaning, so they contribute zero here and their
+ *   revenue comes from the invoice mirror instead.
+ * - Anyone the classifier cannot place. Billability comes from the approved (process x designation)
+ *   matrix, falling back to the period's cost bucket. An employee in neither is `unresolved` and
+ *   earns nothing here rather than defaulting to billable — counted in `unresolvedEmployees` so the
+ *   gap is reported instead of absorbed.
+ *
+ * Proration is `final_payable_days / active_calendar_days`, the same basis payroll paid them on, so
+ * a mid-month joiner bills a part seat. Capped at 1: overtime does not create extra seats.
+ */
+export interface SeatRevenueActuals extends ActualsByKey {
+  /** Billable people who resolved to a rate, and the seats they add up to. */
+  billableEmployees: number;
+  /** Billable, but no rate at any level — revenue silently missing until finance sets one. */
+  rateMissingEmployees: number;
+  /** Neither the matrix nor a cost bucket could classify these. Never assumed billable. */
+  unresolvedEmployees: number;
+  /** Sits on cost centres billed on outcome/volume, where a seat figure has no meaning. */
+  notSeatBilledEmployees: number;
+  /**
+   * Count of rate-missing billable people per key, not rupees.
+   *
+   * Carried per key because the seat shortfall is only meaningful where every billable person
+   * resolved a rate. Live coverage today is 7 cost centres out of ~95 active, so a global
+   * "contracted minus earned" would report roughly Rs 290 lakh of lost revenue that is really
+   * just unconfigured rates. A consumer must publish the shortfall only where this is zero.
+   */
+  rateMissingByKey: ActualsByKey;
+}
+
+const emptySeatRevenue = (): SeatRevenueActuals => ({
+  ...emptyActuals(),
+  billableEmployees: 0,
+  rateMissingEmployees: 0,
+  unresolvedEmployees: 0,
+  notSeatBilledEmployees: 0,
+  rateMissingByKey: emptyActuals(),
+});
+
+/** Latest approved row per (cost centre, designation) as of the period end, designation-specific
+ *  ahead of flat — the same ordering resolveSeatRate applies with its LIMIT 1. */
+const SEAT_RATE_RANKED = `(
+  SELECT cost_centre_id, designation_id, seat_rate_monthly, billing_model,
+         ROW_NUMBER() OVER (
+           PARTITION BY cost_centre_id, COALESCE(designation_id, '~flat')
+           ORDER BY effective_from DESC
+         ) AS rn
+    FROM cost_centre_seat_rate
+   WHERE status = 'approved'
+     AND effective_from <= ? AND (effective_to IS NULL OR effective_to >= ?)
+)`;
+
+export async function getSeatRevenueActuals(periodCode: string): Promise<SeatRevenueActuals> {
+  if (!/^\d{4}-\d{2}$/.test(periodCode)) return emptySeatRevenue();
+  for (const table of ["cost_centre_seat_rate", "salary_prep_line", "pnl_running_salary_snapshot"]) {
+    if (!(await tableExists(table))) return emptySeatRevenue();
+  }
+  // Rates are resolved as of the last day of the period, so a rate signed mid-month applies to
+  // the month it was signed for rather than to whenever this happens to be run.
+  const [year, month] = periodCode.split("-").map(Number);
+  const periodEnd = new Date(Date.UTC(year, month, 0)).toISOString().slice(0, 10);
+
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT e.branch_id AS branch_id, e.process_id AS process_id, e.cost_centre_id AS cost_centre_id,
+            COALESCE(m.is_billable, CASE WHEN snap.pnl_bucket = 'agent_salary' THEN 1
+                                         WHEN snap.pnl_bucket IS NOT NULL THEN 0 END) AS is_billable,
+            COALESCE(ovr.seat_rate_monthly, ccd.seat_rate_monthly, ccf.seat_rate_monthly,
+                     m.seat_rate_monthly, drv.revenue_rate_per_head) AS rate,
+            COALESCE(ccd.billing_model, ccf.billing_model) AS billing_model,
+            LEAST(1, GREATEST(0, COALESCE(l.final_payable_days, 0)
+                                 / NULLIF(l.active_calendar_days, 0))) AS proration
+       FROM salary_prep_line l
+       JOIN salary_prep_run r ON r.id = l.run_id AND r.run_month = ?
+       JOIN employees e ON e.id = l.employee_id
+       LEFT JOIN pnl_running_salary_snapshot snap
+              ON snap.employee_id = e.id AND snap.period_code = ?
+       LEFT JOIN process_role_billability m
+              ON m.process_id = e.process_id AND m.designation_id = e.designation_id
+             AND m.status = 'approved'
+             AND m.effective_from <= ? AND (m.effective_to IS NULL OR m.effective_to >= ?)
+       LEFT JOIN employee_seat_rate_override ovr
+              ON ovr.employee_id = e.id AND ovr.status = 'approved'
+             AND ovr.effective_from <= ? AND (ovr.effective_to IS NULL OR ovr.effective_to >= ?)
+       LEFT JOIN ${SEAT_RATE_RANKED} ccd
+              ON ccd.cost_centre_id = e.cost_centre_id
+             AND ccd.designation_id = e.designation_id AND ccd.rn = 1
+       LEFT JOIN ${SEAT_RATE_RANKED} ccf
+              ON ccf.cost_centre_id = e.cost_centre_id
+             AND ccf.designation_id IS NULL AND ccf.rn = 1
+       LEFT JOIN finance_cost_centre_monthly_driver drv
+              ON drv.cost_centre_id = e.cost_centre_id AND drv.period_code = ?
+             AND drv.revenue_rate_per_head > 0`,
+    [periodCode, periodCode, periodEnd, periodEnd, periodEnd, periodEnd,
+     periodEnd, periodEnd, periodEnd, periodEnd, periodCode]
+  );
+
+  const out = emptySeatRevenue();
+  const earned: RowDataPacket[] = [];
+  for (const row of rows) {
+    if (row.is_billable === null || row.is_billable === undefined) { out.unresolvedEmployees++; continue; }
+    if (Number(row.is_billable) !== 1) continue;
+    if (row.billing_model === "not_seat_billed") { out.notSeatBilledEmployees++; continue; }
+    const rate = Number(row.rate ?? 0);
+    if (!(rate > 0)) {
+      out.rateMissingEmployees++;
+      accumulate([{ ...row, amount: 1 } as RowDataPacket], out.rateMissingByKey);
+      continue;
+    }
+    out.billableEmployees++;
+    earned.push({ ...row, amount: rate * Number(row.proration ?? 0) } as RowDataPacket);
+  }
+  accumulate(earned, out);
+  return out;
+}
+
 export const pnlActualsService = {
   getIndirectCostActuals,
   getDriverRevenueActuals,
   getInvoicedRevenueActuals,
+  getSeatRevenueActuals,
 };

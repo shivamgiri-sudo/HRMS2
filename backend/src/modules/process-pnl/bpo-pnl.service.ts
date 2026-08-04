@@ -14,6 +14,7 @@ import {
   type RevenueComponentInput,
   type RevenueRuleInput,
 } from "./bpo-pnl.calculation.js";
+import { PROCESS_BY_COST_CENTRE } from "./pnl-actuals.service.js";
 import { processPnlService } from "./process-pnl.service.js";
 import type { PnlQueryFilters, ProcessPnlRecord } from "./process-pnl.types.js";
 
@@ -675,6 +676,45 @@ export function allocateBranchPools<T extends { amount: number }>(
   return result;
 }
 
+/**
+ * Approved per-employee cost-centre splits for the period, resolved to PROCESSES.
+ *
+ * Support staff who serve several cost centres are pooled at branch level today and spread by
+ * the allocation driver, which is a reasonable guess and nothing more. Where finance has
+ * recorded what someone actually splits across, the guess should not be used at all.
+ *
+ * The cost centre is mapped to a process by the same modal-employee rule the actuals use
+ * (cost_centre_master.process_id is NULL on all 927 rows, so there is no FK to follow). A share
+ * pointing at a cost centre with no derivable process is dropped HERE and left in the branch
+ * pool by the caller, because posting it nowhere would quietly delete salary.
+ */
+async function getApprovedCostCentreSplits(
+  period: string
+): Promise<Map<string, { processId: string; pct: number }[]>> {
+  const splits = new Map<string, { processId: string; pct: number }[]>();
+  if (!(await tableExists("employee_cost_centre_allocation"))) return splits;
+  const [year, month] = period.split("-").map(Number);
+  if (!year || !month) return splits;
+  const periodEnd = new Date(Date.UTC(year, month, 0)).toISOString().slice(0, 10);
+
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT a.employee_id, a.allocation_pct, pc.process_id
+       FROM employee_cost_centre_allocation a
+       LEFT JOIN ${PROCESS_BY_COST_CENTRE} pc ON pc.cost_centre_id = a.cost_centre_id
+      WHERE a.status = 'approved'
+        AND a.effective_from <= ? AND (a.effective_to IS NULL OR a.effective_to >= ?)`,
+    [periodEnd, periodEnd]
+  );
+  for (const row of rows) {
+    if (!row.process_id) continue;
+    const key = String(row.employee_id);
+    const list = splits.get(key) ?? [];
+    list.push({ processId: String(row.process_id), pct: toNumber(row.allocation_pct) });
+    splits.set(key, list);
+  }
+  return splits;
+}
+
 async function getPeopleCosts(
   baseRows: ProcessPnlRecord[],
   period: string,
@@ -683,7 +723,11 @@ async function getPeopleCosts(
 ) {
   const processMap = new Map<string, PeopleCostMeta>();
   const branchPool = new Map<string, { amount: number; headcount: number }>();
-  const [people, rules] = await Promise.all([getPayrollPeople(period), getClassificationRules(period)]);
+  const [people, rules, splits] = await Promise.all([
+    getPayrollPeople(period), getClassificationRules(period), getApprovedCostCentreSplits(period),
+  ]);
+  /** BMC cost posted straight to a process by an approved split, bypassing the branch pool. */
+  const directBmcByProcess = new Map<string, number>();
 
   for (const person of people) {
     const cost = toNumber(person.loaded_cost);
@@ -711,12 +755,57 @@ async function getPeopleCosts(
       continue;
     }
 
-    if (bucket === "bmc_people" && person.branch_id) {
-      const key = String(person.branch_id);
-      const current = branchPool.get(key) ?? { amount: 0, headcount: 0 };
-      current.amount += cost;
-      current.headcount += 1;
-      branchPool.set(key, current);
+    if (bucket === "bmc_people") {
+      /*
+       * PEEL BEFORE POOLING. Anyone with an approved split is posted directly and must NOT also
+       * enter the branch pool, or their cost is counted twice — once directly and again as a
+       * share of the pool. The two paths are disjoint by construction, which is what keeps
+       * total people cost identical whether or not splits exist.
+       *
+       * allocatePoolAmount does the arithmetic so the shares reconcile to the paisa, and it
+       * deliberately does not renormalise an unbalanced set: if finance approved rows summing to
+       * 90%, the missing 10% surfaces as a warning and the remainder stays in the pool rather
+       * than being silently inflated to make the total look right.
+       */
+      const split = splits.get(String(person.employee_id));
+      if (split && split.length > 0) {
+        const outcome = allocatePoolAmount(
+          cost,
+          split.map((s) => ({ key: s.processId, weight: s.pct })),
+          "manual_percentage"
+        );
+        let posted = 0;
+        for (const [processId, amount] of outcome.amounts.entries()) {
+          directBmcByProcess.set(processId, (directBmcByProcess.get(processId) ?? 0) + amount);
+          posted += amount;
+        }
+        if (!outcome.balanced && warnings) {
+          // The employee id travels in poolType because ManualAllocationWarning has no field for
+          // it; without that the reader gets a percentage and no way to find whose split is wrong.
+          warnings.push({
+            branchId: person.branch_id ? String(person.branch_id) : "",
+            poolType: `bmc_people_split:${person.employee_id}`,
+            percentTotal: outcome.percentTotal ?? 0,
+          });
+        }
+        // Whatever the split did not cover falls back to the pool; nothing is dropped.
+        const remainder = cost - posted;
+        if (Math.abs(remainder) > 0.005 && person.branch_id) {
+          const key = String(person.branch_id);
+          const current = branchPool.get(key) ?? { amount: 0, headcount: 0 };
+          current.amount += remainder;
+          branchPool.set(key, current);
+        }
+        continue;
+      }
+
+      if (person.branch_id) {
+        const key = String(person.branch_id);
+        const current = branchPool.get(key) ?? { amount: 0, headcount: 0 };
+        current.amount += cost;
+        current.headcount += 1;
+        branchPool.set(key, current);
+      }
     }
   }
 
@@ -740,9 +829,14 @@ async function getPeopleCosts(
     processMap.set(row.processId, current);
   }
 
+  const bmcPeopleByProcess = allocateBranchPools(baseRows, branchPool, policies, "bmc_people", warnings);
+  for (const [processId, amount] of directBmcByProcess.entries()) {
+    bmcPeopleByProcess.set(processId, (bmcPeopleByProcess.get(processId) ?? 0) + amount);
+  }
+
   return {
     processMap,
-    bmcPeopleByProcess: allocateBranchPools(baseRows, branchPool, policies, "bmc_people", warnings),
+    bmcPeopleByProcess,
     branchPool,
     people,
   };

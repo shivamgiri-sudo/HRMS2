@@ -466,6 +466,7 @@ const MIGRATION_MANIFEST: string[] = [
   "1068_celebration_post_type.sql", // supersedes 1064 with the same additive columns/index, written with the guarded INFORMATION_SCHEMA + PREPARE/EXECUTE pattern this server's MySQL actually accepts
   "1069_db_bill_budget_grn_snapshot.sql",
   "1070_db_bill_expense_particulars.sql", // the budget and GRN LINE tables — expense_entry_particular carries CostCenterId, which is the only place cost is attributed below branch; expense_particular records each budget amount twice, so expense_type must be filtered when aggregating // db_bill is the live finance system and mas_hrms mirrored none of its budget (18,433 rows), GRN (85,463) or invoice line items (21,055) — the last of which carry the cost-centre-wise seat rate the P&L needs
+  "1071_pnl_revenue_basis_components.sql", // the statement renders only what finance_pnl_component_master lists, so invoicedRevenue/plannedRevenue/seatRevenueEarned/seatShortfall were computed on every request and dropped before any reader saw them
   ];
 
 export type MigrationHealth = {
