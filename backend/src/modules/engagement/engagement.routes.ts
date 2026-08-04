@@ -157,8 +157,12 @@ router.get("/mention-search", h(async (req: AuthenticatedRequest, res: Response)
   const { db } = await import("../../db/mysql.js");
   const like = `%${q}%`;
   const [rows] = await db.execute(
-    `SELECT e.id, e.full_name, e.employee_code, e.designation
+    // `employees` has no `designation` column — it holds designation_id, with the
+    // name on designation_master. Selecting it raised ER_BAD_FIELD_ERROR, so this
+    // employee search returned 500 rather than results.
+    `SELECT e.id, e.full_name, e.employee_code, dm.designation_name AS designation
        FROM employees e
+       LEFT JOIN designation_master dm ON dm.id = e.designation_id
        WHERE e.active_status = 1
          AND (e.full_name LIKE ? OR e.employee_code LIKE ?)
        ORDER BY e.full_name ASC
