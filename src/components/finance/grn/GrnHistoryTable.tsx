@@ -1,10 +1,27 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Clock, FileClock, RefreshCw, Search } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { Clock, RefreshCw } from "lucide-react";
 import { hrmsApi } from "@/lib/hrmsApi";
-import { StatusStamp, type StampTone } from "@/components/finance/grn/StatusStamp";
+import { StatusStamp } from "@/components/finance/grn/StatusStamp";
+import {
+  dateTimeLabel,
+  grnStatusTone,
+  labelStatus,
+  money,
+} from "@/components/finance/grn/grn-format";
+import {
+  GRN_TR,
+  GrnCard,
+  GrnCardHeader,
+  GrnCellSub,
+  GrnChip,
+  GrnEmptyState,
+  GrnIconButton,
+  GrnSearchInput,
+  GrnTable,
+  GrnTd,
+  GrnTh,
+} from "@/components/finance/grn/grn-ui";
 
 type GrnHistoryRow = {
   id: string;
@@ -25,6 +42,8 @@ type GrnHistoryRow = {
   rejection_reason?: string | null;
 };
 
+/** Longer than the redesign mock's six chips on purpose: every entry past "Rejected" is a real
+ *  backend status, and dropping one removes the only way to filter for it. */
 const STATUS_TABS = [
   ["_all", "All"],
   ["draft", "Draft"],
@@ -40,53 +59,17 @@ const STATUS_TABS = [
   ["consumption_reversed", "Consumption Reversed"],
 ] as const;
 
-function labelStatus(value: string) {
-  return value.replace(/_/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
-}
-
-function statusTone(status: string): StampTone {
-  if (["paid", "approved", "pending_accounts_payment", "payment_scheduled", "partially_paid"].includes(status)) {
-    return "ok";
-  }
-  if (["rejected", "cancelled"].includes(status)) return "crit";
-  if (status === "consumption_reversed") return "info";
-  if (["submitted", "branch_head_approved"].includes(status)) return "warn";
-  return "neutral";
-}
-
-function money(value: unknown) {
-  return new Intl.NumberFormat("en-IN", {
-    style: "currency",
-    currency: "INR",
-    maximumFractionDigits: 0,
-  }).format(Number(value ?? 0));
-}
-
-/** Date + time, unlike the date-only labels used elsewhere in this module — the point of this
- *  view is exactly the timestamps, not just the day. */
-function dateTimeLabel(value: unknown) {
-  if (!value) return null;
-  const date = new Date(String(value).replace(" ", "T"));
-  if (Number.isNaN(date.getTime())) return null;
-  return date.toLocaleString("en-IN", {
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-}
-
-/** A stage cell: who, and when — or an em dash once it's clear the stage was never reached. */
+/** A stage cell: who, and when — or an em dash once it's clear the stage was never reached.
+ *  "Pending" and "—" are not interchangeable: one is waiting, the other never will be. */
 function StageCell({ name, at, reachable }: { name?: string | null; at?: string | null; reachable: boolean }) {
   const when = dateTimeLabel(at);
   if (!when) {
-    return <span className="text-slate-400">{reachable ? "Pending" : "—"}</span>;
+    return <span className="text-grn-ink-soft">{reachable ? "Pending" : "—"}</span>;
   }
   return (
     <div>
-      <p className="font-medium text-slate-800">{name?.trim() || "—"}</p>
-      <p className="text-[11px] text-slate-500">{when}</p>
+      <p className="font-semibold text-grn-ink">{name?.trim() || "—"}</p>
+      <GrnCellSub>{when}</GrnCellSub>
     </div>
   );
 }
@@ -108,108 +91,100 @@ export function GrnHistoryTable() {
   const rows = listQuery.data ?? [];
 
   return (
-    <div className="space-y-4 p-4">
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-        <div>
-          <h2 className="flex items-center gap-2 text-base font-bold text-slate-950">
-            <FileClock className="h-4 w-4 text-slate-400" />GRN History
-          </h2>
-          <p className="mt-1 text-xs text-slate-500">Every GRN with its full approval timeline — raised, Branch Head decision, Finance Head decision.</p>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <div className="relative">
-            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-            <Input className="w-56 pl-9" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search GRN, vendor, Head…" />
-          </div>
-          <Button variant="outline" size="icon" onClick={() => void listQuery.refetch()}>
-            <RefreshCw className={`h-4 w-4 ${listQuery.isFetching ? "animate-spin" : ""}`} />
-          </Button>
-        </div>
+    <GrnCard>
+      <GrnCardHeader
+        title="GRN History"
+        description="Every GRN with its full approval timeline — raised, Branch Head decision, Finance Head decision."
+      />
+
+      <div className="flex flex-wrap items-center gap-2 px-4 py-3">
+        <GrnSearchInput
+          value={search}
+          onChange={(event) => setSearch(event.target.value)}
+          placeholder="Search GRN, vendor, head or description"
+        />
+        <GrnIconButton onClick={() => void listQuery.refetch()} title="Refresh" aria-label="Refresh">
+          <RefreshCw className={`h-3.5 w-3.5 ${listQuery.isFetching ? "animate-spin" : ""}`} />
+        </GrnIconButton>
       </div>
 
-      <div className="flex flex-wrap gap-1.5">
+      <div className="flex flex-wrap gap-1.5 border-b border-grn-line-soft px-4 pb-3">
         {STATUS_TABS.map(([value, label]) => (
-          <button
-            type="button"
-            key={value}
-            onClick={() => setStatus(value)}
-            className={`rounded-full border px-3 py-1.5 text-xs font-semibold transition-colors ${status === value ? "border-[#073f78] bg-[#073f78] text-white" : "border-slate-200 bg-white text-slate-600 hover:border-[#073f78]/40 hover:text-[#073f78]"}`}
-          >
+          <GrnChip key={value} active={status === value} onClick={() => setStatus(value)}>
             {label}
-          </button>
+          </GrnChip>
         ))}
       </div>
 
       {listQuery.isLoading ? (
-        <div className="flex justify-center rounded-xl border border-slate-200 bg-white py-20">
-          <RefreshCw className="h-6 w-6 animate-spin text-slate-400" />
+        <div className="flex justify-center py-20">
+          <RefreshCw className="h-6 w-6 animate-spin text-grn-ink-soft" />
         </div>
       ) : !rows.length ? (
-        <div className="rounded-xl border border-slate-200 bg-white py-16 text-center">
-          <Clock className="mx-auto h-10 w-10 text-slate-300" />
-          <p className="mt-3 text-sm font-semibold text-slate-700">No GRNs match the filters</p>
-        </div>
+        <GrnEmptyState icon={<Clock className="h-9 w-9" />} title="No GRNs match the filters" />
       ) : (
-        <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
-          <table className="w-full min-w-[1080px] text-xs">
-            <thead className="sticky top-0 bg-white">
-              <tr className="border-b">
-                <th className="h-8 px-3 text-left font-medium text-slate-500">GRN</th>
-                <th className="h-8 px-3 text-left font-medium text-slate-500">Branch / Vendor</th>
-                <th className="h-8 px-3 text-right font-medium text-slate-500">Amount</th>
-                <th className="h-8 px-3 text-left font-medium text-slate-500">Status</th>
-                <th className="h-8 px-3 text-left font-medium text-slate-500">Raised</th>
-                <th className="h-8 px-3 text-left font-medium text-slate-500">Branch Head</th>
-                <th className="h-8 px-3 text-left font-medium text-slate-500">Finance Head</th>
+        // Header is not sticky: with the page in document flow there is no scrolling ancestor for
+        // it to stick inside, so it would only paint an extra layer.
+        <GrnTable minWidth={1080}>
+          <thead>
+            <tr>
+              <GrnTh sticky={false}>GRN</GrnTh>
+              <GrnTh sticky={false}>Branch / Vendor</GrnTh>
+              <GrnTh sticky={false} align="right">Amount</GrnTh>
+              <GrnTh sticky={false}>Status</GrnTh>
+              <GrnTh sticky={false}>Raised</GrnTh>
+              <GrnTh sticky={false}>Branch Head</GrnTh>
+              <GrnTh sticky={false}>Finance Head</GrnTh>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row) => (
+              <tr key={row.id} className={GRN_TR}>
+                <GrnTd>
+                  <p className="font-grn-mono font-bold text-grn-brand">{row.grn_number}</p>
+                  <GrnCellSub className="uppercase tracking-[0.05em]">{row.grn_type}</GrnCellSub>
+                </GrnTd>
+                <GrnTd>
+                  <p>{row.branch_name ?? "—"}</p>
+                  <GrnCellSub>{row.vendor_name || "Imprest / no vendor"}</GrnCellSub>
+                </GrnTd>
+                <GrnTd align="right" className="font-semibold">
+                  {money(row.amount_with_tax ?? row.amount, 0)}
+                </GrnTd>
+                <GrnTd>
+                  <StatusStamp tone={grnStatusTone(row.status)}>{labelStatus(row.status)}</StatusStamp>
+                  {row.status === "rejected" && row.rejection_reason && (
+                    <GrnCellSub
+                      className="max-w-[160px] truncate text-grn-crit"
+                      // Full text on hover — the column cannot afford the width, but the reason is
+                      // the whole point of a rejected row.
+                    >
+                      <span title={row.rejection_reason}>{row.rejection_reason}</span>
+                    </GrnCellSub>
+                  )}
+                </GrnTd>
+                <GrnTd>
+                  <StageCell name={row.created_by_name} at={row.created_at} reachable />
+                </GrnTd>
+                <GrnTd>
+                  <StageCell
+                    name={row.branch_head_reviewed_by_name}
+                    at={row.branch_head_reviewed_at}
+                    reachable={row.status !== "draft"}
+                  />
+                </GrnTd>
+                <GrnTd>
+                  <StageCell
+                    name={row.finance_head_reviewed_by_name}
+                    at={row.finance_head_reviewed_at}
+                    reachable={Boolean(row.branch_head_reviewed_at) && row.status !== "rejected"}
+                  />
+                </GrnTd>
               </tr>
-            </thead>
-            <tbody className="divide-y">
-              {rows.map((row) => {
-                return (
-                  <tr key={row.id} className="align-top hover:bg-slate-50/70">
-                    <td className="px-3 py-2.5">
-                      <p className="font-mono font-semibold text-[#073f78]">{row.grn_number}</p>
-                      <p className="mt-0.5 text-[11px] uppercase tracking-wide text-slate-400">{row.grn_type}</p>
-                    </td>
-                    <td className="px-3 py-2.5">
-                      <p className="text-slate-800">{row.branch_name ?? "—"}</p>
-                      <p className="mt-0.5 text-[11px] text-slate-500">{row.vendor_name || "Imprest / no vendor"}</p>
-                    </td>
-                    <td className="px-3 py-2.5 text-right font-mono font-medium text-slate-900">
-                      {money(row.amount_with_tax ?? row.amount)}
-                    </td>
-                    <td className="px-3 py-2.5">
-                      <StatusStamp tone={statusTone(row.status)}>{labelStatus(row.status)}</StatusStamp>
-                      {row.status === "rejected" && row.rejection_reason && (
-                        <p className="mt-1 max-w-[160px] text-[11px] text-rose-600" title={row.rejection_reason}>
-                          {row.rejection_reason}
-                        </p>
-                      )}
-                    </td>
-                    <td className="px-3 py-2.5">
-                      <StageCell name={row.created_by_name} at={row.created_at} reachable />
-                    </td>
-                    <td className="px-3 py-2.5">
-                      <StageCell
-                        name={row.branch_head_reviewed_by_name}
-                        at={row.branch_head_reviewed_at}
-                        reachable={row.status !== "draft"}
-                      />
-                    </td>
-                    <td className="px-3 py-2.5">
-                      <StageCell
-                        name={row.finance_head_reviewed_by_name}
-                        at={row.finance_head_reviewed_at}
-                        reachable={Boolean(row.branch_head_reviewed_at) && row.status !== "rejected"}
-                      />
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
+            ))}
+          </tbody>
+        </GrnTable>
       )}
-    </div>
+    </GrnCard>
   );
 }
