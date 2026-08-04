@@ -180,7 +180,7 @@ describe("people cost source", () => {
   it("lets the snapshot replace an upstream figure, rather than deferring to it", async () => {
     /*
      * The snapshot is the only source of the Agent/DSC/BMC split; upstream carries one
-     * undifferentiated people figure. So it replaces that figure even when it is populated —
+     * undifferentiated people figure. So it replaces that figure even when the row is populated —
      * a row-first rule would keep the lump and lose the split.
      */
     expect(await agentSalaryFor(CLOSED, 9_000_000, 14_123_000)).toBe(14_123_000);
@@ -190,5 +190,51 @@ describe("people cost source", () => {
   it("keeps the upstream figure when there is no snapshot at all", async () => {
     // Never zero. This is the case the reverted rule got wrong for every closed month.
     expect(await agentSalaryFor(CLOSED, 9_000_000, 0)).toBe(9_000_000);
+  });
+});
+
+describe("DSC/BMC subtotals track the salary figures", () => {
+  /*
+   * "Total DSC" and "Total BMC" read source fields `dsc`/`bmc`, which resolveValue derives from
+   * dscPeople + dscNonPeople. The resolved people figure is written to dscSalary/bmcSalary, so
+   * whenever the snapshot supplied it — i.e. always, since upstream carries no people cost — the
+   * statement showed "DSC Salary Rs 23.13 lakh" with "Total DSC Rs 0" on the line beneath.
+   */
+  it("does not report zero beside a non-zero salary line", async () => {
+    const statement = await getStatement({ period: CLOSED } as never, "process", {
+      getComponents: async () => [
+        { component_key: "dsc_salary", display_name: "DSC Salary", section_key: "cost",
+          parent_component_key: null, display_order: 1, component_type: "SOURCE_ACTUAL",
+          source_field: "dscSalary", format_type: "CURRENCY", sign_convention: "-",
+          is_subtotal: 0, active_status: 1 },
+        { component_key: "total_dsc", display_name: "Total DSC", section_key: "cost",
+          parent_component_key: null, display_order: 2, component_type: "SUBTOTAL",
+          source_field: "dsc", format_type: "CURRENCY", sign_convention: "-",
+          is_subtotal: 1, active_status: 1 },
+        { component_key: "total_bmc", display_name: "Total BMC", section_key: "cost",
+          parent_component_key: null, display_order: 3, component_type: "SUBTOTAL",
+          source_field: "bmc", format_type: "CURRENCY", sign_convention: "-",
+          is_subtotal: 1, active_status: 1 },
+      ],
+      getSummary: async () => ({
+        rows: [{
+          processId: PROCESS_ID, processName: "P1", branchId: BRANCH_ID, branchName: "B1",
+          recognizedRevenue: 0, directPeopleCost: 0, activeHc: 10,
+        }],
+      }),
+      getIndirectCost: async () => actuals(0),
+      getDriverRevenue: async () => actuals(0),
+      getInvoicedRevenue: async () => actuals(0),
+      getSeatRevenue: async () => seatActuals(0, 0),
+      getPeopleCost: async () => ({
+        byProcess: new Map([[PROCESS_ID, { agent_salary: 0, dsc_people: 2_313_000, bmc_people: 773_000 }]]),
+        byBranch: new Map(),
+      }) as never,
+      getProcessSummary,
+    } as never);
+    const val = (k: string) => statement.rows.find((r) => r.componentKey === k)?.values[PROCESS_ID];
+    expect(val("dsc_salary")).toBe(2_313_000);
+    expect(val("total_dsc"), "Total DSC must not read 0 under a non-zero DSC Salary").toBe(2_313_000);
+    expect(val("total_bmc")).toBe(773_000);
   });
 });

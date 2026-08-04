@@ -282,13 +282,13 @@ function enrichColumn(
    * Profit rose to 81-82% of revenue for a business that runs nowhere near that.
    *
    * Second the purpose: the snapshot is not a stand-in for a missing number, it is the only
-   * source of the Agent/DSC/BMC SPLIT. Upstream carries one undifferentiated people figure, and
-   * the snapshot replaces it — see "uses the snapshot's Agent/DSC/BMC split in place of the
-   * undifferentiated upstream figure" in pnl-running-salary.test.ts, which a row-first rule also
-   * breaks even when the row is populated.
+   * source of the Agent/DSC/BMC SPLIT. Upstream carries one undifferentiated people figure and
+   * the snapshot replaces it, so a row-first rule is also wrong — it keeps the lump and discards
+   * the split. See "uses the snapshot's Agent/DSC/BMC split in place of the undifferentiated
+   * upstream figure" in pnl-running-salary.test.ts, which caught exactly that.
    *
-   * So: snapshot when present, upstream when not, and never nothing. Both branches are pinned by
-   * tests in pnl-running-salary.test.ts and pnl-revenue-basis.test.ts.
+   * So: snapshot when present, upstream when not, never nothing. Both branches are pinned by
+   * tests and mutation-verified.
    */
   const hasSnapshot = Boolean(snapshot)
     && (snapshot!.agent_salary + snapshot!.dsc_people + snapshot!.bmc_people) > 0;
@@ -304,6 +304,19 @@ function enrichColumn(
 
   out.dscSalary = dscSalary;
   out.bmcSalary = bmcSalary;
+  /*
+   * Keep the "Total DSC"/"Total BMC" aggregates in step with the salary figures above them.
+   *
+   * Those two components read source fields `dsc` and `bmc`, and resolveValue falls back to
+   * dscPeople + dscNonPeople when the row has no `dsc` of its own. But the people figure resolved
+   * here is written to dscSalary/bmcSalary, and dscPeople is left as upstream had it — zero,
+   * since upstream carries no people cost. So the statement rendered "DSC Salary Rs 23.13 lakh"
+   * with "Total DSC Rs 0" directly beneath it, and the same for BMC. The waterfall itself was
+   * right (DC Total sums the salary fields), which is what kept it hidden: only the two subtotal
+   * lines lied.
+   */
+  out.dsc = dscSalary + n(out.dscNonPeople);
+  out.bmc = bmcSalary + n(out.bmcNonPeople);
   out.indirectCostTotal = indirectCostTotal;
   out.directCostTotal = directCostTotal;
   out.totalCost = totalCost;
