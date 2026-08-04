@@ -698,8 +698,7 @@ router.get("/api-logs", requireAuth, requireRole("admin", "hr"), h(async (req: A
        FROM candidate_bgv_api_request_log l
        LEFT JOIN ats_candidate c ON c.id = l.candidate_id
       ORDER BY l.created_at DESC
-      LIMIT ?`,
-    [limit]
+      LIMIT ${limit}`,
   );
   return res.json({ success: true, data: rows });
 }));
@@ -799,19 +798,17 @@ router.get("/api-failures", requireAuth, requireRole("admin", "super_admin", "hr
        FROM candidate_bgv_api_request_log l
        LEFT JOIN ats_candidate c ON c.id = l.candidate_id
       WHERE l.outcome NOT IN ('success','mismatch','manual_review')
-        AND l.created_at >= DATE_SUB(NOW(), INTERVAL ? DAY)
+        AND l.created_at >= DATE_SUB(NOW(), INTERVAL ${days} DAY)
       ORDER BY l.created_at DESC
-      LIMIT ?`,
-    [days, limit],
+      LIMIT ${limit}`,
   );
   const [summary] = await db.execute<RowDataPacket[]>(
     `SELECT outcome, error_code, COUNT(*) AS n, MAX(created_at) AS last_seen
        FROM candidate_bgv_api_request_log
       WHERE outcome NOT IN ('success','mismatch','manual_review')
-        AND created_at >= DATE_SUB(NOW(), INTERVAL ? DAY)
+        AND created_at >= DATE_SUB(NOW(), INTERVAL ${days} DAY)
       GROUP BY outcome, error_code
       ORDER BY n DESC`,
-    [days],
   );
   return res.json({ success: true, data: { days, failures: rows, summary } });
 }));
