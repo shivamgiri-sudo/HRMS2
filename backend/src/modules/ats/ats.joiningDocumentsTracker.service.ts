@@ -269,7 +269,7 @@ export async function getJoiningDocumentsTracker(
       e.active_status,
       b.branch_name,
       p.process_name,
-      p.lob_name,
+      p.business_lob AS lob_name,
 
       GROUP_CONCAT(
         CASE WHEN c.document_code IN ('APPOINTMENT_LETTER', 'ID_PROOF', 'BANK_DETAILS', 'ADDRESS_PROOF')
