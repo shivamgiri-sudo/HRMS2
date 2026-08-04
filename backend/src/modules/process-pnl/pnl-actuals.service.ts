@@ -79,6 +79,25 @@ export const PROCESS_BY_COST_CENTRE = `
  * it lands in the month the goods or services were received — the same month the GRN consumed its
  * budget. Net of tax, matching how a non-taxable budget line is consumed.
  */
+/**
+ * Only this company's own trading.
+ *
+ * cost_centre_master.company_name carries the legal entity and the P&L was consolidating three:
+ * MAS Callnet, IDC and Ispark Dataconnect. IDC alone billed Rs 75.23 lakh in June 2026 across 36
+ * cost centres with NOT ONE employee — revenue with no cost behind it, which lifted the reported
+ * margin from MINUS 1.6% to a plausible-looking 17.8%.
+ *
+ * The CEO view was filtered first and these surfaces were not, which left the same page showing
+ * two different margins on adjacent tabs. That is worse than either number alone, so the same
+ * predicate is applied everywhere revenue or spend is read.
+ *
+ * Matched on a normalised name because the source spells it four ways ("MAS Call Net India Pvt
+ * Ltd", "Mas Callnet India Pvt. Ltd.", "Mas Callnet India Pvt Ltd", "MAS CALLNET INDIA PVT LTD.").
+ * `ccm` must be the alias of cost_centre_master in the query using it.
+ */
+export const OWN_COMPANY_SQL =
+  `REPLACE(REPLACE(REPLACE(LOWER(COALESCE(ccm.company_name, '')), '.', ''), ' ', ''), ',', '') LIKE '%mascallnet%'`;
+
 export async function getIndirectCostActuals(periodCode: string): Promise<ActualsByKey> {
   if (!/^\d{4}-\d{2}$/.test(periodCode)) return emptyActuals();
   const [rows] = await db.execute<RowDataPacket[]>(
@@ -150,7 +169,7 @@ export async function getIndirectCostActuals(periodCode: string): Promise<Actual
                 ON ccm.cost_centre_code COLLATE utf8mb4_unicode_ci
                  = l.cost_centre_code COLLATE utf8mb4_unicode_ci
          LEFT JOIN ${PROCESS_BY_COST_CENTRE} pc ON pc.cost_centre_id = ccm.id
-        WHERE g.period_code = ? AND g.is_rejected = 0
+        WHERE g.period_code = ? AND g.is_rejected = 0 AND ${OWN_COMPANY_SQL}
         GROUP BY ccm.branch_id, ccm.id, pc.process_id`,
       [periodCode]
     );
@@ -203,7 +222,7 @@ export async function getInvoicedRevenueActuals(periodCode: string): Promise<Act
               ON ccm.cost_centre_code COLLATE utf8mb4_unicode_ci
                = p.cost_centre_code COLLATE utf8mb4_unicode_ci
        LEFT JOIN ${PROCESS_BY_COST_CENTRE} pc ON pc.cost_centre_id = ccm.id
-      WHERE p.period_code = ?
+      WHERE p.period_code = ? AND ${OWN_COMPANY_SQL}
       GROUP BY ccm.branch_id, ccm.id, pc.process_id`,
     [periodCode]
   );
@@ -321,7 +340,9 @@ export async function getSeatRevenueActuals(periodCode: string): Promise<SeatRev
              AND ccf.designation_id IS NULL AND ccf.rn = 1
        LEFT JOIN finance_cost_centre_monthly_driver drv
               ON drv.cost_centre_id = e.cost_centre_id AND drv.period_code = ?
-             AND drv.revenue_rate_per_head > 0`,
+             AND drv.revenue_rate_per_head > 0
+       LEFT JOIN cost_centre_master ccm ON ccm.id = e.cost_centre_id
+      WHERE ${OWN_COMPANY_SQL}`,
     [periodCode, periodCode, periodEnd, periodEnd, periodEnd, periodEnd,
      periodEnd, periodEnd, periodEnd, periodEnd, periodCode]
   );
