@@ -243,6 +243,11 @@ SOURCE sql/308_email_templates_bulk_import.sql;
 SOURCE sql/309_super_admin_full_page_access.sql;
 SOURCE sql/310_vendor_payment_tracking.sql;
 SOURCE sql/320_bgv_missing_tables.sql;
+SOURCE sql/435_bgv_check_type_name_match.sql;
+SOURCE sql/502_designation_bgv_requirements.sql;
+SOURCE sql/1003_bgv_api_cost_config.sql;
+SOURCE sql/1060_bgv_check_type_aml.sql;
+SOURCE sql/1070_correct_auto_approved_bgv_and_bridge.sql;
 
 -- ── Recent feature additions (321–374) ────────────────────────────────────────
 SOURCE sql/321_leave_request_geo.sql;

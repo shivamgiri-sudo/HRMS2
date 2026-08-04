@@ -101,12 +101,13 @@ CREATE TABLE IF NOT EXISTS candidate_aadhaar_otp_session (
 
 -- ── 6. Org settings: Befisc + Luckpay + Crimescan provider config ─────────────
 -- Insert only if not already present (idempotent)
-INSERT IGNORE INTO org_settings (`key`, `value`, updated_at)
+-- NOTE: org_settings uses setting_key / setting_value, not `key` / `value`.
+INSERT IGNORE INTO org_settings (id, setting_key, setting_value, label)
 VALUES
-  ('bgv_befisc_api_key',          '',  NOW()),
-  ('bgv_luckpay_basic_token',     '',  NOW()),
-  ('bgv_luckpay_client_id',       '',  NOW()),
-  ('bgv_crimescan_api_key',       '',  NOW()),
-  ('bgv_prescreening_api_key',    '',  NOW());
+  (UUID(), 'bgv_befisc_api_key',          '', 'Befisc API Key'),
+  (UUID(), 'bgv_luckpay_basic_token',     '', 'Luckpay Basic Token'),
+  (UUID(), 'bgv_luckpay_client_id',       '', 'Luckpay Client ID'),
+  (UUID(), 'bgv_crimescan_api_key',       '', 'Crimescan API Key'),
+  (UUID(), 'bgv_prescreening_api_key',    '', 'Pre-screening API Key');
 
 SELECT 'migration 320 bgv_missing_tables complete' AS status;

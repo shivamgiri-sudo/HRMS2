@@ -110,12 +110,9 @@ export default function NativeBGVAPIMonitor() {
     setLoading(true);
     try {
       const [statusRes, logsRes, statsRes, costRes, failRes] = await Promise.all([
-        hrmsApi.get<any>('/api/ats/bgv/provider-status'),
-        hrmsApi.get<any>('/api/ats/bgv/api-logs'),
-        hrmsApi.get<any>('/api/ats/bgv/api-stats'),
-        // Spend is computed server-side from the request log. It used to be
-        // multiplied in the browser off a regex guess of the check type, which
-        // silently billed anything unparseable at a flat ₹2.
+        hrmsApi.get<any>('/api/ats/bgv/provider-status').catch(() => ({ data: null })),
+        hrmsApi.get<any>('/api/ats/bgv/api-logs').catch(() => ({ data: [] })),
+        hrmsApi.get<any>('/api/ats/bgv/api-stats').catch(() => ({ data: null })),
         hrmsApi.get<any>('/api/ats/bgv/api-cost-report?days=30').catch(() => ({ data: null })),
         hrmsApi.get<any>('/api/ats/bgv/api-failures?days=30').catch(() => ({ data: null })),
       ]);
@@ -126,7 +123,7 @@ export default function NativeBGVAPIMonitor() {
       setFailures(failRes.data?.failures || []);
       setFailureSummary(failRes.data?.summary || []);
     } catch (e: any) {
-      alert(e?.message || 'Failed to load API monitor data');
+      console.error('[BGV Monitor] Failed to load data:', e?.message);
     } finally {
       setLoading(false);
     }

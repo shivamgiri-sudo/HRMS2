@@ -781,6 +781,16 @@ router.get("/api-cost-report", requireAuth, requireRole("admin", "super_admin", 
 router.get("/api-failures", requireAuth, requireRole("admin", "super_admin", "hr"), h(async (req: Request, res: Response) => {
   const limit = Math.min(Number(req.query.limit) || 100, 500);
   const days = Math.min(Math.max(Number(req.query.days) || 30, 1), 365);
+
+  // outcome/error_code/error_message added by migration 1017 — guard before querying
+  const [colCheck] = await db.execute<RowDataPacket[]>(
+    `SELECT COUNT(*) AS n FROM INFORMATION_SCHEMA.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'candidate_bgv_api_request_log' AND COLUMN_NAME = 'outcome'`
+  );
+  if (Number((colCheck as RowDataPacket[])[0]?.n) === 0) {
+    return res.json({ success: true, data: { days, failures: [], summary: [], _note: "Migration 1017 not yet applied — outcome column missing" } });
+  }
+
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT l.id, l.created_at, l.endpoint_key, l.provider_key, l.outcome,
             l.error_code, l.error_message, l.response_status_code, l.duration_ms,
