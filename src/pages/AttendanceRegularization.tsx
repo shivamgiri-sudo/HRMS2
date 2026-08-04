@@ -474,6 +474,22 @@ export default function AttendanceRegularization() {
 
   const [searchParams] = useSearchParams();
   const linkedEmployeeId = searchParams.get("employeeId");
+  const linkedEmployeeNameParam = searchParams.get("employeeName");
+  const linkedEmployeeCodeParam = searchParams.get("employeeCode");
+  // Resolve display name: prefer URL param, fall back to fetched name, then code, then UUID truncated
+  const [resolvedEmployeeName, setResolvedEmployeeName] = useState<string | null>(null);
+  useEffect(() => {
+    if (!linkedEmployeeId) return;
+    if (linkedEmployeeNameParam) { setResolvedEmployeeName(decodeURIComponent(linkedEmployeeNameParam)); return; }
+    // Legacy notifications without name param — fetch from employees API
+    hrmsApi.get<{ data: { first_name: string; last_name?: string; employee_code?: string } }>(`/api/employees/${linkedEmployeeId}`)
+      .then(res => {
+        const d = res.data;
+        const name = [d.first_name, d.last_name].filter(Boolean).join(" ").trim();
+        setResolvedEmployeeName(name || d.employee_code || linkedEmployeeId);
+      })
+      .catch(() => setResolvedEmployeeName(linkedEmployeeCodeParam ?? `${linkedEmployeeId.slice(0, 8)}…`));
+  }, [linkedEmployeeId, linkedEmployeeNameParam, linkedEmployeeCodeParam]);
 
   const form = useForm<FormValues>({
     resolver: zodResolver(regularizationSchema),
@@ -759,8 +775,14 @@ export default function AttendanceRegularization() {
         </div>
 
         {linkedEmployeeId && (
-          <div className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-800">
-            Deep-linked from notification — Employee ID: <span className="font-mono font-bold">{linkedEmployeeId}</span>
+          <div className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-800 flex items-center gap-2">
+            <span>Viewing regularization for</span>
+            <span className="font-semibold text-blue-900">
+              {resolvedEmployeeName ?? `${linkedEmployeeId.slice(0, 8)}…`}
+            </span>
+            {linkedEmployeeCodeParam && !linkedEmployeeNameParam && (
+              <span className="text-blue-500">({decodeURIComponent(linkedEmployeeCodeParam)})</span>
+            )}
           </div>
         )}
 

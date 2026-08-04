@@ -1223,7 +1223,9 @@ export const attendanceEngineService = {
 
     try {
       const { inboxService } = await import('../inbox/inbox.service.js');
-      const actionUrl = `/attendance-regularization?employeeId=${employeeId}&date=${date}`;
+      const encodedName = encodeURIComponent(emp.full_name?.trim() ?? '');
+      const encodedCode = encodeURIComponent(emp.employee_code ?? '');
+      const actionUrl = `/attendance-regularization?employeeId=${employeeId}&date=${date}${encodedName ? `&employeeName=${encodedName}` : ''}${encodedCode ? `&employeeCode=${encodedCode}` : ''}`;
       for (const userId of recipients) {
         const [existing] = await db.execute<RowDataPacket[]>(
           `SELECT id FROM work_inbox_item
