@@ -1351,12 +1351,21 @@ export const managementService = {
          COUNT(*) AS count,
          ROUND(COUNT(*) * 100.0 / SUM(COUNT(*)) OVER(), 1) AS pct
        FROM exit_request er
-       WHERE er.exit_date >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)
-         AND er.status IN ('completed', 'accepted', 'approved')
+       -- exit_request has no exit_date column. The real ones are
+       -- last_working_day_confirmed / _proposed, so this raised
+       -- ER_BAD_FIELD_ERROR on every call and the catch below turned it into an
+       -- empty chart, indistinguishable from "no attrition".
+       WHERE COALESCE(er.last_working_day_confirmed, er.last_working_day_proposed)
+             >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)
+       -- 'exited' is the only status this table actually holds; the three names
+       -- previously listed occur nowhere, so the filter would have matched nothing
+       -- even against the right date column. Compared case-insensitively: status is
+       -- varchar with no declared vocabulary.
+         AND LOWER(er.status) IN ('completed', 'accepted', 'approved', 'exited')
        GROUP BY er.exit_reason_category
        ORDER BY count DESC
        LIMIT 6`
-    ).catch(() => [[]] as any);
+    );
     return (rows as any[]).map((r) => ({
       reason: String(r.reason),
       count: Number(r.count),

@@ -203,7 +203,15 @@ router.get("/attrition-breakdown", requireRole("admin", "hr", "ceo", "manager", 
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : "Failed";
     console.error("[attrition-breakdown]", msg);
-    res.json({ success: true, data: [] });
+    // `success: true` with an empty array told the caller the query ran and found
+    // no attrition — the reassuring answer, produced by a query that failed. The
+    // service beneath this already swallows its own error into [[]], so the route
+    // was the second of two places turning a fault into good news.
+    res.status(503).json({
+      success: false,
+      error: "Attrition breakdown is unavailable",
+      errorCode: "SOURCE_UNAVAILABLE",
+    });
   }
 }));
 
