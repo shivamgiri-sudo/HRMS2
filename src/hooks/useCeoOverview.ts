@@ -45,6 +45,24 @@ export interface CeoTrendPoint {
   marginPct: number | null;
 }
 
+export interface CeoFocus {
+  kind: "process" | "cost_centre";
+  label: string;
+  revenue: number;
+  invoiceLines: number;
+  peopleCost: number;
+  staffPaid: number;
+  staffZeroPaid: number;
+  indirectCost: number;
+  budget: number;
+  operatingProfit: number;
+  marginPct: number | null;
+  revenuePerHead: number | null;
+  costPerHead: number | null;
+  /** What a reader must know before trusting the margin. Empty when nothing is amiss. */
+  notes: string[];
+}
+
 export interface CeoOverview {
   period: string;
   revenue: number;
@@ -59,6 +77,8 @@ export interface CeoOverview {
   trend: CeoTrendPoint[];
   /** Only values that have data behind them — an option leading to an empty page reads as broken. */
   options: { processes: { id: string; name: string }[]; costCentres: { id: string; code: string }[] };
+  /** Present only when a process or cost centre filter is active. */
+  focus: CeoFocus | null;
 }
 
 export interface CeoOverviewFilters {

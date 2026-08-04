@@ -173,7 +173,7 @@ export function GrnLobAttributionQueue() {
   });
 
   return (
-    <div className="grid items-start gap-[16px] min-[900px]:grid-cols-[320px_minmax(0,1fr)]">
+    <div className="grid items-start gap-4 min-[900px]:grid-cols-[320px_minmax(0,1fr)]">
       <GrnCard>
         <GrnCardHeader
           title="Pending attribution"

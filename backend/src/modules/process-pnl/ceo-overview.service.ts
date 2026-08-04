@@ -71,6 +71,37 @@ export interface CeoTrendPoint {
   marginPct: number | null;
 }
 
+/**
+ * The P&L for one process or cost centre, shown when a filter narrows to it.
+ *
+ * Process is not a grain the data supports across the board — only 18 of 66 processes carry
+ * revenue at all — which is why the whole-company view stays at branch level. But for a
+ * well-mapped one it holds up completely, and refusing to show it would withhold a real answer
+ * because other rows are incomplete.
+ *
+ * So it is shown WITH its caveats attached rather than either hidden or presented bare. Onfido in
+ * June is the worked example: Rs 90.39 lakh invoiced against Rs 32.05 lakh of payroll and
+ * Rs 24.93 lakh of indirect — a 37% margin that is real, except that the indirect figure is the
+ * ENTIRE NOIDA-2 branch GRN booked to this one cost centre, which the notes say out loud.
+ */
+export interface CeoFocus {
+  kind: "process" | "cost_centre";
+  label: string;
+  revenue: number;
+  invoiceLines: number;
+  peopleCost: number;
+  staffPaid: number;
+  staffZeroPaid: number;
+  indirectCost: number;
+  budget: number;
+  operatingProfit: number;
+  marginPct: number | null;
+  revenuePerHead: number | null;
+  costPerHead: number | null;
+  /** What a reader must know before trusting the margin above. Empty when nothing is amiss. */
+  notes: string[];
+}
+
 export interface CeoOverview {
   period: string;
   revenue: number;
@@ -85,6 +116,8 @@ export interface CeoOverview {
   trend: CeoTrendPoint[];
   /** Distinct values for the filter controls, so the UI never invents an option that has no data. */
   options: { processes: { id: string; name: string }[]; costCentres: { id: string; code: string }[] };
+  /** Present only when a process or cost centre filter is active. */
+  focus: CeoFocus | null;
 }
 
 const n = (v: unknown): number => {
@@ -378,21 +411,28 @@ async function marginTrend(endPeriod: string, f: CeoFilters): Promise<CeoTrendPo
     const d = new Date(Date.UTC(year, month - 1 - back, 1));
     periods.push(`${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`);
   }
-  const points: CeoTrendPoint[] = [];
-  for (const period of periods) {
-    const [rev, ppl, spend] = await Promise.all([
-      revenueByBranch(period, f), peopleByBranch(period, f), spendByBranch(period, f),
-    ]);
-    const sum = (m: Map<string, number>) => [...m.values()].reduce((a, b) => a + b, 0);
-    const revenue = sum(rev);
-    const people = [...ppl.values()].reduce((a, b) => a + b.cost, 0);
-    const operatingProfit = revenue - people - sum(spend);
-    points.push({
-      period, revenue, operatingProfit,
-      marginPct: revenue > 0 ? (operatingProfit / revenue) * 100 : null,
-    });
-  }
-  return points;
+  /*
+   * All four months at once, not one after another.
+   *
+   * Written as a sequential loop first, which cost 8.5-11.3s on production: four round trips of
+   * three queries each, every one waiting on the last for no reason — the months are independent.
+   * Issuing them together brings the page back to roughly the cost of a single month.
+   */
+  const sum = (m: Map<string, number>) => [...m.values()].reduce((a, b) => a + b, 0);
+  return Promise.all(
+    periods.map(async (period) => {
+      const [rev, ppl, spend] = await Promise.all([
+        revenueByBranch(period, f), peopleByBranch(period, f), spendByBranch(period, f),
+      ]);
+      const revenue = sum(rev);
+      const people = [...ppl.values()].reduce((a, b) => a + b.cost, 0);
+      const operatingProfit = revenue - people - sum(spend);
+      return {
+        period, revenue, operatingProfit,
+        marginPct: revenue > 0 ? (operatingProfit / revenue) * 100 : null,
+      };
+    }),
+  );
 }
 
 /** Only offer a filter value that has data behind it — an option that returns an empty page is
@@ -424,12 +464,135 @@ async function filterOptions(period: string) {
   };
 }
 
+/**
+ * The P&L for the one process or cost centre a filter has narrowed to, with its caveats.
+ *
+ * The caveats are the point. Onfido's June margin of 37% is real, but its indirect line is the
+ * whole NOIDA-2 branch GRN booked against a single cost centre — so the figure is a contribution,
+ * not a standalone P&L, and a reader has no way to know that from the number itself. Every note
+ * below is derived from the data rather than written in, so it stays true as the mapping improves.
+ */
+async function buildFocus(
+  period: string,
+  f: CeoFilters,
+  totals: { revenue: number; peopleCost: number; indirectCost: number; staffPaid: number },
+): Promise<CeoFocus | null> {
+  if (!f.processId && !f.costCentreId) return null;
+
+  const notes: string[] = [];
+  let label = "";
+  let kind: "process" | "cost_centre" = f.processId ? "process" : "cost_centre";
+  let invoiceLines = 0;
+  let staffZeroPaid = 0;
+  let budget = 0;
+
+  if (f.processId) {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT process_name FROM process_master WHERE id = ? LIMIT 1`, [f.processId],
+    );
+    label = rows[0]?.process_name ? String(rows[0].process_name) : "Process";
+    const [paid] = await db.execute<RowDataPacket[]>(
+      `SELECT SUM(CASE WHEN COALESCE(l.gross_salary, 0) = 0 THEN 1 ELSE 0 END) AS zero_paid
+         FROM salary_prep_line l
+         JOIN salary_prep_run r ON r.id = l.run_id AND r.run_month = ?
+         JOIN employees e ON e.id = l.employee_id
+        WHERE e.process_id = ?`,
+      [period, f.processId],
+    );
+    staffZeroPaid = n(paid[0]?.zero_paid);
+  } else if (f.costCentreId) {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT cost_centre_code FROM cost_centre_master WHERE id = ? LIMIT 1`, [f.costCentreId],
+    );
+    label = rows[0]?.cost_centre_code ? String(rows[0].cost_centre_code) : "Cost centre";
+  }
+
+  // Invoice lines and budget both key on the cost centre CODE, so resolve the codes in scope once.
+  const [codes] = await db.execute<RowDataPacket[]>(
+    f.costCentreId
+      ? `SELECT cost_centre_code AS code, branch_id FROM cost_centre_master WHERE id = ?`
+      : `SELECT DISTINCT ccm.cost_centre_code AS code, ccm.branch_id AS branch_id
+           FROM employees e JOIN cost_centre_master ccm ON ccm.id = e.cost_centre_id
+          WHERE e.process_id = ?`,
+    [f.costCentreId ?? f.processId],
+  );
+  const codeList = codes.map((r) => String(r.code)).filter(Boolean);
+
+  if (codeList.length > 0) {
+    const marks = codeList.map(() => "?").join(",");
+    const [inv] = await db.execute<RowDataPacket[]>(
+      `SELECT COUNT(*) AS n FROM billing_invoice_particular_snapshot
+        WHERE period_code = ? AND cost_centre_code IN (${marks})`,
+      [period, ...codeList],
+    );
+    invoiceLines = n(inv[0]?.n);
+
+    const [bud] = await db.execute<RowDataPacket[]>(
+      `SELECT COALESCE(SUM(amount), 0) AS a FROM finance_budget_line_snapshot
+        WHERE period_code = ? AND expense_type = 'CostCenter' AND expense_type_name IN (${marks})`,
+      [period, ...codeList],
+    );
+    budget = n(bud[0]?.a);
+
+    // Does this cost centre carry its whole branch's overhead? If so the margin is a contribution,
+    // not a standalone P&L, and saying so is the difference between a usable figure and a wrong one.
+    const branchId = codes[0]?.branch_id ? String(codes[0].branch_id) : null;
+    if (branchId && totals.indirectCost > 0) {
+      const [branchGrn] = await db.execute<RowDataPacket[]>(
+        `SELECT COALESCE(SUM(l.total), 0) AS a
+           FROM grn_entry_line_snapshot l
+           JOIN grn_entry_snapshot g ON g.bill_source_id = l.grn_source_id
+           LEFT JOIN cost_centre_master ccm
+                  ON ccm.cost_centre_code COLLATE utf8mb4_unicode_ci
+                   = l.cost_centre_code COLLATE utf8mb4_unicode_ci
+          WHERE g.period_code = ? AND g.is_rejected = 0 AND ccm.branch_id = ?`,
+        [period, branchId],
+      );
+      const branchTotal = n(branchGrn[0]?.a);
+      if (branchTotal > 0 && totals.indirectCost / branchTotal >= 0.95) {
+        notes.push(
+          `The indirect figure is effectively the whole branch's overhead (${lakh(branchTotal)}) `
+          + `booked to this cost centre, not what it alone consumes. Treat the margin as a `
+          + `contribution: the standalone figure would be higher.`,
+        );
+      }
+    }
+  }
+
+  if (staffZeroPaid > 0) {
+    notes.push(`${staffZeroPaid} of ${totals.staffPaid + staffZeroPaid} payroll lines were paid nothing, so the people cost covers the rest.`);
+  }
+  if (totals.revenue > 0 && totals.peopleCost <= 0) {
+    notes.push("Revenue is billed here but no payroll is attributed, so the margin is an attribution error rather than performance.");
+  }
+  if (totals.revenue <= 0 && totals.peopleCost > 0) {
+    notes.push("People are paid here but no invoice maps to it, so this shows cost without the revenue it earned.");
+  }
+
+  const operatingProfit = totals.revenue - totals.peopleCost - totals.indirectCost;
+  return {
+    kind, label,
+    revenue: totals.revenue,
+    invoiceLines,
+    peopleCost: totals.peopleCost,
+    staffPaid: totals.staffPaid,
+    staffZeroPaid,
+    indirectCost: totals.indirectCost,
+    budget,
+    operatingProfit,
+    marginPct: totals.revenue > 0 ? (operatingProfit / totals.revenue) * 100 : null,
+    revenuePerHead: totals.staffPaid > 0 ? totals.revenue / totals.staffPaid : null,
+    costPerHead: totals.staffPaid > 0 ? totals.peopleCost / totals.staffPaid : null,
+    notes,
+  };
+}
+
 export async function getCeoOverview(period: string, filters: CeoFilters = {}): Promise<CeoOverview> {
   const branchId = filters.branchId ?? null;
   const empty: CeoOverview = {
     period, revenue: 0, peopleCost: 0, indirectCost: 0, operatingProfit: 0,
     marginPct: null, staffPaid: 0, revenuePerHead: null, branches: [], opportunities: [],
-    trend: [], options: { processes: [], costCentres: [] },
+    trend: [], options: { processes: [], costCentres: [] }, focus: null,
   };
   if (!/^\d{4}-\d{2}$/.test(period)) return empty;
 
@@ -537,6 +700,12 @@ export async function getCeoOverview(period: string, filters: CeoFilters = {}): 
      * beside a headline of 17.8%: the same figure, on the same card, twice. The current month is
      * replaced with the headline so the two can never disagree.
      */
+    focus: await buildFocus(period, filters, {
+      revenue: totals.revenue,
+      peopleCost: totals.peopleCost,
+      indirectCost: totals.indirectCost,
+      staffPaid: totals.staffPaid,
+    }),
     trend: trend.map((point) =>
       point.period === period
         ? { ...point, revenue: totals.revenue, operatingProfit, marginPct: totals.revenue > 0 ? (operatingProfit / totals.revenue) * 100 : null }

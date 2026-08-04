@@ -1069,7 +1069,7 @@ export function BudgetLinkedGrnForm() {
        *  top offset, not top-0: the page scrolls in #main-content-area, whose first 64px are the
        *  layout's sticky TopBar at z-30. At top-0 this parks underneath it. */}
       <div className="sticky top-[var(--topbar-height)] z-20 mb-4">
-        <div className="rounded-[12px] border border-grn-line bg-grn-card px-4 py-2.5">
+        <div className="rounded-xl border border-grn-line bg-grn-card px-4 py-2.5">
           <div className="flex flex-wrap items-center justify-between gap-3">
             {totalStrip}
             {actionButtons}
@@ -1102,8 +1102,8 @@ export function BudgetLinkedGrnForm() {
       {/* Side rail collapses at 900px, matching the rest of the page, rather than at 1280px
           where it left a 380px gap unused. items-start so the rail does not stretch to the
           form's height. */}
-      <div className="mt-[16px] grid items-start gap-[16px] min-[900px]:grid-cols-[minmax(0,1fr)_300px]">
-        <div className="min-w-0 space-y-[16px]">
+      <div className="mt-4 grid items-start gap-4 min-[900px]:grid-cols-[minmax(0,1fr)_300px]">
+        <div className="min-w-0 space-y-4">
           {showErrors && hasErrors && (
             <div
               role="alert"
@@ -1146,7 +1146,7 @@ export function BudgetLinkedGrnForm() {
                   {files.map((file) => (
                     <li
                       key={file.name}
-                      className="flex items-center justify-between gap-2 rounded-[8px] border border-grn-line bg-grn-paper px-3 py-2 text-[12px]"
+                      className="flex items-center justify-between gap-2 rounded-lg border border-grn-line bg-grn-paper px-3 py-2 text-[12px]"
                     >
                       <span className="truncate text-grn-ink">{file.name}</span>
                       <StatusStamp tone="neutral">Pending upload</StatusStamp>
@@ -1158,7 +1158,7 @@ export function BudgetLinkedGrnForm() {
                       <li
                         key={document.id}
                         className={cn(
-                          "flex items-center justify-between gap-2 rounded-[8px] border px-3 py-2 text-[12px]",
+                          "flex items-center justify-between gap-2 rounded-lg border px-3 py-2 text-[12px]",
                           tone === "ok"
                             ? "border-grn-ok-line bg-grn-ok-bg"
                             : tone === "warn"
@@ -1663,7 +1663,7 @@ export function BudgetLinkedGrnForm() {
                       : "—",
                   ],
                 ].map(([label, value]) => (
-                  <div key={String(label)} className="rounded-[8px] border border-grn-line bg-grn-paper p-2.5">
+                  <div key={String(label)} className="rounded-lg border border-grn-line bg-grn-paper p-2.5">
                     <p className="text-[10px] uppercase tracking-[0.05em] text-grn-ink-soft">{label}</p>
                     <p className="mt-0.5 truncate text-[12px] font-semibold text-grn-ink">
                       {String(value ?? "—")}
@@ -1741,7 +1741,7 @@ export function BudgetLinkedGrnForm() {
 
         {/* Side rail — a card in its own grid column now, not a bordered panel bolted to the
             right edge of a full-height flex row. */}
-        <aside className="hidden rounded-[12px] border border-grn-line bg-grn-card p-4 min-[900px]:block">
+        <aside className="hidden rounded-xl border border-grn-line bg-grn-card p-4 min-[900px]:block">
           <h3 className="text-[10.5px] font-bold uppercase tracking-[0.06em] text-grn-ink-soft">
             Readiness — {readiness}%
           </h3>
@@ -1974,7 +1974,7 @@ function SplitAllocationEditor({
                   />
                 </div>
               </div>
-              <div className="flex justify-between rounded-[8px] border border-grn-line bg-grn-paper px-3 py-2 text-[12px]">
+              <div className="flex justify-between rounded-lg border border-grn-line bg-grn-paper px-3 py-2 text-[12px]">
                 <span className="text-grn-ink-soft">Gross</span>
                 <b className="font-grn-mono">{money(Number(calculation?.gross ?? 0))}</b>
               </div>

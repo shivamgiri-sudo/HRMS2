@@ -14,7 +14,7 @@ import {
   type RevenueComponentInput,
   type RevenueRuleInput,
 } from "./bpo-pnl.calculation.js";
-import { PROCESS_BY_COST_CENTRE } from "./pnl-actuals.service.js";
+import { PROCESS_BY_COST_CENTRE, getInvoicedRevenueActuals } from "./pnl-actuals.service.js";
 import type { PeopleCostByKey, PnlPeopleBucket } from "./pnl-running-salary.service.js";
 import { processPnlService } from "./process-pnl.service.js";
 import type { PnlQueryFilters, ProcessPnlRecord } from "./process-pnl.types.js";
@@ -174,7 +174,11 @@ export interface BpoPnlRow {
   costCentreCode: string | null;
   billingModels: string[];
   primaryBillingModel: string | null;
-  revenueDataStatus: "configured" | "configured_no_delivery" | "accounting_fallback";
+  revenueDataStatus:
+    | "configured"
+    | "configured_no_delivery"
+    | "accounting_fallback"
+    | "invoiced_fallback";
   mandatedSeats: number | null;
   contractedSeats: number | null;
   requiredProductiveHc: number;
@@ -1279,7 +1283,16 @@ async function buildRows(filters: Partial<PnlQueryFilters>) {
   const processIds = baseRows.map((row) => row.processId);
   const policies = await getAllocationPolicies(normalized.period);
   const warnings: ManualAllocationWarning[] = [];
-  const [rulesMap, deliveryMap, componentsMap, plans, people, costComponents, budgets, grnActuals, costCentres] = await Promise.all([
+  /*
+   * What clients were actually invoiced, as the last-resort revenue source.
+   *
+   * The tiers above it are empty in production: process_revenue_rule and process_delivery_actual
+   * hold zero rows and base.revenueMtd is 0, so every process resolved to Rs 0 revenue. That was
+   * survivable while the cost side was also zero, but the information_schema fix revived people
+   * cost — leaving Rs 241.97 lakh of cost against no revenue and an EBITDA of MINUS Rs 242 lakh.
+   * A plausible-looking catastrophe is worse than an obvious blank.
+   */
+  const [rulesMap, deliveryMap, componentsMap, plans, people, costComponents, budgets, grnActuals, costCentres, invoiced] = await Promise.all([
     getRevenueRules(processIds, normalized.period),
     getDeliveryActuals(processIds, normalized.period),
     getRevenueComponents(processIds, normalized.period),
@@ -1289,6 +1302,7 @@ async function buildRows(filters: Partial<PnlQueryFilters>) {
     getBudgets(baseRows, normalized.period, policies, warnings),
     getGrnVendorActuals(baseRows, normalized.period, policies, warnings),
     getCostCentres(processIds),
+    getInvoicedRevenueActuals(normalized.period ?? ""),
   ]);
 
   const rows: BpoPnlRow[] = baseRows.map((base) => {
@@ -1362,7 +1376,21 @@ async function buildRows(filters: Partial<PnlQueryFilters>) {
       amountInr: toNumber(component.amount_inr),
     }));
     const revenue = calculateRevenue(rules, deliveries, revenueComponents);
-    const recognizedRevenue = toNumber(base.revenueMtd) > 0 ? toNumber(base.revenueMtd) : revenue.earnedRevenue;
+    /*
+     * Revenue, most-specific source first:
+     *   1. base.revenueMtd        accounting/invoice figure already on the row
+     *   2. revenue.earnedRevenue  computed from approved rules x validated delivery
+     *   3. invoiced               what the client was actually billed this month
+     *
+     * Three is a real number, not an estimate, and it is the only one populated today. It stays a
+     * fallback rather than the default because a configured rule knows things an invoice does not
+     * — minimum commitments, SLA deductions, incentive components — and must win wherever finance
+     * has set one up.
+     */
+    const invoicedForProcess = invoiced.byProcess.get(base.processId) ?? 0;
+    const ruleRevenue = toNumber(base.revenueMtd) > 0 ? toNumber(base.revenueMtd) : revenue.earnedRevenue;
+    const usedInvoicedFallback = ruleRevenue <= 0 && invoicedForProcess > 0;
+    const recognizedRevenue = usedInvoicedFallback ? invoicedForProcess : ruleRevenue;
     const cost = calculateBpoCostWaterfall({
       revenue: recognizedRevenue,
       agentSalary: peopleMeta.agentSalary,
@@ -1413,7 +1441,7 @@ async function buildRows(filters: Partial<PnlQueryFilters>) {
       primaryBillingModel: rules[0]?.billingModel ?? base.billingModel,
       revenueDataStatus: configuredRules.length > 0
         ? deliveryRows.length > 0 ? "configured" : "configured_no_delivery"
-        : "accounting_fallback",
+        : usedInvoicedFallback ? "invoiced_fallback" : "accounting_fallback",
       mandatedSeats: configuredRules[0]?.mandated_seats ?? base.contractedSeats,
       contractedSeats: base.contractedSeats,
       requiredProductiveHc: base.requiredProductiveHc,
@@ -1583,6 +1611,15 @@ export const bpoPnlService = {
           processId: row.processId,
           processName: row.processName,
         });
+      } else if (row.revenueDataStatus === "invoiced_fallback") {
+        alerts.push({
+          type: "warning",
+          code: "REVENUE_FROM_INVOICES",
+          title: "Revenue taken from invoices",
+          detail: `${row.processName} has no approved revenue rule and no accounting figure, so what the client was actually invoiced is used. Minimum commitments, SLA deductions and incentives are not reflected.`,
+          processId: row.processId,
+          processName: row.processName,
+        });
       } else if (row.revenueDataStatus === "configured_no_delivery") {
         alerts.push({
           type: "warning",
@@ -1710,10 +1747,10 @@ export const bpoPnlService = {
         availableBudget: sum(rows, "availableBudget"),
         activeHeadcount: sum(rows, "activeHc"),
         agentHeadcount: sum(rows, "agentHeadcount"),
-        configuredProcesses: rows.filter((row) => row.revenueDataStatus !== "accounting_fallback").length,
+        configuredProcesses: rows.filter((row) => row.revenueDataStatus === "configured" || row.revenueDataStatus === "configured_no_delivery").length,
         totalProcesses: rows.length,
         revenueModelCoveragePct: pct(
-          rows.filter((row) => row.revenueDataStatus !== "accounting_fallback").length,
+          rows.filter((row) => row.revenueDataStatus === "configured" || row.revenueDataStatus === "configured_no_delivery").length,
           rows.length
         ),
         lossMakingProcesses: rows.filter((row) => row.processStatus === "loss-making").length,

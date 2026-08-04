@@ -11,6 +11,7 @@ const MIGRATIONS_VERIFY_ONLY = process.env.MIGRATIONS_VERIFY_ONLY === "true";
 import { initBusinessActionSyncJobs } from "./cron/business-action-sync.cron.js";
 import { startCommunicationCleanup } from "./modules/communication/cleanup.cron.js";
 import { startTenureBadgeScheduler } from "./modules/engagement/tenure.cron.js";
+import { startDailyGamesScheduler, stopDailyGamesScheduler } from "./modules/engagement/daily-games.cron.js";
 import { migrateLegacyIntegrationSecrets } from "./modules/external-db/external-db.service.js";
 import { startITProvisioningLockScheduler } from "./modules/it-provisioning/it-provisioning.cron.js";
 import { startPayrollWindowClosureScheduler } from "./modules/payroll/payroll-window.cron.js";
@@ -81,6 +82,7 @@ async function gracefulShutdown(signal: string): Promise<void> {
     stopIntegrationScheduler();
     stopPayrollNightlyRecalcWorker();
     stopPerformanceIngestionScheduler();
+    stopDailyGamesScheduler();
 
     // Clear all registered timers
     clearAllTimers();
@@ -144,7 +146,8 @@ function startServer() {
 
     startOfficialEmailComplianceScheduler();
     startIntegrationScheduler();
-    console.log("[scheduler] official-email and integration scheduler started");
+    startDailyGamesScheduler(); // fills daily tip/trivia/brain-teaser/word-puzzle 14 days ahead
+    console.log("[scheduler] official-email, integration and daily-games schedulers started");
 
     if (env.ENABLE_SCHEDULERS) {
       if (!WORKERS_EXTERNAL) {
@@ -165,7 +168,24 @@ function startServer() {
         initBusinessActionSyncJobs();
         startBreachSlaCron();
         startRetentionCron();
-        startAtsRemindersScheduler();
+        // ── Onboarding reminders: FIXED BUT DELIBERATELY NOT STARTED ──────────
+        //
+        // This cron read three columns ats_onboarding_bridge does not have
+        // (onboarding_link, joining_status, reminder_sent_at), so it threw on
+        // every tick and no reminder has ever been sent. The query is now
+        // correct and migration 1071 adds reminder_sent_at.
+        //
+        // It stays off because enabling it is an outward-facing action, not a
+        // bug fix: the first tick would email every candidate with incomplete
+        // onboarding, including ~299 bridge rows sitting at 'pending', some
+        // months old. Some of those people have since joined or dropped out.
+        //
+        // To enable: set ATS_REMINDERS_ENABLED=true, having decided that burst
+        // is wanted. Owner's call, made explicitly rather than as a side effect
+        // of a schema fix.
+        if (process.env.ATS_REMINDERS_ENABLED === "true") {
+          startAtsRemindersScheduler();
+        }
         // Activates employees whose joining date has arrived, and retries failed
         // provisioning. Previously only registered in workers/all-workers.ts,
         // which has no npm script and no importer — so anyone approved before

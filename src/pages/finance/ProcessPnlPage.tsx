@@ -327,15 +327,26 @@ export default function ProcessPnlPage() {
                   The CEO view, read from what actually happened — invoiced revenue, the payroll
                   run and GRN spend.
 
-                  The process-level command centre that used to render here was removed on the
-                  user's instruction: it is fed by bpoPnlService, whose four input tables
-                  (process_revenue_rule, process_delivery_actual, process_revenue_component,
-                  process_monthly_plan) hold no rows, so it reported Rs 0 for revenue, EBITDA and
-                  PAT in every month.
+                  The process-level command centre is deliberately NOT rendered here, after being
+                  measured rather than assumed.
 
-                  CeoCommandCenter.tsx is left in place, unedited and no longer imported here, so
-                  it can be remounted unchanged once those tables carry data. Deleting the
-                  component would be the part that is hard to undo.
+                  bpoPnlService now falls back to invoiced revenue, which fixed a real artefact —
+                  it had been reporting Rs 242 lakh of cost against Rs 0 revenue once the
+                  information_schema fix revived the cost side. But PROCESS is not a grain this
+                  data supports yet:
+
+                    revenue   Rs 249.30L of Rs 370.84L, across 18 of 66 processes
+                    indirect  Rs  62.02L of Rs  77.00L
+                    people    most processes, but zero-paid and no-process staff fall outside
+
+                  Three lines each covering a different subset of the business subtract to a figure
+                  belonging to no real entity, and it would sit on this page disagreeing with the
+                  branch view by Rs 121 lakh. Branch works as a grain precisely because revenue,
+                  payroll and spend each resolve to a branch for essentially all of their value.
+
+                  The fix is process_id mapping on cost centres and employees — data, not more
+                  plumbing. CeoCommandCenter.tsx is untouched and still mounted nowhere else, so
+                  remounting it here is a one-line change once that mapping exists.
                 */}
                 <CeoOverviewPanel
                   period={period}

@@ -25,6 +25,9 @@ interface Fixture {
   people?: { branch_id: string | null; staff: number; cost: number }[];
   spend?: { branch_id: string | null; amount: number }[];
   budget?: { branch_id: string | null; amount: number }[];
+  /** Cost-centre code buildFocus should resolve to, and its branch's total GRN. */
+  focusCode?: string;
+  branchGrn?: number;
 }
 
 function mockDb(f: Fixture) {
@@ -35,8 +38,18 @@ function mockDb(f: Fixture) {
     const q = String(sql);
     if (q.includes("process_master")) return [[], []];
     if (q.includes("FROM branch_master") && !q.includes("JOIN")) return [f.branches, []];
+    // buildFocus resolves the cost-centre code (and its branch) before it can check anything else.
+    if (q.includes("FROM cost_centre_master WHERE id")) {
+      return [[{ code: f.focusCode ?? "CC/TEST", branch_id: f.branches[0]?.id ?? null }], []];
+    }
+    if (q.includes("COUNT(*) AS n FROM billing_invoice_particular_snapshot")) return [[{ n: 3 }], []];
     if (q.includes("billing_invoice_particular_snapshot")) return [f.revenue ?? [], []];
+    if (q.includes("salary_prep_line") && q.includes("zero_paid")) return [[{ zero_paid: 0 }], []];
     if (q.includes("salary_prep_line")) return [f.people ?? [], []];
+    // The branch-overhead comparison asks for one scalar; spendByBranch groups by branch.
+    if (q.includes("grn_entry_line_snapshot") && q.includes("COALESCE(SUM(l.total), 0) AS a")) {
+      return [[{ a: f.branchGrn ?? (f.spend ?? []).reduce((t, r) => t + r.amount, 0) }], []];
+    }
     if (q.includes("grn_entry_line_snapshot")) return [f.spend ?? [], []];
     if (q.includes("finance_budget_line_snapshot")) return [f.budget ?? [], []];
     return [[], []];
@@ -185,5 +198,61 @@ describe("CEO overview", () => {
     const out = await getCeoOverview("Jun-26");
     expect(out.branches).toHaveLength(0);
     expect(execute).not.toHaveBeenCalled();
+  });
+});
+
+describe("focus panel — the caveats are the point", () => {
+  it("warns when a cost centre carries its whole branch's overhead", async () => {
+    /*
+     * Onfido's June margin of 37% is real, but its indirect line is the ENTIRE NOIDA-2 branch GRN
+     * booked against one cost centre — the only sibling, /577, shows Rs 0. Without the note the
+     * figure reads as a standalone P&L, which it is not.
+     */
+    mockDb({
+      branches: [{ id: "b", branch_name: "NOIDA-2", active_status: 1 }],
+      revenue: [{ branch_id: "b", amount: L(90.39) }],
+      people: [{ branch_id: "b", staff: 220, cost: L(32.05) }],
+      spend: [{ branch_id: "b", amount: L(24.93) }],
+    });
+    const { getCeoOverview } = await import("../ceo-overview.service.js");
+    const out = await getCeoOverview("2026-06", { costCentreId: "cc-576" });
+    expect(out.focus).not.toBeNull();
+    expect(out.focus!.marginPct).toBeCloseTo(37.0, 0);
+    expect(
+      out.focus!.notes.join(" "),
+      "a contribution margin must not be presented as a standalone P&L",
+    ).toMatch(/whole branch's overhead/i);
+  });
+
+  it("says so when revenue is billed with no payroll behind it", async () => {
+    mockDb({
+      branches: [{ id: "d", branch_name: "NOIDA-DIALDESK", active_status: 1 }],
+      revenue: [{ branch_id: "d", amount: L(25.92) }],
+      spend: [{ branch_id: "d", amount: L(3.38) }],
+    });
+    const { getCeoOverview } = await import("../ceo-overview.service.js");
+    const out = await getCeoOverview("2026-06", { costCentreId: "cc-dd" });
+    expect(out.focus!.notes.join(" ")).toMatch(/no payroll is attributed/i);
+  });
+
+  it("says so when people are paid with no invoice against them", async () => {
+    mockDb({
+      branches: [{ id: "x", branch_name: "SOMEWHERE", active_status: 1 }],
+      people: [{ branch_id: "x", staff: 40, cost: L(8) }],
+    });
+    const { getCeoOverview } = await import("../ceo-overview.service.js");
+    const out = await getCeoOverview("2026-06", { costCentreId: "cc-x" });
+    expect(out.focus!.notes.join(" ")).toMatch(/no invoice maps to it/i);
+    expect(out.focus!.marginPct, "no revenue means no margin, not a 0% one").toBeNull();
+  });
+
+  it("is absent entirely when nothing is filtered", async () => {
+    mockDb({
+      branches: [{ id: "b", branch_name: "NOIDA", active_status: 1 }],
+      revenue: [{ branch_id: "b", amount: L(100) }],
+      people: [{ branch_id: "b", staff: 10, cost: L(50) }],
+    });
+    const { getCeoOverview } = await import("../ceo-overview.service.js");
+    expect((await getCeoOverview("2026-06")).focus).toBeNull();
   });
 });

@@ -262,10 +262,14 @@ export const workforceMandateService = {
     for (const ratio of ratioRows as RowDataPacket[]) {
       const role = ratio.support_role as string;
       const [empRows] = await db.execute<RowDataPacket[]>(
+        // employees has no designation_name — only designation_id, with the name
+        // on designation_master. The support-role split therefore counted zero
+        // for every role.
         `SELECT COUNT(*) AS cnt FROM employees e
+         LEFT JOIN designation_master dm ON dm.id = e.designation_id
          WHERE e.process_id = ?${branchCond}
            AND e.active_status = 1 AND LOWER(COALESCE(e.employment_status,'active')) = 'active'
-           AND e.designation_name = ?`,
+           AND dm.designation_name = ?`,
         [processId, ...branchParams, role]
       );
       supportSplit[role] = toNum((empRows as RowDataPacket[])[0]?.cnt);

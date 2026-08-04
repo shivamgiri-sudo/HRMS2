@@ -143,7 +143,7 @@ export async function getBGVDetails(candidateId: string): Promise<{
       vd.status,
       vd.verification_method,
       vd.document_number,
-      vd.verified_at,
+      vd.completed_at AS verified_at,
       vd.remarks,
       CONCAT(e.first_name, ' ', e.last_name) as initiated_by_name
     FROM ats_bgv_verification_details vd

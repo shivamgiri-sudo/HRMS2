@@ -97,7 +97,7 @@ export function GrnHistoryTable() {
         description="Every GRN with its full approval timeline — raised, Branch Head decision, Finance Head decision."
       />
 
-      <div className="flex flex-wrap items-center gap-2 px-[16px] py-[12px]">
+      <div className="flex flex-wrap items-center gap-2 px-4 py-3">
         <GrnSearchInput
           value={search}
           onChange={(event) => setSearch(event.target.value)}
