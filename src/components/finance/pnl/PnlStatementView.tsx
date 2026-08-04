@@ -137,6 +137,15 @@ export function PnlStatementView({
           No data available for this period and view.
         </div>
       ) : (
+        {statement.revenueBasis && (
+  // Without this the Revenue block is a puzzle: Recognised and Invoiced agree exactly on a
+  // closed month and diverge sharply on an open one, and nothing on screen says why.
+  <p className="px-4 pb-2 text-[11px] text-slate-500">
+    {statement.revenueBasis === "invoiced"
+      ? "Revenue basis: this month is closed, so Recognised Revenue is what was actually invoiced."
+      : "Revenue basis: this month is still running, so Recognised Revenue is the planned figure — invoicing lags delivery and is shown separately below it."}
+  </p>
+)}
         <div className="overflow-auto rounded-3xl border border-slate-200 bg-white">
           <table className="w-full min-w-max text-sm">
             <thead>
@@ -193,13 +202,23 @@ export function PnlStatementView({
                     );
                   }
                   if (collapsedSections.has(row.section)) continue;
+                  /*
+                   * A row with a parent EXPLAINS the line above it — Invoiced Revenue and
+                   * Contracted Revenue both restate Recognised Revenue on a different basis.
+                   * The statement is a flat list, so without indenting and muting these the
+                   * Revenue section shows the same money on five consecutive lines and reads
+                   * as though it had been counted five times. Indent, mute, and prefix with a
+                   * turned corner so they are unmistakably sub-lines, not additions.
+                   */
+                  const isChild = Boolean(row.parentComponentKey);
                   sections.push(
                     <tr key={row.componentKey} className={`border-b border-slate-100 last:border-0 ${row.isSubtotal ? "bg-slate-50/40 font-semibold" : ""}`}>
-                      <td className="sticky left-0 z-10 bg-white px-4 py-2 text-slate-700">
+                      <td className={`sticky left-0 z-10 bg-white py-2 pr-4 ${isChild ? "pl-10 text-slate-500" : "px-4 text-slate-700"}`}>
+                        {isChild && <span className="mr-1.5 text-slate-300">↳</span>}
                         {row.displayName}
                       </td>
                       {statement.columns.map((column) => (
-                        <td key={column.id} className="px-4 py-2 text-right tabular-nums text-slate-700">
+                        <td key={column.id} className={`px-4 py-2 text-right tabular-nums ${isChild ? "text-slate-500" : "text-slate-700"}`}>
                           {formatValue(row.values[column.id], row.format)}
                         </td>
                       ))}

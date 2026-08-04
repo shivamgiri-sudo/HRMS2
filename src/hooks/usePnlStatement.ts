@@ -28,6 +28,8 @@ export interface PnlStatementRow {
   section: "headcount" | "revenue" | "cost" | "profitability";
   format: "CURRENCY" | "PERCENTAGE" | "COUNT";
   isSubtotal: boolean;
+  /** Set when this line explains the one above it rather than adding to it. */
+  parentComponentKey?: string | null;
   values: Record<string, number | null>;
 }
 
@@ -37,6 +39,9 @@ export interface PnlStatement {
   generatedAt: string;
   /** Date the running-month people cost was computed up to. Null when no snapshot exists. */
   peopleCostAsOf?: string | null;
+  /** "invoiced" once the month has closed, "planned" while it is still running. */
+  revenueBasis?: "invoiced" | "planned";
+  periodOpen?: boolean;
   columns: PnlStatementColumn[];
   rows: PnlStatementRow[];
 }

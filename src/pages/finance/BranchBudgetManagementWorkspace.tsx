@@ -71,7 +71,7 @@ import { hrmsApi } from "@/lib/hrmsApi";
 import { BranchBudgetMatrixPanel } from "@/components/finance/pnl/BranchBudgetMatrixPanel";
 import { BudgetTopupPanel } from "@/components/finance/budget/BudgetTopupPanel";
 import { BranchBudgetImportDialog } from "@/components/finance/pnl/BranchBudgetImportDialog";
-import { BranchBudgetPlannerGrid } from "@/components/finance/pnl/BranchBudgetPlannerGrid";
+import { BranchBudgetPlannerGrid, budgetLineKey } from "@/components/finance/pnl/BranchBudgetPlannerGrid";
 
 const UNITS = [
   "Nos",
@@ -477,13 +477,13 @@ export default function BranchBudgetManagementWorkspace() {
     const workspaceLines = priorDetail.data?.lines ?? [];
     if (workspaceLines.length > 0) {
       workspaceLines.forEach((l) => {
-        const key = `${l.head}|${(l.sub_head ?? (l as any).subHead ?? "").toLowerCase()}`;
+        const key = budgetLineKey(l.head, l.sub_head ?? (l as any).subHead);
         map.set(key, (map.get(key) ?? 0) + Number(l.gross_amount ?? 0));
       });
       return map;
     }
     (priorMirror.data ?? []).forEach((l) => {
-      const key = `${l.head}|${(l.subHead ?? "").toLowerCase()}`;
+      const key = budgetLineKey(l.head, l.subHead);
       map.set(key, (map.get(key) ?? 0) + Number(l.amount ?? 0));
     });
     return map;
@@ -1126,7 +1126,7 @@ Reason:`
                   onCopyForward={() => {
                     pushUndo();
                     setLines((current) => current.map((l) => {
-                      const prior = priorByKey.get(`${l.head}|${(l.subHead ?? "").toLowerCase()}`) ?? 0;
+                      const prior = priorByKey.get(budgetLineKey(l.head, l.subHead)) ?? 0;
                       const already = (Number(l.quantity) || 0) * (Number(l.unitRate) || 0);
                       // Only fill what is still empty — never overwrite a figure already planned.
                       return prior > 0 && already === 0 ? { ...l, quantity: 1, unitRate: prior } : l;

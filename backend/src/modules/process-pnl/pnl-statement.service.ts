@@ -54,6 +54,16 @@ export interface StatementRow {
   componentKey: string;
   displayName: string;
   section: string;
+  /**
+   * The line this one explains, when it is a breakdown rather than a figure in its own right.
+   *
+   * Invoiced Revenue, Contracted Revenue, Earned Seat Revenue and Seat Shortfall all sit under
+   * Recognised Revenue: they say where that number came from and what it would have been, and
+   * they must never read as additional revenue. The statement is rendered as a flat list, so
+   * without this a reader scanning the Revenue section sees the same money on five consecutive
+   * lines and reasonably concludes it has been counted five times.
+   */
+  parentComponentKey: string | null;
   format: string;
   isSubtotal: boolean;
   values: Record<string, number | null>;
@@ -258,8 +268,29 @@ function enrichColumn(
    */
   const snapshot = (key.processId ? people.byProcess.get(key.processId) : undefined)
     ?? (key.branchId ? people.byBranch.get(key.branchId) : undefined);
-  const hasSnapshot = periodOpen
-    && Boolean(snapshot)
+  /*
+   * Use the snapshot whenever it holds anything; fall back to the upstream figure when it does not.
+   *
+   * REVERTED. This briefly read `periodOpen && Boolean(snapshot) && ...`, on the reasoning that a
+   * closed month needs no recomputation because salary_prep_line is what was actually paid and the
+   * row engine reads it. Two things were wrong with that.
+   *
+   * First the premise: canonicalPnlService returns 0.00 for agentSalary, dscPeople, bmcPeople AND
+   * directPeopleCost in every month measured — April, June and July alike. So skipping the
+   * snapshot on a closed month did not swap one people-cost source for a better one, it removed
+   * people cost altogether. April lost Rs 112.11 lakh and June Rs 141.23 lakh, and Operating
+   * Profit rose to 81-82% of revenue for a business that runs nowhere near that.
+   *
+   * Second the purpose: the snapshot is not a stand-in for a missing number, it is the only
+   * source of the Agent/DSC/BMC SPLIT. Upstream carries one undifferentiated people figure, and
+   * the snapshot replaces it — see "uses the snapshot's Agent/DSC/BMC split in place of the
+   * undifferentiated upstream figure" in pnl-running-salary.test.ts, which a row-first rule also
+   * breaks even when the row is populated.
+   *
+   * So: snapshot when present, upstream when not, and never nothing. Both branches are pinned by
+   * tests in pnl-running-salary.test.ts and pnl-revenue-basis.test.ts.
+   */
+  const hasSnapshot = Boolean(snapshot)
     && (snapshot!.agent_salary + snapshot!.dsc_people + snapshot!.bmc_people) > 0;
 
   const agentSalary = hasSnapshot ? snapshot!.agent_salary : n(out.agentSalary);
@@ -410,6 +441,7 @@ export async function getStatement(
     componentKey: component.component_key,
     displayName: component.display_name,
     section: component.section_key,
+    parentComponentKey: component.parent_component_key ?? null,
     format: component.format_type,
     isSubtotal: Boolean(component.is_subtotal),
     values: Object.fromEntries(
@@ -423,6 +455,17 @@ export async function getStatement(
     generatedAt: summary.generatedAt,
     // So the caller can say how current the people cost is instead of implying it is live.
     peopleCostAsOf: people.asOfDate,
+    /*
+     * Which basis the revenue line is on, said out loud.
+     *
+     * A closed month recognises what was invoiced; an open one keeps the planned figure because
+     * invoicing lags delivery. The two can differ enormously — July showed Rs 175.57 lakh planned
+     * against Rs 56.57 lakh invoiced so far — and a reader given both numbers and no explanation
+     * reasonably concludes one of them is wrong. Stating the basis is what makes the pair
+     * intelligible rather than alarming.
+     */
+    revenueBasis: periodOpen ? "planned" : "invoiced",
+    periodOpen,
     columns: columnData.map((item) => item.column),
     rows: statementRows,
   };

@@ -49,6 +49,21 @@ const money = (n: number) =>
 const qnum = (n: number | null | undefined) =>
   n || n === 0 ? Number(n).toLocaleString("en-IN", { maximumFractionDigits: 2 }) : "—";
 
+/**
+ * The key both sides of the Prev/Variance lookup must agree on.
+ *
+ * This existed as a hand-built template literal in four places and they drifted: the map was
+ * written with a lower-cased sub-head while this grid read it back with the original case, so
+ * every capitalised sub-head — which is all of them, "Office Rent", "Electricity Govt." — missed,
+ * and the Prev and Var columns silently read "—" as though last month had no budget. Nothing
+ * errored; the columns just looked empty, which is indistinguishable from having no prior data.
+ *
+ * Case-fold both halves and keep it in one function so the two sides cannot disagree again.
+ */
+export function budgetLineKey(head: string | null | undefined, subHead: string | null | undefined): string {
+  return `${(head ?? "").trim().toLowerCase()}|${(subHead ?? "").trim().toLowerCase()}`;
+}
+
 export interface PlannerRow {
   index: number;
   line: BranchBudgetLineInput;
@@ -605,7 +620,7 @@ export function BranchBudgetPlannerGrid({
                           {planned ? money(p!.amount) : "—"}
                         </td>
                         {(() => {
-                          const prior = priorByKey?.get(`${line.head}|${line.subHead ?? ""}`) ?? 0;
+                          const prior = priorByKey?.get(budgetLineKey(line.head, line.subHead)) ?? 0;
                           const varPct = prior > 0 ? (((p?.amount ?? 0) - prior) / prior) * 100 : null;
                           return (
                             <>
