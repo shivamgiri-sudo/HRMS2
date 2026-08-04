@@ -181,7 +181,11 @@
   background: #fbf9ff !important;
 }
 
-.role-dashboard-reference [class*="bg-gradient-to-r"] {
+/* Flattens decorative gradients to match the reference design.
+   A component whose gradient IS its surface — a coloured panel carrying white text —
+   must opt out with `data-keep-gradient`, otherwise the background is stripped, the
+   white text lands on a white card and the content becomes unreadable. */
+.role-dashboard-reference [class*="bg-gradient-to-r"]:not([data-keep-gradient]) {
   background-image: none;
 }
 

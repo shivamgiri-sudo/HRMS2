@@ -38,9 +38,18 @@ export function EngagementPromoBanner() {
   ];
 
   return (
-    <div className="relative overflow-hidden rounded-2xl bg-gradient-to-r from-violet-600 via-indigo-600 to-blue-700 p-px shadow-lg shadow-indigo-500/20">
+    // data-keep-gradient: this banner's gradient is its surface, not decoration.
+    // Without it the role-dashboard-reference scope strips the background and the
+    // white text below becomes invisible.
+    <div
+      data-keep-gradient
+      className="relative overflow-hidden rounded-2xl bg-gradient-to-r from-violet-600 via-indigo-600 to-blue-700 p-px shadow-lg shadow-indigo-500/20"
+    >
       {/* Inner content */}
-      <div className="relative rounded-[calc(1rem-1px)] bg-gradient-to-r from-violet-600/95 via-indigo-600/95 to-blue-700/95 px-5 py-4">
+      <div
+        data-keep-gradient
+        className="relative rounded-[calc(1rem-1px)] bg-gradient-to-r from-violet-600/95 via-indigo-600/95 to-blue-700/95 px-5 py-4"
+      >
         {/* Background glow */}
         <div className="pointer-events-none absolute -top-10 -right-10 h-40 w-40 rounded-full bg-white/10 blur-3xl" />
         <div className="pointer-events-none absolute -bottom-8 left-20 h-24 w-24 rounded-full bg-pink-400/20 blur-2xl" />

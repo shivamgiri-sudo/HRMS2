@@ -155,6 +155,7 @@ export function WeeklyWinnersWidget({ currentEmployeeId }: { currentEmployeeId?:
       {/* CTA */}
       <Link
         to="/engagement"
+        data-keep-gradient
         className="mx-4 mb-4 flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-violet-600 to-indigo-600 py-2.5 text-xs font-bold text-white shadow-md shadow-violet-500/20 hover:from-violet-700 hover:to-indigo-700 transition-all"
       >
         <Sparkles className="h-3.5 w-3.5" />
