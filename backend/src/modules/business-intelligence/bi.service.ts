@@ -202,7 +202,7 @@ export async function getAttritionRiskSignal(branchId?: string, processId?: stri
   const [resignRows] = await db.execute<RowDataPacket[]>(
     `SELECT COUNT(*) AS cnt FROM exit_request er
      JOIN employees e ON e.id = er.employee_id
-     WHERE er.exit_status NOT IN ('completed','cancelled')
+     WHERE LOWER(er.status) NOT IN ('completed','cancelled','exited')
        AND ${empWhere}`,
     params
   ).catch(() => [[{ cnt: 0 }]] as any);
@@ -220,7 +220,7 @@ export async function getAttritionRiskSignal(branchId?: string, processId?: stri
   const [churnRows] = await db.execute<RowDataPacket[]>(
     `SELECT COUNT(*) AS exits FROM exit_request er
      JOIN employees e ON e.id = er.employee_id
-     WHERE er.exit_status = 'completed'
+     WHERE LOWER(er.status) IN ('completed','exited')
        AND er.updated_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)
        AND ${empWhere}`,
     params

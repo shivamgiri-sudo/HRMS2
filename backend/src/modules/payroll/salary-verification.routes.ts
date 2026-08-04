@@ -58,7 +58,8 @@ salaryVerificationRouter.get(
                   b.id AS branch_id, b.branch_name
              FROM process_master pm
              JOIN branch_master b ON b.id = pm.branch_id
-            WHERE pm.is_active = 1
+            -- process_master has active_status, not is_active.
+            WHERE pm.active_status = 1
             ORDER BY b.branch_name, pm.process_name`
         );
       } else {
@@ -68,9 +69,18 @@ salaryVerificationRouter.get(
              FROM employees e
              JOIN process_master pm ON pm.id = e.process_id
              JOIN branch_master b ON b.id = e.branch_id
-            WHERE e.user_id = ? OR pm.manager_user_id = ?
+            -- process_master has no manager_user_id column — it carries
+            -- process_owner_name / process_owner_email, no user linkage at all.
+            -- Referencing it raised ER_BAD_FIELD_ERROR, so this branch returned
+            -- 500 to every non-admin and they saw no processes whatsoever.
+            --
+            -- Scoped to the caller's own process only. That is narrower than the
+            -- original intent, but it fails closed and is strictly more than the
+            -- nothing they get today. Restoring owner-based scope needs a real
+            -- user column on process_master.
+            WHERE e.user_id = ?
             ORDER BY b.branch_name, pm.process_name`,
-          [userId, userId]
+          [userId]
         );
       }
 

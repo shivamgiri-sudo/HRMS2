@@ -122,7 +122,7 @@ function buildEstimateQuery(groupBy: GroupByOption): string | null {
         FROM employee_salary_assignment esa
         JOIN employees e ON e.id = esa.employee_id
         JOIN branch_master bm ON bm.id = e.branch_id
-        WHERE e.status = 'active'
+        WHERE LOWER(COALESCE(e.employment_status, 'active')) = 'active'
           AND esa.effective_from <= CURDATE()
           AND esa.id = (
             SELECT id FROM employee_salary_assignment esa2
@@ -144,7 +144,7 @@ function buildEstimateQuery(groupBy: GroupByOption): string | null {
         FROM employee_salary_assignment esa
         JOIN employees e ON e.id = esa.employee_id
         JOIN process_master pm ON pm.id = e.process_id
-        WHERE e.status = 'active'
+        WHERE LOWER(COALESCE(e.employment_status, 'active')) = 'active'
           AND esa.effective_from <= CURDATE()
           AND esa.id = (
             SELECT id FROM employee_salary_assignment esa2
@@ -166,7 +166,7 @@ function buildEstimateQuery(groupBy: GroupByOption): string | null {
         FROM employee_salary_assignment esa
         JOIN employees e ON e.id = esa.employee_id
         JOIN department_master dm ON dm.id = e.department_id
-        WHERE e.status = 'active'
+        WHERE LOWER(COALESCE(e.employment_status, 'active')) = 'active'
           AND esa.effective_from <= CURDATE()
           AND esa.id = (
             SELECT id FROM employee_salary_assignment esa2
