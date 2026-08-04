@@ -1267,7 +1267,7 @@ export default function NativeITProvisioningTracker() {
       <Dialog open={actionDialog.open} onOpenChange={(open) => {
         if (!open) { setActionDialog({ open: false, request: null, mode: "action" }); resetForms(); }
       }}>
-        <DialogContent className="max-w-lg">
+        <DialogContent className="max-w-lg max-h-[90vh] flex flex-col">
           <DialogHeader>
             <DialogTitle>
               {actionDialog.mode === "action"  && (isITTask ? "Submit IT Provisioning Details" : isAdminTask ? "Record Admin Actions" : isWfmTask ? "Submit WFM Alignment" : "Mark Request as Actioned")}
@@ -1277,7 +1277,7 @@ export default function NativeITProvisioningTracker() {
           </DialogHeader>
 
           {actionDialog.request && (
-            <div className="space-y-4 py-2">
+            <div className="flex-1 overflow-y-auto space-y-4 py-2 pr-1">
               <div className="rounded-xl border p-3 bg-muted/30 space-y-1">
                 <p className="text-sm font-medium">{actionDialog.request.employee_name} · {actionDialog.request.employee_code}</p>
                 <p className="text-xs text-muted-foreground">{TASK_LABELS[actionDialog.request.task_code] ?? actionDialog.request.task_code}</p>

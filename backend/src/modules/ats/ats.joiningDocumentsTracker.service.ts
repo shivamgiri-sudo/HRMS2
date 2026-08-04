@@ -27,6 +27,7 @@ export interface KeyDocumentStatus {
 
 export interface EmployeeDocumentRow {
   id: string;
+  employee_id: string;
   employee_code: string;
   full_name: string;
   branch_name: string;
@@ -36,6 +37,7 @@ export interface EmployeeDocumentRow {
   joining_document_status: string | null;
   active_status?: number;
   joining_document_completion_pct: number;
+  is_pre_joining?: boolean;
   total_documents: number;
   verified_count: number;
   needs_correction_count: number;
@@ -46,12 +48,12 @@ export interface EmployeeDocumentRow {
 }
 
 export interface TrackerSummary {
-  total: number;
-  complete: number;
+  total_employees: number;
+  completed_count: number;
+  in_progress_count: number;
+  pending_count: number;
+  overdue_count: number;
   pending_verification: number;
-  in_progress: number;
-  not_started: number;
-  overdue: number;
   needs_correction: number;
 }
 
@@ -94,23 +96,23 @@ export function parseKeyDocuments(keyDocumentsRaw: string | null): KeyDocumentSt
 export function calculateTrackerSummary(employees: EmployeeDocumentRow[]): TrackerSummary {
   if (employees.length === 0) {
     return {
-      total: 0,
-      complete: 0,
+      total_employees: 0,
+      completed_count: 0,
+      in_progress_count: 0,
+      pending_count: 0,
+      overdue_count: 0,
       pending_verification: 0,
-      in_progress: 0,
-      not_started: 0,
-      overdue: 0,
       needs_correction: 0,
     };
   }
 
   const summary: TrackerSummary = {
-    total: employees.length,
-    complete: 0,
+    total_employees: employees.length,
+    completed_count: 0,
+    in_progress_count: 0,
+    pending_count: 0,
+    overdue_count: 0,
     pending_verification: 0,
-    in_progress: 0,
-    not_started: 0,
-    overdue: 0,
     needs_correction: 0,
   };
 
@@ -118,17 +120,17 @@ export function calculateTrackerSummary(employees: EmployeeDocumentRow[]): Track
     const pct = emp.joining_document_completion_pct;
 
     if (pct === 100) {
-      summary.complete++;
+      summary.completed_count++;
     } else if (pct >= 75) {
       summary.pending_verification++;
     } else if (pct > 0) {
-      summary.in_progress++;
+      summary.in_progress_count++;
     } else {
-      summary.not_started++;
+      summary.pending_count++;
     }
 
     if (emp.overdue_count > 0) {
-      summary.overdue++;
+      summary.overdue_count++;
     }
 
     if (emp.needs_correction_count > 0) {
@@ -299,6 +301,7 @@ export async function getJoiningDocumentsTracker(
 
   const employees: EmployeeDocumentRow[] = rows.map(row => ({
     id: row.id,
+    employee_id: row.id,
     employee_code: row.employee_code,
     full_name: row.full_name,
     branch_name: row.branch_name || '',
