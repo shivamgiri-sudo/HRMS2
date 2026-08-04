@@ -186,6 +186,39 @@ router.get("/cost-centres", h(async (req: Request, res: Response) => {
   return res.json({ data: rows });
 }));
 
+// Cost-centres: billing summary for last 3 months (must be before /:id route)
+router.get("/cost-centres/billing-summary", h(async (_req: Request, res: Response) => {
+  const months = ["May-25", "Jun-25", "Jul-25"];
+  const [rows] = await db.execute<any[]>(
+    `SELECT cc.cost_centre_code, cc.id AS cost_centre_id,
+        bps.bill_client_name, bps.month_label,
+        COALESCE(SUM(bps.provision_amt), 0) AS provision_amt,
+        COALESCE(SUM(bps.billing_amt), 0)   AS billing_amt
+       FROM cost_centre_master cc
+       JOIN billing_provision_snapshot bps
+         ON bps.cost_centre_code COLLATE utf8mb4_unicode_ci = cc.cost_centre_code COLLATE utf8mb4_unicode_ci
+        AND bps.month_label IN (?, ?, ?)
+        AND bps.bill_branch NOT LIKE '%DIALDESK%'
+       WHERE cc.active_status = 1
+       GROUP BY cc.cost_centre_code, cc.id, bps.bill_client_name, bps.month_label
+       ORDER BY cc.cost_centre_code, bps.month_label`,
+    months
+  );
+  const map: Record<string, { bill_client_name: string | null; months: Record<string, { provision: number; billing: number }> }> = {};
+  for (const row of rows as any[]) {
+    const key = String(row.cost_centre_id);
+    if (!map[key]) map[key] = { bill_client_name: row.bill_client_name ?? null, months: {} };
+    map[key].months[row.month_label] = {
+      provision: Number(row.provision_amt),
+      billing:   Number(row.billing_amt),
+    };
+    if (!map[key].bill_client_name && row.bill_client_name) {
+      map[key].bill_client_name = row.bill_client_name;
+    }
+  }
+  res.json({ success: true, data: map });
+}));
+
 router.get("/cost-centres/:id", h(async (req: Request, res: Response) => {
   const item = await costCentreService.getById(req.params.id);
   if (!item) return res.status(404).json({ error: "Not found" });

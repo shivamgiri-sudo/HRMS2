@@ -692,6 +692,21 @@ const emptyProcessForm = (): ProcessFormData => ({
   client_id: "",
 });
 
+// ── Billing summary types ─────────────────────────────────────────────────────
+
+interface BillingMonth { provision: number; billing: number; }
+interface BillingSummaryEntry { bill_client_name: string | null; months: Record<string, BillingMonth>; }
+type BillingSummaryMap = Record<string, BillingSummaryEntry>; // keyed by cost_centre_id
+
+const BILLING_MONTHS = ["May-25", "Jun-25", "Jul-25"];
+
+function fmt(n: number): string {
+  if (n === 0) return "—";
+  if (n >= 1_000_000) return `₹${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `₹${(n / 1_000).toFixed(0)}K`;
+  return `₹${n}`;
+}
+
 // ── Cost Centre types ─────────────────────────────────────────────────────────
 
 interface CostCentreRecord {
@@ -1307,10 +1322,12 @@ function CostCentreTab({ isAdmin }: { isAdmin: boolean }) {
   const [lobs, setLobs] = useState<LOBOption[]>([]);
   const [branches, setBranches] = useState<BranchOption[]>([]);
   const [processes, setProcesses] = useState<ProcessRecord[]>([]);
+  const [billingSummary, setBillingSummary] = useState<BillingSummaryMap>({});
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<"1" | "0" | "all">("1");
+  const [showBilling, setShowBilling] = useState(false);
 
   const [migrationStatus, setMigrationStatus] = useState<{ total: number; orphaned: number; migrationComplete: boolean; message: string } | null>(null);
 
@@ -1338,13 +1355,14 @@ function CostCentreTab({ isAdmin }: { isAdmin: boolean }) {
       params.set("active_status", statusFilter);
       const url = `/api/org/cost-centres${params.toString() ? `?${params.toString()}` : ""}`;
 
-      const [ccRes, clientRes, lobRes, branchRes, procRes, migRes] = await Promise.all([
+      const [ccRes, clientRes, lobRes, branchRes, procRes, migRes, billRes] = await Promise.all([
         hrmsApi.get<{ data: CostCentreRecord[] } | CostCentreRecord[]>(url),
         hrmsApi.get<{ data: ClientOption[] } | ClientOption[]>("/api/clients"),
         hrmsApi.get<{ data: LOBOption[] } | LOBOption[]>("/api/org/lobs"),
         hrmsApi.get<{ data: BranchOption[] } | BranchOption[]>("/api/org/branches"),
         hrmsApi.get<{ data: ProcessRecord[] } | ProcessRecord[]>("/api/org/processes"),
         hrmsApi.get<{ success: boolean; data: typeof migrationStatus }>("/api/org/cost-centres/migration-status"),
+        hrmsApi.get<{ success: boolean; data: BillingSummaryMap }>("/api/org/cost-centres/billing-summary"),
       ]);
 
       setRecords(Array.isArray(ccRes) ? ccRes : ccRes.data ?? []);
@@ -1353,6 +1371,7 @@ function CostCentreTab({ isAdmin }: { isAdmin: boolean }) {
       setBranches(Array.isArray(branchRes) ? branchRes : branchRes.data ?? []);
       setProcesses(Array.isArray(procRes) ? procRes : procRes.data ?? []);
       setMigrationStatus(migRes.data ?? null);
+      setBillingSummary((billRes as { success: boolean; data: BillingSummaryMap }).data ?? {});
     } catch (err: unknown) {
       setMessage(err instanceof Error ? err.message : "Failed to load");
     } finally {
@@ -1522,15 +1541,28 @@ function CostCentreTab({ isAdmin }: { isAdmin: boolean }) {
               ))}
             </div>
           </div>
-          <button
-            onClick={openAdd}
-            disabled={migrationStatus && !migrationStatus.migrationComplete}
-            className="inline-flex items-center gap-2 rounded-2xl bg-slate-950 px-4 py-2 text-sm font-bold text-white hover:bg-slate-800 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-            title={migrationStatus && !migrationStatus.migrationComplete ? "Complete migration first" : undefined}
-          >
-            <Plus className="h-4 w-4" />
-            Add Cost Centre
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setShowBilling((v) => !v)}
+              className={`inline-flex items-center gap-2 rounded-2xl border px-3 py-2 text-sm font-semibold transition-colors cursor-pointer ${
+                showBilling
+                  ? "border-emerald-300 bg-emerald-50 text-emerald-800"
+                  : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+              }`}
+            >
+              <DollarSign className="h-4 w-4" />
+              {showBilling ? "Hide Billing" : "Billing (May–Jul 25)"}
+            </button>
+            <button
+              onClick={openAdd}
+              disabled={!!(migrationStatus && !migrationStatus.migrationComplete)}
+              className="inline-flex items-center gap-2 rounded-2xl bg-slate-950 px-4 py-2 text-sm font-bold text-white hover:bg-slate-800 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+              title={migrationStatus && !migrationStatus.migrationComplete ? "Complete migration first" : undefined}
+            >
+              <Plus className="h-4 w-4" />
+              Add Cost Centre
+            </button>
+          </div>
         </div>
         <input
           type="text"
@@ -1574,6 +1606,14 @@ function CostCentreTab({ isAdmin }: { isAdmin: boolean }) {
                   <th className="p-4 font-semibold">LOB</th>
                   <th className="p-4 font-semibold">Branch</th>
                   <th className="p-4 font-semibold">Process</th>
+                  {showBilling && (
+                    <>
+                      <th className="p-4 font-semibold text-right">May-25</th>
+                      <th className="p-4 font-semibold text-right">Jun-25</th>
+                      <th className="p-4 font-semibold text-right">Jul-25</th>
+                      <th className="p-4 font-semibold text-right">Billing Status</th>
+                    </>
+                  )}
                   <th className="p-4 font-semibold">Status</th>
                   <th className="p-4 font-semibold">Actions</th>
                 </tr>
@@ -1615,6 +1655,50 @@ function CostCentreTab({ isAdmin }: { isAdmin: boolean }) {
                           <span className="text-rose-400 text-xs font-semibold">Not set</span>
                         )}
                       </td>
+                      {showBilling && (() => {
+                        const bs = billingSummary[rec.id];
+                        if (!bs) return (
+                          <>
+                            <td className="p-4 text-right text-slate-300 text-xs">—</td>
+                            <td className="p-4 text-right text-slate-300 text-xs">—</td>
+                            <td className="p-4 text-right text-slate-300 text-xs">—</td>
+                            <td className="p-4 text-right"><span className="text-xs text-slate-300">No data</span></td>
+                          </>
+                        );
+                        const allBilled = BILLING_MONTHS.every(m => bs.months[m]?.billing > 0);
+                        const someBilled = BILLING_MONTHS.some(m => bs.months[m]?.billing > 0);
+                        const hasProvision = BILLING_MONTHS.some(m => bs.months[m]?.provision > 0);
+                        return (
+                          <>
+                            {BILLING_MONTHS.map(m => {
+                              const mo = bs.months[m];
+                              if (!mo) return <td key={m} className="p-4 text-right text-slate-300 text-xs">—</td>;
+                              return (
+                                <td key={m} className="p-4 text-right text-xs">
+                                  {mo.billing > 0 ? (
+                                    <span className="font-semibold text-emerald-700">{fmt(mo.billing)}</span>
+                                  ) : mo.provision > 0 ? (
+                                    <span className="text-amber-600">{fmt(mo.provision)}<span className="ml-1 text-slate-400">(prov)</span></span>
+                                  ) : (
+                                    <span className="text-slate-300">—</span>
+                                  )}
+                                </td>
+                              );
+                            })}
+                            <td className="p-4 text-right">
+                              {allBilled ? (
+                                <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700">Billed</span>
+                              ) : someBilled ? (
+                                <span className="rounded-full bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-700">Partial</span>
+                              ) : hasProvision ? (
+                                <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-500">Prov only</span>
+                              ) : (
+                                <span className="rounded-full bg-slate-50 px-2.5 py-1 text-xs text-slate-400">—</span>
+                              )}
+                            </td>
+                          </>
+                        );
+                      })()}
                       <td className="p-4">
                         {isActive(rec as unknown as OrgRecord) ? (
                           <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700">
