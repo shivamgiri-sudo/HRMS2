@@ -904,21 +904,26 @@ export async function getDocumentComplianceMetrics(scope: DashboardScope): Promi
     const { sql: scopeSql, params: scopeParams } = buildScopeWhereEmployees(scope, "e");
 
     const [rows] = await db.execute<RowDataPacket[]>(
+      // Joined directly instead of via a derived table. The old form ran
+      // `SELECT ... FROM employee_documents GROUP BY employee_id` with no filter,
+      // so MySQL aggregated all 150k document rows for all 56k employees and
+      // materialised that before joining to the ~1.1k active ones
+      // (EXPLAIN: DERIVED, rows=150032). Measured on prod 2026-08-04: 96,971 ms.
+      // This form is index-driven off idx_emp_doc_emp for active employees only:
+      // 1,418 ms, byte-identical output (1125 / 1051 / 74 / 1068 / 169).
+      // Do NOT reintroduce the derived-table form — it times out the 30s client
+      // limit and has taken the backend process down.
       `SELECT
-         COUNT(*) AS activeEmployees,
-         SUM(CASE WHEN d.doc_count IS NULL THEN 1 ELSE 0 END) AS employeesWithNoDocs,
-         SUM(CASE WHEN d.doc_count IS NOT NULL THEN 1 ELSE 0 END) AS employeesWithDocs,
-         COALESCE(SUM(d.doc_count), 0) AS totalDocs,
-         COALESCE(SUM(d.verified_count), 0) AS verifiedDocs,
-         COALESCE(SUM(d.doc_count - d.verified_count), 0) AS unverifiedDocs
+         COUNT(DISTINCT e.id) AS activeEmployees,
+         COUNT(DISTINCT e.id)
+           - COUNT(DISTINCT CASE WHEN d.id IS NOT NULL THEN e.id END) AS employeesWithNoDocs,
+         COUNT(DISTINCT CASE WHEN d.id IS NOT NULL THEN e.id END) AS employeesWithDocs,
+         COUNT(d.id) AS totalDocs,
+         COALESCE(SUM(CASE WHEN d.verified = 1 THEN 1 ELSE 0 END), 0) AS verifiedDocs,
+         COUNT(d.id)
+           - COALESCE(SUM(CASE WHEN d.verified = 1 THEN 1 ELSE 0 END), 0) AS unverifiedDocs
        FROM employees e
-       LEFT JOIN (
-         SELECT employee_id,
-                COUNT(*) AS doc_count,
-                SUM(CASE WHEN verified = 1 THEN 1 ELSE 0 END) AS verified_count
-           FROM employee_documents
-          GROUP BY employee_id
-       ) d ON d.employee_id = e.id
+       LEFT JOIN employee_documents d ON d.employee_id = e.id
        WHERE e.active_status = 1
          AND ${scopeSql}`,
       scopeParams,
