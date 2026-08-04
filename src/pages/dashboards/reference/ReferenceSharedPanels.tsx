@@ -169,7 +169,9 @@ export function OnboardingFunnelPanel({ data }: { data: ReferenceDashboardData }
           <ReferenceListRow icon={FileCheck2} title="Profile Submitted" subtitle="Ready for HR review" value={metricDetail(m, "onb", "submitted")} tone="blue" href="/ats/onboarding-bridge" />
           <ReferenceListRow icon={UserCheck} title="Joined" subtitle="Converted to employee" value={metricDetail(m, "onb", "joined")} tone="green" href="/ats/joining-control-room" />
           <ReferenceListRow icon={TriangleAlert} title="Stuck" subtitle="Beyond the ageing threshold" value={metricDetail(m, "onb", "stuck")} tone="red" href="/ats/onboarding-requests" />
-          <ReferenceListRow icon={ShieldCheck} title="OTP Verified" subtitle="Candidate identity confirmed" value={metricDetail(m, "onb", "otpPending")} tone="blue" />
+          {/* Reads otpVerified, which is what the query counts. The old key was
+              named otpPending while counting the opposite. */}
+          <ReferenceListRow icon={ShieldCheck} title="OTP Verified" subtitle="Candidate identity confirmed" value={metricDetail(m, "onb", "otpVerified")} tone="blue" />
         </div>
       )}
     </ReferencePanel>

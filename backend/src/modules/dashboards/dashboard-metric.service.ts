@@ -234,10 +234,21 @@ export async function getOnboardingMetrics(scope: DashboardScope): Promise<Metri
     const stuck = Number(r?.stuck ?? 0);
     const joined = Number(r?.joined ?? 0);
     const total = Number(r?.total ?? 0);
-    const otpPending = Number((otpRows[0] as any)?.otp_verified ?? 0);
+    // The SQL counts otp_verified = 1, so this is the number VERIFIED — the key was
+    // named otpPending, which says the opposite. The panel labels the row "OTP
+    // Verified", so the displayed number was right and the key name was wrong; a
+    // reader reconciling the two could reasonably have concluded either was.
+    // Renamed to match what it counts. `otpPending` is kept alongside for one
+    // release so any other consumer does not silently lose the value.
+    const otpVerified = Number((otpRows[0] as any)?.otp_verified ?? 0);
 
     const status: MetricResult["status"] = stuck > 0 ? "critical" : pending > 10 ? "warn" : "ok";
-    return wrapEnriched("ONBOARDING", submitted + pending, { submitted, pending, otpPending, stuck, joined, total }, status, true, scope.branchIds[0], scope.processIds[0], total);
+    return wrapEnriched(
+      "ONBOARDING",
+      submitted + pending,
+      { submitted, pending, otpVerified, otpPending: otpVerified, stuck, joined, total },
+      status, true, scope.branchIds[0], scope.processIds[0], total,
+    );
   } catch (err) {
     return nullResult("ONBOARDING", err);
   }
@@ -422,11 +433,15 @@ export async function getPayrollReadinessMetrics(scope: DashboardScope): Promise
     const status: MetricResult["status"] =
       blockerCount === 0 ? "ok" : blockerCount > 10 ? "critical" : "warn";
 
+    // sourceRowCount was omitted, so NO_DATA_IN_SOURCE could never fire for this
+    // metric and a scope containing no employees rendered "0 of 0 ready" — four
+    // confident zeros that look like a clean bill of health. `total` is the
+    // population the metric measured, which is exactly what that flag needs.
     return wrapEnriched(
       "PAYROLL_READINESS",
       readyCount,
       { total, readyCount, blockerCount, missingBank, missingPan, missingUan },
-      status, true, scope.branchIds[0], scope.processIds[0]
+      status, true, scope.branchIds[0], scope.processIds[0], total
     );
   } catch (err) {
     return nullResult("PAYROLL_READINESS", err);
