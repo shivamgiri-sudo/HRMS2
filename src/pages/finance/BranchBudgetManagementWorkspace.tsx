@@ -729,6 +729,77 @@ export default function BranchBudgetManagementWorkspace() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lines]);
 
+  // Server auto-save only starts once a draft id exists (above) and only fires 3 seconds after
+  // the last edit, so a brand-new budget — or the last few seconds of typing on an existing one —
+  // has no protection against an accidental tab close or refresh. This mirrors that gap in the
+  // browser itself: every edit is also mirrored to localStorage, scoped to this exact branch and
+  // period, so a reload can offer it back instead of losing it outright.
+  const draftKey = branchId && period ? `hrms_branch_budget_draft:${branchId}:${period}` : null;
+  const [recoverableDraft, setRecoverableDraft] = useState<{ lines: BranchBudgetLineInput[]; savedAt: number } | null>(null);
+
+  function lineHasContent(line: BranchBudgetLineInput) {
+    return Boolean(line.head || line.itemName.trim() || line.justification.trim() || Number(line.unitRate) > 0);
+  }
+
+  useEffect(() => {
+    if (!draftKey || !canEdit) return;
+    if (!lines.some(lineHasContent)) return;
+    const timer = setTimeout(() => {
+      try {
+        localStorage.setItem(draftKey, JSON.stringify({ lines, savedAt: Date.now() }));
+      } catch { /* storage full or blocked in this browser — best-effort only */ }
+    }, 800);
+    return () => clearTimeout(timer);
+  }, [draftKey, lines, canEdit]);
+
+  // Offer a local draft back only once we actually know what the server has for this branch and
+  // period (or that nothing exists yet) — otherwise a momentary "no budget yet" render while the
+  // query is still loading would surface a stale recovery banner that the real data was about to
+  // replace anyway.
+  useEffect(() => {
+    setRecoverableDraft(null);
+    if (!draftKey || budgetsQuery.isLoading || (detailId && detailQuery.isLoading)) return;
+    try {
+      const raw = localStorage.getItem(draftKey);
+      if (!raw) return;
+      const parsed = JSON.parse(raw) as { lines?: BranchBudgetLineInput[]; savedAt?: number };
+      if (!parsed?.lines?.length || !parsed.savedAt) return;
+      if (Date.now() - parsed.savedAt > 14 * 24 * 60 * 60 * 1000) {
+        localStorage.removeItem(draftKey);
+        return;
+      }
+      if (!parsed.lines.some(lineHasContent)) return;
+      if (JSON.stringify(parsed.lines) === JSON.stringify(lines)) return;
+      setRecoverableDraft({ lines: parsed.lines, savedAt: parsed.savedAt });
+    } catch {
+      localStorage.removeItem(draftKey);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draftKey, budgetsQuery.isLoading, detailQuery.isLoading, loadedDetailId]);
+
+  function restoreLocalDraft() {
+    if (!recoverableDraft) return;
+    pushUndo();
+    setLines(recoverableDraft.lines);
+    setRecoverableDraft(null);
+  }
+
+  function discardLocalDraft() {
+    if (draftKey) localStorage.removeItem(draftKey);
+    setRecoverableDraft(null);
+  }
+
+  // Warn on an accidental close/refresh/navigation while there is content the server does not
+  // have yet — the one gap localStorage mirroring cannot cover on its own, since some browsers
+  // and OS-level crashes never give the mirroring effect's debounce a chance to run.
+  useEffect(() => {
+    const hasUnsaved = canEdit && (savedBudgetId ? dirtyCount > 0 : lines.some(lineHasContent));
+    if (!hasUnsaved) return;
+    const handler = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ""; };
+    window.addEventListener("beforeunload", handler);
+    return () => window.removeEventListener("beforeunload", handler);
+  }, [canEdit, savedBudgetId, dirtyCount, lines]);
+
   /** Edits that reshape a line rather than nudge a number. Undo snapshots these, so one Undo steps
    *  back a whole decision instead of a single keystroke. */
   const STRUCTURAL_FIELDS = new Set([
@@ -834,6 +905,9 @@ export default function BranchBudgetManagementWorkspace() {
       setSavedSnapshot(JSON.stringify(lines));
       setUndoStack([]);
       setLoadedDetailId(result.id);
+      // The server now has this content, so the local-only safety net for it is no longer needed.
+      if (draftKey) localStorage.removeItem(draftKey);
+      setRecoverableDraft(null);
       const response = await hrmsApi.get<{ success: boolean; data: typeof coverageQuery.data }>(
         `/api/finance/pnl/budgets/${result.id}/coverage`
       );
@@ -1052,6 +1126,18 @@ Reason:`
                 const banner = budgetStatusBanner(currentBudget?.status ?? "", currentBudget?.budget_number);
                 return banner && <div className={`rounded-2xl border p-4 text-sm ${banner.tone}`}>{banner.message}</div>;
               })()}
+              {recoverableDraft && (
+                <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+                  <span>
+                    Unsaved changes from {new Date(recoverableDraft.savedAt).toLocaleString("en-IN")} were found for this branch and period —
+                    likely from a tab that closed or refreshed before "Save draft" was clicked.
+                  </span>
+                  <div className="flex gap-2">
+                    <Button size="sm" onClick={restoreLocalDraft}>Restore</Button>
+                    <Button size="sm" variant="outline" onClick={discardLocalDraft}>Discard</Button>
+                  </div>
+                </div>
+              )}
               {/* The table planner carries the drivers as its own pinned band, so showing this card
                   as well put the same seven editable rows on screen twice. */}
               {branchId && plannerMode === "cards" && (
