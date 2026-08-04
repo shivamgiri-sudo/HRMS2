@@ -81,11 +81,14 @@ export function PayrollReferenceLayout({ data, filters }: { data: ReferenceDashb
   // impossible and true of the finalized runs today.
   const dataIntegrity = arrayAt(data.payroll, "dataIntegrity");
   const statutoryRows = arrayAt(data.payroll, "statutoryFiling");
-  const branchReadiness = arrayAt(data.payroll, "branchReadiness");
-  const disbursement = (read(data.payroll, "disbursement") ?? {}) as Record<string, unknown>;
-  const disbursed = asNumber(disbursement.completed);
-  const disbursalTotal = Object.values(disbursement).reduce((sum, value) => sum + (asNumber(value) ?? 0), 0);
-  const payslipPct = disbursalTotal > 0 && disbursed !== null ? Math.round((disbursed / disbursalTotal) * 1000) / 10 : null;
+  // branchReadiness is a single object for the run's month, not a list of branches.
+  const readiness = read(data.payroll, "branchReadiness") as Record<string, unknown> | null;
+  // disbursement is the run's actual disbursement record (status, amount, NEFT ref),
+  // not a generation-progress breakdown. `completed`/`in_progress`/`initiated`/
+  // `failed` were never returned, so the old donut summed four undefineds to 0 and
+  // printed "0%" over a body that said "No data".
+  const disbursement = read(data.payroll, "disbursement") as Record<string, unknown> | null;
+  const payslips = read(data.payroll, "payslips") as Record<string, unknown> | null;
   const pendingQueues = (read(data.payroll, "pendingQueues") ?? {}) as Record<string, unknown>;
   const loans = (read(data.payroll, "loans") ?? {}) as Record<string, unknown>;
   const reimbursements = (read(data.payroll, "reimbursements") ?? {}) as Record<string, unknown>;
@@ -220,17 +223,31 @@ export function PayrollReferenceLayout({ data, filters }: { data: ReferenceDashb
             <ReferenceListRow icon={IndianRupee} title="Gross Pay" value={formatCurrency(totalGross)} tone="blue" />
             <ReferenceListRow icon={WalletCards} title="Net Pay" value={formatCurrency(totalNet)} tone="green" />
             <ReferenceListRow icon={ReceiptIndianRupee} title="Employee Deductions" value={formatCurrency(deductions)} tone="amber" />
-            <ReferenceListRow icon={BadgeIndianRupee} title="Employer Contributions" value={formatCurrency(employerContribution)} tone="slate" />
+            {/* employerContribution is a hardcoded null — the run stores no employer
+                cost total. Labelled as not captured rather than rendered as a blank
+                currency value that looks like zero rupees. */}
+            <ReferenceListRow icon={BadgeIndianRupee} title="Employer Contributions" value="Not captured" tone="slate" />
           </div>
         </ReferencePanel>
 
+        {/* This panel re-rendered the Payroll Summary above it: "Net Pay Paid" was
+            the same `totalNet` variable as "Net Pay", "Gross Pay" was the same
+            `totalGross`, Employer Contributions was a hardcoded null, and
+            paymentMode was never returned. Two panels showed one set of numbers,
+            with the second implying money had moved.
+            It now shows what was actually disbursed, which is genuinely different
+            from what was computed. */}
         <ReferencePanel title={`Payment Summary (${currentMonth})`}>
-          <div className="divide-y divide-[#edf1f6]">
-            <ReferenceListRow icon={WalletCards} title="Net Pay Paid" value={formatCurrency(totalNet)} tone="green" />
-            <ReferenceListRow icon={BadgeIndianRupee} title="Employer Contributions" value={formatCurrency(employerContribution)} tone="blue" />
-            <ReferenceListRow icon={ReceiptIndianRupee} title="Gross Pay" value={formatCurrency(totalGross)} tone="slate" />
-            <ReferenceListRow icon={CreditCard} title="Payment Mode" value={String(data.payroll.paymentMode ?? "—")} tone="blue" />
-          </div>
+          {disbursement ? (
+            <div className="divide-y divide-[#edf1f6]">
+              <ReferenceListRow icon={WalletCards} title="Amount Disbursed" value={formatCurrency(asNumber(disbursement.totalAmount))} tone="green" />
+              <ReferenceListRow icon={BadgeIndianRupee} title="Employees Paid" value={asNumber(disbursement.employeeCount)} tone="blue" />
+              <ReferenceListRow icon={ReceiptIndianRupee} title="Status" value={String(disbursement.status ?? "—")} tone={String(disbursement.status ?? "").toLowerCase() === "completed" ? "green" : "amber"} />
+              <ReferenceListRow icon={CreditCard} title="Bank Reference" value={String(disbursement.bankRef ?? "—")} tone="slate" />
+            </div>
+          ) : (
+            <p className="px-3 py-8 text-center text-xs text-[#94a3b8]">No disbursement recorded for this run</p>
+          )}
         </ReferencePanel>
 
         <ReferencePanel title="Upcoming Payroll">
@@ -289,19 +306,22 @@ export function PayrollReferenceLayout({ data, filters }: { data: ReferenceDashb
       <div className="grid gap-4 xl:grid-cols-[0.8fr_0.8fr_1.1fr_1fr]">
         <ReferencePanel title="Loan & Advances Snapshot">
           <div className="divide-y divide-[#edf1f6]">
-            <ReferenceListRow title="Total Outstanding" value={formatCurrency(asNumber(loans.totalOutstanding ?? loans.total_outstanding))} tone="blue" />
-            <ReferenceListRow title="Active Loans" value={asNumber(loans.activeLoans ?? loans.active_loans)} tone="slate" />
-            <ReferenceListRow title="Overdue Amount" value={formatCurrency(asNumber(loans.overdueAmount ?? loans.overdue_amount))} tone="red" />
-            <ReferenceListRow title="Overdue Loans" value={asNumber(loans.overdueLoans ?? loans.overdue_loans)} tone="red" />
+            {/* Loan balances are org-wide, not scoped to a payroll run, so this
+                endpoint deliberately does not serve them — see the note in
+                dashboard.routes.ts. Stated plainly rather than shown as four
+                em dashes that look like missing data. */}
+            <p className="px-3 py-8 text-center text-xs text-[#94a3b8]">
+              Loan balances are org-wide and not scoped to a payroll run
+            </p>
           </div>
         </ReferencePanel>
 
         <ReferencePanel title="Reimbursements Pending">
           <div className="divide-y divide-[#edf1f6]">
-            <ReferenceListRow title="Total Pending" value={formatCurrency(asNumber(reimbursements.totalPending ?? reimbursements.total_pending))} tone="slate" />
-            <ReferenceListRow title="Pending Requests" value={asNumber(reimbursements.pendingRequests ?? reimbursements.pending_requests)} tone="slate" />
-            <ReferenceListRow title="Overdue Requests" value={asNumber(reimbursements.overdueRequests ?? reimbursements.overdue_requests)} tone="red" />
-            <ReferenceListRow title="Avg. TAT" value={reimbursements.avgTat ?? reimbursements.avg_tat ?? "—"} tone="blue" />
+            {/* Same reasoning as loans: claims are org-wide, not run-scoped. */}
+            <p className="px-3 py-8 text-center text-xs text-[#94a3b8]">
+              Reimbursement claims are org-wide and not scoped to a payroll run
+            </p>
           </div>
         </ReferencePanel>
 
@@ -309,23 +329,38 @@ export function PayrollReferenceLayout({ data, filters }: { data: ReferenceDashb
           <div className="divide-y divide-[#edf1f6]">
             {statutoryRows.length ? statutoryRows.slice(0, 6).map((row, index) => (
               <ReferenceListRow key={String(row.id ?? index)} title={String(row.filing_type ?? row.type ?? "Filing")} subtitle={String(row.due_date ?? row.dueDate ?? "—")} value={String(row.status ?? "Pending")} tone={String(row.status ?? "").toLowerCase().includes("filed") ? "green" : "blue"} />
-             )) : branchReadiness.slice(0, 5).map((row, index) => (
-               <ReferenceListRow key={String(row.branch_id ?? index)} title={String(row.branch_name ?? "Branch readiness")} subtitle={String(row.readiness_status ?? "Status")} value={row.readiness_score} tone={asNumber(row.readiness_score) !== null && Number(row.readiness_score) >= 90 ? "green" : "amber"} />
-             ))}
-             {!statutoryRows.length && !branchReadiness.length ? <p className="px-3 py-8 text-center text-xs text-[#94a3b8]">Run-linked compliance source unavailable</p> : null}
+             )) : readiness ? (
+               <>
+                 {/* branchReadiness is an object keyed to the run's month, not a list
+                     of branches. It was read with arrayAt, so it was always empty. */}
+                 <ReferenceListRow title="Branches in scope" value={asNumber(readiness.branches)} tone="slate" />
+                 <ReferenceListRow title="Attendance frozen" value={asNumber(readiness.attendanceFrozen)} tone={Number(readiness.attendanceFrozen ?? 0) > 0 ? "green" : "amber"} />
+                 <ReferenceListRow title="Attendance data ready" value={asNumber(readiness.dataReady)} tone={Number(readiness.dataReady ?? 0) > 0 ? "green" : "amber"} />
+               </>
+             ) : null}
+             {!statutoryRows.length && !readiness ? <p className="px-3 py-8 text-center text-xs text-[#94a3b8]">No compliance or readiness data for this run</p> : null}
           </div>
         </ReferencePanel>
 
+        {/* The donut summed four values the endpoint never returned, so it was
+            always 0 and printed "0% Generated" over a body reading "No data".
+            salary_payslip is month-keyed, so generation is counted for the run's
+            month against the run's own lines. */}
         <ReferencePanel title={`Payslip Generation Status (${currentMonth})`}>
-          <ReferenceDonut compact centerValue={payslipPct === null ? null : `${payslipPct}%`} centerLabel="Generated" data={[
-            { name: "Generated", value: disbursed ?? 0 },
-            { name: "In Progress", value: asNumber(disbursement.in_progress) ?? 0 },
-            { name: "Pending", value: (asNumber(disbursement.initiated) ?? 0) + (asNumber(disbursement.failed) ?? 0) },
-          ]} />
-          <div className="mt-4 space-y-3">
-             <ReferenceProgress label="Payroll readiness" value={null} max={100} suffix="%" tone="slate" />
-            <ReferenceProgress label="Pending queues" value={asNumber(pendingQueues.total)} max={Math.max(1, total ?? 1)} tone="amber" />
-          </div>
+          {payslips ? (
+            <>
+              <ReferenceDonut compact centerValue={`${asNumber(payslips.pct) ?? 0}%`} centerLabel="Generated" data={[
+                { name: "Generated", value: asNumber(payslips.generated) ?? 0 },
+                { name: "Pending", value: asNumber(payslips.pending) ?? 0 },
+              ]} />
+              <div className="mt-4 divide-y divide-[#edf1f6]">
+                <ReferenceListRow title="Generated" value={asNumber(payslips.generated)} tone="green" />
+                <ReferenceListRow title="Expected (run lines)" value={asNumber(payslips.expected)} tone="slate" />
+              </div>
+            </>
+          ) : (
+            <p className="px-3 py-8 text-center text-xs text-[#94a3b8]">No payroll lines in this run to generate payslips for</p>
+          )}
         </ReferencePanel>
 
         <SalaryComponentPanel data={data} />
