@@ -463,6 +463,25 @@ export async function computeLineAllocations(
     );
     driverValueByCostCentre = new Map(shares.map((s) => [s.key, s.weight]));
     mode = "weighted";
+  } else if (method === "revenue_share") {
+    // Unlike the other weighted drivers below, a cost centre legitimately has zero revenue —
+    // a new floor, a support function that isn't billed — so requiring every active cost centre
+    // to carry a rate before ANY branch-common line (rent, internet, anything) could be planned
+    // was blocking unrelated costs on missing revenue data. A cost centre with no revenue simply
+    // carries no share of the pool, the same treatment meter_wise already gives an unmetered cost
+    // centre. The gap is still surfaced as a non-blocking caution via checkSharingMethodReadiness
+    // (Exceptions & Readiness tab), which is where "add revenue" belongs — not a save-time throw.
+    const drivers = await getMonthlyDrivers(branchId, periodCode, executor);
+    const driverByCostCentre = new Map(drivers.map((d) => [d.costCentreId, d]));
+    shares = costCentres.map((cc) => ({
+      key: cc.id,
+      weight: Math.max(0, driverByCostCentre.get(cc.id)?.calculatedPlannedRevenue ?? 0),
+    }));
+    unitByCostCentre = new Map(
+      costCentres.map((cc) => [cc.id, driverByCostCentre.get(cc.id)?.calculatedPlannedRevenue ?? 0])
+    );
+    driverValueByCostCentre = new Map(shares.map((s) => [s.key, s.weight]));
+    mode = "weighted";
   } else {
     const drivers = await getMonthlyDrivers(branchId, periodCode, executor);
     const driverByCostCentre = new Map(drivers.map((d) => [d.costCentreId, d]));

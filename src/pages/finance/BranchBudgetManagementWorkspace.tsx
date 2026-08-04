@@ -771,6 +771,12 @@ export default function BranchBudgetManagementWorkspace() {
     const subHead = activeMasters
       .find((head) => head.headName === line.head)
       ?.subHeads.find((item) => item.subHeadName === subHeadName);
+    // "direct_tagging" is not a branch-level sharing method — it plans the line straight against
+    // one cost centre (mirrors the "Direct to one cost centre" option in BranchBudgetPlannerGrid).
+    // Applying it as-is to a branch-common line leaves an allocation driver the server rejects at
+    // save time with "not yet supported for branch-level splitting", so a sub-head seeded with
+    // this default drops the line to cost_centre scope instead.
+    const isDirect = subHead?.defaultAllocationDriver === "direct_tagging";
     updateLine(index, {
       subHead: subHeadName,
       unit: subHead?.defaultUnit ?? line.unit,
@@ -779,6 +785,12 @@ export default function BranchBudgetManagementWorkspace() {
       gstType: subHead?.defaultGstType ?? line.gstType,
       recoverableTaxPct: Number(subHead?.defaultRecoverableTaxPct ?? line.recoverableTaxPct),
       allocationDriver: subHead?.defaultAllocationDriver ?? line.allocationDriver,
+      ...(isDirect ? {
+        planningLevel: "cost_centre" as const,
+        attributionScope: "cost_centre" as const,
+        costCentreId: line.costCentreId ?? activeCostCentres[0]?.id ?? null,
+        includedCostCentreIds: null,
+      } : {}),
     });
   }
 
@@ -790,7 +802,6 @@ export default function BranchBudgetManagementWorkspace() {
       const scope = scopeOf(line);
       if (!line.head || !line.subHead) throw new Error(`${label}: Head and Sub-head are mandatory`);
       if (!line.itemName.trim()) throw new Error(`${label}: Item / service is mandatory`);
-      if (!line.itemDescription?.trim()) throw new Error(`${label}: Description / specification is mandatory`);
       if (!line.unit.trim()) throw new Error(`${label}: Unit is mandatory`);
       if (!line.allocationDriver) throw new Error(`${label}: Allocation driver is mandatory`);
       if (!line.justification.trim()) throw new Error(`${label}: Business justification and rate basis are mandatory`);
@@ -864,6 +875,11 @@ export default function BranchBudgetManagementWorkspace() {
     const subHead = activeMasters
       .find((head) => head.headName === item.head_name)
       ?.subHeads.find((entry) => entry.subHeadName === item.sub_head_name);
+    const defaultDriver = subHead?.defaultAllocationDriver ?? item.default_allocation_driver;
+    // Same "direct_tagging isn't a branch-level method" guard as applySubHead — a fresh line
+    // added straight from coverage defaults to branch_common (blankLine's own default), so a
+    // sub-head seeded with this default must also drop to cost_centre scope here.
+    const isDirect = defaultDriver === "direct_tagging";
     setLines((current) => [...current, blankLine({
       head: item.head_name,
       subHead: item.sub_head_name,
@@ -872,7 +888,12 @@ export default function BranchBudgetManagementWorkspace() {
       gstRate: Number(subHead?.defaultGstRate ?? item.default_gst_rate),
       gstType: subHead?.defaultGstType ?? item.default_gst_type as BranchBudgetLineInput["gstType"],
       recoverableTaxPct: Number(subHead?.defaultRecoverableTaxPct ?? item.default_recoverable_tax_pct),
-      allocationDriver: subHead?.defaultAllocationDriver ?? item.default_allocation_driver,
+      allocationDriver: defaultDriver,
+      ...(isDirect ? {
+        planningLevel: "cost_centre" as const,
+        attributionScope: "cost_centre" as const,
+        costCentreId: activeCostCentres[0]?.id ?? null,
+      } : {}),
     })]);
     setCoverageDraft((current) => ({ ...current, [item.expense_sub_head_id]: { status: "planned", reason: "" } }));
     setTab("plan");
@@ -1117,13 +1138,24 @@ Reason:`
                     ...current,
                     blankLine({
                       head, subHead, unit,
-                      planningLevel: "branch",
-                      allocationDriver: method,
                       itemName: subHead,
                       // The plan is non-taxable, so a new line starts that way instead of
                       // inheriting an 18% default the branch would have to clear on every row.
                       taxTreatment: "non_gst", gstRate: 0, gstType: "none", recoverableTaxPct: 0,
                       justification: `${subHead} for ${period}`,
+                      // "direct_tagging" is not a branch-level sharing method (same guard as
+                      // applySubHead / addFromCoverage) — a sub-head seeded with this default
+                      // must plan straight against one cost centre instead of staying branch-level
+                      // with a driver the server rejects at save time.
+                      ...(method === "direct_tagging" ? {
+                        planningLevel: "cost_centre" as const,
+                        attributionScope: "cost_centre" as const,
+                        costCentreId: activeCostCentres[0]?.id ?? null,
+                        allocationDriver: method,
+                      } : {
+                        planningLevel: "branch" as const,
+                        allocationDriver: method,
+                      }),
                     }),
                   ]); }}
                   priorByKey={priorByKey}
@@ -1259,7 +1291,7 @@ Reason:`
                       <Field label="Head *"><select className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm" value={line.head} disabled={!canEdit || mastersQuery.isLoading} onChange={(event) => applyHead(index, event.target.value)}><option value="">Select Head</option>{activeMasters.map((entry) => <option key={entry.id} value={entry.headName}>{entry.headName}</option>)}</select></Field>
                       <Field label="Sub-head *"><select className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm" value={line.subHead ?? ""} disabled={!canEdit || !line.head} onChange={(event) => applySubHead(index, event.target.value)}><option value="">Select Sub-head</option>{subHeads.map((entry) => <option key={entry.id} value={entry.subHeadName}>{entry.subHeadName}</option>)}</select></Field>
                       <Field label="Item / service *" span={2}><Input value={line.itemName} disabled={!canEdit} onChange={(event) => updateLine(index, { itemName: event.target.value })} /></Field>
-                      <Field label="Description / specification *" span={2}><Textarea value={line.itemDescription ?? ""} disabled={!canEdit} onChange={(event) => updateLine(index, { itemDescription: event.target.value })} /></Field>
+                      <Field label="Description / specification" span={2}><Textarea value={line.itemDescription ?? ""} disabled={!canEdit} onChange={(event) => updateLine(index, { itemDescription: event.target.value })} /></Field>
                       <Field label="Preferred vendor decision *" span={2}><select className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm" value={line.preferredVendorId ?? "_tbd"} disabled={!canEdit} onChange={(event) => updateLine(index, { preferredVendorId: event.target.value === "_tbd" ? null : event.target.value })}><option value="_tbd">Vendor to be finalized through approved Vendor Master</option>{vendors.map((vendor) => <option key={vendor.id} value={vendor.id}>{vendor.vendor_code ? `${vendor.vendor_code} · ` : ""}{vendor.vendor_name ?? vendor.name}</option>)}</select></Field>
                       <Field label="Quantity *"><Input type="number" min="0.0001" step="0.0001" value={line.quantity} disabled={!canEdit} onChange={(event) => updateLine(index, { quantity: Number(event.target.value) })} /></Field>
                       <Field label="Unit *"><select className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm" value={line.unit} disabled={!canEdit} onChange={(event) => updateLine(index, { unit: event.target.value })}>{UNITS.map((unit) => <option key={unit}>{unit}</option>)}</select></Field>

@@ -191,7 +191,7 @@ describe("computeLineAllocations — branch-first sharing methods", () => {
     ).rejects.toThrow(/must total 100%.*90\.00%/);
   });
 
-  it("rejects total_manpower/revenue_share when a cost centre has no monthly driver row", async () => {
+  it("rejects total_manpower when a cost centre has no monthly driver row", async () => {
     const drivers: FakeDriver[] = [
       { cost_centre_id: "cc1", planned_headcount: 10, revenue_rate_per_head: 0, remarks: null, status: "draft", updated_by: null, updated_at: null },
       // cc2, cc3 missing entirely
@@ -199,6 +199,23 @@ describe("computeLineAllocations — branch-first sharing methods", () => {
     await expect(
       computeLineAllocations("branch-1", "2026-08", "total_manpower", AMOUNTS, undefined, fakeExecutor(THREE_COST_CENTRES, drivers))
     ).rejects.toThrow(/planned headcount is missing/i);
+  });
+
+  it("does not reject revenue_share when a cost centre has zero or missing revenue — it just carries no share", async () => {
+    const drivers: FakeDriver[] = [
+      { cost_centre_id: "cc1", planned_headcount: 10, revenue_rate_per_head: 50000, remarks: null, status: "draft", updated_by: null, updated_at: null },
+      { cost_centre_id: "cc2", planned_headcount: 10, revenue_rate_per_head: 0, remarks: null, status: "draft", updated_by: null, updated_at: null },
+      // cc3 missing entirely — also must not block the save
+    ];
+    const rows = await computeLineAllocations(
+      "branch-1", "2026-08", "revenue_share", AMOUNTS, undefined,
+      fakeExecutor(THREE_COST_CENTRES, drivers)
+    );
+    const byId = Object.fromEntries(rows.map((r) => [r.costCentreId, r]));
+    expect(byId.cc1.grossAmount).toBe(72500); // sole revenue carries the whole pool
+    expect(byId.cc2.grossAmount).toBe(0);
+    expect(byId.cc3.grossAmount).toBe(0);
+    expect(sumOf(rows, "grossAmount")).toBe(72500);
   });
 
   it("rejects a genuinely unsupported sharing method with a clear error, not a silent default", async () => {
