@@ -178,11 +178,13 @@ async function createOrUpdateCheck(candidateId: string, checkType: string, statu
     ]
   );
 
-  // Recompute BGV score after check creation/update
-  if (status === "verified" || status === "waived") {
-    // Deferred to avoid circular dependency — call after function is defined
-    setImmediate(() => void computeAndSaveScoreInternal(candidateId).catch(() => {}));
-  }
+  // Sync report status columns + score after every check write, fire-and-forget
+  setImmediate(() => {
+    void syncBgvChecksToReport(candidateId).catch(() => {});
+    if (status === "verified" || status === "waived") {
+      void computeAndSaveScoreInternal(candidateId).catch(() => {});
+    }
+  });
 
   return checkId;
 

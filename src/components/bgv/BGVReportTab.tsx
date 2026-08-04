@@ -157,6 +157,8 @@ export default function BGVReportTab({ candidateId, candidateEmail, candidateNam
   const loadReport = useCallback(async (id: string) => {
     setLoading(true);
     try {
+      // Auto-sync check results into report before loading so statuses are always fresh
+      await hrmsApi.post('/api/ats/bgv/sync-report', { candidate_id: id }).catch(() => {});
       const r = await hrmsApi.get<any>(`/api/ats/bgv/report?candidateId=${id}`);
       setReport(r?.data ?? emptyReport(id));
     } catch {
