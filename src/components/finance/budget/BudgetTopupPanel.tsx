@@ -220,7 +220,7 @@ export function BudgetTopupPanel({
           <div className="space-y-3">
             <div>
               <Label className="text-xs">Budget line *</Label>
-              <Select value={selectedLineId} onValueChange={setSelectedLineId}>
+              <Select value={selectedLineId} onValueChange={setSelectedLineId} disabled={!linesQuery.isLoading && !lines.length}>
                 <SelectTrigger className="mt-1 h-9"><SelectValue placeholder="Select a budget line" /></SelectTrigger>
                 <SelectContent>
                   {lines.map((line) => (
@@ -230,6 +230,13 @@ export function BudgetTopupPanel({
                   ))}
                 </SelectContent>
               </Select>
+              {!linesQuery.isLoading && !lines.length && (
+                <p className="mt-1.5 text-xs text-amber-700">
+                  No active budget line found for {period}. A top-up can only be requested against a budget that has
+                  completed Branch Head, Finance Head and Accounts Head approval — this branch's budget for this
+                  period hasn't reached that stage yet.
+                </p>
+              )}
             </div>
             <div>
               <Label className="text-xs">Additional amount needed *</Label>
