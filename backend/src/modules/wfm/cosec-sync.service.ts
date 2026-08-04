@@ -165,7 +165,18 @@ async function pullCosecAttendance(from: string, to: string): Promise<PunchGroup
   const request = pool.request();
   request.input("fromDate", sql.Date, from);
   request.input("toDate", sql.Date, to);
-  const result = await request.query(`
+  // Guard against a hung MSSQL query stalling the sync lock indefinitely.
+  // The stale-lock threshold is 60 min; give the query 55 s — enough for large
+  // result sets but short enough that the lock releases before the next interval.
+  const QUERY_TIMEOUT_MS = 55_000;
+  let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+  const timeoutRace = new Promise<never>((_, reject) => {
+    timeoutHandle = setTimeout(() => {
+      try { request.cancel(); } catch { /* ignore cancel errors */ }
+      reject(new Error(`pullCosecAttendance timed out after ${QUERY_TIMEOUT_MS / 1000}s`));
+    }, QUERY_TIMEOUT_MS);
+  });
+  const queryPromise = request.query(`
       SELECT
         CAST(${userColumn} AS NVARCHAR(100)) AS user_id,
         CONVERT(CHAR(10), CAST(${datetimeColumn} AS DATE), 23) AS attendance_date,
@@ -180,6 +191,12 @@ async function pullCosecAttendance(from: string, to: string): Promise<PunchGroup
       GROUP BY ${userColumn}, CAST(${datetimeColumn} AS DATE)
       ORDER BY ${userColumn}, attendance_date
     `);
+  let result: Awaited<typeof queryPromise>;
+  try {
+    result = await Promise.race([queryPromise, timeoutRace]);
+  } finally {
+    if (timeoutHandle) clearTimeout(timeoutHandle);
+  }
   return result.recordset
     .map((row: any) => ({
       cosecUserId: String(row.user_id ?? "").trim(),
