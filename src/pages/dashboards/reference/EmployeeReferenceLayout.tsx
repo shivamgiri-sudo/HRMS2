@@ -27,6 +27,8 @@ import { ReferenceAIBrief, ReferenceWorkInbox } from "./ReferenceOperationalPane
 import { LeaveApprovalPanel } from "./ReferenceSharedPanels";
 import { CompanyFeedSidePanel } from "@/components/dashboard/CompanyFeedSidePanel";
 import { TodayCelebrationsWidget } from "@/components/dashboard/TodayCelebrationsWidget";
+import { EngagementPromoBanner } from "@/components/engagement/EngagementPromoBanner";
+import { WeeklyWinnersWidget } from "@/components/engagement/WeeklyWinnersWidget";
 import { SocialFeedWidget } from "@/components/social/SocialFeedWidget";
 import { VideoModal } from "@/components/social/VideoModal";
 import { MyMeetingsWidget } from "@/components/mcnmeet/MyMeetingsWidget";
@@ -102,6 +104,8 @@ export function EmployeeReferenceLayout({ data, employeeName }: { data: Referenc
       <ReferenceHeader title={`Welcome, ${employeeName}`} subtitle="Your personal dashboard" badge="Self Service" />
 
       <TodayCelebrationsWidget />
+
+      <EngagementPromoBanner />
 
       <ReferencePanel title="My Attendance This Month" bodyClassName="p-2 sm:p-3">
         <ReferenceMetricGrid columns={5} loading={data.loading} metrics={[
@@ -202,14 +206,18 @@ export function EmployeeReferenceLayout({ data, employeeName }: { data: Referenc
       <LeaveApprovalPanel data={data} />
 
       <ReferencePanel title="Quick Links" bodyClassName="p-3">
-        <div className="grid gap-2 sm:gap-3 grid-cols-2 md:grid-cols-3 xl:grid-cols-5">
+        <div className="grid gap-2 sm:gap-3 grid-cols-2 md:grid-cols-3 xl:grid-cols-6">
           <ReferenceQuickLink icon={CalendarDays} title="Apply Leave" subtitle="Request time off" href="/leaves" tone="green" />
           <ReferenceQuickLink icon={FileText} title="View Payslip" subtitle="Check your salary details" href="/payroll/payslips" tone="blue" />
           <ReferenceQuickLink icon={Headphones} title="Raise Helpdesk" subtitle="Get support for issues" href="/helpdesk" tone="amber" />
           <ReferenceQuickLink icon={FolderOpen} title="View Documents" subtitle="Access your documents" href="/profile" tone="violet" />
           <ReferenceQuickLink icon={Briefcase} title="Internal Jobs" subtitle="Career opportunities" href="/people/ijp" tone="green" />
+          <ReferenceQuickLink icon={BadgeCheck} title="My Engagement" subtitle="Points, badges & games" href="/engagement" tone="violet" />
         </div>
       </ReferencePanel>
+
+      {/* Weekly Winners — engagement leaderboard spotlight */}
+      <WeeklyWinnersWidget />
 
       {/* MCNmeet — upcoming meetings widget */}
       <MyMeetingsWidget />
