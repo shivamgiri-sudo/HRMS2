@@ -149,7 +149,10 @@ export function SmartGrnApprovalQueue() {
     },
   });
   const workspace = workspaceQuery.data;
-  const parent = workspace?.grn ?? target;
+  // The workspace row carries far more columns than the list row's GrnRow type declares, and the
+  // Details tab reads several of them (invoice_number, vendor_gstin, …). Typed as the loose record
+  // it actually is, rather than a union that has no such properties on one arm.
+  const parent: Record<string, any> | undefined = workspace?.grn ?? target ?? undefined;
   const blockers = (workspace?.validations ?? []).filter(
     (item) => Number(item.is_blocking) === 1 && item.validation_status === "failed"
   );

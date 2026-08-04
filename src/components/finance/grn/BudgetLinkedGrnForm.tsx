@@ -18,10 +18,12 @@ import {
   Trash2,
   UploadCloud,
 } from "lucide-react";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+// SearchableSelect deliberately stays: vendor picking is server-side searched (search /
+// onSearchChange drive a query against a ~1.8k-row master), and it also supplies the hint /
+// keywords matching, the mobile bottom-sheet rendering and the loading and empty states. A plain
+// <select> has no search callback, so swapping it would mean dumping the whole vendor list into
+// the DOM. It is restyled through the className it already forwards instead.
 import { SearchableSelect, type SearchableOption } from "@/components/ui/searchable-select";
 import {
   Table,
@@ -32,7 +34,20 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Textarea } from "@/components/ui/textarea";
+import { StatusStamp } from "@/components/finance/grn/StatusStamp";
+import { checkTone } from "@/components/finance/grn/grn-format";
+// Aliased rather than renamed at the ~40 call sites: same props, same forwarded refs, so this is
+// a swap of appearance only.
+import {
+  GrnButton as Button,
+  GrnCard,
+  GrnCardHeader,
+  GrnFieldRow,
+  GrnIconButton,
+  GrnInput as Input,
+  GrnSegmented,
+  GrnTextarea as Textarea,
+} from "@/components/finance/grn/grn-ui";
 import {
   BRANCH_SHARING_METHODS,
   calculateBudgetLine,
@@ -224,15 +239,6 @@ function parseJson(value: unknown) {
   }
 }
 
-function statusTone(status: string) {
-  if (["passed", "completed", "matched"].includes(status)) {
-    return "border-emerald-200 bg-emerald-50 text-emerald-700";
-  }
-  if (["warning", "manual_review", "near_match", "pending", "processing"].includes(status)) {
-    return "border-amber-200 bg-amber-50 text-amber-700";
-  }
-  return "border-rose-200 bg-rose-50 text-rose-700";
-}
 
 /** Runs `calculateBudgetLine` for a line at a given quantity. */
 function computeLine(line: BudgetLine, quantity: number, unitRate?: number) {
@@ -252,6 +258,10 @@ function computeLine(line: BudgetLine, quantity: number, unitRate?: number) {
 }
 
 // ─── Layout primitives ──────────────────────────────────────────────────────
+//
+// These three stay as local names purely so the ~200 call sites below do not all have to change
+// at once; each is now a thin wrapper over the shared GRN kit, so the form inherits the page's
+// spacing, type scale and palette rather than restating its own.
 
 /**
  * One form field. Label sits beside the control from `md` up and stacks above
@@ -273,26 +283,23 @@ function FieldRow({
   children: React.ReactNode;
 }) {
   return (
-    <div className="grid gap-1 px-4 py-2 md:grid-cols-[190px_minmax(0,1fr)] md:items-start md:gap-4">
-      <Label
-        htmlFor={htmlFor}
-        className="text-xs font-semibold text-slate-700 md:pt-2"
-      >
-        {label}
-        {required && <span className="ml-0.5 text-rose-500">*</span>}
-      </Label>
-      <div className="min-w-0">
-        {children}
-        {error ? (
-          <p className="mt-1 flex items-start gap-1 text-[11px] font-medium text-rose-600">
-            <AlertCircle className="mt-px h-3 w-3 shrink-0" />
-            {error}
-          </p>
-        ) : (
-          hint && <p className="mt-1 text-[11px] text-slate-500">{hint}</p>
-        )}
-      </div>
-    </div>
+    <GrnFieldRow
+      label={label}
+      htmlFor={htmlFor}
+      required={required}
+      hint={hint}
+      error={error}
+      // Tints whatever control this row contains rather than threading an `invalid` prop through
+      // every call site. The descendant selector also out-specifies the control's own border, so
+      // it wins without !important.
+      className={
+        error
+          ? "[&_input]:border-grn-crit [&_input]:bg-grn-crit-bg [&_textarea]:border-grn-crit [&_textarea]:bg-grn-crit-bg"
+          : undefined
+      }
+    >
+      {children}
+    </GrnFieldRow>
   );
 }
 
@@ -308,16 +315,10 @@ function FormSection({
   children: React.ReactNode;
 }) {
   return (
-    <section className="overflow-hidden rounded-xl border border-slate-200 bg-white">
-      <header className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 bg-slate-50/60 px-4 py-2.5">
-        <div>
-          <h2 className="text-[13px] font-bold text-slate-900">{title}</h2>
-          {description && <p className="mt-0.5 text-[11px] text-slate-500">{description}</p>}
-        </div>
-        {action}
-      </header>
-      <div className="divide-y divide-slate-100">{children}</div>
-    </section>
+    <GrnCard>
+      <GrnCardHeader title={title} description={description} action={action} />
+      <div>{children}</div>
+    </GrnCard>
   );
 }
 
@@ -326,8 +327,8 @@ function StaticValue({ children, muted }: { children: React.ReactNode; muted?: b
   return (
     <div
       className={cn(
-        "flex h-9 items-center text-sm font-medium",
-        muted ? "text-slate-400" : "text-slate-900"
+        "flex h-[34px] items-center text-[12.5px] font-semibold",
+        muted ? "text-grn-ink-soft" : "text-grn-ink"
       )}
     >
       {children}
@@ -335,7 +336,9 @@ function StaticValue({ children, muted }: { children: React.ReactNode; muted?: b
   );
 }
 
-const inputClass = "h-9";
+/** GrnInput already carries its own height; this exists only so the call sites that append to it
+ *  (`cn(inputClass, "text-right …")`) keep working. */
+const inputClass = "";
 
 // ─── Component ──────────────────────────────────────────────────────────────
 
@@ -991,34 +994,32 @@ export function BudgetLinkedGrnForm() {
   const actionButtons = (
     <div className="flex gap-2">
       {created && (
-        <Button type="button" size="sm" variant="ghost" onClick={resetForm} aria-label="Start a new GRN">
-          <RotateCcw className="h-4 w-4" />
-        </Button>
+        <GrnIconButton onClick={resetForm} aria-label="Start a new GRN" title="Start a new GRN">
+          <RotateCcw className="h-3.5 w-3.5" />
+        </GrnIconButton>
       )}
       <Button
-        size="sm"
-        variant="outline"
-        className="h-10 flex-1 md:h-9 md:flex-none"
+        className="flex-1 md:flex-none"
         disabled={persistMutation.isPending || submitted}
         onClick={() => persistMutation.mutate(false)}
       >
         {persistMutation.isPending ? (
-          <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
+          <Loader2 className="h-3.5 w-3.5 animate-spin" />
         ) : (
-          <Save className="mr-1.5 h-4 w-4" />
+          <Save className="h-3.5 w-3.5" />
         )}
         Save draft
       </Button>
       <Button
-        size="sm"
-        className="h-10 flex-1 md:h-9 md:flex-none"
+        variant="primary"
+        className="flex-1 md:flex-none"
         disabled={persistMutation.isPending || submitted || !canSubmit}
         onClick={() => persistMutation.mutate(true)}
       >
         {persistMutation.isPending ? (
-          <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
+          <Loader2 className="h-3.5 w-3.5 animate-spin" />
         ) : (
-          <Send className="mr-1.5 h-4 w-4" />
+          <Send className="h-3.5 w-3.5" />
         )}
         Submit GRN
       </Button>
@@ -1138,28 +1139,33 @@ export function BudgetLinkedGrnForm() {
                   {files.map((file) => (
                     <li
                       key={file.name}
-                      className="flex items-center justify-between gap-2 rounded-lg bg-slate-50 px-3 py-2 text-xs"
+                      className="flex items-center justify-between gap-2 rounded-lg border border-grn-line bg-grn-paper px-3 py-2 text-[12px]"
                     >
-                      <span className="truncate text-slate-700">{file.name}</span>
-                      <Badge variant="outline" className="shrink-0">
-                        Pending upload
-                      </Badge>
+                      <span className="truncate text-grn-ink">{file.name}</span>
+                      <StatusStamp tone="neutral">Pending upload</StatusStamp>
                     </li>
                   ))}
-                  {workspace?.documents?.map((document) => (
-                    <li
-                      key={document.id}
-                      className="flex items-center justify-between gap-2 rounded-lg bg-slate-50 px-3 py-2 text-xs"
-                    >
-                      <span className="truncate text-slate-700">{document.original_name}</span>
-                      <Badge
-                        variant="outline"
-                        className={cn("shrink-0", statusTone(document.extraction_status))}
+                  {workspace?.documents?.map((document) => {
+                    const tone = checkTone(String(document.extraction_status ?? "pending"));
+                    return (
+                      <li
+                        key={document.id}
+                        className={cn(
+                          "flex items-center justify-between gap-2 rounded-lg border px-3 py-2 text-[12px]",
+                          tone === "ok"
+                            ? "border-grn-ok-line bg-grn-ok-bg"
+                            : tone === "warn"
+                              ? "border-grn-warn-line bg-grn-warn-bg"
+                              : "border-grn-crit-line bg-grn-crit-bg"
+                        )}
                       >
-                        {Number(document.is_primary) === 1 ? "Primary" : "Support"}
-                      </Badge>
-                    </li>
-                  ))}
+                        <span className="truncate font-semibold text-grn-ink">{document.original_name}</span>
+                        <StatusStamp tone={tone}>
+                          {Number(document.is_primary) === 1 ? "Primary" : "Support"}
+                        </StatusStamp>
+                      </li>
+                    );
+                  })}
                 </ul>
               )}
 
@@ -1175,16 +1181,13 @@ export function BudgetLinkedGrnForm() {
                 </label>
                 {primaryDocument && (
                   <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
                     disabled={analyzeMutation.isPending}
                     onClick={() => analyzeMutation.mutate(primaryDocument.id)}
                   >
                     {analyzeMutation.isPending ? (
-                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
                     ) : (
-                      <ScanLine className="mr-2 h-4 w-4" />
+                      <ScanLine className="h-3.5 w-3.5" />
                     )}
                     Analyze invoice
                   </Button>
@@ -1378,14 +1381,8 @@ export function BudgetLinkedGrnForm() {
             title="Where this spend belongs"
             description="Cost centre, head and sub-head together identify the approved budget."
             action={
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                className="text-xs"
-                onClick={() => setSplitMode((value) => !value)}
-              >
-                <Split className="mr-1.5 h-3.5 w-3.5" />
+              <Button onClick={() => setSplitMode((value) => !value)}>
+                <Split className="h-3 w-3" />
                 {splitMode ? "Use a single budget line" : "Split this invoice across budget lines"}
               </Button>
             }
@@ -1607,25 +1604,19 @@ export function BudgetLinkedGrnForm() {
               description="Check these against the document before applying."
               action={
                 <div className="flex gap-2">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={() => applyExtractedFields(effectiveExtractedFields)}
-                  >
+                  <Button onClick={() => applyExtractedFields(effectiveExtractedFields)}>
                     Apply
                   </Button>
                   {created && (
                     <Button
-                      type="button"
-                      size="sm"
+                      variant="primary"
                       disabled={confirmExtractionMutation.isPending}
                       onClick={() => confirmExtractionMutation.mutate()}
                     >
                       {confirmExtractionMutation.isPending ? (
-                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
                       ) : (
-                        <BadgeCheck className="mr-2 h-4 w-4" />
+                        <BadgeCheck className="h-3.5 w-3.5" />
                       )}
                       Confirm
                     </Button>
@@ -1669,40 +1660,40 @@ export function BudgetLinkedGrnForm() {
               title="Checks"
               action={
                 <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
                   disabled={!created || revalidateMutation.isPending}
                   onClick={() => revalidateMutation.mutate()}
                 >
                   {revalidateMutation.isPending ? (
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
                   ) : (
-                    <RefreshCw className="mr-2 h-4 w-4" />
+                    <RefreshCw className="h-3.5 w-3.5" />
                   )}
                   Re-run
                 </Button>
               }
             >
-              <ul className="divide-y divide-slate-100">
+              <ul>
                 {(workspace.validations ?? []).map((validation) => (
-                  <li key={validation.id} className="flex items-start gap-2 px-4 py-2.5 text-xs">
+                  <li
+                    key={validation.id}
+                    className="flex items-start gap-2 border-b border-grn-line-soft px-4 py-2.5 text-[12px] last:border-b-0"
+                  >
                     <ShieldCheck
                       className={cn(
                         "mt-px h-3.5 w-3.5 shrink-0",
                         validation.validation_status === "passed"
-                          ? "text-emerald-600"
+                          ? "text-grn-ok"
                           : validation.validation_status === "warning"
-                            ? "text-amber-600"
-                            : "text-rose-600"
+                            ? "text-grn-warn"
+                            : "text-grn-crit"
                       )}
                     />
-                    <span className="text-slate-700">{validation.message}</span>
+                    <span className="text-grn-ink">{validation.message}</span>
                     {Number(validation.is_blocking) === 1 &&
                       validation.validation_status === "failed" && (
-                        <Badge variant="outline" className="ml-auto shrink-0 border-rose-200 text-rose-700">
+                        <StatusStamp tone="crit" className="ml-auto shrink-0">
                           Blocking
-                        </Badge>
+                        </StatusStamp>
                       )}
                   </li>
                 ))}
@@ -1880,11 +1871,11 @@ function SplitAllocationEditor({
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-2">
-        <Button type="button" variant="outline" size="sm" onClick={onAutoBalance}>
+        <Button onClick={onAutoBalance}>
           Auto-balance last row
         </Button>
-        <Button type="button" size="sm" onClick={onAdd}>
-          <Plus className="mr-1.5 h-3.5 w-3.5" /> Add row
+        <Button onClick={onAdd}>
+          <Plus className="h-3.5 w-3.5" /> Add row
         </Button>
         <div className="ml-auto flex items-center gap-1.5" title={!autoSplitReadiness.ready ? autoSplitReadiness.reason : undefined}>
           <Label className="text-[11px] text-slate-500">Split by</Label>
@@ -1898,14 +1889,8 @@ function SplitAllocationEditor({
               <option key={method.value} value={method.value}>{method.label}</option>
             ))}
           </select>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            disabled={!autoSplitReadiness.ready}
-            onClick={onAutoSplit}
-          >
-            <Split className="mr-1.5 h-3.5 w-3.5" /> Auto-split
+          <Button disabled={!autoSplitReadiness.ready} onClick={onAutoSplit}>
+            <Split className="h-3.5 w-3.5" /> Auto-split
           </Button>
         </div>
       </div>

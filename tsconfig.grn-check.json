@@ -1,0 +1,23 @@
+{
+  // Typecheck for the GRN Management page (/finance/grn).
+  //
+  // `npm run typecheck` runs `tsc --noEmit` against the root tsconfig, which declares
+  // `"files": []` plus project references — so it compiles nothing and exits 0 no matter what is
+  // broken. Use this instead when touching this page:
+  //
+  //     npx tsc -p tsconfig.grn-check.json
+  //
+  // Scoped rather than repo-wide because `tsc -p tsconfig.app.json` currently reports a few
+  // hundred pre-existing errors (test files without vitest globals, and others' modules), which
+  // buries anything you just introduced.
+  //
+  // Transitively pulled-in files are checked too, so a handful of pre-existing TopBar.tsx errors
+  // still show; everything under src/components/finance/grn is expected to stay clean.
+  "extends": "./tsconfig.app.json",
+  "include": [
+    "src/components/finance/grn",
+    "src/pages/NativeGRNManagement.tsx",
+    "src/hooks/useGrnSummary.ts",
+    "src/vite-env.d.ts"
+  ]
+}

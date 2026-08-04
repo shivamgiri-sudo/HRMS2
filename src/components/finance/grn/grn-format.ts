@@ -43,9 +43,15 @@ export function grnStatusTone(status: string): StampTone {
   return TONE_BY_STATUS[status] ?? "neutral";
 }
 
-/** Validation / extraction / duplicate-check outcomes → stamp colour. Distinct from the GRN
- *  lifecycle above: these describe one check, not the document. */
-export function checkTone(value: string): StampTone {
+/**
+ * Validation / extraction / duplicate-check outcomes → stamp colour. Distinct from the GRN
+ * lifecycle above: these describe one check, not the document.
+ *
+ * Narrower than StampTone on purpose. A check has an outcome — it passed, it warns, it failed —
+ * so "neutral" is never one of the answers, and saying so lets this feed GrnAlert (which has no
+ * neutral tone) without a cast.
+ */
+export function checkTone(value: string): "ok" | "warn" | "crit" {
   if (["passed", "completed", "matched", "overridden", "cleared"].includes(value)) return "ok";
   if (["warning", "manual_review", "near_match", "pending", "processing"].includes(value)) return "warn";
   return "crit";
