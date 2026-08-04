@@ -71,7 +71,9 @@ import { hrmsApi } from "@/lib/hrmsApi";
 import { BranchBudgetMatrixPanel } from "@/components/finance/pnl/BranchBudgetMatrixPanel";
 import { BudgetTopupPanel } from "@/components/finance/budget/BudgetTopupPanel";
 import { BranchBudgetImportDialog } from "@/components/finance/pnl/BranchBudgetImportDialog";
-import { BranchBudgetPlannerGrid, budgetLineKey } from "@/components/finance/pnl/BranchBudgetPlannerGrid";
+import {
+  BranchBudgetPlannerGrid, applyCopyForward, budgetLineKey, type PriorBudgetRow,
+} from "@/components/finance/pnl/BranchBudgetPlannerGrid";
 
 const UNITS = [
   "Nos",
@@ -472,22 +474,39 @@ export default function BranchBudgetManagementWorkspace() {
   // Only fetched when the workspace has no budget for that month — an approved workspace budget
   // is always the better source, being what was actually signed off here.
   const priorMirror = usePriorBudgetMirror(priorPeriod, branchId || undefined, !priorBudgetId);
-  const priorByKey = useMemo(() => {
-    const map = new Map<string, number>();
+  /*
+   * Last month's rows with their ORIGINAL casing, which Copy-forward needs to create a line.
+   * priorByKey is derived from this rather than built separately, so the totals shown in the Prev
+   * column and the rows Copy creates can never disagree about what last month contained.
+   */
+  const priorRows = useMemo<PriorBudgetRow[]>(() => {
     const workspaceLines = priorDetail.data?.lines ?? [];
     if (workspaceLines.length > 0) {
-      workspaceLines.forEach((l) => {
-        const key = budgetLineKey(l.head, l.sub_head ?? (l as any).subHead);
-        map.set(key, (map.get(key) ?? 0) + Number(l.gross_amount ?? 0));
-      });
-      return map;
+      // A workspace budget carries the real quantity x rate, so copy preserves the split instead
+      // of collapsing every line to "1 x total".
+      return workspaceLines.map((l) => ({
+        head: String(l.head ?? ""),
+        subHead: String(l.sub_head ?? (l as any).subHead ?? ""),
+        amount: Number(l.gross_amount ?? 0),
+        quantity: Number((l as any).quantity ?? 0) || null,
+        unitRate: Number((l as any).unit_rate ?? (l as any).unitRate ?? 0) || null,
+      }));
     }
-    (priorMirror.data ?? []).forEach((l) => {
-      const key = budgetLineKey(l.head, l.subHead);
-      map.set(key, (map.get(key) ?? 0) + Number(l.amount ?? 0));
+    return (priorMirror.data ?? []).map((l) => ({
+      head: l.head,
+      subHead: l.subHead ?? "",
+      amount: Number(l.amount ?? 0),
+    }));
+  }, [priorDetail.data, priorMirror.data]);
+
+  const priorByKey = useMemo(() => {
+    const map = new Map<string, number>();
+    priorRows.forEach((row) => {
+      const key = budgetLineKey(row.head, row.subHead);
+      map.set(key, (map.get(key) ?? 0) + row.amount);
     });
     return map;
-  }, [priorDetail.data, priorMirror.data]);
+  }, [priorRows]);
   // Actual-vs-planned by Head/Sub-head: every line already carries its own reserved/consumed
   // amount (populated as GRNs are branch-head/finance-head approved against it), just never
   // grouped and surfaced above the single-line level anywhere in this workspace. Reuses
@@ -1123,14 +1142,18 @@ Reason:`
                     setLines(JSON.parse(stack[stack.length - 1]));
                     return stack.slice(0, -1);
                   })}
+                  priorRowCount={priorByKey.size}
                   onCopyForward={() => {
                     pushUndo();
-                    setLines((current) => current.map((l) => {
-                      const prior = priorByKey.get(budgetLineKey(l.head, l.subHead)) ?? 0;
-                      const already = (Number(l.quantity) || 0) * (Number(l.unitRate) || 0);
-                      // Only fill what is still empty — never overwrite a figure already planned.
-                      return prior > 0 && already === 0 ? { ...l, quantity: 1, unitRate: prior } : l;
-                    }));
+                    // Same preset as "add from masters" below: the plan is non-taxable, so a
+                    // copied row must not arrive carrying blankLine()'s 18% exclusive default.
+                    setLines((current) => applyCopyForward(current, priorRows, (preset) => blankLine({
+                      planningLevel: "branch",
+                      unit: "Unit",
+                      taxTreatment: "non_gst", gstRate: 0, gstType: "none", recoverableTaxPct: 0,
+                      justification: `${preset.subHead || preset.head} for ${period}`,
+                      ...preset,
+                    })));
                   }}
                   onSaveDrivers={() => void saveDrivers()}
                   onSaveDraft={() => void save(false)}
