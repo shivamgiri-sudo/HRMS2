@@ -110,7 +110,7 @@ export function SuperAdminReferenceLayout({ data, filters }: { data: ReferenceDa
         <ReferencePanel title="Recent Joiners" action={<a className="text-xs font-semibold text-[#0b63e5]" href="/employees">View all</a>} bodyClassName="p-0">
           <div className="max-h-[230px] divide-y divide-[#edf1f6] overflow-y-auto">
             {recentJoiners.length ? recentJoiners.slice(0, 6).map((row, index) => (
-              <ReferenceListRow key={String(row.id ?? index)} icon={UserPlus} title={String(row.employee_name ?? row.full_name ?? row.name ?? `New Joiner ${index + 1}`)} subtitle={String(row.designation_name ?? row.designation ?? "Employee")} value={String(row.joining_date ?? row.date ?? "—")} tone="blue" />
+              <ReferenceListRow key={String(row.id ?? index)} icon={UserPlus} title={String(row.employee_name ?? row.full_name ?? row.name ?? `New Joiner ${index + 1}`)} subtitle={String(row.designation_name ?? row.designation ?? "Designation not set")} value={String(row.joining_date ?? row.date ?? "—")} tone="blue" />
             )) : <div className="px-4 py-12 text-center text-xs text-[#94a3b8]">Recent joiners are unavailable</div>}
           </div>
         </ReferencePanel>
@@ -119,10 +119,25 @@ export function SuperAdminReferenceLayout({ data, filters }: { data: ReferenceDa
       </div>
 
       <div className="grid gap-4 xl:grid-cols-[1.05fr_0.9fr_1.05fr]">
-        <ReferencePanel title="Branch / Process Snapshot" action={<a className="text-xs font-semibold text-[#0b63e5]" href="/reports">View all</a>} bodyClassName="p-0">
+        {/* This counts who is logged in RIGHT NOW, not a completed day's attendance.
+            Mid-morning that is legitimately ~25%, so the old `pct >= 70 ? Healthy :
+            Warning` marked every branch orange every morning — and marked a branch with
+            no sessions at all "Warning" too, because null fell to the else branch.
+            The percentage is shown without a fabricated verdict; only genuinely absent
+            data is called out. */}
+        <ReferencePanel title="Branch / Process Snapshot" action={<span className="text-xs text-[#61708a]">Logged in now</span>} bodyClassName="p-0">
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[520px] text-left text-xs"><thead className="bg-[#f8fafc] text-[#61708a]"><tr><th className="px-4 py-2">Branch / Process</th><th>Employees</th><th>Present %</th><th>Status</th></tr></thead><tbody className="divide-y divide-[#edf1f6]">
-              {branchRows.length ? branchRows.slice(0, 8).map((row, index) => { const pct = asNumber(row.present_pct ?? row.attendance_pct); return <tr key={String(row.id ?? index)}><td className="px-4 py-2.5 font-medium text-[#1d2b45]">{String(row.branch_name ?? row.process_name ?? row.name ?? `Scope ${index + 1}`)}</td><td>{formatValue(row.employee_count ?? row.employees)}</td><td>{formatValue(pct, "%")}</td><td className={pct !== null && pct >= 70 ? "font-semibold text-[#16a34a]" : "font-semibold text-[#f97316]"}>{pct !== null && pct >= 70 ? "Healthy" : "Warning"}</td></tr>; }) : <tr><td colSpan={4} className="px-4 py-10 text-center text-[#94a3b8]">Branch snapshot is unavailable</td></tr>}
+            <table className="w-full min-w-[520px] text-left text-xs"><thead className="bg-[#f8fafc] text-[#61708a]"><tr><th className="px-4 py-2">Branch / Process</th><th>Employees</th><th>Logged in now</th><th>Share</th></tr></thead><tbody className="divide-y divide-[#edf1f6]">
+              {branchRows.length ? branchRows.slice(0, 8).map((row, index) => {
+                const pct = asNumber(row.present_pct ?? row.attendance_pct);
+                const present = asNumber(row.present_count ?? row.present);
+                return <tr key={String(row.id ?? index)}>
+                  <td className="px-4 py-2.5 font-medium text-[#1d2b45]">{String(row.branch_name ?? row.process_name ?? row.name ?? `Scope ${index + 1}`)}</td>
+                  <td>{formatValue(row.employee_count ?? row.employees)}</td>
+                  <td>{formatValue(present)}</td>
+                  <td className={pct === null ? "text-[#94a3b8]" : "font-semibold text-[#1d2b45]"}>{pct === null ? "No sessions" : formatValue(pct, "%")}</td>
+                </tr>;
+              }) : <tr><td colSpan={4} className="px-4 py-10 text-center text-[#94a3b8]">Branch snapshot is unavailable</td></tr>}
             </tbody></table>
           </div>
         </ReferencePanel>

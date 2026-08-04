@@ -5,9 +5,11 @@ import { logSensitiveAction } from "../../shared/auditLog.js";
 import {
   HALF_DAY_STATUS,
   LATEST_COMPLETE_ATTENDANCE_DATE_SQL,
+  PRESENT_SESSION_STATUSES,
   attendedDaysSql,
   expectedToWorkSql,
   presentSql,
+  statusList,
 } from "../../shared/attendanceStatus.js";
 import type { Request } from "express";
 
@@ -787,11 +789,17 @@ export const managementService = {
     );
 
     const [recentJoinersResult] = await db.execute<RowDataPacket[]>(
-      `SELECT id, employee_code, full_name as employee_name, designation_id, date_of_joining as joining_date
-       FROM employees
-       WHERE employment_status = 'active'
-         AND date_of_joining >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
-       ORDER BY date_of_joining DESC
+      // The layout renders `designation_name`; this returned only designation_id, so
+      // every joiner showed the literal fallback subtitle "Employee". The join to
+      // designation_master already exists in the team-members query further down —
+      // reused here rather than sending an id the UI cannot resolve.
+      `SELECT e.id, e.employee_code, e.full_name as employee_name, e.designation_id,
+              dm.designation_name, e.date_of_joining as joining_date
+       FROM employees e
+       LEFT JOIN designation_master dm ON dm.id = e.designation_id
+       WHERE LOWER(COALESCE(e.employment_status, 'active')) = 'active'
+         AND e.date_of_joining >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
+       ORDER BY e.date_of_joining DESC
        LIMIT 10`
     );
 
@@ -809,7 +817,7 @@ export const managementService = {
        LEFT JOIN employees e ON e.branch_id = b.id AND e.employment_status = 'active'
        LEFT JOIN wfm_attendance_session s ON s.employee_id = e.id
          AND DATE(s.session_date) = CURDATE()
-         AND s.current_status IN ('Logged In','Active','Login','Rostered')
+         AND s.current_status IN (${statusList(PRESENT_SESSION_STATUSES)})
        WHERE b.active_status = 1
        GROUP BY b.id, b.branch_name
        HAVING employee_count > 0
@@ -847,26 +855,43 @@ export const managementService = {
         WHERE status = 'submitted' AND expense_type = 'employee_claim'`
     ).catch(() => [[{ count: 0 }]] as any);
 
+    // null, not 0, on failure. A zero here reads as "nothing is overdue", which is
+    // the reassuring answer, and it would be produced by a query that never ran.
     const [overtaskResult] = await db.execute<RowDataPacket[]>(
       `SELECT COUNT(*) as overdue FROM work_item WHERE status NOT IN ('completed','cancelled') AND due_at < NOW()`
-    ).catch(() => [[{ overdue: 0 }]] as any);
+    ).catch(() => [[{ overdue: null }]] as any);
 
-    // Pending timesheets (work_item type = timesheet)
+    // Pending timesheets.
+    //
+    // The query is correct and the table is real, but `item_type` is free varchar and
+    // nothing ever writes 'timesheet' — the only value present in production is
+    // 'EMPLOYEE_CODE_PENDING'. So this can only ever be 0, and a permanent zero on an
+    // approval queue reads as "nothing is waiting" rather than "this is not tracked".
+    //
+    // Returned as null so the tile renders as unavailable, matching how Document
+    // Compliance already omits expiry for the same reason.
     const [timesheetResult] = await db.execute<RowDataPacket[]>(
       `SELECT COUNT(*) AS count FROM work_item WHERE item_type = 'timesheet' AND status = 'pending'`
-    ).catch(() => [[{ count: 0 }]] as any);
+    ).catch(() => [[{ count: null }]] as any);
 
-    // Expired employee documents
+    // Expired employee documents.
     //
-    // The table is employee_documents (plural) and has no active_status column.
-    // Both mistakes threw ER_BAD_FIELD_ERROR / ER_NO_SUCH_TABLE on every call,
-    // and the .catch below turned that into a hard-coded 0 — so this tile has
-    // always read "no expired documents" without ever looking at the 207,616
-    // rows that are actually there. A wrong number nobody can tell is wrong.
+    // The table name and column were fixed earlier (it is employee_documents,
+    // plural, with no active_status). The query now runs — and returns 0, which is
+    // true but uninformative: `expiry_date` is populated on **0 of 207,616** rows,
+    // so nothing can ever be expired.
+    //
+    // NULLIF turns that into "not tracked" instead of a compliance all-clear. The
+    // count is only meaningful once some document actually carries an expiry date,
+    // and at that point this reports it. Document Compliance already omits expiry
+    // for exactly this reason; the two panels now agree.
     const [expiredDocsResult] = await db.execute<RowDataPacket[]>(
-      `SELECT COUNT(*) AS count FROM employee_documents
-       WHERE expiry_date IS NOT NULL AND expiry_date < CURDATE()`
-    ).catch(() => [[{ count: 0 }]] as any);
+      `SELECT
+         CASE WHEN SUM(expiry_date IS NOT NULL) = 0 THEN NULL
+              ELSE SUM(expiry_date IS NOT NULL AND expiry_date < CURDATE())
+         END AS count
+       FROM employee_documents`
+    ).catch(() => [[{ count: null }]] as any);
 
     // Pending policy acknowledgements.
     //
@@ -960,7 +985,9 @@ export const managementService = {
       pending_leave_requests: numberValue(approvals.pending_leave_approvals),
       pending_expense_claims: numberValue(expenseResult[0]?.count),
       projects_at_risk: 0,
-      overdue_tasks: numberValue(overtaskResult[0]?.overdue),
+      // null passes through as "—". See the query: a 0 here would be produced by a
+      // failed lookup and would read as "nothing overdue".
+      overdue_tasks: overtaskResult[0]?.overdue == null ? null : numberValue(overtaskResult[0].overdue),
       team_members: teamMembersResult.map((row: RowDataPacket) => ({
         id: String(row.id),
         employee_code: String(row.employee_code),
@@ -971,8 +998,14 @@ export const managementService = {
         attendance_status: String(row.today_status),
         designation_name: row.designation_name ? String(row.designation_name) : null,
       })),
-      pending_timesheets: numberValue((timesheetResult as any)[0]?.[0]?.count ?? 0),
-      expired_documents: numberValue((expiredDocsResult as any)[0]?.[0]?.count ?? 0),
+      // Both deliberately null rather than 0 — see the queries above. `?? 0` here was
+      // undoing the null the query goes out of its way to produce.
+      pending_timesheets: (timesheetResult as any)[0]?.[0]?.count == null
+        ? null
+        : numberValue((timesheetResult as any)[0][0].count),
+      expired_documents: (expiredDocsResult as any)[0]?.[0]?.count == null
+        ? null
+        : numberValue((expiredDocsResult as any)[0][0].count),
       // null, not 0 — the table does not exist. See the query above.
       pending_policy_acknowledgements: (pendingPolicyResult as any)[0]?.[0]?.count == null
         ? null
@@ -997,6 +1030,8 @@ export const managementService = {
         employee_code: String(row.employee_code),
         employee_name: String(row.employee_name),
         designation_id: row.designation_id ? String(row.designation_id) : null,
+        // The layout reads this; without it every joiner read "Employee".
+        designation_name: row.designation_name ? String(row.designation_name) : null,
         joining_date: row.joining_date,
       })),
       branches: branchSnapshotResult.map((row) => ({

@@ -35,7 +35,24 @@ describe("management dashboard queries", () => {
   }
 
   it("counts expired documents from the table that has the rows", () => {
-    expect(SOURCE).toMatch(/FROM employee_documents\s+WHERE expiry_date/);
+    // The original assertion pinned `FROM employee_documents WHERE expiry_date`.
+    // The filter has since moved into the SELECT, because expiry_date is populated
+    // on 0 of 207,616 rows and the tile must distinguish "none expired" from "expiry
+    // is not tracked" — it now returns NULL when nothing carries an expiry date at
+    // all. The intent of this test is unchanged: the right table, and expiry_date
+    // actually consulted.
+    expect(SOURCE).toMatch(/FROM employee_documents\b/);
+    const at = SOURCE.indexOf("FROM employee_documents");
+    const statement = SOURCE.slice(SOURCE.lastIndexOf("`", at), SOURCE.indexOf("`", at));
+    expect(statement).toContain("expiry_date");
+  });
+
+  it("reports expiry as not-tracked rather than zero when no document has one", () => {
+    // A hard 0 on a compliance tile reads as an all-clear. Since no document
+    // currently carries an expiry date, 0 could only ever mean "not tracked".
+    const at = SOURCE.indexOf("FROM employee_documents");
+    const statement = SOURCE.slice(SOURCE.lastIndexOf("`", at), SOURCE.indexOf("`", at));
+    expect(statement).toMatch(/THEN NULL/);
   });
 
   it("does not filter employee_documents on a column it does not have", () => {

@@ -379,7 +379,13 @@ export function ReferenceDonut({
           <div className="flex h-full items-center justify-center text-xs text-[#94a3b8]">No data</div>
         )}
         <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
-          <span className="text-[22px] font-extrabold leading-none text-[#0b1f44]">{formatValue(centerValue ?? total)}</span>
+          {/* `centerValue ?? total` printed a bold "0" whenever the rate was
+              unavailable: callers pass null deliberately (e.g.
+              `attendance === null ? null : ...`) and it fell through to total,
+              which is 0 precisely because there is no data. The body already
+              renders "No data" behind it, so the centre was contradicting it.
+              null now stays null and formatValue renders an em dash. */}
+          <span className="text-[22px] font-extrabold leading-none text-[#0b1f44]">{formatValue(centerValue ?? (total > 0 ? total : null))}</span>
           <span className="mt-1 text-xs font-medium text-[#71809a]">{centerLabel}</span>
         </div>
       </div>

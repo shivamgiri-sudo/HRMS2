@@ -411,12 +411,29 @@ router.post("/report/initiate-portal", requireAuth, requireRole("admin", "hr"), 
 
   // Fetch candidate info needed by InfinitiAI
   const [candRows] = await db.execute<RowDataPacket[]>(
-    `SELECT c.id, c.full_name, c.email, c.mobile, p.date_of_birth, p.father_name,
-            CONCAT_WS(', ', pa.address_line1, pa.city, pa.state) AS address
+    // Three separate faults, any one of which broke "Initiate BGV (InfinitiAI)":
+    //
+    // 1. `LIMIT 1` sat between the JOIN and the WHERE, which is a syntax error —
+    //    so this failed to parse before it could fail on anything else.
+    // 2. candidate_onboarding_address does not exist. There is no separate
+    //    address table; the permanent address lives on the onboarding profile,
+    //    which is already joined here as `p`.
+    // 3. The profile column is father_husband_name, not father_name.
+    //
+    // NULLIF so a candidate with no address recorded sends null rather than the
+    // ", , " that CONCAT_WS leaves behind — the provider should be told the
+    // address is absent, not handed punctuation.
+    `SELECT c.id, c.full_name, c.email, c.mobile, p.date_of_birth,
+            p.father_husband_name AS father_name,
+            NULLIF(
+              CONCAT_WS(', ', p.permanent_address, p.permanent_city,
+                              p.permanent_state, p.permanent_pincode),
+              ''
+            ) AS address
        FROM ats_candidate c
        LEFT JOIN candidate_onboarding_profile p ON p.candidate_id = c.id
-       LEFT JOIN candidate_onboarding_address pa ON pa.candidate_id = c.id AND pa.address_type = 'permanent' LIMIT 1
-      WHERE c.id = ?`,
+      WHERE c.id = ?
+      LIMIT 1`,
     [candidate_id],
   );
   const cand = (candRows as RowDataPacket[])[0];

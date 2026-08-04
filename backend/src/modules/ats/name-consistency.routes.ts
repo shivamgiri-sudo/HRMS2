@@ -41,9 +41,31 @@ function nameMatchScore(a: string, b: string): number {
 router.post("/:candidateId/recalculate", requireRole("admin", "hr", "super_admin"), h(async (req: AuthenticatedRequest, res: Response) => {
   const { candidateId } = req.params;
 
+  // ats_candidate has no aadhar_name or pan_name column — it stores the
+  // numbers (aadhar_number, pan_number) and their verification flags, never a
+  // name. The name a document was actually issued to is what the provider
+  // returned, and that lives in candidate_bgv_check.matched_name, keyed by
+  // check_type. Production holds 59 Aadhaar names, 8 PAN and 23 bank there.
+  //
+  // Selecting the non-existent columns threw, so this whole recalculation —
+  // the thing that decides whether a candidate's names agree across sources —
+  // has never run.
+  //
+  // aadhaar_offline is included with aadhaar: it is the Befisc XML route to the
+  // same identity, and its matched_name is the same person's name.
   const [profile] = await db.execute<RowDataPacket[]>(
     `SELECT cop.employee_name,
-            ac.full_name AS ats_name, ac.aadhar_name, ac.pan_name
+            ac.full_name AS ats_name,
+            (SELECT k.matched_name FROM candidate_bgv_check k
+              WHERE k.candidate_id = cop.candidate_id
+                AND k.check_type IN ('aadhaar', 'aadhaar_offline')
+                AND k.matched_name IS NOT NULL AND k.matched_name <> ''
+              ORDER BY k.verified_at DESC LIMIT 1) AS aadhar_name,
+            (SELECT k.matched_name FROM candidate_bgv_check k
+              WHERE k.candidate_id = cop.candidate_id
+                AND k.check_type = 'pan'
+                AND k.matched_name IS NOT NULL AND k.matched_name <> ''
+              ORDER BY k.verified_at DESC LIMIT 1) AS pan_name
      FROM candidate_onboarding_profile cop
      LEFT JOIN ats_candidate ac ON ac.id = cop.candidate_id
      WHERE cop.candidate_id = ?
@@ -59,14 +81,19 @@ router.post("/:candidateId/recalculate", requireRole("admin", "hr", "super_admin
     [candidateId]
   );
 
-  // Education: institution_name is not a person name — check for a student/learner name field
-  const [education] = await db.execute<RowDataPacket[]>(
-    `SELECT applicant_name
-     FROM candidate_onboarding_education
-     WHERE candidate_id = ? AND applicant_name IS NOT NULL AND applicant_name != ''
-     LIMIT 1`,
-    [candidateId]
-  );
+  // Education is deliberately not a name source.
+  //
+  // This queried `candidate_onboarding_education` for `applicant_name`. Neither
+  // exists: education is stored in candidate_onboarding_qualification, and that
+  // table carries no person-name column at all — only qualification,
+  // specialization_course_name, institution_name, roll_number and board_type.
+  // The original comment already recognised that institution_name is not a
+  // person's name and went looking for a learner-name field; there is none.
+  //
+  // So the query could never return a row, and being unwrapped it threw
+  // ER_NO_SUCH_TABLE and took the whole recalculation with it. Removed rather
+  // than pointed at another table, because no table holds the name it wanted.
+  // If a learner name is ever captured, add it back as a source here.
 
   if (!profile.length) {
     return res.status(404).json({ success: false, message: "Candidate not found" });
@@ -74,15 +101,15 @@ router.post("/:candidateId/recalculate", requireRole("admin", "hr", "super_admin
 
   const p = profile[0] as RowDataPacket;
   const b = bank[0] as RowDataPacket;
-  const edu = education[0] as RowDataPacket;
   const formName = p.employee_name || p.ats_name || "";
 
+  // No education entry — see the note above the removed query. Nothing in the
+  // schema records the name a qualification was issued to.
   const sources: { type: string; name: string }[] = [
     { type: "form", name: formName },
     { type: "aadhaar", name: p.aadhar_name || "" },
     { type: "pan", name: p.pan_name || "" },
     { type: "bank", name: b?.account_holder_name || "" },
-    ...(edu?.applicant_name ? [{ type: "education", name: edu.applicant_name as string }] : []),
   ].filter((s) => s.name);
 
   // Source 5: Employee master (if candidate converted)

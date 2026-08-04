@@ -46,6 +46,31 @@ export const EXPECTED_TO_WORK_EXCLUSIONS = [
   ...LEAVE_STATUSES,
 ] as const;
 
+/**
+ * Live session states, from `wfm_attendance_session.current_status`.
+ *
+ * A different column with a different vocabulary from `attendance_status` above, and
+ * it had drifted the same way. Three call sites matched
+ * `IN ('Logged In','Active','Login','Rostered')`, and a fourth used a shorter list
+ * with different capitalisation. Counted against production:
+ *
+ *   Logged Out  25,409
+ *   Partial      8,872
+ *   Logged In    1,177
+ *
+ * Only one of the four literals occurs at all. 'Active', 'Login' and 'Rostered' are
+ * invented; 'Partial' — the second most common state, someone who punched in and is
+ * mid-shift — was never counted as present.
+ *
+ * The effect was not subtle: the branch snapshot counted 213 present where 355 people
+ * had a live session, so `present_pct` collapsed and the dashboard's `pct >= 70` test
+ * marked *every* branch "Warning".
+ */
+export const PRESENT_SESSION_STATUSES = ["Logged In", "Partial"] as const;
+
+/** Every value `current_status` actually holds — asserts code never invents one. */
+export const ALL_SESSION_STATUSES = ["Logged In", "Partial", "Logged Out"] as const;
+
 /** Every status the live ENUM accepts — used to assert code never invents a value. */
 export const ALL_ATTENDANCE_STATUSES = [
   "present",
