@@ -522,6 +522,67 @@ async function syncProvision(hrms, bill) {
 
 // ── Sync 4: billing_invoice_snapshot ─────────────────────────────────────────
 
+/**
+ * Credit notes — the negative half of revenue.
+ *
+ * Invoices were being summed without them, overstating FY2026-27 revenue by Rs 53.91 lakh net
+ * across 17 approved notes. Verified against source rather than assumed:
+ *   - total + igst + sgst + cgst = grnd on 17 of 17, exactly as tbl_invoice behaves, so `total`
+ *     is net of GST and subtracts directly from the invoice's total_amt.
+ *   - credit_approve and status agree on all 17, so neither is a Reject-style default flag.
+ *   - proforma_bill_no matched 0 of 17 against tbl_invoice.bill_no, so these CANNOT be netted
+ *     per invoice. They are netted at period + cost centre, which is the grain both carry.
+ */
+async function syncCreditNotes(hrms, bill) {
+  log('Sync 11: populating billing_credit_note_snapshot from db_bill.tbl_credit_note ...');
+  const now = new Date();
+  const [src] = await bill.query(
+    `SELECT id, credit_no, proforma_bill_no, category, branch_name, cost_center,
+            finance_year, month, creditDate, creditDescription,
+            total, tax, igst, sgst, cgst, grnd,
+            credit_approve, credit_approved_date, status, createdate
+       FROM tbl_credit_note WHERE finance_year >= ? ORDER BY id`, [FROM_FINANCE_YEAR]);
+  log(`  db_bill.tbl_credit_note rows from ${FROM_FINANCE_YEAR}: ${src.length}`);
+
+  const rows = src.map(r => ({
+    bill_source_id: r.id,
+    credit_no: trim(r.credit_no),
+    proforma_bill_no: trim(r.proforma_bill_no),
+    category: trim(r.category),
+    branch_name: trim(r.branch_name),
+    cost_centre_code: trim(r.cost_center),
+    finance_year: trim(r.finance_year),
+    month_label: trim(r.month),
+    // tbl_credit_note.month speaks the 'Jul-26' dialect, same as tbl_invoice — toPeriodCode
+    // trusts the year carried in the suffix, so Jan-Mar land in the right calendar year.
+    period_code: toPeriodCode(r.finance_year, r.month),
+    credit_date: safeDate(r.creditDate),
+    description: trim(r.creditDescription),
+    total_amt: safeDec(r.total),
+    tax_amt: safeDec(r.tax),
+    igst: safeDec(r.igst),
+    sgst: safeDec(r.sgst),
+    cgst: safeDec(r.cgst),
+    grand_total: safeDec(r.grnd),
+    is_approved: Number(r.credit_approve) === 1 ? 1 : 0,
+    approved_at: safeDateTime(r.credit_approved_date),
+    status: trim(r.status),
+    source_created_at: safeDateTime(r.createdate),
+    synced_at: now,
+  }));
+  const cols = ['bill_source_id','credit_no','proforma_bill_no','category','branch_name',
+    'cost_centre_code','finance_year','month_label','period_code','credit_date','description',
+    'total_amt','tax_amt','igst','sgst','cgst','grand_total','is_approved','approved_at','status',
+    'source_created_at','synced_at'];
+  const n = await insertBatch(hrms, 'billing_credit_note_snapshot', rows, cols, cols.slice(1));
+  await pruneOrphans(hrms, 'billing_credit_note_snapshot', rows.map(r => r.bill_source_id),
+    'finance_year >= ?', [FROM_FINANCE_YEAR]);
+  const approved = rows.filter(r => r.is_approved === 1);
+  const value = approved.reduce((s, r) => s + Number(r.total_amt || 0), 0);
+  log(`  billing_credit_note_snapshot: ${n} rows (${approved.length} approved, `
+    + `Rs ${(value / 100000).toFixed(2)} lakh to be SUBTRACTED from invoiced revenue)`);
+}
+
 async function syncInvoices(hrms, bill) {
   log('Sync 4: populating billing_invoice_snapshot from db_bill.tbl_invoice ...');
 
@@ -662,8 +723,9 @@ async function syncBudget(hrms, bill) {
   }));
 
   const cols = ['bill_source_id','branch_source_id','branch_name','entry_no','finance_year',
-    'finance_month','period_code','head_id','sub_head_id','amount','expense_status','entry_status',
-    'active_status','approve_1_at','approve_2_at','approve_3_at','approve_4_at','approve_5_at',
+    'finance_month','period_code','head_id','sub_head_id','amount','reopen_additional_amount',
+    'expense_status','entry_status','active_status','is_rejected',
+    'approve_1_at','approve_2_at','approve_3_at','approve_4_at','approve_5_at',
     'objective','description_det','source_created_at','synced_at'];
 
   // A budget row created before its finance year began is NOT mis-filed — it is a budget.
@@ -690,8 +752,36 @@ async function syncBudget(hrms, bill) {
     log(`        their finance year began — normal advance planning. Mirrored, not excluded.`);
   }
 
+  // Rejection is a separate table and a separate fact from Active: 7 of the 18 rejected FY2026-27
+  // budgets are still Active=1, so filtering on Active alone leaves Rs 3.97 lakh of rejected
+  // budget counted as approved. RejectDate is the truth, not the presence of a row.
+  // Do NOT scope by expense_master_reject.FinanceYear. It does not describe the budget it points
+  // at: all 18 rejects against FY2026-27 budgets carry FinanceYear '2024-25', so filtering on it
+  // silently found zero and left every rejected budget flagged clean. Match on ExpenseId only —
+  // the table is ~4.3k rows, so reading it whole costs nothing.
+  const [rejects] = await bill.query(
+    `SELECT DISTINCT ExpenseId FROM expense_master_reject WHERE RejectDate IS NOT NULL`);
+  const rejected = new Set(rejects.map(r => String(r.ExpenseId)));
+
+  // A reopen is a sanctioned top-up, not a correction — AdditionalAmount ADDS budget. Approved
+  // ones only. Rs 43.54 lakh across 87 FY2026-27 budgets that were otherwise being understated.
+  const [reopens] = await bill.query(
+    `SELECT ExpenseId, SUM(COALESCE(AdditionalAmount,0)) AS extra
+       FROM expense_reopen_master
+      WHERE Approve = 1 AND FinanceYear >= ? GROUP BY ExpenseId`, [FROM_FINANCE_YEAR]);
+  const topUp = new Map(reopens.map(r => [String(r.ExpenseId), Number(r.extra) || 0]));
+
+  for (const r of rows) {
+    r.is_rejected = rejected.has(String(r.bill_source_id)) ? 1 : 0;
+    r.reopen_additional_amount = topUp.get(String(r.bill_source_id)) ?? 0;
+  }
+
   const scoped = rows.filter(r => inScope(r.period_code));
   const n = await insertBatch(hrms, 'finance_budget_snapshot', scoped, cols, cols.slice(1));
+  const rej = scoped.filter(r => r.is_rejected === 1).length;
+  const extra = scoped.reduce((s, r) => s + r.reopen_additional_amount, 0);
+  if (rej) log(`        ${rej} carry a rejection (independent of Active — check both).`);
+  if (extra) log(`        Rs ${(extra / 100000).toFixed(2)} lakh of approved reopen top-ups mirrored.`);
   const active = scoped.filter(r => r.active_status === 1).length;
   log(`  finance_budget_snapshot: ${n} rows (from ${FROM_PERIOD}; ${rows.length - scoped.length} out of range)`);
   // Surfaced every run: readers that do not filter on active_status are counting the inactive
@@ -928,6 +1018,7 @@ async function main() {
     if (only === 'all' || only === 'particulars')   await syncInvoiceParticulars(hrms, bill);
     if (only === 'all' || only === 'budget_lines')  await syncBudgetLines(hrms, bill);
     if (only === 'all' || only === 'grn_lines')     await syncGrnLines(hrms, bill);
+    if (only === 'all' || only === 'credit_notes')  await syncCreditNotes(hrms, bill);
 
     log('Done.');
   } finally {

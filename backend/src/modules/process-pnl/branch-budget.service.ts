@@ -761,7 +761,7 @@ export async function getPriorBudgetFromMirror(
         -- correlated with all three approvals). Copy-forward exists to seed a new month from what
         -- was actually sanctioned last month, so carrying unapproved lines across would propagate
         -- a budget nobody signed off — and for FY2026-27 that is 367 of 544 rows, Rs 326 L.
-        AND b.active_status = 1
+        AND b.active_status = 1 AND b.is_rejected = 0
       GROUP BY hh.head_name, sh.head_name`,
     [periodCode, branchId],
   );

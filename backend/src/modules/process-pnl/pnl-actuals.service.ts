@@ -214,17 +214,39 @@ export async function getInvoicedRevenueActuals(periodCode: string): Promise<Act
   if (!/^\d{4}-\d{2}$/.test(periodCode)) return emptyActuals();
   if (!(await tableExists("billing_invoice_particular_snapshot"))) return emptyActuals();
 
+  // Invoiced revenue is a NET figure: invoices less approved credit notes. Without the second
+  // half, FY2026-27 revenue overstated by Rs 53.91 lakh across 17 notes (Apr 12.75, May 5.30,
+  // Jun 0.64, Jul 0.50). Both sides are net of GST — verified at source, where
+  // total+igst+sgst+cgst = grnd on 17 of 17, exactly as the invoice table behaves.
+  //
+  // Netted at period + cost centre, NOT per invoice: tbl_credit_note.proforma_bill_no matched
+  // 0 of 17 against tbl_invoice.bill_no, so there is no reliable per-invoice link to use. Period
+  // and cost centre are the grain both tables genuinely share.
+  //
+  // A credit note is emitted as a negative amount into the same accumulate() as the invoice
+  // lines, so it flows through the identical branch/process/cost-centre attribution rather than
+  // being subtracted from a total afterwards — which would have lost the attribution.
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT ccm.branch_id AS branch_id, ccm.id AS cost_centre_id,
-            pc.process_id AS process_id, SUM(p.amount) AS amount
-       FROM billing_invoice_particular_snapshot p
-       LEFT JOIN cost_centre_master ccm
-              ON ccm.cost_centre_code COLLATE utf8mb4_unicode_ci
-               = p.cost_centre_code COLLATE utf8mb4_unicode_ci
-       LEFT JOIN ${PROCESS_BY_COST_CENTRE} pc ON pc.cost_centre_id = ccm.id
-      WHERE p.period_code = ? AND ${OWN_COMPANY_SQL}
-      GROUP BY ccm.branch_id, ccm.id, pc.process_id`,
-    [periodCode]
+    `SELECT branch_id, cost_centre_id, process_id, SUM(amount) AS amount FROM (
+        SELECT ccm.branch_id AS branch_id, ccm.id AS cost_centre_id,
+               pc.process_id AS process_id, p.amount AS amount
+          FROM billing_invoice_particular_snapshot p
+          LEFT JOIN cost_centre_master ccm
+                 ON ccm.cost_centre_code COLLATE utf8mb4_unicode_ci
+                  = p.cost_centre_code COLLATE utf8mb4_unicode_ci
+          LEFT JOIN ${PROCESS_BY_COST_CENTRE} pc ON pc.cost_centre_id = ccm.id
+         WHERE p.period_code = ? AND ${OWN_COMPANY_SQL}
+        UNION ALL
+        SELECT ccm.branch_id, ccm.id, pc.process_id, -cn.total_amt
+          FROM billing_credit_note_snapshot cn
+          LEFT JOIN cost_centre_master ccm
+                 ON ccm.cost_centre_code COLLATE utf8mb4_unicode_ci
+                  = cn.cost_centre_code COLLATE utf8mb4_unicode_ci
+          LEFT JOIN ${PROCESS_BY_COST_CENTRE} pc ON pc.cost_centre_id = ccm.id
+         WHERE cn.period_code = ? AND cn.is_approved = 1 AND ${OWN_COMPANY_SQL}
+     ) netted
+      GROUP BY branch_id, cost_centre_id, process_id`,
+    [periodCode, periodCode]
   );
   return accumulate(rows);
 }

@@ -263,26 +263,50 @@ async function spendByBranch(period: string, f: CeoFilters): Promise<Map<string,
  * needing to test the approval columns as well. Do NOT use EntryStatus for this: it is 1 on 61 of
  * the active rows and on 206 of the inactive ones, so it means something else entirely.
  *
- * Without it this summed all 544 rows — Rs 456.03 L against a real approved budget of Rs 130.00 L,
- * overstating it 2.5x and making every underspend on this screen fiction.
+ * Without it this summed all 544 rows — Rs 456.03 L against a real approved budget of Rs 126.03 L,
+ * overstating it 3.6x and making every underspend on this screen fiction.
+ *
+ * is_rejected is a SEPARATE test, not a refinement of Active: 7 of the 18 rejected FY2026-27
+ * budgets are still Active = 1, worth Rs 3.97 L. Filtering on Active alone leaves them counted.
+ *
+ * Top-ups are added on top. expense_reopen_master.AdditionalAmount is sanctioned extra budget
+ * carried on the HEADER, so it has no lines of its own and cannot appear in a line-level SUM —
+ * it is added once per header below. Rs 42.11 L for FY2026-27, previously missing entirely, so
+ * the budget was simultaneously overstated by inactive rows and understated by these.
+ *
+ * True sanctioned FY2026-27 budget: 126.03 + 42.11 = Rs 168.14 L.
  */
 async function budgetByBranch(period: string): Promise<Map<string, number>> {
   const out = new Map<string, number>();
   if (!(await tableExists("finance_budget_line_snapshot"))) return out;
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT bm.id AS branch_id, SUM(l.amount) AS amount
-       FROM finance_budget_line_snapshot l
-       JOIN finance_budget_snapshot b
-         ON b.bill_source_id = l.budget_source_id AND b.period_code = l.period_code
-       LEFT JOIN (
-             SELECT MIN(id) AS id, UPPER(TRIM(branch_name)) AS nm
-               FROM branch_master GROUP BY UPPER(TRIM(branch_name))
-           ) bm ON bm.nm COLLATE utf8mb4_unicode_ci
-                 = UPPER(TRIM(b.branch_name)) COLLATE utf8mb4_unicode_ci
-      WHERE l.period_code = ? AND l.expense_type = 'CostCenter'
-        AND b.active_status = 1
-      GROUP BY bm.id`,
-    [period],
+    `SELECT branch_id, SUM(amount) AS amount FROM (
+        SELECT bm.id AS branch_id, l.amount AS amount
+          FROM finance_budget_line_snapshot l
+          JOIN finance_budget_snapshot b
+            ON b.bill_source_id = l.budget_source_id AND b.period_code = l.period_code
+          LEFT JOIN (
+                SELECT MIN(id) AS id, UPPER(TRIM(branch_name)) AS nm
+                  FROM branch_master GROUP BY UPPER(TRIM(branch_name))
+              ) bm ON bm.nm COLLATE utf8mb4_unicode_ci
+                    = UPPER(TRIM(b.branch_name)) COLLATE utf8mb4_unicode_ci
+         WHERE l.period_code = ? AND l.expense_type = 'CostCenter'
+           AND b.active_status = 1 AND b.is_rejected = 0
+        UNION ALL
+        -- Header-level top-ups: one row per budget, so they cannot be joined through the lines
+        -- without multiplying by the line count.
+        SELECT bm.id, b.reopen_additional_amount
+          FROM finance_budget_snapshot b
+          LEFT JOIN (
+                SELECT MIN(id) AS id, UPPER(TRIM(branch_name)) AS nm
+                  FROM branch_master GROUP BY UPPER(TRIM(branch_name))
+              ) bm ON bm.nm COLLATE utf8mb4_unicode_ci
+                    = UPPER(TRIM(b.branch_name)) COLLATE utf8mb4_unicode_ci
+         WHERE b.period_code = ? AND b.active_status = 1 AND b.is_rejected = 0
+           AND b.reopen_additional_amount <> 0
+     ) sanctioned
+      GROUP BY branch_id`,
+    [period, period],
   );
   for (const r of rows) out.set(r.branch_id ? String(r.branch_id) : "", n(r.amount));
   return out;
@@ -571,7 +595,7 @@ async function buildFocus(
            ON b.bill_source_id = l.budget_source_id AND b.period_code = l.period_code
         WHERE l.period_code = ? AND l.expense_type = 'CostCenter'
           AND l.expense_type_name IN (${marks})
-          AND b.active_status = 1`,
+          AND b.active_status = 1 AND b.is_rejected = 0`,
       [period, ...codeList],
     );
     budget = n(bud[0]?.a);
