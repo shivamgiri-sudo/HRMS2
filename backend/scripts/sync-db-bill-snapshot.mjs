@@ -322,24 +322,35 @@ async function insertBatch(hrms, table, rows, keys, updateCols) {
  * simply because it did not look at them.
  */
 async function pruneOrphans(hrms, table, keptSourceIds, scopeSql, scopeParams = []) {
-  const [existing] = await hrms.query(
-    `SELECT bill_source_id FROM ${table} WHERE ${scopeSql}`, scopeParams
-  );
-  const keep = new Set(keptSourceIds.map(id => String(id)));
-  const orphans = existing
-    .map(r => r.bill_source_id)
-    .filter(id => id != null && !keep.has(String(id)));
-  if (!orphans.length) return 0;
-
-  for (let i = 0; i < orphans.length; i += BATCH) {
-    const chunk = orphans.slice(i, i + BATCH);
-    await hrms.query(
-      `DELETE FROM ${table} WHERE bill_source_id IN (${chunk.map(() => '?').join(',')})`,
-      chunk
+  // Hygiene, not critical path. A prune that cannot run must never take the sync down with it:
+  // on 2026-08-05 a wrong scope column (period_code on grn_entry_line_snapshot, which has none)
+  // killed sync 10 outright AFTER its rows had been written, and the reconciler still passed
+  // because it does not cover that table. Warn and carry on — a stale extra row is a far smaller
+  // problem than a sync that stops halfway.
+  try {
+    const [existing] = await hrms.query(
+      `SELECT bill_source_id FROM ${table} WHERE ${scopeSql}`, scopeParams
     );
+    const keep = new Set(keptSourceIds.map(id => String(id)));
+    const orphans = existing
+      .map(r => r.bill_source_id)
+      .filter(id => id != null && !keep.has(String(id)));
+    if (!orphans.length) return 0;
+
+    for (let i = 0; i < orphans.length; i += BATCH) {
+      const chunk = orphans.slice(i, i + BATCH);
+      await hrms.query(
+        `DELETE FROM ${table} WHERE bill_source_id IN (${chunk.map(() => '?').join(',')})`,
+        chunk
+      );
+    }
+    log(`  pruned ${orphans.length} orphan row(s) from ${table} (gone at source)`);
+    return orphans.length;
+  } catch (err) {
+    log(`  WARNING: could not prune ${table}: ${err.message}`);
+    log(`           Rows deleted at source may linger here. The sync itself is unaffected.`);
+    return 0;
   }
-  log(`  pruned ${orphans.length} orphan row(s) from ${table} (gone at source)`);
-  return orphans.length;
 }
 
 // ── Sync 1: cost_centre_master enrichment ─────────────────────────────────────
@@ -878,8 +889,10 @@ async function syncGrnLines(hrms, bill) {
     'source_created_at','synced_at'];
   const scoped = rows.filter(r => inScope(r._period));
   const n = await insertBatch(hrms, 'grn_entry_line_snapshot', scoped, cols, cols.slice(1));
+  // This table carries no period of its own — scope through the parent entry, which does.
   await pruneOrphans(hrms, 'grn_entry_line_snapshot', scoped.map(r => r.bill_source_id),
-    'period_code >= ?', [FROM_PERIOD]);
+    'grn_source_id IN (SELECT bill_source_id FROM grn_entry_snapshot WHERE period_code >= ?)',
+    [FROM_PERIOD]);
   const withCc = scoped.filter(r => r.cost_centre_source_id).length;
   log(`  grn_entry_line_snapshot: ${n} rows (${withCc} carry a cost centre, ${scoped.length - withCc} do not)`);
 }
