@@ -56,6 +56,13 @@ function normalizePeriod(value?: string) {
 // computation, and lockPeriod/getPeriodClose are governance actions that
 // need authoritative, uncached data. Only getTrend/getSummary (the
 // dashboard-display path) use this cache.
+// OPEN QUESTION (not yet confirmed by finance/dashboard owner): 60s TTL was
+// chosen to align with process-pnl.service.ts's own computationCache (also
+// 60s), not from a stated staleness requirement. Unlike the general dashboard
+// cache above, this fronts revenue/EBITDA/cost figures shown to CEO/finance
+// roles — a wrong-but-cached number for up to 60s is a different risk than a
+// slow-but-fresh one, and whether that's acceptable should be a stated
+// decision, not an implicit one made when fixing an unrelated perf issue.
 async function getCachedAllocationSummary(filters: Partial<PnlQueryFilters>) {
   const key = `pnl-allocation-summary:v1:${filters.period ?? ""}:${filters.branchId ?? ""}:${filters.processId ?? ""}:${filters.clientId ?? ""}:${filters.search ?? ""}`;
   return pnlSummaryCache.getOrSet(

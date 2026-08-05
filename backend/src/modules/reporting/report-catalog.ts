@@ -37,6 +37,15 @@ export interface FilterDef {
   required?: boolean;
 }
 
+// OPEN QUESTION (not yet confirmed against a documented policy): every entry's
+// sensitivityLevel/containsPII/containsFinancialData below (all 27 added in
+// commit 9ca49d35) was assigned by eyeballing each report's columns —
+// salary/bank fields -> highly_restricted, names/attendance -> confidential,
+// aggregates -> internal — not checked against a written data-classification
+// policy. Searched docs/ (incl. docs/dpdp/) for one: none defines this scheme.
+// Confirm with compliance/security before relying on these to gate
+// viewRoles/exportRoles on financial or PII-bearing reports; flag that a
+// policy doc should exist if none does.
 export type SensitivityLevel =
   | 'internal'          // aggregate/summary, no PII, no financial values
   | 'confidential'      // employee-level non-financial (names, attendance, leave)

@@ -51,6 +51,14 @@ export async function getDailyOpsPulse(targetDate?: string, branchIds?: string[]
   // each agent's lunch % of their login time" actually means anyway — the
   // original form (AVG(lunch time) / one arbitrary row's login time) was
   // never a meaningful percentage even before the SQL mode rejected it.
+  //
+  // OPEN QUESTION (not yet confirmed by WFM/ops): this is "average of each
+  // agent's own %" (per-agent average), matched to the existing sibling
+  // metric's convention, not independently derived. The alternative —
+  // SUM(lunch time)/SUM(login time), a headcount-weighted org-wide %  —
+  // gives a meaningfully different number when agents' login durations vary
+  // a lot, and applies to all five shrinkage-adjacent figures on this tile,
+  // not just the four touched here. Confirm intent before treating either as final.
   const [aprRows] = await db.execute<RowDataPacket[]>(
     `SELECT
        COUNT(DISTINCT a.UserID) AS agents_logged_in,

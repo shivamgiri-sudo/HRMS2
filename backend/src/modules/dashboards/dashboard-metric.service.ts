@@ -475,6 +475,13 @@ export async function getPayrollReadinessMetrics(scope: DashboardScope): Promise
     // items on employees past the grace window — nothing here is hidden by
     // date, only the false positives inherent to a fixed-length statutory
     // process being measured with a same-day yardstick.
+    //
+    // OPEN QUESTION (not yet confirmed by payroll/HR policy owner): 45 and 90
+    // days are my own estimate from general onboarding/EPFO-lag reasoning, not
+    // a documented SLA — statutory_config has no grace-period key to source
+    // this from. If the real onboarding SLA or UAN turnaround differs, these
+    // two numbers need to change; re-run the same before/after blockerCount
+    // comparison once a real figure is confirmed.
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT
          COUNT(*) AS total,

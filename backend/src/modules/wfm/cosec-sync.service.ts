@@ -873,6 +873,14 @@ export const cosecSyncService = {
       // correctly (confirmed via /api/wfm/biometric-summary/adherence-summary
       // showing real data for the same window). Write on every completed
       // run — success or failure — independent of 'cosec_unmapped'.
+      // OPEN QUESTION (not yet confirmed by WFM/ops): inactiveUsers (resigned/
+      // inactive employees still generating COSEC punches) is a roster/HR
+      // data-hygiene signal, not evidence the sync job itself misbehaved —
+      // folding it into cosecStatus means a perfectly healthy sync can show
+      // "warning" purely because of an unrelated roster problem. Reasonable
+      // people could read it either way; confirm with WFM/ops whether that's
+      // the intended meaning, or split inactiveUsers into its own field
+      // instead of OR-ing it into the sync's own health status.
       const cosecStatus = !result.success ? "failed"
         : (result.failed.length > 0 || result.unmappedUsers.length > 0 || result.inactiveUsers.length > 0) ? "warning"
         : "success";

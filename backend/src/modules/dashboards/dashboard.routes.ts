@@ -508,6 +508,11 @@ router.get("/:dashboardCode/summary", h(async (req: AuthenticatedRequest, res: a
   // the same real numbers instantly. workItems is deliberately NOT cached here
   // — it is per-user (assigned_to_user_id = this viewer), so caching it under
   // a scope-only key would leak one user's pending items to another.
+  // OPEN QUESTION (not yet confirmed by dashboard owners): 30s is my own pick
+  // for "reasonable staleness" for aggregate tiles, not a stated requirement.
+  // Ask per-dashboard whether that window is acceptable, same question as the
+  // pnl cache below (see canonical-pnl.service.ts) but lower stakes here since
+  // these are operational aggregates, not the P&L figures shown to finance/CEO.
   const metricsCacheKey = `dash-metrics:v1:${dashboardCode}:${scope.level}:${scope.branchIds.join(",")}:${scope.processIds.join(",")}:${scope.employeeIds.join(",")}`;
   const metricsPromise = dashboardMetricsCache.getOrSet(
     metricsCacheKey,
