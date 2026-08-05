@@ -4,6 +4,7 @@ import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
 import { calculateGratuity } from "../payroll/payrollCalculate.service.js";
+import { notifyFullFinalReady } from "./exit.notifications.js";
 
 export interface FfInput {
   calculationDate: string;
@@ -38,12 +39,33 @@ export interface FullFinalCalculation {
   created_at: string;
   updated_at: string;
   employee_name?: string;
+  /**
+   * Payroll this employee has already been paid around the settlement period.
+   *
+   * Deliberately informational rather than a blocking check. A mid-month leaver
+   * legitimately appears in both: that month's run pays their pro-rated salary to
+   * the last working day, and F&F settles the separate final dues. Refusing F&F
+   * on overlap would reject the normal case. What it guards against is the real
+   * risk — pending salary being keyed into salary_hold by hand when payroll has
+   * already paid it — by putting the figures in front of whoever prepares the
+   * settlement.
+   */
+  payroll_already_paid?: PayrollAlreadyPaid[];
 }
 
 export interface GratuityCalculation {
   amount: number;
   status: "draft" | "not_eligible" | "pending_configuration";
   note: string;
+}
+
+/** A payroll line already raised for this employee around the settlement period. */
+export interface PayrollAlreadyPaid {
+  run_month: string;
+  run_status: string;
+  gross_salary: number;
+  net_salary: number;
+  paid_working_days: number | null;
 }
 
 export const ffService = {
@@ -110,7 +132,42 @@ export const ffService = {
     );
     const rec = (rows as FullFinalCalculation[])[0];
     if (!rec) throw new Error("F&F calculation not found");
+    rec.payroll_already_paid = await this.getPayrollAlreadyPaid(
+      rec.employee_id,
+      String(rec.calculation_date)
+    );
     return rec;
+  },
+
+  /**
+   * Payroll already raised for an employee over the settlement window: the
+   * calculation month and the two before it.
+   *
+   * Draft and cancelled runs are excluded because nothing has been paid from
+   * them, as are excluded/blocked lines. Anything left is money the employee has
+   * already received, which is what makes double-counting it in F&F a risk.
+   */
+  async getPayrollAlreadyPaid(
+    employeeId: string,
+    calculationDate: string
+  ): Promise<PayrollAlreadyPaid[]> {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT spr.run_month,
+              spr.status            AS run_status,
+              spl.gross_salary,
+              spl.net_salary,
+              spl.paid_working_days
+         FROM salary_prep_line spl
+         JOIN salary_prep_run spr ON spr.id = spl.run_id
+        WHERE spl.employee_id = ?
+          AND LOWER(spl.status) NOT IN ('excluded', 'blocked')
+          AND LOWER(spr.status) NOT IN ('draft', 'cancelled')
+          AND spr.run_month BETWEEN DATE_FORMAT(DATE_SUB(?, INTERVAL 2 MONTH), '%Y-%m')
+                                AND DATE_FORMAT(?, '%Y-%m')
+        ORDER BY spr.run_month DESC`,
+      [employeeId, calculationDate, calculationDate]
+    );
+    return rows as PayrollAlreadyPaid[];
   },
 
   async approveFF(
@@ -149,6 +206,8 @@ export const ffService = {
       change_summary: { exit_request_id: rec.exit_request_id },
       req,
     });
+
+    void notifyFullFinalReady(rec.exit_request_id);
 
     return this.getFF(rec.exit_request_id);
   },

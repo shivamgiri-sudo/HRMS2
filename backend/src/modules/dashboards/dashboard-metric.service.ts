@@ -482,6 +482,18 @@ export async function getPayrollReadinessMetrics(scope: DashboardScope): Promise
     // this from. If the real onboarding SLA or UAN turnaround differs, these
     // two numbers need to change; re-run the same before/after blockerCount
     // comparison once a real figure is confirmed.
+    //
+    // Tried to derive this empirically instead of guessing (live, read-only):
+    // no usable signal exists. 99.96% of employee_bank_detail rows were bulk-
+    // inserted in two migration batches (11,671 rows on 2026-06-02, 1,092 on
+    // 2026-06-11) — that's the migration script's run date, not each
+    // employee's actual paperwork-completion date. The remaining 5 rows have
+    // multi-year DATEDIFF-to-joining, not onboarding signal either. audit_log
+    // and employee_epf_audit_log (the only field-level change-history tables)
+    // are both empty — no way to reconstruct "when was this actually filled
+    // in" from this database. Do not re-attempt this empirical approach until
+    // enough post-migration organic hires accumulate; until then this is a
+    // policy number, not a computable one.
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT
          COUNT(*) AS total,

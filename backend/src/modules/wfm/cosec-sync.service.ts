@@ -873,17 +873,28 @@ export const cosecSyncService = {
       // correctly (confirmed via /api/wfm/biometric-summary/adherence-summary
       // showing real data for the same window). Write on every completed
       // run — success or failure — independent of 'cosec_unmapped'.
-      // OPEN QUESTION (not yet confirmed by WFM/ops): inactiveUsers (resigned/
-      // inactive employees still generating COSEC punches) is a roster/HR
-      // data-hygiene signal, not evidence the sync job itself misbehaved —
-      // folding it into cosecStatus means a perfectly healthy sync can show
-      // "warning" purely because of an unrelated roster problem. Reasonable
-      // people could read it either way; confirm with WFM/ops whether that's
-      // the intended meaning, or split inactiveUsers into its own field
-      // instead of OR-ing it into the sync's own health status.
+      // cosecStatus reflects only the sync job's own responsibility: did it
+      // run (result.success), did any punch group fail to process/write
+      // (result.failed), and is its mapping table incomplete (unmappedUsers —
+      // a COSEC ID with no employee mapping at all, so punches are being
+      // dropped/unattributed, which genuinely is the integration's problem).
+      // Deliberately excludes inactiveUsers: a resigned/inactive employee
+      // still generating COSEC punches is a roster/HR data-hygiene fact,
+      // independent of whether the sync itself worked — folding it in here
+      // previously meant a perfectly healthy sync could show "warning" purely
+      // because someone's exit wasn't processed on the badge system. That
+      // count is still fully visible below (informational, not status-
+      // gating) and via the existing logger.warn a few lines up.
       const cosecStatus = !result.success ? "failed"
-        : (result.failed.length > 0 || result.unmappedUsers.length > 0 || result.inactiveUsers.length > 0) ? "warning"
+        : (result.failed.length > 0 || result.unmappedUsers.length > 0) ? "warning"
         : "success";
+      const errorSummaryParts: string[] = [];
+      if (result.failed.length > 0) {
+        errorSummaryParts.push(`${result.failed.length} failed punch group(s): ${result.failed.slice(0, 5).map((f) => f.error).join("; ")}`);
+      }
+      if (result.inactiveUsers.length > 0) {
+        errorSummaryParts.push(`(info, not a sync failure) ${result.inactiveUsers.length} inactive/resigned employee(s) still generating punches`);
+      }
       await db.execute(
         `INSERT INTO integration_sync_run
            (integration_key, started_at, completed_at, status, records_read, records_written, records_failed, error_summary)
@@ -894,9 +905,7 @@ export const cosecSyncService = {
           result.pulledEvents,
           result.migratedDays,
           result.failed.length,
-          result.failed.length > 0
-            ? `${result.failed.length} failed punch group(s): ${result.failed.slice(0, 5).map((f) => f.error).join("; ")}`
-            : null,
+          errorSummaryParts.length > 0 ? errorSummaryParts.join(" | ") : null,
         ],
       ).catch((err) => {
         logger.warn({ err }, "[COSEC Sync] failed to persist 'cosec' sync_run status row (non-critical, does not affect sync result)");
