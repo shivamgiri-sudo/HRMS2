@@ -26,6 +26,30 @@ interface TaxDeclarationRow {
 }
 
 
+// ─── Gross/deductions/net reconciliation ───────────────────────────────────────
+
+/**
+ * Reconcile a payroll line's gross, total deductions and net pay so they
+ * always satisfy `net = gross - deductions`.
+ *
+ * calculateNetSalary (payroll.service.ts) has no floor on net: if statutory
+ * plus other deductions exceed gross, it returns a negative number. The
+ * caller used to clamp only the final net pay to 0 without correspondingly
+ * reducing total_deductions, which stored lines where
+ * `gross_salary - total_deductions !== net_salary` (e.g. gross=20000,
+ * total_deductions=23000, net=0) — payslips and reports that recompute the
+ * difference would misreport. Deductions are capped at what there is to
+ * deduct instead, so net is always what's left and never negative.
+ */
+export function reconcileNetAndDeductions(
+  grossForLine: number,
+  rawDeductions: number
+): { totalDeductions: number; netSalary: number } {
+  const totalDeductions = Math.round(Math.min(rawDeductions, grossForLine) * 100) / 100;
+  const netSalary = Math.round(Math.max(0, grossForLine - totalDeductions) * 100) / 100;
+  return { totalDeductions, netSalary };
+}
+
 // ─── Gratuity ─────────────────────────────────────────────────────────────────
 
 export interface GratuityResult {
@@ -1016,9 +1040,11 @@ export async function calculatePayrollRunScoped(
       gratuityPct: statConfig["gratuity_pct"],
     });
 
-    // Net pay = payrollService net + holiday work extra payout - advance recovery - loan EMI - misc deductions
-    const netPayFinal = Math.max(0, calc.net_salary + holidayWorkExtraPayout - advanceRecovery - loanEmi - miscDeductions);
-    const totalDedFinal = calc.total_deductions + advanceRecovery + loanEmi + miscDeductions;
+    // Net pay = payrollService net + holiday work extra payout - advance recovery - loan EMI - misc deductions.
+    const { totalDeductions: totalDedFinal, netSalary: netPayFinal } = reconcileNetAndDeductions(
+      calc.gross_salary + holidayWorkExtraPayout,
+      calc.total_deductions + advanceRecovery + loanEmi + miscDeductions
+    );
 
     // 6. Accumulate prep line for batch upsert after loop
     const prepLineId = emp.prep_line_id || randomUUID();
