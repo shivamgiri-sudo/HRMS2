@@ -372,6 +372,35 @@ export const payrollService = {
     params.push(id);
     await db.execute(`UPDATE salary_prep_run SET ${sets.join(", ")} WHERE id = ?`, params);
 
+    // Audit every transition through this endpoint.
+    //
+    // PATCH /runs/:id/status is what the UI actually calls to approve, lock and
+    // disburse a run — usePayroll.ts, DisbursalManagement.tsx and Payroll.tsx all
+    // post here — and it wrote no audit row at all. The Payroll Audit Trail screen
+    // reads payroll_calculation_audit and sensitive_action_log, so a run could be
+    // locked or marked disbursed with nothing recorded anywhere about who did it.
+    //
+    // approveRunForDisbursement, a second path reaching 'disbursed', has always
+    // logged. Two routes to the same state, one audited, was the gap.
+    //
+    // Awaited rather than fire-and-forget: for a status change the audit row is
+    // part of the action, not a side effect of it. Failing the request is the right
+    // outcome if it cannot be recorded.
+    const { logSensitiveAction } = await import("../../shared/auditLog.js");
+    await logSensitiveAction({
+      actor_user_id: userId,
+      action_type: `PAYROLL_RUN_${String(input.status).toUpperCase()}`,
+      module_key: "payroll",
+      entity_type: "salary_prep_run",
+      entity_id: id,
+      change_summary: {
+        run_id: id,
+        run_month: run.run_month,
+        previous_status: run.status,
+        new_status: input.status,
+      },
+    });
+
     // Email notification (fire-and-forget). Run statuses notify finance/payroll
     // roles; 'disbursed' fans out to one payslip_ready per employee. All shadow,
     // and payslip_ready is financial: official email only, never CC'd.

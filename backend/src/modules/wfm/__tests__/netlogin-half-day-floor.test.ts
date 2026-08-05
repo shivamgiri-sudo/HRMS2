@@ -183,3 +183,52 @@ describe("every production call site uses the configured floor", () => {
     expect(sqlOnly).not.toMatch(/\bUPDATE\s+attendance_feature_config\b/);
   });
 });
+
+/**
+ * The biometric floor was the asymmetry this file's original fix left behind.
+ *
+ * classifyOperationsNetLogin was routed through resolveHalfDayFloorMinutes, but
+ * the biometric line kept parsing inline as `raw ? Number(raw) : 240`. That
+ * yields NaN for a malformed value, and `minutes >= NaN` is false for every
+ * input — so one bad setting would have classified every biometric day as absent,
+ * for the entire workforce, with nothing logged. The header comment there flagged
+ * it as a known follow-up; these pin that it was done.
+ */
+describe("the biometric floor resolves through the same guard", () => {
+  const ENGINE = readFileSync(
+    resolve(process.cwd(), "src/modules/wfm/attendance-engine.service.ts"),
+    "utf8",
+  );
+
+  it("no longer parses the biometric setting inline", () => {
+    expect(
+      ENGINE,
+      "inline parsing returns NaN for a malformed value and silently marks every day absent",
+    ).not.toMatch(/halfDayFloorStr \? Number\(halfDayFloorStr\) : 240/);
+  });
+
+  it("uses resolveHalfDayFloorMinutes for the biometric key", () => {
+    expect(ENGINE).toMatch(/resolveHalfDayFloorMinutes\('biometric_half_day_floor_minutes'\)/);
+  });
+
+  it("refuses an unusable biometric value and applies the default instead", async () => {
+    for (const bad of ["abc", "-5", "0"]) {
+      execute.mockReset();
+      loggerError.mockReset();
+      execute.mockResolvedValueOnce([[{ config_value: bad }]]);
+
+      const floor = await resolveHalfDayFloorMinutes("biometric_half_day_floor_minutes");
+
+      expect(floor, `"${bad}" must not become the threshold`).toBe(DEFAULT_HALF_DAY_FLOOR_MINUTES);
+      expect(Number.isFinite(floor)).toBe(true);
+      expect(loggerError, `refusing "${bad}" should be logged, not silent`).toHaveBeenCalled();
+    }
+  });
+
+  it("still honours a valid biometric override", async () => {
+    execute.mockReset();
+    execute.mockResolvedValueOnce([[{ config_value: "300" }]]);
+
+    expect(await resolveHalfDayFloorMinutes("biometric_half_day_floor_minutes")).toBe(300);
+  });
+});

@@ -757,14 +757,14 @@ export const attendanceEngineService = {
     // sources measure different things — biometric presence vs dialler net login
     // — so they read separate keys and can be set independently.
     //
-    // The biometric line keeps its original inline parsing deliberately: this
-    // change is scoped to the net-login path. Note it yields NaN for a malformed
-    // value, and `minutes >= NaN` is false for every input, so a bad biometric
-    // setting would mark every day absent. resolveHalfDayFloorMinutes already
-    // guards against that and accepts the biometric key — switching this line to
-    // it is a one-line follow-up, raised separately.
-    const halfDayFloorStr = await getFeatureFlag('biometric_half_day_floor_minutes');
-    const halfDayFloor = halfDayFloorStr ? Number(halfDayFloorStr) : 240;
+    // Both floors now resolve through the same guard. The biometric line used to
+    // parse inline as `raw ? Number(raw) : 240`, which yields NaN for a malformed
+    // value — and `minutes >= NaN` is false for every input, so a single bad
+    // setting would silently classify every biometric day as absent across the
+    // whole workforce. resolveHalfDayFloorMinutes refuses an unusable value, logs
+    // what it rejected, and applies the default instead. This was noted here as a
+    // known follow-up; it is that follow-up.
+    const halfDayFloor = await resolveHalfDayFloorMinutes('biometric_half_day_floor_minutes');
     const netLoginHalfDayFloor = await resolveHalfDayFloorMinutes('netlogin_half_day_floor_minutes');
 
     let diallerMinutes: number | null = null;
