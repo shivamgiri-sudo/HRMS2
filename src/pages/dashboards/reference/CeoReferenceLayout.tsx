@@ -2,12 +2,10 @@ import {
   Activity,
   Award,
   BadgeCheck,
-  CircleAlert,
   Fingerprint,
   IndianRupee,
   ShieldAlert,
   Target,
-  TriangleAlert,
   UserCheck,
   UserMinus,
   Users,
@@ -59,10 +57,6 @@ export function CeoReferenceLayout({ data, filters }: { data: ReferenceDashboard
   const certified = numberAt(data.workforce, "training", "certified_learners") ?? numberAt(data.workforce, "training", "certifiedLearners");
   const onboarding = metricDetail(m, "onb", "pending") ?? metricValue(m, "onb");
   const bgv = metricDetail(m, "bgv", "pending") ?? metricValue(m, "bgv");
-  const mismatch = metricDetail(m, "nm", "blocking") ?? metricValue(m, "nm");
-  const tat = metricDetail(m, "tat", "breached") ?? metricValue(m, "tat");
-  const incentiveCount = metricDetail(m, "incentive", "pendingBatches") ?? metricValue(m, "incentive");
-  const incentiveAmount = metricDetail(m, "incentive", "pendingAmount");
   // docCompliance is already in the CEO bundle and drives the Document Coverage
   // panel below; surfacing it as a tile fills one of the slots vacated by the
   // three removed metrics rather than leaving the grid short.
@@ -103,7 +97,10 @@ export function CeoReferenceLayout({ data, filters }: { data: ReferenceDashboard
         BGV is kept: candidate_bgv_check holds 203 live rows, and `bgv` is now in the
         CEO bundle (dashboard-definition.service.ts), so the tile shows a real figure.
 
-        Restore the other three here and in the bundle once their pipelines feed data.
+        This removal missed two more tiles reading the same dead keys, in the
+        "Bad Insights" panel below (TAT breaches / Name mismatch ReferenceListRows) —
+        removed those too. Restore all of them, here and in the bundle, once their
+        pipelines feed data.
       */}
       <ReferenceActionStrip title="Today's Operations — Immediate Actions" items={[
         { label: "BGV Pending", value: bgv, detail: "Approvals pending", tone: "red", href: "/ats/bgv", ...drill("bgv") },
@@ -149,7 +146,7 @@ export function CeoReferenceLayout({ data, filters }: { data: ReferenceDashboard
         <ReferencePanel title="Good / Bad Insights">
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="border-r border-[#edf1f6] pr-4"><p className="text-xs font-bold text-[#16a34a]">Good Insights</p><div className="mt-3 space-y-2"><ReferenceListRow icon={UserCheck} title="Attendance rate" subtitle="Processed attendance performance" value={attendance === null ? null : `${attendance}%`} tone="blue" /><ReferenceListRow icon={BadgeCheck} title="Certified learners" subtitle="Training readiness" value={certified} tone="green" /><ReferenceListRow icon={Target} title="Payroll readiness" subtitle="Employee data completeness" value={payrollReadiness === null ? null : `${payrollReadiness}%`} tone={payrollReadiness !== null && payrollReadiness >= 90 ? "green" : "amber"} /></div></div>
-            <div><p className="text-xs font-bold text-[#ef4444]">Bad Insights</p><div className="mt-3 space-y-2"><ReferenceListRow icon={TriangleAlert} title="TAT breaches" subtitle="Items beyond SLA" value={tat} tone="red" /><ReferenceListRow icon={CircleAlert} title="Name mismatch" subtitle="Blocking records" value={mismatch} tone="red" /><ReferenceListRow icon={IndianRupee} title="Revenue gap" subtitle="MTD revenue at risk" value={formatCurrency(revenueGap)} tone="red" /></div></div>
+            <div><p className="text-xs font-bold text-[#ef4444]">Bad Insights</p><div className="mt-3 space-y-2"><ReferenceListRow icon={IndianRupee} title="Revenue gap" subtitle="MTD revenue at risk" value={formatCurrency(revenueGap)} tone="red" /></div></div>
           </div>
         </ReferencePanel>
       </div>

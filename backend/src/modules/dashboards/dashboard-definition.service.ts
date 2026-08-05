@@ -124,7 +124,11 @@ const DASHBOARD_METRICS: Readonly<Record<DashboardCode, readonly MetricKey[]>> =
     "hc", "att", "docCompliance", "training", "leaveApprovals",
   ],
   WFM_DASHBOARD: ["hc", "att", "attException", "biometric"],
-  WFM_ATTENDANCE_DASHBOARD: ["att", "attException", "biometric"],
+  // "hc" added — WfmAttendanceReferenceLayout.tsx's first tile, "Total Employees",
+  // reads metricDetail(m, "hc", "active") but this bundle never requested it, so
+  // it rendered a permanent blank. getHeadcountMetrics is cheap post-fix (already
+  // parallelized this session), so there's no cost concern to adding it here.
+  WFM_ATTENDANCE_DASHBOARD: ["hc", "att", "attException", "biometric"],
   PAYROLL_HR_DASHBOARD: ["payroll", "incentive", "salaryComponents", "attException"],
   // Scoped headcount and attendance context for QA; audit scores stay on /api/quality-dashboard/*.
   QUALITY_DASHBOARD: ["hc", "att"],
