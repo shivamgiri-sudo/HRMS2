@@ -2,16 +2,27 @@ import mysql, { type RowDataPacket, type FieldPacket, type QueryResult, type Poo
 
 // Read-only connection to the external LMS database.
 // Never write to this database — it is owned by the LMS system.
-const LMS_HOST     = process.env.LMS_DB_HOST     ?? "192.168.11.225";
-const LMS_PORT     = Number(process.env.LMS_DB_PORT ?? 3306);
-const LMS_USER     = process.env.LMS_DB_USER     ?? "shivam_user";
-const LMS_PASSWORD = process.env.LMS_DB_PASSWORD ?? "qwersdfg!@#hjk";
-const LMS_DATABASE = process.env.LMS_DB_NAME     ?? "mcn_lms";
+//
+// No hardcoded fallback credentials. This used to default to a literal host/user/
+// password/database committed to source — a leaked credential fallback that stayed
+// live because it silently worked. Now it fails loudly at first use instead if any
+// of these are unset, rather than silently connecting with a default nobody chose.
+const LMS_HOST     = process.env.LMS_DB_HOST;
+const LMS_PORT     = Number(process.env.LMS_DB_PORT ?? 3306); // well-known MySQL port, not a secret
+const LMS_USER     = process.env.LMS_DB_USER;
+const LMS_PASSWORD = process.env.LMS_DB_PASSWORD;
+const LMS_DATABASE = process.env.LMS_DB_NAME;
 
 let _lmsPool: Pool | null = null;
 
 function getLmsPool(): Pool {
   if (!_lmsPool) {
+    if (!LMS_HOST || !LMS_USER || !LMS_PASSWORD || !LMS_DATABASE) {
+      throw new Error(
+        "[lms-mysql] LMS_DB_HOST, LMS_DB_USER, LMS_DB_PASSWORD and LMS_DB_NAME must all be " +
+        "set in the environment — no hardcoded fallback is used for the external LMS DB."
+      );
+    }
     _lmsPool = mysql.createPool({
       host:               LMS_HOST,
       port:               LMS_PORT,

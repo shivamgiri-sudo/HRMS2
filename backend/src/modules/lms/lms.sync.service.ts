@@ -3,12 +3,14 @@ import type { RowDataPacket } from "mysql2/promise";
 import { db } from "../../db/mysql.js";
 import { lmsQuery } from "./lms.service.js";
 import { lmsEmployeeMapper } from "./lms-employee-mapper.js";
+import { lmsSyncService } from "../lms-integration/lms-sync.service.js";
 
 export interface SyncResult {
   mapped: number;
   progress: number;
   certifications: number;
   assessments: number;
+  learnerProgress: number;
   errors: string[];
 }
 
@@ -227,7 +229,10 @@ export async function syncAssessmentScores(actorId?: string): Promise<{ count: n
     if (!lmsId) continue;
     try {
       const hrmsEmpId = await lmsEmployeeMapper.getOrMapLmsTrainee(lmsId);
-      if (!hrmsEmpId) continue;
+      if (!hrmsEmpId) {
+        errors.push(`assessment ${lmsId}: could not resolve HRMS employee for LMS learner ${lmsId}`);
+        continue;
+      }
 
       const [empRows] = await db.execute<RowDataPacket[]>(
         `SELECT employee_code FROM employees WHERE id = ? LIMIT 1`, [hrmsEmpId]
@@ -262,6 +267,38 @@ export async function syncAssessmentScores(actorId?: string): Promise<{ count: n
   return { count, errors };
 }
 
+// Learner readiness/attrition-risk snapshot (lms_learner_progress). The computation
+// itself lives in modules/lms-integration/lms-sync.service.ts — it was never wired
+// into any active sync path, so lms_learner_progress stayed permanently empty while
+// 5 other modules (bi.service.ts, the reporting executor, report-catalog, data-
+// governance, this module's own /progress-summary) read it assuming freshness.
+// Wraps its {synced, failed} result into this file's {count, errors} shape and writes
+// to lms_sync_audit_log (the table actually read by the UI/sync-log endpoint) rather
+// than relying on the wrapped function's own internal audit writes, which go to a
+// separate, unread table.
+export async function syncLearnerProgressSnapshot(actorId?: string): Promise<{ count: number; errors: string[] }> {
+  const errors: string[] = [];
+  let count = 0;
+
+  try {
+    const { synced, failed } = await lmsSyncService.syncLearnerProgress();
+    count = synced;
+    if (failed > 0) {
+      errors.push(`learnerProgress: ${failed} trainee(s) could not be mapped or synced`);
+    }
+  } catch (e: any) {
+    errors.push(`learnerProgress: ${e?.message}`);
+  }
+
+  await db.execute(
+    `INSERT INTO lms_sync_audit_log (id, sync_type, records_synced, errors_count, status, initiated_by)
+     VALUES (?, 'learner_progress', ?, ?, ?, ?)`,
+    [randomUUID(), count, errors.length, errors.length === 0 ? "success" : count > 0 ? "partial" : "failed", actorId ?? null]
+  );
+
+  return { count, errors };
+}
+
 // Runs all sync phases in order.
 export async function runFullSync(actorId?: string): Promise<SyncResult> {
   const allErrors: string[] = [];
@@ -278,11 +315,15 @@ export async function runFullSync(actorId?: string): Promise<SyncResult> {
   const assessmentResult = await syncAssessmentScores(actorId);
   allErrors.push(...assessmentResult.errors);
 
+  const learnerProgressResult = await syncLearnerProgressSnapshot(actorId);
+  allErrors.push(...learnerProgressResult.errors);
+
   return {
     mapped: mappingResult.count,
     progress: progressResult.count,
     certifications: certResult.count,
     assessments: assessmentResult.count,
+    learnerProgress: learnerProgressResult.count,
     errors: allErrors,
   };
 }

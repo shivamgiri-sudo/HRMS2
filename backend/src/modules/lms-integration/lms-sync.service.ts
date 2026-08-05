@@ -1,6 +1,10 @@
 import { db } from '../../db/mysql.js';
 import { getLmsConnection } from './lms-external-db.js';
-import { lmsEmployeeMapper } from './lms-employee-mapper.js';
+// Was importing the dead, same-directory mapper, whose queries reference columns
+// (lms_employee_id, hrms_employee_id, ...) that lms_employee_mapping has never had —
+// confirmed live against the actual table. Every lookup below would throw. The live,
+// schema-correct mapper is in modules/lms/.
+import { lmsEmployeeMapper } from '../lms/lms-employee-mapper.js';
 import { randomUUID } from 'crypto';
 import type { RowDataPacket } from 'mysql2';
 
