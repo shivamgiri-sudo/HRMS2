@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { pingDb, getCircuitBreakerStatus, resetCircuitBreaker } from "../db/mysql.js";
-import { getMigrationHealth, verifySchemaVersion } from "../db/runPendingMigrations.js";
+import { getMigrationHealth, verifySchemaVersion, getSchemaVerificationState } from "../db/runPendingMigrations.js";
 import { requireAuth } from "../middleware/authMiddleware.js";
 import { requireRole } from "../middleware/requireRole.js";
 
@@ -84,10 +84,33 @@ healthRouter.get("/live", (_req, res) => {
  * HARDENED: Does not expose internal details like migration failures.
  * Returns only healthy/degraded status for external monitoring.
  * Internal details available via /health/readiness (protected).
+ *
+ * PERF: was `await verifySchemaVersion()` on every hit — that opens a brand
+ * new unpooled `mysql.createConnection` (full TCP+auth handshake) plus 2-3
+ * queries, every single time this public, frequently-polled endpoint is
+ * called. Measured ~2.5-2.9s per call against the live DB, entirely from
+ * connection setup, not query cost. Schema version is verified once at boot
+ * (server.ts) and after any `npm run migrate` run — it does not change
+ * mid-process in this deployment (SKIP_MIGRATIONS=true means prod schema
+ * changes require an explicit migrate + restart, see memory
+ * hrms2-migrations-dont-run-at-boot). getSchemaVerificationState() reads
+ * that already-computed result from memory — zero DB cost.
+ *
+ * Self-heal on the unhappy path only: if the cached state says invalid, that
+ * could be a real pending migration OR a transient boot-time DB hiccup that
+ * never gets re-checked afterwards (verificationState is set once and never
+ * refreshed otherwise — confirmed live: a boot that raced a network switch
+ * cached "invalid" from one ETIMEDOUT while /health/readiness's fresh check
+ * showed 451/451 applied and valid seconds later). One extra live check only
+ * fires in the already-slow "something looks wrong" path, never on the
+ * common healthy one.
  */
 healthRouter.get("/", async (_req, res) => {
   const dbStatus = await getDatabaseStatus();
-  const schemaStatus = await verifySchemaVersion();
+  let schemaStatus = getSchemaVerificationState();
+  if (!schemaStatus.valid) {
+    schemaStatus = await verifySchemaVersion();
+  }
   const healthy = dbStatus === "ok" && schemaStatus.valid;
 
   // SECURITY: Do not expose migration failure details to unauthenticated users
