@@ -1224,13 +1224,19 @@ async function resolveCandidateByActivity(activity: NormalizedHiringActivity): P
     aadhar_number_masked, pan_number_masked, bank_account_no_masked,
     aadhar_number_hash, pan_number_hash, bank_account_no_hash,
     is_minor, guardian_consent_obtained, created_at, updated_at`;
-  const queries: Array<[string, unknown[]]> = [
-    [`SELECT ${SAFE_COLS} FROM ats_candidate WHERE mobile = ? ORDER BY created_at DESC LIMIT 1`, [mobile]],
-    [`SELECT ${SAFE_COLS} FROM ats_candidate WHERE full_name = ? AND mobile = ? ORDER BY created_at DESC LIMIT 1`, [name, mobile]],
-    [`SELECT ${SAFE_COLS} FROM ats_candidate WHERE email = ? ORDER BY created_at DESC LIMIT 1`, [email]],
-    [`SELECT ${SAFE_COLS} FROM ats_candidate WHERE employee_code = ? ORDER BY created_at DESC LIMIT 1`, [empCode]],
-    [`SELECT ${SAFE_COLS} FROM ats_candidate WHERE candidate_code = ? ORDER BY created_at DESC LIMIT 1`, [empCode]],
-  ];
+  // A single-digit placeholder mobile value is shared by 539 ats_candidate rows and
+  // 1,284 employees rows (confirmed live) — matching on it would link this hiring
+  // activity to an arbitrary unrelated candidate. Skip both mobile-keyed tiers below
+  // when the value isn't a plausible real mobile number.
+  const isRealMobile = /^[6-9]\d{9}$/.test(String(mobile ?? "").trim());
+  const queries: Array<[string, unknown[]]> = [];
+  if (isRealMobile) {
+    queries.push([`SELECT ${SAFE_COLS} FROM ats_candidate WHERE mobile = ? ORDER BY created_at DESC LIMIT 1`, [mobile]]);
+    queries.push([`SELECT ${SAFE_COLS} FROM ats_candidate WHERE full_name = ? AND mobile = ? ORDER BY created_at DESC LIMIT 1`, [name, mobile]]);
+  }
+  queries.push([`SELECT ${SAFE_COLS} FROM ats_candidate WHERE email = ? ORDER BY created_at DESC LIMIT 1`, [email]]);
+  queries.push([`SELECT ${SAFE_COLS} FROM ats_candidate WHERE employee_code = ? ORDER BY created_at DESC LIMIT 1`, [empCode]]);
+  queries.push([`SELECT ${SAFE_COLS} FROM ats_candidate WHERE candidate_code = ? ORDER BY created_at DESC LIMIT 1`, [empCode]]);
 
   for (const [sql, params] of queries) {
     if (params[0] === null || params[0] === undefined || params[0] === "") continue;

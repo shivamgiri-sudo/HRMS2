@@ -126,10 +126,20 @@ export const atsService = {
     // mobile check with no status handling, and the tests asserting the rest went
     // red rather than the loss being noticed. Against production that let 1,283
     // duplicate-email candidate rows accumulate across 1,123 addresses.
-    const [dupMobile] = await db.execute<RowDataPacket[]>(
-      "SELECT id, current_stage, active_status FROM ats_candidate WHERE mobile = ? LIMIT 1",
-      [input.mobile]
-    );
+    // Mobile duplicates, but only for a value that is actually a mobile number.
+    //
+    // Same class of gap as the email guard below, confirmed live: a single-digit
+    // placeholder mobile value is shared by 539 ats_candidate rows and 1,284
+    // employees rows (729,994-row collision when joined on mobile). Checking every
+    // stored value verbatim means one recruiter's placeholder blocks the next 538
+    // candidates who share it as "already registered".
+    const isRealMobile = /^[6-9]\d{9}$/.test(String(input.mobile ?? "").trim());
+    const [dupMobile] = isRealMobile
+      ? await db.execute<RowDataPacket[]>(
+          "SELECT id, current_stage, active_status FROM ats_candidate WHERE mobile = ? LIMIT 1",
+          [input.mobile]
+        )
+      : [[] as RowDataPacket[]];
     if ((dupMobile as RowDataPacket[]).length > 0) {
       const existing = (dupMobile as RowDataPacket[])[0];
       const stage = String(existing.current_stage ?? "");

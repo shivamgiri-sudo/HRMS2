@@ -303,11 +303,17 @@ async function lookupProcess(name: string | undefined): Promise<string | null> {
 // ── Core Import ───────────────────────────────────────────────────────────────
 
 async function findExistingCandidate(mobile: string, email: string | undefined): Promise<{ id: string; candidate_code: string } | null> {
-  const [byMobile] = await db.execute<RowDataPacket[]>(
-    `SELECT id, candidate_code FROM ats_candidate WHERE mobile = ? LIMIT 1`,
-    [mobile]
-  );
-  if ((byMobile as RowDataPacket[]).length) return (byMobile as RowDataPacket[])[0] as { id: string; candidate_code: string };
+  // Only match on mobile when it's a plausible real number. A single-digit placeholder
+  // value is shared by 539 ats_candidate rows and 1,284 employees rows (confirmed
+  // live) — matching on it during import would treat a new candidate as an update to
+  // an unrelated existing row instead of a fresh insert.
+  if (/^[6-9]\d{9}$/.test(mobile)) {
+    const [byMobile] = await db.execute<RowDataPacket[]>(
+      `SELECT id, candidate_code FROM ats_candidate WHERE mobile = ? LIMIT 1`,
+      [mobile]
+    );
+    if ((byMobile as RowDataPacket[]).length) return (byMobile as RowDataPacket[])[0] as { id: string; candidate_code: string };
+  }
 
   if (email) {
     const [byEmail] = await db.execute<RowDataPacket[]>(

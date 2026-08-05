@@ -582,17 +582,24 @@ export const atsFullParityService = {
   async createIntake(input: Record<string, unknown>, actor = "PUBLIC") {
     const mobile = normalizeText(input.mobile || input.Mobile || input["Mobile Number"]);
     if (!mobile) throw Object.assign(new Error("Mobile number required"), { statusCode: 400 });
-    const [existing] = await db.execute<CandidateLookupRow[]>(
-      `SELECT id, candidate_code, employee_code, full_name, mobile, email, address,
-              education, experience, gender, role_applied, branch_text, applied_for_branch,
-              applied_for_process, recruiter_selected, recruiter_id, recruiter_assigned_name,
-              recruiter_email, recruiter_mobile, q_token, status, source,
-              aadhar_number_masked, pan_number_masked, bank_account_no_masked,
-              aadhar_number_hash, pan_number_hash, bank_account_no_hash,
-              active_status, created_at, updated_at
-       FROM ats_candidate WHERE mobile = ? AND active_status = 1 ORDER BY created_at DESC LIMIT 1`,
-      [mobile]
-    );
+    // Match on mobile only when it's a plausible real number. A single-digit placeholder
+    // value is shared by 539 ats_candidate rows and 1,284 employees rows (confirmed
+    // live) — matching on it would UPDATE an unrelated existing candidate's record in
+    // place instead of creating a new one, the highest-risk failure mode of this check.
+    const isRealMobile = /^[6-9]\d{9}$/.test(mobile);
+    const [existing] = isRealMobile
+      ? await db.execute<CandidateLookupRow[]>(
+          `SELECT id, candidate_code, employee_code, full_name, mobile, email, address,
+                  education, experience, gender, role_applied, branch_text, applied_for_branch,
+                  applied_for_process, recruiter_selected, recruiter_id, recruiter_assigned_name,
+                  recruiter_email, recruiter_mobile, q_token, status, source,
+                  aadhar_number_masked, pan_number_masked, bank_account_no_masked,
+                  aadhar_number_hash, pan_number_hash, bank_account_no_hash,
+                  active_status, created_at, updated_at
+           FROM ats_candidate WHERE mobile = ? AND active_status = 1 ORDER BY created_at DESC LIMIT 1`,
+          [mobile]
+        )
+      : [[] as CandidateLookupRow[]];
     const now = new Date();
     const fullName = normalizeText(input.fullName || input.FullName || input.Name);
     const branch = normalizeText(input.branch || input.Branch || input.appliedForBranch);
