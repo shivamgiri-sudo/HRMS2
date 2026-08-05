@@ -26,6 +26,12 @@ export interface DailyOpsPulse {
   avg_aht_seconds: number;
   avg_shrinkage_pct: number;
   shrinkage_breakdown: { lunch: number; bio: number; training: number; qa: number; idle: number };
+  // Org-wide weighted figure above is the capacity/forecasting number.
+  // Per-agent-average variant kept for coaching use ("is the typical agent
+  // over-using breaks") — a different question, deliberately not conflated
+  // into the primary field. See DECIDED comment in getDailyOpsPulse.
+  avg_shrinkage_pct_per_agent: number;
+  shrinkage_breakdown_per_agent: { lunch: number; bio: number; training: number; qa: number; idle: number };
   top_process: { name: string; calls: number; agent_count: number } | null;
   intervention_flags: InterventionFlag[];
 }
@@ -52,45 +58,67 @@ export async function getDailyOpsPulse(targetDate?: string, branchIds?: string[]
   // original form (AVG(lunch time) / one arbitrary row's login time) was
   // never a meaningful percentage even before the SQL mode rejected it.
   //
-  // OPEN QUESTION (not yet confirmed by WFM/ops): this is "average of each
-  // agent's own %" (per-agent average), matched to the existing sibling
-  // metric's convention, not independently derived. The alternative —
-  // SUM(lunch time)/SUM(login time), a headcount-weighted org-wide %  —
-  // gives a meaningfully different number when agents' login durations vary
-  // a lot, and applies to all five shrinkage-adjacent figures on this tile,
-  // not just the four touched here. Confirm intent before treating either as final.
+  // DECIDED (was an open question, resolved 2026-08-05): this tile sits next
+  // to capacity metrics (avg_aht_seconds, total_calls), and standard WFM
+  // practice defines "shrinkage" as an org-wide *weighted* figure —
+  // SUM(unavailable time)/SUM(login time) — because it's a capacity/
+  // forecasting number, not a per-agent fairness one. avg_shrinkage_pct and
+  // shrinkage_breakdown below are now weighted (SUM/SUM), matching that
+  // convention and the threshold/intervention-flag logic further down, which
+  // is itself a capacity-risk check. The previous per-agent-average shape
+  // (AVG of each agent's own ratio) is kept as *_per_agent — useful for
+  // coaching ("is the typical agent taking too much break"), a different
+  // question from "how much org capacity is lost." Verified live the two
+  // definitions actually diverge (2026-06-12, a date with real shrinkage
+  // data — apr's BIO/LUNCH/QA/TRAINING columns have been all-zero since
+  // ~2026-06-12, a separate live data-feed gap unrelated to this fix, worth
+  // its own investigation): per-agent 2.69% vs weighted 2.39% on the same
+  // 220 agents — different enough to matter for a capacity call.
   const [aprRows] = await db.execute<RowDataPacket[]>(
     `SELECT
        COUNT(DISTINCT a.UserID) AS agents_logged_in,
        SUM(a.Calls) AS total_calls,
        ROUND(AVG(TIME_TO_SEC(a.AHT)), 0) AS avg_aht_seconds,
+       ROUND(SUM(TIME_TO_SEC(IFNULL(a.LUNCH,'00:00:00')))
+             / NULLIF(SUM(TIME_TO_SEC(IFNULL(a.Login_Time,'00:00:00'))),0) * 100, 2) AS avg_lunch_pct,
+       ROUND(SUM(TIME_TO_SEC(IFNULL(a.BIO,'00:00:00')))
+             / NULLIF(SUM(TIME_TO_SEC(IFNULL(a.Login_Time,'00:00:00'))),0) * 100, 2) AS avg_bio_pct,
+       ROUND(SUM(TIME_TO_SEC(IFNULL(a.TRAINING,'00:00:00')))
+             / NULLIF(SUM(TIME_TO_SEC(IFNULL(a.Login_Time,'00:00:00'))),0) * 100, 2) AS avg_training_pct,
+       ROUND(SUM(TIME_TO_SEC(IFNULL(a.QA,'00:00:00')))
+             / NULLIF(SUM(TIME_TO_SEC(IFNULL(a.Login_Time,'00:00:00'))),0) * 100, 2) AS avg_qa_pct,
+       ROUND(
+         (SUM(TIME_TO_SEC(IFNULL(a.BIO,'00:00:00'))) + SUM(TIME_TO_SEC(IFNULL(a.LUNCH,'00:00:00'))) +
+          SUM(TIME_TO_SEC(IFNULL(a.QA,'00:00:00'))) + SUM(TIME_TO_SEC(IFNULL(a.TRAINING,'00:00:00'))))
+         / NULLIF(SUM(TIME_TO_SEC(IFNULL(a.Login_Time,'00:00:00'))),0) * 100
+       , 2) AS avg_shrinkage_pct,
        ROUND(AVG(
          CASE WHEN TIME_TO_SEC(IFNULL(a.Login_Time,'00:00:00')) > 0 THEN
            TIME_TO_SEC(IFNULL(a.LUNCH,'00:00:00')) / TIME_TO_SEC(IFNULL(a.Login_Time,'00:00:00')) * 100
          ELSE 0 END
-       ), 2) AS avg_lunch_pct,
+       ), 2) AS lunch_pct_per_agent,
        ROUND(AVG(
          CASE WHEN TIME_TO_SEC(IFNULL(a.Login_Time,'00:00:00')) > 0 THEN
            TIME_TO_SEC(IFNULL(a.BIO,'00:00:00')) / TIME_TO_SEC(IFNULL(a.Login_Time,'00:00:00')) * 100
          ELSE 0 END
-       ), 2) AS avg_bio_pct,
+       ), 2) AS bio_pct_per_agent,
        ROUND(AVG(
          CASE WHEN TIME_TO_SEC(IFNULL(a.Login_Time,'00:00:00')) > 0 THEN
            TIME_TO_SEC(IFNULL(a.TRAINING,'00:00:00')) / TIME_TO_SEC(IFNULL(a.Login_Time,'00:00:00')) * 100
          ELSE 0 END
-       ), 2) AS avg_training_pct,
+       ), 2) AS training_pct_per_agent,
        ROUND(AVG(
          CASE WHEN TIME_TO_SEC(IFNULL(a.Login_Time,'00:00:00')) > 0 THEN
            TIME_TO_SEC(IFNULL(a.QA,'00:00:00')) / TIME_TO_SEC(IFNULL(a.Login_Time,'00:00:00')) * 100
          ELSE 0 END
-       ), 2) AS avg_qa_pct,
+       ), 2) AS qa_pct_per_agent,
        ROUND(AVG(
          CASE WHEN TIME_TO_SEC(IFNULL(a.Login_Time,'00:00:00')) > 0 THEN
            (TIME_TO_SEC(IFNULL(a.BIO,'00:00:00')) + TIME_TO_SEC(IFNULL(a.LUNCH,'00:00:00')) +
             TIME_TO_SEC(IFNULL(a.QA,'00:00:00')) + TIME_TO_SEC(IFNULL(a.TRAINING,'00:00:00')))
            / TIME_TO_SEC(IFNULL(a.Login_Time,'00:00:00')) * 100
          ELSE 0 END
-       ), 2) AS avg_shrinkage_pct
+       ), 2) AS shrinkage_pct_per_agent
      FROM apr a
      WHERE DATE(a.ReportDate) = ?`,
     [date]
@@ -170,6 +198,12 @@ export async function getDailyOpsPulse(targetDate?: string, branchIds?: string[]
   const trainingPct = parseFloat(String(aprRow.avg_training_pct ?? 0));
   const qaPct = parseFloat(String(aprRow.avg_qa_pct ?? 0));
   const idlePct = Math.max(0, parseFloat((avgShrinkage - lunchPct - bioPct - trainingPct - qaPct).toFixed(2)));
+  const avgShrinkagePerAgent = parseFloat(String(aprRow.shrinkage_pct_per_agent ?? 0));
+  const lunchPctPerAgent = parseFloat(String(aprRow.lunch_pct_per_agent ?? 0));
+  const bioPctPerAgent = parseFloat(String(aprRow.bio_pct_per_agent ?? 0));
+  const trainingPctPerAgent = parseFloat(String(aprRow.training_pct_per_agent ?? 0));
+  const qaPctPerAgent = parseFloat(String(aprRow.qa_pct_per_agent ?? 0));
+  const idlePctPerAgent = Math.max(0, parseFloat((avgShrinkagePerAgent - lunchPctPerAgent - bioPctPerAgent - trainingPctPerAgent - qaPctPerAgent).toFixed(2)));
 
   // Top process by calls
   const [topProcRows] = await db.execute<RowDataPacket[]>(
@@ -243,6 +277,8 @@ export async function getDailyOpsPulse(targetDate?: string, branchIds?: string[]
     login_adherence_pct: loginAdherence, avg_calls_per_agent: avgCalls,
     total_calls: totalCalls, avg_aht_seconds: avgAht, avg_shrinkage_pct: avgShrinkage,
     shrinkage_breakdown: { lunch: lunchPct, bio: bioPct, training: trainingPct, qa: qaPct, idle: idlePct },
+    avg_shrinkage_pct_per_agent: avgShrinkagePerAgent,
+    shrinkage_breakdown_per_agent: { lunch: lunchPctPerAgent, bio: bioPctPerAgent, training: trainingPctPerAgent, qa: qaPctPerAgent, idle: idlePctPerAgent },
     top_process: topProc ? { name: String(topProc.name), calls: Number(topProc.calls), agent_count: Number(topProc.agent_count) } : null,
     intervention_flags: flags,
   };

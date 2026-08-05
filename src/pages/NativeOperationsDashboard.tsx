@@ -1089,6 +1089,7 @@ export default function NativeOperationsDashboard() {
           <StatCard
             title="Shrinkage"
             value={callMetrics?.avg_shrinkage_pct != null ? `${Number(callMetrics.avg_shrinkage_pct).toFixed(1)}%` : "—"}
+            sub="Org-wide, capacity-weighted"
             icon={<Target className="h-5 w-5" />}
             tone={
               callMetrics?.avg_shrinkage_pct != null && Number(callMetrics.avg_shrinkage_pct) > 30
