@@ -214,7 +214,12 @@ function indiaMonth(): string {
   return `${parts.find((part) => part.type === 'year')?.value ?? ''}-${parts.find((part) => part.type === 'month')?.value ?? ''}`;
 }
 
-function action(label = 'Open my dashboard', url = '/my-dashboard'): AiAction {
+// label/url are both required, deliberately — most call sites used to pass
+// only a label and silently rely on the `/my-dashboard` default regardless of
+// what the label claimed ("Open payroll dashboard" etc. all actually linked
+// to /my-dashboard). Making both required turns every miscalled site into a
+// compile error instead of a silent wrong link.
+function action(label: string, url: string): AiAction {
   return { key: url.replace(/\W+/g, '-') || 'dashboard', label, url, priority: 'low' };
 }
 
@@ -530,7 +535,7 @@ export async function answerSelfAccountQuestion(
       startedAt,
       [{ key: 'privacy-protected', label: 'Other employee data blocked', severity: 'low' }]);
   }
-  if (intent === 'help') return handled(intent, helpText(), startedAt, [], [action()]);
+  if (intent === 'help') return handled(intent, helpText(), startedAt, [], [action('Open my dashboard', '/my-dashboard')]);
 
   const employee = await getEmployeeForUser(userId);
   if (!employee?.id) {
@@ -602,7 +607,11 @@ ${renderCoachReport(teamPoints)}`
     return handled(intent, `${greeting}
 
 ${body}`, startedAt, coachInsights,
-      [action('Open my dashboard'), action('Open leave dashboard', '/leave')]);
+      // '/leaves' (plural) is the real mounted route — '/leave' (singular, what
+      // this previously pointed at, believed correct because it passed an
+      // explicit URL at all) is not a route anywhere in src/config/routes/*.tsx
+      // and would have 404'd.
+      [action('Open my dashboard', '/my-dashboard'), action('Open leave dashboard', '/leaves')]);
   }
 
   if (intent === 'profile') {
@@ -612,12 +621,12 @@ ${body}`, startedAt, coachInsights,
       `• Name: ${t(row.full_name)}\n• Employee code: ${t(row.employee_code)}\n• Joining date: ${date(row.date_of_joining)}\n` +
       `• Employment status: ${t(row.employment_status)}\n• Employment type: ${t(row.employment_type)}\n` +
       `• Branch: ${t(row.branch_name)}\n• Process: ${t(row.process_name)}\n• Reporting manager: ${t(row.reporting_manager_name)}`,
-      startedAt, [], [action('Open my profile dashboard')]);
+      startedAt, [], [action('Open my profile', '/profile')]);
   }
 
   if (intent === 'salary') {
     const row = await cached(userId, intent, () => salary(employeeId));
-    if (!row.run_month) return handled(intent, 'No finalized payslip or salary preparation record is available for your account yet.', startedAt, [], [action()], 0.5);
+    if (!row.run_month) return handled(intent, 'No finalized payslip or salary preparation record is available for your account yet.', startedAt, [], [action('Open payslips', '/payroll/payslips')], 0.5);
     return handled(intent, `Your latest finalized salary summary for ${t(row.run_month)} is:\n\n` +
       `• Gross earnings: ${money(row.gross_salary)}\n• Total deductions: ${money(row.total_deductions)}\n` +
       `• Net take-home: ${money(row.net_salary)}\n• Basic: ${money(row.basic)}\n• HRA: ${money(row.hra)}\n` +
@@ -625,18 +634,18 @@ ${body}`, startedAt, coachInsights,
       `• Professional tax: ${money(row.professional_tax)}\n• TDS: ${money(row.tds)}\n` +
       `• LWP deduction: ${money(row.lwp_deduction)}\n• Advance recovery: ${money(row.advance_recovery)}\n` +
       `• Present / working days: ${n(row.present_days)} / ${n(row.working_days)}`,
-      startedAt, [{ key: 'net-pay', label: 'Net take-home', value: n(row.net_salary), severity: 'low' }], [action('Open payroll dashboard')]);
+      startedAt, [{ key: 'net-pay', label: 'Net take-home', value: n(row.net_salary), severity: 'low' }], [action('Open payslips', '/payroll/payslips')]);
   }
 
   if (intent === 'leave') {
     const data = await cached(userId, intent, () => leave(employeeId));
-    if (!data.rows.length) return handled(intent, `No leave balance ledger is available for ${data.year}. Please check with HR if allocation should already be visible.`, startedAt, [], [action()], 0.5);
+    if (!data.rows.length) return handled(intent, `No leave balance ledger is available for ${data.year}. Please check with HR if allocation should already be visible.`, startedAt, [], [action('Open leave dashboard', '/leaves')], 0.5);
     const lines = data.rows.map((row) => {
       const available = Math.max(0, n(row.allocated_days) + n(row.adjusted_days) - n(row.used_days));
       return `• ${t(row.leave_name)} (${t(row.leave_code)}): ${available} available, ${n(row.used_days)} used, ${n(row.allocated_days)} allocated`;
     });
     return handled(intent, `Your ${data.year} leave balances are:\n\n${lines.join('\n')}`, startedAt,
-      [{ key: 'leave-types', label: `${data.rows.length} leave types found`, count: data.rows.length, severity: 'low' }], [action('Open leave dashboard')]);
+      [{ key: 'leave-types', label: `${data.rows.length} leave types found`, count: data.rows.length, severity: 'low' }], [action('Open leave dashboard', '/leaves')]);
   }
 
   if (intent === 'attendance') {
@@ -656,30 +665,34 @@ ${body}`, startedAt, coachInsights,
 
   if (intent === 'roster') {
     const data = await cached(userId, intent, () => roster(employeeId));
-    if (!data.length) return handled(intent, 'No published roster is available for your account for the next 7 days.', startedAt, [], [action()], 0.5);
+    if (!data.length) return handled(intent, 'No published roster is available for your account for the next 7 days.', startedAt, [], [action('Open my dashboard', '/my-dashboard')], 0.5);
     const lines = data.map((row) => n(row.is_week_off) === 1 ? `• ${date(row.roster_date)}: Week off`
       : n(row.is_holiday) === 1 ? `• ${date(row.roster_date)}: Holiday`
         : `• ${date(row.roster_date)}: ${t(row.shift_name, 'Shift')} (${t(row.start_time, '--')}–${t(row.end_time, '--')})`);
-    return handled(intent, `Your published roster for the next 7 days:\n\n${lines.join('\n')}`, startedAt, [], [action('Open roster dashboard')]);
+    // TODO: verify the real self-service roster page (this session didn't find
+    // one distinct from the manager-side roster builder) and link to it directly.
+    return handled(intent, `Your published roster for the next 7 days:\n\n${lines.join('\n')}`, startedAt, [], [action('Open my dashboard', '/my-dashboard')]);
   }
 
   if (intent === 'documents') {
     const data = await cached(userId, intent, () => documents(employeeId));
-    if (!data.length) return handled(intent, 'No employee document records are currently visible in your account.', startedAt, [], [action()], 0.5);
+    if (!data.length) return handled(intent, 'No employee document records are currently visible in your account.', startedAt, [], [action('Open my dashboard', '/my-dashboard')], 0.5);
     const verified = data.filter((row) => n(row.verified) === 1).length;
     const pending = data.filter((row) => n(row.verified) !== 1);
     const names = pending.slice(0, 8).map((row) => t(row.doc_name, t(row.doc_type))).join(', ');
+    // TODO: verify the real self-service document page (not confirmed distinct
+    // from the onboarding-specific joining-documents route) and link to it directly.
     return handled(intent, `Your document status:\n\n• Total documents: ${data.length}\n• Verified: ${verified}\n• Pending verification: ${pending.length}${names ? `\n• Pending items: ${names}` : ''}`,
-      startedAt, [{ key: 'pending-documents', label: `${pending.length} pending documents`, count: pending.length, severity: pending.length ? 'medium' : 'low' }], [action('Open document dashboard')]);
+      startedAt, [{ key: 'pending-documents', label: `${pending.length} pending documents`, count: pending.length, severity: pending.length ? 'medium' : 'low' }], [action('Open my dashboard', '/my-dashboard')]);
   }
 
   if (intent === 'pending_actions') {
     const data = await cached(userId, intent, () => pendingActions(userId, roleKeys));
     if (!data.length) return handled(intent, 'You have no open work items or assigned approvals at the moment.', startedAt,
-      [{ key: 'pending-actions', label: 'No pending actions', count: 0, severity: 'low' }], [action()]);
+      [{ key: 'pending-actions', label: 'No pending actions', count: 0, severity: 'low' }], [action('Open work inbox', '/work-inbox')]);
     const lines = data.slice(0, 8).map((row) => `• [${t(row.priority, 'medium')}] ${t(row.title)}${row.due_at ? ` — due ${date(row.due_at)}` : ''}`);
     return handled(intent, `You have ${data.length} open assigned item(s). The highest-priority items are:\n\n${lines.join('\n')}`, startedAt,
-      [{ key: 'pending-actions', label: `${data.length} pending actions`, count: data.length, severity: data.some((row) => row.priority === 'critical') ? 'critical' : 'medium' }], [action('Open work dashboard')]);
+      [{ key: 'pending-actions', label: `${data.length} pending actions`, count: data.length, severity: data.some((row) => row.priority === 'critical') ? 'critical' : 'medium' }], [action('Open work inbox', '/work-inbox')]);
   }
 
   if (intent === 'support') {
@@ -688,41 +701,51 @@ ${body}`, startedAt, coachInsights,
     const openGrievances = data.grievances.filter((row) => !['resolved', 'closed'].includes(String(row.status))).length;
     return handled(intent, `Your support status:\n\n• Helpdesk tickets: ${data.tickets.length} recent, ${openTickets} open\n` +
       `• Grievances: ${data.grievances.length} recent, ${openGrievances} open${data.tickets[0] ? `\n• Latest ticket: ${t(data.tickets[0].subject)} — ${t(data.tickets[0].status)}` : ''}`,
-      startedAt, [{ key: 'open-support', label: `${openTickets + openGrievances} open support items`, count: openTickets + openGrievances, severity: openTickets + openGrievances ? 'medium' : 'low' }], [action()]);
+      // TODO: verify the real self-service ticket/grievance submission page
+      // (only found a handling console, GRIEVANCE_COMMAND_CENTER, not a
+      // submission form) and link to it directly.
+      startedAt, [{ key: 'open-support', label: `${openTickets + openGrievances} open support items`, count: openTickets + openGrievances, severity: openTickets + openGrievances ? 'medium' : 'low' }], [action('Open my dashboard', '/my-dashboard')]);
   }
 
   if (intent === 'payroll_readiness') {
     const row = await cached(userId, intent, () => payrollReadiness(employeeId));
-    if (!row.readiness_status) return handled(intent, 'No payroll readiness scan is available for your account yet.', startedAt, [], [action()], 0.5);
+    if (!row.readiness_status) return handled(intent, 'No payroll readiness scan is available for your account yet.', startedAt, [], [action('Open my dashboard', '/my-dashboard')], 0.5);
     const blocked = ['blocked', 'hold'].includes(String(row.readiness_status).toLowerCase());
+    // TODO: verify the real self-service page for fixing payroll-readiness
+    // blockers (bank/PAN/UAN completeness) — likely /profile, not confirmed.
     return handled(intent, `Your latest payroll readiness status is ${t(row.readiness_status)} for ${date(row.period_start)} to ${date(row.period_end)}.` +
       `${row.blocker_summary ? `\n\nBlocker summary: ${t(row.blocker_summary)}` : ''}\nLast scanned: ${date(row.scanned_at)}`,
       startedAt, [{ key: 'payroll-readiness', label: `Payroll ${t(row.readiness_status)}`, severity: blocked ? 'high' : 'low' }],
-      [action('Open payroll dashboard')], n(row.confidence_score) || 0.8);
+      [action('Open my dashboard', '/my-dashboard')], n(row.confidence_score) || 0.8);
   }
 
   if (intent === 'loans') {
     const data = await cached(userId, intent, () => loans(employeeId));
-    if (!data.length) return handled(intent, 'No employee loan or salary advance record is linked to your account.', startedAt, [], [action()]);
+    if (!data.length) return handled(intent, 'No employee loan or salary advance record is linked to your account.', startedAt, [], [action('Open my dashboard', '/my-dashboard')]);
     const pending = data.reduce((sum, row) => sum + n(row.pending_amount), 0);
     const lines = data.slice(0, 5).map((row) => `• ${t(row.loan_type)}: ${t(row.status)}, pending ${money(row.pending_amount)}, monthly deduction ${money(row.deduction_per_month)}`);
+    // TODO: verify the real self-service page an employee uses to view their
+    // own loans/advances (PAYROLL_LOANS at /payroll/loans reads as an
+    // admin/payroll console, not employee-facing) and link to it directly.
     return handled(intent, `Your loan/advance summary:\n\n${lines.join('\n')}\n\nTotal pending amount: ${money(pending)}`, startedAt,
-      [{ key: 'loan-pending', label: 'Pending loan amount', value: pending, severity: pending > 0 ? 'medium' : 'low' }], [action('Open payroll dashboard')]);
+      [{ key: 'loan-pending', label: 'Pending loan amount', value: pending, severity: pending > 0 ? 'medium' : 'low' }], [action('Open my dashboard', '/my-dashboard')]);
   }
 
   if (intent === 'reimbursements') {
     const data = await cached(userId, intent, () => reimbursements(employeeId));
-    if (!data.length) return handled(intent, 'No reimbursement claims are linked to your account.', startedAt, [], [action()]);
+    if (!data.length) return handled(intent, 'No reimbursement claims are linked to your account.', startedAt, [], [action('Open reimbursements', '/payroll/reimbursements')]);
     const lines = data.slice(0, 8).map((row) => `• ${t(row.claim_type)} (${t(row.claim_month)}): ${t(row.status)}, claimed ${money(row.amount_claimed)}${row.amount_approved != null ? `, approved ${money(row.amount_approved)}` : ''}`);
+    // '/payroll/reimbursements' — the router-authoritative path; '/expenses'
+    // is only a redirect shim to it, not the canonical route.
     return handled(intent, `Your recent reimbursement claims:\n\n${lines.join('\n')}`, startedAt,
-      [{ key: 'claims', label: `${data.length} recent claims`, count: data.length, severity: data.some((row) => row.status === 'rejected') ? 'medium' : 'low' }], [action('Open reimbursement dashboard')]);
+      [{ key: 'claims', label: `${data.length} recent claims`, count: data.length, severity: data.some((row) => row.status === 'rejected') ? 'medium' : 'low' }], [action('Open reimbursements', '/payroll/reimbursements')]);
   }
 
   if (intent === 'journey') {
     const data = await cached(userId, intent, () => journey(employeeId));
-    if (!data.length) return handled(intent, 'No employee journey events are available for your account yet.', startedAt, [], [action()], 0.5);
+    if (!data.length) return handled(intent, 'No employee journey events are available for your account yet.', startedAt, [], [action('Open my dashboard', '/my-dashboard')], 0.5);
     const lines = data.slice(0, 10).map((row) => `• ${date(row.event_date)} — ${t(row.event_type)}${row.description ? `: ${t(row.description)}` : ''}`);
-    return handled(intent, `Your recent employee journey events:\n\n${lines.join('\n')}`, startedAt, [], [action('Open my dashboard')]);
+    return handled(intent, `Your recent employee journey events:\n\n${lines.join('\n')}`, startedAt, [], [action('Open my dashboard', '/my-dashboard')]);
   }
 
   if (intent === 'account_overview') {
@@ -755,7 +778,7 @@ ${body}`, startedAt, coachInsights,
       startedAt, [
         { key: 'pending-actions', label: `${pending.length} pending actions`, count: pending.length, severity: pending.length ? 'medium' : 'low' },
         { key: 'leave-available', label: `${totalLeave} leave days available`, value: totalLeave, severity: 'low' },
-      ], [action()], unavailable.length ? 0.8 : 1);
+      ], [action('Open my dashboard', '/my-dashboard')], unavailable.length ? 0.8 : 1);
   }
 
   return { handled: false, intent: 'unknown' };
