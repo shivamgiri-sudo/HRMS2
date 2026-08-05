@@ -54,6 +54,18 @@ export function CeoReferenceLayout({ data, filters }: { data: ReferenceDashboard
   // permanently read "Revenue risk" instead of the actual revenue figure.
   const revenue = numberAt(data.pnl, "kpis", "recognizedRevenue") ?? numberAt(data.pnl, "kpis", "organisationRevenue");
   const revenueGap = numberAt(data.pnl, "kpis", "revenueAtRisk") ?? numberAt(data.pnl, "kpis", "revenueGapMtd");
+  // The page-level "Data as of" control (ReferenceDashboardUI's UpdatedControl)
+  // reflects /api/dashboards/{code}/summary's generatedAt, not the P&L cache's
+  // own — the two can legitimately differ (30s vs 60s TTL, different fetch
+  // times), so a CEO could see a fresher-looking page timestamp than the
+  // revenue figure actually is. pnl/summary's own generatedAt is stamped once
+  // when the allocation summary is computed and reused as-is on every cache
+  // hit (see getCachedAllocationSummary in canonical-pnl.service.ts), so it
+  // correctly reflects when this specific number was last computed.
+  const pnlGeneratedAt = read(data.pnl, "generatedAt");
+  const pnlAsOf = typeof pnlGeneratedAt === "string" && pnlGeneratedAt
+    ? new Date(pnlGeneratedAt).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })
+    : null;
   const certified = numberAt(data.workforce, "training", "certified_learners") ?? numberAt(data.workforce, "training", "certifiedLearners");
   const onboarding = metricDetail(m, "onb", "pending") ?? metricValue(m, "onb");
   const bgv = metricDetail(m, "bgv", "pending") ?? metricValue(m, "bgv");
@@ -111,7 +123,7 @@ export function CeoReferenceLayout({ data, filters }: { data: ReferenceDashboard
       <ReferenceMetricGrid columns={4} loading={data.loading} metrics={[
         { label: "Attendance Rate", value: attendance, valueSuffix: "%", helper: m.att?.previousValue === null ? "Processed attendance" : "vs previous period", icon: Fingerprint, tone: "blue", trend: m.att?.changePct, unavailableReason: metricUnavailableReason(m, "att"), ...drill("att") },
         { label: "Avg Shrinkage", value: shrinkage, valueSuffix: "%", helper: "vs last 30 days", icon: Activity, tone: shrinkage !== null && shrinkage > 20 ? "red" : "green" },
-        { label: "Revenue Gap MTD", value: formatCurrency(revenueGap), helper: revenue === null ? "Revenue risk" : `Revenue ${formatCurrency(revenue)}`, icon: IndianRupee, tone: "violet" },
+        { label: "Revenue Gap MTD", value: formatCurrency(revenueGap), helper: (revenue === null ? "Revenue risk" : `Revenue ${formatCurrency(revenue)}`) + (pnlAsOf ? ` · P&L as of ${pnlAsOf}` : ""), icon: IndianRupee, tone: "violet" },
         { label: "Certified Learners", value: certified, helper: "vs last 30 days", icon: BadgeCheck, tone: "amber" },
       ]} />
 
