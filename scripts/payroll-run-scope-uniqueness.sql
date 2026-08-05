@@ -146,13 +146,18 @@ SELECT INDEX_NAME, GROUP_CONCAT(COLUMN_NAME ORDER BY SEQ_IN_INDEX) AS cols, NON_
  WHERE TABLE_SCHEMA = @schema AND TABLE_NAME = 'salary_prep_run'
    AND INDEX_NAME = 'uq_spr_month_scope'
  GROUP BY INDEX_NAME, NON_UNIQUE;
--- EXPECT one row: run_month,branch_scope_key,process_scope_key with NON_UNIQUE = 0.
+-- EXPECT one row: run_month,branch_scope_key,process_scope_key,run_kind with NON_UNIQUE = 0.
 
 SELECT 'Step 3: still one run per scope' AS status;
+-- Must group by the SAME four columns the index is built on. This previously grouped
+-- by three, omitting run_kind, so it counted the legitimate 2026-03 pair — one
+-- operational run and one legacy import, zero employee overlap — as a duplicate
+-- scope. A successful run would have reported itself failed at the final step, on a
+-- production schema change, which is the worst possible moment for a false alarm.
 SELECT COUNT(*) AS duplicate_scopes FROM (
-  SELECT run_month, branch_scope_key, process_scope_key
+  SELECT run_month, branch_scope_key, process_scope_key, run_kind
     FROM salary_prep_run
-   GROUP BY run_month, branch_scope_key, process_scope_key
+   GROUP BY run_month, branch_scope_key, process_scope_key, run_kind
   HAVING COUNT(*) > 1
 ) d;
 -- EXPECT 0.
