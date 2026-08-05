@@ -695,6 +695,11 @@ async function drillSalaryComponents(scope: DashboardScope): Promise<DrilldownRe
               ROUND(SUM(c.amount), 2) AS totalAmount,
               ROUND(AVG(c.amount), 2) AS avgAmount
          FROM salary_prep_line_component c
+         -- Anchor on the parent line — see the matching note in
+         -- dashboard-metric.service.ts. Without it this drilldown counts orphaned
+         -- component rows whose payroll line was deleted, which no longer represent
+         -- anything payable.
+         JOIN salary_prep_line l ON l.id = c.line_id
          JOIN employees e ON e.id = c.employee_id
         WHERE c.run_id = (
                 SELECT id FROM salary_prep_run ORDER BY run_month DESC, created_at DESC LIMIT 1

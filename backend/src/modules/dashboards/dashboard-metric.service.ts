@@ -1153,6 +1153,14 @@ export async function getSalaryComponentMetrics(scope: DashboardScope): Promise<
          ROUND(SUM(CASE WHEN c.component_type = 'deduction' THEN c.amount ELSE 0 END), 2) AS deductionTotal,
          SUM(CASE WHEN c.taxable = 1 THEN 1 ELSE 0 END) AS taxableLines
        FROM salary_prep_line_component c
+       -- Anchor on the parent line, not just run_id. salary_prep_line_component carries
+       -- denormalised run_id/employee_id and has no foreign key, so deleting a payroll
+       -- line leaves its components behind: 9,841 such orphans exist in production,
+       -- spread over 16 run-months and still pointing at runs that exist. Counting by
+       -- run_id alone therefore inflates component counts, employee counts and earning
+       -- totals. The current latest run happens to have none, so this reads correctly
+       -- today; it did not when 2025-12 (861 orphans across 126 employees) was latest.
+       JOIN salary_prep_line l ON l.id = c.line_id
        JOIN employees e ON e.id = c.employee_id
        WHERE c.run_id = (
                SELECT id FROM salary_prep_run ORDER BY run_month DESC, created_at DESC LIMIT 1
