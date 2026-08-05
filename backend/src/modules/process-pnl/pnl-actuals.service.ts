@@ -215,9 +215,16 @@ export async function getInvoicedRevenueActuals(periodCode: string): Promise<Act
   if (!(await tableExists("billing_invoice_particular_snapshot"))) return emptyActuals();
 
   // Invoiced revenue is a NET figure: invoices less approved credit notes. Without the second
-  // half, FY2026-27 revenue overstated by Rs 53.91 lakh across 17 notes (Apr 12.75, May 5.30,
-  // Jun 0.64, Jul 0.50). Both sides are net of GST — verified at source, where
+  // half every period reads high. Both sides are net of GST — verified at source, where
   // total+igst+sgst+cgst = grnd on 17 of 17, exactly as the invoice table behaves.
+  //
+  // Notes net into their SERVICE month, not the month the credit was raised, because that is the
+  // month whose revenue was overstated and the month this function is asked about. The two differ
+  // often enough to matter: of the 17 approved notes carrying finance_year 2026-27 (Rs 53.91 L
+  // in total), 4 worth Rs 34.72 L name service months Jan/Feb/Mar-26 and so land in the PRIOR
+  // financial year's periods. Only the remaining Rs 19.19 L touches FY2026-27 — Apr 12.75,
+  // May 5.30, Jun 0.64, Jul 0.50. Do not "fix" that gap by reaching for credit_date: those four
+  // are correctly filed, and re-dating them would move real money into the wrong year.
   //
   // Netted at period + cost centre, NOT per invoice: tbl_credit_note.proforma_bill_no matched
   // 0 of 17 against tbl_invoice.bill_no, so there is no reliable per-invoice link to use. Period
