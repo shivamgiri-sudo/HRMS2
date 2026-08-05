@@ -149,6 +149,30 @@ smartGrnRouter.put(
   }
 );
 
+smartGrnRouter.put(
+  "/:id/invoice-components",
+  requireWriteAccess,
+  requireRole(...SMART_WRITE_ROLES),
+  authorizeGrn,
+  async (req: SmartRequest, res) => {
+    try {
+      const user = actor(req);
+      const data = await grnSmartService.saveComponentAllocations(
+        req.params.id,
+        req.body,
+        user.id,
+        user.role
+      );
+      res.json({ success: true, data });
+    } catch (error) {
+      res.status(400).json({
+        success: false,
+        error: error instanceof Error ? error.message : "Unable to save invoice components",
+      });
+    }
+  }
+);
+
 smartGrnRouter.post(
   "/:id/documents",
   requireWriteAccess,

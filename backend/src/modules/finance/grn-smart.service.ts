@@ -34,6 +34,40 @@ export interface SmartGrnInvoiceInput {
   allocations: SmartAllocationInput[];
 }
 
+/** Unified vendor-GRN flow: one declared invoice total, broken into repeatable GST-slab
+ *  components (the same real invoice often carries 2+ GST rates), fanned out across
+ *  whichever cost-centre budget lines the split targets. See saveComponentAllocations(). */
+export interface InvoiceComponentInput {
+  amountWithoutTax: number;
+  gstRate: number;
+  remarks?: string;
+}
+
+export interface CostCentreSplitRowInput {
+  budgetLineId: string;
+  percentage: number;
+  remarks?: string;
+}
+
+export interface SmartGrnComponentSplitInput {
+  invoiceNumber?: string;
+  servicePeriodStart?: string | null;
+  servicePeriodEnd?: string | null;
+  purchaseReference?: string | null;
+  vendorGstin?: string | null;
+  placeOfSupply?: string | null;
+  declaredInvoiceTotal: number;
+  components: InvoiceComponentInput[];
+  costCentreSplits: CostCentreSplitRowInput[];
+}
+
+/** Above this, the raiser must fix the invoice components themselves — a bigger mismatch
+ *  than ordinary invoice rounding is a real data-entry error, not something to auto-absorb. */
+const GRN_INVOICE_COMPONENT_ROUNDOFF_LIMIT = 1.00;
+/** Standard Indian GST slabs — kept in lockstep with src/lib/gst.ts's GST_RATES on the
+ *  frontend; the dropdown there is the only way to reach this value from the UI. */
+const ALLOWED_GST_RATES = new Set([0, 5, 12, 18, 28]);
+
 export interface RegisteredDocumentInput {
   originalName: string;
   storedPath: string;
@@ -120,6 +154,14 @@ async function loadAllocations(connection: PoolConnection, grnId: string, forUpd
        LEFT JOIN cost_centre_master ccm ON ccm.id = a.cost_centre_id
       WHERE a.grn_request_id = ?
       ORDER BY a.sequence_no${forUpdate ? " FOR UPDATE" : ""}`,
+    [grnId]
+  );
+  return rows as any[];
+}
+
+async function loadInvoiceComponents(connection: PoolConnection, grnId: string) {
+  const [rows] = await connection.execute<RowDataPacket[]>(
+    "SELECT * FROM grn_invoice_component WHERE grn_request_id = ? ORDER BY sequence_no",
     [grnId]
   );
   return rows as any[];
@@ -261,6 +303,7 @@ async function buildValidations(connection: PoolConnection, grnId: string) {
   const grn = grnRows[0] as any;
   if (!grn) throw new Error("GRN not found");
   const allocations = await loadAllocations(connection, grnId);
+  const invoiceComponents = await loadInvoiceComponents(connection, grnId);
   const [documentRows] = await connection.execute<RowDataPacket[]>(
     "SELECT * FROM grn_document WHERE grn_request_id = ? ORDER BY uploaded_at",
     [grnId]
@@ -323,6 +366,28 @@ async function buildValidations(connection: PoolConnection, grnId: string) {
       : `Allocation difference is ${roundMoney(totalGross - parentGross).toFixed(2)}`,
     details: { totalBase, totalTax, totalGross, totalPnl, parentGross },
   });
+
+  // Only fires for GRNs raised through the invoice-component flow (saveComponentAllocations);
+  // legacy single-line and pre-existing split-mode GRNs have zero grn_invoice_component rows
+  // and skip this entirely — re-verifies what saveComponentAllocations already enforced at
+  // save time, catching any later mutation (e.g. confirmExtraction touching round_off_amount).
+  if (invoiceComponents.length) {
+    const componentGross = roundMoney(
+      invoiceComponents.reduce((sum, item) => sum + Number(item.amount_with_tax || 0), 0)
+    );
+    const reconciledTotal = roundMoney(componentGross + Number(grn.round_off_amount || 0));
+    const componentDiff = roundMoney(reconciledTotal - parentGross);
+    results.push({
+      code: "INVOICE_COMPONENT_RECONCILIATION",
+      status: Math.abs(componentDiff) <= 0.01 ? "passed" : "failed",
+      severity: Math.abs(componentDiff) <= 0.01 ? "info" : "error",
+      blocking: Math.abs(componentDiff) > 0.01,
+      message: Math.abs(componentDiff) <= 0.01
+        ? "Invoice components plus round-off exactly match the GRN total"
+        : `Invoice component total (incl. round-off) differs from the GRN total by ${componentDiff.toFixed(2)}`,
+      details: { componentGross, roundOffAmount: Number(grn.round_off_amount || 0), reconciledTotal, parentGross },
+    });
+  }
 
   const exactDuplicates = duplicates.filter((item) => item.type === "invoice_identity" || item.type === "document_hash");
   results.push({
@@ -685,6 +750,350 @@ export const grnSmartService = {
         tax_amount: totalTax,
         amount_with_tax: totalGross,
         pnl_cost_amount: totalPnl,
+      });
+      return this.getWorkspace(grnId);
+    } catch (error) {
+      await connection.rollback();
+      throw error;
+    } finally {
+      connection.release();
+    }
+  },
+
+  /** The unified vendor-GRN flow: one declared invoice total, a single Head/Sub-head
+   *  classification split across cost centres by percentage, and the invoice itself broken
+   *  into repeatable {amount without tax, GST slab} components (the same real invoice
+   *  routinely carries 2+ GST rates). Fans out to N (cost-centre splits) x M (components)
+   *  grn_cost_allocation rows, each tagged with the component that drove its GST rate.
+   *
+   *  Parallel to, not a replacement for, saveAllocations() above — imprest GRNs and any
+   *  draft started under the old split-mode UI keep using that route untouched. */
+  async saveComponentAllocations(
+    grnId: string,
+    input: SmartGrnComponentSplitInput,
+    actorUserId: string,
+    actorRole: string
+  ) {
+    const components = Array.isArray(input.components) ? input.components : [];
+    const splits = Array.isArray(input.costCentreSplits) ? input.costCentreSplits : [];
+    if (!components.length) throw new Error("At least one invoice component is required");
+    if (components.length > 20) throw new Error("A GRN cannot exceed 20 invoice components");
+    if (!splits.length) throw new Error("At least one cost centre is required");
+    if (splits.length > 100) throw new Error("A GRN cannot exceed 100 cost-centre splits");
+    const declaredTotal = Number(input.declaredInvoiceTotal);
+    if (!Number.isFinite(declaredTotal) || declaredTotal <= 0) {
+      throw new Error("Total invoice amount (incl. GST) must be greater than zero");
+    }
+
+    for (let index = 0; index < components.length; index += 1) {
+      const component = components[index];
+      const base = Number(component.amountWithoutTax);
+      if (!Number.isFinite(base) || base <= 0) {
+        throw new Error(`Component ${index + 1}: amount without tax must be greater than zero`);
+      }
+      if (!ALLOWED_GST_RATES.has(Number(component.gstRate))) {
+        throw new Error(`Component ${index + 1}: GST rate must be one of 0%, 5%, 12%, 18%, 28%`);
+      }
+    }
+
+    const connection = await db.getConnection();
+    try {
+      await connection.beginTransaction();
+      const grn = await lockGrn(connection, grnId);
+      if (String(grn.status) !== "draft") {
+        throw new Error("Invoice components can only be changed while the GRN is a draft");
+      }
+      if (String(grn.grn_type) !== "vendor") {
+        throw new Error("Invoice-component GRNs are only supported for vendor GRNs");
+      }
+
+      // Resolve every cost-centre split row against its approved budget line — same lock,
+      // period-match, and period-lock checks saveAllocations() already applies per row.
+      const resolvedSplits: any[] = [];
+      let percentageSum = 0;
+      for (let index = 0; index < splits.length; index += 1) {
+        const split = splits[index];
+        if (!split?.budgetLineId) throw new Error(`Cost centre ${index + 1}: budget line is required`);
+        const percentage = Number(split.percentage);
+        if (!Number.isFinite(percentage) || percentage <= 0) {
+          throw new Error(`Cost centre ${index + 1}: split percentage must be greater than zero`);
+        }
+        const line = await lockBudgetLine(connection, split.budgetLineId, String(grn.branch_id));
+        if (String(grn.bill_date).slice(0, 7) !== String(line.period_code)) {
+          throw new Error(`Cost centre ${index + 1}: budget period ${line.period_code} does not match the invoice month`);
+        }
+        if (await isPeriodLocked(line.period_code)) {
+          throw new Error(
+            `Cost centre ${index + 1}: ${line.period_code} is locked for P&L close. Raise this against the current open period.`
+          );
+        }
+        percentageSum += percentage;
+        resolvedSplits.push({ line, percentage, remarks: split.remarks?.trim() || null });
+      }
+      if (Math.abs(percentageSum - 100) > 0.5) {
+        throw new Error(`Cost-centre split percentages must total 100% (currently ${roundMoney(percentageSum)}%)`);
+      }
+      // Absorb ordinary floating-point noise from an auto-split calculation into the last row,
+      // exactly like the defensive correction saveAllocations() applies after insert below.
+      resolvedSplits[resolvedSplits.length - 1].percentage += 100 - percentageSum;
+
+      // One Head/Sub-head classification per GRN — the split only decides how much of that
+      // one spend belongs to which cost centre, not a mix of different expense categories.
+      const distinctHeads = new Set(resolvedSplits.map((item) => String(item.line.head)));
+      const distinctSubHeads = new Set(resolvedSplits.map((item) => String(item.line.sub_head || "")));
+      if (distinctHeads.size > 1 || distinctSubHeads.size > 1) {
+        throw new Error("All cost-centre splits must share the same expense head and sub-head");
+      }
+
+      // The invoice's own GST rate overrides whatever the budget line assumed at planning
+      // time (requirement: invoice is ground truth) — but a line marked exempt/non-taxable
+      // structurally cannot carry a GST-bearing component; that's a hard conflict, not
+      // something to silently coerce to 0%.
+      const gstBearing = components.some((component) => Number(component.gstRate) > 0);
+      if (gstBearing) {
+        const exemptSplit = resolvedSplits.find((item) =>
+          ["exempt", "non_gst"].includes(String(item.line.tax_treatment))
+        );
+        if (exemptSplit) {
+          const label = String(exemptSplit.line.tax_treatment) === "exempt" ? "exempt" : "non-taxable";
+          throw new Error(
+            `Cost centre "${exemptSplit.line.cost_centre_name || "Unassigned"}": budget line is marked ${label} and cannot carry a GST-bearing invoice component.`
+          );
+        }
+      }
+
+      // Tax breakdown is entirely component-driven (each component supplies its own explicit
+      // base + rate), computed via the same calculateBudgetLine() every other GRN/budget path
+      // uses, with quantity=1 and unitRate=<this component's base> so base comes out exact.
+      const componentAmounts = components.map((component) =>
+        calculateBudgetLine({
+          head: "invoice-component",
+          itemName: "invoice-component",
+          quantity: 1,
+          unit: "amount",
+          unitRate: Number(component.amountWithoutTax),
+          taxTreatment: "exclusive",
+          gstRate: Number(component.gstRate),
+          gstType: "cgst_sgst",
+          recoverableTaxPct: 100,
+          justification: "Invoice component",
+        })
+      );
+      const rawTotalBase = roundMoney(componentAmounts.reduce((sum, item) => sum + item.baseAmount, 0));
+      const rawTotalTax = roundMoney(componentAmounts.reduce((sum, item) => sum + item.taxAmount, 0));
+      const rawTotalGross = roundMoney(rawTotalBase + rawTotalTax);
+      const diff = roundMoney(declaredTotal - rawTotalGross);
+      if (Math.abs(diff) > GRN_INVOICE_COMPONENT_ROUNDOFF_LIMIT) {
+        throw new Error(
+          `Invoice components total ₹${rawTotalGross.toFixed(2)} does not match the declared invoice total `
+          + `₹${declaredTotal.toFixed(2)}. Difference ₹${diff.toFixed(2)} exceeds the ₹1.00 auto-round-off limit.`
+        );
+      }
+
+      // Fan out N cost-centre rows x M components. Each grid cell's tax uses the component's
+      // own rate/type (gst_type/recoverable_tax_pct still inherited from the budget line,
+      // unchanged from today — only the rate itself is invoice-driven).
+      const grid: any[] = [];
+      for (const split of resolvedSplits) {
+        const { line, percentage } = split;
+        for (let componentIndex = 0; componentIndex < components.length; componentIndex += 1) {
+          const component = components[componentIndex];
+          const compBase = roundMoney(Number(component.amountWithoutTax) * percentage / 100);
+          const unitRate = Number(line.unit_rate);
+          if (!(unitRate > 0)) {
+            throw new Error(
+              `Cost centre "${line.cost_centre_name || "Unassigned"}": budget line has no approved unit rate to derive a consumed quantity from.`
+            );
+          }
+          const amounts = calculateBudgetLine({
+            head: String(line.head),
+            subHead: line.sub_head,
+            itemName: String(line.item_name),
+            quantity: 1,
+            unit: String(line.unit),
+            unitRate: compBase,
+            taxTreatment: "exclusive",
+            gstRate: Number(component.gstRate),
+            gstType: String(line.gst_type) as BudgetGstType,
+            recoverableTaxPct: Number(line.recoverable_tax_pct),
+            justification: String(line.justification || "Approved budget allocation"),
+          });
+          grid.push({
+            line,
+            component,
+            componentIndex,
+            quantity: roundQuantity(compBase / unitRate),
+            unitRate,
+            amounts,
+            remarks: [split.remarks, component.remarks?.trim() || null].filter(Boolean).join(" — ") || null,
+          });
+        }
+      }
+
+      // Fold the <=₹1 round-off into whichever grid cell already carries the largest amount —
+      // a pure rounding delta layered on amount_with_tax/pnl_cost_amount, not additional
+      // taxable value, exactly like a printed invoice's own "Round Off" line. This keeps
+      // Sigma(grn_cost_allocation.amount_with_tax) === grn_request.amount_with_tax exactly, so
+      // the existing ALLOCATION_AMOUNT_RECONCILIATION check (tolerance <=0.01) keeps passing
+      // unmodified; round_off_amount becomes a pure audit/disclosure figure.
+      if (diff !== 0 && grid.length) {
+        const target = grid.reduce((max, item) => (item.amounts.grossAmount > max.amounts.grossAmount ? item : max), grid[0]);
+        target.amounts = {
+          ...target.amounts,
+          grossAmount: roundMoney(target.amounts.grossAmount + diff),
+          pnlCostAmount: roundMoney(target.amounts.pnlCostAmount + diff),
+        };
+      }
+
+      // Capacity check, grouped per budget line exactly like saveAllocations() — the round-off
+      // adjustment above is included since it already landed inside a grid cell's amount.
+      const groupedUsage = new Map<string, { amount: number; quantity: number; line: any }>();
+      for (const cell of grid) {
+        const usage = groupedUsage.get(String(cell.line.id)) ?? { amount: 0, quantity: 0, line: cell.line };
+        usage.amount = roundMoney(usage.amount + cell.amounts.grossAmount);
+        usage.quantity = roundQuantity(usage.quantity + cell.quantity);
+        groupedUsage.set(String(cell.line.id), usage);
+      }
+      for (const usage of groupedUsage.values()) {
+        const availableAmount = roundMoney(
+          Number(usage.line.gross_amount || 0)
+          - Number(usage.line.reserved_amount || 0)
+          - Number(usage.line.consumed_amount || 0)
+        );
+        const availableQuantity = roundQuantity(
+          Number(usage.line.quantity || 0)
+          - Number(usage.line.reserved_quantity || 0)
+          - Number(usage.line.consumed_quantity || 0)
+        );
+        if (usage.amount > availableAmount + 0.01) {
+          throw new Error(`${usage.line.item_name} (${usage.line.cost_centre_name || "branch"}): split allocation exceeds available budget by ₹${(usage.amount - availableAmount).toFixed(2)}`);
+        }
+        if (usage.quantity > availableQuantity + 0.0001) {
+          throw new Error(`${usage.line.item_name} (${usage.line.cost_centre_name || "branch"}): split allocation exceeds available quantity by ${roundQuantity(usage.quantity - availableQuantity)}`);
+        }
+      }
+
+      await connection.execute("DELETE FROM grn_cost_allocation WHERE grn_request_id = ?", [grnId]);
+      await connection.execute("DELETE FROM grn_invoice_component WHERE grn_request_id = ?", [grnId]);
+
+      const componentIds: string[] = [];
+      for (let index = 0; index < components.length; index += 1) {
+        const component = components[index];
+        const amounts = componentAmounts[index];
+        const id = randomUUID();
+        componentIds.push(id);
+        await connection.execute(
+          `INSERT INTO grn_invoice_component
+           (id, grn_request_id, sequence_no, amount_without_tax, gst_rate,
+            tax_amount, amount_with_tax, remarks, created_by)
+           VALUES (?,?,?,?,?,?,?,?,?)`,
+          [
+            id, grnId, index + 1, amounts.baseAmount, Number(component.gstRate),
+            amounts.taxAmount, amounts.grossAmount, component.remarks?.trim() || null, actorUserId,
+          ]
+        );
+      }
+
+      let sequenceNo = 0;
+      for (const cell of grid) {
+        sequenceNo += 1;
+        const percentage = declaredTotal > 0
+          ? Math.round((cell.amounts.grossAmount / declaredTotal) * 100 * 1_000_000) / 1_000_000
+          : 0;
+        await connection.execute(
+          `INSERT INTO grn_cost_allocation
+           (id, grn_request_id, sequence_no, budget_id, budget_line_id, invoice_component_id,
+            branch_id, process_id, cost_centre_id, cost_class, allocation_percentage,
+            quantity, unit, unit_rate, tax_treatment, gst_rate, gst_type,
+            recoverable_tax_pct, amount_without_tax, tax_amount, cgst_amount,
+            sgst_amount, igst_amount, amount_with_tax, recoverable_tax_amount,
+            pnl_cost_amount, lifecycle_status, remarks, created_by)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+          [
+            randomUUID(), grnId, sequenceNo, cell.line.budget_id, cell.line.id,
+            componentIds[cell.componentIndex], grn.branch_id, cell.line.process_id ?? null,
+            cell.line.cost_centre_id ?? null,
+            cell.line.process_id || cell.line.cost_centre_id ? "direct" : "indirect",
+            percentage, cell.quantity, cell.line.unit, cell.unitRate,
+            "exclusive", cell.component.gstRate, cell.line.gst_type,
+            cell.line.recoverable_tax_pct, cell.amounts.baseAmount,
+            cell.amounts.taxAmount, cell.amounts.cgstAmount, cell.amounts.sgstAmount,
+            cell.amounts.igstAmount, cell.amounts.grossAmount,
+            cell.amounts.recoverableTaxAmount, cell.amounts.pnlCostAmount,
+            "draft", cell.remarks, actorUserId,
+          ]
+        );
+      }
+
+      // Same defensive rounding correction saveAllocations() already applies: force the
+      // percentage total to exactly 100.000000 after per-cell decimal rounding.
+      const [percentageRows] = await connection.execute<RowDataPacket[]>(
+        "SELECT id, allocation_percentage FROM grn_cost_allocation WHERE grn_request_id = ? ORDER BY sequence_no",
+        [grnId]
+      );
+      const percentageTotal = percentageRows.reduce((sum, row) => sum + Number(row.allocation_percentage), 0);
+      if (percentageRows.length && Math.abs(percentageTotal - 100) > 0.000001) {
+        const last = percentageRows[percentageRows.length - 1];
+        await connection.execute(
+          "UPDATE grn_cost_allocation SET allocation_percentage = allocation_percentage + ? WHERE id = ?",
+          [Math.round((100 - percentageTotal) * 1_000_000) / 1_000_000, last.id]
+        );
+      }
+
+      const totalGrossFinal = roundMoney(grid.reduce((sum, cell) => sum + cell.amounts.grossAmount, 0));
+      const totalPnlFinal = roundMoney(grid.reduce((sum, cell) => sum + cell.amounts.pnlCostAmount, 0));
+      const totalQuantity = roundQuantity(grid.reduce((sum, cell) => sum + cell.quantity, 0));
+      const first = resolvedSplits[0].line;
+      const distinctProcesses = new Set(resolvedSplits.map((item) => item.line.process_id).filter(Boolean));
+      const distinctCostCentres = new Set(resolvedSplits.map((item) => item.line.cost_centre_id).filter(Boolean));
+      const units = new Set(resolvedSplits.map((item) => String(item.line.unit)));
+      const gstTypes = new Set(resolvedSplits.map((item) => String(item.line.gst_type)));
+      const weightedGstRate = rawTotalBase > 0 ? roundMoney((rawTotalTax / rawTotalBase) * 100) : 0;
+      const totalRecoverable = roundMoney(grid.reduce((sum, cell) => sum + cell.amounts.recoverableTaxAmount, 0));
+      const weightedRecoverablePct = rawTotalTax > 0 ? roundMoney((totalRecoverable / rawTotalTax) * 100) : 0;
+
+      await connection.execute(
+        `UPDATE grn_request
+            SET allocation_mode = ?, budget_id = ?, budget_line_id = ?,
+                process_id = ?, cost_centre_id = ?, cost_class = ?,
+                head = ?, sub_head = ?, description = ?, quantity = ?, unit = ?,
+                unit_rate = ?, tax_treatment = ?, gst_rate = ?, gst_type = ?,
+                recoverable_tax_pct = ?, amount_without_tax = ?, tax_amount = ?,
+                amount_with_tax = ?, pnl_cost_amount = ?, amount = ?,
+                other_charges = 0.00, round_off_amount = ?,
+                invoice_number = ?, service_period_start = ?, service_period_end = ?,
+                purchase_reference = ?, vendor_gstin = ?, place_of_supply = ?
+          WHERE id = ?`,
+        [
+          grid.length > 1 ? "split" : "single", first.budget_id, first.id,
+          distinctProcesses.size === 1 ? [...distinctProcesses][0] : null,
+          distinctCostCentres.size === 1 ? [...distinctCostCentres][0] : null,
+          resolvedSplits.some((item) => item.line.process_id || item.line.cost_centre_id) ? "direct" : "indirect",
+          String(first.head), first.sub_head ?? null,
+          `${components.length} invoice component(s) across ${resolvedSplits.length} cost centre(s)`,
+          totalQuantity, units.size === 1 ? [...units][0] : "Mixed",
+          totalQuantity > 0 ? roundMoney(rawTotalBase / totalQuantity) : 0,
+          "exclusive", weightedGstRate, gstTypes.size === 1 ? [...gstTypes][0] : "none",
+          weightedRecoverablePct, rawTotalBase, rawTotalTax,
+          totalGrossFinal, totalPnlFinal, totalGrossFinal,
+          diff,
+          normalizeInvoiceNumber(input.invoiceNumber) || null,
+          dateOrNull(input.servicePeriodStart), dateOrNull(input.servicePeriodEnd),
+          String(input.purchaseReference ?? "").trim() || null,
+          String(input.vendorGstin ?? "").trim().toUpperCase() || null,
+          String(input.placeOfSupply ?? "").trim() || null,
+          grnId,
+        ]
+      );
+
+      await connection.commit();
+      await writeAudit("INVOICE_COMPONENTS_SAVED", grnId, actorUserId, actorRole, {
+        component_count: components.length,
+        cost_centre_count: resolvedSplits.length,
+        amount_without_tax: rawTotalBase,
+        tax_amount: rawTotalTax,
+        amount_with_tax: totalGrossFinal,
+        round_off_amount: diff,
       });
       return this.getWorkspace(grnId);
     } catch (error) {
@@ -1068,6 +1477,7 @@ export const grnSmartService = {
     const connection = await db.getConnection();
     try {
       const allocations = await loadAllocations(connection, grnId);
+      const invoiceComponents = await loadInvoiceComponents(connection, grnId);
       const [documents] = await connection.execute<RowDataPacket[]>(
         "SELECT * FROM grn_document WHERE grn_request_id = ? ORDER BY is_primary DESC, uploaded_at",
         [grnId]
@@ -1090,6 +1500,7 @@ export const grnSmartService = {
       return {
         grn: grnRows[0],
         allocations,
+        invoiceComponents,
         documents,
         extractions,
         validations,
