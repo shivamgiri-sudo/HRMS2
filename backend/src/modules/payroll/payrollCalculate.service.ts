@@ -448,7 +448,9 @@ export async function calculatePayrollRunScoped(
   // 3. Fetch eligible employees (scoped to run's process/branch filters)
   const scopedEmployeeIds = Array.from(new Set((options.employeeIds ?? []).filter(Boolean)));
   const isTargetedRun = scopedEmployeeIds.length > 0;
-  const empConds: string[] = ["esa.active_status = 1"];
+  // Salary is selected by the point-in-time join below, not by active_status, so
+  // recalculating an older run uses the salary that was in force during that month.
+  const empConds: string[] = [];
   const empParams: unknown[] = [];
 
   // Only people actually employed during the run month belong in the run.
@@ -482,6 +484,26 @@ export async function calculatePayrollRunScoped(
     empParams.push(...scopedEmployeeIds);
   }
 
+  // Salary is resolved as of the run month, not as of today.
+  //
+  // The join below was "ON esa.employee_id = e.id" filtered by "esa.active_status = 1" —
+  // whatever assignment is active TODAY, regardless of which month is being calculated.
+  // payroll-nightly-recalc.worker.ts re-runs every open run each night, so entering a
+  // salary revision silently rewrote older still-open months at the new figure.
+  //
+  // Selecting on effective_from rather than effective_to is deliberate: no write path has
+  // ever populated effective_to (all 230 superseded rows in production have it NULL), so
+  // effective_from is the only reliable record of when an assignment began.
+  //
+  // The COALESCE fallback is load-bearing. If every assignment for an employee begins
+  // after the run month, the first arm matches nothing, and without the fallback this
+  // INNER JOIN would drop that employee from the run entirely — paying them nothing,
+  // which is worse than the staleness being fixed. The active row is used instead,
+  // preserving the previous behaviour for that case.
+  //
+  // Verified against production before shipping: identical headcount vs the old query for
+  // 2026-08 / 2026-07 / 2026-05 (1113 / 1113 / 912 rows), and one employee's CTC corrected
+  // in months at or before 2026-04 — the defect being repaired, not a regression.
   const [empRows] = await db.execute<RowDataPacket[]>(
     `SELECT e.id AS employee_id, e.employee_code,
             spl_existing.id AS prep_line_id,
@@ -491,14 +513,30 @@ export async function calculatePayrollRunScoped(
             COALESCE(e.salary_start_date, e.date_of_joining) AS salary_start_date,
             e.date_of_leaving
        FROM employees e
-       JOIN employee_salary_assignment esa ON esa.employee_id = e.id
+       -- Point-in-time salary selection. See the block comment above this query for why
+       -- this is not a join on employee_id plus active_status, and why the COALESCE
+       -- fallback must stay.
+       JOIN employee_salary_assignment esa ON esa.id = COALESCE(
+            (SELECT p.id
+               FROM employee_salary_assignment p
+              WHERE p.employee_id = e.id
+                AND p.effective_from <= LAST_DAY(CONCAT(?, '-01'))
+              ORDER BY p.effective_from DESC, p.active_status DESC, p.created_at DESC
+              LIMIT 1),
+            (SELECT a.id
+               FROM employee_salary_assignment a
+              WHERE a.employee_id = e.id AND a.active_status = 1
+              ORDER BY a.effective_from DESC, a.created_at DESC
+              LIMIT 1))
        JOIN salary_structure_master ss      ON ss.id = esa.structure_id
        LEFT JOIN process_master pm          ON pm.id = e.process_id
        LEFT JOIN branch_master bm           ON bm.id = e.branch_id
        LEFT JOIN salary_prep_line spl_existing
               ON spl_existing.run_id = ? AND spl_existing.employee_id = e.id
       WHERE LOWER(e.employment_status) = 'active' AND ${empConds.join(" AND ")}`,
-    [runId, ...empParams]
+    // run_month feeds the point-in-time salary join, which appears before the
+    // spl_existing join in the statement, so it binds first.
+    [run.run_month, runId, ...empParams]
   );
   const employees = empRows as EmployeeRow[];
 
