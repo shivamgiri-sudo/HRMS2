@@ -282,7 +282,7 @@ export async function getJoiningDocumentsTracker(
       SUM(CASE WHEN c.status LIKE '%needs_correction%' THEN 1 ELSE 0 END) AS needs_correction_count,
       SUM(CASE WHEN c.due_at < NOW() AND c.verification_status IS NULL THEN 1 ELSE 0 END) AS overdue_count,
       MAX(c.updated_at) AS last_document_update,
-      emp_hr.full_name AS assigned_hr_name
+      MAX(emp_hr.full_name) AS assigned_hr_name
 
     FROM employees e
     LEFT JOIN branch_master b ON e.branch_id = b.id

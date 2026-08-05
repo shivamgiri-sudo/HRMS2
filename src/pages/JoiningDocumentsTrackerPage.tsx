@@ -83,7 +83,7 @@ export default function JoiningDocumentsTrackerPage() {
   const [dueDate, setDueDate] = useState("");
   const [assignedHrUserId, setAssignedHrUserId] = useState("");
 
-  const { data, isLoading, refetch, isFetching } = useQuery<TrackerResponse>({
+  const { data, isLoading, isError, error, refetch, isFetching } = useQuery<TrackerResponse>({
     queryKey: ["joining-documents-tracker", search, statusFilter, overdueOnly, page],
     queryFn: async () => {
       const params = new URLSearchParams();
@@ -344,6 +344,17 @@ export default function JoiningDocumentsTrackerPage() {
             {isLoading ? (
               <div className="space-y-2">
                 {[...Array(5)].map((_, i) => <Skeleton key={i} className="h-16 w-full" />)}
+              </div>
+            ) : isError ? (
+              <div className="py-16 text-center">
+                <AlertTriangle className="mx-auto h-12 w-12 text-destructive/70" />
+                <p className="mt-4 text-base font-medium text-slate-700">Couldn't load joining documents</p>
+                <p className="mt-1 text-sm text-slate-500">
+                  {(error as Error)?.message || "The server returned an error. This is not the same as no data existing."}
+                </p>
+                <Button variant="outline" size="sm" className="mt-4" onClick={() => refetch()}>
+                  <RefreshCw className="h-4 w-4 mr-2" /> Retry
+                </Button>
               </div>
             ) : rows.length === 0 ? (
               <div className="py-16 text-center">
