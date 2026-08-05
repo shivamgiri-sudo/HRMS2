@@ -4,6 +4,7 @@ import { querySource } from '../../db/sourceDb.js';
 import { getLegacyPool } from '../../db/legacyDb.js';
 import { getIstDateString, getIstMonthStart } from '../../utils/dateUtils.js';
 import { getPolicyValue } from '../policy-engine/policy-engine.cache.js';
+import { logger } from '../../lib/logger.js';
 
 export interface InterventionFlag {
   type: string;
@@ -33,16 +34,47 @@ export async function getDailyOpsPulse(targetDate?: string, branchIds?: string[]
   // branchIds/processIds accepted for future scoped queries; currently the apr table
   // does not carry branch_id so the main APR aggregation remains org-wide.
 
-  // Query synced apr table for the given date
+  // Query synced apr table for the given date.
+  //
+  // avg_lunch_pct/avg_bio_pct/avg_training_pct/avg_qa_pct divided an aggregate
+  // (AVG(...)) by a bare per-row column (a.Login_Time) in the same expression
+  // — illegal under ONLY_FULL_GROUP_BY (which this DB runs) in a query with no
+  // GROUP BY: "expression #4 of SELECT list contains nonaggregated column
+  // 'mas_hrms.a.Login_Time'". Verified live by running the exact query
+  // outside this .catch(). Every request errored and was silently turned
+  // into confident zeros — agents_logged_in: 0, total_calls: 0 — even though
+  // apr rows for the day existed the whole time (proven by topProcRows below,
+  // querying the identical table/date, always having succeeded). Rewrote to
+  // match avg_shrinkage_pct's already-correct shape just below it: the whole
+  // per-row ratio inside a single AVG(CASE ...), which is what "average of
+  // each agent's lunch % of their login time" actually means anyway — the
+  // original form (AVG(lunch time) / one arbitrary row's login time) was
+  // never a meaningful percentage even before the SQL mode rejected it.
   const [aprRows] = await db.execute<RowDataPacket[]>(
     `SELECT
        COUNT(DISTINCT a.UserID) AS agents_logged_in,
        SUM(a.Calls) AS total_calls,
        ROUND(AVG(TIME_TO_SEC(a.AHT)), 0) AS avg_aht_seconds,
-       ROUND(AVG(TIME_TO_SEC(IFNULL(a.LUNCH,'00:00:00'))) / NULLIF(TIME_TO_SEC(IFNULL(a.Login_Time,'00:00:00')),0) * 100, 2) AS avg_lunch_pct,
-       ROUND(AVG(TIME_TO_SEC(IFNULL(a.BIO,'00:00:00'))) / NULLIF(TIME_TO_SEC(IFNULL(a.Login_Time,'00:00:00')),0) * 100, 2) AS avg_bio_pct,
-       ROUND(AVG(TIME_TO_SEC(IFNULL(a.TRAINING,'00:00:00'))) / NULLIF(TIME_TO_SEC(IFNULL(a.Login_Time,'00:00:00')),0) * 100, 2) AS avg_training_pct,
-       ROUND(AVG(TIME_TO_SEC(IFNULL(a.QA,'00:00:00'))) / NULLIF(TIME_TO_SEC(IFNULL(a.Login_Time,'00:00:00')),0) * 100, 2) AS avg_qa_pct,
+       ROUND(AVG(
+         CASE WHEN TIME_TO_SEC(IFNULL(a.Login_Time,'00:00:00')) > 0 THEN
+           TIME_TO_SEC(IFNULL(a.LUNCH,'00:00:00')) / TIME_TO_SEC(IFNULL(a.Login_Time,'00:00:00')) * 100
+         ELSE 0 END
+       ), 2) AS avg_lunch_pct,
+       ROUND(AVG(
+         CASE WHEN TIME_TO_SEC(IFNULL(a.Login_Time,'00:00:00')) > 0 THEN
+           TIME_TO_SEC(IFNULL(a.BIO,'00:00:00')) / TIME_TO_SEC(IFNULL(a.Login_Time,'00:00:00')) * 100
+         ELSE 0 END
+       ), 2) AS avg_bio_pct,
+       ROUND(AVG(
+         CASE WHEN TIME_TO_SEC(IFNULL(a.Login_Time,'00:00:00')) > 0 THEN
+           TIME_TO_SEC(IFNULL(a.TRAINING,'00:00:00')) / TIME_TO_SEC(IFNULL(a.Login_Time,'00:00:00')) * 100
+         ELSE 0 END
+       ), 2) AS avg_training_pct,
+       ROUND(AVG(
+         CASE WHEN TIME_TO_SEC(IFNULL(a.Login_Time,'00:00:00')) > 0 THEN
+           TIME_TO_SEC(IFNULL(a.QA,'00:00:00')) / TIME_TO_SEC(IFNULL(a.Login_Time,'00:00:00')) * 100
+         ELSE 0 END
+       ), 2) AS avg_qa_pct,
        ROUND(AVG(
          CASE WHEN TIME_TO_SEC(IFNULL(a.Login_Time,'00:00:00')) > 0 THEN
            (TIME_TO_SEC(IFNULL(a.BIO,'00:00:00')) + TIME_TO_SEC(IFNULL(a.LUNCH,'00:00:00')) +
@@ -53,7 +85,10 @@ export async function getDailyOpsPulse(targetDate?: string, branchIds?: string[]
      FROM apr a
      WHERE DATE(a.ReportDate) = ?`,
     [date]
-  ).catch(() => [[null]] as any);
+  ).catch((err) => {
+    logger.error({ err, date }, "[bi.service] getDailyOpsPulse apr aggregate query failed");
+    return [[null]] as any;
+  });
 
   // Scheduled agents from attendance records — scoped to branch/process when provided
   const attendScopeClause = branchIds && branchIds.length > 0
@@ -584,12 +619,26 @@ export async function getQualityIntervention(branchId?: string, processId?: stri
   const prevToDate = getIstDateString(8);
 
   // ── Overall summary from db_audit.call_quality_assessment ────────────────
+  //
+  // The outer SELECT referenced quality_percentage and User bare — but the
+  // outer query's FROM is `(...) t CROSS JOIN (...) g`, and neither column
+  // exists at that scope, only t.agent/t.avg_per_agent/g.avg_score do.
+  // Verified live: "Unknown column 'quality_percentage' in 'field list'" —
+  // not a missing-column issue (it exists on the base table), a scope bug.
+  // Every request errored and was silently turned into avg_score: 0, which
+  // is impossible given every agent/process actually scores 25-84% (see
+  // agentRows/processRag below, on the same table/date, which have always
+  // worked) — a real average of 0 cannot coexist with those numbers.
+  // MAX(g.avg_score) rather than bare g.avg_score: g is a single-row
+  // derived table so the value is the same either way, but MAX() keeps
+  // this valid under ONLY_FULL_GROUP_BY without relying on MySQL's
+  // functional-dependency detection for a cross-joined single row.
   interface SummaryRow { avg_score: number; total_agents: number; below_threshold: number }
   const summaryRows = await querySource<SummaryRow>(`
     SELECT
-      ROUND(AVG(quality_percentage), 1)                                              AS avg_score,
-      COUNT(DISTINCT User)                                                            AS total_agents,
-      COUNT(DISTINCT CASE WHEN avg_per_agent < 85 THEN agent END)                   AS below_threshold
+      MAX(g.avg_score)                                                     AS avg_score,
+      COUNT(DISTINCT t.agent)                                              AS total_agents,
+      COUNT(DISTINCT CASE WHEN t.avg_per_agent < 85 THEN t.agent END)      AS below_threshold
     FROM (
       SELECT User AS agent, ROUND(AVG(quality_percentage), 1) AS avg_per_agent
       FROM db_audit.call_quality_assessment
@@ -604,7 +653,10 @@ export async function getQualityIntervention(branchId?: string, processId?: stri
       WHERE CallDate BETWEEN ? AND ?
         AND quality_percentage IS NOT NULL
     ) g
-  `, [fromDate, toDate, fromDate, toDate]).catch(() => [] as SummaryRow[]);
+  `, [fromDate, toDate, fromDate, toDate]).catch((err) => {
+    logger.error({ err, fromDate, toDate }, "[bi.service] getQualityIntervention summary query failed");
+    return [] as SummaryRow[];
+  });
 
   const avgScore = Number(summaryRows[0]?.avg_score ?? 0);
   const belowThreshold = Number(summaryRows[0]?.below_threshold ?? 0);
