@@ -1,6 +1,40 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { cleanForSpeech, takeSpeakableSentences } from '@/lib/speechChunks';
 import { createVoiceActivityDetector, rmsFromByteTimeDomain, type VoiceActivityDetector } from '@/lib/voiceActivity';
+import { apiBaseUrl } from '@/lib/apiBase';
+
+// Mirrors ReceiptUpload.tsx's own local token lookup — no shared exported
+// helper exists for this yet; matching the established precedent rather than
+// introducing a new shared utility as a side effect of this feature.
+function getAuthToken(): string | null {
+  const mysqlToken = localStorage.getItem('hrms_access_token');
+  if (mysqlToken) return mysqlToken;
+  const demoRaw = import.meta.env.DEV && import.meta.env.VITE_ENABLE_DEMO_LOGIN === 'true'
+    ? localStorage.getItem('hrms_demo_session')
+    : null;
+  if (demoRaw) {
+    try {
+      const demo = JSON.parse(demoRaw);
+      return demo?.access_token ?? null;
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
+// Safari's MediaRecorder primarily produces audio/mp4 (AAC), not the
+// audio/webm most Chromium browsers default to — tried in this order so the
+// backend's mime allowlist (ai-voice.routes.ts) always gets something it accepts.
+const STT_FALLBACK_MIME_CANDIDATES = ['audio/mp4', 'audio/webm', 'audio/ogg', 'audio/mpeg', 'audio/wav'];
+
+/** Exported for direct unit testing — the rest of the fallback flow needs a
+ *  real browser (MediaRecorder, getUserMedia, an actual permission prompt),
+ *  which this repo's Node-environment test harness cannot exercise. */
+export function pickRecorderMimeType(): string | undefined {
+  if (typeof window === 'undefined' || typeof window.MediaRecorder === 'undefined') return undefined;
+  return STT_FALLBACK_MIME_CANDIDATES.find((type) => window.MediaRecorder.isTypeSupported?.(type));
+}
 
 interface SpeechRecognitionAlternativeLike { transcript: string }
 interface SpeechRecognitionResultLike { isFinal: boolean; 0: SpeechRecognitionAlternativeLike }
@@ -98,6 +132,25 @@ export function useMiraVoice() {
 
   const recognitionSupported = typeof window !== 'undefined' && !!(window.SpeechRecognition || window.webkitSpeechRecognition);
   const speechSupported = typeof window !== 'undefined' && 'speechSynthesis' in window;
+  // Safari/iOS has no Web Speech API at all — recognitionSupported is false
+  // there. This is the OpenAI Whisper fallback: record via MediaRecorder,
+  // POST to the backend, feed the returned transcript into the same onFinal
+  // callback the native path uses.
+  const sttFallbackSupported = !recognitionSupported
+    && typeof window !== 'undefined'
+    && !!navigator.mediaDevices?.getUserMedia
+    && typeof window.MediaRecorder !== 'undefined';
+  const voiceInputSupported = recognitionSupported || sttFallbackSupported;
+  const sttMode: 'native' | 'fallback' | 'unsupported' = recognitionSupported
+    ? 'native'
+    : sttFallbackSupported
+      ? 'fallback'
+      : 'unsupported';
+
+  // Fallback-path recording state — separate from recognitionRef (native path).
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const mediaStreamRef = useRef<MediaStream | null>(null);
+  const sttAbortControllerRef = useRef<AbortController | null>(null);
 
   useEffect(() => { localStorage.setItem('mira_auto_speak', String(autoSpeak)); }, [autoSpeak]);
   useEffect(() => { localStorage.setItem('mira_barge_in_enabled', String(bargeInEnabled)); bargeInEnabledRef.current = bargeInEnabled; }, [bargeInEnabled]);
@@ -136,13 +189,84 @@ export function useMiraVoice() {
   const stopListening = useCallback(() => {
     recognitionRef.current?.stop();
     recognitionRef.current = null;
+    // Fallback path: stop() triggers the recorder's onstop handler, which
+    // tears down the stream and kicks off the transcribe-and-onFinal flow
+    // asynchronously — listening flips false here immediately (matching the
+    // native path's UX), but the transcript itself arrives a moment later
+    // over the network. There is no distinct "transcribing" indicator in
+    // this pass; a real limitation, not silently hidden.
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+      mediaRecorderRef.current.stop();
+    }
     setListening(false);
     setInterimTranscript('');
   }, []);
 
   const startListening = useCallback((onFinal: (transcript: string) => void) => {
     lastOnFinalRef.current = onFinal;
-    if (!recognitionSupported || listening) return;
+    if (listening) return;
+
+    if (sttFallbackSupported) {
+      setVoiceError(null);
+      if (speechSupported) {
+        speechBufferRef.current = '';
+        window.speechSynthesis.cancel();
+        setSpeaking(false);
+      }
+      navigator.mediaDevices.getUserMedia({ audio: true })
+        .then((stream) => {
+          const mimeType = pickRecorderMimeType();
+          const recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+          const chunks: BlobPart[] = [];
+          recorder.ondataavailable = (event) => { if (event.data.size > 0) chunks.push(event.data); };
+          recorder.onerror = () => {
+            stream.getTracks().forEach((track) => track.stop());
+            mediaStreamRef.current = null;
+            mediaRecorderRef.current = null;
+            setListening(false);
+            setVoiceError('Voice input could not be started.');
+          };
+          recorder.onstop = () => {
+            stream.getTracks().forEach((track) => track.stop());
+            mediaStreamRef.current = null;
+            mediaRecorderRef.current = null;
+            const blob = new Blob(chunks, { type: recorder.mimeType || mimeType || 'audio/webm' });
+            if (blob.size === 0) return; // stopped before anything was captured
+            void (async () => {
+              const controller = new AbortController();
+              sttAbortControllerRef.current = controller;
+              try {
+                const extension = (blob.type.split('/')[1] || 'webm').split(';')[0];
+                const formData = new FormData();
+                formData.append('audio', blob, `voice.${extension}`);
+                const token = getAuthToken();
+                const headers: HeadersInit = {};
+                if (token) headers['Authorization'] = `Bearer ${token}`;
+                const res = await fetch(`${apiBaseUrl()}/api/ai/voice/transcribe`, {
+                  method: 'POST', headers, body: formData, signal: controller.signal,
+                });
+                const payload = await res.json().catch(() => ({} as { data?: { text?: string }; error?: { message?: string } }));
+                if (!res.ok) throw new Error(payload?.error?.message || 'Voice transcription failed');
+                const text = String(payload?.data?.text ?? '').trim();
+                if (text) onFinal(text);
+              } catch (error) {
+                if (error instanceof Error && error.name === 'AbortError') return;
+                setVoiceError(error instanceof Error ? error.message : 'Voice transcription failed');
+              } finally {
+                sttAbortControllerRef.current = null;
+              }
+            })();
+          };
+          mediaRecorderRef.current = recorder;
+          mediaStreamRef.current = stream;
+          recorder.start();
+          setListening(true);
+        })
+        .catch(() => setVoiceError('Microphone permission was denied.'));
+      return;
+    }
+
+    if (!recognitionSupported) return;
     const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!Recognition) return;
     // Barge-in: talking over Mira stops her rather than competing with her, and
@@ -195,7 +319,7 @@ export function useMiraVoice() {
     recognitionRef.current = recognition;
     setListening(true);
     try { recognition.start(); } catch { setListening(false); setVoiceError('Voice input could not be started.'); }
-  }, [language, listening, recognitionSupported, speechSupported]);
+  }, [language, listening, recognitionSupported, speechSupported, sttFallbackSupported]);
 
   /** Release the ambient microphone stream. Safe to call whether or not one is open. */
   const stopAmbientMonitor = useCallback(() => {
@@ -372,10 +496,16 @@ export function useMiraVoice() {
     recognitionRef.current?.abort();
     stopAmbientMonitor();
     if (speechSupported) window.speechSynthesis.cancel();
+    sttAbortControllerRef.current?.abort();
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+      mediaRecorderRef.current.stop();
+    }
+    mediaStreamRef.current?.getTracks().forEach((track) => track.stop());
   }, [speechSupported, stopAmbientMonitor]);
 
   return {
     recognitionSupported, speechSupported, listening, speaking, interimTranscript, voiceError,
+    sttFallbackSupported, voiceInputSupported, sttMode,
     autoSpeak, setAutoSpeak, bargeInEnabled, setBargeInEnabled,
     language, setLanguage, voices: indianVoices, selectedVoiceURI,
     selectedVoiceName: selectedVoice?.name || '', setSelectedVoiceURI, startListening, stopListening, speak, stopSpeaking,

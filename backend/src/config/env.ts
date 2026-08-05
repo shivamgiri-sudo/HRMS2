@@ -183,6 +183,11 @@ const envSchema = z.object({
   // AI provider — Gemini
   GEMINI_API_KEY: z.string().default(""),
 
+  // AI provider — OpenAI Whisper (voice transcription fallback for Safari/iOS,
+  // where the browser has no Web Speech API)
+  OPENAI_API_KEY: z.string().default(""),
+  OPENAI_TRANSCRIBE_MODEL: z.string().default("whisper-1"),
+
   // MCNmeet video meetings
   MCNMEET_ENABLED: z.string().default("false"),
   MCNMEET_BASE_URL: z.string().url().default("https://mcnmeet.teammas.in"),

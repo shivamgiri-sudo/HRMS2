@@ -446,7 +446,7 @@ export default function PeopleOSCopilot() {
                   <button
                     type="button"
                     onClick={startVoice}
-                    disabled={!voice.recognitionSupported}
+                    disabled={!voice.voiceInputSupported}
                     className={cn(
                       'flex h-11 w-11 shrink-0 items-center justify-center rounded-full transition',
                       voice.listening ? 'bg-rose-500 text-white' : 'bg-white text-slate-500 hover:bg-indigo-50 hover:text-indigo-700',
@@ -454,9 +454,13 @@ export default function PeopleOSCopilot() {
                       // answering/speaking so a user can barge in (voice.startListening()
                       // already cancels her in-flight TTS) — gating on `loading` here used to
                       // disable it for nearly the entire time a user would want to interrupt her.
-                      !voice.recognitionSupported && 'cursor-not-allowed opacity-40',
+                      !voice.voiceInputSupported && 'cursor-not-allowed opacity-40',
                     )}
-                    title={voice.recognitionSupported ? 'Speak to Mira' : 'Voice input is not supported in this browser'}
+                    title={
+                      voice.sttMode === 'native' ? 'Speak to Mira'
+                        : voice.sttMode === 'fallback' ? 'Tap to record, tap again to send'
+                        : 'Voice input is not supported in this browser'
+                    }
                     aria-label={voice.listening ? 'Stop listening' : 'Speak to Mira'}
                   >
                     {voice.listening ? <MicOff className="h-5 w-5" /> : <Mic className="h-5 w-5" />}

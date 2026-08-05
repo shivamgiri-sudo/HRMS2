@@ -585,6 +585,10 @@ app.use("/api/ats/reconciliation", reconciliationRouter);
 import { aiInsightsRouter } from "./modules/ai/ai-insights.routes.js";
 app.use("/api/ai", aiInsightsRouter);
 
+// ── Voice transcription (OpenAI Whisper fallback for Safari/iOS) ──────────
+import { aiVoiceRouter } from "./modules/ai/ai-voice.routes.js";
+app.use("/api/ai/voice", aiVoiceRouter);
+
 // ── Business Intelligence — cross-DB ops pulse, attrition, revenue, quality ─
 import { biRouter } from "./modules/business-intelligence/bi.routes.js";
 app.use("/api/bi", biRouter);
