@@ -6,38 +6,39 @@ import { randomUUID } from 'crypto';
 
 /**
  * Legacy Database Metadata Analyzer
- * Scans SQL Server db_bill for relevant tables without full table scans
+ * Scans db_bill (MySQL 5.5.44) for relevant tables without full table scans
  */
 export class LegacyAnalyzerService {
-  
+
   /**
    * Scan legacy database schema for candidate tables
-   * Uses INFORMATION_SCHEMA and sys tables (metadata-only, no data scans)
+   * Uses INFORMATION_SCHEMA (metadata-only, no data scans)
    */
   async scanDatabaseMetadata(): Promise<ScanResult> {
     const startTime = Date.now();
     const pool = await getLegacyPool();
-    
-    // Query metadata from SQL Server system tables
-    const result = await pool.request().query(`
-      SELECT 
-        s.name AS schema_name,
-        t.name AS table_name,
-        p.rows AS row_count,
-        STATS_DATE(i.object_id, i.index_id) AS last_stats_update,
-        t.modify_date AS last_modified
-      FROM sys.tables t
-      INNER JOIN sys.schemas s ON t.schema_id = s.schema_id
-      INNER JOIN sys.partitions p ON t.object_id = p.object_id
-      INNER JOIN sys.indexes i ON t.object_id = i.object_id AND i.index_id < 2
-      WHERE t.is_ms_shipped = 0
-        AND p.index_id < 2
-        AND s.name NOT IN ('sys', 'INFORMATION_SCHEMA')
-      ORDER BY p.rows DESC
+
+    // db_bill is MySQL, not SQL Server — getLegacyPool() returns a mysql2 Pool, which
+    // has no .request()/.input() (those are mssql-only APIs). This previously threw on
+    // every call. TABLE_ROWS is an estimate, same as SQL Server's sys.partitions.rows —
+    // consistent with "metadata-only, no full table scans". No MySQL equivalent of
+    // STATS_DATE exists; last_modified (UPDATE_TIME) is the only date field consumed
+    // below, so it isn't missed.
+    const [rows] = await pool.execute(`
+      SELECT
+        t.TABLE_SCHEMA AS schema_name,
+        t.TABLE_NAME AS table_name,
+        t.TABLE_ROWS AS row_count,
+        t.UPDATE_TIME AS last_modified
+      FROM INFORMATION_SCHEMA.TABLES t
+      WHERE t.TABLE_TYPE = 'BASE TABLE'
+        AND t.TABLE_SCHEMA NOT IN ('information_schema', 'mysql', 'performance_schema', 'sys')
+      ORDER BY t.TABLE_ROWS DESC
     `);
-    
+    const result = { recordset: rows as any[] };
+
     const candidateTables: TableProfile[] = [];
-    
+
     for (const row of result.recordset) {
       const factors = await this.analyzeTableRelevance(
         row.schema_name,
@@ -87,18 +88,18 @@ export class LegacyAnalyzerService {
     rowCount: number
   ): Promise<RelevanceFactors> {
     const pool = await getLegacyPool();
-    
-    // Get column names (metadata-only)
-    const result = await pool.request()
-      .input('schema', schema)
-      .input('table', table)
-      .query(`
-        SELECT COLUMN_NAME, DATA_TYPE
-        FROM INFORMATION_SCHEMA.COLUMNS
-        WHERE TABLE_SCHEMA = @schema AND TABLE_NAME = @table
-      `);
-    
-    const columns = result.recordset.map(r => ({
+
+    // Get column names (metadata-only). mysql2 uses positional `?` placeholders and
+    // returns [rows, fields] directly — no .request()/.input()/@named params, those
+    // are mssql-only (see scanDatabaseMetadata above for the same fix).
+    const [rows] = await pool.execute(
+      `SELECT COLUMN_NAME, DATA_TYPE
+         FROM INFORMATION_SCHEMA.COLUMNS
+        WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?`,
+      [schema, table]
+    );
+
+    const columns = (rows as any[]).map(r => ({
       name: r.COLUMN_NAME.toLowerCase(),
       type: r.DATA_TYPE.toLowerCase()
     }));

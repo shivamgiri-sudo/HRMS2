@@ -207,4 +207,62 @@ export const HOWTO_CATALOG: HowToEntry[] = [
     status: 'verified',
     deniedExplanation: 'Your role does not have access to the team roster view.',
   },
+  {
+    code: 'tax_declaration_submit',
+    title: 'Submit your tax declaration',
+    aliases: [/\btax\s*declaration\b/i, /\b(80c|hra|section\s*80)\b/i],
+    steps: [
+      '1. Go to Payroll → Tax Declaration.',
+      '2. Enter your investment declarations and HRA/exemption details.',
+      '3. Submit for the current financial year.',
+    ],
+    route: '/payroll/tax-declaration',
+    auth: { mode: 'page_code', pageCode: 'TAX_DECLARATION' }, // COMMON_USER_PAGE_CODES — every employee
+    status: 'verified',
+    deniedExplanation: 'Your role does not have access to tax declaration.',
+  },
+  {
+    code: 'lms_access',
+    title: 'Access your training',
+    aliases: [/\b(lms|training|course|learning)\b/i],
+    steps: [
+      '1. Go to Learning → My Learning.',
+      '2. Your assigned courses, modules and progress are shown there.',
+    ],
+    route: '/lms/my-learning',
+    // NativeLMSMyLearning.tsx is a wrapper (<LmsPortalFrame portal="trainee" />)
+    // embedding the externally-deployed LMS — per CLAUDE.md's LMS Integration
+    // Rule, HRMS integrates, does not rebuild, LMS operations. Phrased as
+    // "access", not "enroll" — enrollment happens inside the external system.
+    auth: { mode: 'page_code', pageCode: 'LMS_MY_LEARNING' }, // COMMON_USER_PAGE_CODES
+    status: 'verified',
+    deniedExplanation: 'Your role does not have access to the LMS learning page.',
+  },
+  {
+    code: 'ijp_apply',
+    title: 'Apply to an internal job posting',
+    aliases: [/\b(ijp|internal job|internal opening|internal vacanc)/i],
+    steps: [
+      '1. Go to People → Internal Job Postings.',
+      '2. Browse open internal roles and click Apply on the one you want.',
+    ],
+    route: '/people/ijp',
+    // Structurally different from every other page_code entry here:
+    // 'ijp_opportunities' is absent from rbacPageMatrix.ts entirely (grepped,
+    // zero hits) — the real grant is a DB-seeded role_page_access row
+    // (backend/sql/570_ijp_module.sql:176-181, roles employee/team_leader/tl/
+    // trainer/qa, can_view=1), read live via the same getAccessMe() call every
+    // page_code entry already uses. Also: page_catalog's own seed row for this
+    // code (570_ijp_module.sql:161) has page_path = '/ijp/opportunities' —
+    // NOT the real mounted route. The route above is the router-authoritative
+    // path (src/config/routes/people.routes.tsx:124), confirmed directly
+    // against the actual <Route>, not copied from page_catalog — this is
+    // exactly the class of drift the route-drift guard test exists to catch.
+    // Excluded from the generic rbacPageMatrix cross-check sweep in
+    // ai-howto.service.test.ts for the same reason — it has its own dedicated
+    // test block instead, citing this migration as the source of truth.
+    auth: { mode: 'page_code', pageCode: 'ijp_opportunities' },
+    status: 'verified',
+    deniedExplanation: 'Internal job postings are not currently available for your role.',
+  },
 ];

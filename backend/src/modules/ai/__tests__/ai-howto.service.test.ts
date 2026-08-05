@@ -115,7 +115,16 @@ describe('answerHowToQuestion — RBAC cross-check against rbacPageMatrix.ts', (
   const ROLES_TO_SWEEP = ['employee', 'manager', 'hr', 'branch_hr', 'admin', 'wfm', 'branch_wfm', 'payroll_head', 'finance'];
 
   it.each(
-    HOWTO_CATALOG.filter((entry) => entry.status === 'verified' && entry.auth.mode === 'page_code').flatMap((entry) =>
+    HOWTO_CATALOG.filter((entry) =>
+      // ijp_apply's page_code ('ijp_opportunities') is absent from
+      // rbacPageMatrix.ts entirely — the real grant is a DB-seeded
+      // role_page_access row (backend/sql/570_ijp_module.sql:176-181), not
+      // this file. Sweeping it here would just compute "expected: denied"
+      // for every role (getRolePageCodes never returns it for anyone),
+      // silently asserting zero real coverage of the actual grant. It gets
+      // its own dedicated block below instead.
+      entry.status === 'verified' && entry.auth.mode === 'page_code' && entry.code !== 'ijp_apply'
+    ).flatMap((entry) =>
       ROLES_TO_SWEEP.map((role) => ({ entry, role })),
     ),
   )('$entry.code / role $role matches getRolePageCodes', async ({ entry, role }) => {
@@ -128,6 +137,27 @@ describe('answerHowToQuestion — RBAC cross-check against rbacPageMatrix.ts', (
     expect(driven.handled).toBe(true);
     const hasAction = (driven.response?.actions?.length ?? 0) > 0;
     expect(hasAction).toBe(expectedAllowed);
+  });
+});
+
+// ijp_apply's real grant source is backend/sql/570_ijp_module.sql:176-181
+// (role_page_access rows for employee/team_leader/tl/trainer/qa), not
+// rbacPageMatrix.ts — dedicated coverage instead of the generic sweep above.
+describe('answerHowToQuestion — ijp_apply (DB-seeded grant, not rbacPageMatrix.ts)', () => {
+  it('grants ijp_apply for team_leader when getAccessMe returns ijp_opportunities', async () => {
+    mocks.getAccessMe.mockResolvedValue({
+      pages: [{ page_code: 'ijp_opportunities', can_view: true, can_create: true, can_edit: false, can_delete: false, can_export: false }],
+    });
+    const result = await answerHowToQuestion('how do I apply to an internal job posting', 'user-1', ['team_leader']);
+    expect(result.handled).toBe(true);
+    expect(result.response?.actions?.[0]?.url).toBe('/people/ijp');
+  });
+
+  it('denies ijp_apply for a role with no ijp_opportunities grant', async () => {
+    mocks.getAccessMe.mockResolvedValue({ pages: [] });
+    const result = await answerHowToQuestion('how do I apply to an internal job posting', 'user-1', ['finance']);
+    expect(result.handled).toBe(true);
+    expect(result.response?.actions).toEqual([]);
   });
 });
 

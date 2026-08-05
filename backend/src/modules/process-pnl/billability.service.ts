@@ -48,6 +48,7 @@ export type SeatRateSource =
   | "employee_override"
   | "cc_designation"
   | "cc_flat"
+  | "process_role_rate"
   | "monthly_driver"
   | "not_seat_billed"
   | "missing";
@@ -211,7 +212,32 @@ export async function resolveSeatRate(
     };
   }
 
-  // 4. The existing budgeting driver — what the P&L already uses for its revenue line.
+  // 4. Role-specific rate on the (process, designation) billability rule — set only where
+  // the client prices this specific role differently from the rest of the seats on that
+  // process (1065_billability_seat_cost.sql:69-70, "NULL = inherit the cost-centre
+  // rate"). Exact (process, designation) match, mirroring the join
+  // pnl-actuals.service.ts's batched getSeatRevenueActuals() already uses for this same
+  // tier — this function was missing it entirely, a drift from the batched path that
+  // this file's own doc comment (see resolveSeatRate's header) claims cannot happen.
+  const [roleRate] = await db.execute<RowDataPacket[]>(
+    `SELECT id, seat_rate_monthly
+       FROM process_role_billability
+      WHERE process_id = ? AND designation_id = ? AND status = 'approved'
+        AND effective_from <= ? AND (effective_to IS NULL OR effective_to >= ?)
+        AND seat_rate_monthly IS NOT NULL
+      ORDER BY effective_from DESC LIMIT 1`,
+    [employee.processId, employee.designationId, date, date],
+  );
+  if (roleRate[0]) {
+    return {
+      seatRateMonthly: Number(roleRate[0].seat_rate_monthly),
+      source: "process_role_rate",
+      ruleId: String(roleRate[0].id),
+      prorationMethod: "payable_days",
+    };
+  }
+
+  // 5. The existing budgeting driver — what the P&L already uses for its revenue line.
   // Deliberately accepted regardless of its draft/approved status, because all 44 live
   // rows are 'draft': requiring approval here would resolve every employee to 'missing'
   // on day one and make a working feature look broken. The provenance travels with the

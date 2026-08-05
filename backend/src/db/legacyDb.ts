@@ -28,7 +28,21 @@ let pool: mysql.Pool | null = null;
 export async function getLegacyPool(): Promise<mysql.Pool> {
   if (!pool) {
     pool = mysql.createPool(config);
-    console.log(`[LEGACY/BILL] Connected to ${host}:${port}/${database}`);
+    // db_bill is an upstream read-only source per the project charter — billDb.ts (the
+    // sibling pool to the same source) already enforces this at the session level;
+    // this pool didn't. No code currently writes through getLegacyPool() (confirmed:
+    // no INSERT/UPDATE/DELETE against db_bill.* anywhere in the backend), so this is
+    // defense-in-depth, not a fix for a demonstrated violation.
+    try {
+      const conn = await pool.getConnection();
+      await conn.query('SET SESSION TRANSACTION READ ONLY');
+      conn.release();
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error('[LEGACY/BILL] Failed to set READ ONLY session:', message);
+      throw error;
+    }
+    console.log(`[LEGACY/BILL] Connected to ${host}:${port}/${database} (READ-ONLY)`);
   }
   return pool;
 }
