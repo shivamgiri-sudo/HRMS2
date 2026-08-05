@@ -385,11 +385,13 @@ export function CommandPalette({
             <button
               type="button"
               onClick={startVoice}
-              disabled={!voice.recognitionSupported || loading}
+              disabled={!voice.recognitionSupported}
               className={cn(
                 'flex h-9 w-9 shrink-0 items-center justify-center rounded-full transition',
                 voice.listening ? 'bg-rose-500 text-white' : 'bg-white text-slate-500 hover:bg-indigo-50 hover:text-indigo-700',
-                (!voice.recognitionSupported || loading) && 'cursor-not-allowed opacity-40',
+                // Not gated on `loading` — see PeopleOSCopilot.tsx's mic button for the same fix
+                // and rationale: it must stay clickable during Mira's reply so barge-in works.
+                !voice.recognitionSupported && 'cursor-not-allowed opacity-40',
               )}
               aria-label={voice.listening ? 'Stop listening' : 'Speak to Mira'}
               title={voice.recognitionSupported ? 'Speak to Mira' : 'Voice input is not supported in this browser'}

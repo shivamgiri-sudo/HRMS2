@@ -57,6 +57,13 @@ export function useMiraVoice() {
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
   /** Text received but not yet closing a sentence. */
   const speechBufferRef = useRef('');
+  /** Finalized speech-to-text accumulated across one recognition session.
+   *  The browser can mark a segment `isFinal` mid-utterance on a natural
+   *  pause even though the session (continuous = false) hasn't truly ended —
+   *  dispatching on every such `onresult` sent only the first, often partial,
+   *  phrase and silently dropped the rest of what the user said. Accumulate
+   *  here and dispatch exactly once, from `onend`. */
+  const finalTextRef = useRef('');
   const [listening, setListening] = useState(false);
   const [speaking, setSpeaking] = useState(false);
   const [interimTranscript, setInterimTranscript] = useState('');
@@ -151,6 +158,7 @@ export function useMiraVoice() {
     recognition.continuous = false;
     recognition.interimResults = true;
     recognition.maxAlternatives = 1;
+    finalTextRef.current = '';
     recognition.onresult = (event) => {
       let interim = '';
       let finalText = '';
@@ -161,20 +169,28 @@ export function useMiraVoice() {
         else interim += transcript;
       }
       setInterimTranscript(interim.trim());
-      if (finalText.trim()) {
-        setInterimTranscript('');
-        onFinal(finalText.trim());
-      }
+      // Accumulate only — do not dispatch here. The browser can finalize a
+      // segment mid-utterance; dispatching per-onresult sent the first
+      // (possibly partial) phrase immediately and silently dropped anything
+      // spoken afterward, because the resulting sendMessage() set `loading`
+      // true and a later, fuller onresult's dispatch was ignored by the
+      // `if (loading) return;` guard at the call site. Dispatch once, from
+      // onend, with everything the session captured.
+      if (finalText.trim()) finalTextRef.current = finalText.trim();
     };
     recognition.onerror = (event) => {
       const code = event.error || 'voice_error';
       setVoiceError(code === 'not-allowed' ? 'Microphone permission was denied.' : code === 'no-speech' ? 'No speech was detected.' : 'Voice input could not be started.');
       setListening(false);
+      finalTextRef.current = ''; // don't leak a stale partial into the next session
     };
     recognition.onend = () => {
       recognitionRef.current = null;
       setListening(false);
       setInterimTranscript('');
+      const finalText = finalTextRef.current.trim();
+      finalTextRef.current = '';
+      if (finalText) onFinal(finalText);
     };
     recognitionRef.current = recognition;
     setListening(true);
