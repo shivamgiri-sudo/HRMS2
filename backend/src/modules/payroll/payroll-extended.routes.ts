@@ -142,16 +142,50 @@ payrollExtendedRouter.get("/runs/:id/neft-export", requireRole("admin", "finance
       ORDER BY e.employee_code`,
     [runId],
   );
+  // An employee with no bank account cannot be paid by NEFT, so they must not appear
+  // as a payment instruction.
+  //
+  // Previously every line was emitted, with the literal "NOT_LINKED" standing in for
+  // the IFSC and account number, and — worse — their net pay was still added to the
+  // TOTAL. The file therefore declared a disbursement total the bank could not
+  // actually pay out, and the unpayable rows were indistinguishable from real ones to
+  // anything consuming the file positionally.
+  //
+  // They are excluded from the payment rows and reported underneath instead. Dropping
+  // them silently would be its own defect: an employee who is simply missing bank
+  // details would vanish from payroll with nothing to say so. The sibling exporter in
+  // disbursal.routes.ts filters them with an INNER JOIN and says nothing, which is why
+  // the two exporters disagreed about who was payable.
+  const isPayable = (l: RowDataPacket) =>
+    Boolean(String(l.ifsc_code ?? "").trim()) && Boolean(String(l.account_number ?? "").trim());
+  const payable = (lines as RowDataPacket[]).filter(isPayable);
+  const unpayable = (lines as RowDataPacket[]).filter((l) => !isPayable(l));
+
   const csvRows = ["Sr No,Employee Code,Employee Name,Bank Name,IFSC Code,Account Number,Net Amount,Remarks"];
   let srNo = 1;
   let totalAmount = 0;
-  for (const line of lines) {
+  for (const line of payable) {
     const amount = Number(line.net_salary).toFixed(2);
-    csvRows.push(`${srNo},${line.employee_code},${String(line.full_name ?? "").replace(/,/g, " ")},${String(line.bank_name ?? "").replace(/,/g, " ")},${line.ifsc_code ?? "NOT_LINKED"},${line.account_number ? String(line.account_number) : "NOT_LINKED"},${amount},SALARY ${run.run_month}`);
+    csvRows.push(`${srNo},${line.employee_code},${String(line.full_name ?? "").replace(/,/g, " ")},${String(line.bank_name ?? "").replace(/,/g, " ")},${line.ifsc_code},${String(line.account_number)},${amount},SALARY ${run.run_month}`);
     srNo++;
     totalAmount += Number(line.net_salary);
   }
   csvRows.push(`TOTAL,,,,,,${totalAmount.toFixed(2)},`);
+
+  // Reported after TOTAL, following the same convention that row already sets: a
+  // non-numeric first column marking a summary line rather than a payment.
+  if (unpayable.length > 0) {
+    const withheld = unpayable.reduce((sum, l) => sum + Number(l.net_salary), 0);
+    csvRows.push(
+      `EXCLUDED,,,,,,${withheld.toFixed(2)},${unpayable.length} employee(s) have no bank account and are NOT in this file`,
+    );
+    for (const line of unpayable) {
+      csvRows.push(
+        `,${line.employee_code},${String(line.full_name ?? "").replace(/,/g, " ")},,,,${Number(line.net_salary).toFixed(2)},NOT PAID - bank account missing`,
+      );
+    }
+  }
+  res.setHeader("X-Neft-Excluded-Count", String(unpayable.length));
   res.setHeader("Content-Type", "text/csv");
   res.setHeader("Content-Disposition", `attachment; filename="NEFT_${run.run_month}_${runId.slice(0, 8)}.csv"`);
   return res.send(csvRows.join("\n"));
