@@ -28,20 +28,27 @@ function normalizePeriod(value?: string) {
 }
 
 // bpoPnlAllocationOverlayService.getSummary() runs the full org-wide GRN/
-// vendor-cost allocation engine — measured ~31.6s for a SINGLE period
-// standalone against the live DB. getTrend() below calls it once per
-// trend month (6 by default) and getSummary() calls it again directly for
-// the current period (which getTrend's last month already recomputes,
-// since shiftPeriod(period, 0) === period) — one dashboard load was
-// triggering 7 of these ~31s+ computations. Cached per period+scope with a
-// short TTL, reusing the same QualityCache pattern already used for the
-// dashboard-metrics cache elsewhere this session. This does not fix the
-// per-call cost itself (that's a much larger, financial-correctness-
-// sensitive change — bpoPnlService.getSummary + buildAllocationMaps need
-// their own profiling pass, deliberately out of scope here) but it means
-// only the first request in the TTL window pays it; every other viewer of
-// the same period/scope, and the redundant current-period recomputation
-// inside getSummary() itself, get the same real numbers instantly.
+// vendor-cost allocation engine — measured ~31-33s for a SINGLE period on a
+// genuinely cold cache. getTrend() below calls it once per trend month (6 by
+// default) and getSummary() calls it again directly for the current period
+// (which getTrend's last month already recomputes, since
+// shiftPeriod(period, 0) === period) — one dashboard load was triggering 7
+// of these computations.
+//
+// Self-audit correction (see plan doc): the ~31-33s figure was originally
+// attributed to "the allocation engine is just expensive" and left
+// uninvestigated past that. It's actually dominated by
+// process-pnl.service.ts's buildComputationContext(), which ran 10
+// independent DB pulls sequentially — fixed there directly (parallelized,
+// cold-call cost dropped to ~18.9s). That function already has its own
+// cache (computationCache, 60s TTL, with in-flight-promise dedup) that this
+// session's original fix here didn't know about when it shipped — this
+// cache's TTL was 90s, exceeding that 60s window and silently serving data
+// staler than the underlying system's own designed freshness guarantee.
+// Aligned to 60s to match. This outer cache still has a real purpose on top
+// of computationCache: it also covers the allocation-overlay math
+// (buildAllocationMaps, the GRN/vendor-cost layer) that computationCache
+// does not, and collapses getTrend's redundant current-period call.
 //
 // Deliberately NOT used by listProcesses/getPeriodClose/recalculate/
 // lockPeriod below — recalculate() explicitly calls
@@ -54,7 +61,7 @@ async function getCachedAllocationSummary(filters: Partial<PnlQueryFilters>) {
   return pnlSummaryCache.getOrSet(
     key,
     () => bpoPnlAllocationOverlayService.getSummary(filters) as Promise<Record<string, unknown>>,
-    90,
+    60,
   ) as ReturnType<typeof bpoPnlAllocationOverlayService.getSummary>;
 }
 

@@ -1210,16 +1210,41 @@ async function buildComputationContext(filters: Partial<PnlQueryFilters>): Promi
   const processes = await measurePnlStep("getBaseProcesses", () => getBaseProcesses(normalizedFilters));
   const processIds = processes.map((process) => process.process_id);
 
-  const contracts = await measurePnlStep("getContractMap", () => getContractMap(processIds, normalizedFilters.period));
-  const workforce = await measurePnlStep("getWorkforceMap", () => getWorkforceMap(processIds, start, end));
-  const monthlyPlans = await measurePnlStep("getMonthlyPlanMap", () => getMonthlyPlanMap(processIds, normalizedFilters.period));
-  const activeHeadcount = await measurePnlStep("getActiveHeadcountMap", () => getActiveHeadcountMap(processIds, end));
-  const revenueDaily = await measurePnlStep("getRevenueDailyMap", () => getRevenueDailyMap(processIds, start, end));
-  const invoices = await measurePnlStep("getInvoiceMap", () => getInvoiceMap(processIds, start, end));
-  const payroll = await measurePnlStep("getPayrollMap", () => getPayrollMap(processIds, normalizedFilters.period, end));
-  const expenses = await measurePnlStep("getExpenseMap", () => getExpenseMap(processIds, start, end));
-  const vendorDirectCosts = await measurePnlStep("getVendorDirectCostMap", () => getVendorDirectCostMap(processIds, start, end));
-  const approvedAdjustments = await measurePnlStep("getApprovedAdjustmentMap", () => getApprovedAdjustmentMap(processIds, normalizedFilters.period));
+  // This was 10 sequential awaits, each paying its own DB round trip — the
+  // dominant cost of the whole P&L computation (self-audit finding: a
+  // single cold call measured ~31-33s standalone, and calling this function
+  // twice in the same process dropped the second call to ~60ms purely from
+  // this function's own computationCache below — meaning essentially all of
+  // that 31-33s was these 10 queries running one at a time). Each of the 10
+  // reads only processIds + a date range/period, none reads another's
+  // result — getIndirectAllocationMap is the sole exception, which is why
+  // it stays sequential after this Promise.all (it needs `processes` and
+  // `activeHeadcount`, both resolved here). Same pattern already applied
+  // ~5 times elsewhere this session; 10 concurrent queries also happens to
+  // fit exactly within DB_POOL_MAX=10, so none of them queue for a slot.
+  const [
+    contracts,
+    workforce,
+    monthlyPlans,
+    activeHeadcount,
+    revenueDaily,
+    invoices,
+    payroll,
+    expenses,
+    vendorDirectCosts,
+    approvedAdjustments,
+  ] = await Promise.all([
+    measurePnlStep("getContractMap", () => getContractMap(processIds, normalizedFilters.period)),
+    measurePnlStep("getWorkforceMap", () => getWorkforceMap(processIds, start, end)),
+    measurePnlStep("getMonthlyPlanMap", () => getMonthlyPlanMap(processIds, normalizedFilters.period)),
+    measurePnlStep("getActiveHeadcountMap", () => getActiveHeadcountMap(processIds, end)),
+    measurePnlStep("getRevenueDailyMap", () => getRevenueDailyMap(processIds, start, end)),
+    measurePnlStep("getInvoiceMap", () => getInvoiceMap(processIds, start, end)),
+    measurePnlStep("getPayrollMap", () => getPayrollMap(processIds, normalizedFilters.period, end)),
+    measurePnlStep("getExpenseMap", () => getExpenseMap(processIds, start, end)),
+    measurePnlStep("getVendorDirectCostMap", () => getVendorDirectCostMap(processIds, start, end)),
+    measurePnlStep("getApprovedAdjustmentMap", () => getApprovedAdjustmentMap(processIds, normalizedFilters.period)),
+  ]);
 
   const indirectAllocations = await measurePnlStep("getIndirectAllocationMap", () =>
     getIndirectAllocationMap(processes, activeHeadcount, start, end)
