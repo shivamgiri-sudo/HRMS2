@@ -827,15 +827,22 @@ export const cosecSyncService = {
           { unmappedCount: result.unmappedUsers.length, from, to, users: result.unmappedUsers.slice(0, 20) },
           "[COSEC Sync] Unmapped COSEC user IDs — attendance data dropped for these employees. Ensure employee_code is linked in mas_hrms."
         );
-        // Persist so ops team can query without reading log files
+        // Persist so ops team can query without reading log files.
+        // Column names were records_pulled/records_migrated — verified live,
+        // the real integration_sync_run columns are records_read/
+        // records_written. This insert has been silently failing (swallowed
+        // by the .catch below) on every run since it was written — the table
+        // has zero rows for any status, for either key. Also: idx_isr_key_started
+        // is a plain index, not unique, so ON DUPLICATE KEY UPDATE never
+        // actually triggers here (harmless, just dead).
         await db.execute(
           `INSERT INTO integration_sync_run
-             (integration_key, started_at, completed_at, status, records_pulled, records_migrated,
+             (integration_key, started_at, completed_at, status, records_read, records_written,
               records_failed, error_summary)
            VALUES ('cosec_unmapped', ?, NOW(), 'warning', ?, 0, ?, ?)
            ON DUPLICATE KEY UPDATE
              completed_at = NOW(),
-             records_pulled = VALUES(records_pulled),
+             records_read = VALUES(records_read),
              records_failed = VALUES(records_failed),
              error_summary = VALUES(error_summary)`,
           [
@@ -844,7 +851,9 @@ export const cosecSyncService = {
             result.unmappedUsers.length,
             `${result.unmappedUsers.length} unmapped COSEC user(s) for ${from}→${to}: ${result.unmappedUsers.slice(0, 5).map(u => u.cosecUserId).join(", ")}`,
           ]
-        ).catch(() => { /* non-critical — don't mask the sync result */ });
+        ).catch((err) => {
+          logger.warn({ err }, "[COSEC Sync] failed to persist unmapped-user sync_run row (non-critical, does not affect sync result)");
+        });
       }
 
       if (result.inactiveUsers.length > 0) {
@@ -853,6 +862,37 @@ export const cosecSyncService = {
           "[COSEC Sync] Inactive or resigned COSEC users are still generating punches."
         );
       }
+
+      // Record a status row under the key the monitoring reader actually
+      // checks. getCosecMonitoring (peopleos.service.ts) queries
+      // integration_sync_run WHERE integration_key = 'cosec' — but no code
+      // path ever wrote that key. Only 'cosec_unmapped' was written, and only
+      // when unmappedUsers was non-empty, so a fully clean sync (the common
+      // case) left the reader with zero rows and a permanent
+      // status: "unknown" / confidence 0, even while punches were flowing
+      // correctly (confirmed via /api/wfm/biometric-summary/adherence-summary
+      // showing real data for the same window). Write on every completed
+      // run — success or failure — independent of 'cosec_unmapped'.
+      const cosecStatus = !result.success ? "failed"
+        : (result.failed.length > 0 || result.unmappedUsers.length > 0 || result.inactiveUsers.length > 0) ? "warning"
+        : "success";
+      await db.execute(
+        `INSERT INTO integration_sync_run
+           (integration_key, started_at, completed_at, status, records_read, records_written, records_failed, error_summary)
+         VALUES ('cosec', ?, NOW(), ?, ?, ?, ?, ?)`,
+        [
+          new Date(runningSince),
+          cosecStatus,
+          result.pulledEvents,
+          result.migratedDays,
+          result.failed.length,
+          result.failed.length > 0
+            ? `${result.failed.length} failed punch group(s): ${result.failed.slice(0, 5).map((f) => f.error).join("; ")}`
+            : null,
+        ],
+      ).catch((err) => {
+        logger.warn({ err }, "[COSEC Sync] failed to persist 'cosec' sync_run status row (non-critical, does not affect sync result)");
+      });
 
       lastSyncResult = result;
       return result;
