@@ -19,7 +19,7 @@ export interface DailyOpsPulse {
   date: string;
   agents_scheduled: number;
   agents_logged_in: number;
-  login_adherence_pct: number;
+  login_adherence_pct: number | null;
   avg_calls_per_agent: number;
   total_calls: number;
   avg_aht_seconds: number;
@@ -108,7 +108,26 @@ export async function getDailyOpsPulse(targetDate?: string, branchIds?: string[]
   const totalCalls = Number(aprRow.total_calls ?? 0);
   const agentsLoggedIn = Number(aprRow.agents_logged_in ?? 0);
   const agentsScheduled = Number((attendRows as any[])[0]?.scheduled ?? agentsLoggedIn);
-  const loginAdherence = agentsScheduled > 0 ? parseFloat(((agentsLoggedIn / agentsScheduled) * 100).toFixed(1)) : 0;
+  // agentsScheduled is a same-day count from attendance_daily_record, which
+  // (documented extensively elsewhere in this codebase — see
+  // LATEST_COMPLETE_ATTENDANCE_DATE_SQL and its usages) is incomplete for
+  // "today": processing lags 1-2 days behind. agentsLoggedIn, by contrast,
+  // comes from apr, a genuinely real-time source. Comparing an incomplete
+  // same-day denominator against a complete same-day numerator produces
+  // impossible ratios — verified live on an ordinary (non-anomalous) day:
+  // 194 logged in against only 22 "scheduled" (881.8% adherence). Checked
+  // wfm_roster_assignment and wfm_slot_requirement as alternative same-day
+  // "scheduled" sources — both were empty for today too, so there is
+  // currently no reliable same-day denominator to substitute. Rather than
+  // report a number that is definitionally impossible (more agents logged
+  // in than scheduled), report adherence as unavailable — the same "never
+  // fabricate, report unavailable instead of a wrong number" doctrine
+  // already used elsewhere in this codebase (e.g. noAttendanceSource,
+  // zeroAttendanceRisk).
+  const scheduledDataReliable = agentsScheduled >= agentsLoggedIn;
+  const loginAdherence = scheduledDataReliable && agentsScheduled > 0
+    ? parseFloat(((agentsLoggedIn / agentsScheduled) * 100).toFixed(1))
+    : null;
   const avgCalls = agentsLoggedIn > 0 ? Math.round(totalCalls / agentsLoggedIn) : 0;
   const avgAht = Number(aprRow.avg_aht_seconds ?? 0);
   const avgShrinkage = parseFloat(String(aprRow.avg_shrinkage_pct ?? 0));
@@ -151,13 +170,13 @@ export async function getDailyOpsPulse(targetDate?: string, branchIds?: string[]
 
   // Build intervention flags
   const flags: InterventionFlag[] = [];
-  if (loginAdherence < T.loginCritical && agentsScheduled > 0) {
+  if (loginAdherence !== null && loginAdherence < T.loginCritical && agentsScheduled > 0) {
     flags.push({
       type: 'LOW_LOGIN_ADHERENCE', severity: 'critical',
       detail: `Login adherence at ${loginAdherence}% — ${agentsScheduled - agentsLoggedIn} agents scheduled but not logged in`,
       action: 'Floor check required — contact team leads immediately',
     });
-  } else if (loginAdherence < T.loginWarning && agentsScheduled > 0) {
+  } else if (loginAdherence !== null && loginAdherence < T.loginWarning && agentsScheduled > 0) {
     flags.push({
       type: 'LOW_LOGIN_ADHERENCE', severity: 'warning',
       detail: `Login adherence at ${loginAdherence}% — ${agentsScheduled - agentsLoggedIn} agents below expected`,
