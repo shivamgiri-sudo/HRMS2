@@ -23,7 +23,7 @@ import { payrollController as c } from "./payroll.controller.js";
 import { calculatePayrollRun, calculatePayrollRunScoped } from "./payrollCalculate.service.js";
 import { payrollGovernanceService } from "./payroll-governance.service.js";
 import { assertRunEditable } from "./payrollWindowGuard.js";
-import { isRunClosed } from "./run-status.js";
+import { isRunClosed, runRankSql } from "./run-status.js";
 import { payslipService } from "./payslip.service.js";
 import { taxDeclarationService } from "./taxDeclaration.service.js";
 import { payrollBranchReadinessService } from "./payroll-branch-readiness.service.js";
@@ -59,26 +59,6 @@ const UPLOADS_ROOT = path.resolve(process.cwd(), "uploads");
  *
  * @param alias table alias for `salary_prep_run`, or "" when the column is unqualified
  */
-function runRankSql(alias = ""): string {
-  const col = alias ? `${alias}.status` : "status";
-  // UPPER() because statuses are not stored in a consistent case. Production
-  // holds 'FINALIZED' (51 of 67 runs) alongside lowercase 'approved',
-  // 'processing' and 'draft'; a case-sensitive CASE dropped every FINALIZED run
-  // to the ELSE branch — the worst rank — so the most authoritative status was
-  // ranked below a partial 'approved' run. For 2026-03 that selected a 226-line
-  // run worth ₹19.7L over the real 1,140-line payroll worth ₹1.77Cr.
-  return `
-  CASE UPPER(${col})
-    WHEN 'FINALIZED'  THEN 1
-    WHEN 'DISBURSED'  THEN 2
-    WHEN 'LOCKED'     THEN 3
-    WHEN 'APPROVED'   THEN 4
-    WHEN 'COMPLETED'  THEN 5
-    WHEN 'PROCESSING' THEN 6
-    WHEN 'DRAFT'      THEN 7
-    ELSE 8
-  END`;
-}
 
 const router = Router();
 // eslint-disable-next-line @typescript-eslint/no-explicit-any

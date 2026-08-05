@@ -45,3 +45,37 @@ export function isRunClosed(status: unknown): boolean {
 
 /** SQL fragment for the same rule, for statements that filter in the database. */
 export const CLOSED_RUN_STATUSES_SQL = "'locked','disbursed','finalized'";
+
+/**
+ * Ordering that picks the canonical run when a month holds more than one.
+ *
+ * A month can legitimately hold several runs — a re-run, a correction, an
+ * abandoned draft, or two import batches — and exactly one of them is the answer
+ * to "what was this month's payroll". This ranks by how far a run progressed,
+ * most authoritative first; callers break ties with created_at DESC.
+ *
+ * UPPER() because statuses are not stored in a consistent case. Production holds
+ * 'FINALIZED' (51 of 67 runs) alongside lowercase 'approved', 'processing' and
+ * 'draft'; a case-sensitive CASE dropped every FINALIZED run to the ELSE branch —
+ * the worst rank — so the most authoritative status ranked below a partial
+ * 'approved' run. For 2026-03 that selected a 226-line run over the real
+ * 1,140-line payroll.
+ *
+ * Lives here rather than in any one route file so every report resolves a month
+ * to the same run. Duplicated copies of this ordering are how the endpoints
+ * drifted apart in the first place.
+ */
+export function runRankSql(alias = ""): string {
+  const col = alias ? `${alias}.status` : "status";
+  return `
+  CASE UPPER(${col})
+    WHEN 'FINALIZED'  THEN 1
+    WHEN 'DISBURSED'  THEN 2
+    WHEN 'LOCKED'     THEN 3
+    WHEN 'APPROVED'   THEN 4
+    WHEN 'COMPLETED'  THEN 5
+    WHEN 'PROCESSING' THEN 6
+    WHEN 'DRAFT'      THEN 7
+    ELSE 8
+  END`;
+}

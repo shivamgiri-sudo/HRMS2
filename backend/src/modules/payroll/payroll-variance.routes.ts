@@ -4,6 +4,7 @@ import { requireRole } from "../../middleware/requireRole.js";
 import { db } from "../../db/mysql.js";
 import type { Response } from "express";
 import type { RowDataPacket } from "mysql2";
+import { runRankSql } from "./run-status.js";
 
 export const payrollVarianceRouter = Router();
 const h = (fn: (req: any, res: any) => Promise<unknown>) =>
@@ -89,7 +90,13 @@ payrollVarianceRouter.get(
        LEFT JOIN branch_master b          ON b.id  = e.branch_id
        LEFT JOIN department_master d      ON d.id  = e.department_id
        LEFT JOIN designation_master dm    ON dm.id = e.designation_id
-       WHERE spr.run_month = ?`,
+       WHERE spr.id = (
+               SELECT r.id FROM salary_prep_run r
+                WHERE r.run_month = ?
+                  AND UPPER(r.status) NOT IN ('CANCELLED')
+                ORDER BY ${runRankSql("r")}, r.created_at DESC
+                LIMIT 1
+             )`,
       [month]
     );
 
@@ -122,7 +129,13 @@ payrollVarianceRouter.get(
        LEFT JOIN branch_master b  ON b.id   = e.branch_id
        LEFT JOIN department_master d   ON d.id  = e.department_id
        LEFT JOIN designation_master dm ON dm.id = e.designation_id
-       WHERE spr.run_month = ?`,
+       WHERE spr.id = (
+               SELECT r.id FROM salary_prep_run r
+                WHERE r.run_month = ?
+                  AND UPPER(r.status) NOT IN ('CANCELLED')
+                ORDER BY ${runRankSql("r")}, r.created_at DESC
+                LIMIT 1
+             )`,
       [prevMonth]
     );
 

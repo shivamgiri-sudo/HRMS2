@@ -10,6 +10,14 @@ import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 const source = readFileSync(resolve(__dirname, "../payroll.routes.ts"), "utf8");
+/**
+ * The ranking moved to run-status.ts so the variance report could share it rather
+ * than grow a second copy. That is the same "one definition, every caller" rule
+ * these tests already enforced — the definition simply no longer lives in a route
+ * file, which is what let a sibling report drift in the first place.
+ */
+const runStatusSource = readFileSync(resolve(__dirname, "../run-status.ts"), "utf8");
+const varianceSource = readFileSync(resolve(__dirname, "../payroll-variance.routes.ts"), "utf8");
 
 function block(marker: string, length = 1800): string {
   const index = source.indexOf(marker);
@@ -22,9 +30,15 @@ describe("payroll analytics run selection", () => {
     // Duplicated copies of this ordering are how the endpoints drifted apart.
     // One definition, reused by every caller — including the per-employee
     // payslip history, which must resolve a month to the same run.
-    const rankDefinitions = source.match(/WHEN 'DISBURSED'\s+THEN 2/g) ?? [];
-    expect(rankDefinitions).toHaveLength(1);
-    expect(source).toMatch(/function runRankSql/);
+    // Exactly one definition, and it is not in a route file.
+    expect(runStatusSource.match(/WHEN 'DISBURSED'\s+THEN 2/g) ?? []).toHaveLength(1);
+    expect(source.match(/WHEN 'DISBURSED'\s+THEN 2/g) ?? [], "payroll.routes.ts must import the ranking, not restate it").toHaveLength(0);
+    expect(varianceSource.match(/WHEN 'DISBURSED'\s+THEN 2/g) ?? [], "the variance report must import the ranking, not restate it").toHaveLength(0);
+
+    expect(runStatusSource).toMatch(/export function runRankSql/);
+    expect(source).toMatch(/import \{[^}]*runRankSql[^}]*\} from "\.\/run-status\.js"/);
+    expect(varianceSource).toMatch(/import \{ runRankSql \} from "\.\/run-status\.js"/);
+
     expect(source).toMatch(/const RUN_RANK_SQL = runRankSql\(\)/);
     expect(source).toMatch(/runRankSql\("spr"\)/);
   });
@@ -34,7 +48,9 @@ describe("payroll analytics run selection", () => {
     // A case-sensitive CASE sent every FINALIZED run to the ELSE branch, so for
     // 2026-03 the canonical pick was a 226-line partial worth ₹19.7L instead of
     // the real 1,140-line payroll worth ₹1.77Cr.
-    const rank = block("function runRankSql", 900);
+    const rankIdx = runStatusSource.indexOf("export function runRankSql");
+    expect(rankIdx, "runRankSql not found in run-status.ts").toBeGreaterThan(-1);
+    const rank = runStatusSource.slice(rankIdx, rankIdx + 900);
     expect(rank).toMatch(/CASE UPPER\(\$\{col\}\)/);
     expect(rank).toMatch(/WHEN 'FINALIZED'\s+THEN 1/);
     // Every arm must be upper-case, or it can never match UPPER(status).
