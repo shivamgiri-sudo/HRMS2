@@ -56,23 +56,47 @@ export interface GratuityResult {
   eligible: boolean;
   amount: number;
   years: number;
+  /**
+   * Why an ineligible result is ineligible. Without this a caller cannot tell
+   * "this person has not served long enough" from "nobody has configured
+   * gratuity", and the F&F screen reported the second as the first — telling a
+   * twenty-year employee they had completed 0 years.
+   */
+  reason?: "not_configured" | "no_joining_date" | "below_minimum_service";
 }
 
 /**
  * Calculate gratuity for an employee using the Payment of Gratuity Act formula:
- * amount = (lastBasicMonthly / gratuity_day_divisor) * gratuity_multiplier_days * completedYears
- * Eligibility: >= gratuity_min_months months of continuous service.
+ * amount = (lastBasicMonthly / divisor) * multiplier_days * completedYears
+ * Eligibility: >= minimum months of continuous service.
  * All parameters read from statutory_config — no hardcoded fallbacks.
- * Returns eligible=false if any required config key is missing (provisional guard).
+ *
+ * KEY NAMES. This read three keys that statutory_config has never held. Production
+ * seeds gratuity_divisor (26), gratuity_multiplier (15) and
+ * gratuity_min_service_months (60) — the names migration 028 created — while this
+ * asked for gratuity_day_divisor, gratuity_multiplier_days and gratuity_min_months.
+ * All three lookups missed, so the function returned "not eligible" for everyone,
+ * unconditionally, and an admin looking at the seeded rows in the statutory config
+ * screen would reasonably conclude gratuity was configured.
+ *
+ * Both spellings are accepted so this is correct whichever an environment holds,
+ * rather than trading one silent mismatch for another.
+ *
+ * AS-OF DATE. Tenure was measured to today. For a settlement that is prepared weeks
+ * after someone leaves, that credits service they did not work and overstates the
+ * payout. Callers settling an exit must pass the last working day; asOf defaults to
+ * today only for live projections, where today is the right answer.
  */
 export async function calculateGratuity(
   employeeId: string,
-  lastBasicMonthly: number
+  lastBasicMonthly: number,
+  asOf?: string | Date
 ): Promise<GratuityResult> {
   // Load statutory config parameters — no hardcoded defaults allowed
   const [cfgRows] = await db.execute<RowDataPacket[]>(
     `SELECT config_key, config_value FROM statutory_config
-     WHERE config_key IN ('gratuity_min_months','gratuity_day_divisor','gratuity_multiplier_days')
+     WHERE config_key IN ('gratuity_min_months','gratuity_day_divisor','gratuity_multiplier_days',
+                          'gratuity_min_service_months','gratuity_divisor','gratuity_multiplier')
        AND is_active = 1`,
     []
   );
@@ -80,12 +104,16 @@ export async function calculateGratuity(
   for (const row of cfgRows as Array<{ config_key: string; config_value: string }>) {
     const val = Number(row.config_value);
     if (!Number.isFinite(val) || val <= 0) continue;
-    cfg[row.config_key] = val;
+    cfg[String(row.config_key).toLowerCase()] = val;
   }
 
-  // All three keys must be present in statutory_config — otherwise return provisional block
-  if (cfg["gratuity_min_months"] === undefined || cfg["gratuity_day_divisor"] === undefined || cfg["gratuity_multiplier_days"] === undefined) {
-    return { eligible: false, amount: 0, years: 0 };
+  const minMonths  = cfg["gratuity_min_service_months"] ?? cfg["gratuity_min_months"];
+  const divisor    = cfg["gratuity_divisor"]            ?? cfg["gratuity_day_divisor"];
+  const multiplier = cfg["gratuity_multiplier"]         ?? cfg["gratuity_multiplier_days"];
+
+  // All three must be present — otherwise return a provisional block that says so.
+  if (minMonths === undefined || divisor === undefined || multiplier === undefined) {
+    return { eligible: false, amount: 0, years: 0, reason: "not_configured" };
   }
 
   const [rows] = await db.execute<RowDataPacket[]>(
@@ -94,21 +122,21 @@ export async function calculateGratuity(
   );
   const emp = (rows as Array<{ date_of_joining: string }>)[0];
   if (!emp?.date_of_joining) {
-    return { eligible: false, amount: 0, years: 0 };
+    return { eligible: false, amount: 0, years: 0, reason: "no_joining_date" };
   }
 
   const joinDate = new Date(emp.date_of_joining);
-  const today = new Date();
-  const diffMs = today.getTime() - joinDate.getTime();
+  const asOfDate = asOf ? new Date(asOf) : new Date();
+  const diffMs = asOfDate.getTime() - joinDate.getTime();
   const totalMonths = Math.floor(diffMs / (1000 * 60 * 60 * 24 * 30.4375));
   const completedYears = Math.floor(totalMonths / 12);
 
-  if (totalMonths < cfg["gratuity_min_months"]) {
-    return { eligible: false, amount: 0, years: completedYears };
+  if (totalMonths < minMonths) {
+    return { eligible: false, amount: 0, years: completedYears, reason: "below_minimum_service" };
   }
 
   const amount = Math.round(
-    ((lastBasicMonthly / cfg["gratuity_day_divisor"]) * cfg["gratuity_multiplier_days"] * completedYears) * 100
+    ((lastBasicMonthly / divisor) * multiplier * completedYears) * 100
   ) / 100;
   return { eligible: true, amount, years: completedYears };
 }

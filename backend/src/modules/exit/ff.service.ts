@@ -294,7 +294,15 @@ export const ffService = {
     };
   },
 
-  async calculateGratuityFromEmployee(employeeId: string): Promise<GratuityCalculation> {
+  /**
+   * @param lastWorkingDay Settlement date to measure tenure to. Omit only for a live
+   *   projection; for an exit, leaving it out credits service the employee did not
+   *   work between their last day and whenever the settlement is prepared.
+   */
+  async calculateGratuityFromEmployee(
+    employeeId: string,
+    lastWorkingDay?: string | Date
+  ): Promise<GratuityCalculation> {
     const [salRows] = await db.execute<RowDataPacket[]>(
       `SELECT esa.ctc_annual, ss.basic_pct
          FROM employee_salary_assignment esa
@@ -314,9 +322,25 @@ export const ffService = {
     }
 
     const lastBasicMonthly = (sal.ctc_annual / 12) * ((sal.basic_pct ?? 40) / 100);
-    const result = await calculateGratuity(employeeId, lastBasicMonthly);
+    const result = await calculateGratuity(employeeId, lastBasicMonthly, lastWorkingDay);
 
     if (!result.eligible) {
+      // Reporting a configuration gap as "minimum service not completed" told a
+      // twenty-year employee they had served 0 years. Each cause now says what it is.
+      if (result.reason === "not_configured") {
+        return {
+          amount: 0,
+          status: "pending_configuration",
+          note: "Gratuity is not configured. statutory_config needs the service minimum, day divisor and days-per-year before gratuity can be calculated.",
+        };
+      }
+      if (result.reason === "no_joining_date") {
+        return {
+          amount: 0,
+          status: "pending_configuration",
+          note: "Employee has no date of joining recorded, so tenure cannot be established.",
+        };
+      }
       return {
         amount: 0,
         status: "not_eligible",
@@ -327,7 +351,7 @@ export const ffService = {
     return {
       amount: result.amount,
       status: "draft",
-      note: `Draft calculation: (${lastBasicMonthly.toFixed(2)} / 26) × 15 × ${result.years} years. Requires verification before F&F approval.`,
+      note: `Draft calculation over ${result.years} completed years on a last basic of ${lastBasicMonthly.toFixed(2)}. Requires verification before F&F approval.`,
     };
   },
 };
