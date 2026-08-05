@@ -169,6 +169,17 @@ console.log('\nCREDIT NOTES — current FY (subtracted from revenue)');
 compare('tbl_credit_note / credit_note_snapshot',
   await one(bill, "SELECT COUNT(*) row_n, SUM(COALESCE(total,0)) amt FROM tbl_credit_note WHERE finance_year >= '2026-27'"),
   await one(hrms, "SELECT COUNT(*) row_n, SUM(COALESCE(total_amt,0)) amt FROM billing_credit_note_snapshot WHERE finance_year >= '2026-27'"));
+compare('  its lines / credit_note_line_snapshot',
+  await one(bill, "SELECT COUNT(*) row_n, SUM(COALESCE(amount,0)) amt FROM credit_particulars WHERE fin_year >= '2026-27'"),
+  await one(hrms, "SELECT COUNT(*) row_n, SUM(COALESCE(amount,0)) amt FROM billing_credit_note_line_snapshot WHERE finance_year >= '2026-27'"));
+
+console.log('\nPROVISION DRAWDOWN — mirrored for fidelity, deliberately NOT counted as P&L cost');
+// This proves the copy is faithful. It does not license using it: provision_master already
+// supplies the cost, and adding the drawdown on top would double-count Rs 1,292.80 lakh.
+// See the note above syncProvisionDeductions in sync-db-bill-snapshot.mjs.
+compare('provision_master_month_deductions',
+  await one(bill, "SELECT COUNT(*) row_n, SUM(COALESCE(ProvisionBalanceUsed,0)) amt FROM provision_master_month_deductions WHERE Provision_Finance_Year >= '2026-27'"),
+  await one(hrms, "SELECT COUNT(*) row_n, SUM(COALESCE(balance_used,0)) amt FROM billing_provision_deduction_snapshot WHERE finance_year >= '2026-27'"));
 
 console.log('\nBUDGET ADJUSTMENTS — rejects and sanctioned top-ups');
 compare('rejected budgets',
@@ -203,7 +214,8 @@ console.log('\nCOMPLETENESS — is anything financial in db_bill still unmirrore
 const MIRRORED_SOURCES = new Set(['tbl_invoice','inv_particulars','expense_master','expense_particular',
   'expense_entry_master','expense_entry_particular','client_master','provision_master','cost_master',
   'tbl_bgt_expenseheadingmaster','tbl_bgt_expensesubheadingmaster','tbl_credit_note',
-  'expense_master_reject','expense_reopen_master']);
+  'expense_master_reject','expense_reopen_master',
+  'credit_particulars','provision_master_month_deductions']);
 // Reviewed 2026-08-06 and deliberately out of scope for the P&L. Each is a real live table;
 // leaving them here is a decision on record, not an oversight.
 const OUT_OF_SCOPE = new Map([
@@ -218,7 +230,82 @@ const OUT_OF_SCOPE = new Map([
   ['tbl_vendormaster', 'vendor master — GRN carries the vendor name it needs'],
   ['po_number', 'PO references, no amount'],
   ['expense_master2', 'legacy duplicate of expense_master'],
-  ['tbl_credit_note_particulars', 'no such table today; placeholder if lines are ever added'],
+
+  // --- Triaged 2026-08-06, second pass. Each reason below is a measurement, not a guess. ---
+
+  // Shadow copy, not extra budget. For FY2026-27 it holds 236 rows / Rs 114.52 L, every one of
+  // its 86 ExpenseIds already exists in expense_master, and 280 (ExpenseId, HeadId, SubHeadId,
+  // Amount) tuples match expense_particular exactly. Mirroring it would double-count Rs 114.52 L
+  // of budget. Same call as expense_master2 above, for the same reason.
+  ['expense_particular2', 'shadow copy of expense_particular; mirroring double-counts Rs 114.52 L'],
+
+  // Dead. Last write 2021-05-26, newest FinanceYear 2021-22. Cost transfers between cost centres
+  // WOULD move P&L cost if the feature were live — it is not, and has not been for five years.
+  // If rows ever appear with a current FinanceYear, this decision must be revisited.
+  ['cost_center_cost_transfer_master', 'cost transfers dead since 2021-05; newest FinanceYear 2021-22'],
+  ['cost_center_cost_transfer_particular', 'line detail of the above; same dead-since-2021 evidence'],
+
+  // Collections/AR, not P&L — same reasoning as tbl_payment. Columns are pay_amount, bank_name,
+  // deposit_bank, RTGS pay_no: money received, not cost incurred.
+  ['other_deductions_bill', 'collections/AR — payment receipts, not P&L cost'],
+
+  // Vendor -> head/sub-head mapping. Four columns, all ids, no amount of any kind.
+  ['vendor_expense_relation', 'vendor-to-head mapping, carries no amount'],
+
+  ['expense_entry_particular_approve', 'approval audit trail; the state it sets is on expense_entry_particular'],
+  ['expense_entry_particular_delete', 'delete log, mirrors the header-level table already triaged'],
+
+  // Employee income tax, not branch P&L. Live (imported 2026-07-06) but the grain is
+  // EmpCode + TaxMonth + IncomTax — payroll data, and PII at that. It belongs to the payroll
+  // module if anywhere, and must not be pulled into a finance page.
+  ['IncomtaxMaster', 'per-employee income tax — payroll/PII, not branch P&L'],
+  ['IncomtaxMasterHistory', 'history of the above'],
+
+  // PO references with no money on them. poAmount and poAmountBalance sum to zero across all
+  // 1,112 rows, exactly like po_number above. (Noted in passing: periodFrom/periodTo are
+  // inverted on current rows — a source data-quality issue, not a P&L one.)
+  ['po_number_particulars', 'PO line references; poAmount/poAmountBalance are empty on every row'],
+
+  // Not a shadow of expense_particular — 0 identical tuples — but effectively dead: 10 rows
+  // against a single budget worth Rs 0.86 L in FY2026-27, the rest 2018-21. Too small to move
+  // any figure on the page. REVISIT if the row count for a current FinanceYear ever grows.
+  ['expense_particular3', 'near-dead: 1 budget / Rs 0.86 L in FY2026-27; no overlap with expense_particular'],
+
+  // --- Dead. Last write shown against each; none has a current FinanceYear. ---
+  ['billing_consume_daily', 'telecom consumption, dead since 2022-05'],
+  ['billing_consume_daily_history', 'dead since 2022-02'],
+  ['billing_ledger', 'client ledger, newest fin_year 2022'],
+  ['billing_opening_balance', 'dead since 2022-05'],
+  ['billing_opening_balance_history', 'dead since 2022-04'],
+  ['provision_particulars', 'superseded provision lines, dead since 2020-03'],
+  ['expense_entry_master2', 'dead 2017 duplicate of expense_entry_master'],
+  ['expense_entry_particular2', 'dead 2017 duplicate of expense_entry_particular'],
+  ['expense_entry_branch_particular', 'dead, newest FinanceYear 2017-18'],
+  ['expense_years', 'FY list, dead since 2021-22'],
+  ['expense_years2', 'FY list, dead since 2021-22'],
+  ['tbl_expensemaster', 'pre-2017 budget system, replaced by expense_master'],
+  ['tbl_tempexpensemaster', 'staging table for the pre-2017 budget system'],
+  ['tbl_expensedetails', 'pre-2017 budget lines, dead 2017-03'],
+  ['tbl_expensedetailsnewentry', 'pre-2017 budget lines, dead 2017-03'],
+  ['tbl_expenseunitmaster', 'unit master, dead since 2017-08'],
+  ['tbl_bgt_expenseunittypemaster', 'unit-type master, dead since 2017-01'],
+  ['tbl_bgt_expensesubheadingtypemaster', '6-row type master, no amounts'],
+  ['tbl_tally_row_invoice_data', 'Tally export staging, dead since 2022-04'],
+  ['tbl_service_tax', 'pre-GST service tax rates'],
+  ['tm_tbl_invoice', '2-row remnant'],
+  ['cost_master_1', 'superseded cost_master copy, dead 2019-03'],
+  ['cost_master2', 'superseded cost_master copy, dead 2016-11'],
+  ['cost_master3', 'superseded cost_master copy, dead 2017-04'],
+  ['cost_master_disable', 'disabled-cost-centre log, dead 2017-08'],
+  ['bill_no_master', 'bill-number sequence, no amount'],
+
+  // --- Configuration and routing, no money of any kind. ---
+  ['AddCostcenter', 'cost-centre creation requests, no amount'],
+  ['cost_center_email', 'notification recipients'],
+  ['add_cost_center_email', 'notification recipients'],
+  ['Automail_Grnpayment_Master', 'automated-mail configuration'],
+  ['dashboard_cost_parts', '11-row dashboard display config'],
+  ['vendor_master', 'vendor master; GRN carries the vendor name it needs'],
 ]);
 const FINANCE_HINT = /invoice|bill|expense|credit|payment|provision|cost|budget|vendor|po_|tax|debit/i;
 
@@ -238,21 +325,23 @@ for (const row of active) {
 }
 checks++;
 if (suspects.length) {
-  // WARN, not FAIL, deliberately — and only while the initial triage backlog is being worked
-  // through. 45 tables were outstanding when this check was written on 2026-08-06, and a job that
-  // exits red every night from the first day is one people learn to ignore, which is the same
-  // failure mode as a check that always passes. The money reconciliations above stay the hard
-  // pass/fail signal because they are actionable today.
+  // A HARD FAILURE, and it should stay one. The 45-table backlog this check found on 2026-08-06
+  // was triaged the same day, so a healthy run reaches this branch with nothing in it. Anything
+  // listed here now is genuinely NEW upstream — precisely the event that put Rs 53.91 lakh of
+  // credit notes outside the mirror with nothing on the page to suggest a gap.
   //
-  // TURN THIS INTO A HARD FAILURE once the list below is empty. At that point a newly-appearing
-  // finance table in db_bill SHOULD break the nightly run, because that is precisely the event
-  // that put Rs 53.91 lakh of credit notes outside the mirror unnoticed.
-  console.log(`  WARN  ${suspects.length} finance-shaped db_bill table(s) neither mirrored nor triaged.`);
-  console.log('        Not failing the run yet — see the note in this file. Largest first:');
+  // If it fires, do NOT silence it by adding the table to OUT_OF_SCOPE unread. Measure it the way
+  // the other 45 were measured: row count, newest FinanceYear or date, whether its amount columns
+  // are non-zero, whether its ids already exist in a table we mirror. Two of those 45 turned out
+  // to matter and one of them (credit_particulars) had been dismissed on a guessed name — a
+  // name-based judgement would have missed it a second time.
+  failures++;
+  console.log(`  FAIL  ${suspects.length} finance-shaped db_bill table(s) neither mirrored nor triaged:`);
   for (const s of suspects.sort((a, b) => b.n - a.n).slice(0, 12)) {
     console.log(`          ${String(s.n).padStart(8)} rows  ${s.t}`);
   }
-  console.log('        Each needs checking, then mirroring or adding to OUT_OF_SCOPE with a reason.');
+  if (suspects.length > 12) console.log(`          ... and ${suspects.length - 12} more`);
+  console.log('        Measure each, then mirror it or add it to OUT_OF_SCOPE with the evidence.');
 } else {
   console.log(`  OK    every populated finance-shaped table is mirrored or triaged`
     + ` (${MIRRORED_SOURCES.size} mirrored, ${OUT_OF_SCOPE.size} out of scope)`);

@@ -583,6 +583,109 @@ async function syncCreditNotes(hrms, bill) {
     + `Rs ${(value / 100000).toFixed(2)} lakh to be SUBTRACTED from invoiced revenue)`);
 }
 
+/**
+ * Sync 12 — credit note LINES, from db_bill.credit_particulars.
+ *
+ * Migration 1080 recorded the line table as "no such table today". That was a name assumed from
+ * the header (tbl_credit_note -> tbl_credit_note_particulars) instead of looked up: the table is
+ * real, is called credit_particulars, and was last written 2026-07-16.
+ *
+ * It reconciles to the header exactly — 17 rows / Rs 53.91 lakh for FY2026-27 against 17 headers
+ * / Rs 53.91 lakh, and all 17 join tbl_credit_note.id through initial_id. So this ADDS NO MONEY
+ * and changes no P&L figure; it adds the per-line grain the revenue side already has via
+ * inv_particulars, so a credit can be explained the way an invoice line can.
+ */
+async function syncCreditNoteLines(hrms, bill) {
+  log('Sync 12: populating billing_credit_note_line_snapshot from db_bill.credit_particulars ...');
+  const now = new Date();
+  const [src] = await bill.query(
+    `SELECT id, initial_id, cost_center_id, cost_center, branch_name, username,
+            fin_year, month_for, particulars, sub_category, rate, qty, amount, createdate
+       FROM credit_particulars WHERE fin_year >= ? ORDER BY id`, [FROM_FINANCE_YEAR]);
+  log(`  db_bill.credit_particulars rows from ${FROM_FINANCE_YEAR}: ${src.length}`);
+
+  const rows = src.map(r => ({
+    bill_source_id: r.id,
+    credit_note_source_id: r.initial_id ?? null,
+    cost_centre_source_id: r.cost_center_id ?? null,
+    cost_centre_code: trim(r.cost_center),
+    branch_name: trim(r.branch_name),
+    finance_year: trim(r.fin_year),
+    month_label: trim(r.month_for),
+    // month_for is a bare month here ('Jul'), not the 'Jul-26' dialect the header uses.
+    // toPeriodCode resolves the year from finance_year, the same way inv_particulars does.
+    period_code: toPeriodCode(r.fin_year, r.month_for),
+    particulars: trim(r.particulars),
+    sub_category: trim(r.sub_category),
+    rate: safeDec(r.rate),
+    qty: safeDec(r.qty),
+    amount: safeDec(r.amount),
+    raised_by: trim(r.username),
+    source_created_at: safeDateTime(r.createdate),
+    synced_at: now,
+  }));
+  const cols = ['bill_source_id','credit_note_source_id','cost_centre_source_id','cost_centre_code',
+    'branch_name','finance_year','month_label','period_code','particulars','sub_category',
+    'rate','qty','amount','raised_by','source_created_at','synced_at'];
+  const n = await insertBatch(hrms, 'billing_credit_note_line_snapshot', rows, cols, cols.slice(1));
+  await pruneOrphans(hrms, 'billing_credit_note_line_snapshot', rows.map(r => r.bill_source_id),
+    'finance_year >= ?', [FROM_FINANCE_YEAR]);
+  const value = rows.reduce((s, r) => s + Number(r.amount || 0), 0);
+  log(`  billing_credit_note_line_snapshot: ${n} rows, Rs ${(value / 100000).toFixed(2)} lakh`);
+}
+
+/**
+ * Sync 13 — provision drawdown, from db_bill.provision_master_month_deductions.
+ *
+ * Live: 10,482 rows, newest created_at 2026-08-05. FY2026-27 carries 385 rows worth
+ * Rs 1,292.80 lakh of ProvisionBalanceUsed against the Rs 17,163.40 lakh of provision_master
+ * already mirrored.
+ *
+ * MIRRORED FOR FIDELITY, NOT WIRED INTO P&L COST. provision_master is the provision RAISED, which
+ * the P&L already counts as cost. This table records the balance CONSUMED when an invoice lands.
+ * Feeding it into cost without first settling that relationship would double-count Rs 1,292.80
+ * lakh — a larger error than any this sync has fixed. Mirroring it means the question can be
+ * answered from mas_hrms against real rows instead of guessed at; changing a reader is a separate
+ * decision that needs finance to say whether cost is the provision raised, consumed, or both.
+ */
+async function syncProvisionDeductions(hrms, bill) {
+  log('Sync 13: populating billing_provision_deduction_snapshot ...');
+  const now = new Date();
+  const [src] = await bill.query(
+    `SELECT ProvisionMonthId, ProvisionId, Provision_Finance_Year, Provision_Finance_Month,
+            Provision_Branch_Name, Provision_Cost_Center, Provision_UsedBy_Month,
+            ProvisionBalanceUsed, InvoiceId, deduction_status, created_at
+       FROM provision_master_month_deductions
+      WHERE Provision_Finance_Year >= ? ORDER BY ProvisionMonthId`, [FROM_FINANCE_YEAR]);
+  log(`  db_bill.provision_master_month_deductions rows from ${FROM_FINANCE_YEAR}: ${src.length}`);
+
+  const rows = src.map(r => ({
+    bill_source_id: r.ProvisionMonthId,
+    provision_source_id: r.ProvisionId ?? null,
+    finance_year: trim(r.Provision_Finance_Year),
+    finance_month: trim(r.Provision_Finance_Month),
+    used_by_month: trim(r.Provision_UsedBy_Month),
+    // Provision_Finance_Month speaks the 'Aug-26' dialect, like tbl_credit_note.month.
+    period_code: toPeriodCode(r.Provision_Finance_Year, r.Provision_Finance_Month),
+    branch_name: trim(r.Provision_Branch_Name),
+    cost_centre_code: trim(r.Provision_Cost_Center),
+    balance_used: safeDec(r.ProvisionBalanceUsed),
+    invoice_source_id: r.InvoiceId ?? null,
+    deduction_status: Number(r.deduction_status) === 1 ? 1 : 0,
+    source_created_at: safeDateTime(r.created_at),
+    synced_at: now,
+  }));
+  const cols = ['bill_source_id','provision_source_id','finance_year','finance_month',
+    'used_by_month','period_code','branch_name','cost_centre_code','balance_used',
+    'invoice_source_id','deduction_status','source_created_at','synced_at'];
+  const n = await insertBatch(hrms, 'billing_provision_deduction_snapshot', rows, cols, cols.slice(1));
+  await pruneOrphans(hrms, 'billing_provision_deduction_snapshot', rows.map(r => r.bill_source_id),
+    'finance_year >= ?', [FROM_FINANCE_YEAR]);
+  const value = rows.reduce((s, r) => s + Number(r.balance_used || 0), 0);
+  log(`  billing_provision_deduction_snapshot: ${n} rows, Rs ${(value / 100000).toFixed(2)} lakh `
+    + `of provision drawdown (NOT added to P&L cost — see the note above this function)`);
+}
+
 async function syncInvoices(hrms, bill) {
   log('Sync 4: populating billing_invoice_snapshot from db_bill.tbl_invoice ...');
 
@@ -1019,6 +1122,8 @@ async function main() {
     if (only === 'all' || only === 'budget_lines')  await syncBudgetLines(hrms, bill);
     if (only === 'all' || only === 'grn_lines')     await syncGrnLines(hrms, bill);
     if (only === 'all' || only === 'credit_notes')  await syncCreditNotes(hrms, bill);
+    if (only === 'all' || only === 'credit_lines')  await syncCreditNoteLines(hrms, bill);
+    if (only === 'all' || only === 'prov_deduct')   await syncProvisionDeductions(hrms, bill);
 
     log('Done.');
   } finally {
