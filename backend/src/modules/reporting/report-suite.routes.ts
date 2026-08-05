@@ -803,7 +803,7 @@ reportSuiteRouter.get("/:code", reportScopeMiddleware, reportCatalogAccessMiddle
                JOIN employees e ON e.id = sir.employee_id
                LEFT JOIN branch_master b ON b.id = e.branch_id
                LEFT JOIN process_master p ON p.id = e.process_id
-              WHERE ${clauses.join(" AND ")}
+              WHERE ${clauses.length ? clauses.join(" AND ") : "1=1"}
               ORDER BY sir.created_at DESC`;
       break;
     case "cosec-unmapped":
@@ -1400,10 +1400,18 @@ reportSuiteRouter.get("/:code", reportScopeMiddleware, reportCatalogAccessMiddle
     }
 
     case "salary-advance-register":
+      // Columns as originally written (advance_amount, recovery_start_month,
+      // total_recovered, outstanding_amount, remarks) don't exist on
+      // salary_advance_log — verified live, real columns are amount,
+      // recovery_months, recovered_amount, notes, and no stored outstanding
+      // balance (computed here). Never caught because this report was
+      // unreachable (missing from REPORT_CATALOG) until now.
       addScopedEmployeeFilters(req, clauses, params);
       sql = `SELECT e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-                    sal.advance_date, sal.advance_amount, sal.recovery_start_month,
-                    sal.total_recovered, sal.outstanding_amount, sal.status, sal.remarks
+                    sal.advance_date, sal.amount AS advance_amount, sal.recovery_months,
+                    sal.recovered_amount AS total_recovered,
+                    (sal.amount - COALESCE(sal.recovered_amount, 0)) AS outstanding_amount,
+                    sal.status, sal.notes AS remarks
                FROM salary_advance_log sal
                JOIN employees e ON e.id = sal.employee_id
               WHERE ${clauses.length ? clauses.join(" AND ") : "1=1"}
@@ -1548,11 +1556,15 @@ reportSuiteRouter.get("/:code", reportScopeMiddleware, reportCatalogAccessMiddle
     case "pf-monthly-summary": {
       const from = dateParam(req.query.from, `${new Date().getFullYear()}-01-01`);
       const to = dateParam(req.query.to, new Date().toISOString().slice(0, 10));
+      // spl.eps_employer doesn't exist on salary_prep_line — verified live.
+      // pf-esic-salary-register (elsewhere in this file) already derives EPS
+      // the same way payroll actually computes it: 8.33% of employer PF,
+      // capped monthly. Reused here instead of a non-existent stored column.
       sql = `SELECT spr.run_month,
                     COUNT(DISTINCT spl.employee_id) AS total_employees,
                     SUM(spl.pf_employee) AS total_ee_pf,
                     SUM(spl.pf_employer) AS total_er_pf,
-                    SUM(COALESCE(spl.eps_employer,0)) AS total_eps,
+                    SUM(ROUND(COALESCE(spl.pf_employer,0) * 8.33/12, 0)) AS total_eps,
                     SUM(spl.pf_employee) + SUM(spl.pf_employer) AS total_pf_contribution
                FROM salary_prep_line spl
                JOIN salary_prep_run spr ON spr.id = spl.run_id
@@ -1710,13 +1722,16 @@ reportSuiteRouter.get("/:code", reportScopeMiddleware, reportCatalogAccessMiddle
     case "ats-pipeline-summary": {
       const from = dateParam(req.query.from, `${new Date().getFullYear()}-01-01`);
       const to = dateParam(req.query.to, new Date().toISOString().slice(0, 10));
-      sql = `SELECT stage, COUNT(*) AS candidate_count,
+      // ats_candidate has no "stage" column — verified live, the real column
+      // is current_stage. Never caught because this report was unreachable
+      // (missing from REPORT_CATALOG) until now.
+      sql = `SELECT current_stage AS stage, COUNT(*) AS candidate_count,
                     SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) AS active_count,
                     SUM(CASE WHEN status IN ('withdrawn','rejected','no_show') THEN 1 ELSE 0 END) AS dropped_count
                FROM ats_candidate
               WHERE created_at BETWEEN ? AND ?
-              GROUP BY stage
-              ORDER BY FIELD(stage,'applied','screening','shortlisted','interview_1','interview_2','interview_3','offer','offered','onboarded','joined') , stage`;
+              GROUP BY current_stage
+              ORDER BY FIELD(current_stage,'applied','screening','shortlisted','interview_1','interview_2','interview_3','offer','offered','onboarded','joined') , current_stage`;
       params.push(from, to);
       break;
     }
@@ -2161,8 +2176,12 @@ reportSuiteRouter.get("/:code", reportScopeMiddleware, reportCatalogAccessMiddle
 
     // ─── A10: Assets & Documents ──────────────────────────────────────────────
     case "asset-inventory-report":
-      sql = `SELECT am.asset_code, am.asset_name, am.asset_category, am.asset_status,
-                    am.purchase_cost, am.purchase_date, am.asset_condition,
+      // asset_status and asset_condition don't exist on asset_master —
+      // verified live; the real status column is just "status", and there is
+      // no condition column at all. Never caught because this report was
+      // unreachable (missing from REPORT_CATALOG) until now.
+      sql = `SELECT am.asset_code, am.asset_name, am.asset_category, am.status AS asset_status,
+                    am.purchase_cost, am.purchase_date,
                     COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS assigned_to,
                     e.employee_code AS assigned_employee_code,
                     aa.assigned_date
@@ -2513,17 +2532,21 @@ reportSuiteRouter.get("/:code", reportScopeMiddleware, reportCatalogAccessMiddle
       const prsParams: unknown[] = [month];
       if (req.query.branchId) { prsClauses.push("spr.branch_id = ?"); prsParams.push(String(req.query.branchId)); }
       if (req.query.processId) { prsClauses.push("spr.branch_id IN (SELECT branch_id FROM process_master WHERE id = ?)"); prsParams.push(String(req.query.processId)); }
+      // spr.finalized_at doesn't exist — verified live. salary_prep_run has no
+      // "finalized" timestamp column at all; disbursed_at is the closest real
+      // analog (the run reaching its final, paid state). Never caught because
+      // this report was unreachable (missing from REPORT_CATALOG) until now.
       sql = `SELECT spr.run_month AS payroll_month, b.branch_name,
                     spr.status AS run_status,
                     COUNT(spl.id) AS total_lines,
-                    spr.finalized_at,
+                    spr.disbursed_at AS finalized_at,
                     COALESCE(NULLIF(fin.full_name,''), CONCAT(fin.first_name,' ',COALESCE(fin.last_name,''))) AS finalized_by
                FROM salary_prep_run spr
                LEFT JOIN branch_master b ON b.id = spr.branch_id
                LEFT JOIN salary_prep_line spl ON spl.run_id = spr.id
                LEFT JOIN employees fin ON fin.id = spr.approved_by
               WHERE ${prsClauses.join(" AND ")}
-              GROUP BY spr.id, spr.run_month, b.branch_name, spr.status, spr.finalized_at, fin.full_name, fin.first_name, fin.last_name
+              GROUP BY spr.id, spr.run_month, b.branch_name, spr.status, spr.disbursed_at, fin.full_name, fin.first_name, fin.last_name
               ORDER BY spr.run_month DESC, b.branch_name`;
       params.length = 0; params.push(...prsParams);
       break;
@@ -3495,16 +3518,19 @@ reportSuiteRouter.get("/:code", reportScopeMiddleware, reportCatalogAccessMiddle
       clauses.push("adr.record_date BETWEEN ? AND ?");
       params.push(firstDay, lastDay);
 
+      // department/designation/cost_center fallback columns don't exist on
+      // employees — verified live (same bug as salary-sheet-export /
+      // left-employee-export / new-join-export, fixed the same way).
       const attSql = `
         SELECT
           e.id AS employee_id,
           e.employee_code,
           COALESCE(e.biometric_code, '') AS bio_code,
           CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')) AS emp_name,
-          COALESCE(dept.dept_name, e.department, '') AS department,
-          COALESCE(desig.designation_name, e.designation, '') AS designation,
+          COALESCE(dept.dept_name, '') AS department,
+          COALESCE(desig.designation_name, '') AS designation,
           COALESCE(e.profile_type, '') AS profile,
-          COALESCE(cc.cost_centre_name, e.cost_center, '') AS cost_center,
+          COALESCE(cc.cost_centre_name, '') AS cost_center,
           COALESCE(b.branch_name, '') AS emp_location,
           CASE WHEN COALESCE(e.is_billable, 1) = 1 THEN 'Yes' ELSE 'No' END AS billable,
           DAY(adr.record_date) AS day_num,
@@ -3647,14 +3673,20 @@ reportSuiteRouter.get("/:code", reportScopeMiddleware, reportCatalogAccessMiddle
       clauses.push("COALESCE(e.date_of_leaving, e.date_of_exit) BETWEEN ? AND ?");
       params.push(from, to);
 
+      // department/designation/cost_center/uan fallback columns below
+      // (e.department, e.designation, e.cost_center, e.uan) and
+      // employee_salary_snapshot.snapshot_month don't exist — verified live.
+      // Master-table joins are the only real source for the first three; the
+      // snapshot table's real column is snapshot_date. Never caught because
+      // this report was unreachable (missing from REPORT_CATALOG) until now.
       sql = `
         SELECT
           e.employee_code AS emp_code,
           CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')) AS emp_name,
-          COALESCE(dept.dept_name, e.department, '') AS department,
-          COALESCE(desig.designation_name, e.designation, '') AS designation,
+          COALESCE(dept.dept_name, '') AS department,
+          COALESCE(desig.designation_name, '') AS designation,
           COALESCE(b.branch_name, '') AS branch_name,
-          COALESCE(cc.cost_centre_name, e.cost_center, '') AS cost_center,
+          COALESCE(cc.cost_centre_name, '') AS cost_center,
           COALESCE(e.mobile, '') AS mobile_no,
           DATE_FORMAT(e.date_of_joining, '%Y-%m-%d') AS doj,
           DATE_FORMAT(COALESCE(e.date_of_leaving, e.date_of_exit), '%Y-%m-%d') AS left_date,
@@ -3674,8 +3706,8 @@ reportSuiteRouter.get("/:code", reportScopeMiddleware, reportCatalogAccessMiddle
         LEFT JOIN (
           SELECT employee_id, net_in_hand
           FROM employee_salary_snapshot
-          WHERE (employee_id, snapshot_month) IN (
-            SELECT employee_id, MAX(snapshot_month) FROM employee_salary_snapshot GROUP BY employee_id
+          WHERE (employee_id, snapshot_date) IN (
+            SELECT employee_id, MAX(snapshot_date) FROM employee_salary_snapshot GROUP BY employee_id
           )
         ) ess ON ess.employee_id = e.id
         LEFT JOIN employee_salary_assignment esa ON esa.employee_id = e.id AND esa.active_status = 1
@@ -3693,14 +3725,16 @@ reportSuiteRouter.get("/:code", reportScopeMiddleware, reportCatalogAccessMiddle
       clauses.push("e.date_of_joining BETWEEN ? AND ?");
       params.push(from, to);
 
+      // Same fallback-column bug as left-employee-export above (department/
+      // designation/cost_center don't exist on employees) — fixed the same way.
       sql = `
         SELECT
           e.employee_code AS emp_code,
           CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')) AS emp_name,
           COALESCE(b.branch_name, '') AS branch_name,
-          COALESCE(cc.cost_centre_name, e.cost_center, '') AS cost_center,
-          COALESCE(dept.dept_name, e.department, '') AS department,
-          COALESCE(desig.designation_name, e.designation, '') AS designation,
+          COALESCE(cc.cost_centre_name, '') AS cost_center,
+          COALESCE(dept.dept_name, '') AS department,
+          COALESCE(desig.designation_name, '') AS designation,
           DATE_FORMAT(e.date_of_joining, '%Y-%m-%d') AS doj,
           COALESCE(e.source, '') AS source,
           COALESCE(e.sub_source, '') AS sub_source,
@@ -3715,8 +3749,8 @@ reportSuiteRouter.get("/:code", reportScopeMiddleware, reportCatalogAccessMiddle
         LEFT JOIN (
           SELECT employee_id, net_in_hand
           FROM employee_salary_snapshot
-          WHERE (employee_id, snapshot_month) IN (
-            SELECT employee_id, MAX(snapshot_month) FROM employee_salary_snapshot GROUP BY employee_id
+          WHERE (employee_id, snapshot_date) IN (
+            SELECT employee_id, MAX(snapshot_date) FROM employee_salary_snapshot GROUP BY employee_id
           )
         ) ess ON ess.employee_id = e.id
         LEFT JOIN employee_salary_assignment esa ON esa.employee_id = e.id AND esa.active_status = 1
@@ -3734,13 +3768,19 @@ reportSuiteRouter.get("/:code", reportScopeMiddleware, reportCatalogAccessMiddle
       clauses.push("LOWER(COALESCE(spr.status,'')) NOT IN ('draft','cancelled')");
 
       // Fetch salary lines + employee info
+      // cost_center/department/designation/uan fallback columns below
+      // (e.cost_center, e.department, e.designation, e.uan) don't exist on
+      // employees — verified live. Master-table joins (cc/dept/desig/eu) are
+      // the only real source for these; the COALESCE fallback was always
+      // going to error, never caught because this report was unreachable
+      // (missing from REPORT_CATALOG) until now.
       const lineSql = `
         SELECT
           e.employee_code,
           CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')) AS emp_name,
-          COALESCE(cc.cost_centre_name, e.cost_center, '') AS cost_center,
-          COALESCE(dept.dept_name, e.department, '') AS department,
-          COALESCE(desig.designation_name, e.designation, '') AS designation,
+          COALESCE(cc.cost_centre_name, '') AS cost_center,
+          COALESCE(dept.dept_name, '') AS department,
+          COALESCE(desig.designation_name, '') AS designation,
           COALESCE(e.profile_type, '') AS profile,
           CASE WHEN COALESCE(e.is_billable, 1) = 1 THEN 'InHouse' ELSE 'Non-Billable' END AS employee_for,
           CASE WHEN COALESCE(e.is_billable, 1) = 1 THEN 'Yes' ELSE 'No' END AS billable,
@@ -3778,15 +3818,18 @@ reportSuiteRouter.get("/:code", reportScopeMiddleware, reportCatalogAccessMiddle
           COALESCE(esa.ctc_annual, 0) AS ctc,
           spr.id AS run_id,
           DATE_FORMAT(spr.created_at, '%Y-%m-%d') AS sal_date,
-          COALESCE(e.uan, eu.uan, '') AS uan,
+          COALESCE(eu.uan, '') AS uan,
           COALESCE(e.epf_number, eu.member_id, '') AS epf_no,
           COALESCE(e.esic_number, '') AS esic_no,
           COALESCE(e.employment_status, 'Active') AS left_status,
-          COALESCE(ebd.payment_mode, 'Bank Transfer') AS salary_payment_mode,
+          -- employee_bank_detail has no payment_mode column (every payout is a
+          -- bank transfer in this system) and its branch column is
+          -- bank_branch, not branch_name — verified live.
+          'Bank Transfer' AS salary_payment_mode,
           COALESCE(ebd.account_number, '') AS ac_no,
           COALESCE(ebd.ifsc_code, '') AS ifsc_code,
           COALESCE(ebd.bank_name, '') AS ac_bank,
-          COALESCE(ebd.branch_name, '') AS ac_branch
+          COALESCE(ebd.bank_branch, '') AS ac_branch
         FROM salary_prep_line spl
         JOIN salary_prep_run spr ON spr.id = spl.run_id
         JOIN employees e ON e.id = spl.employee_id
