@@ -8,6 +8,7 @@ import { processLobService } from "./process-lob.service.js";
 import { processPnlGovernanceService } from "./process-pnl.governance.service.js";
 import { processPnlService } from "./process-pnl.service.js";
 import type { PnlQueryFilters } from "./process-pnl.types.js";
+import { cacheInstance as pnlSummaryCache } from "../../lib/cache/quality-cache.js";
 
 const n = (value: unknown): number => {
   const parsed = Number(value ?? 0);
@@ -24,6 +25,37 @@ function currentPeriod() {
 
 function normalizePeriod(value?: string) {
   return value && /^\d{4}-\d{2}$/.test(value) ? value : currentPeriod();
+}
+
+// bpoPnlAllocationOverlayService.getSummary() runs the full org-wide GRN/
+// vendor-cost allocation engine — measured ~31.6s for a SINGLE period
+// standalone against the live DB. getTrend() below calls it once per
+// trend month (6 by default) and getSummary() calls it again directly for
+// the current period (which getTrend's last month already recomputes,
+// since shiftPeriod(period, 0) === period) — one dashboard load was
+// triggering 7 of these ~31s+ computations. Cached per period+scope with a
+// short TTL, reusing the same QualityCache pattern already used for the
+// dashboard-metrics cache elsewhere this session. This does not fix the
+// per-call cost itself (that's a much larger, financial-correctness-
+// sensitive change — bpoPnlService.getSummary + buildAllocationMaps need
+// their own profiling pass, deliberately out of scope here) but it means
+// only the first request in the TTL window pays it; every other viewer of
+// the same period/scope, and the redundant current-period recomputation
+// inside getSummary() itself, get the same real numbers instantly.
+//
+// Deliberately NOT used by listProcesses/getPeriodClose/recalculate/
+// lockPeriod below — recalculate() explicitly calls
+// processPnlService.invalidateCaches() because it exists to force a fresh
+// computation, and lockPeriod/getPeriodClose are governance actions that
+// need authoritative, uncached data. Only getTrend/getSummary (the
+// dashboard-display path) use this cache.
+async function getCachedAllocationSummary(filters: Partial<PnlQueryFilters>) {
+  const key = `pnl-allocation-summary:v1:${filters.period ?? ""}:${filters.branchId ?? ""}:${filters.processId ?? ""}:${filters.clientId ?? ""}:${filters.search ?? ""}`;
+  return pnlSummaryCache.getOrSet(
+    key,
+    () => bpoPnlAllocationOverlayService.getSummary(filters) as Promise<Record<string, unknown>>,
+    90,
+  ) as ReturnType<typeof bpoPnlAllocationOverlayService.getSummary>;
 }
 
 export function shiftPeriod(period: string, delta: number) {
@@ -223,7 +255,7 @@ export const canonicalPnlService = {
     );
     const summaries = await Promise.all(
       periodCodes.map((item) =>
-        bpoPnlAllocationOverlayService.getSummary({ ...filters, period: item })
+        getCachedAllocationSummary({ ...filters, period: item })
       )
     );
     return summaries.map((summary) => ({
@@ -241,7 +273,7 @@ export const canonicalPnlService = {
   async getSummary(filters: Partial<PnlQueryFilters>) {
     const period = normalizePeriod(filters.period);
     const [summary, trend] = await Promise.all([
-      bpoPnlAllocationOverlayService.getSummary({ ...filters, period }),
+      getCachedAllocationSummary({ ...filters, period }),
       this.getTrend({ ...filters, period }),
     ]);
     const rows = summary.rows as BpoPnlRow[];
