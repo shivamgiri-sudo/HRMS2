@@ -155,31 +155,57 @@ export const payrollService = {
 
     const ids = employees.map(e => e.id);
     const placeholders = ids.map(() => "?").join(", ");
-    // Close each superseded row's validity window as well as deactivating it — see
-    // the note in assignSalary. COALESCE preserves any end date already recorded.
-    await db.execute(
-      `UPDATE employee_salary_assignment
-          SET active_status = 0,
-              effective_to = COALESCE(effective_to, DATE_SUB(?, INTERVAL 1 DAY))
-        WHERE employee_id IN (${placeholders}) AND active_status = 1`,
-      [input.effectiveFrom, ...ids]
-    );
 
-    for (const emp of employees) {
-      const asgId = randomUUID();
-      await db.execute(
-        `INSERT INTO employee_salary_assignment
-           (id, employee_id, structure_id, ctc_annual, effective_from,
-            salary_slab_id, salary_proposal_id, governance_mode, assigned_by)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          asgId, emp.id, input.structureId, input.ctcAnnual, input.effectiveFrom,
-          govResult.salarySlabId ?? null,
-          govResult.salaryProposalId ?? null,
-          govResult.mode,
-          userId,
-        ]
+    // One transaction for the whole batch.
+    //
+    // This deactivated every target employee's assignment in one UPDATE and then
+    // inserted replacements in a loop, with no transaction. A failure partway —
+    // a governance column rejecting a value, a lost connection, a restart — left
+    // those employees with their old assignment switched off and no new one, and
+    // nothing retried or reported it.
+    //
+    // That state is worse than it looks. The payroll engine joins employees to
+    // their assignment, so an employee with none is not paid a wrong amount, they
+    // silently drop out of the run altogether. assignSalary has always been
+    // transactional for exactly this reason; the bulk path, which can leave
+    // hundreds of employees in that state at once, was not.
+    const conn = await (db as any).getConnection();
+    try {
+      await conn.beginTransaction();
+
+      // Close each superseded row's validity window as well as deactivating it — see
+      // the note in assignSalary. COALESCE preserves any end date already recorded.
+      await conn.execute(
+        `UPDATE employee_salary_assignment
+            SET active_status = 0,
+                effective_to = COALESCE(effective_to, DATE_SUB(?, INTERVAL 1 DAY))
+          WHERE employee_id IN (${placeholders}) AND active_status = 1`,
+        [input.effectiveFrom, ...ids]
       );
+
+      for (const emp of employees) {
+        const asgId = randomUUID();
+        await conn.execute(
+          `INSERT INTO employee_salary_assignment
+             (id, employee_id, structure_id, ctc_annual, effective_from,
+              salary_slab_id, salary_proposal_id, governance_mode, assigned_by)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            asgId, emp.id, input.structureId, input.ctcAnnual, input.effectiveFrom,
+            govResult.salarySlabId ?? null,
+            govResult.salaryProposalId ?? null,
+            govResult.mode,
+            userId,
+          ]
+        );
+      }
+
+      await conn.commit();
+    } catch (err) {
+      await conn.rollback();
+      throw err;
+    } finally {
+      conn.release();
     }
 
     return { assigned: employees.length, skipped: 0 };
