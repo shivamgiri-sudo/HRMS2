@@ -69,6 +69,7 @@ import {
   useFinanceExpenseMasters,
 } from "@/hooks/useFinanceExpenseMasters";
 import { hrmsApi } from "@/lib/hrmsApi";
+import { GST_RATES } from "@/lib/gst";
 import { BranchBudgetMatrixPanel } from "@/components/finance/pnl/BranchBudgetMatrixPanel";
 import { BudgetTopupPanel } from "@/components/finance/budget/BudgetTopupPanel";
 import { BranchBudgetImportDialog } from "@/components/finance/pnl/BranchBudgetImportDialog";
@@ -95,7 +96,6 @@ const UNITS = [
   "Campaign",
   "Event",
 ];
-const GST_RATES = [0, 5, 12, 18, 28];
 const ALLOCATION_DRIVERS = [
   ["agent_headcount", "Agent headcount"],
   ["total_manpower", "Total manpower"],
