@@ -309,6 +309,39 @@ async function insertBatch(hrms, table, rows, keys, updateCols) {
   return inserted;
 }
 
+/**
+ * Delete mirrored rows whose source row no longer exists.
+ *
+ * insertBatch only ever upserts, so a row deleted in db_bill lived on in the mirror forever.
+ * Found 2026-08-05: finance_budget_line_snapshot held 1,172 rows against 1,168 at source — four
+ * ghosts that no reconciliation by row-count would ever clear, and that quietly inflate any sum
+ * taken over the table.
+ *
+ * Scoped deliberately: pass the same period window the sync just wrote, so this can never remove
+ * history the current run did not consider. A run limited to FY2026-27 must not delete 2014 rows
+ * simply because it did not look at them.
+ */
+async function pruneOrphans(hrms, table, keptSourceIds, scopeSql, scopeParams = []) {
+  const [existing] = await hrms.query(
+    `SELECT bill_source_id FROM ${table} WHERE ${scopeSql}`, scopeParams
+  );
+  const keep = new Set(keptSourceIds.map(id => String(id)));
+  const orphans = existing
+    .map(r => r.bill_source_id)
+    .filter(id => id != null && !keep.has(String(id)));
+  if (!orphans.length) return 0;
+
+  for (let i = 0; i < orphans.length; i += BATCH) {
+    const chunk = orphans.slice(i, i + BATCH);
+    await hrms.query(
+      `DELETE FROM ${table} WHERE bill_source_id IN (${chunk.map(() => '?').join(',')})`,
+      chunk
+    );
+  }
+  log(`  pruned ${orphans.length} orphan row(s) from ${table} (gone at source)`);
+  return orphans.length;
+}
+
 // ── Sync 1: cost_centre_master enrichment ─────────────────────────────────────
 
 async function syncCostCentres(hrms, bill) {
@@ -708,6 +741,8 @@ async function syncGrnEntries(hrms, bill) {
     'description','source_created_at','synced_at'];
   const scoped = rows.filter(r => inScope(r.period_code));
   const n = await insertBatch(hrms, 'grn_entry_snapshot', scoped, cols, cols.slice(1));
+  await pruneOrphans(hrms, 'grn_entry_snapshot', scoped.map(r => r.bill_source_id),
+    'period_code >= ?', [FROM_PERIOD]);
   log(`  grn_entry_snapshot: ${n} rows from ${FROM_PERIOD} (${scoped.filter(r => r.is_rejected).length} genuinely rejected)`);
 }
 
@@ -748,6 +783,9 @@ async function syncInvoiceParticulars(hrms, bill) {
     'rate','qty','amount','billing_pattern','is_seat_line','source_created_at','synced_at'];
   const scoped = rows.filter(r => inScope(r.period_code));
   const n = await insertBatch(hrms, 'billing_invoice_particular_snapshot', scoped, cols, cols.slice(1));
+  // The table the CEO Overview reads its revenue from — an orphan here overstates revenue.
+  await pruneOrphans(hrms, 'billing_invoice_particular_snapshot', scoped.map(r => r.bill_source_id),
+    'period_code >= ?', [FROM_PERIOD]);
   log(`  billing_invoice_particular_snapshot: ${n} rows from ${FROM_PERIOD} (${scoped.filter(r => r.is_seat_line).length} seat-priced lines)`);
 }
 
@@ -793,6 +831,12 @@ async function syncBudgetLines(hrms, bill) {
     'source_created_at','synced_at'];
   const scoped = rows.filter(r => inScope(r.period_code));
   const n = await insertBatch(hrms, 'finance_budget_line_snapshot', scoped, cols, cols.slice(1));
+  // Only within the window this run actually looked at — see pruneOrphans.
+  await pruneOrphans(
+    hrms, 'finance_budget_line_snapshot',
+    scoped.map(r => r.bill_source_id),
+    'period_code >= ?', [FROM_PERIOD]
+  );
   const cc = scoped.filter(r => r.expense_type === 'CostCenter').length;
   log(`  finance_budget_line_snapshot: ${n} rows (${cc} cost-centre attributed, ${scoped.length - cc} manual particulars)`);
 }
@@ -834,6 +878,8 @@ async function syncGrnLines(hrms, bill) {
     'source_created_at','synced_at'];
   const scoped = rows.filter(r => inScope(r._period));
   const n = await insertBatch(hrms, 'grn_entry_line_snapshot', scoped, cols, cols.slice(1));
+  await pruneOrphans(hrms, 'grn_entry_line_snapshot', scoped.map(r => r.bill_source_id),
+    'period_code >= ?', [FROM_PERIOD]);
   const withCc = scoped.filter(r => r.cost_centre_source_id).length;
   log(`  grn_entry_line_snapshot: ${n} rows (${withCc} carry a cost centre, ${scoped.length - withCc} do not)`);
 }
