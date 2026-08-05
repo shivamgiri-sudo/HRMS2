@@ -29,6 +29,19 @@ const INJECTION_PATTERNS: RegExp[] = [
   /\bwhat\s+(is|are)\s+your\s+(system\s+)?instructions/i,
   /\bprint\s+(your\s+)?(system\s+)?prompt/i,
   /\bshow\s+(me\s+)?(your\s+)?(system\s+)?prompt/i,
+  // Added: known jailbreak-persona phrasing not covered by the patterns above.
+  /\b(dan|developer)\s*mode\b/i,
+  /\bpretend\s+you\s+(have\s+no|don'?t\s+have\s+any|do\s+not\s+have\s+any)\s+(restrictions|filters|guidelines|rules)\b/i,
+  /\bjailbreak\b/i,
+  /\byou\s+have\s+no\s+(restrictions|filters|guidelines|rules)\b/i,
+  /\bpretend\s+(that\s+)?you\s+are\s+not\s+(an?\s+)?ai\b/i,
+  /\bbypass\s+(your|the)\s+(safety|content)\s+(filters?|guidelines?|restrictions?)\b/i,
+  // Encoded-instruction smuggling defense: a long contiguous base64-alphabet
+  // run has no legitimate reason to appear in an HRMS question. Reject
+  // outright rather than decode-and-inspect — simpler and matches this
+  // file's existing "block known patterns" approach rather than adding a
+  // decode step whose own output would then need re-validating anyway.
+  /[A-Za-z0-9+/]{40,}={0,2}/,
 ];
 
 // Keys are context codes; value is an array of roles allowed to use them.
