@@ -421,17 +421,36 @@ router.post("/me/bank-change-request", h(async (req: any, res: any) => {
 
   const { bank_name, account_holder_name, bank_branch, ifsc_code, account_type, account_number } = req.body;
 
-  // Fetch existing bank details for old_values record
+  // Fetch existing bank details for old_values record. masked_account_number is not a
+  // real column on employee_bank_detail (this query 500'd on every call — confirmed live);
+  // compute the mask in JS from the raw account_number instead, matching the pattern
+  // already used for reads elsewhere in this file (see GET /me below).
   const [existing] = await db.execute<RowDataPacket[]>(
-    "SELECT bank_name, account_holder_name, bank_branch, ifsc_code, account_type, masked_account_number FROM employee_bank_detail WHERE employee_id = ? AND is_primary = 1 LIMIT 1",
+    "SELECT bank_name, account_holder_name, bank_branch, ifsc_code, account_type, account_number FROM employee_bank_detail WHERE employee_id = ? AND is_primary = 1 LIMIT 1",
     [empId]
   );
+  const existingRow = existing[0];
+  const existingForAudit = existingRow
+    ? {
+        bank_name: existingRow.bank_name,
+        account_holder_name: existingRow.account_holder_name,
+        bank_branch: existingRow.bank_branch,
+        ifsc_code: existingRow.ifsc_code,
+        account_type: existingRow.account_type,
+        masked_account_number: (() => {
+          const raw = existingRow.account_number;
+          if (!raw) return null;
+          const str = Buffer.isBuffer(raw) ? raw.toString("utf8") : String(raw);
+          return "****" + str.slice(-4);
+        })(),
+      }
+    : {};
 
   const result = await profileApprovalService.submitBankDetailsForApproval(
     userId,
     empId,
     { bank_name, account_holder_name, bank_branch, ifsc_code, account_type, account_number },
-    existing[0] ?? {}
+    existingForAudit
   );
 
   return res.json({ success: true, ...result });
@@ -451,15 +470,19 @@ router.put("/me/bank-details", h(async (req: any, res: any) => {
 
   const { bank_name, account_holder_name, bank_branch, ifsc_code, account_type, account_number } = req.body;
 
-  const fields: string[] = ["employee_id", "bank_name", "account_holder_name", "bank_branch", "ifsc_code", "account_type", "verification_status"];
-  const vals: any[] = [empId, bank_name, account_holder_name, bank_branch, ifsc_code, account_type, "pending"];
-  const onDup: string[] = ["bank_name = VALUES(bank_name)", "account_holder_name = VALUES(account_holder_name)", "bank_branch = VALUES(bank_branch)", "ifsc_code = VALUES(ifsc_code)", "account_type = VALUES(account_type)", "verification_status = 'pending'"];
+  // verification_status and masked_account_number are not real columns on
+  // employee_bank_detail (this INSERT 500'd on every call — confirmed live). The real
+  // verification flag is `verified` (tinyint) — see dashboardSqlManifest.ts and
+  // dashboard-drilldown.service.ts, which already document this. masked_account_number
+  // is computed in JS from account_number on read (see GET /me below), never stored.
+  const fields: string[] = ["employee_id", "bank_name", "account_holder_name", "bank_branch", "ifsc_code", "account_type"];
+  const vals: any[] = [empId, bank_name, account_holder_name, bank_branch, ifsc_code, account_type];
+  const onDup: string[] = ["bank_name = VALUES(bank_name)", "account_holder_name = VALUES(account_holder_name)", "bank_branch = VALUES(bank_branch)", "ifsc_code = VALUES(ifsc_code)", "account_type = VALUES(account_type)"];
 
   if (account_number) {
-    const masked = "****" + String(account_number).slice(-4);
-    fields.push("account_number", "masked_account_number");
-    vals.push(account_number, masked);
-    onDup.push("account_number = VALUES(account_number)", "masked_account_number = VALUES(masked_account_number)");
+    fields.push("account_number");
+    vals.push(account_number);
+    onDup.push("account_number = VALUES(account_number)");
   }
 
   const placeholders = fields.map(() => "?").join(", ");
@@ -637,15 +660,17 @@ router.put("/:employeeId/bank-details", ...hrProfileGate, h(async (req: any, res
   const empId = req.params.employeeId;
   const { bank_name, account_holder_name, bank_branch, ifsc_code, account_type, account_number } = req.body;
 
-  const fields: string[] = ["employee_id", "bank_name", "account_holder_name", "bank_branch", "ifsc_code", "account_type", "verification_status"];
-  const vals: any[] = [empId, bank_name, account_holder_name, bank_branch, ifsc_code, account_type, "pending"];
-  const onDup: string[] = ["bank_name = VALUES(bank_name)", "account_holder_name = VALUES(account_holder_name)", "bank_branch = VALUES(bank_branch)", "ifsc_code = VALUES(ifsc_code)", "account_type = VALUES(account_type)", "verification_status = 'pending'"];
+  // verification_status and masked_account_number are not real columns on
+  // employee_bank_detail (this INSERT 500'd on every call — confirmed live). See the
+  // matching fix and comment on PUT /me/bank-details above.
+  const fields: string[] = ["employee_id", "bank_name", "account_holder_name", "bank_branch", "ifsc_code", "account_type"];
+  const vals: any[] = [empId, bank_name, account_holder_name, bank_branch, ifsc_code, account_type];
+  const onDup: string[] = ["bank_name = VALUES(bank_name)", "account_holder_name = VALUES(account_holder_name)", "bank_branch = VALUES(bank_branch)", "ifsc_code = VALUES(ifsc_code)", "account_type = VALUES(account_type)"];
 
   if (account_number) {
-    const masked = "****" + String(account_number).slice(-4);
-    fields.push("account_number", "masked_account_number");
-    vals.push(account_number, masked);
-    onDup.push("account_number = VALUES(account_number)", "masked_account_number = VALUES(masked_account_number)");
+    fields.push("account_number");
+    vals.push(account_number);
+    onDup.push("account_number = VALUES(account_number)");
   }
 
   const placeholders = fields.map(() => "?").join(", ");

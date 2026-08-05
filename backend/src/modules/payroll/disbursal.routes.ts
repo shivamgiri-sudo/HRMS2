@@ -199,7 +199,9 @@ router.get(
       const monthNames = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
       const monthLabel = `${monthNames[parseInt(mo, 10) - 1]} ${yr}`;
 
-      // Fetch employees: must have disbursal record with NEFT/IMPS/RTGS, a salary line, and a primary bank account
+      // Fetch employees: must have disbursal record with NEFT/IMPS/RTGS, a salary line, and a primary bank account.
+      // account_number_status classifies the same way payrollCompliance.routes.ts already
+      // does — a garbled account number must never silently end up in a real bank file.
       const [rows] = await db.query<any[]>(
         `SELECT
            e.full_name,
@@ -208,7 +210,13 @@ router.get(
            spl.net_salary,
            CAST(ebd.account_number AS CHAR) AS account_number,
            ebd.ifsc_code,
-           ebd.bank_name
+           ebd.bank_name,
+           CASE
+             WHEN ebd.account_number IS NULL OR CAST(ebd.account_number AS CHAR) = '' THEN 'missing'
+             WHEN CAST(ebd.account_number AS CHAR) REGEXP '[Ee][+-]' THEN 'corrupt_scientific_notation'
+             WHEN CAST(ebd.account_number AS CHAR) NOT REGEXP '^[0-9]{6,20}$' THEN 'unrecognised_format'
+             ELSE 'ok'
+           END AS account_number_status
          FROM salary_run_disbursal srd
          JOIN salary_prep_line spl
            ON spl.run_id = srd.run_id AND spl.employee_id = srd.employee_id
@@ -230,12 +238,27 @@ router.get(
         });
       }
 
+      // Never write a corrupt/unreadable account number into a real bank file — exclude
+      // and surface it instead. The digits behind 'corrupt_scientific_notation' are
+      // genuinely gone (Excel precision loss upstream), not recoverable from this data.
+      const payableRows = rows.filter((r) => r.account_number_status === "ok");
+      const unpayableRows = rows.filter((r) => r.account_number_status !== "ok");
+
+      if (!payableRows.length) {
+        return res.status(422).json({
+          success: false,
+          error: "No employees in this run have a payable account number.",
+          unpayableCount: unpayableRows.length,
+          unpayableEmployeeCodes: unpayableRows.map((r) => r.employee_code),
+        });
+      }
+
       // Build CSV
       const csvLines: string[] = [];
 
       if (format === "sbi") {
         csvLines.push("TransactionType,BeneficiaryName,BeneficiaryAccountNumber,IFSCCode,Amount,Narration");
-        for (const r of rows) {
+        for (const r of payableRows) {
           const name    = String(r.full_name).toUpperCase().replace(/,/g, " ");
           const acct    = String(r.account_number ?? "").replace(/,/g, "");
           const ifsc    = String(r.ifsc_code ?? "").replace(/,/g, "");
@@ -246,7 +269,7 @@ router.get(
       } else {
         // Generic format
         csvLines.push("Serial,Employee Name,Account Number,IFSC Code,Bank Name,Amount,Purpose,Narration");
-        rows.forEach((r, i) => {
+        payableRows.forEach((r, i) => {
           const name    = `"${String(r.full_name).toUpperCase().replace(/"/g, "'")}"`;
           const acct    = String(r.account_number ?? "").replace(/,/g, "");
           const ifsc    = String(r.ifsc_code ?? "").replace(/,/g, "");
@@ -257,6 +280,16 @@ router.get(
         });
       }
 
+      // Trailing comment block so Finance sees exclusions when the file is opened, since
+      // this download is a plain link today (no pre-download UI to show them first).
+      if (unpayableRows.length) {
+        csvLines.push("");
+        csvLines.push(`# ${unpayableRows.length} employee(s) EXCLUDED from this file — unusable account number:`);
+        for (const r of unpayableRows) {
+          csvLines.push(`# ${r.employee_code},${String(r.full_name ?? "").replace(/,/g, " ")},${r.account_number_status}`);
+        }
+      }
+
       const csvContent  = csvLines.join("\r\n");
 
       void logSensitiveAction({
@@ -265,7 +298,11 @@ router.get(
         module_key: "payroll",
         entity_type: "salary_prep_run",
         entity_id: runId,
-        change_summary: { format, row_count: rows.length, run_month: runMonth },
+        change_summary: {
+          format, row_count: payableRows.length, run_month: runMonth,
+          unpayable_count: unpayableRows.length,
+          unpayable_employee_codes: unpayableRows.map((r) => r.employee_code),
+        },
       });
 
       const formatLabel = format === "sbi" ? "SBI" : "Generic";

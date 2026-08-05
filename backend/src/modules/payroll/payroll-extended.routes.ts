@@ -3,7 +3,6 @@ import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMid
 import { requireRole } from "../../middleware/requireRole.js";
 import { getEmployeeForUser, hasRole } from "../../shared/accessGuard.js";
 import { db } from "../../db/mysql.js";
-import { env } from "../../config/env.js";
 import { isRunClosed } from "./run-status.js";
 import { hasOrgWideScope, buildScopeWhereClause } from "../../shared/scopeAccess.js";
 import type { Response } from "express";
@@ -135,13 +134,13 @@ payrollExtendedRouter.get("/runs/:id/neft-export", requireRole("admin", "finance
   // list here previously blocked NEFT export for every FINALIZED production run.
   if (!isRunClosed(run.status)) return res.status(400).json({ error: "Run must be locked, finalized, or disbursed to generate NEFT export" });
   const [lines] = await db.execute<RowDataPacket[]>(
-    `SELECT spl.employee_id, spl.net_salary, e.employee_code, e.full_name, ebd.bank_name, ebd.ifsc_code, AES_DECRYPT(ebd.account_number, ?) AS account_number
+    `SELECT spl.employee_id, spl.net_salary, e.employee_code, e.full_name, ebd.bank_name, ebd.ifsc_code, CAST(ebd.account_number AS CHAR) AS account_number
        FROM salary_prep_line spl
        JOIN employees e ON e.id = spl.employee_id
        LEFT JOIN employee_bank_detail ebd ON ebd.employee_id = spl.employee_id
       WHERE spl.run_id = ? AND spl.net_salary > 0
       ORDER BY e.employee_code`,
-    [env.PAYROLL_BANK_KEY, runId],
+    [runId],
   );
   const csvRows = ["Sr No,Employee Code,Employee Name,Bank Name,IFSC Code,Account Number,Net Amount,Remarks"];
   let srNo = 1;
@@ -316,7 +315,7 @@ payrollExtendedRouter.get("/runs/:id/salary-sheet-export", requireRole("admin", 
         NULL AS TaxDeductedTillPreviousMonth,
         NULL AS BalanceTax,
         'NEFT'                                             AS SalaryPaymentMode,
-        AES_DECRYPT(ebd.account_number, ?)                 AS AcNo,
+        CAST(ebd.account_number AS CHAR)                   AS AcNo,
         COALESCE(ebd.ifsc_code, '')                        AS IFSCCode,
         COALESCE(ebd.bank_name, '')                        AS AcBank,
         COALESCE(ebd.bank_branch, '')                      AS AcBranch
@@ -343,7 +342,7 @@ payrollExtendedRouter.get("/runs/:id/salary-sheet-export", requireRole("admin", 
       WHERE spl.run_id = ? AND spl.status != 'cancelled'
         AND (${scoped.sql})
       ORDER BY e.employee_code`,
-    [env.PAYROLL_BANK_KEY, runId, ...scoped.params],
+    [runId, ...scoped.params],
   );
 
   // Build sheet data — map each row to a plain object in column order

@@ -30,7 +30,6 @@ import { payrollBranchReadinessService } from "./payroll-branch-readiness.servic
 import { payrollAttendanceControlService } from "./payroll-attendance-control.service.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
 import { db } from "../../db/mysql.js";
-import { env } from "../../config/env.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import type { Response } from "express";
 import type { RowDataPacket } from "mysql2";
@@ -2102,7 +2101,7 @@ router.get(
               ebd.bank_name,
               ebd.ifsc_code,
               COALESCE(ebd.account_holder_name, CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS account_holder_name,
-              AES_DECRYPT(ebd.account_number, ?) AS account_number,
+              CAST(ebd.account_number AS CHAR) AS account_number,
               spl.net_salary,
               spl.gross_salary,
               spl.total_deductions,
@@ -2113,7 +2112,7 @@ router.get(
         WHERE spl.run_id = ?
           AND spl.net_salary > 0
         ORDER BY e.employee_code ASC`,
-      [env.PAYROLL_BANK_KEY, runId]
+      [runId]
     );
 
     const lines = (rows as RowDataPacket[]).map((r: any) => ({
@@ -2165,13 +2164,13 @@ router.get("/runs/:id/neft-export", requireRole("admin", "super_admin", "finance
     `SELECT spl.employee_id, spl.net_salary, spl.gross_salary, spl.total_deductions,
             e.employee_code, e.full_name, e.email,
             ebd.bank_name, ebd.ifsc_code,
-            AES_DECRYPT(ebd.account_number, ?) AS account_number
+            CAST(ebd.account_number AS CHAR) AS account_number
      FROM salary_prep_line spl
      JOIN employees e ON e.id = spl.employee_id
      LEFT JOIN employee_bank_detail ebd ON ebd.employee_id = spl.employee_id
      WHERE spl.run_id = ? AND spl.net_salary > 0
      ORDER BY e.employee_code`,
-    [env.PAYROLL_BANK_KEY, runId]
+    [runId]
   );
 
   // Standard Indian bank NEFT format

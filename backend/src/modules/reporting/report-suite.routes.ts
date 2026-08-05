@@ -1443,7 +1443,7 @@ reportSuiteRouter.get("/:code", reportScopeMiddleware, reportCatalogAccessMiddle
       addScopedEmployeeFilters(req, clauses, params);
       clauses.push("ebd.verified = 0");
       sql = `SELECT e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-                    ebd.bank_name, ebd.account_number, ebd.ifsc_code, ebd.account_holder_name,
+                    ebd.bank_name, CAST(ebd.account_number AS CHAR) AS account_number, ebd.ifsc_code, ebd.account_holder_name,
                     ebd.is_primary, ebd.created_at AS requested_at
                FROM employee_bank_detail ebd
                JOIN employees e ON e.id = ebd.employee_id
@@ -1513,7 +1513,7 @@ reportSuiteRouter.get("/:code", reportScopeMiddleware, reportCatalogAccessMiddle
       clauses.push("spl.net_salary > 0");
       sql = `SELECT e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
                     b.branch_name, p.process_name,
-                    ebd.bank_name, ebd.account_number, ebd.ifsc_code, ebd.account_holder_name, ebd.account_type,
+                    ebd.bank_name, CAST(ebd.account_number AS CHAR) AS account_number, ebd.ifsc_code, ebd.account_holder_name, ebd.account_type,
                     MAX(spl.net_salary) AS transfer_amount, spr.run_month
                FROM salary_prep_line spl
                JOIN salary_prep_run spr ON spr.id = spl.run_id
@@ -3826,7 +3826,7 @@ reportSuiteRouter.get("/:code", reportScopeMiddleware, reportCatalogAccessMiddle
           -- bank transfer in this system) and its branch column is
           -- bank_branch, not branch_name — verified live.
           'Bank Transfer' AS salary_payment_mode,
-          COALESCE(ebd.account_number, '') AS ac_no,
+          COALESCE(CAST(ebd.account_number AS CHAR), '') AS ac_no,
           COALESCE(ebd.ifsc_code, '') AS ifsc_code,
           COALESCE(ebd.bank_name, '') AS ac_bank,
           COALESCE(ebd.bank_branch, '') AS ac_branch

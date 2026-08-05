@@ -56,7 +56,7 @@ class ExpenseReportService {
     if (startDate) { whereConditions.push('ec.submitted_date >= ?'); params.push(startDate); }
     if (endDate) { whereConditions.push('ec.submitted_date <= ?'); params.push(endDate); }
     const [rows] = await db.query<RowDataPacket[]>(
-      `SELECT e.name as employee_name, e.employee_code, ebd.bank_name, ebd.account_number, ebd.ifsc_code,
+      `SELECT e.name as employee_name, e.employee_code, ebd.bank_name, CAST(ebd.account_number AS CHAR) AS account_number, ebd.ifsc_code,
               ec.total_amount as amount, ec.claim_number, ec.submitted_date as expense_date
        FROM expense_claims ec
        JOIN employees e ON ec.employee_id = e.id

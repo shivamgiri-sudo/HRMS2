@@ -430,7 +430,8 @@
     "1072_festival_greetings.sql",
     "1070_correct_auto_approved_bgv_and_bridge.sql",
     "1073_employee_profile_parity.sql",
-    "1074_grn_invoice_gst_components.sql"
+    "1074_grn_invoice_gst_components.sql",
+    "1075_bank_detail_sync_map_account_encrypt_false.sql"
   ],
   "approvedDeletions": [],
   "knownDangling": [],
