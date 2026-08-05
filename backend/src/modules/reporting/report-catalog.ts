@@ -2022,6 +2022,47 @@ export const REPORT_CATALOG: ReportDefinition[] = [
   },
 
   {
+    // Query already existed and works (report-suite.routes.ts, 321 live rows
+    // verified), and this code is already referenced by ReportLibraryView.tsx
+    // and deep-report-packs.ts ("register" and "reconciliation" packs) — but
+    // was never added here. reportCatalogAccessMiddleware 404s any code not
+    // in this array before the query ever runs, so the report tile always
+    // rendered as empty/no-data with no visible error. That was the entire
+    // bug: not a data problem, a missing registration.
+    //
+    // Filters intentionally list only date range — the underlying query does
+    // not apply branchId/processId (no addScopedEmployeeFilters call, no
+    // scope params pushed in that switch case), so listing F_BRANCH/F_PROCESS
+    // here would offer filters that silently do nothing. Fix the query to
+    // scope on e.branch_id/e.process_id (nullable — many rows have no
+    // employee yet) before adding those filters back.
+    code: "offer-to-joining-tracker",
+    name: "Offer to Joining Tracker",
+    category: "Recruitment",
+    subcategory: "Offers & Joining",
+    description: "Offer-to-joining timeline per candidate, with actual vs. expected date of joining variance",
+    rowGrain: "One row per candidate onboarding bridge record",
+    primaryKey: ["candidate_code"],
+    columns: [
+      { key: "candidate_code", label: "Candidate Code", format: "text", width: 120 },
+      { key: "full_name", label: "Candidate Name", format: "text", width: 180 },
+      { key: "mobile", label: "Mobile", format: "phone", width: 120 },
+      { key: "email", label: "Email", format: "email", width: 180 },
+      { key: "offer_date", label: "Offer Date", format: "date", width: 100 },
+      { key: "offered_doj", label: "Offered DOJ", format: "date", width: 110 },
+      { key: "actual_doj", label: "Actual DOJ", format: "date", width: 110 },
+      { key: "doj_variance_days", label: "DOJ Variance (days)", format: "number", width: 130, align: "right" },
+      { key: "onboarding_status", label: "Onboarding Status", format: "status", width: 130 },
+    ],
+    filters: [F_DATE_FROM, F_DATE_TO],
+    viewRoles: ROLES_ATS,
+    exportRoles: ROLES_ATS,
+    sourceTables: ["ats_onboarding_bridge", "ats_candidate", "employees"],
+    branchScoped: false,
+    processScoped: false,
+  },
+
+  {
     code: "joining-pending",
     name: "Pending Joinings",
     category: "Recruitment",
