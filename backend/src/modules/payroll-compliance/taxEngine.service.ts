@@ -65,10 +65,19 @@ export const taxEngineService = {
 
     if (rows[0]) return rows[0] as FyConfigRow;
 
-    if (regime === "new") {
-      return { standard_deduction: 75000, rebate_limit: 1200000, rebate_max_amount: 60000, cess_pct: 4 } as FyConfigRow;
-    }
-    return { standard_deduction: 50000, rebate_limit: 500000, rebate_max_amount: 12500, cess_pct: 4 } as FyConfigRow;
+    // No hardcoded fallback. The removed literals were not wrong — they matched the
+    // Finance Act 2025 — but constants go stale invisibly: once a Finance Act moves a
+    // band, code carrying them keeps deducting last year's rate and nothing reports it.
+    // Under-deduction is the employer's liability under s.201(1A), with interest, and
+    // it surfaces via the tax department rather than via payroll.
+    //
+    // Throwing routes the caller (payrollCalculate.service.ts) into calculateTds, which
+    // reads the approved statutory_config and refuses with pending_configuration when
+    // that is absent too — a different route to the same approved rates, not a laxer one.
+    throw new Error(
+      `No approved tax configuration for financial year ${financialYear}, ${regime} regime. ` +
+      `Seed payroll_tax_fy_config before running payroll for this year.`
+    );
   },
 
   async getSlabs(financialYear: string, regime: TaxRegime): Promise<SlabRow[]> {
@@ -82,24 +91,14 @@ export const taxEngineService = {
 
     if (rows.length) return rows as SlabRow[];
 
-    if (regime === "new") {
-      return [
-        { slab_from: 0, slab_to: 400000, rate_pct: 0 },
-        { slab_from: 400000, slab_to: 800000, rate_pct: 5 },
-        { slab_from: 800000, slab_to: 1200000, rate_pct: 10 },
-        { slab_from: 1200000, slab_to: 1600000, rate_pct: 15 },
-        { slab_from: 1600000, slab_to: 2000000, rate_pct: 20 },
-        { slab_from: 2000000, slab_to: 2400000, rate_pct: 25 },
-        { slab_from: 2400000, slab_to: null, rate_pct: 30 },
-      ] as SlabRow[];
-    }
-
-    return [
-      { slab_from: 0, slab_to: 250000, rate_pct: 0 },
-      { slab_from: 250000, slab_to: 500000, rate_pct: 5 },
-      { slab_from: 500000, slab_to: 1000000, rate_pct: 20 },
-      { slab_from: 1000000, slab_to: null, rate_pct: 30 },
-    ] as SlabRow[];
+    // No hardcoded slab table, for the same reason as getConfig above. The old-regime
+    // literals removed here were the pre-2023 bands (250k/500k/1000k) and had already
+    // drifted from the ones seeded in payroll_tax_slab_master, so this path could
+    // silently tax an old-regime employee on bands nobody had approved.
+    throw new Error(
+      `No approved tax slabs for financial year ${financialYear}, ${regime} regime. ` +
+      `Seed payroll_tax_slab_master before running payroll for this year.`
+    );
   },
 
   calculateSlabTax(taxableIncome: number, slabs: SlabRow[]): number {
