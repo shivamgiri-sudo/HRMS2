@@ -14,6 +14,7 @@
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../../db/mysql.js";
 import type { ExecFilters, ExecScope, ExecOptions, ExecResult } from "./types.js";
+import { excludeEmployeeShapedCandidatesSql } from "../../ats/ats-reporting-scope.js";
 import {
   appendScopeConditions,
   appendFilterConditions,
@@ -144,6 +145,7 @@ export async function recruitmentPipeline(
       LEFT JOIN process_master p    ON p.id = jd.process_id
       LEFT JOIN ats_candidate c     ON c.applied_for_branch = b.branch_name
                                    AND c.applied_for_process = p.process_name
+                                   AND ${excludeEmployeeShapedCandidatesSql("c")}
      WHERE ${clauses.join(" AND ")}
      GROUP BY jd.id, jd.title, jd.posting_code, jd.vacancies, jd.status,
               jd.created_at, jd.closing_date, b.branch_name, p.process_name

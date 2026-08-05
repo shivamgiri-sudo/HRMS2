@@ -1,5 +1,9 @@
 import { db } from '../../db/mysql.js';
 import { RowDataPacket } from 'mysql2/promise';
+import { excludeEmployeeShapedCandidatesSql } from './ats-reporting-scope.js';
+
+const EXCLUDE_EMPLOYEE_SHAPED = excludeEmployeeShapedCandidatesSql('ats_candidate');
+const EXCLUDE_EMPLOYEE_SHAPED_C = excludeEmployeeShapedCandidatesSql('c');
 
 /**
  * ATS Command Centre Service
@@ -74,20 +78,23 @@ export async function getDashboardMetrics(): Promise<DashboardMetrics> {
     [joinedRes],
   ] = await Promise.all([
     db.execute<RowDataPacket[]>(
-      'SELECT COUNT(*) as total FROM ats_candidate WHERE active_status = 1'
+      `SELECT COUNT(*) as total FROM ats_candidate WHERE active_status = 1 AND ${EXCLUDE_EMPLOYEE_SHAPED}`
     ),
     db.execute<RowDataPacket[]>(
       `SELECT COUNT(*) as active FROM ats_candidate
        WHERE active_status = 1
-       AND current_stage NOT IN ('rejected', 'joined', 'rejected_by_branch_head')`
+       AND current_stage NOT IN ('rejected', 'joined', 'rejected_by_branch_head')
+       AND ${EXCLUDE_EMPLOYEE_SHAPED}`
     ),
     db.execute<RowDataPacket[]>(
       `SELECT COUNT(*) as selected FROM ats_candidate
-       WHERE current_stage IN ('selected', 'bgv_pending', 'bgv_verified', 'payroll_validated', 'offer_pending', 'offer_accepted')`
+       WHERE current_stage IN ('selected', 'bgv_pending', 'bgv_verified', 'payroll_validated', 'offer_pending', 'offer_accepted')
+       AND ${EXCLUDE_EMPLOYEE_SHAPED}`
     ),
     db.execute<RowDataPacket[]>(
       `SELECT COUNT(*) as rejected FROM ats_candidate
-       WHERE current_stage IN ('rejected', 'rejected_by_branch_head')`
+       WHERE current_stage IN ('rejected', 'rejected_by_branch_head')
+       AND ${EXCLUDE_EMPLOYEE_SHAPED}`
     ),
     db.execute<RowDataPacket[]>(
       `SELECT COUNT(*) as today_interviews FROM ats_interview_result
@@ -138,7 +145,7 @@ export async function getSourceMetrics(): Promise<SourceMetrics[]> {
       SUM(CASE WHEN current_stage IN ('selected', 'bgv_pending', 'bgv_verified', 'payroll_validated', 'offer_pending', 'offer_accepted', 'joined') THEN 1 ELSE 0 END) as selected_count,
       ROUND((SUM(CASE WHEN current_stage IN ('selected', 'bgv_pending', 'bgv_verified', 'payroll_validated', 'offer_pending', 'offer_accepted', 'joined') THEN 1 ELSE 0 END) / COUNT(*)) * 100, 2) as conversion_rate
     FROM ats_candidate
-    WHERE active_status = 1
+    WHERE active_status = 1 AND ${EXCLUDE_EMPLOYEE_SHAPED}
     GROUP BY sourcing_channel
     ORDER BY total_candidates DESC`
   );
@@ -160,7 +167,7 @@ export async function getBranchMetrics(): Promise<BranchMetrics[]> {
       COUNT(DISTINCT qt.recruiter_id) as active_recruiters
     FROM ats_candidate c
     LEFT JOIN ats_queue_token qt ON qt.candidate_id = c.id AND DATE(qt.created_at) = CURDATE()
-    WHERE c.active_status = 1
+    WHERE c.active_status = 1 AND ${EXCLUDE_EMPLOYEE_SHAPED_C}
     GROUP BY c.applied_for_branch, c.branch_display_name
     ORDER BY total_candidates DESC`
   );
@@ -235,7 +242,7 @@ export async function getTimelineData(days: number = 30): Promise<TimelineData[]
     LEFT JOIN (
       SELECT DATE(created_at) as date, COUNT(*) as registrations
       FROM ats_candidate
-      WHERE created_at >= DATE_SUB(CURDATE(), INTERVAL ? DAY)
+      WHERE created_at >= DATE_SUB(CURDATE(), INTERVAL ? DAY) AND ${EXCLUDE_EMPLOYEE_SHAPED}
       GROUP BY DATE(created_at)
     ) reg ON date_series.date = reg.date
     LEFT JOIN (
@@ -271,9 +278,9 @@ export async function getStageDistribution(): Promise<StageDistribution[]> {
     `SELECT
       current_stage as stage,
       COUNT(*) as count,
-      ROUND((COUNT(*) / (SELECT COUNT(*) FROM ats_candidate WHERE active_status = 1)) * 100, 2) as percentage
+      ROUND((COUNT(*) / (SELECT COUNT(*) FROM ats_candidate WHERE active_status = 1 AND ${EXCLUDE_EMPLOYEE_SHAPED})) * 100, 2) as percentage
     FROM ats_candidate
-    WHERE active_status = 1
+    WHERE active_status = 1 AND ${EXCLUDE_EMPLOYEE_SHAPED}
     GROUP BY current_stage
     ORDER BY count DESC`
   );
@@ -290,7 +297,7 @@ export async function getRoleMetrics(): Promise<{ role: string; count: number }[
       COALESCE(role_applied, applied_for_process) as role,
       COUNT(*) as count
     FROM ats_candidate
-    WHERE active_status = 1
+    WHERE active_status = 1 AND ${EXCLUDE_EMPLOYEE_SHAPED}
     GROUP BY COALESCE(role_applied, applied_for_process)
     ORDER BY count DESC
     LIMIT 10`
@@ -308,7 +315,7 @@ export async function getExperienceDistribution(): Promise<{ experience: string;
       years_of_experience as experience,
       COUNT(*) as count
     FROM ats_candidate
-    WHERE active_status = 1 AND years_of_experience IS NOT NULL
+    WHERE active_status = 1 AND years_of_experience IS NOT NULL AND ${EXCLUDE_EMPLOYEE_SHAPED}
     GROUP BY years_of_experience
     ORDER BY
       CASE

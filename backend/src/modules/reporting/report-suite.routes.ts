@@ -3,6 +3,7 @@ import type { RowDataPacket } from "mysql2";
 import { requireAuth } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { db } from "../../db/mysql.js";
+import { excludeEmployeeShapedCandidatesSql } from "../ats/ats-reporting-scope.js";
 import { buildIdentityMappingExceptionsSql } from "./identity-mapping-report.js";
 import { buildIdentitySourceSnapshotReportSql, runIdentitySourceSnapshotSync } from "./identity-source-snapshot.js";
 import {
@@ -1729,7 +1730,7 @@ reportSuiteRouter.get("/:code", reportScopeMiddleware, reportCatalogAccessMiddle
                     SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) AS active_count,
                     SUM(CASE WHEN status IN ('withdrawn','rejected','no_show') THEN 1 ELSE 0 END) AS dropped_count
                FROM ats_candidate
-              WHERE created_at BETWEEN ? AND ?
+              WHERE created_at BETWEEN ? AND ? AND ${excludeEmployeeShapedCandidatesSql("ats_candidate")}
               GROUP BY current_stage
               ORDER BY FIELD(current_stage,'applied','screening','shortlisted','interview_1','interview_2','interview_3','offer','offered','onboarded','joined') , current_stage`;
       params.push(from, to);

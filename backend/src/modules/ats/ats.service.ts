@@ -6,6 +6,7 @@ import { sendSelectedEmail, sendRejectedEmail, sendSelectionLetterOfIntent } fro
 import { sendOnboardingToken } from "./ats.onboarding.service.js";
 import { transitionCandidateState } from "./ats.status-machine.js";
 import { hasScopedAccess } from "../../shared/scopeAccess.js";
+import { excludeEmployeeShapedCandidatesSql } from "./ats-reporting-scope.js";
 import type {
   AtsCandidate,
   AtsCandidateStageLog,
@@ -397,7 +398,7 @@ export const atsService = {
   },
 
   async getDashboardStats(filters: { fromDate?: string; toDate?: string; branch?: string; process?: string }) {
-    const conds: string[] = ["active_status = 1"];
+    const conds: string[] = ["active_status = 1", excludeEmployeeShapedCandidatesSql("ats_candidate")];
     const params: unknown[] = [];
     if (filters.fromDate) { conds.push("walk_in_date >= ?"); params.push(filters.fromDate); }
     if (filters.toDate)   { conds.push("walk_in_date <= ?"); params.push(filters.toDate); }
@@ -421,7 +422,7 @@ export const atsService = {
     const [timeRows] = await db.execute<RowDataPacket[]>(
       `SELECT AVG(DATEDIFF(updated_at, created_at)) AS avg_days
          FROM ats_candidate
-        WHERE active_status = 1 AND current_stage = 'converted'`, []
+        WHERE active_status = 1 AND current_stage = 'converted' AND ${excludeEmployeeShapedCandidatesSql("ats_candidate")}`, []
     );
 
     const totalCount = Number(total[0]?.total ?? 0);
@@ -445,7 +446,8 @@ export const atsService = {
       `SELECT COUNT(DISTINCT applied_for_process) as count
        FROM ats_candidate
        WHERE active_status = 1
-         AND current_stage NOT IN ('converted', 'rejected', 'Onboarded', 'Selected', 'declined')`, []
+         AND current_stage NOT IN ('converted', 'rejected', 'Onboarded', 'Selected', 'declined')
+         AND ${excludeEmployeeShapedCandidatesSql("ats_candidate")}`, []
     );
     const openPositions = Number(openPosRows[0]?.count ?? 0);
 
@@ -458,7 +460,8 @@ export const atsService = {
        WHERE active_status = 1
          AND current_stage IN ('selected','Selected','Onboarded','converted')
          AND updated_at >= DATE_SUB(CURDATE(), INTERVAL 60 DAY)
-         AND updated_at < DATE_SUB(CURDATE(), INTERVAL 30 DAY)`,
+         AND updated_at < DATE_SUB(CURDATE(), INTERVAL 30 DAY)
+         AND ${excludeEmployeeShapedCandidatesSql("ats_candidate")}`,
       []
     ).catch(() => [[{ cnt: 0 }]] as any);
 
