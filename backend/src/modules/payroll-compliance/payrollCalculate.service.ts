@@ -153,7 +153,36 @@ function componentAmount(components: ComponentLine[], code: string): number {
   return components.filter(c => c.component_code === code).reduce((s, c) => s + Number(c.amount || 0), 0);
 }
 
+/**
+ * @deprecated Not the payroll engine. Do not wire this up.
+ *
+ * This is a second, complete implementation of payroll calculation, left behind
+ * when the compliance pack was integrated as a parallel module rather than merged
+ * into the existing engine. Nothing imports it — the live path is
+ * calculatePayrollRun / calculatePayrollRunScoped in
+ * modules/payroll/payrollCalculate.service.ts, which is what payroll.routes.ts,
+ * payroll-nightly-recalc.worker.ts and the targeted-recalculation service all use.
+ *
+ * It is dangerous precisely because it looks right. Same name, same signature,
+ * plausible body — and an import that resolves to this file instead of the live
+ * one would compile, run, and produce figures. It is missing corrections the live
+ * engine has since gained, most seriously any cap on payable days: it derives
+ * working days straight from the attendance record count with no
+ * MIN(..., daysInMonth), no week-off eligibility, no holiday resolution and no
+ * leave reversal. An employee could be paid for more days than the month has.
+ *
+ * Kept rather than deleted, per the repository rule against removing existing
+ * code. The throw is the point: if this is ever reached, it must fail loudly and
+ * immediately rather than silently computing a payroll nobody meant to run.
+ */
 export async function calculatePayrollRun(runId: string, userId: string): Promise<CalculateResult> {
+  throw new Error(
+    "modules/payroll-compliance/payrollCalculate.service.ts is not the payroll engine and must not be called. " +
+    "It is an unmaintained parallel implementation with no payable-days cap. " +
+    "Use calculatePayrollRun/calculatePayrollRunScoped from modules/payroll/payrollCalculate.service.ts instead.",
+  );
+
+  // eslint-disable-next-line no-unreachable
   const [runRows] = await db.execute<RowDataPacket[]>("SELECT * FROM salary_prep_run WHERE id = ? LIMIT 1", [runId]);
   const run = (runRows as SalaryPrepRun[])[0] as any;
   if (!run) throw new Error("Run not found");
@@ -282,7 +311,10 @@ export async function calculatePayrollRun(runId: string, userId: string): Promis
       [emp.employee_id]
     );
     const advanceRecovery = Number((advRows as Array<{ monthly_recovery: number }>)[0]?.monthly_recovery ?? 0);
-    const professionalTax = emp.state_code ? await getPtFromSlab(emp.state_code, grossAfterLwp) : stat.professional_tax;
+    // String() rather than relying on the ternary's narrowing: the guard at the top of
+    // this function makes everything below it unreachable, and TypeScript does not apply
+    // control-flow narrowing to unreachable code. Behaviourally identical.
+    const professionalTax = emp.state_code ? await getPtFromSlab(String(emp.state_code), grossAfterLwp) : stat.professional_tax;
 
     const [adjRows] = await db.execute<RowDataPacket[]>(
       `SELECT COALESCE(SUM(CASE WHEN adjustment_type='earning' THEN amount ELSE 0 END),0) AS earning_adj,
