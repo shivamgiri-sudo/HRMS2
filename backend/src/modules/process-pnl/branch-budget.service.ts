@@ -757,6 +757,11 @@ export async function getPriorBudgetFromMirror(
               ON sh.bill_source_id = l.sub_head_id AND sh.head_type = 'subhead'
       WHERE l.period_code = ? AND bm.id = ? AND l.expense_type = 'CostCenter'
         AND hh.head_name IS NOT NULL
+        -- Approved budgets only. active_status is db_bill's fully-approved marker (perfectly
+        -- correlated with all three approvals). Copy-forward exists to seed a new month from what
+        -- was actually sanctioned last month, so carrying unapproved lines across would propagate
+        -- a budget nobody signed off — and for FY2026-27 that is 367 of 544 rows, Rs 326 L.
+        AND b.active_status = 1
       GROUP BY hh.head_name, sh.head_name`,
     [periodCode, branchId],
   );

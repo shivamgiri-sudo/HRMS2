@@ -256,6 +256,16 @@ async function spendByBranch(period: string, f: CeoFilters): Promise<Map<string,
  *     budget three times and reported a Rs 32.51 lakh underspend against a real Rs 11.88 lakh.
  *     Collapsed to one id per distinct name before joining.
  */
+/*
+ * Active budgets only. `expense_master.Active` is db_bill's fully-approved marker: for FY2026-27
+ * it is 1 on exactly the 177 rows carrying all three approvals and 0 on exactly the 367 carrying
+ * only the first — the correlation is perfect, so this one predicate says "approved" without
+ * needing to test the approval columns as well. Do NOT use EntryStatus for this: it is 1 on 61 of
+ * the active rows and on 206 of the inactive ones, so it means something else entirely.
+ *
+ * Without it this summed all 544 rows — Rs 456.03 L against a real approved budget of Rs 130.00 L,
+ * overstating it 2.5x and making every underspend on this screen fiction.
+ */
 async function budgetByBranch(period: string): Promise<Map<string, number>> {
   const out = new Map<string, number>();
   if (!(await tableExists("finance_budget_line_snapshot"))) return out;
@@ -270,6 +280,7 @@ async function budgetByBranch(period: string): Promise<Map<string, number>> {
            ) bm ON bm.nm COLLATE utf8mb4_unicode_ci
                  = UPPER(TRIM(b.branch_name)) COLLATE utf8mb4_unicode_ci
       WHERE l.period_code = ? AND l.expense_type = 'CostCenter'
+        AND b.active_status = 1
       GROUP BY bm.id`,
     [period],
   );
@@ -551,9 +562,16 @@ async function buildFocus(
     );
     invoiceLines = n(inv[0]?.n);
 
+    // Approved budgets only — see budgetByBranch. Summing every mirrored row counts 367 rows
+    // that never got past the first approval.
     const [bud] = await db.execute<RowDataPacket[]>(
-      `SELECT COALESCE(SUM(amount), 0) AS a FROM finance_budget_line_snapshot
-        WHERE period_code = ? AND expense_type = 'CostCenter' AND expense_type_name IN (${marks})`,
+      `SELECT COALESCE(SUM(l.amount), 0) AS a
+         FROM finance_budget_line_snapshot l
+         JOIN finance_budget_snapshot b
+           ON b.bill_source_id = l.budget_source_id AND b.period_code = l.period_code
+        WHERE l.period_code = ? AND l.expense_type = 'CostCenter'
+          AND l.expense_type_name IN (${marks})
+          AND b.active_status = 1`,
       [period, ...codeList],
     );
     budget = n(bud[0]?.a);
