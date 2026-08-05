@@ -33,6 +33,7 @@ import {
   getPublicCompanyContext,
   refreshOfficialCompanyKnowledge,
 } from './ai-company-knowledge.service.js';
+import { answerHowToQuestion } from './ai-howto.service.js';
 import { ruleBasedProvider } from './providers/ruleBased.provider.js';
 
 export const aiInsightsRouter = Router();
@@ -386,6 +387,30 @@ async function askHandler(req: AuthenticatedRequest, res: Response, mode: 'json'
     await aiAuditService.logUsage(request, local.response);
     await aiAuditService.logPromptAudit(request, false, [], local.response.answer.slice(0, 200));
     return respond(local.response, { externalSafe: false, intent: local.intent });
+  }
+
+  // Tried after self-account (so "how many leaves do I have" isn't
+  // reinterpreted as a how-to question) and before company-knowledge (so a
+  // "how do I…" question about HRMS mechanics never falls through to the
+  // external LLM, which has no HRMS-navigation knowledge and was the actual
+  // root cause of vague answers to this class of question).
+  const howTo = await answerHowToQuestion(safeQuestion, userId, roleKeys);
+  if (howTo.handled && howTo.response) {
+    const request: AiGenerateRequest = {
+      userId,
+      roleKeys,
+      providerKey: howTo.response.provider,
+      userQuestion: safeQuestion,
+      sanitizedContext: { intent: howTo.intent, data_scope: 'howto_catalog', safe_mode: true },
+      requestSource: 'mira_howto',
+      entityType: 'howto_catalog',
+    };
+    await aiAuditService.logUsage(request, howTo.response);
+    await aiAuditService.logPromptAudit(request, false, [], howTo.response.answer.slice(0, 200));
+    // externalSafe: true — how-to steps and the RBAC-gated wording contain no
+    // employee PII, so unlike self-account answers this is safe to replay to
+    // an external provider on a follow-up turn.
+    return respond(howTo.response, { externalSafe: true, intent: howTo.intent });
   }
 
   const companyAnswer = await answerCompanyQuestion(safeQuestion);
