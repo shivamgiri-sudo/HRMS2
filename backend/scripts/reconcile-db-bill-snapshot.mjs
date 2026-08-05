@@ -64,15 +64,22 @@ function recentMonthLabels(n) {
 
 const money = (n) => (Number(n ?? 0) / 100000).toFixed(2);
 let failures = 0;
+let checks = 0;
 
-function compare(label, src, mirror) {
-  const ok = src.rows === mirror.rows && money(src.amount) === money(mirror.amount);
+/**
+ * `countOnly` for chains with no money column (clients, expense heads): comparing rupees there
+ * would silently pass on 0 === 0 and tell you nothing.
+ */
+function compare(label, src, mirror, { countOnly = false } = {}) {
+  checks++;
+  const rowsOk = src.rows === mirror.rows;
+  const amountOk = countOnly || money(src.amount) === money(mirror.amount);
+  const ok = rowsOk && amountOk;
   if (!ok) failures++;
-  console.log(
-    `  ${ok ? 'OK  ' : 'FAIL'}  ${label.padEnd(34)}` +
-    `source ${String(src.rows).padStart(6)} / ${money(src.amount).padStart(10)} L   ` +
-    `mirror ${String(mirror.rows).padStart(6)} / ${money(mirror.amount).padStart(10)} L`
-  );
+  const fmt = (x) => countOnly
+    ? `${String(x.rows).padStart(6)} rows          `
+    : `${String(x.rows).padStart(6)} / ${money(x.amount).padStart(10)} L`;
+  console.log(`  ${ok ? 'OK  ' : 'FAIL'}  ${label.padEnd(38)}source ${fmt(src)}   mirror ${fmt(mirror)}`);
 }
 
 const bill = await mysql.createConnection(BILL);
@@ -107,11 +114,56 @@ compare('expense_entry_master / grn_entry',
   await one(bill, "SELECT COUNT(*) row_n, SUM(COALESCE(Amount,0)) amt FROM expense_entry_master WHERE FinanceYear >= '2026-27'"),
   await one(hrms, "SELECT COUNT(*) row_n, SUM(COALESCE(amount,0)) amt FROM grn_entry_snapshot WHERE finance_year >= '2026-27'"));
 
+// ── The chains that had no check at all ──────────────────────────────────────
+// Six of the nine tables the sync writes were unverified. That gap is how sync 10 came to fail
+// on every run on 2026-08-05 while this script reported OK on everything it did look at.
+
+console.log('\nGRN LINES — current FY (was unchecked; sync 10 failed here silently)');
+compare('expense_entry_particular / grn_entry_line',
+  await one(bill, `SELECT COUNT(*) row_n, SUM(COALESCE(p.Amount,0)) amt
+                     FROM expense_entry_particular p
+                     JOIN expense_entry_master m ON m.Id = p.ExpenseEntry
+                    WHERE m.FinanceYear >= '2026-27'`),
+  await one(hrms, 'SELECT COUNT(*) row_n, SUM(COALESCE(amount,0)) amt FROM grn_entry_line_snapshot'));
+
+console.log('\nBUDGET — current FY');
+// The sync deliberately drops rows whose finance year begins after their created date — 12 of
+// them, Rs 7.27 L, mis-filed at source. The same predicate has to be applied here or this check
+// would fail forever and be ignored, which is worse than not having it.
+compare('expense_master / finance_budget',
+  await one(bill, `SELECT COUNT(*) row_n, SUM(COALESCE(Amount,0)) amt FROM expense_master
+                    WHERE FinanceYear >= '2026-27' AND createdate >= '2026-04-01'`),
+  await one(hrms, "SELECT COUNT(*) row_n, SUM(COALESCE(amount,0)) amt FROM finance_budget_snapshot WHERE finance_year >= '2026-27'"));
+
+compare('expense_particular / finance_budget_line',
+  await one(bill, `SELECT COUNT(*) row_n, SUM(COALESCE(p.Amount,0)) amt
+                     FROM expense_particular p
+                     JOIN expense_master m ON m.Id = p.ExpenseId
+                    WHERE m.FinanceYear >= '2026-27' AND m.createdate >= '2026-04-01'`),
+  await one(hrms, "SELECT COUNT(*) row_n, SUM(COALESCE(amount,0)) amt FROM finance_budget_line_snapshot WHERE finance_year >= '2026-27'"));
+
+console.log('\nMASTERS — all time');
+compare('provision_master / billing_provision',
+  await one(bill, 'SELECT COUNT(*) row_n, SUM(COALESCE(billing_amt,0)) amt FROM provision_master'),
+  await one(hrms, 'SELECT COUNT(*) row_n, SUM(COALESCE(billing_amt,0)) amt FROM billing_provision_snapshot'));
+
+compare('client_master / bill_client',
+  await one(bill, 'SELECT COUNT(*) row_n, 0 amt FROM client_master'),
+  await one(hrms, 'SELECT COUNT(*) row_n, 0 amt FROM bill_client_snapshot'),
+  { countOnly: true });
+
+compare('expense heads+subheads / expense_head',
+  await one(bill, `SELECT (SELECT COUNT(*) FROM tbl_bgt_expenseheadingmaster)
+                        + (SELECT COUNT(*) FROM tbl_bgt_expensesubheadingmaster) AS row_n, 0 amt`),
+  await one(hrms, 'SELECT COUNT(*) row_n, 0 amt FROM finance_expense_head_snapshot'),
+  { countOnly: true });
+
 await bill.end();
 await hrms.end();
 
 if (failures) {
-  console.log(`\n${failures} mismatch(es). Re-run backend/scripts/sync-db-bill-snapshot.mjs, then this again.\n`);
+  console.log(`\n${failures} of ${checks} checks FAILED. Re-run backend/scripts/sync-db-bill-snapshot.mjs, then this again.`);
+  console.log('Until it passes, every revenue figure on Process P&L is suspect.\n');
   process.exit(1);
 }
-console.log('\nMirror matches source on every check.\n');
+console.log(`\nMirror matches source on all ${checks} checks.\n`);
