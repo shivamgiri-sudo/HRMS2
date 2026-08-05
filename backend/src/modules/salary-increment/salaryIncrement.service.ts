@@ -197,9 +197,15 @@ export const salaryIncrementService = {
 
       // On implement: deactivate old salary assignment and create new one
       if (action === "implement") {
+        // Close the superseded row's validity window as well as deactivating it, so an
+        // increment leaves a reconstructible history rather than a row that claims to
+        // still be effective. See payroll.service.ts assignSalary for the full note.
         await conn.execute(
-          `UPDATE employee_salary_assignment SET active_status = 0 WHERE employee_id = ? AND active_status = 1`,
-          [req.employee_id]
+          `UPDATE employee_salary_assignment
+              SET active_status = 0,
+                  effective_to = COALESCE(effective_to, DATE_SUB(?, INTERVAL 1 DAY))
+            WHERE employee_id = ? AND active_status = 1`,
+          [req.effective_from, req.employee_id]
         );
         const newAssignId = randomUUID();
         // Re-use structure from current assignment if available

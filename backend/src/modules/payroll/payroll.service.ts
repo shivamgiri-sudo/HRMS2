@@ -155,9 +155,14 @@ export const payrollService = {
 
     const ids = employees.map(e => e.id);
     const placeholders = ids.map(() => "?").join(", ");
+    // Close each superseded row's validity window as well as deactivating it — see
+    // the note in assignSalary. COALESCE preserves any end date already recorded.
     await db.execute(
-      `UPDATE employee_salary_assignment SET active_status = 0 WHERE employee_id IN (${placeholders}) AND active_status = 1`,
-      ids
+      `UPDATE employee_salary_assignment
+          SET active_status = 0,
+              effective_to = COALESCE(effective_to, DATE_SUB(?, INTERVAL 1 DAY))
+        WHERE employee_id IN (${placeholders}) AND active_status = 1`,
+      [input.effectiveFrom, ...ids]
     );
 
     for (const emp of employees) {
@@ -250,9 +255,19 @@ export const payrollService = {
     const conn = await (db as any).getConnection();
     try {
       await conn.beginTransaction();
+      // Close the superseded row's validity window, not just its active flag.
+      //
+      // Deactivation previously set active_status alone and left effective_to NULL —
+      // true of all 230 superseded rows in production. A row that says "effective from
+      // 2024-04-01" with no end date cannot answer "what was this employee's CTC on a
+      // given date", which is what reproducing an older payroll run or an audit needs.
+      // COALESCE so an explicitly recorded end date is never overwritten.
       await conn.execute(
-        "UPDATE employee_salary_assignment SET active_status = 0 WHERE employee_id = ? AND active_status = 1",
-        [input.employeeId]
+        `UPDATE employee_salary_assignment
+            SET active_status = 0,
+                effective_to = COALESCE(effective_to, DATE_SUB(?, INTERVAL 1 DAY))
+          WHERE employee_id = ? AND active_status = 1`,
+        [input.effectiveFrom, input.employeeId]
       );
       await conn.execute(
         `INSERT INTO employee_salary_assignment
