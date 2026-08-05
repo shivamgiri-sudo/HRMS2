@@ -115,9 +115,15 @@ describe("salary-sheet export row-filters to the caller's scope", () => {
     expect(res.status).toBe(200);
     const [sql, params] = execute.mock.calls[1];
     expect(sql).toContain("AND (e.branch_id = ?)");
-    // Param order matters: the bank key feeds AES_DECRYPT in the SELECT, runId the
-    // WHERE, and the scope params come last because the clause is appended.
-    expect(params).toEqual(["test-bank-key", RUN_ID, "branch-a"]);
+    // What matters for scoping: runId binds before the scope params, and the scope
+    // params come last because the clause is appended. Asserted positionally rather
+    // than as a fixed array — the SELECT's own binds are an implementation detail
+    // (they were an encryption key until the account column turned out to be
+    // varbinary rather than encrypted), and pinning them made this test fail for a
+    // reason unrelated to what it is checking.
+    expect(params.at(-1)).toBe("branch-a");
+    expect(params).toContain(RUN_ID);
+    expect(params.indexOf(RUN_ID)).toBeLessThan(params.length - 1);
   });
 
   it("returns the whole run unfiltered for an org-wide caller", async () => {
@@ -131,7 +137,8 @@ describe("salary-sheet export row-filters to the caller's scope", () => {
     expect(res.status).toBe(200);
     const [sql, params] = execute.mock.calls[1];
     expect(sql).toContain("AND (1=1)");
-    expect(params).toEqual(["test-bank-key", RUN_ID]);
+    // An org-wide caller contributes no scope params, so runId is the final bind.
+    expect(params.at(-1)).toBe(RUN_ID);
   });
 
   it("refuses a caller with no assigned scope rather than downloading an empty workbook", async () => {

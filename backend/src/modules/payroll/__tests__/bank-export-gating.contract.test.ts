@@ -67,17 +67,25 @@ describe("the salary register filters rather than denies", () => {
 
   it("appends the scope clause to the WHERE and passes its params last", () => {
     expect(EXTENDED).toContain("AND (${scoped.sql})");
-    expect(EXTENDED).toContain("[env.PAYROLL_BANK_KEY, runId, ...scoped.params]");
+    // Asserted as "runId, then the scope params spread last" rather than pinning the
+    // full array. The leading bind used to be an encryption key; that is an unrelated
+    // implementation detail which has since changed, and coupling a scope assertion to
+    // it made this fail for a reason that had nothing to do with scoping.
+    expect(EXTENDED).toMatch(/\[[^\]]*runId,\s*\.\.\.scoped\.params\]/);
   });
 });
 
-describe("tripwire: no new ungated account-number decryption", () => {
-  it("payroll still decrypts account numbers in exactly the four known places", () => {
-    const count = (s: string) => (s.match(/AES_DECRYPT\(ebd\.account_number/g) ?? []).length;
+describe("tripwire: no new ungated account-number export", () => {
+  it("payroll reads bank account numbers in exactly the four known places", () => {
+    // Counts the column, not the function wrapping it. The concern is that an
+    // account number reaches a response at all; whether it is read via AES_DECRYPT
+    // or CAST is a storage question, and the earlier version of this test tracked
+    // the wrapper and so went blind the moment that changed.
+    const count = (s: string) => (s.match(/ebd\.account_number/g) ?? []).length;
     const total = count(ROUTES) + count(EXTENDED);
     expect(
       total,
-      "A payroll endpoint that decrypts bank account numbers was added or removed. " +
+      "A payroll endpoint reading bank account numbers was added or removed. " +
         "If added, gate it with hasOrgWideScope (payment file) or buildScopeWhereClause " +
         "(report) and update this count deliberately.",
     ).toBe(4);

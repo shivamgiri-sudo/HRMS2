@@ -85,6 +85,25 @@ function runEmployeeScopeSql(run: any, restrictToRunLines = false) {
 }
 
 /**
+ * Indian financial year containing `runMonth`, formatted as the tax tables store
+ * it — "2026-27" for April 2026 through March 2027.
+ *
+ * Same derivation as payrollCalculate.service.ts, kept identical on purpose: if
+ * the two disagree, this check would clear a year the calculation then refuses.
+ */
+export function financialYearForMonth(runMonth: string): string {
+  const [year, month] = runMonth.split("-").map(Number);
+  const startYear = month >= 4 ? year : year - 1;
+  return `${startYear}-${String(startYear + 1).slice(2)}`;
+}
+
+/** The financial year after the one containing `runMonth`. */
+export function nextFinancialYear(runMonth: string): string {
+  const startYear = Number(financialYearForMonth(runMonth).slice(0, 4)) + 1;
+  return `${startYear}-${String(startYear + 1).slice(2)}`;
+}
+
+/**
  * First month of the ESI contribution period containing `runMonth`.
  *
  * The Act runs two fixed periods a year — April to September and October to March
@@ -145,6 +164,54 @@ export const payrollGovernanceService = {
         severity: "blocker",
         count: 1,
         message: `Payroll for ${run.run_month} cannot be calculated before ${earliestCalcDate}. Final calculation is allowed from M+2 to ensure night-shift attendance is fully captured.`,
+      });
+    }
+
+    // Tax configuration for the years this run needs, and the one after it.
+    //
+    // taxEngineService refuses when payroll_tax_fy_config / payroll_tax_slab_master
+    // hold no row for a financial year, rather than falling back to hardcoded slabs
+    // — a stale rate under-deducts, and the shortfall is the employer's liability.
+    // Refusing is right, but discovering it during the first run of a new financial
+    // year is not: the rates come from the Finance Act each February, and nobody is
+    // reminded. This surfaces the gap while there is still time to act on it.
+    //
+    // Severity follows tds_mode, because the engine only runs when the mode is
+    // 'auto' (payrollCalculate.service.ts). All 66 production runs are 'manual', so
+    // a missing year does not currently break anything — but switching a run to
+    // auto without the config would, so it is still worth saying.
+    const [fyRows] = await db.execute<RowDataPacket[]>(
+      `SELECT DISTINCT financial_year FROM payroll_tax_fy_config WHERE active_status = 1`,
+    );
+    const seededFys = new Set((fyRows as Array<{ financial_year: string }>).map((r) => r.financial_year));
+    const runFy = financialYearForMonth(run.run_month);
+    const tdsMode = String((run as { tds_mode?: string }).tds_mode ?? "manual");
+
+    if (!seededFys.has(runFy)) {
+      issues.push({
+        code: "TAX_CONFIG_MISSING_FOR_RUN_FY",
+        severity: tdsMode === "auto" ? "blocker" : "warning",
+        count: 1,
+        message:
+          `No approved tax configuration for financial year ${runFy}. ` +
+          (tdsMode === "auto"
+            ? "This run is in auto TDS mode, so calculation will refuse until payroll_tax_fy_config and payroll_tax_slab_master are seeded for that year."
+            : "This run is in manual TDS mode so it is unaffected, but switching it to auto would fail until payroll_tax_fy_config and payroll_tax_slab_master are seeded for that year."),
+      });
+    }
+
+    // Lead time for the next year, raised only from January so it does not nag for
+    // nine months. January to March is the last quarter of the financial year, and
+    // the Budget lands in February — so the rates exist by the time this fires.
+    const upcomingFy = nextFinancialYear(run.run_month);
+    if (runMonthNum >= 1 && runMonthNum <= 3 && !seededFys.has(upcomingFy)) {
+      issues.push({
+        code: "TAX_CONFIG_MISSING_FOR_NEXT_FY",
+        severity: "warning",
+        count: 1,
+        message:
+          `Financial year ${upcomingFy} begins on ${upcomingFy.slice(0, 4)}-04-01 and has no approved tax configuration yet. ` +
+          `Seed payroll_tax_fy_config and payroll_tax_slab_master from the current Finance Act before the first payroll run of that year.`,
       });
     }
 
