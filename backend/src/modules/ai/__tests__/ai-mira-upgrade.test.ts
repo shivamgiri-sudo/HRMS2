@@ -7,7 +7,7 @@ vi.mock('../../../db/mysql.js', () => ({ db: { execute: mocks.execute } }));
 vi.mock('../../../shared/accessGuard.js', () => ({ getEmployeeForUser: mocks.getEmployeeForUser }));
 
 import { answerSelfAccountQuestion, clearMiraCacheForUser, detectMiraIntent } from '../ai-account.service.js';
-import { answerCompanyQuestion, COMPANY_SYSTEM_INSTRUCTION, getPublicCompanyContext } from '../ai-company-knowledge.service.js';
+import { answerCompanyQuestion, clearCompanyKnowledgeCache, COMPANY_SYSTEM_INSTRUCTION, getPublicCompanyContext } from '../ai-company-knowledge.service.js';
 import { OpenRouterProvider } from '../providers/openrouter.provider.js';
 
 function source(relativePath: string): string {
@@ -16,6 +16,7 @@ function source(relativePath: string): string {
 
 beforeEach(() => {
   clearMiraCacheForUser();
+  clearCompanyKnowledgeCache();
   mocks.execute.mockReset();
   mocks.getEmployeeForUser.mockReset();
   mocks.getEmployeeForUser.mockResolvedValue({ id: 'employee-self', employee_code: 'EMP-001' });
@@ -76,6 +77,55 @@ describe('Mira live grounding and OpenRouter upgrade', () => {
     expect(response?.answer).toContain('Branch Leader');
     expect(response?.answer).toContain('live HRMS organisation scope');
     expect(response?.answer).not.toContain('@');
+  });
+
+  it('documents the company-services bug and proves the fix, back to back', async () => {
+    // Regression test for a real bug: 425_mira_openrouter_company_knowledge.sql
+    // only ever seeded 6 of FALLBACK_FACTS's 7 rows (no 'company-services').
+    // facts() does `dbFacts.length ? dbFacts : FALLBACK_FACTS` — all-or-nothing,
+    // not merged — so once any DB rows exist, answerCompanyQuestion's
+    // `selected.length ? selected : allFacts.filter(category === 'overview')`
+    // fallback meant a "what services does MAS offer" question silently
+    // answered with overview/mission content instead of services content — a
+    // plausible-looking but topically wrong answer, not an obvious failure.
+    // Fixed by 1076_mira_company_services_seed.sql.
+    //
+    // facts() caches its result for 10 minutes (module-level factCache,
+    // cleared in beforeEach via clearCompanyKnowledgeCache() so this and every
+    // other test starts clean). Both halves of this test share that same
+    // module-level cache, so they must run in one test with fake timers
+    // advancing past the TTL between them — two separate tests would
+    // silently reuse the first mock's cached result for the second, which
+    // would look like a pass, not catch anything.
+    vi.useFakeTimers();
+    try {
+      mocks.execute.mockResolvedValueOnce([[
+        { knowledge_key: 'company-overview', category: 'overview', title: 'Company overview', content_text: 'Overview content.', source_url: 'https://mascallnet.ai/about/' },
+      ]]);
+      const before = await answerCompanyQuestion('What services does MAS offer?');
+      // This IS the bug: no services row -> silently answers with overview
+      // content instead of a "services" answer.
+      expect(before?.answer).toContain('Overview content.');
+
+      vi.advanceTimersByTime(11 * 60_000); // past the 10-minute factCache TTL
+      mocks.execute.mockResolvedValueOnce([[
+        { knowledge_key: 'company-overview', category: 'overview', title: 'Company overview', content_text: 'Overview content.', source_url: 'https://mascallnet.ai/about/' },
+        { knowledge_key: 'company-services', category: 'services', title: 'Services and capabilities', content_text: 'MAS Callnet provides customer support, back-office and process management services.', source_url: 'https://mascallnet.ai' },
+      ]]);
+      const after = await answerCompanyQuestion('What services does MAS offer?');
+      expect(after?.answer).toContain('Services and capabilities');
+      expect(after?.answer).toContain('back-office and process management');
+      expect(after?.answer).not.toContain('Overview content.');
+    } finally {
+      vi.useRealTimers();
+      // The cache entry set above stores expiresAt computed from the fake,
+      // artificially-advanced clock — once real timers resume, that
+      // timestamp would still look "not yet expired" for a long real-world
+      // stretch and silently leak this test's 2-row result into whichever
+      // test runs next. Clear explicitly rather than rely on the next test's
+      // own beforeEach ordering relative to this cleanup.
+      clearCompanyKnowledgeCache();
+    }
   });
 
   it('builds external context from public company facts only', async () => {

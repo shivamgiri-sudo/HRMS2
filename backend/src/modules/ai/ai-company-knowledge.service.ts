@@ -71,6 +71,14 @@ const INTENT_PATTERNS: Array<{ intent: CompanyIntent; patterns: RegExp[] }> = [
 let factCache: { expiresAt: number; facts: CompanyFact[] } | null = null;
 const CACHE_TTL_MS = 10 * 60_000;
 
+/** Test seam — mirrors clearMiraCacheForUser in ai-account.service.ts. Also
+ *  useful in real code paths (e.g. right after a batch edit to
+ *  ai_company_knowledge) if refreshOfficialCompanyKnowledge()'s live network
+ *  scrape isn't wanted just to invalidate the cache. */
+export function clearCompanyKnowledgeCache(): void {
+  factCache = null;
+}
+
 export function detectCompanyIntent(question: string): CompanyIntent {
   const value = String(question || '').trim();
   for (const item of INTENT_PATTERNS) if (item.patterns.some((pattern) => pattern.test(value))) return item.intent;

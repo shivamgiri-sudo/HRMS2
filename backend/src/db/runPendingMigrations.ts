@@ -472,6 +472,7 @@ const MIGRATION_MANIFEST: string[] = [
   "1073_employee_profile_parity.sql", // manual HR "Add Employee" only ever captured 8 fields against the candidate journey's ~60; adds employee_education, employee_experience, employees.annual_income/count_of_dependents, employee_statutory_info declaration columns
   "1074_grn_invoice_gst_components.sql", // grn_invoice_component table + grn_cost_allocation.invoice_component_id — lets one vendor GRN's declared invoice total be broken into repeatable {amount without tax, GST slab} components (same invoice, multiple GST rates) instead of inheriting one GST rate from whichever budget line was picked
   "1075_bank_detail_sync_map_account_encrypt_false.sql", // corrects legacy_sync_map's bank_detail row: transform_rules_json declared 'account_encrypt':true but nothing has ever read that key (confirmed by grep) and live data is 100% unencrypted plaintext — the flag was asserting something the sync has never done
+  "1076_mira_company_services_seed.sql", // 425's seed only inserted 6 of FALLBACK_FACTS's 7 rows (missing company-services); facts() does dbFacts.length ? dbFacts : FALLBACK_FACTS — all-or-nothing, not merged — so once any DB rows exist, a services-category question got zero facts, not even the fallback text, because 'services' was never among the seeded 6
   ];
 
 export type MigrationHealth = {
