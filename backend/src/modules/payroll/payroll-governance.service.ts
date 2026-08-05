@@ -84,6 +84,21 @@ function runEmployeeScopeSql(run: any, restrictToRunLines = false) {
   return { where: clauses.join(" AND "), params, range };
 }
 
+/**
+ * First month of the ESI contribution period containing `runMonth`.
+ *
+ * The Act runs two fixed periods a year — April to September and October to March
+ * — and coverage, once it attaches, holds to the end of the one it attached in.
+ * A period is therefore not "the last six months": for January the period began
+ * the previous October, which is why the year rolls back.
+ */
+export function esiContributionPeriodStart(runMonth: string): string {
+  const [year, month] = runMonth.split("-").map(Number);
+  if (month >= 4 && month <= 9) return `${year}-04`;
+  if (month >= 10) return `${year}-10`;
+  return `${year - 1}-10`; // Jan-Mar belongs to the period that opened last October
+}
+
 async function countIssue(sql: string, params: unknown[], code: string, severity: PayrollReadinessSeverity, message: string): Promise<PayrollReadinessIssue | null> {
   // Use db.query (text protocol) instead of db.execute (prepared statements) to avoid
   // "Incorrect arguments to mysqld_stmt_execute" when ? placeholders appear inside subqueries.
@@ -394,6 +409,53 @@ export const payrollGovernanceService = {
         "PENDING_LEAVE_REQUESTS",
         "warning",
         "Employees have pending (unapproved) leave requests for this payroll month — these will be lapsed as LWP at cycle close if not resolved",
+      ),
+      // ESI contribution-period continuity.
+      //
+      // calculateNetSalary decides ESI from that month's gross alone
+      // (gross <= esic_wage_limit), re-evaluated every run. Under the ESI Act a person
+      // covered at the start of a contribution period — April-September or
+      // October-March — stays covered to the end of it even if a mid-period raise takes
+      // them past the ceiling. The code drops them the month they cross.
+      //
+      // Reported rather than deducted: correcting the deduction automatically would
+      // change the statutory calculation for every employee on every run, and the
+      // affected population is small (5 employees in April-September 2026). This
+      // surfaces exactly who is affected so payroll can handle them, without altering
+      // anyone's pay. Fixing the rule itself needs a contribution-period table and a
+      // reconciliation pass; tracked separately.
+      countIssue(
+        `SELECT e.id, e.employee_code,
+                COALESCE(NULLIF(e.full_name, ''), CONCAT(e.first_name, ' ', COALESCE(e.last_name, ''))) AS employee_name,
+                ROUND(MIN(prior.gross_salary), 2) AS gross_when_covered,
+                ROUND(MAX(prior.gross_salary), 2) AS gross_after_crossing,
+                MIN(prior_run.run_month)          AS covered_from_month
+           FROM employees e
+           JOIN salary_prep_line prior     ON prior.employee_id = e.id
+           JOIN salary_prep_run  prior_run ON prior_run.id = prior.run_id
+          WHERE ${where}
+            AND LOWER(prior.status) NOT IN ('excluded', 'blocked')
+            AND LOWER(prior_run.status) NOT IN ('draft', 'cancelled')
+            -- earlier month, same contribution period (Apr-Sep or Oct-Mar) as this run
+            AND prior_run.run_month < ?
+            AND prior_run.run_month >= ?
+            AND prior.gross_salary > 0
+          GROUP BY e.id, e.employee_code, employee_name
+            -- Both halves are the point: within one period they were at or under the
+            -- ceiling (so coverage attached) AND have since gone over it (so the
+            -- month-by-month test drops them). Testing only the first half matches
+            -- everyone still under the ceiling — 775 employees against 27 real
+            -- crossings — and a warning that noisy is one nobody reads.
+            HAVING MIN(prior.gross_salary) <= (
+                     SELECT COALESCE(MAX(config_value), 21000) FROM statutory_config
+                      WHERE LOWER(config_key) = 'esic_wage_limit' AND is_active = 1)
+               AND MAX(prior.gross_salary) > (
+                     SELECT COALESCE(MAX(config_value), 21000) FROM statutory_config
+                      WHERE LOWER(config_key) = 'esic_wage_limit' AND is_active = 1)`,
+        [...params, run.run_month, esiContributionPeriodStart(run.run_month)],
+        "ESI_MID_PERIOD_CEILING_CROSSING",
+        "warning",
+        "Employees were within the ESI wage ceiling earlier in this contribution period. Under the ESI Act they remain covered until the period ends (30 Sep / 31 Mar) even if their gross has since crossed the ceiling — verify ESI is still being deducted for them",
       ),
     ];
 
