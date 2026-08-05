@@ -3,6 +3,7 @@ import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { payrollGovernanceService } from "./payroll-governance.service.js";
 import { inboxService } from "../inbox/inbox.service.js";
+import { logSensitiveAction } from "../../shared/auditLog.js";
 
 export type AttendanceControlGap = {
   id: string;
@@ -1081,6 +1082,28 @@ export const payrollAttendanceControlService = {
       await upsertReview(gap, params.status, params.actorUserId, params.note ?? null);
       updated += 1;
     }
+
+    // Marking a cross-evidence conflict "no_issue" is a decision that an attendance
+    // discrepancy should not be pursued, and it is taken against records that feed
+    // payable days. The Payroll Audit Trail reads sensitive_action_log, and this
+    // service wrote nothing to it, so those decisions left no trace of who made them.
+    if (updated > 0) {
+      await logSensitiveAction({
+        actor_user_id: params.actorUserId ?? "system",
+        action_type: "ATTENDANCE_CONFLICT_REVIEWED",
+        module_key: "payroll",
+        entity_type: "payroll_attendance_conflict_review",
+        entity_id: runMonth,
+        change_summary: {
+          run_month: runMonth,
+          status: params.status,
+          conflicts_updated: updated,
+          conflicts_requested: params.conflictKeys.length,
+          note: params.note ?? null,
+        },
+      });
+    }
+
     return { runMonth, updated, requested: params.conflictKeys.length, status: params.status };
   },
 
@@ -1089,9 +1112,40 @@ export const payrollAttendanceControlService = {
     const ncosecKeys = params.conflictKeys.filter((key) => String(key).startsWith("ncosec:"));
     const aprResult = aprKeys.length ? await repairMissingAdrFromApr(aprKeys, params.actorUserId) : { requested: 0, repaired: 0, skipped: 0 };
     const ncosecResult = ncosecKeys.length ? await repairMissingAdrFromNcosec(ncosecKeys, params.actorUserId) : { requested: 0, repaired: 0, skipped: 0 };
+
+    const repaired = aprResult.repaired + ncosecResult.repaired;
+
+    // This writes attendance_daily_record rows, and payable days are derived from
+    // that table — so a repair changes what someone is paid. It is the most
+    // consequential action in this service and was the least visible: nothing here
+    // wrote to sensitive_action_log or payroll_calculation_audit, the two tables the
+    // Payroll Audit Trail screen reads, so attendance could be materially altered
+    // with no record of who did it or which days were touched.
+    //
+    // Logged even when nothing was repaired: an attempt that skipped every key is
+    // itself worth seeing, since it usually means the evidence did not support the
+    // repair the operator believed they were making.
+    await logSensitiveAction({
+      actor_user_id: params.actorUserId ?? "system",
+      action_type: "ATTENDANCE_ADR_REPAIRED",
+      module_key: "payroll",
+      entity_type: "attendance_daily_record",
+      entity_id: `repair:${repaired}`,
+      change_summary: {
+        requested: aprResult.requested + ncosecResult.requested,
+        repaired,
+        skipped: aprResult.skipped + ncosecResult.skipped,
+        apr: aprResult,
+        ncosec: ncosecResult,
+        // The keys carry employee and date, so the audit row says which attendance
+        // was written rather than only how many rows.
+        conflict_keys: params.conflictKeys,
+      },
+    });
+
     return {
       requested: aprResult.requested + ncosecResult.requested,
-      repaired: aprResult.repaired + ncosecResult.repaired,
+      repaired,
       skipped: aprResult.skipped + ncosecResult.skipped,
     };
   },
