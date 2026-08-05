@@ -5,6 +5,7 @@ import { getLegacyPool } from '../../db/legacyDb.js';
 import { getIstDateString, getIstMonthStart } from '../../utils/dateUtils.js';
 import { getPolicyValue } from '../policy-engine/policy-engine.cache.js';
 import { logger } from '../../lib/logger.js';
+import { LATEST_COMPLETE_ATTENDANCE_DATE_SQL } from '../../shared/attendanceStatus.js';
 
 export interface InterventionFlag {
   type: string;
@@ -97,12 +98,22 @@ export async function getDailyOpsPulse(targetDate?: string, branchIds?: string[]
     ? ` AND employee_id IN (SELECT id FROM employees WHERE process_id IN (${processIds.map(() => "?").join(",")}) AND active_status = 1)`
     : "";
   const attendScopeParams = branchIds && branchIds.length > 0 ? branchIds : processIds && processIds.length > 0 ? processIds : [];
-  const [attendRows] = await db.execute<RowDataPacket[]>(
-    `SELECT COUNT(DISTINCT employee_id) AS scheduled
-     FROM attendance_daily_record
-     WHERE record_date = ?${attendScopeClause}`,
-    [date, ...attendScopeParams]
-  ).catch(() => [[{ scheduled: 0 }]] as any);
+  // Fetched alongside `scheduled`, not sequentially — see scheduledDataReliable
+  // below for why a baseline from the latest fully-processed day is needed.
+  const [[attendRows], [baselineRows]] = await Promise.all([
+    db.execute<RowDataPacket[]>(
+      `SELECT COUNT(DISTINCT employee_id) AS scheduled
+       FROM attendance_daily_record
+       WHERE record_date = ?${attendScopeClause}`,
+      [date, ...attendScopeParams]
+    ).catch(() => [[{ scheduled: 0 }]] as any),
+    db.execute<RowDataPacket[]>(
+      `SELECT COUNT(DISTINCT employee_id) AS baseline
+       FROM attendance_daily_record
+       WHERE record_date = ${LATEST_COMPLETE_ATTENDANCE_DATE_SQL}${attendScopeClause}`,
+      [...attendScopeParams]
+    ).catch(() => [[{ baseline: 0 }]] as any),
+  ]);
 
   const aprRow = (aprRows as any[])[0] ?? {};
   const totalCalls = Number(aprRow.total_calls ?? 0);
@@ -124,7 +135,22 @@ export async function getDailyOpsPulse(targetDate?: string, branchIds?: string[]
   // fabricate, report unavailable instead of a wrong number" doctrine
   // already used elsewhere in this codebase (e.g. noAttendanceSource,
   // zeroAttendanceRisk).
-  const scheduledDataReliable = agentsScheduled >= agentsLoggedIn;
+  // The `>= agentsLoggedIn` check alone only catches the extreme case (the
+  // 881.8% symptom above). It does not catch attendance_daily_record having
+  // *partially* caught up for today — say 20 of an eventual ~1100 rows
+  // processed, with agentsLoggedIn happening to be <= 20 too — which would
+  // pass that check and produce a plausible-looking but still-wrong
+  // adherence figure. Added a second, independent signal: compare today's
+  // count against the latest fully-processed day's count (same
+  // LATEST_COMPLETE_ATTENDANCE_DATE_SQL anchor used for attendance tiles
+  // elsewhere). If today is under 30% of that baseline, today's count isn't
+  // representative of real same-day staffing yet, regardless of how it
+  // compares to agentsLoggedIn. Skipped when there's no baseline at all
+  // (baseline 0) rather than treating an org/scope with no recent history as
+  // unreliable — that's a different, unrelated condition.
+  const baselineScheduled = Number((baselineRows as any[])[0]?.baseline ?? 0);
+  const scheduledDataReliable = agentsScheduled >= agentsLoggedIn
+    && (baselineScheduled === 0 || agentsScheduled >= baselineScheduled * 0.3);
   const loginAdherence = scheduledDataReliable && agentsScheduled > 0
     ? parseFloat(((agentsLoggedIn / agentsScheduled) * 100).toFixed(1))
     : null;
