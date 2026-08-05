@@ -10,6 +10,7 @@ import {
 } from "../finance/finance-access-scope.js";
 import { branchBudgetService } from "./branch-budget.service.js";
 import { budgetCoverageService } from "./budget-coverage.service.js";
+import { checkBudgetExceptions } from "./budget-readiness.service.js";
 
 const READ_ROLES = [
   "super_admin",
@@ -108,8 +109,9 @@ budgetCoverageRouter.post(
         user.role
       ) as any;
       await budgetCoverageService.syncPlannedFromLines(String(budget.id), user.id);
-      const data = await branchBudgetService.get(String(budget.id));
-      res.status(201).json({ success: true, data });
+      const data = await branchBudgetService.get(String(budget.id)) as any;
+      const exceptions = await checkBudgetExceptions(String(budget.id));
+      res.status(201).json({ success: true, data: { ...data, exceptions } });
     } catch (error) {
       res.status(400).json({
         success: false,
@@ -172,8 +174,9 @@ budgetCoverageRouter.post(
         user.id,
         user.role
       );
-      const data = await branchBudgetService.get(req.params.id);
-      res.json({ success: true, data });
+      const data = await branchBudgetService.get(req.params.id) as any;
+      const exceptions = await checkBudgetExceptions(req.params.id);
+      res.json({ success: true, data: { ...data, exceptions } });
     } catch (error) {
       res.status(400).json({
         success: false,

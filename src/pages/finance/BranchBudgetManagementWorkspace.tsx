@@ -1595,11 +1595,11 @@ Reason:`
                         <p className="text-sm text-slate-500">Save the budget draft first to check its lines for exceptions.</p>
                       ) : detailQuery.isLoading ? (
                         <Loader2 className="h-5 w-5 animate-spin" />
-                      ) : !detailQuery.data?.exceptions.length ? (
+                      ) : !detailQuery.data?.exceptions?.length ? (
                         <p className="flex items-center gap-2 text-sm text-emerald-700"><CheckCircle2 className="h-4 w-4" />No exceptions found for this budget.</p>
                       ) : (
                         <div className="space-y-2">
-                          {detailQuery.data.exceptions.map((exception) => (
+                          {(detailQuery.data.exceptions ?? []).map((exception) => (
                             <div key={exception.lineId} className="rounded-xl border border-rose-200 bg-rose-50 p-3">
                               <p className="text-sm font-semibold text-rose-900">{exception.itemName}</p>
                               <p className="mt-1 text-xs text-rose-700">{exception.message}</p>
