@@ -2,6 +2,7 @@ import { randomUUID } from "crypto";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
+import { notifySalaryIncrementLetter } from "./salaryIncrement.notifications.js";
 
 type IncrementStatus =
   | "submitted"
@@ -239,6 +240,10 @@ export const salaryIncrementService = {
       employee_id: req.employee_id,
       change_summary: { old_status: oldStatus, new_status: t.to, remarks: remarks ?? null },
     });
+
+    if (action === "implement") {
+      void notifySalaryIncrementLetter(id);
+    }
 
     return this.getById(id);
   },

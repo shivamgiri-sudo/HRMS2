@@ -54,6 +54,18 @@ const WIRING: Array<{ area: string; callSite: string; module: string; functions:
     module: 'exit/exit.notifications.ts',
     functions: ['notifyResignationSubmitted', 'notifyResignationDecision'],
   },
+  {
+    area: 'exit-ff',
+    callSite: 'exit/ff.service.ts',
+    module: 'exit/exit.notifications.ts',
+    functions: ['notifyFullFinalReady'],
+  },
+  {
+    area: 'salary-increment',
+    callSite: 'salary-increment/salaryIncrement.service.ts',
+    module: 'salary-increment/salaryIncrement.notifications.ts',
+    functions: ['notifySalaryIncrementLetter'],
+  },
 ];
 
 const read = (rel: string): string => {
@@ -100,6 +112,37 @@ describe('notification wiring is not silently deleted', () => {
       });
     });
   }
+
+  /**
+   * salary_advance_recovery is fired inline inside notifyPayslipsReady rather than as its
+   * own exported wrapper (it reuses that loop's per-employee context), so the generic
+   * WIRING mechanism above — which checks for an `export async function <fn>` — cannot
+   * cover it. Guard the eventCode string directly instead.
+   */
+  it('payroll.notifications.ts still fires salary_advance_recovery inside notifyPayslipsReady', () => {
+    const src = stripComments(read('payroll/payroll.notifications.ts'));
+    expect(src, 'salary_advance_recovery eventCode missing from payroll.notifications.ts').toContain(
+      "eventCode: 'salary_advance_recovery'",
+    );
+  });
+
+  /**
+   * approveRunForDisbursement is a SECOND path to salary_prep_run.status='disbursed',
+   * independent of updateRunStatus. The generic 'payroll' WIRING check above already
+   * passes via updateRunStatus alone, so it would NOT catch a regression where only
+   * approveRunForDisbursement loses its notify call again — hence this function-scoped
+   * check.
+   */
+  it('approveRunForDisbursement still calls notifyPayslipsReady on its own disbursed path', () => {
+    const src = stripComments(read('payroll/payroll.service.ts'));
+    const fnMatch = src.match(/export async function approveRunForDisbursement[\s\S]*?\n\}/);
+    expect(fnMatch, 'approveRunForDisbursement function body not found').toBeTruthy();
+    expect(
+      fnMatch![0],
+      'approveRunForDisbursement no longer calls notifyPayslipsReady — the disbursed-via-' +
+        'finance-approval path will silently stop notifying again',
+    ).toMatch(/notifyPayslipsReady\s*\(/);
+  });
 
   /**
    * Scheduler split-brain: all-workers.ts (the pm2 `hrms2-workers` process) and server.ts

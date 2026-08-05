@@ -128,6 +128,7 @@ interface PayslipRow extends RowDataPacket {
   gross_salary: number | null;
   lwp_days: number | null;
   branch_id: string | null;
+  advance_recovery: number | null;
 }
 
 /**
@@ -152,7 +153,7 @@ export async function notifyPayslipsReady(runId: string): Promise<{ employees: n
 
     const [lines] = await db.execute<PayslipRow[]>(
       `SELECT spl.employee_id, spl.employee_code, spl.net_salary, spl.gross_salary, spl.lwp_days,
-              e.branch_id
+              e.branch_id, COALESCE(spl.advance_recovery, 0) AS advance_recovery
          FROM salary_prep_line spl
          JOIN employees e ON e.id = spl.employee_id AND e.active_status = 1
         WHERE spl.run_id = ?
@@ -186,9 +187,56 @@ export async function notifyPayslipsReady(runId: string): Promise<{ employees: n
         result.skipped++;
         console.error(`[payroll-notify] payslip ${runId}/${line.employee_id}:`, (err as Error).message);
       }
+
+      // salary_advance_recovery is a separate event from payslip_ready, kept in its own
+      // try/catch so a failure here does not double-count result.skipped for an employee
+      // whose payslip notification already succeeded.
+      if (Number(line.advance_recovery) > 0) {
+        try {
+          await notificationGateway.notify({
+            eventCode: 'salary_advance_recovery',
+            dedupeKey: `salary_prep_run:${runId}:advance_recovery:${line.employee_id}`,
+            context: { employeeId: line.employee_id, branchId: line.branch_id },
+            entityType: 'salary_prep_run',
+            entityId: runId,
+            correlationId: `payroll_run:${runId}`,
+            data: {
+              run_month: run.run_month,
+              employee_code: line.employee_code,
+              advance_recovery: Number(line.advance_recovery),
+              net_pay: line.net_salary == null ? null : Number(line.net_salary),
+            },
+          });
+        } catch (err) {
+          console.error(`[payroll-notify] advance_recovery ${runId}/${line.employee_id}:`, (err as Error).message);
+        }
+      }
     }
   } catch (err) {
     console.error(`[payroll-notify] payslips ${runId}:`, (err as Error).message);
   }
   return result;
+}
+
+/**
+ * Payroll window closing soon — internal warning to payroll_hr/branch_hr, not
+ * employee-facing. dedupeKey includes window_close_date so a run whose close date is
+ * later pushed out gets a fresh warning rather than being permanently deduped.
+ */
+export async function notifyPayrollWindowClosing(runId: string, windowCloseDate: string): Promise<void> {
+  try {
+    const run = await loadRun(runId);
+    if (!run) return;
+    await notificationGateway.notify({
+      eventCode: 'payroll_window_closing',
+      dedupeKey: `salary_prep_run:${runId}:window_closing:${windowCloseDate}`,
+      context: { branchId: run.branch_id },
+      entityType: 'salary_prep_run',
+      entityId: runId,
+      correlationId: `payroll_run:${runId}`,
+      data: { run_month: run.run_month, window_close_date: windowCloseDate },
+    });
+  } catch (err) {
+    console.error(`[payroll-notify] window_closing ${runId}:`, (err as Error).message);
+  }
 }

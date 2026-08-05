@@ -136,6 +136,60 @@ export async function notifyResignationDecision(
   }
 }
 
+interface FfContextRow extends RowDataPacket {
+  net_payable: number | null;
+  gratuity_amount: number | null;
+  notice_recovery: number | null;
+  earned_leave_encashment: number | null;
+  salary_hold: number | null;
+  advances_recovery: number | null;
+}
+
+/**
+ * Full & final settlement approved and ready.
+ *
+ * Uses official_then_personal (see registry seed) because the employee has already
+ * exited and may no longer have official-mailbox access. Note: the shared recipient
+ * resolver still gates the `employee` recipient kind behind active_status = 1 before
+ * considering that fallback — if active_status is cleared before F&F approval, this
+ * resolves zero recipients regardless. That is a resolver-level question affecting all
+ * employee-kind consumers, not fixed here.
+ */
+export async function notifyFullFinalReady(exitRequestId: string): Promise<void> {
+  try {
+    const ctx = await loadExitContext(exitRequestId);
+    if (!ctx) return;
+    const [rows] = await db.execute<FfContextRow[]>(
+      `SELECT net_payable, gratuity_amount, notice_recovery, earned_leave_encashment,
+              salary_hold, advances_recovery
+         FROM full_final_calculation WHERE exit_request_id = ? LIMIT 1`,
+      [exitRequestId],
+    );
+    const ff = rows[0];
+    if (!ff) return;
+    await notificationGateway.notify({
+      eventCode: 'full_final_ready',
+      dedupeKey: `exit_request:${exitRequestId}:ff_ready`,
+      context: { employeeId: ctx.employee_id, branchId: ctx.branch_id, processId: ctx.process_id },
+      entityType: 'exit_request',
+      entityId: exitRequestId,
+      correlationId: `exit:${exitRequestId}`,
+      data: {
+        employee_name: ctx.employee_name,
+        employee_code: ctx.employee_code,
+        net_payable: ff.net_payable == null ? null : Number(ff.net_payable),
+        gratuity_amount: ff.gratuity_amount == null ? null : Number(ff.gratuity_amount),
+        notice_recovery: ff.notice_recovery == null ? null : Number(ff.notice_recovery),
+        earned_leave_encashment: ff.earned_leave_encashment == null ? null : Number(ff.earned_leave_encashment),
+        salary_hold: ff.salary_hold == null ? null : Number(ff.salary_hold),
+        advances_recovery: ff.advances_recovery == null ? null : Number(ff.advances_recovery),
+      },
+    });
+  } catch (err) {
+    console.error(`[exit-notify] full_final_ready ${exitRequestId}:`, (err as Error).message);
+  }
+}
+
 /**
  * Last working day approaching, with the open clearance count.
  *

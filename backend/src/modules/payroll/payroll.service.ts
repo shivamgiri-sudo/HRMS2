@@ -1071,6 +1071,15 @@ export async function approveRunForDisbursement(
     [approverUserId, runId]
   );
 
+  // Email notification (fire-and-forget) — this is a second entry point to the
+  // 'disbursed' state (the other is updateRunStatus) and must notify identically,
+  // per the same payslip_ready fan-out. Previously this path disbursed silently.
+  setImmediate(() => {
+    void notifyPayslipsReady(runId).then((st) =>
+      console.log(`[payroll-notify] run ${runId}: ${st.employees} payslips (finance approval)`),
+    );
+  });
+
   // Log audit
   const { logSensitiveAction } = await import("../../shared/auditLog.js");
   await logSensitiveAction({
