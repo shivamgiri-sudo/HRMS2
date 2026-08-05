@@ -2,6 +2,7 @@ import { Router } from "express";
 import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { getEmployeeForUser, hasRole } from "../../shared/accessGuard.js";
+import { hasScopedAccess } from "../../shared/scopeAccess.js";
 import { db } from "../../db/mysql.js";
 import type { Response } from "express";
 import type { RowDataPacket } from "mysql2";
@@ -15,10 +16,23 @@ payrollMoreRouter.use(requireAuth);
 
 payrollMoreRouter.get("/form16-data/:runId/:employeeId", h(async (req: AuthenticatedRequest, res: Response) => {
   const { runId, employeeId } = req.params;
-  const isPayrollRole = await hasRole(req.authUser!.id, "admin", "hr", "finance", "payroll");
-  if (!isPayrollRole) {
-    const callerEmp = await getEmployeeForUser(req.authUser!.id);
-    if (!callerEmp || callerEmp.id !== employeeId) return res.status(403).json({ success: false, message: "Forbidden" });
+  const callerEmp = await getEmployeeForUser(req.authUser!.id);
+  const isSelf = Boolean(callerEmp && callerEmp.id === employeeId);
+  if (!isSelf) {
+    // A role check alone let a branch-scoped hr/finance/payroll user pull any
+    // employee's Form 16 income/TDS data org-wide (see the sibling route in
+    // payroll.routes.ts for the same fix).
+    const isPayrollRole = await hasRole(req.authUser!.id, "admin", "hr", "finance", "payroll");
+    if (!isPayrollRole) return res.status(403).json({ success: false, message: "Forbidden" });
+    const [targetRows] = await db.execute<RowDataPacket[]>(
+      "SELECT branch_id, process_id, department_id FROM employees WHERE id = ? LIMIT 1",
+      [employeeId]
+    );
+    const target = targetRows[0] as { branch_id: string | null; process_id: string | null; department_id: string | null } | undefined;
+    const scoped = await hasScopedAccess(req.authUser!.id, ["hr", "finance", "payroll"], {
+      branchId: target?.branch_id ?? null, processId: target?.process_id ?? null, departmentId: target?.department_id ?? null, employeeId,
+    });
+    if (!scoped) return res.status(403).json({ success: false, message: "Forbidden" });
   }
 
   const [runRows] = await db.execute<RowDataPacket[]>("SELECT run_month FROM salary_prep_run WHERE id = ? LIMIT 1", [runId]);

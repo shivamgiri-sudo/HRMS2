@@ -8,7 +8,7 @@ import { requireRole } from "../../middleware/requireRole.js";
 import { requireScopedRole } from "../../middleware/scopeMiddleware.js";
 import { requireWFMAccess } from "../../middleware/requireWFMAccess.js";
 import { payrollRunLimiter } from "../../middleware/rateLimiter.js";
-import { buildScopeWhereClause, hasAnyRole as hasAnyRoleAsync } from "../../shared/scopeAccess.js";
+import { buildScopeWhereClause, hasAnyRole as hasAnyRoleAsync, hasScopedAccess, hasOrgWideScope } from "../../shared/scopeAccess.js";
 import { statutoryRegimeForFinancialYear } from "./statutory-regime.js";
 import { loadFlatStatutoryConfig } from "./statutory-config.loader.js";
 import { getPartAAvailability } from "./tds-certificate-part-a.service.js";
@@ -34,6 +34,15 @@ import { env } from "../../config/env.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import type { Response } from "express";
 import type { RowDataPacket } from "mysql2";
+
+/**
+ * Roles whose payroll authority can be org-wide, used with hasOrgWideScope on the
+ * bank-file endpoints below. Those refuse a branch-scoped caller outright rather
+ * than emit a silently partial payment instruction.
+ */
+const PAYROLL_EXPORT_ROLES = ["finance", "payroll", "finance_head", "payroll_head", "payroll_admin"];
+const ORG_WIDE_REQUIRED_MSG =
+  "This export requires org-wide payroll scope. A branch-scoped export would produce a partial payment file, which is indistinguishable from a complete one once downloaded.";
 
 // Must match files.routes.ts UPLOADS_ROOT, which serves these back via
 // /api/files/tax-documents/*. Resolving from __dirname wrote to backend/dist/uploads/
@@ -198,8 +207,30 @@ router.post("/salary-assignments",
   h(c.assignSalary)
 );
 router.post("/salary-assignments/bulk", requireRole("admin", "hr", "super_admin", "finance", "payroll"), h(c.bulkAssignSalary));
-router.get("/salary-assignments/:employeeId", requireRole("admin", "hr", "super_admin", "finance", "payroll"), h(c.getEmployeeSalary));
-router.get("/salary-assignments/:employeeId/history", requireRole("admin", "hr", "super_admin", "finance", "payroll"), h(c.getEmployeeSalaryHistory));
+
+// requireRole alone checked only role membership: any hr/finance/payroll user, however
+// narrowly they're scoped, could read any employee's salary assignment org-wide by
+// supplying a different :employeeId. requireScopedRole applies the same branch/process
+// rule buildScopeWhereClause already enforces on /runs, /records and /employee-salaries
+// (super_admin still bypasses unconditionally inside hasScopedAccess).
+async function resolveEmployeeIdParamScope(req: AuthenticatedRequest) {
+  const [rows] = await db.execute(
+    'SELECT branch_id, process_id, department_id FROM employees WHERE id = ? LIMIT 1',
+    [req.params.employeeId]
+  ) as any[];
+  const emp = rows[0];
+  return { branchId: emp?.branch_id, processId: emp?.process_id, departmentId: emp?.department_id, employeeId: req.params.employeeId };
+}
+router.get("/salary-assignments/:employeeId",
+  requireRole("admin", "hr", "super_admin", "finance", "payroll"),
+  requireScopedRole(["hr", "finance", "payroll"], resolveEmployeeIdParamScope),
+  h(c.getEmployeeSalary)
+);
+router.get("/salary-assignments/:employeeId/history",
+  requireRole("admin", "hr", "super_admin", "finance", "payroll"),
+  requireScopedRole(["hr", "finance", "payroll"], resolveEmployeeIdParamScope),
+  h(c.getEmployeeSalaryHistory)
+);
 
 // ─── Payroll Runs — static paths before :id ───────────────────────────────────
 
@@ -905,7 +936,16 @@ router.get("/payslip/my", h(async (req: AuthenticatedRequest, res: Response) => 
 // registered here, so the payslip QR scan was answered with 401 instead of a verdict.
 
 // GET /api/payroll/payslip/list/:employeeId — paginated payslip history for one employee (admin/HR view)
-router.get("/payslip/list/:employeeId", requireAuth, requireRole("super_admin", "admin", "hr", "finance", "payroll", "ceo"), h(async (req: AuthenticatedRequest, res: Response) => {
+//
+// requireRole alone checked role membership only, never branch/process scope, so a
+// branch-scoped hr/finance/payroll user could read any employee's payslip figures
+// org-wide by supplying a different :employeeId. 'ceo' also removed here: 31-Jul-2026
+// removed CEO from org-wide payroll visibility on /runs and /records (see
+// payroll.secure.routes.ts) specifically because "the CEO sees their own payslip, not
+// the organisation's payroll" — this route granted the exact access that fix closed.
+router.get("/payslip/list/:employeeId", requireAuth, requireRole("super_admin", "admin", "hr", "finance", "payroll"),
+  requireScopedRole(["hr", "finance", "payroll"], resolveEmployeeIdParamScope),
+  h(async (req: AuthenticatedRequest, res: Response) => {
   const { employeeId } = req.params;
   const page = Math.max(1, Number(req.query.page ?? 1));
   const limit = Math.min(50, Math.max(1, Number(req.query.limit ?? 12)));
@@ -946,7 +986,9 @@ router.get("/payslip/list/:employeeId", requireAuth, requireRole("super_admin", 
 }));
 
 // GET /api/payroll/payslip/history/:employeeId — HR/admin view of any employee's payslip list
-router.get("/payslip/history/:employeeId", requireAuth, requireRole("super_admin", "admin", "hr", "payroll_head", "payroll_admin", "finance", "payroll"), h(async (req: AuthenticatedRequest, res: Response) => {
+router.get("/payslip/history/:employeeId", requireAuth, requireRole("super_admin", "admin", "hr", "payroll_head", "payroll_admin", "finance", "payroll"),
+  requireScopedRole(["hr", "payroll_head", "payroll_admin", "finance", "payroll"], resolveEmployeeIdParamScope),
+  h(async (req: AuthenticatedRequest, res: Response) => {
   const { employeeId } = req.params;
   const requestedLimit = Number(req.query.limit ?? 24);
   const limit = Number.isFinite(requestedLimit)
@@ -978,7 +1020,10 @@ router.get("/payslip/history/:employeeId", requireAuth, requireRole("super_admin
 }));
 
 // GET /api/payroll/payslip/legacy/:employeeId — list legacy payslips (HR/admin/payroll)
-router.get("/payslip/legacy/:employeeId", requireAuth, requireRole("super_admin", "admin", "hr", "finance", "payroll", "ceo"), h(async (req: AuthenticatedRequest, res: Response) => {
+// 'ceo' removed — see the note on /payslip/list/:employeeId above.
+router.get("/payslip/legacy/:employeeId", requireAuth, requireRole("super_admin", "admin", "hr", "finance", "payroll"),
+  requireScopedRole(["hr", "finance", "payroll"], resolveEmployeeIdParamScope),
+  h(async (req: AuthenticatedRequest, res: Response) => {
   const { employeeId } = req.params;
   const year = req.query.year ? String(req.query.year) : null;
   const [rows] = await db.execute<RowDataPacket[]>(
@@ -1009,11 +1054,26 @@ router.get("/payslip/legacy/:employeeId", requireAuth, requireRole("super_admin"
 router.get("/payslip/legacy-detail/:employeeCode/:payMonth", requireAuth, h(async (req: AuthenticatedRequest, res: Response) => {
   const { employeeCode, payMonth } = req.params;
 
-  // Employees can only view their own; HR+ can view any
+  // Employees can only view their own; HR+ can view any within their branch/process scope.
+  // 'ceo' removed — see the note on /payslip/list/:employeeId above.
   const callerEmp = await getEmployeeForUser(req.authUser!.id);
-  const isHR = hasAnyRole(req, ["super_admin", "admin", "hr", "finance", "payroll", "ceo"]);
-  if (!isHR && (!callerEmp || callerEmp.employee_code !== employeeCode)) {
-    return res.status(403).json({ success: false, message: "Access denied" });
+  const isSelf = Boolean(callerEmp && callerEmp.employee_code === employeeCode);
+  if (!isSelf) {
+    const isHR = hasAnyRole(req, ["super_admin", "admin", "hr", "finance", "payroll"]);
+    if (!isHR) {
+      return res.status(403).json({ success: false, message: "Access denied" });
+    }
+    const [targetRows] = await db.execute<RowDataPacket[]>(
+      "SELECT id, branch_id, process_id, department_id FROM employees WHERE employee_code = ? LIMIT 1",
+      [employeeCode]
+    );
+    const target = (targetRows as RowDataPacket[])[0] as { id: string; branch_id: string | null; process_id: string | null; department_id: string | null } | undefined;
+    const scoped = target && await hasScopedAccess(req.authUser!.id, ["hr", "finance", "payroll"], {
+      branchId: target.branch_id, processId: target.process_id, departmentId: target.department_id, employeeId: target.id,
+    });
+    if (!scoped) {
+      return res.status(403).json({ success: false, message: "Access denied" });
+    }
   }
 
   const [rows] = await db.execute<RowDataPacket[]>(
@@ -1046,10 +1106,26 @@ router.get("/payslip/legacy-detail/:employeeCode/:payMonth", requireAuth, h(asyn
 router.get("/payslip/:runId/:employeeId", h(async (req: AuthenticatedRequest, res: Response) => {
   const { runId, employeeId } = req.params;
 
-  const isPayrollRole = await hasRole(req.authUser!.id, "admin", "hr", "finance", "payroll", "payroll_head", "payroll_admin");
-  if (!isPayrollRole) {
-    const callerEmp = await getEmployeeForUser(req.authUser!.id);
-    if (!callerEmp || callerEmp.id !== employeeId) {
+  const callerEmp = await getEmployeeForUser(req.authUser!.id);
+  const isSelf = Boolean(callerEmp && callerEmp.id === employeeId);
+  if (!isSelf) {
+    // hasRole() auto-bypasses admin as well as super_admin, but a role check alone let
+    // a branch-scoped hr/finance/payroll user pull any employee's payslip org-wide.
+    // hasScopedAccess applies the same branch/process rule the rest of this module
+    // enforces on /runs, /records and the sibling payslip routes above.
+    const isPayrollRole = await hasRole(req.authUser!.id, "admin", "hr", "finance", "payroll", "payroll_head", "payroll_admin");
+    if (!isPayrollRole) {
+      return res.status(403).json({ success: false, message: "Forbidden" });
+    }
+    const [targetRows] = await db.execute<RowDataPacket[]>(
+      "SELECT branch_id, process_id, department_id FROM employees WHERE id = ? LIMIT 1",
+      [employeeId]
+    );
+    const target = (targetRows as RowDataPacket[])[0] as { branch_id: string | null; process_id: string | null; department_id: string | null } | undefined;
+    const scoped = await hasScopedAccess(req.authUser!.id, ["hr", "finance", "payroll", "payroll_head", "payroll_admin"], {
+      branchId: target?.branch_id ?? null, processId: target?.process_id ?? null, departmentId: target?.department_id ?? null, employeeId,
+    });
+    if (!scoped) {
       return res.status(403).json({ success: false, message: "Forbidden" });
     }
   }
@@ -1451,10 +1527,22 @@ router.get(
   h(async (req: AuthenticatedRequest, res: Response) => {
     const { runId, employeeId } = req.params;
 
-    const isPayrollRole = await hasRole(req.authUser!.id, "admin", "hr", "finance", "payroll");
-    if (!isPayrollRole) {
-      const callerEmp = await getEmployeeForUser(req.authUser!.id);
-      if (!callerEmp || callerEmp.id !== employeeId) {
+    const callerEmp = await getEmployeeForUser(req.authUser!.id);
+    const isSelf = Boolean(callerEmp && callerEmp.id === employeeId);
+    if (!isSelf) {
+      const isPayrollRole = await hasRole(req.authUser!.id, "admin", "hr", "finance", "payroll");
+      if (!isPayrollRole) {
+        return res.status(403).json({ success: false, message: "Forbidden" });
+      }
+      const [targetRows] = await db.execute<RowDataPacket[]>(
+        "SELECT branch_id, process_id, department_id FROM employees WHERE id = ? LIMIT 1",
+        [employeeId]
+      );
+      const target = (targetRows as RowDataPacket[])[0] as { branch_id: string | null; process_id: string | null; department_id: string | null } | undefined;
+      const scoped = await hasScopedAccess(req.authUser!.id, ["hr", "finance", "payroll"], {
+        branchId: target?.branch_id ?? null, processId: target?.process_id ?? null, departmentId: target?.department_id ?? null, employeeId,
+      });
+      if (!scoped) {
         return res.status(403).json({ success: false, message: "Forbidden" });
       }
     }
@@ -1986,6 +2074,12 @@ router.get(
   h(async (req: AuthenticatedRequest, res: Response) => {
     const { runId } = req.params;
 
+    // Returns decrypted full account numbers for every employee in the run — same
+    // org-wide requirement as the NEFT export this feeds.
+    if (!(await hasOrgWideScope(req.authUser!.id, PAYROLL_EXPORT_ROLES))) {
+      return res.status(403).json({ success: false, message: ORG_WIDE_REQUIRED_MSG });
+    }
+
     // Validate runId is a valid UUID
     if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(runId)) {
       return res.status(400).json({ success: false, error: "Invalid run ID format" });
@@ -2042,6 +2136,14 @@ router.get(
 // GET /api/payroll/runs/:id/neft-export — generate NEFT disbursement CSV
 router.get("/runs/:id/neft-export", requireRole("admin", "super_admin", "finance", "payroll"), h(async (req: AuthenticatedRequest, res: Response) => {
   const runId = req.params.id;
+
+  // Bank file — deny a branch-scoped caller rather than row-filter. See
+  // hasOrgWideScope in shared/scopeAccess.ts for why a partial payment file is
+  // worse than none. (This route duplicates the one in payroll-extended.routes.ts;
+  // both are gated so whichever the UI reaches behaves identically.)
+  if (!(await hasOrgWideScope(req.authUser!.id, PAYROLL_EXPORT_ROLES))) {
+    return res.status(403).json({ success: false, message: ORG_WIDE_REQUIRED_MSG });
+  }
 
   const [runRows] = await db.execute<RowDataPacket[]>(
     "SELECT * FROM salary_prep_run WHERE id = ? LIMIT 1",

@@ -58,10 +58,21 @@ describe("payroll-window.cron.ts auto-lock sweep excludes settled runs", () => {
   });
 });
 
+/**
+ * Source of a single route handler: from its path literal to the next route
+ * registration. Bounded this way rather than by a fixed character count, which
+ * silently breaks the moment a comment is added inside the handler.
+ */
+function handlerSource(source: string, path: string): string {
+  const start = source.indexOf(`"${path}"`);
+  expect(start, `route ${path} not found`).toBeGreaterThan(-1);
+  const next = source.indexOf("\nrouter.", start);
+  return source.slice(start, next === -1 ? source.length : next);
+}
+
 describe("NEFT export is reachable for finalized runs (two implementations)", () => {
   it("payroll.routes.ts NEFT export uses isRunClosed", () => {
-    const section = PAYROLL_ROUTES.slice(PAYROLL_ROUTES.indexOf('"/runs/:id/neft-export"'));
-    expect(section.slice(0, 900)).toMatch(/isRunClosed\(run\.status\)/);
+    expect(handlerSource(PAYROLL_ROUTES, "/runs/:id/neft-export")).toMatch(/isRunClosed\(run\.status\)/);
   });
 
   it("payroll-extended.routes.ts NEFT export uses isRunClosed", () => {

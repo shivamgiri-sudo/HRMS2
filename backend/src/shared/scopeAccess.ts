@@ -175,6 +175,28 @@ export async function hasScopedAccess(
 }
 
 /**
+ * Whether a user's authority covers the whole organisation rather than a
+ * branch/process slice of it.
+ *
+ * Exists for outputs where a *partial* result is more dangerous than no result.
+ * A bank transfer file is the case in point: silently filtering it to the
+ * caller's branch turns "pay everyone" into "pay my branch", and the resulting
+ * CSV looks identical either way — so such endpoints deny a scoped caller
+ * outright instead of handing back a subset. Report-style endpoints should keep
+ * filtering with buildScopeWhereClause below; this is only for payment
+ * instructions and anything else where silent truncation causes real-world harm.
+ *
+ * Org-wide means super_admin/admin, or an active user_assignment_scope row with
+ * scope_type='all' for one of the allowed roles.
+ */
+export async function hasOrgWideScope(userId: string, allowedRoles: string[]): Promise<boolean> {
+  if (await hasAnyRole(userId, "super_admin", "admin")) return true;
+  if (!(await hasAnyRole(userId, ...allowedRoles))) return false;
+  const scopes = await getUserAssignmentScopes(userId, allowedRoles);
+  return scopes.some((s) => s.scope_type === "all");
+}
+
+/**
  * Build WHERE clause for list APIs.
  *
  * Usage:

@@ -5,9 +5,21 @@ import { getEmployeeForUser, hasRole } from "../../shared/accessGuard.js";
 import { db } from "../../db/mysql.js";
 import { env } from "../../config/env.js";
 import { isRunClosed } from "./run-status.js";
+import { hasOrgWideScope, buildScopeWhereClause } from "../../shared/scopeAccess.js";
 import type { Response } from "express";
 import type { RowDataPacket } from "mysql2";
 import * as XLSX from "xlsx";
+
+/**
+ * Roles whose payroll authority can be org-wide. Used with hasOrgWideScope for
+ * the bank-file endpoints below, which refuse a branch-scoped caller rather than
+ * emit a partial payment instruction.
+ */
+const PAYROLL_EXPORT_ROLES = ["finance", "payroll", "finance_head", "payroll_head", "payroll_admin"];
+/** Report-style exports row-filter to these roles' assigned scope instead of denying. */
+const PAYROLL_REPORT_SCOPE_ROLES = ["hr", "finance", "payroll", "finance_head", "payroll_head", "payroll_admin"];
+const ORG_WIDE_REQUIRED_MSG =
+  "This export requires org-wide payroll scope. A branch-scoped export would produce a partial payment file, which is indistinguishable from a complete one once downloaded.";
 
 export const payrollExtendedRouter = Router();
 const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any, next: any) => fn(req, res).catch(next);
@@ -89,6 +101,11 @@ payrollExtendedRouter.get("/minimum-wages", requireRole("admin", "hr", "finance"
 }));
 
 payrollExtendedRouter.get("/runs/:id/neft-summary", requireRole("admin", "finance", "payroll"), h(async (req: AuthenticatedRequest, res: Response) => {
+  // Gated the same way as the export it precedes: these totals are org-wide payroll
+  // figures, and showing them to a caller who cannot produce the file is incoherent.
+  if (!(await hasOrgWideScope(req.authUser!.id, PAYROLL_EXPORT_ROLES))) {
+    return res.status(403).json({ success: false, message: ORG_WIDE_REQUIRED_MSG });
+  }
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT COUNT(*) AS total,
             SUM(CASE WHEN ebd.id IS NOT NULL AND ebd.ifsc_code IS NOT NULL THEN 1 ELSE 0 END) AS with_bank,
@@ -105,6 +122,12 @@ payrollExtendedRouter.get("/runs/:id/neft-summary", requireRole("admin", "financ
 
 payrollExtendedRouter.get("/runs/:id/neft-export", requireRole("admin", "finance", "payroll"), h(async (req: AuthenticatedRequest, res: Response) => {
   const runId = req.params.id;
+  // requireRole alone let a branch-scoped payroll user download decrypted bank account
+  // numbers for the entire organisation. Denying rather than row-filtering is deliberate:
+  // a silently branch-filtered bank file would be uploaded as if it paid everyone.
+  if (!(await hasOrgWideScope(req.authUser!.id, PAYROLL_EXPORT_ROLES))) {
+    return res.status(403).json({ success: false, message: ORG_WIDE_REQUIRED_MSG });
+  }
   const [runRows] = await db.execute<RowDataPacket[]>("SELECT * FROM salary_prep_run WHERE id = ? LIMIT 1", [runId]);
   const run = runRows[0];
   if (!run) return res.status(404).json({ error: "Run not found" });
@@ -179,6 +202,26 @@ payrollExtendedRouter.get("/runs/:id/salary-sheet-export", requireRole("admin", 
   const [runRows] = await db.execute<RowDataPacket[]>("SELECT * FROM salary_prep_run WHERE id = ? LIMIT 1", [runId]);
   const run = runRows[0];
   if (!run) return res.status(404).json({ success: false, message: "Run not found" });
+
+  // Unlike the bank file above this is a report, so it row-filters to the caller's
+  // branch/process the way /runs and /records already do, rather than denying
+  // outright. Previously requireRole alone let any hr/finance/payroll user export
+  // the whole organisation's salary register, including decrypted account numbers.
+  const scoped = await buildScopeWhereClause(
+    req.authUser!.id,
+    PAYROLL_REPORT_SCOPE_ROLES,
+    { branchId: "e.branch_id", processId: "e.process_id" },
+    { allowAdminBypass: true },
+  );
+  // buildScopeWhereClause returns 1=0 for a caller with no assigned scope. Letting that
+  // through would download an empty workbook, which reads as "this run has no payroll"
+  // rather than "you have no access" — so say so instead.
+  if (scoped.sql === "1=0") {
+    return res.status(403).json({
+      success: false,
+      message: "No branch or process scope is assigned to your account, so there is nothing you are authorised to export.",
+    });
+  }
 
   const [lines] = await db.execute<RowDataPacket[]>(
     `SELECT
@@ -298,8 +341,9 @@ payrollExtendedRouter.get("/runs/:id/salary-sheet-export", requireRole("admin", 
       LEFT JOIN salary_prep_line_component slc_other     ON slc_other.line_id     = spl.id AND slc_other.component_code     = 'OTHER_ALLOW'
       LEFT JOIN salary_prep_line_component slc_pli       ON slc_pli.line_id       = spl.id AND slc_pli.component_code       = 'PLI'
       WHERE spl.run_id = ? AND spl.status != 'cancelled'
+        AND (${scoped.sql})
       ORDER BY e.employee_code`,
-    [env.PAYROLL_BANK_KEY, runId],
+    [env.PAYROLL_BANK_KEY, runId, ...scoped.params],
   );
 
   // Build sheet data — map each row to a plain object in column order
