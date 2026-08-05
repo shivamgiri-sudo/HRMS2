@@ -53,6 +53,7 @@ import {
   useBranchBudgetAllocations,
 } from "@/hooks/useBranchBudget";
 import { useToast } from "@/hooks/use-toast";
+import { GST_RATES } from "@/lib/gst";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { splitRupees, weightFor } from "@/lib/sharingWeights";
 import { cn } from "@/lib/utils";
@@ -101,6 +102,25 @@ type AllocationDraft = {
   budgetLineId: string;
   quantity: number;
   unitRate: number;
+  remarks: string;
+};
+
+// ── Unified vendor-GRN flow: one Head/Sub-head classification split by percentage across cost
+// centres, plus the invoice broken into repeatable {amount without tax, GST slab} components —
+// the same real invoice routinely carries 2+ GST rates. Vendor-only; imprest keeps AllocationDraft
+// / splitMode / SplitAllocationEditor above, completely untouched.
+
+type CostCentreSplitDraft = {
+  key: string;
+  costCentreKey: string;
+  budgetLineId: string;
+  percentage: number;
+};
+
+type InvoiceComponentDraft = {
+  key: string;
+  amountWithoutTax: number;
+  gstRate: number;
   remarks: string;
 };
 
@@ -182,6 +202,14 @@ const EMPTY_FORM: GrnFormState = {
 
 function newAllocation(): AllocationDraft {
   return { key: crypto.randomUUID(), budgetLineId: "", quantity: 1, unitRate: 0, remarks: "" };
+}
+
+function newInvoiceComponent(): InvoiceComponentDraft {
+  return { key: crypto.randomUUID(), amountWithoutTax: 0, gstRate: 18, remarks: "" };
+}
+
+function roundMoney(value: number) {
+  return Math.round((Number(value) + Number.EPSILON) * 100) / 100;
 }
 
 function financialYearFromPeriod(period: string) {
@@ -372,6 +400,8 @@ export function BudgetLinkedGrnForm() {
   const [splitMode, setSplitMode] = useState(false);
   const [autoSplitMethod, setAutoSplitMethod] = useState<string>("equal_split");
   const [allocations, setAllocations] = useState<AllocationDraft[]>([newAllocation()]);
+  const [costCentreSplits, setCostCentreSplits] = useState<CostCentreSplitDraft[]>([]);
+  const [invoiceComponents, setInvoiceComponents] = useState<InvoiceComponentDraft[]>([newInvoiceComponent()]);
   const [files, setFiles] = useState<File[]>([]);
   const [created, setCreated] = useState<CreatedGrn | null>(null);
   const [autoAnalyze, setAutoAnalyze] = useState(true);
@@ -499,15 +529,24 @@ export function BudgetLinkedGrnForm() {
 
   // Clear downstream selections whenever an upstream one changes, so a stale
   // head can never survive a cost-centre switch.
+  //
+  // Imprest only (guarded below): a vendor GRN never sets form.costCentreKey, so
+  // linesInCostCentre/linesInHead/matchingLines are permanently [] for it — without this guard,
+  // any budgetLines refetch (e.g. after a save invalidates ["available-budget-lines"]) would
+  // recompute those to a new empty-array reference and this effect would blank out the vendor's
+  // own Head/Sub-head (which reuses form.head/form.subHead) even though they were validly set via
+  // the vendor cascade below.
   useEffect(() => {
+    if (isVendor) return;
     setForm((current) => {
       if (!current.head) return current;
       const validHead = linesInCostCentre.some((line) => line.head === current.head);
       return validHead ? current : { ...current, head: "", subHead: "", budgetLineId: "" };
     });
-  }, [linesInCostCentre]);
+  }, [linesInCostCentre, isVendor]);
 
   useEffect(() => {
+    if (isVendor) return;
     setForm((current) => {
       if (!current.subHead) return current;
       const validSubHead = linesInHead.some(
@@ -515,13 +554,146 @@ export function BudgetLinkedGrnForm() {
       );
       return validSubHead ? current : { ...current, subHead: "", budgetLineId: "" };
     });
-  }, [linesInHead]);
+  }, [linesInHead, isVendor]);
 
   useEffect(() => {
+    if (isVendor) return;
     if (matchingLines.length === 1 && form.budgetLineId !== matchingLines[0].id) {
       setForm((current) => ({ ...current, budgetLineId: matchingLines[0].id }));
     }
-  }, [matchingLines, form.budgetLineId]);
+  }, [matchingLines, form.budgetLineId, isVendor]);
+
+  // ── Vendor cascade: Head → Sub-head only, across every cost centre in this branch/period ──
+  //
+  // One classification per GRN; the cost-centre split editor below decides how much of that one
+  // spend belongs to which cost centre, not a separate classification per cost centre.
+
+  const vendorHeadOptions = useMemo(
+    () => [...new Set(budgetLines.map((line) => line.head))].map((head) => ({ value: head, label: head })),
+    [budgetLines]
+  );
+
+  const vendorLinesInHead = useMemo(
+    () => budgetLines.filter((line) => line.head === form.head),
+    [budgetLines, form.head]
+  );
+
+  const vendorSubHeadOptions = useMemo(
+    () =>
+      [...new Set(vendorLinesInHead.map((line) => line.sub_head || GENERAL_SUB_HEAD))].map(
+        (subHead) => ({ value: subHead, label: subHead })
+      ),
+    [vendorLinesInHead]
+  );
+
+  const vendorMatchingLines = useMemo(
+    () =>
+      form.subHead
+        ? vendorLinesInHead.filter((line) => (line.sub_head || GENERAL_SUB_HEAD) === form.subHead)
+        : [],
+    [vendorLinesInHead, form.subHead]
+  );
+
+  /** One entry per cost centre that has at least one line matching Head/Sub-head — the candidate
+   *  rows for the cost-centre split editor. A cost centre with more than one matching line needs
+   *  its own item picker, exactly like the single-line cascade's `needsItemChoice`. */
+  const vendorCostCentreGroups = useMemo(() => {
+    const map = new Map<string, BudgetLine[]>();
+    vendorMatchingLines.forEach((line) => {
+      const key = line.cost_centre_id ?? NO_COST_CENTRE;
+      map.set(key, [...(map.get(key) ?? []), line]);
+    });
+    return [...map.entries()].map(([costCentreKey, lines]) => ({
+      costCentreKey,
+      costCentreName: lines[0].cost_centre_name ?? "Branch (no cost centre)",
+      lines,
+    }));
+  }, [vendorMatchingLines]);
+
+  // Clear a stale vendor Head/Sub-head the same way the single-line cascade already does above.
+  useEffect(() => {
+    setForm((current) => {
+      if (!isVendor || !current.head) return current;
+      const validHead = vendorHeadOptions.some((option) => option.value === current.head);
+      return validHead ? current : { ...current, head: "", subHead: "" };
+    });
+  }, [vendorHeadOptions, isVendor]);
+
+  useEffect(() => {
+    setForm((current) => {
+      if (!isVendor || !current.subHead) return current;
+      const validSubHead = vendorSubHeadOptions.some((option) => option.value === current.subHead);
+      return validSubHead ? current : { ...current, subHead: "" };
+    });
+  }, [vendorSubHeadOptions, isVendor]);
+
+  // Re-seed the cost-centre split rows whenever the matching-line set changes (Head/Sub-head
+  // picked, or the underlying budget lines changed). Preserves an already-set percentage/item
+  // choice for a cost centre that reappears (e.g. toggling Sub-head back and forth) rather than
+  // wiping the whole split every time.
+  useEffect(() => {
+    if (!isVendor) return;
+    setCostCentreSplits((current) => {
+      if (!vendorCostCentreGroups.length) return current.length ? [] : current;
+      const equalPct = Math.round((100 / vendorCostCentreGroups.length) * 1_000_000) / 1_000_000;
+      return vendorCostCentreGroups.map((group) => {
+        const existing = current.find((row) => row.costCentreKey === group.costCentreKey);
+        const stillValid = existing && group.lines.some((line) => line.id === existing.budgetLineId);
+        return {
+          key: existing?.key ?? crypto.randomUUID(),
+          costCentreKey: group.costCentreKey,
+          budgetLineId: stillValid ? existing!.budgetLineId : group.lines[0].id,
+          percentage: existing?.percentage ?? equalPct,
+        };
+      });
+    });
+  }, [vendorCostCentreGroups, isVendor]);
+
+  const costCentreSplitTotal = useMemo(
+    () => Math.round(costCentreSplits.reduce((sum, row) => sum + Number(row.percentage || 0), 0) * 1_000_000) / 1_000_000,
+    [costCentreSplits]
+  );
+
+  /** Client-side mirror of the server's reconciliation math in saveComponentAllocations() —
+   *  keep the two in sync. Preview only; the server stays authoritative. */
+  const componentsPreview = useMemo(() => {
+    const rawTotalBase = roundMoney(
+      invoiceComponents.reduce((sum, item) => sum + Number(item.amountWithoutTax || 0), 0)
+    );
+    const rawTotalTax = roundMoney(
+      invoiceComponents.reduce(
+        (sum, item) => sum + roundMoney(Number(item.amountWithoutTax || 0) * Number(item.gstRate || 0) / 100),
+        0
+      )
+    );
+    const rawTotalGross = roundMoney(rawTotalBase + rawTotalTax);
+    const diff = roundMoney(Number(form.amount || 0) - rawTotalGross);
+    return { rawTotalBase, rawTotalTax, rawTotalGross, diff };
+  }, [invoiceComponents, form.amount]);
+
+  function updateCostCentreSplit(key: string, patch: Partial<CostCentreSplitDraft>) {
+    setCostCentreSplits((current) => current.map((row) => (row.key === key ? { ...row, ...patch } : row)));
+  }
+
+  /** Resets every row to an equal percentage share — the common case, and a one-click recovery
+   *  from manual edits that drifted away from 100%. */
+  function splitCostCentresEvenly() {
+    if (!costCentreSplits.length) return;
+    const equalPct = Math.round((100 / costCentreSplits.length) * 1_000_000) / 1_000_000;
+    setCostCentreSplits((current) => current.map((row) => ({ ...row, percentage: equalPct })));
+  }
+
+  function updateInvoiceComponent(key: string, patch: Partial<InvoiceComponentDraft>) {
+    setInvoiceComponents((current) => current.map((item) => (item.key === key ? { ...item, ...patch } : item)));
+  }
+
+  function addInvoiceComponent() {
+    setInvoiceComponents((current) => [...current, newInvoiceComponent()]);
+  }
+
+  function removeInvoiceComponent(key: string) {
+    setInvoiceComponents((current) => (current.length === 1 ? current : current.filter((item) => item.key !== key)));
+  }
 
   // ── Amount → quantity (single-line mode) ────────────────────────────────
   //
@@ -585,18 +757,12 @@ export function BudgetLinkedGrnForm() {
     if (!form.billDate) {
       next.billDate = isVendor ? "Invoice date is required." : "Receipt date is required.";
     }
-    // The cascade is only rendered in single-line mode; in split mode the
-    // allocation rows carry the budget coordinates instead.
-    if (!splitMode) {
-      if (!form.costCentreKey) next.costCentreKey = "Select a cost centre.";
-      if (!form.head) next.head = "Select an expense head.";
-      if (!form.subHead) next.subHead = "Select a sub-head.";
-      if (needsItemChoice && !form.budgetLineId) {
-        next.budgetLineId = "More than one budget line matches — pick the item.";
-      }
-    }
     if (!form.remarks.trim()) next.remarks = "Add a short reason for this spend.";
-    if (!(form.amount > 0)) next.amount = "Enter an amount greater than zero.";
+    if (!(form.amount > 0)) {
+      next.amount = isVendor
+        ? "Enter the total invoice amount, including GST."
+        : "Enter an amount greater than zero.";
+    }
 
     if (isVendor) {
       if (!form.vendorId) next.vendorId = "Select the vendor.";
@@ -605,26 +771,53 @@ export function BudgetLinkedGrnForm() {
         const gap = daysBetween(form.billDate, form.dueDate);
         if (gap !== null && gap < 0) next.dueDate = "Due date cannot fall before the invoice date.";
       }
-    }
 
-    // Budget capacity — checked client-side so the raiser is not bounced by the
-    // server after filling everything.
-    if (!splitMode && resolvedLine && singleLine) {
-      if (singleLine.quantity > Number(resolvedLine.available_quantity) + 0.0001) {
-        next.amount = `Only ${decimal(Number(resolvedLine.available_quantity))} ${resolvedLine.unit} remain approved on this budget line.`;
-      } else if (
-        Number(singleLine.totals.gross) >
-        Number(resolvedLine.available_gross_amount) + 0.01
-      ) {
-        next.amount = `Exceeds the approved budget balance of ${money(Number(resolvedLine.available_gross_amount))}.`;
+      // Unified flow: Head/Sub-head → cost-centre split → invoice components. No cost-centre
+      // picker, no splitMode toggle — this is the only path for a vendor GRN.
+      if (!form.head) next.head = "Select an expense head.";
+      if (!form.subHead) next.subHead = "Select a sub-head.";
+      if (form.head && form.subHead) {
+        if (!costCentreSplits.length) {
+          next.costCentreSplit = "No approved budget line matches this Head/Sub-head yet.";
+        } else if (Math.abs(costCentreSplitTotal - 100) > 0.5) {
+          next.costCentreSplit = `Cost-centre split percentages must total 100% (currently ${decimal(costCentreSplitTotal, 2)}%).`;
+        }
+        if (!invoiceComponents.some((item) => Number(item.amountWithoutTax) > 0)) {
+          next.components = "Add at least one invoice component.";
+        } else if (Math.abs(componentsPreview.diff) > 1) {
+          next.components = `Invoice components total ${money(componentsPreview.rawTotalGross)} — the declared invoice total is ${money(Number(form.amount || 0))}. Difference ${money(componentsPreview.diff)} exceeds the ₹1 auto-round-off limit.`;
+        }
       }
-    }
+    } else {
+      // Imprest keeps the exact single-line / split-mode behaviour, untouched.
+      if (!splitMode) {
+        if (!form.costCentreKey) next.costCentreKey = "Select a cost centre.";
+        if (!form.head) next.head = "Select an expense head.";
+        if (!form.subHead) next.subHead = "Select a sub-head.";
+        if (needsItemChoice && !form.budgetLineId) {
+          next.budgetLineId = "More than one budget line matches — pick the item.";
+        }
+      }
 
-    if (splitMode) {
-      if (!allocations.every((item) => item.budgetLineId)) {
-        next.split = "Select a budget line in every row.";
-      } else if (Math.abs(splitDifference) > 0.01) {
-        next.split = `Split must equal the invoice total exactly. Difference ${money(splitDifference)}.`;
+      // Budget capacity — checked client-side so the raiser is not bounced by the
+      // server after filling everything.
+      if (!splitMode && resolvedLine && singleLine) {
+        if (singleLine.quantity > Number(resolvedLine.available_quantity) + 0.0001) {
+          next.amount = `Only ${decimal(Number(resolvedLine.available_quantity))} ${resolvedLine.unit} remain approved on this budget line.`;
+        } else if (
+          Number(singleLine.totals.gross) >
+          Number(resolvedLine.available_gross_amount) + 0.01
+        ) {
+          next.amount = `Exceeds the approved budget balance of ${money(Number(resolvedLine.available_gross_amount))}.`;
+        }
+      }
+
+      if (splitMode) {
+        if (!allocations.every((item) => item.budgetLineId)) {
+          next.split = "Select a budget line in every row.";
+        } else if (Math.abs(splitDifference) > 0.01) {
+          next.split = `Split must equal the invoice total exactly. Difference ${money(splitDifference)}.`;
+        }
       }
     }
     return next;
@@ -637,6 +830,10 @@ export function BudgetLinkedGrnForm() {
     singleLine,
     allocations,
     splitDifference,
+    costCentreSplits,
+    costCentreSplitTotal,
+    invoiceComponents,
+    componentsPreview,
   ]);
 
   const proofPresent = files.length > 0 || Boolean(workspace?.documents?.length);
@@ -789,6 +986,8 @@ export function BudgetLinkedGrnForm() {
   function resetForm() {
     setForm(EMPTY_FORM);
     setAllocations([newAllocation()]);
+    setCostCentreSplits([]);
+    setInvoiceComponents([newInvoiceComponent()]);
     setFiles([]);
     setCreated(null);
     setExtractedFields(null);
@@ -818,21 +1017,29 @@ export function BudgetLinkedGrnForm() {
         throw new Error("At least one invoice or supporting proof is mandatory");
       }
 
-      const rows: AllocationDraft[] = splitMode
-        ? allocations
-        : [
-            {
-              key: "single",
-              budgetLineId: resolvedLine!.id,
-              quantity: singleLine!.quantity,
-              unitRate: Number(resolvedLine!.unit_rate),
-              remarks: "",
-            },
-          ];
+      // Vendor: unified flow, one Head/Sub-head split by percentage across cost centres, plus
+      // GST-slab components — resolvedLine/singleLine belong to the OLD cost-centre cascade and
+      // are never populated for a vendor GRN (vendor never sets form.costCentreKey), so this must
+      // not be evaluated for isVendor. Imprest: exact existing single-line / split-mode behaviour.
+      const rows: AllocationDraft[] = isVendor
+        ? []
+        : splitMode
+          ? allocations
+          : [
+              {
+                key: "single",
+                budgetLineId: resolvedLine!.id,
+                quantity: singleLine!.quantity,
+                unitRate: Number(resolvedLine!.unit_rate),
+                remarks: "",
+              },
+            ];
 
-      const firstLine = splitMode
-        ? budgetLines.find((line) => line.id === rows[0].budgetLineId)!
-        : resolvedLine!;
+      const firstLine = isVendor
+        ? budgetLines.find((line) => line.id === costCentreSplits[0].budgetLineId)!
+        : splitMode
+          ? budgetLines.find((line) => line.id === rows[0].budgetLineId)!
+          : resolvedLine!;
       attemptedLineIdRef.current = firstLine.id;
 
       let current = created;
@@ -846,8 +1053,11 @@ export function BudgetLinkedGrnForm() {
             processId: firstLine.process_id ?? undefined,
             costCentreId: firstLine.cost_centre_id ?? undefined,
             vendorId: isVendor ? form.vendorId : undefined,
-            quantity: Number(rows[0].quantity),
-            unitRate: Number(rows[0].unitRate),
+            // Vendor: a trivial placeholder — the follow-up invoice-components call below fully
+            // overwrites every meaningful header column with the real N-cost-centre x M-component
+            // breakdown, exactly like PUT .../allocations already fully overwrites this today.
+            quantity: isVendor ? 0.0001 : Number(rows[0].quantity),
+            unitRate: isVendor ? 0 : Number(rows[0].unitRate),
             billDate: form.billDate,
             paymentTermsDays: isVendor ? Number(resolvedPaymentTerms) : 0,
             remarks: form.remarks || undefined,
@@ -858,22 +1068,39 @@ export function BudgetLinkedGrnForm() {
         setCreated(current);
       }
 
-      await hrmsApi.put(`/api/finance/grns/${current.id}/allocations`, {
-        invoiceNumber: isVendor ? form.invoiceNumber : undefined,
-        purchaseReference: isVendor ? form.purchaseReference || undefined : undefined,
-        vendorGstin: isVendor ? form.vendorGstin || undefined : undefined,
-        placeOfSupply: isVendor ? form.placeOfSupply || undefined : undefined,
-        // Only declared in split mode. In single-line mode the amount drives the
-        // quantity, so the server's computed gross IS the invoice total and a
-        // declared figure could only ever contradict it.
-        declaredInvoiceTotal: splitMode ? Number(form.amount) : undefined,
-        allocations: rows.map((item) => ({
-          budgetLineId: item.budgetLineId,
-          quantity: Number(item.quantity),
-          unitRate: Number(item.unitRate),
-          remarks: item.remarks || undefined,
-        })),
-      });
+      if (isVendor) {
+        await hrmsApi.put(`/api/finance/grns/${current.id}/invoice-components`, {
+          invoiceNumber: form.invoiceNumber,
+          purchaseReference: form.purchaseReference || undefined,
+          vendorGstin: form.vendorGstin || undefined,
+          placeOfSupply: form.placeOfSupply || undefined,
+          declaredInvoiceTotal: Number(form.amount),
+          components: invoiceComponents
+            .filter((item) => Number(item.amountWithoutTax) > 0)
+            .map((item) => ({
+              amountWithoutTax: Number(item.amountWithoutTax),
+              gstRate: Number(item.gstRate),
+              remarks: item.remarks || undefined,
+            })),
+          costCentreSplits: costCentreSplits.map((row) => ({
+            budgetLineId: row.budgetLineId,
+            percentage: Number(row.percentage),
+          })),
+        });
+      } else {
+        await hrmsApi.put(`/api/finance/grns/${current.id}/allocations`, {
+          // Only declared in split mode. In single-line mode the amount drives the
+          // quantity, so the server's computed gross IS the invoice total and a
+          // declared figure could only ever contradict it.
+          declaredInvoiceTotal: splitMode ? Number(form.amount) : undefined,
+          allocations: rows.map((item) => ({
+            budgetLineId: item.budgetLineId,
+            quantity: Number(item.quantity),
+            unitRate: Number(item.unitRate),
+            remarks: item.remarks || undefined,
+          })),
+        });
+      }
 
       let uploadedDocuments: WorkspaceDocument[] = [];
       if (files.length) {
@@ -1212,6 +1439,30 @@ export function BudgetLinkedGrnForm() {
                 : "When the expense was incurred."
             }
           >
+            {isVendor && (
+              <FieldRow
+                label="Total invoice amount (incl. GST)"
+                htmlFor="grn-amount"
+                required
+                error={err("amount")}
+                hint="What the vendor's invoice adds up to. Break it into components below."
+              >
+                <Input
+                  id="grn-amount"
+                  type="number"
+                  inputMode="decimal"
+                  min="0.01"
+                  step="0.01"
+                  className={cn(inputClass, "text-right font-semibold tabular-nums")}
+                  value={form.amount || ""}
+                  placeholder="0.00"
+                  onChange={(event) =>
+                    setForm((current) => ({ ...current, amount: Number(event.target.value) }))
+                  }
+                />
+              </FieldRow>
+            )}
+
             <FieldRow label="Branch" htmlFor="grn-branch" required error={err("branchId")}>
               <SearchableSelect
                 id="grn-branch"
@@ -1233,6 +1484,7 @@ export function BudgetLinkedGrnForm() {
                     budgetLineId: "",
                   }));
                   setAllocations([newAllocation()]);
+                  setInvoiceComponents([newInvoiceComponent()]);
                 }}
                 placeholder="Select branch"
                 searchPlaceholder="Type a branch name…"
@@ -1267,6 +1519,7 @@ export function BudgetLinkedGrnForm() {
                         : addDays(billDate, current.paymentTermsDays),
                   }));
                   setAllocations([newAllocation()]);
+                  setInvoiceComponents([newInvoiceComponent()]);
                 }}
               />
             </FieldRow>
@@ -1386,17 +1639,25 @@ export function BudgetLinkedGrnForm() {
           {/* ── Budget coordinates ── */}
           <FormSection
             title="Where this spend belongs"
-            description="Cost centre, head and sub-head together identify the approved budget."
+            description={
+              isVendor
+                ? "Head and sub-head identify the approved budget. The cost-centre split below decides how much of this spend belongs to each cost centre."
+                : "Cost centre, head and sub-head together identify the approved budget."
+            }
             action={
               <div className="flex flex-wrap items-center gap-1.5">
                 {/* Placed here rather than in a tab of its own: this is the card that tells you
                     there is no approved budget line to charge to, so it is where someone
                     discovers they need one. */}
                 <GrnBudgetImportButton branchId={form.branchId} period={period} disabled={locked} />
-                <Button onClick={() => setSplitMode((value) => !value)}>
-                  <Split className="h-3 w-3" />
-                  {splitMode ? "Use a single budget line" : "Split this invoice across budget lines"}
-                </Button>
+                {/* Vendor GRNs always split by cost centre now — see CostCentreSplitEditor below.
+                    Imprest keeps the single-line / split-mode toggle exactly as before. */}
+                {!isVendor && (
+                  <Button onClick={() => setSplitMode((value) => !value)}>
+                    <Split className="h-3 w-3" />
+                    {splitMode ? "Use a single budget line" : "Split this invoice across budget lines"}
+                  </Button>
+                )}
               </div>
             }
           >
@@ -1413,6 +1674,33 @@ export function BudgetLinkedGrnForm() {
                 No approved budget line is available for {period}. Branch Head, Finance Head and
                 Accounts Head approval must be completed first.
               </div>
+            ) : isVendor ? (
+              <>
+                <FieldRow label="Head" htmlFor="grn-head" required error={err("head")}>
+                  <SearchableSelect
+                    id="grn-head"
+                    aria-label="Expense head"
+                    options={vendorHeadOptions}
+                    value={form.head}
+                    onChange={(value) => setForm((current) => ({ ...current, head: value, subHead: "" }))}
+                    placeholder="Select head"
+                    searchPlaceholder="Type a head…"
+                  />
+                </FieldRow>
+
+                <FieldRow label="Sub-head" htmlFor="grn-subhead" required error={err("subHead")}>
+                  <SearchableSelect
+                    id="grn-subhead"
+                    aria-label="Expense sub-head"
+                    disabled={!form.head}
+                    options={vendorSubHeadOptions}
+                    value={form.subHead}
+                    onChange={(value) => setForm((current) => ({ ...current, subHead: value }))}
+                    placeholder={form.head ? "Select sub-head" : "Select a head first"}
+                    searchPlaceholder="Type a sub-head…"
+                  />
+                </FieldRow>
+              </>
             ) : splitMode ? (
               <div className="px-4 py-4 text-[12px] text-grn-ink-soft">
                 Budget lines are chosen per row in the split editor below.
@@ -1517,9 +1805,39 @@ export function BudgetLinkedGrnForm() {
             )}
           </FormSection>
 
+          {/* Vendor GRNs: cost-centre split, then invoice GST components, in that order — the
+              unified flow. Each is its own card for the same reason SplitAllocationEditor already
+              is: its own toolbar and its own reconciliation footer. */}
+          {isVendor && Boolean(form.branchId) && Boolean(period) && !linesLoading && vendorCostCentreGroups.length > 0 && (
+            <CostCentreSplitEditor
+              groups={vendorCostCentreGroups}
+              rows={costCentreSplits}
+              total={costCentreSplitTotal}
+              error={err("costCentreSplit")}
+              onUpdate={updateCostCentreSplit}
+              onSplitEvenly={splitCostCentresEvenly}
+            />
+          )}
+
+          {isVendor && Boolean(form.branchId) && Boolean(period) && costCentreSplits.length > 0 && (
+            <InvoiceComponentsEditor
+              components={invoiceComponents}
+              preview={componentsPreview}
+              declaredTotal={Number(form.amount || 0)}
+              error={err("components")}
+              remarks={form.remarks}
+              remarksError={err("remarks")}
+              onUpdate={updateInvoiceComponent}
+              onAdd={addInvoiceComponent}
+              onRemove={removeInvoiceComponent}
+              canRemove={invoiceComponents.length > 1}
+              onRemarksChange={(value) => setForm((current) => ({ ...current, remarks: value }))}
+            />
+          )}
+
           {/* Its own card, not a block nested inside the one above: it has its own toolbar and
               its own reconciliation footer, which a section body has nowhere to put. */}
-          {splitMode && Boolean(form.branchId) && Boolean(period) && !linesLoading && budgetLines.length > 0 && (
+          {!isVendor && splitMode && Boolean(form.branchId) && Boolean(period) && !linesLoading && budgetLines.length > 0 && (
             <SplitAllocationEditor
               budgetLines={budgetLines}
               rows={calculatedAllocations}
@@ -1539,83 +1857,64 @@ export function BudgetLinkedGrnForm() {
             />
           )}
 
-          {/* ── Amount ── */}
-          <FormSection
-            title="Amount"
-            description={
-              isVendor
-                ? "Enter the value before GST. The tax and total are calculated for you."
-                : "Enter the amount spent. The total is calculated for you."
-            }
-          >
-            <FieldRow
-              label={splitMode ? "Invoice total (incl. GST)" : isVendor ? "Amount without GST" : "Amount"}
-              htmlFor="grn-amount"
-              required
-              error={err("amount")}
-              hint={roundingNote}
-            >
-              <Input
-                id="grn-amount"
-                type="number"
-                inputMode="decimal"
-                min="0.01"
-                step="0.01"
-                className={cn(inputClass, "text-right font-semibold tabular-nums")}
-                value={form.amount || ""}
-                placeholder="0.00"
-                onChange={(event) =>
-                  setForm((current) => ({ ...current, amount: Number(event.target.value) }))
-                }
-              />
-            </FieldRow>
-
-            {!splitMode && isVendor && (
+          {/* ── Amount (imprest only — vendor's amount lives in Invoice details, its GST
+                 breakdown and remarks live at the end of InvoiceComponentsEditor) ── */}
+          {!isVendor && (
+            <FormSection title="Amount" description="Enter the amount spent. The total is calculated for you.">
               <FieldRow
-                label="GST rate"
-                hint={
-                  resolvedLine
-                    ? `Set by the approved budget line (${resolvedLine.tax_treatment.split("_").join(" ")}).`
-                    : undefined
-                }
+                label={splitMode ? "Invoice total (incl. GST)" : "Amount"}
+                htmlFor="grn-amount"
+                required
+                error={err("amount")}
+                hint={roundingNote}
               >
-                <StaticValue muted={!resolvedLine}>
-                  {resolvedLine ? `${decimal(Number(resolvedLine.gst_rate), 2)}%` : "Select a sub-head first"}
-                </StaticValue>
+                <Input
+                  id="grn-amount"
+                  type="number"
+                  inputMode="decimal"
+                  min="0.01"
+                  step="0.01"
+                  className={cn(inputClass, "text-right font-semibold tabular-nums")}
+                  value={form.amount || ""}
+                  placeholder="0.00"
+                  onChange={(event) =>
+                    setForm((current) => ({ ...current, amount: Number(event.target.value) }))
+                  }
+                />
               </FieldRow>
-            )}
 
-            <div className="border-b border-grn-line-soft bg-grn-paper px-4 py-3">
-              <dl className="ml-auto w-full space-y-1.5 text-[12px] md:max-w-sm">
-                <div className="flex justify-between gap-4">
-                  <dt className="text-grn-ink-soft">Taxable value</dt>
-                  <dd className="font-grn-mono font-semibold text-grn-ink">{money(totals.base)}</dd>
-                </div>
-                <div className="flex justify-between gap-4">
-                  <dt className="text-grn-ink-soft">GST</dt>
-                  <dd className="font-grn-mono font-semibold text-grn-ink">{money(totals.tax)}</dd>
-                </div>
-                <div className="flex justify-between gap-4 border-t border-grn-line pt-1.5">
-                  <dt className="font-bold text-grn-ink">Total payable</dt>
-                  <dd className="font-grn-mono text-[13px] font-bold text-grn-ink">
-                    {money(totals.gross)}
-                  </dd>
-                </div>
-              </dl>
-            </div>
+              <div className="border-b border-grn-line-soft bg-grn-paper px-4 py-3">
+                <dl className="ml-auto w-full space-y-1.5 text-[12px] md:max-w-sm">
+                  <div className="flex justify-between gap-4">
+                    <dt className="text-grn-ink-soft">Taxable value</dt>
+                    <dd className="font-grn-mono font-semibold text-grn-ink">{money(totals.base)}</dd>
+                  </div>
+                  <div className="flex justify-between gap-4">
+                    <dt className="text-grn-ink-soft">GST</dt>
+                    <dd className="font-grn-mono font-semibold text-grn-ink">{money(totals.tax)}</dd>
+                  </div>
+                  <div className="flex justify-between gap-4 border-t border-grn-line pt-1.5">
+                    <dt className="font-bold text-grn-ink">Total payable</dt>
+                    <dd className="font-grn-mono text-[13px] font-bold text-grn-ink">
+                      {money(totals.gross)}
+                    </dd>
+                  </div>
+                </dl>
+              </div>
 
-            <FieldRow label="Remark" htmlFor="grn-remarks" required error={err("remarks")}>
-              <Textarea
-                id="grn-remarks"
-                className="min-h-20"
-                value={form.remarks}
-                placeholder="What was bought or paid for, and why."
-                onChange={(event) =>
-                  setForm((current) => ({ ...current, remarks: event.target.value }))
-                }
-              />
-            </FieldRow>
-          </FormSection>
+              <FieldRow label="Remark" htmlFor="grn-remarks" required error={err("remarks")}>
+                <Textarea
+                  id="grn-remarks"
+                  className="min-h-20"
+                  value={form.remarks}
+                  placeholder="What was bought or paid for, and why."
+                  onChange={(event) =>
+                    setForm((current) => ({ ...current, remarks: event.target.value }))
+                  }
+                />
+              </FieldRow>
+            </FormSection>
+          )}
 
           {/* ── Extraction ── */}
           {effectiveExtractedFields && (
@@ -2104,6 +2403,413 @@ function SplitAllocationEditor({
           {error}
         </p>
       )}
+    </GrnCard>
+  );
+}
+
+/** One Head/Sub-head, split by percentage across every cost centre that has an approved budget
+ *  line for it. A cost centre with more than one matching line gets its own item picker, the
+ *  same "only when genuinely ambiguous" rule the single-line cascade already uses. */
+function CostCentreSplitEditor({
+  groups,
+  rows,
+  total,
+  error,
+  onUpdate,
+  onSplitEvenly,
+}: {
+  groups: Array<{ costCentreKey: string; costCentreName: string; lines: BudgetLine[] }>;
+  rows: CostCentreSplitDraft[];
+  total: number;
+  error?: string;
+  onUpdate: (key: string, patch: Partial<CostCentreSplitDraft>) => void;
+  onSplitEvenly: () => void;
+}) {
+  const reconciled = Math.abs(total - 100) <= 0.5;
+
+  return (
+    <GrnCard>
+      <GrnCardHeader
+        title="Cost-centre split"
+        description="How much of this one spend belongs to each cost centre."
+        action={
+          <Button onClick={onSplitEvenly}>
+            <Split className="h-3.5 w-3.5" /> Split evenly
+          </Button>
+        }
+      />
+
+      {/* Stacked cards on phones. */}
+      <div className="space-y-3 p-4 md:hidden">
+        {rows.map((row, index) => {
+          const group = groups.find((item) => item.costCentreKey === row.costCentreKey);
+          const line = group?.lines.find((item) => item.id === row.budgetLineId);
+          return (
+            <div key={row.key} className="rounded-[10px] border border-grn-line p-3">
+              <div className="mb-2">
+                <span className="font-grn-mono text-[12px] font-bold text-grn-ink-soft">
+                  {group?.costCentreName ?? "Cost centre"}
+                </span>
+                {line && (
+                  <GrnCellSub>
+                    {money(Number(line.available_gross_amount))} available
+                  </GrnCellSub>
+                )}
+              </div>
+              <div className="space-y-2">
+                {group && group.lines.length > 1 && (
+                  <SearchableSelect
+                    aria-label={`Budget item for ${group.costCentreName}`}
+                    options={group.lines.map((item) => ({
+                      value: item.id,
+                      label: item.item_name,
+                      hint: `${money(Number(item.available_gross_amount))} left`,
+                    }))}
+                    value={row.budgetLineId}
+                    onChange={(value) => onUpdate(row.key, { budgetLineId: value })}
+                    placeholder="Select the item"
+                  />
+                )}
+                <div>
+                  <Label className="text-[11px] text-grn-ink-soft">Split %</Label>
+                  <Input
+                    type="number"
+                    inputMode="decimal"
+                    min="0"
+                    max="100"
+                    step="0.01"
+                    className="h-11 text-right"
+                    value={row.percentage}
+                    onChange={(event) => onUpdate(row.key, { percentage: Number(event.target.value) })}
+                  />
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Table from md up. */}
+      <div className="hidden md:block">
+        <GrnTable minWidth={560}>
+          <thead>
+            <tr>
+              <GrnTh sticky={false} className="w-8">#</GrnTh>
+              <GrnTh sticky={false}>Cost centre</GrnTh>
+              <GrnTh sticky={false}>Item</GrnTh>
+              <GrnTh sticky={false} align="right" className="w-28">Split %</GrnTh>
+              <GrnTh sticky={false} align="right" className="w-32">Available</GrnTh>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row, index) => {
+              const group = groups.find((item) => item.costCentreKey === row.costCentreKey);
+              const line = group?.lines.find((item) => item.id === row.budgetLineId);
+              return (
+                <tr key={row.key} className={GRN_TR}>
+                  <GrnTd className="font-grn-mono text-grn-ink-soft">{index + 1}</GrnTd>
+                  <GrnTd className="font-semibold">{group?.costCentreName ?? "—"}</GrnTd>
+                  <GrnTd className="min-w-[200px]">
+                    {group && group.lines.length > 1 ? (
+                      <SearchableSelect
+                        aria-label={`Budget item for ${group.costCentreName}`}
+                        className="h-[34px]"
+                        options={group.lines.map((item) => ({
+                          value: item.id,
+                          label: item.item_name,
+                          hint: `${money(Number(item.available_gross_amount))} left`,
+                        }))}
+                        value={row.budgetLineId}
+                        onChange={(value) => onUpdate(row.key, { budgetLineId: value })}
+                        placeholder="Select item"
+                      />
+                    ) : (
+                      <span className="text-grn-ink-soft">{line?.item_name ?? "—"}</span>
+                    )}
+                  </GrnTd>
+                  <GrnTd>
+                    <Input
+                      type="number"
+                      inputMode="decimal"
+                      min="0"
+                      max="100"
+                      step="0.01"
+                      className="text-right"
+                      value={row.percentage}
+                      onChange={(event) => onUpdate(row.key, { percentage: Number(event.target.value) })}
+                    />
+                  </GrnTd>
+                  <GrnTd align="right" className="font-grn-mono">
+                    {line ? money(Number(line.available_gross_amount)) : "—"}
+                  </GrnTd>
+                </tr>
+              );
+            })}
+          </tbody>
+        </GrnTable>
+      </div>
+
+      <div className="flex flex-wrap items-center justify-between gap-2 border-t border-grn-line-soft px-4 py-2.5 text-[12px]">
+        <span className="text-grn-ink-soft">
+          {rows.length} cost {rows.length === 1 ? "centre" : "centres"}
+        </span>
+        <span className="flex flex-wrap items-center gap-2">
+          <span className="text-grn-ink-soft">
+            Total <b className="font-grn-mono text-grn-ink">{decimal(total, 2)}%</b>
+          </span>
+          {reconciled ? (
+            <StatusStamp tone="ok">Reconciled</StatusStamp>
+          ) : (
+            <StatusStamp tone="crit">
+              {total > 100 ? "Over" : "Under"} by {decimal(Math.abs(100 - total), 2)}%
+            </StatusStamp>
+          )}
+        </span>
+      </div>
+
+      {error && (
+        <p className="flex items-start gap-1 border-t border-grn-line-soft px-4 py-2.5 text-[11px] font-semibold text-grn-crit">
+          <AlertCircle className="mt-px h-3 w-3 shrink-0" />
+          {error}
+        </p>
+      )}
+    </GrnCard>
+  );
+}
+
+/** The invoice broken into repeatable {amount without tax, GST slab} components — the same
+ *  physical invoice routinely carries 2+ GST rates. Placed last, per the raiser's own workflow:
+ *  total first, classification and split next, tax breakdown last once the invoice is in hand. */
+function InvoiceComponentsEditor({
+  components,
+  preview,
+  declaredTotal,
+  error,
+  remarks,
+  remarksError,
+  onUpdate,
+  onAdd,
+  onRemove,
+  canRemove,
+  onRemarksChange,
+}: {
+  components: InvoiceComponentDraft[];
+  preview: { rawTotalBase: number; rawTotalTax: number; rawTotalGross: number; diff: number };
+  declaredTotal: number;
+  error?: string;
+  remarks: string;
+  remarksError?: string;
+  onUpdate: (key: string, patch: Partial<InvoiceComponentDraft>) => void;
+  onAdd: () => void;
+  onRemove: (key: string) => void;
+  canRemove: boolean;
+  onRemarksChange: (value: string) => void;
+}) {
+  // Mirrors the ≤₹1 auto-round-off / >₹1 block boundary saveComponentAllocations() enforces
+  // server-side — this is a live preview, the server call is what's actually authoritative.
+  const withinAutoRoundoff = Math.abs(preview.diff) <= 1;
+  const reconciled = Math.abs(preview.diff) <= 0.01;
+
+  return (
+    <GrnCard>
+      <GrnCardHeader
+        title="Invoice components"
+        description="Break the invoice into its GST slabs — add another row if the same invoice carries more than one rate."
+        action={
+          <Button onClick={onAdd}>
+            <Plus className="h-3.5 w-3.5" /> Add component
+          </Button>
+        }
+      />
+
+      {/* Stacked cards on phones. */}
+      <div className="space-y-3 p-4 md:hidden">
+        {components.map((component, index) => {
+          const tax = roundMoney(Number(component.amountWithoutTax || 0) * Number(component.gstRate || 0) / 100);
+          const gross = roundMoney(Number(component.amountWithoutTax || 0) + tax);
+          return (
+            <div key={component.key} className="rounded-[10px] border border-grn-line p-3">
+              <div className="mb-2 flex items-center justify-between">
+                <span className="font-grn-mono text-[12px] font-bold text-grn-ink-soft">Component {index + 1}</span>
+                {canRemove && (
+                  <GrnIconButton
+                    className="h-11 w-11"
+                    aria-label={`Remove component ${index + 1}`}
+                    onClick={() => onRemove(component.key)}
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </GrnIconButton>
+                )}
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <Label className="text-[11px] text-grn-ink-soft">Amount without tax</Label>
+                  <Input
+                    type="number"
+                    inputMode="decimal"
+                    min="0.01"
+                    step="0.01"
+                    className="h-11 text-right"
+                    value={component.amountWithoutTax || ""}
+                    placeholder="0.00"
+                    onChange={(event) => onUpdate(component.key, { amountWithoutTax: Number(event.target.value) })}
+                  />
+                </div>
+                <div>
+                  <Label className="text-[11px] text-grn-ink-soft">GST slab</Label>
+                  <GrnSelect
+                    className="h-11"
+                    value={component.gstRate}
+                    onChange={(event) => onUpdate(component.key, { gstRate: Number(event.target.value) })}
+                  >
+                    {GST_RATES.map((rate) => (
+                      <option key={rate} value={rate}>{rate}%</option>
+                    ))}
+                  </GrnSelect>
+                </div>
+              </div>
+              <Input
+                className="mt-2"
+                value={component.remarks}
+                placeholder="Optional note for this component"
+                onChange={(event) => onUpdate(component.key, { remarks: event.target.value })}
+              />
+              <div className="mt-2 flex justify-between rounded-[8px] border border-grn-line bg-grn-paper px-3 py-2 text-[12px]">
+                <span className="text-grn-ink-soft">Incl. GST</span>
+                <b className="font-grn-mono">{money(gross)}</b>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Table from md up. */}
+      <div className="hidden md:block">
+        <GrnTable minWidth={640}>
+          <thead>
+            <tr>
+              <GrnTh sticky={false} className="w-8">#</GrnTh>
+              <GrnTh sticky={false} align="right" className="w-36">Amount without tax</GrnTh>
+              <GrnTh sticky={false} align="right" className="w-24">GST slab</GrnTh>
+              <GrnTh sticky={false} align="right" className="w-32">Incl. GST</GrnTh>
+              <GrnTh sticky={false}>Note</GrnTh>
+              <GrnTh sticky={false} className="w-12" />
+            </tr>
+          </thead>
+          <tbody>
+            {components.map((component, index) => {
+              const tax = roundMoney(Number(component.amountWithoutTax || 0) * Number(component.gstRate || 0) / 100);
+              const gross = roundMoney(Number(component.amountWithoutTax || 0) + tax);
+              return (
+                <tr key={component.key} className={GRN_TR}>
+                  <GrnTd className="font-grn-mono text-grn-ink-soft">{index + 1}</GrnTd>
+                  <GrnTd>
+                    <Input
+                      type="number"
+                      inputMode="decimal"
+                      min="0.01"
+                      step="0.01"
+                      className="text-right"
+                      value={component.amountWithoutTax || ""}
+                      placeholder="0.00"
+                      onChange={(event) => onUpdate(component.key, { amountWithoutTax: Number(event.target.value) })}
+                    />
+                  </GrnTd>
+                  <GrnTd>
+                    <GrnSelect
+                      value={component.gstRate}
+                      onChange={(event) => onUpdate(component.key, { gstRate: Number(event.target.value) })}
+                    >
+                      {GST_RATES.map((rate) => (
+                        <option key={rate} value={rate}>{rate}%</option>
+                      ))}
+                    </GrnSelect>
+                  </GrnTd>
+                  <GrnTd align="right" className="font-semibold">{money(gross)}</GrnTd>
+                  <GrnTd className="min-w-[160px]">
+                    <Input
+                      value={component.remarks}
+                      placeholder="Optional"
+                      onChange={(event) => onUpdate(component.key, { remarks: event.target.value })}
+                    />
+                  </GrnTd>
+                  <GrnTd>
+                    <GrnIconButton
+                      disabled={!canRemove}
+                      aria-label={`Remove component ${index + 1}`}
+                      onClick={() => onRemove(component.key)}
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </GrnIconButton>
+                  </GrnTd>
+                </tr>
+              );
+            })}
+          </tbody>
+        </GrnTable>
+      </div>
+
+      {/* Reconciliation, stated as the two figures that have to agree — same convention as
+          SplitAllocationEditor's footer. A ≤₹1 gap is disclosed as an auto-round-off, not an
+          error; only a genuine mismatch (>₹1) is treated as one. */}
+      <div className="flex flex-wrap items-center justify-between gap-2 border-t border-grn-line-soft px-4 py-2.5 text-[12px]">
+        <span className="text-grn-ink-soft">
+          {components.length} component{components.length === 1 ? "" : "s"}
+        </span>
+        <span className="flex flex-wrap items-center gap-2">
+          <span className="text-grn-ink-soft">
+            Components <b className="font-grn-mono text-grn-ink">{money(preview.rawTotalGross)}</b> · Invoice{" "}
+            <b className="font-grn-mono text-grn-ink">{money(declaredTotal)}</b>
+          </span>
+          {reconciled ? (
+            <StatusStamp tone="ok">Reconciled</StatusStamp>
+          ) : withinAutoRoundoff ? (
+            <StatusStamp tone="warn">
+              Auto round-off {preview.diff >= 0 ? "+" : ""}{money(preview.diff)}
+            </StatusStamp>
+          ) : (
+            <StatusStamp tone="crit">
+              Out by {preview.diff >= 0 ? "+" : ""}{money(preview.diff)}
+            </StatusStamp>
+          )}
+        </span>
+      </div>
+
+      {error && (
+        <p className="flex items-start gap-1 border-t border-grn-line-soft px-4 py-2.5 text-[11px] font-semibold text-grn-crit">
+          <AlertCircle className="mt-px h-3 w-3 shrink-0" />
+          {error}
+        </p>
+      )}
+
+      <div className="border-t border-grn-line-soft bg-grn-paper px-4 py-3">
+        <dl className="ml-auto w-full space-y-1.5 text-[12px] md:max-w-sm">
+          <div className="flex justify-between gap-4">
+            <dt className="text-grn-ink-soft">Taxable value</dt>
+            <dd className="font-grn-mono font-semibold text-grn-ink">{money(preview.rawTotalBase)}</dd>
+          </div>
+          <div className="flex justify-between gap-4">
+            <dt className="text-grn-ink-soft">GST</dt>
+            <dd className="font-grn-mono font-semibold text-grn-ink">{money(preview.rawTotalTax)}</dd>
+          </div>
+          <div className="flex justify-between gap-4 border-t border-grn-line pt-1.5">
+            <dt className="font-bold text-grn-ink">Total payable</dt>
+            <dd className="font-grn-mono text-[13px] font-bold text-grn-ink">{money(declaredTotal)}</dd>
+          </div>
+        </dl>
+      </div>
+
+      <div className="px-4 py-3">
+        <FieldRow label="Remark" htmlFor="grn-remarks" required error={remarksError}>
+          <Textarea
+            id="grn-remarks"
+            className="min-h-20"
+            value={remarks}
+            placeholder="What was bought or paid for, and why."
+            onChange={(event) => onRemarksChange(event.target.value)}
+          />
+        </FieldRow>
+      </div>
     </GrnCard>
   );
 }
