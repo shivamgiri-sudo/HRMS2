@@ -30,6 +30,7 @@ import {
   companyKnowledgeMissResponse,
   companyKnowledgeStatus,
   COMPANY_SYSTEM_INSTRUCTION,
+  detectCompanyIntent,
   getPublicCompanyContext,
   refreshOfficialCompanyKnowledge,
 } from './ai-company-knowledge.service.js';
@@ -278,6 +279,54 @@ aiInsightsRouter.get('/providers/usage', requireRole('super_admin', 'admin'), h(
 }));
 
 /**
+ * GET /api/ai/analytics/summary - Aggregate usage/success/fallback/safety stats.
+ * providerKey/fromDate/toDate are all optional — omitting providerKey returns
+ * an all-providers total.
+ */
+aiInsightsRouter.get('/analytics/summary', requireRole('super_admin', 'admin'), h(async (req, res) => {
+  const { providerKey, fromDate, toDate } = req.query;
+  const stats = await aiAuditService.getProviderUsageStats(
+    providerKey ? String(providerKey) : undefined,
+    fromDate ? new Date(String(fromDate)) : undefined,
+    toDate ? new Date(String(toDate)) : undefined,
+  );
+  return res.json(apiSuccess(stats));
+}));
+
+/**
+ * GET /api/ai/analytics/counts - Today/month request and token counts.
+ */
+aiInsightsRouter.get('/analytics/counts', requireRole('super_admin', 'admin'), h(async (req, res) => {
+  const providerKey = req.query.providerKey ? String(req.query.providerKey) : undefined;
+  const [today, month, todayTokens, monthTokens] = await Promise.all([
+    aiAuditService.getTodayUsageCount(providerKey),
+    aiAuditService.getMonthUsageCount(providerKey),
+    aiAuditService.getTodayTokenUsage(providerKey),
+    aiAuditService.getMonthTokenUsage(providerKey),
+  ]);
+  return res.json(apiSuccess({ today, month, todayTokens, monthTokens }));
+}));
+
+/**
+ * GET /api/ai/analytics/prompt-audit - Filterable prompt-audit log, incl.
+ * detected_intent for requests made after 1077_ai_prompt_audit_detected_intent.sql —
+ * historical rows before that migration have a NULL detected_intent, since
+ * question_hash/sanitized_context_hash are one-way hashes with nothing to
+ * backfill intent from.
+ */
+aiInsightsRouter.get('/analytics/prompt-audit', requireRole('super_admin', 'admin'), h(async (req, res) => {
+  const { userId, providerKey, fromDate, toDate, limit, offset } = req.query;
+  const filters: any = {};
+  if (userId) filters.userId = String(userId);
+  if (providerKey) filters.providerKey = String(providerKey);
+  if (fromDate) filters.fromDate = new Date(String(fromDate));
+  if (toDate) filters.toDate = new Date(String(toDate));
+  if (limit) filters.limit = parseInt(String(limit), 10);
+  if (offset) filters.offset = parseInt(String(offset), 10);
+  return res.json(apiSuccess(await aiAuditService.getPromptAuditLogs(filters)));
+}));
+
+/**
  * POST /api/ai/insights - Compatibility endpoint for dashboard insight panels.
  */
 aiInsightsRouter.post('/insights', h(async (_req, res) => {
@@ -385,7 +434,7 @@ async function askHandler(req: AuthenticatedRequest, res: Response, mode: 'json'
       entityType: 'self_account',
     };
     await aiAuditService.logUsage(request, local.response);
-    await aiAuditService.logPromptAudit(request, false, [], local.response.answer.slice(0, 200));
+    await aiAuditService.logPromptAudit(request, false, [], local.response.answer.slice(0, 200), local.intent);
     return respond(local.response, { externalSafe: false, intent: local.intent });
   }
 
@@ -406,7 +455,7 @@ async function askHandler(req: AuthenticatedRequest, res: Response, mode: 'json'
       entityType: 'howto_catalog',
     };
     await aiAuditService.logUsage(request, howTo.response);
-    await aiAuditService.logPromptAudit(request, false, [], howTo.response.answer.slice(0, 200));
+    await aiAuditService.logPromptAudit(request, false, [], howTo.response.answer.slice(0, 200), howTo.intent);
     // externalSafe: true — how-to steps and the RBAC-gated wording contain no
     // employee PII, so unlike self-account answers this is safe to replay to
     // an external provider on a follow-up turn.
@@ -425,7 +474,7 @@ async function askHandler(req: AuthenticatedRequest, res: Response, mode: 'json'
       entityType: 'company_public',
     };
     await aiAuditService.logUsage(request, companyAnswer);
-    await aiAuditService.logPromptAudit(request, false, [], companyAnswer.answer.slice(0, 200));
+    await aiAuditService.logPromptAudit(request, false, [], companyAnswer.answer.slice(0, 200), `company:${detectCompanyIntent(safeQuestion)}`);
     return respond(companyAnswer, { externalSafe: true });
   }
 
@@ -476,6 +525,7 @@ async function askHandler(req: AuthenticatedRequest, res: Response, mode: 'json'
       sanitizationResult.piiRedactionApplied,
       sanitizationResult.sensitiveFieldsRemoved,
       response.answer.slice(0, 200),
+      'unclassified', // no intent could be determined for this question at all — genuinely unclassified, not invented
     );
     return respond(response, { externalSafe: true });
   }
@@ -487,7 +537,7 @@ async function askHandler(req: AuthenticatedRequest, res: Response, mode: 'json'
       sanitizedContext: sanitizationResult.sanitizedContext, requestSource: 'mira_company_knowledge', entityType: 'company_public',
     };
     await aiAuditService.logUsage(request, response);
-    await aiAuditService.logPromptAudit(request, false, [], response.answer.slice(0, 200));
+    await aiAuditService.logPromptAudit(request, false, [], response.answer.slice(0, 200), 'unclassified');
     return respond(response, { externalSafe: true });
   }
 
@@ -539,6 +589,9 @@ async function askHandler(req: AuthenticatedRequest, res: Response, mode: 'json'
     sanitizationResult.piiRedactionApplied,
     sanitizationResult.sensitiveFieldsRemoved,
     response.answer.slice(0, 200)
+    // detected_intent intentionally omitted (-> undefined/NULL) — no intent
+    // is computed for the external-LLM path; inventing one here would be
+    // worse than leaving it blank.
   );
 
   return respond(response, { externalSafe: true });
@@ -759,7 +812,8 @@ Label the answer as an AI-generated recommendation.`;
     request,
     sanitized.piiRedactionApplied,
     sanitized.sensitiveFieldsRemoved,
-    response.answer.slice(0, 200)
+    response.answer.slice(0, 200),
+    'explain_action', // this whole route only ever answers one kind of question
   );
 
   return res.json(apiSuccess({

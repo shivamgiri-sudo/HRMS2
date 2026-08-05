@@ -159,6 +159,7 @@ export interface AiPromptAuditRow {
   pii_redaction_applied: boolean;
   sensitive_fields_removed_json?: string;
   response_summary?: string;
+  detected_intent?: string;
   created_at: Date;
 }
 

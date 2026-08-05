@@ -39,6 +39,34 @@ interface UsageLog {
   created_at: string;
 }
 
+interface AnalyticsSummary {
+  totalRequests: number;
+  successRate: number;
+  avgLatencyMs: number;
+  totalInputTokens: number;
+  totalOutputTokens: number;
+  fallbackCount: number;
+  safetyBlockedCount: number;
+}
+
+interface AnalyticsCounts {
+  today: number;
+  month: number;
+  todayTokens: { inputTokens: number; outputTokens: number };
+  monthTokens: { inputTokens: number; outputTokens: number };
+}
+
+interface PromptAuditRow {
+  id: number;
+  user_id: string;
+  provider_key: string;
+  model_name?: string;
+  request_source?: string;
+  detected_intent?: string;
+  response_summary?: string;
+  created_at: string;
+}
+
 interface ProviderForm {
   activeStatus: 'active' | 'inactive';
   isDefault: boolean;
@@ -71,6 +99,9 @@ export default function AIProviderSettings() {
   const [gemini, setGemini] = useState<ProviderForm>(GEMINI_DEFAULTS);
   const [knowledge, setKnowledge] = useState<{ source: string; facts: number; lastRefreshedAt: string | null } | null>(null);
   const [refreshingKnowledge, setRefreshingKnowledge] = useState(false);
+  const [analyticsSummary, setAnalyticsSummary] = useState<AnalyticsSummary | null>(null);
+  const [analyticsCounts, setAnalyticsCounts] = useState<AnalyticsCounts | null>(null);
+  const [promptAuditLogs, setPromptAuditLogs] = useState<PromptAuditRow[]>([]);
 
   const hydrate = (provider: ProviderConfig | undefined, defaults: ProviderForm): ProviderForm => provider ? {
     ...defaults,
@@ -85,10 +116,13 @@ export default function AIProviderSettings() {
 
   const load = async () => {
     try {
-      const [providerRes, usageRes, knowledgeRes] = await Promise.all([
+      const [providerRes, usageRes, knowledgeRes, summaryRes, countsRes, promptAuditRes] = await Promise.all([
         hrmsApi.get<{ success: boolean; data: ProviderConfig[] }>('/api/ai/providers'),
         hrmsApi.get<{ success: boolean; data: { logs: UsageLog[] } }>('/api/ai/providers/usage?limit=50'),
         hrmsApi.get<{ success: boolean; data: { source: string; facts: number; lastRefreshedAt: string | null } }>('/api/ai/company-knowledge/status'),
+        hrmsApi.get<{ success: boolean; data: AnalyticsSummary }>('/api/ai/analytics/summary'),
+        hrmsApi.get<{ success: boolean; data: AnalyticsCounts }>('/api/ai/analytics/counts'),
+        hrmsApi.get<{ success: boolean; data: { logs: PromptAuditRow[] } }>('/api/ai/analytics/prompt-audit?limit=50'),
       ]);
       const list = providerRes.data || [];
       setProviders(list);
@@ -96,6 +130,9 @@ export default function AIProviderSettings() {
       setGemini((current) => ({ ...hydrate(list.find((item) => item.providerKey === 'gemini'), GEMINI_DEFAULTS), apiKey: current.apiKey }));
       setUsageLogs(usageRes.data?.logs || []);
       setKnowledge(knowledgeRes.data || null);
+      setAnalyticsSummary(summaryRes.data || null);
+      setAnalyticsCounts(countsRes.data || null);
+      setPromptAuditLogs(promptAuditRes.data?.logs || []);
     } catch (error) {
       toast({ title: 'Unable to load Mira settings', description: error instanceof Error ? error.message : 'Request failed', variant: 'destructive' });
     } finally {
@@ -236,6 +273,7 @@ export default function AIProviderSettings() {
           <TabsTrigger value="knowledge">Company Knowledge</TabsTrigger>
           <TabsTrigger value="safety">Safety</TabsTrigger>
           <TabsTrigger value="usage">Usage</TabsTrigger>
+          <TabsTrigger value="analytics">Analytics</TabsTrigger>
         </TabsList>
 
         <TabsContent value="providers" className="space-y-4">
@@ -294,6 +332,60 @@ export default function AIProviderSettings() {
           <Card><CardHeader><CardTitle>Recent Provider Usage</CardTitle></CardHeader><CardContent><Table><TableHeader><TableRow><TableHead>Time</TableHead><TableHead>Provider</TableHead><TableHead>Model</TableHead><TableHead>Latency</TableHead><TableHead>Tokens</TableHead><TableHead>Status</TableHead></TableRow></TableHeader><TableBody>
             {usageLogs.map((log) => <TableRow key={log.id}><TableCell>{new Date(log.created_at).toLocaleString()}</TableCell><TableCell>{log.provider_key}</TableCell><TableCell>{log.model_name || '—'}</TableCell><TableCell>{log.latency_ms ? `${log.latency_ms} ms` : '—'}</TableCell><TableCell>{log.input_token_count || 0} / {log.output_token_count || 0}</TableCell><TableCell><Badge variant={log.success ? 'default' : 'destructive'}>{log.success ? <Check className="mr-1 h-3 w-3" /> : <X className="mr-1 h-3 w-3" />}{log.success ? 'Success' : 'Failed'}</Badge>{log.fallback_used && <Badge variant="secondary" className="ml-1">Fallback</Badge>}</TableCell></TableRow>)}
           </TableBody></Table></CardContent></Card>
+        </TabsContent>
+
+        <TabsContent value="analytics" className="space-y-4">
+          <div className="grid gap-4 md:grid-cols-3">
+            <Card><CardContent className="p-4"><p className="text-sm text-muted-foreground">Requests (30d, all providers)</p><p className="text-2xl font-semibold">{analyticsSummary?.totalRequests ?? '—'}</p></CardContent></Card>
+            <Card><CardContent className="p-4"><p className="text-sm text-muted-foreground">Success rate</p><p className="text-2xl font-semibold">{analyticsSummary ? `${analyticsSummary.successRate.toFixed(1)}%` : '—'}</p></CardContent></Card>
+            <Card><CardContent className="p-4"><p className="text-sm text-muted-foreground">Avg latency</p><p className="text-2xl font-semibold">{analyticsSummary ? `${Math.round(analyticsSummary.avgLatencyMs)} ms` : '—'}</p></CardContent></Card>
+            <Card><CardContent className="p-4"><p className="text-sm text-muted-foreground">Fallback count</p><p className="text-2xl font-semibold">{analyticsSummary?.fallbackCount ?? '—'}</p></CardContent></Card>
+            <Card><CardContent className="p-4"><p className="text-sm text-muted-foreground">Safety-blocked count</p><p className="text-2xl font-semibold">{analyticsSummary?.safetyBlockedCount ?? '—'}</p></CardContent></Card>
+            <Card><CardContent className="p-4"><p className="text-sm text-muted-foreground">Requests today / this month</p><p className="text-2xl font-semibold">{analyticsCounts ? `${analyticsCounts.today} / ${analyticsCounts.month}` : '—'}</p></CardContent></Card>
+          </div>
+          <Card>
+            <CardHeader><CardTitle>Token usage</CardTitle></CardHeader>
+            <CardContent className="grid gap-4 md:grid-cols-2">
+              <div className="rounded-lg border p-4">
+                <p className="text-sm text-muted-foreground">Today</p>
+                <p className="font-medium">{analyticsCounts ? `${analyticsCounts.todayTokens.inputTokens} in / ${analyticsCounts.todayTokens.outputTokens} out` : '—'}</p>
+              </div>
+              <div className="rounded-lg border p-4">
+                <p className="text-sm text-muted-foreground">This month</p>
+                <p className="font-medium">{analyticsCounts ? `${analyticsCounts.monthTokens.inputTokens} in / ${analyticsCounts.monthTokens.outputTokens} out` : '—'}</p>
+              </div>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardHeader>
+              <CardTitle>Top intents</CardTitle>
+              <CardDescription>
+                Available for requests made after this date — detected_intent was only added going forward
+                (migration 1077); historical rows have no intent to report and are not backfilled, since
+                question_hash/sanitized_context_hash are one-way hashes with nothing to derive it from.
+              </CardDescription>
+            </CardHeader>
+            <CardContent><p className="text-sm text-muted-foreground">Not enough post-migration data yet to show a breakdown.</p></CardContent>
+          </Card>
+          <Card>
+            <CardHeader><CardTitle>Recent Prompt Audit</CardTitle></CardHeader>
+            <CardContent>
+              <Table>
+                <TableHeader><TableRow><TableHead>Time</TableHead><TableHead>User</TableHead><TableHead>Provider</TableHead><TableHead>Source</TableHead><TableHead>Detected intent</TableHead></TableRow></TableHeader>
+                <TableBody>
+                  {promptAuditLogs.map((log) => (
+                    <TableRow key={log.id}>
+                      <TableCell>{new Date(log.created_at).toLocaleString()}</TableCell>
+                      <TableCell>{log.user_id}</TableCell>
+                      <TableCell>{log.provider_key}</TableCell>
+                      <TableCell>{log.request_source || '—'}</TableCell>
+                      <TableCell>{log.detected_intent || <span className="text-muted-foreground">unavailable (pre-migration)</span>}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </CardContent>
+          </Card>
         </TabsContent>
       </Tabs>
     </div>

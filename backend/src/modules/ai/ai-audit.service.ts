@@ -62,6 +62,7 @@ class AiAuditService {
     piiRedactionApplied: boolean,
     sensitiveFieldsRemoved: string[],
     responseSummary?: string,
+    detectedIntent?: string,
   ): Promise<void> {
     const questionHash = this.hashString(request.userQuestion);
     const contextHash = this.hashString(JSON.stringify(request.sanitizedContext));
@@ -71,8 +72,8 @@ class AiAuditService {
         `INSERT INTO ai_prompt_audit_log (
           user_id, provider_key, model_name, request_source,
           question_hash, sanitized_context_hash,
-          pii_redaction_applied, sensitive_fields_removed_json, response_summary
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          pii_redaction_applied, sensitive_fields_removed_json, response_summary, detected_intent
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           request.userId,
           request.providerKey,
@@ -83,6 +84,7 @@ class AiAuditService {
           piiRedactionApplied,
           JSON.stringify(sensitiveFieldsRemoved),
           responseSummary || null,
+          detectedIntent || null,
         ],
       );
     } catch (auditError) {
@@ -107,7 +109,7 @@ class AiAuditService {
   }
 
   async getProviderUsageStats(
-    providerKey: string,
+    providerKey?: string,
     fromDate?: Date,
     toDate?: Date,
   ): Promise<{
@@ -121,6 +123,11 @@ class AiAuditService {
   }> {
     const from = fromDate || new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
     const to = toDate || new Date();
+    // providerKey is optional so an all-providers total is possible — a small
+    // new capability (not pure wiring): the clause and its param are only
+    // included when a key is actually supplied.
+    const providerClause = providerKey ? 'provider_key = ? AND ' : '';
+    const params = providerKey ? [providerKey, from, to] : [from, to];
     const [rows] = await db.execute<any[]>(
       `SELECT
         COUNT(*) AS total_requests,
@@ -131,8 +138,8 @@ class AiAuditService {
         SUM(CASE WHEN fallback_used = 1 THEN 1 ELSE 0 END) AS fallback_count,
         SUM(CASE WHEN safety_blocked = 1 THEN 1 ELSE 0 END) AS safety_blocked_count
       FROM ai_provider_usage_log
-      WHERE provider_key = ? AND created_at BETWEEN ? AND ?`,
-      [providerKey, from, to],
+      WHERE ${providerClause}created_at BETWEEN ? AND ?`,
+      params,
     );
     const row = rows[0] || {};
     const totalRequests = Number(row.total_requests || 0);
@@ -212,36 +219,40 @@ class AiAuditService {
     return { logs: logs as AiPromptAuditRow[], total: Number(countRows[0]?.total || 0) };
   }
 
-  async getTodayUsageCount(providerKey: string): Promise<number> {
+  async getTodayUsageCount(providerKey?: string): Promise<number> {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
+    const providerClause = providerKey ? 'provider_key = ? AND ' : '';
+    const params = providerKey ? [providerKey, today] : [today];
     const [rows] = await db.execute<any[]>(
       `SELECT COUNT(*) AS count FROM ai_provider_usage_log
-       WHERE provider_key = ? AND created_at >= ?`,
-      [providerKey, today],
+       WHERE ${providerClause}created_at >= ?`,
+      params,
     );
     return Number(rows[0]?.count || 0);
   }
 
-  async getMonthUsageCount(providerKey: string): Promise<number> {
+  async getMonthUsageCount(providerKey?: string): Promise<number> {
     const firstDay = new Date();
     firstDay.setDate(1);
     firstDay.setHours(0, 0, 0, 0);
+    const providerClause = providerKey ? 'provider_key = ? AND ' : '';
+    const params = providerKey ? [providerKey, firstDay] : [firstDay];
     const [rows] = await db.execute<any[]>(
       `SELECT COUNT(*) AS count FROM ai_provider_usage_log
-       WHERE provider_key = ? AND created_at >= ?`,
-      [providerKey, firstDay],
+       WHERE ${providerClause}created_at >= ?`,
+      params,
     );
     return Number(rows[0]?.count || 0);
   }
 
-  async getTodayTokenUsage(providerKey: string): Promise<{ inputTokens: number; outputTokens: number }> {
+  async getTodayTokenUsage(providerKey?: string): Promise<{ inputTokens: number; outputTokens: number }> {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     return this.getTokenUsageSince(providerKey, today);
   }
 
-  async getMonthTokenUsage(providerKey: string): Promise<{ inputTokens: number; outputTokens: number }> {
+  async getMonthTokenUsage(providerKey?: string): Promise<{ inputTokens: number; outputTokens: number }> {
     const firstDay = new Date();
     firstDay.setDate(1);
     firstDay.setHours(0, 0, 0, 0);
@@ -249,16 +260,18 @@ class AiAuditService {
   }
 
   private async getTokenUsageSince(
-    providerKey: string,
+    providerKey: string | undefined,
     fromDate: Date,
   ): Promise<{ inputTokens: number; outputTokens: number }> {
+    const providerClause = providerKey ? 'provider_key = ? AND ' : '';
+    const params = providerKey ? [providerKey, fromDate] : [fromDate];
     const [rows] = await db.execute<any[]>(
       `SELECT
         SUM(COALESCE(input_token_count, 0)) AS input_tokens,
         SUM(COALESCE(output_token_count, 0)) AS output_tokens
        FROM ai_provider_usage_log
-       WHERE provider_key = ? AND created_at >= ?`,
-      [providerKey, fromDate],
+       WHERE ${providerClause}created_at >= ?`,
+      params,
     );
     return {
       inputTokens: Number(rows[0]?.input_tokens || 0),
