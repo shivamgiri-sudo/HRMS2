@@ -349,6 +349,14 @@ export function resolveRecoverableDraft(
   return { lines: parsed.lines, savedAt: parsed.savedAt };
 }
 
+/** Mirrors backend/src/modules/process-pnl/budget-coverage.service.ts's isInvalidCoverage() —
+ *  keep the two in sync. Used client-side to know which Sub-heads are safe to bulk-mark N/A. */
+function isCoveragePending(item: BudgetCoverageItem) {
+  if (!item.planning_status) return true;
+  if (item.planning_status === "planned") return item.budget_line_count <= 0;
+  return item.budget_line_count > 0 || !String(item.reason ?? "").trim();
+}
+
 function Metric({ label, value, tone = "slate" }: {
   label: string;
   value: string;
@@ -463,6 +471,7 @@ export default function BranchBudgetManagementWorkspace() {
   const [loadedDetailId, setLoadedDetailId] = useState<string | null>(null);
   const [coverageDraft, setCoverageDraft] = useState<CoverageDraft>({});
   const [coverageSearch, setCoverageSearch] = useState("");
+  const [bulkNaReason, setBulkNaReason] = useState("");
   const [expandedHeads, setExpandedHeads] = useState<Set<string>>(new Set());
   const [reviewRemarks, setReviewRemarks] = useState("");
   /** Reviewer's per head/sub-head correction notes, keyed by correctionKey(line). */
@@ -733,6 +742,13 @@ export default function BranchBudgetManagementWorkspace() {
     0
   );
   const coverageItems = coverageQuery.data?.items ?? [];
+  /** Pending Sub-heads split by whether they're safe to bulk-mark N/A (no linked budget line)
+   *  vs. ones that already have real budget data and need an individual decision. */
+  const pendingCoverage = useMemo(() => {
+    const eligible = coverageItems.filter((item) => isCoveragePending(item) && item.budget_line_count === 0);
+    const blocked = coverageItems.filter((item) => isCoveragePending(item) && item.budget_line_count > 0);
+    return { eligible, blocked };
+  }, [coverageItems]);
   const filteredCoverage = coverageItems.filter((item) =>
     `${item.head_name} ${item.sub_head_name}`.toLowerCase().includes(coverageSearch.toLowerCase())
   );
@@ -956,6 +972,35 @@ export default function BranchBudgetManagementWorkspace() {
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Budget could not be saved");
     }
+  }
+
+  /** Stages "Not Applicable" on every Sub-head that's pending and has no linked budget line —
+   *  the completeness check otherwise forces a one-by-one click + typed reason on every one of
+   *  them. Only stages coverageDraft; the existing "Save decisions" button still persists it. */
+  function markRemainingNotApplicable() {
+    const reason = bulkNaReason.trim();
+    if (!reason) {
+      toast.error("Enter a reason before marking the remaining decisions N/A");
+      return;
+    }
+    if (!pendingCoverage.eligible.length) {
+      toast.info("No pending Head/Sub-head decisions to mark.");
+      return;
+    }
+    setCoverageDraft((current) => {
+      const next = { ...current };
+      pendingCoverage.eligible.forEach((item) => {
+        next[item.expense_sub_head_id] = { status: "not_applicable", reason };
+      });
+      return next;
+    });
+    setExpandedHeads((current) => new Set([...current, ...pendingCoverage.eligible.map((item) => item.expense_head_id)]));
+    toast.success(
+      `${pendingCoverage.eligible.length} Sub-head(s) marked "N/A" — review below, then click Save decisions.` +
+        (pendingCoverage.blocked.length
+          ? ` ${pendingCoverage.blocked.length} item(s) with linked budget lines still need a manual decision.`
+          : "")
+    );
   }
 
   async function saveCoverageDecisions() {
@@ -1484,7 +1529,7 @@ Reason:`
             <TabsContent value="coverage" className="space-y-5">
               {!detailId ? <div className="rounded-3xl border border-blue-200 bg-blue-50 p-10 text-center"><ClipboardCheck className="mx-auto h-10 w-10 text-blue-700" /><p className="mt-3 font-bold text-blue-950">Save the budget draft first</p><Button className="mt-4" onClick={() => setTab("plan")}>Open Plan Builder</Button></div> : coverageQuery.isLoading ? <div className="flex justify-center rounded-3xl border border-slate-200 bg-white py-20"><Loader2 className="h-7 w-7 animate-spin" /></div> : <>
                 <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-6"><Metric label="Completion" value={`${coverageQuery.data?.summary.completionPct ?? 0}%`} tone={coverageQuery.data?.summary.readyToSubmit ? "emerald" : "amber"} /><Metric label="All Sub-heads" value={String(coverageQuery.data?.summary.total ?? 0)} /><Metric label="Planned" value={String(coverageQuery.data?.summary.planned ?? 0)} tone="emerald" /><Metric label="Not planned" value={String(coverageQuery.data?.summary.notPlanned ?? 0)} tone="amber" /><Metric label="Not applicable" value={String(coverageQuery.data?.summary.notApplicable ?? 0)} /><Metric label="Incomplete" value={String(coverageQuery.data?.summary.incomplete ?? 0)} tone={(coverageQuery.data?.summary.incomplete ?? 0) ? "rose" : "emerald"} /></div>
-                <Card className="rounded-3xl border-slate-200 shadow-sm"><CardHeader className="border-b border-slate-100"><div className="flex flex-wrap items-center justify-between gap-3"><div><CardTitle>Complete Expense Catalogue</CardTitle><p className="mt-1 text-xs text-slate-500">Every active Sub-head requires a valid decision.</p></div><div className="flex gap-2"><div className="relative"><Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" /><Input className="pl-9" value={coverageSearch} onChange={(event) => setCoverageSearch(event.target.value)} /></div>{capabilities?.canCreate && <Button onClick={() => void saveCoverageDecisions()} disabled={saveCoverage.isPending}><Save className="mr-2 h-4 w-4" />Save decisions</Button>}</div></div></CardHeader><CardContent className="space-y-3 p-4">{coverageGroups.map((group) => { const expanded = expandedHeads.has(group.id); const complete = group.items.every((item) => coverageDraft[item.expense_sub_head_id]?.status); return <div key={group.id} className="overflow-hidden rounded-2xl border border-slate-200"><button type="button" className="flex w-full items-center gap-3 bg-slate-50 px-4 py-3 text-left" onClick={() => setExpandedHeads((current) => { const next = new Set(current); if (next.has(group.id)) next.delete(group.id); else next.add(group.id); return next; })}><span className={`flex h-8 w-8 items-center justify-center rounded-full ${complete ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"}`}>{complete ? <CheckCircle2 className="h-4 w-4" /> : <AlertCircle className="h-4 w-4" />}</span><div className="flex-1"><p className="text-sm font-bold">{group.name}</p><p className="text-[10px] text-slate-500">{group.items.length} Sub-head(s)</p></div>{expanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}</button>{expanded && <div className="divide-y divide-slate-100">{group.items.map((item) => <CoverageDecision key={item.expense_sub_head_id} item={item} draft={coverageDraft[item.expense_sub_head_id] ?? { status: "", reason: "" }} editable={canEdit} onChange={(value) => setCoverageDraft((current) => ({ ...current, [item.expense_sub_head_id]: value }))} onAddLine={() => addFromCoverage(item)} />)}</div>}</div>; })}</CardContent></Card>
+                <Card className="rounded-3xl border-slate-200 shadow-sm"><CardHeader className="border-b border-slate-100"><div className="flex flex-wrap items-center justify-between gap-3"><div><CardTitle>Complete Expense Catalogue</CardTitle><p className="mt-1 text-xs text-slate-500">Every active Sub-head requires a valid decision.</p></div><div className="flex gap-2"><div className="relative"><Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" /><Input className="pl-9" value={coverageSearch} onChange={(event) => setCoverageSearch(event.target.value)} /></div>{capabilities?.canCreate && <Button onClick={() => void saveCoverageDecisions()} disabled={saveCoverage.isPending}><Save className="mr-2 h-4 w-4" />Save decisions</Button>}</div></div>{capabilities?.canCreate && pendingCoverage.eligible.length > 0 && <div className="mt-3 flex flex-wrap items-center gap-2 rounded-xl border border-dashed border-slate-300 bg-slate-50/70 p-3"><Input className="max-w-xs" value={bulkNaReason} onChange={(event) => setBulkNaReason(event.target.value)} placeholder="Reason for marking remaining N/A" /><Button variant="outline" size="sm" disabled={!canEdit} onClick={markRemainingNotApplicable}><XCircle className="mr-2 h-4 w-4" />Mark remaining {pendingCoverage.eligible.length} as N/A</Button>{pendingCoverage.blocked.length > 0 && <span className="text-[11px] text-amber-700">{pendingCoverage.blocked.length} more have budget lines attached — decide those individually.</span>}</div>}</CardHeader><CardContent className="space-y-3 p-4">{coverageGroups.map((group) => { const expanded = expandedHeads.has(group.id); const complete = group.items.every((item) => coverageDraft[item.expense_sub_head_id]?.status); return <div key={group.id} className="overflow-hidden rounded-2xl border border-slate-200"><button type="button" className="flex w-full items-center gap-3 bg-slate-50 px-4 py-3 text-left" onClick={() => setExpandedHeads((current) => { const next = new Set(current); if (next.has(group.id)) next.delete(group.id); else next.add(group.id); return next; })}><span className={`flex h-8 w-8 items-center justify-center rounded-full ${complete ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"}`}>{complete ? <CheckCircle2 className="h-4 w-4" /> : <AlertCircle className="h-4 w-4" />}</span><div className="flex-1"><p className="text-sm font-bold">{group.name}</p><p className="text-[10px] text-slate-500">{group.items.length} Sub-head(s)</p></div>{expanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}</button>{expanded && <div className="divide-y divide-slate-100">{group.items.map((item) => <CoverageDecision key={item.expense_sub_head_id} item={item} draft={coverageDraft[item.expense_sub_head_id] ?? { status: "", reason: "" }} editable={canEdit} onChange={(value) => setCoverageDraft((current) => ({ ...current, [item.expense_sub_head_id]: value }))} onAddLine={() => addFromCoverage(item)} />)}</div>}</div>; })}</CardContent></Card>
               </>}
             </TabsContent>
 
