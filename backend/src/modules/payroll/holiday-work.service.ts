@@ -53,7 +53,7 @@ function lastDayOfMonth(runMonth: string): number {
 export async function resolveHolidaysForEmployeeV2(
   employeeId: string,
   runMonth: string
-): Promise<{ eligibleHolidayCount: number; holidayWorkExtraPayout: number }> {
+): Promise<{ eligibleHolidayCount: number; eligibleHolidayDates: string[]; holidayWorkExtraPayout: number }> {
   // ── Step 1: Employee master data ──────────────────────────────────────────
   const [empRows] = await db.execute<RowDataPacket[]>(
     `SELECT e.date_of_joining, e.salary_start_date, e.branch_id,
@@ -66,7 +66,7 @@ export async function resolveHolidaysForEmployeeV2(
 
   const emp = (empRows as EmployeeMasterRow[])[0];
   if (!emp) {
-    return { eligibleHolidayCount: 0, holidayWorkExtraPayout: 0 };
+    return { eligibleHolidayCount: 0, eligibleHolidayDates: [], holidayWorkExtraPayout: 0 };
   }
 
   // ── Step 2: Effective salary start date ───────────────────────────────────
@@ -90,11 +90,12 @@ export async function resolveHolidaysForEmployeeV2(
 
   const holidays = holidayRows as HolidayRow[];
   if (holidays.length === 0) {
-    return { eligibleHolidayCount: 0, holidayWorkExtraPayout: 0 };
+    return { eligibleHolidayCount: 0, eligibleHolidayDates: [], holidayWorkExtraPayout: 0 };
   }
 
   // ── Step 4 & 5: Per-holiday eligibility check ─────────────────────────────
   let eligibleHolidayCount = 0;
+  const eligibleHolidayDates: string[] = [];
 
   for (const holiday of holidays) {
     const holidayDate = new Date(holiday.holiday_date);
@@ -148,6 +149,7 @@ export async function resolveHolidaysForEmployeeV2(
     // If no mappings exist, all designations are eligible — fall through
 
     eligibleHolidayCount++;
+    eligibleHolidayDates.push(String(holiday.holiday_date));
   }
 
   // ── Step 6: Approved holiday-work extra payout ────────────────────────────
@@ -172,7 +174,7 @@ export async function resolveHolidaysForEmployeeV2(
     (payoutRows as ExtraPayoutRow[])[0]?.extra_payout ?? 0
   );
 
-  return { eligibleHolidayCount, holidayWorkExtraPayout };
+  return { eligibleHolidayCount, eligibleHolidayDates, holidayWorkExtraPayout };
 }
 
 // ─── Backward-compat export (old callers pass no args) ───────────────────────

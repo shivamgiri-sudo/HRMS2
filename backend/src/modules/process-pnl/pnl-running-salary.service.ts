@@ -12,9 +12,19 @@ import { computeRunningSalary } from "../payroll/running-salary.service.js";
  *
  * computeRunningSalary() is called per employee rather than reimplemented as aggregate SQL. It is
  * not simple — fixed components versus ctc_annual/12, payable days, eligible week-offs, LWP,
- * statutory overrides — and a second copy would drift, leaving a payslip and the P&L disagreeing
- * while both looked authoritative. One source of truth, snapshotted, is the trade: the per-employee
- * cost is paid once per refresh instead of on every statement load.
+ * statutory overrides — and a second copy would drift, leaving this snapshot and the "Running
+ * Month" live-estimate widget (running-salary.routes.ts) disagreeing with each other while both
+ * looked authoritative. One source of truth for THAT pair, snapshotted, is the trade: the
+ * per-employee cost is paid once per refresh instead of on every statement load.
+ *
+ * This does NOT extend to salary_prep_line.final_payable_days, the actual locked payslip figure —
+ * that is produced by a completely separate calculation in payrollCalculate.service.ts that never
+ * calls computeRunningSalary(). The two are expected to diverge for an open (not-yet-run) period;
+ * pnl-statement.service.ts already prefers salary_prep_line once payroll has actually run for a
+ * period, falling back to this snapshot only while it hasn't. Confirmed live 2026-08: they disagree
+ * for ~82% of employees, most of it now traced to a since-fixed bug in this file's own dependency
+ * (running-salary.service.ts's holiday resolution) plus a smaller, real modeling difference
+ * (payroll's leave-reversal step has no equivalent here) that is a business decision, not a bug.
  */
 
 export type PnlPeopleBucket = "agent_salary" | "dsc_people" | "bmc_people";

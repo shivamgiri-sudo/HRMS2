@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { execute, resolveHolidaysForEmployee, calculateWeekoffEligibility, calculateNetSalary, getPtFromSlab } = vi.hoisted(() => ({
+const { execute, resolveHolidaysForEmployeeV2, calculateWeekoffEligibility, calculateNetSalary, getPtFromSlab } = vi.hoisted(() => ({
   execute: vi.fn(),
-  resolveHolidaysForEmployee: vi.fn(),
+  resolveHolidaysForEmployeeV2: vi.fn(),
   calculateWeekoffEligibility: vi.fn(),
   calculateNetSalary: vi.fn(),
   getPtFromSlab: vi.fn(),
@@ -13,7 +13,7 @@ vi.mock("../../../db/mysql.js", () => ({
 }));
 
 vi.mock("../holiday-work.service.js", () => ({
-  resolveHolidaysForEmployee,
+  resolveHolidaysForEmployeeV2,
 }));
 
 vi.mock("../weekoff-eligibility.service.js", () => ({
@@ -53,7 +53,7 @@ describe("computeRunningSalary", () => {
     // this module with exactly this default for the same reason; restore it so
     // a miscounted query fails by asserting a wrong number, not by crashing.
     execute.mockResolvedValue([[], []]);
-    resolveHolidaysForEmployee.mockReset();
+    resolveHolidaysForEmployeeV2.mockReset();
     calculateWeekoffEligibility.mockReset();
     calculateNetSalary.mockReset();
   });
@@ -101,9 +101,13 @@ describe("computeRunningSalary", () => {
       ]], [])
       .mockResolvedValueOnce([[{ total_incentives: 0 }], []]);
 
-    for (let i = 0; i < 31; i += 1) {
-      resolveHolidaysForEmployee.mockResolvedValueOnce([]);
-    }
+    // computeRunningSalary now resolves the month's holidays once (correctly, with a
+    // "YYYY-MM" string) instead of re-querying per day — see running-salary.service.ts.
+    resolveHolidaysForEmployeeV2.mockResolvedValueOnce({
+      eligibleHolidayCount: 0,
+      eligibleHolidayDates: [],
+      holidayWorkExtraPayout: 0,
+    });
 
     calculateWeekoffEligibility
       .mockResolvedValueOnce(1)
@@ -184,9 +188,13 @@ describe("computeRunningSalary", () => {
       .mockResolvedValueOnce([[], []])
       .mockResolvedValueOnce([[{ total_incentives: 0 }], []]);
 
-    for (let i = 0; i < 31; i += 1) {
-      resolveHolidaysForEmployee.mockResolvedValueOnce([]);
-    }
+    // computeRunningSalary now resolves the month's holidays once (correctly, with a
+    // "YYYY-MM" string) instead of re-querying per day — see running-salary.service.ts.
+    resolveHolidaysForEmployeeV2.mockResolvedValueOnce({
+      eligibleHolidayCount: 0,
+      eligibleHolidayDates: [],
+      holidayWorkExtraPayout: 0,
+    });
 
     calculateWeekoffEligibility
       .mockResolvedValueOnce(0)
@@ -219,5 +227,72 @@ describe("computeRunningSalary", () => {
 
     // Roster-free projection (19990a4b): 0.5 earned + 5 remaining calendar days.
     expect(result.projected_payable_days).toBe(5.5);
+  });
+
+  it("counts an eligible holiday inside the till-date window, and resolves it with the correct YYYY-MM format", async () => {
+    // Regression test for the bug this fix corrects: computeRunningSalary used to call
+    // resolveHolidaysForEmployee(employeeId, d) once per day with a full "YYYY-MM-DD"
+    // date, which resolveHolidaysForEmployeeV2 silently turned into a malformed date
+    // range (confirmed live) — eligible_holiday_till_date was always 0, for every
+    // employee, always. Now it resolves the month once, correctly, and filters dates.
+    execute
+      .mockResolvedValueOnce([[{
+        branch_id: "branch-1",
+        process_id: "proc-1",
+        ctc_annual: 360000,
+        structure_id: "struct-1",
+        basic_pct: 40,
+        hra_pct: 20,
+        state_code: "UP",
+      }], []])
+      .mockResolvedValueOnce([[{
+        basic: 12000,
+        hra: 6000,
+        conveyance: 0,
+        special_allowance: 0,
+        gross: 30000,
+      }], []])
+      .mockResolvedValueOnce([[], []])
+      .mockResolvedValueOnce([[
+        { config_key: "pf_employee_pct", config_value: 12 },
+        { config_key: "esic_employee_pct", config_value: 0.75 },
+        { config_key: "esic_employer_pct", config_value: 3.25 },
+        { config_key: "esic_wage_limit", config_value: 21000 },
+        { config_key: "pf_wage_limit", config_value: 15000 },
+        { config_key: "professional_tax", config_value: 200 },
+      ], []])
+      .mockResolvedValueOnce([[], []])
+      .mockResolvedValueOnce([[{ salary_start_date: null, date_of_leaving: null }], []])
+      .mockResolvedValueOnce([[
+        { attendance_status: "half_day", lwp_value: 0.5, record_date: "2026-07-25" },
+      ], []])
+      .mockResolvedValueOnce([[], []])
+      .mockResolvedValueOnce([[{ total_incentives: 0 }], []]);
+
+    // A holiday on July 15 — inside the July 1-25 till-date window this test asks for.
+    resolveHolidaysForEmployeeV2.mockResolvedValueOnce({
+      eligibleHolidayCount: 1,
+      eligibleHolidayDates: ["2026-07-15"],
+      holidayWorkExtraPayout: 0,
+    });
+
+    calculateWeekoffEligibility
+      .mockResolvedValueOnce(0)
+      .mockResolvedValueOnce(0);
+
+    getPtFromSlab
+      .mockResolvedValueOnce(0)
+      .mockResolvedValueOnce(0);
+
+    calculateNetSalary
+      .mockReturnValueOnce({ net_salary: 0, pf_employee: 0, esic_employee: 0, professional_tax: 0 })
+      .mockReturnValueOnce({ net_salary: 0, pf_employee: 0, esic_employee: 0, professional_tax: 0 });
+
+    const result = await computeRunningSalary("emp-1", "2026-07-01", "2026-07-25");
+
+    expect(resolveHolidaysForEmployeeV2).toHaveBeenCalledWith("emp-1", "2026-07");
+    expect(result.eligible_holiday_till_date).toBe(1);
+    // 0.5 (half day) + 0 weekoffs + 1 holiday = 1.5 payable days earned.
+    expect(result.earned_payable_days).toBe(1.5);
   });
 });

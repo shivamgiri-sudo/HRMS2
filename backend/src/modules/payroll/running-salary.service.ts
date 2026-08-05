@@ -1,6 +1,6 @@
 import { db } from "../../db/mysql.js";
 import type { RowDataPacket } from "mysql2/promise";
-import { resolveHolidaysForEmployee } from "./holiday-work.service.js";
+import { resolveHolidaysForEmployeeV2 } from "./holiday-work.service.js";
 import { payrollService } from "./payroll.service.js";
 import { calculateWeekoffEligibility } from "./weekoff-eligibility.service.js";
 import { loadFlatStatutoryConfig } from "./statutory-config.loader.js";
@@ -171,16 +171,20 @@ export async function computeRunningSalary(
     runMonth,
   );
 
-  // Eligible holidays till date
-  let eligibleHolidaysTillDate = 0;
-  const dateIter = new Date(monthStart);
-  const tillD = new Date(today < monthEnd ? today : monthEnd);
-  while (dateIter <= tillD) {
-    const d = dateIter.toISOString().slice(0, 10);
-    const hols = await resolveHolidaysForEmployee(employeeId, d);
-    if (hols.length > 0) eligibleHolidaysTillDate += 1;
-    dateIter.setDate(dateIter.getDate() + 1);
-  }
+  // Eligible holidays till date.
+  //
+  // Previously looped day-by-day calling resolveHolidaysForEmployee(employeeId, d)
+  // with a full date string where resolveHolidaysForEmployeeV2 expects "YYYY-MM" —
+  // it built dateFrom = "2026-08-15-01", which never matches a real holiday_date
+  // (confirmed live: the correct query found 1 August 2026 holiday, the malformed
+  // one found 0, silently, no error). Net effect: this function never counted a
+  // holiday for any employee, ever. Fixed by resolving the month's eligible holiday
+  // dates once, correctly, and filtering by date range instead of re-querying per day.
+  const runMonthYM = `${y}-${String(m).padStart(2, "0")}`;
+  const { eligibleHolidayDates } = await resolveHolidaysForEmployeeV2(employeeId, runMonthYM);
+  const eligibleHolidaysTillDate = eligibleHolidayDates.filter(
+    (d) => d >= monthStart && d <= tillDate
+  ).length;
 
   const earnedPayableDays = presentTillDate + paidLeaveTillDate + eligibleWeekoffTillDate +
     eligibleHolidaysTillDate;
@@ -275,17 +279,14 @@ export async function computeRunningSalary(
     }
   }
 
-  // Future holidays
-  let futureHolidays = 0;
-  const futureStart = new Date(today);
-  futureStart.setDate(futureStart.getDate() + 1);
-  const monthEndD = new Date(monthEnd);
-  while (futureStart <= monthEndD) {
-    const d = futureStart.toISOString().slice(0, 10);
-    const hols = await resolveHolidaysForEmployee(employeeId, d);
-    if (hols.length > 0) futureHolidays += 1;
-    futureStart.setDate(futureStart.getDate() + 1);
-  }
+  // Future holidays — same fix as the till-date count above, reusing the one
+  // correctly-resolved eligibleHolidayDates list instead of re-querying per day.
+  const tomorrowD = new Date(today);
+  tomorrowD.setDate(tomorrowD.getDate() + 1);
+  const tomorrowStr = tomorrowD.toISOString().slice(0, 10);
+  const futureHolidays = eligibleHolidayDates.filter(
+    (d) => d >= tomorrowStr && d <= monthEnd
+  ).length;
 
   const projectedPaidWorkingDays = paidWorkingDaysTillDate + futurePresent;
   // Projected week-offs use same slab logic with projected paid base
