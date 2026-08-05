@@ -465,23 +465,29 @@ export async function getPayrollReadinessMetrics(scope: DashboardScope): Promise
 
     // Tenure grace window: bank/PAN take a few weeks of normal onboarding
     // paperwork to reach the system, and UAN allocation is a statutory EPFO
-    // process that routinely takes 60-90+ days — neither is a data-quality
-    // problem for a recent joiner. Verified live: of 238 previously-flagged
-    // blockers, 25 were bank/PAN missing inside 45 days of joining (normal
-    // onboarding lag, not a real gap); missingUan dropped from 656 to 342
-    // once the same 90-day statutory-lag window was applied — more than
-    // half of that figure was never a real problem. The remaining 213
-    // blockers and 342 UAN gaps are genuine, current, actionable compliance
-    // items on employees past the grace window — nothing here is hidden by
-    // date, only the false positives inherent to a fixed-length statutory
-    // process being measured with a same-day yardstick.
+    // process that routinely takes 30-45+ days for a brand-new UAN — neither
+    // is a data-quality problem for a recent joiner, only a same-day yardstick
+    // measuring a process that isn't instant.
     //
-    // OPEN QUESTION (not yet confirmed by payroll/HR policy owner): 45 and 90
-    // days are my own estimate from general onboarding/EPFO-lag reasoning, not
-    // a documented SLA — statutory_config has no grace-period key to source
-    // this from. If the real onboarding SLA or UAN turnaround differs, these
-    // two numbers need to change; re-run the same before/after blockerCount
-    // comparison once a real figure is confirmed.
+    // Tightened from the original 45/90 to 30/60 (still an interim estimate,
+    // not a confirmed SLA — see OPEN QUESTION below): 30 days ties bank/PAN to
+    // the actual operational trigger — an employee's first payroll cycle,
+    // when missing bank details become a real disbursement problem, rather
+    // than an arbitrary round number. 60 days reflects EPFO's realistic
+    // KYC/seeding lag for a *fresh* UAN. Verified live before/after: tightening
+    // does surface more current, near-term gaps rather than hiding them —
+    // missingBank 81->91, missingPan 196->203, missingUan 342->471 on the
+    // live employees table. Checked whether `employees` distinguishes a
+    // brand-new UAN from a transfer-from-previous-employer UAN (the latter
+    // should clear in days, not weeks, and would justify a shorter window for
+    // that subset) — no such column exists, only the bare `uan_number` field,
+    // so this stays a single blended threshold.
+    //
+    // OPEN QUESTION (not yet confirmed by payroll/HR policy owner): 30/60 is
+    // still my own estimate, not a documented SLA — statutory_config has no
+    // grace-period key to source this from. If the real onboarding SLA or UAN
+    // turnaround differs, these two numbers need to change; re-run the same
+    // before/after blockerCount comparison once a real figure is confirmed.
     //
     // Tried to derive this empirically instead of guessing (live, read-only):
     // no usable signal exists. 99.96% of employee_bank_detail rows were bulk-
@@ -498,14 +504,14 @@ export async function getPayrollReadinessMetrics(scope: DashboardScope): Promise
       `SELECT
          COUNT(*) AS total,
          SUM(CASE WHEN (bank_account_number IS NULL OR bank_account_number = '')
-                   AND DATEDIFF(CURDATE(), date_of_joining) > 45 THEN 1 ELSE 0 END) AS missingBank,
+                   AND DATEDIFF(CURDATE(), date_of_joining) > 30 THEN 1 ELSE 0 END) AS missingBank,
          SUM(CASE WHEN (pan_number IS NULL OR pan_number = '')
-                   AND DATEDIFF(CURDATE(), date_of_joining) > 45 THEN 1 ELSE 0 END) AS missingPan,
+                   AND DATEDIFF(CURDATE(), date_of_joining) > 30 THEN 1 ELSE 0 END) AS missingPan,
          SUM(CASE WHEN (uan_number IS NULL OR uan_number = '')
-                   AND DATEDIFF(CURDATE(), date_of_joining) > 90 THEN 1 ELSE 0 END) AS missingUan,
+                   AND DATEDIFF(CURDATE(), date_of_joining) > 60 THEN 1 ELSE 0 END) AS missingUan,
          SUM(CASE WHEN
-               ((bank_account_number IS NOT NULL AND bank_account_number != '') OR DATEDIFF(CURDATE(), date_of_joining) <= 45) AND
-               ((pan_number IS NOT NULL AND pan_number != '') OR DATEDIFF(CURDATE(), date_of_joining) <= 45)
+               ((bank_account_number IS NOT NULL AND bank_account_number != '') OR DATEDIFF(CURDATE(), date_of_joining) <= 30) AND
+               ((pan_number IS NOT NULL AND pan_number != '') OR DATEDIFF(CURDATE(), date_of_joining) <= 30)
              THEN 1 ELSE 0 END) AS readyCount
        FROM employees e
        WHERE e.active_status = 1 AND LOWER(COALESCE(e.employment_status,'active')) = 'active' AND ${scopeSql}`,
