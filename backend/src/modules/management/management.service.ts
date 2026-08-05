@@ -768,195 +768,209 @@ export const managementService = {
       numberValue(training.ats_training) + numberValue(training.training_stage_candidates);
 
     // Add missing fields for dashboard
-    const [onLeaveResult] = await db.execute<RowDataPacket[]>(
-      `SELECT COUNT(DISTINCT employee_id) as count
-       FROM leave_request
-       WHERE status = 'approved'
-         AND CURDATE() BETWEEN start_date AND end_date`
-    );
-    const onLeaveCount = numberValue(onLeaveResult[0]?.count);
-
-    const [branchCountResult] = await db.execute<RowDataPacket[]>(
-      `SELECT COUNT(*) as count FROM branch_master WHERE active_status = 1`
-    );
-    const totalBranches = numberValue(branchCountResult[0]?.count);
-
-    const [leaveSummaryResult] = await db.execute<RowDataPacket[]>(
-      `SELECT status, COUNT(*) as count
-       FROM leave_request
-       WHERE start_date >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)
-       GROUP BY status`
-    );
-
-    const [recentJoinersResult] = await db.execute<RowDataPacket[]>(
+    //
+    // These 14 queries are mutually independent — none reads another's
+    // result — but were previously 14 sequential awaits, each paying the
+    // round-trip cost to the DB one at a time. The Promise.all above this
+    // block already batches its 11 queries; this block just never got the
+    // same treatment. Same fix already applied 4 times elsewhere this
+    // session (dashboard-metric.service.ts, work-inbox.service.ts) —
+    // declare each as a promise, batch with Promise.all, keep each query's
+    // own .catch() attached to its own promise so the null-vs-zero failure
+    // semantics documented below are preserved exactly.
+    const [
+      [onLeaveResult],
+      [branchCountResult],
+      [leaveSummaryResult],
+      [recentJoinersResult],
+      [branchSnapshotResult],
+      [leaveUsageResult],
+      [expenseResult],
+      [overtaskResult],
+      [timesheetResult],
+      [expiredDocsResult],
+      [pendingPolicyResult],
+      [appraisalResult],
+      [processBreakdownResult],
+      [teamMembersResult],
+    ] = await Promise.all([
+      db.execute<RowDataPacket[]>(
+        `SELECT COUNT(DISTINCT employee_id) as count
+         FROM leave_request
+         WHERE status = 'approved'
+           AND CURDATE() BETWEEN start_date AND end_date`
+      ),
+      db.execute<RowDataPacket[]>(
+        `SELECT COUNT(*) as count FROM branch_master WHERE active_status = 1`
+      ),
+      db.execute<RowDataPacket[]>(
+        `SELECT status, COUNT(*) as count
+         FROM leave_request
+         WHERE start_date >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)
+         GROUP BY status`
+      ),
       // The layout renders `designation_name`; this returned only designation_id, so
       // every joiner showed the literal fallback subtitle "Employee". The join to
       // designation_master already exists in the team-members query further down —
       // reused here rather than sending an id the UI cannot resolve.
-      `SELECT e.id, e.employee_code, e.full_name as employee_name, e.designation_id,
-              dm.designation_name, e.date_of_joining as joining_date
-       FROM employees e
-       LEFT JOIN designation_master dm ON dm.id = e.designation_id
-       WHERE LOWER(COALESCE(e.employment_status, 'active')) = 'active'
-         AND e.date_of_joining >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
-       ORDER BY e.date_of_joining DESC
-       LIMIT 10`
-    );
-
-    const [branchSnapshotResult] = await db.execute<RowDataPacket[]>(
-      `SELECT
-         b.id,
-         b.branch_name as name,
-         COUNT(DISTINCT e.id) as employee_count,
-         ROUND(
-           COUNT(DISTINCT s.employee_id) * 100.0 / NULLIF(COUNT(DISTINCT e.id), 0),
-           2
-         ) as present_pct,
-         COUNT(DISTINCT s.employee_id) as present_count
-       FROM branch_master b
-       LEFT JOIN employees e ON e.branch_id = b.id AND e.employment_status = 'active'
-       LEFT JOIN wfm_attendance_session s ON s.employee_id = e.id
-         AND DATE(s.session_date) = CURDATE()
-         AND s.current_status IN (${statusList(PRESENT_SESSION_STATUSES)})
-       WHERE b.active_status = 1
-       GROUP BY b.id, b.branch_name
-       HAVING employee_count > 0
-       ORDER BY employee_count DESC
-       LIMIT 15`
-    );
-
-    // Calculate leave balance usage percentage
-    const [leaveUsageResult] = await db.execute<RowDataPacket[]>(
-      `SELECT
-         COUNT(DISTINCT lr.employee_id) * 100.0 / NULLIF(COUNT(DISTINCT e.id), 0) as usage_pct
-       FROM employees e
-       LEFT JOIN leave_request lr ON lr.employee_id = e.id
-         AND lr.status = 'approved'
-         AND YEAR(lr.start_date) = YEAR(CURDATE())
-       WHERE e.employment_status = 'active'`
-    );
+      db.execute<RowDataPacket[]>(
+        `SELECT e.id, e.employee_code, e.full_name as employee_name, e.designation_id,
+                dm.designation_name, e.date_of_joining as joining_date
+         FROM employees e
+         LEFT JOIN designation_master dm ON dm.id = e.designation_id
+         WHERE LOWER(COALESCE(e.employment_status, 'active')) = 'active'
+           AND e.date_of_joining >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
+         ORDER BY e.date_of_joining DESC
+         LIMIT 10`
+      ),
+      db.execute<RowDataPacket[]>(
+        `SELECT
+           b.id,
+           b.branch_name as name,
+           COUNT(DISTINCT e.id) as employee_count,
+           ROUND(
+             COUNT(DISTINCT s.employee_id) * 100.0 / NULLIF(COUNT(DISTINCT e.id), 0),
+             2
+           ) as present_pct,
+           COUNT(DISTINCT s.employee_id) as present_count
+         FROM branch_master b
+         LEFT JOIN employees e ON e.branch_id = b.id AND e.employment_status = 'active'
+         LEFT JOIN wfm_attendance_session s ON s.employee_id = e.id
+           AND DATE(s.session_date) = CURDATE()
+           AND s.current_status IN (${statusList(PRESENT_SESSION_STATUSES)})
+         WHERE b.active_status = 1
+         GROUP BY b.id, b.branch_name
+         HAVING employee_count > 0
+         ORDER BY employee_count DESC
+         LIMIT 15`
+      ),
+      // Leave balance usage percentage
+      db.execute<RowDataPacket[]>(
+        `SELECT
+           COUNT(DISTINCT lr.employee_id) * 100.0 / NULLIF(COUNT(DISTINCT e.id), 0) as usage_pct
+         FROM employees e
+         LEFT JOIN leave_request lr ON lr.employee_id = e.id
+           AND lr.status = 'approved'
+           AND YEAR(lr.start_date) = YEAR(CURDATE())
+         WHERE e.employment_status = 'active'`
+      ),
+      // Manager-specific: expense claims, work items
+      //
+      // This filtered `status = 'pending'`, which is not a member of the column's
+      // ENUM('draft','submitted','approved','rejected','paid') — so it matched
+      // nothing and the "Expense Claims" tile read 0 on the CEO, HR Admin, Manager,
+      // Ops and both reference dashboards despite 5,634 live rows. 'submitted' is
+      // the awaiting-review state.
+      //
+      // expense_type is constrained too: the table is a mixed ledger and 5,534 of
+      // those rows are migrated vendor bills and imprest, which are settled through
+      // the GRN / vendor-payment flow and are not a manager's expense queue.
+      db.execute<RowDataPacket[]>(
+        `SELECT COUNT(*) as count FROM expense_claim
+          WHERE status = 'submitted' AND expense_type = 'employee_claim'`
+      ).catch(() => [[{ count: 0 }]] as any),
+      // null, not 0, on failure. A zero here reads as "nothing is overdue", which is
+      // the reassuring answer, and it would be produced by a query that never ran.
+      db.execute<RowDataPacket[]>(
+        `SELECT COUNT(*) as overdue FROM work_item WHERE status NOT IN ('completed','cancelled') AND due_at < NOW()`
+      ).catch(() => [[{ overdue: null }]] as any),
+      // Pending timesheets.
+      //
+      // The query is correct and the table is real, but `item_type` is free varchar and
+      // nothing ever writes 'timesheet' — the only value present in production is
+      // 'EMPLOYEE_CODE_PENDING'. So this can only ever be 0, and a permanent zero on an
+      // approval queue reads as "nothing is waiting" rather than "this is not tracked".
+      //
+      // Returned as null so the tile renders as unavailable, matching how Document
+      // Compliance already omits expiry for the same reason.
+      db.execute<RowDataPacket[]>(
+        `SELECT COUNT(*) AS count FROM work_item WHERE item_type = 'timesheet' AND status = 'pending'`
+      ).catch(() => [[{ count: null }]] as any),
+      // Expired employee documents.
+      //
+      // The table name and column were fixed earlier (it is employee_documents,
+      // plural, with no active_status). The query now runs — and returns 0, which is
+      // true but uninformative: `expiry_date` is populated on **0 of 207,616** rows,
+      // so nothing can ever be expired.
+      //
+      // NULLIF turns that into "not tracked" instead of a compliance all-clear. The
+      // count is only meaningful once some document actually carries an expiry date,
+      // and at that point this reports it. Document Compliance already omits expiry
+      // for exactly this reason; the two panels now agree.
+      db.execute<RowDataPacket[]>(
+        `SELECT
+           CASE WHEN SUM(expiry_date IS NOT NULL) = 0 THEN NULL
+                ELSE SUM(expiry_date IS NOT NULL AND expiry_date < CURDATE())
+           END AS count
+         FROM employee_documents`
+      ).catch(() => [[{ count: null }]] as any),
+      // Pending policy acknowledgements.
+      //
+      // `policy_acknowledgement` does not exist — there is no acknowledgement
+      // table in the schema at all. Falling back to 0 rendered as "no pending
+      // acknowledgements", which is indistinguishable from a fully compliant
+      // workforce. null so the tile reads as unavailable.
+      db.execute<RowDataPacket[]>(
+        `SELECT COUNT(*) AS count FROM policy_acknowledgement
+         WHERE acknowledged = 0`
+      ).catch(() => [[{ count: null }]] as any),
+      // Appraisal completion percentage
+      db.execute<RowDataPacket[]>(
+        `SELECT
+           ROUND(
+             SUM(pa.status IN ('completed','approved')) * 100.0
+             / NULLIF(COUNT(*), 0)
+           , 2) AS completion_pct
+         FROM performance_appraisal pa
+         WHERE YEAR(pa.appraisal_year) = YEAR(CURDATE())`
+      ).catch(() => [[{ completion_pct: null }]] as any),
+      // Process breakdown for Operations dashboard
+      db.execute<RowDataPacket[]>(
+        `SELECT
+           pm.id,
+           pm.process_name,
+           COUNT(DISTINCT e.id) AS headcount,
+           ${presentSql("adr.attendance_status")} AS present_count,
+           ${expectedToWorkSql("adr.attendance_status")} AS expected_to_work,
+           ROUND(
+             ${attendedDaysSql("adr.attendance_status")} * 100.0 /
+             NULLIF(${expectedToWorkSql("adr.attendance_status")}, 0),
+           2) AS attendance_pct
+         FROM process_master pm
+         LEFT JOIN employees e ON e.process_id = pm.id AND e.employment_status = 'active'
+         LEFT JOIN attendance_daily_record adr ON adr.employee_id = e.id
+           AND adr.record_date = ${LATEST_COMPLETE_ATTENDANCE_DATE_SQL}
+         WHERE pm.active_status = 1
+         GROUP BY pm.id, pm.process_name
+         HAVING headcount > 0
+         ORDER BY headcount DESC
+         LIMIT 15`
+      ).catch(() => [[]] as any),
+      // Team members snapshot for Manager dashboard roster panel
+      db.execute<RowDataPacket[]>(
+        `SELECT
+           e.id, e.employee_code, e.full_name as employee_name,
+           e.designation_id, e.employment_status,
+           b.branch_name,
+           COALESCE(dm.designation_name, e.designation_id) as designation_name,
+           COALESCE(
+             (SELECT adr.attendance_status FROM attendance_daily_record adr
+              WHERE adr.employee_id = e.id AND adr.record_date = CURDATE() LIMIT 1),
+             'not_marked'
+           ) as today_status
+         FROM employees e
+         LEFT JOIN branch_master b ON b.id = e.branch_id
+         LEFT JOIN designation_master dm ON dm.id = e.designation_id
+         WHERE e.employment_status = 'active'
+         ORDER BY e.full_name ASC
+         LIMIT 20`
+      ).catch(() => [[]] as any),
+    ]);
+    const onLeaveCount = numberValue(onLeaveResult[0]?.count);
+    const totalBranches = numberValue(branchCountResult[0]?.count);
     const leaveBalanceUsagePct = leaveUsageResult[0]?.usage_pct
       ? Number(Number(leaveUsageResult[0].usage_pct).toFixed(2))
       : null;
-
-    // Manager-specific: expense claims, work items
-    //
-    // This filtered `status = 'pending'`, which is not a member of the column's
-    // ENUM('draft','submitted','approved','rejected','paid') — so it matched
-    // nothing and the "Expense Claims" tile read 0 on the CEO, HR Admin, Manager,
-    // Ops and both reference dashboards despite 5,634 live rows. 'submitted' is
-    // the awaiting-review state.
-    //
-    // expense_type is constrained too: the table is a mixed ledger and 5,534 of
-    // those rows are migrated vendor bills and imprest, which are settled through
-    // the GRN / vendor-payment flow and are not a manager's expense queue.
-    const [expenseResult] = await db.execute<RowDataPacket[]>(
-      `SELECT COUNT(*) as count FROM expense_claim
-        WHERE status = 'submitted' AND expense_type = 'employee_claim'`
-    ).catch(() => [[{ count: 0 }]] as any);
-
-    // null, not 0, on failure. A zero here reads as "nothing is overdue", which is
-    // the reassuring answer, and it would be produced by a query that never ran.
-    const [overtaskResult] = await db.execute<RowDataPacket[]>(
-      `SELECT COUNT(*) as overdue FROM work_item WHERE status NOT IN ('completed','cancelled') AND due_at < NOW()`
-    ).catch(() => [[{ overdue: null }]] as any);
-
-    // Pending timesheets.
-    //
-    // The query is correct and the table is real, but `item_type` is free varchar and
-    // nothing ever writes 'timesheet' — the only value present in production is
-    // 'EMPLOYEE_CODE_PENDING'. So this can only ever be 0, and a permanent zero on an
-    // approval queue reads as "nothing is waiting" rather than "this is not tracked".
-    //
-    // Returned as null so the tile renders as unavailable, matching how Document
-    // Compliance already omits expiry for the same reason.
-    const [timesheetResult] = await db.execute<RowDataPacket[]>(
-      `SELECT COUNT(*) AS count FROM work_item WHERE item_type = 'timesheet' AND status = 'pending'`
-    ).catch(() => [[{ count: null }]] as any);
-
-    // Expired employee documents.
-    //
-    // The table name and column were fixed earlier (it is employee_documents,
-    // plural, with no active_status). The query now runs — and returns 0, which is
-    // true but uninformative: `expiry_date` is populated on **0 of 207,616** rows,
-    // so nothing can ever be expired.
-    //
-    // NULLIF turns that into "not tracked" instead of a compliance all-clear. The
-    // count is only meaningful once some document actually carries an expiry date,
-    // and at that point this reports it. Document Compliance already omits expiry
-    // for exactly this reason; the two panels now agree.
-    const [expiredDocsResult] = await db.execute<RowDataPacket[]>(
-      `SELECT
-         CASE WHEN SUM(expiry_date IS NOT NULL) = 0 THEN NULL
-              ELSE SUM(expiry_date IS NOT NULL AND expiry_date < CURDATE())
-         END AS count
-       FROM employee_documents`
-    ).catch(() => [[{ count: null }]] as any);
-
-    // Pending policy acknowledgements.
-    //
-    // `policy_acknowledgement` does not exist — there is no acknowledgement
-    // table in the schema at all. Falling back to 0 rendered as "no pending
-    // acknowledgements", which is indistinguishable from a fully compliant
-    // workforce. null so the tile reads as unavailable.
-    const [pendingPolicyResult] = await db.execute<RowDataPacket[]>(
-      `SELECT COUNT(*) AS count FROM policy_acknowledgement
-       WHERE acknowledged = 0`
-    ).catch(() => [[{ count: null }]] as any);
-
-    // Appraisal completion percentage
-    const [appraisalResult] = await db.execute<RowDataPacket[]>(
-      `SELECT
-         ROUND(
-           SUM(pa.status IN ('completed','approved')) * 100.0
-           / NULLIF(COUNT(*), 0)
-         , 2) AS completion_pct
-       FROM performance_appraisal pa
-       WHERE YEAR(pa.appraisal_year) = YEAR(CURDATE())`
-    ).catch(() => [[{ completion_pct: null }]] as any);
-
-    // Process breakdown for Operations dashboard
-    const [processBreakdownResult] = await db.execute<RowDataPacket[]>(
-      `SELECT
-         pm.id,
-         pm.process_name,
-         COUNT(DISTINCT e.id) AS headcount,
-         ${presentSql("adr.attendance_status")} AS present_count,
-         ${expectedToWorkSql("adr.attendance_status")} AS expected_to_work,
-         ROUND(
-           ${attendedDaysSql("adr.attendance_status")} * 100.0 /
-           NULLIF(${expectedToWorkSql("adr.attendance_status")}, 0),
-         2) AS attendance_pct
-       FROM process_master pm
-       LEFT JOIN employees e ON e.process_id = pm.id AND e.employment_status = 'active'
-       LEFT JOIN attendance_daily_record adr ON adr.employee_id = e.id
-         AND adr.record_date = ${LATEST_COMPLETE_ATTENDANCE_DATE_SQL}
-       WHERE pm.active_status = 1
-       GROUP BY pm.id, pm.process_name
-       HAVING headcount > 0
-       ORDER BY headcount DESC
-       LIMIT 15`
-    ).catch(() => [[]] as any);
-
-    // Team members snapshot for Manager dashboard roster panel
-    const [teamMembersResult] = await db.execute<RowDataPacket[]>(
-      `SELECT
-         e.id, e.employee_code, e.full_name as employee_name,
-         e.designation_id, e.employment_status,
-         b.branch_name,
-         COALESCE(dm.designation_name, e.designation_id) as designation_name,
-         COALESCE(
-           (SELECT adr.attendance_status FROM attendance_daily_record adr
-            WHERE adr.employee_id = e.id AND adr.record_date = CURDATE() LIMIT 1),
-           'not_marked'
-         ) as today_status
-       FROM employees e
-       LEFT JOIN branch_master b ON b.id = e.branch_id
-       LEFT JOIN designation_master dm ON dm.id = e.designation_id
-       WHERE e.employment_status = 'active'
-       ORDER BY e.full_name ASC
-       LIMIT 20`
-    ).catch(() => [[]] as any);
 
     return {
       generated_at: new Date().toISOString(),
