@@ -474,6 +474,7 @@ const MIGRATION_MANIFEST: string[] = [
   "1075_bank_detail_sync_map_account_encrypt_false.sql", // corrects legacy_sync_map's bank_detail row: transform_rules_json declared 'account_encrypt':true but nothing has ever read that key (confirmed by grep) and live data is 100% unencrypted plaintext — the flag was asserting something the sync has never done
   "1076_mira_company_services_seed.sql", // 425's seed only inserted 6 of FALLBACK_FACTS's 7 rows (missing company-services); facts() does dbFacts.length ? dbFacts : FALLBACK_FACTS — all-or-nothing, not merged — so once any DB rows exist, a services-category question got zero facts, not even the fallback text, because 'services' was never among the seeded 6
   "1077_ai_prompt_audit_detected_intent.sql", // adds ai_prompt_audit_log.detected_intent for Mira Analytics top-intent breakdowns — instruments future requests only; question_hash/sanitized_context_hash are one-way SHA-256 hashes, nothing to backfill historical rows from
+  "1078_ai_rate_limit_bucket.sql", // backs ai-rate-limiter.ts with a real table — the in-memory Map had no persistence and no cross-process sharing, so each backend process got its own independent 100/day bucket per user and a restart silently reset everyone's counter
   ];
 
 export type MigrationHealth = {

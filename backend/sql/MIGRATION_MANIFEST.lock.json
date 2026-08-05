@@ -433,7 +433,8 @@
     "1074_grn_invoice_gst_components.sql",
     "1075_bank_detail_sync_map_account_encrypt_false.sql",
     "1076_mira_company_services_seed.sql",
-    "1077_ai_prompt_audit_detected_intent.sql"
+    "1077_ai_prompt_audit_detected_intent.sql",
+    "1078_ai_rate_limit_bucket.sql"
   ],
   "approvedDeletions": [],
   "knownDangling": [],

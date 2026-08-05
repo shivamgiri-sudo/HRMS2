@@ -479,7 +479,7 @@ async function askHandler(req: AuthenticatedRequest, res: Response, mode: 'json'
   }
 
   const providerConfig = await aiProviderConfigService.getDefaultProvider(false);
-  const rateResult = checkAndIncrement(userId, providerConfig?.dailyRequestLimit ?? 0);
+  const rateResult = await checkAndIncrement(userId, providerConfig?.dailyRequestLimit ?? 0);
   if (!rateResult.allowed) {
     res.setHeader('X-RateLimit-Remaining', '0');
     res.setHeader('X-RateLimit-Reset', rateResult.resetAt.toISOString());
