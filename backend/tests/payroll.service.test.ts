@@ -7,6 +7,13 @@ vi.mock("../src/db/mysql.js", () => ({
   },
   pingDb: vi.fn(),
 }));
+// updateRunStatus now writes a sensitive-action audit row for every transition —
+// approve, lock and disburse previously left no record of who performed them.
+// Mocked here so the audit write does not consume a queued db.execute response and
+// shift the mock sequence out from under the assertions.
+vi.mock("../src/shared/auditLog.js", () => ({
+  logSensitiveAction: vi.fn().mockResolvedValue(undefined),
+}));
 import { db } from "../src/db/mysql.js";
 import { payrollService } from "../src/modules/payroll/payroll.service.js";
 

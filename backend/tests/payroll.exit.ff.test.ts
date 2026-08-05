@@ -11,6 +11,12 @@ vi.mock("../src/shared/auditLog.js", () => ({
   logSensitiveAction: vi.fn().mockResolvedValue(undefined),
 }));
 vi.mock("../src/modules/engagement/badge.service.js", () => ({ queueAutoAwards: vi.fn() }));
+// approveFF fires notifyFullFinalReady without awaiting it. Unmocked, it issues its
+// own db.execute calls that race with the assertions and consume queued mock
+// responses, so the mocks the test lines up land on the wrong query.
+vi.mock("../src/modules/exit/exit.notifications.js", () => ({
+  notifyFullFinalReady: vi.fn().mockResolvedValue(undefined),
+}));
 
 import { db } from "../src/db/mysql.js";
 import { logSensitiveAction } from "../src/shared/auditLog.js";
@@ -242,7 +248,10 @@ describe("ffService.approveFF", () => {
       // is_ff_provisional = 0 so approval can proceed
       .mockResolvedValueOnce([[{ ...fakeFf, is_ff_provisional: 0 }], []])  // SELECT by id
       .mockResolvedValueOnce([{ affectedRows: 1 }, []])                    // UPDATE
-      .mockResolvedValueOnce([[{ ...fakeFf, status: "approved", approved_by: "admin-1" }], []]); // getFF
+      .mockResolvedValueOnce([[{ ...fakeFf, status: "approved", approved_by: "admin-1" }], []]) // getFF
+      // getFF now also reports payroll already raised over the settlement window, so
+      // the preparer can see what has been paid before entering pending salary by hand.
+      .mockResolvedValueOnce([[], []]); // getPayrollAlreadyPaid
 
     const result = await ffService.approveFF("ff-1", "admin-1");
     expect(result.status).toBe("approved");
