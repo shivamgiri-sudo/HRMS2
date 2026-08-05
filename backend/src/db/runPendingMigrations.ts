@@ -470,6 +470,7 @@ const MIGRATION_MANIFEST: string[] = [
   "1072_festival_greetings.sql", // festival_calendar table + 2026 seed data (Diwali, Holi, Eid, Independence Day, Christmas, etc.) + worker_config row
   "1070_correct_auto_approved_bgv_and_bridge.sql", // never registered despite the 1070 number being reused by db-bill; applied by hand on 2026-08-03 (42 candidate_bgv_check + 6 candidate_bgv_report rows reset from fake system-verified/clear, ats_onboarding_bridge backfilled from real evidence) — listed here so a fresh environment picks it up; both halves are idempotent no-ops against data that is already corrected
   "1073_employee_profile_parity.sql", // manual HR "Add Employee" only ever captured 8 fields against the candidate journey's ~60; adds employee_education, employee_experience, employees.annual_income/count_of_dependents, employee_statutory_info declaration columns
+  "1074_grn_invoice_gst_components.sql", // grn_invoice_component table + grn_cost_allocation.invoice_component_id — lets one vendor GRN's declared invoice total be broken into repeatable {amount without tax, GST slab} components (same invoice, multiple GST rates) instead of inheriting one GST rate from whichever budget line was picked
   ];
 
 export type MigrationHealth = {
