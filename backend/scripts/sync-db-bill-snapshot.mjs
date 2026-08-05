@@ -662,31 +662,33 @@ async function syncBudget(hrms, bill) {
     'approve_1_at','approve_2_at','approve_3_at','approve_4_at','approve_5_at','objective',
     'description_det','source_created_at','synced_at'];
 
-  const misfiled = rows.filter(r => createdBeforeFinanceYear(r.finance_year, r.source_created_at));
-  if (misfiled.length) {
-    const value = misfiled.reduce((sum, r) => sum + Number(r.amount), 0);
-    log(`  WARNING: ${misfiled.length} budget row(s) worth Rs ${(value / 100000).toFixed(2)} lakh carry a finance year that`);
-    log(`           began AFTER they were created — they are mis-filed and are being excluded.`);
-    for (const r of misfiled.slice(0, 12)) {
-      log(`           id=${r.bill_source_id} ${r.finance_year}/${r.finance_month} created ${String(r.source_created_at).slice(0, 10)} Rs ${r.amount} "${String(r.objective ?? '').slice(0, 20)}"`);
-    }
-    log(`           Fix them in db_bill.expense_master; this only stops the P&L inheriting the error.`);
-
-    // Excluding them from the write is not enough on its own. Every sync here is
-    // INSERT ... ON DUPLICATE KEY UPDATE, so a row mirrored by an earlier run stays until it
-    // is explicitly removed — the first run of this guard left all Rs 7.27 lakh sitting in
-    // the snapshot while reporting that it had skipped them. Delete by the exact ids just
-    // identified, so the mirror is corrected without touching anything else.
-    const ids = misfiled.map(r => r.bill_source_id);
-    const [res] = await hrms.query(
-      `DELETE FROM finance_budget_snapshot WHERE bill_source_id IN (${ids.map(() => '?').join(',')})`, ids);
-    if (res.affectedRows) log(`           removed ${res.affectedRows} previously-mirrored row(s) from the snapshot.`);
+  // A budget row created before its finance year began is NOT mis-filed — it is a budget.
+  // Planning next year's spend before next year starts is the entire point of the exercise.
+  //
+  // This used to treat that as an error and drop the rows. It cost Rs 7.27 lakh of real,
+  // fully-approved budget across 12 rows, and the evidence in db_bill says plainly that they were
+  // the *good* records: all 12 carry Approve1+2+3, Active=1 and EntryStatus=1, while of the 532
+  // rows being kept only 165 are Active and only 165 have reached Approve2. The excluded rows
+  // were more complete than the ones that survived. They also carry uploaded budget workbooks
+  // (MonthlyBudgetDaildesk.xlsx), and the same pattern recurs in FY2025-26 (8 rows, Rs 4.07 lakh),
+  // so it is routine practice rather than a one-off slip.
+  //
+  // Only `objective`/`Methodology` are junk on them ("gorge", "nerf") — free-text fields somebody
+  // filled in lazily, which says nothing about whether the money is real.
+  //
+  // Mirror everything, and let readers filter on entry_status / approve_*_at, which the snapshot
+  // already carries. Deciding what counts as an approved budget is the reader's job; the mirror's
+  // job is to be a faithful copy.
+  const plannedAhead = rows.filter(r => createdBeforeFinanceYear(r.finance_year, r.source_created_at));
+  if (plannedAhead.length) {
+    const value = plannedAhead.reduce((sum, r) => sum + Number(r.amount), 0);
+    log(`  Note: ${plannedAhead.length} budget row(s) worth Rs ${(value / 100000).toFixed(2)} lakh were raised before`);
+    log(`        their finance year began — normal advance planning. Mirrored, not excluded.`);
   }
 
-  const scoped = rows.filter(r => inScope(r.period_code)
-                               && !createdBeforeFinanceYear(r.finance_year, r.source_created_at));
+  const scoped = rows.filter(r => inScope(r.period_code));
   const n = await insertBatch(hrms, 'finance_budget_snapshot', scoped, cols, cols.slice(1));
-  log(`  finance_budget_snapshot: ${n} rows (from ${FROM_PERIOD}; ${rows.length - scoped.length} skipped as out of range or mis-filed)`);
+  log(`  finance_budget_snapshot: ${n} rows (from ${FROM_PERIOD}; ${rows.length - scoped.length} out of range)`);
 }
 
 // ── Sync 7: GRN / expense entries ─────────────────────────────────────────────
@@ -817,8 +819,8 @@ async function syncBudgetLines(hrms, bill) {
             p.ExpenseType, p.ExpenseTypeName, p.Amount, p.AmountPercent, p.createdate
        FROM expense_particular p
        JOIN expense_master m ON m.Id = p.ExpenseId
-      WHERE m.FinanceYear >= ? AND m.createdate >= ?
-      ORDER BY p.Id`, [FROM_FINANCE_YEAR, `${FROM_FINANCE_YEAR.slice(0, 4)}-04-01`]);
+      WHERE m.FinanceYear >= ?
+      ORDER BY p.Id`, [FROM_FINANCE_YEAR]);
   log(`  db_bill.expense_particular rows from ${FROM_FINANCE_YEAR}: ${src.length}`);
 
   const rows = src.map(r => ({

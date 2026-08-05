@@ -127,19 +127,19 @@ compare('expense_entry_particular / grn_entry_line',
   await one(hrms, 'SELECT COUNT(*) row_n, SUM(COALESCE(amount,0)) amt FROM grn_entry_line_snapshot'));
 
 console.log('\nBUDGET — current FY');
-// The sync deliberately drops rows whose finance year begins after their created date — 12 of
-// them, Rs 7.27 L, mis-filed at source. The same predicate has to be applied here or this check
-// would fail forever and be ignored, which is worse than not having it.
+// No created-before-the-finance-year filter here, deliberately. That used to be applied on both
+// sides to keep this check green while the sync dropped 12 fully-approved rows worth Rs 7.27 L.
+// A check written to agree with the code it is checking verifies nothing — it just launders the
+// bug. Compare against everything db_bill holds for the year.
 compare('expense_master / finance_budget',
-  await one(bill, `SELECT COUNT(*) row_n, SUM(COALESCE(Amount,0)) amt FROM expense_master
-                    WHERE FinanceYear >= '2026-27' AND createdate >= '2026-04-01'`),
+  await one(bill, "SELECT COUNT(*) row_n, SUM(COALESCE(Amount,0)) amt FROM expense_master WHERE FinanceYear >= '2026-27'"),
   await one(hrms, "SELECT COUNT(*) row_n, SUM(COALESCE(amount,0)) amt FROM finance_budget_snapshot WHERE finance_year >= '2026-27'"));
 
 compare('expense_particular / finance_budget_line',
   await one(bill, `SELECT COUNT(*) row_n, SUM(COALESCE(p.Amount,0)) amt
                      FROM expense_particular p
                      JOIN expense_master m ON m.Id = p.ExpenseId
-                    WHERE m.FinanceYear >= '2026-27' AND m.createdate >= '2026-04-01'`),
+                    WHERE m.FinanceYear >= '2026-27'`),
   await one(hrms, "SELECT COUNT(*) row_n, SUM(COALESCE(amount,0)) amt FROM finance_budget_line_snapshot WHERE finance_year >= '2026-27'"));
 
 console.log('\nMASTERS — all time');
