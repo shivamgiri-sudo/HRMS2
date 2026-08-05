@@ -627,7 +627,7 @@ async function syncBudget(hrms, bill) {
 
   const [src] = await bill.query(
     `SELECT m.Id, m.BranchId, m.Branch, m.EntryNo, m.FinanceYear, m.FinanceMonth,
-            m.HeadId, m.SubHeadId, m.Amount, m.expense_status, m.EntryStatus,
+            m.HeadId, m.SubHeadId, m.Amount, m.expense_status, m.EntryStatus, m.Active,
             m.ApproveDate1, m.ApproveDate2, m.ApproveDate3, m.ApproveDate4, m.ApproveDate5,
             m.objective, m.Description_Det, m.createdate
        FROM expense_master m WHERE m.FinanceYear >= ? ORDER BY m.Id`, [FROM_FINANCE_YEAR]);
@@ -646,6 +646,10 @@ async function syncBudget(hrms, bill) {
     amount: safeDec(r.Amount),
     expense_status: trim(r.expense_status),
     entry_status: trim(r.EntryStatus),
+    // Kept as a real null when the source has none, rather than defaulting to 1. Only 177 of the
+    // 544 FY2026-27 rows are Active, so assuming "active" is exactly the error this column exists
+    // to make visible.
+    active_status: r.Active == null ? null : (Number(r.Active) === 1 ? 1 : 0),
     approve_1_at: safeDateTime(r.ApproveDate1),
     approve_2_at: safeDateTime(r.ApproveDate2),
     approve_3_at: safeDateTime(r.ApproveDate3),
@@ -659,8 +663,8 @@ async function syncBudget(hrms, bill) {
 
   const cols = ['bill_source_id','branch_source_id','branch_name','entry_no','finance_year',
     'finance_month','period_code','head_id','sub_head_id','amount','expense_status','entry_status',
-    'approve_1_at','approve_2_at','approve_3_at','approve_4_at','approve_5_at','objective',
-    'description_det','source_created_at','synced_at'];
+    'active_status','approve_1_at','approve_2_at','approve_3_at','approve_4_at','approve_5_at',
+    'objective','description_det','source_created_at','synced_at'];
 
   // A budget row created before its finance year began is NOT mis-filed — it is a budget.
   // Planning next year's spend before next year starts is the entire point of the exercise.
@@ -688,7 +692,12 @@ async function syncBudget(hrms, bill) {
 
   const scoped = rows.filter(r => inScope(r.period_code));
   const n = await insertBatch(hrms, 'finance_budget_snapshot', scoped, cols, cols.slice(1));
+  const active = scoped.filter(r => r.active_status === 1).length;
   log(`  finance_budget_snapshot: ${n} rows (from ${FROM_PERIOD}; ${rows.length - scoped.length} out of range)`);
+  // Surfaced every run: readers that do not filter on active_status are counting the inactive
+  // ones too, and the gap is large enough to change any budget total materially.
+  log(`        of which Active at source: ${active} — ${n - active} are INACTIVE and must be`);
+  log(`        filtered by the reader; the mirror keeps them so the choice stays the reader's.`);
 }
 
 // ── Sync 7: GRN / expense entries ─────────────────────────────────────────────

@@ -142,6 +142,13 @@ compare('expense_particular / finance_budget_line',
                     WHERE m.FinanceYear >= '2026-27'`),
   await one(hrms, "SELECT COUNT(*) row_n, SUM(COALESCE(amount,0)) amt FROM finance_budget_line_snapshot WHERE finance_year >= '2026-27'"));
 
+// Active on its own, because the totals above match whether or not the flag is right. Of the
+// Rs 456.03 L mirrored for FY2026-27 only Rs 130.00 L is active — a reader that ignores this
+// overstates the budget by 2.5x, so the flag being faithful matters as much as the amount.
+compare('  of which Active=1',
+  await one(bill, "SELECT COUNT(*) row_n, SUM(COALESCE(Amount,0)) amt FROM expense_master WHERE FinanceYear >= '2026-27' AND Active = 1"),
+  await one(hrms, "SELECT COUNT(*) row_n, SUM(COALESCE(amount,0)) amt FROM finance_budget_snapshot WHERE finance_year >= '2026-27' AND active_status = 1"));
+
 console.log('\nMASTERS — all time');
 compare('provision_master / billing_provision',
   await one(bill, 'SELECT COUNT(*) row_n, SUM(COALESCE(billing_amt,0)) amt FROM provision_master'),
