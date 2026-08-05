@@ -51,14 +51,17 @@ describe("dashboard summary — inbox failure isolation", () => {
 
   it("still computes and returns the metrics on that path", () => {
     // The whole point: metrics are independent of the inbox and must survive.
+    // executeDashboardMetrics is now called inside a getOrSet() passed to
+    // Promise.all alongside the guarded inbox promise, rather than directly
+    // awaited after it — both still run, and neither can take the other down.
     // Match the call site, not the bare identifier — the identifier also appears
     // in the explanatory comment above the try/catch.
-    const callIdx = summaryHandler.search(/await\s+executeDashboardMetrics\(/);
+    const callIdx = summaryHandler.search(/executeDashboardMetrics\(/);
     expect(callIdx, "shared summary no longer computes metrics").toBeGreaterThan(-1);
     const catchIdx = summaryHandler.search(/\}\s*catch/);
     expect(
       callIdx,
-      "executeDashboardMetrics must run after the guarded inbox call, not inside the try"
+      "executeDashboardMetrics must be defined after the guarded inbox call, not inside its try"
     ).toBeGreaterThan(catchIdx);
   });
 
@@ -66,11 +69,11 @@ describe("dashboard summary — inbox failure isolation", () => {
     // Complements dashboard-error-semantics.test.ts: that test forbids the
     // zeroed literal, this one requires the honest alternative be present.
     expect(summaryHandler).not.toContain("pending_count: 0, overdue_count: 0");
-    expect(summaryHandler).toMatch(/workItems\s*=\s*undefined/);
+    expect(summaryHandler).toMatch(/workItems:\s*undefined/);
   });
 
   it("reports the degraded state instead of leaving it indistinguishable from empty", () => {
-    expect(summaryHandler).toMatch(/workItemsStatus\s*=\s*"unavailable"/);
+    expect(summaryHandler).toMatch(/workItemsStatus:\s*"unavailable"/);
     expect(summaryHandler).toContain("workItemsStatus,");
     // The field has to survive parsing — zod strips unknown keys by default, so
     // an unschema'd marker would be silently dropped before it reached the client.

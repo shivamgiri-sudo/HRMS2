@@ -28,13 +28,21 @@ const scope: DashboardScope = {
 describe("dashboard metric calculations", () => {
   beforeEach(() => execute.mockReset());
 
-  // Query order: live session count, anchor date, then the processed breakdown.
-  // The breakdown now carries expected_to_work and attended_days inline rather than
-  // issuing a separate denominator query.
-  const mockAttendance = (breakdown: Record<string, unknown>, livePresent = 8) => {
+  // Query order: live session count, anchor date, coverage check, then the
+  // processed breakdown. live/day/coverage are dispatched concurrently
+  // (Promise.all) but in that statement order, so their mocked responses stay
+  // positional; breakdown genuinely depends on anchorDate and is always last.
+  // The breakdown carries expected_to_work and attended_days inline rather
+  // than issuing a separate denominator query.
+  const mockAttendance = (
+    breakdown: Record<string, unknown>,
+    livePresent = 8,
+    coverage: Record<string, unknown> = { uncovered: 0 },
+  ) => {
     execute
       .mockResolvedValueOnce([[{ live_present: livePresent }]])
       .mockResolvedValueOnce([[{ record_date: "2026-07-29" }]])
+      .mockResolvedValueOnce([[coverage]])
       .mockResolvedValueOnce([[breakdown]]);
   };
 

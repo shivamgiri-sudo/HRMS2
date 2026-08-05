@@ -18,6 +18,7 @@ import { getDrilldown } from "./dashboard-drilldown.service.js";
 import { getUnifiedInboxSummary } from "../work-inbox/work-inbox.service.js";
 import { executeDashboardMetrics, isMetricConfiguredForDashboard } from "./dashboard-definition.service.js";
 import { dashboardSummarySchema } from "../../shared/dashboardMetricContract.js";
+import { cacheInstance as dashboardMetricsCache } from "../../lib/cache/quality-cache.js";
 import { logSourceFailure } from "../../shared/apiResponse.js";
 import {
   HALF_DAY_STATUS,
@@ -443,36 +444,63 @@ router.get("/PAYROLL_HR_DASHBOARD/operational-summary", requireFixedDashboard("P
 router.get("/:dashboardCode/summary", h(async (req: AuthenticatedRequest, res: any) => {
   const dashboardCode = req.params.dashboardCode as DashboardCode;
   const { user, context, scope } = await requestedScope(req);
+  const generatedAt = new Date();
+
   // Unions work_item with work_inbox_item. Reading work_item alone showed an empty
   // inbox on all 12 dashboards while 65k live rows sat in the other table.
   //
-  // Isolate the inbox from the metrics. This await runs before
-  // executeDashboardMetrics, so an unhandled failure here 500s the whole summary
-  // and renders every metric tile as an em-dash. CEO UAT 31-Jul-2026 reported
-  // exactly that on /ceo/dashboard — nine hollow tiles and four "unavailable"
-  // panels from one failing aggregation.
+  // Isolate the inbox from the metrics: a failure here must not 500 the whole
+  // summary and render every metric tile as an em-dash. CEO UAT 31-Jul-2026
+  // reported exactly that on /ceo/dashboard — nine hollow tiles and four
+  // "unavailable" panels from one failing aggregation. On failure `workItems`
+  // is OMITTED, never zeroed: a fabricated "0 pending / 0 overdue" reads as an
+  // empty inbox and would hide the outage, which
+  // dashboard-error-semantics.test.ts explicitly forbids. `workItemsStatus` is
+  // what tells the client the difference between "empty" and "unknown".
   //
-  // On failure `workItems` is OMITTED, never zeroed: a fabricated
-  // "0 pending / 0 overdue" reads as an empty inbox and would hide the outage,
-  // which dashboard-error-semantics.test.ts explicitly forbids. `workItemsStatus`
-  // is what tells the client the difference between "empty" and "unknown".
-  let workItems: Awaited<ReturnType<typeof getUnifiedInboxSummary>> | undefined;
-  let workItemsStatus: "ok" | "unavailable" = "ok";
-  try {
-    workItems = await getUnifiedInboxSummary(user.id, context.roleKeys);
-  } catch (err: unknown) {
-    console.error("[dashboards/summary] work-item aggregation failed", err instanceof Error ? err.message : err);
-    workItems = undefined;
-    workItemsStatus = "unavailable";
-  }
+  // workItems and the dashboard metrics are fully independent aggregations —
+  // this used to be `await`ed before executeDashboardMetrics even started,
+  // serially adding its own latency (~1-2s measured against the live DB) on
+  // top of every dashboard load, all 12 of them. Running both concurrently
+  // removes that entirely; each keeps exactly the failure isolation above.
+  const workItemsPromise = (async (): Promise<{
+    workItems: Awaited<ReturnType<typeof getUnifiedInboxSummary>> | undefined;
+    workItemsStatus: "ok" | "unavailable";
+  }> => {
+    try {
+      return { workItems: await getUnifiedInboxSummary(user.id, context.roleKeys), workItemsStatus: "ok" };
+    } catch (err: unknown) {
+      console.error("[dashboards/summary] work-item aggregation failed", err instanceof Error ? err.message : err);
+      return { workItems: undefined, workItemsStatus: "unavailable" };
+    }
+  })();
 
-  const generatedAt = new Date();
+  // Metrics are org/branch/process-scoped aggregates, not per-user data — every
+  // viewer of the same scope (e.g. 20 people with the org-wide CEO dashboard
+  // open) was independently re-running the same ~4-6s of queries against a DB
+  // that is ~160ms away over the network. A short TTL cache means only the
+  // first request in the window pays that cost; everyone else within 30s gets
+  // the same real numbers instantly. workItems is deliberately NOT cached here
+  // — it is per-user (assigned_to_user_id = this viewer), so caching it under
+  // a scope-only key would leak one user's pending items to another.
+  const metricsCacheKey = `dash-metrics:v1:${dashboardCode}:${scope.level}:${scope.branchIds.join(",")}:${scope.processIds.join(",")}:${scope.employeeIds.join(",")}`;
+  const metricsPromise = dashboardMetricsCache.getOrSet(
+    metricsCacheKey,
+    () => executeDashboardMetrics(dashboardCode, scope, generatedAt) as Promise<Record<string, unknown>>,
+    30,
+  );
+
+  const [{ workItems, workItemsStatus }, metrics] = await Promise.all([
+    workItemsPromise,
+    metricsPromise,
+  ]);
+
   const data = dashboardSummarySchema.parse({
     dashboardCode,
     scope,
     workItems,
     workItemsStatus,
-    metrics: await executeDashboardMetrics(dashboardCode, scope, generatedAt),
+    metrics,
     generatedAt: generatedAt.toISOString(),
   });
   return res.json({ success: true, data });
