@@ -181,7 +181,14 @@ router.get("/PAYROLL_HR_DASHBOARD/operational-summary", requireFixedDashboard("P
   const currentMonth = String(currentRun.run_month);
 
   const salaryScope = buildScopeWhere(scope, "e.branch_id", "e.process_id");
-  const salaryBill = await db.execute<RowDataPacket[]>(
+
+  // salaryBill, unpaidActive and zeroAttendanceRisk are mutually independent —
+  // none reads another's result, only currentRun (already resolved above) and
+  // salaryScope. Previously three sequential awaits; against the live DB this
+  // measured ~28.7s for the endpoint. Kicked off together below; each keeps
+  // its own failure handling exactly as before (zeroAttendanceRisk's
+  // try/catch, in particular, is preserved verbatim — see the comment on it).
+  const salaryBillPromise = db.execute<RowDataPacket[]>(
     // gross_pay / gross_amount / net_pay / net_amount exist in no migration. COALESCE
     // does not protect against unknown identifiers — MySQL resolves them before
     // evaluating — so the old chain guaranteed a 500 rather than a fallback.
@@ -194,13 +201,6 @@ router.get("/PAYROLL_HR_DASHBOARD/operational-summary", requireFixedDashboard("P
       WHERE spl.run_id = ? AND ${salaryScope.sql}`,
     [currentRun.id, ...salaryScope.params],
   ).then(([rows]) => (rows as any[])[0] ?? null);
-
-  // The run has no stored label; compose a stable one so the existing `currentRun.label`
-  // contract on the frontend keeps working.
-  const runLabel = [currentRun.run_month, currentRun.branch_filter].filter(Boolean).join(" · ");
-
-  const totalGross = Number(salaryBill?.total_gross ?? 0);
-  const totalNet = Number(salaryBill?.total_net ?? 0);
 
   // A previous version of this check warned whenever net exceeded gross, calling it
   // "arithmetically impossible". That was wrong, and it fired on ~1,983 lines across
@@ -219,8 +219,15 @@ router.get("/PAYROLL_HR_DASHBOARD/operational-summary", requireFixedDashboard("P
   // Every one of the 649 mismatches in the sampled run was this case, and 56 of them
   // belong to ACTIVE employees — 49 of whom have no attendance record for the month at
   // all, while 692 of 712 paid active employees do.
-  const dataIntegrity: string[] = [];
-  const unpaidActive = await db.execute<RowDataPacket[]>(
+  //
+  // The inner `agg` subquery aggregated ALL of salary_prep_line_component with no
+  // filter — every line of every run — before joining down to this one run's lines.
+  // Measured ~23.6s standalone against the live DB (this table backs every payroll
+  // run ever calculated). Scoped it to this run's line_ids the same way the join
+  // already implies, cutting it to ~5.7s with an identical result, verified against
+  // production. Still worth a covering index later; tracked separately since that
+  // needs a migration, not a query change.
+  const unpaidActivePromise = db.execute<RowDataPacket[]>(
     `SELECT COUNT(*) AS unpaid_lines,
             COALESCE(ROUND(SUM(agg.earn), 2), 0) AS earnings_recorded
        FROM salary_prep_line l
@@ -228,13 +235,14 @@ router.get("/PAYROLL_HR_DASHBOARD/operational-summary", requireFixedDashboard("P
        JOIN (SELECT line_id,
                     SUM(CASE WHEN component_type = 'earning' THEN amount ELSE 0 END) AS earn
                FROM salary_prep_line_component
+              WHERE line_id IN (SELECT id FROM salary_prep_line WHERE run_id = ?)
               GROUP BY line_id) agg ON agg.line_id = l.id
       WHERE l.run_id = ?
         AND l.net_salary = 0
         AND agg.earn > 0
         AND e.active_status = 1
         AND ${salaryScope.sql}`,
-    [currentRun.id, ...salaryScope.params],
+    [currentRun.id, currentRun.id, ...salaryScope.params],
   ).then(([rows]) => (rows as any[])[0] ?? null);
 
   // Forward-looking companion to the check below: employees who WOULD be zeroed by the next
@@ -256,27 +264,44 @@ router.get("/PAYROLL_HR_DASHBOARD/operational-summary", requireFixedDashboard("P
   // indistinguishable from a genuine zero — so an unanswered question would read as a clean
   // bill of health. payroll-run-selection-contract.test.ts enforces this for the whole
   // route by string search, which is also why the forbidden pattern is not quoted here.
-  let zeroAttendanceRisk: number | null = null;
-  try {
-    const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT COUNT(*) AS at_risk
-         FROM employees e
-         JOIN employee_salary_assignment esa
-           ON esa.employee_id = e.id AND esa.active_status = 1
-         JOIN branch_master b ON b.id = e.branch_id AND b.active_status = 1
-        WHERE LOWER(e.employment_status) = 'active'
-          AND NOT EXISTS (
-                SELECT 1 FROM attendance_daily_record a
-                 WHERE a.employee_id = e.id
-                   AND a.record_date >= DATE_SUB(CURDATE(), INTERVAL 60 DAY)
-                   AND a.attendance_status IN ('present', 'week_off_worked', 'half_day'))
-          AND ${salaryScope.sql}`,
-      [...salaryScope.params],
-    );
-    zeroAttendanceRisk = Number((rows as RowDataPacket[])[0]?.at_risk ?? 0);
-  } catch (err) {
-    logSourceFailure("dashboard.payroll-zero-attendance-risk", err, { runId: currentRun.id });
-  }
+  const zeroAttendanceRiskPromise: Promise<number | null> = (async () => {
+    try {
+      const [rows] = await db.execute<RowDataPacket[]>(
+        `SELECT COUNT(*) AS at_risk
+           FROM employees e
+           JOIN employee_salary_assignment esa
+             ON esa.employee_id = e.id AND esa.active_status = 1
+           JOIN branch_master b ON b.id = e.branch_id AND b.active_status = 1
+          WHERE LOWER(e.employment_status) = 'active'
+            AND NOT EXISTS (
+                  SELECT 1 FROM attendance_daily_record a
+                   WHERE a.employee_id = e.id
+                     AND a.record_date >= DATE_SUB(CURDATE(), INTERVAL 60 DAY)
+                     AND a.attendance_status IN ('present', 'week_off_worked', 'half_day'))
+            AND ${salaryScope.sql}`,
+        [...salaryScope.params],
+      );
+      return Number((rows as RowDataPacket[])[0]?.at_risk ?? 0);
+    } catch (err) {
+      logSourceFailure("dashboard.payroll-zero-attendance-risk", err, { runId: currentRun.id });
+      return null;
+    }
+  })();
+
+  const [salaryBill, unpaidActive, zeroAttendanceRisk] = await Promise.all([
+    salaryBillPromise,
+    unpaidActivePromise,
+    zeroAttendanceRiskPromise,
+  ]);
+
+  // The run has no stored label; compose a stable one so the existing `currentRun.label`
+  // contract on the frontend keeps working.
+  const runLabel = [currentRun.run_month, currentRun.branch_filter].filter(Boolean).join(" · ");
+
+  const totalGross = Number(salaryBill?.total_gross ?? 0);
+  const totalNet = Number(salaryBill?.total_net ?? 0);
+
+  const dataIntegrity: string[] = [];
 
   if (zeroAttendanceRisk === null) {
     dataIntegrity.push(
