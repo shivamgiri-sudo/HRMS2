@@ -23,6 +23,7 @@ import { payrollController as c } from "./payroll.controller.js";
 import { calculatePayrollRun, calculatePayrollRunScoped } from "./payrollCalculate.service.js";
 import { payrollGovernanceService } from "./payroll-governance.service.js";
 import { assertRunEditable } from "./payrollWindowGuard.js";
+import { isRunClosed } from "./run-status.js";
 import { payslipService } from "./payslip.service.js";
 import { taxDeclarationService } from "./taxDeclaration.service.js";
 import { payrollBranchReadinessService } from "./payroll-branch-readiness.service.js";
@@ -959,7 +960,9 @@ router.get("/payslip/history/:employeeId", requireAuth, requireRole("super_admin
       WHERE spl.employee_id = ?
         AND spr.status NOT IN ('draft', 'cancelled')
       ORDER BY spr.run_month DESC,
-               FIELD(spr.status,'disbursed','approved','locked','under_review','calculated','processing') ASC
+               -- 'finalized' omitted from this ranking previously made MySQL's FIELD()
+               -- (0 for unranked values) sort FINALIZED runs ahead of everything else.
+               FIELD(spr.status,'disbursed','finalized','approved','locked','under_review','calculated','processing') ASC
       LIMIT ${limit * 3}`,
     [employeeId]
   );
@@ -1549,14 +1552,16 @@ router.get(
                   spl.pf_employee,
                   ROW_NUMBER() OVER (
                     PARTITION BY spr.run_month
-                    ORDER BY FIELD(spr.status, 'disbursed', 'locked', 'approved', 'completed'),
+                    ORDER BY FIELD(spr.status, 'disbursed', 'finalized', 'locked', 'approved', 'completed'),
                              spr.created_at DESC
                   ) AS rn
              FROM salary_prep_line spl
              JOIN salary_prep_run spr ON spr.id = spl.run_id
             WHERE spl.employee_id = ?
               AND spr.run_month BETWEEN ? AND ?
-              AND spr.status IN ('locked', 'approved', 'disbursed', 'completed')
+              -- 'finalized' is the status payroll actually settles runs in (see run-status.ts);
+              -- omitting it here excluded most production months from TDS certificates.
+              AND spr.status IN ('locked', 'finalized', 'approved', 'disbursed', 'completed')
               AND spl.status NOT IN ('excluded', 'blocked')
          ) canonical
         WHERE canonical.rn = 1`,
@@ -2044,8 +2049,11 @@ router.get("/runs/:id/neft-export", requireRole("admin", "super_admin", "finance
   );
   const run = (runRows as RowDataPacket[])[0];
   if (!run) return res.status(404).json({ error: "Run not found" });
-  if (!["locked", "disbursed"].includes(run.status as string)) {
-    return res.status(400).json({ error: "Run must be locked or disbursed to generate NEFT export" });
+  // isRunClosed (locked/disbursed/finalized, case-insensitive) rather than a literal
+  // ["locked","disbursed"] list — that literal previously blocked NEFT export for every
+  // FINALIZED production run (see run-status.ts).
+  if (!isRunClosed(run.status)) {
+    return res.status(400).json({ error: "Run must be locked, finalized, or disbursed to generate NEFT export" });
   }
   if (run.validation_status && run.validation_status !== 'validated') {
     return res.status(403).json({ success: false, message: "Payroll must be validated before generating NEFT export. Current status: " + run.validation_status });

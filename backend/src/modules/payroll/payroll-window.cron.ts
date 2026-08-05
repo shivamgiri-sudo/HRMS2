@@ -3,6 +3,7 @@ import { db } from '../../db/mysql.js';
 import { logSensitiveAction } from '../../shared/auditLog.js';
 import { getIstDateString } from '../../utils/dateUtils.js';
 import { leaveService } from '../leave/leave.service.js';
+import { CLOSED_RUN_STATUSES_SQL } from './run-status.js';
 
 let _timer: ReturnType<typeof setInterval> | null = null;
 
@@ -17,7 +18,7 @@ export async function runPayrollWindowClosure(): Promise<void> {
     `SELECT id, run_month FROM salary_prep_run
      WHERE window_close_date IS NOT NULL
        AND window_close_date <= ?
-       AND status NOT IN ('locked','disbursed','cancelled')
+       AND status NOT IN (${CLOSED_RUN_STATUSES_SQL},'cancelled')
        AND auto_closed_at IS NULL`,
     [today]
   );

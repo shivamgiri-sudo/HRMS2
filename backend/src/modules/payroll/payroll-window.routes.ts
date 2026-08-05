@@ -5,6 +5,7 @@ import { requireAuth } from '../../middleware/authMiddleware.js';
 import { requireRole } from '../../middleware/requireRole.js';
 import type { AuthenticatedRequest } from '../../middleware/authMiddleware.js';
 import { db } from '../../db/mysql.js';
+import { isRunClosed } from './run-status.js';
 
 const router = Router();
 const h = (fn: Function) => (req: any, res: any, next: any) => fn(req, res).catch(next);
@@ -36,7 +37,7 @@ router.get('/runs/:id/window-status', requireRole('payroll', 'super_admin', 'fin
       window_close_date: run.window_close_date,
       auto_closed_at: run.auto_closed_at,
       tds_mode: run.tds_mode ?? 'manual',
-      is_window_open: !isClosed && !['locked', 'disbursed'].includes(run.status),
+      is_window_open: !isClosed && !isRunClosed(run.status),
       days_remaining: run.window_close_date
         ? Math.max(0, Math.ceil((new Date(run.window_close_date as string).getTime() - today.getTime()) / 86400000))
         : null,
@@ -67,7 +68,7 @@ router.patch('/runs/:id/tds-mode', requireRole('payroll', 'super_admin'), h(asyn
   );
   const run = (rows[0] as any);
   if (!run) return res.status(404).json({ success: false, message: 'Run not found' });
-  if (['locked', 'disbursed'].includes(run.status)) {
+  if (isRunClosed(run.status)) {
     return res.status(409).json({ success: false, message: `Cannot change TDS mode on a ${run.status} run` });
   }
   await db.execute(`UPDATE salary_prep_run SET tds_mode = ? WHERE id = ?`, [tds_mode, req.params.id]);
@@ -90,7 +91,7 @@ router.post('/runs/:id/manual-tds', requireRole('payroll', 'super_admin'), h(asy
   );
   const run = (runRows[0] as any);
   if (!run) return res.status(404).json({ success: false, message: 'Run not found' });
-  if (['locked', 'disbursed'].includes(run.status)) {
+  if (isRunClosed(run.status)) {
     return res.status(409).json({ success: false, message: `Run is ${run.status}` });
   }
 

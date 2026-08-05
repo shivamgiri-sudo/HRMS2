@@ -836,14 +836,17 @@ export const payrollService = {
          FROM salary_prep_run
         WHERE run_month = ?
         ORDER BY
+          -- 'finalized' previously fell through to ELSE (lowest priority), so a month with
+          -- both a stale draft run and its real finalized run would show the draft's figures.
           CASE status
             WHEN 'disbursed'  THEN 1
-            WHEN 'locked'     THEN 2
-            WHEN 'approved'   THEN 3
-            WHEN 'completed'  THEN 4
-            WHEN 'processing' THEN 5
-            WHEN 'draft'      THEN 6
-            ELSE 7
+            WHEN 'finalized'  THEN 2
+            WHEN 'locked'     THEN 3
+            WHEN 'approved'   THEN 4
+            WHEN 'completed'  THEN 5
+            WHEN 'processing' THEN 6
+            WHEN 'draft'      THEN 7
+            ELSE 8
           END,
           created_at DESC
         LIMIT 1`,
@@ -859,7 +862,7 @@ export const payrollService = {
       const [fallbackRow] = await db.execute<RowDataPacket[]>(
         `SELECT id, run_month, status, total_employees, total_gross, total_net
            FROM salary_prep_run
-          WHERE status IN ('disbursed','locked','approved','completed','processing','draft')
+          WHERE status IN ('disbursed','finalized','locked','approved','completed','processing','draft')
           ORDER BY run_month DESC, created_at DESC
           LIMIT 1`
       );
