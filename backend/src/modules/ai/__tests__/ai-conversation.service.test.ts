@@ -7,7 +7,9 @@ import {
   getThread,
   isFollowUp,
   lastIntentTurn,
+  pickConversationEntries,
   providerHistory,
+  providerHistorySummaries,
   recordTurn,
   resolveFollowUp,
 } from '../ai-conversation.service.js';
@@ -47,6 +49,70 @@ describe('what may leave the server', () => {
     const [turn] = providerHistory(USER);
     expect(turn.answer.length).toBeLessThan(500);
     expect(turn.answer.endsWith('…')).toBe(true);
+  });
+});
+
+describe('providerHistorySummaries', () => {
+  it('includes a self-account turn as a redacted summary, never its raw answer', () => {
+    recordTurn(USER, {
+      question: 'show my salary',
+      answer: 'Your net pay is 82,000 rupees',
+      intent: 'salary',
+      externalSafe: false,
+      redactedSummary: 'The user previously asked about their salary or payslip; Mira answered from live HRMS data without exposing values in this shared history.',
+    });
+
+    const summaries = providerHistorySummaries(USER);
+
+    expect(summaries).toHaveLength(1);
+    expect(summaries[0].summary).not.toContain('82,000');
+    expect(summaries[0].summary).not.toMatch(/\d/); // no digit at all — no value could have leaked in
+    expect(summaries[0].summary).toContain('salary or payslip');
+    // providerHistory() must still exclude it entirely — this feature is additive.
+    expect(providerHistory(USER)).toHaveLength(0);
+  });
+
+  it('gives an external-safe turn the same trimmed answer providerHistory() would show', () => {
+    recordTurn(USER, { question: 'what does MAS do?', answer: 'x'.repeat(900), externalSafe: true });
+
+    const [summary] = providerHistorySummaries(USER);
+    const [history] = providerHistory(USER);
+    expect(summary.summary).toBe(history.answer);
+  });
+
+  it('falls back to a generic sentence when externalSafe is false but redactedSummary was not set', () => {
+    recordTurn(USER, { question: 'my attendance', answer: '22 present', intent: 'attendance', externalSafe: false });
+
+    const [summary] = providerHistorySummaries(USER);
+    expect(summary.summary).toContain('attendance');
+    expect(summary.summary).not.toContain('22');
+  });
+
+  it('keeps chronological order matching getThread()', () => {
+    recordTurn(USER, { question: 'q1', answer: 'a1', externalSafe: true });
+    recordTurn(USER, { question: 'q2', answer: 'a2', intent: 'leave', externalSafe: false, redactedSummary: 'about leave' });
+
+    const summaries = providerHistorySummaries(USER);
+    expect(summaries.map((s) => s.question)).toEqual(['q1', 'q2']);
+  });
+});
+
+describe('pickConversationEntries', () => {
+  it('prefers conversationSummaries when present', () => {
+    const result = pickConversationEntries(
+      [{ question: 'q', answer: 'raw answer' }],
+      [{ question: 'q', summary: 'redacted summary' }],
+    );
+    expect(result).toEqual([{ question: 'q', text: 'redacted summary' }]);
+  });
+
+  it('falls back to conversation when conversationSummaries is absent', () => {
+    const result = pickConversationEntries([{ question: 'q', answer: 'raw answer' }], undefined);
+    expect(result).toEqual([{ question: 'q', text: 'raw answer' }]);
+  });
+
+  it('returns an empty array when neither is provided', () => {
+    expect(pickConversationEntries(undefined, undefined)).toEqual([]);
   });
 });
 
@@ -140,6 +206,16 @@ describe('wiring', () => {
     expect(routes).toContain('conversation: providerHistory(userId)');
   });
 
+  it('also passes the complete, always-safe summaries alongside it', () => {
+    const routes = source('../ai-insights.routes.ts');
+    expect(routes).toContain('conversationSummaries: providerHistorySummaries(userId)');
+  });
+
+  it('generates a redacted summary from intent, not from answer text, for the self-account exit', () => {
+    const routes = source('../ai-insights.routes.ts');
+    expect(routes).toContain('redactedSummary: describeAccountIntentForHistory(local.intent)');
+  });
+
   it('records every exit of the ask handler', () => {
     const routes = source('../ai-insights.routes.ts');
     // The pipeline lives in askHandler; /ask and /ask/stream are thin registrations.
@@ -167,6 +243,13 @@ describe('wiring', () => {
     const gemini = source('../providers/gemini.provider.ts');
     expect(gemini).toContain('request.conversation');
     expect(gemini).toContain('Earlier in this conversation');
+  });
+
+  it('routes both providers through the same precedence rule instead of each reading request.conversation independently', () => {
+    const gemini = source('../providers/gemini.provider.ts');
+    const openrouter = source('../providers/openrouter.provider.ts');
+    expect(gemini).toContain('pickConversationEntries(request.conversation, request.conversationSummaries)');
+    expect(openrouter).toContain('pickConversationEntries(request.conversation, request.conversationSummaries)');
   });
 });
 

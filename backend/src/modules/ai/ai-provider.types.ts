@@ -39,6 +39,16 @@ export interface AiGenerateRequest {
    * providerHistory() in ai-conversation.service.
    */
   conversation?: Array<{ question: string; answer: string }>;
+  /**
+   * Every remembered turn, reduced to something with no PII by construction —
+   * a self-account turn's redacted topic summary, or an external-safe turn's
+   * real (trimmed) answer. A complete superset of `conversation` above.
+   * Providers should prefer this field via pickConversationEntries() (see
+   * ai-conversation.service.ts) so a follow-up after a self-account question
+   * (e.g. "and what about last month?") can still be resolved, without a real
+   * value ever reaching an external provider.
+   */
+  conversationSummaries?: Array<{ question: string; summary: string }>;
   temperature?: number;
   maxOutputTokens?: number;
   responseFormat?: 'text' | 'json';

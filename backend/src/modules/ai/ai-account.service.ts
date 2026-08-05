@@ -45,6 +45,37 @@ export interface AccountAnswerResult {
   response?: AiGenerateResponse;
 }
 
+// One entry per topical AccountIntent — deliberately excludes 'help',
+// 'scope_violation', 'unknown', which aren't a topic someone asked about in a
+// meaningful sense; those fall through to the generic label below.
+const INTENT_HISTORY_LABEL: Partial<Record<AccountIntent, string>> = {
+  coach: 'their performance',
+  account_overview: 'their account summary',
+  profile: 'their profile details',
+  salary: 'their salary or payslip',
+  leave: 'their leave balance',
+  attendance: 'their attendance',
+  roster: 'their shift or roster',
+  documents: 'their documents',
+  pending_actions: 'their pending actions',
+  support: 'their support tickets',
+  payroll_readiness: 'payroll readiness',
+  loans: 'their loan or advance recovery',
+  reimbursements: 'their reimbursement claims',
+  journey: 'their employment history',
+};
+
+/**
+ * Topic-only, redacted sentence for the shared conversation history — built
+ * purely from the intent label, never from an answer's actual content, so a
+ * real value can never leak into what an external provider sees on a
+ * follow-up turn.
+ */
+export function describeAccountIntentForHistory(intent: AccountIntent): string {
+  const topic = INTENT_HISTORY_LABEL[intent] ?? 'their HRMS account';
+  return `The user previously asked about ${topic}; Mira answered from live HRMS data without exposing values in this shared history.`;
+}
+
 export class MiraDataUnavailableError extends Error {
   readonly operation: string;
 

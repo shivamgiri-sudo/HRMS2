@@ -19,12 +19,13 @@ import { validateQuestion, validateContextType, validateEntityId } from './ai-in
 import type { AiGenerateRequest } from './ai-provider.types.js';
 import {
   answerSelfAccountQuestion,
+  describeAccountIntentForHistory,
   getMiraSuggestedPrompts,
   MIRA_NAME,
   MIRA_TAGLINE,
   MiraDataUnavailableError,
 } from './ai-account.service.js';
-import { recordTurn, resolveFollowUp, lastIntentTurn, providerHistory } from './ai-conversation.service.js';
+import { recordTurn, resolveFollowUp, lastIntentTurn, providerHistory, providerHistorySummaries } from './ai-conversation.service.js';
 import {
   answerCompanyQuestion,
   companyKnowledgeMissResponse,
@@ -388,13 +389,14 @@ async function askHandler(req: AuthenticatedRequest, res: Response, mode: 'json'
 
   const respond = (
     response: { answer: string },
-    options: { externalSafe: boolean; intent?: string },
+    options: { externalSafe: boolean; intent?: string; redactedSummary?: string },
   ) => {
     recordTurn(userId, {
       question: safeQuestion,
       answer: response.answer,
       intent: options.intent,
       externalSafe: options.externalSafe,
+      redactedSummary: options.redactedSummary,
     });
     if (mode === 'sse') {
       // A locally answered question has nothing to stream — send it whole, then close.
@@ -435,7 +437,7 @@ async function askHandler(req: AuthenticatedRequest, res: Response, mode: 'json'
     };
     await aiAuditService.logUsage(request, local.response);
     await aiAuditService.logPromptAudit(request, false, [], local.response.answer.slice(0, 200), local.intent);
-    return respond(local.response, { externalSafe: false, intent: local.intent });
+    return respond(local.response, { externalSafe: false, intent: local.intent, redactedSummary: describeAccountIntentForHistory(local.intent) });
   }
 
   // Tried after self-account (so "how many leaves do I have" isn't
@@ -553,6 +555,12 @@ async function askHandler(req: AuthenticatedRequest, res: Response, mode: 'json'
     // Only turns that were themselves external-safe; self-account answers stay
     // in process, so a salary reply from an earlier turn cannot ride along here.
     conversation: providerHistory(userId),
+    // Complete, always-safe superset — self-account turns included as a
+    // redacted topic summary, never their raw answer. Providers should prefer
+    // this via pickConversationEntries(); kept as a second field rather than
+    // replacing `conversation` above so existing callers/tests referencing
+    // that field are unaffected.
+    conversationSummaries: providerHistorySummaries(userId),
     temperature: 0.2,
     maxOutputTokens: 800,
     requestSource: 'copilot',

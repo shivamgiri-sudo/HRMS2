@@ -12,6 +12,7 @@ import type {
   AiGenerateResponse,
 } from '../ai-provider.types.js';
 import { ruleBasedProvider } from './ruleBased.provider.js';
+import { pickConversationEntries } from '../ai-conversation.service.js';
 
 // Google Generative AI SDK types
 type GoogleGenerativeAI = any;
@@ -169,8 +170,8 @@ export class GeminiProvider implements AiProvider {
   private buildPrompt(request: AiGenerateRequest): string {
     const systemInstruction = request.systemInstruction || 'You are a helpful AI assistant.';
     const contextStr = JSON.stringify(request.sanitizedContext, null, 2);
-    const history = (request.conversation ?? [])
-      .map((turn) => ['User: ' + turn.question, 'Mira: ' + turn.answer].join('\n'))
+    const history = pickConversationEntries(request.conversation, request.conversationSummaries)
+      .map((turn) => ['User: ' + turn.question, 'Mira: ' + turn.text].join('\n'))
       .join('\n\n');
 
     return `${systemInstruction}

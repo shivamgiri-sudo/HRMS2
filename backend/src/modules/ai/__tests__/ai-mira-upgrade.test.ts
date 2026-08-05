@@ -6,7 +6,8 @@ const mocks = vi.hoisted(() => ({ execute: vi.fn(), getEmployeeForUser: vi.fn() 
 vi.mock('../../../db/mysql.js', () => ({ db: { execute: mocks.execute } }));
 vi.mock('../../../shared/accessGuard.js', () => ({ getEmployeeForUser: mocks.getEmployeeForUser }));
 
-import { answerSelfAccountQuestion, clearMiraCacheForUser, detectMiraIntent } from '../ai-account.service.js';
+import { answerSelfAccountQuestion, clearMiraCacheForUser, describeAccountIntentForHistory, detectMiraIntent } from '../ai-account.service.js';
+import type { AccountIntent } from '../ai-account.service.js';
 import { answerCompanyQuestion, clearCompanyKnowledgeCache, COMPANY_SYSTEM_INSTRUCTION, getPublicCompanyContext } from '../ai-company-knowledge.service.js';
 import { OpenRouterProvider } from '../providers/openrouter.provider.js';
 
@@ -170,6 +171,52 @@ describe('Mira live grounding and OpenRouter upgrade', () => {
     expect(String(options.body).toLowerCase()).toContain('approved context');
   });
 
+  it('folds conversationSummaries into alternating user/assistant messages, preferring them over conversation', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ choices: [{ message: { content: 'Follow-up answer' } }], usage: {} }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const provider = new OpenRouterProvider();
+    await provider.generateText({
+      userId: 'user-self', roleKeys: ['employee'], providerKey: 'openrouter', apiKey: 'test-key',
+      userQuestion: 'and what about last month?',
+      sanitizedContext: { safe_mode: true },
+      requestSource: 'copilot',
+      // Both present — conversationSummaries (redacted, always-safe) must win.
+      conversation: [{ question: 'show my salary', answer: 'Your net pay is 82,000 rupees' }],
+      conversationSummaries: [{ question: 'show my salary', summary: 'The user previously asked about their salary; Mira answered from live HRMS data without exposing values in this shared history.' }],
+    });
+    const [, options] = fetchMock.mock.calls[0];
+    const body = JSON.parse(String(options.body));
+    expect(body.messages[0].role).toBe('system');
+    expect(body.messages[1]).toEqual({ role: 'user', content: 'show my salary' });
+    expect(body.messages[2].role).toBe('assistant');
+    expect(body.messages[2].content).toContain('without exposing values');
+    expect(body.messages[2].content).not.toContain('82,000');
+    // Final message is still the actual question with approved context.
+    expect(body.messages[3].role).toBe('user');
+    expect(body.messages[3].content).toContain('and what about last month?');
+  });
+
+  it('reproduces the original 2-message payload when no conversation history is present (regression guard)', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ choices: [{ message: { content: 'Answer' } }], usage: {} }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const provider = new OpenRouterProvider();
+    await provider.generateText({
+      userId: 'user-self', roleKeys: ['employee'], providerKey: 'openrouter', apiKey: 'test-key',
+      userQuestion: 'Who is the CEO?', sanitizedContext: { safe_mode: true }, requestSource: 'copilot',
+    });
+    const [, options] = fetchMock.mock.calls[0];
+    const body = JSON.parse(String(options.body));
+    expect(body.messages).toHaveLength(2);
+    expect(body.messages[0].role).toBe('system');
+    expect(body.messages[1].role).toBe('user');
+  });
+
   it('keeps live self-service before any external AI rate limit', () => {
     const routes = source('../ai-insights.routes.ts');
     // The argument is `routedQuestion` since follow-up resolution landed; what
@@ -242,4 +289,25 @@ describe('Mira live grounding and OpenRouter upgrade', () => {
     expect(settings).toContain('/api/ai/company-knowledge/refresh');
     expect(settings).toContain('Personal employee data remains on the local secure path');
   });
+});
+
+describe('describeAccountIntentForHistory', () => {
+  const TOPICAL_INTENTS: AccountIntent[] = [
+    'coach', 'account_overview', 'profile', 'salary', 'leave', 'attendance', 'roster',
+    'documents', 'pending_actions', 'support', 'payroll_readiness', 'loans', 'reimbursements', 'journey',
+  ];
+
+  it.each(TOPICAL_INTENTS)('produces a topic-only sentence for intent %s, no digits or values', (intent) => {
+    const summary = describeAccountIntentForHistory(intent);
+    expect(summary).toContain('The user previously asked about');
+    expect(summary).toContain('without exposing values in this shared history');
+    expect(summary).not.toMatch(/\d/);
+  });
+
+  it.each(['help', 'scope_violation', 'unknown'] as AccountIntent[])(
+    'falls back to a generic label for non-topical intent %s',
+    (intent) => {
+      expect(describeAccountIntentForHistory(intent)).toContain('their HRMS account');
+    },
+  );
 });

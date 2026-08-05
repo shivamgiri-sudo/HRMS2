@@ -21,6 +21,15 @@ export interface ConversationTurn {
   intent?: string;
   /** True only when this turn's content already went to, or could go to, an external provider. */
   externalSafe: boolean;
+  /**
+   * A topic-only, redacted sentence safe to replay to an external provider even
+   * when externalSafe is false — e.g. "The user previously asked about their
+   * attendance; Mira answered from live HRMS data without exposing values in
+   * this shared history." Built from `intent` at the recording call site
+   * (see describeAccountIntentForHistory in ai-account.service.ts), never by
+   * scrubbing `answer` text — that would risk a value slipping through.
+   */
+  redactedSummary?: string;
   at: number;
 }
 
@@ -99,6 +108,12 @@ export function conversationThreadCount(): number {
   return threads.size;
 }
 
+function trimAnswer(answer: string): string {
+  return answer.length > MAX_REPLAYED_ANSWER
+    ? `${answer.slice(0, MAX_REPLAYED_ANSWER)}…`
+    : answer;
+}
+
 /**
  * The slice of history that may be sent to an external provider: turns that were
  * themselves external-safe, trimmed and oldest-first.
@@ -108,10 +123,45 @@ export function providerHistory(userId: string): Array<{ question: string; answe
     .filter((turn) => turn.externalSafe)
     .map((turn) => ({
       question: turn.question,
-      answer: turn.answer.length > MAX_REPLAYED_ANSWER
-        ? `${turn.answer.slice(0, MAX_REPLAYED_ANSWER)}…`
-        : turn.answer,
+      answer: trimAnswer(turn.answer),
     }));
+}
+
+/**
+ * Every remembered turn, chronological, reduced to something with no PII by
+ * construction — unlike providerHistory(), NOT filtered by externalSafe, since
+ * every entry here is already safe: an external-safe turn's real (trimmed)
+ * answer, or a self-account turn's redacted topic summary. This is what makes
+ * a follow-up like "and what about last month?" resolvable after a
+ * self-account question, without ever putting a real value in front of an
+ * external provider.
+ */
+export function providerHistorySummaries(userId: string): Array<{ question: string; summary: string }> {
+  return getThread(userId).map((turn) => ({
+    question: turn.question,
+    summary: turn.externalSafe
+      ? trimAnswer(turn.answer)
+      : turn.redactedSummary
+        ?? `The user previously asked about ${(turn.intent ?? 'their account').replace(/_/g, ' ')}; Mira answered from live HRMS data without exposing values in this shared history.`,
+  }));
+}
+
+/**
+ * Which history to actually hand a provider: prefer the complete, always-safe
+ * summaries (covers self-account turns too) when present, else fall back to
+ * the narrower externalSafe-only slice. Kept provider-type-agnostic (plain
+ * arrays, not AiGenerateRequest) so both gemini.provider.ts and
+ * openrouter.provider.ts can share one precedence rule instead of each
+ * inventing its own and silently drifting.
+ */
+export function pickConversationEntries(
+  conversation?: Array<{ question: string; answer: string }>,
+  conversationSummaries?: Array<{ question: string; summary: string }>,
+): Array<{ question: string; text: string }> {
+  if (conversationSummaries?.length) {
+    return conversationSummaries.map((turn) => ({ question: turn.question, text: turn.summary }));
+  }
+  return (conversation ?? []).map((turn) => ({ question: turn.question, text: turn.answer }));
 }
 
 /**

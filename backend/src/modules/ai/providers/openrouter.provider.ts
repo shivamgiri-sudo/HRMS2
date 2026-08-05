@@ -5,6 +5,7 @@ import type {
   AiProviderTestResult,
   SafeAiProviderConfig,
 } from '../ai-provider.types.js';
+import { pickConversationEntries } from '../ai-conversation.service.js';
 
 const OFFICIAL_BASE_URL = 'https://openrouter.ai/api/v1';
 const DEFAULT_MODEL = 'openrouter/auto';
@@ -50,6 +51,7 @@ export class OpenRouterProvider implements AiProvider {
         systemInstruction: 'Return exactly: connection successful',
         userQuestion: 'Test the connection.',
         context: { safe_mode: true },
+        conversation: [], // no history for a connectivity ping
         temperature: 0,
         maxOutputTokens: 24,
       });
@@ -81,6 +83,14 @@ export class OpenRouterProvider implements AiProvider {
         systemInstruction: request.systemInstruction || 'You are Mira, MAS Callnet’s helpful HRMS assistant.',
         userQuestion: request.userQuestion,
         context: request.sanitizedContext,
+        // Prefer the complete, always-safe conversationSummaries (covers
+        // self-account turns too, as a redacted topic summary) over the
+        // narrower externally-safe-only `conversation` — see
+        // pickConversationEntries() in ai-conversation.service.ts. Previously
+        // this provider never read conversation history at all, so a
+        // follow-up question lost all context whenever OpenRouter (not
+        // Gemini) was the active default provider.
+        conversation: pickConversationEntries(request.conversation, request.conversationSummaries),
         temperature: request.temperature ?? 0.2,
         maxOutputTokens: request.maxOutputTokens ?? 800,
         responseFormat: request.responseFormat,
@@ -133,6 +143,7 @@ export class OpenRouterProvider implements AiProvider {
     systemInstruction: string;
     userQuestion: string;
     context: Record<string, unknown>;
+    conversation?: Array<{ question: string; text: string }>;
     temperature: number;
     maxOutputTokens: number;
     responseFormat?: 'text' | 'json';
@@ -153,6 +164,13 @@ export class OpenRouterProvider implements AiProvider {
           model: input.model,
           messages: [
             { role: 'system', content: input.systemInstruction },
+            // Prior turns as alternating user/assistant messages — an empty
+            // array (the connectivity-test path, or no history yet)
+            // reproduces the original 2-message payload exactly.
+            ...(input.conversation ?? []).flatMap((turn) => ([
+              { role: 'user' as const, content: turn.question },
+              { role: 'assistant' as const, content: turn.text },
+            ])),
             {
               role: 'user',
               content: `Approved context (use only this context; do not invent facts):\n${JSON.stringify(input.context, null, 2)}\n\nQuestion: ${input.userQuestion}`,
