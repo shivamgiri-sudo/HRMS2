@@ -256,6 +256,7 @@ function buildFiltersForReport(code: string): FilterDef[] {
     "holiday-master-list": [...branchOnly, YEAR_FILTER],
     "payroll-register": [...monthFilter, ...branchProcess],
     "payroll-variance": [...monthFilter, ...branchProcess],
+    "payroll-cost-summary": [...monthFilter, ...branchProcess, DEPT_FILTER],
     "salary-sheet-onfido": [...monthFilter, ...branchProcess],
     "bank-advice": [...monthFilter, ...branchProcess],
     "neft-transfer-file": [...monthFilter, ...branchProcess],

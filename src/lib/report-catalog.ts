@@ -932,6 +932,34 @@ export const REPORT_CATALOG: ReportMeta[] = [
     exportRoles: ["super_admin", "admin", "hr", "wfm"],
   },
 
+  {
+    // Payroll → Cost Summary deep-links here (/payroll/cost-summary). The backend
+    // executor has always worked; the code was simply absent from both catalogs, so
+    // the menu item led to a library that could not list it. Columns mirror the
+    // executor's SELECT list exactly.
+    code: "payroll-cost-summary",
+    name: "Payroll Cost Summary",
+    category: "Payroll",
+    subcategory: "Cost Analysis",
+    description: "Headcount and gross/net cost with employer PF and ESIC, aggregated by branch, process and department for a payroll month",
+    rowGrain: "One row per branch per process per department per payroll month",
+    primaryKey: ["branch_name", "process_name", "department_name", "run_month"],
+    columns: [
+      { key: "branch_name", label: "Branch", format: "text", width: 140 },
+      { key: "process_name", label: "Process", format: "text", width: 160 },
+      { key: "department_name", label: "Department", format: "text", width: 180 },
+      { key: "run_month", label: "Month", format: "text", width: 90 },
+      { key: "employee_count", label: "Headcount", format: "number", width: 100, align: "right" },
+      { key: "total_gross", label: "Total Gross", format: "currency", width: 130, align: "right", sensitive: true },
+      { key: "total_pf_employer", label: "Employer PF", format: "currency", width: 130, align: "right", sensitive: true },
+      { key: "total_esic_employer", label: "Employer ESIC", format: "currency", width: 130, align: "right", sensitive: true },
+      { key: "total_ctc", label: "Total Cost to Company", format: "currency", width: 150, align: "right", sensitive: true },
+      { key: "total_net", label: "Total Net", format: "currency", width: 130, align: "right", sensitive: true },
+    ],
+    viewRoles: ["super_admin", "admin", "finance", "payroll", "payroll_head", "hr_head"],
+    exportRoles: ["super_admin", "admin", "finance", "payroll", "payroll_head", "hr_head"],
+  },
+
   // ═══════════════════════════════════════════════════════════════════════════════
   // LEAVE
   // ═══════════════════════════════════════════════════════════════════════════════

@@ -1758,6 +1758,53 @@ export const REPORT_CATALOG: ReportDefinition[] = [
   },
 
   {
+    // The Payroll → Cost Summary menu item routes to /payroll/cost-summary, which
+    // deep-links to this code. The executor (payrollCostSummary) has been registered
+    // and working the whole time, but the code was missing from this catalog and from
+    // the frontend one, so the menu item was a dead link — the Report Library had
+    // nothing to list or pre-select. Columns below mirror the executor's SELECT list
+    // exactly; a mismatch renders empty columns and silently drops returned values.
+    code: "payroll-cost-summary",
+    name: "Payroll Cost Summary",
+    category: "Payroll",
+    subcategory: "Cost Analysis",
+    description: "Headcount and gross/net cost with employer PF and ESIC, aggregated by branch, process and department for a payroll month",
+    rowGrain: "One row per branch per process per department per payroll month",
+    primaryKey: ["branch_name", "process_name", "department_name", "run_month"],
+    columns: [
+      { key: "branch_name", label: "Branch", format: "text", width: 140 },
+      { key: "process_name", label: "Process", format: "text", width: 160 },
+      { key: "department_name", label: "Department", format: "text", width: 180 },
+      { key: "run_month", label: "Month", format: "text", width: 90 },
+      { key: "employee_count", label: "Headcount", format: "number", width: 100, align: "right" },
+      { key: "total_gross", label: "Total Gross", format: "currency", width: 130, align: "right", sensitive: true },
+      { key: "total_pf_employer", label: "Employer PF", format: "currency", width: 130, align: "right", sensitive: true },
+      { key: "total_esic_employer", label: "Employer ESIC", format: "currency", width: 130, align: "right", sensitive: true },
+      { key: "total_ctc", label: "Total Cost to Company", format: "currency", width: 150, align: "right", sensitive: true },
+      { key: "total_net", label: "Total Net", format: "currency", width: 130, align: "right", sensitive: true },
+    ],
+    filters: [F_MONTH, F_BRANCH, F_PROCESS, F_DEPT],
+    // Explicit rather than ROLES_PAYROLL: the nav item exposes this to payroll_head,
+    // who is not in that set and would have been denied a report they can see listed.
+    viewRoles: ["super_admin", "admin", "finance", "payroll", "payroll_head", "hr_head"],
+    exportRoles: ["super_admin", "admin", "finance", "payroll", "payroll_head", "hr_head"],
+    sourceTables: ["salary_prep_line", "salary_prep_run", "employees", "branch_master", "process_master", "department_master"],
+    calculationNotes:
+      "total_ctc is total_gross + employer PF + employer ESIC — employer-side statutory " +
+      "cost only. It is not the employee's contracted CTC and will not reconcile against " +
+      "ctc_offered. Rows with zero money are real: gross_salary is 0 on a large share of " +
+      "salary_prep_line rows, so roughly half the groups in a month total zero while the " +
+      "month's overall total is correct. Verified against mas_hrms for 2026-07: 146 groups, " +
+      "70 with non-zero gross, summing to 14,965,032.41 which matches the run total exactly.",
+    branchScoped: true,
+    processScoped: true,
+    sensitivityLevel: "restricted",
+    containsPII: false,
+    containsFinancialData: true,
+    availabilityStatus: "validated",
+  },
+
+  {
     code: "ytd-salary-summary",
     name: "Year-to-Date Salary Summary",
     category: "Payroll",

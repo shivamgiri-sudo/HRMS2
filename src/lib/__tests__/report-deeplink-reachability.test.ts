@@ -49,43 +49,20 @@ describe("report deep links", () => {
     expect(links.map(l => l.code)).toContain("break-session-log");
   });
 
-  /**
-   * Known-broken, deliberately not fixed here.
-   *
-   * Payroll → Cost Summary (/payroll/cost-summary) has a working backend executor
-   * registered as "payroll-cost-summary", but the code is missing from the frontend
-   * catalog AND from the backend one, so the menu item is a dead link for the
-   * super_admin / payroll_head / finance roles that can see it — the same defect as
-   * the break report, found by this test on the day it was written.
-   *
-   * Left recorded rather than corrected because payroll changes need explicit
-   * sign-off, and writing a catalog entry means choosing the columns users will be
-   * shown. Removing this entry is the fix; it must not be extended to excuse a new
-   * break.
-   */
-  const KNOWN_UNREGISTERED = new Set(["payroll-cost-summary"]);
-
   it("only deep-links to reports the library can actually list", () => {
+    // This started with one exemption. Payroll → Cost Summary had a working backend
+    // executor but no catalog entry on either side, so it was a dead link for exactly
+    // the roles that could see it — found by this test on the day it was written, and
+    // since registered. There is no allowlist now, and adding one would defeat the
+    // point: a deep link with no catalog entry is always a dead menu item.
     const known = new Set(REPORT_CATALOG.map(r => r.code));
-    const broken = links.filter(l => !known.has(l.code) && !KNOWN_UNREGISTERED.has(l.code));
+    const broken = links.filter(l => !known.has(l.code));
     expect(
       broken,
       `these routes deep-link to report codes missing from REPORT_CATALOG: ${
         broken.map(b => `${b.path} → ${b.code}`).join(", ")
       }`,
     ).toEqual([]);
-  });
-
-  it("still reports every known-unregistered code as genuinely unregistered", () => {
-    // If one of these is fixed, this fails and the exemption gets deleted, so the
-    // allowlist cannot quietly outlive the bug it documents.
-    const known = new Set(REPORT_CATALOG.map(r => r.code));
-    for (const code of KNOWN_UNREGISTERED) {
-      expect(
-        known.has(code),
-        `${code} is now in REPORT_CATALOG — remove it from KNOWN_UNREGISTERED`,
-      ).toBe(false);
-    }
   });
 
   it("gives every nav item that points at a report route a resolving destination", () => {
