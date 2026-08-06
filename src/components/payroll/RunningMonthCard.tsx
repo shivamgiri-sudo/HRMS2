@@ -105,13 +105,55 @@ export function RunningMonthCard({
 
   if (!rs) return <div className="rounded-2xl border border-slate-200 p-6 text-center text-sm text-slate-500">No running salary data for {runMonth}.</div>;
 
+  /**
+   * APR provenance.
+   *
+   * Operations Executives are meant to be judged on dialler net login, but the
+   * attendance engine falls back to the biometric punch on any day APR has
+   * nothing for — without that, the ~626 of 829 who never appear in the feed
+   * would read as absent every day. The fallback is right for pay and was
+   * invisible here, so the headline now counts only APR-verified days and the
+   * rest is stated plainly underneath.
+   *
+   * Everyone else, and every finalized month, renders exactly as before.
+   */
+  const aprGated = rs.apr_eligible === true;
+  const verifiedDays = Number(rs.apr_verified_payable_days ?? 0);
+  const fallbackDays = Number(rs.fallback_payable_days ?? 0);
+  const fallbackAmount = Number(rs.fallback_salary_till_date ?? 0);
+  const noDataDays = Number(rs.apr_no_data_days ?? 0);
+  const headlineAmount = aprGated ? rs.apr_verified_salary_till_date : rs.earned_salary_till_date;
+  // Zero would read as "earned nothing" rather than "not evidenced", which is
+  // the exact misreading this card exists to prevent.
+  const nothingVerified = aprGated && verifiedDays === 0;
+
   return (
     <div className="rounded-2xl border border-indigo-200 bg-gradient-to-br from-white via-white to-[#e8f2fc] p-5 shadow-sm">
       <div className="flex items-start justify-between mb-4">
         <div>
-          <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">Running Month Earned</p>
-          <p className="mt-1 text-2xl font-bold text-slate-950">{amount(INR(rs.earned_salary_till_date))}</p>
-          <p className="text-xs text-slate-500 mt-0.5">Net (after deductions): <span className="font-semibold text-slate-800">{amount(INR(rs.earned_net_till_date))}</span></p>
+          <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">
+            Running Month Earned{aprGated ? " · APR-verified" : ""}
+          </p>
+          {nothingVerified ? (
+            <p className="mt-1 text-lg font-bold text-amber-700">No APR data for this month</p>
+          ) : (
+            <p className="mt-1 text-2xl font-bold text-slate-950">{amount(INR(headlineAmount))}</p>
+          )}
+          <p className="text-xs text-slate-500 mt-0.5">
+            Net (after deductions){aprGated && fallbackDays > 0 ? ", all days" : ""}:{" "}
+            <span className="font-semibold text-slate-800">{amount(INR(rs.earned_net_till_date))}</span>
+          </p>
+          {aprGated && fallbackDays > 0 && (
+            <p className="mt-1 text-xs font-medium text-amber-700">
+              {fallbackDays} {fallbackDays === 1 ? "day" : "days"} not APR-verified —{" "}
+              {amount(INR(fallbackAmount))}, paid from biometric punches.
+            </p>
+          )}
+          {aprGated && noDataDays > 0 && (
+            <p className="mt-0.5 text-[11px] text-slate-500">
+              {noDataDays} {noDataDays === 1 ? "day" : "days"} with neither APR nor a punch — awaiting WFM resolution, not yet deducted.
+            </p>
+          )}
           {dataUpdatedAt > 0 && (
             <p className="text-[10px] text-slate-400 mt-1">
               {rs.is_finalized && !rs.is_draft
@@ -128,14 +170,19 @@ export function RunningMonthCard({
       </div>
       <div className="grid grid-cols-4 gap-3 text-center border-t border-indigo-100 pt-4">
         {[
-          { label: "Payable Days", value: rs.earned_payable_days },
-          { label: "Eligible Weekoffs", value: rs.eligible_weekoff_till_date },
-          { label: "Eligible Holidays", value: rs.eligible_holiday_till_date },
-          { label: "LWP (MTD)", value: rs.lwp_till_date ?? 0 },
+          {
+            label: aprGated ? "Payable Days (APR)" : "Payable Days",
+            value: aprGated ? verifiedDays : rs.earned_payable_days,
+            sub: aprGated && fallbackDays > 0 ? `+${fallbackDays} unverified` : null,
+          },
+          { label: "Eligible Weekoffs", value: rs.eligible_weekoff_till_date, sub: null },
+          { label: "Eligible Holidays", value: rs.eligible_holiday_till_date, sub: null },
+          { label: "LWP (MTD)", value: rs.lwp_till_date ?? 0, sub: null },
         ].map(item => (
           <div key={item.label}>
             <p className="text-base font-bold text-slate-800">{item.value}</p>
             <p className="text-[10px] text-slate-500 mt-0.5">{item.label}</p>
+            {item.sub && <p className="text-[10px] font-medium text-amber-700 mt-0.5">{item.sub}</p>}
           </div>
         ))}
       </div>

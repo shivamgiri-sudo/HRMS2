@@ -97,6 +97,26 @@ export interface RunningSalary {
   is_finalized?: boolean;
   /** True when the run is still in draft/processing — calculated but not yet locked. */
   is_draft?: boolean;
+
+  /**
+   * APR provenance — present only for employees the attendance engine judges on
+   * the dialler feed (Operations Executives).
+   *
+   * These split the SAME earned figure; they never change it. `apr_verified_*`
+   * plus `fallback_*` add back to `earned_salary_till_date` exactly. A day is
+   * unverified when the employee had no APR row and the engine classified them
+   * on their biometric punch instead — which is what payroll will pay, but is
+   * not evidence from the source their designation is configured against.
+   *
+   * Null (and `apr_eligible: false`) for everyone else, and for finalized months.
+   */
+  apr_eligible?: boolean;
+  apr_verified_payable_days?: number | null;
+  apr_verified_salary_till_date?: number | null;
+  fallback_payable_days?: number | null;
+  fallback_salary_till_date?: number | null;
+  /** Days where neither APR nor a punch had anything — held at lwp 0.00 pending WFM. */
+  apr_no_data_days?: number | null;
 }
 
 export interface PayslipSummary {

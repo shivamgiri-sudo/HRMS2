@@ -30,6 +30,13 @@ export async function computeRunningSalary(
   professional_tax: number;
   esic_applicable: boolean;
   gross_monthly: number;
+  // ── APR provenance (display only — see the split below) ────────────────────
+  apr_eligible: boolean;
+  apr_verified_payable_days: number | null;
+  apr_verified_salary_till_date: number | null;
+  fallback_payable_days: number | null;
+  fallback_salary_till_date: number | null;
+  apr_no_data_days: number | null;
 }> {
   // Use IST date so month boundaries align with stored dates (DB datetimes are UTC-shifted)
   const istOffset = 5.5 * 60 * 60 * 1000;
@@ -42,6 +49,8 @@ export async function computeRunningSalary(
   // Get employee salary info
   const [empRows] = await db.execute<RowDataPacket[]>(
     `SELECT e.branch_id, e.process_id,
+            e.designation_id, e.department_id,
+            dm.designation_name, dp.dept_name,
             esa.ctc_annual,
             esa.structure_id,
             ss.basic_pct, ss.hra_pct,
@@ -50,6 +59,8 @@ export async function computeRunningSalary(
        JOIN employee_salary_assignment esa ON esa.employee_id = e.id AND esa.active_status = 1
        JOIN salary_structure_master ss     ON ss.id = esa.structure_id
        LEFT JOIN branch_master bm          ON bm.id = e.branch_id
+       LEFT JOIN designation_master dm     ON dm.id = e.designation_id
+       LEFT JOIN department_master dp      ON dp.id = e.department_id
       WHERE e.id = ?
       LIMIT 1`,
     [employeeId],
@@ -138,7 +149,7 @@ export async function computeRunningSalary(
   // ── Attendance up to today ────────────────────────────────────────────────
   const tillDate = today < monthEnd ? today : monthEnd;
   const [attRows] = await db.execute<RowDataPacket[]>(
-    `SELECT attendance_status, lwp_value, record_date
+    `SELECT attendance_status, lwp_value, record_date, attendance_source, source_system
        FROM attendance_daily_record
       WHERE employee_id = ?
         AND DATE(CONVERT_TZ(record_date, '+00:00', '+05:30')) BETWEEN ? AND ?`,
@@ -150,7 +161,30 @@ export async function computeRunningSalary(
   let lwpTillDate = 0;
   let weekoffRosteredTillDate = 0;
 
+  // Where each paid day's evidence came from.
+  //
+  // An APR-eligible employee is meant to be judged on dialler net login, but
+  // attendance-engine.service.ts:809-828 falls back to the biometric punch on any
+  // day APR has nothing for — otherwise the ~626 of 829 Operations Executives who
+  // are absent from the dialler feed would be marked absent, lwp 1.00, every day.
+  // That fallback is correct for pay and invisible on screen, which is what these
+  // counters exist to fix. They change no arithmetic.
+  let fallbackPaidDays = 0;   // paid day value classified on a biometric punch
+  let aprNoDataDays = 0;      // neither source had anything (missing_punch)
+
   for (const r of attRows as any[]) {
+    const source = String(r.attendance_source ?? "");
+    const sourceSystem = String(r.source_system ?? "");
+    // Paid day value this row contributes, mirroring the switch below.
+    const paidValue =
+      r.attendance_status === "present" || r.attendance_status === "late" ? 1
+        : r.attendance_status === "half_day" ? 0.5
+          : 0;
+    // leave_approved is an HR decision, not a feed reading, so it is never
+    // counted as unverified — only days whose status was decided by a punch are.
+    if (paidValue > 0 && source === "biometric") fallbackPaidDays += paidValue;
+    if (sourceSystem === "apr_no_activity") aprNoDataDays += 1;
+
     switch (r.attendance_status) {
       case "present":        presentTillDate += 1; break;
       case "late":           presentTillDate += 1; break;
@@ -321,6 +355,36 @@ export async function computeRunningSalary(
     pfOptOut, esicOptOut,
   });
 
+  // ── APR provenance split ──────────────────────────────────────────────────
+  //
+  // Display only. The verified figure is the existing total MINUS the fallback
+  // share, never a second formula, so the two always add back to exactly what
+  // payroll will pay. Week-off and holiday entitlement and approved incentives
+  // stay on the verified side: none of them is a reading off the dialler feed.
+  //
+  // Resolved through the engine's own isAprEligible rather than a fresh regex.
+  // Three Operations-Executive tests already exist in this codebase and they
+  // disagree with each other; a fourth would be the worst of both.
+  let aprEligible = false;
+  try {
+    const { attendanceEngineService } = await import("../wfm/attendance-engine.service.js");
+    aprEligible = await attendanceEngineService.isAprEligible(
+      emp.designation_id ?? null,
+      emp.department_id ?? null,
+      emp.process_id ?? null,
+      String(emp.dept_name ?? "").toLowerCase(),
+      String(emp.designation_name ?? "").toLowerCase(),
+    );
+  } catch {
+    // Provenance is a label on the number, not the number. If eligibility cannot
+    // be resolved, report no APR context rather than failing the salary read.
+    aprEligible = false;
+  }
+
+  const fallbackSalaryTillDate = aprEligible
+    ? (monthlyGross / daysInMonth) * fallbackPaidDays
+    : 0;
+
   return {
     earned_payable_days: cappedEarned,
     eligible_weekoff_till_date: eligibleWeekoffTillDate,
@@ -336,6 +400,18 @@ export async function computeRunningSalary(
     professional_tax: Math.round(earnedCalc.professional_tax * 100) / 100,
     esic_applicable: !esicOptOut && monthlyGross <= esicWageLimit,
     gross_monthly: Math.round(monthlyGross * 100) / 100,
+    apr_eligible: aprEligible,
+    apr_verified_payable_days: aprEligible
+      ? Math.round(Math.max(0, cappedEarned - fallbackPaidDays) * 10) / 10
+      : null,
+    apr_verified_salary_till_date: aprEligible
+      ? Math.round(Math.max(0, earnedSalaryTillDate - fallbackSalaryTillDate) * 100) / 100
+      : null,
+    fallback_payable_days: aprEligible ? Math.round(fallbackPaidDays * 10) / 10 : null,
+    fallback_salary_till_date: aprEligible
+      ? Math.round(fallbackSalaryTillDate * 100) / 100
+      : null,
+    apr_no_data_days: aprEligible ? aprNoDataDays : null,
   };
 }
 
@@ -380,5 +456,11 @@ function _zeroResult() {
     professional_tax: 0,
     esic_applicable: false as boolean,
     gross_monthly: 0,
+    apr_eligible: false,
+    apr_verified_payable_days: null as number | null,
+    apr_verified_salary_till_date: null as number | null,
+    fallback_payable_days: null as number | null,
+    fallback_salary_till_date: null as number | null,
+    apr_no_data_days: null as number | null,
   };
 }

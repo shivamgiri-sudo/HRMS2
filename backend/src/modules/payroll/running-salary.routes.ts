@@ -138,6 +138,13 @@ async function getFinalizedLineForMonth(
   projected_payable_days: number;
   gross_monthly: number;
   esic_applicable: boolean;
+  // APR provenance, always inert here — see the note at the return below.
+  apr_eligible: boolean;
+  apr_verified_payable_days: number | null;
+  apr_verified_salary_till_date: number | null;
+  fallback_payable_days: number | null;
+  fallback_salary_till_date: number | null;
+  apr_no_data_days: number | null;
 } | null> {
   const { db } = await import("../../db/mysql.js");
   const [rows] = await db.execute<RowDataPacket[]>(
@@ -223,6 +230,16 @@ async function getFinalizedLineForMonth(
     projected_payable_days:     payableDays,
     gross_monthly:              grossSalary,
     esic_applicable:            Number(row.esic_employee ?? 0) > 0,
+    // A finalized month is never gated on APR provenance. The money is already
+    // decided and, once locked, paid — telling the viewer it is "not APR-verified"
+    // would question a settled figure it can no longer change. The live estimate
+    // path is where the distinction is actionable.
+    apr_eligible:                 false,
+    apr_verified_payable_days:    null,
+    apr_verified_salary_till_date: null,
+    fallback_payable_days:        null,
+    fallback_salary_till_date:    null,
+    apr_no_data_days:             null,
   };
 }
 
