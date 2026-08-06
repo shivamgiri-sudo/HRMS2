@@ -26,6 +26,8 @@ export type AccountIntent =
   | 'profile'
   | 'salary'
   | 'leave'
+  | 'leave_status'
+  | 'holidays'
   | 'attendance'
   | 'roster'
   | 'documents'
@@ -35,6 +37,7 @@ export type AccountIntent =
   | 'loans'
   | 'reimbursements'
   | 'journey'
+  | 'resignation'
   | 'help'
   | 'scope_violation'
   | 'unknown';
@@ -54,6 +57,8 @@ const INTENT_HISTORY_LABEL: Partial<Record<AccountIntent, string>> = {
   profile: 'their profile details',
   salary: 'their salary or payslip',
   leave: 'their leave balance',
+  leave_status: 'the status of a leave request',
+  holidays: 'upcoming company holidays',
   attendance: 'their attendance',
   roster: 'their shift or roster',
   documents: 'their documents',
@@ -63,6 +68,7 @@ const INTENT_HISTORY_LABEL: Partial<Record<AccountIntent, string>> = {
   loans: 'their loan or advance recovery',
   reimbursements: 'their reimbursement claims',
   journey: 'their employment history',
+  resignation: 'the status of their resignation',
 };
 
 /**
@@ -95,8 +101,20 @@ const INTENTS: Array<{ intent: AccountIntent; patterns: RegExp[] }> = [
   // anyone else gets only themselves.
   { intent: 'coach', patterns: [/\bcoach\b/i, /\bhow am i doing\b/i, /\bmy performance\b/i, /\bperformance review\b/i, /\bmotivate\b/i, /\bmotivation\b/i, /\bmy progress\b/i, /\banaly[sz]e (?:me|my (?:data|performance|work|record|team))\b/i, /\bhow can i improve\b/i, /\bwhere (?:do i stand|am i lagging)\b/i, /\bhigh ?lights?\b/i, /\blow ?lights?\b/i, /\bstatus of (?:my|the) team\b/i, /\bmy team(?:'s)? (?:status|performance|summary)\b/i, /\bhow is my team\b/i, /\bteam summary\b/i, /\bmeri performance\b/i, /\bkaisa (?:kaam )?kar raha hoon\b/i, /\bmujhe guide karo\b/i] },
   { intent: 'salary', patterns: [/\bsalary\b/i, /\bpayslip\b/i, /\bpay slip\b/i, /\bnet pay\b/i, /\bgross pay\b/i, /\btake[ -]?home\b/i, /\bctc\b/i, /\bearnings?\b/i, /\bdeductions?\b/i, /meri salary/i, /mera payslip/i, /kitna pay/i] },
+  // Checked before 'leave' (below): "status of my leave"/"is my leave
+  // approved" contains "my leave" as a substring, which 'leave'.patterns's
+  // /\bmy leaves?\b/i would otherwise swallow, answering with a balance
+  // instead of a status. Same shadow-risk class documented throughout
+  // ai-howto-catalog.ts, fixed the same way — more specific intent first.
+  { intent: 'leave_status', patterns: [/\b(?:status|update)\s+of\s+my\s+leave\b/i, /\bmy\s+leave\s+(?:request\s+)?status\b/i, /\b(?:is|has)\s+my\s+leave\s+(?:request\s+)?(?:been\s+)?(?:approved|rejected|pending)\b/i, /\bwhen\s+will\s+my\s+leave\s+(?:be\s+)?approved\b/i, /\bwhy\s+(?:was|is)\s+my\s+leave\s+(?:rejected|still\s+pending)\b/i] },
   { intent: 'leave', patterns: [/\bleave balance\b/i, /\bleaves? (?:left|remaining)\b/i, /\bcasual leave\b/i, /\bsick leave\b/i, /\bprivilege leave\b/i, /\bannual leave\b/i, /\bmy leaves?\b/i, /meri leave/i, /kitni chhutti/i, /chhutti (?:baki|remaining)/i] },
   { intent: 'attendance', patterns: [/\battendance\b/i, /\bpunch(?:ed|ing)?\b/i, /\bclock(?:ed)?[ -]?in\b/i, /\babsent\b/i, /\bpresent days?\b/i, /\blate marks?\b/i, /\blwp\b/i, /\bworking hours?\b/i, /how many days (?:was i|did i) (?:present|attend)/i, /meri attendance/i, /mera punch/i, /kitne din (?:present|attend)/i, /aaj (?:ka )?punch/i, /aaj present/i, /kal (?:ka )?attendance/i] },
+  // Checked before 'roster' (below): its own /\bholiday\b/i alias is a
+  // bare substring match, so it would otherwise swallow these more
+  // specific "give me the holiday calendar" phrasings too. Anything NOT
+  // matching one of these five specific constructions still falls through
+  // to roster's catch-all, unchanged.
+  { intent: 'holidays', patterns: [/\bnext\s+(?:public\s+)?holiday\b/i, /\bupcoming\s+holidays?\b/i, /\bpublic\s+holidays?\b/i, /\bholiday\s+(?:list|calendar)\b/i, /\bcompany\s+holidays?\b/i] },
   // "end time" and "start time" are how people ask about their shift without
   // using the word shift at all.
   { intent: 'roster', patterns: [/\broster\b/i, /\bmy shift\b/i, /\bshift timing\b/i, /\b(?:start|end|log ?out|sign ?off|closing) time\b/i, /\bwhat time (?:do i|does my shift) (?:end|finish|start|begin)\b/i, /\bwhen (?:do i|does my shift) (?:end|finish|start)\b/i, /\bweek(?:ly)? off\b/i, /\btomorrow(?:'s)? shift\b/i, /\bholiday\b/i, /meri shift/i, /mera roster/i, /kal ki shift/i, /week off kab/i, /chhutti kab/i] },
@@ -110,6 +128,7 @@ const INTENTS: Array<{ intent: AccountIntent; patterns: RegExp[] }> = [
   { intent: 'loans', patterns: [/\bloan\b/i, /\badvance recovery\b/i, /\binstallments?\b/i, /\bemi\b/i] },
   { intent: 'reimbursements', patterns: [/\breimbursement\b/i, /\bexpense claim\b/i, /\bclaim status\b/i, /\bmedical claim\b/i, /\blta claim\b/i] },
   { intent: 'journey', patterns: [/\bemployee journey\b/i, /\bemployment history\b/i, /\bmy history\b/i, /\bcareer history\b/i, /\bjoining history\b/i] },
+  { intent: 'resignation', patterns: [/\bmy resignation\b/i, /\bresignation status\b/i, /\blast working day\b/i, /\bnotice period\b/i, /\bwithdraw my resignation\b/i, /\bhas my resignation\b/i] },
   { intent: 'profile', patterns: [/\bmy profile\b/i, /\bmy details\b/i, /\bemployee code\b/i, /\bjoining date\b/i, /\bdesignation\b/i, /\breporting manager\b/i, /\bmy branch\b/i, /\bmy process\b/i] },
   { intent: 'account_overview', patterns: [/\bmy account\b/i, /\baccount summary\b/i, /\bmy summary\b/i, /\boverview\b/i, /\bwhat is happening with my account\b/i, /\bwhat needs my attention\b/i] },
   { intent: 'help', patterns: [/^help$/i, /\bwhat can you do\b/i, /\bhow can you help\b/i, /\bshow capabilities\b/i] },
@@ -152,11 +171,26 @@ const CROSS_EMPLOYEE_SUBJECT_REFERENCE = new RegExp(
 );
 
 const CROSS_EMPLOYEE_PATTERNS = [
-  /\b(other|another|someone else(?:'s)?|his|her|their)\s+(employee\s+)?(salary|attendance|leave|profile|details|documents|payslip)\b/i,
+  // "resignation" added alongside the new resignation intent below — without
+  // it, "his resignation status" or "another employee's resignation" would
+  // reach the resignation intent unblocked, and since that handler always
+  // queries the caller's own exit_request, it would silently answer about
+  // the wrong person instead of refusing (not a data leak — it can't return
+  // someone else's row — but a confusing wrong answer all the same).
+  //
+  // "(employee\s+)?" widened to "(employee'?s?\s+)?": found while adding the
+  // line above — "another employee's salary" (with the possessive
+  // apostrophe) silently failed to match this pattern at all (the literal
+  // "employee\s+" requires whitespace immediately after "employee", but
+  // "employee's" has "'s" there instead), for every subject, not just the
+  // new one — a pre-existing gap in the cross-employee guard, not something
+  // introduced here. Confirmed live: 'another employee's salary' returned
+  // false against the old pattern.
+  /\b(other|another|someone else(?:'s)?|his|her|their)\s+(employee'?s?\s+)?(salary|attendance|leave|profile|details|documents|payslip|resignation)\b/i,
   CROSS_EMPLOYEE_SUBJECT_REFERENCE,
   /\bwhich employees?\b/i,
-  /\bwhose\s+(?:salary|attendance|leave|profile|details|documents?|payslip|shift|loan|reimbursement)\b/i,
-  /\bwho (?:has|is|was|needs|did)\b[^?.]{0,120}\b(?:salary|attendance|leave|profile|documents?|payslip|absent|late|lwp|shift|week[ -]?off|pending|approval|loan|reimbursement)\b/i,
+  /\bwhose\s+(?:salary|attendance|leave|profile|details|documents?|payslip|shift|loan|reimbursement|resignation)\b/i,
+  /\bwho (?:has|is|was|needs|did)\b[^?.]{0,120}\b(?:salary|attendance|leave|profile|documents?|payslip|absent|late|lwp|shift|week[ -]?off|pending|approval|loan|reimbursement|resign(?:ed|ation)?)\b/i,
   /\bemployee\s+(?:code|id)\s*[:#-]?\s*[a-z0-9_-]+\b/i,
 ];
 
@@ -320,6 +354,24 @@ async function leave(employeeId: string): Promise<{ year: number; rows: RowDataP
   };
 }
 
+/**
+ * Recent leave *requests* with their approval status — distinct from
+ * leave() above, which answers "how many days do I have left", not "what
+ * happened to the request I submitted". Mirrors leave.service.ts's own
+ * listRequests() join exactly (leave_request lr LEFT JOIN leave_type_master),
+ * scoped to the caller the same way GET /api/leave/requests/my forces
+ * employeeId server-side — leave.routes.ts:120-129.
+ */
+async function leaveRequests(employeeId: string): Promise<RowDataPacket[]> {
+  return rows('leave_requests', `SELECT lr.id, lr.from_date, lr.to_date, lr.total_days, lr.status, lr.applied_at,
+      lt.leave_name, lt.leave_code
+    FROM leave_request lr
+    LEFT JOIN leave_type_master lt ON lt.id = lr.leave_type_id
+    WHERE lr.employee_id = ?
+    ORDER BY lr.applied_at DESC
+    LIMIT 10`, [employeeId]);
+}
+
 type AttendanceScope = 'today' | 'yesterday' | 'previous_month' | 'month_to_date';
 
 function attendanceScope(question: string): AttendanceScope {
@@ -472,6 +524,24 @@ async function roster(employeeId: string): Promise<RowDataPacket[]> {
     ORDER BY rda.roster_date`, [employeeId]);
 }
 
+/**
+ * Upcoming holidays scoped to the employee's own branch, mirroring
+ * leave.service.ts's listHolidays() query shape (SELECT * FROM
+ * leave_holiday_master WHERE active_status = 1) but filtered to future
+ * dates and branch-relevant rows only — a company-wide holiday has
+ * branch_id NULL (leave_holiday_master.branch_id, 006_leave.sql:21), a
+ * branch-specific one is scoped to that branch.
+ */
+async function holidays(employeeId: string): Promise<RowDataPacket[]> {
+  return rows('holidays', `SELECT holiday_name, holiday_date, holiday_type
+    FROM leave_holiday_master
+    WHERE active_status = 1
+      AND holiday_date >= CURDATE()
+      AND (branch_id IS NULL OR branch_id = (SELECT branch_id FROM employees WHERE id = ?))
+    ORDER BY holiday_date ASC
+    LIMIT 5`, [employeeId]);
+}
+
 async function documents(employeeId: string): Promise<RowDataPacket[]> {
   return rows('documents', `SELECT doc_type, doc_name, verified, created_at
     FROM employee_documents WHERE employee_id = ? ORDER BY created_at DESC LIMIT 100`, [employeeId]);
@@ -519,6 +589,25 @@ async function reimbursements(employeeId: string): Promise<RowDataPacket[]> {
 async function journey(employeeId: string): Promise<RowDataPacket[]> {
   return rows('journey', `SELECT event_type, event_date, description, module
     FROM employee_journey_log WHERE employee_id = ? ORDER BY event_date DESC, created_at DESC LIMIT 12`, [employeeId]);
+}
+
+/**
+ * Most recent exit_request row for this employee — status, notice period
+ * and last-working-day fields only. Deliberately excludes anything from
+ * full_final_calculation (gratuity, F&F) — per CLAUDE.md's payroll safety
+ * rules that table is draft/provisional by design, and no self-service
+ * backend route reads it at all (verified: exit.routes.ts's /ff endpoints
+ * are admin/hr/finance/payroll only), so there's no existing self-scoped
+ * query to safely mirror the way this one mirrors leave.routes.ts:120-129.
+ */
+async function resignation(employeeId: string): Promise<RowDataPacket> {
+  return one('resignation', `SELECT status, exit_type, exit_sub_type,
+      last_working_day_proposed, last_working_day_confirmed,
+      notice_period_days, notice_start_date, notice_end_date, submitted_at
+    FROM exit_request
+    WHERE employee_id = ?
+    ORDER BY created_at DESC
+    LIMIT 1`, [employeeId]);
 }
 
 function helpText(): string {
@@ -679,6 +768,22 @@ ${body}`, startedAt, coachInsights,
       [{ key: 'leave-types', label: `${data.rows.length} leave types found`, count: data.rows.length, severity: 'low' }], [action('Open leave dashboard', '/leaves')]);
   }
 
+  if (intent === 'leave_status') {
+    const data = await cached(userId, intent, () => leaveRequests(employeeId));
+    if (!data.length) return handled(intent, 'You have no leave requests on record.', startedAt, [], [action('Open leave dashboard', '/leaves')], 0.5);
+    const lines = data.map((row) => `• ${t(row.leave_name, t(row.leave_code, 'Leave'))}: ${date(row.from_date)} to ${date(row.to_date)} (${n(row.total_days)} day${n(row.total_days) === 1 ? '' : 's'}) — ${t(row.status)}, applied ${date(row.applied_at)}`);
+    const pending = data.filter((row) => String(row.status) === 'pending').length;
+    return handled(intent, `Your recent leave requests:\n\n${lines.join('\n')}`, startedAt,
+      [{ key: 'leave-requests-pending', label: `${pending} pending`, count: pending, severity: pending ? 'medium' : 'low' }], [action('Open leave dashboard', '/leaves')]);
+  }
+
+  if (intent === 'holidays') {
+    const data = await cached(userId, intent, () => holidays(employeeId));
+    if (!data.length) return handled(intent, 'No upcoming holidays are published yet. Please check with HR.', startedAt, [], [action('Open calendar', '/calendar')], 0.5);
+    const lines = data.map((row) => `• ${date(row.holiday_date)}: ${t(row.holiday_name)}`);
+    return handled(intent, `Upcoming holidays:\n\n${lines.join('\n')}`, startedAt, [], [action('Open calendar', '/calendar')]);
+  }
+
   if (intent === 'attendance') {
     const scope = attendanceScope(question);
     const data = await cached(userId, `${intent}:${scope}`, () => attendance(employeeId, question));
@@ -765,7 +870,10 @@ ${body}`, startedAt, coachInsights,
   if (intent === 'reimbursements') {
     const data = await cached(userId, intent, () => reimbursements(employeeId));
     if (!data.length) return handled(intent, 'No reimbursement claims are linked to your account.', startedAt, [], [action('Open reimbursements', '/payroll/reimbursements')]);
-    const lines = data.slice(0, 8).map((row) => `• ${t(row.claim_type)} (${t(row.claim_month)}): ${t(row.status)}, claimed ${money(row.amount_claimed)}${row.amount_approved != null ? `, approved ${money(row.amount_approved)}` : ''}`);
+    // rejection_reason is already selected by reimbursements() below but was
+    // never rendered — a rejected claim showed only "rejected", with no way
+    // to see why without leaving the chat.
+    const lines = data.slice(0, 8).map((row) => `• ${t(row.claim_type)} (${t(row.claim_month)}): ${t(row.status)}, claimed ${money(row.amount_claimed)}${row.amount_approved != null ? `, approved ${money(row.amount_approved)}` : ''}${row.status === 'rejected' && row.rejection_reason ? ` — ${t(row.rejection_reason)}` : ''}`);
     // '/payroll/reimbursements' — the router-authoritative path; '/expenses'
     // is only a redirect shim to it, not the canonical route.
     return handled(intent, `Your recent reimbursement claims:\n\n${lines.join('\n')}`, startedAt,
@@ -777,6 +885,19 @@ ${body}`, startedAt, coachInsights,
     if (!data.length) return handled(intent, 'No employee journey events are available for your account yet.', startedAt, [], [action('Open my dashboard', '/my-dashboard')], 0.5);
     const lines = data.slice(0, 10).map((row) => `• ${date(row.event_date)} — ${t(row.event_type)}${row.description ? `: ${t(row.description)}` : ''}`);
     return handled(intent, `Your recent employee journey events:\n\n${lines.join('\n')}`, startedAt, [], [action('Open my dashboard', '/my-dashboard')]);
+  }
+
+  if (intent === 'resignation') {
+    const row = await cached(userId, intent, () => resignation(employeeId));
+    if (!row.status) return handled(intent, 'No resignation or exit request is on file for your account.', startedAt, [], [action('Open my resignation', '/exit/resignation')], 0.5);
+    const lastWorkingDay = row.last_working_day_confirmed ?? row.last_working_day_proposed;
+    return handled(intent, `Your resignation status is ${t(row.status)}${row.exit_sub_type ? ` (${t(row.exit_sub_type)})` : ''}.\n\n` +
+      `• Last working day: ${lastWorkingDay ? date(lastWorkingDay) : 'Not yet confirmed'}${row.last_working_day_confirmed ? ' (confirmed)' : row.last_working_day_proposed ? ' (proposed, pending confirmation)' : ''}\n` +
+      `• Notice period: ${n(row.notice_period_days)} days${row.notice_start_date && row.notice_end_date ? ` (${date(row.notice_start_date)} to ${date(row.notice_end_date)})` : ''}\n` +
+      `• Submitted: ${row.submitted_at ? date(row.submitted_at) : 'Not yet submitted'}`,
+      startedAt,
+      [{ key: 'resignation-status', label: t(row.status), severity: ['accepted', 'notice_serving', 'exited'].includes(String(row.status)) ? 'low' : 'medium' }],
+      [action('Open my resignation', '/exit/resignation')]);
   }
 
   if (intent === 'account_overview') {
