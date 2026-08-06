@@ -67,9 +67,7 @@ import mockDigilockerRouter from "./modules/ats/mock-digilocker.routes.js";
 import { queueRouter, queuePublicRouter } from "./modules/ats/queue.routes.js";
 import { exitRouter } from "./modules/exit/exit.routes.js";
 import { exitSecureRouter } from "./modules/exit/exit.secure.routes.js";
-import { exitCompatRouter } from "./modules/exit/exit.compat.routes.js";
 import { ffApprovalGuardCompatRouter } from "./modules/exit/ff-approval-guard.compat.routes.js";
-import { exitStatusGuardCompatRouter } from "./modules/exit/exit-status-guard.compat.routes.js";
 import { migrationRouter } from "./modules/migration/migration.routes.js";
 import { accessRouter } from "./modules/access/access.routes.js";
 import { orgRouter } from "./modules/org/org.routes.js";
@@ -201,6 +199,7 @@ import { employeeCodeGateRouter } from "./modules/ats/employee-code-gate.routes.
 import { payrollHRRouter } from "./modules/ats/payroll-hr.routes.js";
 import { branchHeadApprovalRouter } from "./modules/ats/branch-head-approval.routes.js";
 import { commandCentreRouter } from "./modules/ats/command-centre.routes.js";
+import { bmiBenchmarkRouter } from "./modules/ats/bmi-benchmark.routes.js";
 import { interviewRouter } from "./modules/ats/interview.routes.js";
 // bgvEnhancedRouter removed — duplicate UI, name-match functions migrated to bgv-verification.service.ts
 import bgvVerificationRouter from "./modules/ats/bgv-verification.routes.js";
@@ -410,9 +409,13 @@ app.use("/api/business-actions", businessActionsRouter);
 app.use("/api/onboarding/digilocker", digiLockerRouter);
 app.use("/api/ats-full-parity", atsFullParityRouter);
 app.use("/api/exit", exitSecureRouter);
-app.use("/api/exit", exitCompatRouter);
+// exitCompatRouter and exitStatusGuardCompatRouter used to be mounted here. Both were
+// entirely shadowed dead code — every route either defined was already registered by
+// exitSecureRouter above, and Express dispatches to the first matching handler. Their
+// intended protections (FSM-transition validity, clearance/F&F blockers on "exited") are
+// consolidated into exitSecureRouter's handler instead. The two files are kept, unmounted,
+// with a header comment — see exit.secure.routes.ts's handleExitStatusUpdate.
 app.use("/api/exit", ffApprovalGuardCompatRouter);
-app.use("/api/exit", exitStatusGuardCompatRouter);
 app.use("/api/exit", exitRouter);
 app.use("/api/migration", migrationRouter);
 app.use("/api/access", accessRouter);
@@ -572,6 +575,7 @@ app.use("/api/ats/employee-code", employeeCodeGateRouter);
 app.use("/api/ats/payroll-hr", payrollHRRouter);
 app.use("/api/ats/branch-head-approval", branchHeadApprovalRouter);
 app.use("/api/ats/command-centre", commandCentreRouter);
+app.use("/api/ats/bmi-benchmark", bmiBenchmarkRouter);
 app.use("/api/ats/interview", interviewRouter);
 // bgv-enhanced route removed — duplicate UI, functions migrated to canonical bgv-verification service
 app.use("/api/ats/candidate-portal", candidatePortalRouter);
