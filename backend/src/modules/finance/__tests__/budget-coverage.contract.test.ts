@@ -2,7 +2,7 @@ import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import { describe, expect, it } from "vitest";
-import { isInvalidCoverage } from "../../process-pnl/budget-coverage.service.js";
+import { isStalePlannedMarker } from "../../process-pnl/budget-coverage.service.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const backendRoot = path.resolve(__dirname, "../../../..");
@@ -27,47 +27,63 @@ describe("mandatory branch-budget Head/Sub-head coverage", () => {
   });
 
   /**
-   * Until 2026-08-06 submission required an explicit decision on every one of the 59
-   * active Sub-heads, plus a typed reason for each one the branch was not budgeting.
-   * A branch that budgets 15 Sub-heads had to justify the other 44, every month. On the
-   * live drafts that was 26 of 59 and 21 of 59 rows blocking purely for having no
-   * decision recorded — the budgets were complete, the paperwork was not.
+   * Head/Sub-head coverage does not gate submission, and must not start doing so again.
    *
-   * A branch is not required to budget against every Head/Sub-head, so it is no longer
-   * required to declare anything about the ones it skips. Asserted against the real
-   * predicate rather than by grepping the source, so the rule cannot drift while the
-   * strings still match.
+   * It originally required an explicit decision on every one of the 59 active Sub-heads
+   * plus a typed reason for each one the branch was not budgeting, so a branch budgeting
+   * 15 Sub-heads had to justify the other 44 every month. On the live drafts that was
+   * 26 of 59 and 21 of 59 rows blocking purely for having no decision recorded, and one
+   * budget with a single line was blocked on 58. Relaxing it to "only a stale planned
+   * marker blocks" still left 3 rows blocking across the same drafts, and those were not
+   * mandatory either. A branch budgets what it spends on and submits.
+   *
+   * Asserted against the submit path itself rather than by grepping for an error string,
+   * so a re-added gate fails here even if it is worded differently.
    */
-  describe("submission does not require a decision on every Sub-head", () => {
-    it("lets an untouched Sub-head through — no decision, no reason", () => {
-      expect(isInvalidCoverage({ planning_status: null, reason: null, budget_line_count: 0 })).toBe(false);
+  describe("Head/Sub-head coverage never blocks submission", () => {
+    const service = read("src/modules/process-pnl/budget-coverage.service.ts");
+
+    /** submitBudget's body, so assertions cannot be satisfied by getCoverage/saveCoverage. */
+    const submitBody = (() => {
+      const start = service.indexOf("async submitBudget(");
+      expect(start, "submitBudget not found").toBeGreaterThan(-1);
+      return service.slice(start);
+    })();
+
+    it("has no coverage completeness gate in the submit path", () => {
+      // Nothing may be thrown on account of a Head/Sub-head. This is the assertion that
+      // matters: it catches a re-added gate however it is worded or implemented.
+      const thrown = [...submitBody.matchAll(/throw new Error\(([\s\S]*?)\);/g)].map((m) => m[1]);
+      expect(thrown.length, "expected submitBudget to still throw for its real guards").toBeGreaterThan(0);
+      const coverageThrows = thrown.filter((message) => /sub-?head|coverage|decision/i.test(message));
+      expect(
+        coverageThrows,
+        `submitBudget must not reject a budget over Head/Sub-head coverage: ${coverageThrows.join(" | ")}`,
+      ).toEqual([]);
+
+      expect(submitBody).not.toContain("Complete all Head/Sub-head decisions before submission");
+      expect(submitBody).not.toMatch(/const\s+failures\s*=/);
     });
 
-    it("lets 'not planned' and 'not applicable' through without a reason", () => {
-      // saveCoverage still asks for a reason when someone deliberately records one of
-      // these; what changed is that submission no longer depends on it.
+    it("requires only a draft status and at least one budget line", () => {
+      expect(submitBody).toContain("Only a draft budget can be submitted");
+      expect(submitBody).toContain("Add at least one budget line before submitting");
+      expect(submitBody).toContain("FOR UPDATE");
+    });
+
+    it("treats a stale 'planned' marker as advisory, not a failure", () => {
+      // Still surfaced — a "planned" Sub-head with no amount is stale and a branch head
+      // reading it would be misled — but it is reported, never enforced.
+      expect(isStalePlannedMarker({ planning_status: "planned", budget_line_count: 0 })).toBe(true);
+      expect(isStalePlannedMarker({ planning_status: "planned", budget_line_count: 2 })).toBe(false);
+      expect(isStalePlannedMarker({ planning_status: null, budget_line_count: 0 })).toBe(false);
       for (const status of ["not_planned", "not_applicable"]) {
-        expect(isInvalidCoverage({ planning_status: status, reason: null, budget_line_count: 0 })).toBe(false);
-        expect(isInvalidCoverage({ planning_status: status, reason: "  ", budget_line_count: 0 })).toBe(false);
+        expect(isStalePlannedMarker({ planning_status: status, budget_line_count: 0 })).toBe(false);
       }
     });
 
-    it("still blocks a Sub-head marked 'planned' with no budget line", () => {
-      // The one real contradiction: the marker promises an amount the budget does not
-      // contain, and a branch head reading "planned" would expect one.
-      expect(isInvalidCoverage({ planning_status: "planned", reason: null, budget_line_count: 0 })).toBe(true);
-    });
-
-    it("passes a Sub-head that is planned and has its line", () => {
-      expect(isInvalidCoverage({ planning_status: "planned", reason: null, budget_line_count: 1 })).toBe(false);
-    });
-
-    it("keeps the transaction and row lock around the submit transition", () => {
-      const service = read("src/modules/process-pnl/budget-coverage.service.ts");
-      expect(service).toContain("FOR UPDATE");
-      expect(service).toContain("Add at least one budget line before submitting");
-      // The old rule's message must be gone, not merely unreachable.
-      expect(service).not.toContain("Complete all Head/Sub-head decisions before submission");
+    it("reports readiness from whether the budget has lines, not from decisions", () => {
+      expect(service).toContain("readyToSubmit: lineCount > 0");
     });
   });
 

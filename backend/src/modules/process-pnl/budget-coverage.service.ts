@@ -21,31 +21,21 @@ async function getBudgetOrThrow(budgetId: string) {
 }
 
 /**
- * Whether a Head/Sub-head row blocks submission.
+ * A Sub-head marked "planned" that has no budget line behind it.
  *
- * A branch is NOT required to budget against every Head/Sub-head, and as of
- * 2026-08-06 it is no longer required to *declare* anything about the ones it
- * skips either. Previously every one of the 59 active Sub-heads needed an
- * explicit decision plus a typed reason for each one left unbudgeted, which is
- * what made submission feel mandatory-everywhere: measured on the live drafts,
- * 26 of 59 and 21 of 59 rows were blocking purely for having no decision
- * recorded. An untouched Sub-head now simply means the branch is not budgeting
- * it.
+ * ADVISORY ONLY — this does not block submission and must not be made to. Head/
+ * Sub-head coverage stopped gating submission on 2026-08-06: a branch is not
+ * required to budget against every Head/Sub-head, nor to declare anything about
+ * the ones it skips, nor to resolve a leftover "planned" marker. Submission asks
+ * for one thing only, that the budget contains at least one line.
  *
- * One case still blocks, because it is a contradiction rather than a choice: a
- * Sub-head marked "planned" with no budget line behind it. That marker is a
- * promise the budget does not keep — usually the line was deleted after the
- * decision was recorded — and a branch head reading "planned" would expect an
- * amount. Clearing it means either adding the line or changing the decision.
- *
- * "not planned"/"not applicable" rows are deliberately not checked here: they
- * cannot be recorded against a Sub-head that has a line (saveCoverage refuses
- * it) and a missing reason no longer matters once the decision itself is
- * optional.
+ * The marker is still surfaced in the coverage summary because it is usually a
+ * leftover — the line was deleted after the decision was recorded — and a branch
+ * head reading "planned" with no amount is reading something stale. Measured on
+ * the live drafts when this became advisory: 3 rows across 3 budgets.
  */
-export function isInvalidCoverage(item: {
+export function isStalePlannedMarker(item: {
   planning_status: string | null | undefined;
-  reason: unknown;
   budget_line_count: number;
 }) {
   return item.planning_status === "planned" && item.budget_line_count <= 0;
@@ -98,7 +88,16 @@ async function getCoverage(budgetId: string) {
   const planned = items.filter((item) => item.planning_status === "planned").length;
   const notPlanned = items.filter((item) => item.planning_status === "not_planned").length;
   const notApplicable = items.filter((item) => item.planning_status === "not_applicable").length;
-  const invalid = items.filter((item) => isInvalidCoverage(item));
+  const stalePlanned = items.filter((item) => isStalePlannedMarker(item));
+  // Counted straight from the table rather than by summing budget_line_count: those
+  // counts come from a join on head/sub-head NAME, so a line whose text does not match
+  // the master would be invisible here and a budget that plainly has lines would be
+  // reported as having none.
+  const [lineRows] = await db.execute<RowDataPacket[]>(
+    "SELECT COUNT(*) AS total FROM finance_budget_line WHERE budget_id = ?",
+    [budgetId]
+  );
+  const lineCount = Number(lineRows[0]?.total ?? 0);
 
   return {
     items,
@@ -108,9 +107,12 @@ async function getCoverage(budgetId: string) {
       planned,
       notPlanned,
       notApplicable,
-      incomplete: invalid.length,
+      // Kept under the original key so existing callers keep working, but it no longer
+      // means "cannot submit" — it is the advisory stale-marker count.
+      incomplete: stalePlanned.length,
       completionPct: total ? Math.round((reviewed / total) * 10000) / 100 : 0,
-      readyToSubmit: total > 0 && invalid.length === 0,
+      // Mirrors the only real submit condition. Coverage decisions do not enter into it.
+      readyToSubmit: lineCount > 0,
     },
   };
 }
@@ -263,8 +265,25 @@ export const budgetCoverageService = {
         throw new Error("Only a draft budget can be submitted");
       }
 
+      // Head/Sub-head coverage does NOT gate submission. There is deliberately no
+      // completeness check here: not for undeclared Sub-heads, not for missing
+      // reasons, and not for a leftover "planned" marker with no line. A branch
+      // budgets what it spends on and submits. The coverage figures below are read
+      // only to describe the budget in the approval log.
+      //
+      // The one condition is that the budget contains something. saveDraft already
+      // refuses to save a budget with no lines, so this catches only a draft whose
+      // lines were removed by another route or session between save and submit.
+      const [lineCountRows] = await connection.execute<RowDataPacket[]>(
+        "SELECT COUNT(*) AS total FROM finance_budget_line WHERE budget_id = ?",
+        [budgetId]
+      );
+      if (Number(lineCountRows[0]?.total ?? 0) <= 0) {
+        throw new Error("Add at least one budget line before submitting");
+      }
+
       const [coverageRows] = await connection.execute<RowDataPacket[]>(
-        `SELECT h.head_name, s.sub_head_name, c.planning_status, c.reason,
+        `SELECT h.head_name, s.sub_head_name, c.planning_status,
                 COUNT(l.id) AS budget_line_count
            FROM finance_expense_head_master h
            JOIN finance_expense_sub_head_master s
@@ -275,41 +294,10 @@ export const budgetCoverageService = {
              ON l.budget_id = ? AND l.head = h.head_name
             AND COALESCE(l.sub_head,'') = s.sub_head_name
           WHERE h.active_status = 1
-          GROUP BY h.id, h.head_name, s.id, s.sub_head_name,
-                   c.planning_status, c.reason
+          GROUP BY h.id, h.head_name, s.id, s.sub_head_name, c.planning_status
           ORDER BY h.display_order, s.display_order`,
         [budgetId, budgetId]
       );
-      if (!coverageRows.length) {
-        throw new Error("No active Finance Head/Sub-head master is configured");
-      }
-
-      // A budget still has to contain something. saveDraft already refuses to save
-      // a budget with no lines, so this only catches a draft whose lines were
-      // removed by another route or session between save and submit.
-      const [lineCountRows] = await connection.execute<RowDataPacket[]>(
-        "SELECT COUNT(*) AS total FROM finance_budget_line WHERE budget_id = ?",
-        [budgetId]
-      );
-      if (Number(lineCountRows[0]?.total ?? 0) <= 0) {
-        throw new Error("Add at least one budget line before submitting");
-      }
-
-      const failures = coverageRows.filter((row) =>
-        isInvalidCoverage({
-          planning_status: row.planning_status ? String(row.planning_status) : null,
-          reason: row.reason,
-          budget_line_count: Number(row.budget_line_count ?? 0),
-        })
-      );
-      if (failures.length) {
-        const labels = failures.slice(0, 6).map(
-          (row) => `${row.head_name} / ${row.sub_head_name}`
-        );
-        throw new Error(
-          `These Sub-heads are marked "planned" but have no budget line. Add the line, or change the decision: ${labels.join(", ")}${failures.length > labels.length ? ` and ${failures.length - labels.length} more` : ""}`
-        );
-      }
 
       const [result] = await connection.execute<ResultSetHeader>(
         `UPDATE finance_budget_header
@@ -337,12 +325,21 @@ export const budgetCoverageService = {
          VALUES (?,?,'SUBMIT','draft','submitted',?,?,?)`,
         [
           randomUUID(), budgetId, actorUserId, actorRole,
-          // Was "completeness 100%", which is meaningless now that a decision is not
-          // required on every Sub-head. The reviewer needs to know how much of the
-          // catalogue this budget actually covers, so record that instead.
+          // Was "completeness 100%", which is meaningless now that coverage does not
+          // gate submission. The reviewer needs to know how much of the catalogue this
+          // budget actually covers, and whether any "planned" marker is stale.
           `${coverageRows.filter((row) => Number(row.budget_line_count ?? 0) > 0).length}` +
             ` of ${coverageRows.length} active Sub-heads budgeted` +
-            `; ${coverageRows.filter((row) => !row.planning_status).length} left undeclared`,
+            `; ${coverageRows.filter((row) => !row.planning_status).length} left undeclared` +
+            (coverageRows.some((row) => isStalePlannedMarker({
+              planning_status: row.planning_status ? String(row.planning_status) : null,
+              budget_line_count: Number(row.budget_line_count ?? 0),
+            }))
+              ? `; ${coverageRows.filter((row) => isStalePlannedMarker({
+                  planning_status: row.planning_status ? String(row.planning_status) : null,
+                  budget_line_count: Number(row.budget_line_count ?? 0),
+                })).length} marked planned with no line`
+              : ""),
         ]
       );
       await connection.commit();
