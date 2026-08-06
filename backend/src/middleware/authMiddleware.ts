@@ -41,6 +41,12 @@ type ReadOnlyRow = RowDataPacket & { is_read_only?: unknown };
 // Demo user map: mock-token-{role} → user id, email, and role (matches demoCreds.ts in frontend)
 const DEMO_TOKEN_MAP: Record<string, { id: string; email: string; role: string }> = {
   "mock-token-super-admin-role": { id: "demo-super-admin-id", email: "super-admin@mascallnet.com", role: "super_admin" },
+  // buildDemoSession() in demoCreds.ts generates `mock-token-${cred.role}`, which for the
+  // super_admin demo credential is "mock-token-super_admin" — not the "-role"-suffixed,
+  // hyphenated key above. That mismatch meant every authenticated call 401'd after logging
+  // in as the super_admin demo user (confirmed live 2026-08-06). Added rather than renamed,
+  // so the existing key (used verbatim by policy-engine.routes.test.ts) keeps working.
+  "mock-token-super_admin":      { id: "demo-super-admin-id", email: "superadmin@mascallnet.com",  role: "super_admin" },
   "mock-token-admin":            { id: "demo-admin-id",       email: "admin@mascallnet.com",        role: "admin" },
   "mock-token-hr":               { id: "demo-hr-id",          email: "hr@mascallnet.com",           role: "hr" },
   "mock-token-recruiter":        { id: "demo-recruiter-id",   email: "recruiter@mascallnet.com",    role: "recruiter" },
