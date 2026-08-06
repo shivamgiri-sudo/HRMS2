@@ -40,6 +40,7 @@ export type StatusData = {
   family?: any;
   experience?: any;
   languages?: any[];
+  familyMembers?: any[];
   saved_profile?: Record<string, any>;
   digilocker?: {
     status?: string;
@@ -103,6 +104,21 @@ export type LanguageRow = {
   id: string; language_name: string; can_read: boolean; can_write: boolean;
   can_speak: boolean; proficiency: string;
 };
+
+/**
+ * A family member as declared for EPF Form 2 Part B (pension scheme).
+ *
+ * Distinct from the PF nominee captured in step 2 — Part B asks who the member's
+ * family is, which cannot be inferred from who they nominated. `isEpsNominee`
+ * marks the single fallback entry the form uses where no eligible family exists.
+ */
+export type FamilyMemberRow = {
+  id: string; memberName: string; relation: string; dob: string;
+  address: string; isEpsNominee: boolean;
+};
+
+/** Form 2 prints four family rows; the UI caps entry to match. */
+export const FAMILY_MEMBER_LIMIT = 4;
 
 export type StatutoryForm = {
   previousPfMember: boolean | null; epsMember: boolean | null;
@@ -205,6 +221,7 @@ export function useOnboardingFull(token: string) {
   const [experience, setExperience] = useState<ExperienceForm>(EMPTY_EXP);
   const [family, setFamily] = useState<FamilyForm>(EMPTY_FAMILY);
   const [languages, setLanguages] = useState<LanguageRow[]>([]);
+  const [familyMembers, setFamilyMembers] = useState<FamilyMemberRow[]>([]);
   const [statutory, setStatutory] = useState<StatutoryForm>(EMPTY_STATUTORY);
   const [otpSent, setOtpSent] = useState(false);
   const [otpVerified, setOtpVerified] = useState(false);
@@ -339,6 +356,18 @@ export function useOnboardingFull(token: string) {
           proficiency: l.proficiency ?? "basic",
         })));
       }
+      if (s.familyMembers?.length) {
+        setFamilyMembers(s.familyMembers.map((m: any) => ({
+          id: m.id ?? String(Math.random()),
+          memberName: m.member_name ?? "",
+          relation: m.relation ?? "",
+          // Same .slice(0,10) the other date fields use, so <input type="date">
+          // accepts what the server returns.
+          dob: (m.dob ?? "").slice(0, 10),
+          address: m.address ?? "",
+          isEpsNominee: Boolean(m.is_eps_nominee),
+        })));
+      }
       setStatutory({
         previousPfMember: sp.previous_pf_member != null ? Boolean(sp.previous_pf_member) : null,
         epsMember: sp.eps_member != null ? Boolean(sp.eps_member) : null,
@@ -363,7 +392,7 @@ export function useOnboardingFull(token: string) {
       sc[6] = !!(s.bank?.bank_name && s.bank?.ifsc_code);
       sc[7] = (s.qualifications?.length ?? 0) > 0;
       sc[8] = !!(s.experience && s.experience.working_experience);
-      sc[9] = !!(s.family || (s.languages?.length ?? 0) > 0);
+      sc[9] = !!(s.family || (s.languages?.length ?? 0) > 0 || (s.familyMembers?.length ?? 0) > 0);
       sc[10] = Boolean(sp.statutory_declaration_accepted);
       setSectionComplete(sc);
     } catch (e: any) {
@@ -488,6 +517,22 @@ export function useOnboardingFull(token: string) {
       await hrmsApi.post(`${API}/experience`, { token, ...experience });
       await hrmsApi.post(`${API}/family`, { token, ...family });
       if (languages.length > 0) await hrmsApi.post(`${API}/languages`, { token, languages });
+      // Posted unconditionally, unlike languages above. The endpoint replaces the
+      // whole set, so skipping an empty array would make "remove my last family
+      // member" a silent no-op — the row would survive a save that appeared to
+      // succeed. Sending [] lets a member genuinely clear the section.
+      await hrmsApi.post(`${API}/family-members`, {
+        token,
+        members: familyMembers
+          .filter((m) => m.memberName.trim())
+          .map((m) => ({
+            memberName: m.memberName.trim(),
+            relation: m.relation,
+            dob: m.dob,
+            address: m.address,
+            isEpsNominee: m.isEpsNominee,
+          })),
+      });
       updateSectionStatus("experience", true).catch((e) => console.warn("[onboarding] Background operation failed:", e));
       await load();
     } catch (e: any) {
@@ -865,6 +910,7 @@ export function useOnboardingFull(token: string) {
     step, setStep, loading, saving, error, setError, submitted,
     status, bgv, bgvApiAvailable, employee, setEmployee, bank, setBank, qual, setQual,
     experience, setExperience, family, setFamily, languages, setLanguages,
+    familyMembers, setFamilyMembers,
     statutory, setStatutory, otpSent, otpVerified, otpCode, setOtpCode,
     consentAccepted, privacyConsentAccepted, completion,
     pfOptOutElected, pfOptOutSaving, pfOptOutConsented, pfOptOutConsentedAt, pfOptOutConsent,

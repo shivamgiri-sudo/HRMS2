@@ -1167,6 +1167,20 @@ export async function getFullOnboardingStatus(token: string) {
     `SELECT * FROM candidate_onboarding_experience WHERE candidate_id = ? LIMIT 1`,
     [candidateId]
   );
+  // Both of these are written by the journey and were never read back, so a
+  // returning candidate saw an empty table and re-entered what they had already
+  // supplied. It also silently capped section completeness: sectionComplete is
+  // derived purely from this payload, so a step whose data never returns can
+  // never tick. `family` above is the aggregate row (income, dependents) — a
+  // different table from the per-member list below.
+  const [familyMemberRows] = await db.execute<RowDataPacket[]>(
+    `SELECT * FROM candidate_onboarding_family_member WHERE candidate_id = ? ORDER BY created_at ASC`,
+    [candidateId]
+  );
+  const [languageRows] = await db.execute<RowDataPacket[]>(
+    `SELECT * FROM candidate_onboarding_language WHERE candidate_id = ? ORDER BY created_at ASC`,
+    [candidateId]
+  );
 
   const sanitizedDocuments = (documents as RowDataPacket[])
     .map((row) => sanitizeOnboardingDocument(row as Record<string, unknown>, { token }))
@@ -1182,6 +1196,8 @@ export async function getFullOnboardingStatus(token: string) {
     bank: bankRows[0] ?? null,
     qualifications: qualificationRows,
     family: familyRows[0] ?? null,
+    familyMembers: familyMemberRows,
+    languages: languageRows,
     experience: experienceRows[0] ?? null,
     digilocker,
     esign,
@@ -1935,6 +1951,10 @@ export async function getFullOnboardingByCandidate(
   const [qualificationRows] = await db.execute<RowDataPacket[]>(`SELECT * FROM candidate_onboarding_qualification WHERE candidate_id = ? ORDER BY created_at DESC`, [candidateId]);
   const [familyRows] = await db.execute<RowDataPacket[]>(`SELECT * FROM candidate_onboarding_family WHERE candidate_id = ? LIMIT 1`, [candidateId]);
   const [experienceRows] = await db.execute<RowDataPacket[]>(`SELECT * FROM candidate_onboarding_experience WHERE candidate_id = ? LIMIT 1`, [candidateId]);
+  // Mirrors getFullOnboardingStatus: HR reviewing a candidate must see the same
+  // family and language rows the candidate entered, not a blank where they are.
+  const [familyMemberRows] = await db.execute<RowDataPacket[]>(`SELECT * FROM candidate_onboarding_family_member WHERE candidate_id = ? ORDER BY created_at ASC`, [candidateId]);
+  const [languageRows] = await db.execute<RowDataPacket[]>(`SELECT * FROM candidate_onboarding_language WHERE candidate_id = ? ORDER BY created_at ASC`, [candidateId]);
   const [digilocker, esign] = await Promise.all([
     getLatestDigilockerStatus(candidateId),
     getLatestEsignStatus(candidateId),
@@ -1953,6 +1973,8 @@ export async function getFullOnboardingByCandidate(
     bank: bankRows[0] ?? null,
     qualifications: qualificationRows,
     family: familyRows[0] ?? null,
+    familyMembers: familyMemberRows,
+    languages: languageRows,
     experience: experienceRows[0] ?? null,
     digilocker,
     esign,
@@ -2466,39 +2488,61 @@ export async function saveProgress(token: string, stepIdx: number) {
 
 // ── New functions added by migration 298 ─────────────────────────────────────
 
+/**
+ * The member's family, as declared for EPF Form 2 Part B (Pension Scheme).
+ *
+ * Part B asks the member to list their family; it is not derivable from the PF
+ * nominee, and inventing one there would be a false statutory declaration. So
+ * the candidate supplies it here and the form fills from what they wrote.
+ *
+ * `address` and `isEpsNominee` arrive with migration 428. The EPS block on the
+ * form is a fallback for a member with no eligible family, so it is a flag on a
+ * row rather than a second table: a flagged row renders into eps_nominee.*, the
+ * rest into family_1..4.
+ */
 export async function saveFamilyMembers(
   token: string,
   members: Array<{
     memberName?: string;
     relation?: string;
     dob?: string;
+    address?: string;
     occupation?: string;
     isDependent?: boolean;
+    isEpsNominee?: boolean;
   }>
 ) {
   const { candidate_id } = await validateOnboardingToken(token);
   if (!Array.isArray(members)) throw Object.assign(new Error("members must be an array"), { statusCode: 400 });
+  // A row with no name is not a family member. saveLanguages already skips its
+  // blank drafts; this writer did not, so an untouched draft row was stored as
+  // an all-NULL family member and would have printed an empty Part B line.
+  const rows = members.filter((m) => nonEmptyString(m.memberName));
   const conn = await db.getConnection();
   try {
     await conn.beginTransaction();
     await conn.execute(`DELETE FROM candidate_onboarding_family_member WHERE candidate_id = ?`, [candidate_id]);
-    for (const m of members) {
+    for (const m of rows) {
       await conn.execute(
         `INSERT INTO candidate_onboarding_family_member
-           (id, candidate_id, member_name, relation, dob, occupation, is_dependent)
-         VALUES (UUID(), ?, ?, ?, ?, ?, ?)`,
+           (id, candidate_id, member_name, relation, dob, address, occupation, is_dependent, is_eps_nominee)
+         VALUES (UUID(), ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           candidate_id,
-          m.memberName ?? null,
-          m.relation ?? null,
-          m.dob ?? null,
-          m.occupation ?? null,
+          nonEmptyString(m.memberName),
+          nonEmptyString(m.relation),
+          // normDate, not the raw value: a cleared date input posts '' which is
+          // not a valid DATE and lands as 0000-00-00 under a lax sql_mode.
+          normDate(m.dob),
+          nonEmptyString(m.address),
+          nonEmptyString(m.occupation),
           m.isDependent ? 1 : 0,
+          m.isEpsNominee ? 1 : 0,
         ]
       );
     }
     await conn.commit();
-    return { candidateId: candidate_id, inserted: members.length };
+    return { candidateId: candidate_id, inserted: rows.length, skipped: members.length - rows.length };
   } catch (e) {
     await conn.rollback();
     throw e;

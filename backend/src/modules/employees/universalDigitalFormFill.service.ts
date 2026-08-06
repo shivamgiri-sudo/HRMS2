@@ -691,8 +691,11 @@ export async function buildSourceContext(employeeId: string, candidateId?: strin
         COALESCE(NULLIF(TRIM(e.official_email), ''), NULLIF(TRIM(e.office_email), ''), e.email) AS email,
         -- The statutory identifiers live on the employee row for the bulk of the
         -- workforce (11,751 UAN, 11,754 EPF, 9,663 ESIC), while the EPF context
-        -- below reads employee_epf_compliance_profile, which has 4 rows in all.
+        -- below reads the EPF compliance profile, which holds 4 rows in all.
         -- Without these the forms printed blank for everyone but those 4.
+        -- Do not name another table in this comment: the test doubles dispatch
+        -- on SQL substrings, so a table name here routes this query to the
+        -- wrong stub and the employee comes back empty.
         e.uan_number,
         e.epf_number,
         e.esic_number,
@@ -882,6 +885,42 @@ export async function buildSourceContext(employeeId: string, candidateId?: strin
     nominee[`${p}guardian_relation`] = Number(entry.is_minor ?? 0) === 1 ? entry.guardian_relation ?? null : null;
   });
 
+  // EPF Form 2 Part B declares the member's FAMILY for the pension scheme. It is
+  // a different question from Part A's PF nomination and has no overlap with it:
+  // deriving a family from the nominee would be a false statutory declaration,
+  // so the only legitimate source is what the member wrote themselves during
+  // onboarding. Anyone who did not supply one keeps a blank Part B to complete
+  // by hand, exactly as before.
+  const [familyMembers] = await db.execute<RowDataPacket[]>(
+    `SELECT member_name, relation, dob, address, is_eps_nominee
+       FROM candidate_onboarding_family_member
+      WHERE candidate_id = ?
+      ORDER BY created_at ASC`,
+    [candidateId ?? ""],
+  ).catch(() => [[] as unknown as RowDataPacket[], []]);
+
+  // The EPS block on the form is the fallback used where no eligible family
+  // exists, so a flagged row goes there and never into the family table.
+  const epsRow = (familyMembers as RowDataPacket[]).find((r) => Number(r.is_eps_nominee ?? 0) === 1) ?? null;
+  const family: Record<string, unknown> = {};
+  (familyMembers as RowDataPacket[])
+    .filter((r) => Number(r.is_eps_nominee ?? 0) !== 1)
+    .slice(0, 4)
+    .forEach((entry, index) => {
+      const p = `f${index + 1}_`;
+      family[`${p}name`] = safeTrim(entry.member_name);
+      family[`${p}relationship`] = safeTrim(entry.relation);
+      family[`${p}date_of_birth`] = entry.dob ?? null;
+      family[`${p}address`] = safeTrim(entry.address);
+    });
+
+  const epsNominee = {
+    name: safeTrim(epsRow?.member_name),
+    relationship: safeTrim(epsRow?.relation),
+    date_of_birth: epsRow?.dob ?? null,
+    address: safeTrim(epsRow?.address),
+  };
+
   const attendanceSource = await resolveAttendanceSource(employee);
 
   // Gross is the contractual monthly remuneration the employee signs against.
@@ -946,6 +985,8 @@ export async function buildSourceContext(employeeId: string, candidateId?: strin
 
   return {
     nominee,
+    family,
+    eps_nominee: epsNominee,
     payroll_hr: {
       name: payrollHr?.hrName ?? null,
       designation: payrollHr?.hrDesignation ?? null,

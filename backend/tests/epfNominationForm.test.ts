@@ -50,15 +50,40 @@ describe("EPF nomination form (Form 2)", () => {
     expect([...EPF_NOMINATION_FIELD_NAMES].sort()).toEqual([...inPdf].sort());
   });
 
-  it("TC-NOM-02: Part B carries no source path, so no family is ever invented", () => {
+  it("TC-NOM-02: Part B is member-declared and never derived from the nominee", () => {
+    // Part B used to require source_path === null, because the only family-shaped
+    // data we held was the PF nominee and copying it across would have been a
+    // false declaration on a signed statutory form. The candidate now declares
+    // their family during onboarding, so Part B has a legitimate source — but
+    // the original hazard is unchanged and is what this still guards.
+    //
     // If this fails, someone has wired pension-family boxes to data that does
-    // not describe a family — a false declaration on a signed statutory form.
+    // not describe a family the member actually declared.
     const partB = epfNominationFieldMaps().filter((m) =>
       /^family_\d+_|^eps_nominee_/.test(m.pdf_field_name),
     );
     expect(partB.length).toBeGreaterThanOrEqual(20);
     for (const map of partB) {
-      expect(map.source_path, `${map.pdf_field_name} must be member-completed`).toBeNull();
+      // Only the member-declared namespaces are admissible here.
+      expect(
+        map.source_path,
+        `${map.pdf_field_name} must come from the declared family, not ${map.source_path}`,
+      ).toMatch(/^(family\.f[1-4]_|eps_nominee\.)/);
+      // The specific hazard: a nominee is not a family member.
+      expect(
+        map.source_path,
+        `${map.pdf_field_name} must never be derived from the PF nominee`,
+      ).not.toMatch(/^nominee\./);
+    }
+  });
+
+  it("TC-NOM-02b: Part A nominee boxes never read the declared family", () => {
+    // The converse mistake: filling a PF nomination from the pension family
+    // would nominate people the member never nominated.
+    const partA = epfNominationFieldMaps().filter((m) => /^nominee_\d+_/.test(m.pdf_field_name));
+    expect(partA.length).toBeGreaterThanOrEqual(20);
+    for (const map of partA) {
+      expect(map.source_path, `${map.pdf_field_name} must read a nominee`).toMatch(/^nominee\.n[1-4]_/);
     }
   });
 
@@ -114,9 +139,63 @@ describe("EPF nomination form (Form 2)", () => {
       expect(form.getCheckBox("marital_status_married").isChecked()).toBe(true);
       expect(form.getCheckBox("marital_status_unmarried").isChecked()).toBe(false);
 
-      // Part B stays empty for the member to complete.
+      // This member declared no family, so Part B stays empty for them to
+      // complete at signing — and in particular the Part A nominee above does
+      // NOT bleed into it. TC-NOM-04 covers the case where a family exists.
       expect(form.getTextField("family_1_name").getText() ?? "").toBe("");
       expect(form.getTextField("eps_nominee_name").getText() ?? "").toBe("");
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("TC-NOM-04: a declared family lands in the Part B rows", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nom-"));
+    try {
+      const maps = epfNominationFieldMaps().map((m) => ({ ...m, mapping_mode: "acroform" }));
+      // What buildSourceContext produces once the candidate has declared a
+      // family during onboarding. The nominee is deliberately a different person
+      // from every family member, so any bleed between the parts is visible.
+      const source: Record<string, unknown> = {
+        "epf.employee_name": "KAMAL SINGH RAWAT",
+        "nominee.n1_name": "RAMESH SINGH RAWAT",
+        "nominee.n1_relationship": "Father",
+        "family.f1_name": "SUNITA RAWAT",
+        "family.f1_relationship": "Spouse",
+        "family.f1_date_of_birth": "1996-05-21",
+        "family.f1_address": "H.No. 214, Sector 12, Noida",
+        "family.f2_name": "AARAV RAWAT",
+        "family.f2_relationship": "Son",
+        "family.f2_date_of_birth": "2019-01-09",
+        "eps_nominee.name": "SUNITA RAWAT",
+        "eps_nominee.relationship": "Spouse",
+        "eps_nominee.date_of_birth": "1996-05-21",
+        "eps_nominee.address": "H.No. 214, Sector 12, Noida",
+        "system.current_date": "2026-07-29",
+      };
+      const values = maps.map((m) => ({
+        field_key: m.field_key,
+        value_text: storedValue(source[String(m.source_path ?? "")], m.field_type, m.checked_when),
+      }));
+
+      const out = await fillAcroFormPdf({ templatePath: await buildToDisk(dir), fieldMaps: maps, values });
+      const form = (await PDFDocument.load(out)).getForm();
+
+      expect(form.getTextField("family_1_name").getText()).toBe("SUNITA RAWAT");
+      expect(form.getTextField("family_1_relationship").getText()).toBe("Spouse");
+      expect(form.getTextField("family_1_address").getText()).toContain("Sector 12");
+      expect(form.getTextField("family_2_name").getText()).toBe("AARAV RAWAT");
+      // An undeclared row stays blank rather than repeating an earlier member.
+      expect(form.getTextField("family_3_name").getText() ?? "").toBe("");
+
+      // The EPS date splits across its three boxes via the transform rules.
+      expect(form.getTextField("eps_nominee_name").getText()).toBe("SUNITA RAWAT");
+      expect(form.getTextField("eps_nominee_dob_day").getText()).toBe("21");
+      expect(form.getTextField("eps_nominee_dob_month").getText()).toBe("05");
+      expect(form.getTextField("eps_nominee_dob_year").getText()).toBe("1996");
+
+      // Part A is untouched by any of it: the nominee is still the nominee.
+      expect(form.getTextField("nominee_1_name").getText()).toBe("RAMESH SINGH RAWAT");
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }

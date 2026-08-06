@@ -12,11 +12,18 @@
  *   holds a PF nominee for essentially every employee (nominee_for includes
  *   'pf'), with name, relationship, date of birth and share.
  *
- *   Part B (Pension Scheme, Para 18) — NOT auto-filled. It asks for the whole
- *   family, and no pension-family records exist: nominee_for only ever contains
- *   'gratuity,pf'. Inventing a family from the PF nominee would put false
- *   statutory declarations in front of a member for signature, so Part B is
- *   left for the member to complete at signing.
+ *   Part B (Pension Scheme, Para 18) — filled only from a family the member
+ *   declared themselves. It asks for the whole family, which cannot be derived
+ *   from the PF nominee: inventing one there would put a false statutory
+ *   declaration in front of a member for signature. That remains true and the
+ *   guardrail test asserts Part B never reads a nominee.* path.
+ *
+ *   What changed is where the answer comes from. The candidate onboarding
+ *   journey now asks for family members directly, so Part B is still
+ *   member-completed — just captured earlier and digitally, via
+ *   candidate_onboarding_family_member. A member who supplied no family still
+ *   gets a blank Part B to complete at signing, as before, and so does every
+ *   employee who did not join through that journey.
  *
  * Four nominee and four family rows are provided because the form allows
  * several, even though today every employee has exactly one nominee.
@@ -278,23 +285,25 @@ export function epfNominationFieldMaps() {
     text("parta_signature", "Part A Signature", null),
   );
 
-  // Part B: pension family particulars. No source — see the note at the top.
+  // Part B: pension family particulars, sourced only from the family the member
+  // declared themselves during onboarding — never from the Part A nominee. See
+  // the note at the top for why that distinction is the whole point.
   for (let n = 1; n <= FAMILY_ROWS; n++) {
     maps.push(
-      text(`family_${n}_name`, `Family Member ${n} Name`, null),
-      text(`family_${n}_address`, `Family Member ${n} Address`, null),
-      text(`family_${n}_dob`, `Family Member ${n} Date of Birth`, null),
-      text(`family_${n}_relationship`, `Family Member ${n} Relationship`, null),
+      text(`family_${n}_name`, `Family Member ${n} Name`, `family.f${n}_name`),
+      text(`family_${n}_address`, `Family Member ${n} Address`, `family.f${n}_address`),
+      text(`family_${n}_dob`, `Family Member ${n} Date of Birth`, `family.f${n}_date_of_birth`),
+      text(`family_${n}_relationship`, `Family Member ${n} Relationship`, `family.f${n}_relationship`),
     );
   }
 
   maps.push(
-    text("eps_nominee_name", "EPS Nominee Name", null),
-    text("eps_nominee_address", "EPS Nominee Address", null),
-    text("eps_nominee_relationship", "EPS Nominee Relationship", null),
-    text("eps_nominee_dob_day", "EPS Nominee DOB Day", null, "date_day"),
-    text("eps_nominee_dob_month", "EPS Nominee DOB Month", null, "date_month"),
-    text("eps_nominee_dob_year", "EPS Nominee DOB Year", null, "date_year"),
+    text("eps_nominee_name", "EPS Nominee Name", "eps_nominee.name"),
+    text("eps_nominee_address", "EPS Nominee Address", "eps_nominee.address"),
+    text("eps_nominee_relationship", "EPS Nominee Relationship", "eps_nominee.relationship"),
+    text("eps_nominee_dob_day", "EPS Nominee DOB Day", "eps_nominee.date_of_birth", "date_day"),
+    text("eps_nominee_dob_month", "EPS Nominee DOB Month", "eps_nominee.date_of_birth", "date_month"),
+    text("eps_nominee_dob_year", "EPS Nominee DOB Year", "eps_nominee.date_of_birth", "date_year"),
     text("partb_date_day", "Part B Date Day", "system.current_date", "date_day"),
     text("partb_date_month", "Part B Date Month", "system.current_date", "date_month"),
     text("partb_date_year", "Part B Date Year", "system.current_date", "date_year"),

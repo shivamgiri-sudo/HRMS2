@@ -10,10 +10,10 @@ import {
   F, RO, SectionHead, InfoBox, YNChip,
 } from "./OnboardingFormPrimitives";
 import type {
-  QualForm, ExperienceForm, FamilyForm, LanguageRow,
+  QualForm, ExperienceForm, FamilyForm, LanguageRow, FamilyMemberRow,
   StatutoryForm, StatusData, BgvStatus, BankForm,
 } from "./useOnboardingFull";
-import { EMPTY_QUAL } from "./useOnboardingFull";
+import { EMPTY_QUAL, FAMILY_MEMBER_LIMIT } from "./useOnboardingFull";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -228,17 +228,45 @@ export function Step8Experience({
 
 // ── Step 9: Family & Language ─────────────────────────────────────────────────
 
+const FAMILY_RELATIONS = ["Spouse", "Son", "Daughter", "Father", "Mother", "Brother", "Sister", "Other"];
+
 export function Step9FamilyLang({
-  family, setFamily, languages, setLanguages, saving, onSave,
+  family, setFamily, languages, setLanguages, familyMembers, setFamilyMembers, saving, onSave,
 }: {
   family: FamilyForm;
   setFamily: React.Dispatch<React.SetStateAction<FamilyForm>>;
   languages: LanguageRow[];
   setLanguages: React.Dispatch<React.SetStateAction<LanguageRow[]>>;
+  familyMembers: FamilyMemberRow[];
+  setFamilyMembers: React.Dispatch<React.SetStateAction<FamilyMemberRow[]>>;
   saving: boolean;
   onSave: () => void;
 }) {
   const updFam = (k: keyof FamilyForm, v: string) => setFamily((p) => ({ ...p, [k]: v }));
+
+  const EMPTY_MEMBER = { memberName: "", relation: "", dob: "", address: "", isEpsNominee: false };
+  const [newMember, setNewMember] = useState(EMPTY_MEMBER);
+  const updMember = (k: keyof typeof EMPTY_MEMBER, v: string | boolean) =>
+    setNewMember((p) => ({ ...p, [k]: v }));
+
+  const familyFull = familyMembers.length >= FAMILY_MEMBER_LIMIT;
+  // The form prints one EPS entry, so a second would be silently dropped.
+  const epsTaken = familyMembers.some((m) => m.isEpsNominee);
+
+  const addMember = () => {
+    const name = newMember.memberName.trim();
+    if (!name || familyFull) return;
+    setFamilyMembers((prev) => [...prev, {
+      ...newMember,
+      memberName: name,
+      isEpsNominee: newMember.isEpsNominee && !epsTaken,
+      id: String(Date.now()),
+    }]);
+    setNewMember(EMPTY_MEMBER);
+  };
+
+  const removeMember = (id: string) =>
+    setFamilyMembers((prev) => prev.filter((m) => m.id !== id));
   const [newLang, setNewLang] = useState({ language_name: "", can_read: false, can_write: false, can_speak: false, proficiency: "Intermediate" });
 
   const addLanguage = () => {
@@ -291,6 +319,85 @@ export function Step9FamilyLang({
             helpText="Family members dependent on you"
           />
         </div>
+
+        <SectionHead sub="Required for your EPF pension nomination (Form 2, Part B)">Family Members</SectionHead>
+        <InfoBox variant="info">
+          <p className="text-xs">
+            EPF Form 2 asks you to declare your <strong>family</strong> for the pension scheme.
+            This is separate from the nominee you named earlier — the nominee receives your PF
+            balance, while these details decide pension eligibility. Add up to{" "}
+            <strong>{FAMILY_MEMBER_LIMIT}</strong> members. Leave blank if you have none, and you
+            can complete it by hand when you sign.
+          </p>
+        </InfoBox>
+
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 items-end p-4 bg-slate-50 rounded-xl border-2 border-slate-200 mt-3">
+          <F label="Member Name" value={newMember.memberName} onChange={(v) => updMember("memberName", v)} placeholder="Full name" />
+          <F label="Relationship" value={newMember.relation} onChange={(v) => updMember("relation", v)} opts={FAMILY_RELATIONS} />
+          <F label="Date of Birth" value={newMember.dob} onChange={(v) => updMember("dob", v)} type="date" />
+          <F label="Address" value={newMember.address} onChange={(v) => updMember("address", v)} placeholder="Where they live" />
+          <label className="flex items-center gap-2 text-xs font-semibold text-slate-600 sm:col-span-2 lg:col-span-3">
+            <input
+              type="checkbox"
+              className="h-4 w-4"
+              checked={newMember.isEpsNominee}
+              disabled={epsTaken}
+              onChange={(e) => updMember("isEpsNominee", e.target.checked)}
+            />
+            Nominate for pension (EPS) — used only if you have no eligible family
+            {epsTaken && <span className="text-slate-400">· already chosen</span>}
+          </label>
+          <Button
+            type="button"
+            onClick={addMember}
+            disabled={!newMember.memberName.trim() || familyFull}
+            className="min-h-[48px] w-full gap-2 rounded-xl bg-teal-600 hover:bg-teal-700 font-bold"
+          >
+            <Plus className="h-4 w-4" /> Add
+          </Button>
+        </div>
+
+        {familyFull && (
+          <p className="mt-2 text-xs font-semibold text-amber-700">
+            ⚠ Form 2 prints {FAMILY_MEMBER_LIMIT} family rows, so no more can be added here.
+            Tell HR if you need to declare more.
+          </p>
+        )}
+
+        {familyMembers.length > 0 && (
+          <div className="mt-3 overflow-x-auto rounded-xl border-2 border-slate-200">
+            <table className="w-full text-sm">
+              <thead className="bg-slate-50">
+                <tr>
+                  {["Name", "Relationship", "Date of Birth", "Address", "EPS", ""].map((h) => (
+                    <th key={h} className="px-3 py-2 text-left text-xs font-bold text-slate-600">{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {familyMembers.map((m) => (
+                  <tr key={m.id} className="border-t border-slate-100">
+                    <td className="px-3 py-2 font-semibold text-slate-800">{m.memberName}</td>
+                    <td className="px-3 py-2 text-slate-600">{m.relation || "—"}</td>
+                    <td className="px-3 py-2 text-slate-600">{m.dob || "—"}</td>
+                    <td className="px-3 py-2 text-slate-600">{m.address || "—"}</td>
+                    <td className="px-3 py-2 text-slate-600">{m.isEpsNominee ? "Yes" : "—"}</td>
+                    <td className="px-3 py-2 text-right">
+                      <button
+                        type="button"
+                        onClick={() => removeMember(m.id)}
+                        aria-label={`Remove ${m.memberName}`}
+                        className="p-1.5 rounded-lg hover:bg-red-50"
+                      >
+                        <Trash2 className="h-4 w-4 text-red-400" />
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
 
         <SectionHead sub="Languages you can read, write or speak">Language Proficiency</SectionHead>
         <InfoBox variant="info">

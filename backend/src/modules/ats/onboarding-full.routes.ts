@@ -595,14 +595,17 @@ router.get("/provider-status", requireAuth, requireRole("admin", "super_admin", 
 // ── New routes added by migration 298 ────────────────────────────────────────
 
 // POST /family-members — replace all family member rows for a candidate
-router.post("/family-members", h(async (req, res) => {
+// Rate limited like every other candidate write route. These two were the only
+// unauthenticated, transactional, DELETE-first endpoints without a limiter, so
+// an unthrottled caller holding a token could wipe and rewrite these rows freely.
+router.post("/family-members", candidateWriteLimiter, h(async (req, res) => {
   const { token, members } = req.body;
   if (!token) return res.status(400).json({ success: false, message: "token required" });
   return res.json({ success: true, data: await saveFamilyMembers(token, members ?? []) });
 }));
 
 // POST /nominees — replace all nominee rows for a candidate
-router.post("/nominees", h(async (req, res) => {
+router.post("/nominees", candidateWriteLimiter, h(async (req, res) => {
   const { token, nominees } = req.body;
   if (!token) return res.status(400).json({ success: false, message: "token required" });
   return res.json({ success: true, data: await saveNominees(token, nominees ?? []) });

@@ -244,6 +244,8 @@ export default function CandidateOnboardingFullPage() {
           setFamily={onb.setFamily}
           languages={onb.languages}
           setLanguages={onb.setLanguages}
+          familyMembers={onb.familyMembers}
+          setFamilyMembers={onb.setFamilyMembers}
           saving={onb.saving}
           onSave={onb.saveExperience}
         />

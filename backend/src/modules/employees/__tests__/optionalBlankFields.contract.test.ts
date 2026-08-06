@@ -35,9 +35,21 @@ describe("optional unsourced fields do not block a document", () => {
     // It exists for fields whose source can legitimately be empty. Widening it
     // to the whole optional set would stop genuinely missing statutory data
     // from blocking, which is what the derived rule below is protecting.
+    //
+    // Ceiling raised 3 -> 4 when "process" joined: 19,270 of 58,627 employees
+    // have no process_id and the kit stuck at hr_fill_required forever. Raise
+    // this again only for a field whose source is genuinely, routinely empty —
+    // not to quieten a failure.
     const list = src.match(/OPTIONAL_SOURCED_FIELD_KEYS = \[([^\]]*)\]/)?.[1] ?? "";
-    const entries = list.split(",").map((s) => s.trim()).filter(Boolean);
-    expect(entries.length).toBeLessThanOrEqual(3);
+    const entries = list
+      // Count quoted keys, not commas. The array is commented, and comment prose
+      // contains commas — a plain split counted 12 entries where there were 4.
+      .replace(/\/\/[^\n]*/g, "")
+      .split(",")
+      .map((s) => s.trim())
+      .filter((s) => /^"[^"]+"$/.test(s));
+    expect(entries.length).toBeLessThanOrEqual(4);
+    expect(entries).toContain('"process"');
   });
 
   it("the non-blocking set is derived from the definitions, not hardcoded", () => {
