@@ -77,7 +77,7 @@ export function BMIBenchmarkTab() {
   // Load branch list
   useEffect(() => {
     hrmsApi
-      .get<{ success: boolean; data: { id: string; branch_name: string }[] }>("/api/branches")
+      .get<{ data: { id: string; branch_name: string }[] }>("/api/org/branches")
       .then((r) => {
         if (r?.data) setBranches(r.data.map((b) => ({ id: b.id, name: b.branch_name })));
       })
