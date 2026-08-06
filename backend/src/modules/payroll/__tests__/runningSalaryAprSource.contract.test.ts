@@ -37,9 +37,16 @@ describe("running salary reports APR provenance", () => {
     expect(SERVICE).toMatch(/attendance_source,\s*source_system/);
   });
 
-  it("counts a paid day as unverified only when it was classified on a punch", () => {
-    expect(SERVICE).toMatch(/source === "biometric"/);
-    expect(SERVICE).toMatch(/apr_no_activity/);
+  it("counts a day verified only on POSITIVE APR evidence, not on the 'dialler' label", () => {
+    // attendance_source alone is not evidence: the engine stamps a day 'dialler'
+    // with source_system 'dialer_session_log.session_date' to record where it
+    // LOOKED. That table holds 739 rows all-time, every one with a NULL
+    // employee_id, so it has never produced a minute — yet 4,329 days across
+    // 1,020 employees carry the label and would read as APR-verified.
+    expect(SERVICE).toMatch(/sourceSystem\.startsWith\("apr"\)/);
+    expect(SERVICE).toMatch(/sourceSystem !== "apr_no_activity"/);
+    // Checking the source column instead is exactly the mistake being prevented.
+    expect(SERVICE).not.toMatch(/source === "biometric"/);
   });
 
   it("returns the provenance fields", () => {

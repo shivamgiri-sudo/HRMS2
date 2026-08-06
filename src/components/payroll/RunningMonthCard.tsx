@@ -143,10 +143,13 @@ export function RunningMonthCard({
             Net (after deductions){aprGated && fallbackDays > 0 ? ", all days" : ""}:{" "}
             <span className="font-semibold text-slate-800">{amount(INR(rs.earned_net_till_date))}</span>
           </p>
+          {/* Says only what is known. These days carry no APR evidence; most came
+              from a biometric punch, but some are only labelled dialler by a lookup
+              that found nothing, so naming the source would overstate it. */}
           {aprGated && fallbackDays > 0 && (
             <p className="mt-1 text-xs font-medium text-amber-700">
               {fallbackDays} {fallbackDays === 1 ? "day" : "days"} not APR-verified —{" "}
-              {amount(INR(fallbackAmount))}, paid from biometric punches.
+              {amount(INR(fallbackAmount))} paid without a dialler record.
             </p>
           )}
           {aprGated && noDataDays > 0 && (

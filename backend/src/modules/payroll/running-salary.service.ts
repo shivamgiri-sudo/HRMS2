@@ -169,20 +169,33 @@ export async function computeRunningSalary(
   // are absent from the dialler feed would be marked absent, lwp 1.00, every day.
   // That fallback is correct for pay and invisible on screen, which is what these
   // counters exist to fix. They change no arithmetic.
-  let fallbackPaidDays = 0;   // paid day value classified on a biometric punch
+  let fallbackPaidDays = 0;   // paid day value with no positive APR evidence behind it
   let aprNoDataDays = 0;      // neither source had anything (missing_punch)
 
   for (const r of attRows as any[]) {
-    const source = String(r.attendance_source ?? "");
     const sourceSystem = String(r.source_system ?? "");
     // Paid day value this row contributes, mirroring the switch below.
     const paidValue =
       r.attendance_status === "present" || r.attendance_status === "late" ? 1
         : r.attendance_status === "half_day" ? 0.5
           : 0;
-    // leave_approved is an HR decision, not a feed reading, so it is never
-    // counted as unverified — only days whose status was decided by a punch are.
-    if (paidValue > 0 && source === "biometric") fallbackPaidDays += paidValue;
+    // Verified means POSITIVE APR evidence, not merely "labelled dialler".
+    //
+    // `attendance_source` alone cannot answer this. The engine stamps a day
+    // 'dialler' with source_system 'dialer_session_log.session_date' to record
+    // where it LOOKED, not what it found — and dialer_session_log holds 739 rows
+    // all-time, every one with a NULL employee_id, so it has never yielded a
+    // minute for anybody. 4,329 such days across 1,020 employees would otherwise
+    // be reported as APR-verified on the strength of a lookup that found nothing.
+    //
+    // So the test is the source_system prefix: apr.ReportDate,
+    // apr.night_shift_window, apr_bulk and apr_regularization all carry real APR
+    // minutes; apr_no_activity is the explicit "APR had nothing" marker.
+    //
+    // leave_approved never reaches here — paidValue is 0 for it — so an HR-approved
+    // absence is not counted as unverified.
+    const aprEvidenced = sourceSystem.startsWith("apr") && sourceSystem !== "apr_no_activity";
+    if (paidValue > 0 && !aprEvidenced) fallbackPaidDays += paidValue;
     if (sourceSystem === "apr_no_activity") aprNoDataDays += 1;
 
     switch (r.attendance_status) {

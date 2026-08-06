@@ -7,6 +7,15 @@ import { db } from '../../db/mysql.js';
 import type { RowDataPacket } from 'mysql2';
 import { isOperationsExecutiveByRegex as isOperationsExecutive, classifyOperationsNetLogin, resolveHalfDayFloorMinutes } from './attendance-engine.service.js';
 
+/**
+ * Campaign filed against manually uploaded dialler minutes.
+ *
+ * `apr` is keyed (ReportDate, UserID, campaign_id), so its own campaign keeps a
+ * manual row from colliding with a synced one, makes uploads identifiable for
+ * audit, and lets a corrected re-upload overwrite rather than accumulate.
+ */
+const MANUAL_UPLOAD_CAMPAIGN = 'MANUAL_UPLOAD';
+
 const router = Router();
 router.use(requireAuth);
 
@@ -178,9 +187,36 @@ router.post(
       }
     }
 
+    // Days the dialler feed ALREADY reports, so no manual row is added for them.
+    //
+    // getAprNetMinutes SUMs every `apr` row for a UserID+ReportDate, and the table's
+    // primary key is (ReportDate, UserID, campaign_id) — so a manual row filed under
+    // its own campaign sits ALONGSIDE a synced one rather than replacing it, and the
+    // day's minutes would silently double. Where the feed already reports the day,
+    // the upload still writes the attendance record exactly as before; only the
+    // evidence row is withheld.
+    const aprAlreadySynced = new Set<string>();
+    if (csvRows.length > 0) {
+      const pairParams: string[] = [];
+      const pairPlaceholders = csvRows.map((r) => {
+        pairParams.push(r.employee_code, r.attendance_date);
+        return '(?,?)';
+      }).join(',');
+      const [syncedRows] = await db.execute<RowDataPacket[]>(
+        `SELECT UserID, DATE_FORMAT(ReportDate,'%Y-%m-%d') AS d
+           FROM apr
+          WHERE (UserID, ReportDate) IN (${pairPlaceholders})
+            AND campaign_id <> ?`,
+        [...pairParams, MANUAL_UPLOAD_CAMPAIGN],
+      ).catch(() => [[]] as unknown as [RowDataPacket[], unknown]);
+      for (const r of syncedRows as any[]) aprAlreadySynced.add(`${r.UserID}:${r.d}`);
+    }
+
     const rowErrors: RowError[] = [...parseErrors];
     let uploaded = 0;
     let skippedLocked = 0;
+    let evidenceRecorded = 0;
+    let evidenceSkippedAlreadySynced = 0;
 
     // Resolved once for the whole upload, not per row: a bulk file can carry
     // thousands of rows and this is a database read. Resolving it inside the loop
@@ -261,9 +297,54 @@ router.post(
         ],
       );
       uploaded++;
+
+      // Record the same minutes as EVIDENCE, not only as a verdict.
+      //
+      // Much of the dialler estate is not connected to this database, so those
+      // campaigns never reach `apr` and their agents are invisible to everything
+      // that reasons about dialler coverage — including isEnrolledInAprFeed, which
+      // decides whether an Operations Executive is judged on APR alone. Writing the
+      // attendance record alone left the engine with no memory that the day was
+      // ever evidenced: the employee stayed "not covered" and every day this file
+      // did not mention kept falling back to their biometric punch.
+      //
+      // Filed under its own campaign so it is distinguishable from a synced row,
+      // and re-uploading a corrected figure overwrites it rather than adding to it.
+      // The attendance record above is unchanged and still authoritative for the
+      // days in this file; this only gives the engine the evidence behind it.
+      if (aprAlreadySynced.has(`${row.employee_code}:${row.attendance_date}`)) {
+        evidenceSkippedAlreadySynced++;
+      } else {
+        try {
+          await db.execute(
+            `INSERT INTO apr (ReportDate, UserID, campaign_id, Net_Login)
+             VALUES (?, ?, ?, SEC_TO_TIME(? * 60))
+             ON DUPLICATE KEY UPDATE Net_Login = VALUES(Net_Login)`,
+            [row.attendance_date, row.employee_code, MANUAL_UPLOAD_CAMPAIGN, row.net_login_minutes],
+          );
+          evidenceRecorded++;
+        } catch (err) {
+          // The attendance record is already written and correct. A failure to file
+          // the evidence must not fail the row — but it must not be silent either,
+          // or coverage would quietly stay wrong with the upload reporting success.
+          rowErrors.push({
+            row: row.rowNum,
+            employee_code: row.employee_code,
+            reason: `Attendance saved, but the dialler evidence row could not be recorded: ${
+              err instanceof Error ? err.message : String(err)}`,
+          });
+        }
+      }
     }
 
-    return res.json({ success: true, uploaded, skipped_locked: skippedLocked, errors: rowErrors });
+    return res.json({
+      success: true,
+      uploaded,
+      skipped_locked: skippedLocked,
+      evidence_recorded: evidenceRecorded,
+      evidence_skipped_already_synced: evidenceSkippedAlreadySynced,
+      errors: rowErrors,
+    });
   },
 );
 
