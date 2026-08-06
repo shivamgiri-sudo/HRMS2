@@ -11,6 +11,7 @@ const MIGRATIONS_VERIFY_ONLY = process.env.MIGRATIONS_VERIFY_ONLY === "true";
 import { initBusinessActionSyncJobs } from "./cron/business-action-sync.cron.js";
 import { startCommunicationCleanup } from "./modules/communication/cleanup.cron.js";
 import { startTenureBadgeScheduler } from "./modules/engagement/tenure.cron.js";
+import { startCelebrationScheduler } from "./modules/engagement/celebration.cron.js";
 import { startDailyGamesScheduler, stopDailyGamesScheduler } from "./modules/engagement/daily-games.cron.js";
 import { migrateLegacyIntegrationSecrets } from "./modules/external-db/external-db.service.js";
 import { startITProvisioningLockScheduler } from "./modules/it-provisioning/it-provisioning.cron.js";
@@ -154,6 +155,7 @@ function startServer() {
       if (!WORKERS_EXTERNAL) {
         // Start all schedulers in API process
         startTenureBadgeScheduler();
+        startCelebrationScheduler(); // birthday + work-anniversary posts & emails daily at 8 AM
         startCommunicationCleanup();
         startAttendanceEngineScheduler();
         startAttendanceReconciliationWorker();

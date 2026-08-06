@@ -26,7 +26,12 @@ export async function runProvisioningRetryJob(): Promise<RetryReport> {
     runAt: new Date().toISOString(),
   };
 
-  // Find employees with no provisioning tasks dispatched
+  // Find employees whose provisioning tasks were never dispatched.
+  // - No bridge JOIN: direct-created employees must also be retried.
+  // - 30-day window: 7 days was too short — a DB outage lasting a weekend
+  //   would permanently skip any employee created during it.
+  // - Checks IT_EMAIL_DOMAIN_ASSET task_code existence as the provisioning
+  //   sentinel (the first task dispatched by dispatchJoinProvisioningTasks).
   const [employees] = await db.execute<RowDataPacket[]>(
     `SELECT DISTINCT
        e.id,
@@ -36,15 +41,10 @@ export async function runProvisioningRetryJob(): Promise<RetryReport> {
        e.branch_id,
        ob.id AS bridge_id
      FROM employees e
-     JOIN ats_onboarding_bridge ob ON ob.employee_id = e.id
+     LEFT JOIN ats_onboarding_bridge ob ON ob.employee_id = e.id
      WHERE e.active_status = 0
-       AND e.created_at > DATE_SUB(NOW(), INTERVAL 7 DAY)
-       -- Match on task_code. request_type is ENUM('join','exit'); comparing it
-       -- to a task code never matches, so NOT EXISTS was always true and this
-       -- job re-dispatched every eligible employee on every run — hourly, plus
-       -- once on boot. It has not bitten yet only because no employee has ever
-       -- been created through the ATS path for it to select; that changes as
-       -- soon as conversion works, and createRequest has no idempotency key.
+       AND e.employee_code IS NOT NULL
+       AND e.created_at > DATE_SUB(NOW(), INTERVAL 30 DAY)
        AND NOT EXISTS (
          SELECT 1 FROM it_provisioning_request pr
          WHERE pr.employee_id = e.id

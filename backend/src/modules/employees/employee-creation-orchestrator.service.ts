@@ -26,6 +26,7 @@ import { dispatchJoinProvisioningTasks } from '../it-provisioning/it-provisionin
 import { activateIfJoiningDateReached } from './employee-activation.service.js';
 import { provisionLmsIdentityForEmployee } from '../lms/lms-provisioning.service.js';
 import { autoGenerateJoiningDocuments } from './employeeJoiningDocuments.service.js';
+import { queueJoiningKit, dispatchJoiningKit } from './joiningKitDispatch.service.js';
 import { generateEmployeeCode } from './employee-code.service.js';
 import { appendJourneyEvent } from '../employees/journeyLog.service.js';
 import { logSensitiveAction } from '../../shared/auditLog.js';
@@ -482,13 +483,33 @@ export async function createEmployeeFromCandidate(
       console.error('[EmployeeOrchestrator] Sensitive action log failed:', err instanceof Error ? err.message : String(err));
     });
 
-    // Build the joining-document checklist and pre-filled drafts.
-    autoGenerateJoiningDocuments(employeeId, candidateId, approverId).catch((err: unknown) => {
-      console.error('[EmployeeOrchestrator] Auto joining document generation failed:', {
-        employeeCode,
-        error: err instanceof Error ? err.message : String(err),
+    // Build the joining-document checklist and pre-filled drafts, then
+    // automatically queue and dispatch the eSign kit so the candidate receives
+    // the sign link without HR needing to click "Send for eSign" manually.
+    autoGenerateJoiningDocuments(employeeId, candidateId, approverId)
+      .then(() => {
+        // Auto-dispatch the eSign kit: fire-and-forget, blocked reason is logged.
+        // `hr_fill_pending` block is expected when HR-filled docs aren't ready yet —
+        // HR can re-send manually from the control room once they fill those fields.
+        return queueJoiningKit({
+          employeeId,
+          candidateId: candidateId ?? null,
+          actorUserId: approverId,
+          triggerSource: 'auto_employee_creation',
+        }).then(({ kitId }) => dispatchJoiningKit(kitId, approverId))
+          .then(outcome => {
+            console.log(`[EmployeeOrchestrator] Auto joining kit dispatch: ${outcome.status}`, {
+              employeeCode,
+              blockedReason: outcome.blockedReason ?? null,
+            });
+          });
+      })
+      .catch((err: unknown) => {
+        console.error('[EmployeeOrchestrator] Auto joining document/kit failed:', {
+          employeeCode,
+          error: err instanceof Error ? err.message : String(err),
+        });
       });
-    });
 
     // Tell Payroll HR there is a pack to issue.
     void notifyPayrollHrToIssueJoiningDocuments({
