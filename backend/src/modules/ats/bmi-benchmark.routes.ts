@@ -212,10 +212,10 @@ bmiBenchmarkRouter.get('/', async (req: Request, res: Response) => {
               ROUND(AVG(DATEDIFF(ob.joining_date, jr.created_at)), 1) AS avg_days
        FROM ats_onboarding_bridge ob
        JOIN ats_candidate ac ON ac.id = ob.candidate_id
-       JOIN job_requisition jr ON jr.id = ac.job_requisition_id
+       JOIN job_requisition jr ON jr.id = ac.requisition_id
        WHERE ob.joining_date >= DATE_FORMAT(DATE_SUB(NOW(), INTERVAL 7 MONTH), '%Y-%m-01')
          AND jr.created_at IS NOT NULL
-         ${branchId ? 'AND ob.branch_id = ?' : ''}
+         ${branchId ? 'AND ac.applied_for_branch = ?' : ''}
        GROUP BY mo`,
       branchId ? [branchId] : []
     );
@@ -381,7 +381,7 @@ bmiBenchmarkRouter.get('/', async (req: Request, res: Response) => {
               )), 1) AS avg_days
        FROM job_requisition jr
        LEFT JOIN ats_onboarding_bridge ob ON ob.candidate_id IN (
-         SELECT id FROM ats_candidate WHERE job_requisition_id = jr.id
+         SELECT id FROM ats_candidate WHERE requisition_id = jr.id
        )
        WHERE jr.target_joining_date >= DATE_FORMAT(DATE_SUB(NOW(), INTERVAL 7 MONTH), '%Y-%m-01')
          ${branchId ? 'AND jr.branch_id = ?' : ''}
