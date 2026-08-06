@@ -168,6 +168,73 @@ describe('resignation intent', () => {
   });
 });
 
+describe('detectMiraIntent — lms_progress / lms_certifications stay out of the way of pure navigation questions', () => {
+  it.each([
+    ['what is my training progress', 'lms_progress'],
+    ['my course progress', 'lms_progress'],
+    ['how much of my course have I completed', 'lms_progress'],
+  ])('%s -> lms_progress', (question, expected) => {
+    expect(detectMiraIntent(question)).toBe(expected);
+  });
+
+  it.each([
+    ['am I certified', 'lms_certifications'],
+    ['have I completed my mandatory training', 'lms_certifications'],
+    ['what is my certification status', 'lms_certifications'],
+  ])('%s -> lms_certifications', (question, expected) => {
+    expect(detectMiraIntent(question)).toBe(expected);
+  });
+
+  it('a pure navigation question ("how do I access my training") does not resolve to a self-account intent, leaving it for ai-howto-catalog.ts', () => {
+    expect(detectMiraIntent('how do I access my training')).toBe('unknown');
+  });
+});
+
+describe('lms_progress intent', () => {
+  it('lists per-course completion with a completed-count insight', async () => {
+    mocks.execute.mockResolvedValueOnce([[
+      { course_name: 'POSH Awareness', completion_pct: 100, score: 92, status: 'completed', last_accessed: '2026-07-01' },
+      { course_name: 'Data Security 101', completion_pct: 40, score: null, status: 'in_progress', last_accessed: '2026-08-01' },
+    ]]);
+    const result = await answerSelfAccountQuestion('what is my training progress', 'user-self', ['employee']);
+    expect(result.handled).toBe(true);
+    expect(result.response?.answer).toContain('POSH Awareness');
+    expect(result.response?.answer).toContain('100%');
+    expect(result.response?.insights?.[0]?.count).toBe(1);
+    const [sql, params] = mocks.execute.mock.calls[0];
+    expect(String(sql)).toContain('FROM lms_learning_progress_snapshot');
+    expect(params).toEqual(['employee-self']);
+    expect(result.response?.actions?.[0]?.url).toBe('/lms/my-learning');
+  });
+
+  it('handles no synced progress gracefully', async () => {
+    mocks.execute.mockResolvedValueOnce([[]]);
+    const result = await answerSelfAccountQuestion('my course progress', 'user-self', ['employee']);
+    expect(result.response?.answer).toContain('No training/course progress');
+  });
+});
+
+describe('lms_certifications intent', () => {
+  it('lists certifications with status and dates', async () => {
+    mocks.execute.mockResolvedValueOnce([[
+      { certification_name: 'Fire Safety', status: 'active', issued_date: '2026-01-01', expiry_date: '2027-01-01' },
+    ]]);
+    const result = await answerSelfAccountQuestion('am I certified', 'user-self', ['employee']);
+    expect(result.handled).toBe(true);
+    expect(result.response?.answer).toContain('Fire Safety');
+    expect(result.response?.answer).toContain('active');
+    const [sql, params] = mocks.execute.mock.calls[0];
+    expect(String(sql)).toContain('FROM lms_certification_snapshot');
+    expect(params).toEqual(['employee-self']);
+  });
+
+  it('handles no certifications gracefully', async () => {
+    mocks.execute.mockResolvedValueOnce([[]]);
+    const result = await answerSelfAccountQuestion('have I completed my mandatory training', 'user-self', ['employee']);
+    expect(result.response?.answer).toContain('No certifications are on record');
+  });
+});
+
 describe('reimbursements — rejection_reason now rendered (was already selected, never shown)', () => {
   it('includes the rejection reason for a rejected claim', async () => {
     mocks.execute.mockResolvedValueOnce([[{

@@ -38,6 +38,8 @@ export type AccountIntent =
   | 'reimbursements'
   | 'journey'
   | 'resignation'
+  | 'lms_progress'
+  | 'lms_certifications'
   | 'help'
   | 'scope_violation'
   | 'unknown';
@@ -69,6 +71,8 @@ const INTENT_HISTORY_LABEL: Partial<Record<AccountIntent, string>> = {
   reimbursements: 'their reimbursement claims',
   journey: 'their employment history',
   resignation: 'the status of their resignation',
+  lms_progress: 'their training/course progress',
+  lms_certifications: 'their LMS certifications',
 };
 
 /**
@@ -119,6 +123,14 @@ const INTENTS: Array<{ intent: AccountIntent; patterns: RegExp[] }> = [
   // using the word shift at all.
   { intent: 'roster', patterns: [/\broster\b/i, /\bmy shift\b/i, /\bshift timing\b/i, /\b(?:start|end|log ?out|sign ?off|closing) time\b/i, /\bwhat time (?:do i|does my shift) (?:end|finish|start|begin)\b/i, /\bwhen (?:do i|does my shift) (?:end|finish|start)\b/i, /\bweek(?:ly)? off\b/i, /\btomorrow(?:'s)? shift\b/i, /\bholiday\b/i, /meri shift/i, /mera roster/i, /kal ki shift/i, /week off kab/i, /chhutti kab/i] },
   { intent: 'documents', patterns: [/\bdocuments?\b/i, /\bdoc status\b/i, /\bkyc\b/i, /\bmissing docs?\b/i, /\bverified docs?\b/i] },
+  // Kept specific ("training progress", not bare "training") so a pure
+  // navigation question ("how do I access my training") still falls
+  // through to ai-howto-catalog.ts's lms_access entry — self-account is
+  // checked first in the pipeline, so a bare /\btraining\b/i here would
+  // swallow that navigation question and answer nothing useful instead of
+  // routing to it. Confirmed with a standalone regex check before adding.
+  { intent: 'lms_progress', patterns: [/\b(?:my\s+)?(?:course|training|lms)\s+progress\b/i, /\bhow much (?:of my )?(?:course|training)\s+(?:have i )?completed\b/i, /\bcompletion\s+(?:percentage|status)\b/i, /\bmy\s+(?:course|module)\s+completion\b/i] },
+  { intent: 'lms_certifications', patterns: [/\bam i certified\b/i, /\bmy certifications?\b/i, /\bhave i completed (?:my )?(?:mandatory )?training\b/i, /\bcertification status\b/i] },
   // "in box" as two words is what speech-to-text does with "inbox", and "inbox"
   // on its own is how people actually ask — the old patterns needed "my" or
   // "work" in front of it.
@@ -547,6 +559,29 @@ async function documents(employeeId: string): Promise<RowDataPacket[]> {
     FROM employee_documents WHERE employee_id = ? ORDER BY created_at DESC LIMIT 100`, [employeeId]);
 }
 
+/**
+ * Mirrors GET /api/lms/progress/me exactly (lms.service.ts's getProgress,
+ * self-only via resolveOwnEmployeeId) — HRMS-synced snapshot data, not a
+ * live read of the external LMS itself, per CLAUDE.md's LMS Integration
+ * Rule (HRMS integrates, does not rebuild, LMS operations).
+ */
+async function lmsProgress(employeeId: string): Promise<RowDataPacket[]> {
+  return rows('lms_progress', `SELECT course_name, completion_pct, score, status, last_accessed
+    FROM lms_learning_progress_snapshot
+    WHERE employee_id = ?
+    ORDER BY synced_at DESC
+    LIMIT 10`, [employeeId]);
+}
+
+/** Mirrors GET /api/lms/certifications/me (lms.service.ts's getCertifications). */
+async function lmsCertifications(employeeId: string): Promise<RowDataPacket[]> {
+  return rows('lms_certifications', `SELECT certification_name, issued_date, expiry_date, status
+    FROM lms_certification_snapshot
+    WHERE employee_id = ?
+    ORDER BY issued_date DESC
+    LIMIT 10`, [employeeId]);
+}
+
 async function pendingActions(userId: string, roleKeys: string[]): Promise<RowDataPacket[]> {
   const roles = Array.from(new Set(roleKeys.map((role) => String(role).trim().toLowerCase()).filter(Boolean)));
   if (!roles.length) roles.push('employee');
@@ -820,6 +855,24 @@ ${body}`, startedAt, coachInsights,
     // from the onboarding-specific joining-documents route) and link to it directly.
     return handled(intent, `Your document status:\n\n• Total documents: ${data.length}\n• Verified: ${verified}\n• Pending verification: ${pending.length}${names ? `\n• Pending items: ${names}` : ''}`,
       startedAt, [{ key: 'pending-documents', label: `${pending.length} pending documents`, count: pending.length, severity: pending.length ? 'medium' : 'low' }], [action('Open my dashboard', '/my-dashboard')]);
+  }
+
+  if (intent === 'lms_progress') {
+    const data = await cached(userId, intent, () => lmsProgress(employeeId));
+    if (!data.length) return handled(intent, 'No training/course progress is synced to your account yet.', startedAt, [], [action('Open my learning', '/lms/my-learning')], 0.5);
+    const lines = data.map((row) => `• ${t(row.course_name, 'Course')}: ${n(row.completion_pct)}% complete${row.status ? `, ${t(row.status)}` : ''}${row.score != null ? `, score ${n(row.score)}` : ''}`);
+    const completed = data.filter((row) => String(row.status) === 'completed').length;
+    return handled(intent, `Your training progress:\n\n${lines.join('\n')}`, startedAt,
+      [{ key: 'lms-completed', label: `${completed} of ${data.length} completed`, count: completed, severity: 'low' }], [action('Open my learning', '/lms/my-learning')]);
+  }
+
+  if (intent === 'lms_certifications') {
+    const data = await cached(userId, intent, () => lmsCertifications(employeeId));
+    if (!data.length) return handled(intent, 'No certifications are on record for your account yet.', startedAt, [], [action('Open my learning', '/lms/my-learning')], 0.5);
+    const lines = data.map((row) => `• ${t(row.certification_name, 'Certification')}: ${t(row.status)}${row.issued_date ? `, issued ${date(row.issued_date)}` : ''}${row.expiry_date ? `, expires ${date(row.expiry_date)}` : ''}`);
+    const active = data.filter((row) => String(row.status) === 'active').length;
+    return handled(intent, `Your certifications:\n\n${lines.join('\n')}`, startedAt,
+      [{ key: 'lms-active-certs', label: `${active} active`, count: active, severity: 'low' }], [action('Open my learning', '/lms/my-learning')]);
   }
 
   if (intent === 'pending_actions') {
