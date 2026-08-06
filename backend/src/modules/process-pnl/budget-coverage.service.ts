@@ -20,14 +20,35 @@ async function getBudgetOrThrow(budgetId: string) {
   return rows[0] as any;
 }
 
-function isInvalidCoverage(item: {
+/**
+ * Whether a Head/Sub-head row blocks submission.
+ *
+ * A branch is NOT required to budget against every Head/Sub-head, and as of
+ * 2026-08-06 it is no longer required to *declare* anything about the ones it
+ * skips either. Previously every one of the 59 active Sub-heads needed an
+ * explicit decision plus a typed reason for each one left unbudgeted, which is
+ * what made submission feel mandatory-everywhere: measured on the live drafts,
+ * 26 of 59 and 21 of 59 rows were blocking purely for having no decision
+ * recorded. An untouched Sub-head now simply means the branch is not budgeting
+ * it.
+ *
+ * One case still blocks, because it is a contradiction rather than a choice: a
+ * Sub-head marked "planned" with no budget line behind it. That marker is a
+ * promise the budget does not keep — usually the line was deleted after the
+ * decision was recorded — and a branch head reading "planned" would expect an
+ * amount. Clearing it means either adding the line or changing the decision.
+ *
+ * "not planned"/"not applicable" rows are deliberately not checked here: they
+ * cannot be recorded against a Sub-head that has a line (saveCoverage refuses
+ * it) and a missing reason no longer matters once the decision itself is
+ * optional.
+ */
+export function isInvalidCoverage(item: {
   planning_status: string | null | undefined;
   reason: unknown;
   budget_line_count: number;
 }) {
-  if (!item.planning_status) return true;
-  if (item.planning_status === "planned") return item.budget_line_count <= 0;
-  return item.budget_line_count > 0 || !String(item.reason ?? "").trim();
+  return item.planning_status === "planned" && item.budget_line_count <= 0;
 }
 
 async function getCoverage(budgetId: string) {
@@ -262,6 +283,18 @@ export const budgetCoverageService = {
       if (!coverageRows.length) {
         throw new Error("No active Finance Head/Sub-head master is configured");
       }
+
+      // A budget still has to contain something. saveDraft already refuses to save
+      // a budget with no lines, so this only catches a draft whose lines were
+      // removed by another route or session between save and submit.
+      const [lineCountRows] = await connection.execute<RowDataPacket[]>(
+        "SELECT COUNT(*) AS total FROM finance_budget_line WHERE budget_id = ?",
+        [budgetId]
+      );
+      if (Number(lineCountRows[0]?.total ?? 0) <= 0) {
+        throw new Error("Add at least one budget line before submitting");
+      }
+
       const failures = coverageRows.filter((row) =>
         isInvalidCoverage({
           planning_status: row.planning_status ? String(row.planning_status) : null,
@@ -274,7 +307,7 @@ export const budgetCoverageService = {
           (row) => `${row.head_name} / ${row.sub_head_name}`
         );
         throw new Error(
-          `Complete all Head/Sub-head decisions before submission. Pending: ${labels.join(", ")}${failures.length > labels.length ? ` and ${failures.length - labels.length} more` : ""}`
+          `These Sub-heads are marked "planned" but have no budget line. Add the line, or change the decision: ${labels.join(", ")}${failures.length > labels.length ? ` and ${failures.length - labels.length} more` : ""}`
         );
       }
 
@@ -304,7 +337,12 @@ export const budgetCoverageService = {
          VALUES (?,?,'SUBMIT','draft','submitted',?,?,?)`,
         [
           randomUUID(), budgetId, actorUserId, actorRole,
-          `${coverageRows.length} active Sub-heads reviewed; completeness 100%`,
+          // Was "completeness 100%", which is meaningless now that a decision is not
+          // required on every Sub-head. The reviewer needs to know how much of the
+          // catalogue this budget actually covers, so record that instead.
+          `${coverageRows.filter((row) => Number(row.budget_line_count ?? 0) > 0).length}` +
+            ` of ${coverageRows.length} active Sub-heads budgeted` +
+            `; ${coverageRows.filter((row) => !row.planning_status).length} left undeclared`,
         ]
       );
       await connection.commit();
