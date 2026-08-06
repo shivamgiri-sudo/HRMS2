@@ -389,7 +389,8 @@ export async function lifecycleEvents(
     clauses.push(`e.branch_id IN (${scope.branchScope.ids.map(() => "?").join(",")})`);
     params.push(...scope.branchScope.ids);
   }
-  clauses.push("el.event_date BETWEEN ? AND ?");
+  // employee_lifecycle_event records effective_date, not event_date.
+  clauses.push("el.effective_date BETWEEN ? AND ?");
   params.push(from, to);
 
   if (options.mode === "worker" && options.cursor != null) {
@@ -400,8 +401,13 @@ export async function lifecycleEvents(
     SELECT el.id AS _cursor,
            e.employee_code,
            COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-           el.event_type, el.event_date, el.event_detail,
-           el.effective_date, el.created_by_name,
+           el.event_type,
+           el.effective_date AS event_date,
+           el.remarks AS event_detail,
+           el.effective_date,
+           -- the table stores initiated_by as a user id and carries no name column;
+           -- report it as not-tracked rather than failing the whole query.
+           NULL AS created_by_name,
            b.branch_name, p.process_name
       FROM employee_lifecycle_event el
       JOIN employees e ON e.id = el.employee_id
@@ -437,7 +443,7 @@ export async function incrementPromotionHistory(
     clauses.push(`e.branch_id IN (${scope.branchScope.ids.map(() => "?").join(",")})`);
     params.push(...scope.branchScope.ids);
   }
-  clauses.push("sir.effective_date BETWEEN ? AND ?");
+  clauses.push("sir.effective_from BETWEEN ? AND ?");
   params.push(from, to);
 
   if (options.mode === "worker" && options.cursor != null) {
@@ -448,8 +454,17 @@ export async function incrementPromotionHistory(
     SELECT sir.id AS _cursor,
            e.employee_code,
            COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-           sir.request_type, sir.old_designation, sir.new_designation,
-           sir.old_salary, sir.new_salary, sir.effective_date, sir.approval_status,
+           -- Six of this query's columns did not exist. salary_increment_request keeps
+           -- the money as current_ctc/proposed_ctc, the date as effective_from and the
+           -- state as status; it records no designation change at all, so those two are
+           -- reported as not-tracked rather than failing the whole report.
+           sir.reason_code AS request_type,
+           NULL AS old_designation,
+           NULL AS new_designation,
+           sir.current_ctc  AS old_salary,
+           sir.proposed_ctc AS new_salary,
+           sir.effective_from AS effective_date,
+           sir.status AS approval_status,
            b.branch_name, p.process_name
       FROM salary_increment_request sir
       JOIN employees e ON e.id = sir.employee_id

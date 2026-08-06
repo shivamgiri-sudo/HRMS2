@@ -81,40 +81,12 @@
     "employee_documents.document_number",
     "employee_documents.issuing_authority"
   ],
-  "modules/reporting/executors/attendance.executor.ts": [
-    "break_sessions.session_date"
-  ],
   "modules/reporting/executors/employee.executor.ts": [
-    "employee_lifecycle_event.created_by_name",
-    "employee_lifecycle_event.event_date",
-    "employee_lifecycle_event.event_detail",
     "employees.contract_end_date",
-    "employees.probation_days",
-    "salary_increment_request.approval_status",
-    "salary_increment_request.effective_date",
-    "salary_increment_request.new_designation",
-    "salary_increment_request.new_salary",
-    "salary_increment_request.old_designation",
-    "salary_increment_request.old_salary",
-    "salary_increment_request.request_type"
-  ],
-  "modules/reporting/executors/exit.executor.ts": [
-    "employees.fnf_status",
-    "employees.last_working_day",
-    "employees.resignation_reason",
-    "exit_request.approval_status",
-    "exit_request.exit_reason",
-    "exit_request.last_working_day",
-    "exit_request.resignation_date",
-    "full_final_calculation.finalized_at",
-    "full_final_calculation.gross_earnings",
-    "full_final_calculation.total_deductions"
+    "employees.probation_days"
   ],
   "modules/reporting/executors/identity.executor.ts": [
     "employees.esic_applicable"
-  ],
-  "modules/reporting/executors/leave.executor.ts": [
-    "leave_request.number_of_days"
   ],
   "modules/reporting/executors/payroll.executor.ts": [
     "salary_prep_line.arrear_amount",

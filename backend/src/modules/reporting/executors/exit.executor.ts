@@ -48,7 +48,9 @@ export async function resignationRegister(
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
   clauses.push("eer.id IS NOT NULL");
-  clauses.push("eer.resignation_date BETWEEN ? AND ?");
+  // exit_request has no resignation_date; employees.resignation_date is the real one
+  // (29,070 rows populated).
+  clauses.push("e.resignation_date BETWEEN ? AND ?");
   params.push(from, to);
 
   if (options.mode === "worker" && options.cursor != null) {
@@ -60,10 +62,13 @@ export async function resignationRegister(
     SELECT e.id AS _cursor,
            e.employee_code,
            COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-           eer.resignation_date,
-           COALESCE(eer.last_working_day, e.last_working_day) AS last_working_day,
-           eer.exit_reason,
-           eer.approval_status AS status,
+           e.resignation_date,
+           -- exit_request stores proposed and confirmed separately; neither is called
+           -- last_working_day, and employees has date_of_exit rather than that name.
+           COALESCE(eer.last_working_day_confirmed, eer.last_working_day_proposed, e.date_of_exit)
+             AS last_working_day,
+           eer.exit_reason_category AS exit_reason,
+           eer.status,
            COALESCE(eer.notice_period_days, 0) AS notice_days,
            b.branch_name, p.process_name
       FROM employees e
@@ -102,8 +107,14 @@ export async function fnfPendingRegister(
   const params: unknown[]  = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
-  clauses.push("e.employment_status IN ('resigned','separated')");
-  clauses.push("COALESCE(e.fnf_status,'PENDING') NOT IN ('completed','settled')");
+  // employment_status is stored capitalised ('Resigned' on 30,318 rows), so the
+  // lowercase comparison matched nothing and this register was always empty.
+  // Note 'terminated' (501 rows) is deliberately still excluded — whether termination
+  // belongs in the F&F pending register is a policy call, not a schema fix.
+  clauses.push("LOWER(e.employment_status) IN ('resigned','separated')");
+  // employees has no fnf_status. The F&F state lives on full_final_calculation,
+  // reached through exit_request.
+  clauses.push("COALESCE(ffc.status,'PENDING') NOT IN ('completed','settled')");
 
   if (options.mode === "worker" && options.cursor != null) {
     clauses.push("e.id > ?");
@@ -115,12 +126,16 @@ export async function fnfPendingRegister(
            e.employee_code,
            COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
            e.date_of_exit,
-           e.last_working_day,
+           COALESCE(er.last_working_day_confirmed, er.last_working_day_proposed, e.date_of_exit)
+             AS last_working_day,
            e.employment_status,
-           COALESCE(e.fnf_status,'PENDING') AS fnf_status,
-           DATEDIFF(CURDATE(), COALESCE(e.date_of_exit, e.last_working_day)) AS days_since_exit,
+           COALESCE(ffc.status,'PENDING') AS fnf_status,
+           DATEDIFF(CURDATE(), COALESCE(e.date_of_exit, er.last_working_day_confirmed,
+                                        er.last_working_day_proposed)) AS days_since_exit,
            b.branch_name, p.process_name
       FROM employees e
+      LEFT JOIN exit_request er            ON er.employee_id = e.id
+      LEFT JOIN full_final_calculation ffc ON ffc.exit_request_id = er.id
       LEFT JOIN branch_master b  ON b.id = e.branch_id
       LEFT JOIN process_master p ON p.id = e.process_id
      WHERE ${clauses.join(" AND ")}
@@ -161,7 +176,7 @@ export async function fnfSettlementRegister(
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
   clauses.push("e.employment_status IN ('Exited','Separated','Resigned')");
-  clauses.push("COALESCE(ffc.finalized_at, e.date_of_exit, e.last_working_day) BETWEEN ? AND ?");
+  clauses.push("COALESCE(ffc.approved_at, e.date_of_exit) BETWEEN ? AND ?");
   params.push(from, to);
 
   if (options.mode === "worker" && options.cursor != null) {
@@ -173,13 +188,13 @@ export async function fnfSettlementRegister(
     SELECT e.id AS _cursor,
            e.employee_code,
            COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-           COALESCE(ffc.finalized_at, e.date_of_exit, e.last_working_day) AS settlement_date,
-           COALESCE(ffc.gross_earnings, 0)    AS total_earnings,
-           COALESCE(ffc.total_deductions, 0)  AS total_deductions,
+           COALESCE(ffc.approved_at, e.date_of_exit) AS settlement_date,
+           NULL AS total_earnings,   -- full_final_calculation stores components, not a gross total
+           NULL AS total_deductions, -- deriving one would be inventing payroll arithmetic
            COALESCE(ffc.net_payable, 0)       AS net_payable,
            COALESCE(ffc.status, 'pending')    AS payment_status,
            ffc.is_ff_provisional,
-           LEFT(COALESCE(ffc.finalized_at, e.date_of_exit, e.last_working_day), 7) AS settlement_month,
+           LEFT(COALESCE(ffc.approved_at, e.date_of_exit), 7) AS settlement_month,
            b.branch_name, p.process_name
       FROM employees e
       LEFT JOIN exit_request er            ON er.employee_id = e.id
@@ -264,11 +279,11 @@ export async function monthlyAttritionSummary(
   const params: unknown[]  = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
-  clauses.push("COALESCE(e.date_of_exit, e.last_working_day, e.resignation_date) BETWEEN ? AND ?");
+  clauses.push("COALESCE(e.date_of_exit, e.resignation_date) BETWEEN ? AND ?");
   params.push(from, to);
 
   const base = `
-    SELECT LEFT(COALESCE(e.date_of_exit, e.last_working_day, e.resignation_date), 7) AS exit_month,
+    SELECT LEFT(COALESCE(e.date_of_exit, e.resignation_date), 7) AS exit_month,
            b.branch_name,
            p.process_name,
            COUNT(*) AS attrition_count
@@ -305,14 +320,18 @@ export async function exitReasonAnalysis(
   const params: unknown[]  = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
-  clauses.push("COALESCE(e.date_of_exit, e.last_working_day, e.resignation_date) IS NOT NULL");
+  clauses.push("COALESCE(e.date_of_exit, e.resignation_date) IS NOT NULL");
 
   const base = `
-    SELECT COALESCE(e.resignation_reason, 'Not Specified') AS exit_reason,
+    -- employees carries no resignation_reason; the reason is recorded on exit_request.
+    -- Only 2 exit_request rows exist against ~29k exited employees, so almost every row
+    -- will read 'Not Specified' — that is the truth about the data, not a defect here.
+    SELECT COALESCE(er.resignation_reason, er.exit_reason_category, 'Not Specified') AS exit_reason,
            COUNT(*) AS count,
            b.branch_name,
            p.process_name
       FROM employees e
+      LEFT JOIN exit_request er  ON er.employee_id = e.id
       LEFT JOIN branch_master b  ON b.id = e.branch_id
       LEFT JOIN process_master p ON p.id = e.process_id
      WHERE ${clauses.join(" AND ")}
@@ -388,9 +407,9 @@ export async function earlyAttritionReport(
   const params: unknown[]  = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
-  clauses.push("COALESCE(e.date_of_exit, e.last_working_day) IS NOT NULL");
-  clauses.push("DATEDIFF(COALESCE(e.date_of_exit, e.last_working_day), e.date_of_joining) <= 90");
-  clauses.push("COALESCE(e.date_of_exit, e.last_working_day) BETWEEN ? AND ?");
+  clauses.push("e.date_of_exit IS NOT NULL");
+  clauses.push("DATEDIFF(e.date_of_exit, e.date_of_joining) <= 90");
+  clauses.push("e.date_of_exit BETWEEN ? AND ?");
   params.push(from, to);
 
   if (options.mode === "worker" && options.cursor != null) {
@@ -403,11 +422,13 @@ export async function earlyAttritionReport(
            e.employee_code,
            COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
            e.date_of_joining,
-           COALESCE(e.date_of_exit, e.last_working_day) AS date_of_exit,
-           DATEDIFF(COALESCE(e.date_of_exit, e.last_working_day), e.date_of_joining) AS days_employed,
-           e.resignation_reason,
+           e.date_of_exit AS date_of_exit,
+           DATEDIFF(e.date_of_exit, e.date_of_joining) AS days_employed,
+           -- see the note in exit-reason-analysis: the reason lives on exit_request
+           COALESCE(er.resignation_reason, er.exit_reason_category) AS resignation_reason,
            b.branch_name, p.process_name
       FROM employees e
+      LEFT JOIN exit_request er  ON er.employee_id = e.id
       LEFT JOIN branch_master b  ON b.id = e.branch_id
       LEFT JOIN process_master p ON p.id = e.process_id
      WHERE ${clauses.join(" AND ")}

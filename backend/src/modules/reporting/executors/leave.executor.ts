@@ -413,7 +413,7 @@ export async function leaveLwpReconciliation(
            b.branch_name, p.process_name,
            SUM(adr.lwp_value) AS total_lwp_days,
            COUNT(lr.id) AS leave_applications,
-           SUM(lr.number_of_days) AS leave_days_applied
+           SUM(lr.total_days) AS leave_days_applied
       FROM attendance_daily_record adr
       JOIN employees e ON e.id = adr.employee_id
       LEFT JOIN leave_request lr
