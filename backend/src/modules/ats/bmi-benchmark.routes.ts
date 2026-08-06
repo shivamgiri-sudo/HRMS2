@@ -292,7 +292,8 @@ bmiBenchmarkRouter.get('/', async (req: Request, res: Response) => {
              ${branchId ? 'AND e.branch_id = ?' : ''}`,
           qArgs
         );
-        hrCtcMap[mo] = Number((ctcRows[0] as { total: string | null })?.total) || null;
+        const raw = (ctcRows[0] as { total: string | null })?.total;
+        hrCtcMap[mo] = raw != null && raw !== '' ? Number(raw) : null;
       }
     }
 
@@ -425,8 +426,8 @@ bmiBenchmarkRouter.get('/', async (req: Request, res: Response) => {
              ${branchId ? 'AND e.branch_id = ?' : ''}`,
           qArgs
         );
-        const v = Number((otRows[0] as { total: string | null })?.total);
-        overtimeMap[mo] = v || null;
+        const rawOt = (otRows[0] as { total: string | null })?.total;
+        overtimeMap[mo] = rawOt != null && rawOt !== '' ? Number(rawOt) : null;
       }
     }
 
