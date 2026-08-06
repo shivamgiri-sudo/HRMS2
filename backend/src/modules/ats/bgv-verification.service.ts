@@ -1096,23 +1096,32 @@ export async function listVendorDispatches(candidateId: string) {
 }
 
 export async function listBgvQueueScoped(status: string | undefined, scopeClause: { sql: string; params: unknown[] }) {
+  // status may be a comma-separated list (e.g. "manual_review,failed,pending") — build IN clause
+  const statusList = status ? status.split(',').map(s => s.trim()).filter(Boolean) : [];
+  const statusSQL = statusList.length
+    ? `ch.status IN (${statusList.map(() => '?').join(',')})`
+    : '1=1';
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT c.id AS candidate_id, c.candidate_code, c.full_name, c.mobile, c.email,
             br.branch_name, pm.process_name,
             MAX(ch.updated_at) AS last_check_at,
             SUM(CASE WHEN ch.status IN ('mismatch','failed','manual_review') THEN 1 ELSE 0 END) AS issue_count,
-            SUM(CASE WHEN ch.status = 'verified' THEN 1 ELSE 0 END) AS verified_count
+            SUM(CASE WHEN ch.status = 'verified' THEN 1 ELSE 0 END) AS verified_count,
+            SUM(CASE WHEN ch.status = 'pending' THEN 1 ELSE 0 END) AS checks_pending,
+            SUM(CASE WHEN ch.status IN ('failed','mismatch') THEN 1 ELSE 0 END) AS checks_failed,
+            SUM(CASE WHEN ch.status = 'manual_review' THEN 1 ELSE 0 END) AS checks_manual,
+            COUNT(ch.id) AS total_checks
        FROM ats_candidate c
        LEFT JOIN candidate_bgv_check ch ON ch.candidate_id = c.id
        LEFT JOIN branch_master br ON br.id = c.applied_for_branch
        LEFT JOIN process_master pm ON pm.id = c.applied_for_process
-      WHERE (? IS NULL OR ch.status = ?)
+      WHERE ${statusSQL}
         AND (${scopeClause.sql})
       GROUP BY c.id, c.candidate_code, c.full_name, c.mobile, c.email, br.branch_name, pm.process_name
       HAVING COUNT(ch.id) > 0
       ORDER BY last_check_at DESC
       LIMIT 200`,
-    [status ?? null, status ?? null, ...scopeClause.params]
+    [...statusList, ...scopeClause.params]
   );
   return rows;
 }
