@@ -411,6 +411,46 @@ export const attendanceEngineService = {
   // APR Net_Login minutes for Operations+Executive employees (direct from mas_hrms.apr).
   // Sums across ALL campaigns for the employee on that date — an agent can span multiple
   // campaigns in a day and each row carries per-campaign login time.
+  /**
+   * Does the dialler feed actually carry this employee?
+   *
+   * Enrolment, not activity. The question is whether the APR feed knows this
+   * agent code at all — not whether they logged in on the day being processed.
+   * A covered employee is judged on APR alone: a day with no net login is an
+   * absence. An uncovered one keeps the biometric fallback, because docking
+   * someone for a system that has never held their code is not an attendance
+   * decision, it is an onboarding gap.
+   *
+   * The 30-day look-back is what makes the two populations separable. Asking only
+   * about `date` would answer "did they work today", which is the very thing
+   * being judged, and would put every covered employee's quiet day straight into
+   * absence via the wrong route. Asking about the whole month would flip an
+   * employee's treatment retroactively as rows arrive mid-month.
+   *
+   * As coverage improves this needs no code change: an employee crosses over on
+   * their own, the first time their code appears in the feed.
+   */
+  async isEnrolledInAprFeed(employeeCode: string, date: string): Promise<boolean> {
+    if (!employeeCode) return false;
+    try {
+      const result = await db.execute<RowDataPacket[]>(
+        `SELECT 1 FROM apr
+          WHERE UserID = ?
+            AND ReportDate BETWEEN DATE_SUB(?, INTERVAL 30 DAY) AND ?
+          LIMIT 1`,
+        [employeeCode, date, date],
+      );
+      const rows = (result?.[0] ?? []) as RowDataPacket[];
+      return rows.length > 0;
+    } catch {
+      // Fail to "not covered", never to "covered". An unreachable feed table or a
+      // query error must not be the reason someone is judged on a record that
+      // could not be read — that direction ends in a day's pay removed. Treating
+      // it as uncovered leaves them on the previous behaviour instead.
+      return false;
+    }
+  },
+
   async getAprNetMinutes(employeeCode: string, date: string, shiftWindow?: ShiftWindowInfo): Promise<number> {
     const dates = shiftWindow?.isNightShift
       ? [shiftWindow.startDate, shiftWindow.endDate]
@@ -782,6 +822,10 @@ export const attendanceEngineService = {
     // back to biometric below, and must then be classified as biometric too.
     let classifyAsApr = isAprEmployee;
 
+    // Set inside the APR branch below: whether the dialler feed actually carries
+    // this employee. Only someone the feed covers is judged on APR alone.
+    let aprFeedCoversEmployee = false;
+
     if (isAprEmployee) {
       // G4: Classify biometric independently for mismatch comparison
       if (biometricMinutes > 0) {
@@ -806,20 +850,29 @@ export const attendanceEngineService = {
         mismatchFlag = 1;
       }
 
-      // APR first, biometric fallback.
+      // Is this employee actually covered by the dialler feed?
       //
-      // The APR/dialler feed does not cover the whole Operations Executive population:
-      // on 2026-08-05 it held 216 agent codes company-wide against 828 active Operations
-      // Executives, so only 181 of the 763 with a record that day had any APR row. Judging
-      // the remainder on APR alone puts zero net-login minutes through the operations
-      // classifier — absent, lwp 1.00 — docking a full day's pay for a feed they never
-      // appear in.
+      // Ruling of 2026-08-07: an Operations Executive is judged on APR alone —
+      // no biometric fallback — because a short or missing dialler login IS the
+      // attendance answer for that role.
       //
-      // So when APR has nothing for the day but the employee did punch, classify them on
+      // That applies only to people the feed actually carries. In 2026-08 the
+      // feed held 203 of 829 active Operations Executives; the other 626 have no
+      // agent code in it at all. Judging those on APR would put zero net-login
+      // minutes through the operations classifier and dock a full day's pay for
+      // a system they are not enrolled in — measured on live data as 1,577.5
+      // paid days removed and 461 people taken to zero paid days in six days of
+      // one month. So they keep the biometric fallback until their codes are
+      // onboarded, at which point this check flips them over on its own.
+      aprFeedCoversEmployee = await this.isEnrolledInAprFeed(emp.employee_code, date);
+
+      // Biometric fallback — for the uncovered population only.
+      //
+      // When APR has nothing for the day but the employee did punch, classify them on
       // that punch instead. The APR reading stays recorded in aprStatusRaw/diallerMinutes,
       // and mismatch_flag above is unaffected, so the fallback is visible rather than
       // silently rewriting which source was used.
-      if (rawMinutes === 0 && biometricMinutes > 0) {
+      if (rawMinutes === 0 && biometricMinutes > 0 && !aprFeedCoversEmployee) {
         classifyAsApr = false;
         rawMinutes = biometricMinutes;
         sourceSystem = biometricEvidence.sourceSystem;
@@ -838,7 +891,14 @@ export const attendanceEngineService = {
     // state became missing_punch with lwp 0.00, pending WFM review. Same absence of
     // evidence, opposite payroll outcome. Both now take the review path: a day nothing
     // reported on is a gap to resolve, not a proven absence, whichever feed is silent.
-    if (rawMinutes === 0) {
+    // Someone the dialler feed covers is exempt from this review path: for them a
+    // working day with no net login is the attendance answer, not a gap to chase.
+    // They go to the classifier below and land on 'absent' with lwp 1.00, per the
+    // 2026-08-07 ruling. Pay is unchanged either way — payrollCalculate sets
+    // lwpDeduction = 0 and lets absent days reduce finalPayableDays, so absent and
+    // missing_punch both pay zero for the day; what changes is that the deduction
+    // is now stated rather than left as an unresolved queue item.
+    if (rawMinutes === 0 && !(isAprEmployee && aprFeedCoversEmployee)) {
       const lateResult = await this.calculateLateArrival(employeeId, date, rule);
       return {
         employeeId, date, processId, branchId,
