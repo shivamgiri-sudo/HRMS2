@@ -816,10 +816,37 @@ export async function buildSourceContext(employeeId: string, candidateId?: strin
     [employeeId],
   ).catch(() => [[null] as unknown as RowDataPacket[], []]);
 
+  // The EPF compliance screen writes its own nominee rows, keyed to the EPF
+  // profile and carrying the fields Form 2 actually asks for — share, guardian
+  // for a minor, and a full address. Nothing ever read them: the form took the
+  // general-purpose nominee table instead, so every nominee HR entered on that
+  // screen was discarded at render time. The table is empty today, which is why
+  // no document has been wrong yet, but it would have silently lost data the
+  // moment the screen was used in earnest.
+  //
+  // It wins where it has rows: it is the EPF-specific record, curated for this
+  // form, while the table below is shared with gratuity and insurance.
+  const [epfNominees] = await db.execute<RowDataPacket[]>(
+    `SELECT nominee_name, relationship, date_of_birth, share_percentage,
+            guardian_name, guardian_relationship AS guardian_relation,
+            CONCAT_WS(', ', NULLIF(address_line, ''), NULLIF(city, ''),
+                      NULLIF(state, ''), NULLIF(pincode, '')) AS address,
+            -- This table has no is_minor flag, and the flattener below prints a
+            -- guardian only for a minor. A guardian is recorded for exactly one
+            -- reason, so treat its presence as the flag: hardcoding 0 here would
+            -- silently drop the guardian the screen just collected.
+            CASE WHEN NULLIF(TRIM(guardian_name), '') IS NULL THEN 0 ELSE 1 END AS is_minor
+       FROM employee_epf_nominee
+      WHERE employee_id = ?
+      ORDER BY is_primary DESC, share_percentage DESC, id ASC
+      LIMIT 4`,
+    [employeeId],
+  ).catch(() => [[] as unknown as RowDataPacket[], []]);
+
   // EPF Form 2 nominates against the PF corpus, so take the PF nominees. Rows
   // are flattened to nominee.n1_*, n2_* … because a field map addresses one
   // scalar path per box and the form prints a fixed number of rows.
-  const [nominees] = await db.execute<RowDataPacket[]>(
+  const [generalNominees] = await db.execute<RowDataPacket[]>(
     `SELECT nominee_name, relationship, date_of_birth, share_percentage,
             address, is_minor, guardian_name, guardian_relation
        FROM employee_nominee
@@ -829,6 +856,10 @@ export async function buildSourceContext(employeeId: string, candidateId?: strin
       LIMIT 4`,
     [employeeId],
   ).catch(() => [[] as unknown as RowDataPacket[], []]);
+
+  const nominees = (epfNominees as RowDataPacket[]).length
+    ? (epfNominees as RowDataPacket[])
+    : (generalNominees as RowDataPacket[]);
 
   // employee_nominee is the system of record and wins whenever it has rows. It
   // is empty for anyone who joined through the candidate onboarding journey and
