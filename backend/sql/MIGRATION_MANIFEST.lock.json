@@ -434,7 +434,11 @@
     "1075_bank_detail_sync_map_account_encrypt_false.sql",
     "1076_mira_company_services_seed.sql",
     "1077_ai_prompt_audit_detected_intent.sql",
-    "1078_ai_rate_limit_bucket.sql"
+    "1078_ai_rate_limit_bucket.sql",
+    "1080_bmi_manual_input.sql",
+    "1081_credit_note_lines_and_provision_deductions.sql",
+    "1082_apr_eligibility_config_operations_executive_fix.sql",
+    "1083_wfm_attendance_exceptions_page_code.sql"
   ],
   "approvedDeletions": [],
   "knownDangling": [],
@@ -522,6 +526,8 @@
     "1061_fix_passage_encoding.sql",
     "1064_celebration_post_type.sql",
     "1071_onboarding_reminder_sent_at.sql",
+    "1079_budget_snapshot_active_flag.sql",
+    "1080_credit_notes_and_budget_adjustments.sql",
     "127_ats_candidate_unique_constraints.sql",
     "133_phase2_security_fixes.sql",
     "136_incentive_module.sql",

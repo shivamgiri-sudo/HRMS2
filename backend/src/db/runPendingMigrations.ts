@@ -481,13 +481,19 @@ const MIGRATION_MANIFEST: string[] = [
   // failure this manifest is meant to prevent. Order matters here: 1079 and
   // 1080_credit_notes both ALTER finance_budget_snapshot, and 1081 builds on the credit
   // note table 1080 creates.
-  "1079_budget_snapshot_active_flag.sql",
+  // 1079_budget_snapshot_active_flag.sql and 1080_credit_notes_and_budget_adjustments.sql
+  // are deliberately NOT listed here — see knownUnlisted in MIGRATION_MANIFEST.lock.json.
+  // Their objects already exist in production, so the runner hits them as idempotent
+  // errors and, by the governance rule below, refuses to record them as applied. Listing
+  // them would leave verifySchemaVersion permanently short two migrations, which reports
+  // the whole service as degraded (a 503 on /api/health). They go back in the manifest
+  // once an admin has verified the schema and marked them complete in schema_migrations.
+  //
   // Two different sessions both numbered a migration 1080. The manifest and
   // schema_migrations track full filenames, so the collision is not fatal and neither
   // file is renamed — renaming a migration is how one silently re-runs. They are
-  // unrelated (BMI capture vs billing credit notes) and both are listed.
+  // unrelated: BMI capture vs billing credit notes.
   "1080_bmi_manual_input.sql",
-  "1080_credit_notes_and_budget_adjustments.sql",
   "1081_credit_note_lines_and_provision_deductions.sql",
   "1082_apr_eligibility_config_operations_executive_fix.sql",
   "1083_wfm_attendance_exceptions_page_code.sql", // gives /wfm/attendance-exceptions its own page code instead of borrowing WFM_LIVE_TRACKER (shared with 4 unrelated pages, and it locked out payroll — who own the 455 open salary_payable_days_mismatch blockers). Additive seed only; must be applied BEFORE the frontend Gate is repointed, since prod runs SKIP_MIGRATIONS=true
