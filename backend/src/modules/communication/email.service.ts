@@ -89,6 +89,37 @@ export function resetTransporter(): void {
   cachedTransporter = null;
 }
 
+/**
+ * Refuses to post a link only the sender's own machine can open.
+ *
+ * FRONTEND_URL is schema-defaulted to http://localhost:8080, and roughly twenty
+ * call sites add their own localhost fallbacks on top. So any of them, run from a
+ * developer machine, builds a working-looking link to that machine and mails it
+ * to a real person — with nothing in the result to show it was wrong. On
+ * 2026-08-06 an EPF review link went to an employee's personal Gmail pointing at
+ * localhost:8080, and the send reported success.
+ *
+ * SMTP is what makes this reach someone, so this is the boundary worth guarding:
+ * one check covers every current and future sender. In production FRONTEND_URL is
+ * set, so it never fires. The escape hatch exists for deliberately testing a
+ * template against a local server.
+ */
+export function assertNoLocalhostLinks(input: Pick<EmailSendInput, "to" | "html" | "text">) {
+  if (String(process.env.ALLOW_LOCALHOST_EMAIL_LINKS ?? "").toLowerCase() === "true") return;
+  const body = `${input.html ?? ""}${input.text ?? ""}`;
+  // The host must end where it is matched, or "localhost-tools.teammas.in" —
+  // a perfectly reachable host — would be rejected as loopback.
+  const match = body.match(
+    /https?:\/\/(localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\])(:\d+)?(?=[/?#"'\s>]|$)/i,
+  );
+  if (!match) return;
+  const to = Array.isArray(input.to) ? input.to.join(", ") : String(input.to ?? "");
+  throw new Error(
+    `Refusing to email a ${match[0]} link to ${to} — the recipient cannot open it. `
+    + "Set FRONTEND_URL to the public address, or ALLOW_LOCALHOST_EMAIL_LINKS=true for a local template test.",
+  );
+}
+
 export const emailService = {
   isConfigured(): boolean {
     return Boolean(env.SMTP_HOST && env.SMTP_PORT && env.SMTP_FROM && env.SMTP_USER && smtpPassword());
@@ -117,6 +148,8 @@ export const emailService = {
     if (!this.isConfigured()) {
       throw new Error("SMTP is not configured. Set SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS and SMTP_FROM.");
     }
+
+    assertNoLocalhostLinks(input);
 
     const result = await getTransporter().sendMail({
       from: fromAddress(),

@@ -1390,14 +1390,33 @@ async function persistChecklistFillStatus(checklistId: string) {
   // `NOT IN ()` is a syntax error, so use a sentinel that never matches a key.
   const skip = NON_BLOCKING_FIELD_KEYS.length ? NON_BLOCKING_FIELD_KEYS : ["__none__"];
   const skipSql = skip.map(() => "?").join(",");
+  // Only a field the template marks required may hold a document back.
+  //
+  // Optional fields were blocking too, and there are far more of them than the
+  // named exceptions could ever cover: Form 11 alone marks 43 of its 69 fields
+  // optional — every education and disability tickbox, passport, country of
+  // origin, previous exit date — none of which we hold for anyone. One employee
+  // (MAS63086) had 82 fields flagged across her kit, so it could never be sent
+  // and the e-sign mail never fired. A document that can never complete is worse
+  // than one that goes out with optional boxes for the member to tick at
+  // signing, which is what the paper form expects anyway.
+  //
+  // A field with no map row keeps the old behaviour, so anything the template
+  // does not describe still blocks rather than being silently waived. Signature
+  // fields are filled during e-sign, after this runs, so they never block.
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT
-        SUM(CASE WHEN fill_status = 'hr_fill_required'
-                  AND field_key NOT IN (${skipSql}) THEN 1 ELSE 0 END) AS missing_count,
-        SUM(CASE WHEN value_source = 'HR_ENTERED' THEN 1 ELSE 0 END) AS hr_count,
-        SUM(CASE WHEN employee_confirmed = 0 THEN 1 ELSE 0 END) AS unconfirmed_count
-       FROM employee_joining_document_field_value
-      WHERE checklist_id = ?`,
+        SUM(CASE WHEN fv.fill_status = 'hr_fill_required'
+                  AND fv.field_key NOT IN (${skipSql})
+                  AND fv.field_key NOT REGEXP '(^|_)signature$'
+                  AND COALESCE(m.required, 1) = 1 THEN 1 ELSE 0 END) AS missing_count,
+        SUM(CASE WHEN fv.value_source = 'HR_ENTERED' THEN 1 ELSE 0 END) AS hr_count,
+        SUM(CASE WHEN fv.employee_confirmed = 0 THEN 1 ELSE 0 END) AS unconfirmed_count
+       FROM employee_joining_document_field_value fv
+       JOIN employee_joining_document_checklist cl ON cl.id = fv.checklist_id
+       LEFT JOIN document_template_field_map m
+              ON m.document_code = cl.document_code AND m.field_key = fv.field_key
+      WHERE fv.checklist_id = ?`,
     [...skip, checklistId],
   );
   const row = rows[0] as RowDataPacket | undefined;

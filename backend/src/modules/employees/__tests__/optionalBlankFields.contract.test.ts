@@ -59,10 +59,28 @@ describe("optional unsourced fields do not block a document", () => {
 
   it("missing_count excludes non-blocking fields", () => {
     // The specific regression: without this clause the document can never
-    // leave hr_fill_required.
+    // leave hr_fill_required. Columns are table-qualified since the count now
+    // joins the template map to read each field's required flag.
     expect(src).toMatch(
-      /SUM\(CASE WHEN fill_status = 'hr_fill_required'\s*\n?\s*AND field_key NOT IN \(\$\{skipSql\}\)/,
+      /SUM\(CASE WHEN fv\.fill_status = 'hr_fill_required'\s*\n?\s*AND fv\.field_key NOT IN \(\$\{skipSql\}\)/,
     );
+  });
+
+  it("only a required field can block a document", () => {
+    // Optional fields outnumber the named exceptions by far — Form 11 marks 43
+    // of its 69 optional, none of which we hold for anyone — so counting them
+    // made kits undispatchable. A field with no map row still blocks, so
+    // anything the template does not describe is never silently waived.
+    expect(src).toMatch(/COALESCE\(m\.required, 1\) = 1/);
+    expect(src).toMatch(/LEFT JOIN document_template_field_map m/);
+  });
+
+  it("waives the signature placeholder but not the signature date", () => {
+    // Signatures are applied during e-sign, after this runs. The date beside
+    // them is auto-filled from system.current_date and stays required — an
+    // over-broad %signature% match would have waived those too.
+    expect(src).toMatch(/NOT REGEXP '\(\^\|_\)signature\$'/);
+    expect(src).not.toMatch(/NOT LIKE '%signature%'/);
   });
 
   it("binds the excluded keys before checklistId", () => {

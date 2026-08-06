@@ -188,7 +188,11 @@ function isMissingJoiningDocumentStatusColumn(error: unknown) {
 }
 
 function frontendBaseUrl() {
-  return String(env.FRONTEND_URL || "http://localhost:8080").replace(/\/$/, "");
+  // Defaults to the public address, matching joiningKitDispatch. Every link this
+  // module builds is emailed to a candidate or employee, so a localhost fallback
+  // here only ever produces a link the recipient cannot open. emailService
+  // refuses to send one regardless; this stops it being built in the first place.
+  return String(env.FRONTEND_URL || "https://mcnhrms.teammas.in").replace(/\/$/, "");
 }
 
 function safeExternalProviderUrl(value: unknown): string | null {
