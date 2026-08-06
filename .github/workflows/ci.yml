@@ -257,6 +257,20 @@ jobs:
           done
           exit 1
 
+      # Fails when a query names a column mas_hrms does not have. That query throws at
+      # runtime, and the .catch() around it turns the error into a fabricated zero that
+      # renders as a real measurement — the most common defect in this repo. Ratcheted
+      # against a baseline of the 189 refs that already existed, so it only fails on new
+      # ones. Offline: validates against backend/sql/schema-snapshot.json, no DB needed.
+      - name: Schema column reference contract
+        shell: bash
+        run: |
+          for attempt in 1 2; do
+            (cd backend && npm exec -- vitest run src/db/__tests__/schema-column-refs.test.ts) && exit 0
+            echo "Schema column reference contract attempt $attempt failed."
+          done
+          exit 1
+
       # Every test below caught a defect that reached main on 2026-07-31, when four
       # commits' worth of work was silently reverted by unrelated commits made from a
       # stale working tree. Each one fails against the reverted code, so CI would have

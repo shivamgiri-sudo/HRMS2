@@ -1,0 +1,269 @@
+{
+  "modules/access/access.routes.ts": [
+    "user_assignment_scope.assigned_at"
+  ],
+  "modules/ats-full-parity/analytics.service.ts": [
+    "ats_candidate.sla_breach"
+  ],
+  "modules/ats/interview.service.ts": [
+    "ats_interview_result.created_at"
+  ],
+  "modules/ats/joining-control-room.service.ts": [
+    "it_provisioning_request.assigned_to",
+    "it_provisioning_request.candidate_id",
+    "it_provisioning_request.completed_at",
+    "it_provisioning_request.sla_due"
+  ],
+  "modules/ats/recruiter-hiring.service.ts": [
+    "employees.branch_display_name"
+  ],
+  "modules/business-actions/business-actions.signal-sync.ts": [
+    "employees.reporting_manager_user_id",
+    "roster_assignment.process_id",
+    "wfm_slot_requirement.required_hc"
+  ],
+  "modules/business-intelligence/bi.service.ts": [
+    "lms_learner_progress.certification_status",
+    "lms_learner_progress.completion_pct",
+    "lms_learner_progress.last_updated"
+  ],
+  "modules/employees/employee.routes.ts": [
+    "employee_tier_status.tier_name"
+  ],
+  "modules/employees/employeeJoiningDocuments.service.ts": [
+    "auth_user.full_name"
+  ],
+  "modules/engagement/engagement-health.service.ts": [
+    "development_plan.id",
+    "development_plan_goal.development_plan_id"
+  ],
+  "modules/engagement/survey.service.ts": [
+    "survey_question.display_order",
+    "survey_response.response_id"
+  ],
+  "modules/expenses/expenseReport.service.ts": [
+    "employees.name"
+  ],
+  "modules/finance/vendor-payment.service.ts": [
+    "auth_user.active_status"
+  ],
+  "modules/it-provisioning/it-provisioning.routes.ts": [
+    "employees.designation"
+  ],
+  "modules/lifecycle/lifecycle.routes.ts": [
+    "ats_candidate.converted_employee_id",
+    "ats_employment_offer.prepared_by"
+  ],
+  "modules/payroll-compliance/payrollCompliance.service.ts": [
+    "employee_bank_detail.verified_status"
+  ],
+  "modules/payroll-masters/payrollMasters.service.ts": [
+    "salary_package_master.grade_id",
+    "salary_package_master.slab_id"
+  ],
+  "modules/payroll/holiday-debug.routes.ts": [
+    "cost_centre_master.process_name"
+  ],
+  "modules/payroll/payroll-audit-trail.routes.ts": [
+    "auth_user.first_name",
+    "auth_user.last_name",
+    "sensitive_action_log.created_at"
+  ],
+  "modules/payroll/payroll-extended.routes.ts": [
+    "employees.uan"
+  ],
+  "modules/payroll/payroll-more.routes.ts": [
+    "employees.branch_name",
+    "employees.process_name"
+  ],
+  "modules/payroll/payroll-window.routes.ts": [
+    "auth_user.first_name",
+    "auth_user.last_name"
+  ],
+  "modules/payroll/payroll.routes.ts": [
+    "employee_documents.pan_number",
+    "employees.ctc_annual",
+    "salary_advance_log.advance_amount",
+    "salary_advance_log.approved_at",
+    "salary_advance_log.approved_by",
+    "salary_advance_log.recovery_month",
+    "salary_advance_log.rejection_reason"
+  ],
+  "modules/payroll/salary-verification.routes.ts": [
+    "employees.designation"
+  ],
+  "modules/reporting/executors/assets.executor.ts": [
+    "employee_documents.document_number",
+    "employee_documents.issuing_authority"
+  ],
+  "modules/reporting/executors/attendance.executor.ts": [
+    "break_sessions.end_time",
+    "break_sessions.session_date",
+    "break_sessions.start_time"
+  ],
+  "modules/reporting/executors/employee.executor.ts": [
+    "employee_lifecycle_event.created_by_name",
+    "employee_lifecycle_event.event_date",
+    "employee_lifecycle_event.event_detail",
+    "employees.contract_end_date",
+    "employees.probation_days",
+    "salary_increment_request.approval_status",
+    "salary_increment_request.effective_date",
+    "salary_increment_request.new_designation",
+    "salary_increment_request.new_salary",
+    "salary_increment_request.old_designation",
+    "salary_increment_request.old_salary",
+    "salary_increment_request.request_type"
+  ],
+  "modules/reporting/executors/exit.executor.ts": [
+    "employees.fnf_status",
+    "employees.last_working_day",
+    "employees.resignation_reason",
+    "exit_request.approval_status",
+    "exit_request.exit_reason",
+    "exit_request.last_working_day",
+    "exit_request.resignation_date",
+    "full_final_calculation.finalized_at",
+    "full_final_calculation.gross_earnings",
+    "full_final_calculation.total_deductions"
+  ],
+  "modules/reporting/executors/identity.executor.ts": [
+    "employees.esic_applicable",
+    "employees.uan"
+  ],
+  "modules/reporting/executors/leave.executor.ts": [
+    "leave_request.number_of_days"
+  ],
+  "modules/reporting/executors/payroll.executor.ts": [
+    "salary_prep_line.arrear_amount",
+    "salary_prep_line.arrear_month",
+    "salary_prep_line.arrear_reason",
+    "salary_prep_line.other_allowances"
+  ],
+  "modules/reporting/executors/recruitment.executor.ts": [
+    "ats_candidate.application_status",
+    "ats_candidate.applied_date",
+    "ats_candidate.assigned_recruiter_name",
+    "ats_candidate.expected_joining_date",
+    "ats_candidate.job_id",
+    "ats_candidate.joining_date",
+    "ats_candidate.offer_accepted",
+    "ats_candidate.offer_ctc",
+    "ats_candidate.offer_date",
+    "ats_candidate.offer_decline_reason",
+    "ats_candidate.selected_date",
+    "ats_candidate.source_channel",
+    "job_posting.job_title"
+  ],
+  "modules/reporting/executors/statutory.executor.ts": [
+    "employees.last_drawn_basic",
+    "employees.pt_state",
+    "salary_prep_line.annual_tax_liability",
+    "salary_prep_line.esic_wage",
+    "salary_prep_line.projected_annual_income",
+    "salary_prep_line.taxable_income",
+    "salary_prep_line.tds_exemptions"
+  ],
+  "modules/reporting/identity-mapping-report.ts": [
+    "report_identity_source_snapshot.matched_employee_name",
+    "report_identity_source_snapshot.source_employee_name"
+  ],
+  "modules/reporting/report-suite.routes.ts": [
+    "action_plan.action_plan_number",
+    "action_plan.action_type",
+    "action_plan.branch_id",
+    "action_plan.completed_at",
+    "action_plan.owner",
+    "action_plan.priority",
+    "action_plan.root_cause",
+    "action_plan.title",
+    "ats_candidate.source_channel",
+    "ats_candidate.stage",
+    "ats_onboarding_bridge.branch_id",
+    "ats_onboarding_bridge.process_id",
+    "ats_onboarding_request.completed_at",
+    "ats_onboarding_request.joining_date",
+    "ats_onboarding_request.process_id",
+    "employee_bank_detail.mismatch_reason",
+    "employee_bank_detail.penny_drop_name",
+    "employee_bank_detail.verification_status",
+    "employee_joining_document_checklist.digilocker_linked",
+    "employee_joining_document_checklist.doc_type",
+    "employee_joining_document_checklist.esign_completed_at",
+    "employee_joining_document_checklist.esign_requested_at",
+    "employees.cost_center",
+    "exit_request.exit_notes",
+    "exit_request.rehire_flag",
+    "gratuity_accrual_ledger.accrual_amount",
+    "gratuity_accrual_ledger.calculation_basis",
+    "gratuity_accrual_ledger.eligible_wage",
+    "helpdesk_ticket.ticket_number",
+    "integration_connector_run.connector_key",
+    "integration_connector_run.records_errored",
+    "integration_connector_run.records_fetched",
+    "integration_connector_run.records_inserted",
+    "integration_connector_run.records_updated",
+    "integration_connector_run.run_ended_at",
+    "integration_connector_run.run_started_at",
+    "integration_connector_run.run_status",
+    "integration_connector_run.run_type",
+    "kpi_daily_actual.record_date",
+    "performance_feedback_report.id",
+    "performance_feedback_report.manager_score",
+    "performance_feedback_report.peer_score",
+    "performance_feedback_report.self_score",
+    "performance_feedback_report.submitted_at",
+    "portal_access_log.accessed_at",
+    "portal_access_log.action",
+    "portal_access_log.client_id",
+    "portal_access_log.data_export_flag",
+    "portal_access_log.page_accessed",
+    "portal_access_log.user_identifier",
+    "posh_complaint.complainant_designation",
+    "posh_complaint.complaint_date",
+    "posh_complaint.complaint_id",
+    "posh_complaint.complaint_type",
+    "posh_complaint.ic_formed",
+    "posh_complaint.inquiry_completed_at",
+    "posh_complaint.process_id",
+    "posh_complaint.resolution_date",
+    "posh_complaint.respondent_designation",
+    "salary_prep_run.payroll_month",
+    "sensitive_action_log.actor_id",
+    "sensitive_action_log.after_value",
+    "sensitive_action_log.before_value",
+    "sensitive_action_log.created_at",
+    "sensitive_action_log.reference_id",
+    "sensitive_action_log.reference_type",
+    "tax_declaration.gross_salary",
+    "tax_declaration.status",
+    "tax_declaration.taxable_income",
+    "tax_declaration.tds_deducted",
+    "tax_declaration.tds_deposited",
+    "tax_declaration.total_deductions",
+    "wfm_roster_plan.ack_completed_count",
+    "wfm_roster_plan.ack_required",
+    "wfm_roster_plan.published_at",
+    "wfm_roster_plan.published_by"
+  ],
+  "modules/reporting/reporting.service.ts": [
+    "employee_statutory_info.esic_applicable",
+    "employee_statutory_info.pf_applicable",
+    "employee_statutory_info.pt_applicable",
+    "employee_statutory_info.tds_applicable",
+    "exit_request.last_working_day",
+    "exit_request.resignation_date",
+    "kpi_metric_master.metric_unit",
+    "process_master.lob_id"
+  ],
+  "modules/rta/rta.service.ts": [
+    "wfm_roster_assignment.branch_id",
+    "wfm_roster_assignment.process_id"
+  ],
+  "modules/wfm/attendance-apr-bulk.routes.ts": [
+    "employees.status"
+  ],
+  "modules/wfm/wfm.routes.ts": [
+    "employees.designation"
+  ]
+}
