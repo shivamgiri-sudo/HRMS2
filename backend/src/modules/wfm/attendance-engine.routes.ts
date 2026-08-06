@@ -65,7 +65,7 @@ function istNowParts(date = new Date()) {
     hour: '2-digit',
     minute: '2-digit',
     second: '2-digit',
-    hour12: false,
+    hourCycle: 'h23', // NOT hour12:false — that selects h24 and renders midnight as '24'
   }).formatToParts(date);
   const pick = (type: string) => parts.find((part) => part.type === type)?.value ?? '';
   return {
@@ -891,7 +891,7 @@ router.post('/clock-in', h(async (req: AuthenticatedRequest, res: Response) => {
     timeZone: 'Asia/Kolkata',
     year: 'numeric', month: '2-digit', day: '2-digit',
     hour: '2-digit', minute: '2-digit', second: '2-digit',
-    hour12: false,
+    hourCycle: 'h23', // NOT hour12:false — that selects h24 and renders midnight as '24'
   }).formatToParts(nowDate);
   const g = (t: string) => nowIST.find(p => p.type === t)!.value;
   const today = `${g('year')}-${g('month')}-${g('day')}`;
@@ -950,7 +950,7 @@ router.post('/clock-out', h(async (req: AuthenticatedRequest, res: Response) => 
     timeZone: 'Asia/Kolkata',
     year: 'numeric', month: '2-digit', day: '2-digit',
     hour: '2-digit', minute: '2-digit', second: '2-digit',
-    hour12: false,
+    hourCycle: 'h23', // NOT hour12:false — that selects h24 and renders midnight as '24'
   }).formatToParts(nowDate);
   const g = (t: string) => now.find(p => p.type === t)!.value;
   const nowStr = `${g('year')}-${g('month')}-${g('day')} ${g('hour')}:${g('minute')}:${g('second')}`;

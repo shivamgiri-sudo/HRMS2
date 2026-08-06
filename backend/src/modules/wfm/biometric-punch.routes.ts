@@ -18,7 +18,7 @@ function fmtISTDatetime(dt: Date): string {
     timeZone: 'Asia/Kolkata',
     year: 'numeric', month: '2-digit', day: '2-digit',
     hour: '2-digit', minute: '2-digit', second: '2-digit',
-    hour12: false,
+    hourCycle: 'h23', // NOT hour12:false — that selects h24 and renders midnight as '24'
   }).formatToParts(dt);
   const get = (t: string) => parts.find(p => p.type === t)!.value;
   return `${get('year')}-${get('month')}-${get('day')} ${get('hour')}:${get('minute')}:${get('second')}`;

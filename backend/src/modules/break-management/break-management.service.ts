@@ -124,7 +124,7 @@ function getIstParts(date = new Date()) {
     hour: "2-digit",
     minute: "2-digit",
     second: "2-digit",
-    hour12: false,
+    hourCycle: "h23", // NOT hour12:false — that selects h24 and renders midnight as "24"
   });
   const parts = formatter.formatToParts(date);
   const pick = (type: string) => parts.find((part) => part.type === type)?.value ?? "";
