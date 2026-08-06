@@ -23,6 +23,7 @@ import { slotRequirementService } from "./slotRequirement.service.js";
 import { weekoffDayRuleService } from "./weekoffDayRule.service.js";
 import { calculate } from "./hcCalculation.service.js";
 import { attendanceAprBulkRouter } from "./attendance-apr-bulk.routes.js";
+import { scopedAttendanceDailyHandler } from "./attendance-daily-scoped.routes.js";
 
 export const wfmRouter = Router();
 wfmRouter.use(requireAuth);
@@ -51,7 +52,22 @@ wfmRouter.put("/shifts/:id",      requireRole("admin", "wfm"), h(wfmController.u
 wfmRouter.get("/attendance/daily", h(async (req: any, res: any) => {
   const { employeeId, fromDate, toDate } = req.query;
   if (!employeeId) {
-    return res.status(400).json({ success: false, error: "employeeId is required" });
+    // No employeeId means a self/team/branch/process-scoped, multi-employee
+    // query (e.g. "everyone on my team for today") rather than one
+    // employee's history across a date range — a different query shape than
+    // the rest of this handler builds below. TeamAttendanceTab.tsx calls
+    // exactly this way (date, no employeeId) and got a flat 400 here before
+    // this fix, because this route — mounted at app.ts:334 — always wins the
+    // full path /api/wfm/attendance/daily over attendance-daily-scoped.routes.ts's
+    // own matching mount (app.ts:516, registered later, Express resolves by
+    // registration order for an overlapping exact path). That router's
+    // handler already implements exactly this scoping correctly, so this
+    // delegates to it rather than duplicating ~130 lines of scope-building
+    // SQL; the employeeId-provided path below is completely unchanged for
+    // the five other callers (ADRAttendanceCalendar, useAttendance,
+    // useAttendanceHub, NativeEmployeeStatCard, MyAttendanceHistory) that
+    // already pass employeeId and depend on its exact response shape.
+    return scopedAttendanceDailyHandler(req, res);
   }
 
   // Ownership + role check: employees may only view their own attendance;

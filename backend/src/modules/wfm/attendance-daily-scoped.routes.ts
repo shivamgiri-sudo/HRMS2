@@ -44,7 +44,15 @@ function safeId(value: unknown, field: string): string | null {
   return v;
 }
 
-attendanceDailyScopedRouter.get("/daily", h(async (req, res) => {
+/**
+ * Extracted so wfm.routes.ts's colliding "/attendance/daily" (same full path,
+ * `/api/wfm/attendance/daily` — earlier-mounted at app.ts:334, so it always
+ * wins over this router's own mount at app.ts:516) can delegate to this exact
+ * scoping logic for the one case it doesn't itself handle: no `employeeId`
+ * given (self/team/branch/process scoped, multi-employee, single-date/range
+ * query) — see the delegation call site in wfm.routes.ts for the full story.
+ */
+export async function scopedAttendanceDailyHandler(req: AuthenticatedRequest, res: any) {
   const userId = req.authUser!.id;
   const isAdminHrWfm = await hasRole(userId, "admin", "hr", "wfm", "ceo");
   const isManager = await hasRole(userId, "manager", "assistant_manager", "tl");
@@ -175,4 +183,6 @@ attendanceDailyScopedRouter.get("/daily", h(async (req, res) => {
   }));
 
   return res.json({ success: true, data, total: Number(countRows[0]?.total ?? 0), page, limit });
-}));
+}
+
+attendanceDailyScopedRouter.get("/daily", h(scopedAttendanceDailyHandler));
