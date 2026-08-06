@@ -158,7 +158,9 @@ export const PAGE_CODE_BY_ROUTE: Record<string, string> = {
   "/wfm/extensions": "WFM_EXTENSIONS",
   "/wfm/live-tracker": "WFM_LIVE_TRACKER",
   "/wfm/mismatch-queue": "WFM_LIVE_TRACKER",
-  "/wfm/attendance-exceptions": "WFM_LIVE_TRACKER",
+  // Own code as of migration 1083 — WFM_LIVE_TRACKER is shared with 4 unrelated pages and
+  // excluded payroll, who own the payable-days blockers this page lists.
+  "/wfm/attendance-exceptions": "WFM_ATTENDANCE_EXCEPTIONS",
   "/wfm/planning-rules": "WFM_PLANNING_RULES",
   "/wfm/roster": "WFM_ROSTER",
   "/roster-preference": "WFM_ROSTER",

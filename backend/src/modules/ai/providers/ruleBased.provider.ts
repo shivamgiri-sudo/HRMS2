@@ -148,7 +148,9 @@ export class RuleBasedProvider implements AiProvider {
       actions.push({
         key: 'resolve_attendance_exceptions',
         label: 'Resolve Attendance Exceptions',
-        url: '/attendance/exception-engine',
+        // '/attendance/exception-engine' matched no route in src/config/routes — the
+        // action card rendered but went nowhere. The registered path is /wfm/attendance-exceptions.
+        url: '/wfm/attendance-exceptions',
         priority: context.risky_records > 20 ? 'critical' : 'high',
       });
     }

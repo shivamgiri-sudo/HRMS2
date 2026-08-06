@@ -129,6 +129,7 @@ import { attendanceDisputeRouter } from "./modules/attendance/attendance.dispute
 import { attendanceManualOverrideRouter } from "./modules/attendance/attendance.manual-override.routes.js";
 import { discardRouter } from "./modules/discard/discard.routes.js";
 import { mismatchReviewRouter } from "./modules/wfm/mismatch-review.routes.js";
+import { attendanceExceptionsRouter } from "./modules/wfm/attendance-exceptions.routes.js";
 import { billingConfigRouter } from "./modules/attendance/billing-config.routes.js";
 import customizationRouter from "./modules/customization/customization.routes.js";
 import { rosterMasterRouter } from "./modules/roster/roster-master.routes.js";
@@ -517,6 +518,9 @@ app.use('/api/wfm/attendance', attendanceDailyScopedRouter);
 app.use('/api/wfm/attendance', attendanceEngineRouter);
 app.use('/api/wfm/attendance', attendanceAprBulkRouter);
 app.use('/api/wfm/attendance/manual-mark', attendanceManualMarkRouter);
+// Distinct path segment, not a child of /api/wfm/attendance — the three routers above
+// cannot shadow it. Read-only worklist over attendance_reconciliation_issue.
+app.use('/api/wfm/attendance-exceptions', attendanceExceptionsRouter);
 app.use("/api/dialer", dialerRouter);
 app.use("/api/tasks", taskRouter);
 app.use('/api/wfm/biometric-punch', biometricPunchRouter);

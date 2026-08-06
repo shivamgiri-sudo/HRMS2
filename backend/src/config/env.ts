@@ -69,9 +69,17 @@ const envSchema = z.object({
   NCOSEC_SYNC_INTERVAL_MS: z.coerce.number().int().min(60000).default(300000),
   NCOSEC_SYNC_LOOKBACK_DAYS: z.coerce.number().int().min(1).max(31).default(1),
   NCOSEC_RECONCILIATION_ENABLED: z.string().default("true"),
-  NCOSEC_RECONCILIATION_AUTO_FIX: z.string().default("false"),
+  // Auto-fix is NOT a targeted per-row correction: attendance-reconciliation.service.ts
+  // hands the whole window to cosecSyncService.sync(), i.e. a full COSEC biometric
+  // re-sync. Safe to run because every attendance_daily_record write in that service is
+  // guarded by `is_locked = 0`, so payroll-finalized rows are never rewritten — but it is
+  // real work over the whole lookback window, every night.
+  NCOSEC_RECONCILIATION_AUTO_FIX: z.string().default("true"),
   NCOSEC_RECONCILIATION_HOUR: z.coerce.number().int().min(0).max(23).default(2),
-  NCOSEC_RECONCILIATION_LOOKBACK_DAYS: z.coerce.number().int().min(1).max(31).default(1),
+  // Was 1 — a single missed night left a permanent hole, because the worker only ever
+  // looked at yesterday. 7 lets a gap self-heal on the next successful run. Re-detected
+  // issues upsert on uq issue_key rather than duplicating.
+  NCOSEC_RECONCILIATION_LOOKBACK_DAYS: z.coerce.number().int().min(1).max(31).default(7),
 
   PORTAL_JWT_SECRET: z.string().min(32).default("change-me-in-production-portal-secret-32ch"),
   JWT_SECRET: z.string().min(32).default('change-me-jwt-secret-32characters!!'),

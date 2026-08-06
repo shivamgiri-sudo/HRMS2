@@ -368,6 +368,21 @@ export async function getEmployee360(actor: Actor, employeeId: string, req?: Req
   };
 }
 
+/**
+ * ⚠ Reads `attendance_exception`, which is EMPTY (0 rows, verified live 2026-08-07) and has
+ * no scheduled writer — only the manual POST /scan below, which nothing calls.
+ *
+ * This is NOT the attendance-exception store the product uses. The live one is
+ * `attendance_reconciliation_issue` (~5,700 rows, filled nightly by
+ * attendance-reconciliation.worker.ts), served by modules/wfm/attendance-exceptions.routes.ts
+ * and shown at /wfm/attendance-exceptions. The dashboard `attException` tiles count that
+ * table too.
+ *
+ * Kept because nothing is deleted here, but treat these functions as dormant: pointing a
+ * new page at them is how /wfm/attendance-exceptions ended up rendering a blank screen.
+ * Note also that scanAttendanceExceptions() below keys on attendance_status 'unreconciled',
+ * a value that occurs 0 times live, and ignores 'missing_punch', the largest real category.
+ */
 export async function getAttendanceExceptionSummary(actor: Actor, filters: QueryFilters) {
   const { from, to } = dateRange(filters);
   const scoped = await scopedEmployeeWhere(actor, filters);

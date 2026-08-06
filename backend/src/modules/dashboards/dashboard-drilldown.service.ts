@@ -572,7 +572,9 @@ async function drillAttendanceExceptions(scope: DashboardScope): Promise<Drilldo
           AND ari.issue_date >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
           AND ${scopeSql}
         GROUP BY ari.issue_type, ari.severity
-        ORDER BY FIELD(ari.severity,'blocker','warning','info'), count DESC`,
+        -- severity ENUM is ('blocker','warning') only; the 'info' that used to sit here
+        -- matched nothing. Ordering is unchanged, the phantom value is just gone.
+        ORDER BY FIELD(ari.severity,'blocker','warning'), count DESC`,
       params,
     );
     return {

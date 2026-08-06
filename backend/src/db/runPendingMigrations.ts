@@ -475,6 +475,7 @@ const MIGRATION_MANIFEST: string[] = [
   "1076_mira_company_services_seed.sql", // 425's seed only inserted 6 of FALLBACK_FACTS's 7 rows (missing company-services); facts() does dbFacts.length ? dbFacts : FALLBACK_FACTS — all-or-nothing, not merged — so once any DB rows exist, a services-category question got zero facts, not even the fallback text, because 'services' was never among the seeded 6
   "1077_ai_prompt_audit_detected_intent.sql", // adds ai_prompt_audit_log.detected_intent for Mira Analytics top-intent breakdowns — instruments future requests only; question_hash/sanitized_context_hash are one-way SHA-256 hashes, nothing to backfill historical rows from
   "1078_ai_rate_limit_bucket.sql", // backs ai-rate-limiter.ts with a real table — the in-memory Map had no persistence and no cross-process sharing, so each backend process got its own independent 100/day bucket per user and a restart silently reset everyone's counter
+  "1083_wfm_attendance_exceptions_page_code.sql", // gives /wfm/attendance-exceptions its own page code instead of borrowing WFM_LIVE_TRACKER (shared with 4 unrelated pages, and it locked out payroll — who own the 455 open salary_payable_days_mismatch blockers). Additive seed only; must be applied BEFORE the frontend Gate is repointed, since prod runs SKIP_MIGRATIONS=true
   ];
 
 export type MigrationHealth = {

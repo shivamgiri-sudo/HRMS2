@@ -215,7 +215,7 @@ export const navGroups: NavGroup[] = [
         children: [
           { label: "WFM Tracker",           href: "/wfm/live-tracker",          icon: ic(Clock),     pageCode: "WFM_LIVE_TRACKER", description: "Live" },
           { label: "RTA Board",             href: "/rta-board",                 icon: ic(Activity),  pageCode: "RTA_BOARD",        description: "RTA" },
-          { label: "Attendance Exceptions", href: "/wfm/attendance-exceptions", icon: ic(Clock),     pageCode: "WFM_LIVE_TRACKER", description: "Exception engine" },
+          { label: "Attendance Exceptions", href: "/wfm/attendance-exceptions", icon: ic(Clock),     pageCode: "WFM_ATTENDANCE_EXCEPTIONS", description: "Reconciliation & data-integrity exceptions" },
           { label: "Attendance Mismatch", href: "/wfm/mismatch-queue", icon: ic(ClipboardList), roles: ["admin","hr","wfm","manager","super_admin"], description: "Resolve attendance mismatches" },
           { label: "Attendance Billing", href: "/attendance/billing-config", icon: ic(Settings2), roles: ["admin","hr","wfm","super_admin"], description: "Attendance billing rules" },
           { label: "COSEC Monitoring",      href: "/wfm/cosec-monitoring",      icon: ic(Activity),  pageCode: "WFM_LIVE_TRACKER", description: "Biometric sync" },

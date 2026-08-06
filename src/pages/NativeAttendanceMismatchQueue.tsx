@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from "react";
+import { Link } from "react-router-dom";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -185,7 +186,11 @@ export default function NativeAttendanceMismatchQueue() {
         <div>
           <h1 className="text-2xl font-bold text-slate-900">Attendance Mismatch Queue</h1>
           <p className="text-sm text-slate-500 mt-1">
-            Review APR vs biometric mismatches, missing punches, and week-off worked records
+            Review APR vs biometric mismatches, missing punches, and week-off worked records.
+            {" "}For reconciliation and data-integrity exceptions, see the{" "}
+            <Link to="/wfm/attendance-exceptions" className="font-semibold text-blue-600 hover:underline">
+              attendance exception engine
+            </Link>.
           </p>
         </div>
         <Button variant="outline" size="sm" onClick={() => { load(); loadSummary(); }}>

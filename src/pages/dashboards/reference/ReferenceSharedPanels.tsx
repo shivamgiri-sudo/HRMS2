@@ -305,12 +305,16 @@ export function AttendanceExceptionPanel({ data }: { data: ReferenceDashboardDat
         <p className="px-4 py-8 text-center text-sm text-[#a0aec0]">{reason}</p>
       ) : (
         <div className="divide-y divide-[#edf1f6]">
-          <ReferenceListRow icon={WalletCards} title="Payable Days Mismatch" subtitle="Blocks the payroll run until reconciled" value={metricDetail(m, "attException", "payableMismatch")} tone="red" href="/wfm/mismatch-queue" />
-          <ReferenceListRow icon={FileWarning} title="Missing Attendance Record" subtitle="No daily record was created" value={metricDetail(m, "attException", "missingAdr")} tone="red" href="/wfm/attendance-exceptions" />
-          <ReferenceListRow icon={Fingerprint} title="Unmapped Biometric User" subtitle="Punches cannot be matched to an employee" value={metricDetail(m, "attException", "unmappedCosec")} tone="amber" href="/wfm/attendance-exceptions" />
-          <ReferenceListRow icon={TriangleAlert} title="Warnings" subtitle="Non-blocking, needs review" value={metricDetail(m, "attException", "warnings")} tone="amber" href="/wfm/attendance-exceptions" />
-          <ReferenceListRow icon={UserCheck} title="Resolved (30d)" subtitle="Cleared in the last 30 days" value={metricDetail(m, "attException", "resolved")} tone="green" />
-          <ReferenceListRow icon={FileWarning} title="Total Open" subtitle="All unresolved exceptions in the last 30 days" value={metricDetail(m, "attException", "openTotal")} tone="amber" href="/wfm/attendance-exceptions" />
+          {/* Every row here is counted from `attendance_reconciliation_issue`, so each link
+              carries its own filter into the exception engine, which now reads that same
+              table. Payable Days Mismatch previously pointed at /wfm/mismatch-queue, which
+              reads `attendance_daily_record` and could never show these rows. */}
+          <ReferenceListRow icon={WalletCards} title="Payable Days Mismatch" subtitle="Blocks the payroll run until reconciled" value={metricDetail(m, "attException", "payableMismatch")} tone="red" href="/wfm/attendance-exceptions?issueType=salary_payable_days_mismatch&status=open" />
+          <ReferenceListRow icon={FileWarning} title="Missing Attendance Record" subtitle="No daily record was created" value={metricDetail(m, "attException", "missingAdr")} tone="red" href="/wfm/attendance-exceptions?issueType=missing_adr&status=open" />
+          <ReferenceListRow icon={Fingerprint} title="Unmapped Biometric User" subtitle="Punches cannot be matched to an employee" value={metricDetail(m, "attException", "unmappedCosec")} tone="amber" href="/wfm/attendance-exceptions?issueType=unmapped_cosec_user&status=open" />
+          <ReferenceListRow icon={TriangleAlert} title="Warnings" subtitle="Non-blocking, needs review" value={metricDetail(m, "attException", "warnings")} tone="amber" href="/wfm/attendance-exceptions?severity=warning&status=open" />
+          <ReferenceListRow icon={UserCheck} title="Resolved (30d)" subtitle="Cleared in the last 30 days" value={metricDetail(m, "attException", "resolved")} tone="green" href="/wfm/attendance-exceptions?status=resolved" />
+          <ReferenceListRow icon={FileWarning} title="Total Open" subtitle="All unresolved exceptions in the last 30 days" value={metricDetail(m, "attException", "openTotal")} tone="amber" href="/wfm/attendance-exceptions?status=open" />
           {unscopeable !== null && unscopeable > 0 ? (
             <ReferenceListRow icon={Users} title="No Employee Link" subtitle="Counted org-wide only — cannot be attributed to a branch" value={unscopeable} tone="blue" />
           ) : null}
