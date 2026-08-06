@@ -146,26 +146,13 @@ export default function EmployeeJoiningKitEsignPage() {
           </div>
         ) : session && !done && (
           <div className="grid gap-5 xl:grid-cols-[minmax(0,2fr),minmax(0,1fr)] xl:items-start">
+            {/* The document being signed leads the column. It used to sit under
+                the contents list, which pushed it below the fold on a 1080p
+                screen and off the first two screens on a phone — a viewer the
+                signer has to go looking for is not much better than a small one.
+                The list moved in beside the signing panel, where it reads as a
+                summary of what the tick covers. */}
             <div className="space-y-5">
-              <div className="rounded-[30px] border border-white/10 bg-white/5 p-5">
-                <div className="flex items-center gap-2">
-                  <FileText className="h-4 w-4 text-cyan-300" />
-                  <p className="text-xs font-black uppercase tracking-[0.16em] text-slate-400">
-                    {session.documentCount} documents · {session.totalPages} pages
-                  </p>
-                </div>
-                <ul className="mt-4 space-y-2">
-                  {session.documents.map((d) => (
-                    <li key={d.code} className="flex items-center justify-between gap-3 rounded-2xl border border-white/10 bg-black/20 px-4 py-3">
-                      <span className="text-sm font-semibold text-white">{d.name}</span>
-                      <span className="shrink-0 text-[11px] font-bold uppercase tracking-wide text-slate-500">
-                        {d.pageFrom === d.pageTo ? `Page ${d.pageFrom}` : `Pages ${d.pageFrom}–${d.pageTo}`}
-                      </span>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-
               <div className="overflow-hidden rounded-[30px] border border-white/10 bg-white/5">
                 <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/10 px-5 py-3">
                   <p className="text-xs font-black uppercase tracking-[0.16em] text-slate-400">Read before signing</p>
@@ -193,9 +180,29 @@ export default function EmployeeJoiningKitEsignPage() {
               </div>
             </div>
 
-            {/* Sticky so the consent tick and Sign button stay reachable while
-                the signer scrolls a multi-page kit in the taller viewer. */}
-            <div className="rounded-[30px] border border-white/10 bg-white/5 p-5 xl:sticky xl:top-8">
+            {/* Sticky so the contents, the consent tick and the Sign button all
+                stay reachable while the signer scrolls a 17-page kit. */}
+            <div className="space-y-5 xl:sticky xl:top-8">
+              <div className="rounded-[30px] border border-white/10 bg-white/5 p-5">
+                <div className="flex items-center gap-2">
+                  <FileText className="h-4 w-4 text-cyan-300" />
+                  <p className="text-xs font-black uppercase tracking-[0.16em] text-slate-400">
+                    {session.documentCount} documents · {session.totalPages} pages
+                  </p>
+                </div>
+                <ul className="mt-4 space-y-2">
+                  {session.documents.map((d) => (
+                    <li key={d.code} className="flex items-center justify-between gap-3 rounded-2xl border border-white/10 bg-black/20 px-4 py-3">
+                      <span className="text-sm font-semibold text-white">{d.name}</span>
+                      <span className="shrink-0 text-[11px] font-bold uppercase tracking-wide text-slate-500">
+                        {d.pageFrom === d.pageTo ? `Page ${d.pageFrom}` : `Pages ${d.pageFrom}–${d.pageTo}`}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+
+            <div className="rounded-[30px] border border-white/10 bg-white/5 p-5">
               <div className="flex items-start gap-3 rounded-2xl border border-cyan-400/20 bg-cyan-500/5 p-4">
                 <ShieldCheck className="mt-0.5 h-5 w-5 shrink-0 text-cyan-300" />
                 <p className="text-sm text-slate-300">
@@ -246,6 +253,7 @@ export default function EmployeeJoiningKitEsignPage() {
                   })}.
                 </p>
               )}
+            </div>
             </div>
           </div>
         )}
