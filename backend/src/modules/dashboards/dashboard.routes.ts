@@ -7,6 +7,7 @@ import {
   buildScopeWhere,
   narrowDashboardScope,
   resolveDashboardScope,
+  type DashboardScope,
 } from "../../shared/dashboardScope.js";
 import { getUserRoleContext } from "../../shared/roleResolver.js";
 import {
@@ -46,8 +47,22 @@ async function requireDashboardEntitlement(
   if (!definition) {
     throw dashboardAccessError("Dashboard not found", 404);
   }
-  const context = await getUserRoleContext(req.authUser!.id);
-  if (!canAccessDashboard(definition.code, context.roleKeys)) {
+  // Demo-bypass identities (INTERNAL_DEMO_BYPASS) have no backing row in user_roles,
+  // user_assignment_scope, auth_user or employees — getUserRoleContext's DB-driven lookup
+  // always misses for them and falls back to ["employee"], regardless of which demo role
+  // actually logged in. Confirmed live 2026-08-06: after fixing the super_admin demo
+  // token's own 401 mismatch, the account still got 403 "Not entitled to
+  // SUPER_ADMIN_DASHBOARD" for exactly this reason. requireAuth already sets
+  // req.authUser.role from the demo token map, so trusting it here for demo sessions is
+  // safe. Deliberately local to this one entitlement check — it does not touch
+  // getUserRoleContext/resolveDashboardScope, which 30+ other call sites depend on,
+  // including v2 quality/operations dashboards with their own deliberately fail-closed
+  // behavior for unconfigured accounts (tests/dashboards-v2.routes.test.ts); demo accounts
+  // remain "unconfigured" there on purpose until that is a considered product decision.
+  const roleKeys = req.authUser!.isDemo && req.authUser!.role
+    ? [req.authUser!.role]
+    : (await getUserRoleContext(req.authUser!.id)).roleKeys;
+  if (!canAccessDashboard(definition.code, roleKeys)) {
     throw dashboardAccessError(`Not entitled to ${definition.code}`, 403);
   }
   req.params.dashboardCode = definition.code;
@@ -75,8 +90,31 @@ const requireFixedDashboard = (dashboardCode: DashboardCode) =>
 
 async function requestedScope(req: AuthenticatedRequest) {
   const user = req.authUser!;
-  const context = await getUserRoleContext(user.id);
-  const base = await resolveDashboardScope(user.id, context.primaryRole);
+
+  // Demo-bypass identities (INTERNAL_DEMO_BYPASS) have no backing row in any MySQL table, so
+  // resolveDashboardScope's own internal getUserRoleContext(userId) call always misses and
+  // falls back to role "employee" for them — which then fails closed with 409 "No active
+  // employee mapping scope is configured for role employee" instead of rendering real
+  // demo data. Confirmed live 2026-08-06, right after fixing the entitlement-gate 403 above.
+  //
+  // For the two roles resolveDashboardScope itself already treats as unconditionally
+  // org-wide ("super_admin", "admin" — its own SYSTEM_WIDE_ROLES set), constructing that
+  // same ORG_ALL scope directly here for demo sessions matches its existing, deliberate
+  // logic exactly. Deliberately narrow: it does not call resolveDashboardScope or touch
+  // roleResolver.ts, so every other role (including demo hr/wfm/team_leader/etc., which
+  // genuinely have no real branch/process to show and are left exactly as before) and the
+  // v2 quality/operations dashboards' own separate, deliberately fail-closed "unconfigured
+  // account" contract (tests/dashboards-v2.routes.test.ts) are completely unaffected.
+  const isDemoSystemWide = user.isDemo === true && (user.role === "super_admin" || user.role === "admin");
+
+  const context = isDemoSystemWide
+    ? { roleKeys: [user.role!], primaryRole: user.role!, isSuperAdmin: true, isHO: false }
+    : await getUserRoleContext(user.id);
+
+  const base: DashboardScope = isDemoSystemWide
+    ? { level: "ORG_ALL", branchIds: [], processIds: [], employeeIds: [], userId: user.id, role: context.primaryRole }
+    : await resolveDashboardScope(user.id, context.primaryRole);
+
   const scope = await narrowDashboardScope(
     base,
     String(req.query.branchId ?? ""),
