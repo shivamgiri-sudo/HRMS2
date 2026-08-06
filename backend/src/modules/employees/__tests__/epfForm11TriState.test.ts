@@ -68,12 +68,38 @@ describe("Form 11 previous-membership boxes", () => {
     expect(epf.previous_eps_member).toBe(true);
   });
 
-  it("prefers the EPF compliance record over onboarding", async () => {
-    epfRow = { previous_pf_member: 0 };
-    onboardingRow = { previous_pf_member: 1 };
+  it("does not read a freshly created profile's defaults as answers", async () => {
+    // Every flag on employee_epf_compliance_profile is NOT NULL DEFAULT 0, so a
+    // row created for an employee who has answered nothing arrives with five
+    // zeros. Treating those as declarations put "No" on the form the moment HR
+    // opened the record — which is how SOFIYA SULTAN (MAS63086) came to have
+    // previous_pf_member = 0 without anyone asking her.
+    epfRow = {
+      previous_pf_member: 0, previous_eps_member: 0, international_worker: 0,
+      employee_name: "SOFIYA SULTAN",
+    };
     const epf = await epfOf();
     expect(epf.previous_pf_member).toBe(false);
+    expect(epf.previous_pf_member_no).toBe(false);
+    expect(epf.previous_eps_member_no).toBe(false);
+    expect(epf.international_worker_no).toBe(false);
+  });
+
+  it("lets the member's nullable onboarding answer through a profile default", async () => {
+    // The profile's 0 is not an answer, so her actual "no" from the statutory
+    // step must still reach the form.
+    epfRow = { previous_pf_member: 0 };
+    onboardingRow = { previous_pf_member: 0 };
+    const epf = await epfOf();
     expect(epf.previous_pf_member_no).toBe(true);
+  });
+
+  it("trusts an affirmative on the EPF record over onboarding", async () => {
+    epfRow = { previous_pf_member: 1 };
+    onboardingRow = { previous_pf_member: 0 };
+    const epf = await epfOf();
+    expect(epf.previous_pf_member).toBe(true);
+    expect(epf.previous_pf_member_no).toBe(false);
   });
 
   it("does not read international_worker's default 0 as an answer", async () => {

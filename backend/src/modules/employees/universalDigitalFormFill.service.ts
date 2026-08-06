@@ -131,8 +131,21 @@ function tri(...candidates: unknown[]): boolean | null {
   return null;
 }
 
-/** Treats only an affirmative as an answer; see international_worker below. */
-function onboardingTrueOnly(value: unknown): 1 | null {
+/**
+ * Reads a NOT NULL DEFAULT 0 flag as an answer only when it says yes.
+ *
+ * All five flags on employee_epf_compliance_profile, and international_worker on
+ * candidate_onboarding_profile, are NOT NULL DEFAULT 0. They therefore cannot be
+ * null, and a 0 is indistinguishable from never having been asked — creating a
+ * profile row instantly "answers" every one of them with No. A 1 is a real
+ * declaration and is trusted; a 0 falls through so a nullable source can answer,
+ * and if none does the boxes stay blank.
+ *
+ * The nullable columns (candidate_onboarding_profile.previous_pf_member and
+ * .eps_member) are the only place a genuine "No" can come from, and tri() reads
+ * those directly.
+ */
+function affirmativeOnly(value: unknown): 1 | null {
   return value != null && Number(value) === 1 ? 1 : null;
 }
 
@@ -1111,22 +1124,21 @@ export async function buildSourceContext(employeeId: string, candidateId?: strin
       // and `??` treats '' as a real value, so the employee-row fallback would
       // never fire and the form would print blank for someone who has a UAN.
       uan_masked: safeTrim(epf?.uan_masked) ?? safeTrim(onboarding?.uan_number) ?? maskDigits(employee?.uan_number),
-      previous_pf_member: tri(epf?.previous_pf_member, onboarding?.previous_pf_member) === true,
-      previous_pf_member_no: tri(epf?.previous_pf_member, onboarding?.previous_pf_member) === false,
+      previous_pf_member: tri(affirmativeOnly(epf?.previous_pf_member), onboarding?.previous_pf_member) === true,
+      previous_pf_member_no: tri(affirmativeOnly(epf?.previous_pf_member), onboarding?.previous_pf_member) === false,
       // Only the onboarding column is a valid fallback: its field is labelled
       // "Previous EPF / PF Number". employees.epf_number is the CURRENT member
       // id, and printing it here would make Form 11 assert a previous
       // membership that does not exist.
       previous_pf_account_number: safeTrim(epf?.previous_pf_account_number) ?? safeTrim(onboarding?.epf_number),
       previous_exit_date: epf?.previous_exit_date ?? null,
-      previous_eps_member: tri(epf?.previous_eps_member, onboarding?.eps_member) === true,
-      previous_eps_member_no: tri(epf?.previous_eps_member, onboarding?.eps_member) === false,
-      // international_worker is the one flag whose onboarding column carries a
-      // DEFAULT 0, so 32,762 of its zeros are the default rather than an answer.
-      // A 1 is a real declaration and is trusted; a 0 is not, so it is passed as
-      // unknown and both boxes stay blank rather than asserting "No".
-      international_worker: tri(epf?.international_worker, onboardingTrueOnly(onboarding?.international_worker)) === true,
-      international_worker_no: tri(epf?.international_worker, onboardingTrueOnly(onboarding?.international_worker)) === false,
+      previous_eps_member: tri(affirmativeOnly(epf?.previous_eps_member), onboarding?.eps_member) === true,
+      previous_eps_member_no: tri(affirmativeOnly(epf?.previous_eps_member), onboarding?.eps_member) === false,
+      // Both sources for this one are DEFAULT 0, so it can only ever be answered
+      // yes. With no affirmative anywhere the boxes stay blank rather than
+      // asserting a "No" nobody made.
+      international_worker: tri(affirmativeOnly(epf?.international_worker), affirmativeOnly(onboarding?.international_worker)) === true,
+      international_worker_no: tri(affirmativeOnly(epf?.international_worker), affirmativeOnly(onboarding?.international_worker)) === false,
       country_of_origin: epf?.country_of_origin ?? null,
       passport_number: epf?.passport_number ?? null,
       passport_valid_from: epf?.passport_valid_from ?? null,
