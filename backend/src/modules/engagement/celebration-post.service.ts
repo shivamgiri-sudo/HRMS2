@@ -170,7 +170,7 @@ export async function sendBirthdayGreeting(emp: CelebrationEmployee): Promise<vo
       await emailService.send({
         to: toEmail,
         bcc: bccEmails.length ? bccEmails.join(",") : undefined,
-        subject: `🎂 Happy Birthday, ${firstName}! 🎉`,
+        subject: `🎂 Happy Birthday, ${firstName} (${emp.employee_code})! 🎉`,
         html: birthdayGreetingEmail({
           employeeName: name,
           firstName,
@@ -243,7 +243,7 @@ export async function sendAnniversaryGreeting(emp: CelebrationEmployee): Promise
       await emailService.send({
         to: toEmail,
         bcc: bccEmails.length ? bccEmails.join(",") : undefined,
-        subject: `⭐ Happy ${years}-Year Work Anniversary, ${firstName}!`,
+        subject: `⭐ Happy ${years}-Year Work Anniversary, ${firstName} (${emp.employee_code})!`,
         html: workAnniversaryEmail({
           employeeName: name,
           firstName,
