@@ -78,6 +78,18 @@ router.post("/shifts/templates", h(async (req: AuthenticatedRequest, res: Respon
 
 // ── Roster Cycles ─────────────────────────────────────────────────────────────
 
+// DEAD CODE — unreachable in production. rosterSelfSecureRouter (roster.self.secure.routes.ts)
+// defines the identical path "/my-cycles" and is mounted at the same "/api/roster-gov" prefix
+// FIRST (app.ts:471, this router mounts at app.ts:473) — Express resolves an exact-path
+// collision by registration order, so that router's handler always wins and this one never
+// runs. Confirmed during a 2026-08-06 route audit (the same class of bug fixed for
+// /api/wfm/attendance/daily that session). NOT fixed by reordering the mounts: unlike that
+// case, this handler is a real behavioral regression waiting to happen if it ever did start
+// executing — it filters by process_id only, with no branch_id scoping at all, so an employee
+// whose process spans multiple branches would see every branch's roster cycles, not just
+// their own (rosterSelfSecureRouter's version explicitly scopes on both). Left in place,
+// clearly marked, rather than deleted or silently "fixed" — edit rosterSelfSecureRouter's
+// "/my-cycles" instead if this behavior needs to change; editing this one does nothing.
 // GET /my-cycles — employee-scoped: returns cycles for the employee's own process only
 router.get("/my-cycles", h(async (req: AuthenticatedRequest, res: Response) => {
   const emp = await getEmployeeForUser(req.authUser!.id);
@@ -165,6 +177,12 @@ router.post("/cycles/:id/acknowledge", h(async (req: AuthenticatedRequest, res: 
   return res.json({ data });
 }));
 
+// DEAD CODE — unreachable in production, same class of collision as "/my-cycles" above:
+// rosterSelfSecureRouter defines the identical "/my-roster/:cycleId" and is mounted first
+// (app.ts:471 vs app.ts:473), so its handler always wins. Unlike "/my-cycles", the two
+// implementations here are functionally close (both scope to the caller's own employee_id),
+// so this specific one is lower-risk dead code — but it's still never invoked. Edit
+// rosterSelfSecureRouter's "/my-roster/:cycleId" instead if this behavior needs to change.
 // Get employee's own roster assignments for a cycle
 router.get("/my-roster/:cycleId", h(async (req: AuthenticatedRequest, res: Response) => {
   const emp = await getEmployeeForUser(req.authUser!.id);
