@@ -11,6 +11,7 @@ const Attendance                   = lazy(() => import("@/pages/Attendance"));
 const BiometricPunchLogs           = lazy(() => import("@/pages/BiometricPunchLogs"));
 const AttendanceRegularization     = lazy(() => import("@/pages/AttendanceRegularization"));
 const AdminAttendanceView          = lazy(() => import("@/pages/AdminAttendanceView"));
+const TeamAttendanceMonth          = lazy(() => import("@/pages/wfm/TeamAttendanceMonth"));
 const NativeAttendanceDisputes     = lazy(() => import("@/pages/NativeAttendanceDisputes"));
 const NativeDiscardCenter          = lazy(() => import("@/pages/NativeDiscardCenter"));
 const NativeAttendanceMismatchQueue = lazy(() => import("@/pages/NativeAttendanceMismatchQueue"));
@@ -69,6 +70,15 @@ export const workforceRouteElements = (
       <Route path="/hr/attendance-lookup"       element={
         <ProtectedRoute roles={['super_admin','admin','hr','payroll_head','payroll_admin','wfm']}>
           <Gate pageCode="HR_ATTENDANCE_LOOKUP"><AdminAttendanceView /></Gate>
+        </ProtectedRoute>
+      } />
+      {/* Manager closure screen: whole team, whole month, one page. The backend
+          scopes rows to direct reports on its own — these roles gate who may ask,
+          not whose data comes back. pageCode must stay identical here, in
+          pageRoutePageCodes.ts and in navConfig.tsx or nav and access disagree. */}
+      <Route path="/wfm/team-attendance"        element={
+        <ProtectedRoute roles={['super_admin','admin','hr','wfm','manager','assistant_manager','tl','team_leader','process_manager','branch_head']}>
+          <Gate pageCode="TEAM_ATTENDANCE_MONTH"><DashboardLayout><TeamAttendanceMonth /></DashboardLayout></Gate>
         </ProtectedRoute>
       } />
 

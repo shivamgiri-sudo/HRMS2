@@ -119,6 +119,7 @@ import { emailTemplatesRouter } from "./modules/email-templates/email-templates.
 import { securityCenterRouter } from "./modules/security/security-center.routes.js";
 import { attendanceEngineRouter } from "./modules/wfm/attendance-engine.routes.js";
 import { attendanceDailyScopedRouter } from "./modules/wfm/attendance-daily-scoped.routes.js";
+import { teamAttendanceMonthRouter } from "./modules/wfm/team-attendance-month.routes.js";
 import { attendanceAprBulkRouter } from "./modules/wfm/attendance-apr-bulk.routes.js";
 import { attendanceManualMarkRouter } from "./modules/wfm/attendance-manual-mark.routes.js";
 import { biometricPunchRouter } from "./modules/wfm/biometric-punch.routes.js";
@@ -514,6 +515,11 @@ app.use("/api/external-db", externalDbRouter);
 app.use("/api/apr", aprRouter);
 app.use("/api/payroll-masters", payrollMastersRouter);
 app.use("/api/incentives", incentivesRouter);
+// Mounted ahead of the three routers below because they all share this prefix and the
+// first registration of a path wins — /api/wfm/attendance/daily is already claimed
+// three times over, and only wfm.routes.ts's copy is ever reached. /team-month is
+// unique today; mounting it first keeps it that way.
+app.use('/api/wfm/attendance', teamAttendanceMonthRouter);
 app.use('/api/wfm/attendance', attendanceDailyScopedRouter);
 app.use('/api/wfm/attendance', attendanceEngineRouter);
 app.use('/api/wfm/attendance', attendanceAprBulkRouter);

@@ -397,7 +397,13 @@ runningSalaryRouter.get(
       !(await hasAnyRole(
         userId,
         "super_admin", "admin", "payroll_head", "payroll_branch", "payroll",
-        "branch_head", "management"
+        "branch_head", "management",
+        // The team attendance grid shows each employee's salary days beside their
+        // month, and that figure has to be the one payroll will actually pay — so it
+        // comes from here, where computeRunningSalary is the single source, rather
+        // than from a second formula written for the grid. Row scope is unchanged and
+        // still applies below; this widens who may ask, not whose data comes back.
+        "manager", "assistant_manager", "tl", "team_leader", "process_manager", "hr", "wfm",
       ))
     ) {
       return res.status(403).json({ success: false, message: "Access denied" });

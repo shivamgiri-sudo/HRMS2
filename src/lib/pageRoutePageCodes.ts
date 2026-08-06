@@ -161,6 +161,10 @@ export const PAGE_CODE_BY_ROUTE: Record<string, string> = {
   // Own code as of migration 1083 — WFM_LIVE_TRACKER is shared with 4 unrelated pages and
   // excluded payroll, who own the payable-days blockers this page lists.
   "/wfm/attendance-exceptions": "WFM_ATTENDANCE_EXCEPTIONS",
+  // Its own code, not WFM_LIVE_TRACKER: this page is for reporting managers, who are
+  // not in that code's audience, and the string must match workforce.routes.tsx and
+  // navConfig.tsx exactly or nav visibility and page access disagree.
+  "/wfm/team-attendance": "TEAM_ATTENDANCE_MONTH",
   "/wfm/planning-rules": "WFM_PLANNING_RULES",
   "/wfm/roster": "WFM_ROSTER",
   "/roster-preference": "WFM_ROSTER",

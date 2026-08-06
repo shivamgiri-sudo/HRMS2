@@ -54,6 +54,7 @@ export const navGroups: NavGroup[] = [
           { label: "Regularization",           href: "/attendance/regularizations",    icon: ic(Clock),         pageCode: "ATTENDANCE_REGULARIZATION", description: "Regularize" },
           { label: "Attendance Disputes", href: "/attendance/disputes", icon: ic(ClipboardList), roles: ["admin","hr","wfm","manager","super_admin"], description: "Review attendance disputes" },
           { label: "Attendance Lookup",        href: "/hr/attendance-lookup",          icon: ic(Search),        roles: ["super_admin","admin","hr","payroll_head","payroll_admin","wfm"], description: "View any employee's attendance" },
+          { label: "Team Attendance",          href: "/wfm/team-attendance",           icon: ic(CalendarDays),  pageCode: "TEAM_ATTENDANCE_MONTH", roles: ["super_admin","admin","hr","wfm","manager","assistant_manager","tl","team_leader","process_manager","branch_head"], description: "Whole team, whole month, in one grid" },
           { label: "Discard & Reversal",       href: "/admin/discard-center",          icon: ic(RotateCcw),     roles: ["super_admin","wfm"], description: "Audit trail of reversed approvals" },
           { label: "My Roster",                href: "/my-roster",                     icon: ic(Calendar),      public: true, description: "Roster" },
           { label: "Week-off Preference",      href: "/week-off-preferences",          icon: ic(CalendarDays),  public: true, description: "Week-off" },

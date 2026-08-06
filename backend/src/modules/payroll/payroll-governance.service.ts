@@ -1,5 +1,6 @@
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
+import { getPolicyValue } from "../policy-engine/policy-engine.cache.js";
 
 export type PayrollReadinessSeverity = "blocker" | "warning";
 
@@ -150,14 +151,32 @@ export const payrollGovernanceService = {
     const effectiveEnd = readinessEndDate(range.end);
     const issues: PayrollReadinessIssue[] = [];
 
-    // M+2 gate: final calculation is only allowed on or after the 2nd of the following month.
-    // This ensures night-shift attendance from the last working day of the month has crossed
-    // over and been captured before payroll is sealed.
+    // M+2 gate: final calculation is only allowed from a configured day of the
+    // following month. It exists so night-shift attendance from the last working day
+    // of the month has crossed over and been captured before payroll is sealed.
+    //
+    // The day was hardcoded to the 2nd, which set the floor for the whole disbursal
+    // calendar: nothing can be paid earlier than this no matter how fast attendance
+    // closes. It is now policy `payroll/readiness/earliest_calc_day_of_next_month`,
+    // defaulting to "2" so behaviour is identical until someone deliberately changes
+    // it. Only the timing moves — no payroll figure is computed differently.
+    //
+    // Lowering it trades safety for speed: night-shift days that cross midnight on
+    // the last of the month may not be captured yet, so anyone setting 1 should know
+    // they are choosing to seal payroll before that data lands.
     const today = todayIstDate();
     const [runYear, runMonthNum] = run.run_month.split("-").map(Number);
     const nextMonthYear  = runMonthNum === 12 ? runYear + 1 : runYear;
     const nextMonthNum   = runMonthNum === 12 ? 1 : runMonthNum + 1;
-    const earliestCalcDate = `${nextMonthYear}-${String(nextMonthNum).padStart(2, "0")}-02`;
+    const configuredDay = Number(
+      await getPolicyValue("payroll", "readiness", "earliest_calc_day_of_next_month", "2"),
+    );
+    // A malformed or out-of-range value must not silently open the gate on the 1st or
+    // push it into the middle of the month; refuse it and stand on the default.
+    const earliestCalcDay = Number.isFinite(configuredDay) && configuredDay >= 1 && configuredDay <= 28
+      ? Math.trunc(configuredDay)
+      : 2;
+    const earliestCalcDate = `${nextMonthYear}-${String(nextMonthNum).padStart(2, "0")}-${String(earliestCalcDay).padStart(2, "0")}`;
     if (today < earliestCalcDate) {
       issues.push({
         code: "MONTH_NOT_CLOSED",
