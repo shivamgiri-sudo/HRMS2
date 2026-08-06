@@ -29,6 +29,54 @@ describe('answerHowToQuestion', () => {
     expect(result.handled).toBe(false);
   });
 
+  // Regression: the how-to gate used to be anchored to the START of the
+  // message (`^\s*how to...`), so real phrasing that buries the how-to
+  // intent mid-sentence fell straight through to the external LLM's
+  // canned refusal — even though leave_approve's own catalog entry and
+  // aliases matched fine. Reported live: a manager asked Mira exactly
+  // these two phrasings and got "I couldn't find that in HRMS or the
+  // approved MAS Callnet sources." both times.
+  describe('mid-sentence how-to phrasing (previously fell through unmatched)', () => {
+    it('fires on "I don\'t know how to approve leave for my team member. Can you help me?"', async () => {
+      const result = await answerHowToQuestion(
+        "I don't know how to approve leave for my team member. Can you help me?",
+        'user-1',
+        ['manager'],
+      );
+      expect(result.handled).toBe(true);
+      expect(result.response?.actions?.[0]?.url).toBe('/leaves');
+    });
+
+    it('fires on "I don\'t know the path from where I can approve my team member leave request."', async () => {
+      const result = await answerHowToQuestion(
+        "I don't know the path from where I can approve my team member leave request.",
+        'user-1',
+        ['manager'],
+      );
+      expect(result.handled).toBe(true);
+      expect(result.response?.actions?.[0]?.url).toBe('/leaves');
+    });
+
+    it('still respects RBAC on mid-sentence phrasing — an employee gets the denial, not the steps', async () => {
+      const result = await answerHowToQuestion(
+        "I don't know how to approve leave for my team member.",
+        'user-1',
+        ['employee'],
+      );
+      expect(result.handled).toBe(true);
+      expect(result.response?.answer).toContain('does not include leave approval');
+    });
+
+    it('still requires an actual catalog match — an unrelated mid-sentence "how to" falls through', async () => {
+      const result = await answerHowToQuestion(
+        "I don't know how to fly to the moon from here.",
+        'user-1',
+        ['employee'],
+      );
+      expect(result.handled).toBe(false);
+    });
+  });
+
   describe('static_roles entries', () => {
     it('leave_apply is open to any employee (empty roles list)', async () => {
       const result = await answerHowToQuestion('how can I apply for leave', 'user-1', ['employee']);

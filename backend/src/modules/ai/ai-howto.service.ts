@@ -33,8 +33,33 @@ export interface HowToAnswerResult {
 
 // Broad "how do I…" gate, tried before matching each entry's own aliases —
 // keeps this from firing on every message, only ones that look like a
-// how-to question at all.
-const HOWTO_PREFIX = /^\s*(how\s+(do|can|would|should)\s+i|how\s+to|where\s+(do|can)\s+i)\b/i;
+// how-to question at all. Real users bury the how-to phrasing mid-sentence
+// far more often than they lead with it ("I don't know how to approve
+// leave...", "...the path from where I can approve..."), so this is
+// deliberately NOT anchored to the start of the message (previously
+// `^\s*(...)`, which made both of those real phrasings fall straight
+// through to the external LLM's canned refusal, even though the
+// leave_approve catalog entry below already existed and its own aliases
+// matched fine — the gate in front of it was the only thing wrong).
+// Precision still comes from each entry's own aliases (matchesEntry), not
+// from this gate, so casting it wider here is safe: a broad match with no
+// catalog entry match just falls through exactly as before.
+const HOWTO_TRIGGERS: RegExp[] = [
+  /\bhow\s+to\b/i,
+  /\bhow\s+(do|can|would|should)\s+i\b/i,
+  /\bwhere\s+(do|can|is|are)\s+i\b/i,
+  /\bwhere\s+i\s+can\b/i, // reversed word order ("...from where I can approve...")
+  /\b(the\s+)?path\s+(to|for|from)\b/i,
+  /\bwhich\s+(page|screen|tab|menu)\b/i,
+  /\b(don'?t|doesn'?t|do\s+not|does\s+not)\s+know\s+(how|where)\s+to\b/i,
+  /\b(don'?t|doesn'?t|do\s+not|does\s+not)\s+know\s+the\s+(path|way)\b/i,
+  /\bnot\s+sure\s+how\s+to\b/i,
+  /\bno\s+idea\s+how\s+to\b/i,
+];
+
+function looksLikeHowToQuestion(question: string): boolean {
+  return HOWTO_TRIGGERS.some((pattern) => pattern.test(question));
+}
 
 function matchesEntry(question: string, entry: HowToEntry): boolean {
   return entry.aliases.some((pattern) => pattern.test(question));
@@ -88,7 +113,7 @@ export async function answerHowToQuestion(
   roleKeys: string[],
 ): Promise<HowToAnswerResult> {
   const startedAt = Date.now();
-  if (!HOWTO_PREFIX.test(question)) return { handled: false, intent: 'unknown' };
+  if (!looksLikeHowToQuestion(question)) return { handled: false, intent: 'unknown' };
 
   const entry = HOWTO_CATALOG.find((candidate) => candidate.status === 'verified' && matchesEntry(question, candidate));
   if (!entry) return { handled: false, intent: 'unknown' };

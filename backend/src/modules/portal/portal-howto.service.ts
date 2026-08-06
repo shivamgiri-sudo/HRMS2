@@ -19,14 +19,34 @@ export interface PortalHowToResult {
   route?: string;
 }
 
-const HOWTO_PREFIX = /^\s*(how\s+(do|can|would|should)\s+i|how\s+to|where\s+(do|can)\s+i)\b/i;
+// Kept in sync with ai-howto.service.ts's HOWTO_TRIGGERS: that file's
+// anchored `^\s*(...)` version let real "I don't know how to X" / "...the
+// path from where I can X" phrasing fall through unmatched even though the
+// catalog entry itself was correct — same bug would exist here once this
+// scaffolding gets a caller, so it's fixed here too rather than left latent.
+const HOWTO_TRIGGERS: RegExp[] = [
+  /\bhow\s+to\b/i,
+  /\bhow\s+(do|can|would|should)\s+i\b/i,
+  /\bwhere\s+(do|can|is|are)\s+i\b/i,
+  /\bwhere\s+i\s+can\b/i,
+  /\b(the\s+)?path\s+(to|for|from)\b/i,
+  /\bwhich\s+(page|screen|tab|menu)\b/i,
+  /\b(don'?t|doesn'?t|do\s+not|does\s+not)\s+know\s+(how|where)\s+to\b/i,
+  /\b(don'?t|doesn'?t|do\s+not|does\s+not)\s+know\s+the\s+(path|way)\b/i,
+  /\bnot\s+sure\s+how\s+to\b/i,
+  /\bno\s+idea\s+how\s+to\b/i,
+];
+
+function looksLikeHowToQuestion(question: string): boolean {
+  return HOWTO_TRIGGERS.some((pattern) => pattern.test(question));
+}
 
 function matchesEntry(question: string, entry: PortalHowToEntry): boolean {
   return entry.aliases.some((pattern) => pattern.test(question));
 }
 
 export function answerPortalHowToQuestion(question: string): PortalHowToResult {
-  if (!HOWTO_PREFIX.test(question)) return { handled: false };
+  if (!looksLikeHowToQuestion(question)) return { handled: false };
 
   const entry = PORTAL_HOWTO_CATALOG.find((candidate) => matchesEntry(question, candidate));
   if (!entry) return { handled: false };
