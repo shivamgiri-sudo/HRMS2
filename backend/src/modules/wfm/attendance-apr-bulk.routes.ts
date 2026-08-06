@@ -152,7 +152,17 @@ router.post(
           AND ar.session_date = adr.record_date
           AND ar.status = 'approved'
          WHERE (adr.employee_id, adr.record_date) IN (${lockChecks.join(',')})
-           AND (adr.is_locked=1 OR adr.regularization_id IS NOT NULL OR adr.override_by IS NOT NULL OR ar.id IS NOT NULL)`,
+           AND (
+                 -- A lock this route set on a previous upload is not "protected": the
+                 -- rows below are now written with is_locked=1 so the nightly engine
+                 -- cannot recompute them away, and treating that as protection would
+                 -- make a corrected re-upload permanently impossible. A lock that came
+                 -- with a human decision — an override or a regularization — still wins.
+                 (adr.is_locked=1 AND (adr.override_by IS NOT NULL OR adr.regularization_id IS NOT NULL))
+                 OR adr.regularization_id IS NOT NULL
+                 OR adr.override_by IS NOT NULL
+                 OR ar.id IS NOT NULL
+               )`,
       );
       for (const r of lockedRows as any[]) {
         const key = `${r.employee_id}:${r.record_date}`;
@@ -203,27 +213,46 @@ router.post(
       const { status, lwpValue } = classifyOperationsNetLogin(row.net_login_minutes, netLoginHalfDayFloor);
 
       await db.execute(
+        // is_locked=1 is the whole point of this write.
+        //
+        // Without it the row sits at is_locked=0, and the nightly attendance sweep
+        // recomputes that employee/date from the automatic sources — the `apr` table
+        // and biometric punches — and silently overwrites the upload. This route does
+        // not write to `apr`, so the engine has no memory of what was uploaded: the
+        // file survived until 23:00 that night and then vanished, with no error. The
+        // other manual-override path in this codebase, correctDailyRecord(), has always
+        // set is_locked=1; this one never did.
+        //
+        // The ON DUPLICATE guard keys off override_by/regularization_id rather than
+        // is_locked. Two reasons: those two columns are never assigned in this
+        // statement, so the guard cannot be corrupted by MySQL evaluating assignments
+        // left-to-right and reading an already-updated value; and it expresses the real
+        // precedence — a human override or an approved regularization outranks a bulk
+        // file, while automatic engine output does not.
         `INSERT INTO attendance_daily_record
            (id, employee_id, record_date, branch_id, process_id,
             attendance_source, source_system,
             dialler_minutes, raw_minutes,
             attendance_status, lwp_value,
             late_mark, late_by_minutes,
+            is_locked,
             processed_at, created_by)
          VALUES (UUID(), ?, ?, ?, ?,
                  'dialler', 'apr_bulk',
                  ?, ?,
                  ?, ?,
                  0, 0,
+                 1,
                  NOW(), ?)
          ON DUPLICATE KEY UPDATE
-           attendance_source = IF(is_locked=0, 'dialler',              attendance_source),
-           source_system     = IF(is_locked=0, 'apr_bulk',             source_system),
-           dialler_minutes   = IF(is_locked=0, VALUES(dialler_minutes), dialler_minutes),
-           raw_minutes       = IF(is_locked=0, VALUES(raw_minutes),     raw_minutes),
-           attendance_status = IF(is_locked=0, VALUES(attendance_status), attendance_status),
-           lwp_value         = IF(is_locked=0, VALUES(lwp_value),       lwp_value),
-           processed_at      = IF(is_locked=0, NOW(),                   processed_at)`,
+           attendance_source = IF(override_by IS NULL AND regularization_id IS NULL, 'dialler',                attendance_source),
+           source_system     = IF(override_by IS NULL AND regularization_id IS NULL, 'apr_bulk',               source_system),
+           dialler_minutes   = IF(override_by IS NULL AND regularization_id IS NULL, VALUES(dialler_minutes),   dialler_minutes),
+           raw_minutes       = IF(override_by IS NULL AND regularization_id IS NULL, VALUES(raw_minutes),       raw_minutes),
+           attendance_status = IF(override_by IS NULL AND regularization_id IS NULL, VALUES(attendance_status), attendance_status),
+           lwp_value         = IF(override_by IS NULL AND regularization_id IS NULL, VALUES(lwp_value),         lwp_value),
+           is_locked         = IF(override_by IS NULL AND regularization_id IS NULL, 1,                         is_locked),
+           processed_at      = IF(override_by IS NULL AND regularization_id IS NULL, NOW(),                     processed_at)`,
         [
           emp.employee_id, row.attendance_date, emp.branch_id, emp.process_id,
           row.net_login_minutes, row.net_login_minutes,
