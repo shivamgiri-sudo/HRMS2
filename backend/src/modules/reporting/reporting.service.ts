@@ -279,8 +279,11 @@ const QUERIES: Record<string, Builder> = {
                d.designation_name,
                e.date_of_joining,
                e.date_of_exit,
-               er.resignation_date,
-               er.last_working_day,
+               -- exit_request has neither of these names: the resignation date lives on
+               -- employees, and the last working day is stored as a proposed/confirmed pair.
+               e.resignation_date,
+               COALESCE(er.last_working_day_confirmed, er.last_working_day_proposed, e.date_of_exit)
+                 AS last_working_day,
                er.exit_type,
                ffc.calculation_date,
                ffc.notice_period_days,
@@ -459,10 +462,15 @@ const QUERIES: Record<string, Builder> = {
                e.uan_number,
                e.epf_number,
                e.esic_number,
-               esi.pf_applicable,
-               esi.esic_applicable,
-               esi.pt_applicable,
-               esi.tds_applicable,
+               -- employee_statutory_info names these pf_eligible / esi_eligible, and
+               -- models no PT or TDS applicability at all. Reporting the latter two as
+               -- NULL (not tracked) keeps the column contract while making it clear
+               -- nothing backs them; selecting the invented names threw and this whole
+               -- statutory register returned nothing.
+               esi.pf_eligible  AS pf_applicable,
+               esi.esi_eligible AS esic_applicable,
+               NULL             AS pt_applicable,
+               NULL             AS tds_applicable,
                e.employment_status
              FROM employees e
              LEFT JOIN branch_master b ON b.id = e.branch_id

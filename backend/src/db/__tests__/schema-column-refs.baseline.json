@@ -107,15 +107,6 @@
     "ats_candidate.selected_date",
     "job_posting.job_title"
   ],
-  "modules/reporting/executors/statutory.executor.ts": [
-    "employees.last_drawn_basic",
-    "employees.pt_state",
-    "salary_prep_line.annual_tax_liability",
-    "salary_prep_line.esic_wage",
-    "salary_prep_line.projected_annual_income",
-    "salary_prep_line.taxable_income",
-    "salary_prep_line.tds_exemptions"
-  ],
   "modules/reporting/identity-mapping-report.ts": [
     "report_identity_source_snapshot.matched_employee_name",
     "report_identity_source_snapshot.source_employee_name"
@@ -194,12 +185,6 @@
     "wfm_roster_plan.published_by"
   ],
   "modules/reporting/reporting.service.ts": [
-    "employee_statutory_info.esic_applicable",
-    "employee_statutory_info.pf_applicable",
-    "employee_statutory_info.pt_applicable",
-    "employee_statutory_info.tds_applicable",
-    "exit_request.last_working_day",
-    "exit_request.resignation_date",
     "process_master.lob_id"
   ],
   "modules/rta/rta.service.ts": [

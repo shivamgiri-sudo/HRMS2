@@ -209,7 +209,8 @@ export async function esicContributionRegister(
            ${esicCol},
            b.branch_name, p.process_name,
            spr.run_month,
-           COALESCE(spl.esic_wage, spl.gross_salary, 0) AS esic_wages,
+           -- salary_prep_line has no esic_wage; gross_salary was already the intended fallback.
+           COALESCE(spl.gross_salary, 0) AS esic_wages,
            COALESCE(spl.esic_employee, 0) AS esic_employee,
            COALESCE(spl.esic_employer, 0) AS esic_employer,
            COALESCE(spl.esic_employee, 0) + COALESCE(spl.esic_employer, 0) AS total_esic
@@ -266,7 +267,9 @@ export async function ptRegister(
            spr.run_month,
            COALESCE(spl.professional_tax, 0) AS pt_amount,
            COALESCE(spl.gross_salary, 0) AS gross_salary,
-           e.pt_state
+           -- employees has no pt_state. PT jurisdiction is not modelled separately;
+           -- e.state is the employee's state and is the closest available meaning.
+           e.state AS pt_state
       FROM salary_prep_line spl
       JOIN salary_prep_run spr ON spr.id = spl.run_id
       JOIN employees e ON e.id = spl.employee_id
@@ -322,11 +325,14 @@ export async function tdsComputationRegister(
            b.branch_name, p.process_name,
            spr.run_month,
            ${panCol},
-           COALESCE(spl.projected_annual_income, 0) AS projected_annual_income,
-           COALESCE(spl.tds_exemptions, 0) AS exemptions,
-           COALESCE(spl.taxable_income, 0) AS taxable_income,
+           -- salary_prep_line stores only the deducted TDS. Projected income,
+           -- exemptions, taxable income and annual liability are not computed or
+           -- stored anywhere; reporting 0 would assert a real figure of zero.
+           NULL AS projected_annual_income,
+           NULL AS exemptions,
+           NULL AS taxable_income,
            COALESCE(spl.tds, 0) AS monthly_tds,
-           COALESCE(spl.annual_tax_liability, 0) AS annual_tax_liability
+           NULL AS annual_tax_liability
       FROM salary_prep_line spl
       JOIN salary_prep_run spr ON spr.id = spl.run_id
       JOIN employees e ON e.id = spl.employee_id
@@ -552,12 +558,11 @@ export async function gratuityLiabilityRegister(
            b.branch_name, p.process_name,
            e.date_of_joining,
            TIMESTAMPDIFF(YEAR, e.date_of_joining, CURDATE()) AS years_of_service,
-           COALESCE(e.last_drawn_basic, 0) AS last_drawn_basic,
-           ROUND(
-             COALESCE(e.last_drawn_basic, 0)
-             * TIMESTAMPDIFF(YEAR, e.date_of_joining, CURDATE())
-             * 15 / 26,
-           2) AS gratuity_liability
+           -- employees has no last_drawn_basic. Choosing a different salary column as
+           -- the gratuity base would change a payroll calculation, which is not a
+           -- rename decision — so the base and the derived liability report NULL.
+           NULL AS last_drawn_basic,
+           NULL AS gratuity_liability
       FROM employees e
       LEFT JOIN branch_master b ON b.id = e.branch_id
       LEFT JOIN process_master p ON p.id = e.process_id
