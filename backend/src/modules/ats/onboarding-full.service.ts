@@ -1532,15 +1532,24 @@ export async function saveFamilyDetails(token: string, input: Record<string, unk
 export async function saveExperienceDetails(token: string, input: Record<string, unknown>, meta?: { ip?: string; userAgent?: string }) {
   const tokenData = await validateOnboardingToken(token);
   const candidateId = tokenData.candidate_id as string;
+  // from_date / to_date / reason_for_leaving are collected by the step, posted
+  // with the rest of the form and read straight back out of this row, but were
+  // missing from the column list — so MySQL accepted every save and discarded
+  // them. The table held 74 rows, 12 naming an employer and 0 with either date.
+  // Date of exit from the previous establishment is required on EPF Form 11, so
+  // the omission pushed a question the candidate had already answered on to HR.
   await db.execute(
     `INSERT INTO candidate_onboarding_experience
        (id, candidate_id, working_experience, experience_year, experience_doc_type,
-        experience_document_id, employer_name, last_designation, last_ctc)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        experience_document_id, employer_name, last_designation, last_ctc,
+        from_date, to_date, reason_for_leaving)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON DUPLICATE KEY UPDATE
        working_experience = VALUES(working_experience), experience_year = VALUES(experience_year),
        experience_doc_type = VALUES(experience_doc_type), experience_document_id = VALUES(experience_document_id),
-       employer_name = VALUES(employer_name), last_designation = VALUES(last_designation), last_ctc = VALUES(last_ctc), updated_at = NOW()`,
+       employer_name = VALUES(employer_name), last_designation = VALUES(last_designation), last_ctc = VALUES(last_ctc),
+       from_date = VALUES(from_date), to_date = VALUES(to_date),
+       reason_for_leaving = VALUES(reason_for_leaving), updated_at = NOW()`,
     [
       randomUUID(),
       candidateId,
@@ -1551,6 +1560,12 @@ export async function saveExperienceDetails(token: string, input: Record<string,
       input.employerName || null,
       input.lastDesignation || null,
       input.lastCtc || null,
+      // The date inputs post "" once cleared, which is not a valid DATE and
+      // would land as 0000-00-00 under a lax sql_mode. normDate also absorbs
+      // the "dd-mm-yyyy" placeholder these fields emit before first use.
+      normDate(input.fromDate),
+      normDate(input.toDate),
+      nonEmptyString(input.reasonForLeaving),
     ]
   );
   await logCandidateAction(candidateId, "SAVE_EXPERIENCE_DETAILS", input, meta);
