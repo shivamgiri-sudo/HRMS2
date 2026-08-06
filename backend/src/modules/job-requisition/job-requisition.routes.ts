@@ -22,6 +22,33 @@ import type {
 
 export const jobRequisitionRouter = Router();
 
+/**
+ * Roles allowed to READ requisitions.
+ *
+ * Kept as one constant because the previous inline list had drifted out of step with
+ * role_page_access: `recruiter` (16 users), `manager` (7) and `assistant_manager` (2) all
+ * hold the JOB_REQUISITION page grant, so the page opened for them and then every list
+ * call 403'd. assistant_manager was the clearest tell — it could already POST / and
+ * PATCH /:id but not GET /, i.e. create a requisition and then not see it.
+ *
+ * recruiter was already allowed on /processes-for-branch and /open-for-branch, and
+ * job_requisition carries an owner_recruiter_id column, so read access was always the
+ * intent here.
+ *
+ * Deliberately NOT widened:
+ *  - `interviewer` — holds the page grant but appears in no endpoint in this file; the
+ *    grant is the outlier, not the guards (see migration 1084).
+ *  - write and approval routes — approve/reject/close stay super_admin + branch_head, per
+ *    141_branch_head_approval.sql.
+ *
+ * NOTE: listRequisitions() applies no row scoping, so every role here sees all
+ * requisitions org-wide, including the salary_min/salary_max band.
+ */
+const REQUISITION_READ_ROLES = [
+  "super_admin", "hr", "recruitment_hr", "branch_head", "operations_manager",
+  "process_manager", "management", "manager", "assistant_manager", "recruiter",
+] as const;
+
 type AsyncHandler = (req: AuthenticatedRequest, res: Response) => Promise<unknown>;
 const h = (fn: AsyncHandler) => (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
   void fn(req, res).catch(next);
@@ -31,7 +58,7 @@ const h = (fn: AsyncHandler) => (req: AuthenticatedRequest, res: Response, next:
 jobRequisitionRouter.get(
   "/dashboard",
   requireAuth,
-  requireRole("super_admin", "hr", "recruitment_hr", "branch_head", "operations_manager", "process_manager", "management"),
+  requireRole(...REQUISITION_READ_ROLES),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const { branch_id, branch_name, approval_status, priority, from_date, to_date } = req.query;
     const metrics = await jobRequisitionService.getDashboardMetrics({
@@ -50,7 +77,7 @@ jobRequisitionRouter.get(
 jobRequisitionRouter.get(
   "/",
   requireAuth,
-  requireRole("super_admin", "hr", "recruitment_hr", "branch_head", "operations_manager", "process_manager", "management"),
+  requireRole(...REQUISITION_READ_ROLES),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const filters: RequisitionFilters = {
       branch_id: req.query.branch_id as string | undefined,
@@ -91,7 +118,9 @@ jobRequisitionRouter.get(
 jobRequisitionRouter.get(
   "/batches/available",
   requireAuth,
-  requireRole("super_admin", "hr", "recruitment_hr", "branch_head", "operations_manager", "process_manager"),
+  // Feeds the create/edit form's batch picker — assistant_manager can create a
+  // requisition, so it must be able to load the batches that form requires.
+  requireRole(...REQUISITION_READ_ROLES),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const { branch, process } = req.query;
     const data = await jobRequisitionService.getAvailableBatches({
@@ -136,7 +165,7 @@ jobRequisitionRouter.get(
 jobRequisitionRouter.get(
   "/aggregate-funnel",
   requireAuth,
-  requireRole("super_admin", "hr", "recruitment_hr", "branch_head", "operations_manager", "process_manager", "management"),
+  requireRole(...REQUISITION_READ_ROLES),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const branch_name = req.query.branch_name as string | undefined;
     const approval_status = req.query.approval_status as string | undefined;
@@ -162,7 +191,7 @@ jobRequisitionRouter.get(
 jobRequisitionRouter.get(
   "/:id",
   requireAuth,
-  requireRole("super_admin", "hr", "recruitment_hr", "branch_head", "operations_manager", "process_manager", "management"),
+  requireRole(...REQUISITION_READ_ROLES),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const { id } = req.params;
     const data = await jobRequisitionService.getRequisition(id);
@@ -177,7 +206,7 @@ jobRequisitionRouter.get(
 jobRequisitionRouter.get(
   "/by-code/:code",
   requireAuth,
-  requireRole("super_admin", "hr", "recruitment_hr", "branch_head", "operations_manager", "process_manager", "management"),
+  requireRole(...REQUISITION_READ_ROLES),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const { code } = req.params;
     const data = await jobRequisitionService.getRequisitionByCode(code);
@@ -192,7 +221,7 @@ jobRequisitionRouter.get(
 jobRequisitionRouter.get(
   "/:id/approval-history",
   requireAuth,
-  requireRole("super_admin", "hr", "recruitment_hr", "branch_head", "operations_manager", "process_manager", "management"),
+  requireRole(...REQUISITION_READ_ROLES),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const { id } = req.params;
     const data = await jobRequisitionService.getApprovalHistory(id);
@@ -204,7 +233,7 @@ jobRequisitionRouter.get(
 jobRequisitionRouter.get(
   "/:id/candidates",
   requireAuth,
-  requireRole("super_admin", "hr", "recruitment_hr", "branch_head", "operations_manager", "process_manager", "management"),
+  requireRole(...REQUISITION_READ_ROLES),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const { id } = req.params;
     const data = await jobRequisitionService.getRequisitionCandidates(id);
@@ -437,7 +466,7 @@ jobRequisitionRouter.patch(
 jobRequisitionRouter.get(
   "/:id/funnel",
   requireAuth,
-  requireRole("super_admin", "hr", "recruitment_hr", "branch_head", "operations_manager", "process_manager", "management"),
+  requireRole(...REQUISITION_READ_ROLES),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const { id } = req.params;
     const data = await jobRequisitionService.getRequisitionFunnel(id);
@@ -476,7 +505,7 @@ jobRequisitionRouter.post(
 jobRequisitionRouter.get(
   "/:id/handover-pack",
   requireAuth,
-  requireRole("super_admin", "hr", "recruitment_hr", "branch_head", "operations_manager", "process_manager", "management"),
+  requireRole(...REQUISITION_READ_ROLES),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const { id } = req.params;
     const data = await jobRequisitionService.getHandoverPack(id);
@@ -488,7 +517,7 @@ jobRequisitionRouter.get(
 jobRequisitionRouter.get(
   "/:id/joined-employees",
   requireAuth,
-  requireRole("super_admin", "hr", "recruitment_hr", "branch_head", "operations_manager", "process_manager", "management"),
+  requireRole(...REQUISITION_READ_ROLES),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const { id } = req.params;
     const data = await jobRequisitionService.getJoinedEmployees(id);

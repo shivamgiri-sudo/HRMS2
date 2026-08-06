@@ -16,10 +16,12 @@
 -- actions). No UPDATE or DELETE anywhere in this file; it is purely additive and safe to
 -- re-run.
 --
--- ⚠ ORDER MATTERS. Production runs with SKIP_MIGRATIONS=true, so a deploy applies no
--- schema. This migration MUST be applied BEFORE the frontend change that repoints the
--- route's Gate to WFM_ATTENDANCE_EXCEPTIONS, otherwise every role loses the page until it
--- is run.
+-- ⚠ ORDER MATTERS. This migration MUST be applied BEFORE the frontend change that
+-- repoints the route's Gate to WFM_ATTENDANCE_EXCEPTIONS, otherwise every role loses the
+-- page until it is run. It was applied to live mas_hrms on 2026-08-07, ahead of any
+-- deploy. (An earlier version of this note claimed prod runs SKIP_MIGRATIONS=true — that
+-- is wrong: migrations do run at boot, so a pm2 restart would also apply it. The file is
+-- idempotent either way.)
 
 -- ─── Step 1: register the page ────────────────────────────────────────────────
 INSERT INTO page_catalog (id, page_code, page_name, page_path, module, description, active_status)

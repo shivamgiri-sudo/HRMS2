@@ -46,6 +46,13 @@ router.use(questionBankRouter);
 router.use(assessmentProtectedRouter);
 
 // ── Manpower Requisitions ─────────────────────────────────────────────────────
+// ⚠ DORMANT. These three read/write `manpower_requisition`, which holds 0 rows (verified
+// live 2026-08-07). The requisition system actually in use is `job_requisition` (15 rows),
+// served by modules/job-requisition/ at /api/job-requisition and shown on
+// /recruitment/job-requisition. Guards left as-is deliberately: widening access to a
+// feature with no data would be pure risk. If manpower requisitions are ever revived,
+// note the role guard below excludes `recruiter` — the only non-super_admin role granted
+// the ATS_EXTENSIONS page — so the page would 403 for exactly the people meant to use it.
 router.get("/requisitions", requireRole("admin", "hr"), h(async (req: AuthenticatedRequest, res: Response) => {
   res.json({ success: true, data: await requisitionService.list(req.query as Record<string, string | undefined>) });
 }));

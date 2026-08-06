@@ -496,7 +496,8 @@ const MIGRATION_MANIFEST: string[] = [
   "1080_bmi_manual_input.sql",
   "1081_credit_note_lines_and_provision_deductions.sql",
   "1082_apr_eligibility_config_operations_executive_fix.sql",
-  "1083_wfm_attendance_exceptions_page_code.sql", // gives /wfm/attendance-exceptions its own page code instead of borrowing WFM_LIVE_TRACKER (shared with 4 unrelated pages, and it locked out payroll — who own the 455 open salary_payable_days_mismatch blockers). Additive seed only; must be applied BEFORE the frontend Gate is repointed, since prod runs SKIP_MIGRATIONS=true
+  "1083_wfm_attendance_exceptions_page_code.sql", // gives /wfm/attendance-exceptions its own page code instead of borrowing WFM_LIVE_TRACKER (shared with 4 unrelated pages, and it locked out payroll — who own the 455 open salary_payable_days_mismatch blockers). Additive seed, already applied to live on 2026-08-07; idempotent, so a boot re-run is a no-op
+  "1084_job_requisition_interviewer_grant_removal.sql", // interviewer held the JOB_REQUISITION page grant but appears in none of the 27 endpoints in job-requisition.routes.ts, so the page 403'd for all 9 of them; the grant was the outlier, not the guards (recruiter/manager/assistant_manager fixed the other way, by widening REQUISITION_READ_ROLES)
   ];
 
 export type MigrationHealth = {
