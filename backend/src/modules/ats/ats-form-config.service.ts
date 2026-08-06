@@ -1,5 +1,6 @@
 import { db } from '../../db/mysql.js';
 import type { RowDataPacket, ResultSetHeader } from 'mysql2';
+import { listActiveProcessNames } from './process-options.js';
 
 const DEFAULT_FIELDS = [
   { k:'name',       lb:'Full Name',       t:'text',     ic:'👤', ph:'Enter your full name',    ok:null,                      section:'Basic Details', visible:true, required:true,  sort_order:1  },
@@ -80,6 +81,9 @@ export const atsFormConfigService = {
       'SELECT DISTINCT branch_name FROM branch_master WHERE active_status = 1 ORDER BY branch_name ASC'
     );
     const branchOptions = branchRows.map((r) => r.branch_name);
+
+    // Process names come from process_master, the single place a process exists.
+    const processOptions = await listActiveProcessNames();
 
     // Get branch aliases (display names like Trapezoid, Okaya, etc.)
     const [aliasRows] = await db.execute<BranchAliasRow[]>(
@@ -181,7 +185,10 @@ export const atsFormConfigService = {
       genderOptions:            configMap['genderOptions']           ?? DEFAULT_OPTIONS.genderOptions,
       yesNoOptions:             ['Yes','No'],
       companyName:              'Mas Callnet India Pvt Ltd',
-      hiringProcessOptions:     Array.isArray(configMap['hiringProcessOptions'])     ? configMap['hiringProcessOptions']     as string[] : [],
+      // From process_master, not ats_form_config — see listActiveProcessNames(). The
+      // stored hiringProcessOptions list is deliberately no longer read: it was a second,
+      // hand-maintained set of short names for the same clients.
+      hiringProcessOptions:     processOptions,
       hiringSourceOptions:      Array.isArray(configMap['hiringSourceOptions'])      ? configMap['hiringSourceOptions']      as string[] : [],
       hiringPositionOptions:    Array.isArray(configMap['hiringPositionOptions'])    ? configMap['hiringPositionOptions']    as string[] : [],
       hiringWpGroupOptions:     Array.isArray(configMap['hiringWpGroupOptions'])     ? configMap['hiringWpGroupOptions']     as string[] : [],

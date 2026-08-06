@@ -6,6 +6,7 @@ import { atsService } from "./ats.service.js";
 import { atsQueueService } from "./ats.queue.service.js";
 import { sendOnboardingToken } from "./ats.onboarding.service.js";
 import { resolveRecruiterForActor } from "../ats-full-parity/recruiterInterview.service.js";
+import { listActiveProcessNames } from "./process-options.js";
 
 export type DuplicateMode = "insert_duplicates_with_warning" | "update_existing" | "skip_duplicates";
 
@@ -773,7 +774,7 @@ async function getCurrentUserBranch(userId: string): Promise<string | null> {
 }
 
 export async function getHiringActivityBootstrap(userId: string): Promise<HiringActivityBootstrap> {
-  const [actor, opts] = await Promise.all([
+  const [actor, opts, masterProcessOptions] = await Promise.all([
     buildActivityActorContext(userId),
     getOptionLists(
       ["hiringProcessOptions","hiringSourceOptions","hiringPositionOptions","hiringWpGroupOptions",
@@ -789,11 +790,15 @@ export async function getHiringActivityBootstrap(userId: string): Promise<Hiring
         experienceOptions:          DEFAULT_HIRING_OPTION_LISTS.experienceOptions,
       }
     ),
+    // process_master is the single place a process exists; the stored
+    // hiringProcessOptions list is no longer consulted for process names.
+    listActiveProcessNames(),
   ]);
-  const { hiringProcessOptions: processOptions, hiringSourceOptions: sourceOptions,
+  const { hiringSourceOptions: sourceOptions,
     hiringPositionOptions: positionOptions, hiringWpGroupOptions: wpGroupOptions,
     hiringCallingOutcomeOptions: callingOutcomeOptions, genderOptions,
     educationOptions, experienceOptions } = opts;
+  const processOptions = masterProcessOptions;
 
   return {
     actor: {
