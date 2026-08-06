@@ -749,88 +749,73 @@ employeeJoiningDocumentsRouter.get("/:employeeId/epf-compliance/consent-receipt"
   return res.send(pdf);
 }));
 
+/**
+ * Columns this endpoint may write, and how a submitted value is coerced.
+ *
+ * The update used to name all 34 unconditionally as `req.body.x ?? null`, so any
+ * field the caller did not send was overwritten with NULL. The compliance screen
+ * has inputs for barely half of them — nothing on it touches
+ * previous_pf_account_number, ppo_number, passport_number, gender or
+ * marital_status — so every save silently erased whatever was there, including
+ * values written by an earlier caller that did send them. The request returned
+ * success, and the audit log recorded the request body rather than the damage.
+ *
+ * Only keys actually present in the body are written now, which also makes the
+ * endpoint safe for a partial save from a narrower screen.
+ */
+const EPF_PROFILE_BOOLEAN_COLUMNS = new Set([
+  "previous_pf_member", "previous_eps_member", "international_worker",
+  "specially_abled", "excluded_employee",
+]);
+
+const EPF_PROFILE_WRITABLE_COLUMNS = [
+  "employee_name", "father_or_spouse_name", "relationship_type", "date_of_birth",
+  "gender", "marital_status", "mobile_number", "personal_email",
+  "previous_pf_member", "previous_pf_account_number", "previous_exit_date",
+  "scheme_certificate_number", "ppo_number", "previous_eps_member",
+  "international_worker", "country_of_origin", "passport_number",
+  "passport_valid_from", "passport_valid_to", "education_qualification",
+  "specially_abled", "disability_type", "aadhaar_name_as_per_kyc",
+  "pan_name_as_per_kyc", "bank_verification_status", "pan_verification_status",
+  "uan_verification_status", "excluded_employee", "joining_date",
+  "basic_wage", "gross_monthly_wage",
+] as const;
+
 employeeJoiningDocumentsRouter.put("/:employeeId/epf-compliance/profile", h(async (req: AuthenticatedRequest, res) => {
   const { profile } = await ensureEpfProfile(req.params.employeeId, req.authUser!.id);
-  const aadhaarMasked = maskAadhaar(req.body.aadhaar_number ?? req.body.aadhaar_masked ?? null);
-  const panMasked = maskPan(req.body.pan_number ?? req.body.pan_masked ?? null);
-  const uanMasked = maskUan(req.body.uan_number ?? req.body.uan_masked ?? null);
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  const sent = (key: string) => Object.prototype.hasOwnProperty.call(body, key);
+
+  const sets: string[] = [];
+  const params: unknown[] = [];
+  for (const column of EPF_PROFILE_WRITABLE_COLUMNS) {
+    if (!sent(column)) continue;
+    sets.push(`${column} = ?`);
+    // A boolean column still coerces, but only when the caller named it —
+    // otherwise an absent flag would read as false and clear a real 1.
+    params.push(EPF_PROFILE_BOOLEAN_COLUMNS.has(column) ? (body[column] ? 1 : 0) : body[column] ?? null);
+  }
+
+  // The masked identifiers accept either the raw or the pre-masked form, so they
+  // are considered sent if either key appears.
+  const masked: Array<[string, string[], (v: unknown) => unknown]> = [
+    ["aadhaar_masked", ["aadhaar_number", "aadhaar_masked"], maskAadhaar],
+    ["pan_masked", ["pan_number", "pan_masked"], maskPan],
+    ["uan_masked", ["uan_number", "uan_masked"], maskUan],
+  ];
+  for (const [column, keys, mask] of masked) {
+    if (!keys.some(sent)) continue;
+    sets.push(`${column} = ?`);
+    params.push(mask(body[keys[0]] ?? body[keys[1]] ?? null));
+  }
+
+  // Stage always advances, even for a save that changed nothing else.
+  sets.push("status = 'draft'", "compliance_stage = 'profile_in_progress'", "updated_at = NOW()");
+  params.push(profile.id);
+
   await db.execute(
-      `UPDATE employee_epf_compliance_profile
-        SET employee_name = ?,
-            father_or_spouse_name = ?,
-            relationship_type = ?,
-            date_of_birth = ?,
-            gender = ?,
-            marital_status = ?,
-            mobile_number = ?,
-            personal_email = ?,
-            aadhaar_masked = ?,
-            pan_masked = ?,
-            uan_masked = ?,
-            previous_pf_member = ?,
-            previous_pf_account_number = ?,
-            previous_exit_date = ?,
-            scheme_certificate_number = ?,
-            ppo_number = ?,
-            previous_eps_member = ?,
-            international_worker = ?,
-            country_of_origin = ?,
-            passport_number = ?,
-            passport_valid_from = ?,
-            passport_valid_to = ?,
-            education_qualification = ?,
-            specially_abled = ?,
-            disability_type = ?,
-            aadhaar_name_as_per_kyc = ?,
-            pan_name_as_per_kyc = ?,
-            bank_verification_status = ?,
-            pan_verification_status = ?,
-            uan_verification_status = ?,
-            excluded_employee = ?,
-            joining_date = ?,
-            basic_wage = ?,
-            gross_monthly_wage = ?,
-            status = 'draft',
-            compliance_stage = 'profile_in_progress',
-            updated_at = NOW()
-      WHERE id = ?`,
-    [
-      req.body.employee_name ?? null,
-      req.body.father_or_spouse_name ?? null,
-      req.body.relationship_type ?? null,
-      req.body.date_of_birth ?? null,
-      req.body.gender ?? null,
-      req.body.marital_status ?? null,
-      req.body.mobile_number ?? null,
-      req.body.personal_email ?? null,
-      aadhaarMasked,
-      panMasked,
-      uanMasked,
-      req.body.previous_pf_member ? 1 : 0,
-      req.body.previous_pf_account_number ?? null,
-      req.body.previous_exit_date ?? null,
-      req.body.scheme_certificate_number ?? null,
-      req.body.ppo_number ?? null,
-      req.body.previous_eps_member ? 1 : 0,
-      req.body.international_worker ? 1 : 0,
-      req.body.country_of_origin ?? null,
-      req.body.passport_number ?? null,
-      req.body.passport_valid_from ?? null,
-      req.body.passport_valid_to ?? null,
-      req.body.education_qualification ?? null,
-      req.body.specially_abled ? 1 : 0,
-      req.body.disability_type ?? null,
-      req.body.aadhaar_name_as_per_kyc ?? null,
-      req.body.pan_name_as_per_kyc ?? null,
-      req.body.bank_verification_status ?? null,
-      req.body.pan_verification_status ?? null,
-      req.body.uan_verification_status ?? null,
-      req.body.excluded_employee ? 1 : 0,
-      req.body.joining_date ?? null,
-      req.body.basic_wage ?? null,
-      req.body.gross_monthly_wage ?? null,
-      profile.id,
-    ],
+    `UPDATE employee_epf_compliance_profile SET ${sets.join(", ")} WHERE id = ?`,
+    params,
   );
   const { validation } = await syncEpfValidation(req.params.employeeId, req.authUser!.id);
   await logEpfAudit({
