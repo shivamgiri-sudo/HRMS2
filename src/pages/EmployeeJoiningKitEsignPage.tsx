@@ -8,7 +8,7 @@
  */
 import { useCallback, useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
-import { AlertTriangle, CheckCircle2, Download, FileText, Loader2, Send, ShieldCheck } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Download, FileText, Loader2, Maximize2, Send, ShieldCheck } from "lucide-react";
 
 type KitSession = {
   kitId: string;
@@ -85,7 +85,7 @@ export default function EmployeeJoiningKitEsignPage() {
 
   return (
     <div className="min-h-screen bg-slate-950 px-4 py-8 text-slate-100">
-      <div className="mx-auto max-w-5xl space-y-5">
+      <div className="mx-auto max-w-[1600px] space-y-5">
         <div className="rounded-[30px] border border-white/10 bg-white/5 p-6 backdrop-blur">
           <p className="text-xs font-black uppercase tracking-[0.22em] text-cyan-300">MAS Callnet India Pvt. Ltd.</p>
           <h1 className="mt-2 text-3xl font-black">Sign your joining documents</h1>
@@ -145,7 +145,7 @@ export default function EmployeeJoiningKitEsignPage() {
             <Loader2 className="h-7 w-7 animate-spin text-slate-400" />
           </div>
         ) : session && !done && (
-          <div className="grid gap-5 xl:grid-cols-[1.05fr,0.95fr]">
+          <div className="grid gap-5 xl:grid-cols-[minmax(0,2fr),minmax(0,1fr)] xl:items-start">
             <div className="space-y-5">
               <div className="rounded-[30px] border border-white/10 bg-white/5 p-5">
                 <div className="flex items-center gap-2">
@@ -167,20 +167,35 @@ export default function EmployeeJoiningKitEsignPage() {
               </div>
 
               <div className="overflow-hidden rounded-[30px] border border-white/10 bg-white/5">
-                <div className="border-b border-white/10 px-5 py-3">
+                <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/10 px-5 py-3">
                   <p className="text-xs font-black uppercase tracking-[0.16em] text-slate-400">Read before signing</p>
+                  {/* Mobile browsers (iOS Safari, Android Chrome) refuse to render
+                      a PDF inside an iframe and show a blank box instead. Most
+                      candidates open the joining-kit mail on a phone, so the
+                      document must also be reachable outside the frame. */}
+                  <a
+                    href={`/api/public/joining-kit/esign/${token}/download`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex min-h-[36px] items-center gap-2 rounded-xl border border-cyan-400/30 bg-cyan-500/10 px-3 text-xs font-bold text-cyan-100 hover:bg-cyan-500/20"
+                  >
+                    <Maximize2 className="h-3.5 w-3.5" /> Open full screen
+                  </a>
                 </div>
                 {/* The signer must be able to read the exact file being signed,
-                    not a summary of it. */}
+                    not a summary of it. Sized against the viewport rather than a
+                    fixed 560px so an A4 page is legible without pinch-zooming. */}
                 <iframe
                   title="Joining documents"
-                  src={`/api/public/joining-kit/esign/${token}/download`}
-                  className="h-[560px] w-full bg-white"
+                  src={`/api/public/joining-kit/esign/${token}/download#view=FitH`}
+                  className="h-[calc(100vh-160px)] min-h-[600px] w-full bg-white"
                 />
               </div>
             </div>
 
-            <div className="rounded-[30px] border border-white/10 bg-white/5 p-5">
+            {/* Sticky so the consent tick and Sign button stay reachable while
+                the signer scrolls a multi-page kit in the taller viewer. */}
+            <div className="rounded-[30px] border border-white/10 bg-white/5 p-5 xl:sticky xl:top-8">
               <div className="flex items-start gap-3 rounded-2xl border border-cyan-400/20 bg-cyan-500/5 p-4">
                 <ShieldCheck className="mt-0.5 h-5 w-5 shrink-0 text-cyan-300" />
                 <p className="text-sm text-slate-300">

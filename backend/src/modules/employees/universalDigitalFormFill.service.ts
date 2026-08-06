@@ -689,6 +689,15 @@ export async function buildSourceContext(employeeId: string, candidateId?: strin
         e.permanent_state, e.permanent_pincode,
         e.mobile,
         COALESCE(NULLIF(TRIM(e.official_email), ''), NULLIF(TRIM(e.office_email), ''), e.email) AS email,
+        -- The statutory identifiers live on the employee row for the bulk of the
+        -- workforce (11,751 UAN, 11,754 EPF, 9,663 ESIC), while the EPF context
+        -- below reads employee_epf_compliance_profile, which has 4 rows in all.
+        -- Without these the forms printed blank for everyone but those 4.
+        e.uan_number,
+        e.epf_number,
+        e.esic_number,
+        e.nominee_name,
+        e.nominee_relation,
         d.designation_name,
         dept.dept_name AS department_name,
         b.branch_name,
@@ -727,7 +736,27 @@ export async function buildSourceContext(employeeId: string, candidateId?: strin
         personal_email_id,
         pan_number_masked,
         aadhaar_number_masked,
-        uan_number
+        uan_number,
+        -- The candidate onboarding journey already asks for all of this
+        -- (nominee at step 2, statutory ids at step 5). Selecting only the
+        -- eight columns above meant EPF Form 2 nominees were re-collected by
+        -- hand although the candidate had already supplied them: 19,925 of the
+        -- 32,764 profiles carry a nominee name, 19,928 a nominee date of birth.
+        gender,
+        nominee_name,
+        nominee_relation,
+        nominee_date_of_birth,
+        nominee1_share_pct,
+        nominee2_name,
+        nominee2_relation,
+        nominee2_dob,
+        nominee2_share_pct,
+        epf_number,
+        esic_number,
+        permanent_address,
+        permanent_state,
+        permanent_city,
+        permanent_pincode
        FROM candidate_onboarding_profile
       WHERE candidate_id = ?
       LIMIT 1`,
@@ -798,8 +827,50 @@ export async function buildSourceContext(employeeId: string, candidateId?: strin
     [employeeId],
   ).catch(() => [[] as unknown as RowDataPacket[], []]);
 
+  // employee_nominee is the system of record and wins whenever it has rows. It
+  // is empty for anyone who joined through the candidate onboarding journey and
+  // has not been re-entered by HR since — SOFIYA SULTAN (MAS63086) has no row
+  // here while her onboarding profile names SULTAN AHMED, born 1980-02-03. The
+  // journey collects a maximum of two nominees, in fixed columns rather than
+  // rows, so map them onto the same n1_/n2_ shape the form prints. Nominee
+  // address and guardian are not asked for anywhere on that journey, so they
+  // stay null and remain HR's to fill.
+  const onboardingNominees: RowDataPacket[] = [];
+  if (safeTrim(onboarding?.nominee_name)) {
+    onboardingNominees.push({
+      nominee_name: onboarding?.nominee_name,
+      relationship: onboarding?.nominee_relation ?? null,
+      date_of_birth: onboarding?.nominee_date_of_birth ?? null,
+      share_percentage: onboarding?.nominee1_share_pct ?? null,
+      address: null, is_minor: 0, guardian_name: null, guardian_relation: null,
+    } as unknown as RowDataPacket);
+  }
+  if (safeTrim(onboarding?.nominee2_name)) {
+    onboardingNominees.push({
+      nominee_name: onboarding?.nominee2_name,
+      relationship: onboarding?.nominee2_relation ?? null,
+      date_of_birth: onboarding?.nominee2_dob ?? null,
+      share_percentage: onboarding?.nominee2_share_pct ?? null,
+      address: null, is_minor: 0, guardian_name: null, guardian_relation: null,
+    } as unknown as RowDataPacket);
+  }
+  // Last resort: 18,742 employees carry a single nominee on their own row with
+  // nothing in employee_nominee at all.
+  if (!onboardingNominees.length && safeTrim(employee?.nominee_name)) {
+    onboardingNominees.push({
+      nominee_name: employee?.nominee_name,
+      relationship: employee?.nominee_relation ?? null,
+      date_of_birth: null, share_percentage: null,
+      address: null, is_minor: 0, guardian_name: null, guardian_relation: null,
+    } as unknown as RowDataPacket);
+  }
+
+  const resolvedNominees = (nominees as RowDataPacket[]).length
+    ? (nominees as RowDataPacket[])
+    : onboardingNominees;
+
   const nominee: Record<string, unknown> = {};
-  (nominees as RowDataPacket[]).forEach((entry, index) => {
+  resolvedNominees.forEach((entry, index) => {
     const p = `n${index + 1}_`;
     nominee[`${p}name`] = entry.nominee_name ?? null;
     nominee[`${p}relationship`] = entry.relationship ?? null;
@@ -900,7 +971,14 @@ export async function buildSourceContext(employeeId: string, candidateId?: strin
       relation_prefix: relationPrefix(employee?.gender),
       // "r/o" on the employment agreement means place of residence, so prefer
       // the permanent address and fall back to the current one.
-      permanent_address: joinAddress(employee) || null,
+      // Falls back to the address the candidate typed during onboarding when the
+      // employee record has none. Only 67 profiles carry one today, so this
+      // closes a small gap rather than a large one.
+      permanent_address: joinAddress(employee)
+        || [onboarding?.permanent_address, onboarding?.permanent_city,
+            onboarding?.permanent_state, onboarding?.permanent_pincode]
+             .map((part) => safeTrim(part)).filter(Boolean).join(", ")
+        || null,
       current_address: joinAddress(employee, "current") || null,
     },
     epf: {
@@ -909,7 +987,7 @@ export async function buildSourceContext(employeeId: string, candidateId?: strin
       relationship_type: epf?.relationship_type ?? "father",
       date_of_birth: epf?.date_of_birth ?? onboarding?.date_of_birth ?? employee?.date_of_birth ?? null,
       joining_date: epf?.joining_date ?? employee?.date_of_joining ?? null,
-      gender: epf?.gender ?? employee?.gender ?? null,
+      gender: safeTrim(epf?.gender) ?? safeTrim(employee?.gender) ?? safeTrim(onboarding?.gender),
       marital_status: maritalStatusForForm(
         epf?.marital_status ?? onboarding?.marital_status ?? employee?.marital_status,
       ),
@@ -917,10 +995,21 @@ export async function buildSourceContext(employeeId: string, candidateId?: strin
       personal_email: epf?.personal_email ?? onboarding?.personal_email_id ?? employee?.email ?? null,
       pan_masked: epf?.pan_masked ?? onboarding?.pan_number_masked ?? null,
       aadhaar_masked: epf?.aadhaar_masked ?? onboarding?.aadhaar_number_masked ?? null,
-      uan_masked: epf?.uan_masked ?? onboarding?.uan_number ?? null,
+      // employee_epf_compliance_profile holds 4 rows, so uan_masked was null for
+      // effectively everyone while 11,751 employee rows carry a UAN. Masked on
+      // the way through to match what this field has always printed — the raw
+      // value is deliberately not widened here.
+      // safeTrim, not `??`: these columns hold '' rather than NULL on 65 profiles,
+      // and `??` treats '' as a real value, so the employee-row fallback would
+      // never fire and the form would print blank for someone who has a UAN.
+      uan_masked: safeTrim(epf?.uan_masked) ?? safeTrim(onboarding?.uan_number) ?? maskDigits(employee?.uan_number),
       previous_pf_member: Number(epf?.previous_pf_member ?? 0) === 1,
       previous_pf_member_no: Number(epf?.previous_pf_member ?? 0) !== 1,
-      previous_pf_account_number: epf?.previous_pf_account_number ?? null,
+      // Only the onboarding column is a valid fallback: its field is labelled
+      // "Previous EPF / PF Number". employees.epf_number is the CURRENT member
+      // id, and printing it here would make Form 11 assert a previous
+      // membership that does not exist.
+      previous_pf_account_number: safeTrim(epf?.previous_pf_account_number) ?? safeTrim(onboarding?.epf_number),
       previous_exit_date: epf?.previous_exit_date ?? null,
       previous_eps_member: Number(epf?.previous_eps_member ?? 0) === 1,
       previous_eps_member_no: Number(epf?.previous_eps_member ?? 0) !== 1,
@@ -943,7 +1032,7 @@ export async function buildSourceContext(employeeId: string, candidateId?: strin
     statutory: {
       pan_masked: epf?.pan_masked ?? onboarding?.pan_number_masked ?? null,
       aadhaar_masked: epf?.aadhaar_masked ?? onboarding?.aadhaar_number_masked ?? null,
-      uan: epf?.uan_masked ?? onboarding?.uan_number ?? null,
+      uan: safeTrim(epf?.uan_masked) ?? safeTrim(onboarding?.uan_number) ?? maskDigits(employee?.uan_number),
       bank_account_masked: maskBankAccount(bank?.bank_account_no ?? null),
       ifsc_code: bank?.bank_ifsc ?? bank?.ifsc_code ?? null,
       bank_verified: Number(bank?.bank_verified ?? 0) === 1,
@@ -1154,7 +1243,17 @@ async function upsertFieldValue(params: {
  * which would also stop genuinely missing statutory data (EPF nominees) from
  * blocking.
  */
-const OPTIONAL_SOURCED_FIELD_KEYS = ["surveillance_hr_name", "payroll_hr_name", "payroll_hr_designation"];
+const OPTIONAL_SOURCED_FIELD_KEYS = [
+  "surveillance_hr_name",
+  "payroll_hr_name",
+  "payroll_hr_designation",
+  // Same shape: sourced from employee.process, but 19,270 of 58,627 employees
+  // (and 1,044 of the 1,648 who joined in 2026) have no process_id, so the
+  // resolved value is null and the Employment Agreement, BAMS and NDA stayed
+  // pinned at hr_fill_required forever. A process is assigned by Operations
+  // after joining, so it is legitimately unknown when the kit is issued.
+  "process",
+];
 
 const NON_BLOCKING_FIELD_KEYS: string[] = [
   ...COMMON_TEMPLATE_FIELDS
