@@ -36,6 +36,7 @@ import {
   refreshOfficialCompanyKnowledge,
 } from './ai-company-knowledge.service.js';
 import { answerHowToQuestion } from './ai-howto.service.js';
+import { detectFeedbackIntent, describeFeedbackForHistory, logFeedback } from './ai-feedback.service.js';
 import { ruleBasedProvider } from './providers/ruleBased.provider.js';
 
 export const aiInsightsRouter = Router();
@@ -406,6 +407,35 @@ async function askHandler(req: AuthenticatedRequest, res: Response, mode: 'json'
     }
     return res.json(apiSuccess(response));
   };
+
+  // Checked before self-account: an explicit feedback/complaint-about-the-
+  // system message ("I have a complaint about the HRMS system", "feedback
+  // on Mira") must never be answered from live HRMS data or fall through to
+  // a generic refusal — it needs to be captured and routed to the admin
+  // team. detectFeedbackIntent requires the message to name the system
+  // itself (see ai-feedback.service.ts's SYSTEM_NAME comment), so this never
+  // intercepts an employee's own existing-grievance question, which
+  // self-account's support intent already owns correctly.
+  const feedback = detectFeedbackIntent(safeQuestion);
+  if (feedback.isFeedback) {
+    const feedbackResponse = await logFeedback(userId, safeQuestion, feedback.category);
+    const request: AiGenerateRequest = {
+      userId,
+      roleKeys,
+      providerKey: feedbackResponse.provider,
+      userQuestion: safeQuestion,
+      sanitizedContext: { intent: `feedback:${feedback.category}`, data_scope: 'mira_feedback', safe_mode: true },
+      requestSource: 'mira_feedback',
+      entityType: 'mira_feedback',
+    };
+    await aiAuditService.logUsage(request, feedbackResponse);
+    await aiAuditService.logPromptAudit(request, false, [], feedbackResponse.answer.slice(0, 200), `feedback:${feedback.category}`);
+    return respond(feedbackResponse, {
+      externalSafe: false,
+      intent: `feedback:${feedback.category}`,
+      redactedSummary: describeFeedbackForHistory(feedback.category),
+    });
+  }
 
   // "and last month?" only means something against the previous turn. Rewrite it
   // into a question the intent router can serve; leave anything self-contained be.
