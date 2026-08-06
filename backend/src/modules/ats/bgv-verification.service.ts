@@ -667,7 +667,21 @@ export async function startDigilockerByToken(token: string, requestedDocuments: 
   const candidateId = tokenData.candidate_id as string;
   await ensureConsent(candidateId);
   const adapter = await getConfiguredBgvProviderAdapter();
-  const session = await adapter.startDigilocker(candidateId, requestedDocuments.length ? requestedDocuments : ["AADHAAR", "PAN"]);
+  /**
+   * Resolved once, so the provider and our own record cannot disagree.
+   *
+   * The default used to be applied inline in the adapter call while the INSERT below
+   * stored the raw parameter. The onboarding screen sends no list, so every live session
+   * asked the provider for Aadhaar and PAN and then recorded requested_documents_json as
+   * `[]` — true of all 33 befisc_luckpay rows in production, while the six older mock
+   * sessions, whose caller passed an explicit list, recorded it correctly.
+   *
+   * Nothing was fetched wrongly; the provider always received the right list. What was
+   * lost is the answer to "what did we ask this candidate to share", which is exactly
+   * what a consent-based KYC flow has to be able to show afterwards.
+   */
+  const documentsToRequest = requestedDocuments.length ? requestedDocuments : ["AADHAAR", "PAN"];
+  const session = await adapter.startDigilocker(candidateId, documentsToRequest);
 
   // Production has thrown "Data too long for column 'auth_url'" here 10 times. auth_url is
   // TEXT (65,535 bytes), so the provider is returning something that is not a redirect URL —
@@ -693,7 +707,7 @@ export async function startDigilockerByToken(token: string, requestedDocuments: 
     `INSERT INTO candidate_digilocker_session
        (id, candidate_id, state_token, provider_key, auth_url, session_status, requested_documents_json, expires_at)
      VALUES (?, ?, ?, ?, ?, 'created', ?, ?)`,
-    [randomUUID(), candidateId, session.state, adapter.providerKey, authUrl, JSON.stringify(requestedDocuments), session.expiresAt]
+    [randomUUID(), candidateId, session.state, adapter.providerKey, authUrl, JSON.stringify(documentsToRequest), session.expiresAt]
   );
   // syncDigilockerStatus reads ats_provider_transaction_log and needs BOTH the
   // client transaction id and the provider's own reference to poll. Writing the
