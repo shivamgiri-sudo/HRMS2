@@ -226,6 +226,7 @@ export const platformRouteElements = (
       <Route path="/admin/report-audit"        element={<Navigate to="/reports?view=audit"        replace />} />
       {/* Module-specific report routes → hub library with pre-selected report */}
       <Route path="/break-reports"             element={<Navigate to="/reports?view=library&report=break-daily-summary"  replace />} />
+      <Route path="/break-session-log"         element={<Navigate to="/reports?view=library&report=break-session-log"   replace />} />
       <Route path="/payroll/variance"          element={<Navigate to="/reports?view=library&report=payroll-variance"     replace />} />
       <Route path="/payroll/cost-summary"      element={<Navigate to="/reports?view=library&report=payroll-cost-summary" replace />} />
 

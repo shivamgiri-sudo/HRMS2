@@ -194,6 +194,16 @@ const STATUS_FILTER: FilterDef = {
     { value: "rejected", label: "Rejected" },
   ],
 };
+// break_sessions lifecycle values — not the generic approval states above.
+const BREAK_STATUS_FILTER: FilterDef = {
+  key: "status", label: "Break Status", type: "select",
+  options: [
+    { value: "ACTIVE", label: "Active (on break now)" },
+    { value: "COMPLETED", label: "Completed" },
+    { value: "AUTO_CLOSED", label: "Auto-closed" },
+    { value: "EXCEPTION", label: "Exception" },
+  ],
+};
 
 // ─── Filter Mapping for Central Catalog ───────────────────────────────────────
 
@@ -230,6 +240,8 @@ function buildFiltersForReport(code: string): FilterDef[] {
     "daily-shrinkage-report": [...dateFilters, ...branchProcess],
     "monthly-shrinkage-trend": [...dateFilters, ...branchProcess],
     "punch-raw-export": [...dateFilters, ...branchProcess],
+    "break-daily-summary": [...dateFilters, ...branchProcess],
+    "break-session-log": [...dateFilters, ...branchProcess, BREAK_STATUS_FILTER],
     // Leave Balance shows every leave type as columns (CL / ML / EL / PTL-MTL),
     // so a Leave Type filter is meaningless here and has been removed. Month is
     // required and is passed identically to the preview API and the XLSX export.
@@ -1050,7 +1062,7 @@ export default function NativeReportsCenterV2() {
     >
       <div className="flex min-h-0 bg-slate-50 rounded-xl border border-slate-200 overflow-hidden shadow-sm">
         {/* Sidebar */}
-        <aside className="w-60 shrink-0 bg-white border-r border-slate-200 sticky top-0 h-[calc(100vh-120px)] overflow-y-auto">
+        <aside className="w-60 shrink-0 bg-white border-r border-slate-200 sticky top-0 h-[calc(100dvh-120px)] overflow-y-auto">
           <div className="px-3 py-3 border-b border-slate-100">
             <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Report Categories</p>
             <p className="text-[10px] text-slate-400 mt-1">{totalReports} reports for your role</p>

@@ -44,6 +44,7 @@ import {
   punchRawExport,
   attendanceRegisterGrid,
   breakDailySummary,
+  breakSessionLog,
 } from "./attendance.executor.js";
 
 // ─── Leave ───────────────────────────────────────────────────────────────────
@@ -184,6 +185,7 @@ export const EXECUTOR_MAP: Record<string, ExecutorFn> = {
   "monthly-shrinkage-trend":   monthlyShrinkageTrend,
   "punch-raw-export":          punchRawExport,
   "break-daily-summary":       breakDailySummary,
+  "break-session-log":         breakSessionLog,
 
   // Leave
   "leave-balance":             leaveBalance,

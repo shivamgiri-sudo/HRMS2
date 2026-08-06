@@ -116,6 +116,17 @@ const F_STATUS: FilterDef = {
     { value: "rejected", label: "Rejected" },
   ]
 };
+// Break session lifecycle — these are the literal status values on break_sessions,
+// not the generic approval states in F_STATUS.
+const F_BREAK_STATUS: FilterDef = {
+  key: "status", label: "Break Status", type: "select",
+  options: [
+    { value: "ACTIVE", label: "Active (on break now)" },
+    { value: "COMPLETED", label: "Completed" },
+    { value: "AUTO_CLOSED", label: "Auto-closed" },
+    { value: "EXCEPTION", label: "Exception" },
+  ]
+};
 const F_APPROVAL_STATUS: FilterDef = {
   key: "status", label: "Approval Status", type: "select",
   options: [
@@ -970,13 +981,65 @@ export const REPORT_CATALOG: ReportDefinition[] = [
     filters: [F_DATE_FROM, F_DATE_TO, F_BRANCH, F_PROCESS],
     viewRoles: ["super_admin", "admin", "hr", "wfm", "manager", "process_manager"],
     exportRoles: ["super_admin", "admin", "hr", "wfm"],
-    sourceTables: ["break_sessions", "wfm_attendance_session", "employees"],
+    sourceTables: ["break_sessions", "employees", "wfm_roster_assignment", "wfm_shift_master"],
+    calculationNotes:
+      "Aggregated from break_sessions (not the derived break_daily_summary table) so " +
+      "the report cannot go stale if the summary writer lags. break_count and " +
+      "total_break_minutes cover COMPLETED, AUTO_CLOSED and EXCEPTION sessions only — " +
+      "an ACTIVE break has no end time and no duration yet, so counting it would report " +
+      "break minutes not actually taken. Use Break Session Log for the per-break detail. " +
+      "shift_name comes from wfm_roster_assignment and is blank where no roster exists " +
+      "for that employee and date.",
     branchScoped: true,
     processScoped: true,
     sensitivityLevel: "confidential",
     containsPII: true,
     containsFinancialData: false,
-    availabilityStatus: "under_validation",
+    availabilityStatus: "validated",
+  },
+
+  {
+    code: "break-session-log",
+    name: "Break Session Log",
+    category: "Attendance",
+    subcategory: "BPO Metrics",
+    description: "Every individual break with its break-in and break-out time, duration, source and exception reason",
+    rowGrain: "One row per break session",
+    primaryKey: ["employee_code", "break_date", "break_in"],
+    columns: [
+      { key: "break_date", label: "Date", format: "date", width: 100 },
+      { key: "employee_code", label: "Emp Code", format: "text", width: 100 },
+      { key: "employee_name", label: "Employee Name", format: "text", width: 180 },
+      { key: "branch_name", label: "Branch", format: "text", width: 120 },
+      { key: "process_name", label: "Process", format: "text", width: 140 },
+      { key: "break_type", label: "Break Type", format: "text", width: 110 },
+      { key: "break_in", label: "Break In", format: "time", width: 90 },
+      { key: "break_out", label: "Break Out", format: "time", width: 90 },
+      { key: "duration_minutes", label: "Duration (mins)", format: "number", width: 100, align: "right" },
+      { key: "status", label: "Status", format: "status", width: 110 },
+      { key: "start_source", label: "Start Source", format: "text", width: 110 },
+      { key: "end_source", label: "End Source", format: "text", width: 110 },
+      { key: "kiosk_code", label: "Desk", format: "text", width: 100 },
+      { key: "biometric_punch_in", label: "Biometric In", format: "time", width: 100 },
+      { key: "biometric_punch_out", label: "Biometric Out", format: "time", width: 100 },
+      { key: "exception_reason", label: "Exception Reason", format: "text", width: 200 },
+      { key: "break_reason", label: "Break Reason", format: "text", width: 200 },
+    ],
+    filters: [F_DATE_FROM, F_DATE_TO, F_BRANCH, F_PROCESS, F_BREAK_STATUS],
+    viewRoles: ["super_admin", "admin", "hr", "wfm", "manager", "process_manager"],
+    exportRoles: ["super_admin", "admin", "hr", "wfm"],
+    sourceTables: ["break_sessions", "employees", "break_kiosk_devices"],
+    calculationNotes:
+      "One row per row of break_sessions — no aggregation. Unlike Break Activity Daily " +
+      "Summary this INCLUDES ACTIVE (in-progress) breaks, which show a blank Break Out " +
+      "and zero duration; that is why the two reports' break counts can differ. " +
+      "Biometric In/Out are the shift punches captured on the session, not the break itself.",
+    branchScoped: true,
+    processScoped: true,
+    sensitivityLevel: "confidential",
+    containsPII: true,
+    containsFinancialData: false,
+    availabilityStatus: "validated",
   },
 
   // ═══════════════════════════════════════════════════════════════════════════════

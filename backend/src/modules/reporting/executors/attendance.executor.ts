@@ -5,7 +5,8 @@
  * attendance-summary, late-arrival-summary, overtime-summary,
  * regularization-summary, attendance-dispute-summary, habitual-absentee-list,
  * daily-shrinkage-report, monthly-shrinkage-trend, biometric-reconciliation,
- * punch-raw-export, attendance-register-grid, break-daily-summary
+ * punch-raw-export, attendance-register-grid, break-daily-summary,
+ * break-session-log
  *
  * Every query includes WHERE e.company_id = ? to enforce tenant isolation.
  */
@@ -886,7 +887,21 @@ export async function attendanceRegisterGrid(
 }
 
 // ---------------------------------------------------------------------------
-// break-daily-summary  (raw per-break records)
+// break-daily-summary  (aggregate — one row per employee per date, no cursor)
+//
+// Aggregated from break_sessions rather than the derived break_daily_summary
+// table, so the report cannot go stale if the summary writer lags or misses a
+// day. The date column on break_sessions is shift_date; there is no
+// session_date column.
+//
+// Break count and minutes cover COMPLETED, AUTO_CLOSED and EXCEPTION sessions —
+// the same set getBreakUsageSummary() in break-management.service.ts treats as
+// consumed break time. ACTIVE (in-progress) sessions have no end time and no
+// duration yet, so counting them would report break minutes that have not been
+// taken.
+//
+// shift_name resolves through a correlated subquery rather than a join, so a
+// duplicate roster assignment can never fan out and inflate break_count.
 // ---------------------------------------------------------------------------
 export async function breakDailySummary(
   filters: ExecFilters,
@@ -902,11 +917,86 @@ export async function breakDailySummary(
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
 
-  clauses.push("bs.session_date BETWEEN ? AND ?");
+  clauses.push("bs.shift_date BETWEEN ? AND ?");
   params.push(from, to);
 
+  clauses.push("bs.status IN ('COMPLETED','AUTO_CLOSED','EXCEPTION')");
+
   if (options.asOf) {
-    clauses.push("bs.session_date <= ?");
+    clauses.push("bs.shift_date <= ?");
+    params.push(options.asOf);
+  }
+
+  const base = `
+    SELECT bs.shift_date AS break_date,
+           e.employee_code,
+           COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
+           b.branch_name,
+           p.process_name,
+           (SELECT ws.shift_name
+              FROM wfm_roster_assignment wra
+              JOIN wfm_shift_master ws ON ws.id = wra.shift_id
+             WHERE wra.employee_id = e.id
+               AND wra.roster_date = bs.shift_date
+             LIMIT 1) AS shift_name,
+           COUNT(*) AS break_count,
+           -- CAST to SIGNED so the driver returns a number; a bare SUM() on a
+           -- DECIMAL column arrives as a string and lands in the XLSX as text.
+           CAST(ROUND(SUM(COALESCE(bs.duration_minutes, 0))) AS SIGNED) AS total_break_minutes
+      FROM break_sessions bs
+      JOIN employees e ON e.id = bs.employee_id
+      LEFT JOIN branch_master b ON b.id = e.branch_id
+      LEFT JOIN process_master p ON p.id = e.process_id
+     WHERE ${clauses.join(" AND ")}
+     GROUP BY bs.shift_date, e.id, e.employee_code, e.full_name, e.first_name,
+              e.last_name, b.branch_name, p.process_name
+     ORDER BY bs.shift_date DESC, e.employee_code ASC`;
+
+  const total = options.includeTotal ? await count(base, params) : 0;
+  const sql   = applyPagination(base, options);
+  const rows  = await query(sql, params) as Record<string, unknown>[];
+
+  return {
+    rows,
+    rowCount: options.includeTotal ? total : rows.length,
+    isTruncated: options.includeTotal ? total > rows.length : rows.length === options.limit,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// break-session-log  (detail — one row per break, with in/out times)
+//
+// The per-break companion to break-daily-summary: every individual break punch
+// with its start and end time, rather than the day's totals. ACTIVE sessions
+// ARE included here — an in-progress break is exactly what someone reading a
+// log needs to see — and show a blank break-out time with no duration. That is
+// why the two reports' break counts can differ: the summary counts only
+// finished breaks, this one shows everything on the log.
+// ---------------------------------------------------------------------------
+export async function breakSessionLog(
+  filters: ExecFilters,
+  scope: ExecScope,
+  options: ExecOptions
+): Promise<ExecResult> {
+  const today = new Date().toISOString().slice(0, 10);
+  const from  = dateParam(filters.from, today);
+  const to    = dateParam(filters.to, today);
+
+  const clauses: string[] = ["e.id IS NOT NULL"];
+  const params: unknown[]  = [];
+  appendScopeConditions(scope, clauses, params);
+  appendFilterConditions(filters, clauses, params);
+
+  clauses.push("bs.shift_date BETWEEN ? AND ?");
+  params.push(from, to);
+
+  if (filters.status) {
+    clauses.push("bs.status = ?");
+    params.push(String(filters.status).toUpperCase());
+  }
+
+  if (options.asOf) {
+    clauses.push("bs.shift_date <= ?");
     params.push(options.asOf);
   }
 
@@ -915,29 +1005,50 @@ export async function breakDailySummary(
     params.push(options.cursor);
   }
 
+  // Worker mode pages by bs.id, so it must order by bs.id for the cursor to be
+  // monotonic. Preview/export order the way a human reads a log: newest day
+  // first, then each employee's breaks in the order they were taken.
+  const orderBy = options.mode === "worker"
+    ? "bs.id ASC"
+    : "bs.shift_date DESC, e.employee_code ASC, bs.break_start_time ASC";
+
   const base = `
     SELECT bs.id AS _cursor,
+           bs.shift_date AS break_date,
            e.employee_code,
            COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
            b.branch_name,
            p.process_name,
-           bs.session_date AS break_date,
-           bs.duration_minutes,
-           TIME_FORMAT(bs.break_start_time,'%H:%i:%s') AS break_start,
-           TIME_FORMAT(bs.break_end_time,'%H:%i:%s') AS break_end
+           bs.break_type,
+           TIME_FORMAT(bs.break_start_time,'%H:%i:%s') AS break_in,
+           TIME_FORMAT(bs.break_end_time,'%H:%i:%s')   AS break_out,
+           CAST(ROUND(COALESCE(bs.duration_minutes, 0)) AS SIGNED) AS duration_minutes,
+           bs.status,
+           bs.start_source,
+           bs.end_source,
+           kd.kiosk_code,
+           TIME_FORMAT(bs.biometric_punch_in_time,'%H:%i:%s')  AS biometric_punch_in,
+           TIME_FORMAT(bs.biometric_punch_out_time,'%H:%i:%s') AS biometric_punch_out,
+           bs.exception_reason,
+           bs.break_reason
       FROM break_sessions bs
       JOIN employees e ON e.id = bs.employee_id
       LEFT JOIN branch_master b ON b.id = e.branch_id
       LEFT JOIN process_master p ON p.id = e.process_id
+      LEFT JOIN break_kiosk_devices kd ON kd.id = bs.kiosk_device_id
      WHERE ${clauses.join(" AND ")}
-     ORDER BY bs.id ASC`;
+     ORDER BY ${orderBy}`;
 
   const total = options.includeTotal ? await count(base, params) : 0;
   const sql   = options.mode === "worker" ? `${base} LIMIT ${options.limit}` : applyPagination(base, options);
   const rows  = await query(sql, params) as Record<string, unknown>[];
 
+  // break_sessions.id is a UUID, not an auto-increment. Keyset pagination still
+  // works — ORDER BY bs.id ASC combined with bs.id > cursor is a stable total
+  // order — but pages come out in id order rather than chronological order,
+  // which is why worker mode sorts by bs.id instead of by date.
   const nextCursor = (options.mode === "worker" && rows.length > 0)
-    ? (rows[rows.length - 1]._cursor as number)
+    ? (rows[rows.length - 1]._cursor as string)
     : null;
 
   const out = rows.map(({ _cursor: _, ...rest }) => rest);

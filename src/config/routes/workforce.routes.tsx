@@ -127,5 +127,6 @@ export const workforceRouteElements = (
       {/* Duplicate eliminated — redirect to canonical */}
       <Route path="/break-management/devices" element={<Navigate to="/wfm/break-desk-devices" replace />} />
       <Route path="/break-reports" element={<Navigate to="/reports?view=library&report=break-daily-summary" replace />} />
+      <Route path="/break-session-log" element={<Navigate to="/reports?view=library&report=break-session-log" replace />} />
   </>
 );

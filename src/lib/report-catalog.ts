@@ -871,6 +871,66 @@ export const REPORT_CATALOG: ReportMeta[] = [
     viewRoles: ["super_admin", "admin", "hr", "wfm"],
     exportRoles: ["super_admin", "admin", "hr", "wfm"],
   },
+  {
+    // The WFM → Break Reports menu item deep-links here
+    // (/break-reports → /reports?view=library&report=break-daily-summary), but the
+    // entry was missing from this catalog, so the library could not list or
+    // pre-select it and the menu item led nowhere. Both break reports are declared
+    // here to match the backend catalog.
+    code: "break-daily-summary",
+    name: "Break Activity Daily Summary",
+    category: "Attendance",
+    subcategory: "BPO Metrics",
+    description: "Daily break totals per employee: break count and total break minutes",
+    rowGrain: "One row per employee per date",
+    primaryKey: ["employee_code", "break_date"],
+    columns: [
+      { key: "break_date", label: "Date", format: "date", width: 100 },
+      { key: "employee_code", label: "Emp Code", format: "text", width: 100 },
+      { key: "employee_name", label: "Employee Name", format: "text", width: 180 },
+      { key: "branch_name", label: "Branch", format: "text", width: 120 },
+      { key: "process_name", label: "Process", format: "text", width: 140 },
+      { key: "shift_name", label: "Shift", format: "text", width: 100 },
+      { key: "break_count", label: "Break Count", format: "number", width: 80, align: "right" },
+      { key: "total_break_minutes", label: "Total Break (mins)", format: "number", width: 100, align: "right" },
+    ],
+    viewRoles: ["super_admin", "admin", "hr", "wfm", "manager", "process_manager"],
+    exportRoles: ["super_admin", "admin", "hr", "wfm"],
+  },
+  {
+    code: "break-session-log",
+    name: "Break Session Log",
+    category: "Attendance",
+    subcategory: "BPO Metrics",
+    description: "Every individual break with its break-in and break-out time, duration, source and exception reason",
+    rowGrain: "One row per break session",
+    primaryKey: ["employee_code", "break_date", "break_in"],
+    columns: [
+      { key: "break_date", label: "Date", format: "date", width: 100 },
+      { key: "employee_code", label: "Emp Code", format: "text", width: 100 },
+      { key: "employee_name", label: "Employee Name", format: "text", width: 180 },
+      { key: "branch_name", label: "Branch", format: "text", width: 120 },
+      { key: "process_name", label: "Process", format: "text", width: 140 },
+      { key: "break_type", label: "Break Type", format: "text", width: 110 },
+      { key: "break_in", label: "Break In", format: "time", width: 90 },
+      { key: "break_out", label: "Break Out", format: "time", width: 90 },
+      { key: "duration_minutes", label: "Duration (mins)", format: "number", width: 100, align: "right" },
+      { key: "status", label: "Status", format: "status", width: 110 },
+      { key: "start_source", label: "Start Source", format: "text", width: 110 },
+      { key: "end_source", label: "End Source", format: "text", width: 110 },
+      { key: "kiosk_code", label: "Desk", format: "text", width: 100 },
+      { key: "biometric_punch_in", label: "Biometric In", format: "time", width: 100 },
+      { key: "biometric_punch_out", label: "Biometric Out", format: "time", width: 100 },
+      { key: "exception_reason", label: "Exception Reason", format: "text", width: 200 },
+      { key: "break_reason", label: "Break Reason", format: "text", width: 200 },
+    ],
+    // An in-progress break has no end time and no duration yet. Rendering those as
+    // an em dash and a 0 reads as "returned instantly"; blank reads as "still out".
+    blankInsteadOfDash: true,
+    blankWhenZero: ["duration_minutes"],
+    viewRoles: ["super_admin", "admin", "hr", "wfm", "manager", "process_manager"],
+    exportRoles: ["super_admin", "admin", "hr", "wfm"],
+  },
 
   // ═══════════════════════════════════════════════════════════════════════════════
   // LEAVE

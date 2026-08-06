@@ -222,6 +222,7 @@ export const navGroups: NavGroup[] = [
           { label: "Operations Board",      href: "/display/ops-board",         icon: ic(Activity),  roles: ["super_admin","admin","wfm","manager","process_manager","operations_manager"], description: "Live operations display" },
           { label: "Break Desk",            href: "/break-desk",                icon: ic(ShieldCheck), roles: ["super_admin","admin","wfm","security_head","visitor_security","visitor_reception"], description: "Guard desk portal" },
           { label: "Break Reports",         href: "/break-reports",             icon: ic(Clock),     roles: ["super_admin","admin","hr","wfm","manager","process_manager"], description: "Daily break & attendance report" },
+          { label: "Break Session Log",     href: "/break-session-log",         icon: ic(ClipboardList), roles: ["super_admin","admin","hr","wfm","manager","process_manager"], description: "Every break with in/out times" },
           { label: "Break Desk Devices",    href: "/break-management/devices",  icon: ic(Settings2), roles: ["super_admin","admin","wfm"], description: "Kiosk tokens & devices" },
         ],
       },
