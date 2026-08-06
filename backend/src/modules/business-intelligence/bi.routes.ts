@@ -11,7 +11,7 @@ import {
   getRevenueAtRisk,
   getQualityIntervention,
 } from './bi.service.js';
-import { resolveDashboardScope, narrowDashboardScope } from '../../shared/dashboardScope.js';
+import { resolveDashboardScopeForRequest, narrowDashboardScope } from '../../shared/dashboardScope.js';
 import { getUserRoleContext } from '../../shared/roleResolver.js';
 
 export const biRouter = Router();
@@ -28,7 +28,7 @@ biRouter.get('/daily-operations-pulse', requireRole(...OPS_ROLES),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const date = req.query.date ? String(req.query.date) : undefined;
     const ctx = await getUserRoleContext(req.authUser!.id);
-    const base = await resolveDashboardScope(req.authUser!.id, ctx.primaryRole);
+    const base = await resolveDashboardScopeForRequest(req.authUser!, ctx.primaryRole);
     const scope = await narrowDashboardScope(
       base,
       String(req.query.branchId ?? ""),

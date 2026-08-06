@@ -9,7 +9,7 @@ import type { RowDataPacket } from "mysql2";
 import { kpiController as c } from "./kpi.controller.js";
 import { kpiService } from "./kpi.service.js";
 import { logSourceFailure } from "../../shared/apiResponse.js";
-import { buildScopeWhere, resolveDashboardScope } from "../../shared/dashboardScope.js";
+import { buildScopeWhere, resolveDashboardScopeForRequest } from "../../shared/dashboardScope.js";
 import { getUserRoleContext } from "../../shared/roleResolver.js";
 
 /**
@@ -202,7 +202,7 @@ router.get("/org-summary", requireRole("admin", "hr", "super_admin", "ceo", "man
   // kpi_daily_actual has no branch/process column (process_id_at_event exists but is
   // unpopulated), so scope routes through the employee.
   const roleContext = await getUserRoleContext(req.authUser!.id);
-  const scope = await resolveDashboardScope(req.authUser!.id, roleContext.primaryRole);
+  const scope = await resolveDashboardScopeForRequest(req.authUser!, roleContext.primaryRole);
   const empScope = buildScopeWhere(scope, "e.branch_id", "e.process_id");
 
   // Any guarded query that fails pushes its name here, so the response can say

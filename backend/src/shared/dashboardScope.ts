@@ -249,6 +249,40 @@ async function resolveTeamEmployeeIds(managerEmployeeId: string): Promise<string
   return [...collected];
 }
 
+/**
+ * Demo-bypass-aware wrapper around resolveDashboardScope.
+ *
+ * Demo-bypass identities (INTERNAL_DEMO_BYPASS, e.g. "demo-super-admin-id") have no backing
+ * row in user_roles, user_assignment_scope, auth_user or employees, so
+ * resolveDashboardScope's own internal getUserRoleContext(userId) call always misses for them
+ * and silently falls back to role "employee" — regardless of which demo role actually logged
+ * in — which then throws DashboardScopeConfigurationError (409) for every demo session.
+ * Confirmed live 2026-08-06 across dashboard.routes.ts, management.routes.ts, kpi.routes.ts
+ * and bi.routes.ts, all hitting this identically; the same underlying gap recurs more widely
+ * (also via hasRole()/fetchUserRoles() in it-provisioning.routes.ts, and via
+ * resolveDashboardScope directly in tat.routes.ts, qa-audit.routes.ts, work-inbox.routes.ts —
+ * flagged, not all fixed here; see hrms2-demo-identity-role-resolution-gap memory).
+ *
+ * For the two roles resolveDashboardScope itself already treats as unconditionally org-wide
+ * (its own SYSTEM_WIDE_ROLES set: "super_admin", "admin"), this constructs that same ORG_ALL
+ * scope directly for a demo session instead of calling resolveDashboardScope, matching its
+ * existing logic exactly. Every other role — real or demo — falls through to
+ * resolveDashboardScope completely unchanged. This is purely additive: resolveDashboardScope
+ * itself is untouched, so every existing caller and every existing test of it (including the
+ * v2 quality/operations dashboards' deliberately fail-closed "unconfigured account" contract,
+ * tests/dashboards-v2.routes.test.ts) is unaffected unless a caller explicitly switches to
+ * this wrapper.
+ */
+export async function resolveDashboardScopeForRequest(
+  user: { id: string; role?: string; isDemo?: boolean },
+  primaryRole: string,
+): Promise<DashboardScope> {
+  if (user.isDemo === true && (user.role === "super_admin" || user.role === "admin")) {
+    return { level: "ORG_ALL", branchIds: [], processIds: [], employeeIds: [], userId: user.id, role: user.role };
+  }
+  return resolveDashboardScope(user.id, primaryRole);
+}
+
 export async function resolveDashboardScope(userId: string, _role: string): Promise<DashboardScope> {
   const context = await getUserRoleContext(userId);
   const effectiveRole = context.primaryRole;

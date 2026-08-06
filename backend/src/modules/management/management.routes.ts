@@ -6,7 +6,7 @@ import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { getEmployeeForUser, hasRole } from "../../shared/accessGuard.js";
 import { managementService } from "./management.service.js";
 import { db } from "../../db/mysql.js";
-import { resolveDashboardScope } from "../../shared/dashboardScope.js";
+import { resolveDashboardScopeForRequest } from "../../shared/dashboardScope.js";
 import { getUserRoleContext } from "../../shared/roleResolver.js";
 import { PAYROLL_ROLES } from "../../platform/policy/roles.js";
 
@@ -107,7 +107,7 @@ router.get("/dashboard", requireRole("admin", "hr", "manager", "branch_head", "c
 
 router.get("/workforce-dashboard", requireRole("admin", "hr", "ceo", "manager", "branch_head", "process_manager", "wfm", "payroll", "payroll_hr", "payroll_head", "finance_head"), h(async (req: AuthenticatedRequest, res: Response) => {
   const ctx = await getUserRoleContext(req.authUser!.id);
-  const scope = await resolveDashboardScope(req.authUser!.id, ctx.primaryRole);
+  const scope = await resolveDashboardScopeForRequest(req.authUser!, ctx.primaryRole);
   // Allow ORG_ALL roles to override scope via query params
   const branchId = scope.level === "ORG_ALL"
     ? (req.query.branchId as string | undefined)
