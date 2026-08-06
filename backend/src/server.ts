@@ -20,6 +20,7 @@ import { startPerformanceIngestionScheduler, stopPerformanceIngestionScheduler }
 import { startAttendanceEngineScheduler } from "./modules/wfm/attendance-engine.cron.js";
 import { startAttendanceReconciliationWorker } from "./modules/wfm/attendance-reconciliation.worker.js";
 import { bootstrapCosecIntegration } from "./modules/wfm/cosec-integration.bootstrap.js";
+import { startCosecSyncWorker } from "./modules/wfm/cosec-sync.worker.js";
 import { startAccessExpiryScheduler } from "./workers/access-expiry.worker.js";
 import { startAnnualLeaveWorker } from "./workers/leave-annual-el-credit.worker.js";
 import { startLeaveMonthlyWorker } from "./workers/leave-monthly-credit.worker.js";
@@ -156,6 +157,21 @@ function startServer() {
         startCommunicationCleanup();
         startAttendanceEngineScheduler();
         startAttendanceReconciliationWorker();
+        // Pulls biometric punches from the NCOSEC SQL Server — the only feed that
+        // populates integration_biometric_daily, and so the source every non-Operations
+        // employee's payroll attendance is built from.
+        //
+        // This was registered in workers/all-workers.ts ONLY, the same single-file
+        // registration that silently killed ats-reminders (see the note below). In the
+        // API-process topology it therefore never started, while the upstream stayed
+        // healthy: on 2026-08-06 NCOSEC held 938 punching users for Aug 5 and 753 for
+        // Aug 6, of which HRMS had ingested 22 and 8. The pull itself is fine — the
+        // GROUP BY returns in 3.5s, well inside the 55s cancel guard — nothing was
+        // running it.
+        //
+        // Self-guarding: no-ops unless NCOSEC_DB_HOST/USER/PASSWORD are set, and skips
+        // when NCOSEC_SYNC_ENABLED=false, so this is inert where COSEC isn't configured.
+        startCosecSyncWorker();
         legacySyncWorker.start();
         startAccessExpiryScheduler();
         startITProvisioningLockScheduler();

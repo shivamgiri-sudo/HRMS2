@@ -777,6 +777,11 @@ export const attendanceEngineService = {
     let aprStatusRaw: AttendanceStatus | null = null;
     let mismatchFlag = 0;
 
+    // Tracks which classifier the final status is derived from. Starts as the source
+    // the employee is configured for, but an APR employee with no APR evidence falls
+    // back to biometric below, and must then be classified as biometric too.
+    let classifyAsApr = isAprEmployee;
+
     if (isAprEmployee) {
       // G4: Classify biometric independently for mismatch comparison
       if (biometricMinutes > 0) {
@@ -800,19 +805,48 @@ export const attendanceEngineService = {
       if (biometricStatusRaw !== null && biometricStatusRaw !== aprStatusRaw) {
         mismatchFlag = 1;
       }
+
+      // APR first, biometric fallback.
+      //
+      // The APR/dialler feed does not cover the whole Operations Executive population:
+      // on 2026-08-05 it held 216 agent codes company-wide against 828 active Operations
+      // Executives, so only 181 of the 763 with a record that day had any APR row. Judging
+      // the remainder on APR alone puts zero net-login minutes through the operations
+      // classifier — absent, lwp 1.00 — docking a full day's pay for a feed they never
+      // appear in.
+      //
+      // So when APR has nothing for the day but the employee did punch, classify them on
+      // that punch instead. The APR reading stays recorded in aprStatusRaw/diallerMinutes,
+      // and mismatch_flag above is unaffected, so the fallback is visible rather than
+      // silently rewriting which source was used.
+      if (rawMinutes === 0 && biometricMinutes > 0) {
+        classifyAsApr = false;
+        rawMinutes = biometricMinutes;
+        sourceSystem = biometricEvidence.sourceSystem;
+        sourceReference = biometricEvidence.sourceReference;
+        rule = { ...rule, attendance_source: 'biometric', full_day_minutes: 540, half_day_minutes: halfDayFloor };
+      }
     } else {
       rule = { ...rule, attendance_source: 'biometric', full_day_minutes: 540, half_day_minutes: halfDayFloor };
       rawMinutes = biometricMinutes;
     }
 
-    // G3: Missing punch — no data from any source AND not on leave/holiday/week-off
-    if (rawMinutes === 0 && !isAprEmployee) {
-      // Biometric employee with zero minutes = missing punch (not same as absent)
+    // G3: Missing punch — no data from any source AND not on leave/holiday/week-off.
+    //
+    // Previously gated on `!isAprEmployee`, which meant an APR employee with no evidence
+    // anywhere became absent with lwp 1.00 while a biometric employee in the identical
+    // state became missing_punch with lwp 0.00, pending WFM review. Same absence of
+    // evidence, opposite payroll outcome. Both now take the review path: a day nothing
+    // reported on is a gap to resolve, not a proven absence, whichever feed is silent.
+    if (rawMinutes === 0) {
       const lateResult = await this.calculateLateArrival(employeeId, date, rule);
       return {
         employeeId, date, processId, branchId,
-        source: 'biometric',
-        sourceSystem: 'cosec_policy_absence',
+        // Record the feed the employee is actually configured for. Hardcoding 'biometric'
+        // here would file an Operations Executive whose APR feed reported nothing as a
+        // missed biometric punch, hiding the real gap from whoever reviews the queue.
+        source: isAprEmployee ? 'dialler' : 'biometric',
+        sourceSystem: isAprEmployee ? 'apr_no_activity' : 'cosec_policy_absence',
         sourceRecordDate: date,
         sourceReference: null,
         diallerMinutes: null,
@@ -824,13 +858,15 @@ export const attendanceEngineService = {
         lateByMinutes: lateResult.lateByMinutes,
         ruleConfigId: rule.id === 'fallback' ? null : rule.id,
         biometricStatus: null,
-        aprStatus: null,
+        aprStatus: aprStatusRaw,
         mismatchFlag: 0,
       };
     }
 
-    // Classify
-    const classification = isAprEmployee
+    // Classify — classifyAsApr, not isAprEmployee, so an APR employee who fell back to
+    // biometric above is judged on the biometric thresholds their minutes were measured
+    // against (540/half-day floor), not APR's net-login ones (480/240).
+    const classification = classifyAsApr
       ? classifyOperationsNetLogin(rawMinutes, netLoginHalfDayFloor)
       : classifyCosecMinutes(rawMinutes, halfDayFloor);
 

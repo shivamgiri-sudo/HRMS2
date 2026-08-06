@@ -13,6 +13,7 @@ import {
   Cpu,
   Fingerprint,
   FileText,
+  Clock,
 } from "lucide-react";
 import { format } from "date-fns";
 import { hrmsApi } from "@/lib/hrmsApi";
@@ -31,7 +32,7 @@ import { Separator } from "@/components/ui/separator";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type DayStatus = "present" | "absent" | "leave" | "holiday" | "weekend" | "half_day" | "unreconciled" | "unprocessed";
+type DayStatus = "present" | "absent" | "leave" | "holiday" | "weekend" | "half_day" | "unreconciled" | "unprocessed" | "awaiting";
 
 interface ADRDay {
   date: string;
@@ -107,6 +108,7 @@ function cellStyle(status: DayStatus, isToday: boolean) {
     weekend:      "bg-slate-50    border-slate-200   hover:bg-slate-100",
     unreconciled: "bg-orange-50   border-orange-200  hover:bg-orange-100",
     unprocessed:  "bg-slate-50    border-dashed border-slate-200 hover:bg-slate-100",
+    awaiting:     "bg-sky-50/60   border-dashed border-sky-200   hover:bg-sky-100/60",
   };
   return base + today + (map[status] ?? map.absent);
 }
@@ -120,6 +122,7 @@ function StatusIcon({ status }: { status: DayStatus }) {
   if (status === "holiday")      return <CalendarIcon  className={`${cls} text-purple-500`} />;
   if (status === "unreconciled") return <AlertCircle   className={`${cls} text-orange-500`} />;
   if (status === "unprocessed")  return <MinusCircle   className={`${cls} text-slate-300`} />;
+  if (status === "awaiting")     return <Clock         className={`${cls} text-sky-400`} />;
   return <MinusCircle className={`${cls} text-slate-400`} />;
 }
 
@@ -133,11 +136,13 @@ function StatusBadge({ status }: { status: DayStatus }) {
     weekend:      "bg-slate-100   text-slate-700",
     unreconciled: "bg-orange-100  text-orange-800",
     unprocessed:  "bg-slate-100   text-slate-400",
+    awaiting:     "bg-sky-100     text-sky-700",
   };
   const labels: Record<DayStatus, string> = {
     present: "Present", absent: "Absent", half_day: "Half Day",
     leave: "Leave", holiday: "Holiday", weekend: "Weekend",
     unreconciled: "Unreconciled", unprocessed: "Not Processed",
+    awaiting: "Awaiting Nightly Run",
   };
   return (
     <Badge className={`${map[status] ?? map.absent} hover:${map[status] ?? map.absent} capitalize`}>
@@ -157,7 +162,8 @@ function ADRDayDetailSheet({
 }) {
   if (!day) return null;
 
-  const isUnprocessed = day.status === "unprocessed";
+  const isUnprocessed = day.status === "unprocessed" || day.status === "awaiting";
+  const isAwaiting = day.status === "awaiting";
 
   return (
     <Sheet open={open} onOpenChange={onClose}>
@@ -173,14 +179,25 @@ function ADRDayDetailSheet({
         </SheetHeader>
 
         {isUnprocessed ? (
-          <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 p-6 text-center space-y-2">
-            <AlertCircle className="h-8 w-8 text-slate-300 mx-auto" />
-            <p className="text-sm font-medium text-slate-500">Not yet processed</p>
-            <p className="text-xs text-slate-400">
-              The attendance engine has not processed this date yet.
-              ADR records are updated nightly — please check back after the sync completes.
-            </p>
-          </div>
+          isAwaiting ? (
+            <div className="rounded-xl border border-dashed border-sky-200 bg-sky-50/60 p-6 text-center space-y-2">
+              <Clock className="h-8 w-8 text-sky-300 mx-auto" />
+              <p className="text-sm font-medium text-sky-700">Awaiting tonight's run</p>
+              <p className="text-xs text-sky-600/80">
+                The attendance engine processes each day after 23:00 the following night,
+                so this date is not due yet. Nothing to report — check back tomorrow.
+              </p>
+            </div>
+          ) : (
+            <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 p-6 text-center space-y-2">
+              <AlertCircle className="h-8 w-8 text-slate-300 mx-auto" />
+              <p className="text-sm font-medium text-slate-500">No record for this date</p>
+              <p className="text-xs text-slate-400">
+                The nightly run has already covered this date and produced no attendance
+                record. If you worked that day, raise a regularisation with your manager.
+              </p>
+            </div>
+          )
         ) : (
           <div className="space-y-4">
 
@@ -303,6 +320,32 @@ function istTodayString(): string {
   }).format(new Date());
 }
 
+/** Whole days between `dateStr` (YYYY-MM-DD) and today in IST. Negative = future. */
+function daysBeforeTodayIST(dateStr: string): number {
+  const toUTC = (s: string) => {
+    const [y, m, d] = s.split("-").map(Number);
+    return Date.UTC(y!, (m ?? 1) - 1, d ?? 1);
+  };
+  return Math.round((toUTC(istTodayString()) - toUTC(dateStr)) / 86_400_000);
+}
+
+/**
+ * A missing ADR row means two very different things, and the calendar used to render
+ * both as "Not Processed".
+ *
+ * The attendance engine sweeps at 23:00 and processes the PREVIOUS day, so a row for
+ * date D does not exist until 23:00 on D+1. Today and yesterday are therefore simply
+ * not due yet — normal, nothing to chase. A blank from two or more days ago is a real
+ * gap: the sweep has been round and produced nothing.
+ *
+ * Showing "Not Processed" for yesterday made a healthy pending day look like a fault,
+ * which is exactly what prompted this. Future dates keep the neutral state.
+ */
+function missingDayStatus(dateStr: string): DayStatus {
+  const age = daysBeforeTodayIST(dateStr);
+  return age >= 0 && age <= 1 ? "awaiting" : "unprocessed";
+}
+
 export function ADRAttendanceCalendar({ employeeId, initialMonth, initialYear }: ADRAttendanceCalendarProps) {
   const today = new Date();
   const [currentMonth, setCurrentMonth] = useState(initialMonth ?? today.getMonth());
@@ -372,7 +415,7 @@ export function ADRAttendanceCalendar({ employeeId, initialMonth, initialYear }:
       // Unprocessed day — create a placeholder entry
       setSelectedDay({
         date: dateStr,
-        status: isWknd ? "weekend" : "unprocessed",
+        status: isWknd ? "weekend" : missingDayStatus(dateStr),
         attendanceSource: null,
         diallerMinutes: null, biometricMinutes: null, rawMinutes: null,
         lwpValue: null, lateMark: null, lateByMinutes: null,
@@ -425,7 +468,8 @@ export function ADRAttendanceCalendar({ employeeId, initialMonth, initialYear }:
               { status: "leave"       as DayStatus, label: "Leave",         dot: "bg-blue-500"    },
               { status: "holiday"     as DayStatus, label: "Holiday",       dot: "bg-purple-500"  },
               { status: "weekend"     as DayStatus, label: "Weekend",       dot: "bg-slate-400"   },
-              { status: "unprocessed" as DayStatus, label: "Not Processed", dot: "bg-slate-300"   },
+              { status: "awaiting"    as DayStatus, label: "Awaiting Run",  dot: "bg-sky-300"     },
+              { status: "unprocessed" as DayStatus, label: "No Record",     dot: "bg-slate-300"   },
             ].map(({ label, dot }) => (
               <span key={label} className="flex items-center gap-1">
                 <span className={`h-2.5 w-2.5 rounded-full ${dot}`} />
@@ -449,7 +493,7 @@ export function ADRAttendanceCalendar({ employeeId, initialMonth, initialYear }:
               // IST date — toISOString() is UTC and puts the "today" ring on the
               // previous day between 00:00 and 05:30 IST.
               const isToday   = dateStr === istTodayString();
-              const status: DayStatus = record?.status ?? (isWknd ? "weekend" : "unprocessed");
+              const status: DayStatus = record?.status ?? (isWknd ? "weekend" : missingDayStatus(dateStr));
 
               return (
                 <button

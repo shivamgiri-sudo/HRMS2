@@ -1,0 +1,16 @@
+{
+  // Typecheck for the ADR / Payroll attendance calendar (Attendance page).
+  //
+  // `npm run typecheck` runs `tsc --noEmit` against the root tsconfig, which declares
+  // `"files": []` plus project references — so it compiles nothing and exits 0 no matter
+  // what is broken. Use this instead when touching the ADR calendar:
+  //
+  //     npx tsc -p tsconfig.adr-check.json
+  //
+  // Scoped rather than repo-wide because `tsc -p tsconfig.app.json` reports a few hundred
+  // pre-existing errors from other people's modules, which buries anything just introduced.
+  "extends": "./tsconfig.app.json",
+  "include": [
+    "src/components/attendance/ADRAttendanceCalendar.tsx"
+  ]
+}

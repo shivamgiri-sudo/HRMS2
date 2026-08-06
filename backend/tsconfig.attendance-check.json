@@ -1,0 +1,19 @@
+{
+  // Typecheck for the attendance engine.
+  //
+  // Deliberately NOT the repo-wide `tsc -p tsconfig.json`: that run is slow enough to be
+  // killed mid-flight, and a killed run leaves ~350MB tsc processes behind that cannot be
+  // reaped and starve the machine. Scope to the engine instead:
+  //
+  //     npx tsc -p tsconfig.attendance-check.json
+  //
+  // Transitively pulled-in modules are still checked, so pre-existing errors from other
+  // people's files may appear; attendance-engine.service.ts itself is expected to stay clean.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true
+  },
+  "include": [
+    "src/modules/wfm/attendance-engine.service.ts"
+  ]
+}

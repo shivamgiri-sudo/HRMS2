@@ -67,13 +67,37 @@ wfmRouter.get("/attendance/daily", h(async (req: any, res: any) => {
   }
 
   const { db } = await import("../../db/mysql.js");
+  // The aliased columns (date/status/clock_in/clock_out/location/source) are read by
+  // six callers — TeamAttendanceTab, MyAttendanceHistory, useAttendance, useAttendanceHub,
+  // NativeEmployeeStatCard and the ADR calendar — so they stay exactly as they were.
+  //
+  // The unaliased columns below are additive. ADRAttendanceCalendar reads the raw ADR
+  // column names (attendance_source, lwp_value, mismatch_flag, is_locked, …) and this
+  // query returned none of them, so the APR/BIO badge, LWP figure, late mark, lock icon,
+  // mismatch banner and "last processed" line rendered blank or zero on every day —
+  // including fully processed ones. Returning both spellings keeps existing callers
+  // working while the ADR surface gets the fields it was written against.
   let sql = `SELECT record_date AS date,
                    attendance_status AS status,
                    clock_in_time AS clock_in,
                    clock_out_time AS clock_out,
                    raw_minutes,
                    COALESCE(clock_in_location, clock_out_location) AS location,
-                   attendance_source AS source
+                   attendance_source AS source,
+                   record_date,
+                   attendance_status,
+                   attendance_source,
+                   dialler_minutes,
+                   biometric_minutes,
+                   biometric_status,
+                   apr_status,
+                   lwp_value,
+                   late_mark,
+                   late_by_minutes,
+                   mismatch_flag,
+                   is_locked,
+                   source_system,
+                   processed_at
             FROM attendance_daily_record
             WHERE employee_id = ?`;
   const params: unknown[] = [employeeId];
