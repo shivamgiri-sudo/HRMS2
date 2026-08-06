@@ -62,7 +62,21 @@ export const HOWTO_CATALOG: HowToEntry[] = [
   {
     code: 'leave_apply',
     title: 'Apply for leave',
-    aliases: [/\bapply\b.*\bleave\b/i, /\braise\b.*\bleave\b/i, /\bleave\s*request\b/i, /\btake\s*leave\b/i],
+    // The bare /\bleave\s*request\b/i alias below is deliberately excluded
+    // from matching when approve/reject/deny wording is also present.
+    // "How can I approve my team member leave request?" matched it before
+    // this fix — leave_apply is registered before leave_approve, and
+    // Array.find() returns the first alias match, so a manager asking how
+    // to approve leave got steps for applying for their own leave instead.
+    // Same shadow-risk this file already calls out for resignation_raise
+    // below; fixed the same way (tighten the generic alias), not by
+    // reordering the array.
+    aliases: [
+      /\bapply\b.*\bleave\b/i,
+      /\braise\b.*\bleave\b/i,
+      /\btake\s*leave\b/i,
+      /^(?!.*\b(?:approv|reject|deny|denying|denied)\w*\b).*\bleave\s*request\b/i,
+    ],
     steps: [
       '1. Go to Leaves.',
       '2. Click "Apply for Leave".',

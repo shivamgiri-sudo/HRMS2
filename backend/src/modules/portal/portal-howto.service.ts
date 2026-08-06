@@ -27,6 +27,7 @@ export interface PortalHowToResult {
 const HOWTO_TRIGGERS: RegExp[] = [
   /\bhow\s+to\b/i,
   /\bhow\s+(do|can|would|should)\s+i\b/i,
+  /\bhow\s+i\s+(?:can|do|would|should)\b/i, // reversed word order ("how I can approve...")
   /\bwhere\s+(do|can|is|are)\s+i\b/i,
   /\bwhere\s+i\s+can\b/i,
   /\b(the\s+)?path\s+(to|for|from)\b/i,

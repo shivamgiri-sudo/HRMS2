@@ -75,6 +75,54 @@ describe('answerHowToQuestion', () => {
       );
       expect(result.handled).toBe(false);
     });
+
+    // Regression: reported live right after the fix above shipped. "how I
+    // can" (reversed from "how can I") is the same class of gate miss as
+    // "where I can" — this exact phrase fell through to the generic refusal
+    // in production.
+    it('fires on "how I can" (reversed word order, same class as "where I can")', async () => {
+      const result = await answerHowToQuestion(
+        'Mira, I ask you how I can approve leave request of my team?',
+        'user-1',
+        ['manager'],
+      );
+      expect(result.handled).toBe(true);
+      expect(result.response?.actions?.[0]?.url).toBe('/leaves');
+    });
+  });
+
+  // Regression: reported live in the same round as the mid-sentence gate
+  // miss above. leave_apply is registered before leave_approve in the
+  // catalog and its bare "leave request" alias matched a question about
+  // *approving* a leave request, so Array.find() returned the wrong entry —
+  // a manager asking how to approve leave got "Apply for leave" steps.
+  describe('leave_apply vs leave_approve — bare "leave request" must not shadow approval questions', () => {
+    it('"how can I approve my team member leave request" resolves to leave_approve, not leave_apply', async () => {
+      const result = await answerHowToQuestion(
+        'Hey Mira, how can I approve my team member leave request?',
+        'user-1',
+        ['manager'],
+      );
+      expect(result.handled).toBe(true);
+      expect(result.response?.answer).toContain('Approve');
+      expect(result.response?.answer).not.toContain('Apply for Leave');
+    });
+
+    it('"how can I reject my team member leave request" also resolves to leave_approve', async () => {
+      const result = await answerHowToQuestion(
+        'how can I reject my team member leave request',
+        'user-1',
+        ['manager'],
+      );
+      expect(result.handled).toBe(true);
+      expect(result.response?.answer).toContain('Approve');
+    });
+
+    it('a plain "how do I submit a leave request" (no approve/reject wording) still resolves to leave_apply', async () => {
+      const result = await answerHowToQuestion('how do I submit a leave request', 'user-1', ['employee']);
+      expect(result.handled).toBe(true);
+      expect(result.response?.answer).toContain('Apply for Leave');
+    });
   });
 
   describe('static_roles entries', () => {
