@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { Download, Pencil, Check, X } from "lucide-react";
 import { toast } from "sonner";
 import { hrmsApi } from "@/lib/hrmsApi";
@@ -166,6 +166,21 @@ export function BMIBenchmarkTab() {
 
   const rows: BmiMetricRow[] = data ? data[sheet] : [];
 
+  // Fix 2: Pre-compute display items BEFORE render to avoid mutation during render.
+  // Each entry is either a section-header sentinel or a data row.
+  type DisplayItem =
+    | { type: 'section'; section: string }
+    | { type: 'row'; row: BmiMetricRow };
+
+  const displayItems: DisplayItem[] = rows.flatMap((row, idx) => {
+    const items: DisplayItem[] = [];
+    if (idx === 0 || row.section !== rows[idx - 1].section) {
+      items.push({ type: 'section', section: row.section });
+    }
+    items.push({ type: 'row', row });
+    return items;
+  });
+
   return (
     <div className="space-y-4">
       {/* Controls */}
@@ -238,80 +253,89 @@ export function BMIBenchmarkTab() {
           </thead>
           <tbody>
             {loading ? (
+              // Fix 3: use actual month count (+ 1 for the Total column) instead of hardcoded 7
               Array.from({ length: 8 }).map((_, i) => (
                 <tr key={i} className="border-t border-slate-100">
                   <td className="px-3 py-3"><div className="animate-pulse h-4 bg-slate-100 rounded w-48" /></td>
-                  {Array.from({ length: 7 }).map((__, j) => (
+                  {Array.from({ length: (data?.months.length ?? 6) + 1 }).map((__, j) => (
                     <td key={j} className="px-3 py-3"><div className="animate-pulse h-4 bg-slate-100 rounded w-12 ml-auto" /></td>
                   ))}
                 </tr>
               ))
             ) : (
-              (() => {
-                let lastSection = "";
-                return rows.map((row) => {
-                  const sectionHeader = row.section !== lastSection ? (lastSection = row.section, row.section) : null;
+              // Fix 1 & 2: map over pre-computed displayItems — no Fragment-with-key needed,
+              // no variable mutation during render.
+              displayItems.map((item, i) => {
+                if (item.type === 'section') {
                   return (
-                    <>
-                      {sectionHeader && (
-                        <tr key={`section-${sectionHeader}`} className="bg-slate-50">
-                          <td colSpan={(data?.months.length ?? 0) + 2} className="px-3 py-2 text-xs font-bold uppercase tracking-wider text-slate-500">
-                            {sectionHeader}
-                          </td>
-                        </tr>
-                      )}
-                      <tr key={row.key} className="border-t border-slate-100 hover:bg-slate-50">
-                        <td className="px-3 py-2.5 text-slate-700 font-medium whitespace-nowrap">
-                          {row.label}
-                          {row.editable && <Pencil className="inline h-3 w-3 ml-1 text-blue-400" />}
-                        </td>
-                        {(data?.months ?? []).map((m) => {
-                          const cell = row.cells[m];
-                          const isEditing = editCell?.key === row.key && editCell?.month === m;
-                          return (
-                            <td
-                              key={m}
-                              className="px-3 py-2.5 text-right whitespace-nowrap"
-                              onClick={() => {
-                                if (row.editable && !isEditing) {
-                                  setEditCell({ key: row.key, month: m });
-                                  setEditValue(cell?.value != null ? String(cell.value) : "");
-                                }
-                              }}
-                            >
-                              {isEditing ? (
-                                <span className="flex items-center justify-end gap-1">
-                                  <input
-                                    autoFocus
-                                    className="w-20 text-right border border-blue-400 rounded px-1 py-0.5 text-sm outline-none"
-                                    value={editValue}
-                                    onChange={(e) => setEditValue(e.target.value)}
-                                    onKeyDown={(e) => {
-                                      if (e.key === "Enter") void saveManual(row.key, m, editValue);
-                                      if (e.key === "Escape") setEditCell(null);
-                                    }}
-                                  />
-                                  <button disabled={saving} onClick={() => void saveManual(row.key, m, editValue)}>
-                                    <Check className="h-3.5 w-3.5 text-green-600" />
-                                  </button>
-                                  <button onClick={() => setEditCell(null)}>
-                                    <X className="h-3.5 w-3.5 text-red-400" />
-                                  </button>
-                                </span>
-                              ) : (
-                                <CellDisplay cell={cell ?? { value: null, source: "auto" }} format={row.format} />
-                              )}
-                            </td>
-                          );
-                        })}
-                        <td className="px-3 py-2.5 text-right whitespace-nowrap bg-slate-50 font-semibold">
-                          {row.total !== null ? fmtValue(row.total, row.format) : "—"}
-                        </td>
-                      </tr>
-                    </>
+                    <tr key={`section-${item.section}-${i}`} className="bg-slate-50">
+                      <td colSpan={(data?.months.length ?? 0) + 2} className="px-3 py-2 text-xs font-bold uppercase tracking-wider text-slate-500">
+                        {item.section}
+                      </td>
+                    </tr>
                   );
-                });
-              })()
+                }
+                const row = item.row;
+                return (
+                  <tr key={row.key} className="border-t border-slate-100 hover:bg-slate-50">
+                    <td className="px-3 py-2.5 text-slate-700 font-medium whitespace-nowrap">
+                      {row.label}
+                      {row.editable && <Pencil className="inline h-3 w-3 ml-1 text-blue-400" />}
+                    </td>
+                    {(data?.months ?? []).map((m) => {
+                      const cell = row.cells[m];
+                      const isEditing = editCell?.key === row.key && editCell?.month === m;
+                      const canActivate = row.editable && !isEditing;
+                      function activateEdit() {
+                        setEditCell({ key: row.key, month: m });
+                        setEditValue(cell?.value != null ? String(cell.value) : "");
+                      }
+                      return (
+                        <td
+                          key={m}
+                          className="px-3 py-2.5 text-right whitespace-nowrap"
+                          // Fix 4: keyboard support for editable cells
+                          onClick={canActivate ? activateEdit : undefined}
+                          onKeyDown={canActivate ? (e) => {
+                            if (e.key === 'Enter' || e.key === ' ') {
+                              e.preventDefault();
+                              activateEdit();
+                            }
+                          } : undefined}
+                          tabIndex={canActivate ? 0 : undefined}
+                          role={canActivate ? "button" : undefined}
+                        >
+                          {isEditing ? (
+                            <span className="flex items-center justify-end gap-1">
+                              <input
+                                autoFocus
+                                className="w-20 text-right border border-blue-400 rounded px-1 py-0.5 text-sm outline-none"
+                                value={editValue}
+                                onChange={(e) => setEditValue(e.target.value)}
+                                onKeyDown={(e) => {
+                                  if (e.key === "Enter") void saveManual(row.key, m, editValue);
+                                  if (e.key === "Escape") setEditCell(null);
+                                }}
+                              />
+                              <button disabled={saving} onClick={() => void saveManual(row.key, m, editValue)}>
+                                <Check className="h-3.5 w-3.5 text-green-600" />
+                              </button>
+                              <button onClick={() => setEditCell(null)}>
+                                <X className="h-3.5 w-3.5 text-red-400" />
+                              </button>
+                            </span>
+                          ) : (
+                            <CellDisplay cell={cell ?? { value: null, source: "auto" }} format={row.format} />
+                          )}
+                        </td>
+                      );
+                    })}
+                    <td className="px-3 py-2.5 text-right whitespace-nowrap bg-slate-50 font-semibold">
+                      {row.total !== null ? fmtValue(row.total, row.format) : "—"}
+                    </td>
+                  </tr>
+                );
+              })
             )}
           </tbody>
         </table>
