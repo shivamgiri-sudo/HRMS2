@@ -75,9 +75,14 @@ export const salaryIncrementService = {
   async getAuditLog(requestId: string) {
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT sial.*,
-              CONCAT(COALESCE(au.display_name, au.email, au.id)) AS actor_name
+              COALESCE(
+                NULLIF(TRIM(CONCAT(COALESCE(ae.first_name, ''), ' ', COALESCE(ae.last_name, ''))), ''),
+                au.email,
+                au.id
+              ) AS actor_name
        FROM salary_increment_audit_log sial
        LEFT JOIN auth_user au ON au.id = sial.actor_user_id
+       LEFT JOIN employees ae ON ae.user_id = au.id
        WHERE sial.request_id = ?
        ORDER BY sial.created_at ASC`,
       [requestId]

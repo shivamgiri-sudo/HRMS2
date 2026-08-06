@@ -373,7 +373,7 @@ async function listEffectiveLobs(processId: string, period: string): Promise<Lob
   return queryRows<LobRow>(
     `SELECT l.*, p.process_name, p.client_id, cm.client_name,
             p.branch_id, bm.branch_name,
-            COALESCE(ccm.cost_centre_code, ccm.code) AS cost_centre_code,
+            ccm.cost_centre_code AS cost_centre_code,
             ccm.cost_centre_name
        FROM process_lob_master l
        JOIN process_master p ON p.id = l.process_id
@@ -626,7 +626,7 @@ export const processLobService = {
     return queryRows<LobRow>(
       `SELECT l.*, p.process_name, p.client_id, cm.client_name,
               p.branch_id, bm.branch_name,
-              COALESCE(ccm.cost_centre_code, ccm.code) cost_centre_code,
+              ccm.cost_centre_code cost_centre_code,
               ccm.cost_centre_name
          FROM process_lob_master l
          JOIN process_master p ON p.id = l.process_id

@@ -485,7 +485,7 @@ export async function getPendingOffers(): Promise<PendingOfferRow[]> {
     `SELECT
       ol.*,
       c.full_name as candidate_name,
-      c.candidate_id as candidate_code,
+      c.candidate_code as candidate_code,
       c.mobile,
       c.email
     FROM ats_offer_letters ol

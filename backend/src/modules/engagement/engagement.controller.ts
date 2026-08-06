@@ -538,9 +538,9 @@ export const engagementController = {
       SELECT
         e.id                                                    AS employee_id,
         CONCAT(e.first_name, ' ', e.last_name)                 AS employee_name,
-        COALESCE(b.name, '')                                    AS branch,
-        COALESCE(d.name, '')                                    AS department,
-        COALESCE(e.designation, '')                             AS designation,
+        COALESCE(b.branch_name, '')                             AS branch,
+        COALESCE(d.dept_name, '')                               AS department,
+        COALESCE(dg.designation_name, '')                       AS designation,
         COALESCE(ts.total_points, 0)                           AS total_points,
         COALESCE(tm.tier_name, 'Bronze')                       AS current_tier,
         COALESCE(ts.current_streak, 0)                         AS current_streak,
@@ -558,9 +558,10 @@ export const engagementController = {
       FROM employees e
       LEFT JOIN employee_tier_status ts ON ts.employee_id = e.id
       LEFT JOIN gamification_tier_master tm ON tm.tier_id = ts.current_tier_id
-      LEFT JOIN branches b ON b.id = e.branch_id
-      LEFT JOIN departments d ON d.id = e.department_id
-      WHERE e.status = 'active'
+      LEFT JOIN branch_master b ON b.id = e.branch_id
+      LEFT JOIN department_master d ON d.id = e.department_id
+      LEFT JOIN designation_master dg ON dg.id = e.designation_id
+      WHERE e.employment_status = 'active'
       ORDER BY total_points DESC
     `);
 

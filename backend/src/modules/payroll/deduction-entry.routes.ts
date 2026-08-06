@@ -284,7 +284,9 @@ deductionEntryRouter.get(
          ede.is_prorated,
          ede.run_month,
          ede.status,
-         ede.deactivate_reason,
+         -- No deactivation reason is stored on employee_deduction_entries; report it as
+         -- not-tracked rather than failing the whole query on a missing column.
+         NULL AS deactivate_reason,
          ede.created_at
        FROM employee_deduction_entries ede
        JOIN payroll_deduction_type pdt ON pdt.deduction_code = ede.deduction_type_code
