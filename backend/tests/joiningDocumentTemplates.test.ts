@@ -14,7 +14,7 @@ import os from "os";
 import path from "path";
 import PizZip from "pizzip";
 import { applyTransformRule } from "../src/modules/employees/pdfAcroFormFill.service.js";
-import { renderPlaceholderDocx } from "../src/modules/employees/universalDigitalFormFill.service.js";
+import { renderPlaceholderDocx, matchPlaceholderField } from "../src/modules/employees/universalDigitalFormFill.service.js";
 import {
   TEMPLATE_DEFINITIONS,
   buildTemplateDocx,
@@ -22,22 +22,28 @@ import {
 } from "../src/modules/employees/joiningDocumentTemplates.js";
 
 /**
- * Field keys the fill engine knows, mirrored from COMMON_TEMPLATE_FIELDS in
- * universalDigitalFormFill.service.ts. Any token outside this set renders blank.
+ * Injected by joiningDocumentPdf.service at render time from the branch letterhead and
+ * the company constant, so they resolve without being field values. Same set the sibling
+ * templateTokenCoverage.contract.test.ts keeps.
  */
-const KNOWN_FIELD_KEYS = new Set([
-  "employee_name", "employee_code", "father_name", "date_of_birth", "date_of_joining",
-  "designation", "department", "branch", "process", "mobile", "email",
-  "pan_masked", "aadhaar_masked", "uan", "current_date",
-  "nda_employee_name", "nda_signature_date",
-  "it_employee_name", "it_signature_date",
-  "surveillance_candidate_name", "surveillance_hr_name", "surveillance_signature_date",
-  "bams_employee_name", "bams_employee_code", "bams_date_of_joining",
-  "pi_employee_name", "pi_signature_date",
-  "zero_tolerance_employee_name", "zero_tolerance_signature_date",
-  "employee_address", "monthly_remuneration", "monthly_remuneration_words",
-  "attendance_system_name", "attendance_criterion", "attendance_login_hours",
-]);
+const RENDERER_INJECTED = new Set(["branch_address", "branch_name", "company_registered_office"]);
+
+/**
+ * Whether the fill engine can resolve a token.
+ *
+ * Asked of the engine rather than compared against a copy of its field list. The copy
+ * that used to live here was written by hand and then fell behind on two separate
+ * counts: relation_prefix, payroll_hr_name and payroll_hr_designation were added to
+ * COMMON_TEMPLATE_FIELDS and never mirrored, and branch_address and
+ * company_registered_office are injected by the renderer rather than declared as fields
+ * at all. So this reported five tokens as "would render blank" in the employment
+ * contract when the engine resolves every one of them — a false alarm on the one
+ * document where a blank would be most serious, which is the fastest way to teach
+ * people to ignore a failing test.
+ */
+function isResolvable(token: string): boolean {
+  return RENDERER_INJECTED.has(token) || Boolean(matchPlaceholderField(token));
+}
 
 const EXPECTED = [
   "EMPLOYMENT_CONTRACT",
@@ -64,7 +70,7 @@ describe("joining document templates", () => {
 
   it.each(EXPECTED)("TC-TPL-02: %s uses only field keys the engine can resolve", (code) => {
     const template = readTemplate(code);
-    const unknown = template.tokens.filter((token) => !KNOWN_FIELD_KEYS.has(token));
+    const unknown = template.tokens.filter((token) => !isResolvable(token));
     expect(unknown, `unknown tokens would render blank: ${unknown.join(", ")}`).toEqual([]);
   });
 
@@ -85,8 +91,13 @@ describe("joining document templates", () => {
 
   it("TC-TPL-05: substitution leaves no unreplaced placeholder", () => {
     // Mirrors renderPlaceholderDocx: plain string replacement of {{token}}.
+    // Built from the tokens the templates actually carry, not from a list of keys kept
+    // alongside them: a token missing from that list survived substitution and was
+    // reported as an unreplaced placeholder, which is the same staleness twice over.
     const sample: Record<string, string> = Object.fromEntries(
-      [...KNOWN_FIELD_KEYS].map((key) => [key, `VALUE_${key.toUpperCase()}`]),
+      EXPECTED.flatMap((code) => readTemplate(code).tokens)
+        .filter(isResolvable)
+        .map((key) => [key, `VALUE_${key.toUpperCase()}`]),
     );
     for (const code of EXPECTED) {
       let xml = readTemplate(code).xml;

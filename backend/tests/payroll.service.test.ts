@@ -1,4 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 
 vi.mock("../src/db/mysql.js", () => ({
   db: {
@@ -13,6 +15,33 @@ vi.mock("../src/db/mysql.js", () => ({
 // shift the mock sequence out from under the assertions.
 vi.mock("../src/shared/auditLog.js", () => ({
   logSensitiveAction: vi.fn().mockResolvedValue(undefined),
+}));
+/**
+ * Two gates were added ahead of the code these tests exercise, and both broke them the
+ * same way the audit write above did.
+ *
+ * assignSalary and bulkAssignSalary now refuse a raw CTC that is not backed by an
+ * approved slab or proposal, so the fixtures here — which pass a bare ctcAnnual — were
+ * rejected before any assignment logic ran. Mocked allowed, matching
+ * bulk-assign-salary-atomicity.test.ts; the guard's own behaviour is asserted there and
+ * in the salary-governance suite, not here, because these tests are about what an
+ * assignment writes.
+ *
+ * createRun now runs a branch-readiness check first, and it reaches the database. It
+ * consumed the response queued for the duplicate-run SELECT and read a payroll run as an
+ * unready branch, which is why "throws when run already exists" reported "branches are
+ * not ready: ." with an empty branch name. Mocked to report nothing blocked so the
+ * duplicate check sees its own fixture.
+ */
+vi.mock("../src/modules/payroll/salary-governance.guard.js", () => ({
+  assertSalaryAssignmentAllowed: vi.fn().mockResolvedValue({
+    allowed: true, mode: "slab", salarySlabId: "slab-1", salaryProposalId: null,
+  }),
+}));
+vi.mock("../src/modules/payroll/payroll-branch-readiness.service.js", () => ({
+  payrollBranchReadinessService: {
+    validatePayrollRunCreation: vi.fn().mockResolvedValue({ blocked: [], ready: [] }),
+  },
 }));
 import { db } from "../src/db/mysql.js";
 import { payrollService } from "../src/modules/payroll/payroll.service.js";
@@ -147,12 +176,12 @@ describe("payrollService.listComponents", () => {
 
 describe("payrollService.assignSalary", () => {
   it("deactivates old assignment and creates new", async () => {
-    exec.mockResolvedValueOnce([[fakeStructure], []]); // validate structure
-    exec.mockResolvedValueOnce([[], []]); // no previous assignment
-    exec.mockResolvedValueOnce([{ affectedRows: 1 }, []]); // journey INSERT
-    exec.mockResolvedValueOnce([[], []]); // journey re-fetch
-    exec.mockResolvedValueOnce([{ affectedRows: 1 }, []]); // sensitive audit INSERT
-    exec.mockResolvedValueOnce([[fakeAssignment], []]); // assignment re-fetch
+    // The only db.execute assignSalary makes is the re-fetch after commit: it does not
+    // validate the structure (bulkAssignSalary does), and the two writes go through the
+    // transaction connection. A structure row queued ahead of this was consumed by the
+    // re-fetch, so the assignment came back as a salary structure and ctc_annual read
+    // undefined.
+    exec.mockResolvedValueOnce([[fakeAssignment], []]);
     const r = await payrollService.assignSalary({
       employeeId: "emp-1",
       structureId: "str-1",
@@ -164,8 +193,36 @@ describe("payrollService.assignSalary", () => {
     expect(commit).toHaveBeenCalledOnce();
     expect(rollback).not.toHaveBeenCalled();
     expect(release).toHaveBeenCalledOnce();
-    expect(txExecute).toHaveBeenCalledTimes(3);
-    expect(txExecute.mock.calls.some(([sql]) => /UPDATE employees SET ctc/i.test(sql))).toBe(true);
+
+    // Exactly two statements inside the transaction: close the superseded row, insert the
+    // new one.
+    expect(txExecute).toHaveBeenCalledTimes(2);
+    expect(txExecute.mock.calls.some(([sql]) => /UPDATE employee_salary_assignment/i.test(sql))).toBe(true);
+    expect(txExecute.mock.calls.some(([sql]) => /INSERT INTO employee_salary_assignment/i.test(sql))).toBe(true);
+
+    // The superseded row's validity window is closed, not just its active flag — an
+    // assignment with no effective_to cannot answer "what was this employee's CTC on
+    // this date", which reproducing an old run or an audit needs.
+    const [deactivateSql] = txExecute.mock.calls.find(([sql]) => /UPDATE employee_salary_assignment/i.test(sql))!;
+    expect(String(deactivateSql)).toMatch(/effective_to\s*=\s*COALESCE/i);
+  });
+
+  it("does not write the annual CTC back onto employees.ctc, which holds a monthly figure", () => {
+    // This test used to require `UPDATE employees SET ctc = <ctcAnnual>`. That statement
+    // was dropped in 4f8ffed7, a commit about unrelated SQL errors that never mentioned
+    // it, so it looked like collateral damage worth restoring. It is not.
+    //
+    // employees.ctc is MONTHLY: measured on production, 924 of the 937 populated rows
+    // equal ctc_annual / 12 exactly, and none equal ctc_annual. The old statement wrote
+    // the annual amount into it, so restoring it would overstate every future employee's
+    // stored CTC twelvefold. Nothing reads the column on the payslip path either — the
+    // payslip viewer calls /api/employees/:id/ctc, which returns ctc_annual from
+    // employee_salary_assignment and derives the monthly figure itself.
+    //
+    // Asserted against the source so the statement cannot quietly come back.
+    const source = readFileSync(
+      resolve(process.cwd(), "src/modules/payroll/payroll.service.ts"), "utf8");
+    expect(source).not.toMatch(/UPDATE employees SET ctc/i);
   });
 });
 
@@ -250,9 +307,15 @@ describe("payrollService.listRuns", () => {
 
 describe("payrollService.listLines", () => {
   it("returns lines for a run", async () => {
+    // listLines is paginated and returns { lines, total, page, limit }; this indexed the
+    // result directly, which read undefined once the envelope was added. The controller
+    // passes the envelope straight to the client, so the shape is the contract.
     exec.mockResolvedValueOnce([[fakeLine], []]);
+    exec.mockResolvedValueOnce([[{ total: 1 }], []]);
     const r = await payrollService.listLines("run-1");
-    expect(r[0].employee_code).toBe("MCN001");
+    expect(r.lines[0].employee_code).toBe("MCN001");
+    expect(r.page).toBe(1);
+    expect(r.limit).toBe(50);
   });
 });
 
@@ -371,10 +434,21 @@ describe("payrollService.calculateNetSalary", () => {
     expect(result.pf_employer).toBeCloseTo(1200, 0); // total employer PF
   });
 
-  it("calculates gratuity as 4.81% of Basic", () => {
-    // Basic = 10000, gratuity = 4.81% of 10000 = 481
-    const result = payrollService.calculateNetSalary(baseParams);
+  it("calculates gratuity at the configured percentage of Basic", () => {
+    // Basic = 10000, gratuity = 4.81% of 10000 = 481.
+    // gratuityPct is passed explicitly because there is no longer a default — see below.
+    const result = payrollService.calculateNetSalary({ ...baseParams, gratuityPct: 4.81 });
     expect(result.gratuity).toBeCloseTo(481, 0);
+  });
+
+  it("returns zero gratuity when no percentage is configured, rather than assuming 4.81%", () => {
+    // The hardcoded 4.81% fallback was removed deliberately: the rate belongs in
+    // statutory_config, and a built-in default silently produces a number that looks
+    // right for the wrong reason on any employer whose rate differs. This test asserted
+    // 481 against baseParams, which carries no gratuityPct, so it had been failing since
+    // the fallback was taken out — reading as a broken calculation rather than the
+    // missing configuration it actually is.
+    expect(payrollService.calculateNetSalary(baseParams).gratuity).toBe(0);
   });
 
   it("applies LWP deduction proportionally across all components", () => {
