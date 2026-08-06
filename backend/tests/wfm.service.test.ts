@@ -59,6 +59,17 @@ const fakeReg = {
   created_at: "2026-05-21T00:00:00Z", updated_at: "2026-05-21T00:00:00Z",
 };
 
+/**
+ * A request that can actually change the day.
+ *
+ * fakeReg carries no requested status, no dispute type and no corrected punch,
+ * so there is nothing for an approval to apply. Approving it used to "succeed"
+ * and write nothing — the employee was told their correction was approved while
+ * their attendance and LWP were untouched. That is now refused, so the tests
+ * about the approval flow itself need a request with a correction in it.
+ */
+const fakeApprovableReg = { ...fakeReg, requested_status: "present" };
+
 beforeEach(() => {
   vi.clearAllMocks();
   exec.mockReset().mockResolvedValue([[], []]);
@@ -208,11 +219,32 @@ describe("wfmService.reviewRegularization", () => {
   });
 
   it("approves regularization", async () => {
-    exec.mockResolvedValueOnce([[fakeReg], []]); // get
+    exec.mockResolvedValueOnce([[fakeApprovableReg], []]); // get
     mocks.connExecute.mockResolvedValueOnce([{ affectedRows: 1 }, []]); // regularization status UPDATE
     exec.mockResolvedValueOnce([{ affectedRows: 1 }, []]); // inbox alert close
     exec.mockResolvedValueOnce([[], []]); // SMS employee lookup
-    exec.mockResolvedValueOnce([[{ ...fakeReg, status: "approved" }], []]); // re-fetch
+    exec.mockResolvedValueOnce([[{ ...fakeApprovableReg, status: "approved" }], []]); // re-fetch
+    const r = await wfmService.reviewRegularization("reg-1", { status: "approved" }, "mgr-1");
+    expect(r.status).toBe("approved");
+  });
+
+  it("refuses to approve a request that would change nothing", async () => {
+    // The silent case: no requested status, no exception dispute type, no
+    // corrected punch. This used to return 'approved' and write no attendance
+    // at all, so the audit trail recorded a correction that never happened.
+    exec.mockResolvedValueOnce([[fakeReg], []]); // get
+    await expect(
+      wfmService.reviewRegularization("reg-1", { status: "approved" }, "mgr-1")
+    ).rejects.toThrow(/would not change the attendance record/);
+  });
+
+  it("approves a punch-only correction, which carries no requested status", async () => {
+    // The default category on /attendance-regularization. The correction lives in
+    // the times, not in a status, and used to be discarded on approval.
+    const punchOnly = { ...fakeReg, new_punch_in: "09:00", new_punch_out: "18:00" };
+    exec.mockResolvedValueOnce([[punchOnly], []]); // get
+    mocks.connExecute.mockResolvedValue([[{}], []]);
+    exec.mockResolvedValue([[{ ...punchOnly, status: "approved" }], []]);
     const r = await wfmService.reviewRegularization("reg-1", { status: "approved" }, "mgr-1");
     expect(r.status).toBe("approved");
   });
@@ -220,11 +252,11 @@ describe("wfmService.reviewRegularization", () => {
   it("closes the inbox alerts the decision settles", async () => {
     // Reviewing used to update attendance and leave the alert open, so the
     // approver kept being reminded about a regularization they had cleared.
-    exec.mockResolvedValueOnce([[fakeReg], []]); // get
+    exec.mockResolvedValueOnce([[fakeApprovableReg], []]); // get
     mocks.connExecute.mockResolvedValueOnce([{ affectedRows: 1 }, []]);
     exec.mockResolvedValueOnce([{ affectedRows: 2 }, []]); // inbox alert close
     exec.mockResolvedValueOnce([[], []]); // SMS employee lookup
-    exec.mockResolvedValueOnce([[{ ...fakeReg, status: "approved" }], []]);
+    exec.mockResolvedValueOnce([[{ ...fakeApprovableReg, status: "approved" }], []]);
 
     await wfmService.reviewRegularization("reg-1", { status: "approved" }, "mgr-1");
 

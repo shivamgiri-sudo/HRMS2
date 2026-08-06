@@ -5,6 +5,13 @@ import { queueAutoAwards } from "../engagement/badge.service.js";
 import { getEffectiveConfig } from "../customization/customization-engine.js";
 import { sendSMS } from "../communication/sms.helper.js";
 import { captureAttendanceSnapshot } from "../../shared/attendanceSnapshot.js";
+// The engine's own classifiers and configured floors — a regularization must
+// judge a corrected day exactly as the engine would, not by a second rulebook.
+import {
+  classifyCosecMinutes,
+  classifyOperationsNetLogin,
+  resolveHalfDayFloorMinutes,
+} from "./attendance-engine.service.js";
 import type {
   AttendanceRegularization,
   PaginatedResult,
@@ -50,6 +57,36 @@ export function fallbackMinutesForRegularizedStatus(status?: string | null): num
   if (status === "present") return 480;
   if (status === "half_day") return 240;
   return 0;
+}
+
+/**
+ * Minutes between two corrected clock times on the same working day.
+ *
+ * Accepts "HH:MM", "HH:MM:SS" and a full timestamp, because new_punch_in is
+ * stored as submitted and the two callers of the regularization API disagree
+ * about the format.
+ *
+ * A logout earlier than the login is a night shift crossing midnight, not bad
+ * data — it is the normal case for this workforce — so it wraps to the next day
+ * rather than producing a negative span. Returns null for anything unparseable:
+ * a wrong number of minutes here becomes a wrong attendance status and wrong pay,
+ * so no answer is better than a guessed one.
+ */
+export function minutesBetweenClockTimes(from: string, to: string): number | null {
+  const parse = (v: string): number | null => {
+    const m = String(v).trim().match(/(\d{1,2}):(\d{2})(?::(\d{2}))?/);
+    if (!m) return null;
+    const h = Number(m[1]);
+    const min = Number(m[2]);
+    if (!Number.isFinite(h) || !Number.isFinite(min) || h > 23 || min > 59) return null;
+    return h * 60 + min;
+  };
+  const a = parse(from);
+  const b = parse(to);
+  if (a === null || b === null) return null;
+  const span = b >= a ? b - a : b + 24 * 60 - a;
+  // A "correction" spanning most of a day is a data-entry slip, not a shift.
+  return span > 0 && span <= 16 * 60 ? span : null;
 }
 
 export const wfmService = {
@@ -425,7 +462,27 @@ export const wfmService = {
       const effectiveRequestedStatus = reg.requested_status ||
         (EXCEPTION_DISPUTE_TYPES.includes(reg.dispute_type as string) ? 'present' : null);
 
-      if (input.status === 'approved' && effectiveRequestedStatus) {
+      // A punch correction carries its correction in the times, not in a status.
+      //
+      // This guard used to be `&& effectiveRequestedStatus` alone, so a request
+      // with corrected punches and no requested status was marked 'approved' and
+      // wrote nothing at all — no clock times, no minutes, no status. That is the
+      // DEFAULT category on /attendance-regularization ("punch_correction", and
+      // the page's zod refine deliberately does not require a status for it), so
+      // the most-used correction in the product silently did nothing while telling
+      // the employee and the approver it had worked.
+      const hasPunchCorrection = Boolean(reg.new_punch_in || reg.new_punch_out);
+
+      if (input.status === 'approved' && !effectiveRequestedStatus && !hasPunchCorrection) {
+        // Never report success for an approval that cannot change anything. The
+        // request stays pending rather than becoming a lie in the audit trail.
+        throw new Error(
+          `This request has neither a requested status nor a corrected punch time, so approving it ` +
+          `would not change the attendance record. Reject it, or reopen it with the correction filled in.`
+        );
+      }
+
+      if (input.status === 'approved' && (effectiveRequestedStatus || hasPunchCorrection)) {
         const lwpMap: Record<string, number> = { present: 0, half_day: 0.5, absent: 1.0 };
 
         // Capture before-state for audit trail. SELECT * rather than the seven
@@ -470,9 +527,63 @@ export const wfmService = {
           [reg.employee_id, reg.session_date]
         )) as [RowDataPacket[], unknown];
         const aprMinutes = Number((aprRows[0] as any)?.apr_minutes ?? 0);
-        const regularizedMinutes = Number(existing?.raw_minutes ?? existing?.dialler_minutes ?? 0)
-          || aprMinutes
-          || fallbackMinutesForRegularizedStatus(effectiveRequestedStatus);
+
+        // Minutes actually worked, when the approver corrected BOTH ends of the
+        // day. A corrected window is better evidence than anything already on the
+        // row, so it wins; a one-sided correction is not a window and cannot be
+        // measured, so the existing figure stands.
+        const correctedWindowMinutes = (reg.new_punch_in && reg.new_punch_out)
+          ? minutesBetweenClockTimes(String(reg.new_punch_in), String(reg.new_punch_out))
+          : null;
+
+        const regularizedMinutes = correctedWindowMinutes
+          ?? (Number(existing?.raw_minutes ?? existing?.dialler_minutes ?? 0)
+            || aprMinutes
+            || fallbackMinutesForRegularizedStatus(effectiveRequestedStatus));
+
+        // What the day becomes.
+        //
+        // An explicitly requested status is the approver's decision and is applied
+        // as-is. Otherwise the day is classified from the corrected window using
+        // the engine's OWN classifiers and configured floors — no thresholds are
+        // invented here — against the source the day was actually judged on.
+        //
+        // One deliberate rule: a correction never reduces the paid value of a day.
+        // These requests are remedies, raised because a day was under-recorded, and
+        // the approver cannot see a derived downgrade before clicking approve. If a
+        // day genuinely deserves less, that belongs to the engine or an explicit
+        // status change, not to a side effect of fixing a punch time.
+        let appliedStatus: string;
+        let appliedLwp: number;
+        if (effectiveRequestedStatus) {
+          appliedStatus = effectiveRequestedStatus;
+          appliedLwp = lwpMap[effectiveRequestedStatus] ?? 0;
+        } else if (correctedWindowMinutes !== null) {
+          const dayIsDialler = String(existing?.attendance_source ?? '') === 'dialler';
+          const floor = await resolveHalfDayFloorMinutes(
+            dayIsDialler ? 'netlogin_half_day_floor_minutes' : 'biometric_half_day_floor_minutes',
+          );
+          const derived = dayIsDialler
+            ? classifyOperationsNetLogin(correctedWindowMinutes, floor)
+            : classifyCosecMinutes(correctedWindowMinutes, floor);
+          const existingLwp = Number(existing?.lwp_value ?? 1);
+          const improves = existing?.attendance_status == null || derived.lwpValue <= existingLwp;
+          appliedStatus = improves ? derived.status : String(existing.attendance_status);
+          appliedLwp = improves ? derived.lwpValue : existingLwp;
+        } else {
+          // One-sided punch correction: write the time, leave the verdict alone.
+          appliedStatus = String(existing?.attendance_status ?? 'present');
+          appliedLwp = Number(existing?.lwp_value ?? 0);
+        }
+
+        // Keep the day's real provenance.
+        //
+        // This was the literal 'dialler' for EVERY approved regularization, so
+        // approving a correction for a biometric employee relabelled their day as
+        // dialler-sourced — which is now visible, because the running-month card
+        // reports which evidence a figure rests on.
+        const appliedSource = String(existing?.attendance_source ?? '')
+          || (isAprRegularizationReason(reg.reason_code) ? 'dialler' : 'biometric');
         const sourceSystem = isAprRegularizationReason(reg.reason_code) ? "apr_regularization" : "regularization";
 
         const [adrResult] = await conn.execute(
@@ -483,13 +594,13 @@ export const wfmService = {
               is_locked, processed_at, created_by, old_attendance_status, old_lwp_value,
               status_change_reason, status_changed_by, status_changed_at, clock_in_time, clock_out_time)
            VALUES
-             (UUID(), ?, ?, 'dialler', ?, ?, ?, ?, ?, ?, ?,
+             (UUID(), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
               0, 0, ?, ?, ?, 1, NOW(), ?,
               ?, ?, ?, ?, NOW(),
               IF(? IS NOT NULL, TIMESTAMP(?, ?), NULL),
               IF(? IS NOT NULL, TIMESTAMP(?, ?), NULL))
            ON DUPLICATE KEY UPDATE
-              attendance_source = IF(is_locked = 0 OR regularization_id = VALUES(regularization_id), 'dialler', attendance_source),
+              attendance_source = IF(is_locked = 0 OR regularization_id = VALUES(regularization_id), VALUES(attendance_source), attendance_source),
               source_system = IF(is_locked = 0 OR regularization_id = VALUES(regularization_id), VALUES(source_system), source_system),
               source_record_date = IF(is_locked = 0 OR regularization_id = VALUES(regularization_id), VALUES(source_record_date), source_record_date),
               source_reference = IF(is_locked = 0 OR regularization_id = VALUES(regularization_id), VALUES(source_reference), source_reference),
@@ -511,9 +622,10 @@ export const wfmService = {
               clock_out_time = IF((is_locked = 0 OR regularization_id = VALUES(regularization_id)) AND VALUES(clock_out_time) IS NOT NULL, VALUES(clock_out_time), clock_out_time)`,
           [
            reg.employee_id, reg.session_date,
+           appliedSource,
            sourceSystem, reg.session_date, reg.reason_code ?? id,
            regularizedMinutes, regularizedMinutes,
-           effectiveRequestedStatus, lwpMap[effectiveRequestedStatus] ?? 0,
+           appliedStatus, appliedLwp,
            id, reviewerId, `Regularization approved: ${reg.reason_code ?? reg.reason}`,
            reviewerId,
            existing?.attendance_status ?? null,
