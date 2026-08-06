@@ -157,7 +157,10 @@ export const payrollComplianceService = {
       `SELECT e.id, e.employee_code, e.employment_status, e.branch_id, e.process_id, e.date_of_joining,
               esa.id AS salary_assignment_id,
               ebd.id AS bank_id,
-              ebd.verified_status AS bank_verified_status
+              -- employee_bank_detail has no verified_status; the real column is
+              -- verified, a tinyint. Selecting the old name threw, so this whole
+              -- pre-payroll validation produced no issues at all.
+              ebd.verified AS bank_verified
          FROM employees e
          LEFT JOIN employee_salary_assignment esa ON esa.employee_id = e.id AND esa.active_status = 1
          -- employee_bank_detail, singular. See the matching note in
@@ -184,7 +187,9 @@ export const payrollComplianceService = {
       if (!emp.bank_id) {
         issues++;
         await this.addIssue({ runId, employeeId: emp.id, issueCode: "MISSING_BANK_DETAILS", issueTitle: "Bank details missing", issueDetail: `${emp.employee_code} has no active bank details.`, severity: "blocking", ownerRole: "finance" });
-      } else if (String(emp.bank_verified_status ?? "").toLowerCase() !== "verified") {
+        // tinyint, not a status string — comparing it to "verified" would mark every
+        // employee unverified, which is how a plain rename would have failed here.
+      } else if (Number(emp.bank_verified) !== 1) {
         issues++;
         await this.addIssue({ runId, employeeId: emp.id, issueCode: "BANK_NOT_VERIFIED", issueTitle: "Bank details not verified", issueDetail: `${emp.employee_code} bank details exist but are not verified.`, severity: "critical", ownerRole: "finance" });
       }

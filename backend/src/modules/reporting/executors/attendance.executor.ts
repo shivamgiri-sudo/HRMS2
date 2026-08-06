@@ -923,8 +923,8 @@ export async function breakDailySummary(
            p.process_name,
            bs.session_date AS break_date,
            bs.duration_minutes,
-           TIME_FORMAT(bs.start_time,'%H:%i:%s') AS break_start,
-           TIME_FORMAT(bs.end_time,'%H:%i:%s') AS break_end
+           TIME_FORMAT(bs.break_start_time,'%H:%i:%s') AS break_start,
+           TIME_FORMAT(bs.break_end_time,'%H:%i:%s') AS break_end
       FROM break_sessions bs
       JOIN employees e ON e.id = bs.employee_id
       LEFT JOIN branch_master b ON b.id = e.branch_id

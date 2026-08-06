@@ -2,17 +2,8 @@
   "modules/access/access.routes.ts": [
     "user_assignment_scope.assigned_at"
   ],
-  "modules/ats-full-parity/analytics.service.ts": [
-    "ats_candidate.sla_breach"
-  ],
   "modules/ats/interview.service.ts": [
     "ats_interview_result.created_at"
-  ],
-  "modules/ats/joining-control-room.service.ts": [
-    "it_provisioning_request.assigned_to",
-    "it_provisioning_request.candidate_id",
-    "it_provisioning_request.completed_at",
-    "it_provisioning_request.sla_due"
   ],
   "modules/ats/recruiter-hiring.service.ts": [
     "employees.branch_display_name"
@@ -54,9 +45,6 @@
     "ats_candidate.converted_employee_id",
     "ats_employment_offer.prepared_by"
   ],
-  "modules/payroll-compliance/payrollCompliance.service.ts": [
-    "employee_bank_detail.verified_status"
-  ],
   "modules/payroll-masters/payrollMasters.service.ts": [
     "salary_package_master.grade_id",
     "salary_package_master.slab_id"
@@ -68,9 +56,6 @@
     "auth_user.first_name",
     "auth_user.last_name",
     "sensitive_action_log.created_at"
-  ],
-  "modules/payroll/payroll-extended.routes.ts": [
-    "employees.uan"
   ],
   "modules/payroll/payroll-more.routes.ts": [
     "employees.branch_name",
@@ -97,9 +82,7 @@
     "employee_documents.issuing_authority"
   ],
   "modules/reporting/executors/attendance.executor.ts": [
-    "break_sessions.end_time",
-    "break_sessions.session_date",
-    "break_sessions.start_time"
+    "break_sessions.session_date"
   ],
   "modules/reporting/executors/employee.executor.ts": [
     "employee_lifecycle_event.created_by_name",
@@ -128,8 +111,7 @@
     "full_final_calculation.total_deductions"
   ],
   "modules/reporting/executors/identity.executor.ts": [
-    "employees.esic_applicable",
-    "employees.uan"
+    "employees.esic_applicable"
   ],
   "modules/reporting/executors/leave.executor.ts": [
     "leave_request.number_of_days"
@@ -143,7 +125,6 @@
   "modules/reporting/executors/recruitment.executor.ts": [
     "ats_candidate.application_status",
     "ats_candidate.applied_date",
-    "ats_candidate.assigned_recruiter_name",
     "ats_candidate.expected_joining_date",
     "ats_candidate.job_id",
     "ats_candidate.joining_date",
@@ -152,7 +133,6 @@
     "ats_candidate.offer_date",
     "ats_candidate.offer_decline_reason",
     "ats_candidate.selected_date",
-    "ats_candidate.source_channel",
     "job_posting.job_title"
   ],
   "modules/reporting/executors/statutory.executor.ts": [
@@ -177,8 +157,6 @@
     "action_plan.priority",
     "action_plan.root_cause",
     "action_plan.title",
-    "ats_candidate.source_channel",
-    "ats_candidate.stage",
     "ats_onboarding_bridge.branch_id",
     "ats_onboarding_bridge.process_id",
     "ats_onboarding_request.completed_at",
@@ -191,7 +169,6 @@
     "employee_joining_document_checklist.doc_type",
     "employee_joining_document_checklist.esign_completed_at",
     "employee_joining_document_checklist.esign_requested_at",
-    "employees.cost_center",
     "exit_request.exit_notes",
     "exit_request.rehire_flag",
     "gratuity_accrual_ledger.accrual_amount",
@@ -203,8 +180,6 @@
     "integration_connector_run.records_fetched",
     "integration_connector_run.records_inserted",
     "integration_connector_run.records_updated",
-    "integration_connector_run.run_ended_at",
-    "integration_connector_run.run_started_at",
     "integration_connector_run.run_status",
     "integration_connector_run.run_type",
     "kpi_daily_actual.record_date",
@@ -253,7 +228,6 @@
     "employee_statutory_info.tds_applicable",
     "exit_request.last_working_day",
     "exit_request.resignation_date",
-    "kpi_metric_master.metric_unit",
     "process_master.lob_id"
   ],
   "modules/rta/rta.service.ts": [

@@ -972,7 +972,7 @@ const QUERIES: Record<string, Builder> = {
                p.process_name,
                kmm.metric_code,
                kmm.metric_name,
-               kmm.metric_unit,
+               kmm.unit AS metric_unit,
                ks.actual_value,
                ks.source
              FROM kpi_score ks

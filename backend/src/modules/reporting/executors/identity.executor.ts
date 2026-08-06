@@ -54,9 +54,9 @@ export async function uanStatusReport(
 
   if (filters.status) {
     if (filters.status === "MISSING_UAN") {
-      clauses.push("(e.uan IS NULL OR TRIM(e.uan) = '')");
+      clauses.push("(e.uan_number IS NULL OR TRIM(e.uan_number) = '')");
     } else if (filters.status === "HAS_UAN") {
-      clauses.push("(e.uan IS NOT NULL AND TRIM(e.uan) != '')");
+      clauses.push("(e.uan_number IS NOT NULL AND TRIM(e.uan_number) != '')");
     }
   }
 
@@ -65,7 +65,7 @@ export async function uanStatusReport(
     params.push(options.cursor);
   }
 
-  const uanExpr = sensitiveCol(scope.canViewSensitiveFields, "e.uan", "uan");
+  const uanExpr = sensitiveCol(scope.canViewSensitiveFields, "e.uan_number", "uan");
 
   const base = `
     SELECT e.id AS _cursor,
@@ -74,7 +74,7 @@ export async function uanStatusReport(
            ${uanExpr},
            e.epf_number,
            CASE
-             WHEN e.uan IS NOT NULL AND TRIM(e.uan) != '' THEN 'HAS_UAN'
+             WHEN e.uan_number IS NOT NULL AND TRIM(e.uan_number) != '' THEN 'HAS_UAN'
              ELSE 'MISSING_UAN'
            END AS uan_status,
            b.branch_name,

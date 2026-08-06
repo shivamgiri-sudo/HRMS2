@@ -308,7 +308,7 @@ export class ATSAnalyticsService {
           WHEN c.status = 'Rejected' THEN 0
           ELSE 50
         END) as selectionRate,
-        AVG(CASE WHEN c.sla_breach = 1 THEN 0 ELSE 100 END) as slaComplianceRate,
+        AVG(CASE WHEN c.sla_breached = 1 THEN 0 ELSE 100 END) as slaComplianceRate,
         AVG(TIMESTAMPDIFF(MINUTE, c.created_at, IFNULL(c.updated_at, NOW()))) as avgWaitMinutes
       FROM ats_recruiter_roster rr
       LEFT JOIN ats_candidate c ON rr.name = c.recruiter_assigned_name

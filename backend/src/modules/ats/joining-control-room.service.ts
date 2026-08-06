@@ -210,13 +210,19 @@ export async function getJoiningControlRoomCandidate(candidateId: string) {
 
   // Fetch provisioning task statuses
   const [provTasks] = await db.execute<RowDataPacket[]>(
-    `SELECT r.task_code, r.status, r.assigned_to, r.completed_at, r.sla_due,
+    // Four columns here named things it_provisioning_request does not have, so the whole
+    // provisioning panel of the joining control room threw and showed no tasks:
+    // assigned_to -> assigned_user_id, completed_at -> actioned_at, sla_due -> sla_due_at,
+    // and candidate_id, which has no equivalent at all. The table links to a candidate only
+    // through ats_onboarding_bridge, so that subquery is the only real predicate.
+    `SELECT r.task_code, r.status, r.assigned_user_id AS assigned_to,
+            r.actioned_at AS completed_at, r.sla_due_at AS sla_due,
             CONCAT(e.first_name, ' ', e.last_name) AS assigned_to_name
        FROM it_provisioning_request r
-       LEFT JOIN employees e ON e.id = r.assigned_to
-      WHERE r.candidate_id = ? OR r.employee_id = (SELECT employee_id FROM ats_onboarding_bridge WHERE candidate_id = ? LIMIT 1)
+       LEFT JOIN employees e ON e.id = r.assigned_user_id
+      WHERE r.employee_id = (SELECT employee_id FROM ats_onboarding_bridge WHERE candidate_id = ? LIMIT 1)
       ORDER BY FIELD(r.task_code, 'WFM_PROCESS_ALIGNMENT', 'IT_EMAIL_DOMAIN_ASSET', 'ADMIN_BIOMETRIC_ID_CARD', 'APPOINTMENT_LETTER_ESIGN')`,
-    [candidateId, candidateId],
+    [candidateId],
   );
 
   const taskLabels: Record<string, string> = {

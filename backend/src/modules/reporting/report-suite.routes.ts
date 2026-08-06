@@ -1740,14 +1740,14 @@ reportSuiteRouter.get("/:code", reportScopeMiddleware, reportCatalogAccessMiddle
     case "candidate-source-analysis": {
       const from = dateParam(req.query.from, `${new Date().getFullYear()}-01-01`);
       const to = dateParam(req.query.to, new Date().toISOString().slice(0, 10));
-      sql = `SELECT COALESCE(ac.source_channel, 'Unknown') AS source_name,
+      sql = `SELECT COALESCE(ac.sourcing_channel, 'Unknown') AS source_name,
                     COUNT(*) AS total_candidates,
-                    SUM(CASE WHEN ac.stage IN ('offered','offer','onboarded','joined') THEN 1 ELSE 0 END) AS reached_offer,
-                    SUM(CASE WHEN ac.stage IN ('onboarded','joined') THEN 1 ELSE 0 END) AS joined,
-                    ROUND(SUM(CASE WHEN ac.stage IN ('onboarded','joined') THEN 1 ELSE 0 END) / COUNT(*) * 100, 1) AS joining_rate_pct
+                    SUM(CASE WHEN LOWER(ac.current_stage) IN ('offered','offer','onboarded','joined') THEN 1 ELSE 0 END) AS reached_offer,
+                    SUM(CASE WHEN LOWER(ac.current_stage) IN ('onboarded','joined') THEN 1 ELSE 0 END) AS joined,
+                    ROUND(SUM(CASE WHEN LOWER(ac.current_stage) IN ('onboarded','joined') THEN 1 ELSE 0 END) / COUNT(*) * 100, 1) AS joining_rate_pct
                FROM ats_candidate ac
               WHERE ac.created_at BETWEEN ? AND ?
-              GROUP BY ac.source_channel
+              GROUP BY ac.sourcing_channel
               ORDER BY total_candidates DESC`;
       params.push(from, to);
       break;
@@ -1792,10 +1792,10 @@ reportSuiteRouter.get("/:code", reportScopeMiddleware, reportCatalogAccessMiddle
       sql = `SELECT COALESCE(ac.recruiter_name, 'Unassigned') AS recruiter_name,
                     ac.recruiter_email,
                     COUNT(*) AS total_sourced,
-                    SUM(CASE WHEN ac.stage NOT IN ('applied','screening') THEN 1 ELSE 0 END) AS shortlisted,
-                    SUM(CASE WHEN ac.stage IN ('offered','offer','onboarded','joined') THEN 1 ELSE 0 END) AS offered,
-                    SUM(CASE WHEN ac.stage IN ('onboarded','joined') THEN 1 ELSE 0 END) AS joined,
-                    ROUND(SUM(CASE WHEN ac.stage IN ('onboarded','joined') THEN 1 ELSE 0 END) / NULLIF(COUNT(*),0) * 100, 1) AS conversion_rate_pct
+                    SUM(CASE WHEN LOWER(ac.current_stage) NOT IN ('applied','screening') THEN 1 ELSE 0 END) AS shortlisted,
+                    SUM(CASE WHEN LOWER(ac.current_stage) IN ('offered','offer','onboarded','joined') THEN 1 ELSE 0 END) AS offered,
+                    SUM(CASE WHEN LOWER(ac.current_stage) IN ('onboarded','joined') THEN 1 ELSE 0 END) AS joined,
+                    ROUND(SUM(CASE WHEN LOWER(ac.current_stage) IN ('onboarded','joined') THEN 1 ELSE 0 END) / NULLIF(COUNT(*),0) * 100, 1) AS conversion_rate_pct
                FROM ats_candidate ac
               WHERE ac.created_at BETWEEN ? AND ?
               GROUP BY ac.recruiter_name, ac.recruiter_email
@@ -2965,15 +2965,15 @@ reportSuiteRouter.get("/:code", reportScopeMiddleware, reportCatalogAccessMiddle
       const status = String(req.query.status ?? "");
       if (integrationKey) { clauses.push("icr.connector_key = ?"); params.push(integrationKey); }
       if (status) { clauses.push("icr.run_status = ?"); params.push(status); }
-      clauses.push("icr.run_started_at BETWEEN ? AND ?"); params.push(from, to);
+      clauses.push("icr.started_at BETWEEN ? AND ?"); params.push(from, to);
       sql = `SELECT icr.connector_key, icr.run_type, icr.run_status,
-                    icr.run_started_at, icr.run_ended_at,
-                    TIMESTAMPDIFF(SECOND, icr.run_started_at, icr.run_ended_at) AS duration_sec,
+                    icr.started_at, icr.completed_at,
+                    TIMESTAMPDIFF(SECOND, icr.started_at, icr.completed_at) AS duration_sec,
                     icr.records_fetched, icr.records_inserted, icr.records_updated, icr.records_errored,
                     icr.error_message, icr.triggered_by
                FROM integration_connector_run icr
               WHERE ${clauses.join(" AND ")}
-              ORDER BY icr.run_started_at DESC`;
+              ORDER BY icr.started_at DESC`;
       break;
     }
 
@@ -3639,7 +3639,7 @@ reportSuiteRouter.get("/:code", reportScopeMiddleware, reportCatalogAccessMiddle
           e.employee_code AS emp_code,
           CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')) AS emp_name,
           COALESCE(b.branch_name, '') AS branch_name,
-          COALESCE(cc.cost_centre_name, e.cost_center, '') AS cost_center,
+          COALESCE(cc.cost_centre_name, e.cost_center_code, '') AS cost_center,
           COALESCE(SUM(CASE WHEN lt.leave_code IN ('CL','CAS') THEN lbl.allocated_days END), 0) AS cl_current,
           COALESCE(SUM(CASE WHEN lt.leave_code IN ('ML','SL','MED') THEN lbl.allocated_days END), 0) AS ml_current,
           COALESCE(SUM(CASE WHEN lt.leave_code IN ('EL','PL_E') THEN lbl.allocated_days END), 0) AS el_current,
@@ -3658,7 +3658,7 @@ reportSuiteRouter.get("/:code", reportScopeMiddleware, reportCatalogAccessMiddle
         LEFT JOIN leave_balance_ledger lbl ON lbl.employee_id = e.id AND lbl.balance_year = ?
         LEFT JOIN leave_type_master lt ON lt.id = lbl.leave_type_id
         WHERE ${clauses.join(" AND ")}
-        GROUP BY e.id, e.employee_code, e.first_name, e.last_name, b.branch_name, cc.cost_centre_name, e.cost_center
+        GROUP BY e.id, e.employee_code, e.first_name, e.last_name, b.branch_name, cc.cost_centre_name, e.cost_center_code
         ORDER BY e.employee_code
       `;
       params.unshift(balYear);
@@ -3675,7 +3675,7 @@ reportSuiteRouter.get("/:code", reportScopeMiddleware, reportCatalogAccessMiddle
       params.push(from, to);
 
       // department/designation/cost_center/uan fallback columns below
-      // (e.department, e.designation, e.cost_center, e.uan) and
+      // (e.department, e.designation, e.cost_center_code, e.uan) and
       // employee_salary_snapshot.snapshot_month don't exist — verified live.
       // Master-table joins are the only real source for the first three; the
       // snapshot table's real column is snapshot_date. Never caught because
@@ -3770,7 +3770,7 @@ reportSuiteRouter.get("/:code", reportScopeMiddleware, reportCatalogAccessMiddle
 
       // Fetch salary lines + employee info
       // cost_center/department/designation/uan fallback columns below
-      // (e.cost_center, e.department, e.designation, e.uan) don't exist on
+      // (e.cost_center_code, e.department, e.designation, e.uan) don't exist on
       // employees — verified live. Master-table joins (cc/dept/desig/eu) are
       // the only real source for these; the COALESCE fallback was always
       // going to error, never caught because this report was unreachable

@@ -241,7 +241,7 @@ export async function sourceEffectiveness(
   if (filters.branchId) { clauses.push("jd.branch_id = ?");  params.push(String(filters.branchId)); }
 
   const base = `
-    SELECT COALESCE(c.source_channel, 'Unknown') AS source_channel,
+    SELECT COALESCE(c.sourcing_channel, 'Unknown') AS source_channel,
            COUNT(*) AS total_applications,
            SUM(CASE WHEN c.application_status = 'selected' THEN 1 ELSE 0 END) AS selections,
            ROUND(
@@ -290,7 +290,7 @@ export async function recruiterProductivity(
              NULLIF(recruiter_emp.full_name, ''),
              NULLIF(TRIM(CONCAT(COALESCE(recruiter_emp.first_name, ''), ' ', COALESCE(recruiter_emp.last_name, ''))), ''),
              recruiter_user.email,
-             c.assigned_recruiter_name
+             c.recruiter_assigned_name AS assigned_recruiter_name
            ) AS recruiter_name,
            COUNT(*) AS total_candidates,
            SUM(CASE WHEN c.application_status = 'selected'    THEN 1 ELSE 0 END) AS offers_made,
