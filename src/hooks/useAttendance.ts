@@ -368,9 +368,23 @@ export function useSubmitRegularization() {
         '/api/wfm/regularizations',
         {
           sessionDate: input.sessionDate,
-          reason_code: input.reasonCode,
+          // camelCase, because regularizationSchema (wfm.validation.ts:101-117) is
+          // a plain z.object and strips keys it does not know.
+          //
+          // These two were sent as reason_code / requested_status, so the request
+          // was stored with BOTH as NULL. On approval, reviewRegularization
+          // (wfm.service.ts:428) applies the correction only when
+          // effectiveRequestedStatus is truthy — so the row flipped to 'approved',
+          // the employee was told it was approved, and their attendance and LWP
+          // were never touched. Silent from every angle: no error, no validation
+          // failure, and a success toast.
+          //
+          // The reason code carries more than a label: isAprRegularizationReason
+          // tags the corrected day source_system='apr_regularization', which is why
+          // that value has never once appeared in production.
+          reasonCode: input.reasonCode,
           reason: input.reason,
-          requested_status: input.requestedStatus,
+          requestedStatus: input.requestedStatus,
           disputeType: input.disputeType,
           newPunchIn: input.newPunchIn,
           newPunchOut: input.newPunchOut,
