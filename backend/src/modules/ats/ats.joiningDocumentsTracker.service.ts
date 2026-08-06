@@ -217,11 +217,12 @@ export async function getJoiningDocumentsTracker(
     params.push(actorBranchId);
   }
 
-  // Note: filters.status and filters.document_code are declared in TrackerQueryParams
-  // but are not yet applied as SQL WHERE conditions. They are reserved for
-  // route-level post-processing or a future enhancement task.
-
   // Apply filters
+  if (filters.status && filters.status !== 'all') {
+    whereClauses.push('e.joining_document_status = ?');
+    params.push(filters.status);
+  }
+
   if (filters.branch_id) {
     whereClauses.push('e.branch_id = ?');
     params.push(filters.branch_id);

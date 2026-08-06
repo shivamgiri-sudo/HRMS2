@@ -92,8 +92,7 @@ export default function JoiningDocumentsTrackerPage() {
       if (overdueOnly) params.set("overdue_only", "true");
       params.set("page", String(page));
       params.set("limit", String(limit));
-      const res = await hrmsApi.get(`/api/ats/joining-documents-tracker?${params.toString()}`);
-      return res.data;
+      return await hrmsApi.get(`/api/ats/joining-documents-tracker?${params.toString()}`);
     },
   });
 
