@@ -12,6 +12,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { timingSafeEqual } from "crypto";
 import axios from "axios";
 import { db } from "../src/db/mysql.js";
+import { env } from "../src/config/env.js";
 
 // ── Shared mocks (must come before any dynamic imports) ───────────────────────
 
@@ -151,10 +152,32 @@ describe("getBgvProviderAdapter factory", () => {
   beforeEach(() => resetBgvProviderAdapterCache());
   afterEach(() => resetBgvProviderAdapterCache());
 
-  it("TC-PROV-16: BGV_PROVIDER defaults to mock → returns MockBgvProviderAdapter", () => {
-    const adapter = getBgvProviderAdapter();
-    expect(adapter.providerKey).toBe("mock_bgv");
-    expect(adapter).toBeInstanceOf(MockBgvProviderAdapter);
+  /**
+   * BGV_PROVIDER is set explicitly rather than relied on to be absent.
+   *
+   * The schema in config/env.ts does default it to "mock", but that default never
+   * applies here: vitest.config.ts declares envFile ".env.test", no such file exists,
+   * and loadEnv("test", cwd, "") therefore falls through to the real .env — which sets
+   * BGV_PROVIDER=befisc_luckpay. The factory correctly returned the composite Befisc/
+   * Luckpay adapter and the test failed on every run, asserting a default the process
+   * had already overridden.
+   *
+   * env is a parsed object read at call time, not process.env, so it is set directly and
+   * restored afterwards. What this actually pins is the mapping mock -> Mock adapter,
+   * which is the real contract; the schema default is covered by config/env.ts itself.
+   */
+  it("TC-PROV-16: BGV_PROVIDER=mock → returns MockBgvProviderAdapter", () => {
+    const previous = env.BGV_PROVIDER;
+    (env as { BGV_PROVIDER: string }).BGV_PROVIDER = "mock";
+    try {
+      resetBgvProviderAdapterCache();
+      const adapter = getBgvProviderAdapter();
+      expect(adapter.providerKey).toBe("mock_bgv");
+      expect(adapter).toBeInstanceOf(MockBgvProviderAdapter);
+    } finally {
+      (env as { BGV_PROVIDER: string }).BGV_PROVIDER = previous;
+      resetBgvProviderAdapterCache();
+    }
   });
 
   it("TC-PROV-17: factory caches singleton — same instance returned on second call", () => {

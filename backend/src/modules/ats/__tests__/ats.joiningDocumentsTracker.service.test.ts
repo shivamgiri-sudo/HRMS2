@@ -32,13 +32,18 @@ describe('calculateTrackerSummary', () => {
 
     const summary = calculateTrackerSummary(employees);
 
+    // Key names are the service's, not an earlier draft's. The buckets themselves were
+    // always right — this test was written against total/complete/in_progress/not_started
+    // while TrackerSummary has always returned total_employees/completed_count/
+    // in_progress_count/pending_count, so it failed on every run since it was added.
+    // JoiningDocumentsTrackerPage.tsx reads the service's names, so those are the contract.
     expect(summary).toEqual({
-      total: 4,
-      complete: 1,             // 100%
+      total_employees: 4,
+      completed_count: 1,      // 100%
       pending_verification: 1, // 75-99%
-      in_progress: 1,          // 1-74%
-      not_started: 1,          // 0%
-      overdue: 1,              // overdue_count > 0
+      in_progress_count: 1,    // 1-74%
+      pending_count: 1,        // 0% — "not started"
+      overdue_count: 1,        // overdue_count > 0
       needs_correction: 1,     // needs_correction_count > 0
     });
   });
@@ -46,12 +51,12 @@ describe('calculateTrackerSummary', () => {
   it('should return zeros for empty array', () => {
     const summary = calculateTrackerSummary([]);
     expect(summary).toEqual({
-      total: 0,
-      complete: 0,
+      total_employees: 0,
+      completed_count: 0,
       pending_verification: 0,
-      in_progress: 0,
-      not_started: 0,
-      overdue: 0,
+      in_progress_count: 0,
+      pending_count: 0,
+      overdue_count: 0,
       needs_correction: 0,
     });
   });
