@@ -110,6 +110,32 @@ function maskBankAccount(value: unknown) {
   return `XXXXXX${digits.slice(-4)}`;
 }
 
+/**
+ * A yes/no box on a statutory form has three states, not two.
+ *
+ * Form 11 asks whether the member was previously in the PF and the EPS. The
+ * resolution was `Number(x ?? 0) === 1` for the Yes box and `!== 1` for the No
+ * box, so an employee whose answer is simply unrecorded — which is nearly all of
+ * them, the source table holding 4 rows — had "No" ticked on their behalf.
+ * Declaring a previous membership does not exist is not the same as not knowing,
+ * and on a signed statutory form the difference matters.
+ *
+ * Returns null when nothing answered the question, which leaves both boxes blank
+ * for the member to complete, exactly as an unfilled form would be.
+ */
+function tri(...candidates: unknown[]): boolean | null {
+  for (const value of candidates) {
+    if (value == null || value === "") continue;
+    return Number(value) === 1;
+  }
+  return null;
+}
+
+/** Treats only an affirmative as an answer; see international_worker below. */
+function onboardingTrueOnly(value: unknown): 1 | null {
+  return value != null && Number(value) === 1 ? 1 : null;
+}
+
 function nestedValue(source: Record<string, unknown>, sourcePath?: string | null) {
   const normalized = safeTrim(sourcePath);
   if (!normalized) return null;
@@ -756,6 +782,12 @@ export async function buildSourceContext(employeeId: string, candidateId?: strin
         nominee2_share_pct,
         epf_number,
         esic_number,
+        -- Form 11's previous-membership boxes. Nullable with no default, so a
+        -- non-null value here is a real answer from the statutory step rather
+        -- than a column default.
+        previous_pf_member,
+        eps_member,
+        international_worker,
         permanent_address,
         permanent_state,
         permanent_city,
@@ -1079,18 +1111,22 @@ export async function buildSourceContext(employeeId: string, candidateId?: strin
       // and `??` treats '' as a real value, so the employee-row fallback would
       // never fire and the form would print blank for someone who has a UAN.
       uan_masked: safeTrim(epf?.uan_masked) ?? safeTrim(onboarding?.uan_number) ?? maskDigits(employee?.uan_number),
-      previous_pf_member: Number(epf?.previous_pf_member ?? 0) === 1,
-      previous_pf_member_no: Number(epf?.previous_pf_member ?? 0) !== 1,
+      previous_pf_member: tri(epf?.previous_pf_member, onboarding?.previous_pf_member) === true,
+      previous_pf_member_no: tri(epf?.previous_pf_member, onboarding?.previous_pf_member) === false,
       // Only the onboarding column is a valid fallback: its field is labelled
       // "Previous EPF / PF Number". employees.epf_number is the CURRENT member
       // id, and printing it here would make Form 11 assert a previous
       // membership that does not exist.
       previous_pf_account_number: safeTrim(epf?.previous_pf_account_number) ?? safeTrim(onboarding?.epf_number),
       previous_exit_date: epf?.previous_exit_date ?? null,
-      previous_eps_member: Number(epf?.previous_eps_member ?? 0) === 1,
-      previous_eps_member_no: Number(epf?.previous_eps_member ?? 0) !== 1,
-      international_worker: Number(epf?.international_worker ?? 0) === 1,
-      international_worker_no: Number(epf?.international_worker ?? 0) !== 1,
+      previous_eps_member: tri(epf?.previous_eps_member, onboarding?.eps_member) === true,
+      previous_eps_member_no: tri(epf?.previous_eps_member, onboarding?.eps_member) === false,
+      // international_worker is the one flag whose onboarding column carries a
+      // DEFAULT 0, so 32,762 of its zeros are the default rather than an answer.
+      // A 1 is a real declaration and is trusted; a 0 is not, so it is passed as
+      // unknown and both boxes stay blank rather than asserting "No".
+      international_worker: tri(epf?.international_worker, onboardingTrueOnly(onboarding?.international_worker)) === true,
+      international_worker_no: tri(epf?.international_worker, onboardingTrueOnly(onboarding?.international_worker)) === false,
       country_of_origin: epf?.country_of_origin ?? null,
       passport_number: epf?.passport_number ?? null,
       passport_valid_from: epf?.passport_valid_from ?? null,

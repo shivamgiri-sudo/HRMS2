@@ -557,6 +557,54 @@ export function buildJoiningDocEsignEmailHtml(params: {
   </div>`;
 }
 
+/**
+ * The EPF compliance review link, for the member to confirm their own details.
+ *
+ * The link was minted and returned to the HR screen for manual copy-paste, and
+ * nothing ever sent it — which is a large part of why the EPF profile table
+ * holds 4 rows. The member is the only person who can confirm their own PF
+ * particulars, so they have to be able to reach the page.
+ *
+ * Deliberately not the same copy as the e-sign mail: this asks the member to
+ * check what HR recorded, which is a different request from signing a document.
+ */
+export function buildEpfComplianceReviewEmailHtml(params: {
+  employeeName: string;
+  reviewLink: string;
+  expiryStr: string;
+}): string {
+  const { employeeName, reviewLink, expiryStr } = params;
+  return `
+  <div style="margin:0;padding:24px;background:#f4f7fb;font-family:Arial,Helvetica,sans-serif;color:#0f172a">
+    <div style="max-width:600px;margin:0 auto;background:#ffffff;border:1px solid #dbe4f0;border-radius:18px;overflow:hidden">
+      <div style="background:linear-gradient(135deg,#0f766e,#0ea5e9);padding:24px 28px;color:#ffffff">
+        <div style="font-size:11px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;opacity:.88">MAS Callnet HRMS — Action Required</div>
+        <h1 style="margin:8px 0 0;font-size:20px;line-height:1.3">Check your PF details before we file them</h1>
+      </div>
+      <div style="padding:26px 28px">
+        <p style="margin:0 0 16px;font-size:15px;line-height:1.65;color:#334155">Dear <strong>${employeeName}</strong>,</p>
+        <p style="margin:0 0 16px;font-size:15px;line-height:1.65;color:#334155">
+          HR has prepared your Employees' Provident Fund record. Please check it is correct —
+          these details go on your EPF filing, and a mistake in your name, date of birth or
+          UAN is far harder to correct afterwards.
+        </p>
+        <p style="margin:0 0 20px;font-size:14px;line-height:1.6;color:#475569">
+          You can confirm the details or ask HR to correct them. This link is valid until <strong>${expiryStr}</strong>.
+        </p>
+        <p style="margin:0 0 8px">
+          <a href="${reviewLink}" style="display:inline-block;background:#0f172a;color:#ffffff;text-decoration:none;padding:13px 22px;border-radius:12px;font-weight:800;font-size:15px">Review my PF details</a>
+        </p>
+        <p style="margin:16px 0 0;font-size:12px;color:#64748b">If the button does not work, copy this link:<br><span style="word-break:break-all">${reviewLink}</span></p>
+        <hr style="border:none;border-top:1px solid #e2e8f0;margin:24px 0 16px">
+        <p style="margin:0;font-size:12px;color:#94a3b8">If you were not expecting this, please contact your HR team immediately.</p>
+      </div>
+      <div style="background:#f8fafc;border-top:1px solid #e2e8f0;padding:14px 28px;color:#94a3b8;font-size:11px">
+        MAS Callnet India Pvt. Ltd. &bull; This is an automated message — please do not reply directly to this email.
+      </div>
+    </div>
+  </div>`;
+}
+
 export async function sendJoiningDocReminderEmail(params: {
   to: string;
   employeeName: string;

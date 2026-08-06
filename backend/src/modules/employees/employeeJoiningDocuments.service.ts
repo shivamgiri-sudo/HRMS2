@@ -14,7 +14,7 @@ import { generateChecklistDraft } from "./universalDigitalFormFill.service.js";
 import { templateFileExists } from "./joiningDocumentTemplatePath.js";
 import { inboxService } from "../inbox/inbox.service.js";
 import { emailService } from "../communication/email.service.js";
-import { buildJoiningDocEsignEmailHtml } from "../ats/ats.email.service.js";
+import { buildJoiningDocEsignEmailHtml, buildEpfComplianceReviewEmailHtml } from "../ats/ats.email.service.js";
 
 const STORAGE_ROOT = path.resolve(process.cwd(), "private-storage", "employee-joining-documents");
 const ALLOWED_EXTENSIONS = new Set([".pdf", ".jpg", ".jpeg", ".png", ".webp", ".doc", ".docx"]);
@@ -2323,9 +2323,53 @@ export async function createPublicTokenForEpfReview(params: {
     newValue: { publicTokenIssued: true },
   });
 
+  const reviewLink = `${frontendBaseUrl()}/employee/epf-compliance/review/${publicToken}`;
+
+  // The link was returned to the HR screen for manual copy-paste and nothing
+  // ever sent it, so in practice the member never saw their PF record — which is
+  // most of why employee_epf_compliance_profile holds 4 rows. Same delivery and
+  // failure handling as the joining-document e-sign mail: a mail problem must not
+  // undo a token that has already been issued.
+  let emailed = false;
+  try {
+    const [emailRows] = await db.execute<RowDataPacket[]>(
+      `SELECT personal_email FROM employees WHERE id = ? LIMIT 1`,
+      [params.employeeId],
+    );
+    const toAddresses = [
+      (emailRows as RowDataPacket[])[0]?.personal_email as string | null,
+      target.official_email,
+    ].filter((e): e is string => typeof e === "string" && e.includes("@"));
+    const uniqueTo = [...new Set(toAddresses)];
+    if (uniqueTo.length > 0) {
+      const expiryStr = new Date(Date.now() + 7 * 24 * 3600 * 1000)
+        .toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
+      const html = buildEpfComplianceReviewEmailHtml({
+        employeeName: target.full_name ?? target.employee_code ?? "Employee",
+        reviewLink,
+        expiryStr,
+      });
+      for (const toAddr of uniqueTo) {
+        await emailService.send({
+          to: toAddr,
+          subject: "Action Required: Check your PF details before filing — MAS Callnet",
+          html,
+        });
+      }
+      emailed = true;
+    } else {
+      console.warn(`[epf-compliance] review link not emailed — employee ${params.employeeId} has no personal_email or official_email on record`);
+    }
+  } catch (emailErr) {
+    console.warn("[epf-compliance] Non-fatal: review email delivery failed:", emailErr);
+  }
+
   return {
     public_token: publicToken,
-    review_link: `${frontendBaseUrl()}/employee/epf-compliance/review/${publicToken}`,
+    review_link: reviewLink,
+    // Reported so the HR screen can say whether it still needs to share the link
+    // by hand, rather than leaving the operator to guess.
+    emailed,
   };
 }
 
