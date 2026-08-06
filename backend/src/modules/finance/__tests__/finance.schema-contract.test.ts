@@ -196,7 +196,15 @@ describe("finance database and API contract", () => {
     ];
     for (const caller of callers) {
       const source = read(caller);
-      const paths = source.match(/["'`][^"'`]*vendor-payments\/[^"'`]*["'`]/g) ?? [];
+      // The \n in the character classes is what makes this correct, and it is not
+      // cosmetic. Without it an opening quote could run down the file and swallow
+      // whatever followed: PaymentDispatchSheet.tsx carries the comment "Registered as
+      // /banks (mounted at /api/finance), not under /vendor-payments/*" documenting a
+      // deliberate exception, and the match started at an unrelated quote above and ran
+      // through that prose. The test then failed on every run, reporting the sheet as
+      // calling an unmounted path while the code was right. An API path never spans a
+      // line, so confining the match to one line both fixes it and tightens the check.
+      const paths = source.match(/["'`][^"'`\n]*vendor-payments\/[^"'`\n]*["'`]/g) ?? [];
       expect(paths.length, `${caller} should call the vendor-payment API`).toBeGreaterThan(0);
       for (const path of paths) {
         expect(path, `${caller} must call the mounted /api/finance path`).toContain("/api/finance/vendor-payments/");

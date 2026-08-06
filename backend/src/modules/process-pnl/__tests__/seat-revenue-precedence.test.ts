@@ -24,6 +24,19 @@ import { resolve } from "node:path";
 const { execute } = vi.hoisted(() => ({ execute: vi.fn() }));
 vi.mock("../../../db/mysql.js", () => ({ db: { execute } }));
 
+/**
+ * Imported statically, not with `await import()` inside each test.
+ *
+ * vi.mock is hoisted above the imports, so a static import still receives the mocked db —
+ * the dynamic form bought nothing and cost the suite real failures. Only the first test
+ * to run pays for the module transform, and under the full 44-file parallel run that
+ * import alone exceeded the 5s testTimeout. Worse, a timed-out test's continuation keeps
+ * running: it went on to call execute and swallowed the NEXT test's queued
+ * mockResolvedValueOnce, so "tier 2/3" failed with employee_override for a fixture it
+ * never asked for. Both symptoms came from importing here rather than at module load.
+ */
+import { resolveSeatRate } from "../billability.service.js";
+
 const EMPLOYEE = {
   employeeId: "emp-1",
   processId: "proc-1",
@@ -39,7 +52,6 @@ beforeEach(() => {
 describe("resolveSeatRate precedence", () => {
   it("tier 1: employee override wins outright", async () => {
     execute.mockResolvedValueOnce([[{ id: "r1", seat_rate_monthly: "50000.00", proration_method: "payable_days" }], []]);
-    const { resolveSeatRate } = await import("../billability.service.js");
     const result = await resolveSeatRate(EMPLOYEE, "2026-08-15", "2026-08");
     expect(result).toEqual({
       seatRateMonthly: 50000,
@@ -54,7 +66,6 @@ describe("resolveSeatRate precedence", () => {
     execute
       .mockResolvedValueOnce([[], []]) // no employee override
       .mockResolvedValueOnce([[{ id: "r2", seat_rate_monthly: "40000.00", designation_id: "desig-1", billing_model: "per_seat", proration_method: "payable_days" }], []]);
-    const { resolveSeatRate } = await import("../billability.service.js");
     const result = await resolveSeatRate(EMPLOYEE, "2026-08-15", "2026-08");
     expect(result.source).toBe("cc_designation");
     expect(result.seatRateMonthly).toBe(40000);
@@ -66,7 +77,6 @@ describe("resolveSeatRate precedence", () => {
       .mockResolvedValueOnce([[], []]) // no employee override
       .mockResolvedValueOnce([[], []]) // no cost-centre rate
       .mockResolvedValueOnce([[{ id: "r4", seat_rate_monthly: "35000.00" }], []]); // process_role_billability
-    const { resolveSeatRate } = await import("../billability.service.js");
     const result = await resolveSeatRate(EMPLOYEE, "2026-08-15", "2026-08");
     expect(result).toEqual({
       seatRateMonthly: 35000,
@@ -89,7 +99,6 @@ describe("resolveSeatRate precedence", () => {
       .mockResolvedValueOnce([[], []])
       .mockResolvedValueOnce([[], []]) // no process-role rate
       .mockResolvedValueOnce([[{ id: "r5", revenue_rate_per_head: "20000.00" }], []]);
-    const { resolveSeatRate } = await import("../billability.service.js");
     const result = await resolveSeatRate(EMPLOYEE, "2026-08-15", "2026-08");
     expect(result.source).toBe("monthly_driver");
     expect(result.seatRateMonthly).toBe(20000);
@@ -98,7 +107,6 @@ describe("resolveSeatRate precedence", () => {
 
   it("resolves to missing when nothing matches at any tier", async () => {
     execute.mockResolvedValue([[], []]);
-    const { resolveSeatRate } = await import("../billability.service.js");
     const result = await resolveSeatRate(EMPLOYEE, "2026-08-15", "2026-08");
     expect(result.source).toBe("missing");
     expect(result.seatRateMonthly).toBe(0);

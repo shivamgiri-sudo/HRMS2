@@ -58,6 +58,18 @@ function mockPayroll(people: Record<string, unknown>[]) {
   });
 }
 
+/**
+ * bpo-pnl.service.ts memoises resolved columns in a module-level `columnCache` Map, so
+ * every test has to re-import the module to get a clean one — unlike the sibling tests
+ * here, the dynamic import below is load-bearing and cannot be hoisted.
+ *
+ * That makes each test pay a full module transform, which under the whole-directory
+ * parallel run exceeded the 5s default and failed as "Test timed out in 5000ms" while
+ * passing in isolation. The work is real, not a hang; the default is simply too tight
+ * for six sequential re-imports of a service this size under load.
+ */
+vi.setConfig({ testTimeout: 30_000 });
+
 beforeEach(() => vi.resetModules());
 
 describe("getActualPeopleCost", () => {

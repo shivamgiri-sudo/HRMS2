@@ -27,15 +27,26 @@ vi.mock("../../../middleware/authMiddleware.js", async (importOriginal) => {
   };
 });
 
+/**
+ * Imported statically rather than with `await import()` inside appFor().
+ *
+ * vi.mock is hoisted above the imports, so the router still gets the mocked db and the
+ * stubbed requireAuth. The dynamic form charged the module transform to whichever test
+ * ran first, and under the full 44-file parallel run that alone exceeded the 5s
+ * testTimeout — which is why the granted-role tests failed in a different subset on
+ * every run while passing in isolation. `actor` is reassigned per call and the
+ * middleware closes over it, so one router instance still serves every role.
+ */
+import billabilityRouter from "../billability.routes.js";
+
 // The real requireRole needs no database here: it takes the cached branch when authUser.roles
 // is populated, which is exactly what the app does after requireAuth.
-async function appFor(role: string) {
+function appFor(role: string) {
   actor = { id: `u-${role}`, role, roles: [role] };
   const app = express();
   app.use(express.json());
   app.use((req: any, _res, next) => { req.authUser = actor; next(); });
-  const router = (await import("../billability.routes.js")).default;
-  app.use("/api/finance/billability", router);
+  app.use("/api/finance/billability", billabilityRouter);
   return app;
 }
 
@@ -51,14 +62,14 @@ beforeEach(() => {
 describe("billability API — role access", () => {
   for (const role of GRANTED) {
     it(`allows ${role} to read the cost-centre activity`, async () => {
-      const res = await request(await appFor(role)).get("/api/finance/billability/cost-centre-activity");
+      const res = await request(appFor(role)).get("/api/finance/billability/cost-centre-activity");
       expect(res.status, `${role} was granted this page in 1066 and must not be refused by the API`).toBe(200);
     });
   }
 
   for (const role of DENIED) {
     it(`refuses ${role}`, async () => {
-      const res = await request(await appFor(role)).get("/api/finance/billability/cost-centre-activity");
+      const res = await request(appFor(role)).get("/api/finance/billability/cost-centre-activity");
       expect(res.status, `${role} holds no grant and must not reach billability data`).toBe(403);
     });
   }
@@ -66,8 +77,7 @@ describe("billability API — role access", () => {
   it("refuses an unauthenticated caller outright", async () => {
     const app = express();
     app.use(express.json());
-    const router = (await import("../billability.routes.js")).default;
-    app.use("/api/finance/billability", router);
+    app.use("/api/finance/billability", billabilityRouter);
     const res = await request(app).get("/api/finance/billability/cost-centre-activity");
     // requireRole answers 401 when there is no identity at all, not 403.
     expect(res.status).toBe(401);
@@ -76,7 +86,7 @@ describe("billability API — role access", () => {
   it("refuses a write from a role that may only read", async () => {
     // No role outside the granted four may write, and the write guard must be mounted — a page
     // that opens and then 403s on save is the worst of both.
-    const res = await request(await appFor("hr"))
+    const res = await request(appFor("hr"))
       .post("/api/finance/billability/matrix")
       .send({ processId: "p1", designationId: "d1", isBillable: true, effectiveFrom: "2026-08-01", changeReason: "x" });
     expect(res.status).toBe(403);
