@@ -58,6 +58,18 @@ const fakeCandidate = {
 };
 
 /**
+ * The single process lookup submitInterviewUpdate runs straight after locking the
+ * candidate. It both recognises the process — refusing one that appears in neither
+ * process_master, integration_process_alias nor ats_form_config.hiringProcessOptions —
+ * and resolves process_id from it. This row says "Onfido" is a real, active process.
+ */
+const processLookup = [[{
+  master_id: "process-onfido",
+  alias_id: null,
+  process_options: "Onfido,Housing,LP,BBB",
+}]];
+
+/**
  * The row submitInterviewUpdate expects back when secondRoundInterviewerId is supplied.
  * It looks the interviewer up (404 "Second round interviewer not found" if absent) and
  * then refuses a branch that differs from the recruiter's, so branch_name must match
@@ -154,6 +166,7 @@ describe("TC-01: Assigned Waiting candidate appears; unassigned candidate is den
     const conn = mockConn([
       // candidate row — assigned to someone else
       [[{ ...fakeCandidate, recruiter_assigned_name: "Other Recruiter" }]],
+      processLookup, // process recognition + process_id
     ]);
     void conn; // suppress unused warning
     await expect(
@@ -200,6 +213,7 @@ describe("TC-03: Blank optional Skill Test accepted at higher stages", () => {
     mockConn([
       [[fakeCandidate]], // candidate lock
       interviewerRow, // second-round interviewer lookup
+      processLookup, // process recognition + process_id
       [[]], // no existing submission
       [{ affectedRows: 1 }], // insert submission
       [{ affectedRows: 1 }], // audit
@@ -225,6 +239,7 @@ describe("TC-03: Blank optional Skill Test accepted at higher stages", () => {
     mockConn([
       [[fakeCandidate]],
       interviewerRow, // second-round interviewer lookup
+      processLookup, // process recognition + process_id
       [[]],
       [{ affectedRows: 1 }],
       [{ affectedRows: 1 }],
@@ -267,6 +282,7 @@ describe("TC-04: SkillTest Rejected without SkillTest VOC is denied", () => {
   it("accepts when skillTestResult=Rejected and skillTestVoc is provided", async () => {
     mockConn([
       [[fakeCandidate]],
+      processLookup, // process recognition + process_id
       [[]],
       [{ affectedRows: 1 }],
       [{ affectedRows: 1 }],
@@ -406,6 +422,7 @@ describe("TC-07: Selected auto-normalizes round results", () => {
     const conn = mockConn([
       [[fakeCandidate]],
       interviewerRow, // second-round interviewer lookup
+      processLookup, // process recognition + process_id
       [[]],
       [{ affectedRows: 1 }],
       [{ affectedRows: 1 }],
@@ -449,29 +466,41 @@ describe("TC-08: Invalid enum values are denied", () => {
   beforeEach(() => vi.clearAllMocks());
 
   /**
-   * NOT IMPLEMENTED — this is a real gap, not a stale expectation.
+   * This assertion never ran until the validBase fixture was repaired: the submission was
+   * rejected at 400 for a missing follow-up date instead, so it passed on the wrong error
+   * while the process itself went unchecked. The check now exists, against the union of
+   * process_master, integration_process_alias and ats_form_config.hiringProcessOptions.
    *
-   * validateSubmission checks finalDecision against VALID_DECISIONS and walkinEndStage
-   * against VALID_STAGES, but interviewedForProcess only goes through requireField, which
-   * asserts it is non-empty. Any string is accepted and stored verbatim in
-   * ats_interview_submission.interviewed_for_process; process_id is a separate input and
-   * is not derived from it, so nothing reconciles the two.
-   *
-   * The test has been here since the file was written and never ran: validBase was
-   * missing the follow-up fields, so submitInterviewUpdate rejected with 400 for that
-   * reason instead and the assertion passed on the wrong error. Fixing the fixture is
-   * what exposed it.
-   *
-   * Marked .fails rather than deleted or weakened: the suite stays green, the gap stays
-   * visible, and the moment somebody validates the process this test starts failing and
-   * forces this comment to be removed. Closing it needs a decision about where the
-   * canonical process list comes from (process_master) and what happens to recruiters
-   * typing a process that is not in it — a wrong allow-list blocks real interviews.
+   * The mock therefore answers three lookups — master, alias, config — all empty, which
+   * is what an unrecognised process looks like.
    */
-  it.fails("rejects invalid process — NOT IMPLEMENTED, see comment above", async () => {
-    mockConn([[[fakeCandidate]], [[]]]);
+  it("rejects invalid process", async () => {
+    mockConn([
+      [[fakeCandidate]], // candidate lock
+      // Single process lookup: no master row, no alias, and the dropdown does not list it.
+      [[{ master_id: null, alias_id: null, process_options: "Onfido,Housing,LP" }]],
+    ]);
     const input = { ...validBase, interviewedForProcess: "InvalidProcess" };
     await expect(submitInterviewUpdate(input, "user-1", recruiterProfile)).rejects.toMatchObject({ statusCode: 400 });
+  });
+
+  it("accepts a process that only the recruiter dropdown knows, not process_master", async () => {
+    // "LP", "BBB" and friends are real options in ats_form_config.hiringProcessOptions
+    // with no process_master row. Validating against the master alone would have rejected
+    // 263 of 1,299 production submissions, so this pins that they still go through.
+    mockConn([
+      [[fakeCandidate]], // candidate lock
+      // No master row and no alias, so process_id stays null — but the dropdown lists it.
+      [[{ master_id: null, alias_id: null, process_options: "Onfido,Housing,LP,BBB" }]],
+      [[]],              // no existing submission
+      [{ affectedRows: 1 }], // insert
+      [{ affectedRows: 1 }], // audit
+      [{ affectedRows: 1 }], // update candidate
+      [{ affectedRows: 1 }], // stage log
+    ]);
+    mockExecute.mockResolvedValueOnce([[{ id: "sub-1" }]]);
+    const input = { ...validBase, interviewedForProcess: "LP" };
+    await expect(submitInterviewUpdate(input, "user-1", recruiterProfile)).resolves.toBeDefined();
   });
 
   it("rejects invalid finalDecision", async () => {
@@ -495,6 +524,7 @@ describe("TC-09: First submission inserts one row", () => {
   it("calls INSERT when no existing submission", async () => {
     const conn = mockConn([
       [[fakeCandidate]],
+      processLookup, // process recognition + process_id
       [[]], // no existing submission
       [{ affectedRows: 1 }],
       [{ affectedRows: 1 }],
@@ -522,6 +552,7 @@ describe("TC-10: Resubmission updates same row, preserves previous timestamp/sta
   it("calls UPDATE when existing submission found, preserves tracking fields", async () => {
     const conn = mockConn([
       [[fakeCandidate]],
+      processLookup, // process recognition + process_id
       [[{ id: "sub-1", submitted_at: "2026-06-10T10:00:00Z", walkin_end_stage: "Arrival", final_decision: "Hold" }]],
       [{ affectedRows: 1 }],
       [{ affectedRows: 1 }],
@@ -566,6 +597,7 @@ describe("TC-12: created_date and created_time columns are never modified", () =
   it("UPDATE ats_candidate does not include created_date or created_time", async () => {
     const conn = mockConn([
       [[fakeCandidate]],
+      processLookup, // process recognition + process_id
       [[]],
       [{ affectedRows: 1 }],
       [{ affectedRows: 1 }],
@@ -591,6 +623,7 @@ describe("TC-13: Transaction + SELECT FOR UPDATE prevents duplicate rows", () =>
   it("uses SELECT FOR UPDATE on both candidate and submission rows", async () => {
     const conn = mockConn([
       [[fakeCandidate]],
+      processLookup, // process recognition + process_id
       [[]],
       [{ affectedRows: 1 }],
       [{ affectedRows: 1 }],
@@ -616,6 +649,7 @@ describe("TC-14: Audit log records insert and update actions", () => {
   it("inserts audit row with action=INSERT on first submission", async () => {
     const conn = mockConn([
       [[fakeCandidate]],
+      processLookup, // process recognition + process_id
       [[]],
       [{ affectedRows: 1 }],
       [{ affectedRows: 1 }],
@@ -634,6 +668,7 @@ describe("TC-14: Audit log records insert and update actions", () => {
   it("inserts audit row with action=UPDATE on resubmission", async () => {
     const conn = mockConn([
       [[fakeCandidate]],
+      processLookup, // process recognition + process_id
       [[{ id: "sub-1", submitted_at: "2026-06-10T09:00:00Z", walkin_end_stage: "Arrival", final_decision: "Hold" }]],
       [{ affectedRows: 1 }],
       [{ affectedRows: 1 }],

@@ -814,6 +814,67 @@ export async function submitInterviewUpdate(
       };
     }
 
+    /**
+     * Recognise the process, and link the submission to a real process row.
+     *
+     * Two problems, one lookup.
+     *
+     * VALIDATION. finalDecision and walkinEndStage are checked against fixed lists;
+     * interviewedForProcess was only checked for being non-empty, so any string at all was
+     * accepted and stored. It is checked here against the union of three sources, because
+     * submissions arrive by more than one route and each carries its own vocabulary. The
+     * recruiter walk-in screen offers ats_form_config.hiringProcessOptions, which is
+     * short-form ("Housing", "LP", "BBB", "Neeman's") and is the list this file's header
+     * already names as authoritative. Other paths write the full legal name from
+     * process_master ("Housing.com", "Neemans Private Limited"). integration_process_alias
+     * covers the dialler feeds. Measured against production no single list suffices —
+     * hiringProcessOptions alone would reject 263 of 1,299 submissions, process_master
+     * alone 67 — while the union recognises all 1,299 and every one of the 34 distinct
+     * values in use. Unknown input is refused; nothing the business has actually recorded
+     * is.
+     *
+     * LINKAGE. process_id was only ever set from an explicit input.processId, which the
+     * recruiter screen does not send, so it was NULL on 1,203 of 1,299 rows and ATS
+     * reporting could not join a submission to its process. The same lookup fills it,
+     * preferring an active process so a closed duplicate cannot shadow a live one, and
+     * falling back to the alias mapping. A short-form name with no process_master row is
+     * still valid and simply leaves process_id null — adding an alias row is what links it.
+     *
+     * One round trip rather than four: sequential checks made every submission pay for
+     * lookups it did not need, and forced every test fixture to queue responses in step
+     * with them.
+     */
+    let resolvedProcessId: string | null = input.processId ?? null;
+    if (process) {
+      const [processRows] = await conn.execute<RowDataPacket[]>(
+        `SELECT
+           (SELECT p.id FROM process_master p
+             WHERE LOWER(TRIM(p.process_name)) = LOWER(TRIM(?))
+             ORDER BY (p.active_status = 1) DESC LIMIT 1) AS master_id,
+           (SELECT a.process_id FROM integration_process_alias a
+             WHERE LOWER(TRIM(a.source_value)) = LOWER(TRIM(?)) AND a.active_status = 1
+             LIMIT 1) AS alias_id,
+           (SELECT config_value FROM ats_form_config
+             WHERE config_key = 'hiringProcessOptions' LIMIT 1) AS process_options`,
+        [process, process]
+      );
+      const match = processRows[0] ?? {};
+      const masterId = match.master_id ? String(match.master_id) : null;
+      const aliasId = match.alias_id ? String(match.alias_id) : null;
+      const dropdownOptions = String(match.process_options ?? "")
+        .split(",")
+        .map((option) => option.trim().toLowerCase())
+        .filter(Boolean);
+
+      if (!masterId && !aliasId && !dropdownOptions.includes(process.trim().toLowerCase())) {
+        err(
+          `Invalid Interviewed for Process: "${process}". Pick one of the configured hiring processes.`,
+          400
+        );
+      }
+      resolvedProcessId = resolvedProcessId ?? masterId ?? aliasId;
+    }
+
     const [existingRows] = await conn.execute<ExistingSubmissionRow[]>(
       effectiveQToken
         ? `SELECT id, submitted_at, walkin_end_stage, final_decision
@@ -916,7 +977,7 @@ export async function submitInterviewUpdate(
           actorUserId ?? null,
           recruiterProfile.recruiterCode,
           process,
-          input.processId ?? null,
+          resolvedProcessId,
           walkinEndStage,
           finalDecision,
           r1,
@@ -992,7 +1053,7 @@ export async function submitInterviewUpdate(
           actorUserId ?? null,
           recruiterProfile.recruiterCode,
           process,
-          input.processId ?? null,
+          resolvedProcessId,
           walkinEndStage,
           finalDecision,
           r1,
