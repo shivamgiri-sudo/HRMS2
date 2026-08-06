@@ -25,6 +25,7 @@ import { SourcingTab } from "@/components/ats/command-center/SourcingTab";
 import { LiveQueueTab } from "@/components/ats/command-center/LiveQueueTab";
 import { JourneyTab } from "@/components/ats/command-center/JourneyTab";
 import { HealthTab } from "@/components/ats/command-center/HealthTab";
+import { BMIBenchmarkTab } from "@/components/ats/command-center/BMIBenchmarkTab";
 import { ProvenanceBar } from "@/components/analytics/analytics-kit";
 
 type AnyRow = Record<string, unknown>;
@@ -59,7 +60,7 @@ type WebData = {
 };
 
 const periods = ["ALL", "FTD", "WTD", "MTD"];
-const TAB_IDS = ["Cover", "Dashboard", "Trends", "Rejections", "Recruiters", "Sourcing", "Live Queue", "Journey", "Health"];
+const TAB_IDS = ["Cover", "Dashboard", "Trends", "Rejections", "Recruiters", "Sourcing", "Live Queue", "Journey", "Health", "BMI"];
 
 const n = (v: unknown) => Number(v || 0).toLocaleString("en-IN");
 const pct = (v: unknown) => `${Number(v || 0).toFixed(Number(v || 0) % 1 ? 1 : 0)}%`;
@@ -453,6 +454,11 @@ export default function NativeATSFullParityCommandCenter() {
           {/* Health tab - System Diagnostics */}
           <TabsContent value="Health" className="mt-4">
             <HealthTab />
+          </TabsContent>
+
+          {/* BMI Benchmark tab */}
+          <TabsContent value="BMI" className="mt-4">
+            <BMIBenchmarkTab />
           </TabsContent>
         </Tabs>
       </div>
