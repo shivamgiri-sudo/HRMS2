@@ -475,6 +475,21 @@ const MIGRATION_MANIFEST: string[] = [
   "1076_mira_company_services_seed.sql", // 425's seed only inserted 6 of FALLBACK_FACTS's 7 rows (missing company-services); facts() does dbFacts.length ? dbFacts : FALLBACK_FACTS — all-or-nothing, not merged — so once any DB rows exist, a services-category question got zero facts, not even the fallback text, because 'services' was never among the seeded 6
   "1077_ai_prompt_audit_detected_intent.sql", // adds ai_prompt_audit_log.detected_intent for Mira Analytics top-intent breakdowns — instruments future requests only; question_hash/sanitized_context_hash are one-way SHA-256 hashes, nothing to backfill historical rows from
   "1078_ai_rate_limit_bucket.sql", // backs ai-rate-limiter.ts with a real table — the in-memory Map had no persistence and no cross-process sharing, so each backend process got its own independent 100/day bucket per user and a restart silently reset everyone's counter
+  // 1079-1082 existed as files but were listed in neither the manifest nor the lock, so
+  // they could never run anywhere — schema_migrations has no record of any of them and
+  // none of their tables exist in production. That is exactly the silent-never-applied
+  // failure this manifest is meant to prevent. Order matters here: 1079 and
+  // 1080_credit_notes both ALTER finance_budget_snapshot, and 1081 builds on the credit
+  // note table 1080 creates.
+  "1079_budget_snapshot_active_flag.sql",
+  // Two different sessions both numbered a migration 1080. The manifest and
+  // schema_migrations track full filenames, so the collision is not fatal and neither
+  // file is renamed — renaming a migration is how one silently re-runs. They are
+  // unrelated (BMI capture vs billing credit notes) and both are listed.
+  "1080_bmi_manual_input.sql",
+  "1080_credit_notes_and_budget_adjustments.sql",
+  "1081_credit_note_lines_and_provision_deductions.sql",
+  "1082_apr_eligibility_config_operations_executive_fix.sql",
   "1083_wfm_attendance_exceptions_page_code.sql", // gives /wfm/attendance-exceptions its own page code instead of borrowing WFM_LIVE_TRACKER (shared with 4 unrelated pages, and it locked out payroll — who own the 455 open salary_payable_days_mismatch blockers). Additive seed only; must be applied BEFORE the frontend Gate is repointed, since prod runs SKIP_MIGRATIONS=true
   ];
 

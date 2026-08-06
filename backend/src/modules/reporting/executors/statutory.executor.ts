@@ -267,9 +267,12 @@ export async function ptRegister(
            spr.run_month,
            COALESCE(spl.professional_tax, 0) AS pt_amount,
            COALESCE(spl.gross_salary, 0) AS gross_salary,
-           -- employees has no pt_state. PT jurisdiction is not modelled separately;
-           -- e.state is the employee's state and is the closest available meaning.
-           e.state AS pt_state
+           -- employees has no pt_state. Professional tax is levied by the state the
+           -- employee WORKS in, so the branch state is the jurisdiction — not the
+           -- employee's own (home) state, which is what e.state holds. On live data the
+           -- two disagree for 326 of 1,042 active employees, so this is not cosmetic.
+           -- Branch state also covers more people: 1,113 of 1,123 against 1,042.
+           b.state AS pt_state
       FROM salary_prep_line spl
       JOIN salary_prep_run spr ON spr.id = spl.run_id
       JOIN employees e ON e.id = spl.employee_id
@@ -558,12 +561,33 @@ export async function gratuityLiabilityRegister(
            b.branch_name, p.process_name,
            e.date_of_joining,
            TIMESTAMPDIFF(YEAR, e.date_of_joining, CURDATE()) AS years_of_service,
-           -- employees has no last_drawn_basic. Choosing a different salary column as
-           -- the gratuity base would change a payroll calculation, which is not a
-           -- rename decision — so the base and the derived liability report NULL.
-           NULL AS last_drawn_basic,
-           NULL AS gratuity_liability
+           -- employees has no last_drawn_basic. The gratuity base is taken as the basic
+           -- from the employee's most recent FINALIZED payroll run — the literal "last
+           -- drawn" basic. Only FINALIZED runs count, so a draft or abandoned run cannot
+           -- move a liability figure. salary_prep_line carries no DA column, so the base
+           -- is basic alone, which is what the existing formula already assumed.
+           -- 772 of 1,123 active employees have one; the rest report NULL rather than 0,
+           -- because a 0 liability is a claim and an absent base is not.
+           ldb.basic AS last_drawn_basic,
+           CASE WHEN ldb.basic IS NULL THEN NULL ELSE ROUND(
+             ldb.basic
+             * TIMESTAMPDIFF(YEAR, e.date_of_joining, CURDATE())
+             * 15 / 26,
+           2) END AS gratuity_liability
       FROM employees e
+      -- LATERAL, not a ranked derived table: ranking every one of the 80,338
+      -- salary_prep_line rows took 20.5s, while the correlated form hits
+      -- idx_spl_employee_run and returns in under a second.
+      LEFT JOIN LATERAL (
+        SELECT spl.basic
+          FROM salary_prep_line spl
+          JOIN salary_prep_run spr ON spr.id = spl.run_id
+         WHERE spl.employee_id = e.id
+           AND UPPER(spr.status) = 'FINALIZED'
+           AND spl.basic > 0
+         ORDER BY spr.run_month DESC
+         LIMIT 1
+      ) ldb ON TRUE
       LEFT JOIN branch_master b ON b.id = e.branch_id
       LEFT JOIN process_master p ON p.id = e.process_id
      WHERE ${clauses.join(" AND ")}
