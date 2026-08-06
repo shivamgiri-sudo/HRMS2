@@ -425,8 +425,9 @@ wfmRouter.get("/rotation-summary", requireAuth, requireRole("admin", "super_admi
     `SELECT e.id, e.employee_code,
             CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')) AS full_name,
             COALESCE(e.shift_rotation_type, 'frozen') AS shift_rotation_type,
-            e.designation
+            dm.designation_name AS designation
        FROM employees e
+       LEFT JOIN designation_master dm ON dm.id = e.designation_id
       WHERE e.process_id = ? AND e.active_status = 1${branchWhere}
       ORDER BY e.employee_code ASC`,
     params
@@ -645,7 +646,7 @@ wfmRouter.get("/manager/weekoff-review", requireAuth, requireRole("admin", "hr",
   const [rows] = await dbConn.execute(
     `SELECT wra.*,
             CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')) AS employee_name,
-            e.employee_code, e.designation,
+            e.employee_code, dm.designation_name AS designation,
             pm.process_name, bm.branch_name,
             wst.shift_name, wst.start_time, wst.end_time,
             wrc.week_start_date, wrc.week_end_date
@@ -653,6 +654,7 @@ wfmRouter.get("/manager/weekoff-review", requireAuth, requireRole("admin", "hr",
        JOIN employees e ON e.id = wra.employee_id
        LEFT JOIN process_master pm ON pm.process_name = wra.process_name
        LEFT JOIN branch_master bm ON bm.branch_name = wra.branch_name
+       LEFT JOIN designation_master dm ON dm.id = e.designation_id
        LEFT JOIN wfm_shift_template wst ON wst.id = wra.shift_template_id
        LEFT JOIN weekly_roster_cycle wrc ON wrc.id = wra.cycle_id
       WHERE wra.final_roster_status = 'pending_manager_action'

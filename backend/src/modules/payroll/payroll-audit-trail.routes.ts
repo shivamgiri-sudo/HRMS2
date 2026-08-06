@@ -51,8 +51,8 @@ payrollAuditTrailRouter.get(
     if (run_id)      { salConds.push("JSON_UNQUOTE(JSON_EXTRACT(sal.change_summary, '$.run_id')) = ?"); salParams.push(run_id); }
     if (employee_id) { salConds.push("JSON_UNQUOTE(JSON_EXTRACT(sal.change_summary, '$.employee_id')) = ?"); salParams.push(employee_id); }
     if (event_type)  { salConds.push("sal.action_type LIKE ?"); salParams.push(`%${event_type}%`); }
-    if (date_from)   { salConds.push("sal.created_at >= ?");    salParams.push(date_from); }
-    if (date_to)     { salConds.push("sal.created_at <= ?");    salParams.push(date_to + " 23:59:59"); }
+    if (date_from)   { salConds.push("sal.acted_at >= ?");    salParams.push(date_from); }
+    if (date_to)     { salConds.push("sal.acted_at <= ?");    salParams.push(date_to + " 23:59:59"); }
 
     const salWhere = `WHERE ${salConds.join(" AND ")}`;
 
@@ -74,11 +74,14 @@ payrollAuditTrailRouter.get(
              pca.event_type,
              pca.event_detail,
              pca.actor_user_id,
-             CONCAT(au.first_name,' ',COALESCE(au.last_name,'')) AS actor_name,
+             -- auth_user stores no name, only email; resolve it through employees.user_id
+             COALESCE(NULLIF(TRIM(CONCAT(COALESCE(ae.first_name,''),' ',COALESCE(ae.last_name,''))),''), au.email)
+               AS actor_name,
              pca.created_at
            FROM payroll_calculation_audit pca
            LEFT JOIN employees e   ON e.id   = pca.employee_id
            LEFT JOIN auth_user au  ON au.id  = pca.actor_user_id
+           LEFT JOIN employees ae  ON ae.user_id = au.id
            ${calcWhere}
            ORDER BY pca.created_at DESC`,
           calcParams
@@ -108,12 +111,15 @@ payrollAuditTrailRouter.get(
              sal.action_type AS event_type,
              sal.change_summary AS event_detail,
              sal.actor_user_id,
-             CONCAT(au.first_name,' ',COALESCE(au.last_name,'')) AS actor_name,
-             sal.created_at
+             -- auth_user stores no name, only email; resolve it through employees.user_id
+             COALESCE(NULLIF(TRIM(CONCAT(COALESCE(ae.first_name,''),' ',COALESCE(ae.last_name,''))),''), au.email)
+               AS actor_name,
+             sal.acted_at AS created_at
            FROM sensitive_action_log sal
            LEFT JOIN auth_user au ON au.id = sal.actor_user_id
+           LEFT JOIN employees ae ON ae.user_id = au.id
            ${salWhere}
-           ORDER BY sal.created_at DESC`,
+           ORDER BY sal.acted_at DESC`,
           salParams
         );
         salRows = sr as any[];

@@ -124,7 +124,7 @@ router.post(
        FROM employees e
        LEFT JOIN department_master dm    ON dm.id = e.department_id
        LEFT JOIN designation_master desig ON desig.id = e.designation_id
-       WHERE e.employee_code IN (${ph}) AND e.status = 'active'`,
+       WHERE e.employee_code IN (${ph}) AND e.employment_status = 'active'`,
       codes,
     );
     const empMap = new Map<string, any>();

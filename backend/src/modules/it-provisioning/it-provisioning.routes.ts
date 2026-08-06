@@ -462,11 +462,12 @@ router.get('/tasks/:id/candidate-report', requireRole(...PROVISIONING_ROLES), h(
        ipr.evidence_file_url,
        ipr.requested_at, ipr.actioned_at,
        e.id AS employee_id, e.employee_code, e.first_name, e.last_name,
-       e.personal_email, e.mobile, e.designation, e.date_of_joining,
+       e.personal_email, e.mobile, dm.designation_name AS designation, e.date_of_joining,
        b.branch_name AS branch_name, p.process_name AS process_name
      FROM it_provisioning_request ipr
      JOIN employees e ON e.id = ipr.employee_id
-     LEFT JOIN branch_master b ON b.id = e.branch_id
+     LEFT JOIN designation_master dm ON dm.id = e.designation_id
+    LEFT JOIN branch_master b ON b.id = e.branch_id
      LEFT JOIN process_master p ON p.id = e.process_id
      WHERE ipr.id = ?
      LIMIT 1`,

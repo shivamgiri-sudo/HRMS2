@@ -38,9 +38,6 @@
   "modules/finance/vendor-payment.service.ts": [
     "auth_user.active_status"
   ],
-  "modules/it-provisioning/it-provisioning.routes.ts": [
-    "employees.designation"
-  ],
   "modules/lifecycle/lifecycle.routes.ts": [
     "ats_candidate.converted_employee_id",
     "ats_employment_offer.prepared_by"
@@ -52,18 +49,9 @@
   "modules/payroll/holiday-debug.routes.ts": [
     "cost_centre_master.process_name"
   ],
-  "modules/payroll/payroll-audit-trail.routes.ts": [
-    "auth_user.first_name",
-    "auth_user.last_name",
-    "sensitive_action_log.created_at"
-  ],
   "modules/payroll/payroll-more.routes.ts": [
     "employees.branch_name",
     "employees.process_name"
-  ],
-  "modules/payroll/payroll-window.routes.ts": [
-    "auth_user.first_name",
-    "auth_user.last_name"
   ],
   "modules/payroll/payroll.routes.ts": [
     "employee_documents.pan_number",
@@ -73,9 +61,6 @@
     "salary_advance_log.approved_by",
     "salary_advance_log.recovery_month",
     "salary_advance_log.rejection_reason"
-  ],
-  "modules/payroll/salary-verification.routes.ts": [
-    "employees.designation"
   ],
   "modules/reporting/executors/assets.executor.ts": [
     "employee_documents.document_number",
@@ -190,11 +175,5 @@
   "modules/rta/rta.service.ts": [
     "wfm_roster_assignment.branch_id",
     "wfm_roster_assignment.process_id"
-  ],
-  "modules/wfm/attendance-apr-bulk.routes.ts": [
-    "employees.status"
-  ],
-  "modules/wfm/wfm.routes.ts": [
-    "employees.designation"
   ]
 }

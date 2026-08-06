@@ -128,7 +128,7 @@ salaryVerificationRouter.get(
 
       const [empRows] = await db.execute<RowDataPacket[]>(
         `SELECT e.id AS employee_id, e.employee_code, e.full_name,
-                COALESCE(d.designation_name, e.designation) AS designation_name,
+                d.designation_name AS designation_name,
                 e.branch_id, e.process_id
            FROM employees e
            LEFT JOIN designation_master d ON d.id = e.designation_id
@@ -299,7 +299,7 @@ salaryVerificationRouter.get(
 
       const [empRows] = await db.execute<RowDataPacket[]>(
         `SELECT e.id, e.employee_code, e.full_name,
-                COALESCE(d.designation_name, e.designation) AS designation_name,
+                d.designation_name AS designation_name,
                 b.branch_name, pm.process_name
            FROM employees e
            LEFT JOIN designation_master d ON d.id = e.designation_id
@@ -786,7 +786,7 @@ salaryVerificationRouter.get(
 
       const [empRows] = await db.execute<RowDataPacket[]>(
         `SELECT e.id AS employee_id, e.employee_code, e.full_name,
-                COALESCE(d.designation_name, e.designation) AS designation_name
+                d.designation_name AS designation_name
            FROM employees e
            LEFT JOIN designation_master d ON d.id = e.designation_id
           WHERE ${whereClauses.join(" AND ")}

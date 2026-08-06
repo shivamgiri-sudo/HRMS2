@@ -248,7 +248,9 @@ router.get('/employee-salary-history', requireRole('payroll', 'super_admin', 'fi
             esa.effective_from, esa.effective_to, esa.active_status,
             esa.assignment_reason,
             ssm.structure_name, ssm.basic_pct, ssm.hra_pct,
-            CONCAT(au.first_name,' ',COALESCE(au.last_name,'')) AS assigned_by_name,
+            -- auth_user holds no name, only email; resolve it through employees.user_id
+            COALESCE(NULLIF(TRIM(CONCAT(COALESCE(ae.first_name,''),' ',COALESCE(ae.last_name,''))),''), au.email)
+              AS assigned_by_name,
             CONCAT(e.first_name,' ',COALESCE(e.last_name,'')) AS employee_name,
             e.employee_code,
             bm.branch_name
@@ -256,6 +258,7 @@ router.get('/employee-salary-history', requireRole('payroll', 'super_admin', 'fi
      JOIN employees e ON e.id = esa.employee_id
      LEFT JOIN salary_structure_master ssm ON ssm.id = esa.structure_id
      LEFT JOIN auth_user au ON au.id = esa.assigned_by
+    LEFT JOIN employees ae ON ae.user_id = au.id
      LEFT JOIN branch_master bm ON bm.id = e.branch_id
      ${where}
      ORDER BY esa.employee_id, esa.effective_from DESC
