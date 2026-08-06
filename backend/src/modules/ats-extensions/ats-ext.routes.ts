@@ -104,23 +104,42 @@ router.patch("/offers/:id/status", requireRole("admin", "hr"), h(async (req: Aut
   res.json({ success: true, ok: true });
 }));
 
+/**
+ * Roles for the parts of ATS Extensions that serve live data.
+ *
+ * ATS_EXTENSIONS is granted in role_page_access to `recruiter` and `super_admin` only —
+ * yet every route in this file was `requireRole("admin", "hr")`, an identical guard copied
+ * across all 15. The result was inverted: the 16 recruiters who own the page got 403 from
+ * everything on it, while admin/hr could call the API but had no grant to open the page.
+ *
+ * `recruiter` is added here because deduplicating candidates and reading sourcing funnels
+ * is recruiter work, and these two areas read tables that actually hold data
+ * (ats_duplicate_log, ats_candidate ~37k rows).
+ *
+ * Deliberately NOT extended to the requisition, BGV and offer routes above: those read
+ * manpower_requisition / ats_bgv_record / ats_offer, all of which hold 0 rows (verified
+ * live 2026-08-07). Granting a role future access to background-check and offer data to
+ * un-break a feature that has never been used would be risk without benefit.
+ */
+const ATS_EXT_LIVE_ROLES = ["admin", "hr", "recruiter"] as const;
+
 // ── Duplicate Detection ───────────────────────────────────────────────────────
-router.get("/duplicates", requireRole("admin", "hr"), h(async (_req: AuthenticatedRequest, res: Response) => {
+router.get("/duplicates", requireRole(...ATS_EXT_LIVE_ROLES), h(async (_req: AuthenticatedRequest, res: Response) => {
   res.json({ success: true, data: await duplicateService.listUnresolved() });
 }));
 
-router.post("/duplicates/:id/resolve", requireRole("admin", "hr"), h(async (req: AuthenticatedRequest, res: Response) => {
+router.post("/duplicates/:id/resolve", requireRole(...ATS_EXT_LIVE_ROLES), h(async (req: AuthenticatedRequest, res: Response) => {
   const note = req.body.note ?? req.body.resolution ?? "resolved";
   await duplicateService.resolve(req.params.id, note, req.authUser!.id, req);
   res.json({ success: true, ok: true });
 }));
 
 // ── Sourcing Analytics ────────────────────────────────────────────────────────
-router.get("/analytics/funnel", requireRole("admin", "hr"), h(async (req: AuthenticatedRequest, res: Response) => {
+router.get("/analytics/funnel", requireRole(...ATS_EXT_LIVE_ROLES), h(async (req: AuthenticatedRequest, res: Response) => {
   res.json({ success: true, data: await sourcingAnalyticsService.getFunnel(req.query as Record<string, string | undefined>) });
 }));
 
-router.get("/analytics/stages", requireRole("admin", "hr"), h(async (req: AuthenticatedRequest, res: Response) => {
+router.get("/analytics/stages", requireRole(...ATS_EXT_LIVE_ROLES), h(async (req: AuthenticatedRequest, res: Response) => {
   res.json({ success: true, data: await sourcingAnalyticsService.getStageWise(req.query as Record<string, string | undefined>) });
 }));
 
