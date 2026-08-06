@@ -926,6 +926,10 @@ export async function buildSourceContext(employeeId: string, candidateId?: strin
     `SELECT member_name, relation, dob, address, is_eps_nominee
        FROM candidate_onboarding_family_member
       WHERE candidate_id = ?
+        -- All 31 rows written before the writer skipped blank drafts have a
+        -- NULL member_name. Unfiltered they would take a Part B slot and print
+        -- an empty line, pushing a real family member off the form.
+        AND member_name IS NOT NULL AND TRIM(member_name) <> ''
       ORDER BY created_at ASC`,
     [candidateId ?? ""],
   ).catch(() => [[] as unknown as RowDataPacket[], []]);
