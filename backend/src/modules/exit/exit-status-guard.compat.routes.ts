@@ -5,6 +5,19 @@ import { requireRole } from "../../middleware/requireRole.js";
 import { db } from "../../db/mysql.js";
 import { exitService } from "./exit.service.js";
 
+/**
+ * SUPERSEDED — no longer mounted (2026-08-06).
+ *
+ * This router used to be mounted at /api/exit after exitSecureRouter, which defines the same
+ * PATCH /:id/status path. Express dispatches to the first matching handler, so this file's
+ * allowedTransitions FSM guard was dead code — a direct API call could skip straight from
+ * "submitted" to "exited" despite this file appearing to prevent it.
+ *
+ * Its logic is consolidated into exit.secure.routes.ts's handleExitStatusUpdate. Kept
+ * unmounted rather than deleted, per this repo's rule against removing existing code solely
+ * to simplify — but do not re-mount this without re-verifying it against the consolidated
+ * version first; they may have diverged.
+ */
 export const exitStatusGuardCompatRouter = Router();
 exitStatusGuardCompatRouter.use(requireAuth);
 

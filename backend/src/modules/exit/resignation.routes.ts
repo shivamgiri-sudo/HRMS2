@@ -3,6 +3,7 @@ import { requireAuth } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { getEmployeeForUser, hasRole } from "../../shared/accessGuard.js";
 import { exitController } from "./exit.controller.js";
+import { exitService } from "./exit.service.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import type { Response, NextFunction } from "express";
 import { db } from "../../db/mysql.js";
@@ -297,12 +298,21 @@ resignationRouter.post(
   "/:exitId/accept",
   requireRole("admin", "hr", "branch_head"),
   h(async (req: AuthenticatedRequest, res: Response) => {
-    await db.execute(
-      `UPDATE exit_request SET status = 'accepted', updated_at = NOW() WHERE id = ?`,
-      [req.params.exitId]
+    // Was a raw UPDATE, bypassing exitService.updateExitStatus entirely — the shared function
+    // that creates the default clearance-task checklist and fires the acceptance notification
+    // for every OTHER path to "accepted" in the app. Because this one endpoint skipped it, a
+    // resignation accepted through self-service "My Resignation" got no clearance checklist
+    // and no notification, silently diverging from the HR-driven flow for the same status
+    // value. exitService.updateExitStatus already writes to exit_approval_log itself, so the
+    // separate logExitStatusChange call below (which this handler used to also make) is
+    // removed — keeping both would double-log this one event.
+    const data = await exitService.updateExitStatus(
+      req.params.exitId,
+      "accepted",
+      "Resignation accepted",
+      req.authUser!.id
     );
-    await logExitStatusChange(req, "accepted", "Resignation accepted");
-    return res.json({ success: true, message: "Resignation accepted" });
+    return res.json({ success: true, data, message: "Resignation accepted" });
   })
 );
 

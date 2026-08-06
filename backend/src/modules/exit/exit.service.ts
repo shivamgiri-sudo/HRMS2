@@ -272,8 +272,12 @@ export const exitService = {
     }
 
     if (nextStatus === "exited") {
+      // active_status is what every headcount/payroll-eligibility query in the app filters
+      // on — employment_status alone was previously updated here, leaving an exited employee
+      // still counted as active everywhere else. Confirmed live 2026-08-06: 93 employees with
+      // an exit date recorded still carried active_status=1.
       await db.execute(
-        `UPDATE employees SET employment_status = 'inactive', updated_at = NOW() WHERE id = ?`,
+        `UPDATE employees SET active_status = 0, employment_status = 'inactive', updated_at = NOW() WHERE id = ?`,
         [(existing as any).employee_id]
       ).catch((err: unknown) => {
         logger.error({ err, exitRequestId: id }, '[exit] Employee status update failed');

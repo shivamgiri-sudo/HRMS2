@@ -12,6 +12,66 @@ exitSecureRouter.use(requireAuth);
 const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any, next: any) => fn(req, res).catch(next);
 const EXIT_SCOPE_ROLES = ["manager", "assistant_manager", "tl", "branch_head", "process_manager", "hr"];
 
+/**
+ * FSM transitions for exit_request.status. Matches the frontend exactly — verified against
+ * every updateStatus(...) call site in NativeExitManagement.tsx and NativeExitCommandCenter.tsx,
+ * which already only ever offer this same linear progression (+ revoke from any non-terminal
+ * state) via the UI. Originally built in exit-status-guard.compat.routes.ts, which never ran:
+ * that router is mounted after this one and Express dispatches to the first handler that
+ * matches, so its guard was dead code. Consolidated here, the one router that's actually
+ * reachable for PATCH/POST /api/exit/:id/status.
+ */
+const ALLOWED_EXIT_TRANSITIONS: Record<string, string[]> = {
+  draft: ["submitted", "revoked"],
+  submitted: ["manager_review", "hr_review", "rejected", "revoked"],
+  manager_review: ["hr_review", "rejected", "revoked"],
+  hr_review: ["admin_review", "accepted", "rejected", "revoked"],
+  admin_review: ["accepted", "rejected", "revoked"],
+  accepted: ["notice_serving", "revoked"],
+  notice_serving: ["exited", "revoked"],
+  rejected: [],
+  revoked: [],
+  exited: [],
+};
+
+/**
+ * Blockers for the final "exited" transition: open clearance tasks, and F&F not yet approved
+ * or still provisional. Originally built as finalExitBlockers() in exit.compat.routes.ts,
+ * which never ran for the same shadowing reason as the FSM map above. Consolidated here.
+ */
+async function finalExitBlockers(exitRequestId: string): Promise<string[]> {
+  const [clearanceRows] = await db.execute<RowDataPacket[]>(
+    `SELECT COUNT(*) AS open_count
+       FROM exit_clearance_task
+      WHERE exit_request_id = ?
+        AND status NOT IN ('cleared', 'waived')`,
+    [exitRequestId],
+  );
+  const [ffRows] = await db.execute<RowDataPacket[]>(
+    `SELECT status, is_ff_provisional
+       FROM full_final_calculation
+      WHERE exit_request_id = ?
+      ORDER BY created_at DESC
+      LIMIT 1`,
+    [exitRequestId],
+  );
+  const ff = ffRows[0];
+  const blockers: string[] = [];
+  const openClearance = Number(clearanceRows[0]?.open_count ?? 0);
+  if (openClearance > 0) blockers.push(`${openClearance} clearance task(s) still open`);
+  if (!ff) blockers.push("F&F calculation is missing");
+  else {
+    if (!["approved", "paid"].includes(String(ff.status))) blockers.push(`F&F is ${ff.status}`);
+    if (Number(ff.is_ff_provisional) === 1) blockers.push("F&F is provisional");
+  }
+  return blockers;
+}
+
+function normalizeExitStatus(status: unknown): string {
+  const value = String(status ?? "").trim();
+  return value === "exit_confirmed" ? "exited" : value;
+}
+
 async function exitListScope(userId: string) {
   if (await hasAnyRole(userId, "admin", "hr", "finance", "payroll", "ceo")) return { sql: "1=1", params: [] as unknown[] };
   const scoped = await buildScopeWhereClause(
@@ -119,21 +179,61 @@ exitSecureRouter.get("/", h(async (req: any, res: any) => {
   return res.json({ success: true, data: rows, total: Number(countRows[0]?.total ?? 0), page, limit });
 }));
 
-exitSecureRouter.patch("/:id/status", h(async (req: any, res: any) => {
-  if (!(await canActOnExit(req.authUser!.id, req.params.id))) return res.status(403).json({ success: false, message: "Forbidden: exit request is outside your action scope" });
-  const status = String(req.body?.status ?? "");
-  const allowed = ["submitted", "manager_review", "hr_review", "admin_review", "accepted", "notice_serving", "exited", "exit_confirmed", "revoked", "rejected"];
-  if (!allowed.includes(status)) return res.status(400).json({ success: false, message: "Invalid exit status" });
-  const data = await exitService.updateExitStatus(req.params.id, status, String(req.body?.remarks ?? `Status changed to ${status}`), req.authUser!.id);
-  return res.json({ success: true, data, message: `Exit request status updated to ${status}` });
-}));
+/**
+ * Consolidated status-update handler — the sole implementation of PATCH/POST
+ * /api/exit/:id/status. This used to be defined four separate times across four routers
+ * mounted at /api/exit (exit.secure.routes.ts, exit.compat.routes.ts,
+ * exit-status-guard.compat.routes.ts, exit.routes.ts); Express dispatches to the first
+ * matching handler, so only this file's version — the one with the weakest guard — ever ran.
+ * The other three each independently built half of the missing protection (FSM-transition
+ * validity, and clearance/F&F blockers on "exited") as dead code. Both are merged in here;
+ * the other three files' /:id/status registrations are removed. See
+ * hrms2-exit-status-router-shadowing memory for the full history.
+ */
+async function handleExitStatusUpdate(req: any, res: any) {
+  if (!(await canActOnExit(req.authUser!.id, req.params.id))) {
+    return res.status(403).json({ success: false, message: "Forbidden: exit request is outside your action scope" });
+  }
 
-exitSecureRouter.post("/:id/status", h(async (req: any, res: any) => {
-  req.method = "PATCH";
-  if (!(await canActOnExit(req.authUser!.id, req.params.id))) return res.status(403).json({ success: false, message: "Forbidden: exit request is outside your action scope" });
-  const status = String(req.body?.status ?? "");
-  const allowed = ["submitted", "manager_review", "hr_review", "admin_review", "accepted", "notice_serving", "exited", "exit_confirmed", "revoked", "rejected"];
-  if (!allowed.includes(status)) return res.status(400).json({ success: false, message: "Invalid exit status" });
-  const data = await exitService.updateExitStatus(req.params.id, status, String(req.body?.remarks ?? `Status changed to ${status}`), req.authUser!.id);
-  return res.json({ success: true, data, message: `Exit request status updated to ${status}` });
-}));
+  const nextStatus = normalizeExitStatus(req.body?.status);
+  const allowed = ["submitted", "manager_review", "hr_review", "admin_review", "accepted", "notice_serving", "exited", "revoked", "rejected"];
+  if (!allowed.includes(nextStatus)) {
+    return res.status(400).json({ success: false, message: "Invalid exit status" });
+  }
+
+  const remarks = String(req.body?.remarks ?? "").trim();
+  if (!remarks) return res.status(400).json({ success: false, message: "Remarks are required" });
+
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT status FROM exit_request WHERE id = ? LIMIT 1`,
+    [req.params.id],
+  );
+  const current = rows[0];
+  if (!current) return res.status(404).json({ success: false, message: "Exit request not found" });
+
+  const currentStatus = normalizeExitStatus(current.status);
+  const allowedNext = ALLOWED_EXIT_TRANSITIONS[currentStatus] ?? [];
+  if (!allowedNext.includes(nextStatus)) {
+    return res.status(409).json({
+      success: false,
+      message: `Invalid exit transition: ${currentStatus} → ${nextStatus}. Allowed: ${allowedNext.join(", ") || "none"}`,
+    });
+  }
+
+  if (nextStatus === "exited") {
+    const blockers = await finalExitBlockers(req.params.id);
+    if (blockers.length) {
+      return res.status(409).json({
+        success: false,
+        message: "Cannot mark employee exited until exit controls are complete.",
+        blockers,
+      });
+    }
+  }
+
+  const data = await exitService.updateExitStatus(req.params.id, nextStatus, remarks, req.authUser!.id);
+  return res.json({ success: true, data, message: `Exit request status updated to ${nextStatus}` });
+}
+
+exitSecureRouter.patch("/:id/status", h(handleExitStatusUpdate));
+exitSecureRouter.post("/:id/status", h(handleExitStatusUpdate));

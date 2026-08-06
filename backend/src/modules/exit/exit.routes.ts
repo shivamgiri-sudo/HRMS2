@@ -145,21 +145,12 @@ exitRouter.post(
   })
 );
 
-const updateExitStatus = [
-  requireRole("admin", "hr", "manager"),
-  h(exitController.updateExitStatus.bind(exitController)),
-] as const;
-
-exitRouter.patch("/:id/status", ...updateExitStatus);
-// Compatibility for the original Exit Management screen and older clients.
-exitRouter.post("/:id/status", ...updateExitStatus);
-
-// POST endpoint for frontend compatibility
-exitRouter.post(
-  "/:id/status",
-  requireRole("admin", "hr", "manager"),
-  h(exitController.updateExitStatus.bind(exitController))
-);
+// PATCH/POST /:id/status used to be defined here (three times over, in fact — two identical
+// POST registrations back to back). All were dead code: exitSecureRouter is mounted before
+// exitRouter in app.ts, and Express dispatches to the first matching handler, so
+// exitSecureRouter's version — now the single, properly-guarded implementation — is the only
+// one that ever ran. Removed rather than left as unreachable duplicates. See
+// exit.secure.routes.ts's handleExitStatusUpdate for the consolidated logic.
 
 exitRouter.get(
   "/ff/:exitRequestId",

@@ -6,6 +6,19 @@ import { db } from "../../db/mysql.js";
 import { getEmployeeForUser, hasRole } from "../../shared/accessGuard.js";
 import { exitController } from "./exit.controller.js";
 
+/**
+ * SUPERSEDED — no longer mounted (2026-08-06).
+ *
+ * This router used to be mounted at /api/exit after exitSecureRouter, which defines the same
+ * /:id/status and GET / paths. Express dispatches to the first matching handler, so every
+ * route below was dead code — including finalExitBlockers(), the clearance/F&F check on
+ * marking an employee "exited", which never actually ran despite looking like live protection.
+ *
+ * Its logic is consolidated into exit.secure.routes.ts's handleExitStatusUpdate. Kept
+ * unmounted rather than deleted, per this repo's rule against removing existing code solely
+ * to simplify — but do not re-mount this without re-verifying it against the consolidated
+ * version first; they may have diverged.
+ */
 export const exitCompatRouter = Router();
 exitCompatRouter.use(requireAuth);
 
