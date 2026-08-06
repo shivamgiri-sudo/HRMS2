@@ -43,7 +43,27 @@ const tokenResponse = (token = "access-token", expiresIn = 60) => ({
 
 beforeEach(() => {
   resetLuckpayTokenCache();
-  vi.spyOn(axios, "post").mockReset();
+  /**
+   * Fail closed, rather than fall back to the real axios.
+   *
+   * This was `vi.spyOn(axios, "post").mockReset()`. On a spy, mockReset restores the
+   * ORIGINAL implementation, so between tests axios.post was the live one again — and a
+   * test that called the transport without arming its own mock would have posted to
+   * Luckpay for real. That is not theoretical: backend/.env.test declares no LUCKPAY_*
+   * or BGV_PROVIDER keys, so vitest's loadEnv falls through to .env, where
+   * LUCKPAY_ENV=production, LUCKPAY_PROVIDER_ENABLED=true and the production basic token
+   * and client id are all set. A forgotten mock would have sent a live, credentialed,
+   * billable request from whoever ran the suite.
+   *
+   * Every test here does arm a mock first, so nothing has leaked. This makes that a
+   * property of the harness instead of of everyone remembering.
+   */
+  vi.spyOn(axios, "post").mockImplementation(async (url: unknown) => {
+    throw new Error(
+      `Blocked an unmocked outbound POST to ${String(url)}. ` +
+        "Arm vi.spyOn(axios, 'post') in the test — the Luckpay credentials in .env are live.",
+    );
+  });
 });
 
 afterEach(() => {
@@ -117,7 +137,21 @@ describe("Luckpay token cache", () => {
 });
 
 describe("Luckpay request headers", () => {
-  it("TC-LP-07: sends the client id raw and the access token as Bearer", async () => {
+  /**
+   * Authorization carries base64(clientId), not the raw id.
+   *
+   * This asserted the raw form and so encoded the defect 4d028eec fixed: Luckpay's
+   * business endpoints decode the header, and a 5-character id is not valid base64, so
+   * the gateway answered 401 VAL_EXT_001 "Invalid Base64 encoding" and every PAN,
+   * penny-drop, UAN, DigiLocker and eSign check failed regardless of token or payload.
+   * That was verified against the live provider — raw gave 401, TFBNMTQ= reached payload
+   * validation — and the vendor docs show the same encoded form. The commit updated the
+   * two provider-adapter tests that asserted the raw header and missed this one, so it
+   * has failed on every run since.
+   *
+   * TFBNMTQ= is base64 of "LPM14". Do not "simplify" this back to the raw id.
+   */
+  it("TC-LP-07: sends base64(clientId) as Authorization and the access token as Bearer", async () => {
     const post = vi.spyOn(axios, "post")
       .mockResolvedValueOnce(tokenResponse())
       .mockResolvedValueOnce({ data: { status: "success" } });
@@ -130,11 +164,14 @@ describe("Luckpay request headers", () => {
       expect.objectContaining({ idNumber: "ABCDE1234F" }),
       expect.objectContaining({
         headers: expect.objectContaining({
-          Authorization: "LPM14",
+          Authorization: Buffer.from("LPM14", "utf8").toString("base64"),
           "X-Access-Token": "Bearer access-token",
         }),
       }),
     );
+    // Pinned literally as well, so a change to luckpayAuthHeader cannot be absorbed by
+    // the expectation recomputing itself alongside it.
+    expect(post.mock.calls[1][2].headers.Authorization).toBe("TFBNMTQ=");
   });
 });
 
