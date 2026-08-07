@@ -1,0 +1,48 @@
+-- 429_attendance_daily_record_covering_index.sql
+--
+-- Makes every month-range attendance aggregate use a covering index instead of falling back
+-- to a near-full table scan. NOT YET APPLIED — see the note at the bottom.
+--
+-- The problem, measured on live mas_hrms (2026-08-08), 118,791 rows in the table:
+--
+--   SELECT employee_id, COUNT(*)
+--     FROM attendance_daily_record
+--    WHERE record_date >= '2026-07-01' AND record_date < '2026-08-01'
+--    GROUP BY employee_id;                                    -->  2,065 ms
+--
+--   ... the same query with SUM(COALESCE(raw_minutes, biometric_minutes, 0) > 0)
+--                                                             --> 42,420 ms
+--
+-- The only difference is that the second needs a column the index does not carry. EXPLAIN
+-- shows why the cost is 20x rather than marginal: the optimiser does not do the range scan
+-- and then look rows up. It ABANDONS idx_adr_date_employee entirely and switches to
+-- uq_emp_date, which is (employee_id, record_date) — record_date is not leading, so the month
+-- predicate cannot narrow anything and it examines 104,611 rows instead of the 41,106 in
+-- range.
+--
+--   without the minutes column   key=idx_adr_date_employee  rows=52,305  Using index
+--   with the minutes column      key=uq_emp_date            rows=104,611 Using where
+--
+-- FORCE INDEX (idx_adr_date_employee) recovers part of it — 35,244 ms -> 12,794 ms measured —
+-- but it is still not covering, and it would have to be pasted at 48 query sites and would
+-- then fight this index once it exists. One index fixes all 48 without touching a query.
+--
+-- Extending the existing (record_date, employee_id) index to carry the two minute columns
+-- makes the aggregate covering, which is the 2,065 ms path.
+--
+-- Additive and reversible: no data is read, written or moved, and the rollback is one line.
+-- On 118,791 rows the build is seconds. It duplicates the prefix of idx_adr_date_employee, so
+-- that index becomes redundant afterwards — deliberately NOT dropped here, because dropping
+-- an index other queries may be hinted against is a separate decision with its own blast
+-- radius.
+
+ALTER TABLE attendance_daily_record
+  ADD INDEX idx_adr_date_emp_covering (record_date, employee_id, raw_minutes, biometric_minutes);
+
+-- Rollback:
+--   ALTER TABLE attendance_daily_record DROP INDEX idx_adr_date_emp_covering;
+--
+-- NOT ADDED TO sql/MIGRATION_MANIFEST.lock.json ON PURPOSE.
+-- Migrations in this project run at boot: production has no SKIP_MIGRATIONS, so a pm2 restart
+-- applies whatever the manifest lists. Adding this file to the manifest IS the deployment, and
+-- production DDL needs explicit sign-off. Register it there when that sign-off is given.
