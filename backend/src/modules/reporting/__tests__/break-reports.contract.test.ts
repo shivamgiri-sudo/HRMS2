@@ -116,8 +116,22 @@ describe("break reports", () => {
     });
 
     it("filters on real break_sessions.status values", () => {
-      const literals = [...body.matchAll(/'([A-Z_]{4,})'/g)].map(m => m[1]);
-      const bogus = literals.filter(v => !BREAK_SESSION_STATUSES.has(v));
+      // Only literals actually compared against the status column count. Scanning every
+      // uppercase literal in the query swept up unrelated ones — the 'UNASSIGNED' marker
+      // the identity spine renders for an employee with no cost centre or process is a
+      // display value, not a break status, and has nothing to do with this check.
+      const comparisons = [
+        ...body.matchAll(/\bbs\.status\s*(?:=|<>|!=)\s*'([^']+)'/g),
+        ...body.matchAll(/\bbs\.status\s+(?:NOT\s+)?IN\s*\(([^)]*)\)/gi),
+      ];
+
+      const literals = comparisons.flatMap(m =>
+        [...m[1].matchAll(/'?([A-Za-z_][A-Za-z0-9_]*)'?/g)]
+          .map(x => x[1])
+          .filter(Boolean)
+      );
+
+      const bogus = [...new Set(literals)].filter(v => !BREAK_SESSION_STATUSES.has(v));
       expect(bogus, `not valid break_sessions.status values: ${bogus.join(", ")}`).toEqual([]);
     });
 
