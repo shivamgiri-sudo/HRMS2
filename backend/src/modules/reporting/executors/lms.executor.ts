@@ -63,8 +63,10 @@ export async function trainingCompletionStatus(
     SELECT e.id AS _cursor,
            e.employee_code,
            COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
+           COALESCE(sp_cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
+           COALESCE(sp_cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
            b.branch_name,
-           p.process_name,
+           COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
            llp.batch_no,
            llp.batch_name,
            -- course_completion_pct, mcq_pass_status, attendance_pct,
@@ -88,6 +90,7 @@ export async function trainingCompletionStatus(
               = e.employee_code   COLLATE utf8mb4_unicode_ci
       LEFT JOIN branch_master b          ON b.id = e.branch_id
       LEFT JOIN process_master p         ON p.id = e.process_id
+      LEFT JOIN cost_centre_master sp_cc ON sp_cc.id = e.cost_centre_id
      WHERE ${clauses.join(" AND ")}
      ORDER BY e.id ASC`;
 

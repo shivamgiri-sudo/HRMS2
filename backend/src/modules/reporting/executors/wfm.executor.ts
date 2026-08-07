@@ -1,4 +1,4 @@
-/**
+﻿/**
  * WFM (Workforce Management) executor
  *
  * Codes: roster-published, roster-variance, shift-swap-register, week-off-calendar
@@ -73,6 +73,7 @@ export async function rosterPublished(
       LEFT JOIN wfm_shift_master ws ON ws.id = wra.shift_id
       LEFT JOIN branch_master b     ON b.id  = e.branch_id
       LEFT JOIN process_master p    ON p.id  = e.process_id
+      LEFT JOIN cost_centre_master sp_cc ON sp_cc.id = e.cost_centre_id
      WHERE ${clauses.join(" AND ")}
      ORDER BY wra.id ASC`;
 
@@ -131,6 +132,7 @@ export async function rosterVariance(
             AND adr.record_date = wra.roster_date
       LEFT JOIN branch_master b       ON b.id  = e.branch_id
       LEFT JOIN process_master p      ON p.id  = e.process_id
+      LEFT JOIN cost_centre_master sp_cc ON sp_cc.id = e.cost_centre_id
      WHERE ${clauses.join(" AND ")}
      ORDER BY wra.id ASC`;
 
@@ -159,7 +161,7 @@ export async function shiftSwapRegister(
   const clauses: string[] = ["e_req.id IS NOT NULL"];
   const params: unknown[]  = [];
 
-  // Manual scope via requester employee — standard alias "e" not available here
+  // Manual scope via requester employee â€” standard alias "e" not available here
   if (scope.branchScope.mode === "none") throw new ReportScopeAccessDeniedError("branchScope");
   if (scope.branchScope.mode === "restricted" && scope.branchScope.ids.length > 0) {
     clauses.push(`e_req.branch_id IN (${scope.branchScope.ids.map(() => "?").join(",")})`);
@@ -183,7 +185,7 @@ export async function shiftSwapRegister(
   }
 
   // The live table is wfm_roster_swap_request. This query previously named
-  // wfm_shift_swap_request, which has never existed in mas_hrms — and the catch below
+  // wfm_shift_swap_request, which has never existed in mas_hrms â€” and the catch below
   // swallowed ER_NO_SUCH_TABLE into an empty result, so the report showed "no swap
   // requests" instead of failing. Verified against the live schema on 2026-08-07.
   //
@@ -211,6 +213,7 @@ export async function shiftSwapRegister(
       LEFT JOIN employees e_rev      ON e_rev.id = ssr.reviewed_by
       LEFT JOIN branch_master b      ON b.id     = e_req.branch_id
       LEFT JOIN process_master p     ON p.id     = e_req.process_id
+      LEFT JOIN cost_centre_master sp_cc ON sp_cc.id = e_req.cost_centre_id
      WHERE ${clauses.join(" AND ")}
      ORDER BY ssr.id ASC`;
 
@@ -262,6 +265,7 @@ export async function weekOffCalendar(
       LEFT JOIN wfm_shift_master ws ON ws.id = wra.shift_id
       LEFT JOIN branch_master b     ON b.id  = e.branch_id
       LEFT JOIN process_master p    ON p.id  = e.process_id
+      LEFT JOIN cost_centre_master sp_cc ON sp_cc.id = e.cost_centre_id
      WHERE ${clauses.join(" AND ")}
      ORDER BY wra.id ASC`;
 
