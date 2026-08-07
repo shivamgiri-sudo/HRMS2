@@ -143,7 +143,13 @@ export async function getOwnerWorkload() {
        LEFT JOIN auth_user u ON u.id = t.assigned_to
        LEFT JOIN employees emp_ow ON emp_ow.user_id = u.id
       WHERE t.created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)
-      GROUP BY t.assigned_to
+      -- owner_name must be grouped too. It is built from emp_ow.full_name and u.email, which
+      -- MySQL cannot prove are functionally dependent on t.assigned_to across those LEFT JOINs,
+      -- so under only_full_group_by (this server's mode) the whole statement was rejected and
+      -- /api/helpdesk/command-center returned success:false — the Support Command Centre could
+      -- not load at all. Grouping by the alias matches helpdesk.service.ts's ownerWorkload,
+      -- which has always done it this way and works.
+      GROUP BY t.assigned_to, owner_name
       ORDER BY open DESC
       LIMIT 50`
   );
