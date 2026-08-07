@@ -224,7 +224,7 @@ export default function NativeAuditLog() {
   };
 
   return (
-    <DashboardLayout pageTitle="Audit Log">
+    <DashboardLayout>
       <div className="space-y-5">
 
         {/* Stats summary bar */}

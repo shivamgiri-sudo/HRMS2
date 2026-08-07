@@ -112,6 +112,8 @@ interface Designation {
   name?: string;
   grade?: string;
   status?: string;
+  /** designation_master.active_status, TINYINT NOT NULL DEFAULT 1 — always present on the row. */
+  active_status?: number;
 }
 
 interface GradeBand {
@@ -287,8 +289,8 @@ function SalarySlabsTab() {
                   <TableCell>{s.label}</TableCell>
                   <TableCell>{s.seq_order}</TableCell>
                   <TableCell>
-                    <Badge variant={(s as any).active_status === 1 || s.status === "active" ? "default" : "secondary"}>
-                      {(s as any).active_status === 1 || s.status === "active" ? "Active" : "Inactive"}
+                    <Badge variant={s.active_status === 1 ? "default" : "secondary"}>
+                      {s.active_status === 1 ? "Active" : "Inactive"}
                     </Badge>
                   </TableCell>
                   <TableCell className="text-right">

@@ -13,14 +13,18 @@ interface ToastInput {
   variant?: ToastVariant;
   duration?: number;
   action?: { label: string; onClick: () => void };
+  /** Forwarded to sonner. Callers were already passing this to tint success toasts; the shim
+   *  dropped it silently, so the styling never applied. */
+  className?: string;
 }
 
-function toast({ title, description, variant, duration, action }: ToastInput) {
+function toast({ title, description, variant, duration, action, className }: ToastInput) {
   const message = title ?? "";
   const opts = {
     description,
     duration: duration ?? 4000,
     action,
+    className,
   };
   if (variant === "destructive") {
     sonnerToast.error(message, opts);

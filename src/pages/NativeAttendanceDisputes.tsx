@@ -62,6 +62,9 @@ interface Dispute {
   dispute_type: string | null;
   old_status: string | null;
   new_status: string | null;
+  /** Selected by attendance.dispute.routes.ts and used as the fallback label below when
+   *  new_status is null. Declared there as string | null; it was simply missing here. */
+  requested_status: string | null;
   old_punch_in: string | null;
   old_punch_out: string | null;
   new_punch_in: string | null;
@@ -420,7 +423,7 @@ export default function NativeAttendanceDisputes() {
   // ─── Render ────────────────────────────────────────────────────────────────
 
   return (
-    <DashboardLayout pageTitle="Attendance Disputes">
+    <DashboardLayout>
       <div className="space-y-6">
         {/* Header */}
         <div className="bg-gradient-to-br from-slate-800 via-slate-900 to-slate-800 rounded-2xl p-6 text-white">

@@ -48,14 +48,16 @@ export default function DisbursalManagement() {
 
   const { data: runsData } = useQuery<{ data: PayrollRun[] }>({
     queryKey: ["payroll-runs-list"],
-    queryFn: () => hrmsApi.get<{ data: PayrollRun[] }>("/api/payroll/runs?limit=50").then((r) => r.data),
+    // The useQuery generic and the consumers below both want the envelope; unwrapping here as
+    // well left runsData.data undefined, so the run dropdown was always empty.
+    queryFn: () => hrmsApi.get<{ data: PayrollRun[] }>("/api/payroll/runs?limit=50"),
   });
   const runs = runsData?.data ?? [];
 
   const { data: disbData, isLoading: disbLoading } = useQuery<{ data: DisbursalRow[] }>({
     queryKey: ["disbursal", selectedRunId],
     queryFn: () =>
-      hrmsApi.get<{ data: DisbursalRow[] }>(`/api/payroll/runs/${selectedRunId}/disbursal`).then((r) => r.data),
+      hrmsApi.get<{ data: DisbursalRow[] }>(`/api/payroll/runs/${selectedRunId}/disbursal`),
     enabled: !!selectedRunId,
   });
   const disbRows = disbData?.data ?? [];

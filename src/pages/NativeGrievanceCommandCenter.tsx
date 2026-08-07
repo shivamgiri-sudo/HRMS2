@@ -171,8 +171,8 @@ export default function NativeGrievanceCommandCenter() {
         hrmsApi.get<{ data: GrievanceDetail }>(`/api/helpdesk/grievances/${g.id}`),
         hrmsApi.get<{ data: TimelineEntry[] }>(`/api/helpdesk/grievances/${g.id}/timeline`),
       ]);
-      if (detailRes.status === "fulfilled") setSelected(detailRes.value.data?.data ?? null);
-      if (timelineRes.status === "fulfilled") setTimeline(timelineRes.value.data?.data ?? []);
+      if (detailRes.status === "fulfilled") setSelected(detailRes.value.data ?? null);
+      if (timelineRes.status === "fulfilled") setTimeline(timelineRes.value.data ?? []);
     } catch (e: any) {
       setActionMsg("Failed to load grievance detail");
     } finally {
@@ -194,8 +194,8 @@ export default function NativeGrievanceCommandCenter() {
         hrmsApi.get<{ data: GrievanceDetail }>(`/api/helpdesk/grievances/${selected.id}`),
         hrmsApi.get<{ data: TimelineEntry[] }>(`/api/helpdesk/grievances/${selected.id}/timeline`),
       ]);
-      if (detailRes.status === "fulfilled") setSelected(detailRes.value.data?.data ?? null);
-      if (timelineRes.status === "fulfilled") setTimeline(timelineRes.value.data?.data ?? []);
+      if (detailRes.status === "fulfilled") setSelected(detailRes.value.data ?? null);
+      if (timelineRes.status === "fulfilled") setTimeline(timelineRes.value.data ?? []);
     } catch (e: any) {
       setActionMsg(e.message ?? `${action} failed`);
     } finally {
