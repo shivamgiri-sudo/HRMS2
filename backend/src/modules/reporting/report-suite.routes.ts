@@ -1435,15 +1435,34 @@ reportSuiteRouter.get("/:code", reportScopeMiddleware, reportCatalogAccessMiddle
     }
 
     case "uan-master-register":
+      // Two rival sources for one fact, and this read the dead one. employee_uan exists but
+      // holds 0 rows, so the INNER JOIN eliminated every employee and the register returned
+      // nothing — indistinguishable from "no one has a UAN". The live data is on
+      // employees.uan_number: 467 of the 1,125 active employees have one.
+      //
+      // Driven off employees with a LEFT JOIN to employee_uan, so the register works today
+      // and automatically picks up member_id / epf_join_date if that table is ever populated.
+      // uan_source names which one answered, so this cannot silently regress the same way.
       addScopedEmployeeFilters(req, clauses, params);
-      clauses.push("e.active_status = 1", "eu.uan IS NOT NULL");
+      clauses.push(
+        "e.active_status = 1",
+        "COALESCE(NULLIF(TRIM(eu.uan), ''), NULLIF(TRIM(e.uan_number), '')) IS NOT NULL",
+      );
       sql = `SELECT e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-                    eu.uan, e.epf_number, eu.member_id AS pf_member_id,
+                    COALESCE(NULLIF(TRIM(eu.uan), ''), NULLIF(TRIM(e.uan_number), '')) AS uan,
+                    CASE WHEN NULLIF(TRIM(eu.uan), '') IS NOT NULL THEN 'employee_uan'
+                         ELSE 'employees.uan_number' END AS uan_source,
+                    e.epf_number, eu.member_id AS pf_member_id,
                     e.date_of_joining AS pf_joining_date, e.date_of_birth, e.gender,
-                    b.branch_name
+                    b.branch_name,
+                    COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
+                    COALESCE(cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
+                    COALESCE(cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name
                FROM employees e
-               JOIN employee_uan eu ON eu.employee_id = e.id AND eu.is_active = 1
+               LEFT JOIN employee_uan eu ON eu.employee_id = e.id AND eu.is_active = 1
                LEFT JOIN branch_master b ON b.id = e.branch_id
+               LEFT JOIN process_master p ON p.id = e.process_id
+               LEFT JOIN cost_centre_master cc ON cc.id = e.cost_centre_id
               WHERE ${clauses.join(" AND ")}
               ORDER BY employee_name`;
       break;

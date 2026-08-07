@@ -527,7 +527,16 @@ export async function investmentDeclarationStatus(
   const params: unknown[] = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
-  clauses.push("id_decl.financial_year = ?");
+  // tax_declaration.financial_year is not written in one format. Live counts: '2025-26' has
+  // 1,531 rows, '2025-2026' has 1, '2026-2027' has 1. currentFinancialYear() produces the
+  // short form ('2026-27'), so an equality match found nothing at all and the report returned
+  // 0 rows against 1,533 declarations on file.
+  //
+  // A financial year is uniquely identified by its start year, so both sides are compared on
+  // that alone. This matches every format present instead of picking one and silently
+  // excluding the rest — normalising the stored values would be a data migration, which is
+  // not this report's call to make.
+  clauses.push("LEFT(id_decl.financial_year, 4) = LEFT(?, 4)");
   params.push(fy);
 
   if (options.mode === "worker" && options.cursor != null) {
