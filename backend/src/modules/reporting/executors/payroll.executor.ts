@@ -621,3 +621,119 @@ export async function ytdSalarySummary(
   const rows  = await query(sql, params) as Record<string, unknown>[];
   return { rows, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > rows.length };
 }
+
+// ---------------------------------------------------------------------------
+// lwp-deduction-register
+//
+// Folded in from an inline `case` block. Behaviour preserved: one row per employee per
+// run month where lwp_days > 0, MAX() over the line values because an employee can hold
+// more than one line in a run. Gains cost centre.
+// ---------------------------------------------------------------------------
+export async function lwpDeductionRegister(
+  filters: ExecFilters,
+  scope: ExecScope,
+  options: ExecOptions
+): Promise<ExecResult> {
+  const runMonth = monthParam(filters.month);
+
+  const clauses: string[] = ["e.id IS NOT NULL"];
+  const params: unknown[] = [];
+  appendScopeConditions(scope, clauses, params);
+  appendFilterConditions(filters, clauses, params);
+  clauses.push("spr.run_month = ?");
+  params.push(runMonth);
+  clauses.push("LOWER(COALESCE(spr.status,'')) NOT IN ('draft','cancelled')");
+  clauses.push("spl.lwp_days > 0");
+
+  const base = `
+    SELECT e.employee_code,
+           COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
+           COALESCE(sp_cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
+           COALESCE(sp_cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
+           b.branch_name,
+           COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
+           spr.run_month,
+           MAX(spl.lwp_days) AS lwp_days,
+           MAX(spl.lwp_deduction) AS lwp_deduction_amount,
+           MAX(spl.gross_salary) AS gross_salary,
+           MAX(spl.net_salary) AS net_salary
+      FROM salary_prep_line spl
+      JOIN salary_prep_run spr ON spr.id = spl.run_id
+      JOIN employees e ON e.id = spl.employee_id
+      LEFT JOIN branch_master b ON b.id = e.branch_id
+      LEFT JOIN process_master p ON p.id = e.process_id
+      LEFT JOIN cost_centre_master sp_cc ON sp_cc.id = e.cost_centre_id
+     WHERE ${clauses.join(" AND ")}
+     -- ONLY_FULL_GROUP_BY: cost centre columns belong here as well as in the SELECT.
+     GROUP BY e.id, e.employee_code, e.full_name, e.first_name, e.last_name, spr.run_month,
+              b.branch_name, p.process_name, sp_cc.cost_centre_code, sp_cc.cost_centre_name
+     ORDER BY lwp_days DESC`;
+
+  const total = options.includeTotal ? await count(base, params) : 0;
+  const sql   = applyPagination(base, options);
+  const rows  = await query(sql, params) as Record<string, unknown>[];
+  return { rows, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > rows.length };
+}
+
+// ---------------------------------------------------------------------------
+// neft-transfer-file
+//
+// Folded in from an inline `case` block, behaviour preserved.
+//
+// CAST(ebd.account_number AS CHAR) is load-bearing and must stay: the column is varbinary,
+// so without the cast it reaches JSON as a Buffer and the account number is unusable in
+// the payout file. Account numbers are also deliberately NOT masked here — this is the
+// file a bank is paid from, and a masked account number would make it worthless. The
+// report is highly_restricted and gated on exportRoles instead, which is the right
+// control for a payout instruction.
+// ---------------------------------------------------------------------------
+export async function neftTransferFile(
+  filters: ExecFilters,
+  scope: ExecScope,
+  options: ExecOptions
+): Promise<ExecResult> {
+  const runMonth = monthParam(filters.month);
+
+  const clauses: string[] = ["e.id IS NOT NULL"];
+  const params: unknown[] = [];
+  appendScopeConditions(scope, clauses, params);
+  appendFilterConditions(filters, clauses, params);
+  clauses.push("spr.run_month = ?");
+  params.push(runMonth);
+  clauses.push("LOWER(COALESCE(spr.status,'')) NOT IN ('draft','cancelled')");
+  clauses.push("spl.net_salary > 0");
+
+  const base = `
+    SELECT e.employee_code,
+           COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
+           COALESCE(sp_cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
+           COALESCE(sp_cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
+           b.branch_name,
+           COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
+           ebd.bank_name,
+           CAST(ebd.account_number AS CHAR) AS account_number,
+           ebd.ifsc_code,
+           ebd.account_holder_name,
+           ebd.account_type,
+           MAX(spl.net_salary) AS transfer_amount,
+           spr.run_month
+      FROM salary_prep_line spl
+      JOIN salary_prep_run spr ON spr.id = spl.run_id
+      JOIN employees e ON e.id = spl.employee_id
+      LEFT JOIN branch_master b ON b.id = e.branch_id
+      LEFT JOIN process_master p ON p.id = e.process_id
+      LEFT JOIN cost_centre_master sp_cc ON sp_cc.id = e.cost_centre_id
+      LEFT JOIN employee_bank_detail ebd
+             ON ebd.employee_id = e.id AND ebd.is_primary = 1 AND ebd.active_status = 1
+     WHERE ${clauses.join(" AND ")}
+     GROUP BY e.id, e.employee_code, e.full_name, e.first_name, e.last_name,
+              b.branch_name, p.process_name, ebd.bank_name, ebd.account_number,
+              ebd.ifsc_code, ebd.account_holder_name, ebd.account_type, spr.run_month,
+              sp_cc.cost_centre_code, sp_cc.cost_centre_name
+     ORDER BY ebd.bank_name, employee_name`;
+
+  const total = options.includeTotal ? await count(base, params) : 0;
+  const sql   = applyPagination(base, options);
+  const rows  = await query(sql, params) as Record<string, unknown>[];
+  return { rows, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > rows.length };
+}

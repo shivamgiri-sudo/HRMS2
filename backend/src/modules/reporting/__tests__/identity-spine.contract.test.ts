@@ -168,8 +168,6 @@ describe("mandatory identity columns on employee-grain reports", () => {
    * preview, its direct XLSX and its emailed XLSX can each run a different query.
    */
   const NOT_YET_MIGRATED = new Set<string>([
-    "lwp-deduction-register",
-    "neft-transfer-file",
     "payslip-status",
     // Served by inline case blocks in report-suite.routes.ts, not by an executor â€” they
     // migrate when Phase 3 collapses those into executors.

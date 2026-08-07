@@ -79,6 +79,8 @@ import {
   arrearPaymentRegister,
   payrollCostSummary,
   ytdSalarySummary,
+  lwpDeductionRegister,
+  neftTransferFile,
 } from "./payroll.executor.js";
 
 // â”€â”€â”€ Statutory â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -232,6 +234,8 @@ export const EXECUTOR_MAP: Record<string, ExecutorFn> = {
   "arrear-payment-register":   arrearPaymentRegister,
   "payroll-cost-summary":      payrollCostSummary,
   "ytd-salary-summary":       ytdSalarySummary,
+  "lwp-deduction-register":   lwpDeductionRegister,
+  "neft-transfer-file":       neftTransferFile,
 
   // Statutory
   "pf-contribution-register":  pfContributionRegister,

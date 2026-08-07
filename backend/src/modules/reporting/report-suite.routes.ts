@@ -1384,26 +1384,9 @@ reportSuiteRouter.get("/:code", reportScopeMiddleware, reportCatalogAccessMiddle
               ORDER BY sal.advance_date DESC`;
       break;
 
-    case "lwp-deduction-register": {
-      const month = monthParam(req.query.month);
-      addScopedEmployeeFilters(req, clauses, params);
-      clauses.push("spr.run_month = ?"); params.push(month);
-      clauses.push("LOWER(COALESCE(spr.status,'')) NOT IN ('draft','cancelled')");
-      sql = `SELECT e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-                    spr.run_month, MAX(spl.lwp_days) AS lwp_days,
-                    MAX(spl.lwp_deduction) AS lwp_deduction_amount,
-                    MAX(spl.gross_salary) AS gross_salary, MAX(spl.net_salary) AS net_salary,
-                    b.branch_name, p.process_name
-               FROM salary_prep_line spl
-               JOIN salary_prep_run spr ON spr.id = spl.run_id
-               JOIN employees e ON e.id = spl.employee_id
-               LEFT JOIN branch_master b ON b.id = e.branch_id
-               LEFT JOIN process_master p ON p.id = e.process_id
-              WHERE ${clauses.join(" AND ")} AND spl.lwp_days > 0
-              GROUP BY e.id, e.employee_code, e.full_name, e.first_name, e.last_name, spr.run_month, b.branch_name, p.process_name
-              ORDER BY lwp_days DESC`;
-      break;
-    }
+    // "lwp-deduction-register" now falls through to the default branch, which calls
+    // executeReport() — the single implementation shared by screen, direct XLSX and
+    // emailed file. See executors/payroll.executor.ts.
 
     case "bank-change-requests":
       addScopedEmployeeFilters(req, clauses, params);
@@ -1471,29 +1454,9 @@ reportSuiteRouter.get("/:code", reportScopeMiddleware, reportCatalogAccessMiddle
       break;
     }
 
-    case "neft-transfer-file": {
-      const month = monthParam(req.query.month);
-      addScopedEmployeeFilters(req, clauses, params);
-      clauses.push("spr.run_month = ?"); params.push(month);
-      clauses.push("LOWER(COALESCE(spr.status,'')) NOT IN ('draft','cancelled')");
-      clauses.push("spl.net_salary > 0");
-      sql = `SELECT e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-                    b.branch_name, p.process_name,
-                    ebd.bank_name, CAST(ebd.account_number AS CHAR) AS account_number, ebd.ifsc_code, ebd.account_holder_name, ebd.account_type,
-                    MAX(spl.net_salary) AS transfer_amount, spr.run_month
-               FROM salary_prep_line spl
-               JOIN salary_prep_run spr ON spr.id = spl.run_id
-               JOIN employees e ON e.id = spl.employee_id
-               LEFT JOIN branch_master b ON b.id = e.branch_id
-               LEFT JOIN process_master p ON p.id = e.process_id
-               LEFT JOIN employee_bank_detail ebd ON ebd.employee_id = e.id AND ebd.is_primary = 1 AND ebd.active_status = 1
-              WHERE ${clauses.join(" AND ")}
-              GROUP BY e.id, e.employee_code, e.full_name, e.first_name, e.last_name,
-                       b.branch_name, p.process_name, ebd.bank_name, ebd.account_number,
-                       ebd.ifsc_code, ebd.account_holder_name, ebd.account_type, spr.run_month
-              ORDER BY ebd.bank_name, employee_name`;
-      break;
-    }
+    // "neft-transfer-file" now falls through to the default branch, which calls
+    // executeReport() — the single implementation shared by screen, direct XLSX and
+    // emailed file. See executors/payroll.executor.ts.
 
     // ─── A5: Statutory ────────────────────────────────────────────────────────
     case "pf-ecr-export": {
