@@ -1,8 +1,9 @@
-import { FileCheck2, FileClock, FileText, GitBranch, Search } from "lucide-react";
+import { FileCheck2, FileClock, FileText, GitBranch, Search, Wallet } from "lucide-react";
 import { Link } from "react-router-dom";
 import { BudgetLinkedGrnForm } from "@/components/finance/grn/BudgetLinkedGrnForm";
 import { GrnHistoryTable } from "@/components/finance/grn/GrnHistoryTable";
 import { GrnSearchWorkspace } from "@/components/finance/grn/GrnSearchWorkspace";
+import { ImprestApprovalQueue } from "@/components/finance/grn/ImprestApprovalQueue";
 import { GrnLobAttributionQueue } from "@/components/finance/grn/GrnLobAttributionQueue";
 import { SmartGrnApprovalQueue } from "@/components/finance/grn/SmartGrnApprovalQueue";
 import { money } from "@/components/finance/grn/grn-format";
@@ -98,6 +99,11 @@ export default function NativeGRNManagement() {
                   {queueCount ? <span className={GRN_TAB_COUNT}>{queueCount}</span> : null}
                 </TabsTrigger>
               )}
+              {canReview && (
+                <TabsTrigger value="imprest" className={GRN_TAB_TRIGGER}>
+                  <Wallet className="h-3.5 w-3.5" />Imprest
+                </TabsTrigger>
+              )}
               <TabsTrigger value="search" className={GRN_TAB_TRIGGER}>
                 <Search className="h-3.5 w-3.5" />Search
               </TabsTrigger>
@@ -120,6 +126,13 @@ export default function NativeGRNManagement() {
           )}
           {/* Search sits beside History rather than replacing it: History is a status-chip
               view of recent activity, Search answers a specific question about any GRN. */}
+          {/* Separate from the general approval queue: an imprest voucher is reviewed against a
+              float balance and a proof, not against an invoice, so it needs its own columns. */}
+          {canReview && (
+            <TabsContent value="imprest" className="mt-4">
+              <ImprestApprovalQueue />
+            </TabsContent>
+          )}
           <TabsContent value="search" className="mt-4">
             <GrnSearchWorkspace />
           </TabsContent>

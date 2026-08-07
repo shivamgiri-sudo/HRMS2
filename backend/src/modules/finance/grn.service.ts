@@ -1,6 +1,7 @@
 import { randomUUID } from "crypto";
 import type { ResultSetHeader, RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
+import { resolvePendingWith } from "./finance-workflow-role.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
 import { recordFinanceApprovalEvent } from "../../shared/financeApprovalEvent.js";
 import {
@@ -830,7 +831,7 @@ export const grnService = {
     );
 
     return {
-      data: rows,
+      data: (rows as RowDataPacket[]).map(decorateGrnPendency),
       total: Number(countRows[0]?.total ?? 0),
       page,
       limit,
@@ -1157,3 +1158,37 @@ export const grnService = {
     });
   },
 };
+
+
+/**
+ * Adds the pendency fields the approval queue renders (Requirement 10).
+ *
+ * Derived, never stored. Pending-with is a pure function of status, so a column would be a
+ * second source of truth free to drift from the status it describes.
+ *
+ * Ageing counts time in the CURRENT stage, not since the GRN was raised. Measuring from
+ * creation buries a fast Finance turnaround inside a slow Branch Head one, which is the
+ * opposite of what a pendency queue is for.
+ */
+function decorateGrnPendency(row: RowDataPacket): RowDataPacket {
+  const status = String(row.status ?? "");
+  const pending = resolvePendingWith(status, "grn");
+
+  // The clock restarts at each hand-off, so it reads from the most recent one.
+  const stageStartedAt =
+    row.branch_head_reviewed_at ?? row.submitted_at ?? row.created_at ?? null;
+  const ageDays =
+    pending.isPending && stageStartedAt
+      ? Math.max(0, Math.floor((Date.now() - new Date(String(stageStartedAt)).getTime()) / 86_400_000))
+      : null;
+
+  return {
+    ...row,
+    pending_with_role: pending.role,
+    pending_with: pending.label,
+    is_pending: pending.isPending,
+    pending_since: pending.isPending ? stageStartedAt : null,
+    ageing_days: ageDays,
+    age_bucket: ageDays === null ? null : ageDays <= 2 ? "0-2" : ageDays <= 7 ? "3-7" : "7+",
+  } as RowDataPacket;
+}
