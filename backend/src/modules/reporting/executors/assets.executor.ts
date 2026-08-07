@@ -253,6 +253,19 @@ export async function assetMovementLog(
 // Requires migration 415 (adds expiry_date to employee_documents).
 // Returns gracefully if column not yet added.
 // ---------------------------------------------------------------------------
+/**
+ * Document expiry tracker.
+ *
+ * Structurally empty against live data. Measured 2026-08-07: employee_documents holds
+ * 207,616 rows across 22,672 employees and **not one** has expiry_date set, so the
+ * `ed.expiry_date IS NOT NULL` filter below matches nothing and this report returns zero
+ * rows no matter what is asked of it.
+ *
+ * The query is correct — the column is simply never populated on ingest. Recorded here so
+ * the empty grid reads as a known data gap rather than a broken report, and so nobody
+ * re-debugs the SQL looking for a fault that is not in it. Fixing this means populating
+ * expiry_date upstream, not changing anything below.
+ */
 export async function documentExpiryTracker(
   filters: ExecFilters,
   scope: ExecScope,
@@ -298,11 +311,15 @@ export async function documentExpiryTracker(
            CASE WHEN ed.expiry_date < CURDATE() THEN 'expired'
                 WHEN ed.expiry_date <= DATE_ADD(CURDATE(), INTERVAL 30 DAY) THEN 'critical'
                 ELSE 'expiring_soon' END AS expiry_status,
-           b.branch_name, p.process_name
+           COALESCE(sp_cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
+           COALESCE(sp_cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
+           b.branch_name,
+           COALESCE(p.process_name, 'UNASSIGNED') AS process_name
       FROM employee_documents ed
       JOIN employees e           ON e.id = ed.employee_id
       LEFT JOIN branch_master b  ON b.id = e.branch_id
       LEFT JOIN process_master p ON p.id = e.process_id
+      LEFT JOIN cost_centre_master sp_cc ON sp_cc.id = e.cost_centre_id
      WHERE ${clauses.join(" AND ")}
      ORDER BY ed.expiry_date ASC, ed.id ASC`;
 

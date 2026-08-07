@@ -145,19 +145,22 @@ describe("mandatory identity columns on employee-grain reports", () => {
     (SYNONYMS[fact] ?? [fact]).some(k => keys.includes(k));
 
   /**
-   * Reports not yet migrated to the spine. This list may only ever shrink â€” it is the
-   * remaining Phase 2 work made explicit, not a permanent exemption. Delete an entry as
-   * its executor gains the spine.
+   * Reports not yet migrated to the spine. This list may only ever shrink — it is the
+   * remaining work made explicit, not a permanent exemption. Delete an entry as its
+   * executor gains the spine.
    *
-   * 59 employee-grain reports were short of the mandate when this test was written on
+   * 57 employee-grain reports were short of the mandate when this test was written on
    * 2026-08-07, against a catalog where only 2 of 115 reports carried all three facts.
+   *
+   * Every entry still listed is served by an inline `case` block in
+   * report-suite.routes.ts rather than by an executor. They are deliberately left until
+   * those blocks are folded into executors: adding the spine to SQL that is scheduled for
+   * deletion would be wasted, and would deepen the split where one report's on-screen
+   * preview, its direct XLSX and its emailed XLSX can each run a different query.
    */
   const NOT_YET_MIGRATED = new Set<string>([
     "certification-status",
-    "document-expiry-tracker",
     "document-verification-status",
-    "identity-source-snapshot",
-    "leave-allocation-register",
     "lwp-deduction-register",
     "missing-documents-report",
     "neft-transfer-file",

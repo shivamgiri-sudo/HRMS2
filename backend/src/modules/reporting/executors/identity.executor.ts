@@ -335,12 +335,15 @@ export async function identitySourceSnapshot(
              ris.source_name,
              ris.match_status,
              ris.captured_at,
+             COALESCE(sp_cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
+             COALESCE(sp_cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
              b.branch_name,
-             p.process_name
+             COALESCE(p.process_name, 'UNASSIGNED') AS process_name
         FROM report_identity_source_snapshot ris
         LEFT JOIN employees e          ON e.id  = ris.matched_employee_id
         LEFT JOIN branch_master b      ON b.id  = e.branch_id
         LEFT JOIN process_master p     ON p.id  = e.process_id
+        LEFT JOIN cost_centre_master sp_cc ON sp_cc.id = e.cost_centre_id
        WHERE ${clauses.join(" AND ")}
        ORDER BY ris.id ASC`;
 

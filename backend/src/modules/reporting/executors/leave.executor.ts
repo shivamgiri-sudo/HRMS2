@@ -226,12 +226,16 @@ export async function leaveAllocationRegister(
            COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
            lt.leave_name, lt.leave_code,
            la.balance_year, la.allocated_days, la.adjusted_days, la.used_days,
-           b.branch_name, p.process_name
+           COALESCE(sp_cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
+           COALESCE(sp_cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
+           b.branch_name,
+           COALESCE(p.process_name, 'UNASSIGNED') AS process_name
       FROM leave_balance_ledger la
       JOIN employees e           ON e.id  = la.employee_id
       JOIN leave_type_master lt  ON lt.id = la.leave_type_id
       LEFT JOIN branch_master b  ON b.id  = e.branch_id
       LEFT JOIN process_master p ON p.id  = e.process_id
+      LEFT JOIN cost_centre_master sp_cc ON sp_cc.id = e.cost_centre_id
      WHERE ${clauses.join(" AND ")}
      ORDER BY la.id ASC`;
 
