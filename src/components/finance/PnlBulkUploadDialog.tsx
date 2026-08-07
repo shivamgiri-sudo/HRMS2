@@ -339,11 +339,18 @@ export function PnlBulkUploadDialog({ open, onOpenChange, onSuccess }: Props) {
     if (parsedRows.length === 0) return;
     setSubmitting(true);
     try {
-      const res = await hrmsApi.post("/finance/pnl/bulk-upload", {
-        type: uploadType,
-        rows: parsedRows,
-      });
-      const data = res.data as { imported: number; errors: RowError[] };
+      /*
+       * The endpoint returns `imported` and `errors` at the TOP level of the body
+       * ({ success, imported, errors }), not nested under `data`. This read them as `res.data`,
+       * which is undefined — so the very next line would have thrown on `data.imported` had the
+       * request ever reached the server. It did not: the path was missing its /api prefix and hit
+       * the SPA fallback instead, so the throw was never observed.
+       */
+      const res = await hrmsApi.post<{ success: boolean; imported: number; errors: RowError[] }>(
+        "/api/finance/pnl/bulk-upload",
+        { type: uploadType, rows: parsedRows },
+      );
+      const data = { imported: res.imported ?? 0, errors: res.errors ?? [] };
       setResult(data);
       setStep("result");
       if (data.imported > 0) {

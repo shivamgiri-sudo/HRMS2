@@ -241,7 +241,7 @@ function ConfigField({
 function PolicyHistoryList({ domainKey }: { domainKey: string }) {
   const { data, isLoading } = useQuery({
     queryKey: ["policy-engine", "history", domainKey],
-    queryFn: () => hrmsApi.get(`/policy-engine/domains/${domainKey}/history`).then((r) => r.data.data as HistoryEntry[]),
+    queryFn: () => hrmsApi.get<{ data: HistoryEntry[] }>(`/api/policy-engine/domains/${domainKey}/history`).then((r) => r.data),
     enabled: !!domainKey,
   });
 
@@ -308,7 +308,7 @@ function PolicyEditSheet({
 
   const mutation = useMutation({
     mutationFn: (payload: { reason: string; updates: Array<{ section_key: string; config_key: string; new_value: string }> }) =>
-      hrmsApi.put(`/policy-engine/domains/${domain.domain_key}`, payload),
+      hrmsApi.put(`/api/policy-engine/domains/${domain.domain_key}`, payload),
     onSuccess: () => {
       toast({ title: "Policy updated", description: "Changes saved successfully." });
       queryClient.invalidateQueries({ queryKey: ["policy-engine"] });
@@ -443,7 +443,7 @@ function DomainContent({ domainKey }: { domainKey: string }) {
 
   const { data, isLoading, isError } = useQuery({
     queryKey: ["policy-engine", "domain", domainKey],
-    queryFn: () => hrmsApi.get(`/policy-engine/domains/${domainKey}`).then((r) => r.data.data as PolicyDomain),
+    queryFn: () => hrmsApi.get<{ data: PolicyDomain }>(`/api/policy-engine/domains/${domainKey}`).then((r) => r.data),
     enabled: !!domainKey,
   });
 
@@ -543,7 +543,7 @@ export default function NativePolicyEngine() {
 
   const { data: domains, isLoading } = useQuery({
     queryKey: ["policy-engine", "domains"],
-    queryFn: () => hrmsApi.get("/policy-engine/domains").then((r) => r.data.data as DomainSummary[]),
+    queryFn: () => hrmsApi.get<{ data: DomainSummary[] }>("/api/policy-engine/domains").then((r) => r.data),
   });
 
   return (

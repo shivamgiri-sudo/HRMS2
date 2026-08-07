@@ -93,7 +93,7 @@ export const OvertimeUpdateDialog = ({
     setLoading(true);
 
     try {
-      await hrmsApi.patch(`/payroll/lines/${lineId}/overtime`, {
+      await hrmsApi.patch(`/api/payroll/lines/${lineId}/overtime`, {
         overtimeHours: hours,
         overtimeAmount: amount,
       });
