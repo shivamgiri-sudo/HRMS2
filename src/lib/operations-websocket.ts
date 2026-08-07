@@ -5,7 +5,9 @@
  */
 
 export interface WebSocketMessage {
-  type: 'live-status' | 'roster-vs-actual' | 'attrition-risk' | 'error';
+  // 'connected' and 'disconnected' are emitted by connect() and disconnect() but were never
+  // listed, so emit() could not build a WebSocketMessage for its own lifecycle events.
+  type: 'live-status' | 'roster-vs-actual' | 'attrition-risk' | 'error' | 'connected' | 'disconnected';
   data: any;
   timestamp: string;
 }
@@ -13,7 +15,9 @@ export interface WebSocketMessage {
 type MessageHandler = (message: WebSocketMessage) => void;
 
 export class OperationsWebSocketClient {
-  private pollingInterval: NodeJS.Timer | null = null;
+  // ReturnType<typeof setInterval>, not NodeJS.Timer: this runs in the browser, where
+  // setInterval returns a number, and clearInterval below rejected the Node handle type.
+  private pollingInterval: ReturnType<typeof setInterval> | null = null;
   private url: string;
   private handlers: Map<string, MessageHandler[]> = new Map();
   private isManualClose = false;
@@ -95,7 +99,7 @@ export class OperationsWebSocketClient {
   /**
    * Emit only if data has changed (using hash)
    */
-  private emitIfChanged(type: string, data: any): void {
+  private emitIfChanged(type: WebSocketMessage['type'], data: any): void {
     const dataStr = JSON.stringify(data);
     const hash = this.hashString(dataStr);
 
@@ -161,7 +165,7 @@ export class OperationsWebSocketClient {
   /**
    * Private method to emit events to subscribers
    */
-  private emit(type: string, data: any): void {
+  private emit(type: WebSocketMessage['type'], data: any): void {
     const handlers = this.handlers.get(type) || [];
     handlers.forEach((handler) => {
       try {

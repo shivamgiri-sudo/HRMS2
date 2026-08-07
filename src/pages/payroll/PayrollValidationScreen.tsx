@@ -643,10 +643,9 @@ export default function PayrollValidationScreen() {
                           <TableCell className="whitespace-nowrap">
                             <div className="flex items-center gap-1">
                               {line.needs_recalculation === 1 && (
-                                <AlertTriangle
-                                  className="w-3.5 h-3.5 text-amber-500 shrink-0"
-                                  title="Needs recalculation"
-                                />
+                                <span title="Needs recalculation">
+                                  <AlertTriangle className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+                                </span>
                               )}
                               <span>{line.employee_name ?? "—"}</span>
                             </div>

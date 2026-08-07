@@ -106,7 +106,7 @@ export function AttendanceHubTable({
                 <p className="text-xs text-slate-400 font-mono">{emp.employee_code}</p>
               </div>
               {emp.has_anomaly && (
-                <AlertTriangle className="h-3.5 w-3.5 text-rose-500 shrink-0" title="Attendance anomaly" />
+                <span title="Attendance anomaly"><AlertTriangle className="h-3.5 w-3.5 text-rose-500 shrink-0" /></span>
               )}
             </div>
 

@@ -432,7 +432,9 @@ function WorkflowDefinitions() {
                       </span>
                     </td>
                     <td className="p-4">
-                      {wf.is_active !== false && wf.active !== false ? (
+                      {/* wf.active is not a field on WorkflowDefinition (it is aliased to is_active), so that
+                        operand was always undefined !== false, i.e. always true. */}
+                      {wf.is_active !== false ? (
                         <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700">
                           <CheckCircle2 className="h-3 w-3" /> Active
                         </span>

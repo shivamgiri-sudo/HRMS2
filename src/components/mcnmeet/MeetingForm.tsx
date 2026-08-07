@@ -59,7 +59,9 @@ export function MeetingForm({ onSuccess, onCancel, allowedMeetingTypes }: Props)
   const getOptionsForAudience = (type: AudienceType): { id: string; label: string }[] => {
     if (type === 'branch') return (branches ?? []).map(b => ({ id: b.id, label: (b as any).branch_name || b.name || b.id }));
     if (type === 'process') return (processes ?? []).map(p => ({ id: p.id, label: (p as any).process_name || p.name || p.id }));
-    if (type === 'lob') return (lobs ?? []).map(l => ({ id: l.id, label: (l as any).lob_name || l.name || l.id }));
+    // LOB declares lob_name, so the cast was unnecessary and the  fallback could never
+    // fire - the field does not exist on the type or in the payload.
+    if (type === 'lob') return (lobs ?? []).map(l => ({ id: l.id, label: l.lob_name || l.id }));
     if (type === 'designation') return (designations ?? []).map(d => ({ id: d.id, label: (d as any).designation_name || d.name || d.id }));
     return [];
   };

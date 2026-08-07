@@ -68,7 +68,9 @@ export function LeaveRequestForm({ employeeId }: LeaveRequestFormProps) {
     if (unpaidLeaveType) {
       allocated.push({
         id: unpaidLeaveType.id,
-        name: unpaidLeaveType.leave_name ?? unpaidLeaveType.name ?? "Unpaid Leave",
+        // No .name fallback: the leave type carries leave_name only, so that operand was
+        // always undefined.
+        name: unpaidLeaveType.leave_name ?? "Unpaid Leave",
         is_paid: false,
         days_per_year: 0,
         description: "Unlimited",

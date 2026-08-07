@@ -516,7 +516,7 @@ export default function SuperAdminModuleAccess() {
                     className="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
                   />
                   <button
-                    onClick={handleSearchEmployees}
+                    onClick={() => handleSearchEmployees()}
                     disabled={searchLoading || searchQuery.trim().length < 2}
                     className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:opacity-50"
                   >
