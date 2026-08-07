@@ -13,6 +13,7 @@ import {
 import { budgetConsumptionService } from "../process-pnl/budget-consumption.service.js";
 import { isPeriodLocked } from "../process-pnl/finance-period-lock.js";
 import { vendorPaymentService } from "./vendor-payment.service.js";
+import { grnPeriodAllocationService } from "./grn-period-allocation.service.js";
 
 export interface SmartAllocationInput {
   budgetLineId: string;
@@ -31,6 +32,10 @@ export interface SmartGrnInvoiceInput {
   otherCharges?: number;
   roundOffAmount?: number;
   declaredInvoiceTotal?: number;
+  /** Multi-month recognition (Req 5). Both NULL keeps the GRN single-month, which is what
+   *  every existing caller sends and what every historical row already is. */
+  recognitionStartPeriod?: string | null;
+  recognitionEndPeriod?: string | null;
   allocations: SmartAllocationInput[];
 }
 
@@ -57,6 +62,10 @@ export interface SmartGrnComponentSplitInput {
   vendorGstin?: string | null;
   placeOfSupply?: string | null;
   declaredInvoiceTotal: number;
+  /** Multi-month recognition (Req 5). Both NULL keeps the GRN single-month, which is what
+   *  every existing caller sends and what every historical row already is. */
+  recognitionStartPeriod?: string | null;
+  recognitionEndPeriod?: string | null;
   components: InvoiceComponentInput[];
   costCentreSplits: CostCentreSplitRowInput[];
 }
@@ -585,8 +594,8 @@ export const grnSmartService = {
         const allocation = input.allocations[index];
         if (!allocation?.budgetLineId) throw new Error(`Allocation ${index + 1}: budget line is required`);
         const line = await lockBudgetLine(connection, allocation.budgetLineId, String(grn.branch_id));
-        if (String(grn.bill_date).slice(0, 7) !== String(line.period_code)) {
-          throw new Error(`Allocation ${index + 1}: budget period ${line.period_code} does not match the invoice month`);
+        if (consumptionPeriodOf(grn) !== String(line.period_code)) {
+          throw new Error(`Allocation ${index + 1}: budget period ${line.period_code} does not match the accounting month`);
         }
         if (await isPeriodLocked(line.period_code)) {
           throw new Error(
@@ -743,8 +752,13 @@ export const grnSmartService = {
         ]
       );
 
+      // Recognition schedule last: it reads back the allocation rows just written, and being
+      // inside this transaction means a split that does not reconcile rolls the invoice back.
+      const periodSplit = await writePeriodSplits(connection, grnId, grn, input, actorUserId);
+
       await connection.commit();
       await writeAudit("ALLOCATIONS_SAVED", grnId, actorUserId, actorRole, {
+        recognition_months: periodSplit?.eligibleCount ?? 1,
         allocation_count: prepared.length,
         amount_without_tax: totalBase,
         tax_amount: totalTax,
@@ -819,8 +833,8 @@ export const grnSmartService = {
           throw new Error(`Cost centre ${index + 1}: split percentage must be greater than zero`);
         }
         const line = await lockBudgetLine(connection, split.budgetLineId, String(grn.branch_id));
-        if (String(grn.bill_date).slice(0, 7) !== String(line.period_code)) {
-          throw new Error(`Cost centre ${index + 1}: budget period ${line.period_code} does not match the invoice month`);
+        if (consumptionPeriodOf(grn) !== String(line.period_code)) {
+          throw new Error(`Cost centre ${index + 1}: budget period ${line.period_code} does not match the accounting month`);
         }
         if (await isPeriodLocked(line.period_code)) {
           throw new Error(
@@ -1086,8 +1100,13 @@ export const grnSmartService = {
         ]
       );
 
+      // Recognition schedule last: it reads back the allocation rows just written, and being
+      // inside this transaction means a split that does not reconcile rolls the invoice back.
+      const periodSplit = await writePeriodSplits(connection, grnId, grn, input, actorUserId);
+
       await connection.commit();
       await writeAudit("INVOICE_COMPONENTS_SAVED", grnId, actorUserId, actorRole, {
+        recognition_months: periodSplit?.eligibleCount ?? 1,
         component_count: components.length,
         cost_centre_count: resolvedSplits.length,
         amount_without_tax: rawTotalBase,
@@ -1497,6 +1516,18 @@ export const grnSmartService = {
           WHERE d.grn_request_id = ? ORDER BY d.confidence_score DESC`,
         [grnId]
       );
+      // Read on the same connection, so a workspace fetched mid-save cannot show allocations
+      // from before the split and period rows from after it.
+      const [periodAllocations] = await connection.execute<RowDataPacket[]>(
+        `SELECT p.id, p.cost_allocation_id, p.sequence_no, p.period_code,
+                p.recognition_amount, p.pnl_bucket, p.split_method,
+                a.cost_centre_id, a.process_id, a.pnl_cost_amount AS allocation_amount
+           FROM grn_period_allocation p
+           JOIN grn_cost_allocation a ON a.id = p.cost_allocation_id
+          WHERE p.grn_request_id = ?
+          ORDER BY a.sequence_no, p.sequence_no`,
+        [grnId]
+      );
       return {
         grn: grnRows[0],
         allocations,
@@ -1505,9 +1536,97 @@ export const grnSmartService = {
         extractions,
         validations,
         duplicates,
+        periodAllocations,
       };
     } finally {
       connection.release();
     }
   },
 };
+
+/**
+ * The month a GRN consumes budget in.
+ *
+ * Was `bill_date` alone, which made multi-month impossible: an annual policy dated 25-Mar-2026
+ * recognising from Apr-2026 was rejected outright because its bill month did not equal the
+ * budget line's period. bill_date is vendor-controlled; the accounting month is ours.
+ *
+ * Order is deliberate — accounting_period (what Finance booked it to), then
+ * recognition_start_period (where recognition begins), then bill_date. Every one of those is
+ * NULL on historical rows, so this returns exactly bill_date for them and behaviour is
+ * unchanged for every GRN raised before multi-month existed.
+ */
+function consumptionPeriodOf(grn: {
+  accounting_period?: unknown;
+  recognition_start_period?: unknown;
+  bill_date?: unknown;
+}): string {
+  const accounting = String(grn.accounting_period ?? "").trim();
+  if (/^\d{4}-\d{2}$/.test(accounting)) return accounting;
+  const recognition = String(grn.recognition_start_period ?? "").trim();
+  if (/^\d{4}-\d{2}$/.test(recognition)) return recognition;
+  return String(grn.bill_date ?? "").slice(0, 7);
+}
+
+/**
+ * Writes the multi-month recognition schedule for every cost allocation of a GRN.
+ *
+ * Runs after the allocation rows exist and inside the same transaction, so a split that fails
+ * to reconcile takes the whole invoice save down with it rather than leaving a GRN whose
+ * recognition does not sum to its cost.
+ *
+ * Each allocation is split independently against its OWN pnl_cost_amount: a 3-cost-centre
+ * invoice over 12 months is 36 rows, and each cost centre's twelve rows sum to that centre's
+ * share. Splitting the invoice total once and apportioning afterwards would round twice.
+ *
+ * With no recognition window the function clears any previous schedule and returns null — the
+ * GRN is single-month, exactly as before multi-month existed.
+ */
+async function writePeriodSplits(
+  connection: PoolConnection,
+  grnId: string,
+  grn: { accounting_period?: unknown; recognition_start_period?: unknown; bill_date?: unknown },
+  input: { recognitionStartPeriod?: string | null; recognitionEndPeriod?: string | null },
+  actorUserId: string,
+) {
+  const start = String(input.recognitionStartPeriod ?? "").trim();
+  const end = String(input.recognitionEndPeriod ?? "").trim();
+  if (!start && !end) {
+    // Re-saving a previously multi-month invoice as single-month must not leave the old
+    // schedule behind, or the P&L keeps recognising months the GRN no longer claims.
+    await connection.execute("DELETE FROM grn_period_allocation WHERE grn_request_id = ?", [grnId]);
+    await connection.execute(
+      `UPDATE grn_request
+          SET recognition_start_period = NULL, recognition_end_period = NULL,
+              period_allocation_mode = 'single', is_multi_month = 0
+        WHERE id = ?`,
+      [grnId],
+    );
+    return null;
+  }
+  if (!start || !end) {
+    throw new Error("A multi-month invoice needs both a first and a last recognition month");
+  }
+
+  const [rows] = await connection.execute<RowDataPacket[]>(
+    "SELECT id, pnl_cost_amount FROM grn_cost_allocation WHERE grn_request_id = ? ORDER BY sequence_no",
+    [grnId],
+  );
+  const accountingPeriod = consumptionPeriodOf(grn);
+  let summary: Awaited<ReturnType<typeof grnPeriodAllocationService.saveSplit>> | null = null;
+  for (const row of rows as RowDataPacket[]) {
+    summary = await grnPeriodAllocationService.saveSplit(
+      {
+        costAllocationId: String(row.id),
+        grnRequestId: grnId,
+        recognitionAmount: Number(row.pnl_cost_amount ?? 0),
+        accountingPeriod,
+        startPeriod: start,
+        endPeriod: end,
+        actorUserId,
+      },
+      connection,
+    );
+  }
+  return summary;
+}

@@ -58,6 +58,7 @@ import { hrmsApi } from "@/lib/hrmsApi";
 import { splitRupees, weightFor } from "@/lib/sharingWeights";
 import { cn } from "@/lib/utils";
 import { FieldRow, FormSection, StaticValue } from "./sections/form-primitives";
+import { MonthSplitPanel, type MonthSplitValue } from "./sections/MonthSplitPanel";
 
 /** Methods offered for GRN's auto-split, restricted to what's computable from a single batched
  *  driver fetch. "meter_wise" has no client formula (server-only). "grade_weighted_headcount"'s
@@ -341,6 +342,9 @@ export function BudgetLinkedGrnForm() {
   const [extractedFields, setExtractedFields] = useState<Record<string, any> | null>(null);
   const [showErrors, setShowErrors] = useState(false);
   const [vendorSearch, setVendorSearch] = useState("");
+  // Multi-month recognition (Req 5). Both blank keeps the GRN single-month, which is what it
+  // has always been and what every historical row already is.
+  const [monthSplit, setMonthSplit] = useState<MonthSplitValue>({ startPeriod: "", endPeriod: "" });
 
   const isVendor = form.grnType === "vendor";
   const period = form.billDate ? form.billDate.slice(0, 7) : "";
@@ -1008,6 +1012,8 @@ export function BudgetLinkedGrnForm() {
           vendorGstin: form.vendorGstin || undefined,
           placeOfSupply: form.placeOfSupply || undefined,
           declaredInvoiceTotal: Number(form.amount),
+          recognitionStartPeriod: monthSplit.startPeriod || undefined,
+          recognitionEndPeriod: monthSplit.endPeriod || undefined,
           components: invoiceComponents
             .filter((item) => Number(item.amountWithoutTax) > 0)
             .map((item) => ({
@@ -1026,6 +1032,8 @@ export function BudgetLinkedGrnForm() {
           // quantity, so the server's computed gross IS the invoice total and a
           // declared figure could only ever contradict it.
           declaredInvoiceTotal: splitMode ? Number(form.amount) : undefined,
+          recognitionStartPeriod: monthSplit.startPeriod || undefined,
+          recognitionEndPeriod: monthSplit.endPeriod || undefined,
           allocations: rows.map((item) => ({
             budgetLineId: item.budgetLineId,
             quantity: Number(item.quantity),
@@ -1456,6 +1464,16 @@ export function BudgetLinkedGrnForm() {
                 }}
               />
             </FieldRow>
+
+            {/* Directly under the bill date, because the financial year the schedule is clamped
+                to is derived from it — the two decisions are one decision. */}
+            <MonthSplitPanel
+              value={monthSplit}
+              onChange={setMonthSplit}
+              amount={Number(form.amount) || 0}
+              accountingPeriod={period}
+              disabled={locked}
+            />
 
             {isVendor && (
               <>
