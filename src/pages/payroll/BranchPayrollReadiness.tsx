@@ -54,6 +54,19 @@ import { hrmsApi } from "../../lib/hrmsApi";
 interface BranchReadiness {
   branch_id: string;
   branch_name: string;
+  /*
+   * Process scope and the process-manager sign-off. Present on the API row
+   * (payroll-branch-readiness.service.ts) and read throughout this page, but missing from this
+   * interface — so the page was already using fields it claimed did not exist. Types copied from
+   * the service rather than inferred: process_id is '' for the branch-level aggregate and a UUID
+   * when process-scoped, and the sign-off flag is 0/1, not a boolean.
+   */
+  process_id: string;
+  process_name: string;
+  process_manager_signoff: number;
+  process_manager_signoff_at: string | null;
+  process_manager_signoff_by: string | null;
+  process_manager_remarks: string | null;
   process_month: string;
   attendance_frozen: number;
   attendance_frozen_at: string | null;

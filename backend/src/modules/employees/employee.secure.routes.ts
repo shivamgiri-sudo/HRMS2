@@ -217,8 +217,16 @@ router.get("/options/search", h(async (req: any, res: any) => {
             COALESCE(NULLIF(TRIM(e.full_name), ''), TRIM(CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')))) AS name,
             e.first_name,
             e.last_name,
-            COALESCE(NULLIF(TRIM(e.full_name), ''), TRIM(CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')))) AS full_name
+            COALESCE(NULLIF(TRIM(e.full_name), ''), TRIM(CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')))) AS full_name,
+            -- The TopBar View As picker renders code, designation and branch, but this query
+            -- never selected the last two, so both were undefined and the labels
+            -- silently collapsed to just the code. LEFT JOINs, so an employee with
+            -- neither still matches.
+            d.designation_name,
+            b.branch_name
        FROM employees e
+       LEFT JOIN designation_master d ON d.id = e.designation_id
+       LEFT JOIN branch_master      b ON b.id = e.branch_id
       WHERE e.active_status = 1
         AND ((${scoped.sql})${selfClause})
         AND (

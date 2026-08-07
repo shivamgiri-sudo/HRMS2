@@ -257,7 +257,9 @@ const Leaves = () => {
       // Notify employee (fire and forget)
       hrmsApi.post("/api/communication/dispatch/send", {
         template_name: "leave_status",
-        recipient_employee_ids: [selectedRequest?.employeeId ?? selectedRequest?.employee_id].filter(Boolean) as string[],
+        // No snake_case fallback: the hook maps every row to `employeeId`, and `employee_id` was
+        // never a property of this type — it could only ever have been undefined.
+        recipient_employee_ids: [selectedRequest?.employeeId].filter(Boolean) as string[],
         data: {
           status,
           reviewer_name: reviewerName,
@@ -471,7 +473,9 @@ const Leaves = () => {
     doc.setFontSize(18);
     doc.text("Leave Requests Report", 14, 22);
     doc.setFontSize(10);
-    doc.text(`Generated on ${formatISTDate()}`, 14, 30);
+    // formatISTDate returns "" for a falsy argument, so calling it with none printed
+    // "Generated on" followed by nothing on every exported PDF.
+    doc.text(`Generated on ${formatISTDate(new Date())}`, 14, 30);
 
     if (startDate || endDate) {
       doc.text(

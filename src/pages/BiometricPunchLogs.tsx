@@ -70,10 +70,39 @@ export default function BiometricPunchLogs() {
 
   const isResolvingEmployee = !routeEmployeeId && selfEmployeeLoading;
 
-  const exportRows = useMemo(() => {
+  /*
+   * One row of the CSV export.
+   *
+   * Stated explicitly because the flatMap below returns from two branches — a placeholder row for
+   * a day with no punches, and one row per punch otherwise. The keys are identical, but the
+   * inferred value types are not (cosecIndex, deviceId and rawMinutes are numbers on the punch
+   * path and "" on the placeholder path), so TypeScript could not unify the branches and gave up,
+   * degrading exportRows to unknown[] and taking 17 property reads down with it.
+   */
+  type BiometricExportRow = {
+    date: string;
+    employeeCode: string;
+    employeeName: string;
+    biometricCode: string;
+    cosecUserId: string;
+    firstPunchIn: string;
+    lastPunchOut: string;
+    totalPunches: number;
+    rawMinutes: number | string;
+    attendanceStatus: string;
+    attendanceIn: string;
+    attendanceOut: string;
+    rawPunchTime: string;
+    ioLabel: string;
+    deviceId: number | string;
+    cosecIndex: number | string;
+    syncedAt: string;
+  };
+
+  const exportRows = useMemo<BiometricExportRow[]>(() => {
     if (!data) return [];
 
-    return data.days.flatMap((day) => {
+    return data.days.flatMap((day): BiometricExportRow[] => {
       if (day.rawPunches.length === 0) {
         return [{
           date: day.date,

@@ -23,6 +23,12 @@ export interface Employee {
   designation: string;
   joinDate: string;
   status: "active" | "inactive" | "onboarding" | "offboarded";
+  /**
+   * Set by the mapper below from the API's `profile_incomplete`, but never declared here — so
+   * every consumer that tried to read it was told the property did not exist, and the mapper
+   * itself failed to compile.
+   */
+  profileIncomplete: boolean;
 }
 
 export interface EmployeeWithDetails {
@@ -105,6 +111,9 @@ export interface EmployeeSearchOption {
   first_name?: string | null;
   last_name?: string | null;
   full_name?: string | null;
+  /** Optional because they come from LEFT JOINs — an employee may have neither set. */
+  designation_name?: string | null;
+  branch_name?: string | null;
 }
 
 interface DepartmentRow {

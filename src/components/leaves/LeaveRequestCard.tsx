@@ -6,27 +6,18 @@ import { Check, X, Calendar, Clock, UserCheck, RotateCcw } from "lucide-react";
 import { StatusBadge, normalizeStatus } from "@/components/ui/status-badge";
 import { formatDate, formatDateTime } from "@/lib/utils";
 
-export interface LeaveRequest {
-  id: string;
-  employeeId?: string;
-  employee: {
-    name: string;
-    avatar?: string;
-    department: string;
-  };
-  type: string;
-  startDate: string;
-  endDate: string;
-  days: number;
-  reason: string;
-  status: "pending" | "approved" | "rejected" | "cancelled" | "discarded";
-  submittedAt?: string;
-  reviewedBy?: {
-    name: string;
-  };
-  reviewedAt?: string;
-  reviewNotes?: string;
-}
+/*
+ * One LeaveRequest, defined where the data comes from.
+ *
+ * This file used to declare its own near-identical copy, and Leaves.tsx imported THIS one while
+ * receiving rows typed by the hook — two structurally different types with the same name. They
+ * diverged on the only thing that mattered: the hook's status union carries
+ * "pending_branch_head" and this copy did not, so every hook row was unassignable to the card and
+ * the page could not compile. Re-exported rather than moved, so the existing import path keeps
+ * working.
+ */
+export type { LeaveRequest } from "@/hooks/useLeaves";
+import type { LeaveRequest } from "@/hooks/useLeaves";
 
 interface LeaveRequestCardProps {
   request: LeaveRequest;
