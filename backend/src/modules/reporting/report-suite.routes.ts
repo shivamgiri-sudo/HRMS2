@@ -2116,31 +2116,10 @@ reportSuiteRouter.get("/:code", reportScopeMiddleware, reportCatalogAccessMiddle
       break;
 
     // ─── A11: Productivity / APR ──────────────────────────────────────────────
-    case "productivity-individual-scorecard": {
-      const month = monthParam(req.query.month);
-      addScopedEmployeeFilters(req, clauses, params);
-      clauses.push("DATE_FORMAT(adr.record_date,'%Y-%m') = ?"); params.push(month);
-      sql = `SELECT e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-                    p.process_name,
-                    ROUND(SUM(adr.dialler_minutes) / 60, 2) AS login_hours,
-                    ROUND(SUM(adr.biometric_minutes) / 60, 2) AS biometric_hours,
-                    COUNT(CASE WHEN adr.attendance_status IN ('present','half_day') THEN 1 END) AS present_days,
-                    kss.final_score AS kpi_score, kss.rating AS kpi_rating,
-                    ROUND(COUNT(CASE WHEN adr.attendance_status IN ('present','half_day') THEN 1 END)
-                          / NULLIF(COUNT(*),0) * 100, 1) AS attendance_pct
-               FROM attendance_daily_record adr
-               JOIN employees e ON e.id = adr.employee_id
-               LEFT JOIN process_master p ON p.id = e.process_id
-               LEFT JOIN kpi_score_summary kss ON kss.employee_id = e.id
-               LEFT JOIN kpi_score_period ksp ON ksp.id = kss.period_id
-                 AND ksp.period_start <= LAST_DAY(STR_TO_DATE(CONCAT(?, '-01'), '%Y-%m-%d'))
-                 AND ksp.period_end >= STR_TO_DATE(CONCAT(?, '-01'), '%Y-%m-%d')
-              WHERE ${clauses.join(" AND ")}
-              GROUP BY e.id, e.employee_code, e.full_name, e.first_name, e.last_name, p.process_name, kss.final_score, kss.rating
-              ORDER BY login_hours DESC`;
-      params.push(month, month);
-      break;
-    }
+    // "productivity-individual-scorecard" now falls through to the default branch,
+    // which calls executeReport(). The move also fixed a positional-binding bug: the
+    // KPI-period JOIN placeholders were bound to scope params, so branch-scoped users
+    // silently got NULL KPI scores. See attendance.executor.ts.
 
     case "productivity-team-rollup": {
       const month = monthParam(req.query.month);
@@ -3642,6 +3621,7 @@ reportSuiteRouter.get("/:code", reportScopeMiddleware, reportCatalogAccessMiddle
           CASE WHEN COALESCE(e.is_billable, 1) = 1 THEN 'InHouse' ELSE 'Non-Billable' END AS employee_for,
           CASE WHEN COALESCE(e.is_billable, 1) = 1 THEN 'Yes' ELSE 'No' END AS billable,
           COALESCE(b.branch_name, '') AS branch,
+          COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
           spl.id AS line_id,
           spl.employee_id,
           COALESCE(spl.basic, 0) AS basic,
@@ -3693,6 +3673,7 @@ reportSuiteRouter.get("/:code", reportScopeMiddleware, reportCatalogAccessMiddle
         LEFT JOIN department_master dept ON dept.id = e.department_id
         LEFT JOIN designation_master desig ON desig.id = e.designation_id
         LEFT JOIN branch_master b ON b.id = e.branch_id
+        LEFT JOIN process_master p ON p.id = e.process_id
         LEFT JOIN cost_centre_master cc ON cc.id = e.cost_centre_id
         LEFT JOIN employee_salary_assignment esa ON esa.employee_id = e.id AND esa.active_status = 1
         LEFT JOIN employee_bank_detail ebd ON ebd.employee_id = e.id AND ebd.is_primary = 1 AND ebd.active_status = 1
@@ -3750,6 +3731,7 @@ reportSuiteRouter.get("/:code", reportScopeMiddleware, reportCatalogAccessMiddle
           employee_for:row.employee_for,
           billable:    row.billable,
           branch:      row.branch,
+          process_name: row.process_name,
           // Earnings (Gross components)
           basic, hra, bonus, conv, portfolio,
           medical_allowance: medAllw,

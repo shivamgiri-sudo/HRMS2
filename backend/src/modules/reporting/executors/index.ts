@@ -54,6 +54,7 @@ import {
   attendanceRegisterGrid,
   breakDailySummary,
   breakSessionLog,
+  productivityIndividualScorecard,
 } from "./attendance.executor.js";
 
 // â”€â”€â”€ Leave â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -246,6 +247,7 @@ export const EXECUTOR_MAP: Record<string, ExecutorFn> = {
   "pf-esic-salary-register":  pfEsicSalaryRegister,
   "pf-esi-optout-register":   pfEsiOptOutRegister,
   "roster-adherence":         rosterAdherence,
+  "productivity-individual-scorecard": productivityIndividualScorecard,
 
   // Statutory
   "pf-contribution-register":  pfContributionRegister,

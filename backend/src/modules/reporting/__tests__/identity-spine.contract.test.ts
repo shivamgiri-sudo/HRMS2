@@ -171,8 +171,6 @@ describe("mandatory identity columns on employee-grain reports", () => {
     // Served by inline case blocks in report-suite.routes.ts, not by an executor â€” they
     // migrate when Phase 3 collapses those into executors.
     // Lives in identity.executor.ts, migrates with that file.
-    "productivity-individual-scorecard",
-    "salary-sheet-export",
   ]);
 
   it("every migrated employee-grain report carries employee code, cost centre and process", () => {

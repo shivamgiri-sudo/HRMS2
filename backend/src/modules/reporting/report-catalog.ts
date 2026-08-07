@@ -1973,6 +1973,7 @@ export const REPORT_CATALOG: ReportDefinition[] = [
     columns: [
       { key: "employee_code", label: "Emp Code", format: "text", width: 100 },
       { key: "emp_name", label: "Employee Name", format: "text", width: 180 },
+      { key: "process_name", label: "Process", format: "text", width: 140 },
       { key: "cost_center", label: "Cost Centre", format: "text", width: 120 },
       { key: "department", label: "Department", format: "text", width: 120 },
       { key: "designation", label: "Designation", format: "text", width: 120 },
@@ -4072,6 +4073,8 @@ export const REPORT_CATALOG: ReportDefinition[] = [
     columns: [
       { key: "employee_code", label: "Emp Code", format: "text", width: 100 },
       { key: "employee_name", label: "Employee Name", format: "text", width: 180 },
+      { key: "cost_centre_code", label: "Cost Centre Code", format: "text", width: 140 },
+      { key: "cost_centre_name", label: "Cost Centre", format: "text", width: 180 },
       { key: "process_name", label: "Process", format: "text", width: 140 },
       { key: "login_hours", label: "Login Hours", format: "number", width: 100, align: "right" },
       { key: "biometric_hours", label: "Biometric Hours", format: "number", width: 120, align: "right" },

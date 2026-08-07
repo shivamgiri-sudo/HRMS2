@@ -1130,3 +1130,82 @@ export async function breakSessionLog(
     nextCursor,
   };
 }
+
+// ---------------------------------------------------------------------------
+// productivity-individual-scorecard
+//
+// Folded in from an inline `case` block, and a positional-binding bug fixed on the way.
+//
+// The inline version built its SQL with two `?` placeholders inside the kpi_score_period
+// JOIN — which appear BEFORE the WHERE clause in the SQL text — but appended their values
+// with `params.push(month, month)` AFTER addScopedEmployeeFilters had already pushed the
+// scope and filter values. mysql2 binds positionally, so the JOIN's two date placeholders
+// took whatever came first in the array.
+//
+// For an unrestricted super_admin with no branchId that array is [month, month, month] and
+// it works by luck. For ANY branch-scoped user, or anyone passing ?branchId=, the first two
+// entries are branch UUIDs, so the join evaluated
+// STR_TO_DATE(CONCAT('<uuid>','-01'), '%Y-%m-%d') — which MySQL returns as NULL (verified
+// live), never matching. kpi_score and kpi_rating came back NULL for every such user, with
+// no error: a silently empty column on a scorecard, exactly the kind of wrong answer that
+// looks like "no KPI data yet".
+//
+// Fixed by binding in SQL order: join params first, then the WHERE params. This mirrors
+// payrollVariance in payroll.executor.ts, which documents the same rule.
+//
+// kpi_score_summary holds 0 rows today, so nobody currently sees a score either way — but
+// the bug would have bitten silently the moment KPI data landed.
+// ---------------------------------------------------------------------------
+export async function productivityIndividualScorecard(
+  filters: ExecFilters,
+  scope: ExecScope,
+  options: ExecOptions
+): Promise<ExecResult> {
+  const month = monthParam(filters.month);
+
+  // Params for the two placeholders in the JOIN. These MUST precede the WHERE params.
+  const joinParams: unknown[] = [month, month];
+
+  const clauses: string[] = ["e.id IS NOT NULL"];
+  const whereParams: unknown[] = [];
+  appendScopeConditions(scope, clauses, whereParams);
+  appendFilterConditions(filters, clauses, whereParams);
+  clauses.push("DATE_FORMAT(adr.record_date,'%Y-%m') = ?");
+  whereParams.push(month);
+
+  const base = `
+    SELECT e.employee_code,
+           COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
+           COALESCE(sp_cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
+           COALESCE(sp_cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
+           b.branch_name,
+           COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
+           ROUND(SUM(adr.dialler_minutes) / 60, 2) AS login_hours,
+           ROUND(SUM(adr.biometric_minutes) / 60, 2) AS biometric_hours,
+           COUNT(CASE WHEN adr.attendance_status IN ('present','half_day') THEN 1 END) AS present_days,
+           kss.final_score AS kpi_score,
+           kss.rating AS kpi_rating,
+           ROUND(COUNT(CASE WHEN adr.attendance_status IN ('present','half_day') THEN 1 END)
+                 / NULLIF(COUNT(*),0) * 100, 1) AS attendance_pct
+      FROM attendance_daily_record adr
+      JOIN employees e ON e.id = adr.employee_id
+      LEFT JOIN process_master p ON p.id = e.process_id
+      LEFT JOIN branch_master b ON b.id = e.branch_id
+      LEFT JOIN cost_centre_master sp_cc ON sp_cc.id = e.cost_centre_id
+      LEFT JOIN kpi_score_summary kss ON kss.employee_id = e.id
+      LEFT JOIN kpi_score_period ksp ON ksp.id = kss.period_id
+        AND ksp.period_start <= LAST_DAY(STR_TO_DATE(CONCAT(?, '-01'), '%Y-%m-%d'))
+        AND ksp.period_end >= STR_TO_DATE(CONCAT(?, '-01'), '%Y-%m-%d')
+     WHERE ${clauses.join(" AND ")}
+     -- ONLY_FULL_GROUP_BY: cost centre and branch belong here as well as in the SELECT.
+     GROUP BY e.id, e.employee_code, e.full_name, e.first_name, e.last_name,
+              p.process_name, b.branch_name, sp_cc.cost_centre_code, sp_cc.cost_centre_name,
+              kss.final_score, kss.rating
+     ORDER BY login_hours DESC`;
+
+  const params = [...joinParams, ...whereParams];
+  const total = options.includeTotal ? await count(base, params) : 0;
+  const sql   = applyPagination(base, options);
+  const rows  = await query(sql, params) as Record<string, unknown>[];
+  return { rows, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > rows.length };
+}
