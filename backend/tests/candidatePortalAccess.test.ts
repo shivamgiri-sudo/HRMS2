@@ -57,6 +57,10 @@ describe("issueCandidatePortalAccess", () => {
       id: "cand-1", full_name: "Test Candidate", email: "test@example.com",
       applied_for_branch: "Noida", branch_display_name: "NOIDA-2", applied_for_role: "Executive",
     }], []] as never);
+    // Second SELECT: issueCandidatePortalAccess now looks up a live onboarding token on
+    // ats_onboarding_bridge so the email carries one link rather than two. Without a value here
+    // the bare vi.fn() resolves undefined and the service's .catch() throws on it.
+    vi.mocked(db.execute).mockResolvedValueOnce([[], []] as never);
 
     await issueCandidatePortalAccess("cand-1");
 
@@ -65,7 +69,10 @@ describe("issueCandidatePortalAccess", () => {
     // No plaintext password should ever be persisted anywhere by this
     // function — the string only ever reaches createPortalAccess (which
     // hashes it) and the outbound email.
-    expect(vi.mocked(db.execute)).toHaveBeenCalledTimes(1); // the SELECT only
+    // Two calls, both SELECTs - the candidate row and the onboarding-token lookup. The point of
+    // this assertion is that nothing WRITES, so the count moves with the reads but no INSERT or
+    // UPDATE may appear.
+    expect(vi.mocked(db.execute)).toHaveBeenCalledTimes(2);
   });
 
   it("TC-PORTAL-02: the emailed password matches the one that was hashed and stored", async () => {
@@ -73,6 +80,10 @@ describe("issueCandidatePortalAccess", () => {
       id: "cand-1", full_name: "Test Candidate", email: "test@example.com",
       applied_for_branch: "Noida", branch_display_name: "NOIDA-2", applied_for_role: "Executive",
     }], []] as never);
+    // Second SELECT: issueCandidatePortalAccess now looks up a live onboarding token on
+    // ats_onboarding_bridge so the email carries one link rather than two. Without a value here
+    // the bare vi.fn() resolves undefined and the service's .catch() throws on it.
+    vi.mocked(db.execute).mockResolvedValueOnce([[], []] as never);
 
     await issueCandidatePortalAccess("cand-1");
 

@@ -181,7 +181,15 @@ export const customizationService = {
       [id]
     );
     const rule = rows[0];
-    if (!rule) throw new Error('Rule not found');
+    if (!rule) {
+      // 404, not 500. errorHandler reads statusCode for 4xx; a bare Error fell through to the
+      // generic handler, so asking for a rule that does not exist reported a server fault and a
+      // client could not tell "wrong id" from "backend broken". Set at the throw because every
+      // route that resolves a rule by id - GET, PATCH, DELETE, toggle - comes through here.
+      const err = new Error('Rule not found') as Error & { statusCode?: number };
+      err.statusCode = 404;
+      throw err;
+    }
     return parseRuleRow(rule);
   },
 
