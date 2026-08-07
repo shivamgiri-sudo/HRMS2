@@ -245,11 +245,19 @@ export async function qualityAuditLog(
   appendFilterConditions(filters, eClauses, eParams);
 
   // Build scoped employee code list then query db_audit
-  const empSql = `SELECT e.employee_code FROM mas_hrms.employees e
+  // The audit rows come from db_audit and carry no org identity, so cost centre has to be
+  // brought across from mas_hrms and attached per row — the same enrichment
+  // agent-performance-summary does. Selecting it here costs nothing extra: this query
+  // already runs to build the scoped employee-code list.
+  const empSql = `SELECT e.employee_code,
+    COALESCE(cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
+    COALESCE(cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name
+    FROM mas_hrms.employees e
     LEFT JOIN mas_hrms.branch_master b ON b.id = e.branch_id
     LEFT JOIN mas_hrms.process_master p ON p.id = e.process_id
+    LEFT JOIN mas_hrms.cost_centre_master cc ON cc.id = e.cost_centre_id
    WHERE ${eClauses.join(" AND ")}`;
-  const empRows = await querySource<{ employee_code: string }>(empSql, eParams as (string|number|null)[]);
+  const empRows = await querySource<{ employee_code: string; cost_centre_code: string; cost_centre_name: string }>(empSql, eParams as (string|number|null)[]);
   if (empRows.length === 0) return { rows: [], rowCount: 0, isTruncated: false };
 
   const codes = empRows.map(r => r.employee_code);
@@ -277,7 +285,13 @@ export async function qualityAuditLog(
        ${cursorClause}
      ORDER BY cqa.id ASC${options.mode === "worker" ? ` LIMIT ${options.limit}` : ` LIMIT ${options.limit} OFFSET ${options.offset}`}`;
 
-  const rows = await querySource<Record<string,unknown>>(sql, qParams);
+  const ccByCode = new Map(empRows.map(r => [r.employee_code, r]));
+  const rawRows = await querySource<Record<string,unknown>>(sql, qParams);
+  const rows: Record<string, unknown>[] = rawRows.map(r => ({
+    ...r,
+    cost_centre_code: ccByCode.get(r.employee_code as string)?.cost_centre_code ?? 'UNASSIGNED',
+    cost_centre_name: ccByCode.get(r.employee_code as string)?.cost_centre_name ?? 'UNASSIGNED',
+  }));
   const nextCursor = (options.mode === "worker" && rows.length > 0)
     ? (rows[rows.length - 1].call_id as string) : null;
   return { rows, rowCount: rows.length, isTruncated: rows.length === options.limit, nextCursor };
@@ -306,11 +320,19 @@ export async function fatalErrorRegister(
   appendScopeConditions(scope, eClauses, eParams);
   appendFilterConditions(filters, eClauses, eParams);
 
-  const empSql = `SELECT e.employee_code FROM mas_hrms.employees e
+  // The audit rows come from db_audit and carry no org identity, so cost centre has to be
+  // brought across from mas_hrms and attached per row — the same enrichment
+  // agent-performance-summary does. Selecting it here costs nothing extra: this query
+  // already runs to build the scoped employee-code list.
+  const empSql = `SELECT e.employee_code,
+    COALESCE(cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
+    COALESCE(cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name
+    FROM mas_hrms.employees e
     LEFT JOIN mas_hrms.branch_master b ON b.id = e.branch_id
     LEFT JOIN mas_hrms.process_master p ON p.id = e.process_id
+    LEFT JOIN mas_hrms.cost_centre_master cc ON cc.id = e.cost_centre_id
    WHERE ${eClauses.join(" AND ")}`;
-  const empRows = await querySource<{ employee_code: string }>(empSql, eParams as (string|number|null)[]);
+  const empRows = await querySource<{ employee_code: string; cost_centre_code: string; cost_centre_name: string }>(empSql, eParams as (string|number|null)[]);
   if (empRows.length === 0) return { rows: [], rowCount: 0, isTruncated: false };
 
   const codes = empRows.map(r => r.employee_code);
@@ -337,7 +359,13 @@ export async function fatalErrorRegister(
        ${cursorClause}
      ORDER BY cqa.id ASC${options.mode === "worker" ? ` LIMIT ${options.limit}` : ` LIMIT ${options.limit} OFFSET ${options.offset}`}`;
 
-  const rows = await querySource<Record<string,unknown>>(sql, qParams);
+  const ccByCode = new Map(empRows.map(r => [r.employee_code, r]));
+  const rawRows = await querySource<Record<string,unknown>>(sql, qParams);
+  const rows: Record<string, unknown>[] = rawRows.map(r => ({
+    ...r,
+    cost_centre_code: ccByCode.get(r.employee_code as string)?.cost_centre_code ?? 'UNASSIGNED',
+    cost_centre_name: ccByCode.get(r.employee_code as string)?.cost_centre_name ?? 'UNASSIGNED',
+  }));
   const nextCursor = (options.mode === "worker" && rows.length > 0)
     ? (rows[rows.length - 1].call_id as string) : null;
   return { rows, rowCount: rows.length, isTruncated: rows.length === options.limit, nextCursor };

@@ -200,6 +200,8 @@ export async function fnfSettlementRegister(
     SELECT e.id AS _cursor,
            e.employee_code,
            COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
+           COALESCE(xcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
+           COALESCE(xcc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
            COALESCE(ffc.approved_at, e.date_of_exit) AS settlement_date,
            NULL AS total_earnings,   -- full_final_calculation stores components, not a gross total
            NULL AS total_deductions, -- deriving one would be inventing payroll arithmetic
@@ -213,6 +215,7 @@ export async function fnfSettlementRegister(
       LEFT JOIN full_final_calculation ffc ON ffc.exit_request_id = er.id
       LEFT JOIN branch_master b            ON b.id = e.branch_id
       LEFT JOIN process_master p           ON p.id = e.process_id
+      LEFT JOIN cost_centre_master xcc ON xcc.id = e.cost_centre_id
      WHERE ${clauses.join(" AND ")}
      ORDER BY e.id ASC`;
 
@@ -439,6 +442,8 @@ export async function earlyAttritionReport(
     SELECT e.id AS _cursor,
            e.employee_code,
            COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
+           COALESCE(xcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
+           COALESCE(xcc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
            e.date_of_joining,
            e.date_of_exit AS date_of_exit,
            DATEDIFF(e.date_of_exit, e.date_of_joining) AS days_employed,
@@ -449,6 +454,7 @@ export async function earlyAttritionReport(
       LEFT JOIN exit_request er  ON er.employee_id = e.id
       LEFT JOIN branch_master b  ON b.id = e.branch_id
       LEFT JOIN process_master p ON p.id = e.process_id
+      LEFT JOIN cost_centre_master xcc ON xcc.id = e.cost_centre_id
      WHERE ${clauses.join(" AND ")}
      ORDER BY e.id ASC`;
 
