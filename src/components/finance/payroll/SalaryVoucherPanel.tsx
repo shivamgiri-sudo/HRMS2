@@ -75,13 +75,17 @@ export function SalaryVoucherPanel() {
     },
   });
 
-  const query = `${runId}/vouchers${companyCode ? `?companyCode=${encodeURIComponent(companyCode)}` : ""}`;
+  // Only the query string is interpolated; the PATH is written out in full at each call site.
+  // Hiding path segments inside a variable defeats the route-contract check, which reads the
+  // client's literals to prove every call has a registered route — and a wrong /api path 401s
+  // exactly like a real one, so that check is the only thing that catches a typo here.
+  const search = companyCode ? `?companyCode=${encodeURIComponent(companyCode)}` : "";
 
   const voucherQuery = useQuery({
     queryKey: ["salary-vouchers", runId, companyCode],
     enabled: Boolean(runId),
     queryFn: async () =>
-      unwrap<Payload>(await hrmsApi.get<any>(`/api/finance/payroll/runs/${query}`)),
+      unwrap<Payload>(await hrmsApi.get<any>(`/api/finance/payroll/runs/${runId}/vouchers${search}`)),
   });
 
   const runs = runsQuery.data ?? [];
@@ -104,8 +108,7 @@ export function SalaryVoucherPanel() {
                   // Straight to the API so the file is produced by the same scope resolution as
                   // the table, and in the column order Tally imports by position.
                   window.open(
-                    `/api/finance/payroll/runs/${runId}/vouchers/export`
-                      + (companyCode ? `?companyCode=${encodeURIComponent(companyCode)}` : ""),
+                    `/api/finance/payroll/runs/${runId}/vouchers/export${search}`,
                     "_blank", "noopener",
                   );
                 }}
