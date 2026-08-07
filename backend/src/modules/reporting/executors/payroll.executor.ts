@@ -544,3 +544,80 @@ export async function payrollCostSummary(
   const rows  = await query(sql, params) as Record<string, unknown>[];
   return { rows, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > rows.length };
 }
+
+// ---------------------------------------------------------------------------
+// ytd-salary-summary
+//
+// Moved here from an inline `case` block in report-suite.routes.ts. That block was one of
+// three parallel SQL implementations a report code could have — an inline block for the
+// screen, the executor layer for some paths, and report-worker-executor for emailed
+// files — so the same report could answer differently depending on how you asked for it.
+// The route's default branch already builds ExecFilters and calls executeReport, so
+// deleting the block is what routes this code through the single implementation.
+//
+// Behaviour preserved exactly, including both accepted period formats: ?financialYear=
+// 2025-26 (Apr–Mar) and ?year=2026 (calendar). Draft and cancelled runs stay excluded.
+// Gains the cost centre and process the mandate requires.
+// ---------------------------------------------------------------------------
+export async function ytdSalarySummary(
+  filters: ExecFilters,
+  scope: ExecScope,
+  options: ExecOptions
+): Promise<ExecResult> {
+  const fyRaw = String(filters.financialYear ?? filters.year ?? "").trim();
+  const fyMatch = fyRaw.match(/^(\d{4})-(\d{2,4})$/);
+
+  let monthFrom: string;
+  let monthTo: string;
+  if (fyMatch) {
+    const fyStart = Number(fyMatch[1]);
+    monthFrom = `${fyStart}-04`;
+    monthTo   = `${fyStart + 1}-03`;
+  } else {
+    const cy = Number(fyRaw) || new Date().getFullYear();
+    monthFrom = `${cy}-01`;
+    monthTo   = `${cy}-12`;
+  }
+
+  const clauses: string[] = ["e.id IS NOT NULL"];
+  const params: unknown[] = [];
+  appendScopeConditions(scope, clauses, params);
+  appendFilterConditions(filters, clauses, params);
+
+  clauses.push("spr.run_month BETWEEN ? AND ?");
+  params.push(monthFrom, monthTo);
+  clauses.push("LOWER(COALESCE(spr.status,'')) NOT IN ('draft','cancelled')");
+
+  const base = `
+    SELECT e.employee_code,
+           COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
+           COALESCE(sp_cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
+           COALESCE(sp_cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
+           b.branch_name,
+           COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
+           d.dept_name AS department_name,
+           COUNT(DISTINCT spr.run_month) AS months_paid,
+           ROUND(SUM(spl.gross_salary), 2) AS ytd_gross,
+           ROUND(SUM(spl.basic), 2) AS ytd_basic,
+           ROUND(SUM(COALESCE(spl.pf_employee, 0)), 2) AS ytd_pf,
+           ROUND(SUM(COALESCE(spl.tds_amount, 0)), 2) AS ytd_tds,
+           ROUND(SUM(spl.net_salary), 2) AS ytd_net
+      FROM salary_prep_line spl
+      JOIN salary_prep_run spr ON spr.id = spl.run_id
+      JOIN employees e ON e.id = spl.employee_id
+      LEFT JOIN branch_master b ON b.id = e.branch_id
+      LEFT JOIN process_master p ON p.id = e.process_id
+      LEFT JOIN department_master d ON d.id = e.department_id
+      LEFT JOIN cost_centre_master sp_cc ON sp_cc.id = e.cost_centre_id
+     WHERE ${clauses.join(" AND ")}
+     -- ONLY_FULL_GROUP_BY: every non-aggregated selected column appears here too.
+     GROUP BY e.id, e.employee_code, e.first_name, e.last_name, e.full_name,
+              b.branch_name, p.process_name, d.dept_name,
+              sp_cc.cost_centre_code, sp_cc.cost_centre_name
+     ORDER BY employee_name`;
+
+  const total = options.includeTotal ? await count(base, params) : 0;
+  const sql   = applyPagination(base, options);
+  const rows  = await query(sql, params) as Record<string, unknown>[];
+  return { rows, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > rows.length };
+}

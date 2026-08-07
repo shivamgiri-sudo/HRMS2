@@ -180,7 +180,6 @@ describe("mandatory identity columns on employee-grain reports", () => {
     "productivity-individual-scorecard",
     "roster-adherence",
     "salary-sheet-export",
-    "ytd-salary-summary",
   ]);
 
   it("every migrated employee-grain report carries employee code, cost centre and process", () => {

@@ -78,6 +78,7 @@ import {
   payrollReconciliation,
   arrearPaymentRegister,
   payrollCostSummary,
+  ytdSalarySummary,
 } from "./payroll.executor.js";
 
 // â”€â”€â”€ Statutory â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -230,6 +231,7 @@ export const EXECUTOR_MAP: Record<string, ExecutorFn> = {
   "payroll-reconciliation":    payrollReconciliation,
   "arrear-payment-register":   arrearPaymentRegister,
   "payroll-cost-summary":      payrollCostSummary,
+  "ytd-salary-summary":       ytdSalarySummary,
 
   // Statutory
   "pf-contribution-register":  pfContributionRegister,

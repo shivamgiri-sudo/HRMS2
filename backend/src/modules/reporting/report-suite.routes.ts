@@ -1313,46 +1313,11 @@ reportSuiteRouter.get("/:code", reportScopeMiddleware, reportCatalogAccessMiddle
     }
 
     // ─── A4: Payroll ─────────────────────────────────────────────────────────
-    case "ytd-salary-summary": {
-      // Accept both ?year=2026 (calendar year) and ?financialYear=2025-26 (Apr–Mar)
-      const fyRaw = String(req.query.financialYear ?? req.query.year ?? "").trim();
-      let monthFrom: string;
-      let monthTo: string;
-      const fyMatch = fyRaw.match(/^(\d{4})-(\d{2,4})$/);
-      if (fyMatch) {
-        // Financial year format e.g. "2025-26" → Apr 2025 – Mar 2026
-        const fyStart = Number(fyMatch[1]);
-        const fyEnd = fyStart + 1;
-        monthFrom = `${fyStart}-04`;
-        monthTo   = `${fyEnd}-03`;
-      } else {
-        // Calendar year fallback
-        const cy = Number(fyRaw) || new Date().getFullYear();
-        monthFrom = `${cy}-01`;
-        monthTo   = `${cy}-12`;
-      }
-      addScopedEmployeeFilters(req, clauses, params);
-      // Only include calculated/processed runs (exclude drafts)
-      clauses.push("spr.run_month BETWEEN ? AND ?"); params.push(monthFrom, monthTo);
-      clauses.push("LOWER(COALESCE(spr.status,'')) NOT IN ('draft','cancelled')");
-      sql = `SELECT e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-                    b.branch_name, d.dept_name AS department_name,
-                    COUNT(DISTINCT spr.run_month) AS months_paid,
-                    ROUND(SUM(spl.gross_salary), 2) AS ytd_gross,
-                    ROUND(SUM(spl.basic), 2) AS ytd_basic,
-                    ROUND(SUM(COALESCE(spl.pf_employee, 0)), 2) AS ytd_pf,
-                    ROUND(SUM(COALESCE(spl.tds_amount, 0)), 2) AS ytd_tds,
-                    ROUND(SUM(spl.net_salary), 2) AS ytd_net
-               FROM salary_prep_line spl
-               JOIN salary_prep_run spr ON spr.id = spl.run_id
-               JOIN employees e ON e.id = spl.employee_id
-               LEFT JOIN branch_master b ON b.id = e.branch_id
-               LEFT JOIN department_master d ON d.id = e.department_id
-              WHERE ${clauses.join(" AND ")}
-              GROUP BY e.id, e.employee_code, e.first_name, e.last_name, b.branch_name, d.dept_name
-              ORDER BY employee_name`;
-      break;
-    }
+    // "ytd-salary-summary" was implemented inline here. It now falls through to the
+    // default branch, which calls executeReport() — the single implementation of this
+    // report, shared by the screen, the direct XLSX and the emailed file. Behaviour is
+    // preserved including both period formats (financialYear=2025-26 and year=2026);
+    // see ytdSalarySummary in executors/payroll.executor.ts.
 
     case "cost-centre-salary-summary": {
       const month = monthParam(req.query.month);
