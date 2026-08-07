@@ -336,7 +336,9 @@ const Employees = () => {
     doc.setFontSize(18);
     doc.text("Employee Directory", 14, 22);
     doc.setFontSize(10);
-    doc.text(`Generated on ${formatISTDate()}`, 14, 30);
+    // formatISTDate returns "" for a falsy argument — same omission as the Leaves export, so this
+    // PDF also printed "Generated on" and nothing.
+    doc.text(`Generated on ${formatISTDate(new Date())}`, 14, 30);
 
     if (startDate || endDate) {
       doc.text(

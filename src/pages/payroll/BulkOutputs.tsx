@@ -56,7 +56,7 @@ export default function BulkOutputs() {
     queryKey: ["payroll-runs-for-bulk"],
     queryFn: () => hrmsApi.get<{ success: boolean; data: RunSummary[] }>(
       "/api/payroll/runs?limit=24"
-    ).then(r => r.data),
+    ),
   });
 
   const runs: RunSummary[] = runsData?.data ?? [];
@@ -65,7 +65,7 @@ export default function BulkOutputs() {
     queryKey: ["bulk-payslip-summary", selectedRun],
     queryFn: () => hrmsApi.get<{ success: boolean; data: BulkSummary }>(
       `/api/payroll/runs/${selectedRun}/bulk-payslip-summary`
-    ).then(r => r.data),
+    ),
     enabled: !!selectedRun,
   });
 
@@ -73,7 +73,7 @@ export default function BulkOutputs() {
     queryKey: ["bulk-generate-status", selectedRun],
     queryFn: () => hrmsApi.get<{ success: boolean; data: GenerateJobStatus }>(
       `/api/payroll/runs/${selectedRun}/bulk-generate-status`
-    ).then(r => r.data),
+    ),
     enabled: !!selectedRun && pollingEnabled,
     refetchInterval: pollingEnabled ? 2000 : false,
   });

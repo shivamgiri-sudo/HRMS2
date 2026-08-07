@@ -33,6 +33,12 @@ type DeskSession = {
   exception_reason: string | null;
 };
 
+/*
+ * BreakDeskEmployeeRow declares its own narrower DeskEmployee with the same name — no *_id
+ * fields, no roster_status. This one is the API shape and a superset, so rows receive it happily,
+ * but its onShowDetails callback hands back the narrow type. The row echoes the same object it
+ * was given, so the cast at that call site is safe; the two declarations should be merged.
+ */
 type DeskEmployee = {
   employee_id: string;
   employee_code: string;
@@ -342,12 +348,15 @@ export default function BreakDesk() {
         .then((registration) => {
           console.log('[BreakDesk] Service Worker registered:', registration.scope);
 
-          // Listen for sync events
-          if ('sync' in registration) {
-            registration.sync.register('sync-break-desk-queue').catch((err) => {
-              console.warn('[BreakDesk] Background sync registration failed:', err);
-            });
-          }
+          // Background Sync is Chromium-only and absent from lib.dom, so `'sync' in registration`
+          // narrows it to unknown rather than to something callable. Declared here instead of
+          // asserted away, so the optional chain still guards browsers that lack it.
+          const syncReg = registration as ServiceWorkerRegistration & {
+            sync?: { register(tag: string): Promise<void> };
+          };
+          syncReg.sync?.register('sync-break-desk-queue').catch((err) => {
+            console.warn('[BreakDesk] Background sync registration failed:', err);
+          });
         })
         .catch((err) => {
           console.error('[BreakDesk] Service Worker registration failed:', err);
@@ -1033,7 +1042,7 @@ export default function BreakDesk() {
 
                 {/* Full-Screen Table (No Virtual Scrolling) */}
                 <div className="rounded-2xl border border-slate-200 bg-white shadow-sm">
-                  <div className="max-h-[calc(100vh-200px)] overflow-auto rounded-2xl">
+                  <div className="max-h-[calc(100dvh-200px)] overflow-x-auto overflow-y-auto rounded-2xl">
                     <table className="min-w-[1080px] w-full text-xs">
                       <thead className="sticky top-0 z-10 bg-slate-50">
                         <tr className="text-left text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">
@@ -1068,7 +1077,7 @@ export default function BreakDesk() {
                             onToggleSelect={toggleSelectEmployee}
                             onPunchAction={handlePunchAction}
                             onBreakAction={handleBreakAction}
-                            onShowDetails={setSelectedEmployee}
+                            onShowDetails={(e) => setSelectedEmployee(e as DeskEmployee)}
                             statusTone={statusTone}
                             shiftLabelForDisplay={shiftLabelForDisplay}
                             formatStamp={formatStamp}

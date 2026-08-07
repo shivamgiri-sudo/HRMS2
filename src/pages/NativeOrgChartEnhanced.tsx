@@ -3,7 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { OrgChartNodeCard } from "@/components/orgchart/OrgChartNode";
 import { OrgScopeSelector, type OrgChartScope } from "@/components/org-chart/OrgScopeSelector";
-import { OrgDataQualityPanel } from "@/components/org-chart/OrgDataQualityPanel";
+import { OrgDataQualityPanel, type DataQualitySummary } from "@/components/org-chart/OrgDataQualityPanel";
 import { OrgChartFilters, type OrgChartFilterValues } from "@/components/org-chart/OrgChartFilters";
 import { OrgNodeDetailsDrawer } from "@/components/org-chart/OrgNodeDetailsDrawer";
 import { hrmsApi } from "@/lib/hrmsApi";
@@ -106,7 +106,10 @@ export default function NativeOrgChartEnhanced() {
   const canSeeDataQuality = scopesData?.available_scopes.some((s) => s.value === currentScope && s.can_see_data_quality);
   const { data: qualityData, refetch: refetchQuality } = useQuery({
     queryKey: ["org-chart-data-quality", currentScope],
-    queryFn: () => hrmsApi.get("/api/org-chart/data-quality"),
+    // The route replies { success, data: qualityReport }; without the generic this resolved to
+    // the envelope and the panel was handed that instead of the report.
+    queryFn: async () =>
+      (await hrmsApi.get<{ success: boolean; data: DataQualitySummary }>("/api/org-chart/data-quality")).data,
     staleTime: 120_000,
     enabled: !!canSeeDataQuality,
   });

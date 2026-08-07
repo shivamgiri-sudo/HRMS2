@@ -85,14 +85,14 @@ export default function StatutoryFilingTracker() {
     queryKey: ["statutory-filing", month],
     queryFn: () => hrmsApi.get<{ success: boolean; data: FilingRecord[] }>(
       `/api/payroll/statutory-filing?month=${month}`
-    ).then(r => r.data),
+    ),
   });
 
   const { data: overdueData } = useQuery({
     queryKey: ["statutory-filing-overdue"],
     queryFn: () => hrmsApi.get<{ success: boolean; data: FilingRecord[] }>(
       "/api/payroll/statutory-filing/overdue"
-    ).then(r => r.data),
+    ),
   });
 
   const initMut = useMutation({

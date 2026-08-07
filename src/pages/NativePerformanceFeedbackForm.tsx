@@ -53,7 +53,11 @@ export default function NativePerformanceFeedbackForm() {
 
   const fetchFormTemplate = async () => {
     try {
-      const data = await hrmsApi.get(`/api/performance-feedback/requests/${requestId}/form`);
+      // The endpoint replies { data: template } (performance-feedback.controller.ts), so the
+      // payload is one level in. Reading it as the template made data.competencies undefined and
+      // the .forEach below threw, so this form never finished loading.
+      const res = await hrmsApi.get<{ data: FormTemplate }>(`/api/performance-feedback/requests/${requestId}/form`);
+      const data = res.data;
       setTemplate(data);
 
       // Initialize ratings

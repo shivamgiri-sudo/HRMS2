@@ -13,7 +13,7 @@ interface DataQualityIssue {
   detected_at: string;
 }
 
-interface DataQualitySummary {
+export interface DataQualitySummary {
   total_employees: number;
   issues_count: number;
   critical_count: number;
