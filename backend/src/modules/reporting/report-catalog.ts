@@ -784,6 +784,8 @@ export const REPORT_CATALOG: ReportDefinition[] = [
     primaryKey: ["employee_code", "effective_date"],
     columns: [
       { key: "employee_code", label: "Emp Code", format: "text", width: 100 },
+      { key: "cost_centre_code", label: "Cost Centre Code", format: "text" },
+      { key: "cost_centre_name", label: "Cost Centre", format: "text" },
       { key: "employee_name", label: "Employee Name", format: "text", width: 180 },
       { key: "branch_name", label: "Branch", format: "text", width: 120 },
       { key: "change_type", label: "Change Type", format: "status", width: 100 },
@@ -1155,6 +1157,8 @@ export const REPORT_CATALOG: ReportDefinition[] = [
     primaryKey: ["employee_code", "attendance_date", "submitted_at"],
     columns: [
       { key: "employee_code", label: "Emp Code", format: "text", width: 100 },
+      { key: "cost_centre_code", label: "Cost Centre Code", format: "text" },
+      { key: "cost_centre_name", label: "Cost Centre", format: "text" },
       { key: "employee_name", label: "Employee Name", format: "text", width: 180 },
       { key: "branch_name", label: "Branch", format: "text", width: 120 },
       { key: "process_name", label: "Process", format: "text", width: 140 },
@@ -1190,6 +1194,8 @@ export const REPORT_CATALOG: ReportDefinition[] = [
     primaryKey: ["employee_code", "dispute_date", "submitted_at"],
     columns: [
       { key: "employee_code", label: "Emp Code", format: "text", width: 100 },
+      { key: "cost_centre_code", label: "Cost Centre Code", format: "text" },
+      { key: "cost_centre_name", label: "Cost Centre", format: "text" },
       { key: "employee_name", label: "Employee Name", format: "text", width: 180 },
       { key: "branch_name", label: "Branch", format: "text", width: 120 },
       { key: "process_name", label: "Process", format: "text", width: 140 },
@@ -1539,6 +1545,8 @@ export const REPORT_CATALOG: ReportDefinition[] = [
     columns: [
       { key: "sr_no",               label: "SR#",                 format: "number", width: 60,  align: "center" },
       { key: "employee_code",       label: "EMPLOYEE_CODE",       format: "text",   width: 120 },
+      { key: "cost_centre_code", label: "Cost Centre Code", format: "text" },
+      { key: "cost_centre_name", label: "Cost Centre", format: "text" },
       { key: "employee_name",       label: "EMPLOYEE_NAME",       format: "text",   width: 200 },
       { key: "leave_name",          label: "LEAVE_NAME",          format: "text",   width: 140 },
       { key: "leave_type",          label: "LEAVE TYPE",          format: "text",   width: 90,  align: "center" },
@@ -2788,6 +2796,8 @@ export const REPORT_CATALOG: ReportDefinition[] = [
     primaryKey: ["employee_code", "settlement_date"],
     columns: [
       { key: "employee_code", label: "Emp Code", format: "text", width: 100 },
+      { key: "cost_centre_code", label: "Cost Centre Code", format: "text" },
+      { key: "cost_centre_name", label: "Cost Centre", format: "text" },
       { key: "employee_name", label: "Employee Name", format: "text", width: 180 },
       { key: "branch_name", label: "Branch", format: "text", width: 120 },
       { key: "last_working_date", label: "LWD", format: "date", width: 100 },
@@ -2936,6 +2946,8 @@ export const REPORT_CATALOG: ReportDefinition[] = [
     primaryKey: ["employee_code", "exit_date"],
     columns: [
       { key: "employee_code", label: "Emp Code", format: "text", width: 100 },
+      { key: "cost_centre_code", label: "Cost Centre Code", format: "text" },
+      { key: "cost_centre_name", label: "Cost Centre", format: "text" },
       { key: "employee_name", label: "Employee Name", format: "text", width: 180 },
       { key: "branch_name", label: "Branch", format: "text", width: 120 },
       { key: "process_name", label: "Process", format: "text", width: 140 },
@@ -3249,6 +3261,8 @@ export const REPORT_CATALOG: ReportDefinition[] = [
     columns: [
       { key: "audit_date", label: "Audit Date", format: "date", width: 100 },
       { key: "employee_code", label: "Emp Code", format: "text", width: 100 },
+      { key: "cost_centre_code", label: "Cost Centre Code", format: "text" },
+      { key: "cost_centre_name", label: "Cost Centre", format: "text" },
       { key: "employee_name", label: "Agent Name", format: "text", width: 180 },
       { key: "branch_name", label: "Branch", format: "text", width: 120 },
       { key: "process_name", label: "Process", format: "text", width: 140 },
@@ -3282,6 +3296,8 @@ export const REPORT_CATALOG: ReportDefinition[] = [
     columns: [
       { key: "audit_date", label: "Audit Date", format: "date", width: 100 },
       { key: "employee_code", label: "Emp Code", format: "text", width: 100 },
+      { key: "cost_centre_code", label: "Cost Centre Code", format: "text" },
+      { key: "cost_centre_name", label: "Cost Centre", format: "text" },
       { key: "employee_name", label: "Agent Name", format: "text", width: 180 },
       { key: "branch_name", label: "Branch", format: "text", width: 120 },
       { key: "process_name", label: "Process", format: "text", width: 140 },

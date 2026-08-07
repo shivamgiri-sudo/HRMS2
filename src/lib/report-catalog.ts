@@ -420,6 +420,8 @@ export const REPORT_CATALOG: ReportMeta[] = [
     primaryKey: ["employee_code", "effective_date"],
     columns: [
       { key: "employee_code", label: "Emp Code", format: "text", width: 100 },
+      { key: "cost_centre_code", label: "Cost Centre Code", format: "text", width: 150 },
+      { key: "cost_centre_name", label: "Cost Centre", format: "text", width: 180 },
       { key: "employee_name", label: "Employee Name", format: "text", width: 180 },
       { key: "change_type", label: "Change Type", format: "status", width: 100 },
       { key: "effective_date", label: "Effective Date", format: "date", width: 100 },
@@ -762,6 +764,8 @@ export const REPORT_CATALOG: ReportMeta[] = [
     primaryKey: ["employee_code", "attendance_date", "submitted_at"],
     columns: [
       { key: "employee_code", label: "Emp Code", format: "text", width: 100 },
+      { key: "cost_centre_code", label: "Cost Centre Code", format: "text", width: 150 },
+      { key: "cost_centre_name", label: "Cost Centre", format: "text", width: 180 },
       { key: "employee_name", label: "Employee Name", format: "text", width: 180 },
       { key: "branch_name", label: "Branch", format: "text", width: 120 },
       { key: "process_name", label: "Process", format: "text", width: 140 },
@@ -792,6 +796,8 @@ export const REPORT_CATALOG: ReportMeta[] = [
     primaryKey: ["employee_code", "dispute_date", "submitted_at"],
     columns: [
       { key: "employee_code", label: "Emp Code", format: "text", width: 100 },
+      { key: "cost_centre_code", label: "Cost Centre Code", format: "text", width: 150 },
+      { key: "cost_centre_name", label: "Cost Centre", format: "text", width: 180 },
       { key: "employee_name", label: "Employee Name", format: "text", width: 180 },
       { key: "branch_name", label: "Branch", format: "text", width: 120 },
       { key: "process_name", label: "Process", format: "text", width: 140 },
@@ -1101,6 +1107,8 @@ export const REPORT_CATALOG: ReportMeta[] = [
     columns: [
       { key: "sr_no",               label: "SR#",                 format: "number", width: 60,  align: "center" },
       { key: "employee_code",       label: "EMPLOYEE_CODE",       format: "text",   width: 120 },
+      { key: "cost_centre_code", label: "Cost Centre Code", format: "text", width: 150 },
+      { key: "cost_centre_name", label: "Cost Centre", format: "text", width: 180 },
       { key: "employee_name",       label: "EMPLOYEE_NAME",       format: "text",   width: 200 },
       { key: "leave_name",          label: "LEAVE_NAME",          format: "text",   width: 140 },
       { key: "leave_type",          label: "LEAVE TYPE",          format: "text",   width: 90,  align: "center" },
@@ -1752,6 +1760,8 @@ export const REPORT_CATALOG: ReportMeta[] = [
     primaryKey: ["employee_code", "settlement_date"],
     columns: [
       { key: "employee_code", label: "Emp Code", format: "text", width: 100 },
+      { key: "cost_centre_code", label: "Cost Centre Code", format: "text", width: 150 },
+      { key: "cost_centre_name", label: "Cost Centre", format: "text", width: 180 },
       { key: "employee_name", label: "Employee Name", format: "text", width: 180 },
       { key: "settlement_date", label: "Settlement Date", format: "date", width: 100 },
       { key: "total_earnings", label: "Total Earnings", format: "currency", width: 120, align: "right" },
@@ -1861,6 +1871,8 @@ export const REPORT_CATALOG: ReportMeta[] = [
     primaryKey: ["employee_code", "exit_date"],
     columns: [
       { key: "employee_code", label: "Emp Code", format: "text", width: 100 },
+      { key: "cost_centre_code", label: "Cost Centre Code", format: "text", width: 150 },
+      { key: "cost_centre_name", label: "Cost Centre", format: "text", width: 180 },
       { key: "employee_name", label: "Employee Name", format: "text", width: 180 },
       { key: "date_of_joining", label: "DOJ", format: "date", width: 100 },
       { key: "date_of_exit", label: "Date Of Exit", format: "date", width: 110 },
@@ -2071,6 +2083,8 @@ export const REPORT_CATALOG: ReportMeta[] = [
     columns: [
       { key: "call_id", label: "Call ID", format: "text", width: 120 },
       { key: "employee_code", label: "Emp Code", format: "text", width: 100 },
+      { key: "cost_centre_code", label: "Cost Centre Code", format: "text", width: 150 },
+      { key: "cost_centre_name", label: "Cost Centre", format: "text", width: 180 },
       { key: "audit_date", label: "Audit Date", format: "date", width: 100 },
       { key: "score", label: "Score", format: "percentage", width: 80, align: "right" },
       { key: "fatal_error", label: "Fatal Error", format: "boolean", width: 80 },
@@ -2090,6 +2104,8 @@ export const REPORT_CATALOG: ReportMeta[] = [
     columns: [
       { key: "call_id", label: "Call ID", format: "text", width: 120 },
       { key: "employee_code", label: "Emp Code", format: "text", width: 100 },
+      { key: "cost_centre_code", label: "Cost Centre Code", format: "text", width: 150 },
+      { key: "cost_centre_name", label: "Cost Centre", format: "text", width: 180 },
       { key: "audit_date", label: "Audit Date", format: "date", width: 100 },
       { key: "score", label: "Score", format: "number", width: 100, align: "right" },
       { key: "process_name", label: "Process", format: "text", width: 140 },
