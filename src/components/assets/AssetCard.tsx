@@ -2,7 +2,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Laptop, Monitor, Smartphone, Headphones, MoreVertical, Edit, Trash2, UserPlus, RotateCcw, History } from "lucide-react";
+import { Laptop, Monitor, Package, Smartphone, Headphones, MoreVertical, Edit, Trash2, UserPlus, RotateCcw, History } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -11,20 +11,13 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 
-export interface Asset {
-  id: string;
-  name: string;
-  type: "laptop" | "monitor" | "phone" | "accessory";
-  serialNumber: string;
-  purchaseDate: string;
-  cost: number;
-  status: "available" | "assigned" | "maintenance" | "retired";
-  notes?: string;
-  assignedTo?: {
-    name: string;
-    avatar?: string;
-  };
-}
+/*
+ * Re-exported from the hook rather than redeclared. The copy that lived here was narrower than
+ * the data it receives - no "repair" or "lost" status, and `type` pinned to four literals when
+ * the API allows any string - so assets in those states could not be passed to this card at all.
+ */
+export type { Asset } from "@/hooks/useAssets";
+import type { Asset } from "@/hooks/useAssets";
 
 interface AssetCardProps {
   asset: Asset;
@@ -36,14 +29,14 @@ interface AssetCardProps {
   showAdminActions?: boolean;
 }
 
-const typeIcons = {
+const typeIcons: Record<string, JSX.Element> = {
   laptop: <Laptop className="h-6 w-6" />,
   monitor: <Monitor className="h-6 w-6" />,
   phone: <Smartphone className="h-6 w-6" />,
   accessory: <Headphones className="h-6 w-6" />,
 };
 
-const statusStyles = {
+const statusStyles: Record<string, string> = {
   available: "bg-emerald-500/10 text-emerald-600 border-emerald-500/20",
   assigned: "bg-primary/10 text-primary border-primary/20",
   maintenance: "bg-amber-500/10 text-amber-600 border-amber-500/20",
@@ -56,7 +49,7 @@ export function AssetCard({ asset, onAssign, onReturn, onEdit, onDelete, onViewH
         <div className="flex items-start justify-between">
           <div className="flex items-start gap-4">
             <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-primary/10 text-primary">
-              {typeIcons[asset.type]}
+              {typeIcons[asset.type] ?? <Package className="h-6 w-6" />}
             </div>
             <div>
               <h3 className="font-semibold text-foreground">{asset.name}</h3>
@@ -120,7 +113,7 @@ export function AssetCard({ asset, onAssign, onReturn, onEdit, onDelete, onViewH
         </div>
 
         <div className="mt-4 flex items-center justify-between border-t border-border pt-4">
-          <Badge variant="outline" className={statusStyles[asset.status]}>
+          <Badge variant="outline" className={statusStyles[asset.status] ?? "bg-muted text-muted-foreground border-border"}>
             {asset.status}
           </Badge>
           {asset.assignedTo && (

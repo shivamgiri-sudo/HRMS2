@@ -542,6 +542,8 @@ const Employees = () => {
                   </Link>
                 </Button>
                 <DateRangeExportDialog
+                  title="Export Employee Directory"
+                  description="Export the employee directory with an optional joining date range filter."
                   onExportCSV={exportToCSV}
                   onExportPDF={exportToPDF}
                 />

@@ -165,7 +165,10 @@ export default function AgentQualityDashboard() {
               {cqScoreLoading ? (
                 <PanelSkeleton />
               ) : cqScore ? (
-                <QuickWins data={cqScore} />
+                <QuickWins
+                  topWeakness={weakness?.weakness_areas?.[0]?.category}
+                  isLoading={cqScoreLoading}
+                />
               ) : null}
             </div>
 
@@ -210,8 +213,12 @@ export default function AgentQualityDashboard() {
                 <TableSkeleton />
               ) : callsReview && callsReview.calls.length > 0 ? (
                 <CallsTable
-                  data={callsReview}
-                  onRowClick={(call) => {
+                  calls={callsReview.calls}
+                  totalCalls={callsReview.total_calls}
+                  currentPage={Math.floor(callsReview.page.offset / callsReview.page.limit) + 1}
+                  pageSize={callsReview.page.limit}
+                  isLoading={callsLoading}
+                  onCallClick={(call) => {
                     setSelectedCallId(call.call_id);
                     setIsModalOpen(true);
                   }}
@@ -232,7 +239,7 @@ export default function AgentQualityDashboard() {
             setIsModalOpen(false);
             setSelectedCallId(null);
           }}
-          callDetail={callDetail}
+          call={callDetail}
           isLoading={!callDetail && isModalOpen}
         />
       </div>

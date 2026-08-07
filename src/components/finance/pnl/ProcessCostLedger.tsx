@@ -13,7 +13,14 @@ export function ProcessCostLedger({
   rows,
 }: {
   title: string;
-  rows: Array<Record<string, unknown>>;
+  /*
+   * Readonly, and indexed through Record inside the body rather than declared as one.
+   * A typed row array such as PnlAdjustmentRow[] is NOT assignable to Record<string, unknown>[]
+   * - interfaces carry no implicit index signature - even though it satisfies the shape
+   * structurally. This component reads keys dynamically (snake_case or camelCase, whichever the
+   * caller has), so it accepts any object array and does the widening itself.
+   */
+  rows: ReadonlyArray<Record<string, unknown>> | ReadonlyArray<object>;
 }) {
   return (
     <Card className="rounded-3xl border-slate-200 shadow-sm">
@@ -42,7 +49,7 @@ export function ProcessCostLedger({
                     </td>
                   </tr>
                 )}
-                {rows.map((row, index) => (
+                {(rows as ReadonlyArray<Record<string, unknown>>).map((row, index) => (
                   <tr key={`${String(row.id ?? index)}-${index}`} className="hover:bg-slate-50/80">
                     <td className="px-4 py-3 text-slate-700">{String(row.process_name ?? row.processName ?? "-")}</td>
                     <td className="px-4 py-3 text-slate-700">{String(row.metric_key ?? row.metricKey ?? "-")}</td>
