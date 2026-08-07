@@ -27,6 +27,28 @@ const ROUTE_BY_PAGE_CODE: Record<string, string> = Object.entries(PAGE_CODE_BY_R
   {} as Record<string, string>,
 );
 
+/** Every path the router actually serves, so a catalog path can be sanity-checked. */
+const KNOWN_ROUTES = new Set(Object.keys(PAGE_CODE_BY_ROUTE));
+
+/**
+ * Resolve where a launcher tile should point.
+ *
+ * Router mapping wins. A database path is used only if it names a route that exists —
+ * page_catalog.page_path drifts (sql/216 is the recorded example) and an unchecked
+ * fallback turns that drift into a 404 the user meets by clicking a tile they were
+ * legitimately granted.
+ */
+function resolveLaunchRoute(page: { page_code: string; route_path?: string | null; page_path?: string | null }): string {
+  const routerPath = ROUTE_BY_PAGE_CODE[page.page_code];
+  if (routerPath) return routerPath;
+
+  const dbPath = page.route_path ?? page.page_path ?? null;
+  // Catalog paths sometimes carry a query string (?tab=…); the route is the part before it.
+  if (dbPath && KNOWN_ROUTES.has(dbPath.split("?")[0])) return dbPath;
+
+  return "/dashboard";
+}
+
 const iconMap: Record<string, JSX.Element> = {
   // Core modules
   HRMS: <Users className="h-5 w-5" />,
@@ -103,9 +125,16 @@ export default function ModuleLauncher() {
             ...page,
             module_code: page.module_code ?? page.module ?? page.page_code.split("_")[0] ?? "HRMS",
             page_description: page.page_description ?? page.description ?? "Open workspace",
-            // Router first, database second. See ROUTE_BY_PAGE_CODE above.
-            route_path:
-              ROUTE_BY_PAGE_CODE[page.page_code] ?? page.route_path ?? page.page_path ?? "/dashboard",
+            // Router first, database second — and the database only when it names a
+            // route that actually exists. Nine granted codes (LEAVE_MANAGEMENT,
+            // WFM_ROSTER_MANAGER_QUEUE, COACHING, PAYROLL_ATTENDANCE_OVERRIDES,
+            // ONBOARDING_REQUESTS/REVIEW/SECTION_STATUS, SALARY_PREP,
+            // SALARY_BAND_MASTER) have no router entry AND a page_path matching no
+            // mounted route, so the old chain handed the user a tile that 404s. Falling
+            // back to the dashboard is not a fix for those codes — they still need
+            // either a route mapping or retiring in page_catalog — but a tile that lands
+            // somewhere real beats one that dead-ends.
+            route_path: resolveLaunchRoute(page),
           }));
       } catch {
         return access.visiblePageCodes.map(fallbackPageFromCode);
