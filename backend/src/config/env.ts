@@ -14,7 +14,7 @@ const envCandidates = [
 const loadedEnvPaths = new Set<string>();
 for (const envPath of envCandidates) {
   if (!fs.existsSync(envPath) || loadedEnvPaths.has(envPath)) continue;
-  dotenv.config({ path: envPath, override: true });
+  dotenv.config({ path: envPath, override: false });
   loadedEnvPaths.add(envPath);
 }
 

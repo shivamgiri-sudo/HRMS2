@@ -348,10 +348,10 @@ SOURCE sql/508_ats_onboarding_bridge_code_columns.sql;
 SOURCE sql/509_portal_client_master_fixes.sql;
 SOURCE sql/510_portal_superadmin_user.sql;
 
--- ── Governed multi-source performance ingestion (520–522) ───────────────────
-SOURCE sql/520_performance_ingestion_platform.sql;
-SOURCE sql/521_performance_multi_source_lineage.sql;
-SOURCE sql/522_performance_governance_audit.sql;
+-- ── Governed multi-source performance ingestion (580–582) ───────────────────
+SOURCE sql/580_performance_ingestion_platform.sql;
+SOURCE sql/581_performance_multi_source_lineage.sql;
+SOURCE sql/582_performance_governance_audit.sql;
 
 -- ── Report query performance indexes (540) ────────────────────────────────────
 SOURCE sql/540_report_performance_indexes.sql;

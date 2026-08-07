@@ -4,9 +4,9 @@ on:
   pull_request:
     branches: [main]
     paths:
-      - "backend/sql/520_performance_ingestion_platform.sql"
-      - "backend/sql/521_performance_multi_source_lineage.sql"
-      - "backend/sql/522_performance_governance_audit.sql"
+      - "backend/sql/580_performance_ingestion_platform.sql"
+      - "backend/sql/581_performance_multi_source_lineage.sql"
+      - "backend/sql/582_performance_governance_audit.sql"
       - "backend/src/modules/performance-ingestion/**"
       - "backend/src/modules/performance-intelligence/**"
       - "backend/src/db/runPendingMigrations.ts"
@@ -23,11 +23,11 @@ on:
       - ".github/workflows/performance-platform-validation.yml"
   push:
     branches:
-      - agent/performance-ingestion-platform
+      - codex/performance-platform-finalization
     paths:
-      - "backend/sql/520_performance_ingestion_platform.sql"
-      - "backend/sql/521_performance_multi_source_lineage.sql"
-      - "backend/sql/522_performance_governance_audit.sql"
+      - "backend/sql/580_performance_ingestion_platform.sql"
+      - "backend/sql/581_performance_multi_source_lineage.sql"
+      - "backend/sql/582_performance_governance_audit.sql"
       - "backend/src/modules/performance-ingestion/**"
       - "backend/src/modules/performance-intelligence/**"
       - "backend/src/db/runPendingMigrations.ts"
@@ -77,28 +77,38 @@ jobs:
         run: npm --prefix backend run typecheck
 
       - name: Performance platform tests
+        working-directory: backend
         run: >-
-          npm --prefix backend exec -- vitest run
+          npm test -- --run
           src/modules/performance-ingestion/__tests__/performance-source-adapters.test.ts
           src/modules/performance-ingestion/__tests__/performance-governance.service.test.ts
           src/modules/performance-ingestion/__tests__/performance-scheduler.service.test.ts
+          src/modules/performance-ingestion/__tests__/performance-manual-upload.service.test.ts
+          src/modules/performance-ingestion/__tests__/performance-manual-upload-verification.service.test.ts
           src/modules/performance-intelligence/__tests__/performance-intelligence.formulas.test.ts
           src/modules/performance-intelligence/__tests__/performance-intelligence.service.test.ts
+          src/config/__tests__/env-loading.contract.test.ts
+          src/db/__tests__/migrate-fresh-test-safety.contract.test.ts
 
       - name: Authentication security contract
-        run: npm --prefix backend exec -- vitest run src/modules/auth/__tests__/auth-security.test.ts
+        working-directory: backend
+        run: npm test -- --run src/modules/auth/__tests__/auth-security.test.ts
 
       - name: Document vault security contract
-        run: npm --prefix backend exec -- vitest run src/modules/files/__tests__/document-vault-security.test.ts
+        working-directory: backend
+        run: npm test -- --run src/modules/files/__tests__/document-vault-security.test.ts
 
       - name: Migration governance contract
-        run: npm --prefix backend exec -- vitest run src/db/__tests__/migration-governance.test.ts
+        working-directory: backend
+        run: npm test -- --run src/db/__tests__/migration-governance.test.ts
 
       - name: Database connection reliability contract
-        run: npm --prefix backend exec -- vitest run src/db/__tests__/connection-reliability.test.ts
+        working-directory: backend
+        run: npm test -- --run src/db/__tests__/connection-reliability.test.ts
 
       - name: Worker safety contract
-        run: npm --prefix backend exec -- vitest run src/workers/__tests__/worker-safety.test.ts
+        working-directory: backend
+        run: npm test -- --run src/workers/__tests__/worker-safety.test.ts
 
       - name: Backend build
         run: npm --prefix backend run build

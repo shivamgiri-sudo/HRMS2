@@ -70,12 +70,22 @@ function aggregateGroup(facts: MetricFact[]): PerformanceMetricResult {
     const numerator = componentFacts.reduce((sum, fact) => sum + Number(fact.numeratorValue), 0);
     const denominator = componentFacts.reduce((sum, fact) => sum + Number(fact.denominatorValue), 0);
     if (denominator > 0) {
-      const multiplier = first?.unit === "percent" ? 100 : 1;
+      const multiplier = finiteOrNull(first?.calculationMultiplier) ?? 100;
       value = round((numerator / denominator) * multiplier, decimals);
       calculationStatus = componentFacts.length === actualFacts.length && allFormulaVersioned
         ? "verified"
         : "legacy_unverified";
     }
+  } else if (method === "weighted_average" && actualValues.length > 0) {
+    const weightedFacts = actualFacts.filter((fact) => finiteOrNull(fact.sourceRecordCount) !== null);
+    const totalWeight = weightedFacts.reduce((sum, fact) => sum + Math.max(0, Number(fact.sourceRecordCount)), 0);
+    value = totalWeight > 0
+      ? round(weightedFacts.reduce(
+          (sum, fact) => sum + Number(fact.actualValue) * Math.max(0, Number(fact.sourceRecordCount)),
+          0,
+        ) / totalWeight, decimals)
+      : round(actualValues.reduce((sum, current) => sum + current, 0) / actualValues.length, decimals);
+    calculationStatus = allFormulaVersioned ? "verified" : "legacy_unverified";
   } else if (actualValues.length > 0) {
     value = round(actualValues.reduce((sum, current) => sum + current, 0) / actualValues.length, decimals);
     calculationStatus = allFormulaVersioned ? "verified" : "legacy_unverified";

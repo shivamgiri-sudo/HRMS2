@@ -36,7 +36,7 @@ const metricBindingSchema = z.object({
   valueField: z.string().trim().max(255).optional(),
   numeratorField: z.string().trim().max(255).optional(),
   denominatorField: z.string().trim().max(255).optional(),
-  aggregation: z.enum(["sum", "average", "ratio", "latest"]).optional(),
+  aggregation: z.enum(["sum", "average", "weighted_average", "ratio", "latest"]).optional(),
   ratioMultiplier: z.coerce.number().finite().optional(),
   sourceRecordCountField: z.string().trim().max(255).optional(),
 }).superRefine((value, context) => {
@@ -72,6 +72,7 @@ const datasetSchema = z.object({
     employeeIdentifierType: z.string().trim().max(50).optional(),
     eventDateField: z.string().trim().min(1).max(255),
     sourceRecordKeyField: z.string().trim().max(255).optional(),
+    sourceEventTimestampField: z.string().trim().max(255).optional(),
     externalProcessField: z.string().trim().max(255).optional(),
     branchField: z.string().trim().max(255).optional(),
     metrics: z.array(metricBindingSchema).min(1).max(100),

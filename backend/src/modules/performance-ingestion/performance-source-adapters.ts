@@ -11,6 +11,12 @@ import type {
   PerformanceDataset,
   SourceRow,
 } from "./performance-ingestion.types.js";
+import {
+  assertSourceRowColumns,
+  assertSourceRowLimit,
+  inspectManualUploadFile,
+  performanceDatasetMaxRows,
+} from "./performance-manual-upload.service.js";
 
 const MUTATING_SQL = /\b(INSERT|UPDATE|DELETE|MERGE|DROP|ALTER|TRUNCATE|CREATE|GRANT|REVOKE|EXEC(?:UTE)?|CALL|REPLACE|LOAD\s+DATA|INTO\s+OUTFILE)\b/i;
 const STARTS_READ_ONLY = /^\s*(SELECT|WITH)\b/i;
@@ -20,16 +26,73 @@ const GOOGLE_SHEET_HOSTS = new Set([
   "sheets.googleapis.com",
 ]);
 
+function stripSqlLiteralsAndComments(query: string): string {
+  let output = "";
+  let index = 0;
+  while (index < query.length) {
+    const char = query[index];
+    const next = query[index + 1];
+
+    if (char === "-" && next === "-") {
+      index += 2;
+      while (index < query.length && !/[\r\n]/.test(query[index])) index += 1;
+      output += " ";
+      continue;
+    }
+    if (char === "#") {
+      index += 1;
+      while (index < query.length && !/[\r\n]/.test(query[index])) index += 1;
+      output += " ";
+      continue;
+    }
+    if (char === "/" && next === "*") {
+      index += 2;
+      while (index < query.length && !(query[index] === "*" && query[index + 1] === "/")) index += 1;
+      index += 2;
+      output += " ";
+      continue;
+    }
+    if (char === "'" || char === '"' || char === "`") {
+      const quote = char;
+      output += "''";
+      index += 1;
+      while (index < query.length) {
+        if (query[index] === "\\" && quote !== "`") {
+          index += 2;
+          continue;
+        }
+        if (query[index] === quote) {
+          index += 1;
+          if (query[index] === quote && quote !== "`") {
+            index += 1;
+            continue;
+          }
+          break;
+        }
+        index += 1;
+      }
+      continue;
+    }
+    output += char;
+    index += 1;
+  }
+  return output;
+}
+
 export function assertReadOnlyQuery(query: string): void {
   const normalised = String(query ?? "").trim();
   if (!normalised) throw new Error("Dataset query is not configured");
+  if (/\/\*!/.test(normalised)) {
+    throw new Error("Executable SQL comments are not allowed");
+  }
   if (!STARTS_READ_ONLY.test(normalised)) {
     throw new Error("Only SELECT or WITH queries are allowed for performance sources");
   }
-  if (MUTATING_SQL.test(normalised)) {
+  const structuralSql = stripSqlLiteralsAndComments(normalised);
+  if (MUTATING_SQL.test(structuralSql)) {
     throw new Error("Mutating SQL is forbidden for performance source connectors");
   }
-  if (normalised.replace(/;\s*$/, "").includes(";")) {
+  if (structuralSql.replace(/;\s*$/, "").includes(";")) {
     throw new Error("Multiple SQL statements are not allowed");
   }
 }
@@ -67,9 +130,7 @@ export function assertConnectorType(
 }
 
 function boundedMaxRows(dataset: PerformanceDataset): number {
-  const configured = Number((dataset.config as { maxRows?: number }).maxRows ?? 10_000);
-  if (!Number.isFinite(configured)) return 10_000;
-  return Math.max(1, Math.min(100_000, Math.trunc(configured)));
+  return performanceDatasetMaxRows(dataset);
 }
 
 function queryArguments(
@@ -101,7 +162,10 @@ async function readDatabaseRows(
     assertReadOnlyQuery(query);
     const pool = await getPoolForKey(dataset.connectorKey) as mysql.Pool;
     const [rows] = await pool.execute(query, queryArguments(config, input));
-    return (rows as SourceRow[]).slice(0, maxRows);
+    const sourceRows = rows as SourceRow[];
+    assertSourceRowLimit(sourceRows.length, maxRows);
+    assertSourceRowColumns(dataset, sourceRows);
+    return sourceRows;
   }
 
   const query = String(config.queryMssql ?? "");
@@ -112,10 +176,13 @@ async function readDatabaseRows(
   request.input("to", sql.NVarChar(50), input.to);
   request.input("checkpoint", sql.NVarChar(500), input.checkpoint ?? "");
   const result = await request.query(query);
-  return (result.recordset as SourceRow[]).slice(0, maxRows);
+  const sourceRows = result.recordset as SourceRow[];
+  assertSourceRowLimit(sourceRows.length, maxRows);
+  assertSourceRowColumns(dataset, sourceRows);
+  return sourceRows;
 }
 
-function workbookRows(buffer: Buffer, maxRows: number): SourceRow[] {
+function workbookRows(dataset: PerformanceDataset, buffer: Buffer, maxRows: number): SourceRow[] {
   const workbook = XLSX.read(buffer, { type: "buffer", cellDates: true, raw: false });
   const firstSheet = workbook.SheetNames[0];
   if (!firstSheet) return [];
@@ -123,7 +190,9 @@ function workbookRows(buffer: Buffer, maxRows: number): SourceRow[] {
     defval: null,
     raw: false,
   });
-  return rows.slice(0, maxRows);
+  assertSourceRowLimit(rows.length, maxRows);
+  assertSourceRowColumns(dataset as PerformanceDataset, rows);
+  return rows;
 }
 
 async function googleSheetRows(dataset: PerformanceDataset): Promise<SourceRow[]> {
@@ -142,7 +211,7 @@ async function googleSheetRows(dataset: PerformanceDataset): Promise<SourceRow[]
       }
     },
   });
-  return workbookRows(Buffer.from(response.data), boundedMaxRows(dataset));
+  return workbookRows(dataset, Buffer.from(response.data), boundedMaxRows(dataset));
 }
 
 export async function readPerformanceSourceRows(
@@ -162,7 +231,7 @@ export async function readPerformanceSourceRows(
   }
   if (dataset.sourceType === "excel" || dataset.sourceType === "csv") {
     if (!input.uploadBuffer) throw new Error("An Excel or CSV file is required for this dataset");
-    return workbookRows(input.uploadBuffer, boundedMaxRows(dataset));
+    return inspectManualUploadFile(dataset, input.uploadBuffer, null).rows;
   }
   throw new Error(`Unsupported performance source type: ${dataset.sourceType}`);
 }

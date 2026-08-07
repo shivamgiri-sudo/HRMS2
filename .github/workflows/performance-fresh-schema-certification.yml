@@ -1,0 +1,70 @@
+name: Performance Fresh Schema Certification
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "backend/sql/**"
+      - "backend/scripts/migrate-fresh-test.ts"
+      - "backend/src/db/runPendingMigrations.ts"
+      - "backend/src/modules/performance-ingestion/**"
+      - "backend/src/modules/performance-intelligence/**"
+      - ".github/workflows/performance-fresh-schema-certification.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  fresh-schema:
+    name: MySQL 8.4 certifies Performance migrations
+    runs-on: ubuntu-24.04
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: root
+        ports:
+          - 3307:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -proot"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install backend dependencies
+        run: npm --prefix backend ci
+
+      - name: Performance migration certification
+        run: npm --prefix backend run performance:certify-migrations -- --allow-destructive-test-db
+        env:
+          NODE_ENV: test
+          DB_HOST: 127.0.0.1
+          DB_PORT: 3307
+          DB_USER: root
+          DB_PASSWORD: root
+          DB_NAME: hrms_ci_baseline
+          TEST_DB_NAME: hrms_test_performance
+
+      - name: Performance database tests
+        working-directory: backend
+        run: >-
+          npm test -- --run
+          src/modules/performance-ingestion/__tests__/performance-source-adapters.test.ts
+          src/modules/performance-ingestion/__tests__/performance-manual-upload.service.test.ts
+          src/modules/performance-ingestion/__tests__/performance-manual-upload-verification.service.test.ts
+          src/modules/performance-intelligence/__tests__/performance-intelligence.formulas.test.ts
+
+      - name: Backend typecheck
+        run: npm --prefix backend run typecheck
+
+      - name: Backend build
+        run: npm --prefix backend run build
