@@ -655,6 +655,8 @@ interface ProcessRecord {
   workload_type: string | null;
   client_id: string | null;
   client_name: string | null;
+  /** Comma-separated cost centre codes mapped to this process; NULL when none are. */
+  cost_centre_codes: string | null;
   active_status: number;
 }
 
@@ -1027,6 +1029,7 @@ function ProcessTab({ isAdmin }: { isAdmin: boolean }) {
                 <tr>
                   <th className="p-4 font-semibold">Process Name</th>
                   <th className="p-4 font-semibold">Code</th>
+                  <th className="p-4 font-semibold">Cost Centre</th>
                   <th className="p-4 font-semibold">Client</th>
                   <th className="p-4 font-semibold">Branch</th>
                   <th className="p-4 font-semibold">LOB</th>
@@ -1039,6 +1042,28 @@ function ProcessTab({ isAdmin }: { isAdmin: boolean }) {
                   <tr key={rec.id} className="border-t hover:bg-slate-50/80 transition-colors">
                     <td className="p-4 font-semibold text-slate-900">{rec.process_name}</td>
                     <td className="p-4 font-mono text-xs text-slate-500">{rec.process_code}</td>
+                    {/* Cost centre codes carried by this process (Req 18). Derived from
+                        cost_centre_master.process_id on read; process_master.process_name is
+                        never mutated. 110 of 131 processes are unmapped today, so the empty
+                        state names the gap instead of showing a dash that reads as "none". */}
+                    <td className="p-4">
+                      {rec.cost_centre_codes ? (
+                        <div className="flex flex-wrap gap-1">
+                          {rec.cost_centre_codes.split(",").map((code) => (
+                            <span
+                              key={code}
+                              className="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 font-mono text-[11px] font-semibold text-slate-700"
+                            >
+                              {code.trim()}
+                            </span>
+                          ))}
+                        </div>
+                      ) : (
+                        <span className="text-xs text-slate-400" title="No cost centre in the Cost Centres tab points at this process">
+                          not mapped
+                        </span>
+                      )}
+                    </td>
                     <td className="p-4 text-slate-700">{rec.client_name ?? <span className="text-slate-300">—</span>}</td>
                     <td className="p-4">
                       {rec.branch_name ? (

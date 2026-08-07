@@ -721,7 +721,15 @@ export const processService = {
               bm.branch_name,
               bm.branch_code,
               cl.client_name AS client_name_joined,
-              cl.client_code
+              cl.client_code,
+              -- Cost centre codes mapped to this process (Req 18). Derived on read from
+              -- cost_centre_master.process_id, which is the ONLY real link: client_id is empty
+              -- on all 927 cost centres, so there is nothing else to derive from. The
+              -- correlated subquery beats a JOIN + GROUP BY here because pm.* is selected
+              -- whole and grouping it would mean naming all 78 columns.
+              (SELECT GROUP_CONCAT(cc.cost_centre_code ORDER BY cc.cost_centre_code SEPARATOR ',')
+                 FROM cost_centre_master cc
+                WHERE cc.process_id = pm.id AND cc.active_status = 1) AS cost_centre_codes
          FROM process_master pm
          LEFT JOIN branch_master bm ON bm.id = pm.branch_id
          LEFT JOIN client_master cl ON cl.id = pm.client_id
