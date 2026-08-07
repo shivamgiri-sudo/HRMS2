@@ -1,6 +1,7 @@
 import { randomUUID } from "crypto";
 import type { PoolConnection, RowDataPacket } from "mysql2/promise";
 import { db } from "../../db/mysql.js";
+import { financeBranchFilter, type FinanceBranchScope } from "./finance-access-scope.js";
 
 /**
  * The imprest float ledger (Requirement 7).
@@ -166,6 +167,9 @@ export const imprestLedgerService = {
   /** The statement for one float, oldest first — what a manager-level report renders. */
   async listEntries(filters: {
     imprestManagerId?: string;
+    /** The caller's branch entitlement. Applied on top of any explicit branchId, never instead
+     *  of it — a user who asks for a branch they do not hold must get nothing, not everything. */
+    branchScope?: FinanceBranchScope;
     branchId?: string;
     from?: string;
     to?: string;
@@ -173,6 +177,13 @@ export const imprestLedgerService = {
   }) {
     const conditions: string[] = [];
     const params: unknown[] = [];
+    if (filters.branchScope) {
+      const scope = financeBranchFilter(filters.branchScope, "l.branch_id");
+      if (scope.sql !== "1=1") {
+        conditions.push(scope.sql);
+        params.push(...scope.params);
+      }
+    }
     if (filters.imprestManagerId) {
       conditions.push("l.imprest_manager_id = ?");
       params.push(filters.imprestManagerId);
@@ -209,9 +220,25 @@ export const imprestLedgerService = {
    * Opening is everything strictly before the window, so consecutive periods chain: one
    * period's closing is the next one's opening, by construction rather than by convention.
    */
-  async getPeriodSummary(filters: { imprestManagerId?: string; branchId?: string; from: string; to: string }) {
+  async getPeriodSummary(filters: {
+    imprestManagerId?: string;
+    branchScope?: FinanceBranchScope;
+    branchId?: string;
+    from: string;
+    to: string;
+  }) {
     const scope: string[] = [];
     const scopeParams: unknown[] = [];
+    if (filters.branchScope) {
+      // Opening, movements and closing are three separate queries over the same window, so the
+      // entitlement has to be part of the shared predicate — scoping only the movements would
+      // produce a closing balance that does not equal opening plus movements.
+      const entitlement = financeBranchFilter(filters.branchScope, "branch_id");
+      if (entitlement.sql !== "1=1") {
+        scope.push(entitlement.sql);
+        scopeParams.push(...entitlement.params);
+      }
+    }
     if (filters.imprestManagerId) {
       scope.push("imprest_manager_id = ?");
       scopeParams.push(filters.imprestManagerId);

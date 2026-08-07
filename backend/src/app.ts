@@ -209,6 +209,7 @@ import { candidatePortalRouter } from "./modules/ats/candidate-portal.routes.js"
 import { superAdminRouter } from "./modules/ats/super-admin.routes.js";
 import { vendorPaymentRouter } from "./modules/finance/vendor-payment.routes.js";
 import { grnRouter } from "./modules/finance/grn.routes.js";
+import { imprestRouter } from "./modules/finance/imprest.routes.js";
 import { costCentreManagementRouter } from "./modules/finance/cost-centre-management.routes.js";
 import { processPnlRouter } from "./modules/process-pnl/process-pnl.routes.js";
 import billabilityRouter from "./modules/process-pnl/billability.routes.js";
@@ -484,6 +485,9 @@ app.use("/api/ijp", ijpRouter);
 app.use("/api/erp", erpRouter);
 app.use("/api/finance", vendorPaymentRouter);
 app.use("/api/finance", grnRouter);
+// Mounted at its own /imprest prefix rather than bare /api/finance, so no imprest path can
+// ever be shadowed by grnRouter's "/grns/:id"-shaped routes above it.
+app.use("/api/finance/imprest", imprestRouter);
 app.use("/api/finance/cost-centres", costCentreManagementRouter);
 app.use("/api/finance", processPnlRouter);
 // Mounted on its own base, BEFORE nothing and after processPnlRouter deliberately: it
