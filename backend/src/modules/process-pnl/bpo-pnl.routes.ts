@@ -4,7 +4,7 @@ import {
   type AuthenticatedRequest,
 } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
-import { resolveFinanceBranchScope } from "../finance/finance-access-scope.js";
+import { resolveFinanceBranchScopeSet } from "../finance/finance-access-scope.js";
 import { bpoPnlAllocationOverlayService } from "./bpo-pnl-allocation-overlay.service.js";
 import { bpoPnlConfigurationService } from "./bpo-pnl.configuration.service.js";
 import { isPeriodLocked } from "./finance-period-lock.js";
@@ -34,13 +34,20 @@ function filters(req: AuthenticatedRequest, scopedBranchId?: string | null) {
 
 async function scopedFilters(req: AuthenticatedRequest) {
   const user = req.authUser;
-  const branchId = await resolveFinanceBranchScope({
+  // The SET, not a single branch. A finance user entitled to three branches used to get an
+  // error here telling them to "select a single branch" — the P&L was simply unusable for
+  // them. The base query ANDs the entitlement as an IN predicate, and the allocation overlay
+  // already groups its cost pools by branch, so N branches need no change to the maths.
+  const scope = await resolveFinanceBranchScopeSet({
     userId: user.id,
     primaryRole: user.role,
     userRoles: req.userRoles,
     requestedBranchId: req.query.branchId ? String(req.query.branchId) : undefined,
   });
-  return filters(req, branchId);
+  const base = filters(req, scope.mode === "branches" && scope.branchIds.length === 1
+    ? scope.branchIds[0]
+    : undefined);
+  return scope.mode === "all" ? base : { ...base, branchIds: scope.branchIds };
 }
 
 // isPeriodLocked here is a transparency flag, not (yet) a snapshot substitution: these three

@@ -286,6 +286,7 @@ function normalizeFilters(filters: Partial<PnlQueryFilters>): PnlQueryFilters {
   return {
     period: filters.period && /^\d{4}-\d{2}$/.test(filters.period) ? filters.period : defaultPeriod(),
     branchId: filters.branchId,
+    branchIds: filters.branchIds,
     processId: filters.processId,
     clientId: filters.clientId,
     search: filters.search,

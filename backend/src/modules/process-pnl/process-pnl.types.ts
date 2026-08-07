@@ -1,6 +1,15 @@
 export interface PnlQueryFilters {
   period: string;
   branchId?: string;
+  /**
+   * The caller's branch entitlement, when it covers more than one branch.
+   *
+   * Applied as an IN predicate ALONGSIDE branchId, never instead of it: branchId is what the
+   * user asked to see, branchIds is what they are allowed to see, and a request for a branch
+   * outside the entitlement must return nothing rather than everything. An empty array is
+   * therefore treated as "no branch is permitted", not as "no restriction".
+   */
+  branchIds?: string[];
   processId?: string;
   clientId?: string;
   search?: string;

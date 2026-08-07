@@ -832,13 +832,19 @@ async function overlayCanonicalProfit(
 
 async function scopedFilters(req: AuthenticatedRequest) {
   const user = req.authUser;
-  const branchId = await resolveFinanceBranchScope({
+  // Resolves the SET. A user entitled to several branches previously hit "this finance screen
+  // does not support multi-branch access yet", which made the canonical P&L — summary, trend
+  // and export — unusable for exactly the people most likely to hold more than one branch.
+  const scope = await resolveFinanceBranchScopeSet({
     userId: user.id,
     primaryRole: user.role,
     userRoles: req.userRoles,
     requestedBranchId: req.query.branchId ? String(req.query.branchId) : undefined,
   });
-  return readFilters(req, branchId);
+  const base = readFilters(req, scope.mode === "branches" && scope.branchIds.length === 1
+    ? scope.branchIds[0]
+    : undefined);
+  return scope.mode === "all" ? base : { ...base, branchIds: scope.branchIds };
 }
 
 // Canonical endpoints: summary/trend/export/close all use the same allocation-aware engine.

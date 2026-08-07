@@ -301,6 +301,17 @@ async function getBaseProcesses(filters: PnlQueryFilters): Promise<ProcessBaseRo
     conds.push("p.branch_id = ?");
     params.push(filters.branchId);
   }
+  // The entitlement, ANDed with whatever branch was asked for. An empty array means the caller
+  // holds no branch at all, and must see nothing — `1=0` rather than a dropped predicate,
+  // because a dropped predicate here silently returns every branch's P&L.
+  if (filters.branchIds) {
+    if (!filters.branchIds.length) {
+      conds.push("1=0");
+    } else {
+      conds.push(`p.branch_id IN (${filters.branchIds.map(() => "?").join(", ")})`);
+      params.push(...filters.branchIds);
+    }
+  }
   if (filters.processId) {
     conds.push("p.id = ?");
     params.push(filters.processId);
@@ -1189,6 +1200,9 @@ async function buildComputationContext(filters: Partial<PnlQueryFilters>): Promi
   const normalizedFilters: PnlQueryFilters = {
     period: filters.period && /^\d{4}-\d{2}$/.test(filters.period) ? filters.period : defaultPeriod(),
     branchId: filters.branchId,
+    // Rebuilt field by field, so a new filter has to be added here explicitly or it is silently
+    // dropped on the way to the query — which is what happened to branchIds first time round.
+    branchIds: filters.branchIds,
     processId: filters.processId,
     clientId: filters.clientId,
     search: filters.search,
