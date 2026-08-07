@@ -83,6 +83,7 @@ import {
   lwpDeductionRegister,
   neftTransferFile,
   payslipStatus,
+  salarySheetExport,
 } from "./payroll.executor.js";
 
 // â”€â”€â”€ Statutory â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -243,6 +244,7 @@ export const EXECUTOR_MAP: Record<string, ExecutorFn> = {
   "lwp-deduction-register":   lwpDeductionRegister,
   "neft-transfer-file":       neftTransferFile,
   "payslip-status":           payslipStatus,
+  "salary-sheet-export":      salarySheetExport,
   "pt-monthly-register":      ptMonthlyRegister,
   "pf-esic-salary-register":  pfEsicSalaryRegister,
   "pf-esi-optout-register":   pfEsiOptOutRegister,

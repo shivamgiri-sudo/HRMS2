@@ -791,3 +791,247 @@ export async function payslipStatus(
   const rows  = await query(sql, params) as Record<string, unknown>[];
   return { rows, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > rows.length };
 }
+
+// ---------------------------------------------------------------------------
+// salary-sheet-export
+//
+// The last of the inline `case` blocks in report-suite.routes.ts, and the only one that
+// was not a mechanical move: it ran a line query, then a second query for component
+// amounts, then assembled a bespoke ~100-column payload in JS and returned its own
+// response. That shape is preserved here in full; every column and alias is unchanged, so
+// an existing consumer sees the same workbook.
+//
+// One behaviour DOES change, deliberately. The inline version ignored limit and offset and
+// always returned every row, on preview as well as export. Through the executor layer it
+// obeys the standard options, so the on-screen preview now pages like every other report
+// while the export path keeps its full allowance. That also makes the component lookup
+// cheaper: it resolves components only for the lines actually returned, not the whole run.
+//
+// The original block recorded that e.cost_center_code, e.department, e.designation and
+// e.uan do not exist on employees and that the master-table joins are the only real source.
+// That is still true, and those joins are kept.
+// ---------------------------------------------------------------------------
+export async function salarySheetExport(
+  filters: ExecFilters,
+  scope: ExecScope,
+  options: ExecOptions
+): Promise<ExecResult> {
+  const runMonth = monthParam(filters.month);
+
+  const clauses: string[] = ["e.id IS NOT NULL"];
+  const params: unknown[] = [];
+  appendScopeConditions(scope, clauses, params);
+  appendFilterConditions(filters, clauses, params);
+  clauses.push("spr.run_month = ?");
+  params.push(runMonth);
+  clauses.push("LOWER(COALESCE(spr.status,'')) NOT IN ('draft','cancelled')");
+
+  const base = `
+    SELECT
+      e.employee_code,
+      CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')) AS emp_name,
+      COALESCE(cc.cost_centre_code, '') AS cost_center_code,
+      COALESCE(cc.cost_centre_name, '') AS cost_center,
+      COALESCE(dept.dept_name, '') AS department,
+      COALESCE(desig.designation_name, '') AS designation,
+      COALESCE(e.profile_type, '') AS profile,
+      CASE WHEN COALESCE(e.is_billable, 1) = 1 THEN 'InHouse' ELSE 'Non-Billable' END AS employee_for,
+      CASE WHEN COALESCE(e.is_billable, 1) = 1 THEN 'Yes' ELSE 'No' END AS billable,
+      COALESCE(b.branch_name, '') AS branch,
+      COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
+      spl.id AS line_id,
+      spl.employee_id,
+      COALESCE(spl.basic, 0) AS basic,
+      COALESCE(spl.hra, 0) AS hra,
+      COALESCE(spl.special_allowance, 0) AS special_allowance,
+      COALESCE(spl.gross_salary, 0) AS gross,
+      COALESCE(spl.working_days, 0) AS working_days,
+      COALESCE(esa.ctc_annual, 0) AS ctc_offered,
+      COALESCE(esa.ctc_annual, 0) AS current_ctc,
+      COALESCE(spl.active_calendar_days, 30) AS actual_days,
+      COALESCE(spl.final_payable_days, spl.present_days, 0) AS earned_days,
+      COALESCE(spl.holiday_work_extra_payout, 0) AS extra_day,
+      COALESCE(spl.leave_days, 0) AS leave_days,
+      CASE WHEN COALESCE(spl.esic_employee, 0) > 0 THEN 'Yes' ELSE 'No' END AS esi_elig,
+      CASE WHEN COALESCE(spl.pf_employee, 0) > 0 THEN 'Yes' ELSE 'No' END AS pf_elig,
+      COALESCE(spl.esic_employee, 0) AS esic,
+      COALESCE(spl.pf_employee, 0) AS epf,
+      COALESCE(spl.tds_amount, spl.tds, 0) AS income_tax,
+      COALESCE(spl.advance_recovery, 0) AS adv_paid,
+      COALESCE(spl.loan_emi, 0) AS loan_ded,
+      COALESCE(spl.professional_tax, 0) AS pro_tax_deduction,
+      COALESCE(spl.lwp_deduction, 0) AS leave_deduction,
+      COALESCE(spl.other_deductions, 0) AS other_deduction,
+      COALESCE(spl.total_deductions, 0) AS total_deduction,
+      COALESCE(spl.incentive_total, 0) AS incentive,
+      COALESCE(spl.overtime_pay, 0) AS extra_day_incentive,
+      COALESCE(spl.net_salary, 0) AS net_salary,
+      COALESCE(spl.esic_employer, 0) AS esic_company,
+      COALESCE(spl.pf_employer, 0) AS epf_company,
+      0 AS admin_chrg,
+      COALESCE(esa.ctc_annual, 0) AS ctc,
+      spr.id AS run_id,
+      DATE_FORMAT(spr.created_at, '%Y-%m-%d') AS sal_date,
+      COALESCE(eu.uan, '') AS uan,
+      COALESCE(e.epf_number, eu.member_id, '') AS epf_no,
+      COALESCE(e.esic_number, '') AS esic_no,
+      COALESCE(e.employment_status, 'Active') AS left_status,
+      'Bank Transfer' AS salary_payment_mode,
+      COALESCE(CAST(ebd.account_number AS CHAR), '') AS ac_no,
+      COALESCE(ebd.ifsc_code, '') AS ifsc_code,
+      COALESCE(ebd.bank_name, '') AS ac_bank,
+      COALESCE(ebd.bank_branch, '') AS ac_branch
+    FROM salary_prep_line spl
+    JOIN salary_prep_run spr ON spr.id = spl.run_id
+    JOIN employees e ON e.id = spl.employee_id
+    LEFT JOIN department_master dept ON dept.id = e.department_id
+    LEFT JOIN designation_master desig ON desig.id = e.designation_id
+    LEFT JOIN branch_master b ON b.id = e.branch_id
+    LEFT JOIN process_master p ON p.id = e.process_id
+    LEFT JOIN cost_centre_master cc ON cc.id = e.cost_centre_id
+    LEFT JOIN employee_salary_assignment esa ON esa.employee_id = e.id AND esa.active_status = 1
+    LEFT JOIN employee_bank_detail ebd ON ebd.employee_id = e.id AND ebd.is_primary = 1 AND ebd.active_status = 1
+    LEFT JOIN employee_uan eu ON eu.employee_id = e.id AND eu.is_active = 1
+    WHERE ${clauses.join(" AND ")}
+    ORDER BY e.employee_code`;
+
+  const total = options.includeTotal ? await count(base, params) : 0;
+  const sql = applyPagination(base, options);
+  const lineRows = await query(sql, params) as Record<string, unknown>[];
+  if (lineRows.length === 0) {
+    return { rows: [], rowCount: options.includeTotal ? total : 0, isTruncated: false };
+  }
+
+  // Component amounts for exactly the lines being returned.
+  const lineIds = lineRows.map(r => r.line_id);
+  const compRows = await query(
+    `SELECT line_id, component_code, amount
+       FROM salary_prep_line_component
+      WHERE line_id IN (${lineIds.map(() => "?").join(",")})`,
+    lineIds
+  ) as Record<string, unknown>[];
+
+  const compMap = new Map<string, Record<string, number>>();
+  for (const c of compRows) {
+    const key = String(c.line_id);
+    if (!compMap.has(key)) compMap.set(key, {});
+    compMap.get(key)![String(c.component_code)] = Number(c.amount);
+  }
+
+  const rows = lineRows.map((row, idx) => {
+    const comp = compMap.get(String(row.line_id)) ?? {};
+    const basic = Number(row.basic) || comp["BASIC"] || 0;
+    const hra = Number(row.hra) || comp["HRA"] || 0;
+    const bonus = comp["BONUS"] || 0;
+    const conv = comp["CONV"] || comp["TA"] || 0;
+    const portfolio = comp["PORTFOLIO"] || 0;
+    const medAllw = comp["MA"] || 0;
+    const lta = comp["LTA"] || 0;
+    const special = Number(row.special_allowance) || comp["SPECIAL"] || comp["PA"] || 0;
+    const otherAllw = comp["OTHER"] || 0;
+    const pli1 = comp["PLI"] || 0;
+    const gross = Number(row.gross)
+      || (basic + hra + bonus + conv + portfolio + medAllw + lta + special + otherAllw + pli1);
+
+    const earnedDays = Number(row.earned_days) || 0;
+    const workingDays = Number(row.working_days) || 1;
+    const earnRatio = earnedDays / workingDays;
+    const incomeTax = Number(row.income_tax);
+
+    return {
+      sno: (options.offset ?? 0) + idx + 1,
+      emp_code: row.employee_code,
+      emp_name: row.emp_name,
+      cost_center_code: row.cost_center_code,
+      cost_center: row.cost_center,
+      department: row.department,
+      designation: row.designation,
+      process_name: row.process_name,
+      profile: row.profile,
+      employee_for: row.employee_for,
+      billable: row.billable,
+      branch: row.branch,
+      basic, hra, bonus, conv, portfolio,
+      medical_allowance: medAllw,
+      lta, special_allowance: special,
+      other_allowance: otherAllw,
+      pli1, gross,
+      working_days: row.working_days,
+      ctc_offered: row.ctc_offered,
+      current_ctc: row.current_ctc,
+      actual_days: row.actual_days,
+      earned_days: earnedDays,
+      extra_day: row.extra_day,
+      leave: row.leave_days,
+      basic1: Math.round(basic * earnRatio),
+      hra1: Math.round(hra * earnRatio),
+      bonus1: Math.round(bonus * earnRatio),
+      conv1: Math.round(conv * earnRatio),
+      portfolio1: Math.round(portfolio * earnRatio),
+      special_allowance1: Math.round(special * earnRatio),
+      other_allowance1: Math.round(otherAllw * earnRatio),
+      medical_allowance1: Math.round(medAllw * earnRatio),
+      gross1: Math.round(gross * earnRatio),
+      esi_elig: row.esi_elig,
+      pf_elig: row.pf_elig,
+      esic: row.esic,
+      epf: row.epf,
+      income_tax: row.income_tax,
+      adv_taken: 0,
+      adv_paid: row.adv_paid,
+      loan_taken: 0,
+      loan_ded: row.loan_ded,
+      mobile_deduction: comp["MOB_DED"] || 0,
+      short_collection: comp["SHORT_COLL"] || 0,
+      asset_recovery: comp["ASSET_REC"] || 0,
+      insurance: comp["INSURANCE"] || 0,
+      pro_tax_deduction: row.pro_tax_deduction,
+      leave_deduction: row.leave_deduction,
+      other_deduction: row.other_deduction,
+      other_deduction_remarks: "",
+      total_deduction: row.total_deduction,
+      incentive: row.incentive,
+      extra_day_incentive: row.extra_day_incentive,
+      arrear: comp["ARREAR"] || 0,
+      pli: comp["PLI"] || 0,
+      net_salary: row.net_salary,
+      esic_company: row.esic_company,
+      epf_company: row.epf_company,
+      admin_chrg: row.admin_chrg,
+      ctc: row.ctc,
+      shsh: String(row.run_id ?? "").slice(-8).toUpperCase(),
+      sal_date: row.sal_date,
+      uan: row.uan,
+      epf_no: row.epf_no,
+      esic_no: row.esic_no,
+      cheque_number: "",
+      cheque_date: "",
+      print_date: new Date().toISOString().slice(0, 10),
+      left_status: row.left_status,
+      tax_total_gross: gross * 12,
+      tax_section10: 0,
+      tax_balance: 0,
+      tax_under_hd: 0,
+      deduction_under24: 0,
+      tax_gross_total: gross * 12,
+      tax_agg_chapter6: 0,
+      total_income: gross * 12,
+      tax_on_total_income: incomeTax * 12,
+      edu_cess: Math.round(incomeTax * 12 * 0.04),
+      tax_pay_edu_cess: Math.round(incomeTax * 12 * 1.04),
+      tax_deducted_till_prev_month: 0,
+      balance_tax: 0,
+      salary_payment_mode: row.salary_payment_mode,
+      ac_no: row.ac_no,
+      ifsc_code: row.ifsc_code,
+      ac_bank: row.ac_bank,
+      ac_branch: row.ac_branch,
+    };
+  });
+
+  return {
+    rows,
+    rowCount: options.includeTotal ? total : rows.length,
+    isTruncated: options.includeTotal ? total > rows.length : rows.length === options.limit,
+  };
+}
