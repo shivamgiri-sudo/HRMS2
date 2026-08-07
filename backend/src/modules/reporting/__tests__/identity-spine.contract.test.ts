@@ -154,9 +154,7 @@ describe("mandatory identity columns on employee-grain reports", () => {
    */
   const NOT_YET_MIGRATED = new Set<string>([
     "anniversary-list",
-    "arrear-payment-register",
     "bank-account-verification",
-    "bank-advice",
     "birthday-list",
     "certification-status",
     "confirmation-due-list",
@@ -173,8 +171,6 @@ describe("mandatory identity columns on employee-grain reports", () => {
     "missing-documents-report",
     "neft-transfer-file",
     "pan-verification-status",
-    "payroll-reconciliation",
-    "payroll-variance",
     "payslip-status",
     // Served by inline case blocks in report-suite.routes.ts, not by an executor â€” they
     // migrate when Phase 3 collapses those into executors.
@@ -188,7 +184,6 @@ describe("mandatory identity columns on employee-grain reports", () => {
     "roster-published",
     "roster-variance",
     "salary-sheet-export",
-    "salary-sheet-onfido",
     "training-completion-status",
     "week-off-calendar",
     "ytd-salary-summary",

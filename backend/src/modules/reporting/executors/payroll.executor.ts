@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Payroll executor
  * Security classification: highly_restricted
  *
@@ -21,6 +21,11 @@ import {
   monthParam,
   applyPagination,
 } from "./types.js";
+import {
+  statusList,
+  PRESENT_STATUSES,
+  HALF_DAY_STATUS,
+} from "../../../shared/attendanceStatus.js";
 
 async function query(sql: string, params: unknown[]): Promise<RowDataPacket[]> {
   const [rows] = await db.execute<RowDataPacket[]>(sql, params);
@@ -70,7 +75,7 @@ export async function payrollRegister(
   //      SUM(total_deductions) therefore overstates money actually deducted by 38,800 for
   //      that run. deduction_applied is the amount a payslip could really have withheld.
   //      A further 146 of those lines carry net_salary = 200 against zero gross and zero
-  //      attendance — 29,200 in total, every one an inactive employee — which line_flag
+  //      attendance â€” 29,200 in total, every one an inactive employee â€” which line_flag
   //      surfaces as PAID_WITHOUT_GROSS rather than leaving it to be found by hand.
   //
   // cost_centre_code / cost_centre_name are added because a payroll register without a
@@ -167,7 +172,9 @@ export async function payrollVariance(
            e.employee_code,
            COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
            b.branch_name,
-           p.process_name,
+           COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
+           COALESCE(sp_cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
+           COALESCE(sp_cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
            d.dept_name AS department_name,
            curr_run.run_month,
            COALESCE(curr.gross_salary,0) AS current_gross,
@@ -188,6 +195,7 @@ export async function payrollVariance(
       JOIN employees e ON e.id = curr.employee_id
       LEFT JOIN branch_master b ON b.id = e.branch_id
       LEFT JOIN process_master p ON p.id = e.process_id
+      LEFT JOIN cost_centre_master sp_cc ON sp_cc.id = e.cost_centre_id
       LEFT JOIN department_master d ON d.id = e.department_id
      WHERE ${clauses.join(" AND ")}
      ORDER BY curr.id ASC`;
@@ -211,7 +219,7 @@ export async function salarySheetOnfido(
 ): Promise<ExecResult> {
   const runMonth = monthParam(filters.month);
 
-  // Sensitive field projections — masked when caller lacks canViewSensitiveFields
+  // Sensitive field projections â€” masked when caller lacks canViewSensitiveFields
   const panField  = scope.canViewSensitiveFields ? "e.pan_number"          : "'***MASKED***' AS pan_number";
   const uanField  = scope.canViewSensitiveFields ? "e.uan_number"          : "'***MASKED***' AS uan_number";
   const bankField = scope.canViewSensitiveFields ? "e.bank_account_number" : "'***MASKED***' AS bank_account_number";
@@ -234,7 +242,9 @@ export async function salarySheetOnfido(
            e.employee_code,
            COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
            b.branch_name,
-           p.process_name,
+           COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
+           COALESCE(sp_cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
+           COALESCE(sp_cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
            d.dept_name AS department_name,
            des.designation_name,
            ${panField},
@@ -262,6 +272,7 @@ export async function salarySheetOnfido(
       JOIN employees e ON e.id = spl.employee_id
       LEFT JOIN branch_master b ON b.id = e.branch_id
       LEFT JOIN process_master p ON p.id = e.process_id
+      LEFT JOIN cost_centre_master sp_cc ON sp_cc.id = e.cost_centre_id
       LEFT JOIN department_master d ON d.id = e.department_id
       LEFT JOIN designation_master des ON des.id = e.designation_id
      WHERE ${clauses.join(" AND ")}
@@ -308,7 +319,9 @@ export async function bankAdvice(
            e.employee_code,
            COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
            b.branch_name,
-           p.process_name,
+           COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
+           COALESCE(sp_cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
+           COALESCE(sp_cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
            ${bankField},
            ${ifscField},
            ${bankName},
@@ -319,6 +332,7 @@ export async function bankAdvice(
       JOIN employees e ON e.id = spl.employee_id
       LEFT JOIN branch_master b ON b.id = e.branch_id
       LEFT JOIN process_master p ON p.id = e.process_id
+      LEFT JOIN cost_centre_master sp_cc ON sp_cc.id = e.cost_centre_id
       LEFT JOIN department_master d ON d.id = e.department_id
      WHERE ${clauses.join(" AND ")}
      ORDER BY spl.id ASC`;
@@ -333,7 +347,7 @@ export async function bankAdvice(
 }
 
 // ---------------------------------------------------------------------------
-// payroll-reconciliation  (aggregate — no cursor)
+// payroll-reconciliation  (aggregate â€” no cursor)
 // ---------------------------------------------------------------------------
 export async function payrollReconciliation(
   filters: ExecFilters,
@@ -351,32 +365,79 @@ export async function payrollReconciliation(
     params.push(runMonth);
   }
 
+  // This query used to return branch/process/month financial totals: employee_count,
+  // total_gross, total_net and so on. Its catalog entry describes something else
+  // entirely â€” "Reconciliation between attendance inputs and payroll outputs", one row
+  // per employee per month, keyed on employee_code â€” and declares ten columns
+  // (attendance_present_days, payroll_payable_days, day_variance, reconciliation_status,
+  // ...) of which the query produced NOT ONE. The grid maps catalog keys onto row keys,
+  // so this report rendered ten empty columns for every row.
+  //
+  // Restored to what it says it is. The branch/process totals it used to return are not
+  // lost: payroll-cost-summary produces exactly that shape, so nothing is duplicated here.
+  //
+  // The reconciliation is worth having on its own terms. Against live 2026-07 it
+  // immediately surfaces employees with 27 attendance days against 9 payroll payable
+  // days â€” the attendance and payroll populations for a month do not agree (1,549
+  // employees with attendance against 1,464 payroll lines), and this is where that
+  // shows up per person rather than as a total that happens to balance.
+  //
+  // Attendance present days count half_day as 0.5, matching the shared attendance
+  // vocabulary. `att` is grouped per employee per month so the join cannot fan out and
+  // multiply a payroll line.
   const base = `
-    SELECT b.branch_name,
-           p.process_name,
-           spr.run_month,
-           COUNT(*) AS employee_count,
-           SUM(COALESCE(spl.gross_salary,0)) AS total_gross,
-           SUM(COALESCE(spl.total_deductions,0)) AS total_deductions,
-           SUM(COALESCE(spl.net_salary,0)) AS total_net,
-           SUM(COALESCE(spl.pf_employee,0)) AS total_pf_employee,
-           SUM(COALESCE(spl.esic_employee,0)) AS total_esic_employee,
-           SUM(COALESCE(spl.tds,0)) AS total_tds,
-           SUM(COALESCE(spl.lwp_deduction,0)) AS total_lwp_deduction
+    SELECT spl.id AS _cursor,
+           e.employee_code,
+           COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
+           COALESCE(sp_cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
+           COALESCE(sp_cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
+           b.branch_name,
+           COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
+           spr.run_month AS payroll_month,
+           ROUND(COALESCE(att.present_days, 0), 2) AS attendance_present_days,
+           ROUND(COALESCE(spl.final_payable_days, spl.working_days, 0), 2) AS payroll_payable_days,
+           ROUND(COALESCE(att.lwp_days, 0), 2) AS attendance_lwp_days,
+           ROUND(COALESCE(spl.lwp_days, 0), 2) AS payroll_lwp_days,
+           ROUND(COALESCE(spl.final_payable_days, spl.working_days, 0)
+                 - COALESCE(att.present_days, 0), 2) AS day_variance,
+           CASE
+             WHEN att.employee_id IS NULL THEN 'NO_ATTENDANCE_DATA'
+             WHEN ABS(COALESCE(spl.final_payable_days, spl.working_days, 0)
+                      - COALESCE(att.present_days, 0)) < 0.5 THEN 'MATCHED'
+             ELSE 'VARIANCE'
+           END AS reconciliation_status,
+           CASE
+             WHEN att.employee_id IS NULL
+               THEN 'Paid this month with no attendance rows for it.'
+             WHEN ABS(COALESCE(spl.lwp_days,0) - COALESCE(att.lwp_days,0)) >= 0.5
+               THEN 'Payroll LWP and attendance LWP disagree.'
+             ELSE ''
+           END AS remarks
       FROM salary_prep_line spl
       JOIN salary_prep_run spr ON spr.id = spl.run_id
       JOIN employees e ON e.id = spl.employee_id
       LEFT JOIN branch_master b ON b.id = e.branch_id
       LEFT JOIN process_master p ON p.id = e.process_id
-      LEFT JOIN department_master d ON d.id = e.department_id
+      LEFT JOIN cost_centre_master sp_cc ON sp_cc.id = e.cost_centre_id
+      LEFT JOIN (
+        SELECT adr.employee_id,
+               LEFT(adr.record_date, 7) AS ym,
+               SUM(CASE WHEN adr.attendance_status IN (${statusList(PRESENT_STATUSES)}) THEN 1
+                        WHEN adr.attendance_status = '${HALF_DAY_STATUS}' THEN 0.5
+                        ELSE 0 END) AS present_days,
+               SUM(COALESCE(adr.lwp_value, 0)) AS lwp_days
+          FROM attendance_daily_record adr
+         GROUP BY adr.employee_id, LEFT(adr.record_date, 7)
+      ) att ON att.employee_id = spl.employee_id AND att.ym = spr.run_month
      WHERE ${clauses.join(" AND ")}
-     GROUP BY b.branch_name, p.process_name, spr.run_month
-     ORDER BY spr.run_month DESC, b.branch_name, p.process_name`;
+     ORDER BY ABS(COALESCE(spl.final_payable_days, spl.working_days, 0)
+                  - COALESCE(att.present_days, 0)) DESC, spl.id ASC`;
 
   const total = options.includeTotal ? await count(base, params) : 0;
   const sql   = applyPagination(base, options);
   const rows  = await query(sql, params) as Record<string, unknown>[];
-  return { rows, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > rows.length };
+  const out   = rows.map(({ _cursor: _, ...rest }) => rest);
+  return { rows: out, rowCount: options.includeTotal ? total : out.length, isTruncated: total > out.length };
 }
 
 // ---------------------------------------------------------------------------
@@ -410,7 +471,9 @@ export async function arrearPaymentRegister(
            e.employee_code,
            COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
            b.branch_name,
-           p.process_name,
+           COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
+           COALESCE(sp_cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
+           COALESCE(sp_cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
            d.dept_name AS department_name,
            COALESCE(spl.arrear_month, spr.run_month) AS arrear_month,
            COALESCE(spl.arrear_amount,0) AS arrear_amount,
@@ -422,6 +485,7 @@ export async function arrearPaymentRegister(
       JOIN employees e ON e.id = spl.employee_id
       LEFT JOIN branch_master b ON b.id = e.branch_id
       LEFT JOIN process_master p ON p.id = e.process_id
+      LEFT JOIN cost_centre_master sp_cc ON sp_cc.id = e.cost_centre_id
       LEFT JOIN department_master d ON d.id = e.department_id
      WHERE ${clauses.join(" AND ")}
      ORDER BY spl.id ASC`;
@@ -436,7 +500,7 @@ export async function arrearPaymentRegister(
 }
 
 // ---------------------------------------------------------------------------
-// payroll-cost-summary  (aggregate — no cursor)
+// payroll-cost-summary  (aggregate â€” no cursor)
 // ---------------------------------------------------------------------------
 export async function payrollCostSummary(
   filters: ExecFilters,
