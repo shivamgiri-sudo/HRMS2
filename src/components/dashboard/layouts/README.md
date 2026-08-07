@@ -31,3 +31,11 @@ files.
 
 Deleting them is a separate, approved change. Until then nothing imports them and they
 have no runtime effect.
+
+## Excluded from typechecking
+
+`tsconfig.app.json` excludes this directory. These files are dead by the definition above —
+nothing imports them, they have no runtime effect, and they must not be revived as-is — so
+their errors were pure noise in a gate that is meant to measure live code. The files are
+untouched; only the checker ignores them. If any panel is ported into a `*ReferenceLayout.tsx`,
+it gets typechecked there like everything else.

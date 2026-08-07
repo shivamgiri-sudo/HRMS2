@@ -323,12 +323,33 @@ async function requestBlob(path: string): Promise<Blob> {
   return res.blob();
 }
 
+/**
+ * The envelope essentially every HRMS endpoint returns.
+ *
+ * Used as the DEFAULT type argument below. Without a default, `T` collapsed to `unknown`, so the
+ * ordinary `const res = await hrmsApi.get(...); res.data` — correct at runtime, since request()
+ * returns the parsed body — failed to compile in 44 places. `unknown` made right code look wrong,
+ * which is the worst way for a type to be wrong: it trains people to stop reading the errors.
+ *
+ * Deliberately WITHOUT an index signature. `data`, `success`, `message` and `error` cover the
+ * envelope, and anything else is still a compile error — so a typo like `res.dta`, or a caller
+ * reading a field the endpoint returns at the top level, is caught rather than waved through.
+ * Endpoints that do return payload at the top level (pnl/bulk-upload returns `imported`/`errors`
+ * there) should pass their own type argument, which still works exactly as before.
+ */
+export interface HrmsEnvelope<T = any> {
+  success?: boolean;
+  data?: T;
+  message?: string;
+  error?: string;
+}
+
 export const hrmsApi = {
-  get: <T>(path: string, timeoutMs?: number) => request<T>("GET", path, undefined, timeoutMs),
-  post: <T>(path: string, body?: unknown, timeoutMs?: number) => request<T>("POST", path, body, timeoutMs),
-  put: <T>(path: string, body?: unknown) => request<T>("PUT", path, body),
-  patch: <T>(path: string, body?: unknown) => request<T>("PATCH", path, body),
-  delete: <T>(path: string, opts?: { params?: Record<string, string>; data?: unknown }) => {
+  get: <T = HrmsEnvelope>(path: string, timeoutMs?: number) => request<T>("GET", path, undefined, timeoutMs),
+  post: <T = HrmsEnvelope>(path: string, body?: unknown, timeoutMs?: number) => request<T>("POST", path, body, timeoutMs),
+  put: <T = HrmsEnvelope>(path: string, body?: unknown) => request<T>("PUT", path, body),
+  patch: <T = HrmsEnvelope>(path: string, body?: unknown) => request<T>("PATCH", path, body),
+  delete: <T = HrmsEnvelope>(path: string, opts?: { params?: Record<string, string>; data?: unknown }) => {
     const qs = opts?.params ? "?" + new URLSearchParams(opts.params).toString() : "";
     return request<T>("DELETE", path + qs, opts?.data);
   },

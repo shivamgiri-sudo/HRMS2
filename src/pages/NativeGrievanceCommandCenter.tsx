@@ -143,12 +143,12 @@ export default function NativeGrievanceCommandCenter() {
         `/api/helpdesk/grievances/command-center?${p}`
       );
 
-      if (res.data?.success) {
-        setStats(res.data.data.stats);
-        setCategories(res.data.data.category_breakdown ?? []);
-        setSeverities(res.data.data.severity_breakdown ?? []);
-        setAging(res.data.data.aging);
-        setGrievances(res.data.data.cases ?? []);
+      if (res.success) {
+        setStats(res.data.stats);
+        setCategories(res.data.category_breakdown ?? []);
+        setSeverities(res.data.severity_breakdown ?? []);
+        setAging(res.data.aging);
+        setGrievances(res.data.cases ?? []);
       }
     } catch (e: any) {
       setError(e.message ?? "Failed to load");

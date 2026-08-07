@@ -16,7 +16,13 @@ import { getRoutePageCode } from "@/lib/pageRoutePageCodes";
 interface ProtectedRouteProps {
   children: React.ReactNode;
   /** When provided, the user must have at least one of these role keys. */
-  roles?: string[];
+  /**
+   * `readonly` so the route files can keep declaring their role lists `as const`, which is what
+   * makes them literal types and keeps them honest against the backend's role constants. Declared
+   * as mutable `string[]`, every one of those call sites failed to compile — the array is only
+   * ever read (`roles.some(...)` below), so mutability was never required of the caller.
+   */
+  roles?: readonly string[];
   /** Canonical role-dashboard entitlement. Takes precedence over a local role list. */
   dashboardCode?: DashboardCode;
 }

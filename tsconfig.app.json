@@ -4,7 +4,7 @@
     "isolatedModules": true,
     "jsx": "react-jsx",
     "lib": [
-      "ES2020",
+      "ES2022",
       "DOM",
       "DOM.Iterable"
     ],
@@ -28,5 +28,8 @@
   },
   "include": [
     "src"
+  ],
+  "exclude": [
+    "src/components/dashboard/layouts"
   ]
 }

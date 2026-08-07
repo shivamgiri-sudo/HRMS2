@@ -181,13 +181,13 @@ export default function NativeSupportCommandCenter() {
         `/api/helpdesk/command-center?${params}`
       );
 
-      if (res.data?.success) {
-        setStats(res.data.data.stats);
-        setSla(res.data.data.sla_summary ?? []);
-        setCategories(res.data.data.category_breakdown ?? []);
-        setOwners(res.data.data.owner_workload ?? []);
-        setAging(res.data.data.aging ?? null);
-        setRootCauses(res.data.data.root_causes ?? []);
+      if (res.success) {
+        setStats(res.data.stats);
+        setSla(res.data.sla_summary ?? []);
+        setCategories(res.data.category_breakdown ?? []);
+        setOwners(res.data.owner_workload ?? []);
+        setAging(res.data.aging ?? null);
+        setRootCauses(res.data.root_causes ?? []);
       }
       setLastRefresh(formatISTTime());
     } catch (e: any) {
@@ -206,7 +206,7 @@ export default function NativeSupportCommandCenter() {
       const res = await hrmsApi.get<{ success: boolean; data: ItAnalysisData }>(
         `/api/helpdesk/it-analysis?${params}`
       );
-      if (res.data?.success) setItAnalysis(res.data.data);
+      if (res.success) setItAnalysis(res.data);
     } catch { /* non-fatal */ }
     finally { setItLoading(false); }
   }, [from, to]);
