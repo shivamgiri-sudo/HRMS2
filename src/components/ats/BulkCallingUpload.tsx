@@ -210,15 +210,15 @@ export function BulkCallingUpload({ bootstrap, sessionLocked, sessionContext }: 
         process_name: sessionContext.process_name,
       }));
 
-      const res = await hrmsApi.post("/api/ats/recruiter/hiring-activity/import", {
+      const res = await hrmsApi.post<{ success: boolean; data: ImportResult }>("/api/ats/recruiter/hiring-activity/import", {
         rows: enrichedRows,
         fileName: file?.name ?? "bulk_calling_upload.xlsx",
         duplicateMode: "insert_duplicates_with_warning",
       });
 
-      setImportResult(res.data.data);
+      setImportResult(res.data);
       setStep("done");
-      toast.success(`Imported ${res.data.data?.insertedRows ?? 0} rows successfully`);
+      toast.success(`Imported ${res.data?.insertedRows ?? 0} rows successfully`);
     } catch (err: unknown) {
       setStep("preview");
       const msg = (err as { response?: { data?: { message?: string } } })?.response?.data?.message ?? "Import failed";

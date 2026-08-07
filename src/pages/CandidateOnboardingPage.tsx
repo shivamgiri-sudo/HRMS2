@@ -36,8 +36,8 @@ export default function CandidateOnboardingPage() {
 
   useEffect(() => {
     if (!token) { setTokenError('No onboarding token provided.'); setLoading(false); return; }
-    hrmsApi.get(`/api/ats/onboarding/validate-token?token=${token}`)
-      .then(r => { setPrefill(r.data.data); setLoading(false); })
+    hrmsApi.get<{ data: PreFill }>(`/api/ats/onboarding/validate-token?token=${token}`)
+      .then(r => { setPrefill(r.data); setLoading(false); })
       .catch((e: any) => { setTokenError(e?.response?.data?.error ?? 'Invalid or expired token.'); setLoading(false); });
   }, [token]);
 

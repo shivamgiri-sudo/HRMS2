@@ -72,7 +72,11 @@ const getLeaveTypeStyle = (type: string): string => {
   return fallbackColors[hash % fallbackColors.length];
 };
 
-export function LeaveRequestCard({ request, onApprove, onReject }: LeaveRequestCardProps) {
+// onDiscard was declared in the props interface but never destructured here, so the identifier
+// below was undefined rather than optional. `request.status === "approved" && onDiscard` short-
+// circuits for every other status, which is why this only surfaced on an approved leave — and
+// then threw "onDiscard is not defined" instead of simply hiding the button.
+export function LeaveRequestCard({ request, onApprove, onReject, onDiscard }: LeaveRequestCardProps) {
   return (
     <Card className="overflow-hidden transition-all duration-300 hover:shadow-lg">
       <CardContent className="p-6">

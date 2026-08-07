@@ -28,7 +28,10 @@ export class OperationsWebSocketClient {
    * Connect to the operations data source (using polling)
    */
   connect(token: string): Promise<void> {
-    return new Promise((resolve) => {
+    // `reject` is used in the catch below. Omitting it here made that line throw
+    // "reject is not defined" — so a connection failure raised a ReferenceError
+    // instead of rejecting the promise, and the real error was lost.
+    return new Promise((resolve, reject) => {
       try {
         this.token = token;
         this.isManualClose = false;
