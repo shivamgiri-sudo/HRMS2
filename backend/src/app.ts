@@ -80,6 +80,7 @@ import { assetsRouter } from "./modules/assets/assets.routes.js";
 import { filesRouter } from "./modules/files/files.routes.js";
 import { employeeDocsRouter } from "./modules/employees/employee.documents.routes.js";
 import { helpdeskRouter } from "./modules/helpdesk/helpdesk.routes.js";
+import { uatPipelineRouter } from "./modules/uat-pipeline/uat-pipeline.routes.js";
 import { lettersRouter } from "./modules/letters/letters.routes.js";
 import { publicJoiningKitRouter, joiningKitRouter } from "./modules/employees/joiningKit.routes.js";
 import { appointmentEsignRouter } from "./modules/letters/appointment-esign.routes.js";
@@ -458,6 +459,8 @@ app.use("/api/company-seal", companySealRouter);
 app.use("/api/branch-payroll-hr", branchPayrollHrSignatoryRouter);
 app.use("/api/payroll", payrollEpfComplianceRouter);
 app.use("/api/helpdesk", helpdeskRouter);
+// UAT governance. Additive mount on a new path — no existing route changes behaviour.
+app.use("/api/uat", uatPipelineRouter);
 app.use("/api/letters", lettersRouter);
 app.use("/api/letters", appointmentEsignRouter);
 // Company signing certificate — super_admin only, handles private key material.

@@ -1,0 +1,270 @@
+{
+  "$comment": "Path floor for the UAT pipeline. Dimension one of two; see uat/capability-registry.json for dimension two. This file is the authoritative source: backend/src/modules/uat-pipeline/protected-paths.ts is a typed wrapper over it, and the CI diff gate reads these same bytes. A contract test asserts the wrapper deep-equals this file and that every non-glob path still exists on disk, so a silent rename cannot void a rule. Deny-tier itself: the pipeline can never edit this file.",
+  "version": 1,
+  "tiers": {
+    "deny": "The pipeline halts before any LLM call. There is no override path in the product; only a human editing this file in a normal reviewed PR can change it.",
+    "review": "The pipeline may proceed, but the checklist hard-blocks until a named human approver signs off, and the PR is labelled needs-domain-owner."
+  },
+  "rules": [
+    {
+      "tier": "deny",
+      "category": "business-critical",
+      "pattern": "backend/src/modules/payroll/**",
+      "reason": "Payroll arithmetic is read-only by standing project rule. Quantify and report; never correct. The nightly recalc worker applies changes here retroactively."
+    },
+    {
+      "tier": "deny",
+      "category": "business-critical",
+      "pattern": "backend/src/modules/payroll-compliance/payrollCalculate.service.ts",
+      "reason": "Second, partially-duplicated payroll engine. It exports the same calculatePayrollRun/calculateGratuity/getPtFromSlab names as modules/payroll, so a change applied to only one is a silent correctness divergence."
+    },
+    {
+      "tier": "deny",
+      "category": "business-critical",
+      "pattern": "backend/src/modules/ats/salary.calculator.ts",
+      "reason": "Third salary engine, used at offer stage. Same divergence risk as payroll-compliance."
+    },
+    {
+      "tier": "deny",
+      "category": "business-critical",
+      "pattern": "backend/src/workers/**",
+      "reason": "all-workers.ts is the single WORKERS[] registry for ~45 schedulers. A bad edit silences or double-runs every scheduled job, and a worker registered in only one place silently never runs."
+    },
+    {
+      "tier": "deny",
+      "category": "business-critical",
+      "pattern": "backend/src/**/*.cron.ts",
+      "reason": "Scheduled jobs run unattended; a fault here surfaces days later as missing data rather than as an error."
+    },
+    {
+      "tier": "deny",
+      "category": "business-critical",
+      "pattern": "backend/src/middleware/**",
+      "reason": "requireAuth, requireRole and scopeMiddleware are the enforcement points for every route in the application."
+    },
+    {
+      "tier": "deny",
+      "category": "business-critical",
+      "pattern": "backend/src/modules/auth/**",
+      "reason": "JWT signing, refresh-token rotation, 2FA and password reset."
+    },
+    {
+      "tier": "deny",
+      "category": "business-critical",
+      "pattern": "backend/src/shared/rbacPageMatrix.ts",
+      "reason": "Backend half of the dual-sided RBAC matrix. Drift between the two halves over-grants silently."
+    },
+    {
+      "tier": "deny",
+      "category": "business-critical",
+      "pattern": "src/lib/rbacPageMatrix.ts",
+      "reason": "Frontend half of the dual-sided RBAC matrix. Must stay in sync with the backend copy."
+    },
+    {
+      "tier": "deny",
+      "category": "business-critical",
+      "pattern": "backend/src/shared/accessGuard.ts",
+      "reason": "Central authorization helper."
+    },
+    {
+      "tier": "deny",
+      "category": "business-critical",
+      "pattern": "backend/src/shared/scopeAccess.ts",
+      "reason": "Row-scope enforcement. A change here can widen data visibility across branches and processes without any visible symptom."
+    },
+    {
+      "tier": "deny",
+      "category": "business-critical",
+      "pattern": "backend/src/shared/roleResolver.ts",
+      "reason": "Role resolution. Known to resolve demo-bypass identities to 'employee' via DB-driven lookups."
+    },
+    {
+      "tier": "deny",
+      "category": "business-critical",
+      "pattern": "backend/src/shared/demoAuth.ts",
+      "reason": "Demo bypass paths. Any change risks turning a demo affordance into a production authentication hole."
+    },
+    {
+      "tier": "deny",
+      "category": "business-critical",
+      "pattern": "backend/src/db/runPendingMigrations.ts",
+      "reason": "Runs DDL at process boot. A failed migration leaves health at 503."
+    },
+    {
+      "tier": "deny",
+      "category": "business-critical",
+      "pattern": "backend/sql/**",
+      "reason": "Schema. Migrations apply automatically on restart; the pipeline is explicitly forbidden from introducing DDL (checklist DI-01)."
+    },
+    {
+      "tier": "deny",
+      "category": "business-critical",
+      "pattern": "backend/src/config/env.ts",
+      "reason": "Single validated env schema, including the kill switches and bypass flags (ENABLE_SCHEDULERS, INTERNAL_DEMO_BYPASS, PORTAL_DEMO_BYPASS, OUTBOUND_ALLOW_PRIVATE_URLS, NCOSEC_RECONCILIATION_AUTO_FIX)."
+    },
+    {
+      "tier": "deny",
+      "category": "business-critical",
+      "pattern": "backend/src/modules/integrations/luckpay/**",
+      "reason": "Payment gateway. Real money leaves the building through this code."
+    },
+    {
+      "tier": "deny",
+      "category": "business-critical",
+      "pattern": "backend/src/modules/payroll/disbursal.routes.ts",
+      "reason": "Salary disbursal and cheque validation."
+    },
+    {
+      "tier": "deny",
+      "category": "business-critical",
+      "pattern": "backend/src/modules/exit/ff.service.ts",
+      "reason": "Full and final settlement. Provisional-flag handling here gates whether an F&F can be approved at all."
+    },
+    {
+      "tier": "deny",
+      "category": "business-critical",
+      "pattern": "backend/src/modules/process-pnl/**",
+      "reason": "P&L, budgets and billability. Finance period locks live here."
+    },
+    {
+      "tier": "deny",
+      "category": "business-critical",
+      "pattern": "backend/src/modules/finance/**",
+      "reason": "Vendor payments, GRN and cost centres."
+    },
+    {
+      "tier": "deny",
+      "category": "business-critical",
+      "pattern": "backend/src/modules/wfm/attendance-reconciliation.service.ts",
+      "reason": "Writes into attendance, which feeds payroll. Has an auto-fix mode gated only by an env flag."
+    },
+    {
+      "tier": "deny",
+      "category": "business-critical",
+      "pattern": "backend/src/modules/wfm/cosec-sync.service.ts",
+      "reason": "Biometric ingestion. Attendance derived here becomes payable days."
+    },
+
+    {
+      "tier": "deny",
+      "category": "control-plane",
+      "pattern": "uat/*.json",
+      "reason": "The pipeline must never be able to modify the mechanism that decides whether its own modification is acceptable. Covers this file and capability-registry.json."
+    },
+    {
+      "tier": "deny",
+      "category": "control-plane",
+      "pattern": "backend/src/modules/uat-pipeline/**",
+      "reason": "The pipeline's own implementation. Self-modification is prohibited by construction."
+    },
+    {
+      "tier": "deny",
+      "category": "control-plane",
+      "pattern": "backend/scripts/uat-*.mjs",
+      "reason": "CI diff gate and related guards. A patch that edits its own gate could otherwise influence the gate evaluating it."
+    },
+    {
+      "tier": "deny",
+      "category": "control-plane",
+      "pattern": "backend/scripts/guard-*.mjs",
+      "reason": "Mass-deletion guard and siblings."
+    },
+    {
+      "tier": "deny",
+      "category": "control-plane",
+      "pattern": "backend/scripts/update-migration-lock.mjs",
+      "reason": "Generates the migration manifest lock that the deletion guard checks against."
+    },
+    {
+      "tier": "deny",
+      "category": "control-plane",
+      "pattern": "backend/scripts/check-test-baseline.mjs",
+      "reason": "The test-count ratchet backing regression gates RG-01 and RG-02."
+    },
+    {
+      "tier": "deny",
+      "category": "control-plane",
+      "pattern": "backend/src/db/__tests__/migration-*.test.ts",
+      "reason": "Migration governance and manifest guard tests."
+    },
+    {
+      "tier": "deny",
+      "category": "control-plane",
+      "pattern": "**/uat-*.test.ts",
+      "reason": "The pipeline's own verification tests, including the workflow-verification suite."
+    },
+    {
+      "tier": "deny",
+      "category": "control-plane",
+      "pattern": ".github/**",
+      "reason": "Workflows, CODEOWNERS, issue templates and any secret-scanning configuration."
+    },
+    {
+      "tier": "deny",
+      "category": "control-plane",
+      "pattern": ".gitleaks.*",
+      "reason": "Secret-scanning configuration. Written as a glob deliberately: no gitleaks config exists yet, and a rule protecting a file that does not exist would fail the path-existence contract test while protecting nothing. As a glob it is exempt from that check and covers the file the moment someone adds it. .github/** already covers .github/secret_scanning.yml."
+    },
+    {
+      "tier": "deny",
+      "category": "control-plane",
+      "pattern": "backend/src/app.ts",
+      "reason": "Route composition root. An additive app.use is the only change the pipeline could safely want here, and it is not worth the blast radius of allowing edits at all."
+    },
+
+    {
+      "tier": "review",
+      "category": "domain-owned",
+      "pattern": "backend/src/modules/lms/**",
+      "reason": "The deployed LMS is the external system of record. HRMS integrates, never rebuilds."
+    },
+    {
+      "tier": "review",
+      "category": "domain-owned",
+      "pattern": "backend/src/modules/portal/**",
+      "reason": "Client Portal. PII and payroll leakage risk to external client users."
+    },
+    {
+      "tier": "review",
+      "category": "domain-owned",
+      "pattern": "backend/src/db/**",
+      "reason": "Connection pools, circuit breaker and schema snapshot helpers."
+    },
+    {
+      "tier": "review",
+      "category": "domain-owned",
+      "pattern": "backend/src/platform/**",
+      "reason": "Policy, route contract and data governance primitives."
+    },
+    {
+      "tier": "review",
+      "category": "domain-owned",
+      "pattern": "src/config/routes/**",
+      "reason": "Route composition. A new page must register here, so this is review rather than deny, but a mistake removes existing routes."
+    },
+    {
+      "tier": "review",
+      "category": "domain-owned",
+      "pattern": "**/__tests__/**",
+      "reason": "The pipeline must add tests, but must not weaken existing ones."
+    },
+    {
+      "tier": "review",
+      "category": "domain-owned",
+      "pattern": "backend/tests/**",
+      "reason": "As above, for the backend integration suite."
+    },
+    {
+      "tier": "review",
+      "category": "domain-owned",
+      "pattern": "package.json",
+      "reason": "Dependency and script changes. Checklist BR-07 blocks new dependencies outright; this catches script edits."
+    },
+    {
+      "tier": "review",
+      "category": "domain-owned",
+      "pattern": "backend/package.json",
+      "reason": "As above, for the backend."
+    }
+  ]
+}

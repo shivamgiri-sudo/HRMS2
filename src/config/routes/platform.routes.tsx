@@ -18,6 +18,10 @@ const Settings                      = lazy(() => import("@/pages/Settings"));
 const Profile                       = lazy(() => import("@/pages/Profile"));
 const NativeAssetsManager           = lazy(() => import("@/pages/NativeAssetsManager"));
 const NativeHelpdesk                = lazy(() => import("@/pages/NativeHelpdesk"));
+const NativeUatFeedback             = lazy(() => import("@/pages/NativeUatFeedback"));
+const NativeUatTriageConsole        = lazy(() => import("@/pages/NativeUatTriageConsole"));
+const NativeUatReleaseBoard         = lazy(() => import("@/pages/NativeUatReleaseBoard"));
+const NativeUatChecklistAdmin       = lazy(() => import("@/pages/NativeUatChecklistAdmin"));
 const NativeSupportCommandCenter    = lazy(() => import("@/pages/NativeSupportCommandCenter"));
 const NativeGrievanceCommandCenter  = lazy(() => import("@/pages/NativeGrievanceCommandCenter"));
 const NativeLetters                 = lazy(() => import("@/pages/NativeLetters"));
@@ -145,6 +149,10 @@ export const platformRouteElements = (
 
       {/* Helpdesk / Support */}
       <Route path="/helpdesk"                        element={<ProtectedRoute><Gate pageCode="HELPDESK"><NativeHelpdesk /></Gate></ProtectedRoute>} />
+      <Route path="/uat/feedback"                    element={<ProtectedRoute><Gate pageCode="UAT_FEEDBACK"><NativeUatFeedback /></Gate></ProtectedRoute>} />
+      <Route path="/uat/triage"                      element={<ProtectedRoute><Gate pageCode="UAT_TRIAGE_CONSOLE"><NativeUatTriageConsole /></Gate></ProtectedRoute>} />
+      <Route path="/uat/releases"                    element={<ProtectedRoute><Gate pageCode="UAT_RELEASE_BOARD"><NativeUatReleaseBoard /></Gate></ProtectedRoute>} />
+      <Route path="/uat/checklist"                   element={<ProtectedRoute><Gate pageCode="UAT_CHECKLIST_ADMIN"><NativeUatChecklistAdmin /></Gate></ProtectedRoute>} />
       <Route path="/support/command-center"          element={<ProtectedRoute><Gate pageCode="SUPPORT_COMMAND_CENTER"><NativeSupportCommandCenter /></Gate></ProtectedRoute>} />
       <Route path="/support/grievance-command-center" element={<ProtectedRoute><Gate pageCode="GRIEVANCE_COMMAND_CENTER"><NativeGrievanceCommandCenter /></Gate></ProtectedRoute>} />
 

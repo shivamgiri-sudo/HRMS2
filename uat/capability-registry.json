@@ -1,0 +1,319 @@
+{
+  "$comment": "Business-capability risk classification for the UAT pipeline. Dimension two of two; see uat/protected-paths.json for the path floor. effective_risk = max(path_tier, capability_class). This exists because a path-only model misses the most common real failure: an apparently harmless file edit that nevertheless changes an HR policy outcome. Detection is the UNION of three signals (path glob, table/column name, keyword), so a capability fires even when no protected file matches. Deliberately over-broad; a false positive costs one human review. This file is HRMS policy configuration, not code: deny-tier, CODEOWNERS-governed, and never editable by the pipeline.",
+  "version": 1,
+  "classes": {
+    "DENY": "Human engineering only. The pipeline halts before any LLM call.",
+    "HIGH_REVIEW": "Requires a domain owner AND a technical reviewer before dispatch.",
+    "REVIEW": "Requires the named domain owner before dispatch.",
+    "STANDARD": "Eligible for the automated path.",
+    "TRIVIAL": "Eligible for the automated path; lowest scrutiny."
+  },
+  "capabilities": [
+    {
+      "key": "payroll_calculation",
+      "name": "Payroll calculation, F&F and statutory",
+      "class": "DENY",
+      "requiredApproverRoles": [],
+      "mandatoryTests": [],
+      "paths": [
+        "backend/src/modules/payroll/**",
+        "backend/src/modules/payroll-compliance/**",
+        "backend/src/modules/payroll-masters/**",
+        "backend/src/modules/salary-increment/**",
+        "backend/src/modules/incentives/**",
+        "backend/src/modules/benefits/**",
+        "backend/src/modules/ats/salary.calculator.ts",
+        "src/lib/payslipPdfGenerator.ts",
+        "src/lib/masCallnetPayslipGenerator*.ts"
+      ],
+      "tables": [
+        "payroll_*", "salary_*", "statutory_config", "pf_*", "esic_*", "tds_*",
+        "gratuity_*", "payslip*", "deduction_*", "loan_*", "reimbursement_*", "ff_*"
+      ],
+      "keywords": [
+        "payroll", "pay\\s?slip", "salary", "\\bCTC\\b", "\\bPF\\b", "\\bUAN\\b", "\\bESIC?\\b",
+        "\\bTDS\\b", "gratuity", "F&F", "full and final", "arrear", "professional tax",
+        "\\bPT slab\\b", "net pay", "gross pay", "payable days", "deduction", "increment",
+        "incentive", "bonus"
+      ],
+      "reason": "Payroll arithmetic is read-only by standing project rule, and three rival engines mean a partial change is a silent divergence. Quantify and report; never correct."
+    },
+    {
+      "key": "auth_rbac",
+      "name": "Authentication, RBAC and session",
+      "class": "DENY",
+      "requiredApproverRoles": [],
+      "mandatoryTests": [],
+      "paths": [
+        "backend/src/modules/auth/**",
+        "backend/src/modules/access/**",
+        "backend/src/modules/security/**",
+        "backend/src/middleware/**",
+        "backend/src/shared/rbacPageMatrix.ts",
+        "backend/src/shared/accessGuard.ts",
+        "backend/src/shared/scopeAccess.ts",
+        "backend/src/shared/roleResolver.ts",
+        "backend/src/shared/demoAuth.ts",
+        "src/lib/rbacPageMatrix.ts",
+        "src/lib/navigationAccess.ts",
+        "src/contexts/AuthContext.tsx",
+        "src/components/auth/**"
+      ],
+      "tables": ["users", "user_*", "role_*", "page_catalog", "user_page_access", "refresh_token*", "session*"],
+      "keywords": [
+        "login", "logout", "password", "\\bOTP\\b", "two.?factor", "\\b2FA\\b", "\\bJWT\\b",
+        "token", "role", "permission", "access denied", "unauthori[sz]ed", "\\bRBAC\\b", "impersonat"
+      ],
+      "reason": "Dual-sided RBAC that can silently over-grant. A role check written as a union fails open."
+    },
+    {
+      "key": "finance_payment",
+      "name": "Finance, payment and disbursal",
+      "class": "DENY",
+      "requiredApproverRoles": [],
+      "mandatoryTests": [],
+      "paths": [
+        "backend/src/modules/finance/**",
+        "backend/src/modules/process-pnl/**",
+        "backend/src/modules/integrations/luckpay/**",
+        "backend/src/modules/payroll/disbursal.routes.ts",
+        "backend/src/modules/erp/**",
+        "backend/src/modules/revenue-risk/**"
+      ],
+      "tables": ["vendor_*", "grn_*", "budget_*", "pnl_*", "cost_centre*", "imprest_*", "payment_*", "invoice*"],
+      "keywords": [
+        "disburs", "payment", "penny.?drop", "bank transfer", "\\bNEFT\\b", "\\bIMPS\\b", "\\bRTGS\\b",
+        "vendor payment", "\\bGRN\\b", "invoice", "budget", "\\bP&L\\b", "cost cent", "imprest"
+      ],
+      "reason": "Real money leaves the building through this code."
+    },
+    {
+      "key": "attendance_classification",
+      "name": "Attendance classification and punch interpretation",
+      "class": "DENY",
+      "requiredApproverRoles": ["UAT_DOMAIN_OWNER_HR", "UAT_DOMAIN_OWNER_OPS"],
+      "mandatoryTests": [
+        "backend/src/modules/dashboards/__tests__/attendance-canon.contract.test.ts"
+      ],
+      "paths": [
+        "backend/src/modules/wfm/attendance-engine.service.ts",
+        "backend/src/modules/wfm/attendance-reconciliation*.ts",
+        "backend/src/modules/wfm/cosec-*.ts",
+        "backend/src/modules/wfm/attendance-realtime-ncosec.service.ts",
+        "backend/src/modules/wfm/biometric-*.ts",
+        "backend/src/modules/attendance/**",
+        "backend/src/shared/attendanceStatus.ts",
+        "backend/src/shared/attendanceSnapshot.ts",
+        "backend/src/shared/attendanceRestore.ts"
+      ],
+      "tables": ["attendance_*", "biometric_*", "punch_*", "cosec_*"],
+      "keywords": [
+        "punch", "biometric", "cosec", "attendance", "\\blate\\b", "half.?day", "absent",
+        "present", "missing punch", "in.?time", "out.?time", "shift timing", "\\bLWP\\b"
+      ],
+      "reason": "Attendance feeds payable days. A misclassification here becomes a wrong salary without ever touching payroll code."
+    },
+    {
+      "key": "leave_entitlement",
+      "name": "Leave entitlement and accrual",
+      "class": "HIGH_REVIEW",
+      "requiredApproverRoles": ["UAT_DOMAIN_OWNER_HR", "UAT_TECH_REVIEWER"],
+      "mandatoryTests": [],
+      "paths": ["backend/src/modules/leave/**"],
+      "tables": ["leave_*", "holiday_*", "comp_off*"],
+      "keywords": [
+        "leave", "accrual", "entitlement", "carry.?forward", "comp.?off", "\\bCL\\b", "\\bSL\\b",
+        "\\bEL\\b", "\\bPL\\b", "encash", "leave balance", "holiday", "week.?off"
+      ],
+      "reason": "Leave balances are a monetary entitlement and feed encashment and F&F."
+    },
+    {
+      "key": "roster_shift",
+      "name": "Roster, shift, week-off and OT",
+      "class": "HIGH_REVIEW",
+      "requiredApproverRoles": ["UAT_DOMAIN_OWNER_WFM", "UAT_TECH_REVIEWER"],
+      "mandatoryTests": [],
+      "paths": [
+        "backend/src/modules/roster/**",
+        "backend/src/modules/wfm/auto-roster-*.ts",
+        "backend/src/modules/wfm/wfm.regularization.secure.routes.ts",
+        "backend/src/modules/wfm-extensions/**"
+      ],
+      "tables": ["roster_*", "shift_*", "week_off*", "overtime_*", "shrinkage_*"],
+      "keywords": [
+        "roster", "shift", "week.?off", "\\bOT\\b", "overtime", "regulari[sz]ation",
+        "shrinkage", "schedule", "duty"
+      ],
+      "reason": "Roster is payroll input. A worked Sunday is paid and still counts toward the month's week-off entitlement — subtle rules that a naive edit breaks."
+    },
+    {
+      "key": "employee_master",
+      "name": "Employee master data",
+      "class": "HIGH_REVIEW",
+      "requiredApproverRoles": ["UAT_DOMAIN_OWNER_HR", "UAT_TECH_REVIEWER"],
+      "mandatoryTests": [],
+      "paths": [
+        "backend/src/modules/employees/**",
+        "backend/src/modules/lifecycle/**",
+        "backend/src/modules/onboarding/**",
+        "backend/src/modules/org/**",
+        "backend/src/modules/org-chart/**"
+      ],
+      "tables": ["employees", "employee_*", "branch_master", "department_*", "designation_*"],
+      "keywords": [
+        "employee master", "employee code", "date of joining", "\\bDOJ\\b", "confirmation",
+        "probation", "reporting manager", "branch transfer", "designation master",
+        "department master", "employee record"
+      ],
+      "reason": "Employee master rows key payroll, attendance, access and statutory reporting. A bad write propagates everywhere."
+    },
+    {
+      "key": "exit_ff_inputs",
+      "name": "Exit, clearance and F&F inputs",
+      "class": "HIGH_REVIEW",
+      "requiredApproverRoles": ["UAT_DOMAIN_OWNER_HR", "UAT_DOMAIN_OWNER_FINANCE"],
+      "mandatoryTests": [],
+      "paths": ["backend/src/modules/exit/**"],
+      "tables": ["exit_*", "clearance_*", "resignation_*", "ff_*", "noc_*"],
+      "keywords": [
+        "resignation", "exit", "clearance", "last working day", "\\bLWD\\b", "notice period",
+        "relieving", "\\bNOC\\b", "settlement", "full and final"
+      ],
+      "reason": "Exit status drives the F&F money path. The exit-status FSM was 100% dead code across three routers once already."
+    },
+    {
+      "key": "ats_stage_logic",
+      "name": "ATS selection and stage logic",
+      "class": "REVIEW",
+      "requiredApproverRoles": ["UAT_DOMAIN_OWNER_RECRUITMENT"],
+      "mandatoryTests": [],
+      "paths": [
+        "backend/src/modules/ats/**",
+        "backend/src/modules/ats-extensions/**",
+        "backend/src/modules/ats-full-parity/**",
+        "backend/src/modules/ats-assessment/**",
+        "backend/src/modules/candidate-onboarding/**",
+        "backend/src/modules/job-requisition/**",
+        "backend/src/modules/ijp/**"
+      ],
+      "tables": ["candidate_*", "ats_*", "interview_*", "offer_*", "requisition_*"],
+      "keywords": [
+        "candidate", "interview", "shortlist", "offer letter", "recruit", "hiring stage",
+        "requisition", "selection", "rejected candidate", "joining kit"
+      ],
+      "reason": "Stage transitions gate offers and onboarding. The candidate table also holds ~30k legacy employee records, so naive queries double-count."
+    },
+    {
+      "key": "performance_kpi",
+      "name": "Performance and KPI calculation",
+      "class": "REVIEW",
+      "requiredApproverRoles": ["UAT_DOMAIN_OWNER_METRICS"],
+      "mandatoryTests": [],
+      "paths": [
+        "backend/src/modules/kpi/**",
+        "backend/src/modules/goals/**",
+        "backend/src/modules/apr/**",
+        "backend/src/modules/performance-dashboard/**",
+        "backend/src/modules/performance-feedback/**",
+        "backend/src/modules/performance-ingestion/**",
+        "backend/src/modules/performance-intelligence/**",
+        "backend/src/modules/quality-dashboard/**"
+      ],
+      "tables": ["kpi_*", "apr_*", "goal_*", "performance_*", "quality_*"],
+      "keywords": ["\\bKPI\\b", "\\bAPR\\b", "appraisal", "performance score", "rating", "quality score", "audit score"],
+      "reason": "Performance scores drive increments and exits. One active config row silently disabled APR eligibility for an entire grade once already."
+    },
+    {
+      "key": "reporting_calculations",
+      "name": "Reports and dashboard calculations",
+      "class": "REVIEW",
+      "requiredApproverRoles": ["UAT_DOMAIN_OWNER_METRICS"],
+      "mandatoryTests": [],
+      "paths": [
+        "backend/src/modules/reporting/**",
+        "backend/src/modules/analytics/**",
+        "backend/src/modules/business-intelligence/**",
+        "backend/src/modules/dashboards/**"
+      ],
+      "tables": ["report_*", "dashboard_*"],
+      "keywords": ["report", "dashboard", "export", "\\btotal\\b", "count is wrong", "figure", "mismatch", "does not tally"],
+      "reason": "Four rival layers decide a report's SQL and columns; the executor you read is usually not the one that runs."
+    },
+    {
+      "key": "lms_owned",
+      "name": "LMS-owned domains",
+      "class": "REVIEW",
+      "requiredApproverRoles": ["UAT_DOMAIN_OWNER_TRAINING"],
+      "mandatoryTests": [],
+      "paths": ["backend/src/modules/lms/**", "backend/src/modules/lms-integration/**"],
+      "tables": ["lms_*", "course_*", "certification_*", "trainee_*"],
+      "keywords": ["\\bLMS\\b", "course", "curriculum", "certification", "trainee", "\\bMCQ\\b", "assessment", "training module"],
+      "reason": "The deployed LMS is the external system of record. HRMS integrates only; building here creates a second source of truth."
+    },
+    {
+      "key": "client_portal",
+      "name": "Client Portal exposure",
+      "class": "HIGH_REVIEW",
+      "requiredApproverRoles": ["UAT_DOMAIN_OWNER_OPS", "UAT_TECH_REVIEWER"],
+      "mandatoryTests": [],
+      "paths": ["backend/src/modules/portal/**"],
+      "tables": ["portal_*", "client_*"],
+      "keywords": ["client portal", "client login", "client view", "client access"],
+      "reason": "External client users. Payroll, salary, PII and individual rosters must never surface here."
+    },
+    {
+      "key": "notifications_templates",
+      "name": "Notifications and templates",
+      "class": "REVIEW",
+      "requiredApproverRoles": ["UAT_DOMAIN_OWNER_COMMS"],
+      "mandatoryTests": [],
+      "paths": [
+        "backend/src/modules/communication/**",
+        "backend/src/modules/email-templates/**",
+        "backend/src/modules/push/**",
+        "backend/src/modules/letters/**"
+      ],
+      "tables": ["notification_*", "email_template*", "letter_*", "dispatch_*"],
+      "keywords": ["notification", "email", "\\bSMS\\b", "whatsapp", "template", "letter", "alert", "reminder"],
+      "reason": "Outbound messages reach employees and clients directly, and template changes can leak fields the template author never intended."
+    },
+    {
+      "key": "privacy_documents",
+      "name": "Document vault and privacy",
+      "class": "HIGH_REVIEW",
+      "requiredApproverRoles": ["UAT_DOMAIN_OWNER_HR", "UAT_TECH_REVIEWER"],
+      "mandatoryTests": [],
+      "paths": [
+        "backend/src/modules/document-vault/**",
+        "backend/src/modules/privacy/**",
+        "backend/src/modules/privacy-engine/**",
+        "backend/src/modules/files/**"
+      ],
+      "tables": ["document_*", "dpdp_*", "consent_*", "retention_*"],
+      "keywords": ["document", "\\bDPDP\\b", "consent", "retention", "personal data", "\\bPII\\b", "aadhaar", "\\bPAN\\b", "upload"],
+      "reason": "DPDP-relevant personal data and its retention rules."
+    },
+    {
+      "key": "cosmetic_ui",
+      "name": "Pure cosmetic UI",
+      "class": "STANDARD",
+      "requiredApproverRoles": [],
+      "mandatoryTests": [],
+      "paths": ["src/components/ui/**"],
+      "tables": [],
+      "keywords": ["colour", "color", "spacing", "padding", "margin", "layout", "responsive", "dark mode", "icon"],
+      "reason": "Presentation-only changes with no data or policy effect."
+    },
+    {
+      "key": "label_text",
+      "name": "Tooltip, label and alignment",
+      "class": "TRIVIAL",
+      "requiredApproverRoles": [],
+      "mandatoryTests": [],
+      "paths": [],
+      "tables": [],
+      "keywords": ["tooltip", "label", "spelling", "typo", "wording", "placeholder text", "alignment", "capitali[sz]ation"],
+      "reason": "Text and alignment only."
+    }
+  ]
+}

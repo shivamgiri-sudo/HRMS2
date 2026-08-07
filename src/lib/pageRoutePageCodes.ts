@@ -150,6 +150,10 @@ export const PAGE_CODE_BY_ROUTE: Record<string, string> = {
   "/super-admin/page-access": "ACCESS_CONTROL",
   "/support/command-center": "SUPPORT_COMMAND_CENTER",
   "/support/grievance-command-center": "GRIEVANCE_COMMAND_CENTER",
+  "/uat/checklist": "UAT_CHECKLIST_ADMIN",
+  "/uat/feedback": "UAT_FEEDBACK",
+  "/uat/triage": "UAT_TRIAGE_CONSOLE",
+  "/uat/releases": "UAT_RELEASE_BOARD",
   "/vendors": "VENDOR_MANAGEMENT",
   "/wfm-attendance": "WFM_ATTENDANCE_DASHBOARD",
   "/wfm/auto-roster": "WFM_AUTO_ROSTER",
@@ -164,7 +168,7 @@ export const PAGE_CODE_BY_ROUTE: Record<string, string> = {
   // Its own code, not WFM_LIVE_TRACKER: this page is for reporting managers, who are
   // not in that code's audience, and the string must match workforce.routes.tsx and
   // navConfig.tsx exactly or nav visibility and page access disagree.
-  "/wfm/team-attendance": "TEAM_ATTENDANCE_MONTH",
+  "/wfm/team-attendance": "TEAM_ATTENDANCE",
   "/wfm/planning-rules": "WFM_PLANNING_RULES",
   "/wfm/roster": "WFM_ROSTER",
   "/roster-preference": "WFM_ROSTER",

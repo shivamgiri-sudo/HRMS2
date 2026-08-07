@@ -1,0 +1,51 @@
+# CODEOWNERS — required reviewers by path.
+#
+# Introduced with the UAT governance platform to give its control plane the review it needs:
+# uat/*.json decides which files an automated change may touch, so it must not be editable
+# by one person acting alone. The same reasoning applies to the guard scripts that enforce it
+# and to the workflows that run them.
+#
+# GitHub applies the LAST matching pattern, so order matters: broad rules first, specific
+# rules after.
+#
+# Replace the placeholder teams below with real GitHub teams before enabling branch
+# protection. Until the teams exist these lines are inert — a CODEOWNERS entry naming a
+# non-existent team is ignored rather than enforced, which is worth knowing before relying
+# on it as a control.
+
+# ── UAT governance control plane ──────────────────────────────────────────────
+# The mechanism that decides whether an automated change is acceptable. Requires review
+# from security plus a business function; one approver is not enough for a file that can
+# widen what the pipeline is allowed to edit.
+/uat/protected-paths.json          @masc-security @masc-engineering-leads
+/uat/capability-registry.json      @masc-security @masc-hr-systems @masc-finance-systems
+
+# The guards that enforce the control plane, and the manifest lock they check against.
+/backend/scripts/guard-*.mjs               @masc-security @masc-engineering-leads
+/backend/scripts/uat-*.mjs                 @masc-security @masc-engineering-leads
+/backend/scripts/update-migration-lock.mjs @masc-engineering-leads
+/backend/scripts/check-test-baseline.mjs   @masc-engineering-leads
+
+# The pipeline itself, including its own verification tests.
+/backend/src/modules/uat-pipeline/         @masc-engineering-leads
+
+# CI: the workflows are what actually run the gates.
+/.github/                          @masc-security @masc-engineering-leads
+
+# ── Business-critical domains ─────────────────────────────────────────────────
+# These are deny-tier for the pipeline. They are listed here so a HUMAN change to them is
+# also reviewed by the owning function, which is the gap a path deny-list does not close.
+/backend/src/modules/payroll/              @masc-payroll @masc-engineering-leads
+/backend/src/modules/payroll-compliance/   @masc-payroll @masc-engineering-leads
+/backend/src/modules/finance/              @masc-finance-systems @masc-engineering-leads
+/backend/src/modules/process-pnl/          @masc-finance-systems @masc-engineering-leads
+/backend/src/modules/exit/                 @masc-hr-systems @masc-finance-systems
+/backend/src/modules/auth/                 @masc-security
+/backend/src/middleware/                   @masc-security
+/backend/src/shared/rbacPageMatrix.ts      @masc-security
+/backend/src/shared/scopeAccess.ts         @masc-security
+/backend/src/config/env.ts                 @masc-security @masc-engineering-leads
+
+# Schema and the boot-time migration runner.
+/backend/sql/                              @masc-engineering-leads
+/backend/src/db/runPendingMigrations.ts    @masc-engineering-leads

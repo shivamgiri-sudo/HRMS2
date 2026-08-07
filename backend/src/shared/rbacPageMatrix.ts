@@ -12,6 +12,9 @@ export const COMMON_USER_PAGE_CODES = [
   "MY_KPI",
   "RESIGNATION_MY_REQUEST",
   "DPDP_WITHDRAWAL",
+  // Every employee can raise UAT feedback and retest their own item. Restricting who may
+  // report a defect is how UAT feedback ends up in a spreadsheet instead of the system.
+  "UAT_FEEDBACK",
 ] as const;
 
 export const ROLE_DASHBOARD_PAGE_CODES = [
@@ -50,6 +53,12 @@ export const ROLE_SPECIFIC_PAGE_CODES = {
     // only exposes the Report Library page; every individual report remains gated
     // by its own catalog viewRoles/exportRoles and by branch/process row scope.
     "REPORTS_CENTER",
+    // UAT governance. The triage console and release board are administrative surfaces;
+    // UAT_CHECKLIST_ADMIN is deliberately NOT granted here — it reaches super_admin only,
+    // via the all-active-pages rule below, because whoever can view the guardrails should
+    // not be the same population that approves work evaluated under them.
+    "UAT_TRIAGE_CONSOLE",
+    "UAT_RELEASE_BOARD",
   ],
   hr: [
     "JOB_REQUISITION",

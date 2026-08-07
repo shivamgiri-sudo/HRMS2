@@ -94,7 +94,10 @@ const KNOWN_UNMAPPED_PAGE_CODES = [
   "SALARY_PREP",
   "SALARY_PROPOSAL_APPROVALS",
   "SALARY_REGISTER",
-  "TEAM_ATTENDANCE",
+  // TEAM_ATTENDANCE removed: it now maps to /wfm/team-attendance. It was unmapped because
+  // the route gated on TEAM_ATTENDANCE_MONTH (seeded nowhere, so the gate denied everyone)
+  // while the catalog pointed TEAM_ATTENDANCE at /team/attendance (mounted nowhere, so the
+  // launcher 404'd). 1101_team_attendance_page_path_fix.sql consolidated the two.
   "WFM_ROSTER_MANAGER_QUEUE",
 
   // Investigated and resolved to a real, currently-mounted page — but that page's route is

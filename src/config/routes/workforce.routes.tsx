@@ -78,7 +78,11 @@ export const workforceRouteElements = (
           pageRoutePageCodes.ts and in navConfig.tsx or nav and access disagree. */}
       <Route path="/wfm/team-attendance"        element={
         <ProtectedRoute roles={['super_admin','admin','hr','wfm','manager','assistant_manager','tl','team_leader','process_manager','branch_head']}>
-          <Gate pageCode="TEAM_ATTENDANCE_MONTH"><DashboardLayout><TeamAttendanceMonth /></DashboardLayout></Gate>
+          {/* TEAM_ATTENDANCE, not TEAM_ATTENDANCE_MONTH: the latter exists in no migration, so
+              the page gate denied everyone. TEAM_ATTENDANCE is the code the grants were
+              actually issued against (102_role_page_access_seed, 309, and tq_head in the RBAC
+              matrix). See 1101_team_attendance_page_path_fix.sql. */}
+          <Gate pageCode="TEAM_ATTENDANCE"><DashboardLayout><TeamAttendanceMonth /></DashboardLayout></Gate>
         </ProtectedRoute>
       } />
 
