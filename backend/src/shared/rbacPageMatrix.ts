@@ -52,6 +52,7 @@ export const ROLE_SPECIFIC_PAGE_CODES = {
     "REPORTS_CENTER",
   ],
   hr: [
+    "JOB_REQUISITION",
     "HR_DASHBOARD",
     "EMPLOYEE_MANAGEMENT",
     "ATTENDANCE_DISPUTES",
@@ -82,6 +83,7 @@ export const ROLE_SPECIFIC_PAGE_CODES = {
     "DPDP_WITHDRAWAL_ADMIN",
   ],
   recruiter: [
+    "JOB_REQUISITION",
     "RECRUITER_DASHBOARD",
     "ATS_DASHBOARD",
     "ATS_RECRUITER_QUEUE",
@@ -93,6 +95,7 @@ export const ROLE_SPECIFIC_PAGE_CODES = {
     "ATS_EXTENSIONS",
   ],
   manager: [
+    "JOB_REQUISITION",
     "MANAGEMENT_DASHBOARD",
     "ATTENDANCE_DISPUTES",
     "WFM_ROSTER",
@@ -116,6 +119,7 @@ export const ROLE_SPECIFIC_PAGE_CODES = {
     "QUALITY_DASHBOARD",
   ],
   process_manager: [
+    "JOB_REQUISITION",
     "MANAGEMENT_DASHBOARD",
     "WFM_ROSTER",
     "WFM_LIVE_TRACKER",
@@ -436,6 +440,7 @@ export const ROLE_SPECIFIC_PAGE_CODES = {
   // those page codes have no mounted route. Dashboard registry already allows
   // MANAGEMENT, QUALITY and OPERATIONS for this role.
   branch_head: [
+    "JOB_REQUISITION",
     "MANAGEMENT_DASHBOARD",
     "OPERATIONS_DASHBOARD",
     "QUALITY_DASHBOARD",
