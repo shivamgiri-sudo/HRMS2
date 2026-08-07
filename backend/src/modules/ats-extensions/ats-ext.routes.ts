@@ -105,23 +105,22 @@ router.patch("/offers/:id/status", requireRole("admin", "hr"), h(async (req: Aut
 }));
 
 /**
- * Roles for the parts of ATS Extensions that serve live data.
+ * Every route in this file is admin/hr only, and that is deliberate.
  *
- * ATS_EXTENSIONS is granted in role_page_access to `recruiter` and `super_admin` only —
- * yet every route in this file was `requireRole("admin", "hr")`, an identical guard copied
- * across all 15. The result was inverted: the 16 recruiters who own the page got 403 from
- * everything on it, while admin/hr could call the API but had no grant to open the page.
+ * ATS_EXTENSIONS is granted in role_page_access to `recruiter` and `super_admin`, so the
+ * 16 recruiters who hold the page get 403 from everything on it. That asymmetry looks like
+ * drift, and I briefly "fixed" it by adding `recruiter` here — which was wrong.
  *
- * `recruiter` is added here because deduplicating candidates and reading sourcing funnels
- * is recruiter work, and these two areas read tables that actually hold data
- * (ats_duplicate_log, ats_candidate ~37k rows).
+ * tests/pr16.security.test.ts asserts 403 for recruiter on /duplicates and
+ * /analytics/funnel, named "scope not yet enforced — admin/hr only". The narrow guard is a
+ * compensating control, not an oversight: these endpoints apply no branch/process row
+ * scope, so widening the role list hands a recruiter every candidate's duplicate and
+ * sourcing-funnel data org-wide.
  *
- * Deliberately NOT extended to the requisition, BGV and offer routes above: those read
- * manpower_requisition / ats_bgv_record / ats_offer, all of which hold 0 rows (verified
- * live 2026-08-07). Granting a role future access to background-check and offer data to
- * un-break a feature that has never been used would be risk without benefit.
+ * The order of work is therefore: enforce row scope on these endpoints first, then widen
+ * the roles — or retire the recruiter page grant. Do not widen the guard alone.
  */
-const ATS_EXT_LIVE_ROLES = ["admin", "hr", "recruiter"] as const;
+const ATS_EXT_LIVE_ROLES = ["admin", "hr"] as const;
 
 // ── Duplicate Detection ───────────────────────────────────────────────────────
 router.get("/duplicates", requireRole(...ATS_EXT_LIVE_ROLES), h(async (_req: AuthenticatedRequest, res: Response) => {
