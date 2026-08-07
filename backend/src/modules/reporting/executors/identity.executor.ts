@@ -281,46 +281,64 @@ export async function bankAccountVerification(
 
 // ---------------------------------------------------------------------------
 // identity-source-snapshot
-// Reads the snapshot table populated by the identity-source-snapshot sync job.
-// Falls back gracefully if the table does not yet exist.
+// Reads report_identity_source_snapshot, populated by the identity-source-snapshot
+// sync job. Surfaces unmatched and ambiguous source records, not just matched ones.
 // ---------------------------------------------------------------------------
 export async function identitySourceSnapshot(
   filters: ExecFilters,
   scope: ExecScope,
   options: ExecOptions
 ): Promise<ExecResult> {
-  try {
-    const clauses: string[] = ["e.id IS NOT NULL"];
+  {
+    // Anchor on the snapshot row, not the employee. The seed clause used to be
+    // "e.id IS NOT NULL", which — against the LEFT JOIN below — would discard every
+    // unmatched source record, i.e. the exceptions this report exists to show.
+    const clauses: string[] = ["ris.id IS NOT NULL"];
     const params: unknown[]  = [];
     appendScopeConditions(scope, clauses, params);
     appendFilterConditions(filters, clauses, params);
 
     if (filters.status) {
-      clauses.push("eis.match_status = ?");
+      clauses.push("ris.match_status = ?");
       params.push(String(filters.status));
     }
 
+    // Only the current snapshot. syncIdentitySourceSnapshot() sets is_current = 0 on the
+    // previous generation instead of deleting it, so without this every historical run
+    // is unioned into one result and every employee appears once per sync.
+    clauses.push("ris.is_current = 1");
+
     if (options.mode === "worker" && options.cursor != null) {
-      clauses.push("eis.id > ?");
+      clauses.push("ris.id > ?");
       params.push(options.cursor);
     }
 
+    // The live table is report_identity_source_snapshot; employee_identity_snapshot has
+    // never existed in mas_hrms (verified 2026-08-07), and the bare catch below turned
+    // the resulting ER_NO_SUCH_TABLE into an empty result — so this report has always
+    // rendered "no identity records" rather than reporting its own failure.
+    //
+    // LEFT JOIN, not JOIN: unmatched and ambiguous rows have a NULL matched_employee_id,
+    // and they are the entire point of an identity-exceptions report. An inner join
+    // would silently drop exactly the rows a user opens this to find.
     const base = `
-      SELECT eis.id AS _cursor,
-             e.employee_code,
+      SELECT ris.id AS _cursor,
+             COALESCE(e.employee_code, ris.matched_employee_code) AS employee_code,
              COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-             eis.source_system,
-             eis.source_employee_id,
-             eis.match_status,
-             eis.last_synced_at,
+             ris.source_system,
+             ris.source_employee_code,
+             ris.source_agent_id,
+             ris.source_name,
+             ris.match_status,
+             ris.captured_at,
              b.branch_name,
              p.process_name
-        FROM employee_identity_snapshot eis
-        JOIN employees e               ON e.id  = eis.employee_id
+        FROM report_identity_source_snapshot ris
+        LEFT JOIN employees e          ON e.id  = ris.matched_employee_id
         LEFT JOIN branch_master b      ON b.id  = e.branch_id
         LEFT JOIN process_master p     ON p.id  = e.process_id
        WHERE ${clauses.join(" AND ")}
-       ORDER BY eis.id ASC`;
+       ORDER BY ris.id ASC`;
 
     const total = options.includeTotal ? await count(base, params) : 0;
     const sql   = options.mode === "worker" ? `${base} LIMIT ${options.limit}` : applyPagination(base, options);
@@ -329,8 +347,7 @@ export async function identitySourceSnapshot(
       ? (rows[rows.length - 1]._cursor as number) : null;
     const out = rows.map(({ _cursor: _, ...rest }) => rest);
     return { rows: out, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > out.length, nextCursor };
-  } catch {
-    // Table does not yet exist — return empty result set
-    return { rows: [], rowCount: 0, isTruncated: false };
   }
+  // No catch. A failure here must surface: an empty identity-exceptions report reads as
+  // "nothing to fix", which is the most dangerous wrong answer this report can give.
 }

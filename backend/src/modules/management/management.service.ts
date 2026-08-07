@@ -1,4 +1,4 @@
-import { randomUUID } from "crypto";
+﻿import { randomUUID } from "crypto";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
@@ -230,7 +230,7 @@ export const managementService = {
     await logSensitiveAction({ actor_user_id: acknowledgedBy, action_type: "ALERT_ACKNOWLEDGED", module_key: "MANAGEMENT", entity_type: "performance_alert", entity_id: alertId, req });
   },
 
-  // ─── TNI (Training Needs Identification) ───────────────────────────────────
+  // â”€â”€â”€ TNI (Training Needs Identification) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   async listTni(filters: { employee_id?: string; status?: string }) {
     const conds: string[] = ["1=1"];
@@ -344,13 +344,12 @@ export const managementService = {
     ] = await Promise.all([
       // employment_status is filtered here to match dashboard-metric.service.ts,
       // which is what every other headcount tile uses. Without it this surface
-      // counted employees the rest of the product does not — the CEO UAT saw 1152
+      // counted employees the rest of the product does not â€” the CEO UAT saw 1152
       // here against different figures elsewhere for the same organisation.
       db.execute<RowDataPacket[]>(
         `SELECT
            SUM(
              e.active_status = 1
-             AND LOWER(COALESCE(e.employment_status, 'active')) = 'active'
              AND e.date_of_joining <= CURDATE()
            ) AS headcount,
            SUM(
@@ -381,7 +380,7 @@ export const managementService = {
       // day and reconciled overnight, so "today" is a partially-written day: on
       // 2026-07-30 at 15:00 it held 802 rows of which 1 was present and 431 were
       // missing_punch. That is what produced the "Attendance Rate 2.3%" the CEO UAT
-      // reported — the panel was reading an in-progress day as if it were final.
+      // reported â€” the panel was reading an in-progress day as if it were final.
       // The shared helper picks the latest substantially-processed day and
       // explicitly excludes today; see shared/attendanceStatus.ts for why a
       // row-count threshold alone is not sufficient.
@@ -449,7 +448,7 @@ export const managementService = {
     ] = await Promise.all([
       db.execute<RowDataPacket[]>("SELECT COUNT(*) AS total FROM auth_user"),
       db.execute<RowDataPacket[]>(
-        "SELECT COUNT(*) AS total FROM employees WHERE active_status = 1 AND LOWER(COALESCE(employment_status,'active')) = 'active' AND date_of_joining <= CURDATE()"
+        "SELECT COUNT(*) AS total FROM employees WHERE active_status = 1 AND date_of_joining <= CURDATE()"
       ),
       db.execute<RowDataPacket[]>("SELECT COUNT(*) AS total FROM workforce_role_catalog WHERE active_status = 1"),
       db.execute<RowDataPacket[]>("SELECT COUNT(*) AS total FROM page_catalog"),
@@ -459,7 +458,7 @@ export const managementService = {
            SUM(active_status = 1) AS active
          FROM integration_config`
       ),
-      // auth_user has no 2FA column at all — two-factor is not implemented, so
+      // auth_user has no 2FA column at all â€” two-factor is not implemented, so
       // this cannot be counted. It used to fall into `.catch(() => 0)`, which
       // rendered as "0 users without 2FA", i.e. the strongest possible security
       // reassurance produced by a query that had never run. null so the tile
@@ -535,7 +534,7 @@ export const managementService = {
         configuredIntegrations: numberValue(integrationRows[0][0]?.configured),
         systemHealth: modules.some((module) => module.status === "degraded") ? "warning" : "healthy",
         uptime: uptimeFormatted,
-        // null, not 0 — see the query above. 2FA is not implemented, and a 0
+        // null, not 0 â€” see the query above. 2FA is not implemented, and a 0
         // here is read as "everyone is covered".
         usersWithout2fa: (twoFaRows as any)[0]?.[0]?.count == null
           ? null
@@ -573,8 +572,8 @@ export const managementService = {
     ] = await Promise.all([
       db.execute<RowDataPacket[]>(
         `SELECT
-           SUM(active_status = 1 AND LOWER(COALESCE(employment_status,'active')) = 'active' AND date_of_joining <= CURDATE()) AS active_headcount,
-           SUM(active_status = 1 AND LOWER(COALESCE(employment_status,'active')) = 'active' AND date_of_joining BETWEEN DATE_SUB(CURDATE(), INTERVAL 29 DAY) AND CURDATE()) AS new_joiners_30d,
+           SUM(active_status = 1 AND date_of_joining <= CURDATE()) AS active_headcount,
+           SUM(active_status = 1 AND date_of_joining BETWEEN DATE_SUB(CURDATE(), INTERVAL 29 DAY) AND CURDATE()) AS new_joiners_30d,
            SUM(
              COALESCE(date_of_leaving, resignation_date, date_of_exit)
              BETWEEN DATE_SUB(CURDATE(), INTERVAL 29 DAY) AND CURDATE()
@@ -769,12 +768,12 @@ export const managementService = {
 
     // Add missing fields for dashboard
     //
-    // These 14 queries are mutually independent — none reads another's
-    // result — but were previously 14 sequential awaits, each paying the
+    // These 14 queries are mutually independent â€” none reads another's
+    // result â€” but were previously 14 sequential awaits, each paying the
     // round-trip cost to the DB one at a time. The Promise.all above this
     // block already batches its 11 queries; this block just never got the
     // same treatment. Same fix already applied 4 times elsewhere this
-    // session (dashboard-metric.service.ts, work-inbox.service.ts) —
+    // session (dashboard-metric.service.ts, work-inbox.service.ts) â€”
     // declare each as a promise, batch with Promise.all, keep each query's
     // own .catch() attached to its own promise so the null-vs-zero failure
     // semantics documented below are preserved exactly.
@@ -811,14 +810,14 @@ export const managementService = {
       ),
       // The layout renders `designation_name`; this returned only designation_id, so
       // every joiner showed the literal fallback subtitle "Employee". The join to
-      // designation_master already exists in the team-members query further down —
+      // designation_master already exists in the team-members query further down â€”
       // reused here rather than sending an id the UI cannot resolve.
       db.execute<RowDataPacket[]>(
         `SELECT e.id, e.employee_code, e.full_name as employee_name, e.designation_id,
                 dm.designation_name, e.date_of_joining as joining_date
          FROM employees e
          LEFT JOIN designation_master dm ON dm.id = e.designation_id
-         WHERE LOWER(COALESCE(e.employment_status, 'active')) = 'active'
+         WHERE e.active_status = 1
            AND e.date_of_joining >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
          ORDER BY e.date_of_joining DESC
          LIMIT 10`
@@ -857,7 +856,7 @@ export const managementService = {
       // Manager-specific: expense claims, work items
       //
       // This filtered `status = 'pending'`, which is not a member of the column's
-      // ENUM('draft','submitted','approved','rejected','paid') — so it matched
+      // ENUM('draft','submitted','approved','rejected','paid') â€” so it matched
       // nothing and the "Expense Claims" tile read 0 on the CEO, HR Admin, Manager,
       // Ops and both reference dashboards despite 5,634 live rows. 'submitted' is
       // the awaiting-review state.
@@ -877,7 +876,7 @@ export const managementService = {
       // Pending timesheets.
       //
       // The query is correct and the table is real, but `item_type` is free varchar and
-      // nothing ever writes 'timesheet' — the only value present in production is
+      // nothing ever writes 'timesheet' â€” the only value present in production is
       // 'EMPLOYEE_CODE_PENDING'. So this can only ever be 0, and a permanent zero on an
       // approval queue reads as "nothing is waiting" rather than "this is not tracked".
       //
@@ -889,7 +888,7 @@ export const managementService = {
       // Expired employee documents.
       //
       // The table name and column were fixed earlier (it is employee_documents,
-      // plural, with no active_status). The query now runs — and returns 0, which is
+      // plural, with no active_status). The query now runs â€” and returns 0, which is
       // true but uninformative: `expiry_date` is populated on **0 of 207,616** rows,
       // so nothing can ever be expired.
       //
@@ -906,7 +905,7 @@ export const managementService = {
       ).catch(() => [[{ count: null }]] as any),
       // Pending policy acknowledgements.
       //
-      // `policy_acknowledgement` does not exist — there is no acknowledgement
+      // `policy_acknowledgement` does not exist â€” there is no acknowledgement
       // table in the schema at all. Falling back to 0 rendered as "no pending
       // acknowledgements", which is indistinguishable from a fully compliant
       // workforce. null so the tile reads as unavailable.
@@ -999,7 +998,7 @@ export const managementService = {
       pending_leave_requests: numberValue(approvals.pending_leave_approvals),
       pending_expense_claims: numberValue(expenseResult[0]?.count),
       projects_at_risk: 0,
-      // null passes through as "—". See the query: a 0 here would be produced by a
+      // null passes through as "â€”". See the query: a 0 here would be produced by a
       // failed lookup and would read as "nothing overdue".
       overdue_tasks: overtaskResult[0]?.overdue == null ? null : numberValue(overtaskResult[0].overdue),
       team_members: teamMembersResult.map((row: RowDataPacket) => ({
@@ -1012,7 +1011,7 @@ export const managementService = {
         attendance_status: String(row.today_status),
         designation_name: row.designation_name ? String(row.designation_name) : null,
       })),
-      // Both deliberately null rather than 0 — see the queries above. `?? 0` here was
+      // Both deliberately null rather than 0 â€” see the queries above. `?? 0` here was
       // undoing the null the query goes out of its way to produce.
       pending_timesheets: (timesheetResult as any)[0]?.[0]?.count == null
         ? null
@@ -1020,7 +1019,7 @@ export const managementService = {
       expired_documents: (expiredDocsResult as any)[0]?.[0]?.count == null
         ? null
         : numberValue((expiredDocsResult as any)[0][0].count),
-      // null, not 0 — the table does not exist. See the query above.
+      // null, not 0 â€” the table does not exist. See the query above.
       pending_policy_acknowledgements: (pendingPolicyResult as any)[0]?.[0]?.count == null
         ? null
         : numberValue((pendingPolicyResult as any)[0][0].count),
@@ -1159,7 +1158,7 @@ export const managementService = {
       hiringGapResult,
       ffLiabilityResult,
     ] = await Promise.all([
-      // 1. Payroll liability — current month run (matches Payroll page total)
+      // 1. Payroll liability â€” current month run (matches Payroll page total)
       // Fixed: select only the LATEST run for the current month to avoid summing across multiple runs
       db.execute<RowDataPacket[]>(
         `SELECT
@@ -1253,8 +1252,8 @@ export const managementService = {
          ORDER BY billing_month DESC
          LIMIT 1`
       ),
-      // 5. Attrition cost (exits last 30d × avg CTC × 0.5 replacement multiplier)
-      // Industry standard: replacement cost ≈ 50% of annual CTC (recruitment + training + productivity loss)
+      // 5. Attrition cost (exits last 30d Ã— avg CTC Ã— 0.5 replacement multiplier)
+      // Industry standard: replacement cost â‰ˆ 50% of annual CTC (recruitment + training + productivity loss)
       db.execute<RowDataPacket[]>(
         `SELECT
            COUNT(*) AS exits_30d,

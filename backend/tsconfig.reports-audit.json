@@ -1,0 +1,16 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true
+  },
+  "include": [
+    "src/modules/reporting/**/*.ts",
+    "src/modules/dashboards/**/*.ts",
+    "src/modules/ats/ats.service.ts",
+    "src/modules/wfm/biometric-summary.routes.ts",
+    "src/shared/attendanceStatus.ts",
+    "src/modules/management/management.service.ts"
+  ],
+  "exclude": ["node_modules", "dist", "src/**/__tests__"]
+}
+

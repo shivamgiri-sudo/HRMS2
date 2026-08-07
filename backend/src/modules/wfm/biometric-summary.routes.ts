@@ -107,14 +107,26 @@ biometricSummaryRouter.get("/adherence-summary", roleGuard, h(async (req: any, r
   );
 
   // Live counts: on_leave and working_remotely (today only)
+  //
+  // leave_request carries two parallel date pairs — from_date/to_date and
+  // start_date/end_date — and they are not equally populated: 2,678 rows have
+  // from_date/to_date, only 2,661 have start_date/end_date (verified 2026-08-07).
+  // Reading start_date alone silently drops 17 approved requests, so COALESCE to the
+  // complete pair and fall back to the other.
   const [liveRows] = await db.execute<RowDataPacket[]>(
     `SELECT
        (SELECT COUNT(DISTINCT employee_id) FROM leave_request
-        WHERE status = 'approved' AND CURDATE() BETWEEN start_date AND end_date) AS on_leave,
+        WHERE status = 'approved'
+          AND CURDATE() BETWEEN COALESCE(from_date, start_date) AND COALESCE(to_date, end_date)) AS on_leave,
        (SELECT COUNT(DISTINCT adr2.employee_id) FROM attendance_daily_record adr2
         WHERE adr2.record_date = CURDATE() AND adr2.work_mode IN ('wfh','remote')) AS working_remotely`,
     []
-  ).catch(() => [[{ on_leave: 0, working_remotely: 0 }]] as any);
+  ).catch((err: unknown) => {
+    // null, not 0. "Nobody is on leave today" is a claim; a failed query is not evidence
+    // for it, and this tile sits next to headcount where a false zero reads as coverage.
+    console.warn("[biometric-summary] live on-leave/remote counts failed:", (err as Error).message);
+    return [[{ on_leave: null, working_remotely: null }]] as any;
+  });
 
   // Regularization summary.
   //

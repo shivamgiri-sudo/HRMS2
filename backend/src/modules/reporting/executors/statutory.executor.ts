@@ -469,7 +469,17 @@ export async function form16Status(
 
 // ---------------------------------------------------------------------------
 // investment-declaration-status
-// Returns empty result set when investment_declaration table does not exist.
+//
+// Reads tax_declaration — the live store, holding 1,533 rows (verified 2026-08-07).
+// This previously targeted `investment_declaration`, which has never existed in
+// mas_hrms, and swallowed ER_NO_SUCH_TABLE into an empty result. The report therefore
+// showed "no declarations submitted" for an entire workforce that had submitted 1,533,
+// which during tax season is the difference between chasing everyone and chasing no one.
+//
+// tax_declaration has no declaration_status or verified_amount column: the presence of a
+// row IS the submission, so status is derived and verified_amount is not emitted rather
+// than invented. Its real columns (regime and the 80C/80D/HRA split) are surfaced
+// instead, since they are what a payroll reviewer actually needs.
 // ---------------------------------------------------------------------------
 export async function investmentDeclarationStatus(
   filters: ExecFilters,
@@ -498,36 +508,34 @@ export async function investmentDeclarationStatus(
            COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
            b.branch_name, p.process_name,
            id_decl.financial_year,
-           id_decl.declaration_status,
-           id_decl.submitted_at,
-           id_decl.total_declared_amount,
-           id_decl.verified_amount
-      FROM investment_declaration id_decl
+           'SUBMITTED' AS declaration_status,
+           id_decl.regime,
+           id_decl.created_at AS submitted_at,
+           id_decl.total_investment AS total_declared_amount,
+           id_decl.declared_80c,
+           id_decl.declared_80d,
+           id_decl.declared_hra,
+           id_decl.tds_projected
+      FROM tax_declaration id_decl
       JOIN employees e ON e.id = id_decl.employee_id
       LEFT JOIN branch_master b ON b.id = e.branch_id
       LEFT JOIN process_master p ON p.id = e.process_id
      WHERE ${clauses.join(" AND ")}
      ORDER BY id_decl.id ASC`;
 
-  try {
-    const total = options.includeTotal ? await count(base, params) : 0;
-    const sql = options.mode === "worker" ? `${base} LIMIT ${options.limit}` : applyPagination(base, options);
-    const rows = await query(sql, params) as Record<string, unknown>[];
-    const nextCursor = (options.mode === "worker" && rows.length > 0)
-      ? (rows[rows.length - 1]._cursor as number)
-      : null;
-    const out = rows.map(({ _cursor: _, ...rest }) => rest);
-    return {
-      rows: out,
-      rowCount: options.includeTotal ? total : rows.length,
-      isTruncated: options.includeTotal ? total > out.length : rows.length === options.limit,
-      nextCursor,
-    };
-  } catch (err: unknown) {
-    const mysqlCode = (err as Record<string, unknown>)?.["code"];
-    if (mysqlCode !== "ER_NO_SUCH_TABLE" && mysqlCode !== "ER_BAD_TABLE_ERROR") throw err;
-    return { rows: [], rowCount: 0, isTruncated: false, nextCursor: null };
-  }
+  const total = options.includeTotal ? await count(base, params) : 0;
+  const sql = options.mode === "worker" ? `${base} LIMIT ${options.limit}` : applyPagination(base, options);
+  const rows = await query(sql, params) as Record<string, unknown>[];
+  const nextCursor = (options.mode === "worker" && rows.length > 0)
+    ? (rows[rows.length - 1]._cursor as number)
+    : null;
+  const out = rows.map(({ _cursor: _, ...rest }) => rest);
+  return {
+    rows: out,
+    rowCount: options.includeTotal ? total : rows.length,
+    isTruncated: options.includeTotal ? total > out.length : rows.length === options.limit,
+    nextCursor,
+  };
 }
 
 // ---------------------------------------------------------------------------

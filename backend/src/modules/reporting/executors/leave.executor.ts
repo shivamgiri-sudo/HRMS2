@@ -27,6 +27,7 @@ import {
   yearParam,
   applyPagination,
   ReportScopeAccessDeniedError,
+  ReportSourceUnavailableError,
 } from "./types.js";
 
 async function query(sql: string, params: unknown[]): Promise<RowDataPacket[]> {
@@ -202,7 +203,7 @@ export async function leaveAllocationRegister(
   appendFilterConditions(filters, clauses, params);
 
   if (filters.year) {
-    clauses.push("la.allocation_year = ?");
+    clauses.push("la.balance_year = ?");
     params.push(yearParam(filters.year));
   }
 
@@ -211,15 +212,22 @@ export async function leaveAllocationRegister(
     params.push(options.cursor);
   }
 
+  // Allocations live in leave_balance_ledger. There is no `leave_allocation` table in
+  // mas_hrms and there never has been (verified 2026-08-07) — the catch below turned the
+  // resulting ER_NO_SUCH_TABLE into an empty result, so this report has always shown
+  // zero allocations against a ledger holding 4,656 rows for 2026 alone.
+  //
+  // The ledger has no effective_from/effective_to/allocation_reason columns, so those are
+  // not emitted rather than faked. It does carry adjusted_days and used_days, which are
+  // part of the same allocation picture, so they are included.
   const base = `
     SELECT la.id AS _cursor,
            e.employee_code,
            COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
            lt.leave_name, lt.leave_code,
-           la.allocation_year, la.allocated_days,
-           la.effective_from, la.effective_to, la.allocation_reason,
+           la.balance_year, la.allocated_days, la.adjusted_days, la.used_days,
            b.branch_name, p.process_name
-      FROM leave_allocation la
+      FROM leave_balance_ledger la
       JOIN employees e           ON e.id  = la.employee_id
       JOIN leave_type_master lt  ON lt.id = la.leave_type_id
       LEFT JOIN branch_master b  ON b.id  = e.branch_id
@@ -569,7 +577,14 @@ export async function leaveEncashmentRegister(
   } catch (err: unknown) {
     const mysqlCode = (err as Record<string, unknown>)?.["code"];
     if (mysqlCode === "ER_NO_SUCH_TABLE" || mysqlCode === "ER_BAD_TABLE_ERROR") {
-      return { rows: [], rowCount: 0, isTruncated: false };
+      // leave_encashment_request does not exist in mas_hrms (verified 2026-08-07), and
+      // the leave_request fallback suggested in this file's header was never built. An
+      // empty result made encashment look like a settled, zero-liability question.
+      throw new ReportSourceUnavailableError(
+        "leave-encashment-register",
+        "leave_encashment_request",
+        "Leave encashment is not recorded in this database; the report is marked blocked in the catalog."
+      );
     }
     throw err;
   }

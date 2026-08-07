@@ -57,15 +57,37 @@ export async function payrollRegister(
     params.push(options.cursor);
   }
 
+  // Payroll arithmetic is read-only here. Verified against live mas_hrms 2026-08-07:
+  // gross - total_deductions = net_salary holds on EVERY line where gross_salary > 0, with
+  // no exceptions. Nothing below recomputes a figure; it only makes two facts visible that
+  // the register previously flattened, both of which distort any total taken from it:
+  //
+  //   1. Population. The 2026-07 run has 1,464 lines, 350 of them for employees whose
+  //      active_status = 0. Without employment_status on the row, an exited employee is
+  //      indistinguishable from a current one.
+  //   2. Floored deductions. 454 lines have gross_salary = 0 while carrying a
+  //      total_deductions of 200, and net_salary floors at 0 rather than going negative.
+  //      SUM(total_deductions) therefore overstates money actually deducted by 38,800 for
+  //      that run. deduction_applied is the amount a payslip could really have withheld.
+  //      A further 146 of those lines carry net_salary = 200 against zero gross and zero
+  //      attendance — 29,200 in total, every one an inactive employee — which line_flag
+  //      surfaces as PAID_WITHOUT_GROSS rather than leaving it to be found by hand.
+  //
+  // cost_centre_code / cost_centre_name are added because a payroll register without a
+  // cost centre cannot be reconciled to finance.
   const base = `
     SELECT spl.id AS _cursor,
            spr.run_month AS payroll_month,
            e.employee_code,
            COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
+           COALESCE(cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
+           COALESCE(cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
            b.branch_name,
-           p.process_name,
+           COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
            d.dept_name AS department_name,
            des.designation_name,
+           e.employment_status,
+           CASE WHEN e.active_status = 1 THEN 'ACTIVE' ELSE 'INACTIVE' END AS employee_state,
            COALESCE(spl.basic,0) AS basic_pay,
            COALESCE(spl.hra,0) AS hra,
            COALESCE(spl.gross_salary,0) AS gross_salary,
@@ -75,7 +97,15 @@ export async function payrollRegister(
            COALESCE(spl.tds,0) AS tds,
            COALESCE(spl.lwp_deduction,0) AS lwp_deduction,
            COALESCE(spl.total_deductions,0) AS total_deductions,
+           CASE WHEN COALESCE(spl.gross_salary,0) > 0
+                THEN COALESCE(spl.total_deductions,0) ELSE 0 END AS deduction_applied,
            spl.net_salary AS net_pay,
+           CASE
+             WHEN COALESCE(spl.gross_salary,0) = 0 AND COALESCE(spl.net_salary,0) > 0
+               THEN 'PAID_WITHOUT_GROSS'
+             WHEN COALESCE(spl.gross_salary,0) = 0 THEN 'ZERO_GROSS'
+             ELSE 'OK'
+           END AS line_flag,
            COALESCE(spl.final_payable_days, spl.working_days, 0) AS payable_days,
            COALESCE(spl.lwp_days,0) AS lwp_days
       FROM salary_prep_line spl
@@ -85,6 +115,7 @@ export async function payrollRegister(
       LEFT JOIN process_master p ON p.id = e.process_id
       LEFT JOIN department_master d ON d.id = e.department_id
       LEFT JOIN designation_master des ON des.id = e.designation_id
+      LEFT JOIN cost_centre_master cc ON cc.id = e.cost_centre_id
      WHERE ${clauses.join(" AND ")}
      ORDER BY spl.id ASC`;
 

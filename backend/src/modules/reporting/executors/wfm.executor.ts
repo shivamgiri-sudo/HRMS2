@@ -182,41 +182,45 @@ export async function shiftSwapRegister(
     params.push(options.cursor);
   }
 
+  // The live table is wfm_roster_swap_request. This query previously named
+  // wfm_shift_swap_request, which has never existed in mas_hrms — and the catch below
+  // swallowed ER_NO_SUCH_TABLE into an empty result, so the report showed "no swap
+  // requests" instead of failing. Verified against the live schema on 2026-08-07.
+  //
+  // Column names follow the real table: requester_emp_id / swap_with_emp_id / status /
+  // created_at. There are no original_shift or swap_to_shift columns and no roster link
+  // to derive them from, so those two are not emitted; the catalog entry drops them too
+  // rather than promise a value that cannot exist.
   const base = `
     SELECT ssr.id AS _cursor,
+           ssr.created_at AS request_date,
            e_req.employee_code AS requester_code,
            CONCAT(e_req.first_name,' ',COALESCE(e_req.last_name,'')) AS requester_name,
-           e_swp.employee_code AS swappee_code,
-           CONCAT(e_swp.first_name,' ',COALESCE(e_swp.last_name,'')) AS swappee_name,
+           e_swp.employee_code AS swap_with_code,
+           CONCAT(e_swp.first_name,' ',COALESCE(e_swp.last_name,'')) AS swap_with_name,
            ssr.swap_date,
-           ssr.original_shift,
-           ssr.swap_to_shift,
-           ssr.approval_status,
-           ssr.requested_at,
+           ssr.reason,
+           ssr.status,
+           CONCAT(e_rev.first_name,' ',COALESCE(e_rev.last_name,'')) AS approved_by,
+           ssr.reviewed_at,
            b.branch_name,
            p.process_name
-      FROM wfm_shift_swap_request ssr
-      JOIN employees e_req           ON e_req.id = ssr.requester_id
-      LEFT JOIN employees e_swp      ON e_swp.id = ssr.swappee_id
+      FROM wfm_roster_swap_request ssr
+      JOIN employees e_req           ON e_req.id = ssr.requester_emp_id
+      LEFT JOIN employees e_swp      ON e_swp.id = ssr.swap_with_emp_id
+      LEFT JOIN employees e_rev      ON e_rev.id = ssr.reviewed_by
       LEFT JOIN branch_master b      ON b.id     = e_req.branch_id
       LEFT JOIN process_master p     ON p.id     = e_req.process_id
      WHERE ${clauses.join(" AND ")}
      ORDER BY ssr.id ASC`;
 
-  try {
-    const total = options.includeTotal ? await count(base, params) : 0;
-    const sql   = options.mode === "worker" ? `${base} LIMIT ${options.limit}` : applyPagination(base, options);
-    const rows  = await query(sql, params) as Record<string, unknown>[];
-    const nextCursor = (options.mode === "worker" && rows.length > 0)
-      ? (rows[rows.length - 1]._cursor as number) : null;
-    const out = rows.map(({ _cursor: _, ...rest }) => rest);
-    return { rows: out, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > out.length, nextCursor };
-  } catch (err: unknown) {
-    if ((err as Record<string, unknown>)?.["code"] === 'ER_NO_SUCH_TABLE') {
-      return { rows: [], rowCount: 0, isTruncated: false };
-    }
-    throw err;
-  }
+  const total = options.includeTotal ? await count(base, params) : 0;
+  const sql   = options.mode === "worker" ? `${base} LIMIT ${options.limit}` : applyPagination(base, options);
+  const rows  = await query(sql, params) as Record<string, unknown>[];
+  const nextCursor = (options.mode === "worker" && rows.length > 0)
+    ? (rows[rows.length - 1]._cursor as number) : null;
+  const out = rows.map(({ _cursor: _, ...rest }) => rest);
+  return { rows: out, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > out.length, nextCursor };
 }
 
 // ---------------------------------------------------------------------------

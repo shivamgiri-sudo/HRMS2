@@ -150,7 +150,11 @@ export async function getHeadcountMetrics(scope: DashboardScope): Promise<Metric
     // of the single slowest query instead of the sum of all three.
     const [[rows], [reqRows], [availRows]] = await Promise.all([
       db.execute<RowDataPacket[]>(
-        `SELECT COUNT(*) AS active FROM employees e WHERE e.active_status = 1 AND LOWER(COALESCE(e.employment_status,'active')) = 'active' AND ${scopeSql}`,
+        // active_status alone. The extra employment_status conjunct made this tile
+        // disagree with the headcount and employee-master reports (1,123 vs 1,125 on
+        // 2026-08-07) and excluded anyone on probation, notice or suspension from the
+        // company's headline headcount.
+        `SELECT COUNT(*) AS active FROM employees e WHERE e.active_status = 1 AND ${scopeSql}`,
         scopeParams
       ),
       // Required HC: today's planned HC from slot requirements, fallback to workforce mandate
@@ -514,7 +518,11 @@ export async function getPayrollReadinessMetrics(scope: DashboardScope): Promise
                ((pan_number IS NOT NULL AND pan_number != '') OR DATEDIFF(CURDATE(), date_of_joining) <= 30)
              THEN 1 ELSE 0 END) AS readyCount
        FROM employees e
-       WHERE e.active_status = 1 AND LOWER(COALESCE(e.employment_status,'active')) = 'active' AND ${scopeSql}`,
+       -- active_status alone, matching the headcount tile and the employee reports.
+       -- The employment_status conjunct dropped probation/notice/suspended staff out of
+       -- this denominator, so a missing bank account or PAN on one of them never showed
+       -- as a payroll blocker.
+       WHERE e.active_status = 1 AND ${scopeSql}`,
       scopeParams
     );
 

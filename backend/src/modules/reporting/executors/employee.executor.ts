@@ -36,6 +36,19 @@ async function count(baseSql: string, params: unknown[]): Promise<number> {
 // ---------------------------------------------------------------------------
 // headcount
 // ---------------------------------------------------------------------------
+/**
+ * An active employee is `active_status = 1`. Nothing else.
+ *
+ * This used to also require LOWER(employment_status) = 'active', which made headcount
+ * disagree with employee-master and every other employee-grain report: on 2026-08-07
+ * headcount returned 1,123 where employee-master returned 1,125. The two rows behind the
+ * gap have active_status = 1 with employment_status 'inactive' and 'resigned' — i.e.
+ * contradictory flags on real employees, which is a data-quality problem to surface, not
+ * a reason for two reports to answer the same question differently.
+ *
+ * Ruling of 2026-08-07: standardise on active_status, and expose the contradictions
+ * through a dedicated exception report rather than silently dropping the rows.
+ */
 export async function headcount(
   filters: ExecFilters,
   scope: ExecScope,
@@ -45,7 +58,7 @@ export async function headcount(
   const params: unknown[] = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
-  clauses.push("e.active_status = 1", "LOWER(COALESCE(e.employment_status,'active')) = 'active'");
+  clauses.push("e.active_status = 1");
 
   const base = `
     SELECT b.branch_name, d.dept_name AS department_name, p.process_name,

@@ -85,15 +85,33 @@ describe("attendance canon", () => {
   });
 
   it("management headcount matches the definition every other tile uses", () => {
-    const source = stripComments(read("src/modules/management/management.service.ts"));
-    const metric = stripComments(read("src/modules/dashboards/dashboard-metric.service.ts"));
-    const filter = /employment_status\s*,\s*'active'\)\)\s*=\s*'active'/;
-    expect(metric).toMatch(filter);
-    expect(
-      source,
-      "counting employees the canonical headcount excludes is why this surface " +
-        "reported a different organisation size from every other one"
-    ).toMatch(filter);
+    // The point of this test is unchanged — every surface must size the organisation the
+    // same way — but the canonical definition changed on 2026-08-07.
+    //
+    // It used to be `active_status = 1 AND LOWER(COALESCE(employment_status,'active')) =
+    // 'active'`. Measured against live mas_hrms that returns 1,123 while employee-master,
+    // the payroll register and every employee-grain report return 1,125, because two real
+    // employees carry active_status = 1 with employment_status 'inactive'/'resigned'.
+    // It also silently excluded anyone on probation, notice or suspension — including from
+    // the payroll-readiness denominator, so their missing bank details never raised a flag.
+    //
+    // Ruling: active_status = 1 alone. Contradictory flags are a data-quality problem to
+    // surface in an exception report, not a reason for two tiles to disagree.
+    const surfaces = {
+      "management.service.ts": stripComments(read("src/modules/management/management.service.ts")),
+      "dashboard-metric.service.ts": stripComments(read("src/modules/dashboards/dashboard-metric.service.ts")),
+      "employee.executor.ts": stripComments(read("src/modules/reporting/executors/employee.executor.ts")),
+    };
+
+    const supersededFilter = /employment_status\s*,\s*'active'\)\)\s*=\s*'active'/;
+    for (const [name, source] of Object.entries(surfaces)) {
+      expect(
+        source,
+        `${name} still narrows headcount by employment_status. That is the superseded ` +
+          `definition and makes this surface report a different organisation size from the rest.`
+      ).not.toMatch(supersededFilter);
+      expect(source, `${name} must filter on active_status`).toMatch(/active_status\s*=\s*1/);
+    }
   });
 
   it("the self-service attendance summary shares the org-wide numerator", () => {

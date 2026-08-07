@@ -20,6 +20,13 @@ import {
   monthParam,
   applyPagination,
 } from "./types.js";
+import {
+  presentSql,
+  attendedDaysSql,
+  expectedToWorkSql,
+  statusList,
+  LEAVE_STATUSES,
+} from "../../../shared/attendanceStatus.js";
 
 async function query(sql: string, params: unknown[]): Promise<RowDataPacket[]> {
   const [rows] = await db.execute<RowDataPacket[]>(sql, params);
@@ -254,24 +261,54 @@ export async function attendanceSummary(
     params.push(options.cursor);
   }
 
+  // Two defects fixed here, both verified against live mas_hrms on 2026-08-07:
+  //
+  //   1. lwp_days counted `attendance_status = 'lwp'`. There is no 'lwp' member of the
+  //      ENUM — LWP is the numeric `lwp_value` column — so the figure was 0 on all
+  //      118,350 rows. July 2026 alone carries 13,731.5 LWP days across 16,386 rows, and
+  //      LWP drives pay. This is the same defect class the header of
+  //      shared/attendanceStatus.ts documents for 'late'.
+  //
+  //   2. The buckets did not account for the month. present + absent + half_day left
+  //      9,778 of July's 41,106 rows unexplained — 9,773 of them `missing_punch` (23.8%
+  //      of the month) — so the columns silently failed to sum to the total and there was
+  //      no way to see why the attendance rate was what it was. Every ENUM member now has
+  //      a column, and missing_punch is named rather than absorbed.
+  //
+  // attendance_pct keeps the shared definition (approved leave and non-working days out
+  // of the denominator, missing_punch left in it, since an unresolved missing punch is
+  // not a verified attendance). Emitting the bucket makes that judgement auditable
+  // instead of invisible.
   const base = `
     SELECT e.id AS _cursor,
            e.employee_code,
            COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
            b.branch_name,
            p.process_name,
-           SUM(CASE WHEN adr.attendance_status = 'present'  THEN 1 ELSE 0 END) AS present_days,
-           SUM(CASE WHEN adr.attendance_status = 'absent'   THEN 1 ELSE 0 END) AS absent_days,
-           SUM(CASE WHEN adr.attendance_status = 'half_day' THEN 1 ELSE 0 END) AS half_days,
-           SUM(CASE WHEN adr.attendance_status = 'lwp'      THEN 1 ELSE 0 END) AS lwp_days,
-           SUM(CASE WHEN adr.late_by_minutes > 0            THEN 1 ELSE 0 END) AS late_days,
-           COUNT(*) AS working_days
+           d.dept_name AS department_name,
+           COUNT(*) AS total_days,
+           ${presentSql("adr.attendance_status")} AS present_days,
+           SUM(CASE WHEN adr.attendance_status = 'absent'          THEN 1 ELSE 0 END) AS absent_days,
+           SUM(CASE WHEN adr.attendance_status = 'half_day'        THEN 1 ELSE 0 END) AS half_days,
+           SUM(CASE WHEN adr.attendance_status IN (${statusList(LEAVE_STATUSES)}) THEN 1 ELSE 0 END) AS leave_days,
+           SUM(CASE WHEN adr.attendance_status = 'week_off'        THEN 1 ELSE 0 END) AS week_off_days,
+           SUM(CASE WHEN adr.attendance_status = 'holiday'         THEN 1 ELSE 0 END) AS holiday_days,
+           SUM(CASE WHEN adr.attendance_status = 'missing_punch'   THEN 1 ELSE 0 END) AS missing_punch_days,
+           SUM(CASE WHEN adr.attendance_status = 'unreconciled'    THEN 1 ELSE 0 END) AS unreconciled_days,
+           ROUND(SUM(COALESCE(adr.lwp_value, 0)), 2) AS lwp_days,
+           SUM(CASE WHEN adr.late_mark = 1 THEN 1 ELSE 0 END) AS late_days,
+           ROUND(SUM(COALESCE(adr.biometric_minutes, 0)) / 60, 2) AS total_productive_hours,
+           ROUND(
+             100 * ${attendedDaysSql("adr.attendance_status")}
+             / NULLIF(${expectedToWorkSql("adr.attendance_status")}, 0)
+           , 2) AS attendance_pct
       FROM attendance_daily_record adr
       JOIN employees e ON e.id = adr.employee_id
       LEFT JOIN branch_master b ON b.id = e.branch_id
       LEFT JOIN process_master p ON p.id = e.process_id
+      LEFT JOIN department_master d ON d.id = e.department_id
      WHERE ${clauses.join(" AND ")}
-     GROUP BY e.id, e.employee_code, employee_name, b.branch_name, p.process_name
+     GROUP BY e.id, e.employee_code, employee_name, b.branch_name, p.process_name, d.dept_name
      ORDER BY e.id ASC`;
 
   const total = options.includeTotal ? await count(base, params) : 0;

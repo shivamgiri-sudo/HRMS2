@@ -463,7 +463,14 @@ export const atsService = {
          AND updated_at < DATE_SUB(CURDATE(), INTERVAL 30 DAY)
          AND ${excludeEmployeeShapedCandidatesSql("ats_candidate")}`,
       []
-    ).catch(() => [[{ cnt: 0 }]] as any);
+    ).catch((err: unknown) => {
+      // Same treatment as the onboarding trend below: a swallowed failure here reads as a
+      // real zero on a selection trend tile, and "zero selections in the prior 30 days"
+      // is indistinguishable from a genuine hiring freeze. Log it, and return null rather
+      // than 0 so the tile renders as unknown instead of asserting a number nobody measured.
+      console.warn("[ats-stats] previous-30-day selected trend failed:", (err as Error).message);
+      return [[{ cnt: null }]] as any;
+    });
 
     // Previous 30 days for onboarding submitted trend (HR dashboard)
     const [prevSubmittedRows] = await db.execute<RowDataPacket[]>(
@@ -507,7 +514,9 @@ export const atsService = {
       time_to_hire_avg: Number(timeRows[0]?.avg_days ?? 0),
       open_positions: openPositions,
       selected_candidates: selectedCount,
-      previous_selected: Number(prevRows[0]?.cnt ?? 0),
+      // null, not 0, when the lookup failed — see the catch above. Same contract as
+      // pending_requisitions below: unknown renders as unknown, never as a measured zero.
+      previous_selected: prevRows[0]?.cnt == null ? null : Number(prevRows[0].cnt),
       previous_submitted: Number(prevSubmittedRows[0]?.cnt ?? 0),
       pending_requisitions: pendingReqRows[0]?.cnt == null ? null : Number(pendingReqRows[0].cnt),
     };

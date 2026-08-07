@@ -164,6 +164,31 @@ export class ReportScopeAccessDeniedError extends Error {
   }
 }
 
+/**
+ * The report's source table does not exist in this database.
+ *
+ * Several executors used to catch ER_NO_SUCH_TABLE and return `{ rows: [] }`, which
+ * rendered as a normal, empty report — indistinguishable from "there is genuinely
+ * nothing to show". On 2026-08-07 five reports were in that state against live
+ * mas_hrms, each quietly reporting nothing for a table that had never been created.
+ *
+ * An empty compliance or exceptions report is the most expensive wrong answer these can
+ * give, so an absent source is now an error with the missing table named in it.
+ */
+export class ReportSourceUnavailableError extends Error {
+  constructor(
+    public readonly code: string,
+    public readonly missingTable: string,
+    public readonly detail?: string
+  ) {
+    super(
+      `Report "${code}" is unavailable: required table \`${missingTable}\` does not exist in this database.` +
+        (detail ? ` ${detail}` : "")
+    );
+    this.name = "ReportSourceUnavailableError";
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Scope helpers — shared by all executors
 // ---------------------------------------------------------------------------

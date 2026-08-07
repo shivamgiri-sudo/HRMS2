@@ -20,6 +20,7 @@ import {
   monthParam,
   applyPagination,
   ReportScopeAccessDeniedError,
+  ReportSourceUnavailableError,
 } from "./types.js";
 
 async function query(sql: string, params: unknown[]): Promise<RowDataPacket[]> {
@@ -233,7 +234,15 @@ export async function assetMovementLog(
     return { rows: out, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > out.length, nextCursor };
   } catch (err: unknown) {
     if ((err as Record<string, unknown>)?.["code"] === "ER_NO_SUCH_TABLE") {
-      return { rows: [], rowCount: 0, isTruncated: false };
+      // asset_movement_log does not exist in mas_hrms and has no equivalent —
+      // asset_service_log records servicing, not custody transfers (verified 2026-08-07).
+      // Returning an empty result here made the report read "no asset movements ever",
+      // which for an audit trail is worse than admitting the source is missing.
+      throw new ReportSourceUnavailableError(
+        "asset-movement-log",
+        "asset_movement_log",
+        "Asset custody movements are not recorded in this database; the report is marked blocked in the catalog."
+      );
     }
     throw err;
   }

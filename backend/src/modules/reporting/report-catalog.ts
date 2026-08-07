@@ -1,5 +1,5 @@
-/**
- * HRMS Report Catalog — Complete Source of Truth
+﻿/**
+ * HRMS Report Catalog â€” Complete Source of Truth
  *
  * This file defines ALL 137 reports with:
  * - Column schemas (key, label, format, alignment)
@@ -39,18 +39,18 @@ export interface FilterDef {
 
 // Classification policy: docs/dashboard-audit/REPORT_DATA_CLASSIFICATION_POLICY.md
 // (2026-08-05). Every entry's sensitivityLevel/containsPII/containsFinancialData
-// was assigned by eyeballing each report's columns — salary/bank/PAN/UAN/ESIC/TDS
+// was assigned by eyeballing each report's columns â€” salary/bank/PAN/UAN/ESIC/TDS
 // -> highly_restricted, individual-identifiable non-financial -> confidential,
-// aggregates -> internal — now written up as the 4-rule policy in that doc so
+// aggregates -> internal â€” now written up as the 4-rule policy in that doc so
 // classifying the *next* report doesn't require a fresh ad hoc judgment call.
 // Still needs compliance/security sign-off to be authoritative, not just
-// internally consistent — see that doc's status line and
+// internally consistent â€” see that doc's status line and
 // OPEN_POLICY_QUESTIONS_2026-08-05.md item 3.
 export type SensitivityLevel =
   | 'internal'          // aggregate/summary, no PII, no financial values
   | 'confidential'      // employee-level non-financial (names, attendance, leave)
   | 'restricted'        // financial data or identity docs
-  | 'highly_restricted';// salary, bank, PAN, UAN, TDS — payroll/statutory
+  | 'highly_restricted';// salary, bank, PAN, UAN, TDS â€” payroll/statutory
 
 export type ReportAvailabilityStatus =
   | 'draft'               // not yet implemented
@@ -96,7 +96,7 @@ export interface ReportDefinition {
   availabilityStatus?: ReportAvailabilityStatus; // default: 'under_validation'
 }
 
-// ─── Common Filters ────────────────────────────────────────────────────────────
+// â”€â”€â”€ Common Filters â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 const F_BRANCH: FilterDef = { key: "branchId", label: "Branch", type: "select" };
 const F_PROCESS: FilterDef = { key: "processId", label: "Process", type: "select" };
@@ -116,7 +116,7 @@ const F_STATUS: FilterDef = {
     { value: "rejected", label: "Rejected" },
   ]
 };
-// Break session lifecycle — these are the literal status values on break_sessions,
+// Break session lifecycle â€” these are the literal status values on break_sessions,
 // not the generic approval states in F_STATUS.
 const F_BREAK_STATUS: FilterDef = {
   key: "status", label: "Break Status", type: "select",
@@ -136,7 +136,7 @@ const F_APPROVAL_STATUS: FilterDef = {
   ]
 };
 
-// ─── Common Role Sets ──────────────────────────────────────────────────────────
+// â”€â”€â”€ Common Role Sets â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 const ROLES_HR_ADMIN = ["super_admin", "admin", "hr", "hr_head"];
 const ROLES_HR_MANAGER = ["super_admin", "admin", "hr", "hr_head", "manager", "process_manager", "branch_head"];
@@ -147,7 +147,7 @@ const ROLES_ATS = ["super_admin", "admin", "hr", "hr_head", "recruiter", "recrui
 const ROLES_OPERATIONS = ["super_admin", "admin", "operations", "quality", "manager", "process_manager"];
 const ROLES_ALL_MANAGEMENT = ["super_admin", "admin", "hr", "hr_head", "finance", "payroll", "wfm", "manager", "process_manager", "branch_head", "ceo"];
 
-// ─── Report Definitions ────────────────────────────────────────────────────────
+// â”€â”€â”€ Report Definitions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export const REPORT_CATALOG: ReportDefinition[] = [
   {
@@ -155,7 +155,7 @@ export const REPORT_CATALOG: ReportDefinition[] = [
     // figure the project had been repeating: the catalogue said 156 active employees could
     // not receive a payslip, counting only those whose official_email was EMPTY. The
     // resolver also requires a company domain, and by that rule 725 of 1,152 (62.9%) are
-    // blocked — 519 have a gmail.com address sitting in the official_email column, plus 31
+    // blocked â€” 519 have a gmail.com address sitting in the official_email column, plus 31
     // example.com test rows and several hand-typed typos. This report is the worklist for
     // fixing that, and no `fin` event can sensibly go live until it has been worked through.
     code: "notification-undeliverable-recipients",
@@ -189,9 +189,9 @@ export const REPORT_CATALOG: ReportDefinition[] = [
     // independent queries (155 with no official email, 156 with no manager).
     availabilityStatus: "validated",
   },
-  // ═══════════════════════════════════════════════════════════════════════════════
+  // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
   // CATEGORY 1: HR & WORKFORCE
-  // ═══════════════════════════════════════════════════════════════════════════════
+  // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
   {
     code: "headcount",
@@ -494,9 +494,9 @@ export const REPORT_CATALOG: ReportDefinition[] = [
     branchScoped: true,
   },
 
-  // ═══════════════════════════════════════════════════════════════════════════════
+  // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
   // CATEGORY 2: ATTENDANCE
-  // ═══════════════════════════════════════════════════════════════════════════════
+  // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
   {
     code: "attendance-daily",
@@ -625,15 +625,24 @@ export const REPORT_CATALOG: ReportDefinition[] = [
       { key: "leave_days", label: "Leave", format: "number", width: 80, align: "right" },
       { key: "week_off_days", label: "Week Off", format: "number", width: 80, align: "right" },
       { key: "holiday_days", label: "Holiday", format: "number", width: 80, align: "right" },
+      // Named, not absorbed. missing_punch is 23.8% of July 2026's rows and sits in the
+      // attendance_pct denominator without ever reaching the numerator, so without this
+      // column the percentage cannot be explained from the row it appears on.
+      { key: "missing_punch_days", label: "Missing Punch", format: "number", width: 110, align: "right" },
+      { key: "unreconciled_days", label: "Unreconciled", format: "number", width: 110, align: "right" },
       { key: "lwp_days", label: "LWP", format: "number", width: 80, align: "right" },
-      { key: "payable_days", label: "Payable Days", format: "number", width: 100, align: "right" },
+      { key: "late_days", label: "Late Marks", format: "number", width: 90, align: "right" },
       { key: "total_productive_hours", label: "Productive Hours", format: "duration", width: 120 },
       { key: "attendance_pct", label: "Attendance %", format: "percentage", width: 100, align: "right" },
     ],
     filters: [F_MONTH, F_BRANCH, F_PROCESS, F_DEPT],
     viewRoles: ROLES_WFM,
     exportRoles: ["super_admin", "admin", "hr", "hr_head", "wfm"],
-    sourceTables: ["attendance_daily_record", "employees"],
+    // payable_days was declared here but no attendance source produces it — payable days
+    // are a payroll output (salary_prep_line.final_payable_days), not an attendance one,
+    // so the column rendered permanently blank. Dropped rather than faked; use the
+    // payroll register for payable days.
+    sourceTables: ["attendance_daily_record", "employees", "department_master"],
     branchScoped: true,
     processScoped: true,
   },
@@ -985,7 +994,7 @@ export const REPORT_CATALOG: ReportDefinition[] = [
     calculationNotes:
       "Aggregated from break_sessions (not the derived break_daily_summary table) so " +
       "the report cannot go stale if the summary writer lags. break_count and " +
-      "total_break_minutes cover COMPLETED, AUTO_CLOSED and EXCEPTION sessions only — " +
+      "total_break_minutes cover COMPLETED, AUTO_CLOSED and EXCEPTION sessions only â€” " +
       "an ACTIVE break has no end time and no duration yet, so counting it would report " +
       "break minutes not actually taken. Use Break Session Log for the per-break detail. " +
       "shift_name comes from wfm_roster_assignment and is blank where no roster exists " +
@@ -1030,7 +1039,7 @@ export const REPORT_CATALOG: ReportDefinition[] = [
     exportRoles: ["super_admin", "admin", "hr", "wfm"],
     sourceTables: ["break_sessions", "employees", "break_kiosk_devices"],
     calculationNotes:
-      "One row per row of break_sessions — no aggregation. Unlike Break Activity Daily " +
+      "One row per row of break_sessions â€” no aggregation. Unlike Break Activity Daily " +
       "Summary this INCLUDES ACTIVE (in-progress) breaks, which show a blank Break Out " +
       "and zero duration; that is why the two reports' break counts can differ. " +
       "Biometric In/Out are the shift punches captured on the session, not the break itself.",
@@ -1042,9 +1051,9 @@ export const REPORT_CATALOG: ReportDefinition[] = [
     availabilityStatus: "validated",
   },
 
-  // ═══════════════════════════════════════════════════════════════════════════════
+  // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
   // CATEGORY 3: LEAVE
-  // ═══════════════════════════════════════════════════════════════════════════════
+  // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
   {
     code: "leave-balance",
@@ -1052,7 +1061,7 @@ export const REPORT_CATALOG: ReportDefinition[] = [
     category: "Leave",
     subcategory: "Balance & Allocation",
     description:
-      "Leave balance in MAS Callnet format — CL/ML/EL/PTL-MTL columns for Current, Taken and Remaining, one row per employee",
+      "Leave balance in MAS Callnet format â€” CL/ML/EL/PTL-MTL columns for Current, Taken and Remaining, one row per employee",
     rowGrain: "One row per employee",
     primaryKey: ["emp_code"],
     columns: [
@@ -1135,7 +1144,7 @@ export const REPORT_CATALOG: ReportDefinition[] = [
     category: "Leave",
     subcategory: "Utilization & Trends",
     description:
-      "Approved leave register — one row per leave request with dates, branch, process and approval details",
+      "Approved leave register â€” one row per leave request with dates, branch, process and approval details",
     rowGrain: "One row per leave request",
     primaryKey: ["employee_code", "start_date", "leave_type"],
     columns: [
@@ -1270,13 +1279,13 @@ export const REPORT_CATALOG: ReportDefinition[] = [
     filters: [F_YEAR, F_BRANCH],
     viewRoles: ROLES_ALL_MANAGEMENT,
     exportRoles: ROLES_HR_ADMIN,
-    sourceTables: ["holiday_master"],
+    sourceTables: ["leave_holiday_master"],
     branchScoped: true,
   },
 
-  // ═══════════════════════════════════════════════════════════════════════════════
+  // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
   // CATEGORY 4: PAYROLL
-  // ═══════════════════════════════════════════════════════════════════════════════
+  // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
   {
     code: "payroll-register",
@@ -1290,10 +1299,16 @@ export const REPORT_CATALOG: ReportDefinition[] = [
       { key: "payroll_month", label: "Payroll Month", format: "text", width: 100 },
       { key: "employee_code", label: "Emp Code", format: "text", width: 100 },
       { key: "employee_name", label: "Employee Name", format: "text", width: 180 },
+      { key: "cost_centre_code", label: "Cost Centre Code", format: "text", width: 140 },
+      { key: "cost_centre_name", label: "Cost Centre", format: "text", width: 180 },
       { key: "branch_name", label: "Branch", format: "text", width: 120 },
       { key: "process_name", label: "Process", format: "text", width: 140 },
       { key: "department_name", label: "Department", format: "text", width: 120 },
       { key: "designation_name", label: "Designation", format: "text", width: 140 },
+      // 350 of the 1,464 lines in the 2026-07 run belong to employees who have left.
+      // Without these two the register cannot be reconciled to a headcount.
+      { key: "employment_status", label: "Employment Status", format: "status", width: 130 },
+      { key: "employee_state", label: "Active / Inactive", format: "status", width: 120 },
       { key: "date_of_joining", label: "DOJ", format: "date", width: 100 },
       { key: "basic_pay", label: "Basic", format: "currency", width: 100, align: "right" },
       { key: "hra", label: "HRA", format: "currency", width: 100, align: "right" },
@@ -1310,7 +1325,12 @@ export const REPORT_CATALOG: ReportDefinition[] = [
       { key: "lwp_deduction", label: "LWP Deduction", format: "currency", width: 120, align: "right" },
       { key: "other_deduction", label: "Other Deduction", format: "currency", width: 120, align: "right" },
       { key: "total_deductions", label: "Total Deductions", format: "currency", width: 120, align: "right" },
+      // On a zero-gross line net_salary floors at 0 while total_deductions still carries a
+      // value, so summing total_deductions overstates money actually withheld — by 38,800
+      // on the 2026-07 run. deduction_applied is the reconcilable figure.
+      { key: "deduction_applied", label: "Deduction Applied", format: "currency", width: 130, align: "right" },
       { key: "net_pay", label: "Net Pay", format: "currency", width: 120, align: "right" },
+      { key: "line_flag", label: "Line Flag", format: "status", width: 150 },
       { key: "payable_days", label: "Payable Days", format: "number", width: 80, align: "right" },
       { key: "lwp_days", label: "LWP Days", format: "number", width: 80, align: "right" },
       { key: "bank_name", label: "Bank Name", format: "text", width: 140 },
@@ -1322,8 +1342,13 @@ export const REPORT_CATALOG: ReportDefinition[] = [
     filters: [F_MONTH, F_BRANCH, F_PROCESS],
     viewRoles: ROLES_PAYROLL,
     exportRoles: ["super_admin", "admin", "finance", "payroll"],
-    sourceTables: ["salary_prep_line", "salary_prep_run", "salary_prep_line_component", "employees"],
-    calculationNotes: "Uses finalized payroll run. Components aggregated to employee level. Deduplication by employee_id + run_id.",
+    sourceTables: ["salary_prep_line", "salary_prep_run", "salary_prep_line_component", "employees", "cost_centre_master"],
+    calculationNotes:
+      "Uses finalized payroll run. Components aggregated to employee level. Deduplication by employee_id + run_id. " +
+      "No figure is recomputed here: verified against live mas_hrms on 2026-08-07, gross - total_deductions = net_salary " +
+      "holds on every line where gross_salary > 0. Read Deduction Applied, not Total Deductions, when reconciling cash: " +
+      "zero-gross lines carry a deduction that net_salary floors away (38,800 on the 2026-07 run). Line Flag marks " +
+      "ZERO_GROSS and PAID_WITHOUT_GROSS lines; the run also includes employees who have left, shown by Active / Inactive.",
     branchScoped: true,
     processScoped: true,
     requiresRunSelector: true,
@@ -1425,7 +1450,7 @@ export const REPORT_CATALOG: ReportDefinition[] = [
     filters: [F_MONTH, F_BRANCH],
     viewRoles: ["super_admin", "admin", "finance", "payroll"],
     exportRoles: ["super_admin", "admin", "finance", "payroll"],
-    sourceTables: ["salary_prep_line", "salary_prep_run", "employee_bank_details", "employees"],
+    sourceTables: ["salary_prep_line", "salary_prep_run", "employee_bank_detail", "employees"],
     branchScoped: true,
     directDownload: true,
   },
@@ -1485,7 +1510,7 @@ export const REPORT_CATALOG: ReportDefinition[] = [
 
   // The 10 entries below (payslip-status through ytd-salary-summary) all have
   // working SQL in report-suite.routes.ts and are actively referenced by
-  // deep-report-packs.ts and/or the frontend, but were never registered here —
+  // deep-report-packs.ts and/or the frontend, but were never registered here â€”
   // reportCatalogAccessMiddleware 404s any code missing from this array before
   // the query ever runs, so each rendered as empty/no-data with no visible
   // error. Same bug class as offer-to-joining-tracker (fixed earlier). Columns
@@ -1664,7 +1689,7 @@ export const REPORT_CATALOG: ReportDefinition[] = [
     name: "Salary Sheet Export",
     category: "Payroll",
     subcategory: "Monthly Processing",
-    description: "Full payroll register — earnings, deductions, statutory and bank details per employee per payroll month",
+    description: "Full payroll register â€” earnings, deductions, statutory and bank details per employee per payroll month",
     rowGrain: "One row per employee per payroll month",
     primaryKey: ["employee_code", "sal_date"],
     columns: [
@@ -1758,10 +1783,10 @@ export const REPORT_CATALOG: ReportDefinition[] = [
   },
 
   {
-    // The Payroll → Cost Summary menu item routes to /payroll/cost-summary, which
+    // The Payroll â†’ Cost Summary menu item routes to /payroll/cost-summary, which
     // deep-links to this code. The executor (payrollCostSummary) has been registered
     // and working the whole time, but the code was missing from this catalog and from
-    // the frontend one, so the menu item was a dead link — the Report Library had
+    // the frontend one, so the menu item was a dead link â€” the Report Library had
     // nothing to list or pre-select. Columns below mirror the executor's SELECT list
     // exactly; a mismatch renders empty columns and silently drops returned values.
     code: "payroll-cost-summary",
@@ -1790,7 +1815,7 @@ export const REPORT_CATALOG: ReportDefinition[] = [
     exportRoles: ["super_admin", "admin", "finance", "payroll", "payroll_head", "hr_head"],
     sourceTables: ["salary_prep_line", "salary_prep_run", "employees", "branch_master", "process_master", "department_master"],
     calculationNotes:
-      "total_ctc is total_gross + employer PF + employer ESIC — employer-side statutory " +
+      "total_ctc is total_gross + employer PF + employer ESIC â€” employer-side statutory " +
       "cost only. It is not the employee's contracted CTC and will not reconcile against " +
       "ctc_offered. Rows with zero money are real: gross_salary is 0 on a large share of " +
       "salary_prep_line rows, so roughly half the groups in a month total zero while the " +
@@ -1834,9 +1859,9 @@ export const REPORT_CATALOG: ReportDefinition[] = [
     containsFinancialData: true,
   },
 
-  // ═══════════════════════════════════════════════════════════════════════════════
+  // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
   // CATEGORY 5: STATUTORY & COMPLIANCE
-  // ═══════════════════════════════════════════════════════════════════════════════
+  // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
   {
     code: "pf-contribution-register",
@@ -1976,7 +2001,7 @@ export const REPORT_CATALOG: ReportDefinition[] = [
     filters: [{ key: "fy", label: "Financial Year", type: "text", required: true }, F_BRANCH],
     viewRoles: ROLES_COMPLIANCE,
     exportRoles: ["super_admin", "admin", "finance", "payroll"],
-    sourceTables: ["employee_tax_projection", "salary_prep_line_component", "employees"],
+    sourceTables: ["tax_declaration", "salary_prep_line_component", "employees"],
     calculationNotes: "Uses employee's declared regime. Applies effective-dated slab configuration.",
     branchScoped: true,
   },
@@ -2004,7 +2029,7 @@ export const REPORT_CATALOG: ReportDefinition[] = [
     filters: [{ key: "fy", label: "Financial Year", type: "text", required: true }, F_BRANCH],
     viewRoles: ROLES_COMPLIANCE,
     exportRoles: ["super_admin", "admin", "finance", "payroll"],
-    sourceTables: ["form16_status", "employees"],
+    sourceTables: ["employees", "employees"],
     branchScoped: true,
   },
 
@@ -2031,7 +2056,7 @@ export const REPORT_CATALOG: ReportDefinition[] = [
     filters: [{ key: "fy", label: "Financial Year", type: "text", required: true }, F_BRANCH],
     viewRoles: ROLES_COMPLIANCE,
     exportRoles: ["super_admin", "admin", "finance", "payroll"],
-    sourceTables: ["employee_tax_declaration", "employees"],
+    sourceTables: ["tax_declaration", "employees"],
     branchScoped: true,
   },
 
@@ -2057,8 +2082,8 @@ export const REPORT_CATALOG: ReportDefinition[] = [
     filters: [F_BRANCH, { key: "eligibleOnly", label: "Eligible Only", type: "select", options: [{ value: "yes", label: "Yes" }, { value: "no", label: "No" }] }],
     viewRoles: ROLES_COMPLIANCE,
     exportRoles: ["super_admin", "admin", "finance", "payroll"],
-    sourceTables: ["employees", "salary_structure"],
-    calculationNotes: "Gratuity = (Basic × 15 × Years) / 26. Eligible after 5 years. Capped at statutory limit.",
+    sourceTables: ["employees", "salary_structure_master"],
+    calculationNotes: "Gratuity = (Basic Ã— 15 Ã— Years) / 26. Eligible after 5 years. Capped at statutory limit.",
     branchScoped: true,
   },
 
@@ -2119,7 +2144,7 @@ export const REPORT_CATALOG: ReportDefinition[] = [
     name: "UAN Master Register",
     category: "Statutory",
     subcategory: "PF/EPF",
-    description: "Active employees with a UAN on file — PF identity master for EPFO filings",
+    description: "Active employees with a UAN on file â€” PF identity master for EPFO filings",
     rowGrain: "One row per active employee with a UAN",
     primaryKey: ["employee_code"],
     columns: [
@@ -2229,9 +2254,9 @@ export const REPORT_CATALOG: ReportDefinition[] = [
     containsFinancialData: true,
   },
 
-  // ═══════════════════════════════════════════════════════════════════════════════
+  // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
   // CATEGORY 6: EXIT & SEPARATION
-  // ═══════════════════════════════════════════════════════════════════════════════
+  // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
   {
     code: "resignation-register",
@@ -2259,7 +2284,7 @@ export const REPORT_CATALOG: ReportDefinition[] = [
     filters: [F_DATE_FROM, F_DATE_TO, F_BRANCH, F_PROCESS],
     viewRoles: ROLES_HR_ADMIN,
     exportRoles: ROLES_HR_ADMIN,
-    sourceTables: ["employee_resignation", "employees"],
+    sourceTables: ["exit_request", "employees"],
     branchScoped: true,
     processScoped: true,
     sensitivityLevel: "confidential",
@@ -2290,7 +2315,7 @@ export const REPORT_CATALOG: ReportDefinition[] = [
     filters: [F_BRANCH, { key: "daysThreshold", label: "Days > ", type: "number", placeholder: "30" }],
     viewRoles: ROLES_HR_ADMIN,
     exportRoles: ROLES_HR_ADMIN,
-    sourceTables: ["employee_fnf", "employees"],
+    sourceTables: ["full_final_calculation", "employees"],
     branchScoped: true,
   },
 
@@ -2323,7 +2348,7 @@ export const REPORT_CATALOG: ReportDefinition[] = [
     filters: [F_DATE_FROM, F_DATE_TO, F_BRANCH],
     viewRoles: ["super_admin", "admin", "hr_head", "finance", "payroll"],
     exportRoles: ["super_admin", "admin", "hr_head", "finance", "payroll"],
-    sourceTables: ["employee_fnf", "employee_fnf_component", "employees"],
+    sourceTables: ["full_final_calculation", "full_final_calculation", "employees"],
     branchScoped: true,
     sensitivityLevel: "restricted",
     containsPII: true,
@@ -2353,13 +2378,13 @@ export const REPORT_CATALOG: ReportDefinition[] = [
     filters: [F_BRANCH, { key: "clearanceDept", label: "Clearance Dept", type: "text" }],
     viewRoles: ROLES_HR_ADMIN,
     exportRoles: ROLES_HR_ADMIN,
-    sourceTables: ["employee_clearance", "employees"],
+    sourceTables: ["exit_clearance_checklist", "employees"],
     branchScoped: true,
   },
 
-  // ═══════════════════════════════════════════════════════════════════════════════
+  // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
   // CATEGORY 7: ATTRITION & TRENDS
-  // ═══════════════════════════════════════════════════════════════════════════════
+  // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
   {
     code: "monthly-attrition-summary",
@@ -2384,7 +2409,7 @@ export const REPORT_CATALOG: ReportDefinition[] = [
     viewRoles: ROLES_ALL_MANAGEMENT,
     exportRoles: ROLES_HR_ADMIN,
     sourceTables: ["employees"],
-    calculationNotes: "Attrition % = (Exits / Avg HC) × 100. Avg HC = (Opening + Closing) / 2.",
+    calculationNotes: "Attrition % = (Exits / Avg HC) Ã— 100. Avg HC = (Opening + Closing) / 2.",
     branchScoped: true,
     processScoped: true,
     sensitivityLevel: "confidential",
@@ -2412,7 +2437,7 @@ export const REPORT_CATALOG: ReportDefinition[] = [
     filters: [F_DATE_FROM, F_DATE_TO, F_BRANCH, F_PROCESS],
     viewRoles: ROLES_HR_ADMIN,
     exportRoles: ROLES_HR_ADMIN,
-    sourceTables: ["employee_resignation", "employees"],
+    sourceTables: ["exit_request", "employees"],
     branchScoped: true,
     processScoped: true,
   },
@@ -2462,15 +2487,15 @@ export const REPORT_CATALOG: ReportDefinition[] = [
     filters: [F_DATE_FROM, F_DATE_TO, F_BRANCH, F_PROCESS],
     viewRoles: ROLES_HR_ADMIN,
     exportRoles: ROLES_HR_ADMIN,
-    sourceTables: ["employees", "employee_resignation"],
+    sourceTables: ["employees", "exit_request"],
     calculationNotes: "Includes exits where tenure_days <= 90",
     branchScoped: true,
     processScoped: true,
   },
 
-  // ═══════════════════════════════════════════════════════════════════════════════
+  // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
   // CATEGORY 8: RECRUITMENT / ATS
-  // ═══════════════════════════════════════════════════════════════════════════════
+  // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
   {
     code: "recruitment-pipeline",
@@ -2491,7 +2516,7 @@ export const REPORT_CATALOG: ReportDefinition[] = [
     filters: [F_BRANCH, F_PROCESS, { key: "jobId", label: "Job", type: "select" }],
     viewRoles: ROLES_ATS,
     exportRoles: ROLES_ATS,
-    sourceTables: ["ats_candidate", "ats_job_requisition"],
+    sourceTables: ["ats_candidate", "job_posting"],
     branchScoped: true,
     processScoped: true,
     sensitivityLevel: "internal",
@@ -2525,7 +2550,7 @@ export const REPORT_CATALOG: ReportDefinition[] = [
     filters: [F_DATE_FROM, F_DATE_TO, F_BRANCH, F_PROCESS, { key: "stage", label: "Stage", type: "select" }],
     viewRoles: ROLES_ATS,
     exportRoles: ROLES_ATS,
-    sourceTables: ["ats_candidate", "ats_job_requisition"],
+    sourceTables: ["ats_candidate", "job_posting"],
     branchScoped: true,
     processScoped: true,
   },
@@ -2552,8 +2577,8 @@ export const REPORT_CATALOG: ReportDefinition[] = [
     filters: [F_DATE_FROM, F_DATE_TO, F_BRANCH, F_PROCESS],
     viewRoles: ROLES_ATS,
     exportRoles: ROLES_ATS,
-    sourceTables: ["ats_candidate", "ats_job_requisition"],
-    calculationNotes: "Conversion Rate = Joined / Applications × 100. Time to Hire = Days from application to joining.",
+    sourceTables: ["ats_candidate", "job_posting"],
+    calculationNotes: "Conversion Rate = Joined / Applications Ã— 100. Time to Hire = Days from application to joining.",
     branchScoped: true,
   },
 
@@ -2579,7 +2604,7 @@ export const REPORT_CATALOG: ReportDefinition[] = [
     filters: [F_DATE_FROM, F_DATE_TO, F_BRANCH],
     viewRoles: ROLES_ATS,
     exportRoles: ROLES_ATS,
-    sourceTables: ["ats_candidate", "ats_job_requisition", "employees"],
+    sourceTables: ["ats_candidate", "job_posting", "employees"],
     branchScoped: true,
   },
 
@@ -2606,7 +2631,7 @@ export const REPORT_CATALOG: ReportDefinition[] = [
     filters: [F_DATE_FROM, F_DATE_TO, F_BRANCH, F_PROCESS],
     viewRoles: ROLES_ATS,
     exportRoles: ROLES_ATS,
-    sourceTables: ["ats_candidate", "ats_job_requisition"],
+    sourceTables: ["ats_candidate", "job_posting"],
     branchScoped: true,
     processScoped: true,
   },
@@ -2614,17 +2639,17 @@ export const REPORT_CATALOG: ReportDefinition[] = [
   {
     // Query already existed and works (report-suite.routes.ts, 321 live rows
     // verified), and this code is already referenced by ReportLibraryView.tsx
-    // and deep-report-packs.ts ("register" and "reconciliation" packs) — but
+    // and deep-report-packs.ts ("register" and "reconciliation" packs) â€” but
     // was never added here. reportCatalogAccessMiddleware 404s any code not
     // in this array before the query ever runs, so the report tile always
     // rendered as empty/no-data with no visible error. That was the entire
     // bug: not a data problem, a missing registration.
     //
-    // Filters intentionally list only date range — the underlying query does
+    // Filters intentionally list only date range â€” the underlying query does
     // not apply branchId/processId (no addScopedEmployeeFilters call, no
     // scope params pushed in that switch case), so listing F_BRANCH/F_PROCESS
     // here would offer filters that silently do nothing. Fix the query to
-    // scope on e.branch_id/e.process_id (nullable — many rows have no
+    // scope on e.branch_id/e.process_id (nullable â€” many rows have no
     // employee yet) before adding those filters back.
     code: "offer-to-joining-tracker",
     name: "Offer to Joining Tracker",
@@ -2675,14 +2700,14 @@ export const REPORT_CATALOG: ReportDefinition[] = [
     filters: [F_BRANCH, F_PROCESS],
     viewRoles: ROLES_ATS,
     exportRoles: ROLES_ATS,
-    sourceTables: ["ats_candidate", "ats_job_requisition"],
+    sourceTables: ["ats_candidate", "job_posting"],
     branchScoped: true,
     processScoped: true,
   },
 
-  // ═══════════════════════════════════════════════════════════════════════════════
+  // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
   // CATEGORY 9: OPERATIONS & QUALITY
-  // ═══════════════════════════════════════════════════════════════════════════════
+  // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
   {
     code: "agent-performance-summary",
@@ -2710,7 +2735,7 @@ export const REPORT_CATALOG: ReportDefinition[] = [
     filters: [F_MONTH, F_BRANCH, F_PROCESS],
     viewRoles: ROLES_OPERATIONS,
     exportRoles: ["super_admin", "admin", "operations", "quality"],
-    sourceTables: ["agent_kpi_daily", "employees"],
+    sourceTables: ["Shivamgiri.v_call_master_unified_kpi", "employees"],
     branchScoped: true,
     processScoped: true,
     sensitivityLevel: "confidential",
@@ -2742,7 +2767,7 @@ export const REPORT_CATALOG: ReportDefinition[] = [
     filters: [F_MONTH, F_BRANCH, F_PROCESS],
     viewRoles: ROLES_OPERATIONS,
     exportRoles: ["super_admin", "admin", "operations", "quality"],
-    sourceTables: ["agent_kpi_daily", "employees"],
+    sourceTables: ["Shivamgiri.v_call_master_unified_kpi", "employees"],
     branchScoped: true,
     processScoped: true,
     sensitivityLevel: "confidential",
@@ -2775,7 +2800,7 @@ export const REPORT_CATALOG: ReportDefinition[] = [
     filters: [F_DATE_FROM, F_DATE_TO, F_BRANCH, F_PROCESS],
     viewRoles: ROLES_OPERATIONS,
     exportRoles: ["super_admin", "admin", "operations", "quality"],
-    sourceTables: ["quality_audit", "employees"],
+    sourceTables: ["db_audit.call_quality_assessment", "employees"],
     branchScoped: true,
     processScoped: true,
     sensitivityLevel: "confidential",
@@ -2807,14 +2832,14 @@ export const REPORT_CATALOG: ReportDefinition[] = [
     filters: [F_DATE_FROM, F_DATE_TO, F_BRANCH, F_PROCESS],
     viewRoles: ROLES_OPERATIONS,
     exportRoles: ["super_admin", "admin", "operations", "quality"],
-    sourceTables: ["quality_audit", "employees"],
+    sourceTables: ["db_audit.call_quality_assessment", "employees"],
     branchScoped: true,
     processScoped: true,
   },
 
-  // ═══════════════════════════════════════════════════════════════════════════════
+  // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
   // CATEGORY 10: ROSTER / WFM
-  // ═══════════════════════════════════════════════════════════════════════════════
+  // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
   {
     code: "roster-published",
@@ -2903,7 +2928,7 @@ export const REPORT_CATALOG: ReportDefinition[] = [
     filters: [F_DATE_FROM, F_DATE_TO, F_BRANCH, F_PROCESS],
     viewRoles: ROLES_WFM,
     exportRoles: ["super_admin", "admin", "wfm"],
-    sourceTables: ["wfm_shift_swap_request", "employees"],
+    sourceTables: ["wfm_roster_swap_request", "employees"],
     branchScoped: true,
     processScoped: true,
   },
@@ -2934,9 +2959,9 @@ export const REPORT_CATALOG: ReportDefinition[] = [
     processScoped: true,
   },
 
-  // ═══════════════════════════════════════════════════════════════════════════════
+  // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
   // CATEGORY 11: ASSETS
-  // ═══════════════════════════════════════════════════════════════════════════════
+  // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
   {
     code: "asset-inventory",
@@ -3020,11 +3045,16 @@ export const REPORT_CATALOG: ReportDefinition[] = [
     exportRoles: ["super_admin", "admin", "hr"],
     sourceTables: ["asset_movement_log", "asset_master", "employees"],
     branchScoped: true,
+    // asset_movement_log does not exist in mas_hrms and has no equivalent — asset_service_log
+    // records servicing, not custody transfers (verified against live 2026-08-07). The executor
+    // now throws ReportSourceUnavailableError naming the table instead of returning an empty
+    // result, which had made an audit trail read as "no movements have ever occurred".
+    availabilityStatus: "blocked",
   },
 
-  // ═══════════════════════════════════════════════════════════════════════════════
+  // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
   // CATEGORY 12: TRAINING / LMS INTEGRATION
-  // ═══════════════════════════════════════════════════════════════════════════════
+  // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
   {
     code: "training-completion-status",
@@ -3083,7 +3113,7 @@ export const REPORT_CATALOG: ReportDefinition[] = [
     filters: [F_BRANCH, F_PROCESS, { key: "status", label: "Status", type: "select" }],
     viewRoles: [...ROLES_HR_MANAGER, "trainer"],
     exportRoles: ROLES_HR_ADMIN,
-    sourceTables: ["lms_certification_status", "employees"],
+    sourceTables: ["lms_certification_snapshot", "employees"],
     branchScoped: true,
     processScoped: true,
   },
@@ -3113,14 +3143,14 @@ export const REPORT_CATALOG: ReportDefinition[] = [
     filters: [F_DATE_FROM, F_DATE_TO, F_BRANCH, F_PROCESS],
     viewRoles: [...ROLES_HR_MANAGER, "trainer"],
     exportRoles: ROLES_HR_ADMIN,
-    sourceTables: ["lms_batch", "lms_learner_progress"],
+    sourceTables: ["lms_learner_progress", "lms_learner_progress"],
     branchScoped: true,
     processScoped: true,
   },
 
-  // ═══════════════════════════════════════════════════════════════════════════════
+  // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
   // CATEGORY 13: DOCUMENTS
-  // ═══════════════════════════════════════════════════════════════════════════════
+  // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
   {
     code: "document-expiry-tracker",
@@ -3144,7 +3174,7 @@ export const REPORT_CATALOG: ReportDefinition[] = [
     filters: [F_BRANCH, { key: "docType", label: "Document Type", type: "select" }, { key: "daysAhead", label: "Expiring in Days", type: "number", placeholder: "30" }],
     viewRoles: ROLES_HR_ADMIN,
     exportRoles: ROLES_HR_ADMIN,
-    sourceTables: ["employee_document", "employees"],
+    sourceTables: ["employee_documents", "employees"],
     branchScoped: true,
     sensitivityLevel: "confidential",
     containsPII: true,
@@ -3174,7 +3204,7 @@ export const REPORT_CATALOG: ReportDefinition[] = [
     filters: [F_BRANCH, { key: "docType", label: "Document Type", type: "select" }, { key: "status", label: "Status", type: "select" }],
     viewRoles: ROLES_HR_ADMIN,
     exportRoles: ROLES_HR_ADMIN,
-    sourceTables: ["employee_document", "employees"],
+    sourceTables: ["employee_documents", "employees"],
     branchScoped: true,
   },
 
@@ -3199,14 +3229,14 @@ export const REPORT_CATALOG: ReportDefinition[] = [
     filters: [F_BRANCH, F_PROCESS],
     viewRoles: ROLES_HR_ADMIN,
     exportRoles: ROLES_HR_ADMIN,
-    sourceTables: ["employee_document", "document_type_master", "employees"],
+    sourceTables: ["employee_documents", "employee_documents", "employees"],
     branchScoped: true,
     processScoped: true,
   },
 
-  // ═══════════════════════════════════════════════════════════════════════════════
+  // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
   // CATEGORY 14: IDENTITY & VERIFICATION
-  // ═══════════════════════════════════════════════════════════════════════════════
+  // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
   {
     code: "uan-status-report",
@@ -3230,7 +3260,7 @@ export const REPORT_CATALOG: ReportDefinition[] = [
     filters: [F_BRANCH, { key: "uanStatus", label: "UAN Status", type: "select" }],
     viewRoles: ROLES_COMPLIANCE,
     exportRoles: ["super_admin", "admin", "finance", "payroll"],
-    sourceTables: ["employee_pf_details", "employees"],
+    sourceTables: ["employees", "employees"],
     branchScoped: true,
     sensitivityLevel: "restricted",
     containsPII: true,
@@ -3259,7 +3289,7 @@ export const REPORT_CATALOG: ReportDefinition[] = [
     filters: [F_BRANCH, { key: "esicStatus", label: "ESIC Status", type: "select" }],
     viewRoles: ROLES_COMPLIANCE,
     exportRoles: ["super_admin", "admin", "finance", "payroll"],
-    sourceTables: ["employee_esic_details", "employees"],
+    sourceTables: ["employees", "employees"],
     branchScoped: true,
   },
 
@@ -3284,7 +3314,7 @@ export const REPORT_CATALOG: ReportDefinition[] = [
     filters: [F_BRANCH, { key: "panStatus", label: "PAN Status", type: "select" }],
     viewRoles: ROLES_COMPLIANCE,
     exportRoles: ["super_admin", "admin", "finance", "payroll"],
-    sourceTables: ["employee_kyc", "employees"],
+    sourceTables: ["employees", "employees"],
     branchScoped: true,
   },
 
@@ -3311,7 +3341,7 @@ export const REPORT_CATALOG: ReportDefinition[] = [
     filters: [F_BRANCH, { key: "verificationStatus", label: "Status", type: "select" }],
     viewRoles: ROLES_COMPLIANCE,
     exportRoles: ["super_admin", "admin", "finance", "payroll"],
-    sourceTables: ["employee_bank_details", "employees"],
+    sourceTables: ["employee_bank_detail", "employees"],
     branchScoped: true,
   },
 
@@ -3339,7 +3369,7 @@ export const REPORT_CATALOG: ReportDefinition[] = [
     filters: [F_BRANCH],
     viewRoles: ["super_admin", "admin", "hr_head", "finance"],
     exportRoles: ["super_admin", "admin"],
-    sourceTables: ["employees", "employee_kyc", "employee_pf_details", "employee_esic_details"],
+    sourceTables: ["employees", "employees", "employees", "employees"],
     branchScoped: true,
     sensitivityLevel: "confidential",
     containsPII: true,
@@ -3347,15 +3377,15 @@ export const REPORT_CATALOG: ReportDefinition[] = [
     availabilityStatus: "under_validation",
   },
 
-  // ═══════════════════════════════════════════════════════════════════════════════
+  // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
   // Same "working SQL, never registered" bug as the Payroll/Statutory batches
-  // above — 11 more codes spanning Leave, Recruitment, Documents, Exit,
+  // above â€” 11 more codes spanning Leave, Recruitment, Documents, Exit,
   // Employee lifecycle, Attendance/WFM, Assets and Productivity. Left grouped
   // here rather than distributed into their matching CATEGORY sections above:
   // REPORT_CATALOG is consumed via .find()/filter, not positionally, so array
-  // placement doesn't affect behavior — the category/subcategory fields below
+  // placement doesn't affect behavior â€” the category/subcategory fields below
   // still group them correctly wherever a consumer displays by category.
-  // ═══════════════════════════════════════════════════════════════════════════════
+  // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
   {
     code: "lwp-deduction-register",
@@ -3413,7 +3443,7 @@ export const REPORT_CATALOG: ReportDefinition[] = [
     name: "Employee Document Compliance",
     category: "Documents",
     subcategory: "Compliance",
-    description: "Document checklist completion per active employee — verified, missing and completion percentage",
+    description: "Document checklist completion per active employee â€” verified, missing and completion percentage",
     rowGrain: "One row per active employee",
     primaryKey: ["employee_code"],
     columns: [
@@ -3473,7 +3503,7 @@ export const REPORT_CATALOG: ReportDefinition[] = [
     name: "Full & Final Settlement Register",
     category: "Exit",
     subcategory: "Compliance",
-    description: "Full & final settlement calculation per exited employee — recoveries, encashment, gratuity and net payable",
+    description: "Full & final settlement calculation per exited employee â€” recoveries, encashment, gratuity and net payable",
     rowGrain: "One row per exit request with an F&F calculation",
     primaryKey: ["employee_code", "last_working_day"],
     columns: [
@@ -3603,7 +3633,7 @@ export const REPORT_CATALOG: ReportDefinition[] = [
     name: "Roster Adherence",
     category: "Roster/WFM",
     subcategory: "Adherence",
-    description: "Daily roster-vs-actual adherence per employee — on-roster shift, attendance status and lateness",
+    description: "Daily roster-vs-actual adherence per employee â€” on-roster shift, attendance status and lateness",
     rowGrain: "One row per employee per date",
     primaryKey: ["employee_code", "record_date"],
     columns: [
@@ -3682,7 +3712,7 @@ export const REPORT_CATALOG: ReportDefinition[] = [
   },
 ];
 
-// ─── Helper Functions ──────────────────────────────────────────────────────────
+// â”€â”€â”€ Helper Functions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export function getReportDefinition(code: string): ReportDefinition | undefined {
   return REPORT_CATALOG.find(r => r.code === code);

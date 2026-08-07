@@ -75,16 +75,30 @@ const QUERIES: Record<string, Builder> = {
     params: [],
   }),
 
+  /**
+   * Call Centre (Dialer) Headcount — grouped by call_centre_code, which is the
+   * dialer/biometric integration key, NOT the finance cost centre. For cost centre use
+   * the `cost-centre-headcount` report instead.
+   *
+   * Verified against mas_hrms 2026-08-07: this had no active_status filter at all, so it
+   * counted every employee row ever created — 58,627 against a true active headcount of
+   * 1,125, a 52x overstatement. `active_count` compounded it by counting
+   * employment_status='active' (1,123) over that inflated base.
+   *
+   * employees.call_centre_code is NULL in all 58,627 rows, so the COALESCE always falls
+   * through to branch_master.call_centre_code (populated on 42 of 45 branches). Kept
+   * rather than simplified: the column is the documented override point, so a future
+   * backfill must keep working.
+   */
   cc_headcount: (f, scope) => {
     const sc = scopeClause(scope, 'e.branch_id');
     return {
-      sql: `SELECT COALESCE(e.call_centre_code, b.call_centre_code) AS cc_code,
-                   b.branch_name, COUNT(e.id) AS headcount,
-                   COUNT(CASE WHEN e.employment_status = 'active' THEN 1 END) AS active_count
+      sql: `SELECT COALESCE(e.call_centre_code, b.call_centre_code) AS call_centre_code,
+                   b.branch_name, COUNT(e.id) AS headcount
               FROM employees e
               LEFT JOIN branch_master b ON b.id = e.branch_id
-             WHERE ${sc.sql} ${f.ccCode ? 'AND COALESCE(e.call_centre_code, b.call_centre_code) = ?' : ''}
-             GROUP BY cc_code, b.branch_name ORDER BY cc_code`,
+             WHERE ${sc.sql} AND e.active_status = 1 ${f.ccCode ? 'AND COALESCE(e.call_centre_code, b.call_centre_code) = ?' : ''}
+             GROUP BY call_centre_code, b.branch_name ORDER BY call_centre_code`,
       params: [...sc.params, ...(f.ccCode ? [f.ccCode] : [])],
     };
   },
