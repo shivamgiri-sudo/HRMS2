@@ -25,14 +25,19 @@ import { enqueue, registerJobHandler, type UatJob } from "./uat-job-runner.js";
 import { recordEvent, transition } from "./uat-state-machine.js";
 import { runValidator, summariseForConsole, type ValidatorDeps } from "./uat-validator.service.js";
 import type { StaticScanResult } from "./uat-pipeline.types.js";
+import { changeTypeGate, switchEnabled, type ChangeType } from "./uat-governance.service.js";
+import { runPromptWriter, PROMPT_WRITER_TEMPLATE_VERSION } from "./uat-prompt-writer.service.js";
+import { savePrompt } from "./uat-prompt.repo.js";
 
 interface FeedbackRow extends RowDataPacket {
   id: string;
+  feedback_code: string;
   title: string;
   body_redacted: string | null;
   kind: string;
   page_route: string | null;
   status: string;
+  change_type: string | null;
 }
 
 interface ScanRow extends RowDataPacket {
@@ -65,6 +70,28 @@ function j<T>(value: unknown, fallback: T): T {
   return value as T;
 }
 
+/** Rehydrate a StaticScanResult from its stored row. Shared by both LLM stages. */
+function scanFromRow(s: ScanRow): StaticScanResult {
+  return {
+    scannerVersion: s.scanner_version,
+    pathsSha: s.paths_sha,
+    registrySha: s.registry_sha,
+    impactedPaths: j(s.impacted_paths_json, []),
+    impactedRoutes: j(s.impacted_routes_json, []),
+    impactedModules: j(s.impacted_modules_json, []),
+    protectedHits: j(s.protected_hits_json, []),
+    capabilityHits: j(s.capability_hits_json, []),
+    reverseDepMax: Number(s.reverse_dep_max ?? 0),
+    resolverMode: s.resolver_mode,
+    riskTier: s.risk_tier,
+    capabilityClass: s.capability_class,
+    effectiveRisk: s.effective_risk,
+    requiredApproverRoles: [],
+    durationMs: Number(s.duration_ms ?? 0),
+    blockedReason: null,
+  };
+}
+
 /** An error the runner must not retry. */
 class TerminalJobError extends Error {
   readonly terminal = true;
@@ -95,7 +122,7 @@ export async function handleValidateJob(job: UatJob, deps?: ValidatorDeps): Prom
   if (!feedbackId) throw new TerminalJobError("validate job carries no feedback_id");
 
   const [fbRows] = await db.query<FeedbackRow[]>(
-    `SELECT id, title, body_redacted, kind, page_route, status
+    `SELECT id, feedback_code, title, body_redacted, kind, page_route, status, change_type
        FROM uat_feedback WHERE id = ? LIMIT 1`,
     [feedbackId]
   );
@@ -110,25 +137,7 @@ export async function handleValidateJob(job: UatJob, deps?: ValidatorDeps): Prom
     // Validation without a scan would send an unclassified item to an external model.
     throw new TerminalJobError(`feedback ${feedbackId} has no static scan; refusing to validate`);
   }
-  const s = scanRows[0];
-  const scan: StaticScanResult = {
-    scannerVersion: s.scanner_version,
-    pathsSha: s.paths_sha,
-    registrySha: s.registry_sha,
-    impactedPaths: j(s.impacted_paths_json, []),
-    impactedRoutes: j(s.impacted_routes_json, []),
-    impactedModules: j(s.impacted_modules_json, []),
-    protectedHits: j(s.protected_hits_json, []),
-    capabilityHits: j(s.capability_hits_json, []),
-    reverseDepMax: Number(s.reverse_dep_max ?? 0),
-    resolverMode: s.resolver_mode,
-    riskTier: s.risk_tier,
-    capabilityClass: s.capability_class,
-    effectiveRisk: s.effective_risk,
-    requiredApproverRoles: [],
-    durationMs: Number(s.duration_ms ?? 0),
-    blockedReason: null,
-  };
+  const scan = scanFromRow(scanRows[0]);
 
   const checklist = await loadChecklist();
   const floor = evaluateFloor(scan);
@@ -234,11 +243,119 @@ export async function queueValidation(
   });
 }
 
+/**
+ * Stage 2 — render a build prompt for human review.
+ *
+ * Four gates before a single token is spent, in this order and all of them fail-closed:
+ * the kill switch, the checklist verdict, the change-type approvals, and the capability
+ * approvals. Checking the switch first means a paused pipeline costs nothing; checking the
+ * approvals before the call means an item waiting on a product owner does not get a prompt
+ * written speculatively that would then create pressure to approve it.
+ */
+export async function handlePromptWriteJob(job: UatJob): Promise<void> {
+  const feedbackId = job.feedbackId;
+  if (!feedbackId) throw new TerminalJobError("prompt_write job carries no feedback_id");
+
+  const gate = await switchEnabled("prompt_writer_enabled", process.env.UAT_PROMPT_WRITER_ENABLED);
+  if (!gate.enabled) throw new TerminalJobError(gate.reason ?? "prompt writer disabled");
+
+  const [fbRows] = await db.query<FeedbackRow[]>(
+    `SELECT id, feedback_code, title, body_redacted, kind, page_route, status, change_type
+       FROM uat_feedback WHERE id = ? LIMIT 1`,
+    [feedbackId]
+  );
+  if (!fbRows.length) throw new TerminalJobError(`feedback ${feedbackId} no longer exists`);
+  const fb = fbRows[0] as FeedbackRow & { feedback_code: string; change_type: ChangeType | null };
+
+  // CG-01/02/03. A prompt written before its approvals exist is a fait accompli, so this is
+  // checked here rather than at dispatch.
+  const ct = await changeTypeGate(feedbackId, fb.change_type);
+  if (!ct.satisfied) {
+    throw new TerminalJobError(
+      `Change-type governance is not satisfied: ${ct.reason ?? "approvals outstanding"}.`
+    );
+  }
+
+  const [scanRows] = await db.query<ScanRow[]>(
+    `SELECT * FROM uat_static_scan WHERE feedback_id = ? ORDER BY created_at DESC LIMIT 1`,
+    [feedbackId]
+  );
+  if (!scanRows.length) throw new TerminalJobError("no static scan; refusing to plan a change");
+  const scan = scanFromRow(scanRows[0]);
+
+  const attemptNo = Number(job.payload.attemptNo ?? 1);
+  const result = await runPromptWriter(
+    {
+      feedbackId,
+      feedbackCode: fb.feedback_code,
+      title: fb.title,
+      bodyRedacted: fb.body_redacted ?? "",
+      changeType: ct.changeType,
+      restatedRequirement: String(job.payload.restatedRequirement ?? fb.title),
+      scan,
+      attemptNo,
+      previousFailure: (job.payload.previousFailure as string | undefined) ?? null,
+    },
+    {
+      apiKey: env.ANTHROPIC_API_KEY,
+      model: env.ANTHROPIC_DEFAULT_MODEL,
+      effort: env.ANTHROPIC_EFFORT,
+      maxTokens: env.ANTHROPIC_MAX_OUTPUT_TOKENS,
+      timeoutMs: env.ANTHROPIC_TIMEOUT_MS,
+      dailyCapUsd: env.UAT_DAILY_LLM_USD_CAP,
+      enabled: true,
+    }
+  );
+
+  if (!result.ok) {
+    await transition(feedbackId, "validation_failed", {
+      actorKind: "system",
+      reason: result.failureReason ?? "The prompt writer did not complete.",
+    });
+    throw Object.assign(new Error(result.failureReason ?? "prompt writer failed"), {
+      terminal: Boolean(result.terminal),
+    });
+  }
+
+  await savePrompt({
+    feedbackId,
+    attemptNo,
+    templateVersion: PROMPT_WRITER_TEMPLATE_VERSION,
+    promptText: result.promptText!,
+    allowedPaths: result.allowlist!.allowed,
+    forbiddenPaths: result.allowlist!.forbidden,
+    mandatoryTests: result.mandatoryTests ?? [],
+    branchSlug: result.branchSlug!,
+    acceptanceCriteria: result.acceptanceCriteria ?? [],
+    rollbackPlan: result.rollbackPlan ?? "",
+    llmCallId: result.llmCallId ?? null,
+  });
+
+  await recordEvent(feedbackId, "prompt_generated", {
+    actorKind: "llm",
+    message: `Build prompt rendered (${PROMPT_WRITER_TEMPLATE_VERSION}), branch ${result.branchSlug}.`,
+    detail: {
+      allowedPaths: result.allowlist!.allowed,
+      // Surfaced, not hidden: a reviewer must see what the model asked for and was denied,
+      // or they will approve a plan believing it is intact.
+      removedPaths: result.allowlist!.removed,
+      mandatoryTests: result.mandatoryTests,
+      promptSha256: result.promptSha256,
+    },
+  });
+
+  await transition(feedbackId, "prompt_ready", {
+    actorKind: "llm",
+    reason: "A build prompt is ready for human review. Nothing has been dispatched.",
+  });
+}
+
 let registered = false;
 
 /** Idempotent: a second call is a no-op, so double registration cannot double-handle a job. */
 export function registerUatJobHandlers(): void {
   if (registered) return;
   registerJobHandler("validate", (job) => handleValidateJob(job));
+  registerJobHandler("prompt_write", (job) => handlePromptWriteJob(job));
   registered = true;
 }

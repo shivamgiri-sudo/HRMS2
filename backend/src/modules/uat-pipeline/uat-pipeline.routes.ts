@@ -60,6 +60,16 @@ import { loadChecklist } from "./uat-checklist.repo.js";
 import { queueValidation } from "./uat-jobs.handlers.js";
 import { jobHealth } from "./uat-job-runner.js";
 import { spendTodayMicros } from "./uat-cost.service.js";
+import {
+  changeTypeGate,
+  confirmChangeType,
+  readConfig,
+  requirementsFor,
+  switchEnabled,
+  type ChangeType,
+} from "./uat-governance.service.js";
+import { decidePrompt, jsonArray, latestPrompt } from "./uat-prompt.repo.js";
+import { enqueue } from "./uat-job-runner.js";
 
 const router = Router();
 
@@ -720,6 +730,247 @@ router.post(
         message: queued
           ? "Queued for evaluation. The result appears on this item when the worker completes it."
           : "This item is already queued for evaluation.",
+      },
+    });
+  })
+);
+
+// -- Change-type governance (Phase 3) -----------------------------------------
+
+const CHANGE_TYPES: ChangeType[] = ["bug", "enhancement", "policy_change", "unclear"];
+
+/**
+ * Confirm a change type. A HUMAN does this, not the model.
+ *
+ * The validator proposes a classification; triage accepts or overrides it, and the acceptance
+ * is recorded with the person's id. This matters because the classification decides who has
+ * to sign - letting the model choose it would let the model choose its own reviewers.
+ */
+router.post(
+  "/feedback/:id/change-type",
+  requireRole(...UAT_TRIAGE_ROLES),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const actor = await actorOf(req);
+    const fb = await getFeedback(req.params.id, actor.userId, actor.employeeId);
+    if (!fb) return res.status(404).json({ success: false, message: "Feedback item not found." });
+
+    const changeType = String(req.body?.changeType ?? "") as ChangeType;
+    if (!CHANGE_TYPES.includes(changeType)) {
+      return res.status(400).json({
+        success: false,
+        message: `changeType must be one of: ${CHANGE_TYPES.join(", ")}.`,
+      });
+    }
+    const gate = await confirmChangeType({
+      feedbackId: req.params.id,
+      changeType,
+      actorUserId: actor.userId,
+    });
+    return res.json({ success: true, data: gate });
+  })
+);
+
+/** Where the change-type gate stands, and who is being waited on. */
+router.get(
+  "/feedback/:id/governance",
+  requireRole(...UAT_TRIAGE_ROLES),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const actor = await actorOf(req);
+    const fb = await getFeedback(req.params.id, actor.userId, actor.employeeId);
+    if (!fb) return res.status(404).json({ success: false, message: "Feedback item not found." });
+    const gate = await changeTypeGate(
+      req.params.id,
+      (fb as { change_type?: ChangeType | null }).change_type ?? null
+    );
+    return res.json({ success: true, data: gate });
+  })
+);
+
+/** The governance policy itself, so the console can explain a requirement before it bites. */
+router.get(
+  "/change-type-policy",
+  requireRole(...UAT_TRIAGE_ROLES),
+  h(async (_req: AuthenticatedRequest, res: Response) => {
+    const data: Record<string, unknown> = {};
+    for (const ct of CHANGE_TYPES) data[ct] = await requirementsFor(ct);
+    return res.json({ success: true, data });
+  })
+);
+
+// -- Build prompt (Phase 3) ---------------------------------------------------
+
+/**
+ * Queue prompt generation.
+ *
+ * Refuses unless the checklist passed AND change-type governance is satisfied. Both are
+ * checked here as well as in the worker, because a queued job that will certainly fail is
+ * worse than a refusal the user can read: it looks like progress.
+ */
+router.post(
+  "/feedback/:id/generate-prompt",
+  requireRole(...UAT_TRIAGE_ROLES),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const actor = await actorOf(req);
+    const fb = await getFeedback(req.params.id, actor.userId, actor.employeeId);
+    if (!fb) return res.status(404).json({ success: false, message: "Feedback item not found." });
+
+    const sw = await switchEnabled("prompt_writer_enabled", process.env.UAT_PROMPT_WRITER_ENABLED);
+    if (!sw.enabled) return res.status(409).json({ success: false, message: sw.reason });
+
+    const status = (fb as { status?: string }).status;
+    if (status !== "checklist_passed" && status !== "awaiting_approval") {
+      return res.status(409).json({
+        success: false,
+        message: `A build prompt is only written after the checklist passes. This item is "${status}".`,
+      });
+    }
+
+    const gate = await changeTypeGate(
+      req.params.id,
+      (fb as { change_type?: ChangeType | null }).change_type ?? null
+    );
+    if (!gate.satisfied) {
+      return res.status(409).json({
+        success: false,
+        message: `Change-type governance is not satisfied: ${gate.reason}`,
+        data: gate,
+      });
+    }
+
+    const { queued } = await enqueue({
+      jobType: "prompt_write",
+      feedbackId: req.params.id,
+      payload: { attemptNo: 1 },
+      idempotencyKey: `prompt:${req.params.id}:1`,
+    });
+    return res.json({
+      success: true,
+      data: {
+        queued,
+        message: queued
+          ? "Queued. The prompt appears here for review when the worker finishes. Nothing is dispatched."
+          : "A prompt is already queued for this item.",
+      },
+    });
+  })
+);
+
+/**
+ * Read the current prompt, in full.
+ *
+ * Returns the whole text on purpose: a reviewer approving an instruction set must be able to
+ * read all of it. A truncated preview would produce approvals of text nobody saw.
+ */
+router.get(
+  "/feedback/:id/prompt",
+  requireRole(...UAT_TRIAGE_ROLES),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const actor = await actorOf(req);
+    const fb = await getFeedback(req.params.id, actor.userId, actor.employeeId);
+    if (!fb) return res.status(404).json({ success: false, message: "Feedback item not found." });
+
+    const row = await latestPrompt(req.params.id);
+    if (!row) return res.json({ success: true, data: null });
+    return res.json({
+      success: true,
+      data: {
+        id: row.id,
+        attemptNo: row.attempt_no,
+        templateVersion: row.template_version,
+        promptText: row.prompt_text,
+        promptSha256: row.prompt_sha256,
+        branchSlug: row.branch_slug,
+        allowedPaths: jsonArray(row.allowed_paths_json),
+        forbiddenPaths: jsonArray(row.forbidden_paths_json),
+        mandatoryTests: jsonArray(row.mandatory_tests_json),
+        acceptanceCriteria: jsonArray(row.acceptance_criteria_json),
+        rollbackPlan: row.rollback_plan,
+        approvedBy: row.approved_by,
+        approvedAt: row.approved_at,
+        rejectedBy: row.rejected_by,
+        rejectedAt: row.rejected_at,
+        rejectionReason: row.rejection_reason,
+        createdAt: row.created_at,
+      },
+    });
+  })
+);
+
+/**
+ * Approve or reject a prompt.
+ *
+ * promptSha256 is required in the body and compared against what is stored: an approval
+ * attaches to an exact text, not to an item. If the prompt was regenerated between the
+ * reviewer opening it and clicking, this fails rather than silently approving new words.
+ *
+ * Approving does NOT dispatch anything in Phase 3. It records that a human read the
+ * instructions and considered them sound.
+ */
+router.post(
+  "/feedback/:id/prompt/decide",
+  requireRole(...APPROVER_ROLES),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const actor = await actorOf(req);
+    const fb = await getFeedback(req.params.id, actor.userId, actor.employeeId);
+    if (!fb) return res.status(404).json({ success: false, message: "Feedback item not found." });
+
+    const decision = String(req.body?.decision ?? "");
+    if (decision !== "approved" && decision !== "rejected") {
+      return res
+        .status(400)
+        .json({ success: false, message: "decision must be approved or rejected." });
+    }
+    const promptId = String(req.body?.promptId ?? "");
+    const expectedSha = String(req.body?.promptSha256 ?? "");
+    if (!promptId || !expectedSha) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "promptId and promptSha256 are both required - an approval names the exact text it covers.",
+      });
+    }
+
+    await decidePrompt({
+      feedbackId: req.params.id,
+      promptId,
+      expectedSha,
+      decision,
+      actorUserId: actor.userId,
+      reason: req.body?.reason ?? null,
+    });
+    return res.json({
+      success: true,
+      data: {
+        decision,
+        message:
+          decision === "approved"
+            ? "Prompt approved and recorded. Nothing has been dispatched - automated builds are off."
+            : "Prompt rejected.",
+      },
+    });
+  })
+);
+
+/** Kill switches and their current values, so an operator can see what is live. */
+router.get(
+  "/config",
+  requireRole(...UAT_TRIAGE_ROLES),
+  h(async (_req: AuthenticatedRequest, res: Response) => {
+    const keys = [
+      ["pipeline_enabled", process.env.UAT_PIPELINE_ENABLED],
+      ["validator_enabled", process.env.UAT_VALIDATOR_ENABLED],
+      ["prompt_writer_enabled", process.env.UAT_PROMPT_WRITER_ENABLED],
+      ["builds_enabled", process.env.UAT_BUILDS_ENABLED],
+    ] as const;
+    const switches: Record<string, unknown> = {};
+    for (const [key, envValue] of keys) switches[key] = await switchEnabled(key, envValue);
+    return res.json({
+      success: true,
+      data: {
+        switches,
+        dailyBuildCap: await readConfig("daily_build_cap", "5"),
+        dailyLlmUsdCap: await readConfig("daily_llm_usd_cap", "25"),
+        allowlistedModules: await readConfig("allowlisted_modules", ""),
       },
     });
   })

@@ -205,6 +205,8 @@ const envSchema = z.object({
   // UAT pipeline kill switches. Both default OFF: the validator costs money and reaches an
   // external provider, so it must be switched on deliberately rather than by deploying.
   UAT_VALIDATOR_ENABLED: z.string().default("false"),
+  UAT_PROMPT_WRITER_ENABLED: z.string().default("false"),
+  UAT_BUILDS_ENABLED: z.string().default("false"),
   UAT_DAILY_LLM_USD_CAP: z.coerce.number().default(25),
 
   // AI provider — OpenAI Whisper (voice transcription fallback for Safari/iOS,

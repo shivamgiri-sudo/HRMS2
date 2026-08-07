@@ -139,6 +139,41 @@ const VERDICT_STYLES: Record<EvaluationRow["verdict"], string> = {
  */
 const AUTHORITATIVE: ReadonlySet<EvaluationRow["source"]> = new Set(["floor", "capability"]);
 
+interface GovernanceGate {
+  changeType: "bug" | "enhancement" | "policy_change" | "unclear";
+  satisfied: boolean;
+  required: Array<{ requiredRole: string; rationale: string }>;
+  pending: string[];
+  rejected: string[];
+  blocked: boolean;
+  reason: string | null;
+}
+
+interface BuildPrompt {
+  id: string;
+  attemptNo: number;
+  templateVersion: string;
+  promptText: string;
+  promptSha256: string;
+  branchSlug: string;
+  allowedPaths: string[];
+  forbiddenPaths: string[];
+  mandatoryTests: string[];
+  acceptanceCriteria: string[];
+  rollbackPlan: string | null;
+  approvedBy: string | null;
+  approvedAt: string | null;
+  rejectedBy: string | null;
+  rejectedAt: string | null;
+  rejectionReason: string | null;
+}
+
+const CHANGE_TYPE_OPTIONS = [
+  { value: "bug", label: "Bug", hint: "Restores intended behaviour. Technical review only." },
+  { value: "enhancement", label: "Enhancement", hint: "Changes what the product does. Needs a product owner." },
+  { value: "policy_change", label: "Policy change", hint: "Alters an HR outcome. Needs the owning function too." },
+] as const;
+
 export default function NativeUatTriageConsole() {
   const [items, setItems] = useState<FeedbackItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -150,6 +185,11 @@ export default function NativeUatTriageConsole() {
   const [llmCalls, setLlmCalls] = useState<LlmCallRow[]>([]);
   const [evaluating, setEvaluating] = useState(false);
   const [evalNotice, setEvalNotice] = useState<string | null>(null);
+  const [governance, setGovernance] = useState<GovernanceGate | null>(null);
+  const [prompt, setPrompt] = useState<BuildPrompt | null>(null);
+  const [promptBusy, setPromptBusy] = useState(false);
+  const [promptNotice, setPromptNotice] = useState<string | null>(null);
+  const [showPromptText, setShowPromptText] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -174,22 +214,30 @@ export default function NativeUatTriageConsole() {
     setEvaluations([]);
     setLlmCalls([]);
     setEvalNotice(null);
+    setGovernance(null);
+    setPrompt(null);
+    setPromptNotice(null);
+    setShowPromptText(false);
     setScanLoading(true);
     try {
       // Settled, not all: a missing checklist is normal for an item that has not been
       // evaluated yet, and failing the whole drawer over it would hide the scan too.
-      const [scanRes, checklistRes, callsRes] = await Promise.allSettled([
+      const [scanRes, checklistRes, callsRes, govRes, promptRes] = await Promise.allSettled([
         hrmsApi.get<{ data: ScanRow | null }>(`/api/uat/feedback/${item.id}/scan`),
         hrmsApi.get<{ data: { evaluations: EvaluationRow[] } }>(
           `/api/uat/feedback/${item.id}/checklist`
         ),
         hrmsApi.get<{ data: LlmCallRow[] }>(`/api/uat/feedback/${item.id}/llm-calls`),
+        hrmsApi.get<{ data: GovernanceGate }>(`/api/uat/feedback/${item.id}/governance`),
+        hrmsApi.get<{ data: BuildPrompt | null }>(`/api/uat/feedback/${item.id}/prompt`),
       ]);
       setScan(scanRes.status === "fulfilled" ? (scanRes.value.data ?? null) : null);
       setEvaluations(
         checklistRes.status === "fulfilled" ? (checklistRes.value.data?.evaluations ?? []) : []
       );
       setLlmCalls(callsRes.status === "fulfilled" ? (callsRes.value.data ?? []) : []);
+      setGovernance(govRes.status === "fulfilled" ? (govRes.value.data ?? null) : null);
+      setPrompt(promptRes.status === "fulfilled" ? (promptRes.value.data ?? null) : null);
     } finally {
       setScanLoading(false);
     }
@@ -212,6 +260,68 @@ export default function NativeUatTriageConsole() {
       setEvaluating(false);
     }
   }, []);
+
+  const setChangeType = useCallback(async (item: FeedbackItem, changeType: string) => {
+    setPromptBusy(true);
+    setPromptNotice(null);
+    try {
+      const res = await hrmsApi.post<{ data: GovernanceGate }>(
+        `/api/uat/feedback/${item.id}/change-type`,
+        { changeType }
+      );
+      setGovernance(res.data ?? null);
+      setPromptNotice(
+        `Classified as ${changeType}. ${res.data?.reason ?? "All required approvals are in place."}`
+      );
+    } catch (e) {
+      setPromptNotice(e instanceof Error ? e.message : "Could not set the change type.");
+    } finally {
+      setPromptBusy(false);
+    }
+  }, []);
+
+  const generatePrompt = useCallback(async (item: FeedbackItem) => {
+    setPromptBusy(true);
+    setPromptNotice(null);
+    try {
+      const res = await hrmsApi.post<{ data: { message: string } }>(
+        `/api/uat/feedback/${item.id}/generate-prompt`,
+        {}
+      );
+      setPromptNotice(res.data?.message ?? "Queued.");
+    } catch (e) {
+      // The API refuses with a reason - governance not satisfied, switch off, wrong status.
+      // That reason is the answer the user needs, so it is shown rather than swallowed.
+      setPromptNotice(e instanceof Error ? e.message : "Could not queue prompt generation.");
+    } finally {
+      setPromptBusy(false);
+    }
+  }, []);
+
+  const decidePromptFn = useCallback(
+    async (item: FeedbackItem, p: BuildPrompt, decision: "approved" | "rejected") => {
+      setPromptBusy(true);
+      setPromptNotice(null);
+      try {
+        // promptSha256 goes with the decision: the approval attaches to this exact text, and
+        // the server rejects it if the prompt was regenerated since it was opened.
+        const res = await hrmsApi.post<{ data: { message: string } }>(
+          `/api/uat/feedback/${item.id}/prompt/decide`,
+          { promptId: p.id, promptSha256: p.promptSha256, decision }
+        );
+        setPromptNotice(res.data?.message ?? `Prompt ${decision}.`);
+        const refreshed = await hrmsApi.get<{ data: BuildPrompt | null }>(
+          `/api/uat/feedback/${item.id}/prompt`
+        );
+        setPrompt(refreshed.data ?? null);
+      } catch (e) {
+        setPromptNotice(e instanceof Error ? e.message : `Could not record the ${decision}.`);
+      } finally {
+        setPromptBusy(false);
+      }
+    },
+    []
+  );
 
   const overdue = useMemo(() => items.filter((i) => i.aging?.overdue), [items]);
   const blocked = useMemo(() => items.filter((i) => i.status === "scan_blocked"), [items]);
@@ -514,6 +624,175 @@ export default function NativeUatTriageConsole() {
                     · snapshot {evaluations[0]?.rule_snapshot_sha256?.slice(0, 12) ?? "—"}
                   </p>
                 </>
+              )}
+
+              {/* Governance and prompt */}
+              <h3 className="mt-6 text-sm font-semibold text-slate-800">Change type</h3>
+              <p className="mt-1 text-xs text-slate-500">
+                A human classifies this, not the model. The classification decides who has to
+                sign, so letting the model pick it would let it pick its own reviewers.
+              </p>
+              <div className="mt-2 flex flex-wrap gap-2">
+                {CHANGE_TYPE_OPTIONS.map((opt) => (
+                  <button
+                    key={opt.value}
+                    title={opt.hint}
+                    disabled={promptBusy}
+                    onClick={() => void setChangeType(selected, opt.value)}
+                    className={`rounded border px-2.5 py-1.5 text-xs disabled:opacity-50 ${
+                      governance?.changeType === opt.value
+                        ? "border-slate-800 bg-slate-800 text-white"
+                        : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
+                    }`}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+
+              {governance && (
+                <div
+                  className={`mt-2 rounded border p-2.5 text-xs ${
+                    governance.blocked
+                      ? "border-red-300 bg-red-50 text-red-800"
+                      : governance.satisfied
+                        ? "border-emerald-300 bg-emerald-50 text-emerald-800"
+                        : "border-amber-300 bg-amber-50 text-amber-800"
+                  }`}
+                >
+                  <p className="font-medium">
+                    {governance.satisfied
+                      ? "All required approvals are recorded."
+                      : (governance.reason ?? "Approvals outstanding.")}
+                  </p>
+                  {governance.required.length > 0 && (
+                    <ul className="mt-1 space-y-0.5">
+                      {governance.required.map((r) => (
+                        <li key={r.requiredRole}>
+                          <span className="font-mono">{r.requiredRole}</span>
+                          {governance.rejected.includes(r.requiredRole)
+                            ? " — refused"
+                            : governance.pending.includes(r.requiredRole)
+                              ? " — waiting"
+                              : " — approved"}
+                          <span className="opacity-70"> · {r.rationale}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              )}
+
+              <div className="mt-6 flex items-center justify-between">
+                <h3 className="text-sm font-semibold text-slate-800">Build prompt</h3>
+                <button
+                  onClick={() => void generatePrompt(selected)}
+                  disabled={promptBusy}
+                  className="rounded border border-slate-300 bg-white px-2.5 py-1.5 text-xs text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                >
+                  {promptBusy ? "Working…" : prompt ? "Regenerate" : "Generate"}
+                </button>
+              </div>
+
+              {promptNotice && (
+                <p className="mt-2 rounded border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700">
+                  {promptNotice}
+                </p>
+              )}
+
+              {!prompt ? (
+                <p className="mt-2 text-sm text-slate-500">
+                  No prompt yet. Generating one writes instructions for a human to read — it
+                  dispatches nothing.
+                </p>
+              ) : (
+                <div className="mt-3 space-y-3 text-xs">
+                  <div className="rounded border border-slate-200 bg-white p-3">
+                    <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-slate-600">
+                      <span className="font-medium text-slate-800">
+                        attempt {prompt.attemptNo}
+                      </span>
+                      <span>· {prompt.templateVersion}</span>
+                      <span>
+                        · branch <span className="font-mono">{prompt.branchSlug}</span>
+                      </span>
+                      <span className="font-mono text-slate-400">
+                        · {prompt.promptSha256.slice(0, 12)}
+                      </span>
+                    </div>
+
+                    <p className="mt-2 font-semibold uppercase tracking-wide text-slate-500">
+                      Allowed paths ({prompt.allowedPaths.length})
+                    </p>
+                    <ul className="mt-1 space-y-0.5 font-mono text-emerald-800">
+                      {prompt.allowedPaths.map((p) => (
+                        <li key={p}>{p}</li>
+                      ))}
+                    </ul>
+
+                    {prompt.acceptanceCriteria.length > 0 && (
+                      <>
+                        <p className="mt-2 font-semibold uppercase tracking-wide text-slate-500">
+                          Acceptance criteria
+                        </p>
+                        <ul className="mt-1 list-disc space-y-0.5 pl-4 text-slate-700">
+                          {prompt.acceptanceCriteria.map((c) => (
+                            <li key={c}>{c}</li>
+                          ))}
+                        </ul>
+                      </>
+                    )}
+
+                    {prompt.mandatoryTests.length > 0 && (
+                      <p className="mt-2 text-slate-600">
+                        Mandatory suites:{" "}
+                        <span className="font-mono">{prompt.mandatoryTests.join(", ")}</span>
+                      </p>
+                    )}
+                  </div>
+
+                  {/* The full text, not a preview. Approving an instruction set you have only
+                      partly read is the failure this avoids. */}
+                  <button
+                    onClick={() => setShowPromptText((v) => !v)}
+                    className="text-xs font-medium text-slate-600 underline hover:text-slate-900"
+                  >
+                    {showPromptText ? "Hide" : "Read"} the full prompt (
+                    {prompt.promptText.length.toLocaleString()} characters)
+                  </button>
+                  {showPromptText && (
+                    <pre className="max-h-96 overflow-auto rounded border border-slate-200 bg-slate-900 p-3 text-[11px] leading-relaxed text-slate-100">
+                      {prompt.promptText}
+                    </pre>
+                  )}
+
+                  {prompt.approvedAt ? (
+                    <p className="rounded border border-emerald-300 bg-emerald-50 px-3 py-2 text-emerald-800">
+                      Approved. Nothing has been dispatched — automated builds are off.
+                    </p>
+                  ) : prompt.rejectedAt ? (
+                    <p className="rounded border border-red-300 bg-red-50 px-3 py-2 text-red-800">
+                      Rejected{prompt.rejectionReason ? `: ${prompt.rejectionReason}` : "."}
+                    </p>
+                  ) : (
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => void decidePromptFn(selected, prompt, "approved")}
+                        disabled={promptBusy}
+                        className="rounded border border-emerald-300 bg-emerald-50 px-3 py-1.5 text-xs font-medium text-emerald-800 hover:bg-emerald-100 disabled:opacity-50"
+                      >
+                        Approve this prompt
+                      </button>
+                      <button
+                        onClick={() => void decidePromptFn(selected, prompt, "rejected")}
+                        disabled={promptBusy}
+                        className="rounded border border-red-300 bg-red-50 px-3 py-1.5 text-xs font-medium text-red-800 hover:bg-red-100 disabled:opacity-50"
+                      >
+                        Reject
+                      </button>
+                    </div>
+                  )}
+                </div>
               )}
 
               {/* ── Model calls ─────────────────────────────────────────── */}
