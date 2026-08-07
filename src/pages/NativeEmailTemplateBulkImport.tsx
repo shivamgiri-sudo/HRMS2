@@ -258,10 +258,11 @@ export default function NativeEmailTemplateBulkImport() {
 
   // ── Download sample ──────────────────────────────────────────────────────
   const downloadSample = async () => {
-    const res = await hrmsApi.get("/api/admin/email-templates/import/sample", {
-      responseType: "blob",
-    });
-    const url = URL.createObjectURL(new Blob([res.data]));
+    // hrmsApi.get's second parameter is timeoutMs, not an Axios config — { responseType: "blob" }
+    // was being passed as a timeout, and the xlsx was then rebuilt from a JSON body. getBlob is
+    // the helper for a binary response.
+    const blob = await hrmsApi.getBlob("/api/admin/email-templates/import/sample");
+    const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
     a.download = "email_templates_sample.xlsx";
@@ -277,10 +278,14 @@ export default function NativeEmailTemplateBulkImport() {
     try {
       const fd = new FormData();
       fd.append("file", file);
-      const res = await hrmsApi.post("/api/admin/email-templates/import/preview", fd, {
-        headers: { "Content-Type": "multipart/form-data" },
-      });
-      setPreview(res.data.data);
+      // postForm, not post: the third parameter is timeoutMs, and a multipart Content-Type set
+      // by hand omits the boundary, which makes the upload unparseable. postForm lets the browser
+      // set it. The route replies { success, data: preview }, so one unwrap.
+      const res = await hrmsApi.postForm<{ success: boolean; data: typeof preview }>(
+        "/api/admin/email-templates/import/preview",
+        fd,
+      );
+      setPreview(res.data);
       setStep("preview");
     } catch (e: any) {
       setError(e?.response?.data?.error ?? "Upload failed — check file format");

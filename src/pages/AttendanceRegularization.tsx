@@ -82,6 +82,8 @@ type ActionLog = {
 
 type EmployeeRequest = {
   id: string;
+  /** Mirrors id. Set by the mapper and consumed by the nested detail/stage/log rows. */
+  request_id: string;
   request_no: string;
   employee_id: string | null;
   submitted_by: string | null;
@@ -515,7 +517,7 @@ export default function AttendanceRegularization() {
   const filteredRequests = useMemo(() => {
     return requests.filter((item) => {
       if (filterStatus !== "all" && item.current_status !== filterStatus) return false;
-      const detail = item.details?.[0];
+      const detail = item.regularization_request_detail?.[0];
       const date = detail?.attendance_date ?? "";
       if (filterFromDate && date && date < filterFromDate) return false;
       if (filterToDate && date && date > filterToDate) return false;

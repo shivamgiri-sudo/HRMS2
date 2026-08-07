@@ -153,8 +153,10 @@ export default function NativeRosterPreference() {
     queryKey: ["roster-prefs-my"],
     queryFn: () =>
       hrmsApi
-        .get<{ data: RosterPreference[] }>("/wfm/roster-preferences/my")
-        .then((r) => r.data.data ?? []),
+        // /api prefix: hrmsApi adds none, so "/wfm/..." hit the SPA fallback and returned HTML.
+        // And the route replies { data: prefs }, so one unwrap, not two.
+        .get<{ data: RosterPreference[] }>("/api/wfm/roster-preferences/my")
+        .then((r) => r.data ?? []),
     enabled: activeTab === "my-preferences",
   });
 
@@ -162,8 +164,8 @@ export default function NativeRosterPreference() {
     queryKey: ["roster-prefs-pending"],
     queryFn: () =>
       hrmsApi
-        .get<{ data: RosterPreference[] }>("/wfm/roster-preferences/pending")
-        .then((r) => r.data.data ?? []),
+        .get<{ data: RosterPreference[] }>("/api/wfm/roster-preferences/pending")
+        .then((r) => r.data ?? []),
     enabled: activeTab === "pending-approvals" && isApprover,
   });
 
