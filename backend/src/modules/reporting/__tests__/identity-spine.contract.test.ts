@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+﻿import { describe, expect, it } from "vitest";
 import { REPORT_CATALOG } from "../report-catalog.js";
 import { EXECUTOR_MAP } from "../executors/index.js";
 import {
@@ -24,7 +24,7 @@ const isEmployeeGrain = (r: (typeof REPORT_CATALOG)[number]): boolean => {
   const grain = (r.rowGrain ?? "").toLowerCase();
   if (!grain.includes("per employee")) return false;
   // "One row per employee per month" is still employee-grain. "One row per branch per
-  // employee count" is not — but no such grain exists; the guard below is for aggregates
+  // employee count" is not â€” but no such grain exists; the guard below is for aggregates
   // that merely mention employees in passing.
   if (/^one row per (branch|cost cent|process|department|month|day|shift|course|asset)/.test(grain)) return false;
   return true;
@@ -119,7 +119,7 @@ describe("mandatory identity columns on employee-grain reports", () => {
 
   /**
    * Reports whose column names are fixed by someone else. These are file formats consumed
-   * by an external system, where an extra column corrupts the upload — not places where
+   * by an external system, where an extra column corrupts the upload â€” not places where
    * the mandate was skipped.
    */
   const EXTERNAL_FORMATS: Record<string, string> = {
@@ -145,7 +145,7 @@ describe("mandatory identity columns on employee-grain reports", () => {
     (SYNONYMS[fact] ?? [fact]).some(k => keys.includes(k));
 
   /**
-   * Reports not yet migrated to the spine. This list may only ever shrink — it is the
+   * Reports not yet migrated to the spine. This list may only ever shrink â€” it is the
    * remaining Phase 2 work made explicit, not a permanent exemption. Delete an entry as
    * its executor gains the spine.
    *
@@ -155,12 +155,9 @@ describe("mandatory identity columns on employee-grain reports", () => {
   const NOT_YET_MIGRATED = new Set<string>([
     "anniversary-list",
     "arrear-payment-register",
-    "attendance-daily",
     "attendance-register-grid",
-    "attendance-summary",
     "bank-account-verification",
     "bank-advice",
-    "biometric-reconciliation",
     "birthday-list",
     "break-daily-summary",
     "certification-status",
@@ -188,7 +185,7 @@ describe("mandatory identity columns on employee-grain reports", () => {
     "payroll-reconciliation",
     "payroll-variance",
     "payslip-status",
-    // Served by inline case blocks in report-suite.routes.ts, not by an executor — they
+    // Served by inline case blocks in report-suite.routes.ts, not by an executor â€” they
     // migrate when Phase 3 collapses those into executors.
     "pf-esi-optout-register",
     "pt-monthly-register",
@@ -196,13 +193,11 @@ describe("mandatory identity columns on employee-grain reports", () => {
     "uan-status-report",
     "pf-esic-salary-register",
     "productivity-individual-scorecard",
-    "punch-raw-export",
     "roster-adherence",
     "roster-published",
     "roster-variance",
     "salary-sheet-export",
     "salary-sheet-onfido",
-    "shift-adherence-detail",
     "training-completion-status",
     "week-off-calendar",
     "ytd-salary-summary",

@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Attendance executor
  *
  * Covers codes: attendance-daily, daily-hc-shift, shift-adherence-detail,
@@ -82,7 +82,9 @@ export async function attendanceDaily(
            e.employee_code,
            COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
            b.branch_name,
-           p.process_name,
+           COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
+           COALESCE(sp_cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
+           COALESCE(sp_cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
            d.dept_name AS department_name,
            des.designation_name,
            ws.shift_name,
@@ -98,6 +100,7 @@ export async function attendanceDaily(
       JOIN employees e ON e.id = adr.employee_id
       LEFT JOIN branch_master b ON b.id = e.branch_id
       LEFT JOIN process_master p ON p.id = e.process_id
+      LEFT JOIN cost_centre_master sp_cc ON sp_cc.id = e.cost_centre_id
       LEFT JOIN department_master d ON d.id = e.department_id
       LEFT JOIN designation_master des ON des.id = e.designation_id
       LEFT JOIN wfm_roster_assignment wra
@@ -125,7 +128,7 @@ export async function attendanceDaily(
 }
 
 // ---------------------------------------------------------------------------
-// daily-hc-shift  (aggregate — no row-level cursor)
+// daily-hc-shift  (aggregate â€” no row-level cursor)
 // ---------------------------------------------------------------------------
 export async function dailyHcShift(
   filters: ExecFilters,
@@ -203,7 +206,9 @@ export async function shiftAdherenceDetail(
            e.employee_code,
            COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
            b.branch_name,
-           p.process_name,
+           COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
+           COALESCE(sp_cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
+           COALESCE(sp_cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
            adr.record_date,
            ws.shift_name,
            TIME_FORMAT(ws.start_time,'%H:%i') AS scheduled_start,
@@ -214,6 +219,7 @@ export async function shiftAdherenceDetail(
       JOIN employees e ON e.id = adr.employee_id
       LEFT JOIN branch_master b ON b.id = e.branch_id
       LEFT JOIN process_master p ON p.id = e.process_id
+      LEFT JOIN cost_centre_master sp_cc ON sp_cc.id = e.cost_centre_id
       LEFT JOIN wfm_roster_assignment wra
              ON wra.employee_id = adr.employee_id
             AND wra.roster_date = adr.record_date
@@ -264,14 +270,14 @@ export async function attendanceSummary(
   // Two defects fixed here, both verified against live mas_hrms on 2026-08-07:
   //
   //   1. lwp_days counted `attendance_status = 'lwp'`. There is no 'lwp' member of the
-  //      ENUM — LWP is the numeric `lwp_value` column — so the figure was 0 on all
+  //      ENUM â€” LWP is the numeric `lwp_value` column â€” so the figure was 0 on all
   //      118,350 rows. July 2026 alone carries 13,731.5 LWP days across 16,386 rows, and
   //      LWP drives pay. This is the same defect class the header of
   //      shared/attendanceStatus.ts documents for 'late'.
   //
   //   2. The buckets did not account for the month. present + absent + half_day left
-  //      9,778 of July's 41,106 rows unexplained — 9,773 of them `missing_punch` (23.8%
-  //      of the month) — so the columns silently failed to sum to the total and there was
+  //      9,778 of July's 41,106 rows unexplained â€” 9,773 of them `missing_punch` (23.8%
+  //      of the month) â€” so the columns silently failed to sum to the total and there was
   //      no way to see why the attendance rate was what it was. Every ENUM member now has
   //      a column, and missing_punch is named rather than absorbed.
   //
@@ -284,7 +290,9 @@ export async function attendanceSummary(
            e.employee_code,
            COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
            b.branch_name,
-           p.process_name,
+           COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
+           COALESCE(sp_cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
+           COALESCE(sp_cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
            d.dept_name AS department_name,
            COUNT(*) AS total_days,
            ${presentSql("adr.attendance_status")} AS present_days,
@@ -307,8 +315,13 @@ export async function attendanceSummary(
       LEFT JOIN branch_master b ON b.id = e.branch_id
       LEFT JOIN process_master p ON p.id = e.process_id
       LEFT JOIN department_master d ON d.id = e.department_id
+      LEFT JOIN cost_centre_master sp_cc ON sp_cc.id = e.cost_centre_id
      WHERE ${clauses.join(" AND ")}
-     GROUP BY e.id, e.employee_code, employee_name, b.branch_name, p.process_name, d.dept_name
+     -- The server runs with ONLY_FULL_GROUP_BY, so every non-aggregated selected column
+     -- has to appear here too; omitting the cost centre columns would make this report
+     -- fail outright rather than degrade.
+     GROUP BY e.id, e.employee_code, employee_name, b.branch_name, p.process_name,
+              sp_cc.cost_centre_code, sp_cc.cost_centre_name, d.dept_name
      ORDER BY e.id ASC`;
 
   const total = options.includeTotal ? await count(base, params) : 0;
@@ -627,7 +640,7 @@ export async function habitualAbsenteeList(
 }
 
 // ---------------------------------------------------------------------------
-// daily-shrinkage-report  (aggregate — no row-level cursor)
+// daily-shrinkage-report  (aggregate â€” no row-level cursor)
 // ---------------------------------------------------------------------------
 export async function dailyShrinkageReport(
   filters: ExecFilters,
@@ -671,7 +684,7 @@ export async function dailyShrinkageReport(
 }
 
 // ---------------------------------------------------------------------------
-// monthly-shrinkage-trend  (aggregate — no row-level cursor)
+// monthly-shrinkage-trend  (aggregate â€” no row-level cursor)
 // ---------------------------------------------------------------------------
 export async function monthlyShrinkageTrend(
   filters: ExecFilters,
@@ -749,7 +762,9 @@ export async function biometricReconciliation(
            e.employee_code,
            COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
            b.branch_name,
-           p.process_name,
+           COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
+           COALESCE(sp_cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
+           COALESCE(sp_cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
            adr.record_date,
            adr.attendance_status,
            CASE WHEN ibd.id IS NOT NULL THEN 'HAS_BIOMETRIC' ELSE 'NO_BIOMETRIC' END AS biometric_presence,
@@ -764,6 +779,7 @@ export async function biometricReconciliation(
       JOIN employees e ON e.id = adr.employee_id
       LEFT JOIN branch_master b ON b.id = e.branch_id
       LEFT JOIN process_master p ON p.id = e.process_id
+      LEFT JOIN cost_centre_master sp_cc ON sp_cc.id = e.cost_centre_id
       -- integration_biometric_daily keys on employee_code + activity_date. It has neither
       -- employee_id nor record_date, so the previous join threw ER_BAD_FIELD_ERROR on every
       -- run and this report has never returned a row (36,190 biometric rows sat unjoinable).
@@ -825,7 +841,9 @@ export async function punchRawExport(
            e.employee_code,
            COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
            b.branch_name,
-           p.process_name,
+           COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
+           COALESCE(sp_cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
+           COALESCE(sp_cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
            was.session_date,
            TIME_FORMAT(was.login_time,'%H:%i:%s') AS login_time,
            TIME_FORMAT(was.logout_time,'%H:%i:%s') AS logout_time,
@@ -835,6 +853,7 @@ export async function punchRawExport(
       JOIN employees e ON e.id = was.employee_id
       LEFT JOIN branch_master b ON b.id = e.branch_id
       LEFT JOIN process_master p ON p.id = e.process_id
+      LEFT JOIN cost_centre_master sp_cc ON sp_cc.id = e.cost_centre_id
      WHERE ${clauses.join(" AND ")}
      ORDER BY was.id ASC`;
 
@@ -924,14 +943,14 @@ export async function attendanceRegisterGrid(
 }
 
 // ---------------------------------------------------------------------------
-// break-daily-summary  (aggregate — one row per employee per date, no cursor)
+// break-daily-summary  (aggregate â€” one row per employee per date, no cursor)
 //
 // Aggregated from break_sessions rather than the derived break_daily_summary
 // table, so the report cannot go stale if the summary writer lags or misses a
 // day. The date column on break_sessions is shift_date; there is no
 // session_date column.
 //
-// Break count and minutes cover COMPLETED, AUTO_CLOSED and EXCEPTION sessions —
+// Break count and minutes cover COMPLETED, AUTO_CLOSED and EXCEPTION sessions â€”
 // the same set getBreakUsageSummary() in break-management.service.ts treats as
 // consumed break time. ACTIVE (in-progress) sessions have no end time and no
 // duration yet, so counting them would report break minutes that have not been
@@ -1001,12 +1020,12 @@ export async function breakDailySummary(
 }
 
 // ---------------------------------------------------------------------------
-// break-session-log  (detail — one row per break, with in/out times)
+// break-session-log  (detail â€” one row per break, with in/out times)
 //
 // The per-break companion to break-daily-summary: every individual break punch
 // with its start and end time, rather than the day's totals. ACTIVE sessions
-// ARE included here — an in-progress break is exactly what someone reading a
-// log needs to see — and show a blank break-out time with no duration. That is
+// ARE included here â€” an in-progress break is exactly what someone reading a
+// log needs to see â€” and show a blank break-out time with no duration. That is
 // why the two reports' break counts can differ: the summary counts only
 // finished breaks, this one shows everything on the log.
 // ---------------------------------------------------------------------------
@@ -1081,8 +1100,8 @@ export async function breakSessionLog(
   const rows  = await query(sql, params) as Record<string, unknown>[];
 
   // break_sessions.id is a UUID, not an auto-increment. Keyset pagination still
-  // works — ORDER BY bs.id ASC combined with bs.id > cursor is a stable total
-  // order — but pages come out in id order rather than chronological order,
+  // works â€” ORDER BY bs.id ASC combined with bs.id > cursor is a stable total
+  // order â€” but pages come out in id order rather than chronological order,
   // which is why worker mode sorts by bs.id instead of by date.
   const nextCursor = (options.mode === "worker" && rows.length > 0)
     ? (rows[rows.length - 1]._cursor as string)
