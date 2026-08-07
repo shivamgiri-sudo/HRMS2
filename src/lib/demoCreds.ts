@@ -42,6 +42,11 @@ const ALL_PAGES = [
   // Routed and referenced but previously absent here and from page_catalog (see 604), so
   // no role could be granted them and the routes were unreachable.
   "EMPLOYEE_STAT_CARD","WFM_BRANCH_SPOC_CONFIG",
+  // COMMON_USER_PAGE_CODES gained UAT_FEEDBACK but this list did not, which broke the
+  // demo-access contract: getRolePageCodes("super_admin", ALL_PAGES) returns ALL_PAGES
+  // verbatim without unioning the common pages, so any common code missing here drops out
+  // of the super-admin demo credential. /uat/feedback is a real route gated on this code.
+  "UAT_FEEDBACK",
 ];
 
 const ADMIN_DEMO_PAGES = getRolePageCodes("admin", ALL_PAGES);
