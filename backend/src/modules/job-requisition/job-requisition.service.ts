@@ -13,6 +13,49 @@ import { randomUUID } from "crypto";
 import type { RowDataPacket, ResultSetHeader } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { workflowService } from "../workflow/workflow.service.js";
+import {
+  resolveUserBusinessScope,
+  buildProcessScopeCondition,
+  type EnterpriseUser,
+  type ScopeCondition,
+} from "../../shared/enterpriseScope.js";
+
+/**
+ * Row scope for requisition reads.
+ *
+ * buildProcessScopeCondition returns "1=1" for super_admin / admin / hr / ceo, so HR keeps
+ * the org-wide view recruitment needs.
+ *
+ * `alias` is "jr" for listRequisitions and "" for getDashboardMetrics, which queries the
+ * table without an alias. Both must be scoped or the KPI counts would contradict the rows
+ * beneath them.
+ *
+ * ⚠ branch is matched through branch_name, NOT branch_id. `job_requisition.branch_id` is
+ * NULL on 100% of rows (verified live 2026-08-07) — only branch_name is ever written —
+ * while user_assignment_scope stores a branch_id. Comparing the two directly yields NULL,
+ * so a naive `jr.branch_id = ?` silently returns zero rows and would have blanked the page
+ * for all 14 branch-scoped users. The subquery maps the requisition's branch_name back to
+ * a branch_master id so the comparison is against a real value. process_id IS populated
+ * and needs no mapping.
+ *
+ * department_id is deliberately omitted: it is also NULL on every row, and no user
+ * currently holds a department-scoped assignment (live scope_types are process 16,
+ * branch 14, all 7).
+ *
+ * Coverage checked live before enabling: 33 real users holding a requisition read role
+ * have user_assignment_scope rows. The 10 without are 9 test/demo fixtures
+ * (@example.com, @e2etest.local, recruiter@mascallnet.com) plus one real recruiter who has
+ * never logged in. Those resolve to "1=0" and see nothing — correct fail-closed
+ * behaviour; the fix for them is a scope assignment, not a looser query.
+ */
+async function requisitionScope(actor: EnterpriseUser, alias: "jr" | ""): Promise<ScopeCondition> {
+  const scope = await resolveUserBusinessScope(actor);
+  const table = alias || "job_requisition";
+  return buildProcessScopeCondition(scope, {
+    branchId: `(SELECT bm.id FROM branch_master bm WHERE bm.branch_name = ${table}.branch_name)`,
+    processId: `${table}.process_id`,
+  });
+}
 import { inboxService } from "../inbox/inbox.service.js";
 import type {
   JobRequisition,
@@ -47,7 +90,8 @@ export const jobRequisitionService = {
    * List requisitions with filters and pagination
    */
   async listRequisitions(
-    filters: RequisitionFilters = {}
+    filters: RequisitionFilters = {},
+    actor: EnterpriseUser,
   ): Promise<PaginatedResult<JobRequisitionSummary>> {
     const page = Math.max(1, Math.floor(filters.page ?? 1));
     const limit = Math.min(500, Math.max(1, Math.floor(filters.limit ?? 20)));
@@ -55,6 +99,12 @@ export const jobRequisitionService = {
 
     const conditions: string[] = ["jr.active_status = 1"];
     const params: unknown[] = [];
+
+    // actor is required rather than optional: an optional scope argument is one forgotten
+    // call site away from silently serving every requisition org-wide.
+    const scope = await requisitionScope(actor, "jr");
+    conditions.push(`(${scope.sql})`);
+    params.push(...scope.params);
 
     if (filters.branch_id) {
       conditions.push("jr.branch_id = ?");
@@ -772,9 +822,16 @@ export const jobRequisitionService = {
   /**
    * Get dashboard metrics
    */
-  async getDashboardMetrics(filters: { branch_id?: string; branch_name?: string; approval_status?: string; priority?: string; from_date?: string; to_date?: string } = {}): Promise<RequisitionDashboardMetrics> {
+  async getDashboardMetrics(filters: { branch_id?: string; branch_name?: string; approval_status?: string; priority?: string; from_date?: string; to_date?: string } = {}, actor: EnterpriseUser): Promise<RequisitionDashboardMetrics> {
     const conditions: string[] = ["active_status = 1"];
     const params: unknown[] = [];
+
+    // Scoped with the same predicate as listRequisitions, on unaliased columns — if the
+    // tiles counted org-wide while the table below them was scoped, the page would
+    // contradict itself.
+    const scope = await requisitionScope(actor, "");
+    conditions.push(`(${scope.sql})`);
+    params.push(...scope.params);
 
     if (filters.branch_id) {
       conditions.push("branch_id = ?");

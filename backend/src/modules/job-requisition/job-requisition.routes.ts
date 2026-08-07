@@ -41,8 +41,11 @@ export const jobRequisitionRouter = Router();
  *  - write and approval routes — approve/reject/close stay super_admin + branch_head, per
  *    141_branch_head_approval.sql.
  *
- * NOTE: listRequisitions() applies no row scoping, so every role here sees all
- * requisitions org-wide, including the salary_min/salary_max band.
+ * Row scoping IS applied: listRequisitions() and getDashboardMetrics() both run
+ * buildProcessScopeCondition against job_requisition's own branch_id/process_id, so a role
+ * here sees only its assigned scope. super_admin/admin/hr/ceo still resolve org-wide,
+ * which is what recruitment needs. Being in this list is permission to reach the endpoint,
+ * not permission to see every row.
  */
 const REQUISITION_READ_ROLES = [
   "super_admin", "hr", "recruitment_hr", "branch_head", "operations_manager",
@@ -68,7 +71,7 @@ jobRequisitionRouter.get(
       priority: priority as string | undefined,
       from_date: from_date as string | undefined,
       to_date: to_date as string | undefined,
-    });
+    }, req.authUser!);
     return res.json({ success: true, data: metrics });
   })
 );
@@ -97,7 +100,7 @@ jobRequisitionRouter.get(
       limit: req.query.limit ? Number(req.query.limit) : 20,
     };
 
-    const result = await jobRequisitionService.listRequisitions(filters);
+    const result = await jobRequisitionService.listRequisitions(filters, req.authUser!);
     return res.json({ success: true, ...result });
   })
 );
