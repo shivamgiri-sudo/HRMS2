@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync } from "fs";
 import path from "path";
 import { Router, type NextFunction, type Response } from "express";
+import type { RowDataPacket } from "mysql2";
 import multer from "multer";
 import {
   requireAuth,
@@ -8,6 +9,7 @@ import {
   type AuthenticatedRequest,
 } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
+import { db } from "../../db/mysql.js";
 import { budgetCoverageRouter } from "../process-pnl/budget-coverage.routes.js";
 import { financeExpenseMasterService } from "../process-pnl/finance-expense-master.service.js";
 import {
@@ -18,6 +20,7 @@ import { resolveFinanceStageRole } from "./finance-workflow-role.js";
 import { grnService } from "./grn.service.js";
 import { smartGrnRouter } from "./grn-smart.routes.js";
 import { vendorExpenseMappingService } from "./vendor-expense-mapping.service.js";
+import { vendorApplicabilityService } from "./vendor-applicability.service.js";
 import { vendorPaymentService } from "./vendor-payment.service.js";
 import type { RoleKey } from "../../platform/policy/index.js";
 
@@ -304,6 +307,104 @@ function grNExpenseMasterRoutes(router: Router) {
         res.status(400).json({
           success: false,
           error: error instanceof Error ? error.message : "Unable to save vendor expense mappings",
+        });
+      }
+    }
+  );
+
+  /**
+   * The legal entities a vendor can be made applicable to.
+   *
+   * finance_company is the master: MAS, IDC and Pikquick. There is no company_master table in
+   * mas_hrms — the three entities were only ever discoverable as free text in
+   * cost_centre_master.company_name, which is precisely why this list has to come from a
+   * master rather than from a DISTINCT over a varchar.
+   */
+  router.get(
+    "/companies",
+    requireRole(...EXPENSE_MASTER_READ_ROLES),
+    async (_req: AuthenticatedRequest, res) => {
+      try {
+        const [rows] = await db.execute<RowDataPacket[]>(
+          `SELECT company_code, company_name, grn_prefix, legacy_comp_id
+             FROM finance_company
+            WHERE active_status = 1
+            ORDER BY company_name`
+        );
+        res.json({ success: true, data: rows });
+      } catch (error: unknown) {
+        res.status(400).json({
+          success: false,
+          error: error instanceof Error ? error.message : "Unable to load companies",
+        });
+      }
+    }
+  );
+
+  // ── Vendor applicability: legal entity and branch (Vendor Master, three concepts) ──────
+  // Deliberately a separate endpoint from the vendor CRUD on /api/erp. Identity is one thing,
+  // and where that identity may be used is another — merging them is what produced 1,829
+  // legacy vendor rows for 1,552 real vendors.
+
+  router.get(
+    "/vendors/:vendorId/applicability",
+    requireRole(...EXPENSE_MASTER_READ_ROLES),
+    async (req: AuthenticatedRequest, res) => {
+      try {
+        const data = await vendorApplicabilityService.getForVendor(req.params.vendorId);
+        res.json({ success: true, data });
+      } catch (error: unknown) {
+        res.status(400).json({
+          success: false,
+          error: error instanceof Error ? error.message : "Unable to load vendor applicability",
+        });
+      }
+    }
+  );
+
+  router.put(
+    "/vendors/:vendorId/applicability",
+    requireWriteAccess,
+    requireRole(...EXPENSE_MASTER_WRITE_ROLES),
+    async (req: AuthenticatedRequest, res) => {
+      try {
+        // Only the keys actually present are replaced. Sending companies alone must not clear
+        // the branch list — they are independent concepts edited on separate tabs.
+        const data = await vendorApplicabilityService.replaceForVendor(
+          req.params.vendorId,
+          {
+            companyCodes: Array.isArray(req.body?.companyCodes) ? req.body.companyCodes : undefined,
+            branches: Array.isArray(req.body?.branches) ? req.body.branches : undefined,
+          },
+          req.authUser.id
+        );
+        res.json({ success: true, data });
+      } catch (error: unknown) {
+        res.status(400).json({
+          success: false,
+          error: error instanceof Error ? error.message : "Unable to save vendor applicability",
+        });
+      }
+    }
+  );
+
+  /** The Ship-To a GRN should print: the vendor/branch override if set, else the branch's own. */
+  router.get(
+    "/vendors/:vendorId/ship-to",
+    requireRole(...EXPENSE_MASTER_READ_ROLES),
+    async (req: AuthenticatedRequest, res) => {
+      try {
+        const branchId = String(req.query.branchId ?? "");
+        if (!branchId) {
+          return res.status(400).json({ success: false, error: "branchId is required" });
+        }
+        const data = await vendorApplicabilityService.resolveShipTo(req.params.vendorId, branchId);
+        if (!data) return res.status(404).json({ success: false, error: "Branch not found" });
+        res.json({ success: true, data });
+      } catch (error: unknown) {
+        res.status(400).json({
+          success: false,
+          error: error instanceof Error ? error.message : "Unable to resolve the ship-to address",
         });
       }
     }

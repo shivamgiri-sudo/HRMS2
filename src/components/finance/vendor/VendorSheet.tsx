@@ -14,6 +14,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { VendorExpenseMappingTab } from "./VendorExpenseMappingTab";
+import { VendorApplicabilityTab } from "./VendorApplicabilityTab";
 
 export interface Vendor {
   id?: string;
@@ -143,7 +144,7 @@ export function VendorSheet({ vendor, mode, open, onOpenChange, onSaved }: Props
         </SheetHeader>
 
         <Tabs defaultValue="identity" className="flex flex-1 flex-col overflow-hidden">
-          <TabsList className="mx-4 mt-3 grid w-auto grid-cols-5">
+          <TabsList className="mx-4 mt-3 grid w-auto grid-cols-6">
             <TabsTrigger value="identity" className="text-xs">Identity</TabsTrigger>
             <TabsTrigger value="address" className="text-xs">Address</TabsTrigger>
             <TabsTrigger value="tax" className="text-xs">GST &amp; Tax</TabsTrigger>
@@ -151,6 +152,11 @@ export function VendorSheet({ vendor, mode, open, onOpenChange, onSaved }: Props
             {/* A mapping belongs to a saved vendor, so it cannot be edited before one exists. */}
             <TabsTrigger value="mapping" className="text-xs" disabled={!vendor?.id}>
               Mapping
+            </TabsTrigger>
+            {/* Separate from identity, and separate from each other: which companies may
+                transact with this vendor, and which branches may raise a GRN against it. */}
+            <TabsTrigger value="applicability" className="text-xs" disabled={!vendor?.id}>
+              Where
             </TabsTrigger>
           </TabsList>
 
@@ -295,6 +301,10 @@ export function VendorSheet({ vendor, mode, open, onOpenChange, onSaved }: Props
 
             <TabsContent value="mapping" className="mt-0">
               {vendor?.id && <VendorExpenseMappingTab vendorId={vendor.id} readOnly={isReadOnly} />}
+            </TabsContent>
+
+            <TabsContent value="applicability" className="mt-0">
+              {vendor?.id && <VendorApplicabilityTab vendorId={vendor.id} readOnly={isReadOnly} />}
             </TabsContent>
           </div>
         </Tabs>
