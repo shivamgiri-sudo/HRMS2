@@ -5,7 +5,7 @@ import { Coffee, Filter, LogIn, LogOut, RefreshCw, Search, ShieldCheck, TimerRes
 import mcnLogo from "@/assets/brand/mcn-logo.png";
 import { apiUrl } from "@/lib/apiBase";
 import { cn } from "@/lib/utils";
-import { EmployeeRow } from "@/components/BreakDeskEmployeeRow";
+import { EmployeeRow, type DeskEmployee as RowDeskEmployee } from "@/components/BreakDeskEmployeeRow";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Button } from "@/components/ui/button";
 
@@ -39,57 +39,26 @@ type DeskSession = {
  * but its onShowDetails callback hands back the narrow type. The row echoes the same object it
  * was given, so the cast at that call site is safe; the two declarations should be merged.
  */
-type DeskEmployee = {
-  employee_id: string;
-  employee_code: string;
-  employee_name: string;
-  avatar_url: string | null;
+/*
+ * The row's fields plus the ones only this page needs. BreakDeskEmployeeRow declared its own
+ * DeskEmployee with the same name and a narrower shape, so the two were structurally different
+ * types that happened to share an identifier — which is why onShowDetails needed a cast to hand
+ * back the very object it had been given. One declaration now, extended here.
+ */
+type DeskEmployee = RowDeskEmployee & {
   branch_id?: string | null;
   process_id?: string | null;
   department_id?: string | null;
   designation_id?: string | null;
   manager_id?: string | null;
-  branch_name: string | null;
-  process_name: string | null;
-  department_name: string | null;
-  designation_name: string | null;
-  manager_name: string | null;
-  biometric_id: string;
-  biometric_punch_in_time: string | null;
-  biometric_punch_out_time: string | null;
-  biometric_minutes: number;
-  attendance_source_system: string | null;
-  shift_name: string | null;
-  shift_start_time: string | null;
-  shift_end_time: string | null;
-  shift_duration_minutes: number;
   roster_status: string | null;
   leave_name: string | null;
-  total_break_minutes: number;
-  total_break_minutes_overall?: number;
-  mini_break_count: number;
-  long_break_count: number;
-  total_break_count: number;
-  remaining_daily_break_minutes?: number;
   daily_break_limit_minutes?: number;
   per_break_limit_minutes?: number;
-  last_break_reason: string | null;
-  active_break_id: string | null;
-  active_break_start_time: string | null;
-  active_break_minutes: number;
   no_biometric_punch_flag: boolean;
   manager_approval_required: boolean;
-  current_status: string;
   current_status_tone: string;
-  exceeded_minutes: number;
-  today_sessions: DeskSession[];
-  safe_actions: {
-    can_punch_in: boolean;
-    can_punch_out: boolean;
-    can_start_break: boolean;
-    can_end_break: boolean;
-    exception_start_allowed: boolean;
-  };
+  exception_start_allowed: boolean;
 };
 
 type BreakDeskBootstrap = {
@@ -1077,7 +1046,7 @@ export default function BreakDesk() {
                             onToggleSelect={toggleSelectEmployee}
                             onPunchAction={handlePunchAction}
                             onBreakAction={handleBreakAction}
-                            onShowDetails={(e) => setSelectedEmployee(e as DeskEmployee)}
+                            onShowDetails={(employee) => setSelectedEmployee(employee)}
                             statusTone={statusTone}
                             shiftLabelForDisplay={shiftLabelForDisplay}
                             formatStamp={formatStamp}

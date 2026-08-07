@@ -13,7 +13,13 @@ type DeskSession = {
   exception_reason: string | null;
 };
 
-type DeskEmployee = {
+/**
+ * The fields a desk row renders. BreakDesk's own DeskEmployee is a strict superset of this — it
+ * adds the *_id columns, roster_status and the break-limit fields — so the page extends this
+ * rather than declaring a second type with the same name, which is what previously forced a cast
+ * at the onShowDetails boundary.
+ */
+export type DeskEmployee = {
   employee_id: string;
   employee_code: string;
   employee_name: string;
@@ -53,23 +59,31 @@ type DeskEmployee = {
   };
 };
 
-interface EmployeeRowProps {
-  employee: DeskEmployee;
+/*
+ * Generic over the employee type so the callbacks hand back exactly what was passed in.
+ *
+ * BreakDesk's DeskEmployee extends this one with thirteen further fields. Pinning these
+ * signatures to the narrow type meant every callback promised to return the base shape, and the
+ * page - whose state holds the wide one - had to cast the object straight back to the type it
+ * had supplied a moment earlier. T carries that through instead.
+ */
+interface EmployeeRowProps<T extends DeskEmployee = DeskEmployee> {
+  employee: T;
   isActing: boolean;
   isSelected: boolean;
   onToggleSelect: (employeeId: string) => void;
-  onPunchAction: (employee: DeskEmployee) => void;
-  onBreakAction: (employee: DeskEmployee) => void;
-  onShowDetails: (employee: DeskEmployee) => void;
+  onPunchAction: (employee: T) => void;
+  onBreakAction: (employee: T) => void;
+  onShowDetails: (employee: T) => void;
   statusTone: (status: string) => string;
-  shiftLabelForDisplay: (employee: DeskEmployee) => string;
+  shiftLabelForDisplay: (employee: T) => string;
   formatStamp: (stamp: string | null) => string;
   formatLiveDuration: (start: string | null, end: string | null, minutes: number) => string;
   formatMinutes: (minutes: number) => string;
-  totalBreakMinutesForDisplay: (employee: DeskEmployee) => number;
+  totalBreakMinutesForDisplay: (employee: T) => number;
 }
 
-function EmployeeRowComponent({
+function EmployeeRowComponent<T extends DeskEmployee>({
   employee,
   isActing,
   isSelected,
@@ -83,7 +97,7 @@ function EmployeeRowComponent({
   formatLiveDuration,
   formatMinutes,
   totalBreakMinutesForDisplay,
-}: EmployeeRowProps) {
+}: EmployeeRowProps<T>) {
   const punchLabel = employee.safe_actions.can_punch_in
     ? 'Punch In'
     : employee.safe_actions.can_punch_out
@@ -229,4 +243,6 @@ function EmployeeRowComponent({
   );
 }
 
-export const EmployeeRow = memo(EmployeeRowComponent);
+// memo() widens the component to its non-generic form, which would drop T at every call site.
+// Re-asserting the signature keeps the inference the props were made generic for.
+export const EmployeeRow = memo(EmployeeRowComponent) as typeof EmployeeRowComponent;
