@@ -253,7 +253,13 @@ export async function salarySheetOnfido(
            COALESCE(spl.basic,0) AS basic_pay,
            COALESCE(spl.hra,0) AS hra,
            COALESCE(spl.special_allowance,0) AS special_allowance,
-           COALESCE(spl.other_allowances,0) AS other_allowances,
+           -- salary_prep_line has no other_allowances column, so this threw "Unknown column
+           -- 'spl.other_allowances'" and the whole sheet 500'd. Verified on the live July 2026
+           -- run that gross decomposes exactly into the three named components — 1,464 of 1,464
+           -- lines, total residual 0.00 — so there is no missing earnings bucket to recover and
+           -- the honest value is a structural zero. Kept as a column rather than dropped so the
+           -- sheet's earnings block still balances visibly against gross.
+           0 AS other_allowances,
            COALESCE(spl.gross_salary,0) AS gross_salary,
            COALESCE(spl.pf_employee,0) AS pf_employee,
            COALESCE(spl.esic_employee,0) AS esic_employee,
@@ -266,7 +272,12 @@ export async function salarySheetOnfido(
            spl.net_salary AS net_pay,
            COALESCE(spl.final_payable_days, spl.working_days, 0) AS payable_days,
            COALESCE(spl.lwp_days,0) AS lwp_days,
-           COALESCE(spl.arrear_amount,0) AS arrear_amount
+           -- Second missing arrear column on this table (see arrearPaymentRegister below):
+           -- salary_prep_line records no arrears at all. Arrears live only in
+           -- legacy_payslip_snapshot.arrear, which is a different grain and a different run,
+           -- so joining it into a current-month sheet would attribute a legacy payment to this
+           -- month. Structural zero, same treatment as other_allowances above.
+           0 AS arrear_amount
       FROM salary_prep_line spl
       JOIN salary_prep_run spr ON spr.id = spl.run_id
       JOIN employees e ON e.id = spl.employee_id
@@ -448,47 +459,61 @@ export async function arrearPaymentRegister(
   scope: ExecScope,
   options: ExecOptions
 ): Promise<ExecResult> {
-  const clauses: string[] = ["e.id IS NOT NULL"];
+  // This read salary_prep_line for arrear_month / arrear_amount / arrear_reason. None of the
+  // three exists on that table — it has 58 columns and not one mentions arrears — so the
+  // report 500'd with "Unknown column 'spl.arrear_month'" every time it was opened.
+  //
+  // Arrears are recorded in legacy_payslip_snapshot.arrear, the only arrear column anywhere in
+  // mas_hrms. It holds real data: 20 rows carry a non-zero arrear, ₹13,590.47 in total, out of
+  // 135,365 payslip rows. Repointed there rather than blocked, since the data exists and the
+  // report is answerable — the amount is a recorded fact and nothing here recomputes it.
+  //
+  // Note the grain changes with the source: one row per legacy payslip (employee × pay_month),
+  // not per current-run salary line, which is what an arrears register wants anyway.
+  // LEFT JOIN, and no `e.id IS NOT NULL` requirement: 5 of the 20 arrear rows carry an
+  // employee_id that resolves to no employees row. An inner join would drop a quarter of the
+  // register without saying so, which is the failure mode this audit exists to remove. The
+  // payslip's own employee_code and name are used as the fallback so those rows still appear.
+  const clauses: string[] = ["1 = 1"];
   const params: unknown[] = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
-  // Only rows that carry an arrear component
-  clauses.push("COALESCE(spl.arrear_amount, 0) > 0");
+  clauses.push("COALESCE(lps.arrear, 0) <> 0");
 
   if (filters.month) {
-    const runMonth = monthParam(filters.month);
-    clauses.push("spr.run_month = ?");
-    params.push(runMonth);
+    clauses.push("lps.pay_month = ?");
+    params.push(monthParam(filters.month));
   }
 
   if (options.mode === "worker" && options.cursor != null) {
-    clauses.push("spl.id > ?");
+    clauses.push("lps.id > ?");
     params.push(options.cursor);
   }
 
   const base = `
-    SELECT spl.id AS _cursor,
-           e.employee_code,
-           COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
+    SELECT lps.id AS _cursor,
+           COALESCE(e.employee_code, lps.employee_code) AS employee_code,
+           COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,'')),
+                    NULLIF(lps.employee_name,''), 'UNRESOLVED') AS employee_name,
+           CASE WHEN e.id IS NULL THEN 'NOT_IN_EMPLOYEE_MASTER' ELSE 'RESOLVED' END AS employee_link_status,
            b.branch_name,
            COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
            COALESCE(sp_cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
            COALESCE(sp_cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
            d.dept_name AS department_name,
-           COALESCE(spl.arrear_month, spr.run_month) AS arrear_month,
-           COALESCE(spl.arrear_amount,0) AS arrear_amount,
-           spr.run_month AS payment_month,
-           COALESCE(spl.arrear_reason, '') AS reason,
-           COALESCE(spl.net_salary,0) AS net_pay
-      FROM salary_prep_line spl
-      JOIN salary_prep_run spr ON spr.id = spl.run_id
-      JOIN employees e ON e.id = spl.employee_id
+           lps.pay_month AS arrear_month,
+           COALESCE(lps.arrear, 0) AS arrear_amount,
+           lps.pay_month AS payment_month,
+           COALESCE(lps.gross_salary, 0) AS gross_salary,
+           COALESCE(lps.net_salary, 0) AS net_pay
+      FROM legacy_payslip_snapshot lps
+      LEFT JOIN employees e ON e.id = lps.employee_id
       LEFT JOIN branch_master b ON b.id = e.branch_id
       LEFT JOIN process_master p ON p.id = e.process_id
       LEFT JOIN cost_centre_master sp_cc ON sp_cc.id = e.cost_centre_id
       LEFT JOIN department_master d ON d.id = e.department_id
      WHERE ${clauses.join(" AND ")}
-     ORDER BY spl.id ASC`;
+     ORDER BY lps.id ASC`;
 
   const total = options.includeTotal ? await count(base, params) : 0;
   const sql   = options.mode === "worker" ? `${base} LIMIT ${options.limit}` : applyPagination(base, options);

@@ -64,19 +64,28 @@ export async function agentPerformanceSummary(
     new Date(from).getMonth() + 1, 0).toISOString().slice(0, 10);
 
   // Resolve scoped employee codes from mas_hrms
-  const eClauses: string[] = ["e.id IS NOT NULL"];
+  // active_status = 1 is load-bearing here, not cosmetic. Without it this resolved all 58,627
+  // employee rows ever created and then sent an IN list of 58,627 placeholders to
+  // Shivamgiri.v_call_master_unified_kpi — a 1.36M-row view on which an unbounded scan takes
+  // ~248s. Both this report and team-performance-summary simply died at the client timeout.
+  // Scoped to the 1,125 active employees the same query returns in milliseconds.
+  const eClauses: string[] = ["e.active_status = 1"];
   const eParams: unknown[]  = [];
   appendScopeConditions(scope, eClauses, eParams);
   appendFilterConditions(filters, eClauses, eParams);
 
   const empSql = `SELECT e.employee_code,
     COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-    b.branch_name, p.process_name
+    b.branch_name,
+    COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
+    COALESCE(cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
+    COALESCE(cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name
     FROM mas_hrms.employees e
     LEFT JOIN mas_hrms.branch_master b ON b.id = e.branch_id
     LEFT JOIN mas_hrms.process_master p ON p.id = e.process_id
+    LEFT JOIN mas_hrms.cost_centre_master cc ON cc.id = e.cost_centre_id
    WHERE ${eClauses.join(" AND ")}`;
-  const empRows = await querySource<{ employee_code: string; employee_name: string; branch_name: string; process_name: string }>(
+  const empRows = await querySource<{ employee_code: string; employee_name: string; branch_name: string; process_name: string; cost_centre_code: string; cost_centre_name: string }>(
     empSql, eParams as (string|number|null)[]
   );
   if (empRows.length === 0) return { rows: [], rowCount: 0, isTruncated: false };
@@ -88,13 +97,19 @@ export async function agentPerformanceSummary(
 
   let cursorClause = "";
   if (options.mode === "worker" && options.cursor != null) {
-    cursorClause = ` HAVING MIN(kpi.CallDate) > ?`;
+    cursorClause = ` HAVING MIN(kpi.call_date) > ?`;
     qParams.push(options.cursor as string);
   }
 
+  // Column names here are the Call Master view's, not this database's. The query referenced
+  // kpi.User and kpi.CallDate — PascalCase names from an older shape of
+  // Shivamgiri.v_call_master_unified_kpi — and the live view exposes neither, so both
+  // agent-performance-summary and team-performance-summary 500'd with "Unknown column
+  // 'kpi.User'". The view's 19 columns include agent_employee_code and call_date; verified
+  // against the live source rather than inferred from the alias.
   const sql = `
-    SELECT kpi.User AS employee_code,
-           LEFT(kpi.CallDate, 7) AS score_month,
+    SELECT kpi.agent_employee_code AS employee_code,
+           LEFT(kpi.call_date, 7) AS score_month,
            COUNT(*) AS total_calls,
            ROUND(AVG(kpi.quality_score) * 100, 2) AS avg_quality_score,
            MAX(kpi.quality_score) * 100 AS max_quality_score,
@@ -104,17 +119,19 @@ export async function agentPerformanceSummary(
                 WHEN AVG(kpi.quality_score) >= 0.70 THEN 'Average'
                 ELSE 'Poor' END AS quality_band
       FROM Shivamgiri.v_call_master_unified_kpi kpi
-     WHERE kpi.User IN (${placeholders})
-       AND kpi.CallDate BETWEEN ? AND ?
-     GROUP BY kpi.User${cursorClause}
-     ORDER BY kpi.User ASC
+     WHERE kpi.agent_employee_code IN (${placeholders})
+       AND kpi.call_date BETWEEN ? AND ?
+     GROUP BY kpi.agent_employee_code, LEFT(kpi.call_date, 7)${cursorClause}
+     ORDER BY kpi.agent_employee_code ASC
      LIMIT ${options.limit} OFFSET ${options.mode === "worker" ? 0 : options.offset}`;
 
   const rows = await querySource<Record<string,unknown>>(sql, qParams);
   // Enrich with employee name / branch / process from mas_hrms lookup
   const enriched = rows.map(r => {
     const info = empMap.get(r.employee_code as string);
-    return { ...r, employee_name: info?.employee_name, branch_name: info?.branch_name, process_name: info?.process_name };
+    return { ...r, employee_name: info?.employee_name, branch_name: info?.branch_name,
+            process_name: info?.process_name,
+            cost_centre_code: info?.cost_centre_code, cost_centre_name: info?.cost_centre_name };
   });
   const nextCursor = (options.mode === "worker" && rows.length > 0)
     ? String(rows[rows.length - 1].employee_code ?? "") : null;
@@ -136,20 +153,29 @@ export async function teamPerformanceSummary(
     new Date(from).getMonth() + 1, 0).toISOString().slice(0, 10);
 
   // Resolve scoped employees with manager info
-  const eClauses: string[] = ["e.id IS NOT NULL"];
+  // active_status = 1 is load-bearing here, not cosmetic. Without it this resolved all 58,627
+  // employee rows ever created and then sent an IN list of 58,627 placeholders to
+  // Shivamgiri.v_call_master_unified_kpi — a 1.36M-row view on which an unbounded scan takes
+  // ~248s. Both this report and team-performance-summary simply died at the client timeout.
+  // Scoped to the 1,125 active employees the same query returns in milliseconds.
+  const eClauses: string[] = ["e.active_status = 1"];
   const eParams: unknown[]  = [];
   appendScopeConditions(scope, eClauses, eParams);
   appendFilterConditions(filters, eClauses, eParams);
 
   const empSql = `SELECT e.employee_code,
     COALESCE(NULLIF(tm.full_name,''), CONCAT(tm.first_name,' ',COALESCE(tm.last_name,''))) AS team_lead_name,
-    b.branch_name, p.process_name
+    b.branch_name,
+    COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
+    COALESCE(cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
+    COALESCE(cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name
     FROM mas_hrms.employees e
     LEFT JOIN mas_hrms.employees tm ON tm.id = COALESCE(e.reporting_manager_id, e.manager_id)
     LEFT JOIN mas_hrms.branch_master b ON b.id = e.branch_id
     LEFT JOIN mas_hrms.process_master p ON p.id = e.process_id
+    LEFT JOIN mas_hrms.cost_centre_master cc ON cc.id = e.cost_centre_id
    WHERE ${eClauses.join(" AND ")}`;
-  const empRows = await querySource<{ employee_code: string; team_lead_name: string; branch_name: string; process_name: string }>(
+  const empRows = await querySource<{ employee_code: string; team_lead_name: string; branch_name: string; process_name: string; cost_centre_code: string; cost_centre_name: string }>(
     empSql, eParams as (string|number|null)[]
   );
   if (empRows.length === 0) return { rows: [], rowCount: 0, isTruncated: false };
@@ -165,12 +191,12 @@ export async function teamPerformanceSummary(
 
   const placeholders = codes.map(() => "?").join(",");
   const kpiSql = `
-    SELECT kpi.User AS employee_code,
+    SELECT kpi.agent_employee_code AS employee_code,
            ROUND(AVG(kpi.quality_score) * 100, 2) AS avg_score
       FROM Shivamgiri.v_call_master_unified_kpi kpi
-     WHERE kpi.User IN (${placeholders})
-       AND kpi.CallDate BETWEEN ? AND ?
-     GROUP BY kpi.User`;
+     WHERE kpi.agent_employee_code IN (${placeholders})
+       AND kpi.call_date BETWEEN ? AND ?
+     GROUP BY kpi.agent_employee_code`;
   const kpiRows = await querySource<{ employee_code: string; avg_score: number }>(
     kpiSql, [...codes, from, to] as (string|number|null)[]
   );
@@ -208,7 +234,12 @@ export async function qualityAuditLog(
   const from  = dateParam(filters.from, `${new Date().getFullYear()}-01-01`);
   const to    = dateParam(filters.to, today);
 
-  const eClauses: string[] = ["e.id IS NOT NULL"];
+  // active_status = 1 is load-bearing here, not cosmetic. Without it this resolved all 58,627
+  // employee rows ever created and then sent an IN list of 58,627 placeholders to
+  // Shivamgiri.v_call_master_unified_kpi — a 1.36M-row view on which an unbounded scan takes
+  // ~248s. Both this report and team-performance-summary simply died at the client timeout.
+  // Scoped to the 1,125 active employees the same query returns in milliseconds.
+  const eClauses: string[] = ["e.active_status = 1"];
   const eParams: unknown[]  = [];
   appendScopeConditions(scope, eClauses, eParams);
   appendFilterConditions(filters, eClauses, eParams);
@@ -265,7 +296,12 @@ export async function fatalErrorRegister(
   const from  = dateParam(filters.from, `${new Date().getFullYear()}-01-01`);
   const to    = dateParam(filters.to, today);
 
-  const eClauses: string[] = ["e.id IS NOT NULL"];
+  // active_status = 1 is load-bearing here, not cosmetic. Without it this resolved all 58,627
+  // employee rows ever created and then sent an IN list of 58,627 placeholders to
+  // Shivamgiri.v_call_master_unified_kpi — a 1.36M-row view on which an unbounded scan takes
+  // ~248s. Both this report and team-performance-summary simply died at the client timeout.
+  // Scoped to the 1,125 active employees the same query returns in milliseconds.
+  const eClauses: string[] = ["e.active_status = 1"];
   const eParams: unknown[]  = [];
   appendScopeConditions(scope, eClauses, eParams);
   appendFilterConditions(filters, eClauses, eParams);

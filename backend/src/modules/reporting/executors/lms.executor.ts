@@ -40,8 +40,18 @@ export async function trainingCompletionStatus(
   scope: ExecScope,
   options: ExecOptions
 ): Promise<ExecResult> {
-  const clauses: string[] = ["e.company_id = ?"];
-  const params: unknown[]  = [scope.companyId];
+  // `employees` has no company_id column — this deployment is single-tenant, and
+  // ExecScope.companyId is a hardcoded '1' placeholder (see resolveFullScope: "single-tenant;
+  // extend when multi-tenant"). The clause therefore threw "Unknown column 'e.company_id' in
+  // 'where clause'" and this report 500'd for everyone. Dropped rather than rewritten: there
+  // is no tenant column to guard on, and row scope is enforced by appendScopeConditions below.
+  // If multi-tenancy lands, the guard belongs there, applied uniformly, not re-added here.
+  //
+  // active_status = 1 is the agreed active definition and is REQUIRED here, not optional:
+  // with the broken clause removed and nothing in its place the report returned all 58,627
+  // employee rows ever created — the same 52x overstatement that cc_headcount had.
+  const clauses: string[] = ["e.active_status = 1"];
+  const params: unknown[]  = [];
   appendScopeConditions(scope, clauses, params, "e");
   appendFilterConditions(filters, clauses, params, "e");
 

@@ -109,13 +109,32 @@ export async function esicStatusReport(
   appendFilterConditions(filters, clauses, params);
   clauses.push("e.active_status = 1");
 
+  // `employees` has no esic_applicable column, so every branch below threw "Unknown column
+  // 'e.esic_applicable'" and the report 500'd outright. There is no stored applicability flag
+  // to recover: payroll_employee_component_snapshot.esic_applicable exists but covers 67 of
+  // 1,125 active employees, and inventing a wage threshold here would be writing statutory
+  // policy into a report.
+  //
+  // So applicability is derived from facts that ARE recorded — whether ESIC was actually
+  // deducted in the employee's most recent payroll line, and whether an ESIC number is on
+  // file. Both are observed, neither is a rule this report gets to decide.
+  //
+  // The ESIC_MISSING bucket is the compliance case and it is not empty: for July 2026, 828
+  // lines carried an ESIC deduction while only 439 employees had an ESIC number recorded.
+  const esicDeducted = `EXISTS (
+    SELECT 1 FROM salary_prep_line spl
+      JOIN salary_prep_run spr ON spr.id = spl.run_id
+     WHERE spl.employee_id = e.id AND COALESCE(spl.esic_employee, 0) > 0)`;
+  const hasNumber = `(e.esic_number IS NOT NULL AND TRIM(e.esic_number) <> '')`;
+
   if (filters.status) {
     if (filters.status === "ESIC_MISSING") {
-      clauses.push("e.esic_applicable = 1 AND (e.esic_number IS NULL OR TRIM(e.esic_number) = '')");
+      // Deducted from pay, but no number on file — the case that needs action.
+      clauses.push(`${esicDeducted} AND NOT ${hasNumber}`);
     } else if (filters.status === "NOT_APPLICABLE") {
-      clauses.push("e.esic_applicable = 0");
+      clauses.push(`NOT ${esicDeducted} AND NOT ${hasNumber}`);
     } else if (filters.status === "HAS_ESIC") {
-      clauses.push("e.esic_applicable = 1 AND e.esic_number IS NOT NULL AND TRIM(e.esic_number) != ''");
+      clauses.push(hasNumber);
     }
   }
 
@@ -131,14 +150,18 @@ export async function esicStatusReport(
            e.employee_code,
            COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
            ${esicExpr},
-           e.esic_applicable,
+           CASE WHEN ${esicDeducted} THEN 1 ELSE 0 END AS esic_deducted_in_payroll,
            CASE
-             WHEN e.esic_applicable = 1 AND (e.esic_number IS NULL OR TRIM(e.esic_number) = '') THEN 'ESIC_MISSING'
-             WHEN e.esic_applicable = 0                                                          THEN 'NOT_APPLICABLE'
-             ELSE 'HAS_ESIC'
+             WHEN ${esicDeducted} AND NOT ${hasNumber} THEN 'ESIC_MISSING'
+             WHEN ${hasNumber}                         THEN 'HAS_ESIC'
+             ELSE 'NOT_APPLICABLE'
            END AS esic_status,
            b.branch_name,
-           p.process_name
+           p.process_name,
+           -- cost_centre_master was already joined here and never selected, so the mandatory
+           -- cost centre columns were absent from a report that had them one line away.
+           COALESCE(sp_cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
+           COALESCE(sp_cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name
       FROM employees e
       LEFT JOIN branch_master b  ON b.id = e.branch_id
       LEFT JOIN process_master p ON p.id = e.process_id

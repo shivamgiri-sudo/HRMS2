@@ -61,8 +61,12 @@ export async function pfContributionRegister(
   options: ExecOptions
 ): Promise<ExecResult> {
   const runMonth = monthParam(filters.month);
+  // employees has no `uan` column — it is `uan_number`. The unmasked branch therefore threw
+  // "Unknown column 'e.uan'" and the whole report 500'd, while the masked branch (a literal)
+  // worked fine, so the failure only ever appeared for users entitled to see the real number.
+  // Aliased back to `uan` so the output column name matches the masked branch and the catalogue.
   const uanCol = scope.canViewSensitiveFields
-    ? "e.uan"
+    ? "e.uan_number AS uan"
     : "'***MASKED***' AS uan";
 
   const clauses: string[] = ["e.id IS NOT NULL"];
@@ -125,8 +129,12 @@ export async function pfEcrFormat(
   options: ExecOptions
 ): Promise<ExecResult> {
   const runMonth = monthParam(filters.month);
+  // employees has no `uan` column — it is `uan_number`. The unmasked branch therefore threw
+  // "Unknown column 'e.uan'" and the whole report 500'd, while the masked branch (a literal)
+  // worked fine, so the failure only ever appeared for users entitled to see the real number.
+  // Aliased back to `uan` so the output column name matches the masked branch and the catalogue.
   const uanCol = scope.canViewSensitiveFields
-    ? "e.uan"
+    ? "e.uan_number AS uan"
     : "'***MASKED***' AS uan";
 
   const clauses: string[] = ["e.id IS NOT NULL"];
