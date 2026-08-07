@@ -46,6 +46,27 @@ function arg(name: string, fallback: string): string {
 }
 const APPLY = process.argv.includes("--apply");
 
+/**
+ * Restrict cost-centre changes to one legal entity. Off by default — behaviour is unchanged
+ * unless --company is passed.
+ *
+ * WHY THIS EXISTS
+ * The evidence this script trusts is db_bill.salary_data, and that table only covers MAS Callnet.
+ * Of IDC's 518 cost centres exactly 2 appear in it since April; IDC pays its people through a
+ * different system. So a run without this filter proposed closing 280 IDC cost centres — not
+ * because they are idle, but because their payroll was never visible here in the first place.
+ *
+ * Absent evidence is not evidence of absence. Anything whose activity this script cannot observe
+ * must be left alone rather than closed on a silence it was always going to find.
+ *
+ * Matched on a normalised substring because the source spells the name several ways.
+ */
+const COMPANY = arg("company", "");
+const normalise = (s: unknown) =>
+  String(s ?? "").toLowerCase().replace(/[.,\s]/g, "");
+const companyMatches = (name: unknown) =>
+  !COMPANY || normalise(name).includes(normalise(COMPANY));
+
 function defaultMonth(): string {
   const d = new Date();
   d.setMonth(d.getMonth() - 1);
@@ -116,7 +137,8 @@ async function main() {
 
     // ── cost centres ─────────────────────────────────────────────────────────────────────────
     const [ccRows] = await hrms.query<any[]>(
-      `SELECT id, cost_centre_code, cost_centre_name, active_status, close_date, branch_id
+      `SELECT id, cost_centre_code, cost_centre_name, active_status, close_date, branch_id,
+              company_name
          FROM cost_centre_master`);
 
     const activeCcCodes = new Set<string>();
@@ -137,10 +159,17 @@ async function main() {
         }
       }
 
+      /*
+       * Whether this row may be CHANGED. Evidence gathering above is deliberately unfiltered —
+       * activeCcCodes and branchLastActivity must still see every cost centre, or a branch that
+       * owns one in-scope and one out-of-scope cost centre would be judged on half its estate.
+       */
+      const emit = companyMatches(cc.company_name);
+
       if (hasSalaryNow) {
         activeCcCodes.add(code);
         // Reactivate if wrongly closed — the correction must work in both directions.
-        if (Number(cc.active_status) !== 1) {
+        if (emit && Number(cc.active_status) !== 1) {
           changes.push({ table: "cost_centre_master", id: String(cc.id), label: code,
             field: "active_status", oldValue: String(cc.active_status), newValue: "1" });
         }
@@ -149,6 +178,7 @@ async function main() {
 
       if (billedRecently) { skipped.push(`BILLING_ONLY  ${code}  (last invoice ${act?.invoice})`); continue; }
       if (!last)          { skipped.push(`NO_HISTORY    ${code}  (cannot date its closure)`); continue; }
+      if (!emit)          { skipped.push(`OUT_OF_SCOPE  ${code}  (${cc.company_name ?? "no company"})`); continue; }
 
       if (Number(cc.active_status) !== 0) {
         changes.push({ table: "cost_centre_master", id: String(cc.id), label: code,
@@ -229,6 +259,10 @@ async function main() {
     const noHistory = skipped.filter((s) => s.startsWith("NO_HISTORY")).length;
     console.log(`   BILLING_ONLY (invoiced, no staff): ${billingOnly}`);
     console.log(`   NO_HISTORY   (cannot date close) : ${noHistory}`);
+    if (COMPANY) {
+      const outOfScope = skipped.filter((s) => s.startsWith("OUT_OF_SCOPE")).length;
+      console.log(`   OUT_OF_SCOPE (--company=${COMPANY})    : ${outOfScope}`);
+    }
 
     if (!changes.length) { console.log("\nNothing to change."); return; }
 
