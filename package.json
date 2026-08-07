@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit -p tsconfig.app.json && tsc --noEmit -p tsconfig.node.json",
     "schema-audit:build": "tsc -p tools/schema-auditor/tsconfig.json",
     "schema-audit:check": "npm run schema-audit:build && node tools/schema-auditor/dist/cli.js check",
     "schema-audit:collect": "npm run schema-audit:build && node tools/schema-auditor/dist/cli.js collect",

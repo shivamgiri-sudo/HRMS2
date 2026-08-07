@@ -30,6 +30,13 @@ export default {
   test: {
     environment: "node",
     globals: true,
+    /*
+     * 5s (the default) is too short for the contract tests that walk the whole src/ tree —
+     * api-route-existence, auth-user-role-idiom and workforce-access-surface each read several
+     * hundred files. They pass in ~8s apiece and were failing purely on the clock, which makes
+     * the suite look broken and trains people to ignore it.
+     */
+    testTimeout: 60000,
     include: ["src/**/*.{test,spec}.{ts,tsx}"],
     exclude: ["node_modules", "dist", ".worktrees", "backend", ".codex-tmp"],
   },

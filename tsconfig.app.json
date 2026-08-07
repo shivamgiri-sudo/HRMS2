@@ -19,8 +19,15 @@
     "paths": {
       "@/*": [
         "./src/*"
+      ],
+      "vitest": [
+        "./backend/node_modules/vitest"
       ]
     },
+    "types": [
+      "vite/client",
+      "./backend/node_modules/vitest/globals"
+    ],
     "skipLibCheck": true,
     "strict": false,
     "target": "ES2020",
