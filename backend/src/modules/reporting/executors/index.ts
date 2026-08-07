@@ -25,6 +25,8 @@ import {
   incrementPromotionHistory,
   birthdayList,
   anniversaryList,
+  orgMappingGaps,
+  employeeStatusConflicts,
 } from "./employee.executor.js";
 
 // ─── Attendance ──────────────────────────────────────────────────────────────
@@ -168,6 +170,9 @@ export const EXECUTOR_MAP: Record<string, ExecutorFn> = {
   "increment-promotion-history": incrementPromotionHistory,
   "birthday-list":             birthdayList,
   "anniversary-list":          anniversaryList,
+  // Exception reports backing the UNASSIGNED convention and the active_status ruling.
+  "org-mapping-gaps":          orgMappingGaps,
+  "employee-status-conflicts": employeeStatusConflicts,
 
   // Attendance
   "attendance-daily":          attendanceDaily,

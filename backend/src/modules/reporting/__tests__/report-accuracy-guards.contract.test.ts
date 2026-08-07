@@ -149,7 +149,14 @@ describe("no executor queries a table that does not exist", () => {
    */
   const sqlOnly = (source: string): string =>
     [...source.matchAll(/`([^`]*)`/g)]
-      .map(([, body]) => body.replace(/--[^\n]*/g, " "))
+      .map(([, body]) =>
+        body
+          .replace(/--[^\n]*/g, " ")
+          // Drop single-quoted SQL string literals. They carry English — a CASE arm
+          // reading 'Excluded from every report...' otherwise parses as a table named
+          // "every". Literals are values, never schema.
+          .replace(/'(?:[^']|'')*'/g, "''")
+      )
       .join("\n");
 
   /**

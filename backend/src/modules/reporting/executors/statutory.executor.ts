@@ -1,11 +1,11 @@
-/**
+﻿/**
  * Statutory / Compliance executor
  *
  * Covers codes: pf-contribution-register, pf-ecr-format,
  * esic-contribution-register, pt-register, tds-computation-register,
  * form-16-status, investment-declaration-status, gratuity-liability-register
  *
- * UAN, PAN, ESIC numbers are highly_restricted PII — masked when
+ * UAN, PAN, ESIC numbers are highly_restricted PII â€” masked when
  * scope.canViewSensitiveFields is false.
  *
  * Every query includes WHERE e.company_id = :companyId to enforce tenant isolation.
@@ -40,7 +40,7 @@ async function count(baseSql: string, params: unknown[]): Promise<number> {
 
 /**
  * Returns the current Indian financial year as a string, e.g. "2024-25".
- * Jan–Mar → previous calendar year start; Apr–Dec → current calendar year start.
+ * Janâ€“Mar â†’ previous calendar year start; Aprâ€“Dec â†’ current calendar year start.
  */
 function currentFinancialYear(): string {
   const now = new Date();
@@ -82,7 +82,10 @@ export async function pfContributionRegister(
            e.employee_code,
            COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
            ${uanCol},
-           b.branch_name, p.process_name,
+           b.branch_name,
+           COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
+           COALESCE(sp_cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
+           COALESCE(sp_cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
            spr.run_month,
            COALESCE(spl.pf_employee, 0) AS pf_employee,
            COALESCE(spl.pf_employer, 0) AS pf_employer,
@@ -94,6 +97,7 @@ export async function pfContributionRegister(
       JOIN employees e ON e.id = spl.employee_id
       LEFT JOIN branch_master b ON b.id = e.branch_id
       LEFT JOIN process_master p ON p.id = e.process_id
+      LEFT JOIN cost_centre_master sp_cc ON sp_cc.id = e.cost_centre_id
      WHERE ${clauses.join(" AND ")}
      ORDER BY spl.id ASC`;
 
@@ -151,6 +155,7 @@ export async function pfEcrFormat(
       JOIN employees e ON e.id = spl.employee_id
       LEFT JOIN branch_master b ON b.id = e.branch_id
       LEFT JOIN process_master p ON p.id = e.process_id
+      LEFT JOIN cost_centre_master sp_cc ON sp_cc.id = e.cost_centre_id
      WHERE ${clauses.join(" AND ")}
      ORDER BY spl.id ASC`;
 
@@ -207,7 +212,10 @@ export async function esicContributionRegister(
            e.employee_code,
            COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
            ${esicCol},
-           b.branch_name, p.process_name,
+           b.branch_name,
+           COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
+           COALESCE(sp_cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
+           COALESCE(sp_cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
            spr.run_month,
            -- salary_prep_line has no esic_wage; gross_salary was already the intended fallback.
            COALESCE(spl.gross_salary, 0) AS esic_wages,
@@ -219,6 +227,7 @@ export async function esicContributionRegister(
       JOIN employees e ON e.id = spl.employee_id
       LEFT JOIN branch_master b ON b.id = e.branch_id
       LEFT JOIN process_master p ON p.id = e.process_id
+      LEFT JOIN cost_centre_master sp_cc ON sp_cc.id = e.cost_centre_id
      WHERE ${clauses.join(" AND ")}
      ORDER BY spl.id ASC`;
 
@@ -263,12 +272,15 @@ export async function ptRegister(
     SELECT spl.id AS _cursor,
            e.employee_code,
            COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-           b.branch_name, p.process_name,
+           b.branch_name,
+           COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
+           COALESCE(sp_cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
+           COALESCE(sp_cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
            spr.run_month,
            COALESCE(spl.professional_tax, 0) AS pt_amount,
            COALESCE(spl.gross_salary, 0) AS gross_salary,
            -- employees has no pt_state. Professional tax is levied by the state the
-           -- employee WORKS in, so the branch state is the jurisdiction — not the
+           -- employee WORKS in, so the branch state is the jurisdiction â€” not the
            -- employee's own (home) state, which is what e.state holds. On live data the
            -- two disagree for 326 of 1,042 active employees, so this is not cosmetic.
            -- Branch state also covers more people: 1,113 of 1,123 against 1,042.
@@ -278,6 +290,7 @@ export async function ptRegister(
       JOIN employees e ON e.id = spl.employee_id
       LEFT JOIN branch_master b ON b.id = e.branch_id
       LEFT JOIN process_master p ON p.id = e.process_id
+      LEFT JOIN cost_centre_master sp_cc ON sp_cc.id = e.cost_centre_id
      WHERE ${clauses.join(" AND ")}
      ORDER BY spl.id ASC`;
 
@@ -325,7 +338,10 @@ export async function tdsComputationRegister(
     SELECT spl.id AS _cursor,
            e.employee_code,
            COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-           b.branch_name, p.process_name,
+           b.branch_name,
+           COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
+           COALESCE(sp_cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
+           COALESCE(sp_cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
            spr.run_month,
            ${panCol},
            -- salary_prep_line stores only the deducted TDS. Projected income,
@@ -341,6 +357,7 @@ export async function tdsComputationRegister(
       JOIN employees e ON e.id = spl.employee_id
       LEFT JOIN branch_master b ON b.id = e.branch_id
       LEFT JOIN process_master p ON p.id = e.process_id
+      LEFT JOIN cost_centre_master sp_cc ON sp_cc.id = e.cost_centre_id
      WHERE ${clauses.join(" AND ")}
      ORDER BY spl.id ASC`;
 
@@ -376,7 +393,7 @@ export async function form16Status(
     ? "e.pan_number"
     : "'***MASKED***' AS pan_number";
 
-  // Build base scope/filter conditions (may throw ReportScopeAccessDeniedError — intentional)
+  // Build base scope/filter conditions (may throw ReportScopeAccessDeniedError â€” intentional)
   const baseClauses: string[] = ["e.id IS NOT NULL"];
   const baseParams: unknown[] = [];
   appendScopeConditions(scope, baseClauses, baseParams);
@@ -397,6 +414,9 @@ export async function form16Status(
            COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
            ${panCol},
            b.branch_name,
+           COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
+           COALESCE(sp_cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
+           COALESCE(sp_cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
            f16.financial_year,
            COALESCE(f16.status, 'NOT_GENERATED') AS form16_status,
            f16.generated_at AS generated_date
@@ -404,6 +424,7 @@ export async function form16Status(
       JOIN employees e ON e.id = f16.employee_id
       LEFT JOIN branch_master b ON b.id = e.branch_id
       LEFT JOIN process_master p ON p.id = e.process_id
+      LEFT JOIN cost_centre_master sp_cc ON sp_cc.id = e.cost_centre_id
      WHERE ${f16Clauses.join(" AND ")}
      ORDER BY f16.id ASC`;
 
@@ -442,12 +463,16 @@ export async function form16Status(
            COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
            ${panCol},
            b.branch_name,
+           COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
+           COALESCE(sp_cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
+           COALESCE(sp_cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
            ? AS financial_year,
            'NOT_GENERATED' AS form16_status,
            NULL AS generated_date
       FROM employees e
       LEFT JOIN branch_master b ON b.id = e.branch_id
       LEFT JOIN process_master p ON p.id = e.process_id
+      LEFT JOIN cost_centre_master sp_cc ON sp_cc.id = e.cost_centre_id
      WHERE ${simClauses.join(" AND ")}
      ORDER BY e.id ASC`;
 
@@ -470,7 +495,7 @@ export async function form16Status(
 // ---------------------------------------------------------------------------
 // investment-declaration-status
 //
-// Reads tax_declaration — the live store, holding 1,533 rows (verified 2026-08-07).
+// Reads tax_declaration â€” the live store, holding 1,533 rows (verified 2026-08-07).
 // This previously targeted `investment_declaration`, which has never existed in
 // mas_hrms, and swallowed ER_NO_SUCH_TABLE into an empty result. The report therefore
 // showed "no declarations submitted" for an entire workforce that had submitted 1,533,
@@ -506,7 +531,10 @@ export async function investmentDeclarationStatus(
     SELECT id_decl.id AS _cursor,
            e.employee_code,
            COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-           b.branch_name, p.process_name,
+           b.branch_name,
+           COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
+           COALESCE(sp_cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
+           COALESCE(sp_cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
            id_decl.financial_year,
            'SUBMITTED' AS declaration_status,
            id_decl.regime,
@@ -520,6 +548,7 @@ export async function investmentDeclarationStatus(
       JOIN employees e ON e.id = id_decl.employee_id
       LEFT JOIN branch_master b ON b.id = e.branch_id
       LEFT JOIN process_master p ON p.id = e.process_id
+      LEFT JOIN cost_centre_master sp_cc ON sp_cc.id = e.cost_centre_id
      WHERE ${clauses.join(" AND ")}
      ORDER BY id_decl.id ASC`;
 
@@ -566,11 +595,14 @@ export async function gratuityLiabilityRegister(
     SELECT e.id AS _cursor,
            e.employee_code,
            COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-           b.branch_name, p.process_name,
+           b.branch_name,
+           COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
+           COALESCE(sp_cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
+           COALESCE(sp_cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
            e.date_of_joining,
            TIMESTAMPDIFF(YEAR, e.date_of_joining, CURDATE()) AS years_of_service,
            -- employees has no last_drawn_basic. The gratuity base is taken as the basic
-           -- from the employee's most recent FINALIZED payroll run — the literal "last
+           -- from the employee's most recent FINALIZED payroll run â€” the literal "last
            -- drawn" basic. Only FINALIZED runs count, so a draft or abandoned run cannot
            -- move a liability figure. salary_prep_line carries no DA column, so the base
            -- is basic alone, which is what the existing formula already assumed.
@@ -598,6 +630,7 @@ export async function gratuityLiabilityRegister(
       ) ldb ON TRUE
       LEFT JOIN branch_master b ON b.id = e.branch_id
       LEFT JOIN process_master p ON p.id = e.process_id
+      LEFT JOIN cost_centre_master sp_cc ON sp_cc.id = e.cost_centre_id
      WHERE ${clauses.join(" AND ")}
      ORDER BY e.id ASC`;
 
