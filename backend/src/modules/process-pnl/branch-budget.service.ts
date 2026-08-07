@@ -2,6 +2,7 @@ import { randomUUID } from "crypto";
 import type { ResultSetHeader, RowDataPacket } from "mysql2";
 import type { PoolConnection } from "mysql2/promise";
 import { db } from "../../db/mysql.js";
+import { financeBranchFilter, type FinanceBranchScope } from "../finance/finance-access-scope.js";
 import { tableExists } from "../../shared/dbHelpers.js";
 import {
   computeLineAllocations,
@@ -775,14 +776,26 @@ export async function getPriorBudgetFromMirror(
 
 export const branchBudgetService = {
   getPriorBudgetFromMirror,
-  async list(filters: { period?: string; branchId?: string; status?: string }) {
+  async list(filters: {
+    period?: string;
+    branchId?: string;
+    /** Multi-branch scope; wins over branchId. Both exist so routers migrate one at a time. */
+    branchScope?: FinanceBranchScope;
+    status?: string;
+  }) {
     const where: string[] = [];
     const params: unknown[] = [];
     if (filters.period) {
       where.push("h.period_code = ?");
       params.push(filters.period);
     }
-    if (filters.branchId) {
+    if (filters.branchScope) {
+      const filter = financeBranchFilter(filters.branchScope, "h.branch_id");
+      if (filter.sql !== "1=1") {
+        where.push(filter.sql);
+        params.push(...filter.params);
+      }
+    } else if (filters.branchId) {
       where.push("h.branch_id = ?");
       params.push(filters.branchId);
     }

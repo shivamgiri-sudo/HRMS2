@@ -11,7 +11,7 @@ import {
 import { requireRole } from "../../middleware/requireRole.js";
 import {
   assertFinanceRecordBranch,
-  resolveFinanceBranchScope,
+  resolveFinanceBranchScopeSet,
 } from "./finance-access-scope.js";
 import { vendorPaymentLedgerService } from "./vendor-payment-ledger.service.js";
 import { vendorPaymentService } from "./vendor-payment.service.js";
@@ -127,7 +127,7 @@ router.get(
   requireRole(...PAYMENT_READ_ROLES),
   h(async (req, res) => {
     const user = actor(req);
-    const branchId = await resolveFinanceBranchScope({
+    const branchScope = await resolveFinanceBranchScopeSet({
       userId: user.id,
       primaryRole: user.role,
       userRoles: user.roles,
@@ -140,7 +140,7 @@ router.get(
         ? String(req.query.financialYear)
         : undefined,
       month: req.query.month ? String(req.query.month) : undefined,
-      branchId,
+      branchScope,
       processId: req.query.processId ? String(req.query.processId) : undefined,
       costCentreId: req.query.costCentreId
         ? String(req.query.costCentreId)
@@ -169,7 +169,7 @@ router.get(
   requireRole(...PAYMENT_READ_ROLES),
   h(async (req, res) => {
     const user = actor(req);
-    const branchId = await resolveFinanceBranchScope({
+    const branchScope = await resolveFinanceBranchScopeSet({
       userId: user.id,
       primaryRole: user.role,
       userRoles: user.roles,
@@ -182,7 +182,7 @@ router.get(
         ? String(req.query.financialYear)
         : undefined,
       month: req.query.month ? String(req.query.month) : undefined,
-      branchId,
+      branchScope,
       processId: req.query.processId ? String(req.query.processId) : undefined,
       costCentreId: req.query.costCentreId
         ? String(req.query.costCentreId)

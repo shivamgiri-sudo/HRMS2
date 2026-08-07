@@ -4,11 +4,20 @@ import type { PoolConnection } from "mysql2/promise";
 import { db } from "../../db/mysql.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
 import { inboxService } from "../inbox/inbox.service.js";
+import { financeBranchFilter, type FinanceBranchScope } from "./finance-access-scope.js";
 
 export interface VendorPaymentFilters {
   financialYear?: string;
   month?: string;
   branchId?: string;
+  /**
+   * Multi-branch scope; wins over branchId when present.
+   *
+   * Both exist so routers can migrate one at a time. exportPayments delegates straight to
+   * listPayments, so scoping here covers the CSV export too — an export must never return a
+   * row its list would not.
+   */
+  branchScope?: FinanceBranchScope;
   processId?: string;
   costCentreId?: string;
   costClass?: string;
@@ -145,7 +154,13 @@ export const vendorPaymentService = {
       conditions.push("DATE_FORMAT(vpt.due_date, '%Y-%m') = ?");
       params.push(filters.month);
     }
-    if (filters.branchId) {
+    if (filters.branchScope) {
+      const filter = financeBranchFilter(filters.branchScope, "vpt.branch_id");
+      if (filter.sql !== "1=1") {
+        conditions.push(filter.sql);
+        params.push(...filter.params);
+      }
+    } else if (filters.branchId) {
       conditions.push("vpt.branch_id = ?");
       params.push(filters.branchId);
     }

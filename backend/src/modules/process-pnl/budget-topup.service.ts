@@ -1,6 +1,7 @@
 import { randomUUID } from "crypto";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
+import { financeBranchFilter, type FinanceBranchScope } from "../finance/finance-access-scope.js";
 import { lockActiveBudgetLine } from "./budget-consumption.service.js";
 
 export type BudgetTopupStatus =
@@ -92,10 +93,21 @@ export const budgetTopupService = {
     return rows[0];
   },
 
-  async list(filters: { branchId?: string; status?: string }) {
+  async list(filters: {
+    branchId?: string;
+    /** Multi-branch scope; wins over branchId. Both exist so routers migrate one at a time. */
+    branchScope?: FinanceBranchScope;
+    status?: string;
+  }) {
     const conditions: string[] = [];
     const params: unknown[] = [];
-    if (filters.branchId) {
+    if (filters.branchScope) {
+      const filter = financeBranchFilter(filters.branchScope, "h.branch_id");
+      if (filter.sql !== "1=1") {
+        conditions.push(filter.sql);
+        params.push(...filter.params);
+      }
+    } else if (filters.branchId) {
       conditions.push("h.branch_id = ?");
       params.push(filters.branchId);
     }

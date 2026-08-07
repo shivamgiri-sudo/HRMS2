@@ -8,6 +8,7 @@ import { requireRole } from "../../middleware/requireRole.js";
 import {
   assertFinanceRecordBranch,
   resolveFinanceBranchScope,
+  resolveFinanceBranchScopeSet,
   resolveFinanceProcessScope,
 } from "../finance/finance-access-scope.js";
 import { resolveFinanceStageRole } from "../finance/finance-workflow-role.js";
@@ -138,7 +139,7 @@ router.get(
   requireRole(...BUDGET_READ_ROLES),
   h(async (req, res) => {
     const user = actor(req);
-    const branchId = await resolveFinanceBranchScope({
+    const branchScope = await resolveFinanceBranchScopeSet({
       userId: user.id,
       primaryRole: user.role,
       userRoles: user.roles,
@@ -146,7 +147,7 @@ router.get(
     });
     const data = await branchBudgetService.list({
       period: req.query.period ? String(req.query.period) : undefined,
-      branchId,
+      branchScope,
       status: req.query.status ? String(req.query.status) : undefined,
     });
     res.json({ success: true, data });
@@ -351,14 +352,14 @@ router.get(
   requireRole(...TOPUP_REVIEW_ROLES, ...TOPUP_CREATE_ROLES),
   h(async (req, res) => {
     const user = actor(req);
-    const branchId = await resolveFinanceBranchScope({
+    const branchScope = await resolveFinanceBranchScopeSet({
       userId: user.id,
       primaryRole: user.role,
       userRoles: user.roles,
       requestedBranchId: req.query.branchId ? String(req.query.branchId) : undefined,
     });
     const data = await budgetTopupService.list({
-      branchId,
+      branchScope,
       status: req.query.status ? String(req.query.status) : undefined,
     });
     res.json({ success: true, data });
