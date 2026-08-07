@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 import { BudgetLinkedGrnForm } from "@/components/finance/grn/BudgetLinkedGrnForm";
 import { GrnHistoryTable } from "@/components/finance/grn/GrnHistoryTable";
 import { GrnSearchWorkspace } from "@/components/finance/grn/GrnSearchWorkspace";
-import { ImprestApprovalQueue } from "@/components/finance/grn/ImprestApprovalQueue";
+import { ImprestWorkspace } from "@/components/finance/grn/imprest/ImprestWorkspace";
 import { GrnLobAttributionQueue } from "@/components/finance/grn/GrnLobAttributionQueue";
 import { SmartGrnApprovalQueue } from "@/components/finance/grn/SmartGrnApprovalQueue";
 import { money } from "@/components/finance/grn/grn-format";
@@ -130,7 +130,9 @@ export default function NativeGRNManagement() {
               float balance and a proof, not against an invoice, so it needs its own columns. */}
           {canReview && (
             <TabsContent value="imprest" className="mt-4">
-              <ImprestApprovalQueue />
+              {/* Approvals, allocation and the report share one tab: they are one workflow read
+                  three ways, and a reviewer clearing vouchers wants the float behind them. */}
+              <ImprestWorkspace />
             </TabsContent>
           )}
           <TabsContent value="search" className="mt-4">
