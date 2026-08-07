@@ -24,6 +24,7 @@ import {
   appendFilterConditions,
   dateParam,
   monthParam,
+  monthRange,
   yearParam,
   applyPagination,
   ReportScopeAccessDeniedError,
@@ -409,8 +410,11 @@ export async function leaveLwpReconciliation(
   }
 
   if (filters.month) {
-    clauses.push("LEFT(adr.record_date,7) = ?");
-    params.push(monthParam(filters.month));
+    clauses.push("adr.record_date >= ? AND adr.record_date < ?");
+    {
+      const r = monthRange(monthParam(filters.month));
+      params.push(r.start, r.endExclusive);
+    }
   }
 
   if (options.mode === "worker" && options.cursor != null) {

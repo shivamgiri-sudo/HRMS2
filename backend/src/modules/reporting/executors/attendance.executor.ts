@@ -18,6 +18,7 @@ import {
   appendFilterConditions,
   dateParam,
   monthParam,
+  monthRange,
   applyPagination,
 } from "./types.js";
 import {
@@ -259,8 +260,8 @@ export async function attendanceSummary(
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
 
-  clauses.push("LEFT(adr.record_date, 7) = ?");
-  params.push(month);
+  clauses.push("adr.record_date >= ? AND adr.record_date < ?");
+  params.push(monthRange(month).start, monthRange(month).endExclusive);
 
   if (options.mode === "worker" && options.cursor != null) {
     clauses.push("e.id > ?");
@@ -356,8 +357,8 @@ export async function lateArrivalSummary(
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
 
-  clauses.push("LEFT(adr.record_date, 7) = ?", "adr.late_by_minutes > 0");
-  params.push(month);
+  clauses.push("adr.record_date >= ? AND adr.record_date < ?", "adr.late_by_minutes > 0");
+  params.push(monthRange(month).start, monthRange(month).endExclusive);
 
   if (options.mode === "worker" && options.cursor != null) {
     clauses.push("e.id > ?");
@@ -416,9 +417,9 @@ export async function overtimeSummary(
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
 
-  clauses.push("LEFT(adr.record_date, 7) = ?");
+  clauses.push("adr.record_date >= ? AND adr.record_date < ?");
   clauses.push("adr.raw_minutes > COALESCE(ws.required_minutes, 480)");
-  params.push(month);
+  params.push(monthRange(month).start, monthRange(month).endExclusive);
 
   if (options.mode === "worker" && options.cursor != null) {
     clauses.push("e.id > ?");
@@ -604,8 +605,8 @@ export async function habitualAbsenteeList(
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
 
-  clauses.push("LEFT(adr.record_date, 7) = ?", "adr.attendance_status = 'absent'");
-  params.push(month);
+  clauses.push("adr.record_date >= ? AND adr.record_date < ?", "adr.attendance_status = 'absent'");
+  params.push(monthRange(month).start, monthRange(month).endExclusive);
 
   if (options.mode === "worker" && options.cursor != null) {
     clauses.push("e.id > ?");

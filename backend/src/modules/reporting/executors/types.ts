@@ -304,6 +304,29 @@ export function monthParam(value: unknown): string {
   return def;
 }
 
+/**
+ * Half-open date range for a 'YYYY-MM' month: [first day, first day of next month).
+ *
+ * Exists to kill `LEFT(record_date, 7) = ?`, which was the filter on five reports. Wrapping
+ * an indexed column in a function makes the predicate non-sargable, so MySQL cannot use any
+ * of the eight indexes on attendance_daily_record.record_date and full-scans instead.
+ * Measured on the live table: the LEFT() form takes 2072ms against 1227ms for the range, for
+ * an identical 41,106 rows — and that is the cheap COUNT; inside overtime-summary's joins to
+ * wfm_roster_assignment and wfm_shift_master it was the difference between a result and a
+ * report that never came back at all (>180s).
+ *
+ * Half-open rather than BETWEEN so it stays correct if the column ever becomes a DATETIME:
+ * `BETWEEN '2026-07-01' AND '2026-07-31'` silently drops everything after midnight on the
+ * 31st.
+ */
+export function monthRange(month: string): { start: string; endExclusive: string } {
+  const [y, m] = month.split("-").map(Number);
+  const start = `${month}-01`;
+  const ny = m === 12 ? y + 1 : y;
+  const nm = m === 12 ? 1 : m + 1;
+  return { start, endExclusive: `${ny}-${String(nm).padStart(2, "0")}-01` };
+}
+
 export function yearParam(value: unknown): number {
   const n = Number(value);
   return Number.isFinite(n) && n > 2000 && n < 2100 ? n : new Date().getFullYear();
