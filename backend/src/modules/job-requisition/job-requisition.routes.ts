@@ -139,7 +139,7 @@ jobRequisitionRouter.get(
   requireRole("super_admin", "branch_head"),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const role = req.authUser?.role ?? "branch_head";
-    const data = await jobRequisitionService.getPendingForApproval(role);
+    const data = await jobRequisitionService.getPendingForApproval(role, req.authUser!);
     return res.json({ success: true, data });
   })
 );
@@ -199,7 +199,7 @@ jobRequisitionRouter.get(
   h(async (req: AuthenticatedRequest, res: Response) => {
     const branch_name = req.query.branch_name as string | undefined;
     const approval_status = req.query.approval_status as string | undefined;
-    const data = await jobRequisitionService.getAggregateFunnel({ branch_name, approval_status });
+    const data = await jobRequisitionService.getAggregateFunnel({ branch_name, approval_status }, req.authUser!);
     return res.json({ success: true, data });
   })
 );
@@ -314,6 +314,7 @@ jobRequisitionRouter.patch(
   "/:id",
   requireAuth,
   requireRole("super_admin", "hr", "recruitment_hr", "branch_head", "operations_manager", "process_manager", "assistant_manager"),
+  inScope("id"),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const { id } = req.params;
     const input: UpdateRequisitionInput = req.body;
@@ -333,6 +334,7 @@ jobRequisitionRouter.post(
   "/:id/submit",
   requireAuth,
   requireRole("super_admin", "hr", "recruitment_hr", "branch_head", "operations_manager", "process_manager", "assistant_manager"),
+  inScope("id"),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const { id } = req.params;
     const userId = req.authUser?.id;
@@ -353,6 +355,7 @@ jobRequisitionRouter.post(
   "/:id/approve",
   requireAuth,
   requireRole("super_admin", "branch_head"),
+  inScope("id"),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const { id } = req.params;
     const { remarks } = req.body;
@@ -374,6 +377,7 @@ jobRequisitionRouter.post(
   "/:id/reject",
   requireAuth,
   requireRole("super_admin", "branch_head"),
+  inScope("id"),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const { id } = req.params;
     const { reason } = req.body;
@@ -402,6 +406,7 @@ jobRequisitionRouter.post(
   "/:id/close",
   requireAuth,
   requireRole("super_admin", "branch_head"),
+  inScope("id"),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const { id } = req.params;
     const { reason } = req.body;
@@ -425,6 +430,7 @@ jobRequisitionRouter.post(
   "/:id/extend-deadline",
   requireAuth,
   requireRole("super_admin", "hr", "recruitment_hr", "branch_head"),
+  inScope("id"),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const { id } = req.params;
     const { new_validity, reason } = req.body;
@@ -450,6 +456,7 @@ jobRequisitionRouter.post(
   "/:id/link-candidate",
   requireAuth,
   requireRole("super_admin", "hr", "recruitment_hr", "branch_head", "operations_manager"),
+  inScope("id"),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const { id: requisitionId } = req.params;
     const { candidate_id, link_source, remarks } = req.body;
@@ -479,6 +486,7 @@ jobRequisitionRouter.patch(
   "/:id/candidate/:candidateId/outcome",
   requireAuth,
   requireRole("super_admin", "hr", "recruitment_hr", "branch_head", "operations_manager"),
+  inScope("id"),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const { id: requisitionId, candidateId } = req.params;
     const { outcome, remarks } = req.body;
@@ -517,6 +525,7 @@ jobRequisitionRouter.post(
   "/:id/handover",
   requireAuth,
   requireRole("super_admin", "hr", "recruitment_hr", "branch_head", "operations_manager"),
+  inScope("id"),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const { id } = req.params;
     const { notes, emailRecipientUserIds, manualCcEmails } = req.body;
@@ -579,6 +588,7 @@ jobRequisitionRouter.patch(
   "/:id/batch",
   requireAuth,
   requireRole("super_admin", "hr", "recruitment_hr", "branch_head", "operations_manager"),
+  inScope("id"),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const { id } = req.params;
     const { batch_no, batch_name, training_start_date } = req.body;

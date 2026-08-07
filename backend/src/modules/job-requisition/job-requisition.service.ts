@@ -970,7 +970,18 @@ export const jobRequisitionService = {
   /**
    * Get requisitions pending approval for a specific role
    */
-  async getPendingForApproval(approverRole: string): Promise<JobRequisitionSummary[]> {
+  /**
+   * `approverRole` is accepted but has never been used by the query — it was, and remains,
+   * inert. What actually decides who sees what is the actor's row scope, which was missing
+   * entirely: every branch_head saw every pending requisition org-wide, not just their own
+   * branch's. The 4 real branch heads are each scoped to exactly one branch
+   * (NOIDA-2 / NOIDA / AHMEDABAD-JALDARSHAN / MOHALI), which is what
+   * 141_branch_head_approval.sql intends. The parameter is left in place rather than
+   * removed so no caller signature breaks.
+   */
+  async getPendingForApproval(approverRole: string, actor: EnterpriseUser): Promise<JobRequisitionSummary[]> {
+    void approverRole;
+    const scope = await requisitionScope(actor, "jr");
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT
         jr.*,
@@ -985,9 +996,11 @@ export const jobRequisitionService = {
        LEFT JOIN employees e ON e.id = jr.owner_recruiter_id
        WHERE jr.approval_status = 'pending_approval'
          AND jr.active_status = 1
+         AND (${scope.sql})
        ORDER BY
          CASE jr.priority WHEN 'urgent' THEN 1 WHEN 'high' THEN 2 WHEN 'normal' THEN 3 ELSE 4 END,
-         jr.created_at ASC`
+         jr.created_at ASC`,
+      scope.params,
     );
     return rows as JobRequisitionSummary[];
   },
@@ -1384,9 +1397,15 @@ export const jobRequisitionService = {
   /**
    * Aggregate funnel across all approved/active requisitions (or filtered subset)
    */
-  async getAggregateFunnel(filters: { branch_name?: string; approval_status?: string } = {}): Promise<AggregateFunnel> {
+  async getAggregateFunnel(filters: { branch_name?: string; approval_status?: string } = {}, actor: EnterpriseUser): Promise<AggregateFunnel> {
     const conditions: string[] = ["jr.active_status = 1"];
     const params: unknown[] = [];
+
+    // Cross-requisition totals. Unscoped, this leaked org-wide hiring-funnel volumes to
+    // every read role even after the list itself was scoped.
+    const scope = await requisitionScope(actor, "jr");
+    conditions.push(`(${scope.sql})`);
+    params.push(...scope.params);
     if (filters.branch_name) { conditions.push("jr.branch_name = ?"); params.push(filters.branch_name); }
     if (filters.approval_status) { conditions.push("jr.approval_status = ?"); params.push(filters.approval_status); }
     const where = conditions.join(" AND ");
