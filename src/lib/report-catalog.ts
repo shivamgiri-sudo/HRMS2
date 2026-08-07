@@ -670,10 +670,11 @@ export const REPORT_CATALOG: ReportMeta[] = [
   },
   {
     code: "attendance-register-grid",
-    name: "Monthly Attendance Register Grid",
+    name: "Monthly Attendance Summary (per Employee)",
     category: "Attendance",
     subcategory: "Monthly",
-    description: "Day-wise attendance grid showing status codes for each day",
+    description:
+      "One row per employee for the month with present, absent, half, LWP, late and working day totals. Despite the previous name this returns no per-day columns — the day-by-day grid is attendance-register-monthly, and the two were labelled the wrong way round.",
     rowGrain: "One row per employee per month with day-wise columns",
     primaryKey: ["employee_code", "month"],
     columns: [
@@ -983,6 +984,8 @@ export const REPORT_CATALOG: ReportMeta[] = [
       { key: "employee_name", label: "Employee Name", format: "text", width: 180 },
       { key: "branch_name", label: "Branch", format: "text", width: 120 },
       { key: "process_name", label: "Process", format: "text", width: 140 },
+      { key: "cost_centre_code", label: "Cost Centre Code", format: "text", width: 150 },
+      { key: "cost_centre_name", label: "Cost Centre", format: "text", width: 180 },
       { key: "break_type", label: "Break Type", format: "text", width: 110 },
       { key: "break_in", label: "Break In", format: "time", width: 90 },
       { key: "break_out", label: "Break Out", format: "time", width: 90 },

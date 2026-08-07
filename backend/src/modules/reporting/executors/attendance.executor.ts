@@ -1089,6 +1089,8 @@ export async function breakSessionLog(
            bs.shift_date AS break_date,
            e.employee_code,
            COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
+           COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
+           COALESCE(zcc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
            b.branch_name,
            p.process_name,
            bs.break_type,
@@ -1108,6 +1110,7 @@ export async function breakSessionLog(
       LEFT JOIN branch_master b ON b.id = e.branch_id
       LEFT JOIN process_master p ON p.id = e.process_id
       LEFT JOIN break_kiosk_devices kd ON kd.id = bs.kiosk_device_id
+      LEFT JOIN cost_centre_master zcc ON zcc.id = e.cost_centre_id
      WHERE ${clauses.join(" AND ")}
      ORDER BY ${orderBy}`;
 

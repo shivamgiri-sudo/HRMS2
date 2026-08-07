@@ -918,6 +918,8 @@ reportSuiteRouter.get("/:code", reportScopeMiddleware, reportCatalogAccessMiddle
       addScopedEmployeeFilters(req, clauses, params);
       clauses.push("ejh.effective_date BETWEEN ? AND ?"); params.push(from, to);
       sql = `SELECT e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
+                    COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
+                    COALESCE(zcc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
                     ejh.change_type, ejh.effective_date,
                     fd.designation_name AS old_designation, td.designation_name AS new_designation,
                     ejh.from_ctc_annual AS old_ctc, ejh.to_ctc_annual AS new_ctc,
@@ -926,6 +928,7 @@ reportSuiteRouter.get("/:code", reportScopeMiddleware, reportCatalogAccessMiddle
                JOIN employees e ON e.id = ejh.employee_id
                LEFT JOIN designation_master fd ON fd.id = ejh.from_designation_id
                LEFT JOIN designation_master td ON td.id = ejh.to_designation_id
+               LEFT JOIN cost_centre_master zcc ON zcc.id = e.cost_centre_id
               WHERE ${clauses.join(" AND ")}
               ORDER BY ejh.effective_date DESC`;
       break;
@@ -1223,6 +1226,8 @@ reportSuiteRouter.get("/:code", reportScopeMiddleware, reportCatalogAccessMiddle
       addScopedEmployeeFilters(req, clauses, params);
       clauses.push("lbl.balance_year = ?"); params.push(year);
       sql = `SELECT e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
+                    COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
+                    COALESCE(zcc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
                     lt.leave_code, lt.leave_name, lbl.allocated_days, lbl.adjusted_days,
                     lbl.used_days, (lbl.allocated_days + lbl.adjusted_days - lbl.used_days) AS remaining_days,
                     b.branch_name
@@ -1230,6 +1235,7 @@ reportSuiteRouter.get("/:code", reportScopeMiddleware, reportCatalogAccessMiddle
                JOIN employees e ON e.id = lbl.employee_id
                JOIN leave_type_master lt ON lt.id = lbl.leave_type_id
                LEFT JOIN branch_master b ON b.id = e.branch_id
+               LEFT JOIN cost_centre_master zcc ON zcc.id = e.cost_centre_id
               WHERE ${clauses.join(" AND ")}
               ORDER BY employee_name, lt.leave_code`;
       break;
@@ -1256,6 +1262,8 @@ reportSuiteRouter.get("/:code", reportScopeMiddleware, reportCatalogAccessMiddle
       addScopedEmployeeFilters(req, clauses, params);
       clauses.push("DATE_FORMAT(adr.record_date,'%Y-%m') = ?"); params.push(month);
       sql = `SELECT e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
+                    COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
+                    COALESCE(zcc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
                     SUM(adr.lwp_value) AS lwp_days_attendance,
                     COALESCE(spl.lwp_days, 0) AS lwp_days_payroll,
                     SUM(adr.lwp_value) - COALESCE(spl.lwp_days, 0) AS variance
@@ -1263,6 +1271,7 @@ reportSuiteRouter.get("/:code", reportScopeMiddleware, reportCatalogAccessMiddle
                JOIN employees e ON e.id = adr.employee_id
                LEFT JOIN salary_prep_run spr ON spr.run_month = ?
                LEFT JOIN salary_prep_line spl ON spl.employee_id = e.id AND spl.run_id = spr.id
+               LEFT JOIN cost_centre_master zcc ON zcc.id = e.cost_centre_id
               WHERE ${clauses.join(" AND ")} AND adr.lwp_value > 0
               GROUP BY e.id, e.employee_code, e.first_name, e.last_name, spl.lwp_days
               HAVING lwp_days_attendance > 0
@@ -1291,11 +1300,14 @@ reportSuiteRouter.get("/:code", reportScopeMiddleware, reportCatalogAccessMiddle
       addScopedEmployeeFilters(req, clauses, params);
       clauses.push("lbl.balance_year < ?"); params.push(currentYear);
       sql = `SELECT e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
+                    COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
+                    COALESCE(zcc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
                     lt.leave_code, lt.leave_name, lbl.balance_year,
                     GREATEST(lbl.allocated_days + lbl.adjusted_days - lbl.used_days, 0) AS lapsed_days
                FROM leave_balance_ledger lbl
                JOIN employees e ON e.id = lbl.employee_id
                JOIN leave_type_master lt ON lt.id = lbl.leave_type_id
+               LEFT JOIN cost_centre_master zcc ON zcc.id = e.cost_centre_id
               WHERE ${clauses.join(" AND ")}
                 AND (lbl.allocated_days + lbl.adjusted_days - lbl.used_days) > 0
               ORDER BY employee_name, lbl.balance_year`;
@@ -2324,6 +2336,8 @@ reportSuiteRouter.get("/:code", reportScopeMiddleware, reportCatalogAccessMiddle
       clauses.push("DATE_FORMAT(arr.session_date,'%Y-%m') = ?"); params.push(month);
       sql = `SELECT e.employee_code,
                     COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
+                    COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
+                    COALESCE(zcc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
                     b.branch_name,
                     p.process_name,
                     d.dept_name AS department_name,
@@ -2347,6 +2361,7 @@ reportSuiteRouter.get("/:code", reportScopeMiddleware, reportCatalogAccessMiddle
                LEFT JOIN designation_master dm ON dm.id = e.designation_id
                LEFT JOIN attendance_reason_master arm ON arm.code = arr.reason_code
                LEFT JOIN employees reviewer ON reviewer.id = arr.reviewed_by
+               LEFT JOIN cost_centre_master zcc ON zcc.id = e.cost_centre_id
               WHERE ${clauses.join(" AND ")}
               ORDER BY arr.session_date DESC, employee_name`;
       break;
@@ -2362,6 +2377,8 @@ reportSuiteRouter.get("/:code", reportScopeMiddleware, reportCatalogAccessMiddle
       clauses.push("DATE_FORMAT(arr.session_date,'%Y-%m') = ?"); params.push(month);
       sql = `SELECT e.employee_code,
                     COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
+                    COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
+                    COALESCE(zcc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
                     b.branch_name,
                     p.process_name,
                     d.dept_name AS department_name,
@@ -2391,6 +2408,7 @@ reportSuiteRouter.get("/:code", reportScopeMiddleware, reportCatalogAccessMiddle
                LEFT JOIN designation_master dm ON dm.id = e.designation_id
                LEFT JOIN attendance_reason_master arm ON arm.code = arr.reason_code
                LEFT JOIN employees reviewer ON reviewer.id = arr.reviewed_by
+               LEFT JOIN cost_centre_master zcc ON zcc.id = e.cost_centre_id
               WHERE ${clauses.join(" AND ")}
               ORDER BY arr.session_date DESC, employee_name`;
       break;

@@ -304,6 +304,8 @@ export async function leaveUtilization(
            ROW_NUMBER() OVER (ORDER BY lr.from_date DESC, e.employee_code ASC) AS sr_no,
            e.employee_code,
            COALESCE(NULLIF(e.full_name,''), TRIM(CONCAT(e.first_name,' ',COALESCE(e.last_name,'')))) AS employee_name,
+           COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
+           COALESCE(zcc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
            lt.leave_name,
            lt.leave_code AS leave_type,
            lr.total_days AS days_used,
@@ -321,6 +323,7 @@ export async function leaveUtilization(
       LEFT JOIN branch_master b  ON b.id  = e.branch_id
       LEFT JOIN process_master p ON p.id  = e.process_id
       LEFT JOIN employees appr   ON appr.id = lr.approved_by
+      LEFT JOIN cost_centre_master zcc ON zcc.id = e.cost_centre_id
      WHERE ${clauses.join(" AND ")}
      ORDER BY lr.from_date DESC, e.employee_code ASC`;
 
