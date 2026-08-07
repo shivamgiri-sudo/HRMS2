@@ -316,14 +316,36 @@ export async function attendanceEnrollmentGap(
              ELSE 'OK'
            END AS enrollment_gap
       FROM employees e
+      -- Deferred join, not a plain aggregate, and the difference is 20x.
+      --
+      -- Written the obvious way — GROUP BY employee_id over the month, selecting raw_minutes —
+      -- MySQL does not range-scan and then look rows up. Needing a column that
+      -- idx_adr_date_employee does not carry, it abandons that index entirely and switches to
+      -- uq_emp_date (employee_id, record_date), where record_date is not leading, so the month
+      -- predicate narrows nothing and it examines 104,611 rows instead of the 41,106 in range.
+      -- Measured: 2,065 ms without the minutes column, 42,420 ms with it.
+      --
+      -- So the range is resolved FIRST, in a derived table touching only record_date and
+      -- employee_id — both in idx_adr_date_employee, and the PK comes along free in any InnoDB
+      -- secondary index, so that part is covering. The minutes are then fetched by primary key
+      -- against an already-narrowed 41k row set, which the optimiser cannot turn into a
+      -- full-index scan.
+      --
+      -- This needs no schema change. A covering index would be better still (~2s) and is
+      -- written up in sql/migrations/429_attendance_daily_record_covering_index.sql, but that
+      -- is production DDL awaiting sign-off, and this report should not be unusable until then.
       LEFT JOIN (
-             SELECT adr.employee_id,
+             SELECT k.employee_id,
                     COUNT(*) AS days_with_record,
-                    SUM(CASE WHEN COALESCE(adr.raw_minutes, adr.biometric_minutes, 0) > 0
+                    SUM(CASE WHEN COALESCE(a.raw_minutes, a.biometric_minutes, 0) > 0
                              THEN 1 ELSE 0 END) AS days_with_punch
-               FROM attendance_daily_record adr
-              WHERE adr.record_date >= ? AND adr.record_date < ?
-              GROUP BY adr.employee_id
+               FROM (
+                      SELECT adr.id, adr.employee_id
+                        FROM attendance_daily_record adr
+                       WHERE adr.record_date >= ? AND adr.record_date < ?
+                    ) k
+               JOIN attendance_daily_record a ON a.id = k.id
+              GROUP BY k.employee_id
            ) att ON att.employee_id = e.id
       LEFT JOIN branch_master b ON b.id = e.branch_id
       LEFT JOIN process_master p ON p.id = e.process_id
