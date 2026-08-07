@@ -1,7 +1,8 @@
-import { FileCheck2, FileClock, FileText, GitBranch } from "lucide-react";
+import { FileCheck2, FileClock, FileText, GitBranch, Search } from "lucide-react";
 import { Link } from "react-router-dom";
 import { BudgetLinkedGrnForm } from "@/components/finance/grn/BudgetLinkedGrnForm";
 import { GrnHistoryTable } from "@/components/finance/grn/GrnHistoryTable";
+import { GrnSearchWorkspace } from "@/components/finance/grn/GrnSearchWorkspace";
 import { GrnLobAttributionQueue } from "@/components/finance/grn/GrnLobAttributionQueue";
 import { SmartGrnApprovalQueue } from "@/components/finance/grn/SmartGrnApprovalQueue";
 import { money } from "@/components/finance/grn/grn-format";
@@ -97,6 +98,9 @@ export default function NativeGRNManagement() {
                   {queueCount ? <span className={GRN_TAB_COUNT}>{queueCount}</span> : null}
                 </TabsTrigger>
               )}
+              <TabsTrigger value="search" className={GRN_TAB_TRIGGER}>
+                <Search className="h-3.5 w-3.5" />Search
+              </TabsTrigger>
               <TabsTrigger value="history" className={GRN_TAB_TRIGGER}>
                 <FileClock className="h-3.5 w-3.5" />History
               </TabsTrigger>
@@ -114,6 +118,11 @@ export default function NativeGRNManagement() {
               <SmartGrnApprovalQueue />
             </TabsContent>
           )}
+          {/* Search sits beside History rather than replacing it: History is a status-chip
+              view of recent activity, Search answers a specific question about any GRN. */}
+          <TabsContent value="search" className="mt-4">
+            <GrnSearchWorkspace />
+          </TabsContent>
           <TabsContent value="history" className="mt-4">
             <GrnHistoryTable />
           </TabsContent>
