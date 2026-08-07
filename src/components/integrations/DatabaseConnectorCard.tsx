@@ -21,7 +21,12 @@ export interface DbConnectorConfig {
 export interface DatabaseConnectorCardProps {
   integrationKey: string;
   name: string;
-  config: DbConnectorConfig;
+  /**
+   * Partial: a connector that has never been set up has no config_json, and the Integration Hub
+   * passes {} for it. This component already anticipates that (isConfigured below) — the prop
+   * type just claimed otherwise.
+   */
+  config: Partial<DbConnectorConfig>;
   activeStatus: number;
   testOk: boolean | null;
   testError: string | null;
@@ -54,7 +59,9 @@ export function DatabaseConnectorCard({
           <div className="flex-1">
             <p className="font-semibold text-sm">{name}</p>
             <p className="text-xs text-muted-foreground">
-              {config.db_type.toUpperCase()} · Database
+              {/* Outside the isConfigured guard, so an unconfigured connector reached
+                  undefined.toUpperCase() here and threw, taking the card down with it. */}
+              {config.db_type ? `${config.db_type.toUpperCase()} · Database` : "Database"}
             </p>
           </div>
           <Badge variant={isConfigured && activeStatus ? 'default' : 'destructive'}>

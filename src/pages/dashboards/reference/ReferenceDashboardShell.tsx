@@ -86,7 +86,16 @@ const ADMIN_ITEMS: NavigationItem[] = [
   { label: "System Settings", href: "/settings", icon: Settings },
 ];
 
-const NAV_BY_VARIANT: Record<RoleDashboardVariant, NavigationItem[]> = {
+/*
+ * Partial, and read through a fallback below.
+ *
+ * RoleDashboardVariant has twelve members; this map and ROLE_LABEL each cover eight. Typed as a
+ * total Record they merely asserted otherwise — recruiter, quality, operations and it_manager
+ * resolved to undefined, so those four dashboards rendered a nav group with 
+ * and no role label. Curating a sidebar for each is a product decision, not a typing one, so the
+ * gap is made explicit here and degrades to the employee nav rather than to undefined.
+ */
+const NAV_BY_VARIANT: Partial<Record<RoleDashboardVariant, NavigationItem[]>> = {
   employee: [
     { label: "Dashboard", href: "/dashboard", icon: Home },
     { label: "Attendance", href: "/attendance", icon: Clock },
@@ -175,7 +184,7 @@ const NAV_BY_VARIANT: Record<RoleDashboardVariant, NavigationItem[]> = {
   ],
 };
 
-const ROLE_LABEL: Record<RoleDashboardVariant, string> = {
+const ROLE_LABEL: Partial<Record<RoleDashboardVariant, string>> = {
   employee: "Employee",
   wfm: "WFM",
   wfm_attendance: "WFM",
@@ -239,7 +248,7 @@ function UnifiedSidebar({
   avatarUrl?: string;
 }) {
   const groups = useMemo<NavigationGroup[]>(() => {
-    const result: NavigationGroup[] = [{ label: "MAIN", items: NAV_BY_VARIANT[variant] }];
+    const result: NavigationGroup[] = [{ label: "MAIN", items: NAV_BY_VARIANT[variant] ?? NAV_BY_VARIANT.employee ?? [] }];
     if (["hr", "ceo", "payroll", "super_admin"].includes(variant)) {
       result.push({ label: "ADMIN", items: ADMIN_ITEMS });
     }
@@ -324,7 +333,7 @@ export function ReferenceDashboardShell({ variant, children }: { variant: RoleDa
   const { user } = useAuth();
   const { data: profile } = useEmployeeProfile();
   const name = profile?.full_name || profile?.first_name || user?.email?.split("@")[0] || "HRMS User";
-  const role = profile?.designation || ROLE_LABEL[variant];
+  const role = profile?.designation || ROLE_LABEL[variant] || "HRMS User";
   const avatarUrl = profile?.avatar_url;
 
   const sidebar = (

@@ -37,7 +37,7 @@ import {
 import _ReactApexChartImport from "react-apexcharts";
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const ReactApexChart = (_ReactApexChartImport as any).default ?? _ReactApexChartImport;
-type ApexOptions = import("apexcharts").ApexChartOptions;
+type ApexOptions = import("apexcharts").ApexOptions;
 import { toast } from "sonner";
 import { useWorkforceAccess } from "@/hooks/useUserRole";
 import { useDebounce } from "@/hooks/useDebounce";
@@ -417,7 +417,7 @@ export default function NativeATSHiringEntry() {
 
   const tabBarRef = useRef<HTMLDivElement>(null);
   const saveEntryRef = useRef<(() => Promise<void>) | null>(null);
-  const timeoutRefs = useRef<ReturnType<typeof setTimeout>[]>([]);
+  const timeoutRefs = useRef<number[]>([]);
   const safeTimeout = useCallback((fn: () => void, ms: number) => {
     const id = window.setTimeout(fn, ms);
     timeoutRefs.current.push(id);
@@ -1497,7 +1497,7 @@ export default function NativeATSHiringEntry() {
                 plotOptions: { bar: { borderRadius: 4, columnWidth: "55%",
                   colors: { ranges: [{ from: 0, to: 0, color: "#e2e8f0" }] } } },
                 xaxis: { categories: dowData.map((d) => d.label), labels: { style: { fontSize: "11px" } } },
-                yaxis: { labels: { style: { fontSize: "10px" } }, allowDecimals: false },
+                yaxis: { labels: { style: { fontSize: "10px" } }, decimalsInFloat: 0 },
                 colors: ["#8b5cf6"],
                 dataLabels: { enabled: false },
                 grid: { strokeDashArray: 3, borderColor: "#f1f5f9" },
@@ -1508,9 +1508,9 @@ export default function NativeATSHiringEntry() {
               const srcLabels   = analytics.bySource.map((s) => s.label);
               const srcOptions: ApexOptions = {
                 chart: { type: "bar", toolbar: { show: false } },
-                plotOptions: { bar: { columnWidth: "60%", borderRadius: 3, grouped: true } },
+                plotOptions: { bar: { columnWidth: "60%", borderRadius: 3 } },
                 xaxis: { categories: srcLabels, labels: { style: { fontSize: "10px" }, rotate: -30 } },
-                yaxis: { labels: { style: { fontSize: "10px" } }, allowDecimals: false },
+                yaxis: { labels: { style: { fontSize: "10px" } }, decimalsInFloat: 0 },
                 colors: ["#94a3b8", "#0ea5e9", "#10b981", "#6366f1"],
                 legend: { position: "top", fontSize: "11px", itemMargin: { horizontal: 8 } },
                 dataLabels: { enabled: false },
