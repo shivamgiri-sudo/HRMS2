@@ -1,0 +1,24 @@
+{
+  // Scoped typecheck for the Finance / GRN / Imprest / Vendor work.
+  //
+  // `npm run typecheck` at the repo root is a no-op — the root tsconfig declares "files": []
+  // so `tsc --noEmit` compiles nothing and exits 0 no matter what is broken. Compiling the
+  // whole backend instead surfaces a few hundred pre-existing errors in unrelated modules,
+  // which buries anything new. This config is the actual gate for finance changes.
+  //
+  //   npx tsc -p backend/tsconfig.finance-check.json
+  //
+  // Transitive imports are checked too, so errors from outside these directories can appear.
+  // Everything under src/modules/finance and src/modules/process-pnl is expected to stay clean.
+  //
+  // Sibling of tsconfig.scoped-check.json, which pins only grn.service.ts and is kept as-is.
+  "extends": "./tsconfig.json",
+  "include": [
+    "src/modules/finance",
+    "src/modules/process-pnl",
+    "src/modules/erp",
+    "src/shared/scopeAccess.ts",
+    "src/db/runPendingMigrations.ts"
+  ],
+  "compilerOptions": { "noEmit": true }
+}

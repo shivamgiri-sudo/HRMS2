@@ -8,6 +8,7 @@ import {
   type BudgetGstType,
   type BudgetTaxTreatment,
 } from "../process-pnl/branch-budget.service.js";
+import { financeBranchFilter, type FinanceBranchScope } from "./finance-access-scope.js";
 import { budgetConsumptionService } from "../process-pnl/budget-consumption.service.js";
 import { isPeriodLocked } from "../process-pnl/finance-period-lock.js";
 import { allocateGrnNumber } from "./grn-number.service.js";
@@ -642,6 +643,13 @@ export const grnService = {
 
   async listGrns(filters: {
     branchId?: string;
+    /**
+     * Multi-branch scope. Wins over `branchId` when present.
+     *
+     * Both are accepted so routers can migrate one at a time: an unmigrated caller keeps
+     * passing a single `branchId` and behaves exactly as before.
+     */
+    branchScope?: FinanceBranchScope;
     processId?: string;
     costCentreId?: string;
     costClass?: string;
@@ -654,7 +662,13 @@ export const grnService = {
   }) {
     const conditions: string[] = [];
     const params: unknown[] = [];
-    if (filters.branchId) {
+    if (filters.branchScope) {
+      const filter = financeBranchFilter(filters.branchScope, "g.branch_id");
+      if (filter.sql !== "1=1") {
+        conditions.push(filter.sql);
+        params.push(...filter.params);
+      }
+    } else if (filters.branchId) {
       conditions.push("g.branch_id = ?");
       params.push(filters.branchId);
     }
@@ -752,10 +766,20 @@ export const grnService = {
    * Branch scope is applied by the caller via resolveFinanceBranchScope, exactly as the list
    * endpoint does; this method never widens what the caller may see.
    */
-  async getGrnSummary(filters: { branchId?: string; financialYear?: string }) {
+  async getGrnSummary(filters: {
+    branchId?: string;
+    branchScope?: FinanceBranchScope;
+    financialYear?: string;
+  }) {
     const conditions: string[] = [];
     const params: unknown[] = [];
-    if (filters.branchId) {
+    if (filters.branchScope) {
+      const filter = financeBranchFilter(filters.branchScope, "g.branch_id");
+      if (filter.sql !== "1=1") {
+        conditions.push(filter.sql);
+        params.push(...filter.params);
+      }
+    } else if (filters.branchId) {
       conditions.push("g.branch_id = ?");
       params.push(filters.branchId);
     }

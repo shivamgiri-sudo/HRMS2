@@ -498,6 +498,34 @@ const MIGRATION_MANIFEST: string[] = [
   "1082_apr_eligibility_config_operations_executive_fix.sql",
   "1083_wfm_attendance_exceptions_page_code.sql", // gives /wfm/attendance-exceptions its own page code instead of borrowing WFM_LIVE_TRACKER (shared with 4 unrelated pages, and it locked out payroll — who own the 455 open salary_payable_days_mismatch blockers). Additive seed, already applied to live on 2026-08-07; idempotent, so a boot re-run is a no-op
   "1084_job_requisition_interviewer_grant_removal.sql", // interviewer held the JOB_REQUISITION page grant but appears in none of the 27 endpoints in job-requisition.routes.ts, so the page 403'd for all 9 of them; the grant was the outlier, not the guards (recruiter/manager/assistant_manager fixed the other way, by widening REQUISITION_READ_ROLES)
+
+  // Registered late, out of numeric order, and that is correct: this array is ordered by
+  // POSITION, not by filename, and tracking in schema_migrations is by filename. The file
+  // has sat in backend/sql since it was written but was never added here, so it never ran —
+  // exactly the silent-never-applied failure this manifest exists to prevent. access.routes.ts
+  // already INSERTs assigned_by_user_id (see the comment there referencing this migration),
+  // so without it every scope grant throws ER_BAD_FIELD_ERROR and the grant endpoint has
+  // never worked. It only touches user_assignment_scope (created back in 003) and is guarded,
+  // so running it here rather than at slot 1049 is safe. Sibling files 1049_joining_document_esign_kit.sql
+  // and 1049_mcnmeet_module.sql share the prefix and are unrelated.
+  "1049_user_assignment_scope_granted_by.sql",
+
+  // ── Finance / GRN / Imprest / Vendor enhancement, Phase A ────────────────────
+  // All additive and guarded. 1090 ships its cutover flag OFF, so none of these change
+  // behaviour on their own; they only make the new behaviour possible.
+  "1085_grn_billing_cycle_and_accounting_period.sql", // OPEN/CLOSED is a business attribute kept OUT of the 12-value workflow status enum; accounting_period is the FY month the GRN books to and the source of MM/YY in the new number (bill_date is vendor-controlled and must not mint a serial in a month whose sequence has moved on)
+  "1086_vendor_master_enrichment.sql",                // first ALTER to vendor_master since 024_erp.sql; adds tally name, structured address, GST-enabled/state-code and TDS terms. gst_number stays canonical — no duplicate gstin column. Two backfills, both derivations from data already in the row
+  "1087_branch_master_gst_registration.sql",          // gives "Billing State Code" a source; it has none today. Display/validation only — deriving gst_type from it would silently move tax on flows that already reconcile
+  "1088_vendor_expense_mapping.sql",                  // vendor -> head/sub-head restriction, intersected server-side with approved budget lines. Ships disabled (finance_config.vendor_expense_mapping_enforced = 0) because every existing vendor has zero mapping rows
+  "1089_finance_approval_event.sql",                  // the workflow history GRN/top-up/imprest never had. Throws rather than swallowing, unlike audit_action_log/sensitive_action_log — a history that can drop a row is not a history (see 1033)
+  "1090_finance_grn_monthly_sequence.sql",            // per-company monthly sequence for {prefix}/MM/YY/SERIAL, keyed (company_code, period_code) because db_bill issues under two live entities — CompId 1 `Mas` (68,646) and CompId 2 `IDC` (8,590). New table alongside finance_grn_sequence, which keeps its (branch_id, financial_year) PK and every historical number. No seed: every month starts at 1
+  "1092_vendor_expense_mapping_legacy_import.sql",    // 1,273 of I-Spark's 1,730 vendor->head/sub-head mappings, covering 946 vendors, so Requirement 2 works on day one instead of Finance re-keying them. Static seed because db_bill is a separate MySQL 5.5 server a migration cannot reach; matched on head_code/sub_head_code because the master's UUIDs differ per environment. The 457 not imported are listed in the file, not dropped silently — nearly all are legacy's year-versioned capex sub-heads
+  // Deliberately NOT added: a 'salary' value on grn_request.grn_type. db_bill shows 39,099
+  // historical Salary entries, but the last was 25-May-2021 and every year since 2023-24 has
+  // zero — the feature was discontinued. HRMS2's payroll path (pnl-running-salary,
+  // actual-people-cost) is the live source of people cost, and a second writable source would
+  // double-count it in the P&L while still looking plausible. Historical rows remain readable
+  // through the db_bill mirror without a writable type here.
   ];
 
 export type MigrationHealth = {

@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { hrmsApi } from '@/lib/hrmsApi';
@@ -65,13 +65,30 @@ export default function NativeVendorManagement() {
   const [sheetOpen, setSheetOpen] = useState(false);
 
   // ── Data
+  // Vendor search runs on the server. vendorService.list already supports `q` and `limit`, and
+  // 1,821 live vendors is too many to ship to the browser on every keystroke just to filter
+  // them in JS. `q` also matches GSTIN, which the old client-side filter could not.
+  // Debounced so typing does not issue a request per character.
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedSearch(search.trim()), 250);
+    return () => clearTimeout(timer);
+  }, [search]);
+
   const { data: vendorsData, isLoading: loadingV, refetch: refV } = useQuery({
-    queryKey: ['erp-vendors', filterType],
+    queryKey: ['erp-vendors', filterType, debouncedSearch],
     queryFn: async () => {
-      const qs = filterType ? `?vendor_type=${filterType}` : '?is_active=1';
-      const r = await hrmsApi.get<any>(`/api/erp/vendors${qs}`);
+      const params = new URLSearchParams();
+      if (filterType) params.set('vendor_type', filterType);
+      else params.set('is_active', '1');
+      if (debouncedSearch) params.set('q', debouncedSearch);
+      // Capped server-side at 500. A search narrows well before that; an unfiltered list is
+      // paged by the table rather than being unbounded.
+      params.set('limit', '200');
+      const r = await hrmsApi.get<any>(`/api/erp/vendors?${params.toString()}`);
       return ((r as any)?.data ?? r ?? []) as Vendor[];
     },
+    placeholderData: (previous) => previous,
   });
 
   const { data: contractsData, isLoading: loadingC, refetch: refC } = useQuery({
@@ -82,10 +99,8 @@ export default function NativeVendorManagement() {
     },
   });
 
-  const filteredVendors = (vendorsData ?? []).filter(v =>
-    !search || v.vendor_name?.toLowerCase().includes(search.toLowerCase()) ||
-    v.vendor_code?.toLowerCase().includes(search.toLowerCase())
-  );
+  // Already filtered by the server; re-filtering here would drop GSTIN matches the API found.
+  const filteredVendors = vendorsData ?? [];
   const contracts = (contractsData ?? []).filter(c =>
     !search || c.title?.toLowerCase().includes(search.toLowerCase()) ||
     c.vendor_name?.toLowerCase().includes(search.toLowerCase())

@@ -12,11 +12,12 @@ import { budgetCoverageRouter } from "../process-pnl/budget-coverage.routes.js";
 import { financeExpenseMasterService } from "../process-pnl/finance-expense-master.service.js";
 import {
   assertFinanceRecordBranch,
-  resolveFinanceBranchScope,
+  resolveFinanceBranchScopeSet,
 } from "./finance-access-scope.js";
 import { resolveFinanceStageRole } from "./finance-workflow-role.js";
 import { grnService } from "./grn.service.js";
 import { smartGrnRouter } from "./grn-smart.routes.js";
+import { vendorExpenseMappingService } from "./vendor-expense-mapping.service.js";
 import { vendorPaymentService } from "./vendor-payment.service.js";
 import type { RoleKey } from "../../platform/policy/index.js";
 
@@ -264,6 +265,87 @@ function grNExpenseMasterRoutes(router: Router) {
       }
     }
   );
+
+  // ── Vendor → Head/Sub-head mapping (Requirement 2) ──────────────────────────
+  // Declared here rather than on /api/erp with the rest of the vendor CRUD, because the
+  // thing being restricted is the Finance expense master and the roles that may change it
+  // are EXPENSE_MASTER_WRITE_ROLES, not the erp router's admin/hr/finance.
+
+  router.get(
+    "/vendors/:vendorId/expense-mappings",
+    requireRole(...EXPENSE_MASTER_READ_ROLES),
+    async (req: AuthenticatedRequest, res) => {
+      try {
+        const data = await vendorExpenseMappingService.listForVendor(req.params.vendorId);
+        res.json({ success: true, data });
+      } catch (error: unknown) {
+        res.status(400).json({
+          success: false,
+          error: error instanceof Error ? error.message : "Unable to load vendor expense mappings",
+        });
+      }
+    }
+  );
+
+  router.put(
+    "/vendors/:vendorId/expense-mappings",
+    requireWriteAccess,
+    requireRole(...EXPENSE_MASTER_WRITE_ROLES),
+    async (req: AuthenticatedRequest, res) => {
+      try {
+        const mappings = Array.isArray(req.body?.mappings) ? req.body.mappings : [];
+        const data = await vendorExpenseMappingService.saveForVendor(
+          req.params.vendorId,
+          mappings,
+          req.authUser.id
+        );
+        res.json({ success: true, data });
+      } catch (error: unknown) {
+        res.status(400).json({
+          success: false,
+          error: error instanceof Error ? error.message : "Unable to save vendor expense mappings",
+        });
+      }
+    }
+  );
+
+  // The single server-side authority for what a GRN raiser may classify against:
+  // vendor mapping INTERSECT approved budget with headroom. Branch-scoped like every other
+  // finance read — a caller cannot ask about a branch they cannot see.
+  router.get(
+    "/expense-selectable",
+    requireRole(...GRN_READ_ROLES),
+    async (req: AuthenticatedRequest, res) => {
+      try {
+        const user = actor(req);
+        const scope = await resolveFinanceBranchScopeSet({
+          userId: user.id,
+          primaryRole: user.role,
+          userRoles: user.roles,
+          requestedBranchId: req.query.branchId ? String(req.query.branchId) : undefined,
+        });
+        // Needs exactly one branch: budget headroom is per branch, so "which heads can I use"
+        // is meaningless across several. Global callers must name one too.
+        const branchId =
+          scope.mode === "branches" && scope.branchIds.length === 1 ? scope.branchIds[0] : undefined;
+        if (!branchId) throw new Error("Select a branch to see which expense heads are available");
+
+        const data = await vendorExpenseMappingService.selectableClassifications({
+          vendorId: req.query.vendorId ? String(req.query.vendorId) : undefined,
+          branchId,
+          periodCode: req.query.periodCode ? String(req.query.periodCode) : undefined,
+          processId: req.query.processId ? String(req.query.processId) : undefined,
+          costCentreId: req.query.costCentreId ? String(req.query.costCentreId) : undefined,
+        });
+        res.json({ success: true, data });
+      } catch (error: unknown) {
+        res.status(errorStatus(error, 400)).json({
+          success: false,
+          error: error instanceof Error ? error.message : "Unable to resolve selectable expense heads",
+        });
+      }
+    }
+  );
 }
 
 grnRouter.get(
@@ -272,14 +354,14 @@ grnRouter.get(
   async (req: AuthenticatedRequest, res) => {
     try {
       const user = actor(req);
-      const branchId = await resolveFinanceBranchScope({
+      const branchScope = await resolveFinanceBranchScopeSet({
         userId: user.id,
         primaryRole: user.role,
         userRoles: user.roles,
         requestedBranchId: req.query.branchId ? String(req.query.branchId) : undefined,
       });
       const result = await grnService.listGrns({
-        branchId,
+        branchScope,
         processId: req.query.processId ? String(req.query.processId) : undefined,
         costCentreId: req.query.costCentreId ? String(req.query.costCentreId) : undefined,
         costClass: req.query.costClass ? String(req.query.costClass) : undefined,
@@ -308,14 +390,14 @@ grnRouter.get(
   async (req: AuthenticatedRequest, res) => {
     try {
       const user = actor(req);
-      const branchId = await resolveFinanceBranchScope({
+      const branchScope = await resolveFinanceBranchScopeSet({
         userId: user.id,
         primaryRole: user.role,
         userRoles: user.roles,
         requestedBranchId: req.query.branchId ? String(req.query.branchId) : undefined,
       });
       const result = await grnService.getGrnSummary({
-        branchId,
+        branchScope,
         financialYear: req.query.financialYear ? String(req.query.financialYear) : undefined,
       });
       res.json({ data: result });
@@ -342,13 +424,28 @@ grnRouter.post(
   async (req: AuthenticatedRequest, res) => {
     try {
       const user = actor(req);
-      const branchId = await resolveFinanceBranchScope({
+      const branchScope = await resolveFinanceBranchScopeSet({
         userId: user.id,
         primaryRole: user.role,
         userRoles: user.roles,
         requestedBranchId: req.body?.branchId,
       });
-      if (!branchId) throw new Error("Branch is required");
+      // Creating a GRN needs exactly one branch, and the server must never pick it. A user
+      // covering three branches who omits branchId is ambiguous, and silently defaulting to
+      // the first would book someone else's spend against the wrong branch — invisible until
+      // the P&L is wrong. resolveFinanceBranchScopeSet has already rejected a requested branch
+      // outside their set, so reaching here with one branch means it is theirs.
+      const branchId =
+        branchScope.mode === "branches" && branchScope.branchIds.length === 1
+          ? branchScope.branchIds[0]
+          : undefined;
+      if (!branchId) {
+        throw new Error(
+          branchScope.mode === "branches"
+            ? "Select which branch this GRN belongs to"
+            : "Branch is required",
+        );
+      }
       const result = await grnService.createDraft(
         { ...req.body, branchId },
         user.id,

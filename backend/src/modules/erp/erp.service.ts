@@ -57,61 +57,127 @@ export const vendorService = {
 
   async create(data: Record<string, unknown>) {
     const id = randomUUID();
+    const enriched = withDerivedGstStateCode(data);
+    const columns = ["id", "vendor_code", "vendor_name", "vendor_type", "contact_name",
+      "contact_email", "contact_phone", "address", "gst_number", "pan_number",
+      "payment_terms", "is_active"];
+    const values: unknown[] = [
+      id,
+      data.vendor_code,
+      data.vendor_name,
+      data.vendor_type ?? "supplier",
+      data.contact_name ?? null,
+      data.contact_email ?? null,
+      data.contact_phone ?? null,
+      data.address ?? null,
+      data.gst_number ?? null,
+      data.pan_number ?? null,
+      data.payment_terms ?? null,
+      data.is_active !== undefined ? data.is_active : 1,
+    ];
+    // Enrichment columns (migration 1086) are appended only when supplied, so a caller that
+    // knows nothing about them still inserts exactly the row it always did.
+    for (const column of VENDOR_ENRICHMENT_COLUMNS) {
+      if (Object.prototype.hasOwnProperty.call(enriched, column)) {
+        columns.push(column);
+        values.push(normaliseEnrichmentValue(column, enriched[column]));
+      }
+    }
     await db.execute(
-      `INSERT INTO vendor_master
-         (id, vendor_code, vendor_name, vendor_type, contact_name, contact_email,
-          contact_phone, address, gst_number, pan_number, payment_terms, is_active)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        id,
-        data.vendor_code,
-        data.vendor_name,
-        data.vendor_type ?? "supplier",
-        data.contact_name ?? null,
-        data.contact_email ?? null,
-        data.contact_phone ?? null,
-        data.address ?? null,
-        data.gst_number ?? null,
-        data.pan_number ?? null,
-        data.payment_terms ?? null,
-        data.is_active !== undefined ? data.is_active : 1,
-      ]
+      `INSERT INTO vendor_master (${columns.join(", ")})
+       VALUES (${columns.map(() => "?").join(", ")})`,
+      values
     );
     return this.getById(id);
   },
 
   async update(id: string, data: Record<string, unknown>) {
-    await db.execute(
-      `UPDATE vendor_master SET
-         vendor_name    = COALESCE(?, vendor_name),
-         vendor_type    = COALESCE(?, vendor_type),
-         contact_name   = COALESCE(?, contact_name),
-         contact_email  = COALESCE(?, contact_email),
-         contact_phone  = COALESCE(?, contact_phone),
-         address        = COALESCE(?, address),
-         gst_number     = COALESCE(?, gst_number),
-         pan_number     = COALESCE(?, pan_number),
-         payment_terms  = COALESCE(?, payment_terms),
-         is_active      = COALESCE(?, is_active),
-         updated_at     = NOW()
-       WHERE id = ?`,
-      [
-        data.vendor_name ?? null,
-        data.vendor_type ?? null,
-        data.contact_name ?? null,
-        data.contact_email ?? null,
-        data.contact_phone ?? null,
-        data.address ?? null,
-        data.gst_number ?? null,
-        data.pan_number ?? null,
-        data.payment_terms ?? null,
-        data.is_active ?? null,
-        id,
-      ]
-    );
+    const enriched = withDerivedGstStateCode(data);
+
+    // The original ten columns keep COALESCE semantics — "omitted means preserved". Callers
+    // have always relied on that for partial updates from VendorSheet, and flipping them to
+    // "omitted means NULL" would blank data on every save that did not send every field.
+    const sets = [
+      "vendor_name    = COALESCE(?, vendor_name)",
+      "vendor_type    = COALESCE(?, vendor_type)",
+      "contact_name   = COALESCE(?, contact_name)",
+      "contact_email  = COALESCE(?, contact_email)",
+      "contact_phone  = COALESCE(?, contact_phone)",
+      "address        = COALESCE(?, address)",
+      "gst_number     = COALESCE(?, gst_number)",
+      "pan_number     = COALESCE(?, pan_number)",
+      "payment_terms  = COALESCE(?, payment_terms)",
+      "is_active      = COALESCE(?, is_active)",
+    ];
+    const params: unknown[] = [
+      data.vendor_name ?? null,
+      data.vendor_type ?? null,
+      data.contact_name ?? null,
+      data.contact_email ?? null,
+      data.contact_phone ?? null,
+      data.address ?? null,
+      data.gst_number ?? null,
+      data.pan_number ?? null,
+      data.payment_terms ?? null,
+      data.is_active ?? null,
+    ];
+
+    // The enrichment columns use presence semantics instead: a key present in the payload is
+    // written even when its value is null. Without this there is no way to clear one, and
+    // tds_section in particular MUST be clearable — leaving a stale section behind after
+    // tds_enabled flips to 0 would mean deducting under a section the vendor no longer has.
+    for (const column of VENDOR_ENRICHMENT_COLUMNS) {
+      if (Object.prototype.hasOwnProperty.call(enriched, column)) {
+        sets.push(`${column} = ?`);
+        params.push(normaliseEnrichmentValue(column, enriched[column]));
+      }
+    }
+
+    sets.push("updated_at = NOW()");
+    params.push(id);
+    await db.execute(`UPDATE vendor_master SET ${sets.join(", ")} WHERE id = ?`, params);
     return this.getById(id);
   },
 };
+
+/** Columns added by migration 1086. Written only when the caller mentions them. */
+const VENDOR_ENRICHMENT_COLUMNS = [
+  "tally_name",
+  "address_line1", "address_line2", "address_line3", "city", "state", "pin_code",
+  "gst_enabled", "gst_state_code",
+  "tds_enabled", "tds_section", "tds_rate",
+] as const;
+
+const BOOLEAN_COLUMNS = new Set(["gst_enabled", "tds_enabled"]);
+
+function normaliseEnrichmentValue(column: string, value: unknown) {
+  if (value === undefined || value === null || value === "") {
+    // NOT NULL DEFAULT 0 on the two flags, so an empty value means "off", not NULL.
+    return BOOLEAN_COLUMNS.has(column) ? 0 : null;
+  }
+  if (BOOLEAN_COLUMNS.has(column)) return value === true || value === 1 || value === "1" ? 1 : 0;
+  if (column === "tds_rate") {
+    const rate = Number(value);
+    return Number.isFinite(rate) ? rate : null;
+  }
+  return typeof value === "string" ? value.trim() : value;
+}
+
+/**
+ * Keeps gst_state_code consistent with the GSTIN.
+ *
+ * The first two characters of a GSTIN are the state code by definition, so deriving it means
+ * the two can never disagree. Only fills a blank — an explicitly supplied code always wins,
+ * and a malformed GSTIN derives nothing rather than producing a bogus state. Same rule the
+ * 1086 backfill applied to existing rows, so new rows match migrated ones.
+ */
+function withDerivedGstStateCode(data: Record<string, unknown>): Record<string, unknown> {
+  const supplied = data.gst_state_code;
+  if (supplied !== undefined && String(supplied ?? "").trim() !== "") return data;
+  const gstin = String(data.gst_number ?? "").trim();
+  if (gstin.length !== 15 || !/^\d{2}/.test(gstin)) return data;
+  return { ...data, gst_state_code: gstin.slice(0, 2) };
+}
 
 // ─── Contracts ──────────────────────────────────────────────────────────────
 

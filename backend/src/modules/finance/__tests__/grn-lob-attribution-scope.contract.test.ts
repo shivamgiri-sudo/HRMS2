@@ -40,7 +40,12 @@ describe("GRN LOB attribution branch scope", () => {
     const [sql, params] = execute.mock.calls.at(-1) as [string, unknown[]];
     expect(sql).toContain("g.branch_id = ?");
     expect(params).toEqual(["branch-abc"]);
-  });
+    // 20s, not the 5s default: this is the first test in the file to `await import` the
+    // service, and that pulls a large dependency graph through Vite's transform. In
+    // isolation it finishes in ~40ms, but under a full-suite run the cold transform
+    // regularly crosses 5s and the whole file fails on a timeout that says nothing about
+    // the assertion. A flaky red here makes every other run ambiguous.
+  }, 20_000);
 
   it("does not filter by branch for global finance roles", async () => {
     const { db } = await import("../../../db/mysql.js");

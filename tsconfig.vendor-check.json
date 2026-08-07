@@ -1,0 +1,18 @@
+{
+  // Scoped typecheck for the Vendor Master work. The root `npm run typecheck` is a no-op
+  // ("files": []), and tsc -p tsconfig.app.json emits several hundred pre-existing errors in
+  // unrelated modules that bury anything new. Sibling of tsconfig.grn-check.json.
+  //
+  //   npx tsc -p tsconfig.vendor-check.json
+  //
+  // Transitive imports are checked too, so a handful of pre-existing errors from shared
+  // layout/UI files can surface; everything under src/components/finance/vendor and
+  // NativeVendorManagement.tsx is expected to stay clean.
+  "extends": "./tsconfig.app.json",
+  "include": [
+    "src/components/finance/vendor",
+    "src/pages/NativeVendorManagement.tsx",
+    "src/vite-env.d.ts"
+  ],
+  "compilerOptions": { "noEmit": true }
+}
