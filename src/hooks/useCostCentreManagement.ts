@@ -227,7 +227,7 @@ export function useCostCentreList(filters: ListFilters = {}) {
         total: number;
         page: number;
         limit: number;
-      }>(`/finance/cost-centres?${params.toString()}`);
+      }>(`/api/finance/cost-centres?${params.toString()}`);
       return res;
     },
   });
@@ -238,7 +238,7 @@ export function useCostCentreDetail(id: string | null) {
     queryKey: KEYS.detail(id ?? ""),
     queryFn: async () => {
       if (!id) return null;
-      const res = await hrmsApi.get<{ data: CostCentreRecord }>(`/finance/cost-centres/${id}`);
+      const res = await hrmsApi.get<{ data: CostCentreRecord }>(`/api/finance/cost-centres/${id}`);
       return res.data;
     },
     enabled: !!id,
@@ -250,7 +250,7 @@ export function useCostCentreHistory(id: string | null) {
     queryKey: KEYS.history(id ?? ""),
     queryFn: async () => {
       if (!id) return [];
-      const res = await hrmsApi.get<{ data: ApprovalLogEntry[] }>(`/finance/cost-centres/${id}/history`);
+      const res = await hrmsApi.get<{ data: ApprovalLogEntry[] }>(`/api/finance/cost-centres/${id}/history`);
       return res.data;
     },
     enabled: !!id,
@@ -261,7 +261,7 @@ export function useCostCentreStatusCounts() {
   return useQuery({
     queryKey: KEYS.statusCounts(),
     queryFn: async () => {
-      const res = await hrmsApi.get<{ data: StatusCounts }>("/finance/cost-centres/status-counts");
+      const res = await hrmsApi.get<{ data: StatusCounts }>("/api/finance/cost-centres/status-counts");
       return res.data;
     },
   });
@@ -271,7 +271,7 @@ export function useCostCentreApprovalQueue() {
   return useQuery({
     queryKey: KEYS.approvalQueue(),
     queryFn: async () => {
-      const res = await hrmsApi.get<{ data: CostCentreRecord[] }>("/finance/cost-centres/approval-queue");
+      const res = await hrmsApi.get<{ data: CostCentreRecord[] }>("/api/finance/cost-centres/approval-queue");
       return res.data;
     },
   });
@@ -285,7 +285,7 @@ export function useCreateCostCentre() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (data: CostCentreInput) => {
-      const res = await hrmsApi.post<{ data: CostCentreRecord }>("/finance/cost-centres", data);
+      const res = await hrmsApi.post<{ data: CostCentreRecord }>("/api/finance/cost-centres", data);
       return res.data;
     },
     onSuccess: () => {
@@ -298,7 +298,7 @@ export function useUpdateCostCentre() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async ({ id, data }: { id: string; data: Partial<CostCentreInput> }) => {
-      const res = await hrmsApi.put<{ data: CostCentreRecord }>(`/finance/cost-centres/${id}`, data);
+      const res = await hrmsApi.put<{ data: CostCentreRecord }>(`/api/finance/cost-centres/${id}`, data);
       return res.data;
     },
     onSuccess: (_, { id }) => {
@@ -312,7 +312,7 @@ export function useSubmitCostCentre() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (id: string) => {
-      const res = await hrmsApi.post<{ data: CostCentreRecord }>(`/finance/cost-centres/${id}/submit`);
+      const res = await hrmsApi.post<{ data: CostCentreRecord }>(`/api/finance/cost-centres/${id}/submit`);
       return res.data;
     },
     onSuccess: (_, id) => {
@@ -326,7 +326,7 @@ export function useApproveL1CostCentre() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async ({ id, remarks }: { id: string; remarks?: string }) => {
-      const res = await hrmsApi.post<{ data: CostCentreRecord }>(`/finance/cost-centres/${id}/approve-l1`, { remarks });
+      const res = await hrmsApi.post<{ data: CostCentreRecord }>(`/api/finance/cost-centres/${id}/approve-l1`, { remarks });
       return res.data;
     },
     onSuccess: (_, { id }) => {
@@ -341,7 +341,7 @@ export function useApproveL2CostCentre() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async ({ id, remarks }: { id: string; remarks?: string }) => {
-      const res = await hrmsApi.post<{ data: CostCentreRecord }>(`/finance/cost-centres/${id}/approve-l2`, { remarks });
+      const res = await hrmsApi.post<{ data: CostCentreRecord }>(`/api/finance/cost-centres/${id}/approve-l2`, { remarks });
       return res.data;
     },
     onSuccess: (_, { id }) => {
@@ -356,7 +356,7 @@ export function useRejectCostCentre() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async ({ id, reason }: { id: string; reason: string }) => {
-      const res = await hrmsApi.post<{ data: CostCentreRecord }>(`/finance/cost-centres/${id}/reject`, { reason });
+      const res = await hrmsApi.post<{ data: CostCentreRecord }>(`/api/finance/cost-centres/${id}/reject`, { reason });
       return res.data;
     },
     onSuccess: (_, { id }) => {
@@ -371,7 +371,7 @@ export function useRequestRevisionCostCentre() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async ({ id, reason }: { id: string; reason: string }) => {
-      const res = await hrmsApi.post<{ data: CostCentreRecord }>(`/finance/cost-centres/${id}/request-revision`, { reason });
+      const res = await hrmsApi.post<{ data: CostCentreRecord }>(`/api/finance/cost-centres/${id}/request-revision`, { reason });
       return res.data;
     },
     onSuccess: (_, { id }) => {
@@ -386,7 +386,7 @@ export function useActivateCostCentre() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (id: string) => {
-      const res = await hrmsApi.post<{ data: CostCentreRecord }>(`/finance/cost-centres/${id}/activate`);
+      const res = await hrmsApi.post<{ data: CostCentreRecord }>(`/api/finance/cost-centres/${id}/activate`);
       return res.data;
     },
     onSuccess: (_, id) => {
@@ -400,7 +400,7 @@ export function useCloseCostCentre() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async ({ id, reason }: { id: string; reason?: string }) => {
-      const res = await hrmsApi.post<{ data: CostCentreRecord }>(`/finance/cost-centres/${id}/close`, { reason });
+      const res = await hrmsApi.post<{ data: CostCentreRecord }>(`/api/finance/cost-centres/${id}/close`, { reason });
       return res.data;
     },
     onSuccess: (_, { id }) => {

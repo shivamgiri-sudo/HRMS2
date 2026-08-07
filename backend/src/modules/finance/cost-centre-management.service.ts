@@ -151,7 +151,22 @@ export const costCentreManagementService = {
     }
 
     const whereClause = where.length > 0 ? `WHERE ${where.join(" AND ")}` : "";
-    const offset = (page - 1) * Math.min(limit, 100);
+
+    /*
+     * LIMIT and OFFSET are interpolated, not bound.
+     *
+     * They were passed as `LIMIT ? OFFSET ?` placeholders to db.execute(), which prepares the
+     * statement — and MySQL will not accept a bound parameter in LIMIT there. Every call to this
+     * endpoint failed with ER_WRONG_ARGUMENTS, so the Cost Centre Management page has returned 500
+     * on load since it was added and has never displayed a row.
+     *
+     * Coerced to integers and clamped before they reach the string, so nothing user-supplied can
+     * survive into the SQL: a non-numeric page or limit collapses to the default rather than
+     * concatenating. Every other filter stays a bound parameter.
+     */
+    const safeLimit = Math.max(1, Math.min(Math.trunc(Number(limit)) || 50, 100));
+    const safePage = Math.max(1, Math.trunc(Number(page)) || 1);
+    const safeOffset = (safePage - 1) * safeLimit;
 
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT cc.*,
@@ -174,8 +189,8 @@ export const costCentreManagementService = {
          LEFT JOIN employees l2approver ON l2approver.id = cc.l2_approved_by
         ${whereClause}
         ORDER BY cc.created_at DESC
-        LIMIT ? OFFSET ?`,
-      [...params, Math.min(limit, 100), offset]
+        LIMIT ${safeLimit} OFFSET ${safeOffset}`,
+      params
     );
 
     // Count total
@@ -190,8 +205,8 @@ export const costCentreManagementService = {
     return {
       data: rows,
       total: Number(countRows[0]?.total ?? 0),
-      page,
-      limit: Math.min(limit, 100),
+      page: safePage,
+      limit: safeLimit,
     };
   },
 
