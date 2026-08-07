@@ -118,15 +118,24 @@ describe("mandatory identity columns on employee-grain reports", () => {
   });
 
   /**
-   * Reports whose column names are fixed by someone else. These are file formats consumed
-   * by an external system, where an extra column corrupts the upload â€” not places where
-   * the mandate was skipped.
+   * Reports the mandate does not apply to, each with the reason it does not. Two distinct
+   * cases, kept together because both mean "not a gap to be closed later":
+   *
+   *  - a file format whose columns are dictated by an external system, where an extra
+   *    column corrupts the upload;
+   *  - a report marked `blocked` in the catalog because the data it needs does not exist,
+   *    where adding identity columns to nothing would achieve nothing.
    */
-  const EXTERNAL_FORMATS: Record<string, string> = {
+  const EXEMPT_WITH_REASON: Record<string, string> = {
     "pf-ecr-format":
       "EPFO ECR upload file. Column set and order are dictated by EPFO (uan, gross_wages, " +
       "epf_wages, eps_wages, edli_wages, ...). Adding employee code or cost centre would " +
       "break the upload. Use pf-contribution-register for the internal view.",
+    "missing-documents-report":
+      "Blocked in the catalog. Reporting a MISSING document needs a list of required " +
+      "documents and no org-wide one exists: document_type_master is absent, and the " +
+      "joining checklist carries a mandatory flag for 11 of 22,672 employees. Building on " +
+      "that would imply the other 22,661 are complete.",
   };
 
   /**
@@ -159,10 +168,7 @@ describe("mandatory identity columns on employee-grain reports", () => {
    * preview, its direct XLSX and its emailed XLSX can each run a different query.
    */
   const NOT_YET_MIGRATED = new Set<string>([
-    "certification-status",
-    "document-verification-status",
     "lwp-deduction-register",
-    "missing-documents-report",
     "neft-transfer-file",
     "payslip-status",
     // Served by inline case blocks in report-suite.routes.ts, not by an executor â€” they
@@ -182,7 +188,7 @@ describe("mandatory identity columns on employee-grain reports", () => {
 
     for (const report of employeeGrain) {
       if (NOT_YET_MIGRATED.has(report.code)) continue;
-      if (report.code in EXTERNAL_FORMATS) continue;
+      if (report.code in EXEMPT_WITH_REASON) continue;
       const keys = columnKeys(report);
       const missing = MANDATORY_IDENTITY_COLUMNS.filter(c => !hasFact(keys, c));
       if (missing.length > 0) offenders.push(`${report.code}: missing ${missing.join(", ")}`);

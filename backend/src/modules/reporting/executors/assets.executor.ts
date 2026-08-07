@@ -339,3 +339,135 @@ export async function documentExpiryTracker(
     throw err;
   }
 }
+
+// ---------------------------------------------------------------------------
+// document-verification-status
+//
+// Was a stub. The code has a catalog entry and appears in the documents-identity-privacy
+// deep-report pack, so it is reachable from the UI, but it had neither an executor nor an
+// inline block — every request fell through to fallbackReport() and returned one row
+// reading "PENDING_DATA_BUILDER … its dedicated backend data builder is not configured
+// yet". A navigable report that has never returned data.
+//
+// The data was there the whole time. Measured against live 2026-08-07: employee_documents
+// holds 207,616 rows across 22,672 employees, of which 11,124 are verified and 196,492
+// are not — which is exactly the backlog this report exists to show.
+// ---------------------------------------------------------------------------
+export async function documentVerificationStatus(
+  filters: ExecFilters,
+  scope: ExecScope,
+  options: ExecOptions
+): Promise<ExecResult> {
+  const clauses: string[] = ["e.id IS NOT NULL"];
+  const params: unknown[] = [];
+  appendScopeConditions(scope, clauses, params);
+  appendFilterConditions(filters, clauses, params);
+
+  if (filters.status === "verified")   clauses.push("ed.verified = 1");
+  if (filters.status === "unverified") clauses.push("COALESCE(ed.verified, 0) = 0");
+  if (typeof filters["docType"] === "string" && filters["docType"]) {
+    clauses.push("ed.doc_type = ?");
+    params.push(String(filters["docType"]));
+  }
+
+  if (options.mode === "worker" && options.cursor != null) {
+    clauses.push("ed.id > ?");
+    params.push(options.cursor);
+  }
+
+  const base = `
+    SELECT ed.id AS _cursor,
+           e.employee_code,
+           COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
+           COALESCE(sp_cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
+           COALESCE(sp_cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
+           b.branch_name,
+           COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
+           ed.doc_type,
+           ed.doc_name,
+           ed.created_at AS submitted_date,
+           CASE WHEN ed.verified = 1 THEN 'VERIFIED' ELSE 'PENDING_VERIFICATION' END AS verification_status,
+           COALESCE(NULLIF(v.full_name,''), CONCAT(v.first_name,' ',COALESCE(v.last_name,''))) AS verified_by,
+           ed.verification_date AS verified_date,
+           ed.verification_remarks
+      FROM employee_documents ed
+      JOIN employees e            ON e.id = ed.employee_id
+      LEFT JOIN employees v       ON v.id = ed.verified_by
+      LEFT JOIN branch_master b   ON b.id = e.branch_id
+      LEFT JOIN process_master p  ON p.id = e.process_id
+      LEFT JOIN cost_centre_master sp_cc ON sp_cc.id = e.cost_centre_id
+     WHERE ${clauses.join(" AND ")}
+     ORDER BY ed.id ASC`;
+
+  const total = options.includeTotal ? await count(base, params) : 0;
+  const sql   = options.mode === "worker" ? `${base} LIMIT ${options.limit}` : applyPagination(base, options);
+  const rows  = await query(sql, params) as Record<string, unknown>[];
+  const nextCursor = (options.mode === "worker" && rows.length > 0)
+    ? (rows[rows.length - 1]._cursor as number) : null;
+  const out = rows.map(({ _cursor: _, ...rest }) => rest);
+  return { rows: out, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > out.length, nextCursor };
+}
+
+// ---------------------------------------------------------------------------
+// certification-status
+//
+// Also a stub before this, and also reachable — it appears in four perspectives of the
+// training-lms deep-report pack.
+//
+// lms_certification_snapshot is the right source and exists, but holds 0 rows against
+// live on 2026-08-07: the deployed LMS is the system of record for certification and
+// nothing has been synced into this snapshot yet. So this returns an empty result today
+// and will fill in when the sync runs — which is a materially different statement from
+// "no data builder is configured", and one a user can act on.
+// ---------------------------------------------------------------------------
+export async function certificationStatus(
+  filters: ExecFilters,
+  scope: ExecScope,
+  options: ExecOptions
+): Promise<ExecResult> {
+  const clauses: string[] = ["e.id IS NOT NULL"];
+  const params: unknown[] = [];
+  appendScopeConditions(scope, clauses, params);
+  appendFilterConditions(filters, clauses, params);
+  clauses.push("e.active_status = 1");
+
+  if (typeof filters.status === "string" && filters.status) {
+    clauses.push("lcs.status = ?");
+    params.push(String(filters.status));
+  }
+
+  if (options.mode === "worker" && options.cursor != null) {
+    clauses.push("lcs.id > ?");
+    params.push(options.cursor);
+  }
+
+  const base = `
+    SELECT lcs.id AS _cursor,
+           e.employee_code,
+           COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
+           COALESCE(sp_cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
+           COALESCE(sp_cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
+           b.branch_name,
+           COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
+           lcs.certification_name,
+           lcs.issued_date AS certified_date,
+           lcs.expiry_date,
+           lcs.status AS certification_status,
+           DATEDIFF(lcs.expiry_date, CURDATE()) AS days_to_expiry,
+           lcs.synced_at
+      FROM lms_certification_snapshot lcs
+      JOIN employees e            ON e.id = lcs.employee_id
+      LEFT JOIN branch_master b   ON b.id = e.branch_id
+      LEFT JOIN process_master p  ON p.id = e.process_id
+      LEFT JOIN cost_centre_master sp_cc ON sp_cc.id = e.cost_centre_id
+     WHERE ${clauses.join(" AND ")}
+     ORDER BY lcs.id ASC`;
+
+  const total = options.includeTotal ? await count(base, params) : 0;
+  const sql   = options.mode === "worker" ? `${base} LIMIT ${options.limit}` : applyPagination(base, options);
+  const rows  = await query(sql, params) as Record<string, unknown>[];
+  const nextCursor = (options.mode === "worker" && rows.length > 0)
+    ? (rows[rows.length - 1]._cursor as number) : null;
+  const out = rows.map(({ _cursor: _, ...rest }) => rest);
+  return { rows: out, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > out.length, nextCursor };
+}

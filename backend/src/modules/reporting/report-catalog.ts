@@ -3290,6 +3290,8 @@ export const REPORT_CATALOG: ReportDefinition[] = [
     columns: [
       { key: "employee_code", label: "Emp Code", format: "text", width: 100 },
       { key: "employee_name", label: "Employee Name", format: "text", width: 180 },
+      { key: "cost_centre_code", label: "Cost Centre Code", format: "text", width: 140 },
+      { key: "cost_centre_name", label: "Cost Centre", format: "text", width: 180 },
       { key: "branch_name", label: "Branch", format: "text", width: 120 },
       { key: "process_name", label: "Process", format: "text", width: 140 },
       { key: "certification_name", label: "Certification", format: "text", width: 200 },
@@ -3297,6 +3299,7 @@ export const REPORT_CATALOG: ReportDefinition[] = [
       { key: "expiry_date", label: "Expiry Date", format: "date", width: 100 },
       { key: "certification_status", label: "Status", format: "status", width: 100 },
       { key: "days_to_expiry", label: "Days to Expiry", format: "number", width: 100, align: "right" },
+      { key: "synced_at", label: "Last Synced", format: "datetime", width: 140 },
     ],
     filters: [F_BRANCH, F_PROCESS, { key: "status", label: "Status", type: "select" }],
     viewRoles: [...ROLES_HR_MANAGER, "trainer"],
@@ -3304,6 +3307,13 @@ export const REPORT_CATALOG: ReportDefinition[] = [
     sourceTables: ["lms_certification_snapshot", "employees"],
     branchScoped: true,
     processScoped: true,
+    // Had no executor and no inline block, so every request returned the
+    // PENDING_DATA_BUILDER stub. It now queries its real source. That source holds 0 rows
+    // against live on 2026-08-07 — the deployed LMS is the system of record for
+    // certification and nothing has been synced into the snapshot yet — so the report is
+    // legitimately empty until the sync runs. "Empty pending sync" is a statement a user
+    // can act on; "no data builder configured" was not.
+    availabilityStatus: "validated_with_limitations",
   },
 
   {
@@ -3382,15 +3392,22 @@ export const REPORT_CATALOG: ReportDefinition[] = [
     rowGrain: "One row per employee per document type",
     primaryKey: ["employee_code", "document_type"],
     columns: [
+      // Keys realigned to the executor's SELECT. document_type and rejection_reason were
+      // declared here but the real columns are doc_type and verification_remarks, so both
+      // would have rendered blank even once the report started returning rows.
       { key: "employee_code", label: "Emp Code", format: "text", width: 100 },
       { key: "employee_name", label: "Employee Name", format: "text", width: 180 },
+      { key: "cost_centre_code", label: "Cost Centre Code", format: "text", width: 140 },
+      { key: "cost_centre_name", label: "Cost Centre", format: "text", width: 180 },
       { key: "branch_name", label: "Branch", format: "text", width: 120 },
-      { key: "document_type", label: "Document Type", format: "text", width: 140 },
+      { key: "process_name", label: "Process", format: "text", width: 140 },
+      { key: "doc_type", label: "Document Type", format: "text", width: 140 },
+      { key: "doc_name", label: "Document", format: "text", width: 180 },
       { key: "submitted_date", label: "Submitted Date", format: "date", width: 100 },
-      { key: "verification_status", label: "Verification Status", format: "status", width: 120 },
+      { key: "verification_status", label: "Verification Status", format: "status", width: 150 },
       { key: "verified_by", label: "Verified By", format: "text", width: 140 },
       { key: "verified_date", label: "Verified Date", format: "date", width: 100 },
-      { key: "rejection_reason", label: "Rejection Reason", format: "text", width: 200 },
+      { key: "verification_remarks", label: "Remarks", format: "text", width: 220 },
     ],
     filters: [F_BRANCH, { key: "docType", label: "Document Type", type: "select" }, { key: "status", label: "Status", type: "select" }],
     viewRoles: ROLES_HR_ADMIN,
@@ -3420,9 +3437,21 @@ export const REPORT_CATALOG: ReportDefinition[] = [
     filters: [F_BRANCH, F_PROCESS],
     viewRoles: ROLES_HR_ADMIN,
     exportRoles: ROLES_HR_ADMIN,
-    sourceTables: ["employee_documents", "employee_documents", "employees"],
+    sourceTables: ["employee_documents", "employees"],
     branchScoped: true,
     processScoped: true,
+    // Blocked, with a reason. Reporting a MISSING document needs a list of documents that
+    // are required, and no org-wide one exists: document_type_master is absent from
+    // mas_hrms, and employee_joining_document_checklist — which does carry a `mandatory`
+    // flag — holds 92 rows covering 11 employees out of 22,672 (measured 2026-08-07). A
+    // report built on that would tell 11 people what they are missing and silently imply
+    // the other 22,661 are complete, which is worse than showing nothing.
+    //
+    // Until a mandatory-document master exists, use document-verification-status, which
+    // shows what HAS been submitted and its verification state across all 207,616
+    // documents. This entry stays listed so the gap is visible rather than forgotten;
+    // it previously returned the PENDING_DATA_BUILDER stub with no explanation.
+    availabilityStatus: "blocked",
   },
 
   // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
