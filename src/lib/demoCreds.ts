@@ -38,7 +38,7 @@ const ALL_PAGES = [
   "STATUTORY_CONFIG","KPI_CONFIG","OPERATIONS_KPI","PORTAL_DATA_MANAGER","PROCESS_CONFIG",
   "LEAVE_TYPES","RTA_BOARD",
   "MY_PROFILE","ATTENDANCE_REGULARIZATION","MY_EXPENSES","EXPENSE_CREATE","MY_KPI",
-  "RESIGNATION_MY_REQUEST","DPDP_WITHDRAWAL",
+  "RESIGNATION_MY_REQUEST","DPDP_WITHDRAWAL","UAT_FEEDBACK",
   // Routed and referenced but previously absent here and from page_catalog (see 604), so
   // no role could be granted them and the routes were unreachable.
   "EMPLOYEE_STAT_CARD","WFM_BRANCH_SPOC_CONFIG",
