@@ -232,9 +232,16 @@ export const REPORT_CATALOG: ReportMeta[] = [
     name: "Manager Mapping Report",
     category: "HR & Workforce",
     subcategory: "Headcount & Org",
-    description: "Employee to reporting manager mapping",
+    description:
+      "Employee to reporting manager mapping, with the mapping defect named per row: MISSING_MANAGER where neither manager field is set, MANAGER_FIELD_MISMATCH where reporting_manager_id and manager_id disagree.",
     rowGrain: "One row per employee",
     primaryKey: ["employee_code"],
+    // Keys verified against the live API response, not the backend catalogue's declaration.
+    // Four of the previous keys matched nothing the executor returns — designation_name,
+    // reporting_manager_code, reporting_manager and manager_designation all rendered as a
+    // permanent em dash on every row, while manager_code, manager_name and mapping_status
+    // came over the wire and were discarded because the grid had never heard of them. That
+    // hid the report's actual finding: mapping_status is the column it exists to produce.
     columns: [
       { key: "employee_code", label: "Emp Code", format: "text", width: 100 },
       { key: "employee_name", label: "Employee Name", format: "text", width: 180 },
@@ -242,10 +249,9 @@ export const REPORT_CATALOG: ReportMeta[] = [
       { key: "cost_centre_code", label: "Cost Centre Code", format: "text", width: 140 },
       { key: "cost_centre_name", label: "Cost Centre", format: "text", width: 180 },
       { key: "process_name", label: "Process", format: "text", width: 140 },
-      { key: "designation_name", label: "Designation", format: "text", width: 140 },
-      { key: "reporting_manager_code", label: "Manager Code", format: "text", width: 100 },
-      { key: "reporting_manager", label: "Reporting Manager", format: "text", width: 180 },
-      { key: "manager_designation", label: "Manager Designation", format: "text", width: 140 },
+      { key: "manager_code", label: "Manager Code", format: "text", width: 110 },
+      { key: "manager_name", label: "Reporting Manager", format: "text", width: 180 },
+      { key: "mapping_status", label: "Mapping Status", format: "status", width: 170 },
     ],
     viewRoles: ["super_admin", "admin", "hr", "hr_head", "manager", "process_manager", "branch_head"],
     exportRoles: ["super_admin", "admin", "hr", "hr_head"],

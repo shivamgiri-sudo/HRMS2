@@ -831,7 +831,24 @@ function detectDuplicates(rows: Record<string, unknown>[], primaryKey: string[])
 
 // ─── Main Component ─────────────────────────────────────────────────────────────
 
-export default function NativeReportsCenterV2() {
+/**
+ * ReportsHub reads `?report=<code>` off the URL and passes it in as `preselectedReport`.
+ * This component declared no props at all, so the value was passed into nothing and every
+ * deep link into a specific report landed on the empty "select a category and report"
+ * screen instead.
+ *
+ * That is not only a nice-to-have: several pages were RETIRED in favour of this view and
+ * now redirect into it — /payroll/cost-summary, /payroll/variance, /break-reports and
+ * /break-session-log all `<Navigate to="/reports?view=library&report=…">`, and
+ * SourceValidationView links each failing report by code. All of them silently lost their
+ * destination, so a user following a migrated link saw an empty page and no error.
+ */
+interface ReportLibraryViewProps {
+  /** Report code from `?report=`; selects that report on first render when the user may view it. */
+  preselectedReport?: string;
+}
+
+export default function NativeReportsCenterV2({ preselectedReport }: ReportLibraryViewProps = {}) {
   const { roleKeys, isLoading: rolesLoading } = useWorkforceAccess();
   const userRoles = roleKeys;
 
@@ -946,6 +963,27 @@ export default function NativeReportsCenterV2() {
     saveList(LS_RECENT, next);
     setTimeout(() => runnerRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 100);
   }
+
+  /**
+   * Apply `?report=<code>` once the role-filtered catalogue is available.
+   *
+   * Gated on `visibleCatalog` rather than the raw catalogue so a deep link cannot select a
+   * report the user is not entitled to see — the link is a convenience, not an authorisation
+   * path, and the backend enforces scope regardless. Runs only while nothing is selected, so
+   * it cannot fight the user's own clicks or re-fire when roles finish loading.
+   *
+   * An unknown or not-permitted code is deliberately a no-op: the user lands on the normal
+   * browse screen rather than an error, which is the same place they were before this wiring
+   * existed.
+   */
+  const appliedPreselect = useRef(false);
+  useEffect(() => {
+    if (appliedPreselect.current) return;
+    if (!preselectedReport || rolesLoading || visibleCatalog.length === 0) return;
+    const match = visibleCatalog.find(r => r.code === preselectedReport);
+    appliedPreselect.current = true;
+    if (match) selectReport(match);
+  }, [preselectedReport, rolesLoading, visibleCatalog]);
 
   function toggleFav(code: string) {
     setFavCodes(prev => {
