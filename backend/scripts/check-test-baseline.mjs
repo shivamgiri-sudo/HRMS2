@@ -100,6 +100,10 @@ function idsOfFailures(report) {
 
 const report = runSuite();
 const failing = idsOfFailures(report);
+const existingBaseline = existsSync(BASELINE)
+  ? JSON.parse(readFileSync(BASELINE, "utf8"))
+  : { failures: [], optionalFailures: [] };
+const optionalFailures = new Set(existingBaseline.optionalFailures ?? []);
 
 if (UPDATE) {
   writeFileSync(
@@ -109,6 +113,7 @@ if (UPDATE) {
         "Tests known to be failing. Anything not listed here fails CI. When you fix one, delete its line — the checker also fails if a listed test starts passing, so this file cannot rot.",
       recorded: failing.length,
       failures: failing,
+      optionalFailures: [...optionalFailures].sort(),
     }, null, 2)}\n`,
   );
   console.log(`Recorded ${failing.length} known failures to ${relative(ROOT, BASELINE)}`);
@@ -120,10 +125,10 @@ if (!existsSync(BASELINE)) {
   process.exit(2);
 }
 
-const baseline = new Set(JSON.parse(readFileSync(BASELINE, "utf8")).failures ?? []);
+const baseline = new Set(existingBaseline.failures ?? []);
 const nowFailing = new Set(failing);
 
-let newlyBroken = failing.filter((id) => !baseline.has(id));
+let newlyBroken = failing.filter((id) => !baseline.has(id) && !optionalFailures.has(id));
 let nowFixed = [...baseline].filter((id) => !nowFailing.has(id)).sort();
 
 // Confirm before accusing. This suite has timeout-prone tests, and a gate that
@@ -161,7 +166,7 @@ if (nowFixed.length) {
 
 console.log(
   `suite: ${report.numPassedTests ?? 0} passed, ${report.numFailedTests ?? 0} failed; ` +
-  `baseline: ${baseline.size} known`,
+  `baseline: ${baseline.size} known, ${optionalFailures.size} optional`,
 );
 
 if (newlyBroken.length) {
