@@ -835,6 +835,17 @@ reportSuiteRouter.get("/:code", reportScopeMiddleware, reportCatalogAccessMiddle
 
     // ─── A1: HR & Workforce ───────────────────────────────────────────────────
     case "org-structure-snapshot":
+      // Same two defects cost-centre-headcount had, in the same shape.
+      //
+      // No row scope: the WHERE was hardcoded, so a branch-scoped user saw the org structure
+      // of every branch. Scope is enforced in the query and nowhere else. An all-scope user
+      // gains no predicate, so super_admin output is unchanged.
+      //
+      // And the superseded two-flag active test, which counts 1,123 where the agreed
+      // definition — active_status alone — counts 1,125, leaving this report unable to
+      // reconcile against headcount.
+      addScopedEmployeeFilters(req, clauses, params);
+      clauses.push("e.active_status = 1");
       sql = `SELECT b.branch_name, d.dept_name AS department_name, p.process_name,
                     COUNT(e.id) AS headcount,
                     SUM(CASE WHEN e.reporting_manager_id IS NOT NULL OR e.manager_id IS NOT NULL THEN 1 ELSE 0 END) AS with_manager,
@@ -843,7 +854,7 @@ reportSuiteRouter.get("/:code", reportScopeMiddleware, reportCatalogAccessMiddle
                LEFT JOIN branch_master b ON b.id = e.branch_id
                LEFT JOIN department_master d ON d.id = e.department_id
                LEFT JOIN process_master p ON p.id = e.process_id
-              WHERE e.active_status = 1 AND LOWER(COALESCE(e.employment_status,'active')) = 'active'
+              WHERE ${clauses.join(" AND ")}
               GROUP BY b.branch_name, d.dept_name, p.process_name
               ORDER BY b.branch_name, d.dept_name, p.process_name`;
       break;
@@ -1213,6 +1224,11 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
     }
 
     case "punch-raw-export": {
+      // Row scope was absent: this block read employee data with no branch/process
+      // restriction, so a scoped user received every branch's rows. Scope is enforced in
+      // the query and nowhere else. For an all-scope user this adds no predicate, which is
+      // why super_admin output is unchanged.
+      addScopedEmployeeFilters(req, clauses, params);
       const from = dateParam(req.query.from, new Date().toISOString().slice(0, 10));
       const to = dateParam(req.query.to, from);
       clauses.push("ibd.activity_date BETWEEN ? AND ?"); params.push(from, to);
@@ -1493,6 +1509,11 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
 
     // ─── A5: Statutory ────────────────────────────────────────────────────────
     case "pf-ecr-export": {
+      // Row scope was absent: this block read employee data with no branch/process
+      // restriction, so a scoped user received every branch's rows. Scope is enforced in
+      // the query and nowhere else. For an all-scope user this adds no predicate, which is
+      // why super_admin output is unchanged.
+      addScopedEmployeeFilters(req, clauses, params);
       const month = monthParam(req.query.month);
       clauses.push("spr.run_month = ?"); params.push(month);
       clauses.push("LOWER(COALESCE(spr.status,'')) NOT IN ('draft','cancelled')");
@@ -2717,6 +2738,11 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
     }
 
     case "esign-digilocker-status": {
+      // Row scope was absent: this block read employee data with no branch/process
+      // restriction, so a scoped user received every branch's rows. Scope is enforced in
+      // the query and nowhere else. For an all-scope user this adds no predicate, which is
+      // why super_admin output is unchanged.
+      addScopedEmployeeFilters(req, clauses, params);
       const from = dateParam(req.query.from, `${new Date().getFullYear()}-01-01`);
       const to = dateParam(req.query.to, new Date().toISOString().slice(0, 10));
       if (req.query.branchId) { clauses.push("e.branch_id = ?"); params.push(String(req.query.branchId)); }
@@ -2765,6 +2791,11 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
     }
 
     case "attrition-by-exit-reason": {
+      // Row scope was absent: this block read employee data with no branch/process
+      // restriction, so a scoped user received every branch's rows. Scope is enforced in
+      // the query and nowhere else. For an all-scope user this adds no predicate, which is
+      // why super_admin output is unchanged.
+      addScopedEmployeeFilters(req, clauses, params);
       const year = String(req.query.year ?? new Date().getFullYear());
       if (req.query.branchId) { clauses.push("e.branch_id = ?"); params.push(String(req.query.branchId)); }
       clauses.push("YEAR(ar.exit_date) = ?"); params.push(year);
@@ -2912,6 +2943,11 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
     }
 
     case "tat-escalation-breach": {
+      // Row scope was absent: this block read employee data with no branch/process
+      // restriction, so a scoped user received every branch's rows. Scope is enforced in
+      // the query and nowhere else. For an all-scope user this adds no predicate, which is
+      // why super_admin output is unchanged.
+      addScopedEmployeeFilters(req, clauses, params);
       const from = dateParam(req.query.from, `${new Date().getFullYear()}-01-01`);
       const to = dateParam(req.query.to, new Date().toISOString().slice(0, 10));
       const taskType = String(req.query.taskType ?? "");
@@ -2932,6 +2968,11 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
     }
 
     case "sensitive-action-audit": {
+      // Row scope was absent: this block read employee data with no branch/process
+      // restriction, so a scoped user received every branch's rows. Scope is enforced in
+      // the query and nowhere else. For an all-scope user this adds no predicate, which is
+      // why super_admin output is unchanged.
+      addScopedEmployeeFilters(req, clauses, params);
       const from = dateParam(req.query.from, `${new Date().getFullYear()}-01-01`);
       const to = dateParam(req.query.to, new Date().toISOString().slice(0, 10));
       const module = String(req.query.module ?? "");
@@ -2973,6 +3014,11 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
 
     // ─── Missing Helpdesk & Grievance ─────────────────────────────────────────
     case "helpdesk-ticket-summary": {
+      // Row scope was absent: this block read employee data with no branch/process
+      // restriction, so a scoped user received every branch's rows. Scope is enforced in
+      // the query and nowhere else. For an all-scope user this adds no predicate, which is
+      // why super_admin output is unchanged.
+      addScopedEmployeeFilters(req, clauses, params);
       const from = dateParam(req.query.from, `${new Date().getFullYear()}-01-01`);
       const to = dateParam(req.query.to, new Date().toISOString().slice(0, 10));
       if (req.query.ticketCategory) { clauses.push("ht.category = ?"); params.push(String(req.query.ticketCategory)); }
@@ -2995,6 +3041,11 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
     }
 
     case "grievance-register": {
+      // Row scope was absent: this block read employee data with no branch/process
+      // restriction, so a scoped user received every branch's rows. Scope is enforced in
+      // the query and nowhere else. For an all-scope user this adds no predicate, which is
+      // why super_admin output is unchanged.
+      addScopedEmployeeFilters(req, clauses, params);
       const from = dateParam(req.query.from, `${new Date().getFullYear()}-01-01`);
       const to = dateParam(req.query.to, new Date().toISOString().slice(0, 10));
       if (req.query.status) { clauses.push("gc.status = ?"); params.push(String(req.query.status)); }
@@ -3051,6 +3102,11 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
     }
 
     case "dpdp-consent-status": {
+      // Row scope was absent: this block read employee data with no branch/process
+      // restriction, so a scoped user received every branch's rows. Scope is enforced in
+      // the query and nowhere else. For an all-scope user this adds no predicate, which is
+      // why super_admin output is unchanged.
+      addScopedEmployeeFilters(req, clauses, params);
       if (req.query.branchId) { clauses.push("e.branch_id = ?"); params.push(String(req.query.branchId)); }
       clauses.push("e.active_status = 1");
       sql = `SELECT e.employee_code,
@@ -3267,6 +3323,11 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
     }
 
     case "productivity-org-summary": {
+      // Row scope was absent: this block read employee data with no branch/process
+      // restriction, so a scoped user received every branch's rows. Scope is enforced in
+      // the query and nowhere else. For an all-scope user this adds no predicate, which is
+      // why super_admin output is unchanged.
+      addScopedEmployeeFilters(req, clauses, params);
       const from = dateParam(req.query.from, new Date().toISOString().slice(0, 10));
       const to = dateParam(req.query.to, from);
       if (req.query.branchId) { clauses.push("e.branch_id = ?"); params.push(String(req.query.branchId)); }
