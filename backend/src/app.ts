@@ -81,6 +81,7 @@ import { filesRouter } from "./modules/files/files.routes.js";
 import { employeeDocsRouter } from "./modules/employees/employee.documents.routes.js";
 import { helpdeskRouter } from "./modules/helpdesk/helpdesk.routes.js";
 import { uatPipelineRouter } from "./modules/uat-pipeline/uat-pipeline.routes.js";
+import { uatInternalRouter } from "./modules/uat-pipeline/uat-internal.routes.js";
 import { lettersRouter } from "./modules/letters/letters.routes.js";
 import { publicJoiningKitRouter, joiningKitRouter } from "./modules/employees/joiningKit.routes.js";
 import { appointmentEsignRouter } from "./modules/letters/appointment-esign.routes.js";
@@ -211,6 +212,7 @@ import { superAdminRouter } from "./modules/ats/super-admin.routes.js";
 import { vendorPaymentRouter } from "./modules/finance/vendor-payment.routes.js";
 import { grnRouter } from "./modules/finance/grn.routes.js";
 import { imprestRouter } from "./modules/finance/imprest.routes.js";
+import { salaryVoucherRouter } from "./modules/finance/salary-voucher.routes.js";
 import { costCentreManagementRouter } from "./modules/finance/cost-centre-management.routes.js";
 import { processPnlRouter } from "./modules/process-pnl/process-pnl.routes.js";
 import billabilityRouter from "./modules/process-pnl/billability.routes.js";
@@ -461,6 +463,11 @@ app.use("/api/payroll", payrollEpfComplianceRouter);
 app.use("/api/helpdesk", helpdeskRouter);
 // UAT governance. Additive mount on a new path — no existing route changes behaviour.
 app.use("/api/uat", uatPipelineRouter);
+// Mounted BEFORE requireAuth on purpose: a GitHub-hosted runner has no HRMS session, so its
+// only credential is an OIDC token. The router applies its own gate + OIDC middleware to
+// every route it owns, and refuses entirely (503) while automated builds are held — which
+// they are, until all eight gates in uat_gate_status are attested. See uat-internal.routes.ts.
+app.use("/api/uat-internal", uatInternalRouter);
 app.use("/api/letters", lettersRouter);
 app.use("/api/letters", appointmentEsignRouter);
 // Company signing certificate — super_admin only, handles private key material.
@@ -491,6 +498,9 @@ app.use("/api/finance", grnRouter);
 // Mounted at its own /imprest prefix rather than bare /api/finance, so no imprest path can
 // ever be shadowed by grnRouter's "/grns/:id"-shaped routes above it.
 app.use("/api/finance/imprest", imprestRouter);
+// Its own prefix, like imprest: a salary voucher exposes a whole branch payroll, and it must
+// not be reachable through a path that a broader finance router also serves.
+app.use("/api/finance/payroll", salaryVoucherRouter);
 app.use("/api/finance/cost-centres", costCentreManagementRouter);
 app.use("/api/finance", processPnlRouter);
 // Mounted on its own base, BEFORE nothing and after processPnlRouter deliberately: it

@@ -13,6 +13,7 @@ const NativeVendorPaymentTracking  = lazy(() => import("@/pages/NativeVendorPaym
 const NativeGRNManagement          = lazy(() => import("@/pages/NativeGRNManagement"));
 const BranchBudgetManagementPage   = lazy(() => import("@/pages/finance/BranchBudgetManagementPage"));
 const BudgetConsolidationPage      = lazy(() => import("@/pages/finance/BudgetConsolidationPage"));
+const SalaryVoucherPage      = lazy(() => import("@/pages/finance/SalaryVoucherPage"));
 const ProcessPnlPage               = lazy(() => import("@/pages/finance/ProcessPnlPage"));
 const ProcessPnlDetailPage         = lazy(() => import("@/pages/finance/ProcessPnlDetailPage"));
 const ProcessPnlConfigurationPage  = lazy(() => import("@/pages/finance/ProcessPnlConfigurationPage"));
@@ -48,6 +49,9 @@ export const financeRouteElements = (
       {/* Finance */}
       <Route path="/finance/vendor-payment-tracking" element={<ProtectedRoute roles={financeRoles}><Gate pageCode="FINANCE_VENDOR_PAYMENTS"><NativeVendorPaymentTracking /></Gate></ProtectedRoute>} />
       <Route path="/finance/grn"                     element={<ProtectedRoute roles={grnRoles}><Gate pageCode="FINANCE_GRN"><NativeGRNManagement /></Gate></ProtectedRoute>} />
+      {/* Roles match migration 1104's grants and the API's VOUCHER_ROLES exactly. A salary
+          voucher renders a whole branch payroll, so this stays narrower than the GRN set. */}
+      <Route path="/finance/salary-voucher"          element={<ProtectedRoute roles={['super_admin','finance_head','payroll_hr']}><Gate pageCode="FINANCE_SALARY_VOUCHER"><SalaryVoucherPage /></Gate></ProtectedRoute>} />
       <Route path="/finance/branch-budget"           element={<ProtectedRoute roles={['super_admin','admin','branch_admin','branch_head','finance','finance_head','accounts_head']}><Gate pageCode="FINANCE_BRANCH_BUDGET"><BranchBudgetManagementPage /></Gate></ProtectedRoute>} />
       <Route path="/finance/budget-consolidation"    element={<ProtectedRoute roles={budgetConsolidationRoles}><Gate pageCode="FINANCE_BUDGET_CONSOLIDATION"><BudgetConsolidationPage /></Gate></ProtectedRoute>} />
       <Route path="/finance/cost-centres"            element={<ProtectedRoute roles={costCentreRoles}><Gate pageCode="FINANCE_COST_CENTRES"><CostCentreManagementPage /></Gate></ProtectedRoute>} />

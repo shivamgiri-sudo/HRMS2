@@ -1,0 +1,4 @@
+{
+  "extends": "./tsconfig.app.json",
+  "include": ["src/components/finance/payroll/**/*.tsx", "src/vite-env.d.ts"]
+}
