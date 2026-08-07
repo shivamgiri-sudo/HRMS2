@@ -121,9 +121,12 @@ export function useOrgMasters(key: OrgMasterKey) {
   const branches = useBranches();
   const processes = useProcesses();
   const designations = useDesignations();
-  const map: Record<OrgMasterKey, ReturnType<typeof useClients>> = {
-    clients, lobs, branches, processes, designations,
-  };
+  /*
+   * Inferred, not annotated as Record<OrgMasterKey, ReturnType<typeof useClients>>. That said
+   * every entry was a UseQueryResult<Client[]>, which is true of exactly one of the five — so
+   * LOB[], Branch[], Process[] and Designation[] were all being asserted to be Client[].
+   */
+  const map = { clients, lobs, branches, processes, designations };
   return map[key];
 }
 

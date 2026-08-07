@@ -107,8 +107,7 @@ export async function generateMasCallnetPayslip(data: MasCallnetPayslipData): Pr
     body: [
       [
         { content: "Emp Name", styles: { fontStyle: "bold" } },
-        { content: data.empName, styles: { colSpan: 2 } },
-        null,
+        { content: data.empName, colSpan: 2 },
         { content: "Designation", styles: { fontStyle: "bold" } },
         data.designation,
         { content: "Department", styles: { fontStyle: "bold" } },
@@ -120,8 +119,7 @@ export async function generateMasCallnetPayslip(data: MasCallnetPayslipData): Pr
         { content: "EPF No", styles: { fontStyle: "bold" } },
         data.epfNo || "",
         { content: "Location", styles: { fontStyle: "bold" } },
-        { content: data.location, styles: { colSpan: 2 } },
-        null,
+        { content: data.location, colSpan: 2 },
       ],
       [
         { content: "ESI No", styles: { fontStyle: "bold" } },
@@ -129,8 +127,7 @@ export async function generateMasCallnetPayslip(data: MasCallnetPayslipData): Pr
         { content: "W Days", styles: { fontStyle: "bold" } },
         String(data.wDays),
         { content: "Earned Days", styles: { fontStyle: "bold" } },
-        { content: String(data.earnedDays), styles: { colSpan: 2 } },
-        null,
+        { content: String(data.earnedDays), colSpan: 2 },
       ],
     ],
     theme: "grid",
@@ -299,7 +296,7 @@ export async function generateMasCallnetPayslip(data: MasCallnetPayslipData): Pr
 
   currentY += 2;
   doc.setDrawColor(0, 0, 0);
-  doc.setLineDash([1, 1], 0);
+  doc.setLineDashPattern([1, 1], 0);
   doc.line(15, currentY, pageWidth - 15, currentY);
 
   return doc;

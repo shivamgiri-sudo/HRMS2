@@ -291,7 +291,7 @@ export async function generateBGVReportPDF(data: BGVReportData): Promise<jsPDF> 
   drawStatusBadge(doc, 55, currentY - 4, report.overall_status, 35);
 
   doc.text("BGV Score:", 120, currentY);
-  const scoreColor = report.bgv_score >= 80 ? [16, 185, 129] : report.bgv_score >= 60 ? [245, 158, 11] : [220, 38, 38];
+  const scoreColor: [number, number, number] = report.bgv_score >= 80 ? [16, 185, 129] : report.bgv_score >= 60 ? [245, 158, 11] : [220, 38, 38];
   doc.setTextColor(...scoreColor);
   doc.setFontSize(14);
   doc.text(`${report.bgv_score}/100`, 155, currentY);
@@ -580,7 +580,7 @@ export async function generateBGVReportPDF(data: BGVReportData): Promise<jsPDF> 
       ["IFSC Code", safeText(bank.ifsc_code)],
       ["Account Holder Name", safeText(bank.account_holder_name)],
       ["Account Type", safeText(bank.account_type)],
-      ["Account Number", safeText(bank.account_no_masked)],
+      ["Account Number", { content: safeText(bank.account_no_masked), styles: { font: 'courier' } }],
       ["Name on Cheque", safeText(bank.name_on_cheque)],
       ["Verification Status", safeText(bank.verification_status)],
       ["Provider", safeText(bank.provider_name)],
@@ -589,7 +589,6 @@ export async function generateBGVReportPDF(data: BGVReportData): Promise<jsPDF> 
     theme: 'grid',
     styles: { fontSize: 9, cellPadding: 2 },
     headStyles: { fillColor: [30, 41, 59], textColor: [255, 255, 255], fontStyle: 'bold' },
-    bodyStyles: { 5: { font: 'courier' } },
     columnStyles: {
       0: { fontStyle: 'bold', cellWidth: 60 },
       1: { cellWidth: 120 },
@@ -831,7 +830,7 @@ export async function generateBGVReportPDF(data: BGVReportData): Promise<jsPDF> 
   doc.text("BGV Score", 15, currentY);
   currentY += 2;
 
-  const scoreColorFinal = report.bgv_score >= 80 ? [16, 185, 129] : report.bgv_score >= 60 ? [245, 158, 11] : [220, 38, 38];
+  const scoreColorFinal: [number, number, number] = report.bgv_score >= 80 ? [16, 185, 129] : report.bgv_score >= 60 ? [245, 158, 11] : [220, 38, 38];
   doc.setFillColor(...scoreColorFinal);
   doc.roundedRect(15, currentY, 180, 20, 3, 3, 'F');
   doc.setTextColor(255, 255, 255);

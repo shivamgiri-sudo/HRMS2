@@ -79,6 +79,9 @@ type RecruiterProfile = {
   employeeId: string | null;
 };
 
+/** The Form keys whose value is a string — everything the generic field() renderer can bind to. */
+type StringFormKey = { [K in keyof Form]: Form[K] extends string ? K : never }[keyof Form];
+
 type Config = {
   processOptions: string[];
   decisionOptions: string[];
@@ -587,7 +590,7 @@ export default function NativeATSRecruiterWorkspace() {
     setInterviewerSearchLoading(true);
     try {
       const params = new URLSearchParams({ roundType: "second_round", limit: "50" });
-      const branch = recruiterProfile?.branch_name;
+      const branch = recruiterProfile?.branch;
       if (branch) params.set("branchName", branch);
       if (q.trim()) params.set("q", q.trim());
       const res = await hrmsApi.get<{ success: boolean; data: Array<{ id: string; name: string; branch_name?: string | null; designation_name?: string | null }> }>(
@@ -918,7 +921,13 @@ export default function NativeATSRecruiterWorkspace() {
     });
   }, [history, query, decision, fromDate, toDate]);
 
-  const field = (label: string, key: keyof Form, type: "input" | "select" | "textarea", options: string[] = []) => (
+  /*
+   * Only the string-valued keys.  also covers clientRoundConducted and
+   * followupRequired, which are booleans, and an <input value="..."> cannot take one — so this
+   * renderer advertised support for two fields it could never render. If a caller ever does pass
+   * a boolean key, it now fails here instead of silently coercing.
+   */
+  const field = (label: string, key: StringFormKey, type: "input" | "select" | "textarea", options: string[] = []) => (
     <div>
       <label>{label}</label>
       {type === "textarea"

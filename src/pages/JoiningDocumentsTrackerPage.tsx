@@ -251,25 +251,25 @@ export default function JoiningDocumentsTrackerPage() {
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           <HrmsBentoTile
             icon={<Users className="h-5 w-5" />}
-            label="Total Employees"
+            title="Total Employees"
             value={summary.total_employees}
             className="bg-slate-50 text-slate-700"
           />
           <HrmsBentoTile
             icon={<CheckCircle2 className="h-5 w-5" />}
-            label="Completed"
+            title="Completed"
             value={summary.completed_count}
             className="bg-emerald-50 text-emerald-700"
           />
           <HrmsBentoTile
             icon={<Clock className="h-5 w-5" />}
-            label="In Progress"
+            title="In Progress"
             value={summary.in_progress_count}
             className="bg-amber-50 text-amber-700"
           />
           <HrmsBentoTile
             icon={<AlertTriangle className="h-5 w-5" />}
-            label="Overdue"
+            title="Overdue"
             value={summary.overdue_count}
             className="bg-rose-50 text-rose-700"
           />
