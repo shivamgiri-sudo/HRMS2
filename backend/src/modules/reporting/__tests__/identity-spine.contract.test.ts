@@ -168,15 +168,10 @@ describe("mandatory identity columns on employee-grain reports", () => {
    * preview, its direct XLSX and its emailed XLSX can each run a different query.
    */
   const NOT_YET_MIGRATED = new Set<string>([
-    "payslip-status",
     // Served by inline case blocks in report-suite.routes.ts, not by an executor â€” they
     // migrate when Phase 3 collapses those into executors.
-    "pf-esi-optout-register",
-    "pt-monthly-register",
     // Lives in identity.executor.ts, migrates with that file.
-    "pf-esic-salary-register",
     "productivity-individual-scorecard",
-    "roster-adherence",
     "salary-sheet-export",
   ]);
 

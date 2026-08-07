@@ -81,6 +81,7 @@ import {
   ytdSalarySummary,
   lwpDeductionRegister,
   neftTransferFile,
+  payslipStatus,
 } from "./payroll.executor.js";
 
 // â”€â”€â”€ Statutory â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -93,6 +94,9 @@ import {
   form16Status,
   investmentDeclarationStatus,
   gratuityLiabilityRegister,
+  ptMonthlyRegister,
+  pfEsicSalaryRegister,
+  pfEsiOptOutRegister,
 } from "./statutory.executor.js";
 
 // â”€â”€â”€ Exit & Attrition â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -131,6 +135,7 @@ import {
   rosterVariance,
   shiftSwapRegister,
   weekOffCalendar,
+  rosterAdherence,
 } from "./wfm.executor.js";
 
 // â”€â”€â”€ Assets â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -236,6 +241,11 @@ export const EXECUTOR_MAP: Record<string, ExecutorFn> = {
   "ytd-salary-summary":       ytdSalarySummary,
   "lwp-deduction-register":   lwpDeductionRegister,
   "neft-transfer-file":       neftTransferFile,
+  "payslip-status":           payslipStatus,
+  "pt-monthly-register":      ptMonthlyRegister,
+  "pf-esic-salary-register":  pfEsicSalaryRegister,
+  "pf-esi-optout-register":   pfEsiOptOutRegister,
+  "roster-adherence":         rosterAdherence,
 
   // Statutory
   "pf-contribution-register":  pfContributionRegister,

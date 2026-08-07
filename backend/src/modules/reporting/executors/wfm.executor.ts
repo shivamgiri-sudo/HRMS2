@@ -277,3 +277,65 @@ export async function weekOffCalendar(
   const out = rows.map(({ _cursor: _, ...rest }) => rest);
   return { rows: out, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > out.length, nextCursor };
 }
+
+// ---------------------------------------------------------------------------
+// roster-adherence
+//
+// Folded in from an inline `case` block, behaviour preserved. Gains cost centre, process
+// and branch, none of which the original selected.
+//
+// The adherent CASE keeps its original vocabulary deliberately: it tests
+// attendance_status IN ('present','half_day'), NOT the shared PRESENT_STATUSES helper.
+// Those differ — the helper also counts 'week_off_worked' as present. Silently widening
+// this report's definition would change an adherence figure while claiming to be a
+// refactor. Whether a worked week-off counts as roster-adherent is a WFM question, not
+// something to settle by moving a file.
+// ---------------------------------------------------------------------------
+export async function rosterAdherence(
+  filters: ExecFilters,
+  scope: ExecScope,
+  options: ExecOptions
+): Promise<ExecResult> {
+  const today = new Date().toISOString().slice(0, 10);
+  const from  = dateParam(filters.from, today);
+  const to    = dateParam(filters.to, from);
+
+  const clauses: string[] = ["e.id IS NOT NULL"];
+  const params: unknown[] = [];
+  appendScopeConditions(scope, clauses, params);
+  appendFilterConditions(filters, clauses, params);
+  clauses.push("adr.record_date BETWEEN ? AND ?");
+  params.push(from, to);
+
+  const base = `
+    SELECT adr.record_date,
+           e.employee_code,
+           COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
+           COALESCE(sp_cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
+           COALESCE(sp_cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
+           b.branch_name,
+           COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
+           COALESCE(ws.shift_name, 'Unassigned') AS roster_shift,
+           adr.attendance_status,
+           adr.late_mark,
+           CASE
+             WHEN adr.attendance_status IN ('present','half_day') AND adr.late_mark = 0 THEN 'Y'
+             WHEN adr.attendance_status IN ('present','half_day') AND adr.late_mark = 1 THEN 'LATE'
+             ELSE 'N'
+           END AS adherent
+      FROM attendance_daily_record adr
+      JOIN employees e ON e.id = adr.employee_id
+      LEFT JOIN wfm_roster_assignment wra
+             ON wra.employee_id = adr.employee_id AND wra.roster_date = adr.record_date
+      LEFT JOIN wfm_shift_master ws ON ws.id = wra.shift_id
+      LEFT JOIN branch_master b ON b.id = e.branch_id
+      LEFT JOIN process_master p ON p.id = e.process_id
+      LEFT JOIN cost_centre_master sp_cc ON sp_cc.id = e.cost_centre_id
+     WHERE ${clauses.join(" AND ")}
+     ORDER BY adr.record_date DESC, employee_name`;
+
+  const total = options.includeTotal ? await count(base, params) : 0;
+  const sql   = applyPagination(base, options);
+  const rows  = await query(sql, params) as Record<string, unknown>[];
+  return { rows, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > rows.length };
+}

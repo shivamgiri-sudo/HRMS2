@@ -762,19 +762,9 @@ reportSuiteRouter.get("/:code", reportScopeMiddleware, reportCatalogAccessMiddle
               ORDER BY ABS(spl.net_salary - COALESCE(prev.net_salary, 0)) DESC`;
       break;
     }
-    case "payslip-status": {
-      const month = monthParam(req.query.month);
-      addScopedEmployeeFilters(req, clauses, params);
-      clauses.push("spr.run_month = ?"); params.push(month);
-      sql = `SELECT spr.run_month, e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-                    sp.payslip_ref, sp.file_url, sp.acknowledged_at,
-                    CASE WHEN sp.id IS NULL THEN 'NOT_GENERATED' WHEN sp.acknowledged_at IS NULL THEN 'RELEASED_NOT_ACKNOWLEDGED' ELSE 'ACKNOWLEDGED' END AS payslip_status
-               FROM salary_prep_line spl JOIN salary_prep_run spr ON spr.id = spl.run_id JOIN employees e ON e.id = spl.employee_id
-               LEFT JOIN salary_payslip sp ON sp.prep_line_id = spl.id
-              WHERE ${clauses.join(" AND ")}
-              ORDER BY payslip_status DESC, employee_name`;
-      break;
-    }
+    // "payslip-status" now falls through to the default branch, which calls
+    // executeReport() — the single implementation shared by screen, direct XLSX and
+    // emailed file.
     case "statutory-missing":
       addScopedEmployeeFilters(req, clauses, params); clauses.push("e.active_status = 1");
       sql = `SELECT e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
@@ -1421,17 +1411,9 @@ reportSuiteRouter.get("/:code", reportScopeMiddleware, reportCatalogAccessMiddle
       break;
     }
 
-    case "pf-esi-optout-register":
-      addScopedEmployeeFilters(req, clauses, params);
-      sql = `SELECT e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-                    eso.override_type AS opt_out_type,
-                    eso.effective_from_month AS effective_month,
-                    eso.status, eso.approved_at, eso.audit_note AS reason
-               FROM employee_statutory_override eso
-               JOIN employees e ON e.id = eso.employee_id
-              WHERE ${clauses.length ? clauses.join(" AND ") : "1=1"}
-              ORDER BY employee_name, eso.override_type`;
-      break;
+    // "pf-esi-optout-register" now falls through to the default branch, which calls
+    // executeReport() — the single implementation shared by screen, direct XLSX and
+    // emailed file.
 
     case "grade-salary-distribution": {
       const month = monthParam(req.query.month);
@@ -1539,49 +1521,13 @@ reportSuiteRouter.get("/:code", reportScopeMiddleware, reportCatalogAccessMiddle
       break;
     }
 
-    case "pt-monthly-register": {
-      const month = monthParam(req.query.month);
-      addScopedEmployeeFilters(req, clauses, params);
-      clauses.push("spr.run_month = ?"); params.push(month);
-      clauses.push("LOWER(COALESCE(spr.status,'')) NOT IN ('draft','cancelled')");
-      sql = `SELECT e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-                    COALESCE(e.state, 'Unknown') AS state,
-                    spl.gross_salary, spl.professional_tax AS pt_deducted, spr.run_month
-               FROM salary_prep_line spl
-               JOIN salary_prep_run spr ON spr.id = spl.run_id
-               JOIN employees e ON e.id = spl.employee_id
-              WHERE ${clauses.join(" AND ")} AND spl.professional_tax > 0
-              ORDER BY e.state, employee_name`;
-      break;
-    }
+    // "pt-monthly-register" now falls through to the default branch, which calls
+    // executeReport() — the single implementation shared by screen, direct XLSX and
+    // emailed file.
 
-    case "pf-esic-salary-register": {
-      const month = monthParam(req.query.month);
-      addScopedEmployeeFilters(req, clauses, params);
-      clauses.push("spr.run_month = ?"); params.push(month);
-      clauses.push("LOWER(COALESCE(spr.status,'')) NOT IN ('draft','cancelled')");
-      sql = `SELECT e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-                    b.branch_name, p.process_name, spr.run_month AS payroll_month,
-                    COALESCE(eu.uan, e.epf_number) AS uan,
-                    e.esic_number,
-                    LEAST(COALESCE(spl.basic, 0), 15000) AS pf_basic,
-                    spl.gross_salary AS gross_wages,
-                    COALESCE(spl.pf_employee, 0) AS pf_employee,
-                    COALESCE(spl.pf_employer, 0) AS pf_employer,
-                    ROUND(COALESCE(spl.pf_employer,0) * 8.33/12, 0) AS eps_contribution,
-                    COALESCE(spl.esic_employee, 0) AS esic_employee,
-                    COALESCE(spl.esic_employer, 0) AS esic_employer,
-                    spl.net_salary
-               FROM salary_prep_line spl
-               JOIN salary_prep_run spr ON spr.id = spl.run_id
-               JOIN employees e ON e.id = spl.employee_id
-               LEFT JOIN branch_master b ON b.id = e.branch_id
-               LEFT JOIN process_master p ON p.id = e.process_id
-               LEFT JOIN employee_uan eu ON eu.employee_id = e.id AND eu.is_active = 1
-              WHERE ${clauses.join(" AND ")}
-              ORDER BY b.branch_name, employee_name`;
-      break;
-    }
+    // "pf-esic-salary-register" now falls through to the default branch, which calls
+    // executeReport() — the single implementation shared by screen, direct XLSX and
+    // emailed file.
 
     case "tds-working-sheet": {
       const year = Number(req.query.year ?? new Date().getFullYear());
@@ -2001,27 +1947,9 @@ reportSuiteRouter.get("/:code", reportScopeMiddleware, reportCatalogAccessMiddle
       break;
 
     // ─── A9: WFM & Roster ─────────────────────────────────────────────────────
-    case "roster-adherence": {
-      const from = dateParam(req.query.from, new Date().toISOString().slice(0, 10));
-      const to = dateParam(req.query.to, from);
-      addScopedEmployeeFilters(req, clauses, params);
-      clauses.push("adr.record_date BETWEEN ? AND ?"); params.push(from, to);
-      sql = `SELECT adr.record_date, e.employee_code,
-                    COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-                    COALESCE(ws.shift_name, 'Unassigned') AS roster_shift,
-                    adr.attendance_status, adr.late_mark,
-                    CASE WHEN adr.attendance_status IN ('present','half_day') AND adr.late_mark = 0 THEN 'Y'
-                         WHEN adr.attendance_status IN ('present','half_day') AND adr.late_mark = 1 THEN 'LATE'
-                         ELSE 'N' END AS adherent
-               FROM attendance_daily_record adr
-               JOIN employees e ON e.id = adr.employee_id
-               LEFT JOIN wfm_roster_assignment wra ON wra.employee_id = adr.employee_id
-                 AND wra.roster_date = adr.record_date
-               LEFT JOIN wfm_shift_master ws ON ws.id = wra.shift_id
-              WHERE ${clauses.join(" AND ")}
-              ORDER BY adr.record_date DESC, employee_name`;
-      break;
-    }
+    // "roster-adherence" now falls through to the default branch, which calls
+    // executeReport() — the single implementation shared by screen, direct XLSX and
+    // emailed file.
 
     case "workforce-mandate-vs-actual": {
       const from = dateParam(req.query.from, new Date().toISOString().slice(0, 10));

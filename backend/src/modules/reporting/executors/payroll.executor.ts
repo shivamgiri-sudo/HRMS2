@@ -737,3 +737,57 @@ export async function neftTransferFile(
   const rows  = await query(sql, params) as Record<string, unknown>[];
   return { rows, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > rows.length };
 }
+
+// ---------------------------------------------------------------------------
+// payslip-status
+//
+// Folded in from an inline `case` block, behaviour preserved. One row per payroll line
+// with the payslip's generation and acknowledgement state; a NULL salary_payslip row means
+// NOT_GENERATED, which is the state this report exists to surface. Gains cost centre,
+// process and branch — a payslip chase-list is worked branch by branch.
+// ---------------------------------------------------------------------------
+export async function payslipStatus(
+  filters: ExecFilters,
+  scope: ExecScope,
+  options: ExecOptions
+): Promise<ExecResult> {
+  const runMonth = monthParam(filters.month);
+
+  const clauses: string[] = ["e.id IS NOT NULL"];
+  const params: unknown[] = [];
+  appendScopeConditions(scope, clauses, params);
+  appendFilterConditions(filters, clauses, params);
+  clauses.push("spr.run_month = ?");
+  params.push(runMonth);
+
+  const base = `
+    SELECT spr.run_month,
+           e.employee_code,
+           COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
+           COALESCE(sp_cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
+           COALESCE(sp_cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
+           b.branch_name,
+           COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
+           sp.payslip_ref,
+           sp.file_url,
+           sp.acknowledged_at,
+           CASE
+             WHEN sp.id IS NULL THEN 'NOT_GENERATED'
+             WHEN sp.acknowledged_at IS NULL THEN 'RELEASED_NOT_ACKNOWLEDGED'
+             ELSE 'ACKNOWLEDGED'
+           END AS payslip_status
+      FROM salary_prep_line spl
+      JOIN salary_prep_run spr ON spr.id = spl.run_id
+      JOIN employees e ON e.id = spl.employee_id
+      LEFT JOIN salary_payslip sp ON sp.prep_line_id = spl.id
+      LEFT JOIN branch_master b ON b.id = e.branch_id
+      LEFT JOIN process_master p ON p.id = e.process_id
+      LEFT JOIN cost_centre_master sp_cc ON sp_cc.id = e.cost_centre_id
+     WHERE ${clauses.join(" AND ")}
+     ORDER BY payslip_status DESC, employee_name`;
+
+  const total = options.includeTotal ? await count(base, params) : 0;
+  const sql   = applyPagination(base, options);
+  const rows  = await query(sql, params) as Record<string, unknown>[];
+  return { rows, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > rows.length };
+}

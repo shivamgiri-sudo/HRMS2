@@ -648,3 +648,153 @@ export async function gratuityLiabilityRegister(
     nextCursor,
   };
 }
+
+// ---------------------------------------------------------------------------
+// pt-monthly-register
+//
+// Folded in from an inline `case` block, behaviour preserved: professional tax actually
+// deducted per employee for a run month, restricted to lines where PT is non-zero.
+// Gains cost centre, process and branch.
+// ---------------------------------------------------------------------------
+export async function ptMonthlyRegister(
+  filters: ExecFilters,
+  scope: ExecScope,
+  options: ExecOptions
+): Promise<ExecResult> {
+  const runMonth = monthParam(filters.month);
+
+  const clauses: string[] = ["e.id IS NOT NULL"];
+  const params: unknown[] = [];
+  appendScopeConditions(scope, clauses, params);
+  appendFilterConditions(filters, clauses, params);
+  clauses.push("spr.run_month = ?");
+  params.push(runMonth);
+  clauses.push("LOWER(COALESCE(spr.status,'')) NOT IN ('draft','cancelled')");
+  clauses.push("spl.professional_tax > 0");
+
+  const base = `
+    SELECT e.employee_code,
+           COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
+           COALESCE(sp_cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
+           COALESCE(sp_cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
+           b.branch_name,
+           COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
+           COALESCE(e.state, 'Unknown') AS state,
+           spl.gross_salary,
+           spl.professional_tax AS pt_deducted,
+           spr.run_month
+      FROM salary_prep_line spl
+      JOIN salary_prep_run spr ON spr.id = spl.run_id
+      JOIN employees e ON e.id = spl.employee_id
+      LEFT JOIN branch_master b ON b.id = e.branch_id
+      LEFT JOIN process_master p ON p.id = e.process_id
+      LEFT JOIN cost_centre_master sp_cc ON sp_cc.id = e.cost_centre_id
+     WHERE ${clauses.join(" AND ")}
+     ORDER BY e.state, employee_name`;
+
+  const total = options.includeTotal ? await count(base, params) : 0;
+  const sql   = applyPagination(base, options);
+  const rows  = await query(sql, params) as Record<string, unknown>[];
+  return { rows, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > rows.length };
+}
+
+// ---------------------------------------------------------------------------
+// pf-esic-salary-register
+//
+// Folded in from an inline `case` block, behaviour preserved exactly — including the two
+// statutory constants it carries: the PF wage ceiling of 15,000 (LEAST) and the EPS share
+// of 8.33/12. Neither is changed here; payroll arithmetic stays read-only, and moving
+// those into effective-dated statutory config is a separate, approved change.
+// Gains cost centre.
+// ---------------------------------------------------------------------------
+export async function pfEsicSalaryRegister(
+  filters: ExecFilters,
+  scope: ExecScope,
+  options: ExecOptions
+): Promise<ExecResult> {
+  const runMonth = monthParam(filters.month);
+
+  const clauses: string[] = ["e.id IS NOT NULL"];
+  const params: unknown[] = [];
+  appendScopeConditions(scope, clauses, params);
+  appendFilterConditions(filters, clauses, params);
+  clauses.push("spr.run_month = ?");
+  params.push(runMonth);
+  clauses.push("LOWER(COALESCE(spr.status,'')) NOT IN ('draft','cancelled')");
+
+  const base = `
+    SELECT e.employee_code,
+           COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
+           COALESCE(sp_cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
+           COALESCE(sp_cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
+           b.branch_name,
+           COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
+           spr.run_month AS payroll_month,
+           COALESCE(eu.uan, e.epf_number) AS uan,
+           e.esic_number,
+           LEAST(COALESCE(spl.basic, 0), 15000) AS pf_basic,
+           spl.gross_salary AS gross_wages,
+           COALESCE(spl.pf_employee, 0) AS pf_employee,
+           COALESCE(spl.pf_employer, 0) AS pf_employer,
+           ROUND(COALESCE(spl.pf_employer,0) * 8.33/12, 0) AS eps_contribution,
+           COALESCE(spl.esic_employee, 0) AS esic_employee,
+           COALESCE(spl.esic_employer, 0) AS esic_employer,
+           spl.net_salary
+      FROM salary_prep_line spl
+      JOIN salary_prep_run spr ON spr.id = spl.run_id
+      JOIN employees e ON e.id = spl.employee_id
+      LEFT JOIN branch_master b ON b.id = e.branch_id
+      LEFT JOIN process_master p ON p.id = e.process_id
+      LEFT JOIN cost_centre_master sp_cc ON sp_cc.id = e.cost_centre_id
+      LEFT JOIN employee_uan eu ON eu.employee_id = e.id AND eu.is_active = 1
+     WHERE ${clauses.join(" AND ")}
+     ORDER BY b.branch_name, employee_name`;
+
+  const total = options.includeTotal ? await count(base, params) : 0;
+  const sql   = applyPagination(base, options);
+  const rows  = await query(sql, params) as Record<string, unknown>[];
+  return { rows, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > rows.length };
+}
+
+// ---------------------------------------------------------------------------
+// pf-esi-optout-register
+//
+// Folded in from an inline `case` block. The original joined no org masters at all, so an
+// approved statutory opt-out could not be attributed to a branch, process or cost centre —
+// on a compliance register that is the first thing an auditor asks for. All are added.
+// ---------------------------------------------------------------------------
+export async function pfEsiOptOutRegister(
+  filters: ExecFilters,
+  scope: ExecScope,
+  options: ExecOptions
+): Promise<ExecResult> {
+  const clauses: string[] = ["e.id IS NOT NULL"];
+  const params: unknown[] = [];
+  appendScopeConditions(scope, clauses, params);
+  appendFilterConditions(filters, clauses, params);
+
+  const base = `
+    SELECT e.employee_code,
+           COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
+           COALESCE(sp_cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
+           COALESCE(sp_cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
+           b.branch_name,
+           COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
+           eso.override_type AS opt_out_type,
+           eso.effective_from_month AS effective_month,
+           eso.status,
+           eso.approved_at,
+           eso.audit_note AS reason
+      FROM employee_statutory_override eso
+      JOIN employees e ON e.id = eso.employee_id
+      LEFT JOIN branch_master b ON b.id = e.branch_id
+      LEFT JOIN process_master p ON p.id = e.process_id
+      LEFT JOIN cost_centre_master sp_cc ON sp_cc.id = e.cost_centre_id
+     WHERE ${clauses.join(" AND ")}
+     ORDER BY eso.approved_at DESC, employee_name`;
+
+  const total = options.includeTotal ? await count(base, params) : 0;
+  const sql   = applyPagination(base, options);
+  const rows  = await query(sql, params) as Record<string, unknown>[];
+  return { rows, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > rows.length };
+}
