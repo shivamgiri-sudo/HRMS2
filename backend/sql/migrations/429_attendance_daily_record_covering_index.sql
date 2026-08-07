@@ -1,48 +1,73 @@
 -- 429_attendance_daily_record_covering_index.sql
 --
 -- Makes every month-range attendance aggregate use a covering index instead of falling back
--- to a near-full table scan. NOT YET APPLIED — see the note at the bottom.
+-- to a near-full table scan. NOT YET APPLIED — not registered in the manifest; see the bottom.
 --
--- The problem, measured on live mas_hrms (2026-08-08), 118,791 rows in the table:
+-- ── Why ─────────────────────────────────────────────────────────────────────────────────
+-- Measured on live mas_hrms (2026-08-08), 104,611 rows:
 --
---   SELECT employee_id, COUNT(*)
---     FROM attendance_daily_record
+--   SELECT employee_id, COUNT(*) FROM attendance_daily_record
 --    WHERE record_date >= '2026-07-01' AND record_date < '2026-08-01'
---    GROUP BY employee_id;                                    -->  2,065 ms
+--    GROUP BY employee_id;                                            -->  2,065 ms
+--   ... the same plus SUM(COALESCE(raw_minutes, biometric_minutes,0)>0) --> 42,420 ms
 --
---   ... the same query with SUM(COALESCE(raw_minutes, biometric_minutes, 0) > 0)
---                                                             --> 42,420 ms
+-- One column the index does not carry, and a 20x cost, because the optimiser does not
+-- range-scan then look rows up. It ABANDONS idx_adr_date_employee and switches to
+-- uq_emp_date (employee_id, record_date), where record_date is not leading, so the month
+-- predicate narrows nothing:
 --
--- The only difference is that the second needs a column the index does not carry. EXPLAIN
--- shows why the cost is 20x rather than marginal: the optimiser does not do the range scan
--- and then look rows up. It ABANDONS idx_adr_date_employee entirely and switches to
--- uq_emp_date, which is (employee_id, record_date) — record_date is not leading, so the month
--- predicate cannot narrow anything and it examines 104,611 rows instead of the 41,106 in
--- range.
+--   without minutes   key=idx_adr_date_employee   rows=52,305    Using index
+--   with minutes      key=uq_emp_date             rows=104,611   Using where
 --
---   without the minutes column   key=idx_adr_date_employee  rows=52,305  Using index
---   with the minutes column      key=uq_emp_date            rows=104,611 Using where
+-- This is why attendance-enrollment-gap took 79s and attendance-summary ~150s. It affects the
+-- 48 sites that aggregate attendance_daily_record over a date range. FORCE INDEX recovers
+-- part of it (35,244 ms -> 12,794 ms measured) but is still not covering and would have to be
+-- pasted at all 48. One index fixes them all with no query changes.
 --
--- FORCE INDEX (idx_adr_date_employee) recovers part of it — 35,244 ms -> 12,794 ms measured —
--- but it is still not covering, and it would have to be pasted at 48 query sites and would
--- then fight this index once it exists. One index fixes all 48 without touching a query.
+-- ── Safety ──────────────────────────────────────────────────────────────────────────────
+-- Server is MySQL 8.0.42 / InnoDB, so ADD INDEX runs as online DDL: concurrent reads AND
+-- writes continue and the table is not rebuilt. ALGORITHM=INPLACE, LOCK=NONE are stated
+-- explicitly rather than left to the default, so that if this server ever cannot do it online
+-- the statement ERRORS instead of silently falling back to a blocking table copy.
 --
--- Extending the existing (record_date, employee_id) index to carry the two minute columns
--- makes the aggregate covering, which is the 2,065 ms path.
+-- Size and write cost are not the concern: the table is 55.2 MB of data, the new index adds
+-- roughly 10 MB, and ingest is about 900 rows a day (6,373 in the last 7 days), so a
+-- nineteenth index is immaterial to write throughput.
 --
--- Additive and reversible: no data is read, written or moved, and the rollback is one line.
--- On 118,791 rows the build is seconds. It duplicates the prefix of idx_adr_date_employee, so
--- that index becomes redundant afterwards — deliberately NOT dropped here, because dropping
--- an index other queries may be hinted against is a separate decision with its own blast
--- radius.
+-- THE REAL RISK IS TIMING, NOT THE CHANGE. Online DDL still takes a short exclusive metadata
+-- lock at the start and end. If it lands behind a long-running query on this table it waits,
+-- and everything touching the table queues behind it. At the time of writing the server had
+-- 21 threads running and 8 queries already past 10 seconds, so this must not be run blind.
+-- lock_wait_timeout is set low deliberately: the statement gives up quickly rather than
+-- forming a queue. If it aborts, that is the guard doing its job — retry when the server is
+-- quiet, do not raise the timeout to force it through.
+--
+-- Rollback is one line and equally online:
+--   ALTER TABLE attendance_daily_record DROP INDEX idx_adr_date_emp_covering;
+
+SET SESSION lock_wait_timeout = 10;
 
 ALTER TABLE attendance_daily_record
-  ADD INDEX idx_adr_date_emp_covering (record_date, employee_id, raw_minutes, biometric_minutes);
+  ADD INDEX idx_adr_date_emp_covering (record_date, employee_id, raw_minutes, biometric_minutes),
+  ALGORITHM=INPLACE, LOCK=NONE;
 
--- Rollback:
---   ALTER TABLE attendance_daily_record DROP INDEX idx_adr_date_emp_covering;
+-- ── Redundancy this creates, and what was already there ─────────────────────────────────
+-- The new index has (record_date, employee_id) as an exact prefix, so it supersedes both
+-- idx_adr_date_employee (record_date, employee_id) and idx_adr_date (record_date). Dropping
+-- them would return the index count to 18 and the disk cost to roughly neutral.
 --
--- NOT ADDED TO sql/MIGRATION_MANIFEST.lock.json ON PURPOSE.
--- Migrations in this project run at boot: production has no SKIP_MIGRATIONS, so a pm2 restart
--- applies whatever the manifest lists. Adding this file to the manifest IS the deployment, and
--- production DDL needs explicit sign-off. Register it there when that sign-off is given.
+-- Deliberately NOT dropped in this migration. Dropping an index is the half that cannot be
+-- undone cheaply if some other query depended on it, and it should be a separate decision
+-- taken after this one is confirmed to help. Left as:
+--   ALTER TABLE attendance_daily_record DROP INDEX idx_adr_date_employee;  -- superseded
+--   ALTER TABLE attendance_daily_record DROP INDEX idx_adr_date;           -- superseded
+--
+-- Noticed while checking the above, and NOT touched here because it predates this work:
+-- idx_adr_emp_date and uq_emp_date are both (employee_id, record_date) — the same index
+-- twice. One of them is pure write overhead on every insert. Worth raising separately.
+--
+-- ── Deployment ──────────────────────────────────────────────────────────────────────────
+-- NOT ADDED TO sql/MIGRATION_MANIFEST.lock.json ON PURPOSE. Migrations run at boot here:
+-- production has no SKIP_MIGRATIONS, so a pm2 restart applies whatever the manifest lists.
+-- Adding this file to the manifest IS the deployment. Register it only with explicit sign-off,
+-- and prefer a low-traffic window.
