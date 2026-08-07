@@ -77,7 +77,8 @@ export default function NativeControlTower() {
       setEvents(eventRes.data ?? []);
       setHealth(healthRes.data ?? { checks: [], total_issues: 0 });
       setRisks(riskRes.data ?? { open_risks: [], counts: {}, generated_risks: [] });
-      setLastRefresh(formatISTTime());
+      // formatISTTime returns "" for a falsy argument, so "last refreshed" was always blank.
+      setLastRefresh(formatISTTime(new Date()));
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {

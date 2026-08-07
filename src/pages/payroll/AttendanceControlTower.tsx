@@ -436,7 +436,7 @@ export default function AttendanceControlTower() {
               <Button
                 size="sm"
                 className="h-9 bg-white text-blue-800 hover:bg-blue-50"
-                onClick={() => notifyManagers.mutate()}
+                onClick={() => notifyManagers.mutate(undefined)}
                 disabled={notifyManagers.isPending || (selected.length ? selectedConflictCount === 0 : managerConflictCount === 0)}
               >
                 <Bell className="mr-1.5 h-4 w-4" />

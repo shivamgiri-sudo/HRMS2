@@ -189,7 +189,8 @@ export default function NativeSupportCommandCenter() {
         setAging(res.data.aging ?? null);
         setRootCauses(res.data.root_causes ?? []);
       }
-      setLastRefresh(formatISTTime());
+      // formatISTTime returns "" for a falsy argument, so "last refreshed" was always blank.
+      setLastRefresh(formatISTTime(new Date()));
     } catch (e: any) {
       setError(e.message ?? "Failed to load");
     } finally {

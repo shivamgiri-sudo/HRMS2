@@ -31,7 +31,7 @@ import {
 } from "lucide-react";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { useToast } from "@/hooks/use-toast";
-import { useUserRole } from "@/hooks/useUserRole";
+import { useWorkforceAccess } from "@/hooks/useUserRole";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -2214,7 +2214,9 @@ function DedTypeForm({ form, onChange }: { form: ReturnType<typeof emptyDedTypeF
 // ── Advance Requests Tab ─────────────────────────────────────────────────────
 
 function AdvanceRequestsTab() {
-  const { roleKeys } = useUserRole();
+  // useUserRole returns the raw UseQueryResult; roleKeys lives on useWorkforceAccess, which is
+  // what every other caller in the app uses.
+  const { roleKeys } = useWorkforceAccess();
   const isHRorFinance = roleKeys.some((r) => ["payroll_head", "finance", "admin", "super_admin"].includes(r));
   const [requestForm, setRequestForm] = useState({ amount: "", purpose: "Personal", recovery_months: "3" });
   const [statusFilter, setStatusFilter] = useState("pending");

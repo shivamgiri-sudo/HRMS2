@@ -45,7 +45,13 @@ interface ProvisioningRequest {
   request_type: "join" | "exit";
   task_code: string;
   assigned_role: string;
-  status: "pending" | "actioned" | "confirmed" | "waived";
+  /*
+   * pending_unassigned is part of the ENUM (migration 420) and the backend branches on it
+   * explicitly. it-provisioning.service.ts records why it was kept rather than folded into
+   * 'pending': this UI renders an "Unassigned" badge and gates its reassign action on exactly
+   * this value. The union simply never listed it, so that branch looked unreachable.
+   */
+  status: "pending" | "pending_unassigned" | "actioned" | "confirmed" | "waived";
   locked: number;
   trigger_event_id: string | null;
   requested_at: string;

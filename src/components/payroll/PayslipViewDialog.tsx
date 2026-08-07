@@ -124,7 +124,14 @@ export function PayslipViewDialog({ open, onOpenChange, record }: PayslipViewDia
   // attDetail now returns eligible counts from salary_prep_line when available
   const eligibleWeekoff  = record.eligibleWeekoffDays ?? attDetail?.week_off_days ?? 0;
   const eligibleHoliday  = record.eligibleHolidayDays ?? attDetail?.holiday_days  ?? 0;
-  const paidWorkingDays  = record.paidWorkingDays     ?? attDetail?.paid_working_days ?? 0;
+  /*
+   * No attDetail fallback. paid_working_days is a salary_prep_line column, not a field on the
+   * attendance breakdown (PayrollLineAttendance has working_days), so that operand was always
+   * undefined and this already reduced to record.paidWorkingDays ?? 0. Dropping it changes
+   * nothing. Substituting attDetail.working_days WOULD change a payslip figure - working days and
+   * paid working days are different quantities - and that is a payroll decision, not a typing one.
+   */
+  const paidWorkingDays  = record.paidWorkingDays ?? 0;
   const attWeekOff  = eligibleWeekoff;
   const attHoliday  = eligibleHoliday;
   // payable = present + approved_leave + eligible_weekoff + eligible_holiday − lwp
