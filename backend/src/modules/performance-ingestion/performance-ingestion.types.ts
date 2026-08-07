@@ -1,6 +1,6 @@
 export type PerformanceSourceType = "mysql" | "mssql" | "excel" | "csv" | "google_sheet";
 export type PerformanceRunMode = "preview" | "publish";
-export type PerformanceAggregation = "sum" | "average" | "ratio" | "latest";
+export type PerformanceAggregation = "sum" | "average" | "weighted_average" | "ratio" | "latest";
 
 export interface DatasetMetricBinding {
   metricCode: string;
@@ -17,6 +17,7 @@ export interface DatasetMapping {
   employeeIdentifierType?: string;
   eventDateField: string;
   sourceRecordKeyField?: string;
+  sourceEventTimestampField?: string;
   externalProcessField?: string;
   branchField?: string;
   metrics: DatasetMetricBinding[];
@@ -66,6 +67,8 @@ export interface NormalisedMetricFact {
   actualValue: number;
   numeratorValue: number | null;
   denominatorValue: number | null;
+  calculationMultiplier: number | null;
+  sourceEventTimestamp: string | null;
   sourceRecordCount: number | null;
   sourceRecordKey: string | null;
   rawRecordId: number | null;

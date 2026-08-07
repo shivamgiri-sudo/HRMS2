@@ -15,7 +15,7 @@
  * NEVER run against the production database.
  */
 
-import "dotenv/config";
+import dotenv from "dotenv";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -26,9 +26,42 @@ import { splitSql } from "../src/db/runPendingMigrations.js";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const SQL_DIR = path.resolve(__dirname, "../sql");
 
+for (const envPath of [
+  path.resolve(process.cwd(), ".env.test"),
+  path.resolve(process.cwd(), ".env"),
+]) {
+  if (fs.existsSync(envPath)) dotenv.config({ path: envPath, override: false });
+}
+
 // Resolve test DB name — never allow production DB name
 const PROD_DB = process.env.DB_NAME ?? "mas_hrms";
 const TEST_DB = process.env.TEST_DB_NAME ?? `${PROD_DB}_test`;
+const DB_HOST = process.env.DB_HOST ?? "127.0.0.1";
+const NODE_ENV = process.env.NODE_ENV ?? "development";
+const allowDestructive = process.argv.includes("--allow-destructive-test-db");
+const localHosts = new Set(["127.0.0.1", "localhost", "::1"]);
+const disposableDbName =
+  /(^test_|_test$|_testing$|^hrms_migration_test_|^hrms_test_)/i.test(TEST_DB);
+
+if (!allowDestructive) {
+  console.error("[migrate-fresh-test] FATAL: missing --allow-destructive-test-db confirmation flag.");
+  process.exit(1);
+}
+
+if (!localHosts.has(DB_HOST.trim().toLowerCase())) {
+  console.error(`[migrate-fresh-test] FATAL: refusing destructive test migration on non-local host '${DB_HOST}'.`);
+  process.exit(1);
+}
+
+if (!disposableDbName) {
+  console.error(`[migrate-fresh-test] FATAL: TEST_DB_NAME '${TEST_DB}' does not look disposable/test-scoped.`);
+  process.exit(1);
+}
+
+if (NODE_ENV === "production") {
+  console.error("[migrate-fresh-test] FATAL: refusing destructive test migration when NODE_ENV=production.");
+  process.exit(1);
+}
 
 if (TEST_DB === PROD_DB) {
   console.error(
@@ -39,7 +72,7 @@ if (TEST_DB === PROD_DB) {
 }
 
 const connBase = {
-  host: process.env.DB_HOST ?? "127.0.0.1",
+  host: DB_HOST,
   port: Number(process.env.DB_PORT ?? 3306),
   user: process.env.DB_USER ?? "root",
   password: process.env.DB_PASSWORD ?? "",
@@ -180,6 +213,9 @@ async function main() {
   }
 
   console.log(`[migrate-fresh-test] MySQL version: ${mysqlVersion}`);
+  console.log(`[migrate-fresh-test] Host: ${connBase.host}`);
+  console.log(`[migrate-fresh-test] Port: ${connBase.port}`);
+  console.log(`[migrate-fresh-test] NODE_ENV: ${NODE_ENV}`);
   console.log(`[migrate-fresh-test] Test database: ${TEST_DB}`);
 
   console.log(`[migrate-fresh-test] Dropping '${TEST_DB}' ...`);

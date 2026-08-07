@@ -5,6 +5,7 @@ import {
 } from "../../middleware/authMiddleware.js";
 import { performanceGovernanceAuditRouter } from "../performance-ingestion/performance-governance-audit.routes.js";
 import { performanceIngestionRouter } from "../performance-ingestion/performance-ingestion.routes.js";
+import { performanceManualUploadRouter } from "../performance-ingestion/performance-manual-upload.routes.js";
 import { performanceSchedulerRouter } from "../performance-ingestion/performance-scheduler.routes.js";
 import { performanceIntelligenceRepository } from "./performance-intelligence.repository.js";
 import {
@@ -66,6 +67,7 @@ export function createPerformanceIntelligenceRouter(
   // Canonical administration surface for database, Sheet, Excel and CSV ingestion.
   // Child routers apply role, backend scope and write-access guards.
   router.use("/ingestion", performanceIngestionRouter);
+  router.use("/ingestion", performanceManualUploadRouter);
   router.use("/ingestion", performanceSchedulerRouter);
   router.use("/ingestion", performanceGovernanceAuditRouter);
 

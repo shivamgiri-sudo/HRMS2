@@ -26,6 +26,7 @@ type Accumulator = {
   template: NormalisedMetricFact;
   aggregation: PerformanceAggregation;
   sum: number;
+  weightedSum: number;
   count: number;
   numerator: number;
   denominator: number;
@@ -117,6 +118,16 @@ function dateOnly(value: unknown): string | null {
 
   const parsed = new Date(raw);
   return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString().slice(0, 10);
+}
+
+function timestampIso(value: unknown): string | null {
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    return value.toISOString();
+  }
+  const raw = text(value);
+  if (!raw) return null;
+  const parsed = new Date(raw);
+  return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
 }
 
 function field(row: SourceRow, name?: string): unknown {
@@ -396,13 +407,29 @@ function addFact(
     template: fact,
     aggregation,
     sum: 0,
+    weightedSum: 0,
     count: 0,
     numerator: 0,
     denominator: 0,
     recordCount: 0,
   };
-  current.template = aggregation === "latest" ? fact : current.template;
+  if (aggregation === "latest") {
+    const currentKey = [
+      current.template.scoreDate,
+      current.template.sourceEventTimestamp ?? "",
+      current.template.sourceRecordKey ?? "",
+      current.template.rawRecordId ?? 0,
+    ].join("|");
+    const nextKey = [
+      fact.scoreDate,
+      fact.sourceEventTimestamp ?? "",
+      fact.sourceRecordKey ?? "",
+      fact.rawRecordId ?? 0,
+    ].join("|");
+    current.template = nextKey >= currentKey ? fact : current.template;
+  }
   current.sum += fact.actualValue;
+  current.weightedSum += fact.actualValue * Math.max(0, fact.sourceRecordCount ?? 1);
   current.count += 1;
   current.numerator += fact.numeratorValue ?? 0;
   current.denominator += fact.denominatorValue ?? 0;
@@ -427,6 +454,13 @@ function finalFacts(
     if (item.aggregation === "average") {
       actual = item.count ? item.sum / item.count : 0;
     }
+    if (item.aggregation === "weighted_average") {
+      actual = item.recordCount > 0
+        ? item.weightedSum / item.recordCount
+        : item.count
+          ? item.sum / item.count
+          : 0;
+    }
     if (item.aggregation === "ratio") {
       actual = item.denominator > 0
         ? (item.numerator / item.denominator) *
@@ -447,6 +481,10 @@ function finalFacts(
         item.aggregation === "ratio"
           ? item.denominator
           : item.template.denominatorValue,
+      calculationMultiplier:
+        item.aggregation === "ratio"
+          ? multiplierByMetric.get(item.template.metricCode) ?? 100
+          : item.template.calculationMultiplier,
       sourceRecordCount: item.recordCount,
     };
   });
@@ -646,6 +684,9 @@ export const performanceIngestionService = {
         const eventDate = dateOnly(
           field(row, dataset.mapping.eventDateField),
         );
+        const sourceEventTimestamp = timestampIso(
+          field(row, dataset.mapping.sourceEventTimestampField),
+        );
         const rawRecordId = await insertRawRecord(
           runId,
           row,
@@ -827,13 +868,13 @@ export const performanceIngestionService = {
           const numerator = numberOrNull(field(row, binding.numeratorField));
           const denominator = numberOrNull(field(row, binding.denominatorField));
           const aggregation = binding.aggregation ?? metric.aggregation;
+          const ratioMultiplier = Number(binding.ratioMultiplier ?? 100);
           const derived =
             aggregation === "ratio" &&
             numerator !== null &&
             denominator !== null &&
             denominator > 0
-              ? (numerator / denominator) *
-                Number(binding.ratioMultiplier ?? 100)
+              ? (numerator / denominator) * ratioMultiplier
               : value;
 
           if (derived === null) {
@@ -860,6 +901,9 @@ export const performanceIngestionService = {
               actualValue: derived,
               numeratorValue: numerator,
               denominatorValue: denominator,
+              calculationMultiplier:
+                aggregation === "ratio" ? ratioMultiplier : null,
+              sourceEventTimestamp,
               sourceRecordCount:
                 numberOrNull(field(row, binding.sourceRecordCountField)) ?? 1,
               sourceRecordKey:
