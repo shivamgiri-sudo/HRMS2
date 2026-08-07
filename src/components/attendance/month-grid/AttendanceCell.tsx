@@ -28,12 +28,16 @@ export function AttendanceCell({
   isToday,
   onSelect,
   selected,
+  width,
 }: {
   day: TeamMonthDay;
   weekend: boolean;
   isToday: boolean;
   onSelect?: (day: TeamMonthDay) => void;
   selected?: boolean;
+  /** Fixed px width. Passed in so the cell and its header cannot drift apart, and
+   *  because table-layout:auto otherwise collapses 31 narrow columns to fit. */
+  width: number;
 }) {
   // Outside the employment window or still in the future: render an inert cell so the
   // row stays aligned, but never colour it as a gap. Chasing a row that must not exist
@@ -41,8 +45,9 @@ export function AttendanceCell({
   if (!day.applicable) {
     return (
       <td
+        style={{ minWidth: width, width, maxWidth: width }}
         className={cn(
-          "h-7 w-7 border border-slate-100 p-0 text-center align-middle",
+          "h-7 border border-slate-100 p-0 text-center align-middle",
           weekend ? "bg-slate-100/60" : "bg-slate-50/40",
         )}
         aria-hidden="true"
@@ -66,8 +71,9 @@ export function AttendanceCell({
       <TooltipTrigger asChild>
         <td
           onClick={() => onSelect?.(day)}
+          style={{ minWidth: width, width, maxWidth: width }}
           className={cn(
-            "relative h-7 w-7 cursor-pointer border border-slate-100 p-0 text-center align-middle",
+            "relative h-7 cursor-pointer border border-slate-100 p-0 text-center align-middle",
             "text-[10px] font-semibold leading-none transition-colors duration-150",
             theme.cell,
             isToday && "outline outline-1 outline-offset-[-1px] outline-sky-500",

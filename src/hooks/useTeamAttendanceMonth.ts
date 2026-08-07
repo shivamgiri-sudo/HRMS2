@@ -89,8 +89,13 @@ export function useTeamAttendanceMonth(month: string, filters: Filters = {}) {
       // The column simply shows nothing rather than a number the page invented.
       let salaryDaysUnavailable = false;
       try {
+        // Ask for as many as the endpoint will give. A manager's team fits easily;
+        // an HR/admin caller seeing the whole company will not, and the column shows
+        // "—" for the remainder rather than a number this page made up. Verified
+        // against production: 1,032 employees returned, of which only the first slice
+        // carried a payable-days figure.
         const batch = await hrmsApi.get<any>(
-          `/api/payroll/running-summary-batch?month=${encodeURIComponent(month)}&limit=200`,
+          `/api/payroll/running-summary-batch?month=${encodeURIComponent(month)}&limit=1000`,
         );
         const rows: any[] = batch?.data ?? batch?.employees ?? [];
         const byId = new Map<string, number>();

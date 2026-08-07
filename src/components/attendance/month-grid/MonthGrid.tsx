@@ -18,6 +18,8 @@ import { cn } from "@/lib/utils";
  */
 
 const COL = { name: 200, code: 96, meta: 150, salary: 78 };
+/** Width of one day column. Applied inline — see the header comment for why. */
+const DAY_COL = 28;
 const LEFT = {
   name: 0,
   code: COL.name,
@@ -108,8 +110,13 @@ export function MonthGrid({
               {dayMeta.map((d) => (
                 <th
                   key={d.date}
+                  // Explicit min/max width, not just a w-7 class. Under table-layout:auto
+                  // the browser collapses 31 narrow columns to fit the container, which
+                  // rendered the day numbers as an unreadable run of digits — the header
+                  // read "8910111213" instead of separate days.
+                  style={{ minWidth: DAY_COL, width: DAY_COL, maxWidth: DAY_COL }}
                   className={cn(
-                    "sticky top-0 z-20 h-9 w-7 border-b border-slate-200 px-0 text-center font-semibold",
+                    "sticky top-0 z-20 h-9 border-b border-slate-200 px-0 text-center font-semibold",
                     d.weekend ? "bg-slate-100 text-slate-500" : "bg-slate-50 text-slate-700",
                     d.isToday && "bg-sky-100 text-sky-800",
                   )}
@@ -170,6 +177,7 @@ export function MonthGrid({
                   return (
                     <AttendanceCell
                       key={`${emp.employeeId}:${day.d}`}
+                      width={DAY_COL}
                       day={day}
                       weekend={meta?.weekend ?? false}
                       isToday={meta?.isToday ?? false}
