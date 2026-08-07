@@ -900,6 +900,161 @@ export const grnService = {
     return { id: grnId, billing_cycle_status: billingCycleStatus };
   },
 
+  /**
+   * Sends a GRN back for correction instead of killing it (Requirement 9).
+   *
+   * Rejection was terminal: a voucher rejected by Finance had to be raised again from scratch,
+   * and the original reason lived only in a column the next transition overwrote. That is
+   * unusable for imprest, where a Branch Head is expected to correct and resubmit.
+   *
+   * Two return targets, deliberately distinct:
+   *   returned_to_branch_head  Finance sends it back to the Branch Head, who can fix and
+   *                            resubmit without the raiser being involved.
+   *   returned_to_raiser       the Branch Head sends it further back to whoever raised it,
+   *                            because the correction needs the original documents.
+   *
+   * WHY NOT REUSE 'draft'
+   * `draft` means "never submitted", and saveAllocations/saveComponentAllocations gate on it.
+   * Reusing it would let a returned GRN silently rewrite its allocations with nobody aware it
+   * had already been through approval.
+   *
+   * The reservation is RELEASED on return. Holding it while the GRN sits with someone freezes
+   * budget headroom for an unbounded time and starves the line — the money is not committed
+   * until it comes back and is approved again.
+   *
+   * History is appended, never overwritten: every hop writes a finance_approval_event carrying
+   * its own reason, so a GRN returned twice shows both.
+   */
+  async returnGrn(
+    grnId: string,
+    target: "branch_head" | "raiser",
+    reason: string,
+    actorUserId: string,
+    actorRole: string,
+  ) {
+    if (!reason || !reason.trim()) {
+      throw new Error("A reason is required to return a GRN");
+    }
+    const connection = await db.getConnection();
+    try {
+      await connection.beginTransaction();
+      const [rows] = await connection.execute<RowDataPacket[]>(
+        `SELECT * FROM grn_request WHERE id = ? FOR UPDATE`,
+        [grnId],
+      );
+      const grn = rows[0];
+      if (!grn) throw new Error("GRN not found");
+      const from = String(grn.status);
+
+      // Only a GRN that is actually with a reviewer can be sent back. Returning a paid or
+      // cancelled one would reopen something already accounted for.
+      const RETURNABLE = new Set(["submitted", "branch_head_approved", "returned_to_branch_head"]);
+      if (!RETURNABLE.has(from)) {
+        throw new Error(`A GRN with status ${from} cannot be returned`);
+      }
+      const to = target === "branch_head" ? "returned_to_branch_head" : "returned_to_raiser";
+      if (from === to) throw new Error(`This GRN is already ${to}`);
+
+      // Release only from branch_head_approved — that is the only state holding a reservation.
+      if (from === "branch_head_approved" && grn.budget_line_id) {
+        await budgetConsumptionService.release(
+          connection,
+          String(grn.budget_line_id),
+          Number(grn.amount_with_tax || grn.amount),
+          Number(grn.quantity),
+        );
+      }
+
+      const [result] = await connection.execute<ResultSetHeader>(
+        `UPDATE grn_request
+            SET status = ?, review_note = ?, reviewed_by = ?, reviewed_at = NOW()
+          WHERE id = ? AND status = ?`,
+        [to, reason, actorUserId, grnId, from],
+      );
+      // Optimistic guard: someone else moved it while we were deciding.
+      if (result.affectedRows !== 1) {
+        throw new Error("GRN status changed during review; refresh and retry");
+      }
+
+      await recordFinanceApprovalEvent(
+        {
+          entityType: "grn",
+          entityId: grnId,
+          action: "return",
+          fromStatus: from,
+          toStatus: to,
+          decision: target === "branch_head" ? "returned_to_branch_head" : "returned_to_raiser",
+          actorUserId,
+          actorRole,
+          remarks: reason,
+        },
+        connection,
+      );
+
+      await connection.commit();
+      return { id: grnId, status: to };
+    } catch (error) {
+      await connection.rollback();
+      throw error;
+    } finally {
+      connection.release();
+    }
+  },
+
+  /**
+   * Puts a returned GRN back into the approval chain.
+   *
+   * From returned_to_branch_head it goes to 'submitted', NOT straight to
+   * branch_head_approved — the Branch Head must approve it again, which re-reserves the
+   * budget through the normal path rather than through a second reservation route here.
+   */
+  async resubmitReturnedGrn(grnId: string, actorUserId: string, actorRole: string, note?: string) {
+    const connection = await db.getConnection();
+    try {
+      await connection.beginTransaction();
+      const [rows] = await connection.execute<RowDataPacket[]>(
+        `SELECT id, status FROM grn_request WHERE id = ? FOR UPDATE`,
+        [grnId],
+      );
+      const grn = rows[0];
+      if (!grn) throw new Error("GRN not found");
+      const from = String(grn.status);
+      if (from !== "returned_to_branch_head" && from !== "returned_to_raiser") {
+        throw new Error(`Only a returned GRN can be resubmitted; this one is ${from}`);
+      }
+
+      const [result] = await connection.execute<ResultSetHeader>(
+        `UPDATE grn_request SET status = 'submitted', submitted_at = NOW() WHERE id = ? AND status = ?`,
+        [grnId, from],
+      );
+      if (result.affectedRows !== 1) {
+        throw new Error("GRN status changed during resubmission; refresh and retry");
+      }
+
+      await recordFinanceApprovalEvent(
+        {
+          entityType: "grn",
+          entityId: grnId,
+          action: "resubmit",
+          fromStatus: from,
+          toStatus: "submitted",
+          actorUserId,
+          actorRole,
+          remarks: note ?? null,
+        },
+        connection,
+      );
+
+      await connection.commit();
+      return { id: grnId, status: "submitted" };
+    } catch (error) {
+      await connection.rollback();
+      throw error;
+    } finally {
+      connection.release();
+    }
+  },
+
   async getGrnSummary(filters: {
     branchId?: string;
     branchScope?: FinanceBranchScope;

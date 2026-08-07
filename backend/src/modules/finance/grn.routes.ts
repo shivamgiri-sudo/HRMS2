@@ -505,6 +505,58 @@ grnRouter.patch(
   }
 );
 
+// Declared on grnRouter, not smartGrnRouter: a returned GRN must be reachable for
+// allocation-less historical rows too, which onlyWhenSmart would otherwise route away.
+grnRouter.post(
+  "/grns/:id/return",
+  requireWriteAccess,
+  requireRole("branch_head", "finance_head", "accounts_head", "super_admin"),
+  authorizeGrnBranch,
+  async (req: ScopedGrnRequest, res) => {
+    try {
+      const user = actor(req);
+      const target = String(req.body?.target ?? "branch_head") === "raiser" ? "raiser" : "branch_head";
+      const data = await grnService.returnGrn(
+        req.params.id,
+        target,
+        String(req.body?.reason ?? ""),
+        user.id,
+        user.role,
+      );
+      res.json({ success: true, data });
+    } catch (error: unknown) {
+      res.status(errorStatus(error, 400)).json({
+        success: false,
+        error: error instanceof Error ? error.message : "Unable to return this GRN",
+      });
+    }
+  }
+);
+
+grnRouter.post(
+  "/grns/:id/resubmit",
+  requireWriteAccess,
+  requireRole(...GRN_WRITE_ROLES),
+  authorizeGrnBranch,
+  async (req: ScopedGrnRequest, res) => {
+    try {
+      const user = actor(req);
+      const data = await grnService.resubmitReturnedGrn(
+        req.params.id,
+        user.id,
+        user.role,
+        req.body?.note ? String(req.body.note) : undefined,
+      );
+      res.json({ success: true, data });
+    } catch (error: unknown) {
+      res.status(errorStatus(error, 400)).json({
+        success: false,
+        error: error instanceof Error ? error.message : "Unable to resubmit this GRN",
+      });
+    }
+  }
+);
+
 grnRouter.post(
   "/grns/:id/submit",
   requireWriteAccess,
