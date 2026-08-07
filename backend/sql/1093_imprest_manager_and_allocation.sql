@@ -3,8 +3,9 @@
 --
 -- HRMS2 has no imprest model at all today: `imprest` exists only as a value of
 -- grn_request.grn_type. The legacy system db_bill does, and these tables are modelled on it
--- rather than invented — imprest_manager (46 rows) and imprest_allotment_master (2,896 rows,
--- still being written this month).
+-- rather than invented — imprest_manager (46 rows, 45 active) and imprest_allotment_master (2,818 rows,
+-- still being written this month). Counts are exact COUNT(*), not
+-- information_schema.TABLE_ROWS, which is an InnoDB estimate and read 2,896 here.
 --
 -- WHAT IS KEPT FROM LEGACY
 --   * One row per (manager, branch). Legacy's imprest_manager carries a single BranchId per
