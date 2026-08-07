@@ -1,4 +1,4 @@
-import { Router } from 'express';
+﻿import { Router } from 'express';
 import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
@@ -20,7 +20,7 @@ import type { RowDataPacket } from 'mysql2';
 import { recordReportAuditEvent, REPORT_AUDIT_EVENTS } from './report-audit.service.js';
 
 const router = Router();
-// Secure request → generate → email platform routes (must be mounted before :code wildcard routes)
+// Secure request â†’ generate â†’ email platform routes (must be mounted before :code wildcard routes)
 router.use("/", reportRequestRouter);
 router.use("/bpo-master", bpoMasterReportRouter);
 router.use("/deep-sections", deepReportRouter);
@@ -30,7 +30,7 @@ router.use("/suite", reportSuiteRouter);
 const h = (fn: (req: AuthenticatedRequest, res: any) => Promise<void>) =>
   (req: any, res: any, next: any) => fn(req, res).catch(next);
 
-// All authenticated roles may list and run reports — branch scope is enforced in the service.
+// All authenticated roles may list and run reports â€” branch scope is enforced in the service.
 router.get('/', requireAuth, h(async (req, res) => {
   const reports = await reportingService.listReports(req.authUser!.id);
   res.json({ data: reports });
@@ -58,9 +58,9 @@ router.post('/:code/run', requireAuth, h(async (req, res) => {
   res.json({ data: result });
 }));
 
-// ── GET /api/reports/catalog ───────────────────────────────────────────────────
+// â”€â”€ GET /api/reports/catalog â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // Returns permission-filtered catalog with security metadata computed server-side.
-// Frontend must read isSensitive, immediateExportAllowed, deliveryModes from this response —
+// Frontend must read isSensitive, immediateExportAllowed, deliveryModes from this response â€”
 // never maintain a local SENSITIVE_CATEGORIES list.
 router.get('/catalog', requireAuth, h(async (req, res) => {
   const userId   = req.authUser!.id;
@@ -81,11 +81,30 @@ router.get('/catalog', requireAuth, h(async (req, res) => {
       const viewAllowed   = isSuperAdmin || r.viewRoles.length === 0 || r.viewRoles.some(role => userRoles.has(role));
       const exportAllowed = isSuperAdmin || r.exportRoles.length === 0 || r.exportRoles.some(role => userRoles.has(role));
 
-      // super_admin can immediately download ALL reports regardless of sensitivity
-      // All other roles: only internal/confidential + exportAllowed + enabled
+      // super_admin can immediately download ALL reports regardless of sensitivity.
+      // All other roles: internal/confidential only.
+      //
+      // This deliberately does NOT gate on `enabled` (i.e. on availabilityStatus), for two
+      // reasons measured on 2026-08-07:
+      //
+      //   1. It disagreed with the endpoint that actually serves the file.
+      //      GET /api/reports/suite/:code/export gates on sensitivity and exportRoles and
+      //      never looks at availabilityStatus. So the backend would return the workbook
+      //      while this told the UI to hide the button â€” 108 of 117 reports were
+      //      downloadable and invisible. That mismatch is the "no XLSX export exists,
+      //      only Request by Email" finding from CEO UAT.
+      //
+      //   2. It protected nothing. `email` below is pushed on viewAllowed alone, so the
+      //      same rows of the same report already left the building by email for exactly
+      //      the same users. Gating the download while leaving email open withheld
+      //      convenience, not data.
+      //
+      // availabilityStatus and `enabled` are still returned below so the UI can badge an
+      // unvalidated report as such. Marking a report unvalidated should say "treat this
+      // number with care", not silently remove the way to get it.
       const immediateExportAllowed = isSuperAdmin
-        ? exportAllowed && enabled
-        : IMMEDIATE_LEVELS.has(level) && exportAllowed && enabled;
+        ? exportAllowed
+        : IMMEDIATE_LEVELS.has(level) && exportAllowed;
 
       const deliveryModes: string[] = ['screen'];
       if (immediateExportAllowed)              deliveryModes.push('xlsx');
@@ -123,7 +142,7 @@ router.get('/catalog', requireAuth, h(async (req, res) => {
   });
 }));
 
-// ── GET /api/reports/download/:token ──────────────────────────────────────────
+// â”€â”€ GET /api/reports/download/:token â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // Secure single-use download for restricted report files.
 // Requires authenticated session; token is personal and non-transferable.
 const UPLOADS_ROOT = path.resolve(process.cwd(), 'uploads');
