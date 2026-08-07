@@ -1,4 +1,4 @@
-﻿import { Router } from 'express';
+import { Router } from 'express';
 import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
@@ -20,7 +20,7 @@ import type { RowDataPacket } from 'mysql2';
 import { recordReportAuditEvent, REPORT_AUDIT_EVENTS } from './report-audit.service.js';
 
 const router = Router();
-// Secure request â†’ generate â†’ email platform routes (must be mounted before :code wildcard routes)
+// Secure request → generate → email platform routes (must be mounted before :code wildcard routes)
 router.use("/", reportRequestRouter);
 router.use("/bpo-master", bpoMasterReportRouter);
 router.use("/deep-sections", deepReportRouter);
@@ -30,7 +30,7 @@ router.use("/suite", reportSuiteRouter);
 const h = (fn: (req: AuthenticatedRequest, res: any) => Promise<void>) =>
   (req: any, res: any, next: any) => fn(req, res).catch(next);
 
-// All authenticated roles may list and run reports â€” branch scope is enforced in the service.
+// All authenticated roles may list and run reports — branch scope is enforced in the service.
 router.get('/', requireAuth, h(async (req, res) => {
   const reports = await reportingService.listReports(req.authUser!.id);
   res.json({ data: reports });
@@ -58,9 +58,9 @@ router.post('/:code/run', requireAuth, h(async (req, res) => {
   res.json({ data: result });
 }));
 
-// â”€â”€ GET /api/reports/catalog â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── GET /api/reports/catalog ───────────────────────────────────────────────────
 // Returns permission-filtered catalog with security metadata computed server-side.
-// Frontend must read isSensitive, immediateExportAllowed, deliveryModes from this response â€”
+// Frontend must read isSensitive, immediateExportAllowed, deliveryModes from this response —
 // never maintain a local SENSITIVE_CATEGORIES list.
 router.get('/catalog', requireAuth, h(async (req, res) => {
   const userId   = req.authUser!.id;
@@ -90,7 +90,7 @@ router.get('/catalog', requireAuth, h(async (req, res) => {
       //   1. It disagreed with the endpoint that actually serves the file.
       //      GET /api/reports/suite/:code/export gates on sensitivity and exportRoles and
       //      never looks at availabilityStatus. So the backend would return the workbook
-      //      while this told the UI to hide the button â€” 108 of 117 reports were
+      //      while this told the UI to hide the button — 108 of 117 reports were
       //      downloadable and invisible. That mismatch is the "no XLSX export exists,
       //      only Request by Email" finding from CEO UAT.
       //
@@ -142,7 +142,7 @@ router.get('/catalog', requireAuth, h(async (req, res) => {
   });
 }));
 
-// â”€â”€ GET /api/reports/download/:token â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── GET /api/reports/download/:token ──────────────────────────────────────────
 // Secure single-use download for restricted report files.
 // Requires authenticated session; token is personal and non-transferable.
 const UPLOADS_ROOT = path.resolve(process.cwd(), 'uploads');

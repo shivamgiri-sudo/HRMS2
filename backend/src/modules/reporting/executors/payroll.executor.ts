@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Payroll executor
  * Security classification: highly_restricted
  *
@@ -75,7 +75,7 @@ export async function payrollRegister(
   //      SUM(total_deductions) therefore overstates money actually deducted by 38,800 for
   //      that run. deduction_applied is the amount a payslip could really have withheld.
   //      A further 146 of those lines carry net_salary = 200 against zero gross and zero
-  //      attendance â€” 29,200 in total, every one an inactive employee â€” which line_flag
+  //      attendance — 29,200 in total, every one an inactive employee — which line_flag
   //      surfaces as PAID_WITHOUT_GROSS rather than leaving it to be found by hand.
   //
   // cost_centre_code / cost_centre_name are added because a payroll register without a
@@ -219,7 +219,7 @@ export async function salarySheetOnfido(
 ): Promise<ExecResult> {
   const runMonth = monthParam(filters.month);
 
-  // Sensitive field projections â€” masked when caller lacks canViewSensitiveFields
+  // Sensitive field projections — masked when caller lacks canViewSensitiveFields
   const panField  = scope.canViewSensitiveFields ? "e.pan_number"          : "'***MASKED***' AS pan_number";
   const uanField  = scope.canViewSensitiveFields ? "e.uan_number"          : "'***MASKED***' AS uan_number";
   const bankField = scope.canViewSensitiveFields ? "e.bank_account_number" : "'***MASKED***' AS bank_account_number";
@@ -347,7 +347,7 @@ export async function bankAdvice(
 }
 
 // ---------------------------------------------------------------------------
-// payroll-reconciliation  (aggregate â€” no cursor)
+// payroll-reconciliation  (aggregate — no cursor)
 // ---------------------------------------------------------------------------
 export async function payrollReconciliation(
   filters: ExecFilters,
@@ -367,8 +367,8 @@ export async function payrollReconciliation(
 
   // This query used to return branch/process/month financial totals: employee_count,
   // total_gross, total_net and so on. Its catalog entry describes something else
-  // entirely â€” "Reconciliation between attendance inputs and payroll outputs", one row
-  // per employee per month, keyed on employee_code â€” and declares ten columns
+  // entirely — "Reconciliation between attendance inputs and payroll outputs", one row
+  // per employee per month, keyed on employee_code — and declares ten columns
   // (attendance_present_days, payroll_payable_days, day_variance, reconciliation_status,
   // ...) of which the query produced NOT ONE. The grid maps catalog keys onto row keys,
   // so this report rendered ten empty columns for every row.
@@ -378,7 +378,7 @@ export async function payrollReconciliation(
   //
   // The reconciliation is worth having on its own terms. Against live 2026-07 it
   // immediately surfaces employees with 27 attendance days against 9 payroll payable
-  // days â€” the attendance and payroll populations for a month do not agree (1,549
+  // days — the attendance and payroll populations for a month do not agree (1,549
   // employees with attendance against 1,464 payroll lines), and this is where that
   // shows up per person rather than as a total that happens to balance.
   //
@@ -500,7 +500,7 @@ export async function arrearPaymentRegister(
 }
 
 // ---------------------------------------------------------------------------
-// payroll-cost-summary  (aggregate â€” no cursor)
+// payroll-cost-summary  (aggregate — no cursor)
 // ---------------------------------------------------------------------------
 export async function payrollCostSummary(
   filters: ExecFilters,

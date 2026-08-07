@@ -1,11 +1,11 @@
-﻿/**
+/**
  * Statutory / Compliance executor
  *
  * Covers codes: pf-contribution-register, pf-ecr-format,
  * esic-contribution-register, pt-register, tds-computation-register,
  * form-16-status, investment-declaration-status, gratuity-liability-register
  *
- * UAN, PAN, ESIC numbers are highly_restricted PII â€” masked when
+ * UAN, PAN, ESIC numbers are highly_restricted PII — masked when
  * scope.canViewSensitiveFields is false.
  *
  * Every query includes WHERE e.company_id = :companyId to enforce tenant isolation.
@@ -40,7 +40,7 @@ async function count(baseSql: string, params: unknown[]): Promise<number> {
 
 /**
  * Returns the current Indian financial year as a string, e.g. "2024-25".
- * Janâ€“Mar â†’ previous calendar year start; Aprâ€“Dec â†’ current calendar year start.
+ * Jan–Mar → previous calendar year start; Apr–Dec → current calendar year start.
  */
 function currentFinancialYear(): string {
   const now = new Date();
@@ -280,7 +280,7 @@ export async function ptRegister(
            COALESCE(spl.professional_tax, 0) AS pt_amount,
            COALESCE(spl.gross_salary, 0) AS gross_salary,
            -- employees has no pt_state. Professional tax is levied by the state the
-           -- employee WORKS in, so the branch state is the jurisdiction â€” not the
+           -- employee WORKS in, so the branch state is the jurisdiction — not the
            -- employee's own (home) state, which is what e.state holds. On live data the
            -- two disagree for 326 of 1,042 active employees, so this is not cosmetic.
            -- Branch state also covers more people: 1,113 of 1,123 against 1,042.
@@ -393,7 +393,7 @@ export async function form16Status(
     ? "e.pan_number"
     : "'***MASKED***' AS pan_number";
 
-  // Build base scope/filter conditions (may throw ReportScopeAccessDeniedError â€” intentional)
+  // Build base scope/filter conditions (may throw ReportScopeAccessDeniedError — intentional)
   const baseClauses: string[] = ["e.id IS NOT NULL"];
   const baseParams: unknown[] = [];
   appendScopeConditions(scope, baseClauses, baseParams);
@@ -495,7 +495,7 @@ export async function form16Status(
 // ---------------------------------------------------------------------------
 // investment-declaration-status
 //
-// Reads tax_declaration â€” the live store, holding 1,533 rows (verified 2026-08-07).
+// Reads tax_declaration — the live store, holding 1,533 rows (verified 2026-08-07).
 // This previously targeted `investment_declaration`, which has never existed in
 // mas_hrms, and swallowed ER_NO_SUCH_TABLE into an empty result. The report therefore
 // showed "no declarations submitted" for an entire workforce that had submitted 1,533,
@@ -602,7 +602,7 @@ export async function gratuityLiabilityRegister(
            e.date_of_joining,
            TIMESTAMPDIFF(YEAR, e.date_of_joining, CURDATE()) AS years_of_service,
            -- employees has no last_drawn_basic. The gratuity base is taken as the basic
-           -- from the employee's most recent FINALIZED payroll run â€” the literal "last
+           -- from the employee's most recent FINALIZED payroll run — the literal "last
            -- drawn" basic. Only FINALIZED runs count, so a draft or abandoned run cannot
            -- move a liability figure. salary_prep_line carries no DA column, so the base
            -- is basic alone, which is what the existing formula already assumed.

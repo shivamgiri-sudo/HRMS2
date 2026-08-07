@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Identity / statutory identity executor
  *
  * Codes: uan-status-report, esic-status-report, pan-verification-status,
@@ -33,7 +33,7 @@ async function count(baseSql: string, params: unknown[]): Promise<number> {
   return Number((rows as Array<{ total?: number }>)[0]?.total ?? 0);
 }
 
-/** Returns a SQL expression for a sensitive field â€” masked or real. */
+/** Returns a SQL expression for a sensitive field — masked or real. */
 function sensitiveCol(canView: boolean, expr: string, alias: string): string {
   return canView ? `${expr} AS ${alias}` : `'***MASKED***' AS ${alias}`;
 }
@@ -235,7 +235,7 @@ export async function bankAccountVerification(
     if (filters.status === "MISSING_BANK") {
       clauses.push("(e.bank_account_number IS NULL OR TRIM(e.bank_account_number) = '')");
     } else if (filters.status === "VERIFIED") {
-      // bank_verified column may not exist â€” skip filter to avoid ER_BAD_FIELD_ERROR
+      // bank_verified column may not exist — skip filter to avoid ER_BAD_FIELD_ERROR
     } else if (filters.status === "UNVERIFIED") {
       clauses.push(
         "e.bank_account_number IS NOT NULL AND TRIM(e.bank_account_number) != ''"
@@ -295,7 +295,7 @@ export async function identitySourceSnapshot(
 ): Promise<ExecResult> {
   {
     // Anchor on the snapshot row, not the employee. The seed clause used to be
-    // "e.id IS NOT NULL", which â€” against the LEFT JOIN below â€” would discard every
+    // "e.id IS NOT NULL", which — against the LEFT JOIN below — would discard every
     // unmatched source record, i.e. the exceptions this report exists to show.
     const clauses: string[] = ["ris.id IS NOT NULL"];
     const params: unknown[]  = [];
@@ -319,7 +319,7 @@ export async function identitySourceSnapshot(
 
     // The live table is report_identity_source_snapshot; employee_identity_snapshot has
     // never existed in mas_hrms (verified 2026-08-07), and the bare catch below turned
-    // the resulting ER_NO_SUCH_TABLE into an empty result â€” so this report has always
+    // the resulting ER_NO_SUCH_TABLE into an empty result — so this report has always
     // rendered "no identity records" rather than reporting its own failure.
     //
     // LEFT JOIN, not JOIN: unmatched and ambiguous rows have a NULL matched_employee_id,

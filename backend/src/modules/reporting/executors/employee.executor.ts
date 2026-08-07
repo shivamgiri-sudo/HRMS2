@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Employee / HR & Workforce executor
  *
  * Covers codes: headcount, employee-master, manager-mapping, org-structure-snapshot,
@@ -44,7 +44,7 @@ async function count(baseSql: string, params: unknown[]): Promise<number> {
  * This used to also require LOWER(employment_status) = 'active', which made headcount
  * disagree with employee-master and every other employee-grain report: on 2026-08-07
  * headcount returned 1,123 where employee-master returned 1,125. The two rows behind the
- * gap have active_status = 1 with employment_status 'inactive' and 'resigned' â€” i.e.
+ * gap have active_status = 1 with employment_status 'inactive' and 'resigned' — i.e.
  * contradictory flags on real employees, which is a data-quality problem to surface, not
  * a reason for two reports to answer the same question differently.
  *
@@ -613,14 +613,14 @@ export async function anniversaryList(
 // where those rows become someone's work. One row per active employee missing at least
 // one org attribute, with the missing ones named.
 //
-// Baseline against live mas_hrms, 2026-08-07 â€” 200 of 1,125 active employees have at
+// Baseline against live mas_hrms, 2026-08-07 — 200 of 1,125 active employees have at
 // least one gap:
 //   cost centre    64 missing
 //   process       143 missing
 //   designation   119 missing
 //   manager       153 missing   (COALESCE(reporting_manager_id, manager_id); counting
 //                                reporting_manager_id alone gives 162, which is why the
-//                                COALESCE matters â€” 9 employees are mapped only via the
+//                                COALESCE matters — 9 employees are mapped only via the
 //                                duplicate manager_id column)
 //   department     13 missing
 //   branch         10 missing
@@ -685,11 +685,11 @@ export async function orgMappingGaps(
 // active_status and employment_status are two independent flags that can contradict each
 // other. Standardising every report on active_status (2026-08-07) means a row flagged
 // active_status = 1 but employment_status 'resigned' is now counted as a current
-// employee â€” correct for consistency, and exactly the row HR needs to see and resolve.
+// employee — correct for consistency, and exactly the row HR needs to see and resolve.
 //
 // This is the safety net for that decision, so nothing is hidden rather than fixed.
-// Baseline: 2 rows (one 'inactive', one 'resigned'). It also reports the reverse case â€”
-// active_status = 0 with an active-looking employment_status â€” which would otherwise be
+// Baseline: 2 rows (one 'inactive', one 'resigned'). It also reports the reverse case —
+// active_status = 0 with an active-looking employment_status — which would otherwise be
 // invisible to every report, since they all filter to active_status = 1.
 // ---------------------------------------------------------------------------
 export async function employeeStatusConflicts(

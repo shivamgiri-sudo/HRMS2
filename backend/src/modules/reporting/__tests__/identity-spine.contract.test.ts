@@ -1,4 +1,4 @@
-﻿import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import { REPORT_CATALOG } from "../report-catalog.js";
 import { EXECUTOR_MAP } from "../executors/index.js";
 import {
@@ -24,7 +24,7 @@ const isEmployeeGrain = (r: (typeof REPORT_CATALOG)[number]): boolean => {
   const grain = (r.rowGrain ?? "").toLowerCase();
   if (!grain.includes("per employee")) return false;
   // "One row per employee per month" is still employee-grain. "One row per branch per
-  // employee count" is not â€” but no such grain exists; the guard below is for aggregates
+  // employee count" is not — but no such grain exists; the guard below is for aggregates
   // that merely mention employees in passing.
   if (/^one row per (branch|cost cent|process|department|month|day|shift|course|asset)/.test(grain)) return false;
   return true;
@@ -168,7 +168,7 @@ describe("mandatory identity columns on employee-grain reports", () => {
    * preview, its direct XLSX and its emailed XLSX can each run a different query.
    */
   const NOT_YET_MIGRATED = new Set<string>([
-    // Served by inline case blocks in report-suite.routes.ts, not by an executor â€” they
+    // Served by inline case blocks in report-suite.routes.ts, not by an executor — they
     // migrate when Phase 3 collapses those into executors.
     // Lives in identity.executor.ts, migrates with that file.
   ]);

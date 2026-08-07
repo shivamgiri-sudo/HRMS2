@@ -1,4 +1,4 @@
-﻿/**
+/**
  * WFM (Workforce Management) executor
  *
  * Codes: roster-published, roster-variance, shift-swap-register, week-off-calendar
@@ -161,7 +161,7 @@ export async function shiftSwapRegister(
   const clauses: string[] = ["e_req.id IS NOT NULL"];
   const params: unknown[]  = [];
 
-  // Manual scope via requester employee â€” standard alias "e" not available here
+  // Manual scope via requester employee — standard alias "e" not available here
   if (scope.branchScope.mode === "none") throw new ReportScopeAccessDeniedError("branchScope");
   if (scope.branchScope.mode === "restricted" && scope.branchScope.ids.length > 0) {
     clauses.push(`e_req.branch_id IN (${scope.branchScope.ids.map(() => "?").join(",")})`);
@@ -185,7 +185,7 @@ export async function shiftSwapRegister(
   }
 
   // The live table is wfm_roster_swap_request. This query previously named
-  // wfm_shift_swap_request, which has never existed in mas_hrms â€” and the catch below
+  // wfm_shift_swap_request, which has never existed in mas_hrms — and the catch below
   // swallowed ER_NO_SUCH_TABLE into an empty result, so the report showed "no swap
   // requests" instead of failing. Verified against the live schema on 2026-08-07.
   //

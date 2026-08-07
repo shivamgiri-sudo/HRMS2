@@ -1,8 +1,8 @@
-﻿/**
+/**
  * Central report executor dispatcher.
  *
  * executeReport() is the canonical entry point for ALL suite report codes.
- * It throws ReportExecutorNotFoundError for any unregistered code â€” callers
+ * It throws ReportExecutorNotFoundError for any unregistered code — callers
  * must handle this explicitly (never silently return a placeholder row).
  *
  * dispatchReport() routes across all three report families (suite, BPO master,
@@ -11,7 +11,7 @@
 import type { ExecFilters, ExecScope, ExecOptions, ExecResult, ExecutorFn } from "./types.js";
 import { ReportExecutorNotFoundError } from "./types.js";
 
-// â”€â”€â”€ Employee / HR & Workforce â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─── Employee / HR & Workforce ──────────────────────────────────────────────
 import {
   headcount,
   employeeMaster,
@@ -36,7 +36,7 @@ import {
   headcountByCostCentreAndProcess,
 } from "./org-master.executor.js";
 
-// â”€â”€â”€ Attendance â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─── Attendance ──────────────────────────────────────────────────────────────
 import {
   attendanceDaily,
   dailyHcShift,
@@ -57,7 +57,7 @@ import {
   productivityIndividualScorecard,
 } from "./attendance.executor.js";
 
-// â”€â”€â”€ Leave â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─── Leave ───────────────────────────────────────────────────────────────────
 import {
   leaveBalance,
   leaveAllocationRegister,
@@ -70,7 +70,7 @@ import {
   holidayMasterList,
 } from "./leave.executor.js";
 
-// â”€â”€â”€ Payroll â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─── Payroll ─────────────────────────────────────────────────────────────────
 import {
   payrollRegister,
   payrollVariance,
@@ -86,7 +86,7 @@ import {
   salarySheetExport,
 } from "./payroll.executor.js";
 
-// â”€â”€â”€ Statutory â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─── Statutory ───────────────────────────────────────────────────────────────
 import {
   pfContributionRegister,
   pfEcrFormat,
@@ -101,7 +101,7 @@ import {
   pfEsiOptOutRegister,
 } from "./statutory.executor.js";
 
-// â”€â”€â”€ Exit & Attrition â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─── Exit & Attrition ────────────────────────────────────────────────────────
 import {
   resignationRegister,
   fnfPendingRegister,
@@ -113,7 +113,7 @@ import {
   earlyAttritionReport,
 } from "./exit.executor.js";
 
-// â”€â”€â”€ Recruitment â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─── Recruitment ─────────────────────────────────────────────────────────────
 import {
   recruitmentPipeline,
   candidateTracker,
@@ -123,7 +123,7 @@ import {
   joiningPending,
 } from "./recruitment.executor.js";
 
-// â”€â”€â”€ Operations & Quality â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─── Operations & Quality ────────────────────────────────────────────────────
 import {
   agentPerformanceSummary,
   teamPerformanceSummary,
@@ -131,7 +131,7 @@ import {
   fatalErrorRegister,
 } from "./operations.executor.js";
 
-// â”€â”€â”€ WFM & Roster â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─── WFM & Roster ────────────────────────────────────────────────────────────
 import {
   rosterPublished,
   rosterVariance,
@@ -140,7 +140,7 @@ import {
   rosterAdherence,
 } from "./wfm.executor.js";
 
-// â”€â”€â”€ Assets â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─── Assets ──────────────────────────────────────────────────────────────────
 import {
   assetInventory,
   assetAllocationRegister,
@@ -150,12 +150,12 @@ import {
   certificationStatus,
 } from "./assets.executor.js";
 
-// â”€â”€â”€ LMS / Training â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─── LMS / Training ──────────────────────────────────────────────────────────
 import {
   trainingCompletionStatus,
 } from "./lms.executor.js";
 
-// â”€â”€â”€ Identity â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─── Identity ────────────────────────────────────────────────────────────────
 import {
   uanStatusReport,
   esicStatusReport,
@@ -164,7 +164,7 @@ import {
   identitySourceSnapshot,
 } from "./identity.executor.js";
 
-// â”€â”€â”€ Governance (placeholders) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─── Governance (placeholders) ───────────────────────────────────────────────
 import {
   complianceAuditSummary,
   helpDeskSummary,
@@ -173,7 +173,7 @@ import {
 } from "./governance.executor.js";
 
 // ---------------------------------------------------------------------------
-// EXECUTOR_MAP â€” maps every report code to its canonical executor function
+// EXECUTOR_MAP — maps every report code to its canonical executor function
 // ---------------------------------------------------------------------------
 export const EXECUTOR_MAP: Record<string, ExecutorFn> = {
   // HR & Workforce
@@ -309,7 +309,7 @@ export const EXECUTOR_MAP: Record<string, ExecutorFn> = {
   "bank-account-verification": bankAccountVerification,
   "identity-source-snapshot":  identitySourceSnapshot,
 
-  // Governance (placeholders â€” availabilityStatus: 'draft')
+  // Governance (placeholders — availabilityStatus: 'draft')
   "compliance-audit-summary":  complianceAuditSummary,
   "helpdesk-summary":          helpDeskSummary,
   "grievance-register":        grievanceRegister,
@@ -317,7 +317,7 @@ export const EXECUTOR_MAP: Record<string, ExecutorFn> = {
 };
 
 // ---------------------------------------------------------------------------
-// executeReport â€” canonical dispatcher for suite report codes
+// executeReport — canonical dispatcher for suite report codes
 // ---------------------------------------------------------------------------
 export async function executeReport(
   code: string,
