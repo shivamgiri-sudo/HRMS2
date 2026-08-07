@@ -32,18 +32,51 @@ const inlineCodes = (): Set<string> => {
 
 /**
  * Codes still served by an inline block despite having an executor. Shrink only.
- * Each removal needs the executor's columns checked against the catalogue first.
+ *
+ * IMPORTANT: these are NOT a to-do list to be cleared in bulk. All 25 were measured
+ * against the live API on 2026-08-07 — captured before, block removed, captured after —
+ * and only two survived. The rest FAILED, in three distinct ways:
+ *
+ *   broke outright     birthday-list and anniversary-list returned 0 rows through their
+ *                      executor where the inline block returned 1,114 and 1,125.
+ *                      attendance-summary stopped responding inside 45s.
+ *   grain collapsed    attendance-dispute-summary went from a 26-row detail register
+ *                      (dispute date, type, old/requested punches, payroll impact,
+ *                      reviewer, resolution) to a 4-row count-by-status aggregate.
+ *                      regularization-summary, daily-shrinkage-report and daily-hc-shift
+ *                      did the same.
+ *   columns lost       leave-lwp-reconciliation lost lwp_days_attendance,
+ *                      lwp_days_payroll and variance — the three columns the report
+ *                      exists to show. shift-adherence-detail lost punch times and
+ *                      adherence_pct; punch-raw-export lost every biometric column.
+ *
+ * So for most of these the inline block is the BETTER implementation and deleting it
+ * would be a regression, however much it looks like dead-code cleanup. Where cost centre
+ * is missing on such a report, the fix is to add it to the inline SQL (or bring the
+ * executor up to the inline block's depth first) — not to delete the block.
+ *
+ * Removing an entry from this list therefore means: capture the live response, remove the
+ * block, capture again, and confirm the executor's output is a superset at equal or better
+ * row count. Two passed that bar and are already gone (manager-mapping, which gained
+ * manager code, branch, process and cost centre at an unchanged 1,125 rows; and
+ * habitual-absentee-list, whose inline block timed out at 45s where the executor returns
+ * 650 rows with cost centre).
+ *
+ * Separately, employee-movement / payroll-register / payroll-variance / payslip-status /
+ * leave-balance are ALSO claimed by report-suite-highrisk.routes.ts, which mounts first.
+ * For those there are three implementations and removing the inline block changes nothing
+ * observable — which is exactly what the before/after capture showed.
  */
 const SHADOWED_BACKLOG = new Set<string>([
   "anniversary-list", "attendance-daily", "attendance-dispute-summary", "attendance-summary",
   "biometric-reconciliation", "birthday-list", "clearance-status-register",
   "confirmation-due-list", "contract-expiry-list", "cost-centre-headcount", "daily-hc-shift",
   "daily-shrinkage-report", "employee-master", "employee-movement",
-  "gratuity-liability-register", "grievance-register", "habitual-absentee-list",
+  "gratuity-liability-register", "grievance-register",
   "holiday-master-list", "identity-source-snapshot", "increment-promotion-history",
   "late-arrival-summary", "leave-allocation-register", "leave-balance-export",
   "leave-encashment-register", "leave-lapse-summary", "leave-lwp-reconciliation",
-  "leave-trend-monthly", "lifecycle-events", "manager-mapping", "maternity-paternity-register",
+  "leave-trend-monthly", "lifecycle-events", "maternity-paternity-register",
   "monthly-attrition-summary", "monthly-shrinkage-trend", "org-structure-snapshot",
   "overtime-summary", "payroll-register", "payroll-variance", "punch-raw-export",
   "regularization-summary", "shift-adherence-detail",

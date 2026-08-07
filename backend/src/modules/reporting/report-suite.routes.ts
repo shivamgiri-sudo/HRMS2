@@ -485,20 +485,6 @@ reportSuiteRouter.get("/:code", reportScopeMiddleware, reportCatalogAccessMiddle
       params.push(from, to);
       break;
     }
-    case "manager-mapping":
-      addScopedEmployeeFilters(req, clauses, params);
-      clauses.push("e.active_status = 1");
-      sql = `SELECT e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-                    e.reporting_manager_id, e.manager_id,
-                    COALESCE(NULLIF(m.full_name,''), CONCAT(m.first_name,' ',COALESCE(m.last_name,''))) AS manager_name,
-                    CASE WHEN e.reporting_manager_id IS NULL AND e.manager_id IS NULL THEN 'MISSING_MANAGER'
-                         WHEN e.reporting_manager_id IS NOT NULL AND e.manager_id IS NOT NULL AND e.reporting_manager_id <> e.manager_id THEN 'MANAGER_FIELD_MISMATCH'
-                         ELSE 'OK' END AS mapping_status
-               FROM employees e
-               LEFT JOIN employees m ON m.id = COALESCE(e.reporting_manager_id, e.manager_id)
-              WHERE ${clauses.join(" AND ")}
-              ORDER BY mapping_status DESC, employee_name`;
-      break;
     case "attendance-daily": {
       const from = dateParam(req.query.from, new Date().toISOString().slice(0, 10));
       const to = dateParam(req.query.to, from);
@@ -1080,38 +1066,6 @@ reportSuiteRouter.get("/:code", reportScopeMiddleware, reportCatalogAccessMiddle
       break;
     }
 
-    case "habitual-absentee-list": {
-      const month = monthParam(req.query.month);
-      const threshold = Number(req.query.threshold ?? 3);
-      addScopedEmployeeFilters(req, clauses, params);
-      if (req.query.processId) { clauses.push("e.process_id = ?"); params.push(String(req.query.processId)); }
-      clauses.push("DATE_FORMAT(adr.record_date,'%Y-%m') = ?"); params.push(month);
-      sql = `SELECT e.employee_code,
-                    COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-                    b.branch_name,
-                    p.process_name,
-                    d.dept_name AS department_name,
-                    dm.designation_name,
-                    SUM(adr.attendance_status = 'absent') AS absent_days,
-                    SUM(adr.late_mark = 1) AS late_days,
-                    SUM(adr.lwp_value) AS lwp_days,
-                    COUNT(*) AS total_working_days,
-                    ROUND(SUM(adr.attendance_status = 'absent') / NULLIF(COUNT(*), 0) * 100, 1) AS absent_pct,
-                    GROUP_CONCAT(DISTINCT CASE WHEN adr.attendance_status = 'absent' THEN DATE_FORMAT(adr.record_date, '%d') END ORDER BY adr.record_date SEPARATOR ',') AS absent_dates
-               FROM attendance_daily_record adr
-               JOIN employees e ON e.id = adr.employee_id
-               LEFT JOIN branch_master b ON b.id = e.branch_id
-               LEFT JOIN process_master p ON p.id = e.process_id
-               LEFT JOIN department_master d ON d.id = e.department_id
-               LEFT JOIN designation_master dm ON dm.id = e.designation_id
-              WHERE ${clauses.join(" AND ")}
-              GROUP BY e.id, e.employee_code, e.first_name, e.last_name, e.full_name,
-                       b.branch_name, p.process_name, d.dept_name, dm.designation_name
-              HAVING absent_days >= ?
-              ORDER BY absent_days DESC`;
-      params.push(threshold);
-      break;
-    }
 
     case "daily-shrinkage-report": {
       const from = dateParam(req.query.from, new Date().toISOString().slice(0, 10));

@@ -90,6 +90,6 @@ describe("frontend catalogue can draw what the backend returns", () => {
     expect(
       unlistable.length,
       `reports with no frontend catalogue entry (cannot be selected in the Report Library):\n${unlistable.sort().join("\n")}`,
-    ).toBeLessThanOrEqual(40);
+    ).toBeLessThanOrEqual(35);
   });
 });
