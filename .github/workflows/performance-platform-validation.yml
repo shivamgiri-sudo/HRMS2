@@ -77,8 +77,9 @@ jobs:
         run: npm --prefix backend run typecheck
 
       - name: Performance platform tests
+        working-directory: backend
         run: >-
-          npm --prefix backend exec -- vitest run
+          npm test -- --run
           src/modules/performance-ingestion/__tests__/performance-source-adapters.test.ts
           src/modules/performance-ingestion/__tests__/performance-governance.service.test.ts
           src/modules/performance-ingestion/__tests__/performance-scheduler.service.test.ts
@@ -90,19 +91,24 @@ jobs:
           src/db/__tests__/migrate-fresh-test-safety.contract.test.ts
 
       - name: Authentication security contract
-        run: npm --prefix backend exec -- vitest run src/modules/auth/__tests__/auth-security.test.ts
+        working-directory: backend
+        run: npm test -- --run src/modules/auth/__tests__/auth-security.test.ts
 
       - name: Document vault security contract
-        run: npm --prefix backend exec -- vitest run src/modules/files/__tests__/document-vault-security.test.ts
+        working-directory: backend
+        run: npm test -- --run src/modules/files/__tests__/document-vault-security.test.ts
 
       - name: Migration governance contract
-        run: npm --prefix backend exec -- vitest run src/db/__tests__/migration-governance.test.ts
+        working-directory: backend
+        run: npm test -- --run src/db/__tests__/migration-governance.test.ts
 
       - name: Database connection reliability contract
-        run: npm --prefix backend exec -- vitest run src/db/__tests__/connection-reliability.test.ts
+        working-directory: backend
+        run: npm test -- --run src/db/__tests__/connection-reliability.test.ts
 
       - name: Worker safety contract
-        run: npm --prefix backend exec -- vitest run src/workers/__tests__/worker-safety.test.ts
+        working-directory: backend
+        run: npm test -- --run src/workers/__tests__/worker-safety.test.ts
 
       - name: Backend build
         run: npm --prefix backend run build

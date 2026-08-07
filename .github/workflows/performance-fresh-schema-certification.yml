@@ -16,7 +16,7 @@ permissions:
 
 jobs:
   fresh-schema:
-    name: MySQL 8.4 fresh schema reaches Performance migrations
+    name: MySQL 8.4 certifies Performance migrations
     runs-on: ubuntu-24.04
     services:
       mysql:
@@ -43,8 +43,8 @@ jobs:
       - name: Install backend dependencies
         run: npm --prefix backend ci
 
-      - name: Fresh schema migration certification
-        run: npm --prefix backend run migrate:fresh:test -- --allow-destructive-test-db
+      - name: Performance migration certification
+        run: npm --prefix backend run performance:certify-migrations -- --allow-destructive-test-db
         env:
           NODE_ENV: test
           DB_HOST: 127.0.0.1
@@ -55,8 +55,9 @@ jobs:
           TEST_DB_NAME: hrms_test_performance
 
       - name: Performance database tests
+        working-directory: backend
         run: >-
-          npm --prefix backend exec -- vitest run
+          npm test -- --run
           src/modules/performance-ingestion/__tests__/performance-source-adapters.test.ts
           src/modules/performance-ingestion/__tests__/performance-manual-upload.service.test.ts
           src/modules/performance-ingestion/__tests__/performance-manual-upload-verification.service.test.ts
