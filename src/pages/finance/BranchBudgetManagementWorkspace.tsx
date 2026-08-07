@@ -1033,7 +1033,11 @@ export default function BranchBudgetManagementWorkspace() {
               } satisfies BudgetCoverageEntry
             : null;
         })
-        .filter((entry): entry is BudgetCoverageEntry => Boolean(entry));
+        // NonNullable<typeof entry>, not BudgetCoverageEntry: the map already narrows via
+        // , so the element type is the object literal - and BudgetCoverageEntry is not
+        // assignable back to it (reason is optional there, required here). This drops the nulls
+        // without asserting a wider type over the result.
+        .filter((entry): entry is NonNullable<typeof entry> => entry !== null);
       await saveCoverage.mutateAsync(entries);
       toast.success("Head/Sub-head decisions saved");
     } catch (error) {

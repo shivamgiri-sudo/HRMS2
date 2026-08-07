@@ -276,11 +276,13 @@ export function PayrollReferenceLayout({ data, filters }: { data: ReferenceDashb
 
         <ReferencePanel title={`PF / ESI / TDS Liability (${currentMonth})`}>
           <div className="grid grid-cols-3 gap-3">
-            {[
+            {([
               ["PF Liability", pf, Users, "green"],
               ["ESI Liability", esi, CreditCard, "blue"],
               ["TDS Liability", tds, FileText, "amber"],
-            ].map(([label, value, Icon, tone]) => {
+            // as const - see CeoReferenceLayout: otherwise every slot widens to one union
+            // and the first element includes the icon component type.
+            ] as const).map(([label, value, Icon, tone]) => {
               const IconComponent = Icon as typeof Users;
               return <div key={String(label)} className="rounded-lg border border-[#e3e9f2] p-4 text-center"><span className={`mx-auto flex h-9 w-9 items-center justify-center rounded-full ${tone === "green" ? "bg-[#eaf8ef] text-[#16a34a]" : tone === "amber" ? "bg-[#fff4e8] text-[#f97316]" : "bg-[#edf4ff] text-[#0b63e5]"}`}><IconComponent className="h-4 w-4" /></span><p className="mt-3 text-xs text-[#61708a]">{label}</p><p className="mt-2 text-[15px] font-extrabold text-[#0b1f44]">{formatCurrency(value as number | null)}</p></div>;
             })}

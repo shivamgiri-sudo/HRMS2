@@ -436,7 +436,10 @@ export default function NativeWorkInbox() {
         ? {
             ...prev,
             total: Math.max(0, prev.total - 1),
-            [task.risk]: Math.max(0, (prev as Record<string, number>)[task.risk] - 1),
+            // No cast: Risk is exactly the four numeric keys of PendingSummary, so this
+            // indexes directly. The blanket Record<string, number> was also untrue - by_module
+            // is an object, not a number.
+            [task.risk]: Math.max(0, prev[task.risk] - 1),
             by_module: {
               ...prev.by_module,
               [task.module]: Math.max(0, (prev.by_module[task.module] ?? 1) - 1),

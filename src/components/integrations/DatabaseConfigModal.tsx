@@ -13,7 +13,8 @@ interface Props {
   onClose: () => void;
   integrationKey: string;
   name: string;
-  initialConfig: DbConnectorConfig;
+  /** Partial: a connector that has never been set up has no config_json and the hub passes {}. */
+  initialConfig: Partial<DbConnectorConfig>;
   showTables?: boolean;
 }
 
@@ -22,12 +23,23 @@ interface TestResult {
   error?: string;
 }
 
+const EMPTY_DB_CONFIG: DbConnectorConfig = {
+  host: '', port: 0, database: '', username: '', password: '',
+  date_column: '', employee_code_column: '', tables: [], db_type: 'mysql',
+};
+
 export function DatabaseConfigModal({ open, onClose, integrationKey, name, initialConfig }: Props) {
   const qc = useQueryClient();
-  const [form, setForm] = useState(initialConfig);
+  /*
+   * Seeded from a complete blank so every field stays a controlled input. initialConfig may be {}
+   * for a connector that has never been configured, and spreading that alone would leave
+   * form.host and friends undefined - React then switches those inputs from controlled to
+   * uncontrolled the moment a user types.
+   */
+  const [form, setForm] = useState<DbConnectorConfig>({ ...EMPTY_DB_CONFIG, ...initialConfig });
   const [testResult, setTestResult] = useState<TestResult | null>(null);
 
-  useEffect(() => { setForm(initialConfig); setTestResult(null); }, [initialConfig, open]);
+  useEffect(() => { setForm({ ...EMPTY_DB_CONFIG, ...initialConfig }); setTestResult(null); }, [initialConfig, open]);
 
   const set = (key: keyof DbConnectorConfig) => (e: React.ChangeEvent<HTMLInputElement>) =>
     setForm(f => ({ ...f, [key]: key === 'port' ? Number(e.target.value) : e.target.value }));

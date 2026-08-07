@@ -8,7 +8,12 @@ export function F({
   placeholder, required, prefilled, helpText, error: fieldError,
 }: {
   label: string; value: string; onChange: (v: string) => void;
-  type?: string; opts?: string[]; mode?: string; onBlur?: () => void;
+  type?: string; opts?: string[];
+  /** Passed to the input's inputMode, which has its own union ("text" | "numeric" | "tel" ...)
+   *  — not HTMLInputTypeAttribute, which is the set of <input type> values and was the wrong
+   *  cast target below. */
+  mode?: string;
+  onBlur?: () => void;
   placeholder?: string; required?: boolean; prefilled?: boolean;
   helpText?: string; error?: string;
 }) {
@@ -35,7 +40,7 @@ export function F({
       ) : (
         <Input
           type={type}
-          inputMode={mode as React.HTMLInputTypeAttribute}
+          inputMode={mode as React.HTMLAttributes<HTMLInputElement>["inputMode"]}
           value={value || ""}
           onChange={(e) => onChange(e.target.value)}
           onBlur={onBlur}
