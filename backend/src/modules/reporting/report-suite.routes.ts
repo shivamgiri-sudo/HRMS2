@@ -849,12 +849,31 @@ reportSuiteRouter.get("/:code", reportScopeMiddleware, reportCatalogAccessMiddle
       break;
 
     case "cost-centre-headcount":
+      // Two corrections, both to the predicate rather than the shape.
+      //
+      // 1. This was the only report of the 65 inline blocks that never called
+      //    addScopedEmployeeFilters. Its WHERE was hardcoded, so row scope was not applied at
+      //    all and a branch-scoped user saw the headcount of every branch, not just their own.
+      //    Scope is enforced at the query, not in the UI, so this was a real leak rather than
+      //    an untidy omission.
+      //
+      // 2. `active_status = 1 AND LOWER(COALESCE(employment_status,'active')) = 'active'` is
+      //    the superseded two-flag test. It yields 1,123 where the agreed definition —
+      //    active_status alone — yields 1,125, and it is why this report could never be
+      //    reconciled against headcount or employee-master. The two employees it drops are
+      //    exactly the ones employee-status-conflicts exists to report.
+      //
+      // Grouping already carried cost_centre_code, so this report was never subject to the
+      // name-collision merge that the executor version had (927 cost centres share only 913
+      // names — "Snapdeal" alone is six of them).
+      addScopedEmployeeFilters(req, clauses, params);
+      clauses.push("e.active_status = 1");
       sql = `SELECT cc.cost_centre_code, cc.cost_centre_name, b.branch_name,
                     COUNT(e.id) AS active_headcount
                FROM employees e
                LEFT JOIN cost_centre_master cc ON cc.id = e.cost_centre_id
                LEFT JOIN branch_master b ON b.id = e.branch_id
-              WHERE e.active_status = 1 AND LOWER(COALESCE(e.employment_status,'active')) = 'active'
+              WHERE ${clauses.join(" AND ")}
               GROUP BY cc.cost_centre_code, cc.cost_centre_name, b.branch_name
               ORDER BY cc.cost_centre_name`;
       break;

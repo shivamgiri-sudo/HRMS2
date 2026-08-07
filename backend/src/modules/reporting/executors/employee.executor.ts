@@ -234,15 +234,37 @@ export async function costCentreHeadcount(
   appendFilterConditions(filters, clauses, params);
   clauses.push("e.active_status = 1");
 
+  // Grouped by NAME, which is not unique. Live check: 927 cost centres carry only 913
+  // distinct names — 8 names belong to several cost centres at once. "Snapdeal" is six of
+  // them (BSS/FLD/CORP/110, CS/FLD/AHMH/0212, CS/FLD/CHD/0202, CS/FLD/JPR/0214,
+  // CS/FLD/KNL/0201, CS/FLD/MRT/0215) and "Deactive-JPRMAS2" is two that sit in the same
+  // branch, so their headcounts were summed into a single row.
+  //
+  // Branch is the employee's branch, not the cost centre's, so branch in the GROUP BY did not
+  // reliably separate them either. Grouping on the code as well splits them correctly, and
+  // selecting it means a reader can tell six identically-named cost centres apart — which was
+  // impossible before, since the code was never on the row.
+  //
+  // Column is active_headcount, not headcount: that is what the catalogue declares and what
+  // the inline block in report-suite.routes.ts (which actually serves this code today)
+  // returns. This executor is currently shadowed by that block, so the fixes here are latent
+  // — they matter only if the inline block is ever removed, and they must not disagree with
+  // it in the meantime.
+  //
+  // UNASSIGNED rather than NULL for the 64 active employees with no cost centre, matching how
+  // every other report in this audit renders them, so they stay visible instead of collapsing
+  // into a blank row.
   const base = `
-    SELECT cc.cost_centre_name, b.branch_name,
-           COUNT(*) AS headcount
+    SELECT COALESCE(cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
+           COALESCE(cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
+           b.branch_name,
+           COUNT(*) AS active_headcount
       FROM employees e
       LEFT JOIN cost_centre_master cc ON cc.id = e.cost_centre_id
       LEFT JOIN branch_master b       ON b.id  = e.branch_id
      WHERE ${clauses.join(" AND ")}
-     GROUP BY cc.cost_centre_name, b.branch_name
-     ORDER BY cc.cost_centre_name, b.branch_name`;
+     GROUP BY cc.cost_centre_code, cc.cost_centre_name, b.branch_name
+     ORDER BY cc.cost_centre_code, b.branch_name`;
 
   const total = options.includeTotal ? await count(base, params) : 0;
   const sql   = applyPagination(base, options);
