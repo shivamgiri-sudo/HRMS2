@@ -191,6 +191,22 @@ const envSchema = z.object({
   // AI provider — Gemini
   GEMINI_API_KEY: z.string().default(""),
 
+  // AI provider — Anthropic Claude. Used by the UAT pipeline's validator stage and available
+  // to Mira like any other provider. Every key is defaulted so an existing deployment that
+  // has never heard of Claude still passes env validation and boots unchanged.
+  ANTHROPIC_API_KEY: z.string().default(""),
+  ANTHROPIC_DEFAULT_MODEL: z.string().default("claude-opus-5"),
+  // Caps thinking AND response text together on this model, so it is sized for a full
+  // structured verdict rather than a chat reply.
+  ANTHROPIC_MAX_OUTPUT_TOKENS: z.coerce.number().default(8000),
+  ANTHROPIC_EFFORT: z.enum(["low", "medium", "high", "xhigh", "max"]).default("high"),
+  ANTHROPIC_TIMEOUT_MS: z.coerce.number().default(300000),
+
+  // UAT pipeline kill switches. Both default OFF: the validator costs money and reaches an
+  // external provider, so it must be switched on deliberately rather than by deploying.
+  UAT_VALIDATOR_ENABLED: z.string().default("false"),
+  UAT_DAILY_LLM_USD_CAP: z.coerce.number().default(25),
+
   // AI provider — OpenAI Whisper (voice transcription fallback for Safari/iOS,
   // where the browser has no Web Speech API)
   OPENAI_API_KEY: z.string().default(""),

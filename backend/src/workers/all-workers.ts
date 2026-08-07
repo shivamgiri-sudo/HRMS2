@@ -48,6 +48,8 @@ import { startReportSubscriptionWorker, stopReportSubscriptionWorker } from "./r
 import { registerNotificationDeliverer } from "../modules/communication/notification.deliverer.js";
 import { startPayrollPrepReminderWorker, stopPayrollPrepReminderWorker } from "./payroll-prep-reminder.worker.js";
 import { startAutoRosterSchedulerWorker, stopAutoRosterSchedulerWorker } from "./auto-roster-scheduler.worker.js";
+import { startUatJobRunner, stopUatJobRunner } from "../modules/uat-pipeline/uat-job-runner.js";
+import { registerUatJobHandlers } from "../modules/uat-pipeline/uat-jobs.handlers.js";
 import { clearAllTimers } from "./worker-utils.js";
 
 const WORKERS: Array<{ name: string; start: () => Promise<void> }> = [
@@ -234,6 +236,16 @@ const WORKERS: Array<{ name: string; start: () => Promise<void> }> = [
     name: "auto-roster-scheduler",
     start: () => { startAutoRosterSchedulerWorker(); return Promise.resolve(); },
   },
+  {
+    // Registered HERE AND ONLY HERE. A worker present in only one of server.ts /
+    // all-workers.ts silently never runs — that killed the biometric payroll feed for
+    // weeks — so uat-worker-registration.test.ts asserts this appears once in this file
+    // and not at all in server.ts. Polling only; it dispatches no builds in Phase 2.
+    name: "uat-job-runner",
+    // Handlers register before the runner starts: a claimed job whose type has no handler
+    // goes straight to `dead`, so registering afterwards would kill the first tick's work.
+    start: () => { registerUatJobHandlers(); startUatJobRunner(); return Promise.resolve(); },
+  },
 ];
 
 async function startAllWorkers(): Promise<void> {
@@ -300,6 +312,7 @@ function shutdown(): void {
   stopTatEscalationWorker();
   stopReportSubscriptionWorker();
   stopAutoRosterSchedulerWorker();
+  stopUatJobRunner();
   clearAllTimers();
   console.log("[workers] Clean shutdown complete.");
   process.exit(0);

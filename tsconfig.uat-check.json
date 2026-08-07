@@ -1,0 +1,29 @@
+{
+  "//": [
+    "Scoped typecheck for the UAT governance pages.",
+    "",
+    "`npm run typecheck` in this repository compiles ZERO files and always exits 0, so it",
+    "proves nothing. `tsc -p tsconfig.app.json` does compile the app, but it also pulls in",
+    "src/__tests__/**, which has no vitest globals configured and produces hundreds of",
+    "pre-existing 'Cannot find name describe' errors that bury any real one.",
+    "",
+    "This config checks the four UAT pages plus whatever they import (tsc follows imports),",
+    "which is the part a change to them can actually break.",
+    "",
+    "  npx tsc --noEmit -p tsconfig.uat-check.json",
+    "",
+    "It does NOT replace the full frontend typecheck in CI — it is the fast local gate.",
+    "Same pattern as tsconfig.vendor-check.json and its siblings."
+  ],
+  "extends": "./tsconfig.app.json",
+  "compilerOptions": {
+    "noEmit": true
+  },
+  "include": [
+    "src/pages/NativeUatFeedback.tsx",
+    "src/pages/NativeUatTriageConsole.tsx",
+    "src/pages/NativeUatReleaseBoard.tsx",
+    "src/pages/NativeUatChecklistAdmin.tsx",
+    "src/vite-env.d.ts"
+  ]
+}

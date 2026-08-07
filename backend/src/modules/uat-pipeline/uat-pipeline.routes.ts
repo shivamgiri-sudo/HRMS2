@@ -56,6 +56,10 @@ import { findSimilar, recordMeToo } from "./uat-dedup.service.js";
 import { loadCapabilityRegistry } from "./capability-registry.js";
 import { loadProtectedPaths } from "./protected-paths.js";
 import { agingFor } from "./uat-sla.service.js";
+import { loadChecklist } from "./uat-checklist.repo.js";
+import { queueValidation } from "./uat-jobs.handlers.js";
+import { jobHealth } from "./uat-job-runner.js";
+import { spendTodayMicros } from "./uat-cost.service.js";
 
 const router = Router();
 
@@ -590,6 +594,132 @@ router.get(
         overdueItems: overdue,
         expiredDelegations: expiredDeleg,
         controlPlaneLoaded: true,
+        // Queue depth by state. `dead` is the number that matters: a dead job is work that
+        // will never be retried, and without it here the only symptom is an item that sits
+        // in `validating` forever with nobody aware.
+        jobs: await jobHealth(),
+        spendTodayUsd: (await spendTodayMicros()) / 1_000_000,
+      },
+    });
+  })
+);
+
+// ── Checklist (Phase 2) ───────────────────────────────────────────────────────
+
+/**
+ * The active checklist.
+ *
+ * `isFloor` is returned so the admin page can render those rows locked. There is deliberately
+ * no write endpoint in this phase: the seeded rows mirror the JSON control plane, and a form
+ * that let someone edit a mirror would imply the mirror is authoritative. Editing a
+ * non-floor rule arrives with the admin UI in a later phase, behind its own approval.
+ */
+router.get(
+  "/checklist",
+  requireRole(...UAT_TRIAGE_ROLES),
+  h(async (_req: AuthenticatedRequest, res: Response) => {
+    const checklist = await loadChecklist();
+    return res.json({
+      success: true,
+      data: {
+        snapshotSha: checklist.snapshotSha,
+        items: checklist.rules.map((r) => ({
+          ...r,
+          blocking: checklist.blockingItemKeys.has(r.itemKey),
+          ...(checklist.statements.get(r.itemKey) ?? {}),
+        })),
+      },
+    });
+  })
+);
+
+/**
+ * One item's evaluation, with the rule version and control-plane shas that produced it.
+ *
+ * Returns the shas rather than hiding them: "which checklist judged this" is the question a
+ * six-month-old decision actually raises, and re-running today's rules to answer it would
+ * give a confidently wrong answer.
+ */
+router.get(
+  "/feedback/:id/checklist",
+  requireRole(...UAT_TRIAGE_ROLES),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const actor = await actorOf(req);
+    // Scope check by way of the shared reader: a user who cannot see the item cannot see
+    // its evaluation either. getFeedback applies the scope WHERE clause, so an out-of-scope
+    // id comes back null and is indistinguishable from one that does not exist.
+    const fb = await getFeedback(req.params.id, actor.userId, actor.employeeId);
+    if (!fb) return res.status(404).json({ success: false, message: "Feedback item not found." });
+    const { db } = await import("../../db/mysql.js");
+    const [rows] = await db.execute(
+      `SELECT item_key, verdict, source, evidence, confidence, rule_version,
+              rule_snapshot_sha256, paths_sha, registry_sha, created_at
+         FROM uat_checklist_evaluation
+        WHERE feedback_id = ?
+        ORDER BY item_key`,
+      [req.params.id]
+    );
+    const [hits] = await db.execute(
+      `SELECT capability_key, capability_class, match_signal, matched_token
+         FROM uat_capability_hit WHERE feedback_id = ? ORDER BY capability_key`,
+      [req.params.id]
+    );
+    return res.json({ success: true, data: { evaluations: rows, capabilityHits: hits } });
+  })
+);
+
+/**
+ * The LLM call log for one item — model version, effort, tokens, cost and stop reason.
+ *
+ * Excludes response_json and the prompt itself. A reviewer needs to know what it cost and
+ * whether it refused; the stored payload was built from the redacted body and there is no
+ * reason to widen who can read it.
+ */
+router.get(
+  "/feedback/:id/llm-calls",
+  requireRole(...UAT_TRIAGE_ROLES),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const actor = await actorOf(req);
+    const fb = await getFeedback(req.params.id, actor.userId, actor.employeeId);
+    if (!fb) return res.status(404).json({ success: false, message: "Feedback item not found." });
+    const { db } = await import("../../db/mysql.js");
+    const [rows] = await db.execute(
+      `SELECT stage, provider_key, model_id, model_version, effort, attempt_no,
+              schema_valid, stop_reason, refusal_category, input_tokens, output_tokens,
+              cache_read_tokens, cost_usd_micros, latency_ms, error_message,
+              prompt_template_version, created_at
+         FROM uat_llm_call
+        WHERE feedback_id = ?
+        ORDER BY created_at`,
+      [req.params.id]
+    );
+    return res.json({ success: true, data: rows });
+  })
+);
+
+/**
+ * Queue an item for automated evaluation.
+ *
+ * Triage-only, and it queues rather than evaluating inline: the call takes up to a minute,
+ * and a request that dies halfway would leave the item in `validating` with no worker aware
+ * of it. The state machine rejects an item that is not in a legal source state, so a double
+ * click cannot queue twice.
+ */
+router.post(
+  "/feedback/:id/evaluate",
+  requireRole(...UAT_TRIAGE_ROLES),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const actor = await actorOf(req);
+    const fb = await getFeedback(req.params.id, actor.userId, actor.employeeId);
+    if (!fb) return res.status(404).json({ success: false, message: "Feedback item not found." });
+    const { queued } = await queueValidation(req.params.id, actor.userId);
+    return res.json({
+      success: true,
+      data: {
+        queued,
+        message: queued
+          ? "Queued for evaluation. The result appears on this item when the worker completes it."
+          : "This item is already queued for evaluation.",
       },
     });
   })

@@ -92,6 +92,53 @@ function parseJson<T>(v: T | string | null | undefined, fallback: T): T {
   }
 }
 
+/** One row of uat_checklist_evaluation, as the API returns it. */
+interface EvaluationRow {
+  item_key: string;
+  verdict: "pass" | "fail" | "warn" | "not_applicable" | "undetermined";
+  source: "floor" | "capability" | "static" | "llm" | "human" | "db";
+  evidence: string | null;
+  confidence: number | null;
+  rule_version: number | null;
+  rule_snapshot_sha256: string | null;
+}
+
+interface LlmCallRow {
+  stage: string;
+  model_id: string;
+  model_version: string | null;
+  effort: string | null;
+  attempt_no: number;
+  schema_valid: number;
+  stop_reason: string | null;
+  refusal_category: string | null;
+  input_tokens: number | null;
+  output_tokens: number | null;
+  cache_read_tokens: number | null;
+  cost_usd_micros: number | null;
+  latency_ms: number | null;
+  error_message: string | null;
+  prompt_template_version: string;
+  created_at: string;
+}
+
+const VERDICT_STYLES: Record<EvaluationRow["verdict"], string> = {
+  fail: "border-red-300 bg-red-50 text-red-800",
+  warn: "border-amber-300 bg-amber-50 text-amber-800",
+  // Deliberately NOT green. An item nobody could evaluate is outstanding work, and colouring
+  // it like a pass is how a reviewer comes away believing the checklist cleared it.
+  undetermined: "border-slate-300 bg-slate-100 text-slate-700",
+  pass: "border-emerald-300 bg-emerald-50 text-emerald-800",
+  not_applicable: "border-slate-200 bg-white text-slate-500",
+};
+
+/**
+ * Floor and capability verdicts are rendered locked. The distinction is not decorative: a
+ * reviewer needs to know which verdicts came from the reviewed JSON control plane and which
+ * came from a DB rule or the model, because only the latter two are arguable.
+ */
+const AUTHORITATIVE: ReadonlySet<EvaluationRow["source"]> = new Set(["floor", "capability"]);
+
 export default function NativeUatTriageConsole() {
   const [items, setItems] = useState<FeedbackItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -99,6 +146,10 @@ export default function NativeUatTriageConsole() {
   const [selected, setSelected] = useState<FeedbackItem | null>(null);
   const [scan, setScan] = useState<ScanRow | null>(null);
   const [scanLoading, setScanLoading] = useState(false);
+  const [evaluations, setEvaluations] = useState<EvaluationRow[]>([]);
+  const [llmCalls, setLlmCalls] = useState<LlmCallRow[]>([]);
+  const [evaluating, setEvaluating] = useState(false);
+  const [evalNotice, setEvalNotice] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -120,14 +171,45 @@ export default function NativeUatTriageConsole() {
   const openItem = useCallback(async (item: FeedbackItem) => {
     setSelected(item);
     setScan(null);
+    setEvaluations([]);
+    setLlmCalls([]);
+    setEvalNotice(null);
     setScanLoading(true);
     try {
-      const res = await hrmsApi.get<{ data: ScanRow | null }>(`/api/uat/feedback/${item.id}/scan`);
-      setScan(res.data ?? null);
-    } catch {
-      setScan(null);
+      // Settled, not all: a missing checklist is normal for an item that has not been
+      // evaluated yet, and failing the whole drawer over it would hide the scan too.
+      const [scanRes, checklistRes, callsRes] = await Promise.allSettled([
+        hrmsApi.get<{ data: ScanRow | null }>(`/api/uat/feedback/${item.id}/scan`),
+        hrmsApi.get<{ data: { evaluations: EvaluationRow[] } }>(
+          `/api/uat/feedback/${item.id}/checklist`
+        ),
+        hrmsApi.get<{ data: LlmCallRow[] }>(`/api/uat/feedback/${item.id}/llm-calls`),
+      ]);
+      setScan(scanRes.status === "fulfilled" ? (scanRes.value.data ?? null) : null);
+      setEvaluations(
+        checklistRes.status === "fulfilled" ? (checklistRes.value.data?.evaluations ?? []) : []
+      );
+      setLlmCalls(callsRes.status === "fulfilled" ? (callsRes.value.data ?? []) : []);
     } finally {
       setScanLoading(false);
+    }
+  }, []);
+
+  const evaluate = useCallback(async (item: FeedbackItem) => {
+    setEvaluating(true);
+    setEvalNotice(null);
+    try {
+      const res = await hrmsApi.post<{ data: { queued: boolean; message: string } }>(
+        `/api/uat/feedback/${item.id}/evaluate`,
+        {}
+      );
+      setEvalNotice(res.data?.message ?? "Queued for evaluation.");
+    } catch (e) {
+      // Surfaced, not swallowed: the state machine refuses an item in the wrong status, and
+      // that refusal is the answer the user needs rather than a silent no-op.
+      setEvalNotice(e instanceof Error ? e.message : "Could not queue this item for evaluation.");
+    } finally {
+      setEvaluating(false);
     }
   }, []);
 
@@ -370,6 +452,113 @@ export default function NativeUatTriageConsole() {
                     </div>
                   </div>
                 </div>
+              )}
+
+              {/* ── Checklist ───────────────────────────────────────────── */}
+              <div className="mt-6 flex items-center justify-between">
+                <h3 className="text-sm font-semibold text-slate-800">Checklist</h3>
+                <button
+                  onClick={() => void evaluate(selected)}
+                  disabled={evaluating}
+                  className="rounded border border-slate-300 bg-white px-2.5 py-1.5 text-xs text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                >
+                  {evaluating ? "Queueing…" : evaluations.length ? "Re-evaluate" : "Evaluate"}
+                </button>
+              </div>
+
+              {evalNotice && (
+                <p className="mt-2 rounded border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700">
+                  {evalNotice}
+                </p>
+              )}
+
+              {evaluations.length === 0 ? (
+                <p className="mt-2 text-sm text-slate-500">
+                  Not evaluated yet. Evaluation is advisory — it explains and recommends, and a
+                  human still decides.
+                </p>
+              ) : (
+                <>
+                  <ul className="mt-3 space-y-1.5">
+                    {evaluations.map((e) => (
+                      <li
+                        key={e.item_key}
+                        className={`rounded border p-2 text-xs ${VERDICT_STYLES[e.verdict]}`}
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="font-mono font-medium">{e.item_key}</span>
+                          <span className="flex items-center gap-1.5">
+                            {AUTHORITATIVE.has(e.source) && (
+                              <span
+                                className="rounded bg-white/70 px-1.5 py-0.5 text-[10px] font-semibold uppercase"
+                                title="From the reviewed control-plane files. A database rule cannot loosen this."
+                              >
+                                locked
+                              </span>
+                            )}
+                            <span className="text-[10px] uppercase tracking-wide opacity-70">
+                              {e.source}
+                            </span>
+                            <span className="font-semibold">{e.verdict}</span>
+                          </span>
+                        </div>
+                        {e.evidence && <p className="mt-1 opacity-90">{e.evidence}</p>}
+                      </li>
+                    ))}
+                  </ul>
+                  {/* Which rules produced this, so a six-month-old decision stays explainable. */}
+                  <p className="mt-2 font-mono text-[10px] text-slate-400">
+                    rules v
+                    {[...new Set(evaluations.map((e) => e.rule_version).filter(Boolean))].join(", ") ||
+                      "—"}{" "}
+                    · snapshot {evaluations[0]?.rule_snapshot_sha256?.slice(0, 12) ?? "—"}
+                  </p>
+                </>
+              )}
+
+              {/* ── Model calls ─────────────────────────────────────────── */}
+              {llmCalls.length > 0 && (
+                <>
+                  <h3 className="mt-6 text-sm font-semibold text-slate-800">Model calls</h3>
+                  <ul className="mt-2 space-y-1.5">
+                    {llmCalls.map((c, idx) => (
+                      <li
+                        key={`${c.created_at}-${idx}`}
+                        className="rounded border border-slate-200 bg-white p-2 text-xs text-slate-600"
+                      >
+                        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                          <span className="font-medium text-slate-800">{c.stage}</span>
+                          <span>·</span>
+                          {/* model_version is what the API actually served — with server-side
+                              fallback on, that can differ from the model we asked for. */}
+                          <span className="font-mono">{c.model_version || c.model_id}</span>
+                          {c.effort && <span>· effort {c.effort}</span>}
+                          <span>· attempt {c.attempt_no}</span>
+                          {c.stop_reason && <span>· {c.stop_reason}</span>}
+                        </div>
+                        <div className="mt-1 flex flex-wrap gap-x-2 text-slate-500">
+                          <span>
+                            {c.input_tokens ?? 0} in / {c.output_tokens ?? 0} out
+                          </span>
+                          {c.cache_read_tokens ? <span>· {c.cache_read_tokens} cached</span> : null}
+                          <span>
+                            ·{" "}
+                            {c.cost_usd_micros == null
+                              ? "unpriced"
+                              : `$${(c.cost_usd_micros / 1_000_000).toFixed(4)}`}
+                          </span>
+                          {c.latency_ms != null && <span>· {c.latency_ms}ms</span>}
+                          <span>· {c.prompt_template_version}</span>
+                        </div>
+                        {(c.error_message || c.refusal_category) && (
+                          <p className="mt-1 text-red-700">
+                            {c.refusal_category ? `refused (${c.refusal_category})` : c.error_message}
+                          </p>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                </>
               )}
             </div>
           </div>
