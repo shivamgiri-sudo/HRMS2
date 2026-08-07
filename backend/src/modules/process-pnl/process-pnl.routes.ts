@@ -361,8 +361,17 @@ router.get(
     const data = await budgetTopupService.list({
       branchScope,
       status: req.query.status ? String(req.query.status) : undefined,
+      head: req.query.head ? String(req.query.head) : undefined,
+      subHead: req.query.subHead ? String(req.query.subHead) : undefined,
+      requestedBy: req.query.requestedBy ? String(req.query.requestedBy) : undefined,
+      period: req.query.period ? String(req.query.period) : undefined,
+      raisedFrom: req.query.raisedFrom ? String(req.query.raisedFrom) : undefined,
+      raisedTo: req.query.raisedTo ? String(req.query.raisedTo) : undefined,
+      pendingWithRole: req.query.pendingWith ? String(req.query.pendingWith) : undefined,
     });
-    res.json({ success: true, data });
+    // `data` stays the array it has always been so BudgetTopupPanel keeps working unchanged;
+    // the tab counts ride alongside it rather than wrapping it.
+    res.json({ success: true, data: data.rows, counts: data.counts });
   })
 );
 

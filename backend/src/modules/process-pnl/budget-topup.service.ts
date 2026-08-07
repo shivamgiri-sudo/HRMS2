@@ -2,6 +2,7 @@ import { randomUUID } from "crypto";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { financeBranchFilter, type FinanceBranchScope } from "../finance/finance-access-scope.js";
+import { resolvePendingWith } from "../finance/finance-workflow-role.js";
 import { lockActiveBudgetLine } from "./budget-consumption.service.js";
 
 export type BudgetTopupStatus =
@@ -98,6 +99,14 @@ export const budgetTopupService = {
     /** Multi-branch scope; wins over branchId. Both exist so routers migrate one at a time. */
     branchScope?: FinanceBranchScope;
     status?: string;
+    head?: string;
+    subHead?: string;
+    requestedBy?: string;
+    period?: string;
+    raisedFrom?: string;
+    raisedTo?: string;
+    /** Narrow to rows awaiting a given stage. Derived from status, never stored. */
+    pendingWithRole?: string;
   }) {
     const conditions: string[] = [];
     const params: unknown[] = [];
@@ -115,6 +124,30 @@ export const budgetTopupService = {
       conditions.push("t.status = ?");
       params.push(filters.status);
     }
+    if (filters.head) {
+      conditions.push("l.head = ?");
+      params.push(filters.head);
+    }
+    if (filters.subHead) {
+      conditions.push("l.sub_head = ?");
+      params.push(filters.subHead);
+    }
+    if (filters.requestedBy) {
+      conditions.push("t.requested_by = ?");
+      params.push(filters.requestedBy);
+    }
+    if (filters.period) {
+      conditions.push("h.period_code = ?");
+      params.push(filters.period);
+    }
+    if (filters.raisedFrom) {
+      conditions.push("t.created_at >= ?");
+      params.push(`${filters.raisedFrom} 00:00:00`);
+    }
+    if (filters.raisedTo) {
+      conditions.push("t.created_at <= ?");
+      params.push(`${filters.raisedTo} 23:59:59`);
+    }
     const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
     // LIMIT/OFFSET are not used here (no pagination yet, matches an already-fixed footgun in
     // grn.service.ts listGrns — mysql2 3.22.3 rejects them as execute() bind params).
@@ -131,7 +164,23 @@ export const budgetTopupService = {
         LIMIT 200`,
       params
     );
-    return rows;
+
+    const decorated = (rows as RowDataPacket[]).map((row) => decorateTopup(row));
+    const visible = filters.pendingWithRole
+      ? decorated.filter((r) => r.pending_with_role === filters.pendingWithRole)
+      : decorated;
+
+    // Counts come from the same scoped, filtered set the rows do — a tab badge that counted
+    // more widely than the list beneath it would advertise other branches' requests.
+    const counts = {
+      all: decorated.length,
+      pending_branch_head: decorated.filter((r) => r.pending_with_role === "branch_head").length,
+      pending_finance_head: decorated.filter((r) => r.pending_with_role === "finance_head").length,
+      applied: decorated.filter((r) => String(r.status) === "applied").length,
+      rejected: decorated.filter((r) => String(r.status) === "rejected").length,
+    };
+
+    return { rows: visible, counts };
   },
 
   /** Two-stage chain, identical shape to GRN review: branch_head at 'submitted',
@@ -216,3 +265,53 @@ export const budgetTopupService = {
     }
   },
 };
+
+
+/**
+ * Adds the derived pendency fields Requirement 1 asks for.
+ *
+ * All of it is computed, not stored. Pending-with is a pure function of status, and ageing is
+ * a function of when the current stage began — a stored copy of either would be a second
+ * source of truth free to drift from the status it describes.
+ *
+ * Ageing counts time in the CURRENT stage, not since the request was raised. Measuring from
+ * creation buries a fast Finance turnaround inside a slow Branch Head one, which is the
+ * opposite of what a pendency report is for.
+ */
+type DecoratedTopup = RowDataPacket & {
+  pending_with_role: string | null;
+  pending_with: string;
+  is_pending: boolean;
+  ageing_days: number | null;
+  age_bucket: string | null;
+};
+
+function decorateTopup(row: RowDataPacket): DecoratedTopup {
+  const status = String(row.status ?? "");
+  const pending = resolvePendingWith(status, "topup");
+
+  const stageStartedAt =
+    row.branch_head_reviewed_at ?? row.created_at ?? null;
+  const lastActionAt =
+    row.applied_at ?? row.finance_head_reviewed_at ?? row.branch_head_reviewed_at ?? null;
+  const lastActionBy =
+    row.finance_head_reviewed_by ?? row.branch_head_reviewed_by ?? null;
+
+  const ageDays = pending.isPending && stageStartedAt
+    ? Math.max(0, Math.floor((Date.now() - new Date(String(stageStartedAt)).getTime()) / 86_400_000))
+    : null;
+
+  return {
+    ...row,
+    pending_with_role: pending.role,
+    pending_with: pending.label,
+    is_pending: pending.isPending,
+    pending_since: pending.isPending ? stageStartedAt : null,
+    ageing_days: ageDays,
+    age_bucket: ageDays === null ? null : ageDays <= 2 ? "0-2" : ageDays <= 7 ? "3-7" : "7+",
+    last_action_by: lastActionBy,
+    last_action_at: lastActionAt,
+    approval_remarks:
+      row.finance_head_review_note ?? row.branch_head_review_note ?? row.rejection_reason ?? null,
+  } as DecoratedTopup;
+}

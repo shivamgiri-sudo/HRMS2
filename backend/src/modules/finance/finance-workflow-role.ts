@@ -48,3 +48,63 @@ export function resolveFinanceStageRole(input: {
   }
   return expectedRole;
 }
+
+/** How a stage owner reads on screen. */
+const STAGE_LABELS: Record<FinanceStageRole, string> = {
+  branch_head: "Branch Head",
+  finance_head: "Finance Head",
+  accounts_head: "Accounts Head",
+};
+
+export type PendingWith = {
+  /** The role that owes the next action, or null when nobody does. */
+  role: FinanceStageRole | null;
+  /** Display text, including terminal states — never blank. */
+  label: string;
+  /** True while the item is still waiting on someone. */
+  isPending: boolean;
+};
+
+/**
+ * Who a request is waiting on, for display (Requirement 1).
+ *
+ * Separate from resolveFinanceStageRole, and deliberately NOT a relaxation of it. That
+ * function throws for a status with no valid stage, and that throw is an authorisation
+ * check — softening it so a list could render would turn a security guard into a label
+ * formatter. This one answers a different question ("who owes the next move?"), never
+ * throws, and is safe to call for every row in a list.
+ *
+ * Nothing is stored. Pending-with is a pure function of status, so a column would be a second
+ * source of truth that could drift from the status it describes.
+ */
+export function resolvePendingWith(
+  currentStatus: string,
+  workflow: "budget" | "grn" | "topup" = "topup",
+): PendingWith {
+  const status = String(currentStatus ?? "").toLowerCase();
+
+  // Terminal states first: these are answers, not gaps.
+  if (status === "applied") return { role: null, label: "Completed", isPending: false };
+  if (status === "rejected") return { role: null, label: "Rejected", isPending: false };
+  if (status === "cancelled") return { role: null, label: "Cancelled", isPending: false };
+  if (status === "draft") return { role: null, label: "Not submitted", isPending: false };
+
+  if (status === "submitted") {
+    return { role: "branch_head", label: STAGE_LABELS.branch_head, isPending: true };
+  }
+  if (status === "branch_head_approved") {
+    return { role: "finance_head", label: STAGE_LABELS.finance_head, isPending: true };
+  }
+  // Declared on the budget chain and on the top-up enum, though the top-up service never
+  // writes it — Finance Head approval goes straight to 'applied'. Handled so a legacy row
+  // carrying it still renders something true.
+  if (status === "finance_head_approved") {
+    return workflow === "budget"
+      ? { role: "accounts_head", label: STAGE_LABELS.accounts_head, isPending: true }
+      : { role: null, label: "Completed", isPending: false };
+  }
+
+  // An unrecognised status is reported as unknown rather than guessed at. Silently showing
+  // "Completed" for a status nobody anticipated is how a stuck request stops being chased.
+  return { role: null, label: "Unknown", isPending: false };
+}
