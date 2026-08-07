@@ -29,6 +29,10 @@ export function GridLegend() {
         <span className="inline-block h-1.5 w-1.5 rounded-bl bg-amber-500" aria-hidden="true" />
         <span>Late mark</span>
       </span>
+      <span className="inline-flex items-center gap-1.5">
+        <span className="inline-block h-[2px] w-2.5 bg-sky-400/70" aria-hidden="true" />
+        <span>Sources disagreed (no action needed)</span>
+      </span>
     </div>
   );
 }

@@ -83,6 +83,11 @@ export function AttendanceCell({
           {day.lateMark && (
             <span className="absolute right-0 top-0 h-1.5 w-1.5 rounded-bl bg-amber-500" aria-hidden="true" />
           )}
+          {/* The sources disagreed. Worth seeing, but the day HAS a decision and
+              payroll will pay it — so a hairline, not an alarm. */}
+          {day.sourceMismatch && !day.needsAttention && (
+            <span className="absolute inset-x-0 bottom-0 h-[2px] bg-sky-400/70" aria-hidden="true" />
+          )}
         </td>
       </TooltipTrigger>
 
@@ -110,6 +115,12 @@ export function AttendanceCell({
             {day.regularized && <p className="text-indigo-300">Corrected by an approved regularization.</p>}
             {day.overridden && <p className="text-indigo-300">Manually overridden.</p>}
             {day.locked && <p className="text-slate-400">Locked for payroll.</p>}
+            {day.sourceMismatch && (
+              <p className="text-sky-300">
+                APR and biometric disagreed on this day. The status above is what payroll
+                will use — no action needed unless it looks wrong.
+              </p>
+            )}
             {day.note && <p className="text-slate-400">“{day.note}”</p>}
           </>
         )}

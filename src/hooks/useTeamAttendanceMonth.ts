@@ -23,6 +23,8 @@ export interface TeamMonthDay {
   overridden?: boolean;
   locked?: boolean;
   needsAttention?: boolean;
+  /** APR and biometric disagreed. Informational — not a blocker and not an action. */
+  sourceMismatch?: boolean;
   source?: string | null;
   sourceSystem?: string | null;
   minutes?: number;

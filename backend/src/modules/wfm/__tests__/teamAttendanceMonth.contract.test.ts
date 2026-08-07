@@ -76,11 +76,28 @@ describe("team-month grid is scoped and gated", () => {
 
   it("mirrors the payroll blockers when deciding a day needs attention", () => {
     const at = SOURCE.indexOf("function needsAttention");
-    const block = SOURCE.slice(at, at + 500);
+    const block = SOURCE.slice(at, at + 400);
     expect(block).toMatch(/missing_punch/);
     expect(block).toMatch(/unreconciled/);
-    expect(block).toMatch(/mismatch_flag/);
-    expect(block).toMatch(/mismatch_resolved_at/);
+  });
+
+  it("does NOT treat a source mismatch as needing attention", () => {
+    // mismatch_flag records that APR and biometric disagreed. It is provenance, not
+    // an open question: governance reads it nowhere and it blocks no payroll. The
+    // first version of this endpoint included it and flagged 4,761 of 6,181 days in
+    // the first week of 2026-08 — 77% of the grid — with 2,612 flagged by nothing
+    // else while already settled as present or half_day. A mostly-orange grid cannot
+    // be triaged, which defeats the only thing this page is for.
+    // Isolate needsAttention's own body: hasSourceMismatch sits immediately after it
+    // and legitimately mentions mismatch_flag, so a fixed-size window catches it.
+    const at = SOURCE.indexOf("function needsAttention");
+    const body = SOURCE.slice(at, SOURCE.indexOf("\n}", at) + 2);
+    expect(body).toMatch(/missing_punch/);
+    expect(body, "mismatch_flag is back in needsAttention — the grid will turn 77% orange")
+      .not.toMatch(/mismatch_flag/);
+    // It still travels to the UI, just not as an alarm.
+    expect(SOURCE).toMatch(/function hasSourceMismatch/);
+    expect(SOURCE).toMatch(/sourceMismatch: hasSourceMismatch\(row\)/);
   });
 
   it("drives the attendance query from employee ids so the index is usable", () => {

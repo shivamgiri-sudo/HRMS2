@@ -46,19 +46,31 @@ function monthWindow(month: string) {
 }
 
 /**
- * A day needs a manager's attention when it is one of the states that stops payroll.
+ * A day needs a manager's attention when it has no usable attendance decision.
  *
- * Deliberately mirrors payroll-governance.service.ts rather than inventing a
- * definition: missing_punch (its MISSING_PUNCH_WITH_BIOMETRIC_EVIDENCE blocker), an
- * unresolved source mismatch, and — handled by the caller — no record at all
- * (PARTIAL_ATTENDANCE_DAYS_MISSING). If those disagree, the grid tells a manager the
- * month is clean while payroll refuses to run, which is worse than showing nothing.
+ * Mirrors payroll-governance.service.ts rather than inventing a definition:
+ * missing_punch (its MISSING_PUNCH_WITH_BIOMETRIC_EVIDENCE blocker), unreconciled,
+ * and — handled by the caller — no record at all (PARTIAL_ATTENDANCE_DAYS_MISSING).
+ *
+ * `mismatch_flag` is deliberately NOT part of this, though the first version had it.
+ * It records that APR and biometric disagreed about a day, which is provenance, not
+ * an open question: governance reads it nowhere and it blocks no payroll. Including
+ * it flagged 4,761 of 6,181 days in the first week of 2026-08 — 77% of the grid —
+ * and 2,612 of those were flagged by nothing else while already being settled as
+ * present (1,415) or half_day (1,108). A grid that is mostly orange cannot be
+ * triaged, which defeats the only thing this page is for.
+ *
+ * The disagreement is still worth seeing, so it travels as `sourceMismatch` on the
+ * cell and shows as a quiet marker instead of an alarm.
  */
-function needsAttention(row: { attendance_status?: string | null; mismatch_flag?: number | null; mismatch_resolved_at?: unknown }): boolean {
+function needsAttention(row: { attendance_status?: string | null }): boolean {
   const status = String(row.attendance_status ?? "");
-  if (status === "missing_punch" || status === "unreconciled") return true;
-  if (Number(row.mismatch_flag ?? 0) === 1 && !row.mismatch_resolved_at) return true;
-  return false;
+  return status === "missing_punch" || status === "unreconciled";
+}
+
+/** APR and biometric disagreed. Informational — not a blocker, not an action. */
+function hasSourceMismatch(row: { mismatch_flag?: number | null; mismatch_resolved_at?: unknown }): boolean {
+  return Number(row.mismatch_flag ?? 0) === 1 && !row.mismatch_resolved_at;
 }
 
 /**
@@ -235,6 +247,7 @@ teamAttendanceMonthRouter.get(
           overridden: Boolean(row.override_by),
           locked: Number(row.is_locked ?? 0) === 1,
           needsAttention: attn,
+          sourceMismatch: hasSourceMismatch(row),
           source: row.attendance_source,
           sourceSystem: row.source_system,
           minutes: Number(row.raw_minutes ?? 0),
