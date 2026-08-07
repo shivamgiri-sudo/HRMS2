@@ -891,6 +891,14 @@ reportSuiteRouter.get("/:code", reportScopeMiddleware, reportCatalogAccessMiddle
 
     case "confirmation-due-list": {
       const days = Number(req.query.days ?? 30);
+      // Row scope was absent — this read employee data with no branch restriction.
+      // Called FIRST so its clauses and params lead the bind list; the report's own
+      // conditions are pushed after, in the order their placeholders appear.
+      addScopedEmployeeFilters(req, clauses, params);
+      clauses.push("e.active_status = 1");
+      clauses.push("ep.status = 'active'");
+      clauses.push("ep.probation_end_date BETWEEN CURDATE() AND DATE_ADD(CURDATE(), INTERVAL ? DAY)");
+      params.push(days);
       sql = `SELECT e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
                     e.date_of_joining, ep.probation_end_date,
                     DATEDIFF(ep.probation_end_date, CURDATE()) AS days_remaining,
@@ -899,16 +907,21 @@ reportSuiteRouter.get("/:code", reportScopeMiddleware, reportCatalogAccessMiddle
                JOIN employee_probation ep ON ep.employee_id = e.id
                LEFT JOIN branch_master b ON b.id = e.branch_id
                LEFT JOIN department_master d ON d.id = e.department_id
-              WHERE e.active_status = 1
-                AND ep.status = 'active'
-                AND ep.probation_end_date BETWEEN CURDATE() AND DATE_ADD(CURDATE(), INTERVAL ? DAY)
+              WHERE ${clauses.join(" AND ")}
               ORDER BY ep.probation_end_date ASC`;
-      params.push(days);
       break;
     }
 
     case "contract-expiry-list": {
       const days = Number(req.query.days ?? 60);
+      // Row scope was absent — this read employee data with no branch restriction.
+      // Called FIRST so its clauses and params lead the bind list; the report's own
+      // conditions are pushed after, in the order their placeholders appear.
+      addScopedEmployeeFilters(req, clauses, params);
+      clauses.push("e.active_status = 1");
+      clauses.push("ec.contract_end_date IS NOT NULL");
+      clauses.push("ec.contract_end_date BETWEEN CURDATE() AND DATE_ADD(CURDATE(), INTERVAL ? DAY)");
+      params.push(days);
       sql = `SELECT e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
                     e.date_of_joining, ec.contract_end_date, ec.contract_type,
                     DATEDIFF(ec.contract_end_date, CURDATE()) AS days_to_expiry,
@@ -917,11 +930,8 @@ reportSuiteRouter.get("/:code", reportScopeMiddleware, reportCatalogAccessMiddle
                JOIN employee_contract ec ON ec.employee_id = e.id AND ec.status = 'active'
                LEFT JOIN branch_master b ON b.id = e.branch_id
                LEFT JOIN department_master d ON d.id = e.department_id
-              WHERE e.active_status = 1
-                AND ec.contract_end_date IS NOT NULL
-                AND ec.contract_end_date BETWEEN CURDATE() AND DATE_ADD(CURDATE(), INTERVAL ? DAY)
+              WHERE ${clauses.join(" AND ")}
               ORDER BY ec.contract_end_date ASC`;
-      params.push(days);
       break;
     }
 
@@ -1939,6 +1949,12 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
     case "clearance-status-register": {
       const from = dateParam(req.query.from, `${new Date().getFullYear()}-01-01`);
       const to = dateParam(req.query.to, new Date().toISOString().slice(0, 10));
+      // Row scope was absent — this read employee data with no branch restriction.
+      // Called FIRST so its clauses and params lead the bind list; the report's own
+      // conditions are pushed after, in the order their placeholders appear.
+      addScopedEmployeeFilters(req, clauses, params);
+      clauses.push("er.submitted_at BETWEEN ? AND ?");
+      params.push(from, to);
       sql = `SELECT e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
                     d.dept_name AS department_name,
                     COALESCE(er.last_working_day_confirmed, er.last_working_day_proposed) AS last_working_day,
@@ -1949,9 +1965,8 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
                JOIN exit_request er ON er.id = ecc.exit_request_id
                JOIN employees e ON e.id = er.employee_id
                LEFT JOIN department_master d ON d.id = e.department_id
-              WHERE er.submitted_at BETWEEN ? AND ?
+              WHERE ${clauses.join(" AND ")}
               ORDER BY e.employee_code, ecc.department`;
-      params.push(from, to);
       break;
     }
 
