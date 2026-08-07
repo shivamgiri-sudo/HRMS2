@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Employee / HR & Workforce executor
  *
  * Covers codes: headcount, employee-master, manager-mapping, org-structure-snapshot,
@@ -44,7 +44,7 @@ async function count(baseSql: string, params: unknown[]): Promise<number> {
  * This used to also require LOWER(employment_status) = 'active', which made headcount
  * disagree with employee-master and every other employee-grain report: on 2026-08-07
  * headcount returned 1,123 where employee-master returned 1,125. The two rows behind the
- * gap have active_status = 1 with employment_status 'inactive' and 'resigned' — i.e.
+ * gap have active_status = 1 with employment_status 'inactive' and 'resigned' â€” i.e.
  * contradictory flags on real employees, which is a data-quality problem to surface, not
  * a reason for two reports to answer the same question differently.
  *
@@ -105,7 +105,10 @@ export async function employeeMaster(
            COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
            e.official_email, e.mobile, e.employment_status,
            e.date_of_joining, e.date_of_exit,
-           b.branch_name, d.dept_name AS department_name, p.process_name, cc.cost_centre_name,
+           b.branch_name, d.dept_name AS department_name,
+           COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
+           COALESCE(cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
+           COALESCE(cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
            COALESCE(NULLIF(m.full_name,''), CONCAT(m.first_name,' ',COALESCE(m.last_name,''))) AS reporting_manager
       FROM employees e
       LEFT JOIN branch_master b  ON b.id  = e.branch_id
@@ -164,11 +167,14 @@ export async function managerMapping(
                   AND e.reporting_manager_id <> e.manager_id THEN 'MANAGER_FIELD_MISMATCH'
              ELSE 'OK'
            END AS mapping_status,
-           b.branch_name, p.process_name
+           b.branch_name, COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
+           COALESCE(sp_cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
+           COALESCE(sp_cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name
       FROM employees e
       LEFT JOIN employees m ON m.id = COALESCE(e.reporting_manager_id, e.manager_id)
       LEFT JOIN branch_master b ON b.id = e.branch_id
       LEFT JOIN process_master p ON p.id = e.process_id
+      LEFT JOIN cost_centre_master sp_cc ON sp_cc.id = e.cost_centre_id
      WHERE ${clauses.join(" AND ")}
      ORDER BY mapping_status DESC, e.id ASC`;
 
@@ -274,11 +280,14 @@ export async function employeeMovement(
            e.date_of_joining,
            COALESCE(e.date_of_exit, e.date_of_leaving, e.resignation_date) AS exit_date,
            CASE WHEN e.date_of_joining BETWEEN ? AND ? THEN 'joining' ELSE 'exit' END AS movement_type,
-           b.branch_name, d.dept_name AS department_name, p.process_name
+           b.branch_name, d.dept_name AS department_name, COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
+           COALESCE(sp_cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
+           COALESCE(sp_cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name
       FROM employees e
       LEFT JOIN branch_master b     ON b.id = e.branch_id
       LEFT JOIN department_master d ON d.id = e.department_id
       LEFT JOIN process_master p    ON p.id = e.process_id
+      LEFT JOIN cost_centre_master sp_cc ON sp_cc.id = e.cost_centre_id
      WHERE ${clauses.join(" AND ")}
      ORDER BY e.id ASC`;
   params.push(from, to);
@@ -322,10 +331,13 @@ export async function confirmationDueList(
            e.date_of_joining,
            DATE_ADD(e.date_of_joining, INTERVAL COALESCE(e.probation_days,90) DAY) AS confirmation_due_date,
            DATEDIFF(CURDATE(), DATE_ADD(e.date_of_joining, INTERVAL COALESCE(e.probation_days,90) DAY)) AS overdue_days,
-           b.branch_name, p.process_name, d.dept_name AS department_name
+           b.branch_name, COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
+           COALESCE(sp_cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
+           COALESCE(sp_cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name, d.dept_name AS department_name
       FROM employees e
       LEFT JOIN branch_master b     ON b.id = e.branch_id
       LEFT JOIN process_master p    ON p.id = e.process_id
+      LEFT JOIN cost_centre_master sp_cc ON sp_cc.id = e.cost_centre_id
       LEFT JOIN department_master d ON d.id = e.department_id
      WHERE ${clauses.join(" AND ")}
      ORDER BY e.id ASC`;
@@ -368,10 +380,13 @@ export async function contractExpiryList(
            COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
            e.date_of_joining, e.contract_end_date,
            DATEDIFF(e.contract_end_date, CURDATE()) AS days_to_expiry,
-           b.branch_name, p.process_name, d.dept_name AS department_name
+           b.branch_name, COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
+           COALESCE(sp_cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
+           COALESCE(sp_cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name, d.dept_name AS department_name
       FROM employees e
       LEFT JOIN branch_master b     ON b.id = e.branch_id
       LEFT JOIN process_master p    ON p.id = e.process_id
+      LEFT JOIN cost_centre_master sp_cc ON sp_cc.id = e.cost_centre_id
       LEFT JOIN department_master d ON d.id = e.department_id
      WHERE ${clauses.join(" AND ")}
      ORDER BY e.id ASC`;
@@ -523,10 +538,13 @@ export async function birthdayList(
            e.employee_code,
            COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
            e.date_of_birth, MONTH(e.date_of_birth) AS birth_month, DAY(e.date_of_birth) AS birth_day,
-           b.branch_name, p.process_name, d.dept_name AS department_name
+           b.branch_name, COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
+           COALESCE(sp_cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
+           COALESCE(sp_cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name, d.dept_name AS department_name
       FROM employees e
       LEFT JOIN branch_master b     ON b.id = e.branch_id
       LEFT JOIN process_master p    ON p.id = e.process_id
+      LEFT JOIN cost_centre_master sp_cc ON sp_cc.id = e.cost_centre_id
       LEFT JOIN department_master d ON d.id = e.department_id
      WHERE ${clauses.join(" AND ")}
      ORDER BY birth_month ASC, birth_day ASC, e.id ASC`;
@@ -568,10 +586,13 @@ export async function anniversaryList(
            e.date_of_joining,
            TIMESTAMPDIFF(YEAR, e.date_of_joining, CURDATE()) AS years_of_service,
            MONTH(e.date_of_joining) AS join_month, DAY(e.date_of_joining) AS join_day,
-           b.branch_name, p.process_name, d.dept_name AS department_name
+           b.branch_name, COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
+           COALESCE(sp_cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
+           COALESCE(sp_cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name, d.dept_name AS department_name
       FROM employees e
       LEFT JOIN branch_master b     ON b.id = e.branch_id
       LEFT JOIN process_master p    ON p.id = e.process_id
+      LEFT JOIN cost_centre_master sp_cc ON sp_cc.id = e.cost_centre_id
       LEFT JOIN department_master d ON d.id = e.department_id
      WHERE ${clauses.join(" AND ")}
      ORDER BY join_month ASC, join_day ASC, e.id ASC`;
@@ -592,14 +613,14 @@ export async function anniversaryList(
 // where those rows become someone's work. One row per active employee missing at least
 // one org attribute, with the missing ones named.
 //
-// Baseline against live mas_hrms, 2026-08-07 — 200 of 1,125 active employees have at
+// Baseline against live mas_hrms, 2026-08-07 â€” 200 of 1,125 active employees have at
 // least one gap:
 //   cost centre    64 missing
 //   process       143 missing
 //   designation   119 missing
 //   manager       153 missing   (COALESCE(reporting_manager_id, manager_id); counting
 //                                reporting_manager_id alone gives 162, which is why the
-//                                COALESCE matters — 9 employees are mapped only via the
+//                                COALESCE matters â€” 9 employees are mapped only via the
 //                                duplicate manager_id column)
 //   department     13 missing
 //   branch         10 missing
@@ -664,11 +685,11 @@ export async function orgMappingGaps(
 // active_status and employment_status are two independent flags that can contradict each
 // other. Standardising every report on active_status (2026-08-07) means a row flagged
 // active_status = 1 but employment_status 'resigned' is now counted as a current
-// employee — correct for consistency, and exactly the row HR needs to see and resolve.
+// employee â€” correct for consistency, and exactly the row HR needs to see and resolve.
 //
 // This is the safety net for that decision, so nothing is hidden rather than fixed.
-// Baseline: 2 rows (one 'inactive', one 'resigned'). It also reports the reverse case —
-// active_status = 0 with an active-looking employment_status — which would otherwise be
+// Baseline: 2 rows (one 'inactive', one 'resigned'). It also reports the reverse case â€”
+// active_status = 0 with an active-looking employment_status â€” which would otherwise be
 // invisible to every report, since they all filter to active_status = 1.
 // ---------------------------------------------------------------------------
 export async function employeeStatusConflicts(

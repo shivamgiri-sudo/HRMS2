@@ -153,19 +153,12 @@ describe("mandatory identity columns on employee-grain reports", () => {
    * 2026-08-07, against a catalog where only 2 of 115 reports carried all three facts.
    */
   const NOT_YET_MIGRATED = new Set<string>([
-    "anniversary-list",
-    "birthday-list",
     "certification-status",
-    "confirmation-due-list",
-    "contract-expiry-list",
     "document-expiry-tracker",
     "document-verification-status",
-    "employee-master",
-    "employee-movement",
     "identity-source-snapshot",
     "leave-allocation-register",
     "lwp-deduction-register",
-    "manager-mapping",
     "missing-documents-report",
     "neft-transfer-file",
     "payslip-status",
