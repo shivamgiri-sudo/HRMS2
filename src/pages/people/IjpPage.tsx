@@ -11,12 +11,21 @@ function IjpEmployeeStats() {
   const { data: eligibleData } = useEligibleIjpPostings();
   const { data: appsData } = useMyIjpApplications();
 
-  const openCount    = eligibleData?.postings?.filter((p: { eligible: boolean }) => p.eligible).length ?? 0;
-  const totalPostings = eligibleData?.postings?.length ?? 0;
-  const activeApps   = appsData?.applications?.filter((a: { status: string }) =>
+  /*
+   * Both hooks already unwrap the envelope - useEligibleIjpPostings returns res.postings and
+   * useMyIjpApplications returns res.applications - so these are plain arrays. Reading .postings
+   * and .applications off them again made every tile on this page read 0, always.  came
+   * off the same discarded envelope, so it is the application count.
+   */
+  // p.eligibility.eligible, not p.eligible. The previous inline annotation `(p: { eligible:
+  // boolean })` asserted a field that does not exist on EligiblePostingResponse, so this tile
+  // counted zero open postings no matter how many were open.
+  const openCount     = eligibleData?.filter((p) => p.eligibility?.eligible).length ?? 0;
+  const totalPostings = eligibleData?.length ?? 0;
+  const activeApps    = appsData?.filter((a) =>
     !['rejected','withdrawn','offer_declined'].includes(a.status)
   ).length ?? 0;
-  const totalApps    = appsData?.total ?? 0;
+  const totalApps     = appsData?.length ?? 0;
 
   return (
     <div className="grid gap-3 grid-cols-2 sm:grid-cols-3">

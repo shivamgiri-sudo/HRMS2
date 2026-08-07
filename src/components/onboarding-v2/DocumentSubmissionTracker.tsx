@@ -6,7 +6,13 @@ export interface DocumentStatus {
   docType: string;
   label: string;
   required: boolean;
-  status: 'not_started' | 'uploaded' | 'pending_review' | 'verified' | 'failed';
+  /**
+   * `name_mismatch` belongs here as well as on verificationStatus below: buildDocStatuses in
+   * S10_ReviewSubmit maps a document_status of 'name_mismatch' straight onto this field. Omitting
+   * it made three switch cases and two comparisons in this file look unreachable when they are
+   * not — the mismatch banner does render, the union just denied it could.
+   */
+  status: 'not_started' | 'uploaded' | 'pending_review' | 'verified' | 'failed' | 'name_mismatch';
   uploadedAt?: string;
   verificationStatus?: 'pending' | 'verified' | 'name_mismatch' | 'failed';
 }

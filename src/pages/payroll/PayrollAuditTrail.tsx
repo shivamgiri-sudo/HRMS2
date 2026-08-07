@@ -120,19 +120,22 @@ export default function PayrollAuditTrail() {
 
   const { data, isLoading, refetch } = useQuery({
     queryKey: ["payroll-audit-trail", params.toString()],
+    // No .then(r => r.data) here: every consumer below reads data.data and data.total, i.e. the
+    // whole envelope. Unwrapping it made entries always [] and total always 0 - an audit trail
+    // that rendered no rows and paginated over nothing.
     queryFn: () => hrmsApi.get<{ success: boolean; data: AuditEntry[]; total: number; page: number; limit: number }>(
       `/api/payroll/audit-trail?${params.toString()}`
-    ).then(r => r.data),
+    ),
   });
 
   const { data: eventTypesData } = useQuery({
     queryKey: ["payroll-audit-event-types"],
-    queryFn: () => hrmsApi.get<{ success: boolean; data: string[] }>("/api/payroll/audit-trail/event-types").then(r => r.data),
+    queryFn: () => hrmsApi.get<{ success: boolean; data: string[] }>("/api/payroll/audit-trail/event-types"),
   });
 
   const { data: runsData } = useQuery({
     queryKey: ["payroll-audit-runs"],
-    queryFn: () => hrmsApi.get<{ success: boolean; data: RunOption[] }>("/api/payroll/audit-trail/runs").then(r => r.data),
+    queryFn: () => hrmsApi.get<{ success: boolean; data: RunOption[] }>("/api/payroll/audit-trail/runs"),
   });
 
   const entries: AuditEntry[] = data?.data ?? [];
