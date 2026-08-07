@@ -1,6 +1,28 @@
 /**
- * Report Worker Executor
+ * Report Worker Executor — SUPERSEDED AND UNREFERENCED. Do not extend.
  *
+ * Nothing imports this file. `executeReportForWorker` has no call sites anywhere in
+ * backend/src (verified 2026-08-07); the only other mentions of it are comments. The path
+ * that actually builds a scheduled or emailed report is:
+ *
+ *   report-subscription.worker  → inserts a report_request row
+ *   report-generation.worker    → picks it up and calls executeReport()
+ *
+ * i.e. the same executor layer the screen and the direct XLSX download use. Adding a report
+ * here does nothing; adding one to executors/ serves all three delivery paths at once.
+ *
+ * It is kept rather than deleted because this repository does not delete working code on
+ * sight, but treat it as documentation of a retired design. Its SQL has already drifted
+ * from the live definitions — its `headcount` still filters on active_status AND
+ * employment_status, which returns 1,123 where every current surface returns 1,125, and its
+ * payroll-register predates the population and floored-deduction disclosure. Reading it as
+ * a reference will teach you the wrong numbers.
+ *
+ * A stale copy is not harmless: a hardcoded six-code allowlist in
+ * communication/notification-admin.routes.ts cited this file as the reason only six reports
+ * could be scheduled, which blocked 92 working reports until it was corrected.
+ *
+ * ── Original header ────────────────────────────────────────────────────────────
  * Executes report queries for the background generation worker using the
  * resolved scope snapshot stored at request time. This avoids HTTP round-trips
  * and HTTP-layer dependencies while reusing the existing SQL patterns.

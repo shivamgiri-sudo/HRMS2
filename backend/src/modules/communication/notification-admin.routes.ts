@@ -20,7 +20,8 @@ import { resolveRecipients } from "../../shared/recipient-resolver.js";
 import { RecipientResolutionError } from "../../shared/recipient-resolver.types.js";
 import type { RecipientSpec, Sensitivity } from "../../shared/recipient-resolver.types.js";
 import { maskEmail } from "../../shared/email-domains.js";
-import { getReportDefinition } from "../reporting/report-catalog.js";
+import { getReportDefinition, REPORT_CATALOG } from "../reporting/report-catalog.js";
+import { EXECUTOR_MAP } from "../reporting/executors/index.js";
 import { templateService } from "./template.service.js";
 import { fallbackBody } from "./notification.deliverer.js";
 
@@ -33,14 +34,35 @@ const h = (fn: (req: AuthenticatedRequest, res: Response) => Promise<unknown>) =
     void fn(req as AuthenticatedRequest, res).catch(next);
   };
 
-/** Report codes with a real executor in report-worker-executor.ts. Everything else in the
- *  89-entry catalog returns a PENDING_DEDICATED_BUILDER placeholder that the mailer would
- *  happily deliver on a schedule. The UI shows the rest as disabled WITH THE REASON,
- *  rather than hiding them (CLAUDE.md rule 9). */
-const IMPLEMENTED_REPORT_CODES = [
-  "employee-master", "headcount", "attendance-daily",
-  "leave-balance", "payroll-register", "birthday-list",
-];
+/**
+ * Report codes that can safely be put on a schedule.
+ *
+ * This used to be a hardcoded list of six, justified as "report codes with a real executor
+ * in report-worker-executor.ts". That justification expired. report-worker-executor.ts is
+ * dead code — nothing imports it, and it is referenced only by comments (verified across
+ * backend/src on 2026-08-07). The path that actually builds a scheduled report is
+ * report-subscription.worker inserting a report_request row, which report-generation.worker
+ * picks up and runs through executeReport() — the same executor layer the screen and the
+ * direct XLSX download use.
+ *
+ * So the gate was blocking 92 working reports on the strength of a file that no longer runs.
+ * Measured the same day: 105 codes registered in EXECUTOR_MAP, 120 catalogue entries, 98 in
+ * both. Those 98 are what a subscription can actually deliver.
+ *
+ * Derived rather than listed, so it cannot drift again: a report is subscribable when it has
+ * an executor (something will run) AND a catalogue entry (the mail has a name, category and
+ * sensitivity to declare). Availability status is deliberately not part of this — an
+ * under-validation report still returns real rows, and blocking delivery on that flag is the
+ * same mistake the export gate made.
+ */
+function subscribableReportCodes(): string[] {
+  const withExecutor = new Set(Object.keys(EXECUTOR_MAP));
+  return REPORT_CATALOG
+    .filter(r => withExecutor.has(r.code))
+    .filter(r => !["deprecated", "disabled", "blocked"].includes(r.availabilityStatus ?? "under_validation"))
+    .map(r => r.code)
+    .sort();
+}
 
 /** GET /api/notification-admin/catalogue — every registered event and its live state. */
 router.get("/catalogue", h(async (_req, res) => {
@@ -225,7 +247,7 @@ router.get("/subscriptions", h(async (_req, res) => {
  * the others cannot. The UI shows the blocked ones disabled with this reason attached.
  */
 router.get("/report-codes", h(async (_req, res) => {
-  const codes = IMPLEMENTED_REPORT_CODES.map((code) => {
+  const subscribable = subscribableReportCodes().map((code) => {
     const def = getReportDefinition(code);
     return {
       code, name: def?.name ?? code, category: def?.category ?? null,
@@ -233,14 +255,30 @@ router.get("/report-codes", h(async (_req, res) => {
       subscribable: true, reason: null as string | null,
     };
   });
+
+  // Catalogued but not schedulable, each with the reason attached, so the UI can show them
+  // disabled rather than hiding them (CLAUDE.md rule 9).
+  const withExecutor = new Set(Object.keys(EXECUTOR_MAP));
+  const blocked = REPORT_CATALOG
+    .filter(r => !subscribable.some(s => s.code === r.code))
+    .map(r => ({
+      code: r.code,
+      name: r.name,
+      category: r.category ?? null,
+      subscribable: false,
+      reason: !withExecutor.has(r.code)
+        ? "No executor is registered for this code, so a scheduled run would have nothing to build."
+        : `Report is marked ${r.availabilityStatus} in the catalogue.`,
+    }));
+
   return res.json({
     success: true,
     data: {
-      subscribable: codes,
+      subscribable,
+      blocked,
       blockedReason:
-        "Only 6 of the 89 catalogued reports have a builder in report-worker-executor.ts. " +
-        "The rest return a PENDING_DEDICATED_BUILDER placeholder, so subscribing to one " +
-        "would email an empty spreadsheet on a schedule.",
+        "A report can be scheduled when it has a registered executor and a catalogue entry. " +
+        "Reports listed under `blocked` carry their individual reason.",
     },
   });
 }));

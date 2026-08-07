@@ -9,7 +9,9 @@
     "src/modules/ats/ats.service.ts",
     "src/modules/wfm/biometric-summary.routes.ts",
     "src/shared/attendanceStatus.ts",
-    "src/modules/management/management.service.ts"
+    "src/modules/management/management.service.ts",
+    "src/modules/communication/notification-admin.routes.ts",
+    "src/workers/report-generation.worker.ts"
   ],
   "exclude": ["node_modules", "dist", "src/**/__tests__"]
 }
