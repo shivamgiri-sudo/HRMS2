@@ -107,8 +107,16 @@ export async function fnfPendingRegister(
   const params: unknown[]  = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
-  // employment_status is stored capitalised ('Resigned' on 30,318 rows), so the
-  // lowercase comparison matched nothing and this register was always empty.
+  // employment_status is stored in mixed case: 28,200 rows 'Resigned' against 2,118
+  // 'resigned' (measured 2026-08-07). The column collates utf8mb4_unicode_ci, which is
+  // case-insensitive, so a bare lowercase IN(...) already matches all 30,318 — verified
+  // both forms return the same count. The LOWER() is harmless insurance against a future
+  // case-sensitive collation, not a fix for a comparison that failed.
+  //
+  // (An earlier note here said the lowercase form "matched nothing and this register was
+  // always empty". That is not what the data shows; whatever emptied the register, it was
+  // not the casing.)
+  //
   // Note 'terminated' (501 rows) is deliberately still excluded — whether termination
   // belongs in the F&F pending register is a policy call, not a schema fix.
   clauses.push("LOWER(e.employment_status) IN ('resigned','separated')");
@@ -132,12 +140,16 @@ export async function fnfPendingRegister(
            COALESCE(ffc.status,'PENDING') AS fnf_status,
            DATEDIFF(CURDATE(), COALESCE(e.date_of_exit, er.last_working_day_confirmed,
                                         er.last_working_day_proposed)) AS days_since_exit,
-           b.branch_name, p.process_name
+           COALESCE(sp_cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
+           COALESCE(sp_cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
+           b.branch_name,
+           COALESCE(p.process_name, 'UNASSIGNED') AS process_name
       FROM employees e
       LEFT JOIN exit_request er            ON er.employee_id = e.id
       LEFT JOIN full_final_calculation ffc ON ffc.exit_request_id = er.id
       LEFT JOIN branch_master b  ON b.id = e.branch_id
       LEFT JOIN process_master p ON p.id = e.process_id
+      LEFT JOIN cost_centre_master sp_cc ON sp_cc.id = e.cost_centre_id
      WHERE ${clauses.join(" AND ")}
      ORDER BY e.id ASC`;
 
@@ -243,15 +255,21 @@ export async function clearanceStatusRegister(
            SUM(CASE WHEN ec.status = 'cleared' THEN 1 ELSE 0 END) AS depts_cleared,
            COUNT(ec.id) AS depts_total,
            MAX(CASE WHEN ec.status NOT IN ('cleared','waived') THEN ec.department ELSE NULL END) AS pending_dept,
-           b.branch_name, p.process_name
+           COALESCE(sp_cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
+           COALESCE(sp_cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
+           b.branch_name,
+           COALESCE(p.process_name, 'UNASSIGNED') AS process_name
       FROM employees e
       LEFT JOIN exit_request er              ON er.employee_id = e.id
       LEFT JOIN exit_clearance_checklist ec  ON ec.exit_request_id = er.id
       LEFT JOIN branch_master b              ON b.id = e.branch_id
       LEFT JOIN process_master p             ON p.id = e.process_id
+      LEFT JOIN cost_centre_master sp_cc     ON sp_cc.id = e.cost_centre_id
      WHERE ${clauses.join(" AND ")}
+     -- ONLY_FULL_GROUP_BY: cost centre columns belong here as well as in the SELECT.
      GROUP BY e.id, e.employee_code, e.full_name, e.first_name, e.last_name,
-              er.status, er.last_working_day_confirmed, b.branch_name, p.process_name
+              er.status, er.last_working_day_confirmed, b.branch_name, p.process_name,
+              sp_cc.cost_centre_code, sp_cc.cost_centre_name
      ORDER BY e.id ASC`;
 
   const total = options.includeTotal ? await count(base, params) : 0;

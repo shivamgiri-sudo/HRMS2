@@ -418,7 +418,10 @@ export async function leaveLwpReconciliation(
     SELECT e.id AS _cursor,
            e.employee_code,
            COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-           b.branch_name, p.process_name,
+           COALESCE(sp_cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
+           COALESCE(sp_cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
+           b.branch_name,
+           COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
            SUM(adr.lwp_value) AS total_lwp_days,
            COUNT(lr.id) AS leave_applications,
            SUM(lr.total_days) AS leave_days_applied
@@ -430,10 +433,14 @@ export async function leaveLwpReconciliation(
             AND DATE(lr.from_date) = adr.record_date
       LEFT JOIN branch_master b  ON b.id = e.branch_id
       LEFT JOIN process_master p ON p.id = e.process_id
+      LEFT JOIN cost_centre_master sp_cc ON sp_cc.id = e.cost_centre_id
      WHERE ${clauses.join(" AND ")}
+     -- ONLY_FULL_GROUP_BY: the cost centre columns must appear here as well as in the
+     -- SELECT, or this aggregate fails outright rather than degrading.
      GROUP BY e.id, e.employee_code,
               COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))),
-              b.branch_name, p.process_name
+              b.branch_name, p.process_name,
+              sp_cc.cost_centre_code, sp_cc.cost_centre_name
      ORDER BY e.id ASC`;
 
   const total = options.includeTotal ? await count(base, params) : 0;
@@ -623,6 +630,10 @@ export async function leaveLapseSummary(
     SELECT e.id AS _cursor,
            e.employee_code,
            COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
+           COALESCE(sp_cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
+           COALESCE(sp_cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
+           b.branch_name,
+           COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
            lt.leave_name, lt.leave_code,
            lbl.balance_year,
            COALESCE(lbl.allocated_days,0) AS allocated,
@@ -635,6 +646,7 @@ export async function leaveLapseSummary(
             AND lbl.leave_type_id = lt.id
       LEFT JOIN branch_master b  ON b.id = e.branch_id
       LEFT JOIN process_master p ON p.id = e.process_id
+      LEFT JOIN cost_centre_master sp_cc ON sp_cc.id = e.cost_centre_id
      WHERE ${clauses.join(" AND ")}
      ORDER BY e.id ASC, lt.leave_name`;
 
