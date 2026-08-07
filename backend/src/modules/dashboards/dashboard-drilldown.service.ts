@@ -7,7 +7,29 @@ export interface DrilldownResult {
   metricCode: string;
   records: unknown[];
   note?: string;
+  /**
+   * Rows returned, NOT the size of the underlying population.
+   *
+   * Every drilldown below caps its query (25, 50, 100 or 200 rows). When the cap is hit
+   * this equals the cap, so it must never be read as "there are N of these" — use `note`,
+   * which says so explicitly.
+   */
   totalCount?: number;
+}
+
+/**
+ * Says out loud that a drilldown was truncated.
+ *
+ * Each drilldown is capped, and 12 of the 13 reported `totalCount: rows.length` with no
+ * note. On a capped result that reports exactly the cap, which reads as a complete count:
+ * a queue of 4,000 open items and a queue of exactly 100 look identical in the drawer.
+ * One handler already did this properly (the document-compliance one); this makes the
+ * rest match it rather than leaving the disclosure to whoever remembered.
+ */
+function capNote(returned: number, cap: number, noun: string): string | undefined {
+  return returned >= cap
+    ? `Showing the first ${cap} ${noun}. More exist — open the full report for the complete list.`
+    : undefined;
 }
 
 /**
@@ -114,8 +136,11 @@ async function drillHeadcount(scope: DashboardScope): Promise<DrilldownResult> {
               COUNT(*) AS count
          FROM employees e
          LEFT JOIN branch_master b ON b.id = e.branch_id
+        -- active_status alone, matching the HEADCOUNT tile this drilldown opens from and
+        -- the headcount/employee-master reports. It previously also required
+        -- employment_status = 'active', so the tile and the "click to see who" behind it
+        -- counted different people — the drilldown is supposed to explain the tile.
         WHERE e.active_status = 1
-          AND LOWER(COALESCE(e.employment_status,'active')) = 'active'
           AND ${scopeSql}
         GROUP BY e.branch_id, b.branch_name
         ORDER BY count DESC`,
@@ -299,6 +324,7 @@ async function drillTat(scope: DashboardScope): Promise<DrilldownResult> {
         status: r.status,
       })),
       totalCount: rows.length,
+      note: capNote(rows.length, 100, "overdue tasks"),
     };
   } catch (err) { sourceUnavailable(err); }
 }
@@ -336,6 +362,7 @@ async function drillNameMismatch(scope: DashboardScope): Promise<DrilldownResult
         detectedAt: r.detectedAt,
       })),
       totalCount: rows.length,
+      note: capNote(rows.length, 100, "mismatches"),
     };
   } catch (err) { sourceUnavailable(err); }
 }
@@ -374,6 +401,7 @@ async function drillIncentive(scope: DashboardScope): Promise<DrilldownResult> {
         createdAt: r.createdAt,
       })),
       totalCount: rows.length,
+      note: capNote(rows.length, 100, "incentive batches"),
     };
   } catch (err) { sourceUnavailable(err); }
 }
@@ -413,6 +441,7 @@ async function drillResignation(scope: DashboardScope): Promise<DrilldownResult>
         lastWorkingDay: r.lastWorkingDay,
       })),
       totalCount: rows.length,
+      note: capNote(rows.length, 100, "resignations"),
     };
   } catch (err) { sourceUnavailable(err); }
 }
@@ -447,6 +476,7 @@ async function drillBgv(scope: DashboardScope): Promise<DrilldownResult> {
         createdAt: r.createdAt,
       })),
       totalCount: rows.length,
+      note: capNote(rows.length, 100, "BGV checks"),
     };
   } catch (err) { sourceUnavailable(err); }
 }
@@ -509,6 +539,7 @@ async function drillAppointmentEsign(scope: DashboardScope): Promise<DrilldownRe
         createdAt: r.createdAt,
       })),
       totalCount: rows.length,
+      note: capNote(rows.length, 100, "pending e-signatures"),
     };
   } catch (err) { sourceUnavailable(err); }
 }
@@ -549,6 +580,7 @@ async function drillJoiningDocEsign(scope: DashboardScope): Promise<DrilldownRes
         overdue: Boolean(r.overdue),
       })),
       totalCount: rows.length,
+      note: capNote(rows.length, 100, "joining documents"),
     };
   } catch (err) { sourceUnavailable(err); }
 }
@@ -679,6 +711,7 @@ async function drillBiometricActivity(scope: DashboardScope): Promise<DrilldownR
         hours: r.hours === null ? null : Number(r.hours),
       })),
       totalCount: rows.length,
+      note: capNote(rows.length, 100, "records"),
     };
   } catch (err) { sourceUnavailable(err); }
 }
@@ -808,6 +841,7 @@ async function drillTrainingProgress(scope: DashboardScope): Promise<DrilldownRe
         syncedAt: r.syncedAt,
       })),
       totalCount: rows.length,
+      note: capNote(rows.length, 50, "records"),
     };
   } catch (err) { sourceUnavailable(err); }
 }
@@ -858,6 +892,7 @@ async function drillLeaveApprovals(scope: DashboardScope): Promise<DrilldownResu
         needsBranchHead: Boolean(r.needsBranchHead),
       })),
       totalCount: rows.length,
+      note: capNote(rows.length, 100, "leave requests"),
     };
   } catch (err) { sourceUnavailable(err); }
 }

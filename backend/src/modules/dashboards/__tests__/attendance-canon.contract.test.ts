@@ -101,6 +101,11 @@ describe("attendance canon", () => {
       "management.service.ts": stripComments(read("src/modules/management/management.service.ts")),
       "dashboard-metric.service.ts": stripComments(read("src/modules/dashboards/dashboard-metric.service.ts")),
       "employee.executor.ts": stripComments(read("src/modules/reporting/executors/employee.executor.ts")),
+      // The drilldown is included because it is the "click the tile to see who" behind the
+      // HEADCOUNT tile. It kept the two-flag definition after the tile moved to one, so the
+      // tile said 1,125 and the list explaining it was built from 1,123 — the one place a
+      // user would go to reconcile the number was the one place still disagreeing.
+      "dashboard-drilldown.service.ts": stripComments(read("src/modules/dashboards/dashboard-drilldown.service.ts")),
     };
 
     const supersededFilter = /employment_status\s*,\s*'active'\)\)\s*=\s*'active'/;
