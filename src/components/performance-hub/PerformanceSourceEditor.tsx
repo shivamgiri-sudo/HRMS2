@@ -40,6 +40,7 @@ const defaultMapping: PerformanceDatasetMapping = {
   employeeIdentifierType: "employee_code",
   eventDateField: "performance_date",
   sourceRecordKeyField: "record_id",
+  sourceEventTimestampField: "source_updated_at",
   externalProcessField: "process",
   metrics: [
     {

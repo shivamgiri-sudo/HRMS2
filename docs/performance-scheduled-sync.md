@@ -116,7 +116,7 @@ A failed scheduled run does not advance the publication checkpoint. After correc
 
 ## Staging activation sequence
 
-1. Confirm migrations 520 and 521 are applied.
+1. Confirm migrations 580, 581, and 582 are applied.
 2. Verify `hrms-workers` is built and running.
 3. Configure one read-only source and preview one day manually.
 4. Resolve every mapping exception.

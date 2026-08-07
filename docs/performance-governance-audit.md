@@ -30,7 +30,7 @@ Process Managers and QA Managers can administer sources inside their assigned sc
 
 ## Durable audit records
 
-Migration `522_performance_governance_audit.sql` creates `performance_governance_audit`.
+Migration `582_performance_governance_audit.sql` creates `performance_governance_audit`.
 
 Successful mutations record:
 
@@ -72,7 +72,7 @@ Process- and branch-scoped users cannot query audit records belonging to another
 
 ## Staging verification
 
-After applying migrations 520–522:
+After applying migrations 580–582:
 
 ```sql
 SHOW TABLES LIKE 'performance_governance_audit';

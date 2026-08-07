@@ -1,5 +1,5 @@
 export type PerformanceSourceType = "mysql" | "mssql" | "excel" | "csv" | "google_sheet";
-export type PerformanceAggregation = "sum" | "average" | "ratio" | "latest";
+export type PerformanceAggregation = "sum" | "average" | "weighted_average" | "ratio" | "latest";
 
 export type PerformanceMetricBinding = {
   metricCode: string;
@@ -16,6 +16,7 @@ export type PerformanceDatasetMapping = {
   employeeIdentifierType?: string;
   eventDateField: string;
   sourceRecordKeyField?: string;
+  sourceEventTimestampField?: string;
   externalProcessField?: string;
   branchField?: string;
   metrics: PerformanceMetricBinding[];
@@ -159,4 +160,54 @@ export type PerformanceReferenceData = {
     direction: string;
     aggregation: string;
   }>;
+};
+
+export type PerformanceManualUploadSchema = {
+  datasetId: string;
+  datasetKey: string;
+  datasetName: string;
+  sourceType: "excel" | "csv";
+  acceptedExtensions: string[];
+  maximumFileBytes: number;
+  maxRows: number;
+  sheetName: string | null;
+  requiredColumns: string[];
+  mapping: PerformanceDatasetMapping;
+};
+
+export type PerformanceManualUploadPreflight = {
+  fileName: string | null;
+  fileHash: string;
+  fileSize: number;
+  sheetName: string;
+  rowCount: number;
+  maxRows: number;
+  columns: string[];
+  requiredColumns: string[];
+  missingColumns: string[];
+  duplicateColumns: string[];
+  warnings: string[];
+  sample: Array<Record<string, unknown>>;
+};
+
+export type PerformanceCertificationCheck = {
+  code: string;
+  label: string;
+  passed: boolean;
+  expected?: number | string | null;
+  actual?: number | string | null;
+  detail: string;
+};
+
+export type PerformanceRunCertification = {
+  runId: string;
+  datasetId: string;
+  datasetKey: string;
+  datasetName: string;
+  mode: string;
+  status: string;
+  certified: boolean;
+  checkedAt: string;
+  checks: PerformanceCertificationCheck[];
+  counts: Record<string, number>;
 };

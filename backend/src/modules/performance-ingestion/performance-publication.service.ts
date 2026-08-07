@@ -24,9 +24,13 @@ type CurrentLineageRow = RowDataPacket & {
   mapping_version_id: string | null;
   dataset_key: string | null;
   actual_value: number | string | null;
+  score_date: string;
   numerator_value: number | string | null;
   denominator_value: number | string | null;
+  calculation_multiplier: number | string | null;
+  source_event_timestamp: string | null;
   source_record_count: number | string | null;
+  source_record_key: string | null;
   process_id_at_event: string | null;
   branch_id_at_event: string | null;
   aggregation_method: string | null;
@@ -65,20 +69,24 @@ function canonicalValue(rows: CurrentLineageRow[]): {
   if (method === "sum") {
     actualValue = rows.reduce((sum, row) => sum + numeric(row.actual_value), 0);
   } else if (method === "ratio" && denominator > 0) {
-    const multiplier = String(rows[0]?.unit ?? "").toLowerCase() === "percent" ? 100 : 1;
+    const multiplier = numeric(rows[0]?.calculation_multiplier ?? 100) || 100;
     actualValue = (numerator / denominator) * multiplier;
   } else if (method === "latest") {
     const latest = [...rows].sort((left, right) =>
+      String(left.score_date).localeCompare(String(right.score_date)) ||
+      String(left.source_event_timestamp ?? "").localeCompare(String(right.source_event_timestamp ?? "")) ||
+      String(left.source_record_key ?? "").localeCompare(String(right.source_record_key ?? "")) ||
       String(left.created_at).localeCompare(String(right.created_at))).at(-1);
     actualValue = numeric(latest?.actual_value);
-  } else {
-    const weightedRows = rows.filter((row) => numeric(row.source_record_count) > 0);
-    actualValue = weightedRows.length
-      ? weightedRows.reduce(
-          (sum, row) => sum + numeric(row.actual_value) * numeric(row.source_record_count),
+  } else if (method === "weighted_average") {
+    actualValue = sourceRecordCount > 0
+      ? rows.reduce(
+          (sum, row) => sum + numeric(row.actual_value) * Math.max(0, numeric(row.source_record_count)),
           0,
-        ) / weightedRows.reduce((sum, row) => sum + numeric(row.source_record_count), 0)
+        ) / sourceRecordCount
       : rows.reduce((sum, row) => sum + numeric(row.actual_value), 0) / Math.max(rows.length, 1);
+  } else {
+    actualValue = rows.reduce((sum, row) => sum + numeric(row.actual_value), 0) / Math.max(rows.length, 1);
   }
 
   return {
@@ -98,10 +106,14 @@ async function currentLineage(
        pfl.source_dataset_id,
        pfl.mapping_version_id,
        psd.dataset_key,
+       DATE_FORMAT(pfl.score_date, '%Y-%m-%d') AS score_date,
        pfl.actual_value,
        pfl.numerator_value,
        pfl.denominator_value,
+       pfl.calculation_multiplier,
+       pfl.source_event_timestamp,
        pfl.source_record_count,
+       pfl.source_record_key,
        pfl.process_id_at_event,
        pfl.branch_id_at_event,
        kmm.aggregation_method,
@@ -181,9 +193,10 @@ async function writeCanonicalFact(input: {
        (employee_id, metric_id, score_date, actual_value, source,
         numerator_value, denominator_value, source_system, source_dataset_id,
         source_record_key, mapping_version_id, publication_batch_id,
-        process_id_at_event, branch_id_at_event, source_record_count,
-        formula_version_id, integration_run_id, computed_at, published_at)
-     VALUES (?, ?, ?, ?, 'calculated', ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?,
+       process_id_at_event, branch_id_at_event, source_record_count,
+       calculation_multiplier,
+       formula_version_id, integration_run_id, computed_at, published_at)
+     VALUES (?, ?, ?, ?, 'calculated', ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?,
        (SELECT id FROM kpi_formula_version
          WHERE metric_code = (SELECT metric_code FROM kpi_metric_master WHERE id = ?)
            AND status = 'active'
@@ -202,6 +215,7 @@ async function writeCanonicalFact(input: {
        process_id_at_event = VALUES(process_id_at_event),
        branch_id_at_event = VALUES(branch_id_at_event),
        source_record_count = VALUES(source_record_count),
+       calculation_multiplier = VALUES(calculation_multiplier),
        formula_version_id = VALUES(formula_version_id),
        integration_run_id = VALUES(integration_run_id),
        computed_at = VALUES(computed_at),
@@ -220,6 +234,7 @@ async function writeCanonicalFact(input: {
       processIds.length === 1 ? processIds[0] : input.fact.processIdAtEvent,
       branchIds.length === 1 ? branchIds[0] : input.fact.branchIdAtEvent,
       canonical.sourceRecordCount,
+      rows[0]?.calculation_multiplier ?? null,
       input.fact.metricId,
       input.runId,
     ],
@@ -299,9 +314,10 @@ export async function publishPerformanceFacts(input: {
         `INSERT INTO performance_fact_lineage
            (publication_batch_id, run_id, source_dataset_id, mapping_version_id, raw_record_id,
             employee_id, metric_id, score_date, source_record_key,
-            actual_value, numerator_value, denominator_value, source_record_count,
+            actual_value, numerator_value, denominator_value, calculation_multiplier,
+            source_event_timestamp, source_record_count,
             process_id_at_event, branch_id_at_event)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           publicationBatchId,
           input.runId,
@@ -315,6 +331,8 @@ export async function publishPerformanceFacts(input: {
           fact.actualValue,
           fact.numeratorValue,
           fact.denominatorValue,
+          fact.calculationMultiplier,
+          fact.sourceEventTimestamp,
           fact.sourceRecordCount,
           fact.processIdAtEvent,
           fact.branchIdAtEvent,

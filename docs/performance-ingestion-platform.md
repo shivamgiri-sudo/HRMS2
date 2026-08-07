@@ -23,7 +23,7 @@ From `backend` in a staging environment:
 npm run performance:install-ingestion-schema
 ```
 
-The installer refuses to execute unless its internal `--apply` guard is present. The package command includes that flag. Review `sql/520_performance_ingestion_platform.sql` and `sql/521_performance_multi_source_lineage.sql` before production execution.
+The installer refuses to execute unless its internal `--apply` guard is present. The package command includes that flag. Review `sql/580_performance_ingestion_platform.sql`, `sql/581_performance_multi_source_lineage.sql`, and `sql/582_performance_governance_audit.sql` before production execution.
 
 ## Performance Hub administration
 
@@ -123,9 +123,10 @@ A revised source configuration or mapping automatically returns the dataset to `
 Supported aggregation methods:
 
 - `sum`: totals values across the selected date range.
-- `average`: averages row values.
-- `ratio`: sums numerator and denominator before calculating the result.
-- `latest`: uses the most recent value.
+- `average`: simple average of row values.
+- `weighted_average`: weighted average using `sourceRecordCountField` when sample size must drive the KPI definition.
+- `ratio`: sums numerator and denominator before calculating the result. `ratioMultiplier` is calculation metadata and is not inferred from the metric unit label.
+- `latest`: uses deterministic business ordering: score date, configured `sourceEventTimestampField` when present, source record key, then ingestion evidence as final tiebreakers.
 
 ## MySQL source configuration
 
@@ -256,7 +257,7 @@ These are aggregated from authorised employee facts and displayed according to t
 
 ## Pilot sequence
 
-1. Apply migrations 520 and 521 in staging.
+1. Apply migrations 580, 581, and 582 in staging.
 2. Create or verify read-only external database credentials.
 3. Create one dataset in draft status and assign its process/branch scope.
 4. Preview a one-day window.

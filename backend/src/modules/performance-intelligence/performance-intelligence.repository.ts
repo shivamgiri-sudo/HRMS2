@@ -24,6 +24,7 @@ type MetricFactRow = RowDataPacket & {
   actual_value: number | string | null;
   numerator_value: number | string | null;
   denominator_value: number | string | null;
+  calculation_multiplier: number | string | null;
   target_value: number | string | null;
   weightage: number | string | null;
   max_achievement_pct: number | string | null;
@@ -62,6 +63,7 @@ function mapFact(row: MetricFactRow): MetricFact {
     actualValue: numberOrNull(row.actual_value),
     numeratorValue: numberOrNull(row.numerator_value),
     denominatorValue: numberOrNull(row.denominator_value),
+    calculationMultiplier: numberOrNull(row.calculation_multiplier),
     targetValue: numberOrNull(row.target_value),
     weightage: Math.max(0, numberOr(row.weightage, 100)),
     maxAchievementPct: Math.max(0, numberOr(row.max_achievement_pct, 120)),
@@ -110,6 +112,7 @@ async function listFacts(
        kda.actual_value,
        kda.numerator_value,
        kda.denominator_value,
+       kda.calculation_multiplier,
        COALESCE(ker.target_value, kpc.target_value) AS target_value,
        COALESCE(kpc.weightage, 100) AS weightage,
        COALESCE(kmm.max_achievement_pct, 120) AS max_achievement_pct,

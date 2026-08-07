@@ -5,7 +5,7 @@ export type PerformanceDirection = "higher_is_better" | "lower_is_better";
 export type CalculationStatus = "verified" | "legacy_unverified" | "missing";
 export type MetricStatus = "on_track" | "watch" | "off_track" | "no_target" | "missing";
 export type MetricUnit = "count" | "seconds" | "percent" | "currency" | string;
-export type AggregationMethod = "sum" | "average" | "ratio" | "latest" | string;
+export type AggregationMethod = "sum" | "average" | "weighted_average" | "ratio" | "latest" | string;
 
 export interface PerformanceQuery {
   from: string;
@@ -48,6 +48,7 @@ export interface MetricFact {
   actualValue: number | null;
   numeratorValue: number | null;
   denominatorValue: number | null;
+  calculationMultiplier: number | null;
   targetValue: number | null;
   weightage: number;
   maxAchievementPct: number;
