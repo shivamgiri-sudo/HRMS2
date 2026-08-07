@@ -252,8 +252,13 @@ describe("offers submitted before the fix still approve", () => {
   it("the queue flag reports whether the salary can be established", () => {
     // Not merely whether a row exists — that would warn about offers that
     // approve perfectly well.
+    // Bounded by the next function rather than a fixed character count. The clause sits 3,769
+    // characters into listPendingApprovals and the window was 2,500, so this began failing when
+    // the function grew - while the guarded behaviour was still there, untouched. A contract
+    // test that reports a regression nobody caused is worse than no test.
     const at = onboarding.indexOf("export async function listPendingApprovals");
-    const body = onboarding.slice(at, at + 2500);
+    const nextFn = onboarding.indexOf("export async function", at + 10);
+    const body = onboarding.slice(at, nextFn === -1 ? undefined : nextFn);
     expect(body).toContain("o.gross IS NOT NULL AND o.date_of_joining IS NOT NULL");
   });
 });
