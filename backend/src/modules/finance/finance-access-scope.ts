@@ -21,9 +21,42 @@ function normalizedRoles(primaryRole?: string, userRoles?: string[]) {
   );
 }
 
+/**
+ * Roles bound to exactly one branch.
+ *
+ * Holding one of these pins the user to their own branch even when they also hold a global
+ * finance role, because the branch grant is the more specific statement of intent. The live
+ * case this exists for is a branch admin who also carries the generic `admin` role: before
+ * this rule, `admin` alone put them in GLOBAL_FINANCE_ROLES and they read every branch's
+ * budget from the Branch Budget workspace.
+ */
+const BRANCH_BOUND_FINANCE_ROLES = new Set(["branch_admin"]);
+
+/**
+ * Global roles strong enough to survive a branch-bound role.
+ *
+ * These are the budget approval chain (BUDGET_REVIEW_ROLES in process-pnl.routes.ts) plus
+ * company-wide finance and management: they must read every branch or the review workflow
+ * stalls, and at least one live account holds branch_admin alongside finance_head for
+ * exactly that reason. `admin` is deliberately absent — it is a generic grant, not a
+ * statement that the holder reviews other branches' budgets.
+ */
+const OVERRIDING_GLOBAL_FINANCE_ROLES = new Set([
+  "super_admin",
+  "finance",
+  "finance_head",
+  "accounts_head",
+  "payroll_head",
+  "ceo",
+  "coo",
+  "hr_admin",
+]);
+
 export function hasGlobalFinanceScope(primaryRole?: string, userRoles?: string[]) {
-  const roles = normalizedRoles(primaryRole, userRoles);
-  return Array.from(roles).some((role) => GLOBAL_FINANCE_ROLES.has(role));
+  const roles = Array.from(normalizedRoles(primaryRole, userRoles));
+  if (roles.some((role) => OVERRIDING_GLOBAL_FINANCE_ROLES.has(role))) return true;
+  if (roles.some((role) => BRANCH_BOUND_FINANCE_ROLES.has(role))) return false;
+  return roles.some((role) => GLOBAL_FINANCE_ROLES.has(role));
 }
 
 export async function getUserBranchId(userId: string) {

@@ -62,6 +62,25 @@ export async function getMappingHistory(
 }
 
 /**
+ * A cost centre's CURRENT branch, for the route-level branch guard.
+ *
+ * Reads cost_centre_master's own branch_id — today's state, which is what an access check must
+ * be judged against — rather than the history table, where an as-of-date lookup could answer
+ * with a branch the cost centre has since left. Returns null when the cost centre does not
+ * exist or is unmapped; assertFinanceRecordBranch treats null as a denial, not as unrestricted.
+ */
+export async function getCostCentreBranchId(
+  costCentreId: string,
+  executor: Executor = db
+): Promise<string | null> {
+  const [rows] = await executor.execute<RowDataPacket[]>(
+    `SELECT branch_id FROM cost_centre_master WHERE id = ? LIMIT 1`,
+    [costCentreId]
+  );
+  return rows[0]?.branch_id ? String(rows[0].branch_id) : null;
+}
+
+/**
  * Resolves a cost centre's branch/process mapping as of a given date. Falls back to
  * cost_centre_master's own current columns when no history row matches — defensive only; the
  * PR 8 backfill migration seeds one open-ended row per existing cost centre, so this fallback
@@ -216,6 +235,7 @@ export async function recordMappingChange(
 
 export const costCentreMappingService = {
   getMappingHistory,
+  getCostCentreBranchId,
   resolveCostCentreMapping,
   recordMappingChange,
 };

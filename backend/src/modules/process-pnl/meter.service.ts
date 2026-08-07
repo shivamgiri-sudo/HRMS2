@@ -143,6 +143,22 @@ async function getReadingRow(
   return rows[0] ?? null;
 }
 
+/**
+ * The branch that owns a meter, for the route-level branch guard.
+ *
+ * The reading endpoints address a meter by id alone, so without this a branch-scoped caller
+ * could read or write another branch's readings by guessing/holding an id. Same shape as
+ * budget-topup.service.ts's getLineBranch(). Returns null when the meter does not exist, which
+ * assertFinanceRecordBranch treats as a denial rather than as "unrestricted".
+ */
+export async function getMeterBranchId(meterId: string, executor: Executor = db): Promise<string | null> {
+  const [rows] = await executor.execute<RowDataPacket[]>(
+    `SELECT branch_id FROM finance_meter_master WHERE id = ? LIMIT 1`,
+    [meterId]
+  );
+  return rows[0]?.branch_id ? String(rows[0].branch_id) : null;
+}
+
 export async function listReadings(meterId: string, periodCode: string): Promise<MeterReadingRecord[]> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT * FROM finance_meter_reading WHERE meter_id = ? AND period_code = ? ORDER BY reading_type`,
@@ -449,6 +465,7 @@ export async function getCostCentreMeterConsumption(
 export const meterService = {
   listMeters,
   createMeter,
+  getMeterBranchId,
   listReadings,
   saveReading,
   getCostCentreMeterConsumption,

@@ -89,6 +89,23 @@ function actor(req: AuthenticatedRequest) {
   };
 }
 
+/**
+ * Asserts that a record's owning branch is one the caller may touch.
+ *
+ * The endpoints below address a record by its own id (a meter, a cost centre) rather than by
+ * branch, so resolveFinanceBranchScope has nothing to pin — the branch has to be read off the
+ * record first. A null branch is a denial for a branch-scoped caller, never a free pass.
+ */
+async function assertBranchOf(req: AuthenticatedRequest, recordBranchId: string | null | undefined) {
+  const user = actor(req);
+  await assertFinanceRecordBranch({
+    userId: user.id,
+    primaryRole: user.role,
+    userRoles: user.roles,
+    recordBranchId,
+  });
+}
+
 async function scopedBudget(req: AuthenticatedRequest, budgetId: string) {
   const user = actor(req);
   const budget = await branchBudgetService.get(budgetId) as any;
@@ -540,6 +557,7 @@ router.get(
   h(async (req, res) => {
     const periodCode = String(req.query.period ?? "");
     if (!/^\d{4}-\d{2}$/.test(periodCode)) throw new Error("A valid budget period (YYYY-MM) is required");
+    await assertBranchOf(req, await meterService.getMeterBranchId(String(req.params.id)));
     const data = await meterService.listReadings(String(req.params.id), periodCode);
     res.json({ success: true, data });
   })
@@ -552,6 +570,7 @@ router.put(
   h(async (req, res) => {
     const user = actor(req);
     const periodCode = String(req.body?.periodCode ?? "");
+    await assertBranchOf(req, await meterService.getMeterBranchId(String(req.params.id)));
     const data = await meterService.saveReading(
       String(req.params.id),
       periodCode,
@@ -572,6 +591,7 @@ router.get(
   "/pnl/cost-centres/:id/mapping-history",
   requireRole(...BUDGET_READ_ROLES),
   h(async (req, res) => {
+    await assertBranchOf(req, await costCentreMappingService.getCostCentreBranchId(String(req.params.id)));
     const data = await costCentreMappingService.getMappingHistory(String(req.params.id));
     res.json({ success: true, data });
   })
@@ -583,10 +603,25 @@ router.put(
   requireRole(...BUDGET_CREATE_ROLES),
   h(async (req, res) => {
     const user = actor(req);
+    const requestedBranchId = req.body?.branchId ? String(req.body.branchId) : null;
+    // Two checks, not one. The cost centre must already belong to the caller's branch, AND the
+    // branch it is being moved to must also be theirs — otherwise a branch admin could pull
+    // another branch's cost centre into their own, or push their own out of reach. Only resolved
+    // when a branch was actually supplied: a process-only remap sends null, and feeding that
+    // through the resolver would turn it into an unrequested branch reassignment.
+    await assertBranchOf(req, await costCentreMappingService.getCostCentreBranchId(String(req.params.id)));
+    if (requestedBranchId) {
+      await resolveFinanceBranchScope({
+        userId: user.id,
+        primaryRole: user.role,
+        userRoles: user.roles,
+        requestedBranchId,
+      });
+    }
     const data = await costCentreMappingService.recordMappingChange(
       String(req.params.id),
       {
-        branchId: req.body?.branchId ? String(req.body.branchId) : null,
+        branchId: requestedBranchId,
         processId: req.body?.processId ? String(req.body.processId) : null,
         effectiveFrom: String(req.body?.effectiveFrom ?? ""),
         changeReason: String(req.body?.changeReason ?? ""),
@@ -644,6 +679,9 @@ router.get(
     const periodCode = String(req.query.period ?? "");
     if (!costCentreId) throw new Error("Cost centre is required");
     if (!/^\d{4}-\d{2}$/.test(periodCode)) throw new Error("A valid budget period (YYYY-MM) is required");
+    // The sibling PUT already resolves scope from its body's branchId; this GET is addressed by
+    // cost centre alone, so the branch has to come off the cost centre itself.
+    await assertBranchOf(req, await costCentreMappingService.getCostCentreBranchId(costCentreId));
     const data = await gradeEngineService.listGradeDrivers(costCentreId, periodCode);
     res.json({ success: true, data });
   })

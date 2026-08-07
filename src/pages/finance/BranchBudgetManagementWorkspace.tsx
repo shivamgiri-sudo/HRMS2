@@ -624,8 +624,17 @@ export default function BranchBudgetManagementWorkspace() {
   const readiness = readinessQuery.data ?? [];
 
   const allBranches = unwrapList(branchResponse).filter((item) => Number(item.active_status ?? 1) === 1);
-  const branches = capabilities?.branchLocked && capabilities.scopedBranchId
-    ? allBranches.filter((item) => item.id === capabilities.scopedBranchId)
+  /*
+   * Unresolved capabilities means "we do not know which branch this user is allowed to see",
+   * and that must lock the picker rather than open it. /capabilities returns 400 for a
+   * branch_admin whose account has no employee branch mapping; reading branchLocked off an
+   * undefined capabilities object made that falsy, so the failure mode was a fully enabled
+   * dropdown listing every branch in the company. Pending counts as unresolved for the same
+   * reason — the answer has not arrived yet.
+   */
+  const branchLocked = capabilitiesQuery.isSuccess ? Boolean(capabilities?.branchLocked) : true;
+  const branches = branchLocked
+    ? allBranches.filter((item) => item.id === capabilities?.scopedBranchId)
     : allBranches;
   const processes = unwrapList(processResponse).filter(
     (item) => Number(item.active_status ?? 1) === 1 && (!branchId || !item.branch_id || item.branch_id === branchId)
@@ -1208,7 +1217,18 @@ Reason:`
               {/* Compacted: three tall stacked blocks became one inline row. This is a context
                   selector, not a form to fill in, so it should not occupy a card's worth of height
                   above the grid that actually does the work. */}
-              <Card className="rounded-2xl border-slate-200 shadow-sm"><CardContent className="flex flex-wrap items-end gap-3 p-3 [&_input]:h-9 [&_input]:min-h-0 [&_input]:py-1 [&_select]:h-9 [&_label]:text-xs [&_label]:text-slate-500"><div className="w-52 space-y-1"><Label>Period *</Label><MonthYearPicker value={period} onChange={(value) => { setPeriod(value); setSavedBudgetId(null); setLoadedDetailId(null); }} /></div><div className="w-56 space-y-1"><Label>{capabilities?.branchLocked ? "Assigned branch" : "Branch *"}</Label><select className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm disabled:bg-slate-100" value={branchId} disabled={Boolean(capabilities?.branchLocked)} onChange={(event) => { setBranchId(event.target.value); setSavedBudgetId(null); setLoadedDetailId(null); }}><option value="">Select branch</option>{branches.map((branch) => <option key={branch.id} value={branch.id}>{branch.branch_name ?? branch.name}</option>)}</select></div><div className="w-28 space-y-1"><Label>Financial year</Label><div className="flex h-9 items-center rounded-md border border-dashed border-slate-300 bg-slate-50 px-3 text-sm font-medium text-slate-600" title="Set by Period — April to March. Not independently editable.">{financialYear(period)}</div></div></CardContent></Card>
+              <Card className="rounded-2xl border-slate-200 shadow-sm"><CardContent className="flex flex-wrap items-end gap-3 p-3 [&_input]:h-9 [&_input]:min-h-0 [&_input]:py-1 [&_select]:h-9 [&_label]:text-xs [&_label]:text-slate-500"><div className="w-52 space-y-1"><Label>Period *</Label><MonthYearPicker value={period} onChange={(value) => { setPeriod(value); setSavedBudgetId(null); setLoadedDetailId(null); }} /></div><div className="w-56 space-y-1"><Label>{branchLocked ? "Assigned branch" : "Branch *"}</Label><select className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm disabled:bg-slate-100" value={branchId} disabled={branchLocked} onChange={(event) => { setBranchId(event.target.value); setSavedBudgetId(null); setLoadedDetailId(null); }}><option value="">Select branch</option>{branches.map((branch) => <option key={branch.id} value={branch.id}>{branch.branch_name ?? branch.name}</option>)}</select></div><div className="w-28 space-y-1"><Label>Financial year</Label><div className="flex h-9 items-center rounded-md border border-dashed border-slate-300 bg-slate-50 px-3 text-sm font-medium text-slate-600" title="Set by Period — April to March. Not independently editable.">{financialYear(period)}</div></div></CardContent></Card>
+              {/* The branch picker above is locked and empty whenever capabilities failed to load.
+                  Say why — an unexplained empty dropdown reads as a broken page, and the server's
+                  own message ("not mapped to an active employee branch") is the actionable one. */}
+              {capabilitiesQuery.isError && (
+                <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+                  Your branch access could not be determined, so the branch selector is locked and no budget
+                  data can be loaded.{" "}
+                  {capabilitiesQuery.error instanceof Error ? capabilitiesQuery.error.message : ""} Ask an
+                  administrator to map your account to an active employee record with a branch.
+                </div>
+              )}
               {(() => {
                 const banner = budgetStatusBanner(currentBudget?.status ?? "", currentBudget?.budget_number);
                 return banner && <div className={`rounded-2xl border p-4 text-sm ${banner.tone}`}>{banner.message}</div>;
