@@ -28,6 +28,8 @@ interface Fixture {
   /** Cost-centre code buildFocus should resolve to, and its branch's total GRN. */
   focusCode?: string;
   branchGrn?: number;
+  /** Rows for the billing-completeness probe: invoice lines and value per period, per branch. */
+  billing?: { period_code: string; branch_id: string | null; line_count: number; amount: number }[];
 }
 
 function mockDb(f: Fixture) {
@@ -43,6 +45,9 @@ function mockDb(f: Fixture) {
       return [[{ code: f.focusCode ?? "CC/TEST", branch_id: f.branches[0]?.id ?? null }], []];
     }
     if (q.includes("COUNT(*) AS n FROM billing_invoice_particular_snapshot")) return [[{ n: 3 }], []];
+    // The completeness probe is the only query asking for a per-period line count, so it must be
+    // matched BEFORE the generic revenue branch below or it would be handed revenue-shaped rows.
+    if (q.includes("COUNT(*) AS line_count")) return [f.billing ?? [], []];
     if (q.includes("billing_invoice_particular_snapshot")) return [f.revenue ?? [], []];
     if (q.includes("salary_prep_line") && q.includes("zero_paid")) return [[{ zero_paid: 0 }], []];
     if (q.includes("salary_prep_line")) return [f.people ?? [], []];
@@ -192,12 +197,176 @@ describe("CEO overview", () => {
     expect(out.opportunities).toHaveLength(0);
   });
 
+  it("hides a closed branch whose every money column is zero, without losing its people", async () => {
+    /*
+     * branch_master holds 45 branches and 5 are active. In July 2026 nine closed ones still
+     * reached the table — KARNAL, Delhi Office, MOHALI, AHEMDABAD HOUSE, MEERUT, HYDERABAD,
+     * JAIPUR and both Head Office duplicates — carrying 234 people and Rs 0 in every money column.
+     * They are removed from the comparison, NOT from the analysis or the headcount.
+     */
+    mockDb({
+      branches: [
+        { id: "n", branch_name: "NOIDA", active_status: 1 },
+        { id: "k", branch_name: "KARNAL", active_status: 0 },
+        { id: "d", branch_name: "Delhi Office", active_status: 0 },
+      ],
+      revenue: [{ branch_id: "n", amount: L(127.4) }],
+      people: [
+        { branch_id: "n", staff: 464, cost: L(80.36) },
+        { branch_id: "k", staff: 50, cost: 0 },
+        { branch_id: "d", staff: 51, cost: 0 },
+      ],
+    });
+    const { getCeoOverview } = await import("../ceo-overview.service.js");
+    const out = await getCeoOverview("2026-06");
+
+    expect(out.branches.map((b) => b.branchName)).toEqual(["NOIDA"]);
+    expect(out.closedBranchesHidden.map((b) => b.branchName).sort()).toEqual(["Delhi Office", "KARNAL"]);
+    expect(out.closedBranchesHidden.reduce((t, b) => t + b.staffPaid, 0)).toBe(101);
+    // Still counted, still found: hiding a row from a table is not the same as deleting it.
+    expect(out.staffPaid, "company headcount must not move because a row was hidden").toBe(565);
+    expect(out.opportunities.find((o) => o.id === "zero-paid")?.value).toBe("101");
+  });
+
+  it("keeps a closed branch that is still spending", async () => {
+    // Money still leaving a branch that closed is a finding, not clutter. Only the all-zero rows go.
+    mockDb({
+      branches: [{ id: "m", branch_name: "MOHALI", active_status: 0 }],
+      spend: [{ branch_id: "m", amount: L(2.4) }],
+    });
+    const { getCeoOverview } = await import("../ceo-overview.service.js");
+    const out = await getCeoOverview("2026-06");
+    expect(out.branches.map((b) => b.branchName)).toEqual(["MOHALI"]);
+    expect(out.closedBranchesHidden).toHaveLength(0);
+    expect(out.opportunities.some((o) => o.id.startsWith("closed-spend"))).toBe(true);
+  });
+
   it("refuses a malformed period without querying", async () => {
     mockDb({ branches: [] });
     const { getCeoOverview } = await import("../ceo-overview.service.js");
     const out = await getCeoOverview("Jun-26");
     expect(out.branches).toHaveLength(0);
     expect(execute).not.toHaveBeenCalled();
+  });
+});
+
+describe("billing completeness — an unfinished month is not a bad month", () => {
+  /*
+   * MAS bills in arrears: June 2026's Rs 372.07 lakh was assembled from invoices dated June
+   * (Rs 218.32 lakh) plus invoices dated July (Rs 150.08 lakh). Read on 7 August, July therefore
+   * showed NOIDA at Rs 1.31 lakh of revenue against Rs 80.36 lakh of payroll — a Rs 96.9 lakh loss
+   * on a branch that had billed Rs 127.40 lakh the month before. One of its seventeen cost centres
+   * had been invoiced; the rest had simply not been raised.
+   */
+  const juneBaseline = (branch: string, lines: number, amount: number) =>
+    ["2026-04", "2026-05", "2026-06"].map((period_code) => ({ period_code, branch_id: branch, line_count: lines, amount }));
+
+  it("flags a month billed far below its own recent norm, and names the branch that is missing", async () => {
+    mockDb({
+      branches: [
+        { id: "n", branch_name: "NOIDA", active_status: 1 },
+        { id: "n2", branch_name: "NOIDA-2", active_status: 1 },
+      ],
+      revenue: [{ branch_id: "n", amount: L(1.31) }, { branch_id: "n2", amount: L(93.39) }],
+      people: [{ branch_id: "n", staff: 464, cost: L(80.36) }],
+      billing: [
+        ...juneBaseline("n", 53, L(127.4)),
+        ...juneBaseline("n2", 14, L(117.45)),
+        { period_code: "2026-07", branch_id: "n", line_count: 2, amount: L(1.31) },
+        { period_code: "2026-07", branch_id: "n2", line_count: 5, amount: L(93.39) },
+      ],
+    });
+    const { getCeoOverview } = await import("../ceo-overview.service.js");
+    const out = await getCeoOverview("2026-07");
+
+    expect(out.billing.incomplete, "7 lines against a 67-line norm is an unfinished month").toBe(true);
+    expect(out.billing.lines).toBe(7);
+    expect(out.billing.baselineLines).toBeCloseTo(67, 0);
+    expect(out.billing.gaps.map((g) => g.branchName), "NOIDA is 1% of its norm; NOIDA-2 is 79%").toEqual(["NOIDA"]);
+    expect(out.billing.gaps[0].baselineRevenue).toBeCloseTo(L(127.4), 0);
+    // The figures themselves are untouched — an estimate on a P&L is worse than an incomplete fact.
+    expect(out.branches.find((b) => b.branchName === "NOIDA")?.revenue).toBeCloseTo(L(1.31), 0);
+  });
+
+  it("stays silent on a month that billed normally", async () => {
+    mockDb({
+      branches: [{ id: "n", branch_name: "NOIDA", active_status: 1 }],
+      revenue: [{ branch_id: "n", amount: L(127.4) }],
+      billing: [
+        ...juneBaseline("n", 53, L(127.4)),
+        { period_code: "2026-07", branch_id: "n", line_count: 51, amount: L(126.0) },
+      ],
+    });
+    const { getCeoOverview } = await import("../ceo-overview.service.js");
+    const out = await getCeoOverview("2026-07");
+    expect(out.billing.incomplete).toBe(false);
+    expect(out.billing.gaps).toHaveLength(0);
+  });
+
+  it("says nothing when there is too little history to judge", async () => {
+    // A new period with a two-line baseline proves nothing; guessing would be worse than silence.
+    mockDb({
+      branches: [{ id: "n", branch_name: "NOIDA", active_status: 1 }],
+      revenue: [{ branch_id: "n", amount: L(1) }],
+      billing: [
+        { period_code: "2026-06", branch_id: "n", line_count: 2, amount: L(2) },
+        { period_code: "2026-07", branch_id: "n", line_count: 1, amount: L(1) },
+      ],
+    });
+    const { getCeoOverview } = await import("../ceo-overview.service.js");
+    expect((await getCeoOverview("2026-07")).billing.incomplete).toBe(false);
+  });
+});
+
+describe("multi-select filters", () => {
+  const three = {
+    branches: [
+      { id: "a", branch_name: "NOIDA", active_status: 1 },
+      { id: "b", branch_name: "NOIDA-2", active_status: 1 },
+      { id: "c", branch_name: "AHMEDABAD-JALDARSHAN", active_status: 1 },
+    ],
+    revenue: [
+      { branch_id: "a", amount: L(127.4) }, { branch_id: "b", amount: L(117.45) },
+      { branch_id: "c", amount: L(49.41) },
+    ],
+    people: [
+      { branch_id: "a", staff: 464, cost: L(80.36) }, { branch_id: "b", staff: 460, cost: L(58.95) },
+      { branch_id: "c", staff: 293, cost: L(18.6) },
+    ],
+  };
+
+  it("returns every selected branch, not just the first", async () => {
+    mockDb(three);
+    const { getCeoOverview } = await import("../ceo-overview.service.js");
+    const out = await getCeoOverview("2026-06", { branchIds: ["a", "b"] });
+    expect(out.branches.map((b) => b.branchName).sort()).toEqual(["NOIDA", "NOIDA-2"]);
+    expect(out.revenue, "totals cover the selection, not the company").toBeCloseTo(L(244.85), 0);
+  });
+
+  it("folds the singular branchId into the list rather than ignoring either", async () => {
+    // The branch-scope resolver still passes branchId; a selection must not silently drop it.
+    mockDb(three);
+    const { getCeoOverview } = await import("../ceo-overview.service.js");
+    const out = await getCeoOverview("2026-06", { branchId: "c", branchIds: ["a"] });
+    expect(out.branches.map((b) => b.branchName).sort()).toEqual(["AHMEDABAD-JALDARSHAN", "NOIDA"]);
+  });
+
+  it("shows no focus panel for a multi-process selection", async () => {
+    /*
+     * The focus panel is one entity's P&L with caveats attached — "the indirect figure is really
+     * the whole branch's overhead" is a statement about one cost centre. Under a selection of two
+     * it would carry one label and two entities' arithmetic, which reads as a fact about the first.
+     */
+    mockDb(three);
+    const { getCeoOverview } = await import("../ceo-overview.service.js");
+    expect((await getCeoOverview("2026-06", { processIds: ["p1", "p2"] })).focus).toBeNull();
+    expect((await getCeoOverview("2026-06", { processIds: ["p1"] })).focus).not.toBeNull();
+  });
+
+  it("suppresses company-wide findings under any selection", async () => {
+    mockDb(three);
+    const { getCeoOverview } = await import("../ceo-overview.service.js");
+    expect((await getCeoOverview("2026-06", { branchIds: ["a", "b"] })).opportunities).toHaveLength(0);
   });
 });
 

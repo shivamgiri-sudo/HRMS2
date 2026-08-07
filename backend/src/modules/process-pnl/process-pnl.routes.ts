@@ -35,6 +35,18 @@ const router = Router();
 const h = (fn: (req: AuthenticatedRequest, res: any) => Promise<unknown>) =>
   (req: AuthenticatedRequest, res: any, next: any) => fn(req, res).catch(next);
 
+/**
+ * A repeatable filter parameter, as either `?ids=a,b,c` or `?ids=a&ids=b&ids=c`.
+ *
+ * Express hands the second form back as an array, so a naive String() would produce "a,b" — which
+ * happens to parse correctly here and would not elsewhere. Both forms are handled explicitly.
+ */
+const csv = (value: unknown): string[] =>
+  (Array.isArray(value) ? value : [value])
+    .flatMap((v) => (v === undefined || v === null ? [] : String(v).split(",")))
+    .map((v) => v.trim())
+    .filter(Boolean);
+
 const PNL_READ_ROLES = [
   "super_admin",
   "admin",
@@ -831,11 +843,26 @@ router.get(
      * order and a ":id" pattern would otherwise swallow this path.
      */
     const user = actor(req);
+    /*
+     * Multi-select, WITHOUT loosening the row scope.
+     *
+     * The resolvers are asked what this user is confined to first, with nothing requested. A global
+     * user gets undefined and their whole list is honoured. A branch-bound or process-bound user
+     * gets their own id back, and that single id REPLACES whatever list arrived — so adding
+     * `branchIds=a,b,c` to the URL cannot widen a scoped user's view. The resolver is still called
+     * with the singular parameter as well, so asking for someone else's branch outright keeps
+     * failing loudly instead of being silently narrowed.
+     */
+    const requestedBranchIds = csv(req.query.branchIds);
+    const requestedProcessIds = csv(req.query.processIds);
     const branchId = await resolveFinanceBranchScope({
       userId: user.id,
       primaryRole: user.role,
       userRoles: req.userRoles,
       requestedBranchId: req.query.branchId ? String(req.query.branchId) : undefined,
+    });
+    const confinedBranch = await resolveFinanceBranchScope({
+      userId: user.id, primaryRole: user.role, userRoles: req.userRoles,
     });
     const period = req.query.period ? String(req.query.period) : "";
     const processId = await resolveFinanceProcessScope({
@@ -844,10 +871,16 @@ router.get(
       userRoles: req.userRoles,
       requestedProcessId: req.query.processId ? String(req.query.processId) : undefined,
     });
+    const confinedProcess = await resolveFinanceProcessScope({
+      userId: user.id, primaryRole: user.role, userRoles: req.userRoles,
+    });
     const data = await getCeoOverview(period, {
       branchId: branchId ?? undefined,
       processId: processId ?? undefined,
       costCentreId: req.query.costCentreId ? String(req.query.costCentreId) : undefined,
+      branchIds: confinedBranch ? [confinedBranch] : requestedBranchIds,
+      processIds: confinedProcess ? [confinedProcess] : requestedProcessIds,
+      costCentreIds: csv(req.query.costCentreIds),
     });
     res.json({ success: true, data });
   })

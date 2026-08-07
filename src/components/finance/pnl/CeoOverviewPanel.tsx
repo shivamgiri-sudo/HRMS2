@@ -1,6 +1,7 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { useCeoOverview, type CeoBranchRow, type CeoFocus, type CeoOpportunity } from "@/hooks/useCeoOverview";
+import { FilterMultiSelect } from "./FilterMultiSelect";
 
 /**
  * The CEO view of the P&L.
@@ -58,11 +59,36 @@ export interface CeoOverviewPanelProps {
 }
 
 export function CeoOverviewPanel({ period, branchId, onBranchChange }: CeoOverviewPanelProps) {
-  const [processId, setProcessId] = useState("");
-  const [costCentreId, setCostCentreId] = useState("");
+  /*
+   * All three filters are lists. The question this panel answers is comparative — "Noida and
+   * Noida-2 against Ahmedabad", "these four processes only" — and asking it one branch at a time
+   * is several page loads with no comparison at the end.
+   *
+   * The page-level `branchId` in the URL stays a single value, because the Matrix and Statement
+   * tabs read it and neither understands a list. So the two are kept in step where they can be:
+   * this panel adopts the page's branch when it changes, and pushes its own selection back only
+   * when exactly one branch is ticked. Selecting several narrows THIS tab and clears the page
+   * filter rather than sending a list somewhere that would silently use only the first id.
+   */
+  const [branchIds, setBranchIds] = useState<string[]>(branchId ? [branchId] : []);
+  const [processIds, setProcessIds] = useState<string[]>([]);
+  const [costCentreIds, setCostCentreIds] = useState<string[]>([]);
   const [compare, setCompare] = useState<"avg" | "budget">("avg");
-  const { data, isLoading, error } = useCeoOverview(period, { branchId, processId, costCentreId });
-  const narrowed = Boolean(branchId || processId || costCentreId);
+
+  useEffect(() => {
+    setBranchIds((current) => {
+      if (!branchId) return current.length <= 1 ? [] : current;
+      return current.length === 1 && current[0] === branchId ? current : [branchId];
+    });
+  }, [branchId]);
+
+  const selectBranches = (ids: string[]) => {
+    setBranchIds(ids);
+    onBranchChange?.(ids.length === 1 ? ids[0] : "");
+  };
+
+  const { data, isLoading, error } = useCeoOverview(period, { branchIds, processIds, costCentreIds });
+  const narrowed = branchIds.length > 0 || processIds.length > 0 || costCentreIds.length > 0;
 
   /** Company-average margin, used as the comparison baseline. Excludes the rows that would skew
    *  it: cost centres, closed branches, and any branch flagged as missing a cost line. */
@@ -90,6 +116,8 @@ export function CeoOverviewPanel({ period, branchId, onBranchChange }: CeoOvervi
   }
 
   const { revenue, peopleCost, indirectCost, operatingProfit, marginPct, staffPaid, revenuePerHead } = data;
+  const branchOptions = (data.options.branches ?? []).map((b) => ({ value: b.id, label: b.name }));
+  const hiddenHeads = data.closedBranchesHidden.reduce((total, b) => total + b.staffPaid, 0);
   const width = (part: number) => (revenue > 0 ? Math.max(0, Math.min(100, (part / revenue) * 100)) : 0);
 
   const trendMax = Math.max(1, ...data.trend.map((t) => Math.abs(t.marginPct ?? 0)));
@@ -100,20 +128,27 @@ export function CeoOverviewPanel({ period, branchId, onBranchChange }: CeoOvervi
       {/* Filters. Every option is drawn from data that exists for this period — an option that
           leads to an empty page is indistinguishable from a broken one. */}
       <section className="flex flex-wrap items-end gap-2.5 rounded-2xl border border-slate-200 bg-white p-3.5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
-        <Filter label="Branch" id="ceoBranch" value={branchId ?? ""} onChange={(v) => onBranchChange?.(v)}>
-          <option value="">All branches</option>
-          {data.branches.map((b) => (
-            <option key={b.branchId ?? b.branchName} value={b.branchId ?? ""}>{b.branchName}</option>
-          ))}
-        </Filter>
-        <Filter label="Process" id="ceoProcess" value={processId} onChange={setProcessId}>
-          <option value="">All processes</option>
-          {data.options.processes.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-        </Filter>
-        <Filter label="Cost centre" id="ceoCc" value={costCentreId} onChange={setCostCentreId}>
-          <option value="">All cost centres</option>
-          {data.options.costCentres.map((c) => <option key={c.id} value={c.id}>{c.code}</option>)}
-        </Filter>
+        <FilterMultiSelect
+          label="Branch"
+          allLabel="All branches"
+          options={branchOptions}
+          selected={branchIds}
+          onChange={selectBranches}
+        />
+        <FilterMultiSelect
+          label="Process"
+          allLabel="All processes"
+          options={data.options.processes.map((p) => ({ value: p.id, label: p.name }))}
+          selected={processIds}
+          onChange={setProcessIds}
+        />
+        <FilterMultiSelect
+          label="Cost centre"
+          allLabel="All cost centres"
+          options={data.options.costCentres.map((c) => ({ value: c.id, label: c.code }))}
+          selected={costCentreIds}
+          onChange={setCostCentreIds}
+        />
         <Filter label="Compare with" id="ceoCompare" value={compare} onChange={(v) => setCompare(v as "avg" | "budget")}>
           <option value="avg">Company average</option>
           <option value="budget">Budget</option>
@@ -121,13 +156,56 @@ export function CeoOverviewPanel({ period, branchId, onBranchChange }: CeoOvervi
         {narrowed && (
           <button
             type="button"
-            onClick={() => { setProcessId(""); setCostCentreId(""); onBranchChange?.(""); }}
+            onClick={() => { setProcessIds([]); setCostCentreIds([]); selectBranches([]); }}
             className="ml-auto rounded-md border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-600 hover:border-slate-400 hover:text-slate-900 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-400"
           >
             Clear filters
           </button>
         )}
       </section>
+
+      {/*
+        Read before the numbers, not after them.
+
+        MAS bills in arrears: June 2026's ₹372.07 L was assembled from invoices dated June
+        (₹218.32 L) plus invoices dated July (₹150.08 L). Opened on 7 August, July therefore showed
+        NOIDA at ₹1.31 L of revenue against ₹80.36 L of payroll — a ₹96.9 L loss on a branch that
+        had billed ₹127.40 L the month before. One of its seventeen cost centres had been invoiced.
+
+        The figures are NOT adjusted; there is nothing honest to adjust them to. What was missing
+        was the label saying which of the two you are looking at.
+      */}
+      {data.billing.incomplete && (
+        <section className="rounded-2xl border border-amber-300 bg-amber-50/70 p-4 dark:border-amber-900/60 dark:bg-amber-950/25">
+          <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+            <h3 className="text-sm font-semibold text-amber-900 dark:text-amber-200">
+              {period} is still being invoiced
+            </h3>
+            <span className="text-[12.5px] text-amber-800 dark:text-amber-300">
+              {data.billing.lines} invoice line{data.billing.lines === 1 ? "" : "s"} against a
+              {" "}{Math.round(data.billing.baselineLines)}-line average for the three months before it
+              {data.billing.pctOfBaseline !== null && ` · ${data.billing.pctOfBaseline.toFixed(0)}%`}
+            </span>
+          </div>
+          <p className="mt-1.5 max-w-[85ch] text-[13px] text-slate-700 dark:text-slate-300">
+            Invoices are raised in arrears, so a large part of this month is normally billed during the
+            next one. Revenue below is what has actually been invoiced — treat the margins as
+            incomplete rather than as a fall in trading, and read them again once billing closes.
+          </p>
+          {data.billing.gaps.length > 0 && (
+            <ul className="mt-2.5 flex flex-col gap-1">
+              {data.billing.gaps.map((gap) => (
+                <li key={gap.branchName} className="text-[13px] text-slate-700 dark:text-slate-300">
+                  <span className="font-semibold text-slate-900 dark:text-slate-100">{gap.branchName}</span>
+                  {" "}has invoiced {lakh(gap.currentRevenue)} against a recent monthly average of{" "}
+                  {lakh(gap.baselineRevenue)} — its cost is complete, its revenue is not, so its
+                  margin here is understated.
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+      )}
 
       {/* Headline figures */}
       <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
@@ -237,6 +315,20 @@ export function CeoOverviewPanel({ period, branchId, onBranchChange }: CeoOvervi
             </tbody>
           </table>
         </div>
+
+        {/* Set aside, not deleted. branch_master holds 45 branches and 5 are active; the closed ones
+            that reach this month carry headcount and ₹0 in every money column. Hiding them without
+            saying so would make 234 people vanish from a page that is partly about them — the
+            "branches carry staff with no salary" finding below still names every one. */}
+        {data.closedBranchesHidden.length > 0 && (
+          <p className="border-t border-slate-100 px-5 py-2.5 text-[12.5px] text-slate-500 dark:border-slate-800">
+            {data.closedBranchesHidden.length} closed branch
+            {data.closedBranchesHidden.length === 1 ? " is" : "es are"} not listed — no revenue, no
+            payroll and no spend this month
+            {hiddenHeads > 0 && `, though ${hiddenHeads.toLocaleString("en-IN")} people still sit against them in the payroll run`}
+            : {data.closedBranchesHidden.map((b) => b.branchName).join(", ")}.
+          </p>
+        )}
       </section>
 
       {/* The P&L for whatever the filter narrowed to, with its caveats attached.

@@ -63,6 +63,28 @@ export interface CeoFocus {
   notes: string[];
 }
 
+/** A branch that billed steadily in the baseline months and has almost nothing in this one. */
+export interface CeoBillingGap {
+  branchName: string;
+  baselineRevenue: number;
+  currentRevenue: number;
+}
+
+/**
+ * Whether this month's invoicing is finished or still being raised.
+ *
+ * MAS bills in arrears — a large part of any month is invoiced during the next one — so a month
+ * read too early is not a bad month, it is an unfinished one. The figures are never adjusted for
+ * this; only labelled, so a reader knows which of the two they are looking at.
+ */
+export interface CeoBillingCompleteness {
+  lines: number;
+  baselineLines: number;
+  pctOfBaseline: number | null;
+  incomplete: boolean;
+  gaps: CeoBillingGap[];
+}
+
 export interface CeoOverview {
   period: string;
   revenue: number;
@@ -75,28 +97,46 @@ export interface CeoOverview {
   branches: CeoBranchRow[];
   opportunities: CeoOpportunity[];
   trend: CeoTrendPoint[];
-  /** Only values that have data behind them — an option leading to an empty page reads as broken. */
-  options: { processes: { id: string; name: string }[]; costCentres: { id: string; code: string }[] };
-  /** Present only when a process or cost centre filter is active. */
+  /**
+   * Only values that have data behind them — an option leading to an empty page reads as broken.
+   *
+   * `options.branches` is every branch that traded this period, NOT the filtered `branches` array:
+   * the dropdown must keep offering the others once one is ticked.
+   */
+  options: {
+    processes: { id: string; name: string }[];
+    costCentres: { id: string; code: string }[];
+    branches: { id: string; name: string }[];
+  };
+  /** Present only when exactly one process or cost centre is selected. */
   focus: CeoFocus | null;
+  billing: CeoBillingCompleteness;
+  /** Closed branches left out of `branches` because every money column was zero. */
+  closedBranchesHidden: { branchName: string; staffPaid: number }[];
 }
 
 export interface CeoOverviewFilters {
-  branchId?: string;
-  processId?: string;
-  costCentreId?: string;
+  /** Empty means all. Kept as lists so the page can compare several at once. */
+  branchIds?: string[];
+  processIds?: string[];
+  costCentreIds?: string[];
 }
 
 export function useCeoOverview(period: string, filters: CeoOverviewFilters = {}) {
-  const { branchId, processId, costCentreId } = filters;
+  const branchIds = filters.branchIds ?? [];
+  const processIds = filters.processIds ?? [];
+  const costCentreIds = filters.costCentreIds ?? [];
+  /* Sorted in the key so ticking A then B and B then A are one cached query rather than two. The
+   * server treats the list as a set, so the order genuinely carries no meaning. */
+  const key = (ids: string[]) => [...ids].sort().join(",");
   return useQuery({
-    queryKey: ["ceo-overview", period, branchId ?? "", processId ?? "", costCentreId ?? ""],
+    queryKey: ["ceo-overview", period, key(branchIds), key(processIds), key(costCentreIds)],
     enabled: Boolean(period),
     queryFn: async () => {
       const params = new URLSearchParams({ period });
-      if (branchId) params.set("branchId", branchId);
-      if (processId) params.set("processId", processId);
-      if (costCentreId) params.set("costCentreId", costCentreId);
+      if (branchIds.length) params.set("branchIds", branchIds.join(","));
+      if (processIds.length) params.set("processIds", processIds.join(","));
+      if (costCentreIds.length) params.set("costCentreIds", costCentreIds.join(","));
       const response = await hrmsApi.get<{ success: boolean; data: CeoOverview }>(
         `/api/finance/pnl/ceo-overview?${params.toString()}`,
       );

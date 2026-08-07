@@ -61,7 +61,37 @@ export interface CeoFilters {
   branchId?: string | null;
   processId?: string | null;
   costCentreId?: string | null;
+  /**
+   * Multi-select. A CEO comparing "Noida + Noida-2 against Ahmedabad" cannot do it one branch at a
+   * time, so every filter accepts a list. The singular fields above are kept and folded in rather
+   * than replaced: they are what the branch-scope resolver and every existing caller still pass.
+   */
+  branchIds?: string[] | null;
+  processIds?: string[] | null;
+  costCentreIds?: string[] | null;
 }
+
+/** Filters after the singular and plural forms have been merged into one list each. */
+interface CeoScope {
+  branchIds: string[];
+  processIds: string[];
+  costCentreIds: string[];
+}
+
+function scopeOf(f: CeoFilters): CeoScope {
+  const merge = (one?: string | null, many?: string[] | null): string[] =>
+    Array.from(new Set(
+      [...(many ?? []), ...(one ? [one] : [])].map((v) => String(v).trim()).filter(Boolean),
+    ));
+  return {
+    branchIds: merge(f.branchId, f.branchIds),
+    processIds: merge(f.processId, f.processIds),
+    costCentreIds: merge(f.costCentreId, f.costCentreIds),
+  };
+}
+
+/** `IN (?,?,?)` for a list that is never empty at the call site — callers test length first. */
+const marks = (list: string[]) => list.map(() => "?").join(",");
 
 /** A month on the margin trend line. */
 export interface CeoTrendPoint {
@@ -114,10 +144,24 @@ export interface CeoOverview {
   branches: CeoBranchRow[];
   opportunities: CeoOpportunity[];
   trend: CeoTrendPoint[];
-  /** Distinct values for the filter controls, so the UI never invents an option that has no data. */
-  options: { processes: { id: string; name: string }[]; costCentres: { id: string; code: string }[] };
-  /** Present only when a process or cost centre filter is active. */
+  /**
+   * Distinct values for the filter controls, so the UI never invents an option that has no data.
+   *
+   * `branches` is deliberately NOT the filtered `branches` array above: it lists every branch that
+   * traded this month, so ticking one still leaves the others selectable. Deriving the options from
+   * the filtered rows makes the control a trap — select NOIDA and NOIDA becomes the only option.
+   */
+  options: {
+    processes: { id: string; name: string }[];
+    costCentres: { id: string; code: string }[];
+    branches: { id: string; name: string }[];
+  };
+  /** Present only when exactly one process or cost centre is selected. */
   focus: CeoFocus | null;
+  /** Whether this month's invoicing looks finished. Never null in practice; see billingCompleteness. */
+  billing: CeoBillingCompleteness;
+  /** Closed branches suppressed from `branches` because every money column was zero. */
+  closedBranchesHidden: { branchName: string; staffPaid: number }[];
 }
 
 const n = (v: unknown): number => {
@@ -157,18 +201,21 @@ const OWN_COMPANY_SQL = `REPLACE(REPLACE(REPLACE(LOWER(COALESCE(ccm.company_name
  * utf8mb4_0900_ai_ci and cost_centre_master is utf8mb4_unicode_ci — so the join needs an explicit
  * COLLATE or it dies with ER_CANT_AGGREGATE_2COLLATIONS.
  */
-async function revenueByBranch(period: string, f: CeoFilters): Promise<Map<string, number>> {
+async function revenueByBranch(period: string, s: CeoScope): Promise<Map<string, number>> {
   const out = new Map<string, number>();
   if (!(await tableExists("billing_invoice_particular_snapshot"))) return out;
   const where: string[] = ["p.period_code = ?", OWN_COMPANY_SQL];
   const params: unknown[] = [period];
-  if (f.costCentreId) { where.push("ccm.id = ?"); params.push(f.costCentreId); }
+  if (s.costCentreIds.length) {
+    where.push(`ccm.id IN (${marks(s.costCentreIds)})`);
+    params.push(...s.costCentreIds);
+  }
   // Cost centre carries no process_id on any live row, so a process narrows revenue through the
   // employees actually posted to that cost centre — the same modal rule the actuals use.
-  if (f.processId) {
+  if (s.processIds.length) {
     where.push(`ccm.id IN (SELECT DISTINCT e.cost_centre_id FROM employees e
-                            WHERE e.process_id = ? AND e.cost_centre_id IS NOT NULL)`);
-    params.push(f.processId);
+                            WHERE e.process_id IN (${marks(s.processIds)}) AND e.cost_centre_id IS NOT NULL)`);
+    params.push(...s.processIds);
   }
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT ccm.branch_id AS branch_id, SUM(p.amount) AS amount
@@ -191,13 +238,19 @@ async function revenueByBranch(period: string, f: CeoFilters): Promise<Map<strin
  * unreadable in the first place: information_schema returns COLUMN_NAME uppercased, so every
  * column probe answered false and every person came back costing nothing.
  */
-async function peopleByBranch(period: string, f: CeoFilters): Promise<Map<string, { cost: number; staff: number }>> {
+async function peopleByBranch(period: string, s: CeoScope): Promise<Map<string, { cost: number; staff: number }>> {
   const out = new Map<string, { cost: number; staff: number }>();
   if (!(await tableExists("salary_prep_line"))) return out;
   const where: string[] = ["r.run_month = ?"];
   const params: unknown[] = [period];
-  if (f.processId) { where.push("e.process_id = ?"); params.push(f.processId); }
-  if (f.costCentreId) { where.push("e.cost_centre_id = ?"); params.push(f.costCentreId); }
+  if (s.processIds.length) {
+    where.push(`e.process_id IN (${marks(s.processIds)})`);
+    params.push(...s.processIds);
+  }
+  if (s.costCentreIds.length) {
+    where.push(`e.cost_centre_id IN (${marks(s.costCentreIds)})`);
+    params.push(...s.costCentreIds);
+  }
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT e.branch_id AS branch_id,
             COUNT(*) AS staff,
@@ -219,16 +272,19 @@ async function peopleByBranch(period: string, f: CeoFilters): Promise<Map<string
 
 /** GRN spend by branch. Rejections excluded via RejectDate, never the Reject flag — that flag is
  *  1 on 85,255 of 85,463 source rows and means nothing. */
-async function spendByBranch(period: string, f: CeoFilters): Promise<Map<string, number>> {
+async function spendByBranch(period: string, s: CeoScope): Promise<Map<string, number>> {
   const out = new Map<string, number>();
   if (!(await tableExists("grn_entry_line_snapshot"))) return out;
   const where: string[] = ["g.period_code = ?", "g.is_rejected = 0", OWN_COMPANY_SQL];
   const params: unknown[] = [period];
-  if (f.costCentreId) { where.push("ccm.id = ?"); params.push(f.costCentreId); }
-  if (f.processId) {
+  if (s.costCentreIds.length) {
+    where.push(`ccm.id IN (${marks(s.costCentreIds)})`);
+    params.push(...s.costCentreIds);
+  }
+  if (s.processIds.length) {
     where.push(`ccm.id IN (SELECT DISTINCT e.cost_centre_id FROM employees e
-                            WHERE e.process_id = ? AND e.cost_centre_id IS NOT NULL)`);
-    params.push(f.processId);
+                            WHERE e.process_id IN (${marks(s.processIds)}) AND e.cost_centre_id IS NOT NULL)`);
+    params.push(...s.processIds);
   }
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT ccm.branch_id AS branch_id, SUM(l.total) AS amount
@@ -310,6 +366,147 @@ async function budgetByBranch(period: string): Promise<Map<string, number>> {
   );
   for (const r of rows) out.set(r.branch_id ? String(r.branch_id) : "", n(r.amount));
   return out;
+}
+
+/**
+ * Is this month's invoicing finished, or is it still being raised?
+ *
+ * MAS bills in arrears, and a large part of any month is invoiced during the NEXT one. June 2026's
+ * Rs 372.07 lakh was assembled from invoices dated June (Rs 218.32 lakh) plus invoices dated July
+ * (Rs 150.08 lakh). So a month read too early is not "a bad month", it is an unfinished one.
+ *
+ * On 7 August that produced a figure nobody could act on. NOIDA showed Rs 1.31 lakh of revenue for
+ * July against Rs 80.36 lakh of payroll and Rs 17.90 lakh of GRN — a Rs 96.9 lakh loss on a branch
+ * that had invoiced Rs 127.40 lakh in June and Rs 126.74 lakh in May. One of its seventeen cost
+ * centres had billed; the other sixteen simply had not been raised yet.
+ *
+ * The numbers are NOT adjusted for this — there is nothing to adjust them to, and an estimate on a
+ * P&L is worse than an incomplete fact. What is missing is the label, so a reader knows which of
+ * the two they are looking at.
+ *
+ * Measured against the period's own recent history rather than a fixed threshold, so it stays true
+ * as the business grows or shrinks.
+ */
+export interface CeoBillingGap {
+  branchName: string;
+  /** Mean monthly invoiced revenue over the baseline months in which it billed at all. */
+  baselineRevenue: number;
+  currentRevenue: number;
+}
+
+export interface CeoBillingCompleteness {
+  /** Invoice lines mirrored for this period, within the current filters. */
+  lines: number;
+  /** Mean invoice lines across the three preceding months. 0 when there is no history to compare. */
+  baselineLines: number;
+  pctOfBaseline: number | null;
+  /** True when the period is far enough below its own recent norm to read as still being raised. */
+  incomplete: boolean;
+  /** Branches that billed steadily in the baseline months and have almost nothing now. */
+  gaps: CeoBillingGap[];
+}
+
+/** Below this share of its own recent norm, a month is treated as unfinished rather than as a fall
+ *  in trading. Set at 80% because the arrears pattern routinely leaves a fifth outstanding. */
+const BILLING_COMPLETE_PCT = 80;
+/** A branch this far below its own baseline is called out by name. */
+const BRANCH_GAP_PCT = 25;
+/** Too little history to judge anything — say nothing rather than guess. */
+const MIN_BASELINE_LINES = 10;
+
+async function billingCompleteness(
+  period: string,
+  s: CeoScope,
+  branchName: (id: string) => string,
+): Promise<CeoBillingCompleteness> {
+  const idle: CeoBillingCompleteness = { lines: 0, baselineLines: 0, pctOfBaseline: null, incomplete: false, gaps: [] };
+  if (!(await tableExists("billing_invoice_particular_snapshot"))) return idle;
+
+  const [year, month] = period.split("-").map(Number);
+  const periods: string[] = [];
+  for (let back = 3; back >= 0; back--) {
+    const d = new Date(Date.UTC(year, month - 1 - back, 1));
+    periods.push(`${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`);
+  }
+
+  // Same joins and company filter as revenueByBranch, so the comparison is against the figures
+  // actually on the page rather than against a different slice of the mirror.
+  const where: string[] = [`p.period_code IN (${marks(periods)})`, OWN_COMPANY_SQL];
+  const params: unknown[] = [...periods];
+  if (s.costCentreIds.length) {
+    where.push(`ccm.id IN (${marks(s.costCentreIds)})`);
+    params.push(...s.costCentreIds);
+  }
+  if (s.processIds.length) {
+    where.push(`ccm.id IN (SELECT DISTINCT e.cost_centre_id FROM employees e
+                            WHERE e.process_id IN (${marks(s.processIds)}) AND e.cost_centre_id IS NOT NULL)`);
+    params.push(...s.processIds);
+  }
+  if (s.branchIds.length) {
+    where.push(`ccm.branch_id IN (${marks(s.branchIds)})`);
+    params.push(...s.branchIds);
+  }
+
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT p.period_code AS period_code, ccm.branch_id AS branch_id,
+            COUNT(*) AS line_count, SUM(p.amount) AS amount
+       FROM billing_invoice_particular_snapshot p
+       LEFT JOIN cost_centre_master ccm
+              ON ccm.cost_centre_code COLLATE utf8mb4_unicode_ci
+               = p.cost_centre_code COLLATE utf8mb4_unicode_ci
+      WHERE ${where.join(" AND ")}
+      GROUP BY p.period_code, ccm.branch_id`,
+    params,
+  );
+
+  const current = periods[periods.length - 1];
+  const baselinePeriods = periods.slice(0, -1);
+  let lines = 0;
+  let baselineLineTotal = 0;
+  const monthsWithLines = new Set<string>();
+  // branch id -> { current, baseline months that billed }
+  const byBranch = new Map<string, { current: number; baseline: number[] }>();
+
+  for (const row of rows) {
+    const rowPeriod = String(row.period_code ?? "");
+    const count = n(row.line_count);
+    const amount = n(row.amount);
+    const id = row.branch_id ? String(row.branch_id) : "";
+    const entry = byBranch.get(id) ?? { current: 0, baseline: [] };
+    if (rowPeriod === current) {
+      lines += count;
+      entry.current += amount;
+    } else if (baselinePeriods.includes(rowPeriod)) {
+      baselineLineTotal += count;
+      monthsWithLines.add(rowPeriod);
+      if (amount > 0) entry.baseline.push(amount);
+    }
+    byBranch.set(id, entry);
+  }
+
+  const baselineMonths = monthsWithLines.size;
+  if (baselineMonths === 0) return { ...idle, lines };
+  const baselineLines = baselineLineTotal / baselineMonths;
+  const pctOfBaseline = baselineLines > 0 ? (lines / baselineLines) * 100 : null;
+  const incomplete =
+    baselineLines >= MIN_BASELINE_LINES && pctOfBaseline !== null && pctOfBaseline < BILLING_COMPLETE_PCT;
+
+  const gaps: CeoBillingGap[] = [];
+  if (incomplete) {
+    for (const [id, entry] of byBranch) {
+      if (entry.baseline.length === 0) continue;
+      const mean = entry.baseline.reduce((t, v) => t + v, 0) / entry.baseline.length;
+      if (mean <= 0 || (entry.current / mean) * 100 >= BRANCH_GAP_PCT) continue;
+      gaps.push({
+        branchName: id ? branchName(id) : "Unmapped cost centres",
+        baselineRevenue: mean,
+        currentRevenue: entry.current,
+      });
+    }
+    gaps.sort((a, b) => (b.baselineRevenue - b.currentRevenue) - (a.baselineRevenue - a.currentRevenue));
+  }
+
+  return { lines, baselineLines, pctOfBaseline, incomplete, gaps };
 }
 
 /**
@@ -463,7 +660,7 @@ function findOpportunities(branches: CeoBranchRow[], unbranchedPeople: number): 
  * overview passes — the trend is a shape, not a drill-down, and paying 1.7s per point for it
  * would make the page slower than the engine it replaced.
  */
-async function marginTrend(endPeriod: string, f: CeoFilters): Promise<CeoTrendPoint[]> {
+async function marginTrend(endPeriod: string, s: CeoScope): Promise<CeoTrendPoint[]> {
   const [year, month] = endPeriod.split("-").map(Number);
   const periods: string[] = [];
   for (let back = 3; back >= 0; back--) {
@@ -481,7 +678,7 @@ async function marginTrend(endPeriod: string, f: CeoFilters): Promise<CeoTrendPo
   return Promise.all(
     periods.map(async (period) => {
       const [rev, ppl, spend] = await Promise.all([
-        revenueByBranch(period, f), peopleByBranch(period, f), spendByBranch(period, f),
+        revenueByBranch(period, s), peopleByBranch(period, s), spendByBranch(period, s),
       ]);
       const revenue = sum(rev);
       const people = [...ppl.values()].reduce((a, b) => a + b.cost, 0);
@@ -533,21 +730,29 @@ async function filterOptions(period: string) {
  */
 async function buildFocus(
   period: string,
-  f: CeoFilters,
+  s: CeoScope,
   totals: { revenue: number; peopleCost: number; indirectCost: number; staffPaid: number },
 ): Promise<CeoFocus | null> {
-  if (!f.processId && !f.costCentreId) return null;
+  /*
+   * Only for a selection of exactly one. The panel below is a single entity's P&L with its own
+   * caveats attached — "the indirect figure is really the whole branch's overhead" is a statement
+   * about one cost centre. Under a multi-select of four processes the same panel would carry one
+   * label and four entities' worth of arithmetic, which reads as a fact about the first of them.
+   */
+  const processId = s.processIds.length === 1 ? s.processIds[0] : null;
+  const costCentreId = s.costCentreIds.length === 1 ? s.costCentreIds[0] : null;
+  if (!processId && !costCentreId) return null;
 
   const notes: string[] = [];
   let label = "";
-  let kind: "process" | "cost_centre" = f.processId ? "process" : "cost_centre";
+  let kind: "process" | "cost_centre" = processId ? "process" : "cost_centre";
   let invoiceLines = 0;
   let staffZeroPaid = 0;
   let budget = 0;
 
-  if (f.processId) {
+  if (processId) {
     const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT process_name FROM process_master WHERE id = ? LIMIT 1`, [f.processId],
+      `SELECT process_name FROM process_master WHERE id = ? LIMIT 1`, [processId],
     );
     label = rows[0]?.process_name ? String(rows[0].process_name) : "Process";
     const [paid] = await db.execute<RowDataPacket[]>(
@@ -556,32 +761,32 @@ async function buildFocus(
          JOIN salary_prep_run r ON r.id = l.run_id AND r.run_month = ?
          JOIN employees e ON e.id = l.employee_id
         WHERE e.process_id = ?`,
-      [period, f.processId],
+      [period, processId],
     );
     staffZeroPaid = n(paid[0]?.zero_paid);
-  } else if (f.costCentreId) {
+  } else if (costCentreId) {
     const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT cost_centre_code FROM cost_centre_master WHERE id = ? LIMIT 1`, [f.costCentreId],
+      `SELECT cost_centre_code FROM cost_centre_master WHERE id = ? LIMIT 1`, [costCentreId],
     );
     label = rows[0]?.cost_centre_code ? String(rows[0].cost_centre_code) : "Cost centre";
   }
 
   // Invoice lines and budget both key on the cost centre CODE, so resolve the codes in scope once.
   const [codes] = await db.execute<RowDataPacket[]>(
-    f.costCentreId
+    costCentreId
       ? `SELECT cost_centre_code AS code, branch_id FROM cost_centre_master WHERE id = ?`
       : `SELECT DISTINCT ccm.cost_centre_code AS code, ccm.branch_id AS branch_id
            FROM employees e JOIN cost_centre_master ccm ON ccm.id = e.cost_centre_id
           WHERE e.process_id = ?`,
-    [f.costCentreId ?? f.processId],
+    [costCentreId ?? processId],
   );
   const codeList = codes.map((r) => String(r.code)).filter(Boolean);
 
   if (codeList.length > 0) {
-    const marks = codeList.map(() => "?").join(",");
+    const codeMarks = marks(codeList);
     const [inv] = await db.execute<RowDataPacket[]>(
       `SELECT COUNT(*) AS n FROM billing_invoice_particular_snapshot
-        WHERE period_code = ? AND cost_centre_code IN (${marks})`,
+        WHERE period_code = ? AND cost_centre_code IN (${codeMarks})`,
       [period, ...codeList],
     );
     invoiceLines = n(inv[0]?.n);
@@ -594,7 +799,7 @@ async function buildFocus(
          JOIN finance_budget_snapshot b
            ON b.bill_source_id = l.budget_source_id AND b.period_code = l.period_code
         WHERE l.period_code = ? AND l.expense_type = 'CostCenter'
-          AND l.expense_type_name IN (${marks})
+          AND l.expense_type_name IN (${codeMarks})
           AND b.active_status = 1 AND b.is_rejected = 0`,
       [period, ...codeList],
     );
@@ -654,21 +859,27 @@ async function buildFocus(
 }
 
 export async function getCeoOverview(period: string, filters: CeoFilters = {}): Promise<CeoOverview> {
-  const branchId = filters.branchId ?? null;
+  const scope = scopeOf(filters);
+  const selectedBranches = new Set(scope.branchIds);
   const empty: CeoOverview = {
     period, revenue: 0, peopleCost: 0, indirectCost: 0, operatingProfit: 0,
     marginPct: null, staffPaid: 0, revenuePerHead: null, branches: [], opportunities: [],
-    trend: [], options: { processes: [], costCentres: [] }, focus: null,
+    trend: [], options: { processes: [], costCentres: [], branches: [] }, focus: null,
+    billing: { lines: 0, baselineLines: 0, pctOfBaseline: null, incomplete: false, gaps: [] },
+    closedBranchesHidden: [],
   };
   if (!/^\d{4}-\d{2}$/.test(period)) return empty;
 
   const [branchRows] = await db.execute<RowDataPacket[]>(
     `SELECT id, branch_name, active_status FROM branch_master`,
   );
-  const [revenue, people, spend, budget, trend, options] = await Promise.all([
-    revenueByBranch(period, filters), peopleByBranch(period, filters),
-    spendByBranch(period, filters), budgetByBranch(period),
-    marginTrend(period, filters), filterOptions(period),
+  const nameOfBranch = (id: string) =>
+    String(branchRows.find((r) => String(r.id) === id)?.branch_name ?? "Unnamed");
+  const [revenue, people, spend, budget, trend, options, billing] = await Promise.all([
+    revenueByBranch(period, scope), peopleByBranch(period, scope),
+    spendByBranch(period, scope), budgetByBranch(period),
+    marginTrend(period, scope), filterOptions(period),
+    billingCompleteness(period, scope, nameOfBranch),
   ]);
 
   /*
@@ -693,10 +904,17 @@ export async function getCeoOverview(period: string, filters: CeoFilters = {}): 
     });
   }
 
-  const branches: CeoBranchRow[] = [];
+  /*
+   * Every branch that traded this month, built BEFORE the selection is applied.
+   *
+   * The branch dropdown is fed from this list, so it keeps offering the other branches once one is
+   * ticked. Deriving the options from the filtered rows instead makes the control a trap: select
+   * NOIDA and NOIDA is the only remaining option, so there is no way to add NOIDA-2 without
+   * clearing the filter first.
+   */
+  const traded: { row: CeoBranchRow; ids: string[]; hiddenAsClosed: boolean }[] = [];
   for (const [, entry] of merged) {
     const id = entry.id;
-    if (branchId && id !== branchId) continue;
     // Sum across every duplicate id that shares this name, or the merge would drop their figures.
     const ids = branchRows
       .filter((r) => String(r.branch_name ?? "").trim().toUpperCase() === entry.name.trim().toUpperCase())
@@ -713,11 +931,30 @@ export async function getCeoOverview(period: string, filters: CeoFilters = {}): 
     if (rev === 0 && pay.staff === 0 && idc === 0) continue;   // nothing happened here this month
 
     const isClosed = !entry.active;
+    /*
+     * A closed branch with nothing but headcount is not a P&L row.
+     *
+     * branch_master holds 45 branches and only 5 are active. Nine of the closed ones survived the
+     * test above in July 2026 — KARNAL, Delhi Office, MOHALI, AHEMDABAD HOUSE, MEERUT, HYDERABAD,
+     * JAIPUR and both Head Office duplicates — carrying 234 people between them and Rs 0 in every
+     * money column. They contributed nothing to any total and nothing to any comparison; they
+     * lengthened the table and filled the branch dropdown with places that closed.
+     *
+     * A closed branch that is still SPENDING stays, because that is a finding — findOpportunities
+     * raises it by name. Only the all-zero rows go, and they are reported in closedBranchesHidden
+     * so the 234 heads are visibly set aside rather than quietly dropped.
+     *
+     * The row is still built and still handed to findOpportunities via `allRows` below. Dropping it
+     * from that too would have deleted the "N branches carry staff with no salary" finding, which
+     * is the one place those 234 people are accounted for — hiding a row from a table and hiding it
+     * from the analysis are different decisions, and only the first was asked for.
+     */
+    const hiddenAsClosed = isClosed && rev === 0 && pay.cost === 0 && idc === 0;
     // A branch that pays people and raises spend but bills no client is a cost centre, not a
     // failing business — reporting a negative margin for Head Office would be nonsense.
     const isCostCentre = !isClosed && rev < pay.cost * 0.2;
     const op = rev - pay.cost - idc;
-    branches.push({
+    const row: CeoBranchRow = {
       branchId: id,
       branchName: entry.name,
       revenue: rev,
@@ -731,12 +968,32 @@ export async function getCeoOverview(period: string, filters: CeoFilters = {}): 
       flag: rev > 0 && pay.cost <= 0 ? "no payroll attributed" : null,
       isCostCentre,
       isClosed,
-    });
+    };
+    traded.push({ row, ids, hiddenAsClosed });
   }
+
+  // A multi-select matches on ANY of the duplicate spellings: the id a user picks is whichever one
+  // the dropdown offered, and the others are the same branch under a different spelling.
+  const selected = selectedBranches.size === 0
+    ? traded
+    : traded.filter((t) => t.ids.some((i) => selectedBranches.has(i)));
+
+  /** Every selected row, INCLUDING the closed all-zero ones the table hides. */
+  const allRows = selected.map((t) => t.row);
+  const branches = selected.filter((t) => !t.hiddenAsClosed).map((t) => t.row);
+  const closedBranchesHidden = selected
+    .filter((t) => t.hiddenAsClosed)
+    .map((t) => ({ branchName: t.row.branchName, staffPaid: t.row.staffPaid }));
 
   branches.sort((a, b) => b.operatingProfit - a.operatingProfit);
 
-  const totals = branches.reduce(
+  /*
+   * From allRows, not `branches`. The closed all-zero rows are hidden from the TABLE; they are
+   * still 234 people in this month's payroll run, and dropping them from the company headcount
+   * would mean the same page reported a different number of staff before and after a cosmetic
+   * filter. Their money columns are zero by definition, so no financial total moves.
+   */
+  const totals = allRows.reduce(
     (acc, b) => ({
       revenue: acc.revenue + b.revenue,
       peopleCost: acc.peopleCost + b.peopleCost,
@@ -755,18 +1012,20 @@ export async function getCeoOverview(period: string, filters: CeoFilters = {}): 
     marginPct: totals.revenue > 0 ? (operatingProfit / totals.revenue) * 100 : null,
     revenuePerHead: totals.staffPaid > 0 ? totals.revenue / totals.staffPaid : null,
     branches,
+    closedBranchesHidden,
+    billing,
     // A narrowed view compares nothing against nothing, and a branch-scoped user must not be shown
     // findings computed across branches they cannot see.
-    opportunities: branchId || filters.processId || filters.costCentreId
+    opportunities: scope.branchIds.length || scope.processIds.length || scope.costCentreIds.length
       ? []
-      : findOpportunities(branches, unbranched),
+      : findOpportunities(allRows, unbranched),
     /*
      * The trend sums its source maps directly, while the headline is built from the branch rows —
      * which drop any branch where nothing happened at all. That left the last bar reading 18.1%
      * beside a headline of 17.8%: the same figure, on the same card, twice. The current month is
      * replaced with the headline so the two can never disagree.
      */
-    focus: await buildFocus(period, filters, {
+    focus: await buildFocus(period, scope, {
       revenue: totals.revenue,
       peopleCost: totals.peopleCost,
       indirectCost: totals.indirectCost,
@@ -777,7 +1036,16 @@ export async function getCeoOverview(period: string, filters: CeoFilters = {}): 
         ? { ...point, revenue: totals.revenue, operatingProfit, marginPct: totals.revenue > 0 ? (operatingProfit / totals.revenue) * 100 : null }
         : point,
     ),
-    options,
+    options: {
+      ...options,
+      // Closed all-zero branches are excluded here too: an option that resolves to a hidden row
+      // would select nothing and read as a broken filter.
+      branches: traded
+        .filter((t) => !t.hiddenAsClosed)
+        .map((t) => ({ id: t.row.branchId ?? "", name: t.row.branchName }))
+        .filter((b) => b.id)
+        .sort((a, b) => a.name.localeCompare(b.name)),
+    },
   };
 }
 
