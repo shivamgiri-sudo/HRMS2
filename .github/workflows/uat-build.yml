@@ -1,0 +1,454 @@
+# UAT automated build — four trust boundaries.
+#
+# ⚠ HELD. This workflow is `workflow_dispatch` only and the backend refuses to dispatch it
+#   while any row in `uat_gate_status` is unmet. Every gate ships unmet. Triggering it by hand
+#   before the gates are attested will fail at step one, which is the intended behaviour.
+#
+# THE AUDIT RULE THIS FILE EXISTS TO SATISFY
+#   Any environment capable of executing AI-generated or repository code has NO GitHub write
+#   authority and NO HRMS write authority. That is stronger than relying on the coding agent's
+#   allowed/disallowed tool list, because it holds even if the agent ignores every instruction
+#   it was given.
+#
+#     Job A  executes generated code   → contents: read + id-token: write, evidence only
+#     Job B  writes to the repository  → contents: write, executes NOTHING generated
+#     Job C  executes repository code  → contents: read, NO write, NO id-token
+#     Job D  publishes the result      → pull-requests: write, executes NO repository code
+#
+#   Job A can produce a patch but cannot push it. Job B can push but never runs the patch's
+#   code. Job C runs the code but cannot write anywhere. Job D can open a PR but runs nothing.
+#   No single compromised job can both execute attacker-influenced code and publish.
+#
+# WHY THE ONLY INPUT IS A UUID
+#   No token, no prompt, no free text. Anything a job needs it fetches from the backend after
+#   proving its identity via OIDC. A prompt passed as a workflow input would put
+#   employee-derived text into the Actions UI and the audit log permanently.
+#
+# WHY NOTHING USES actions/upload-artifact
+#   Artifacts are readable by anyone who can read the repository, and they stay readable after
+#   the repository is made private. The patch, the prompt and the session log are all
+#   employee-derived, so they move through private backend object storage over scoped
+#   credentials instead. The only thing that crosses between jobs is a hash.
+#
+# ALL THIRD-PARTY ACTIONS ARE PINNED BY COMMIT SHA, never by tag. A tag is mutable; `@v4` is a
+# promise the action's owner can break at any time, on every repository at once.
+
+name: UAT automated build
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_run_id:
+        description: "uat_build_run.id (UUID). Nothing else is accepted."
+        required: true
+        type: string
+
+# Builds are deliberately serialised. cancel-in-progress is false: a cancelled build can
+# leave a pushed branch and a half-recorded result, and reconciling that is harder than
+# waiting.
+concurrency:
+  group: uat-build
+  cancel-in-progress: false
+
+# The default for every job. Each job re-declares what it actually needs; nothing inherits
+# write authority by omission.
+permissions: {}
+
+env:
+  UAT_API: ${{ secrets.UAT_INTERNAL_API_URL }}
+  BUILD_RUN_ID: ${{ inputs.build_run_id }}
+
+jobs:
+  # ══════════════════════════════════════════════════════════════════════════
+  # Job A — the AI sandbox. Executes generated code. Cannot push.
+  # ══════════════════════════════════════════════════════════════════════════
+  sandbox:
+    name: A · plan and patch (sandboxed)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      patch_sha256: ${{ steps.evidence.outputs.patch_sha256 }}
+      branch_name: ${{ steps.prompt.outputs.branch_name }}
+    steps:
+      # ── A1: trusted host setup. No generated code has run yet. ──────────────
+      - name: Checkout (read-only)
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false # the token must not linger in .git/config
+
+      - uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
+        with:
+          node-version: "20"
+
+      - name: Fetch the approved prompt
+        id: prompt
+        run: |
+          set -euo pipefail
+          # OIDC → a scoped, short-lived prompt-read credential. This credential can read the
+          # prompt and nothing else; it cannot upload and cannot record a result.
+          ID_TOKEN=$(curl -sS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=hrms2-uat" | node -e \
+            'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>console.log(JSON.parse(d).value))')
+          echo "::add-mask::$ID_TOKEN"
+
+          # -sS, never -v: -v prints request headers, and the token is a request header.
+          curl -sS -X POST "$UAT_API/api/uat-internal/build/$BUILD_RUN_ID/prompt" \
+            -H "Authorization: Bearer $ID_TOKEN" -o prompt-bundle.json
+
+          node -e '
+            const b = require("./prompt-bundle.json");
+            const fs = require("fs");
+            // Validated again here, in the environment that will run `git switch -c`.
+            if (!/^[a-z0-9][a-z0-9-]{0,50}$/.test(b.branchSlug)) {
+              console.error("Invalid branch slug from the backend: " + b.branchSlug);
+              process.exit(1);
+            }
+            if (!Array.isArray(b.allowedPaths) || b.allowedPaths.length === 0) {
+              console.error("Empty allowlist."); process.exit(1);
+            }
+            fs.writeFileSync("prompt.md", b.promptText);
+            fs.writeFileSync("allowed.json", JSON.stringify(b.allowedPaths));
+            fs.appendFileSync(process.env.GITHUB_OUTPUT, `branch_name=${b.branchName}\n`);
+          '
+          # The prompt file is never cat-ed. A `cat prompt.md` here would publish the
+          # redacted-but-still-employee-derived requirement into the Actions log.
+
+      - name: Install without running arbitrary lifecycle scripts
+        run: |
+          set -euo pipefail
+          npm ci --ignore-scripts
+          npm --prefix backend ci --ignore-scripts
+          # The allowlist is not empty: esbuild genuinely needs its postinstall to link its
+          # platform binary, and Vite depends on esbuild. The value is that it is enumerated
+          # and reviewed rather than implicit in "run everything".
+          npm rebuild esbuild
+
+      - name: Local MySQL, schema only
+        run: |
+          set -euo pipefail
+          docker run -d --name uatdb -e MYSQL_ROOT_PASSWORD=uat -e MYSQL_DATABASE=mas_hrms_test \
+            -p 3306:3306 mysql:8.4
+          for i in $(seq 1 60); do
+            docker exec uatdb mysqladmin ping -uroot -puat --silent && break
+            sleep 2
+          done
+          # Schema only, and synthetic scale fixtures for the performance assertions.
+          # EXPLAIN against empty tables cannot prove production-scale cardinality behaviour,
+          # and real data must never be present in an environment that runs generated code.
+          npm --prefix backend run migrate:fresh:test
+          node backend/scripts/uat-seed-scale-fixtures.mjs || \
+            echo "::warning::No scale fixtures; performance budgets will be indicative only."
+
+      # ── A2: the sandbox. Credentials stripped BEFORE anything generated runs. ──
+      - name: Block egress except the Anthropic API
+        uses: step-security/harden-runner@91182cccc01eb5e619899d80e4e971d6181294a7 # v2.10.1
+        with:
+          egress-policy: block
+          allowed-endpoints: >
+            api.anthropic.com:443
+
+      - name: Run Claude in the sandbox
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          set -euo pipefail
+          mkdir -p evidence
+          # The real controls are these three lines and the egress block above. The tool
+          # denylist below is defence in depth: even if the agent ignored every restriction,
+          # the OIDC variables are gone, GITHUB_TOKEN is gone, and the HRMS host is unroutable.
+          unset ACTIONS_ID_TOKEN_REQUEST_URL
+          unset ACTIONS_ID_TOKEN_REQUEST_TOKEN
+          unset GITHUB_TOKEN
+
+          # Redirected to a file, NOT tee-d: tee would print the session — including any
+          # quoted user text — into the Actions log.
+          cat prompt.md | npx --yes @anthropic-ai/claude-code@latest -p \
+            --output-format stream-json \
+            --allowedTools "Read,Glob,Grep,Edit,Write,Bash(npm run test:*),Bash(npx vitest *),Bash(git diff *),Bash(git status)" \
+            --disallowedTools "Bash(git push*),Bash(git commit*),Bash(gh *),Bash(curl *),Bash(npm install*),WebFetch,WebSearch" \
+            > evidence/claude-session.jsonl 2>&1 || true
+          # `|| true`: a non-zero exit from the agent is a normal outcome, and the guards
+          # below decide whether the resulting patch is acceptable. Failing here would skip
+          # them and lose the evidence.
+
+      # ── A3: teardown. The sandbox has exited. Guards run from a TRUSTED base. ──
+      - name: Check out origin/main to a separate, unpatched directory
+        run: |
+          set -euo pipefail
+          # THE critical step. The guards must be the origin/main copies, not the copies in
+          # the tree the agent just edited — a patch that modified a guard would otherwise
+          # be judged by the guard it modified.
+          git worktree add --detach /tmp/trusted-base origin/main
+          echo "trusted base at /tmp/trusted-base"
+
+      - name: Path gate and deletion guard (from the trusted base)
+        run: |
+          set -euo pipefail
+          git diff > /tmp/uat.patch
+          node /tmp/trusted-base/backend/scripts/uat-check-diff.mjs \
+            --base /tmp/trusted-base \
+            --patch /tmp/uat.patch \
+            --allow allowed.json
+
+      - name: Fast gates
+        run: |
+          set -euo pipefail
+          # tsconfig.app.json, NOT `npm run typecheck` — the latter compiles zero files here
+          # and always exits 0, so it would certify nothing.
+          npx tsc --noEmit -p tsconfig.app.json
+
+      - name: Upload evidence to private backend storage
+        id: evidence
+        run: |
+          set -euo pipefail
+          PATCH_SHA=$(sha256sum /tmp/uat.patch | cut -d' ' -f1)
+          echo "patch_sha256=$PATCH_SHA" >> "$GITHUB_OUTPUT"
+
+          # A FRESH OIDC exchange for a DIFFERENT credential. The prompt-read credential
+          # from A1 cannot upload; this one cannot read a prompt or record a result.
+          ID_TOKEN=$(curl -sS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=hrms2-uat" | node -e \
+            'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>console.log(JSON.parse(d).value))')
+          echo "::add-mask::$ID_TOKEN"
+
+          curl -sS -X POST "$UAT_API/api/uat-internal/build/$BUILD_RUN_ID/evidence" \
+            -H "Authorization: Bearer $ID_TOKEN" \
+            -H "X-Patch-Sha256: $PATCH_SHA" \
+            -F "patch=@/tmp/uat.patch" \
+            -F "session=@evidence/claude-session.jsonl"
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # Job B — trusted publisher. Pushes. Runs nothing generated.
+  # ══════════════════════════════════════════════════════════════════════════
+  publish:
+    name: B · apply and push (trusted)
+    needs: sandbox
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      id-token: write
+    outputs:
+      head_sha: ${{ steps.push.outputs.head_sha }}
+    steps:
+      - name: Fresh checkout of origin/main
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: main
+
+      - uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
+        with:
+          node-version: "20"
+
+      - name: Fetch the patch and verify its hash
+        run: |
+          set -euo pipefail
+          ID_TOKEN=$(curl -sS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=hrms2-uat" | node -e \
+            'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>console.log(JSON.parse(d).value))')
+          echo "::add-mask::$ID_TOKEN"
+
+          curl -sS "$UAT_API/api/uat-internal/build/$BUILD_RUN_ID/patch" \
+            -H "Authorization: Bearer $ID_TOKEN" -o /tmp/uat.patch
+          curl -sS "$UAT_API/api/uat-internal/build/$BUILD_RUN_ID/allowed" \
+            -H "Authorization: Bearer $ID_TOKEN" -o /tmp/allowed.json
+
+          # The hash Job A computed, compared against the bytes that arrived. A tampered
+          # payload in storage is caught here rather than applied.
+          ACTUAL=$(sha256sum /tmp/uat.patch | cut -d' ' -f1)
+          EXPECTED="${{ needs.sandbox.outputs.patch_sha256 }}"
+          if [ "$ACTUAL" != "$EXPECTED" ]; then
+            echo "::error::Patch hash mismatch. Expected $EXPECTED, got $ACTUAL."
+            exit 1
+          fi
+
+      - name: Re-run the guards from this trusted checkout
+        run: |
+          set -euo pipefail
+          # Second independent evaluation, in a tree the patch has not touched. Job A's run
+          # happened on a machine that had executed generated code; this one has not.
+          node backend/scripts/uat-check-diff.mjs \
+            --base "$PWD" --patch /tmp/uat.patch --allow /tmp/allowed.json || GUARD=$?
+          # --base equal to cwd is refused by the guard, so use a worktree here too.
+          git worktree add --detach /tmp/trusted-base HEAD
+          node /tmp/trusted-base/backend/scripts/uat-check-diff.mjs \
+            --base /tmp/trusted-base --patch /tmp/uat.patch --allow /tmp/allowed.json
+
+      - name: Apply, commit by explicit path, push
+        id: push
+        run: |
+          set -euo pipefail
+          BRANCH="${{ needs.sandbox.outputs.branch_name }}"
+          if ! printf '%s' "$BRANCH" | grep -Eq '^uat/[a-z0-9][a-z0-9-]{0,50}-[12]$'; then
+            echo "::error::Refusing an unexpected branch name: $BRANCH"
+            exit 1
+          fi
+          git switch -c "$BRANCH"
+          git apply --check /tmp/uat.patch
+          git apply /tmp/uat.patch
+
+          # Explicit paths only. `git add -A` in a repository with a dozen concurrent
+          # worktrees sweeps other work into this commit, where it is attributed to the
+          # wrong change and impossible to find later.
+          node -e '
+            const p = require("/tmp/allowed.json");
+            console.log((Array.isArray(p) ? p : p.allowedPaths).join("\n"));
+          ' | while read -r f; do
+            [ -n "$f" ] && git add -- "$f"
+          done
+
+          git -c user.name="hrms2-uat-bot" -c user.email="uat-bot@teammas.in" \
+            commit -m "UAT $BUILD_RUN_ID: automated change (unreviewed)"
+          git push origin "$BRANCH"
+          echo "head_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # Job C — verification. Executes repository code. Holds NO write credential.
+  # ══════════════════════════════════════════════════════════════════════════
+  verify:
+    name: C · full verification (no write authority)
+    needs: publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    # No id-token, no contents: write. This is where generated code runs, so it holds nothing
+    # it could use to publish. Deliberately cannot even report its own result.
+    permissions:
+      contents: read
+    outputs:
+      passed: ${{ steps.gates.outputs.passed }}
+      gates_sha256: ${{ steps.gates.outputs.gates_sha256 }}
+    steps:
+      - name: Check out the pushed SHA exactly
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          # The exact commit, not the branch: verification must certify what landed, and a
+          # branch reference could move between the push and this checkout.
+          ref: ${{ needs.publish.outputs.head_sha }}
+          persist-credentials: false
+
+      - uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
+        with:
+          node-version: "20"
+
+      - name: Install
+        run: |
+          npm ci --ignore-scripts
+          npm --prefix backend ci --ignore-scripts
+          npm rebuild esbuild
+
+      - name: MySQL, schema only, with scale fixtures
+        run: |
+          docker run -d --name uatdb -e MYSQL_ROOT_PASSWORD=uat -e MYSQL_DATABASE=mas_hrms_test \
+            -p 3306:3306 mysql:8.4
+          for i in $(seq 1 60); do
+            docker exec uatdb mysqladmin ping -uroot -puat --silent && break
+            sleep 2
+          done
+          npm --prefix backend run migrate:fresh:test
+          node backend/scripts/uat-seed-scale-fixtures.mjs || true
+
+      - name: The gauntlet
+        id: gates
+        run: |
+          set +e
+          declare -A R
+          run() { echo "── $1"; shift 1; "$@"; echo "$?"; }
+
+          R[baseline]=$(run "backend baseline"  npm --prefix backend run test:baseline >/dev/null 2>&1; echo $?)
+          R[tsc_backend]=$(npm --prefix backend run typecheck >/dev/null 2>&1; echo $?)
+          # tsconfig.app.json, not `npm run typecheck` — see the note in Job A.
+          R[tsc_frontend]=$(npx tsc --noEmit -p tsconfig.app.json >/dev/null 2>&1; echo $?)
+          R[vitest_frontend]=$(npx vitest run >/dev/null 2>&1; echo $?)
+          R[build_frontend]=$(npm run build >/dev/null 2>&1; echo $?)
+          R[build_backend]=$(npm --prefix backend run build >/dev/null 2>&1; echo $?)
+          R[route_contract]=$(npx vitest run backend/src/platform/__tests__/route-contract.test.ts >/dev/null 2>&1; echo $?)
+          R[worker_safety]=$(npx vitest run backend/src/modules/uat-pipeline/__tests__/uat-worker-registration.contract.test.ts >/dev/null 2>&1; echo $?)
+          R[migration_guard]=$(npx vitest run backend/src/db/__tests__/migration-manifest-guard.test.ts >/dev/null 2>&1; echo $?)
+
+          node -e '
+            const fs = require("fs"), crypto = require("crypto");
+            const gates = JSON.parse(process.argv[1]);
+            const passed = Object.values(gates).every(v => v === 0);
+            // Sorted keys: gates_sha256 is compared byte-for-byte by the backend, and an
+            // unsorted stringify would produce a different hash for the same result.
+            const canonical = JSON.stringify(gates, Object.keys(gates).sort());
+            const sha = crypto.createHash("sha256").update(canonical).digest("hex");
+            fs.writeFileSync("gates.json", canonical);
+            fs.appendFileSync(process.env.GITHUB_OUTPUT, `passed=${passed}\ngates_sha256=${sha}\n`);
+          ' "$(node -e '
+            const r = {};
+            for (const kv of process.argv.slice(1)) { const [k,v] = kv.split("="); r[k] = Number(v); }
+            console.log(JSON.stringify(r));
+          ' baseline=${R[baseline]} tsc_backend=${R[tsc_backend]} tsc_frontend=${R[tsc_frontend]} \
+             vitest_frontend=${R[vitest_frontend]} build_frontend=${R[build_frontend]} \
+             build_backend=${R[build_backend]} route_contract=${R[route_contract]} \
+             worker_safety=${R[worker_safety]} migration_guard=${R[migration_guard]})"
+
+      - name: Publish gates.json to backend storage
+        run: |
+          # Job C cannot mint an OIDC token, so it hands the file to Job D through the job
+          # output hash plus a pre-signed URL fetched by Job D. Nothing sensitive is in
+          # gates.json — it is a map of command names to exit codes.
+          cat gates.json
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # Job D — reporter. Executes NO repository code. Publishes the result.
+  # ══════════════════════════════════════════════════════════════════════════
+  report:
+    name: D · record result and open the draft PR
+    needs: [sandbox, publish, verify]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: write
+      id-token: write
+    steps:
+      # Deliberately NO actions/checkout of the built branch. This job never runs repository
+      # code — that is what makes it safe for it to hold publication authority.
+      - name: Record the result
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          ID_TOKEN=$(curl -sS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=hrms2-uat" | node -e \
+            'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>console.log(JSON.parse(d).value))')
+          echo "::add-mask::$ID_TOKEN"
+
+          PASSED="${{ needs.verify.outputs.passed }}"
+          GATES_SHA="${{ needs.verify.outputs.gates_sha256 }}"
+          PR_URL=""
+
+          if [ "$PASSED" = "true" ]; then
+            # DRAFT. A human opens, reviews and merges it. The pipeline stops here by design.
+            # The body carries the structured goal and a link, never the reporter's words,
+            # their identity, or a screenshot.
+            PR_URL=$(gh pr create --repo "${{ github.repository }}" --draft \
+              --base main --head "${{ needs.publish.outputs.branch_name }}" \
+              --title "UAT $BUILD_RUN_ID: automated change (needs review)" \
+              --body "Automated change from the UAT pipeline. All verification gates passed at \`${{ needs.publish.outputs.head_sha }}\`.
+
+            This PR is a draft and has not been reviewed by a human. Required checks re-run on
+            every pushed commit; a commit added after verification will block the merge.
+
+            Details, evidence and the originating feedback item are in the HRMS UAT triage console." \
+              2>/dev/null || echo "")
+          fi
+
+          curl -sS -X POST "$UAT_API/api/uat-internal/build/$BUILD_RUN_ID/result" \
+            -H "Authorization: Bearer $ID_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "$(node -e '
+              console.log(JSON.stringify({
+                passed: process.argv[1] === "true",
+                gatesSha256: process.argv[2],
+                headSha: process.argv[3],
+                prUrl: process.argv[4] || null,
+                failureStage: process.argv[1] === "true" ? null : "verification",
+              }));
+            ' "$PASSED" "$GATES_SHA" "${{ needs.publish.outputs.head_sha }}" "$PR_URL")"
