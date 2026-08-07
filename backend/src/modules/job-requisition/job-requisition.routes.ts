@@ -304,6 +304,15 @@ jobRequisitionRouter.post(
       return res.status(401).json({ success: false, message: "User not authenticated" });
     }
 
+    // A branch-scoped raiser must not open headcount against someone else's branch.
+    // Silent for actors whose scope names no branch — see canCreateForBranch.
+    if (!(await jobRequisitionService.canCreateForBranch(req.authUser!, input.branch_name))) {
+      return res.status(403).json({
+        success: false,
+        message: `You cannot raise a requisition for ${input.branch_name}. It is outside your assigned branch.`,
+      });
+    }
+
     const data = await jobRequisitionService.createRequisition(input, userId, userName);
     return res.status(201).json({ success: true, data, message: "Requisition created as draft" });
   })

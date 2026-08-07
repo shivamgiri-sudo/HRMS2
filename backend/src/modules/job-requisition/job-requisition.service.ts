@@ -103,6 +103,41 @@ export const jobRequisitionService = {
    * Deliberately no active_status filter: this decides visibility only, and must not
    * change which rows the underlying getters already return.
    */
+  /**
+   * May this actor raise a requisition against this branch?
+   *
+   * Deliberately narrower than the read scope. The read predicate ORs branch and process
+   * together, so applying it to a create would reject a process-scoped user who omits
+   * process_id — and process_id is optional on create (4 live rows have it NULL). 16 users
+   * are process-scoped; blocking them from raising a requisition would be a worse bug than
+   * the one being fixed.
+   *
+   * So this only rejects the unambiguous violation: an actor whose scope *does* name
+   * specific branches naming a different one. It stays silent when the actor's scope says
+   * nothing about branches, and defers entirely for bypass roles and scope_type='all',
+   * matching buildProcessScopeCondition.
+   *
+   * Returns true = allowed. Caller answers a refusal with 403, not 404: the branch is
+   * something the user supplied, so there is no existence to conceal.
+   */
+  async canCreateForBranch(actor: EnterpriseUser, branchName: string): Promise<boolean> {
+    const scope = await resolveUserBusinessScope(actor);
+    if (scope.isSuperAdmin || scope.isAdmin || scope.isHr || scope.roles.includes("ceo")) return true;
+    if (scope.assignments.some((a) => a.scopeType === "all")) return true;
+
+    const branchIds = scope.assignments.map((a) => a.branchId).filter((b): b is string => Boolean(b));
+    if (branchIds.length === 0) return true;
+
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT 1 FROM branch_master
+        WHERE branch_name = ?
+          AND id IN (${branchIds.map(() => "?").join(",")})
+        LIMIT 1`,
+      [branchName, ...branchIds],
+    );
+    return (rows as RowDataPacket[]).length > 0;
+  },
+
   async isRequisitionVisible(
     actor: EnterpriseUser,
     ref: { id?: string; code?: string },
