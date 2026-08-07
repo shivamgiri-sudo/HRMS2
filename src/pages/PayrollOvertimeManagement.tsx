@@ -222,10 +222,7 @@ export default function PayrollOvertimeManagement() {
   });
 
   return (
-    <DashboardLayout
-      title="Overtime Management"
-      description="Manage employee overtime hours and amounts for payroll"
-    >
+    <DashboardLayout>
       <div className="space-y-6">
         {/* Filters */}
         <Card>

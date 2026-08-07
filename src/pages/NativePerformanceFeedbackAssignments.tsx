@@ -31,8 +31,10 @@ export default function NativePerformanceFeedbackAssignments() {
 
   const fetchAssignments = async () => {
     try {
-      const data = await hrmsApi.get("/api/performance-feedback/requests");
-      setAssignments(data);
+      // The controller replies { data: requests }; without the generic this resolved to the
+      // envelope and the whole object was pushed into an Assignment[] state.
+      const res = await hrmsApi.get<{ data: Assignment[] }>("/api/performance-feedback/requests");
+      setAssignments(res.data ?? []);
     } catch (error) {
       console.error("Failed to fetch assignments:", error);
     } finally {

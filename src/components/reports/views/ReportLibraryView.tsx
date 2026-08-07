@@ -852,12 +852,25 @@ function detectDuplicates(rows: Record<string, unknown>[], primaryKey: string[])
 
 // ─── Main Component ─────────────────────────────────────────────────────────────
 
-export default function NativeReportsCenterV2() {
+/**
+ * @param preselectedReport A report code from ?report= on /reports. ReportsHub has always read
+ *   that param and passed it here, but this component took no props at all, so it was dropped and
+ *   the deep link only ever opened the library — never the report it named.
+ */
+export default function NativeReportsCenterV2({ preselectedReport }: { preselectedReport?: string } = {}) {
   const { roleKeys, isLoading: rolesLoading } = useWorkforceAccess();
   const userRoles = roleKeys;
 
   const [selectedReport, setSelectedReport] = useState<ReportDef | null>(null);
   const [filterValues, setFilterValues] = useState<Record<string, string>>({});
+
+  /* Resolve ?report=<code> once the catalogue is available. Only when nothing is selected yet, so
+     a user who has since clicked another report is not yanked back to the deep-linked one. */
+  useEffect(() => {
+    if (!preselectedReport || selectedReport) return;
+    const match = CATALOG.find((r) => r.code === preselectedReport);
+    if (match) setSelectedReport(match);
+  }, [preselectedReport, selectedReport]);
   const [rows, setRows] = useState<Record<string, unknown>[]>([]);
   const [totalCount, setTotalCount] = useState(0);
   const [currentPage, setCurrentPage] = useState(1);

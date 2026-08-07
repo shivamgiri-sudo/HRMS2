@@ -266,7 +266,9 @@ export default function NativeChequeNameValidation() {
     setLoading(true);
     try {
       const res = await hrmsApi.get<{ success: boolean; data: MismatchCase[] }>("/api/payroll/cheque-validation/queue");
-      setCases(res.data.data ?? []);
+      // The generic already unwraps to { data: MismatchCase[] }; res.data IS the array, so the
+      // extra hop meant the cheque-validation queue always rendered empty.
+      setCases(res.data ?? []);
     } catch {
       setCases([]);
     } finally {

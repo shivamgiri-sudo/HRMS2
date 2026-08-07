@@ -231,7 +231,7 @@ const Performance = () => {
           )}
 
           <TabsContent value="apr">
-            <AprSection isManager={isManager} employeeId={employeeData.id} />
+            <AprSection isManager={isManager} />
           </TabsContent>
         </Tabs>
       </div>

@@ -1945,11 +1945,13 @@ const Onboarding = () => {
                   <h4 className="text-sm font-medium text-muted-foreground">Status</h4>
                   <div className="mt-1">{getRequestStatusBadge(selectedRequest.status)}</div>
                 </div>
+                {/* ats_onboarding_request has no message/remarks column and OnboardingRequest
+                    declares none, so this always rendered the fallback. Kept as a labelled empty
+                    state rather than removed: dropping a panel a user may rely on seeing is a
+                    product call, and adding the column is a schema one. */}
                 <div>
                   <h4 className="text-sm font-medium text-muted-foreground">Message</h4>
-                  <p className="mt-1 text-foreground">
-                    {selectedRequest.message || "No message provided"}
-                  </p>
+                  <p className="mt-1 text-foreground">No message provided</p>
                 </div>
                 <div>
                   <h4 className="text-sm font-medium text-muted-foreground">Submitted</h4>
