@@ -1,4 +1,38 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
+
+/*
+ * The rate limiter moved from an in-memory Map to the ai_rate_limit_bucket table, and these
+ * tests were never migrated with it. With no database reachable, db.execute resolves without an
+ * insertId, so checkAndIncrement read a count of 1 every time: the limit never blocked, and
+ * peekUsage always answered 0.
+ *
+ * This double reproduces the two SQL statements it relies on, including the part that actually
+ * matters — INSERT ... ON DUPLICATE KEY UPDATE request_count = LAST_INSERT_ID(request_count + 1)
+ * returns the POST-increment count through insertId. Nothing else in this file touches the
+ * database, so the mock is scoped to the limiter's behaviour alone.
+ */
+const buckets = new Map<string, number>();
+vi.mock("../src/db/mysql.js", () => ({
+  db: {
+    execute: vi.fn(async (sql: string, params: unknown[]) => {
+      const key = `${String(params[0])}|${String(params[1])}`;
+      if (sql.includes("INSERT INTO ai_rate_limit_bucket")) {
+        const next = (buckets.get(key) ?? 0) + 1;
+        buckets.set(key, next);
+        return [{ insertId: next }];
+      }
+      if (sql.includes("SELECT request_count")) {
+        const n = buckets.get(key);
+        return [n === undefined ? [] : [{ request_count: n }]];
+      }
+      if (sql.includes("DELETE FROM ai_rate_limit_bucket")) {
+        buckets.delete(key);
+        return [{ affectedRows: 1 }];
+      }
+      return [[]];
+    }),
+  },
+}));
 import {
   validateQuestion,
   validateContextType,
@@ -145,60 +179,66 @@ describe("AI Rate Limiter", () => {
   const USER_A = "test-user-rate-a";
   const USER_B = "test-user-rate-b";
 
-  beforeEach(() => {
-    resetBucket(USER_A);
-    resetBucket(USER_B);
+  /*
+   * Every call below is awaited. checkAndIncrement, peekUsage and resetBucket are async, and
+   * these tests were calling them synchronously - so `r` was a Promise, `r.allowed` was
+   * undefined, and all eight assertions compared undefined against their expected value. They
+   * were passing on nothing and proving nothing about the limiter.
+   */
+  beforeEach(async () => {
+    await resetBucket(USER_A);
+    await resetBucket(USER_B);
   });
 
-  it("allows first request and returns correct remaining", () => {
-    const r = checkAndIncrement(USER_A, 10);
+  it("allows first request and returns correct remaining", async () => {
+    const r = await checkAndIncrement(USER_A, 10);
     expect(r.allowed).toBe(true);
     expect(r.remaining).toBe(9);
   });
 
-  it("allows requests up to the limit", () => {
+  it("allows requests up to the limit", async () => {
     for (let i = 0; i < 5; i++) {
-      checkAndIncrement(USER_A, 5);
+      await checkAndIncrement(USER_A, 5);
     }
-    const peek = peekUsage(USER_A);
+    const peek = await peekUsage(USER_A);
     expect(peek.count).toBe(5);
   });
 
-  it("blocks the (limit+1)th request", () => {
+  it("blocks the (limit+1)th request", async () => {
     for (let i = 0; i < 3; i++) {
-      checkAndIncrement(USER_A, 3);
+      await checkAndIncrement(USER_A, 3);
     }
-    const r = checkAndIncrement(USER_A, 3);
+    const r = await checkAndIncrement(USER_A, 3);
     expect(r.allowed).toBe(false);
     expect(r.remaining).toBe(0);
   });
 
-  it("user buckets are independent", () => {
-    checkAndIncrement(USER_A, 1);
-    checkAndIncrement(USER_A, 1); // blocks USER_A
-    const rB = checkAndIncrement(USER_B, 1);
+  it("user buckets are independent", async () => {
+    await checkAndIncrement(USER_A, 1);
+    await checkAndIncrement(USER_A, 1); // blocks USER_A
+    const rB = await checkAndIncrement(USER_B, 1);
     expect(rB.allowed).toBe(true); // USER_B unaffected
   });
 
-  it("uses DEFAULT_DAILY_REQUEST_LIMIT when dailyLimit=0", () => {
-    const r = checkAndIncrement(USER_A, 0);
+  it("uses DEFAULT_DAILY_REQUEST_LIMIT when dailyLimit=0", async () => {
+    const r = await checkAndIncrement(USER_A, 0);
     expect(r.allowed).toBe(true);
     expect(r.remaining).toBeGreaterThan(0);
   });
 
-  it("resetBucket allows fresh requests after reset", () => {
-    for (let i = 0; i < 2; i++) checkAndIncrement(USER_A, 2);
-    expect(checkAndIncrement(USER_A, 2).allowed).toBe(false);
-    resetBucket(USER_A);
-    expect(checkAndIncrement(USER_A, 2).allowed).toBe(true);
+  it("resetBucket allows fresh requests after reset", async () => {
+    for (let i = 0; i < 2; i++) await checkAndIncrement(USER_A, 2);
+    expect((await checkAndIncrement(USER_A, 2)).allowed).toBe(false);
+    await resetBucket(USER_A);
+    expect((await checkAndIncrement(USER_A, 2)).allowed).toBe(true);
   });
 
-  it("peekUsage returns 0 for unknown user", () => {
-    expect(peekUsage("no-such-user-xyz").count).toBe(0);
+  it("peekUsage returns 0 for unknown user", async () => {
+    expect((await peekUsage("no-such-user-xyz")).count).toBe(0);
   });
 
-  it("resetAt is in the future", () => {
-    const r = checkAndIncrement(USER_A, 5);
+  it("resetAt is in the future", async () => {
+    const r = await checkAndIncrement(USER_A, 5);
     expect(r.resetAt.getTime()).toBeGreaterThan(Date.now());
   });
 });
