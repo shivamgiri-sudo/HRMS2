@@ -136,7 +136,7 @@ router.get(
     assertManualSource(dataset);
     const fileName = `${safeFilePart(dataset.datasetKey)}-manual-upload-template.csv`;
     res.setHeader("Content-Type", "text/csv; charset=utf-8");
-    res.setHeader("Content-Disposition", `attachment; filename=\"${fileName}\"`);
+    res.setHeader("Content-Disposition", `attachment; filename="${fileName}"`);
     res.setHeader("Cache-Control", "private, no-store");
     return res.send(`\uFEFF${buildManualUploadTemplate(dataset)}`);
   }),
@@ -236,7 +236,7 @@ router.get(
     res.setHeader("Content-Type", "text/csv; charset=utf-8");
     res.setHeader(
       "Content-Disposition",
-      `attachment; filename=\"performance-run-${safeFilePart(req.params.runId)}-errors.csv\"`,
+      `attachment; filename="performance-run-${safeFilePart(req.params.runId)}-errors.csv"`,
     );
     res.setHeader("Cache-Control", "private, no-store");
     return res.send(`\uFEFF${csv}`);
