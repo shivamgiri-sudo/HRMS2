@@ -549,6 +549,11 @@ export default function NativeStatutoryConfig() {
     effective_from: new Date().toISOString().slice(0, 10),
   });
 
+  // Declared before loadPtSlabs, which names it in its dependency array. Being a const, reading
+  // it from that array five lines earlier hit the temporal dead zone and threw
+  // "Cannot access 'showToast' before initialization" on every render of this page.
+  const showToast = useCallback((message: string, type: "success" | "error") => setToast({ message, type }), []);
+
   const loadPtSlabs = useCallback(async (sc: string) => {
     setPtLoading(true);
     try {
@@ -567,7 +572,6 @@ export default function NativeStatutoryConfig() {
   useEffect(() => { void loadPtSlabs(ptStateCode); }, [ptStateCode, loadPtSlabs]);
 
   const toggleSection = (key: string) => setOpenSections((p) => ({ ...p, [key]: !p[key] }));
-  const showToast = useCallback((message: string, type: "success" | "error") => setToast({ message, type }), []);
 
   const load = async () => {
     setLoading(true);

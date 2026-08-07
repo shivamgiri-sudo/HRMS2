@@ -98,7 +98,11 @@ export function ScopedFilterBar({
     const url = selectedBranch
       ? `/api/org/processes?branch_id=${selectedBranch}`
       : "/api/org/processes";
-    hrmsApi.get(url)
+    // The two endpoints this switches between disagree on shape - one replies { data }, the
+    // other has historically replied { processes } - and a bare array is tolerated too, hence the
+    // three-way read. Typed so all three branches are legal rather than leaving the response
+    // unknown.
+    hrmsApi.get<Process[] | { processes?: Process[]; data?: Process[] }>(url)
       .then((json) => {
         const list: Process[] = Array.isArray(json)
           ? json

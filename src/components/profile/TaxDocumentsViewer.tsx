@@ -218,9 +218,10 @@ export function TaxDocumentsViewer({ employeeId }: TaxDocumentsViewerProps) {
                   formData.append("documentType", documentType);
                   setUploading(true);
                   try {
-                    await hrmsApi.post(`/api/employee-docs/${employeeId}/upload`, formData, {
-                      headers: { "Content-Type": "multipart/form-data" },
-                    });
+                    // postForm, not post: post's third parameter is timeoutMs, so this header
+                    // object went nowhere - and a hand-set multipart type omits the boundary,
+                    // which would make the upload unparseable if it did arrive.
+                    await hrmsApi.postForm(`/api/employee-docs/${employeeId}/upload`, formData);
                     setSelectedFile(null);
                     setDocumentType("");
                     alert("Document uploaded successfully");

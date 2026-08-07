@@ -3,7 +3,6 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { ChevronDown, ChevronRight, Loader2, Play, X, CheckCircle2, Clock, ArrowRight } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { hrmsApi } from "@/lib/hrmsApi";
-import { formatIST } from "@/lib/utils";
 
 type Process = { id: string; process_name?: string; process_code?: string };
 type Shift = { id: string; shift_code: string; shift_name: string; start_time: string; end_time: string; version: number };
@@ -57,6 +56,10 @@ const LIFECYCLE: string[] = ["draft", "submitted", "reviewed", "published", "ack
 const next: Record<string, string> = { draft: "submitted", submitted: "reviewed", reviewed: "published", published: "acknowledged", acknowledged: "active", active: "variance_review", variance_review: "attendance_locked", attendance_locked: "payroll_input_ready", payroll_input_ready: "closed" };
 const today = new Date().toISOString().slice(0, 10);
 
+// Local, and deliberately not the shared lib/utils formatIST: this page wants the compact
+// "08 Aug, 10:30 pm" form, while the shared one renders "Aug 8, 2026 10:30 PM". Both were in
+// scope under the same name, which is a duplicate binding; the import is the one that goes,
+// since every call site here is written for this format.
 function formatIST(ts: string): string {
   try {
     return new Date(ts).toLocaleString("en-IN", { timeZone: "Asia/Kolkata", day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });

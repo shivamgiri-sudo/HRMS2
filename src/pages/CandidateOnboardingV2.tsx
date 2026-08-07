@@ -240,7 +240,11 @@ function CandidateOnboardingV2Authenticated({ token, sessionToken, onLogout }: {
     status, bgv, loading, error, saving,
     fetchStatus, saveSection, verifyBgv, submitOnboarding,
     bgvCheckFor, hasConsent,
-  } = useOnboardingV2(token, sessionToken);
+    // useOnboardingV2 takes only the onboarding token and authenticates with ?token=; the second
+    // argument was accepted by nobody and silently dropped. If these calls are meant to carry the
+    // x-candidate-session-token header that this page's own api() sends, that is a change to the
+    // hook, not an extra argument here.
+  } = useOnboardingV2(token);
 
   const completed = useMemo(() => {
     const s = new Set<number>();
