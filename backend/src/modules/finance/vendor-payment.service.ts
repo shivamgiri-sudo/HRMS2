@@ -229,13 +229,21 @@ export const vendorPaymentService = {
               pm.process_name,
               ccm.cost_centre_name,
               vm.vendor_type,
-              vm.gst_number AS vendor_gst
+              vm.gst_number AS vendor_gst,
+              -- Requirement 11 wants the invoice number on the payment grid, and it lives on
+              -- the GRN, not here: vendor_payment_tracking carries grn_number but never the
+              -- vendor's own bill reference. That is the number Accounts quote to a vendor
+              -- chasing payment, so joining beats asking them to open each GRN.
+              g.invoice_number,
+              g.bill_date,
+              g.billing_cycle_status
          FROM vendor_payment_tracking vpt
          LEFT JOIN bank_master bm ON bm.id = vpt.bank_id
          LEFT JOIN branch_master b ON b.id = vpt.branch_id
          LEFT JOIN process_master pm ON pm.id = vpt.process_id
          LEFT JOIN cost_centre_master ccm ON ccm.id = vpt.cost_centre_id
          LEFT JOIN vendor_master vm ON vm.id = vpt.vendor_id
+         LEFT JOIN grn_request g ON g.id = vpt.grn_request_id
          ${where}
         ORDER BY vpt.due_date ASC, vpt.created_at ASC
         LIMIT ${limit} OFFSET ${offset}`,

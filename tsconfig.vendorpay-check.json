@@ -1,0 +1,5 @@
+{
+  "extends": "./tsconfig.app.json",
+  "include": ["src/pages/finance/VendorPaymentDispatchPage.tsx", "src/components/finance/vendor", "src/vite-env.d.ts"],
+  "compilerOptions": { "noEmit": true }
+}

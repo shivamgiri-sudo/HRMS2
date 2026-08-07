@@ -53,6 +53,10 @@ interface VendorPayment {
   vendor_name?: string | null;
   head?: string | null;
   sub_head?: string | null;
+  /** From grn_request via the list join — the vendor's own bill reference, not the GRN number. */
+  invoice_number?: string | null;
+  bill_date?: string | null;
+  billing_cycle_status?: "OPEN" | "BOOKED" | "CLOSED" | null;
   amount_without_tax?: number;
   tax_amount?: number;
   amount_with_tax?: number;
@@ -590,8 +594,14 @@ export default function VendorPaymentDispatchPage() {
               <thead className="sticky top-0 bg-white">
                 <tr className="border-b">
                   <th className="h-8 min-w-[120px] text-left font-medium text-slate-500">GRN / Branch</th>
+                  <th className="h-8 min-w-[110px] text-left font-medium text-slate-500">Invoice</th>
                   <th className="h-8 min-w-[120px] text-left font-medium text-slate-500">Vendor</th>
-                  <th className="h-8 min-w-[80px] text-left font-medium text-slate-500">Head</th>
+                  <th className="h-8 min-w-[110px] text-left font-medium text-slate-500">Head / Sub-head</th>
+                  <th className="h-8 min-w-[110px] text-left font-medium text-slate-500">Cost centre / Process</th>
+                  {/* Amounts right-aligned and tabular so a column of money lines up on the
+                      decimal — the Finance convention the plan set out. */}
+                  <th className="h-8 min-w-[90px] text-right font-medium text-slate-500">GRN amount</th>
+                  <th className="h-8 min-w-[80px] text-right font-medium text-slate-500">Paid</th>
                   <th className="h-8 min-w-[80px] text-right font-medium text-slate-500">Balance</th>
                   <th className="h-8 min-w-[80px] text-left font-medium text-slate-500">Due date</th>
                   <th className="h-8 min-w-[80px] text-left font-medium text-slate-500">Status</th>
@@ -609,9 +619,30 @@ export default function VendorPaymentDispatchPage() {
                       <div className="font-medium truncate max-w-[120px]">{p.grn_number ?? p.grn_request_id}</div>
                       <div className="text-slate-400 truncate max-w-[120px]">{p.branch_name}</div>
                     </td>
+                    <td className="truncate max-w-[110px] py-1">
+                      <div className="truncate">{p.invoice_number ?? "-"}</div>
+                      {/* The GRN file is what a vendor query actually needs opening; surfaced
+                          here rather than only inside the dispatch sheet. */}
+                      {p.grn_file_name && (
+                        <div className="truncate text-slate-400">{p.grn_file_name}</div>
+                      )}
+                    </td>
                     <td className="truncate max-w-[120px] py-1">{p.vendor_name ?? "-"}</td>
-                    <td className="truncate max-w-[80px] py-1">{p.head ?? "-"}</td>
-                    <td className="py-1 text-right font-medium">
+                    <td className="truncate max-w-[110px] py-1">
+                      <div className="truncate">{p.head ?? "-"}</div>
+                      <div className="truncate text-slate-400">{p.sub_head ?? "-"}</div>
+                    </td>
+                    <td className="truncate max-w-[110px] py-1">
+                      <div className="truncate">{p.cost_centre_name ?? "-"}</div>
+                      <div className="truncate text-slate-400">{p.process_name ?? "-"}</div>
+                    </td>
+                    <td className="py-1 text-right tabular-nums">
+                      ₹{(p.due_amount ?? 0).toLocaleString("en-IN")}
+                    </td>
+                    <td className="py-1 text-right tabular-nums">
+                      ₹{(p.paid_amount ?? 0).toLocaleString("en-IN")}
+                    </td>
+                    <td className="py-1 text-right font-medium tabular-nums">
                       ₹{(p.balance_amount ?? 0).toLocaleString("en-IN")}
                     </td>
                     <td className="py-1">{p.due_date ? formatISTDate(p.due_date) : "-"}</td>
@@ -637,7 +668,7 @@ export default function VendorPaymentDispatchPage() {
                 ))}
                 {(rows ?? []).length === 0 && (
                   <tr>
-                    <td colSpan={7} className="py-8 text-center text-slate-400">No payments found</td>
+                    <td colSpan={11} className="py-8 text-center text-slate-400">No payments found</td>
                   </tr>
                 )}
               </tbody>
