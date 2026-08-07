@@ -307,7 +307,7 @@ export default function NativePerformanceFeedbackReportDetail() {
               <CompetencyCard
                 key={comp.competency_id}
                 name={comp.competency_name}
-                score={parseFloat(comp.avg_rating)}
+                rating={parseFloat(comp.avg_rating)}
                 description={
                   comp.comments.length > 0
                     ? comp.comments.join(" • ")

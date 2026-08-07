@@ -5,7 +5,9 @@ import { Badge } from "@/components/ui/badge";
 
 interface CompetencyCardProps {
   name: string;
-  category: string;
+  /** Optional: the report detail view has competency scores with no category, and this only
+   *  drives a colour lookup that already falls back. */
+  category?: string;
   rating: number | null;
   description?: string;
   variant?: "default" | "compact";
@@ -29,7 +31,7 @@ export function CompetencyCard({
   className,
 }: CompetencyCardProps) {
   const categoryColor =
-    categoryColors[category.toLowerCase()] || categoryColors.default;
+    categoryColors[(category ?? "").toLowerCase()] || categoryColors.default;
 
   if (variant === "compact") {
     return (

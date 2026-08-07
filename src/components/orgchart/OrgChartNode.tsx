@@ -26,6 +26,9 @@ interface OrgChartNodeProps {
   currentEmployeeId?: string | null;
   isLast?: boolean;
   searchQuery?: string;
+  /** Opens the employee drawer. NativeOrgChartEnhanced has always passed this, but the prop did
+   *  not exist, so clicking a node did nothing at all. */
+  onClick?: () => void;
 }
 
 export const OrgChartNodeCard = memo(function OrgChartNodeCard({
@@ -33,6 +36,7 @@ export const OrgChartNodeCard = memo(function OrgChartNodeCard({
   depth = 0,
   currentEmployeeId,
   searchQuery = "",
+  onClick,
 }: OrgChartNodeProps) {
   const [expanded, setExpanded] = useState(depth < 3);
   const hasChildren = node.children && node.children.length > 0;
@@ -58,7 +62,9 @@ export const OrgChartNodeCard = memo(function OrgChartNodeCard({
           "transition-all duration-base hover:shadow-[0_6px_24px_rgba(0,0,0,0.1)] hover-pointer:-translate-y-0.5",
           "bg-white",
           isMe ? "ring-2 ring-[#1B3A5C] ring-offset-2" : "border-slate-200/80",
+          onClick ? "cursor-pointer" : "",
         ].join(" ")}
+        onClick={onClick}
       >
         {/* Coloured top strip */}
         <div className={`h-[5px] w-full ${style.strip}`} />
@@ -123,7 +129,13 @@ export const OrgChartNodeCard = memo(function OrgChartNodeCard({
           {/* Collapse/expand button */}
           {hasChildren && (
             <button
-              onClick={() => setExpanded((v) => !v)}
+              onClick={(e) => {
+                // The card itself is now clickable (it opens the employee drawer), and this
+                // button sits inside it — without stopping propagation, expanding a node would
+                // also open the drawer.
+                e.stopPropagation();
+                setExpanded((v) => !v);
+              }}
               className="flex items-center gap-1 mt-0.5 px-2.5 py-1 rounded-full bg-slate-50 hover:bg-slate-100 text-slate-500 hover:text-slate-800 transition-all cursor-pointer border border-slate-200/60"
             >
               {expanded ? (

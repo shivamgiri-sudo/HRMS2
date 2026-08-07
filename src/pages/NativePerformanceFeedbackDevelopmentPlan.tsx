@@ -428,8 +428,13 @@ export default function NativePerformanceFeedbackDevelopmentPlan() {
                   <CardContent>
                     <DevPlanTimeline
                       goals={selectedPlan.goals.map((g) => ({
+                        // DevPlanGoal wants id and target_date. This mapper produced neither -
+                        // it emitted camelCase targetDate and dropped the id entirely - so the
+                        // timeline had no date to place a goal on and no stable key.
+                        id: g.id,
                         title: g.goal_description,
-                        targetDate: g.target_date,
+                        description: g.notes ?? undefined,
+                        target_date: g.target_date,
                         status: g.status,
                       }))}
                     />
