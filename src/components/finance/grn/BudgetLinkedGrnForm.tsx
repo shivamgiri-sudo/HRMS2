@@ -1286,91 +1286,6 @@ export function BudgetLinkedGrnForm() {
             </div>
           )}
 
-          {/* ── Proof ── */}
-          <FormSection
-            title="Proof"
-            description="Attach the invoice or receipt. At least one file is required to submit."
-          >
-            <div className="px-4 py-3">
-              <label className="flex cursor-pointer flex-col items-center justify-center gap-2 rounded-[10px] border-[1.5px] border-dashed border-grn-line bg-grn-paper px-4 py-[22px] text-center transition-colors hover:border-grn-brand">
-                <UploadCloud className="h-[26px] w-[26px] text-grn-ink-soft" strokeWidth={1.6} />
-                <span className="text-[13px] font-bold text-grn-ink">
-                  Tap to attach invoice or receipt
-                </span>
-                <span className="text-[11px] text-grn-ink-soft">
-                  PDF, JPG, PNG or WEBP · up to 10 files, 20 MB each
-                </span>
-                <input
-                  type="file"
-                  multiple
-                  accept=".pdf,.jpg,.jpeg,.png,.webp"
-                  className="sr-only"
-                  onChange={(event) => setFiles(Array.from(event.target.files ?? []))}
-                />
-              </label>
-
-              {(files.length > 0 || (workspace?.documents?.length ?? 0) > 0) && (
-                <ul className="mt-3 space-y-1.5">
-                  {files.map((file) => (
-                    <li
-                      key={file.name}
-                      className="flex items-center justify-between gap-2 rounded-[8px] border border-grn-line bg-grn-paper px-3 py-2 text-[12px]"
-                    >
-                      <span className="truncate text-grn-ink">{file.name}</span>
-                      <StatusStamp tone="neutral">Pending upload</StatusStamp>
-                    </li>
-                  ))}
-                  {workspace?.documents?.map((document) => {
-                    const tone = checkTone(String(document.extraction_status ?? "pending"));
-                    return (
-                      <li
-                        key={document.id}
-                        className={cn(
-                          "flex items-center justify-between gap-2 rounded-lg border px-3 py-2 text-[12px]",
-                          tone === "ok"
-                            ? "border-grn-ok-line bg-grn-ok-bg"
-                            : tone === "warn"
-                              ? "border-grn-warn-line bg-grn-warn-bg"
-                              : "border-grn-crit-line bg-grn-crit-bg"
-                        )}
-                      >
-                        <span className="truncate font-semibold text-grn-ink">{document.original_name}</span>
-                        <StatusStamp tone={tone}>
-                          {Number(document.is_primary) === 1 ? "Primary" : "Support"}
-                        </StatusStamp>
-                      </li>
-                    );
-                  })}
-                </ul>
-              )}
-
-              <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
-                <label className="flex items-center gap-2 text-[11.5px] text-grn-ink-soft">
-                  <input
-                    type="checkbox"
-                    className="h-4 w-4"
-                    checked={autoAnalyze}
-                    onChange={(event) => setAutoAnalyze(event.target.checked)}
-                  />
-                  Read the invoice automatically after upload
-                </label>
-                {primaryDocument && (
-                  <Button
-                    disabled={analyzeMutation.isPending}
-                    onClick={() => analyzeMutation.mutate(primaryDocument.id)}
-                  >
-                    {analyzeMutation.isPending ? (
-                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                    ) : (
-                      <ScanLine className="h-3.5 w-3.5" />
-                    )}
-                    Analyze invoice
-                  </Button>
-                )}
-              </div>
-            </div>
-          </FormSection>
-
           {/* ── Details ── */}
           <FormSection
             title={isVendor ? "Invoice details" : "Receipt details"}
@@ -1585,6 +1500,101 @@ export function BudgetLinkedGrnForm() {
                 </FieldRow>
               </>
             )}
+          </FormSection>
+
+          {/* ── Proof ──
+              Sits directly after the invoice header, not first and not last.
+
+              Not first, because I-Spark's flow is to key the invoice and then attach it, and a
+              raiser who has the document in hand types from it rather than the other way round.
+
+              Not last either, which is where a naive reading of the section order would put it:
+              the Gemini extraction below reads the uploaded file and fills the fields ABOVE it.
+              Move the upload past them and auto-fill has nothing left to fill, which would trade
+              a working capability for a cosmetic reordering. */}
+          {/* ── Proof ── */}
+          <FormSection
+            title="Proof"
+            description="Attach the invoice or receipt. At least one file is required to submit."
+          >
+            <div className="px-4 py-3">
+              <label className="flex cursor-pointer flex-col items-center justify-center gap-2 rounded-[10px] border-[1.5px] border-dashed border-grn-line bg-grn-paper px-4 py-[22px] text-center transition-colors hover:border-grn-brand">
+                <UploadCloud className="h-[26px] w-[26px] text-grn-ink-soft" strokeWidth={1.6} />
+                <span className="text-[13px] font-bold text-grn-ink">
+                  Tap to attach invoice or receipt
+                </span>
+                <span className="text-[11px] text-grn-ink-soft">
+                  PDF, JPG, PNG or WEBP · up to 10 files, 20 MB each
+                </span>
+                <input
+                  type="file"
+                  multiple
+                  accept=".pdf,.jpg,.jpeg,.png,.webp"
+                  className="sr-only"
+                  onChange={(event) => setFiles(Array.from(event.target.files ?? []))}
+                />
+              </label>
+
+              {(files.length > 0 || (workspace?.documents?.length ?? 0) > 0) && (
+                <ul className="mt-3 space-y-1.5">
+                  {files.map((file) => (
+                    <li
+                      key={file.name}
+                      className="flex items-center justify-between gap-2 rounded-[8px] border border-grn-line bg-grn-paper px-3 py-2 text-[12px]"
+                    >
+                      <span className="truncate text-grn-ink">{file.name}</span>
+                      <StatusStamp tone="neutral">Pending upload</StatusStamp>
+                    </li>
+                  ))}
+                  {workspace?.documents?.map((document) => {
+                    const tone = checkTone(String(document.extraction_status ?? "pending"));
+                    return (
+                      <li
+                        key={document.id}
+                        className={cn(
+                          "flex items-center justify-between gap-2 rounded-lg border px-3 py-2 text-[12px]",
+                          tone === "ok"
+                            ? "border-grn-ok-line bg-grn-ok-bg"
+                            : tone === "warn"
+                              ? "border-grn-warn-line bg-grn-warn-bg"
+                              : "border-grn-crit-line bg-grn-crit-bg"
+                        )}
+                      >
+                        <span className="truncate font-semibold text-grn-ink">{document.original_name}</span>
+                        <StatusStamp tone={tone}>
+                          {Number(document.is_primary) === 1 ? "Primary" : "Support"}
+                        </StatusStamp>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+
+              <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
+                <label className="flex items-center gap-2 text-[11.5px] text-grn-ink-soft">
+                  <input
+                    type="checkbox"
+                    className="h-4 w-4"
+                    checked={autoAnalyze}
+                    onChange={(event) => setAutoAnalyze(event.target.checked)}
+                  />
+                  Read the invoice automatically after upload
+                </label>
+                {primaryDocument && (
+                  <Button
+                    disabled={analyzeMutation.isPending}
+                    onClick={() => analyzeMutation.mutate(primaryDocument.id)}
+                  >
+                    {analyzeMutation.isPending ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <ScanLine className="h-3.5 w-3.5" />
+                    )}
+                    Analyze invoice
+                  </Button>
+                )}
+              </div>
+            </div>
           </FormSection>
 
           {/* ── Budget coordinates ── */}

@@ -96,4 +96,39 @@ describe("GRN form capabilities survive restructuring", () => {
     // the stored file — no file, no hash, no duplicate detection.
     expect(src).toMatch(/FormData/);
   });
+  it("keeps the sections in the I-Spark order", () => {
+    // Requirement 3: the raiser keys the invoice header, attaches the document, lets extraction
+    // fill what it can, then classifies and reconciles.
+    const order = [
+      "── Details ──",
+      'title="Proof"',
+      'title="Where this spend belongs"',
+      'title="Amount"',
+      'title="Read from the invoice"',
+      'title="Checks"',
+      'title="Readiness"',
+    ];
+    const positions = order.map((marker) => {
+      const at = src.indexOf(marker);
+      expect(at, `${marker} must still be present`).toBeGreaterThan(-1);
+      return at;
+    });
+    for (let i = 1; i < positions.length; i++) {
+      expect(positions[i], `${order[i]} must follow ${order[i - 1]}`).toBeGreaterThan(positions[i - 1]);
+    }
+  });
+
+  it("keeps the upload ahead of the extraction that reads it", () => {
+    // The section order looks cosmetic and is not. Gemini extraction fills the fields ABOVE the
+    // upload, so moving Proof to the end — which a naive reading of "documents last" would do —
+    // leaves auto-fill with nothing to fill.
+    expect(src.indexOf('title="Proof"')).toBeLessThan(src.indexOf('title="Read from the invoice"'));
+  });
+
+  it("still offers multi-month recognition on the form", () => {
+    // Requirement 5's panel lives inside this form; losing it in a restructure would silently
+    // send every invoice back to single-month.
+    expect(src).toContain("<MonthSplitPanel");
+    expect(src).toContain("recognitionStartPeriod");
+  });
 });
