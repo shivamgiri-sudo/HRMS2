@@ -418,8 +418,9 @@ jobs:
         run: npm --prefix backend run typecheck
 
       - name: Finance calculation and schema-contract tests
+        working-directory: backend
         run: >-
-          npm --prefix backend exec -- vitest run
+          npm test -- --run
           src/modules/process-pnl/__tests__/branch-budget.calculation.test.ts
           src/modules/process-pnl/__tests__/bpo-pnl.calculation.test.ts
           src/modules/process-pnl/__tests__/bpo-pnl.schema-contract.test.ts
