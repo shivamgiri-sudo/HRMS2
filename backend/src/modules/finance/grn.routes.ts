@@ -360,8 +360,28 @@ grnRouter.get(
         userRoles: user.roles,
         requestedBranchId: req.query.branchId ? String(req.query.branchId) : undefined,
       });
+      const num = (v: unknown) =>
+        v === undefined || v === "" ? undefined : Number(v);
       const result = await grnService.listGrns({
         branchScope,
+        grnNumber: req.query.grnNumber ? String(req.query.grnNumber) : undefined,
+        invoiceNumber: req.query.invoiceNumber ? String(req.query.invoiceNumber) : undefined,
+        vendorId: req.query.vendorId ? String(req.query.vendorId) : undefined,
+        head: req.query.head ? String(req.query.head) : undefined,
+        subHead: req.query.subHead ? String(req.query.subHead) : undefined,
+        billingCycleStatus: req.query.billingCycleStatus
+          ? String(req.query.billingCycleStatus)
+          : undefined,
+        accountingPeriod: req.query.accountingPeriod
+          ? String(req.query.accountingPeriod)
+          : undefined,
+        billDateFrom: req.query.billDateFrom ? String(req.query.billDateFrom) : undefined,
+        billDateTo: req.query.billDateTo ? String(req.query.billDateTo) : undefined,
+        amountFrom: num(req.query.amountFrom),
+        amountTo: num(req.query.amountTo),
+        createdBy: req.query.createdBy ? String(req.query.createdBy) : undefined,
+        multiMonth:
+          req.query.multiMonth === undefined ? undefined : String(req.query.multiMonth) === "true",
         processId: req.query.processId ? String(req.query.processId) : undefined,
         costCentreId: req.query.costCentreId ? String(req.query.costCentreId) : undefined,
         costClass: req.query.costClass ? String(req.query.costClass) : undefined,
@@ -455,6 +475,32 @@ grnRouter.post(
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : "Failed to create GRN";
       res.status(errorStatus(error, 400)).json({ error: message });
+    }
+  }
+);
+
+grnRouter.patch(
+  "/grns/:id/billing-cycle",
+  requireWriteAccess,
+  requireRole("finance_head", "accounts_head", "super_admin"),
+  authorizeGrnBranch,
+  async (req: ScopedGrnRequest, res) => {
+    try {
+      const user = actor(req);
+      const raw = req.body?.billingCycleStatus;
+      // null clears back to unclassified. Historical rows are NULL because the column
+      // postdates them, so "not classified" has to stay reachable rather than forcing a guess.
+      const value =
+        raw === null || raw === "" || raw === undefined
+          ? null
+          : (String(raw).toUpperCase() as "OPEN" | "BOOKED" | "CLOSED");
+      const data = await grnService.setBillingCycleStatus(req.params.id, value, user.id);
+      res.json({ success: true, data });
+    } catch (error: unknown) {
+      res.status(errorStatus(error, 400)).json({
+        success: false,
+        error: error instanceof Error ? error.message : "Unable to set billing status",
+      });
     }
   }
 );

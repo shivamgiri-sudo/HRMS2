@@ -2,6 +2,7 @@ import { randomUUID } from "crypto";
 import type { ResultSetHeader, RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
+import { recordFinanceApprovalEvent } from "../../shared/financeApprovalEvent.js";
 import {
   branchBudgetService,
   calculateBudgetLine,
@@ -657,6 +658,22 @@ export const grnService = {
     financialYear?: string;
     grnType?: string;
     search?: string;
+    // Requirement 14 — the GRN Search workspace. Free-text `search` stays; these are the
+    // structured filters, which an operator needs to answer "which GRNs are this vendor's,
+    // in August, over a lakh, still unpaid" without scrolling.
+    grnNumber?: string;
+    invoiceNumber?: string;
+    vendorId?: string;
+    head?: string;
+    subHead?: string;
+    billingCycleStatus?: string;
+    accountingPeriod?: string;
+    billDateFrom?: string;
+    billDateTo?: string;
+    amountFrom?: number;
+    amountTo?: number;
+    createdBy?: string;
+    multiMonth?: boolean;
     page?: number;
     limit?: number;
   }) {
@@ -702,6 +719,71 @@ export const grnService = {
       );
       const like = `%${filters.search}%`;
       params.push(like, like, like, like);
+    }
+    // Partial match on the two identifiers people actually quote at each other.
+    if (filters.grnNumber) {
+      conditions.push("g.grn_number LIKE ?");
+      params.push(`%${filters.grnNumber}%`);
+    }
+    if (filters.invoiceNumber) {
+      conditions.push("g.invoice_number LIKE ?");
+      params.push(`%${filters.invoiceNumber}%`);
+    }
+    if (filters.vendorId) {
+      conditions.push("g.vendor_id = ?");
+      params.push(filters.vendorId);
+    }
+    if (filters.head) {
+      conditions.push("g.head = ?");
+      params.push(filters.head);
+    }
+    if (filters.subHead) {
+      conditions.push("g.sub_head = ?");
+      params.push(filters.subHead);
+    }
+    if (filters.billingCycleStatus) {
+      // 'UNCLASSIFIED' is how the UI asks for historical rows, which are NULL because the
+      // column postdates them. A plain equality would silently return nothing for those.
+      if (filters.billingCycleStatus === "UNCLASSIFIED") {
+        conditions.push("g.billing_cycle_status IS NULL");
+      } else {
+        conditions.push("g.billing_cycle_status = ?");
+        params.push(filters.billingCycleStatus);
+      }
+    }
+    if (filters.accountingPeriod) {
+      // Falls back to bill_date for rows raised before accounting_period existed, so a period
+      // filter does not simply hide every historical GRN.
+      conditions.push(
+        "COALESCE(g.accounting_period, DATE_FORMAT(g.bill_date, '%Y-%m')) = ?"
+      );
+      params.push(filters.accountingPeriod);
+    }
+    if (filters.billDateFrom) {
+      conditions.push("g.bill_date >= ?");
+      params.push(filters.billDateFrom);
+    }
+    if (filters.billDateTo) {
+      conditions.push("g.bill_date <= ?");
+      params.push(filters.billDateTo);
+    }
+    // Compared against the gross, which is what the list column shows — filtering on a
+    // different figure from the one on screen is how "the filter is broken" reports start.
+    if (filters.amountFrom !== undefined && Number.isFinite(filters.amountFrom)) {
+      conditions.push("COALESCE(g.amount_with_tax, g.amount) >= ?");
+      params.push(filters.amountFrom);
+    }
+    if (filters.amountTo !== undefined && Number.isFinite(filters.amountTo)) {
+      conditions.push("COALESCE(g.amount_with_tax, g.amount) <= ?");
+      params.push(filters.amountTo);
+    }
+    if (filters.createdBy) {
+      conditions.push("g.created_by = ?");
+      params.push(filters.createdBy);
+    }
+    if (filters.multiMonth !== undefined) {
+      conditions.push("COALESCE(g.is_multi_month, 0) = ?");
+      params.push(filters.multiMonth ? 1 : 0);
     }
 
     const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
@@ -766,6 +848,58 @@ export const grnService = {
    * Branch scope is applied by the caller via resolveFinanceBranchScope, exactly as the list
    * endpoint does; this method never widens what the caller may see.
    */
+  /**
+   * Sets the OPEN / BOOKED / CLOSED billing cycle status (Requirement 4).
+   *
+   * Deliberately its own method touching its own column. billing_cycle_status answers
+   * "is another invoice expected against this service cycle?", which is orthogonal to
+   * grn_request.status, the twelve-value approval and payment chain. Overloading `status`
+   * would have made "is this paid" and "is this cycle finished" the same question, and they
+   * are not — a monthly rental GRN can be fully paid and still OPEN.
+   *
+   * No approval transition ever writes this column, and this never writes `status`. A contract
+   * test asserts they never appear in the same UPDATE, because the moment they do, closing a
+   * billing cycle starts moving GRNs through the payment workflow.
+   *
+   * NULL stays reachable: historical rows predate the column and read as "Not classified".
+   * Clearing back to unclassified is allowed rather than forcing a guess.
+   */
+  async setBillingCycleStatus(
+    grnId: string,
+    billingCycleStatus: "OPEN" | "BOOKED" | "CLOSED" | null,
+    actorUserId: string,
+  ) {
+    const allowed = new Set(["OPEN", "BOOKED", "CLOSED"]);
+    if (billingCycleStatus !== null && !allowed.has(billingCycleStatus)) {
+      throw new Error("Billing status must be OPEN, BOOKED or CLOSED");
+    }
+
+    const [existing] = await db.execute<RowDataPacket[]>(
+      `SELECT id, billing_cycle_status FROM grn_request WHERE id = ? LIMIT 1`,
+      [grnId],
+    );
+    if (!existing[0]) throw new Error("GRN not found");
+    const previous = existing[0].billing_cycle_status ?? null;
+
+    await db.execute(
+      `UPDATE grn_request SET billing_cycle_status = ? WHERE id = ?`,
+      [billingCycleStatus, grnId],
+    );
+
+    await recordFinanceApprovalEvent({
+      entityType: "grn",
+      entityId: grnId,
+      action: "billing_cycle_set",
+      fromStatus: previous ? String(previous) : null,
+      toStatus: billingCycleStatus ?? "UNCLASSIFIED",
+      actorUserId,
+      actorRole: "finance",
+      remarks: null,
+    });
+
+    return { id: grnId, billing_cycle_status: billingCycleStatus };
+  },
+
   async getGrnSummary(filters: {
     branchId?: string;
     branchScope?: FinanceBranchScope;
