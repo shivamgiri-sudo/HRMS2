@@ -201,26 +201,57 @@ router.get(
       search: req.query.search ? String(req.query.search) : undefined,
     });
 
-    const columns = [
+    // ── Report format contract ────────────────────────────────────────────────
+    // The default export reproduces the LEGACY GRN Payment Report exactly. Its shape is not a
+    // recollection: db_bill.tbl_payment_processing (12,553 rows, still being written) declares
+    // GrnNo, BranchId, Head, SubHead, DueAmount, DueDate, PaymentMode, PaymentDate, BankName,
+    // TransactionId, and Grn File comes from expense_entry_master.grn_file.
+    //
+    // Header spelling and column order are part of the contract — "Grn No." not "GRN No",
+    // "SubHead" not "Sub Head", "Due Amount" not "Due Amount With Tax". Finance already works
+    // from these headers, and a renamed column silently breaks whatever consumes the file.
+    // grn-payment-report-format.contract.test.ts fails if any of it drifts.
+    //
+    // The nine extra columns HRMS2 can offer (Process, Cost Centre, Cost Class, Vendor, the
+    // tax split, Paid/Balance/Status/Remarks) are NOT dropped — they move behind
+    // ?format=extended, so the official report stays as-is while nobody loses data they were
+    // already using.
+    const EXTENDED = String(req.query.format ?? "").toLowerCase() === "extended";
+
+    const LEGACY_COLUMNS = [
+      "Sr. No.", "Branch", "Grn No.", "Head", "SubHead", "Due Amount", "Due Date",
+      "Grn File", "Payment Mode", "Payment Date", "Bank Name", "Transaction ID / Cheque No.",
+    ];
+    const EXTENDED_COLUMNS = [
       "Sr No", "Branch", "Process", "Cost Centre", "Cost Class", "GRN No",
       "Vendor", "Head", "Sub Head", "Amount Without Tax", "Tax Amount",
       "Due Amount With Tax", "Due Date", "Latest Payment Mode",
       "Latest Payment Date", "Latest Bank Name", "Latest Transaction ID",
       "Paid Amount", "Balance Amount", "Payment Status", "Remarks",
     ];
+    const columns = EXTENDED ? EXTENDED_COLUMNS : LEGACY_COLUMNS;
+
     const escape = (value: unknown) =>
       `"${String(value ?? "").replace(/"/g, '""')}"`;
     const csvRows = [
       columns.map(escape).join(","),
       ...(rows as any[]).map((row, index) =>
-        [
-          index + 1, row.branch_name ?? row.branch_id, row.process_name ?? "",
-          row.cost_centre_name ?? "", row.cost_class ?? "", row.grn_number,
-          row.vendor_name, row.head, row.sub_head, row.amount_without_tax,
-          row.tax_amount, row.due_amount, row.due_date, row.payment_mode,
-          row.payment_date, row.bank_name, row.transaction_id, row.paid_amount,
-          row.balance_amount, row.payment_status, row.remarks,
-        ].map(escape).join(",")
+        (EXTENDED
+          ? [
+              index + 1, row.branch_name ?? row.branch_id, row.process_name ?? "",
+              row.cost_centre_name ?? "", row.cost_class ?? "", row.grn_number,
+              row.vendor_name, row.head, row.sub_head, row.amount_without_tax,
+              row.tax_amount, row.due_amount, row.due_date, row.payment_mode,
+              row.payment_date, row.bank_name, row.transaction_id, row.paid_amount,
+              row.balance_amount, row.payment_status, row.remarks,
+            ]
+          : [
+              index + 1, row.branch_name ?? row.branch_id, row.grn_number,
+              row.head, row.sub_head, row.due_amount, row.due_date,
+              row.grn_file_name ?? "", row.payment_mode, row.payment_date,
+              row.bank_name, row.transaction_id,
+            ]
+        ).map(escape).join(",")
       ),
     ];
 
