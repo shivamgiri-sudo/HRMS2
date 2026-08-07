@@ -89,6 +89,35 @@ export const jobRequisitionService = {
   /**
    * List requisitions with filters and pagination
    */
+  /**
+   * Can this actor see this one requisition?
+   *
+   * Scoping the list alone left the detail endpoints open: /:id, /by-code/:code and the
+   * per-requisition sub-resources took only an id, so anyone holding a read role could
+   * fetch a requisition outside their branch/process if they knew the UUID. The list no
+   * longer hands those UUIDs out, but "hard to guess" is not access control.
+   *
+   * Callers should answer a miss with 404 rather than 403 — a 403 would confirm the
+   * requisition exists to someone not allowed to know that.
+   *
+   * Deliberately no active_status filter: this decides visibility only, and must not
+   * change which rows the underlying getters already return.
+   */
+  async isRequisitionVisible(
+    actor: EnterpriseUser,
+    ref: { id?: string; code?: string },
+  ): Promise<boolean> {
+    const value = ref.id ?? ref.code;
+    if (!value) return false;
+    const scope = await requisitionScope(actor, "jr");
+    const keyColumn = ref.id ? "jr.id" : "jr.requisition_code";
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT 1 FROM job_requisition jr WHERE ${keyColumn} = ? AND (${scope.sql}) LIMIT 1`,
+      [value, ...scope.params],
+    );
+    return (rows as RowDataPacket[]).length > 0;
+  },
+
   async listRequisitions(
     filters: RequisitionFilters = {},
     actor: EnterpriseUser,

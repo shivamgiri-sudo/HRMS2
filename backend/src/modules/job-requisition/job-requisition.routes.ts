@@ -57,6 +57,33 @@ const h = (fn: AsyncHandler) => (req: AuthenticatedRequest, res: Response, next:
   void fn(req, res).catch(next);
 };
 
+/**
+ * Row-scope guard for the single-requisition read endpoints.
+ *
+ * Scoping only the list left these open: they take an id (or code) straight from the URL,
+ * so any read role could pull a requisition from another branch by knowing its UUID.
+ *
+ * Answers a miss with 404, not 403 — 403 would confirm the requisition exists to someone
+ * who is not entitled to know it does.
+ *
+ * Read endpoints only. The id-based WRITE routes (PATCH /:id, POST /:id/submit,
+ * approve/reject/close) are still unscoped; they carry narrower role lists but no row
+ * check. Left alone deliberately — guarding an approval path needs a branch-scoped login
+ * to test against, and every demo token here carries scope_type='all'.
+ */
+const inScope = (key: "id" | "code") =>
+  (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+    const value = req.params[key];
+    void jobRequisitionService
+      .isRequisitionVisible(req.authUser!, key === "id" ? { id: value } : { code: value })
+      .then((visible) =>
+        visible
+          ? next()
+          : res.status(404).json({ success: false, message: "Requisition not found" }),
+      )
+      .catch(next);
+  };
+
 // ─── Dashboard Metrics ───────────────────────────────────────────────────────
 jobRequisitionRouter.get(
   "/dashboard",
@@ -195,6 +222,7 @@ jobRequisitionRouter.get(
   "/:id",
   requireAuth,
   requireRole(...REQUISITION_READ_ROLES),
+  inScope("id"),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const { id } = req.params;
     const data = await jobRequisitionService.getRequisition(id);
@@ -210,6 +238,7 @@ jobRequisitionRouter.get(
   "/by-code/:code",
   requireAuth,
   requireRole(...REQUISITION_READ_ROLES),
+  inScope("code"),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const { code } = req.params;
     const data = await jobRequisitionService.getRequisitionByCode(code);
@@ -225,6 +254,7 @@ jobRequisitionRouter.get(
   "/:id/approval-history",
   requireAuth,
   requireRole(...REQUISITION_READ_ROLES),
+  inScope("id"),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const { id } = req.params;
     const data = await jobRequisitionService.getApprovalHistory(id);
@@ -237,6 +267,7 @@ jobRequisitionRouter.get(
   "/:id/candidates",
   requireAuth,
   requireRole(...REQUISITION_READ_ROLES),
+  inScope("id"),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const { id } = req.params;
     const data = await jobRequisitionService.getRequisitionCandidates(id);
@@ -470,6 +501,7 @@ jobRequisitionRouter.get(
   "/:id/funnel",
   requireAuth,
   requireRole(...REQUISITION_READ_ROLES),
+  inScope("id"),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const { id } = req.params;
     const data = await jobRequisitionService.getRequisitionFunnel(id);
@@ -509,6 +541,7 @@ jobRequisitionRouter.get(
   "/:id/handover-pack",
   requireAuth,
   requireRole(...REQUISITION_READ_ROLES),
+  inScope("id"),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const { id } = req.params;
     const data = await jobRequisitionService.getHandoverPack(id);
@@ -521,6 +554,7 @@ jobRequisitionRouter.get(
   "/:id/joined-employees",
   requireAuth,
   requireRole(...REQUISITION_READ_ROLES),
+  inScope("id"),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const { id } = req.params;
     const data = await jobRequisitionService.getJoinedEmployees(id);
