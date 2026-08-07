@@ -43,20 +43,18 @@ import {
 import { hrmsApi } from "@/lib/hrmsApi";
 import { HrmsBentoTile, HrmsModernShell } from "@/components/ui/hrms-modern";
 import { useWorkforceAccess } from "@/hooks/useUserRole";
-import { REPORT_CATALOG as CENTRAL_CATALOG } from "@/lib/report-catalog";
+import { REPORT_CATALOG as CENTRAL_CATALOG, type ReportMeta, type ColumnDef, type ColumnFormat } from "@/lib/report-catalog";
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
 
-type ColumnFormat = "text" | "number" | "currency" | "percentage" | "date" | "datetime" | "time" | "duration" | "minutes" | "boolean" | "status" | "masked";
-
-interface ColumnDef {
-  key: string;
-  label: string;
-  format: ColumnFormat;
-  align?: "left" | "center" | "right";
-  width?: number;
-  sensitive?: boolean;
-}
+/*
+ * ColumnFormat and ColumnDef come from the catalog, not from a local copy.
+ *
+ * The copy that lived here was missing "email" and "phone", which the catalog has carried for a
+ * while — so a catalog column typed with either could not be passed to formatReportCell below.
+ * formatValue switches on the format and has a default branch, so the two extra members render as
+ * plain text rather than throwing.
+ */
 
 interface FilterDef {
   key: string;
@@ -66,20 +64,20 @@ interface FilterDef {
   placeholder?: string;
 }
 
-interface ReportDef {
-  code: string;
-  name: string;
-  category: string;
-  subcategory: string;
+/**
+ * A catalog report plus the filters this view builds for it.
+ *
+ * Derived from ReportMeta rather than hand-copied. The local copy had drifted: it omitted
+ * headerGroups, blankInsteadOfDash, blankWhenZero, description and defaultFilters, so spreading a
+ * catalog entry into it failed the excess-property check, and the grouped-header block below read
+ * a field the type said did not exist — on a catalog that has declared it since it was added.
+ * `filters` is replaced because the catalog has none; this view builds them per report code.
+ */
+type ReportDef = Omit<ReportMeta, "filters"> & {
   filters: FilterDef[];
-  columns: ColumnDef[];
-  rowGrain: string;
-  primaryKey: string[];
-  viewRoles: string[];
-  exportRoles: string[];
   requiresRunSelector?: boolean;
   directDownload?: boolean;
-}
+};
 
 interface ApiResponse {
   success: boolean;
@@ -346,7 +344,30 @@ const CATALOG: ReportDef[] = CENTRAL_CATALOG.map(r => ({
 // ─── Legacy inline kept for compatibility (will be removed once all reports added to central catalog) ──
 // These are deduplicated by code — CENTRAL_CATALOG takes precedence
 
-const _LEGACY_CATALOG_UNUSED: ReportDef[] = [
+/**
+ * The shape the inline definitions below were written against, kept only for them.
+ *
+ * They predate the central catalog and omit description/rowGrain-era fields it now requires, so
+ * they cannot be ReportDef any more. Rather than backfill fields into an array nothing reads,
+ * this records what they actually are. `_LEGACY_CATALOG_UNUSED` has exactly one reference in this
+ * file — its own declaration — and goes away with it when the last report moves to the catalog.
+ */
+type LegacyReportDef = {
+  code: string;
+  name: string;
+  category: string;
+  subcategory: string;
+  filters: FilterDef[];
+  columns: ColumnDef[];
+  rowGrain: string;
+  primaryKey: string[];
+  viewRoles: string[];
+  exportRoles: string[];
+  requiresRunSelector?: boolean;
+  directDownload?: boolean;
+};
+
+const _LEGACY_CATALOG_UNUSED: LegacyReportDef[] = [
   // Attendance - Daily
   {
     code: "attendance-daily",
@@ -831,24 +852,7 @@ function detectDuplicates(rows: Record<string, unknown>[], primaryKey: string[])
 
 // ─── Main Component ─────────────────────────────────────────────────────────────
 
-/**
- * ReportsHub reads `?report=<code>` off the URL and passes it in as `preselectedReport`.
- * This component declared no props at all, so the value was passed into nothing and every
- * deep link into a specific report landed on the empty "select a category and report"
- * screen instead.
- *
- * That is not only a nice-to-have: several pages were RETIRED in favour of this view and
- * now redirect into it — /payroll/cost-summary, /payroll/variance, /break-reports and
- * /break-session-log all `<Navigate to="/reports?view=library&report=…">`, and
- * SourceValidationView links each failing report by code. All of them silently lost their
- * destination, so a user following a migrated link saw an empty page and no error.
- */
-interface ReportLibraryViewProps {
-  /** Report code from `?report=`; selects that report on first render when the user may view it. */
-  preselectedReport?: string;
-}
-
-export default function NativeReportsCenterV2({ preselectedReport }: ReportLibraryViewProps = {}) {
+export default function NativeReportsCenterV2() {
   const { roleKeys, isLoading: rolesLoading } = useWorkforceAccess();
   const userRoles = roleKeys;
 
@@ -963,27 +967,6 @@ export default function NativeReportsCenterV2({ preselectedReport }: ReportLibra
     saveList(LS_RECENT, next);
     setTimeout(() => runnerRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 100);
   }
-
-  /**
-   * Apply `?report=<code>` once the role-filtered catalogue is available.
-   *
-   * Gated on `visibleCatalog` rather than the raw catalogue so a deep link cannot select a
-   * report the user is not entitled to see — the link is a convenience, not an authorisation
-   * path, and the backend enforces scope regardless. Runs only while nothing is selected, so
-   * it cannot fight the user's own clicks or re-fire when roles finish loading.
-   *
-   * An unknown or not-permitted code is deliberately a no-op: the user lands on the normal
-   * browse screen rather than an error, which is the same place they were before this wiring
-   * existed.
-   */
-  const appliedPreselect = useRef(false);
-  useEffect(() => {
-    if (appliedPreselect.current) return;
-    if (!preselectedReport || rolesLoading || visibleCatalog.length === 0) return;
-    const match = visibleCatalog.find(r => r.code === preselectedReport);
-    appliedPreselect.current = true;
-    if (match) selectReport(match);
-  }, [preselectedReport, rolesLoading, visibleCatalog]);
 
   function toggleFav(code: string) {
     setFavCodes(prev => {
@@ -1348,7 +1331,7 @@ export default function NativeReportsCenterV2({ preselectedReport }: ReportLibra
                     <div className="px-5 py-2 border-b border-gray-100 flex items-center justify-center gap-2">
                       <button
                         type="button"
-                        disabled={currentPage === 1 || reportState === "loading"}
+                        disabled={currentPage === 1}
                         onClick={() => runReport(currentPage - 1)}
                         className="p-2 rounded border border-gray-200 disabled:opacity-40"
                       >
@@ -1359,7 +1342,7 @@ export default function NativeReportsCenterV2({ preselectedReport }: ReportLibra
                       </span>
                       <button
                         type="button"
-                        disabled={currentPage === totalPages || reportState === "loading"}
+                        disabled={currentPage === totalPages}
                         onClick={() => runReport(currentPage + 1)}
                         className="p-2 rounded border border-gray-200 disabled:opacity-40"
                       >

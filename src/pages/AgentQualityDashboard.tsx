@@ -176,7 +176,7 @@ export default function AgentQualityDashboard() {
                 {weaknessLoading ? (
                   <PanelSkeleton />
                 ) : weakness ? (
-                  <WeaknessPanel data={weakness} />
+                  <WeaknessPanel weaknessAreas={weakness.weakness_areas} />
                 ) : (
                   <Card className="p-6 text-center text-slate-500">
                     No weakness data available
@@ -189,7 +189,13 @@ export default function AgentQualityDashboard() {
                 {cqScoreLoading ? (
                   <PanelSkeleton />
                 ) : cqScore ? (
-                  <TrendPanel data={cqScore} />
+                  <TrendPanel
+                    weekly={cqScore.weekly}
+                    cq_7day_avg={cqScore.cq_score_7day_avg}
+                    cq_30day_avg={cqScore.cq_score_30day_avg}
+                    trend_7day={cqScore.trend_7day}
+                    trend_30day={cqScore.trend_30day}
+                  />
                 ) : (
                   <Card className="p-6 text-center text-slate-500">
                     No trend data available

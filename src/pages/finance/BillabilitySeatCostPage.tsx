@@ -122,11 +122,11 @@ export default function BillabilitySeatCostPage() {
         hrmsApi.get<{ data: SplitCandidate[] }>("/api/finance/billability/split-candidates"),
         hrmsApi.get<{ data: Exceptions }>("/api/finance/billability/exceptions"),
       ]);
-      setMatrix(m.data.data ?? []);
-      setSeatRates(r.data.data ?? []);
-      setCostCentres(cc.data.data ?? []);
-      setCandidates(sc.data.data ?? []);
-      setExceptions(ex.data.data ?? null);
+      setMatrix(m.data ?? []);
+      setSeatRates(r.data ?? []);
+      setCostCentres(cc.data ?? []);
+      setCandidates(sc.data ?? []);
+      setExceptions(ex.data ?? null);
     } catch {
       toast.error("Could not load billability configuration.");
     } finally {
