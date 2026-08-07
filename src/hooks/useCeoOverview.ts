@@ -132,6 +132,18 @@ export function useCeoOverview(period: string, filters: CeoOverviewFilters = {})
   return useQuery({
     queryKey: ["ceo-overview", period, key(branchIds), key(processIds), key(costCentreIds)],
     enabled: Boolean(period),
+    /*
+     * Keep the previous month's data on screen while the next one loads.
+     *
+     * Without this, ticking a branch changes the query key, isLoading flips back to true, and
+     * CeoOverviewPanel returns its spinner instead of the panel — which unmounts the filter
+     * dropdown mid-use and closes it. With a single-select that was invisible, because choosing one
+     * option ends the interaction anyway. With checkboxes it makes multi-select impossible: the
+     * panel shuts after every tick, so a second branch can never be added without reopening.
+     *
+     * Confirmed in the browser before and after: NOIDA then NOIDA-2 in one interaction.
+     */
+    placeholderData: (previous) => previous,
     queryFn: async () => {
       const params = new URLSearchParams({ period });
       if (branchIds.length) params.set("branchIds", branchIds.join(","));
