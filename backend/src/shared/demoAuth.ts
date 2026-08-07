@@ -30,3 +30,34 @@ export const DEMO_TOKEN_MAP: Record<string, { id: string; email: string; role: s
   // Legacy demo token — lowest privilege
   "mock-token":                  { id: "demo-user-id",        email: "demo@mascallnet.com",         role: "employee" },
 };
+
+/**
+ * Is the demo bypass active? Exactly the gate authMiddleware.requireAuth applies, kept here
+ * so every consumer asks the same question rather than re-deriving it.
+ */
+export function isDemoBypassEnabled(): boolean {
+  return process.env.INTERNAL_DEMO_BYPASS === "true" && process.env.NODE_ENV !== "production";
+}
+
+/**
+ * The role a demo user id carries, or null for anything else.
+ *
+ * authMiddleware puts the right role on req.authUser, but anything that re-derives a role
+ * from the database gets nothing: these ids have no row in user_roles, and no employees row
+ * either. Every such lookup therefore silently downgrades a demo super_admin to "no roles".
+ *
+ * In reporting that was not cosmetic. resolveFullScope() reads roles from user_roles, found
+ * none, concluded not-super-admin, and returned a scope with no branches — which
+ * appendScopeConditions renders as `1 = 0`. Logged in as the demo super_admin, every
+ * employee-grain report returned 200 with totalCount 0. Indistinguishable from "this report
+ * is broken", and it is why the Report Library looked empty during UI verification.
+ *
+ * Returns null unless the bypass gate is on, so production behaviour cannot change.
+ */
+export function demoRoleForUserId(userId: string): string | null {
+  if (!isDemoBypassEnabled()) return null;
+  for (const demo of Object.values(DEMO_TOKEN_MAP)) {
+    if (demo.id === userId) return demo.role;
+  }
+  return null;
+}

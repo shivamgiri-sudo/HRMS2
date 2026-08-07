@@ -462,18 +462,10 @@ reportSuiteRouter.get("/:code", reportScopeMiddleware, reportCatalogAccessMiddle
               WHERE ${clauses.length ? clauses.join(" AND ") : "1=1"}
               ORDER BY e.employee_code`;
       break;
-    case "headcount":
-      addScopedEmployeeFilters(req, clauses, params);
-      clauses.push("e.active_status = 1", "LOWER(COALESCE(e.employment_status,'active')) = 'active'");
-      sql = `SELECT b.branch_name, d.dept_name AS department_name, p.process_name, COUNT(*) AS active_headcount
-               FROM employees e
-               LEFT JOIN branch_master b ON b.id = e.branch_id
-               LEFT JOIN department_master d ON d.id = e.department_id
-               LEFT JOIN process_master p ON p.id = e.process_id
-              WHERE ${clauses.join(" AND ")}
-              GROUP BY b.branch_name, d.dept_name, p.process_name
-              ORDER BY b.branch_name, d.dept_name, p.process_name`;
-      break;
+    // "headcount" now falls through to executeReport(). The inline copy kept the
+    // superseded definition (active_status AND employment_status) and, because an
+    // inline case wins over the executor, it was still serving 1,123 where every other
+    // surface reports 1,125. Same output columns either way.
     case "employee-movement": {
       const from = dateParam(req.query.from, `${new Date().getFullYear()}-01-01`);
       const to = dateParam(req.query.to, new Date().toISOString().slice(0, 10));

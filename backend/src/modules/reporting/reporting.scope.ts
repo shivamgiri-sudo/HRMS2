@@ -1,6 +1,7 @@
 import { db } from '../../db/mysql.js';
 import type { RowDataPacket } from 'mysql2';
 import type { ExecScope, DimensionScope } from './executors/types.js';
+import { demoRoleForUserId } from '../../shared/demoAuth.js';
 
 const NO_BRANCH_SCOPE_SENTINEL = '__NO_BRANCH_SCOPE__';
 
@@ -16,7 +17,15 @@ export async function resolveBranchScope(userId: string): Promise<BranchScope> {
     `SELECT role_key FROM user_roles WHERE user_id = ? AND active_status = 1`,
     [userId]
   );
-  const roles = (roleRows as { role_key: string }[]).map(r => r.role_key);
+  const dbRoles = (roleRows as { role_key: string }[]).map(r => r.role_key);
+
+  // Same demo-identity gap as resolveFullScope below: these ids exist in DEMO_TOKEN_MAP but
+  // in neither user_roles nor employees, so without this the branch scope falls through to
+  // the NO_BRANCH_SCOPE sentinel and every scoped report returns nothing. Both entry points
+  // need it — patching only one leaves the report suite still empty, which is exactly what
+  // happened on the first attempt at this fix.
+  const demoRole = demoRoleForUserId(userId);
+  const roles = demoRole ? [...dbRoles, demoRole] : dbRoles;
 
   if (roles.some(r => SUPER_ADMIN_ROLES.includes(r))) {
     return { isSuperAdmin: true, branchIds: [] };
@@ -93,7 +102,17 @@ export async function resolveFullScope(userId: string): Promise<ExecScope> {
     [userId]
   );
   const rawRoles = (roleRows as { role_key: string }[]).map(r => r.role_key);
-  const roles    = normRoles(rawRoles);
+
+  // A demo-bypass identity has no row in user_roles and none in employees, so the query
+  // above returns nothing and this function would conclude "no roles, no scope" — which
+  // appendScopeConditions renders as `1 = 0`. Logged in as the demo super_admin, every
+  // employee-grain report then returned 200 with totalCount 0, indistinguishable from a
+  // broken report. Take the role from the same map authMiddleware authenticated against.
+  //
+  // demoRoleForUserId returns null unless INTERNAL_DEMO_BYPASS=true and NODE_ENV is not
+  // production — the identical gate requireAuth applies — so production is unaffected.
+  const demoRole = demoRoleForUserId(userId);
+  const roles    = normRoles(demoRole ? [...rawRoles, demoRole] : rawRoles);
   const isSuperAdmin = roles.some(r => SUPER_ADMIN_ROLES.includes(r));
 
   // 2. Fetch employee record for self-service and fallback branch
