@@ -44,18 +44,6 @@ const conn = await mysql.createConnection({
 });
 
 try {
-  if (apply) {
-    await conn.beginTransaction();
-    await conn.execute(
-      `CREATE TABLE IF NOT EXISTS ${backupTable} AS SELECT *, NOW() AS backed_up_at FROM role_page_access WHERE 1=0`,
-    );
-    await conn.execute(
-      `INSERT INTO ${backupTable} SELECT rpa.*, NOW() AS backed_up_at FROM role_page_access rpa WHERE rpa.role_key IN (${roles.map(() => "?").join(",")})`,
-      roles,
-    );
-    await conn.execute("UPDATE page_catalog SET active_status = 1 WHERE page_code = 'EMPLOYEE_SELF_DASHBOARD'");
-  }
-
   const [activeRows] = await conn.query("SELECT page_code FROM page_catalog WHERE active_status = 1 ORDER BY page_code");
   const activePages = activeRows.map((row) => row.page_code);
   const activePageSet = new Set(activePages);
@@ -73,6 +61,65 @@ try {
   let inserted = 0;
   let enabled = 0;
   let disabled = 0;
+
+  // ── Revocation guard ────────────────────────────────────────────────────────
+  // This script's UPDATE deactivates every active grant not present in the matrix.
+  // The matrix drifts behind production constantly — other sessions add pages to
+  // role_page_access without updating LIVE_IMPORTED_PAGE_CODES — so an --apply run
+  // silently revokes whatever has accumulated since the snapshot was last refreshed.
+  //
+  // Measured on 2026-08-08: a run would have deactivated ~132 grants across 30 roles,
+  // including finance_head losing the entire finance module (FINANCE_GRN,
+  // FINANCE_PROCESS_PNL, FINANCE_HEAD_DASHBOARD, FINANCE_BRANCH_BUDGET,
+  // FINANCE_BUDGET_CONSOLIDATION), payroll_head losing PAYROLL_SIGN_OFF and
+  // PAYROLL_AUDIT_TRAIL, and branch_head losing ATS_DASHBOARD and EMPLOYEE_MANAGEMENT.
+  //
+  // Not every extra is an accident to preserve — some were removed from the matrix
+  // deliberately (the CEO's ADVANCED_REPORTS and KPI_DASHBOARD were dropped after UAT).
+  // That is exactly why this cannot be auto-resolved: it needs a human to say which
+  // revocations are intended. So --apply now refuses when anything would be revoked,
+  // and the operator must either refresh LIVE_IMPORTED_PAGE_CODES or pass
+  // --allow-revoke having read the list.
+  const allowRevoke = process.argv.includes("--allow-revoke");
+  if (apply && !allowRevoke) {
+    const wouldRevoke = [];
+    for (const role of roles) {
+      const desiredSet = new Set(
+        getRolePageCodes(role, activePages).filter((pageCode) => activePageSet.has(pageCode)),
+      );
+      for (const pageCode of grants.get(role) ?? new Set()) {
+        if (!desiredSet.has(pageCode)) wouldRevoke.push(`${role}: ${pageCode}`);
+      }
+    }
+    if (wouldRevoke.length > 0) {
+      console.error(
+        `Refusing to apply: this would deactivate ${wouldRevoke.length} existing grant(s).\n\n` +
+          wouldRevoke.map((entry) => `  - ${entry}`).join("\n") +
+          `\n\nThe matrix is behind production. Either add these to LIVE_IMPORTED_PAGE_CODES in` +
+          ` backend/src/shared/rbacPageMatrix.ts, or re-run with --allow-revoke if every` +
+          ` revocation above is intended. Run without --apply first to see the full picture.`,
+      );
+      process.exitCode = 1;
+      await conn.end();
+      process.exit(1);
+    }
+  }
+
+  // Backup and the EMPLOYEE_SELF_DASHBOARD reactivation happen only once the
+  // revocation guard above has passed. They used to run before any validation, so an
+  // --apply that was going to be refused still left a backup table behind and had
+  // already written to page_catalog.
+  if (apply) {
+    await conn.beginTransaction();
+    await conn.execute(
+      `CREATE TABLE IF NOT EXISTS ${backupTable} AS SELECT *, NOW() AS backed_up_at FROM role_page_access WHERE 1=0`,
+    );
+    await conn.execute(
+      `INSERT INTO ${backupTable} SELECT rpa.*, NOW() AS backed_up_at FROM role_page_access rpa WHERE rpa.role_key IN (${roles.map(() => "?").join(",")})`,
+      roles,
+    );
+    await conn.execute("UPDATE page_catalog SET active_status = 1 WHERE page_code = 'EMPLOYEE_SELF_DASHBOARD'");
+  }
 
   for (const role of roles) {
     const desired = getRolePageCodes(role, activePages).filter((pageCode) => activePageSet.has(pageCode));
