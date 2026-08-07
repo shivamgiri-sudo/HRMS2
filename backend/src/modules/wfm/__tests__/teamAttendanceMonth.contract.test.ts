@@ -90,6 +90,32 @@ describe("team-month grid is scoped and gated", () => {
     expect(SOURCE).toMatch(/adr\.record_date BETWEEN \? AND \?/);
   });
 
+  it("flagging re-checks the team server-side rather than trusting the client", () => {
+    // The grid scoped what the manager could SEE, but a POST is not the page —
+    // nothing stops a caller sending any employee id.
+    const at = SOURCE.indexOf('"/team-month/flag"');
+    expect(at).toBeGreaterThan(-1);
+    const block = SOURCE.slice(at);
+    expect(block).toMatch(/e\.reporting_manager_id = \? OR e\.manager_id = \? OR e\.id = \?/);
+    expect(block).toMatch(/skippedOutOfScope/);
+  });
+
+  it("flagging writes no attendance", () => {
+    // A manager has no authority to resolve a mismatch or mark a day; granting it
+    // from a new screen would be a far larger change than a visibility page.
+    const at = SOURCE.indexOf('"/team-month/flag"');
+    const block = SOURCE.slice(at);
+    expect(block).not.toMatch(/UPDATE attendance_daily_record/);
+    expect(block).not.toMatch(/INSERT INTO attendance_daily_record/);
+  });
+
+  it("reports employees who cannot receive the flag", () => {
+    // No auth_user_id means no inbox; counting it beats a clean success for a
+    // notice that never arrived.
+    expect(SOURCE).toMatch(/skippedNoAccount/);
+    expect(SOURCE).toMatch(/skipped_no_account/);
+  });
+
   it("is mounted before the routers that share its prefix", () => {
     const mine = APP.indexOf("teamAttendanceMonthRouter);");
     const scoped = APP.indexOf("attendanceDailyScopedRouter);");

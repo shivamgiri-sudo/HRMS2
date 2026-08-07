@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, CalendarDays, CheckCheck, Download, Loader2, Search } from "lucide-react";
+import { AlertTriangle, CalendarDays, CheckCheck, Download, Flag, Loader2, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -139,6 +139,46 @@ export default function TeamAttendanceMonth() {
     }
   }
 
+  async function flagSelected() {
+    if (selected.size === 0) return;
+    const note = window.prompt(
+      `Flag ${selected.size} day(s) to the employee. What should they look at?`,
+    );
+    if (!note?.trim()) return;
+
+    setBusy(true);
+    try {
+      const items = [...selected].map((key) => {
+        const [employeeId, date] = key.split(":");
+        return { employeeId, date };
+      });
+      const res = await hrmsApi.post<any>("/api/wfm/attendance/team-month/flag", {
+        items,
+        note: note.trim(),
+      });
+      // An employee with no login cannot receive an inbox item. Saying so beats a
+      // clean success message for a notice that never arrived.
+      const extra = [
+        res?.skipped_no_account ? `${res.skipped_no_account} have no login account` : "",
+        res?.skipped_out_of_scope ? `${res.skipped_out_of_scope} outside your team` : "",
+      ].filter(Boolean).join(" · ");
+      toast({
+        title: `${res?.flagged ?? 0} day(s) flagged`,
+        description: extra || "The employee has been notified in their inbox.",
+        variant: res?.skipped_no_account || res?.skipped_out_of_scope ? "destructive" : undefined,
+      });
+      setSelected(new Set());
+    } catch (e) {
+      toast({
+        title: "Could not flag",
+        description: e instanceof Error ? e.message : "The request failed.",
+        variant: "destructive",
+      });
+    } finally {
+      setBusy(false);
+    }
+  }
+
   function exportCsv() {
     if (!data) return;
     const header = ["Employee", "Code", "Department", "Process", "Salary Days", "Needs Attention", "Absent",
@@ -217,10 +257,15 @@ export default function TeamAttendanceMonth() {
 
         <div className="ml-auto flex items-center gap-2">
           {selected.size > 0 && (
-            <Button size="sm" className="h-8 text-xs" onClick={raiseForSelected} disabled={busy}>
-              {busy ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" /> : null}
-              Raise correction for {selected.size}
-            </Button>
+            <>
+              <Button size="sm" variant="outline" className="h-8 text-xs" onClick={flagSelected} disabled={busy}>
+                <Flag className="mr-1 h-3.5 w-3.5" /> Flag {selected.size}
+              </Button>
+              <Button size="sm" className="h-8 text-xs" onClick={raiseForSelected} disabled={busy}>
+                {busy ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" /> : null}
+                Raise correction for {selected.size}
+              </Button>
+            </>
           )}
           <Button
             size="sm" variant="outline" className="h-8 text-xs"

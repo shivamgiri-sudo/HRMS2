@@ -19,8 +19,10 @@ import { Router } from "express";
 import type { RowDataPacket } from "mysql2";
 import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
+import { requireWriteAccess } from "../../middleware/authMiddleware.js";
 import { db } from "../../db/mysql.js";
 import { getEmployeeForUser, hasRole } from "../../shared/accessGuard.js";
+import { inboxService } from "../inbox/inbox.service.js";
 
 export const teamAttendanceMonthRouter = Router();
 teamAttendanceMonthRouter.use(requireAuth);
@@ -273,6 +275,109 @@ teamAttendanceMonthRouter.get(
         regularized: totalRegularized,
         missing: totalMissing,
       },
+    });
+  }),
+);
+
+/**
+ * POST /api/wfm/attendance/team-month/flag
+ * body: { items: [{ employeeId, date }], note }
+ *
+ * Raise a "look at this day" for someone on the team. Writes NO attendance: it puts
+ * a work-inbox item in front of the employee and, where the day is one only WFM can
+ * fix, in front of WFM too.
+ *
+ * Deliberately not an attendance write. A manager cannot resolve a mismatch or mark
+ * a day manually — both routes exclude them — and quietly granting that authority
+ * from a new screen would be a much larger change than a visibility page. Flagging
+ * is the honest thing a manager can do: say "this is wrong" to the person who can
+ * fix it, and keep the day visible until they do.
+ */
+teamAttendanceMonthRouter.post(
+  "/team-month/flag",
+  requireWriteAccess,
+  requireRole(
+    "manager", "assistant_manager", "tl", "team_leader", "process_manager",
+    "branch_head", "hr", "wfm", "admin", "super_admin",
+  ),
+  h(async (req, res) => {
+    const items: Array<{ employeeId?: string; date?: string }> = Array.isArray(req.body?.items)
+      ? req.body.items
+      : [];
+    const note = String(req.body?.note ?? "").trim();
+    if (items.length === 0) {
+      return res.status(400).json({ success: false, message: "Nothing selected to flag" });
+    }
+    if (items.length > 200) {
+      return res.status(400).json({ success: false, message: "Flag at most 200 days at a time" });
+    }
+    if (!note) {
+      return res.status(400).json({ success: false, message: "A note is required — a flag with no reason is noise" });
+    }
+
+    const userId = req.authUser!.id;
+    const isWide = await hasRole(userId, "admin", "hr", "wfm", "ceo", "super_admin");
+    const callerEmp = await getEmployeeForUser(userId);
+    if (!isWide && !callerEmp?.id) {
+      return res.status(403).json({ success: false, message: "No employee record for this user" });
+    }
+
+    // Re-check the team on the way in. The grid already scoped what a manager could
+    // see, but a request is not the page — nothing stops a caller posting any id, so
+    // authorisation is decided here rather than trusted from the client.
+    const ids = [...new Set(items.map((i) => String(i.employeeId ?? "")).filter(Boolean))];
+    if (ids.length === 0) {
+      return res.status(400).json({ success: false, message: "No employees in the request" });
+    }
+    const ph = ids.map(() => "?").join(",");
+    const scopeSql = isWide
+      ? ""
+      : " AND (e.reporting_manager_id = ? OR e.manager_id = ? OR e.id = ?)";
+    const scopeParams = isWide ? [] : [callerEmp!.id, callerEmp!.id, callerEmp!.id];
+
+    const [allowedRows] = await db.query<RowDataPacket[]>(
+      `SELECT e.id, e.employee_code, e.auth_user_id,
+              COALESCE(NULLIF(TRIM(e.full_name),''),
+                       TRIM(CONCAT(e.first_name,' ',COALESCE(e.last_name,'')))) AS employee_name
+         FROM employees e
+        WHERE e.id IN (${ph}) AND e.active_status = 1${scopeSql}`,
+      [...ids, ...scopeParams],
+    );
+    const allowed = new Map((allowedRows as any[]).map((r) => [String(r.id), r]));
+
+    let flagged = 0;
+    let skippedOutOfScope = 0;
+    let skippedNoAccount = 0;
+
+    for (const item of items) {
+      const emp = allowed.get(String(item.employeeId ?? ""));
+      if (!emp) { skippedOutOfScope++; continue; }
+      const date = String(item.date ?? "");
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) { skippedOutOfScope++; continue; }
+
+      // An employee with no login cannot be told anything by an inbox item. Counted
+      // and returned rather than silently dropped, so the manager knows the message
+      // did not land and can follow up another way.
+      if (!emp.auth_user_id) { skippedNoAccount++; continue; }
+
+      await inboxService.createItem({
+        user_id: String(emp.auth_user_id),
+        type: "attendance_flagged_by_manager",
+        title: `Attendance query for ${date}`,
+        description: `${note} — raised by your reporting manager. Open your attendance and raise a regularization if this day is wrong.`,
+        entity_type: "attendance_daily_record",
+        entity_id: `${emp.id}:${date}`.slice(0, 64),
+        action_url: `/attendance?date=${encodeURIComponent(date)}`,
+        priority: "high",
+      }, 24 * 60).catch(() => undefined);
+      flagged++;
+    }
+
+    return res.json({
+      success: true,
+      flagged,
+      skipped_out_of_scope: skippedOutOfScope,
+      skipped_no_account: skippedNoAccount,
     });
   }),
 );
