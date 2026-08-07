@@ -35,6 +35,12 @@ import {
   processMasterReport,
   headcountByCostCentreAndProcess,
 } from "./org-master.executor.js";
+import {
+  payrollPopulationReconciliation,
+  leaveLedgerVsRequestsReconciliation,
+  costCentreVsBillingReconciliation,
+  attendanceEnrollmentGap,
+} from "./reconciliation.executor.js";
 
 // ─── Attendance ──────────────────────────────────────────────────────────────
 import {
@@ -197,6 +203,15 @@ export const EXECUTOR_MAP: Record<string, ExecutorFn> = {
   "cost-centre-master-report":            costCentreMasterReport,
   "process-master-report":                processMasterReport,
   "headcount-by-cost-centre-and-process": headcountByCostCentreAndProcess,
+
+  // Reconciliations. Each exposes a discrepancy the audit could only find by hand-writing
+  // SQL: three headcounts for one month, a leave ledger 40x its own request history, a
+  // billing name that disagrees with the operational one, and missing attendance that is
+  // actually an unenrolled biometric. All quantify; none recompute.
+  "payroll-population-reconciliation":       payrollPopulationReconciliation,
+  "leave-ledger-vs-requests-reconciliation": leaveLedgerVsRequestsReconciliation,
+  "cost-centre-vs-billing-reconciliation":   costCentreVsBillingReconciliation,
+  "attendance-enrollment-gap":               attendanceEnrollmentGap,
 
   // Attendance
   "attendance-daily":          attendanceDaily,
