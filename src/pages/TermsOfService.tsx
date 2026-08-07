@@ -7,6 +7,14 @@ import Footer from "@/components/layout/Footer";
 import { isProductionDomain } from "@/lib/domain";
 import { formatISTDate } from "@/lib/utils";
 
+/**
+ * The date this document was last revised — NOT the render date. formatISTDate() was being
+ * called with no argument, which returns "" , so the line read "Last updated:" and nothing.
+ * Passing new Date() would have been worse: it would assert a revision on every page view.
+ * Taken from this file's last content change (2026-07-14); update it when the text changes.
+ */
+const LAST_UPDATED = "2026-07-14";
+
 const TermsOfService = () => {
   const sections = [
     {
@@ -126,7 +134,7 @@ const TermsOfService = () => {
             Please read these terms carefully before using our services.
           </p>
           <p className="text-sm text-muted-foreground">
-            Last updated: {formatISTDate()}
+            Last updated: {formatISTDate(LAST_UPDATED)}
           </p>
         </div>
       </section>

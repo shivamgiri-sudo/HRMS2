@@ -180,7 +180,7 @@ wfmRouter.get("/attendance/breaks", h(async (req: any, res: any) => {
 
   const placeholders = recordIds.map(() => "?").join(",");
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT id, session_id, break_start, break_end, created_at
+    `SELECT id, session_id, break_start, break_end, break_type, created_at
        FROM wfm_break_log
       WHERE session_id IN (${placeholders})
         AND employee_id = ?
@@ -195,6 +195,9 @@ wfmRouter.get("/attendance/breaks", h(async (req: any, res: any) => {
       attendance_record_id: row.session_id,
       pause_time: row.break_start,
       resume_time: row.break_end ?? null,
+      // wfm_break_log.break_type is VARCHAR NOT NULL DEFAULT 'Break'. It was neither selected nor
+      // mapped, so the Attendance page's LONG/MINI badge read undefined and always fell back.
+      break_type: row.break_type ?? null,
       // wfm_break_log carries no geolocation. Returned as null rather than omitted so the
       // client's AttendanceBreak shape is satisfied and "no location" is explicit.
       pause_latitude: null,

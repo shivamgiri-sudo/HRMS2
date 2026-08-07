@@ -31,7 +31,10 @@ const emptyPayload: AtsDashPayload = {
 const num = (v: any) => Number(v || 0);
 const fmt = (n: any) => Number(n || 0).toLocaleString("en-IN");
 const pct = (n: number, d: number) => (d ? `${Math.round((n / d) * 1000) / 10}%` : "0%");
-const todayKey = () => formatISTDate();
+// en-CA gives YYYY-MM-DD, matching weekStartKey below and the rows' _dateKey. formatISTDate
+// renders "7 Aug 2026" and, called with no argument, returned "" - so the FTD and WTD filters
+// compared against an empty string and matched nothing at all.
+const todayKey = () => new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
 const monthKey = () => todayKey().slice(0, 7);
 const weekStartKey = () => {
   const d = new Date();

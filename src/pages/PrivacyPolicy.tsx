@@ -9,6 +9,14 @@ import { isProductionDomain } from "@/lib/domain";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { formatISTDate } from "@/lib/utils";
 
+/**
+ * The date this document was last revised — NOT the render date. formatISTDate() was being
+ * called with no argument, which returns "" , so the line read "Last updated:" and nothing.
+ * Passing new Date() would have been worse: it would assert a revision on every page view.
+ * Taken from this file's last content change (2026-07-02); update it when the text changes.
+ */
+const LAST_UPDATED = "2026-07-02";
+
 type GrievanceOfficer = { name: string; email: string; designation: string; sla_days: number };
 
 const PrivacyPolicy = () => {
@@ -132,7 +140,7 @@ const PrivacyPolicy = () => {
             We are committed to protecting your privacy and ensuring the security of your personal information.
           </p>
           <p className="text-sm text-muted-foreground">
-            Last updated: {formatISTDate()}
+            Last updated: {formatISTDate(LAST_UPDATED)}
           </p>
         </div>
       </section>

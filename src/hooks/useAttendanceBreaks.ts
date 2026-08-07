@@ -13,6 +13,9 @@ export interface AttendanceBreak {
   resume_latitude: number | null;
   resume_longitude: number | null;
   resume_location_name: string | null;
+  /** wfm_break_log.break_type — 'LONG', 'MINI' or the 'Break' default. Nullable only because
+   *  older rows predate the column being returned by the batch endpoint. */
+  break_type: string | null;
   created_at: string;
 }
 

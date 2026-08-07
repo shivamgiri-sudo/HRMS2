@@ -410,7 +410,9 @@ const Assets = () => {
     doc.setFontSize(18);
     doc.text("Asset Inventory", 14, 22);
     doc.setFontSize(10);
-    doc.text(`Generated on ${formatISTDate()}`, 14, 30);
+    // Third export with the same omission (Leaves, Employees, Assets): formatISTDate returns ""
+    // for a falsy argument, so this printed "Generated on" and nothing.
+    doc.text(`Generated on ${formatISTDate(new Date())}`, 14, 30);
 
     if (startDate || endDate) {
       doc.text(

@@ -143,10 +143,10 @@ export default function NativeCallMasterDashboard() {
       const newFlags: InterventionFlag[] = [];
       const k = kpiRes.data;
       if (k?.inbound?.fatal_score != null && n(k.inbound.fatal_score) > 10) {
-        newFlags.push({ id: "fatal-ib", severity: "critical", title: "High Fatal Rate — Inbound", message: `${pct(k.inbound.fatal_score)} of inbound calls are fatal. Immediate QA action required.`, area: "Quality" });
+        newFlags.push({ type: "High Fatal Rate — Inbound", severity: "critical", detail: `${pct(k.inbound.fatal_score)} of inbound calls are fatal.`, action: "Immediate QA action required." });
       }
       if (k?.outbound?.conversion != null && n(k.outbound.conversion) < 5) {
-        newFlags.push({ id: "conv-ob", severity: "warning", title: "Low Outbound Conversion", message: `${pct(k.outbound.conversion)} conversion — below 5% threshold.`, area: "Sales" });
+        newFlags.push({ type: "Low Outbound Conversion", severity: "warning", detail: `${pct(k.outbound.conversion)} conversion — below 5% threshold.` });
       }
       setFlags(newFlags);
     } catch {

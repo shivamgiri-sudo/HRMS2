@@ -413,7 +413,7 @@ export default function NativeEmployeeBGVStatus() {
 
             {/* Print footer */}
             <div className="hidden print:block mt-8 pt-4 border-t border-slate-200 text-xs text-slate-400 text-center">
-              MAS Callnet PeopleOS — BGV Status Report — {formatISTDate()} — Confidential
+              MAS Callnet PeopleOS — BGV Status Report — {formatISTDate(new Date())} — Confidential
             </div>
           </>
         )}

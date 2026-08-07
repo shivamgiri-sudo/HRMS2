@@ -5,7 +5,9 @@ export interface InterventionFlag {
   type: string;
   severity: "critical" | "warning" | "info";
   detail: string;
-  action: string;
+  /** Optional: the ops-pulse feed always supplies one, but flags derived on the client (Call
+   *  Master) have no action copy, and inventing one would put words in the business's mouth. */
+  action?: string;
 }
 
 interface InterventionPanelProps {
@@ -117,9 +119,11 @@ export function InterventionPanel({
                     </span>
                   </div>
                   <p className="mt-1 text-xs text-slate-700 leading-relaxed">{flag.detail}</p>
-                  <p className={`mt-1 text-xs font-semibold ${cfg.actionColor}`}>
-                    → {flag.action}
-                  </p>
+                  {flag.action && (
+                    <p className={`mt-1 text-xs font-semibold ${cfg.actionColor}`}>
+                      → {flag.action}
+                    </p>
+                  )}
                 </div>
               </div>
             );

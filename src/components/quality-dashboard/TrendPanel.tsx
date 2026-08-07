@@ -105,7 +105,7 @@ export const TrendPanel: React.FC<TrendPanelProps> = ({
                   <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
                   <XAxis dataKey="day" />
                   <YAxis domain={[0, 100]} label={{ value: 'Score (%)', angle: -90, position: 'insideLeft' }} />
-                  <Tooltip formatter={(value) => `${value.toFixed(1)}%`} />
+                  <Tooltip formatter={(value) => `${Number(value).toFixed(1)}%`} />
                   <Line type="monotone" dataKey="score" stroke="#3b82f6" strokeWidth={2} dot={{ r: 5 }} activeDot={{ r: 7 }} />
                 </LineChart>
               </ResponsiveContainer>
@@ -175,7 +175,7 @@ export const TrendPanel: React.FC<TrendPanelProps> = ({
                   <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
                   <XAxis dataKey="label" />
                   <YAxis domain={[0, 100]} label={{ value: 'Score (%)', angle: -90, position: 'insideLeft' }} />
-                  <Tooltip formatter={(value) => `${value.toFixed(1)}%`} />
+                  <Tooltip formatter={(value) => `${Number(value).toFixed(1)}%`} />
                   <Bar dataKey="score" radius={[8, 8, 0, 0]} fill="#3b82f6" />
                 </BarChart>
               </ResponsiveContainer>
