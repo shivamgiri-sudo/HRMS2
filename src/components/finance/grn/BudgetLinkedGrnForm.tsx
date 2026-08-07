@@ -57,6 +57,7 @@ import { GST_RATES } from "@/lib/gst";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { splitRupees, weightFor } from "@/lib/sharingWeights";
 import { cn } from "@/lib/utils";
+import { FieldRow, FormSection, StaticValue } from "./sections/form-primitives";
 
 /** Methods offered for GRN's auto-split, restricted to what's computable from a single batched
  *  driver fetch. "meter_wise" has no client formula (server-only). "grade_weighted_headcount"'s
@@ -294,74 +295,6 @@ function computeLine(line: BudgetLine, quantity: number, unitRate?: number) {
  * One form field. Label sits beside the control from `md` up and stacks above
  * it on narrower screens, so the page never scrolls sideways on a phone.
  */
-function FieldRow({
-  label,
-  htmlFor,
-  required,
-  hint,
-  error,
-  children,
-}: {
-  label: string;
-  htmlFor?: string;
-  required?: boolean;
-  hint?: string;
-  error?: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <GrnFieldRow
-      label={label}
-      htmlFor={htmlFor}
-      required={required}
-      hint={hint}
-      error={error}
-      // Tints whatever control this row contains rather than threading an `invalid` prop through
-      // every call site. The descendant selector also out-specifies the control's own border, so
-      // it wins without !important.
-      className={
-        error
-          ? "[&_input]:border-grn-crit [&_input]:bg-grn-crit-bg [&_textarea]:border-grn-crit [&_textarea]:bg-grn-crit-bg"
-          : undefined
-      }
-    >
-      {children}
-    </GrnFieldRow>
-  );
-}
-
-function FormSection({
-  title,
-  description,
-  action,
-  children,
-}: {
-  title: string;
-  description?: string;
-  action?: React.ReactNode;
-  children: React.ReactNode;
-}) {
-  return (
-    <GrnCard>
-      <GrnCardHeader title={title} description={description} action={action} />
-      <div>{children}</div>
-    </GrnCard>
-  );
-}
-
-/** Read-only value rendered at input height so rows stay on one baseline. */
-function StaticValue({ children, muted }: { children: React.ReactNode; muted?: boolean }) {
-  return (
-    <div
-      className={cn(
-        "flex h-[34px] items-center text-[12.5px] font-semibold",
-        muted ? "text-grn-ink-soft" : "text-grn-ink"
-      )}
-    >
-      {children}
-    </div>
-  );
-}
 
 /** GrnInput already carries its own height; this exists only so the call sites that append to it
  *  (`cn(inputClass, "text-right …")`) keep working. */
