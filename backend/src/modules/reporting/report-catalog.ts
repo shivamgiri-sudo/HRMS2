@@ -235,6 +235,125 @@ export const REPORT_CATALOG: ReportDefinition[] = [
   },
 
   {
+    // Cost centre had 927 rows (573 active) carrying 1,061 of 1,125 active employees, and
+    // no report on it. You could see a cost centre code on an employee row and had no way
+    // to ask what it was, whose client it served, or how many people it carried.
+    code: "cost-centre-master-report",
+    name: "Cost Centre Master",
+    category: "HR & Workforce",
+    subcategory: "Organisation Masters",
+    description: "Every cost centre with its client, branch, approval state and live headcount",
+    rowGrain: "One row per cost centre",
+    primaryKey: ["cost_centre_code"],
+    columns: [
+      { key: "cost_centre_code", label: "Cost Centre Code", format: "text", width: 160 },
+      { key: "cost_centre_name", label: "Cost Centre", format: "text", width: 200 },
+      { key: "client_name", label: "Client", format: "text", width: 200 },
+      { key: "branch_name", label: "Branch", format: "text", width: 140 },
+      { key: "department_name", label: "Department", format: "text", width: 140 },
+      { key: "cc_category", label: "Category", format: "text", width: 120 },
+      { key: "cc_type", label: "Type", format: "text", width: 110 },
+      { key: "tower", label: "Tower", format: "text", width: 110 },
+      { key: "approval_status", label: "Approval Status", format: "status", width: 130 },
+      { key: "cost_centre_state", label: "Active / Inactive", format: "status", width: 120 },
+      { key: "active_headcount", label: "Active Headcount", format: "number", width: 130, align: "right" },
+      { key: "distinct_processes", label: "Processes", format: "number", width: 100, align: "right" },
+      { key: "billing_process_name", label: "Billing Name", format: "text", width: 200 },
+      { key: "mapped_process", label: "Mapped Process", format: "text", width: 180 },
+      { key: "go_live_date", label: "Go Live", format: "date", width: 110 },
+      { key: "close_date", label: "Closed", format: "date", width: 110 },
+    ],
+    filters: [F_BRANCH, F_COST_CENTRE, F_STATUS],
+    viewRoles: ROLES_HR_ADMIN,
+    exportRoles: ROLES_HR_ADMIN,
+    sourceTables: ["cost_centre_master", "branch_master", "department_master", "process_master", "employees"],
+    branchScoped: true,
+    sensitivityLevel: "internal",
+    containsPII: false,
+    containsFinancialData: false,
+    // Verified against live 2026-08-07: 927 rows, headcount summing to 1,061 — exactly the
+    // active employees who resolve to a cost centre. Mapped Process is empty on every row
+    // because cost_centre_master.process_id is NULL on all 927; shown rather than hidden,
+    // since a column that should be populated and is not is itself the finding.
+    availabilityStatus: "validated_with_limitations",
+  },
+
+  {
+    // 131 processes (66 active) carrying 982 of 1,125 active employees, likewise unreported.
+    code: "process-master-report",
+    name: "Process Master",
+    category: "HR & Workforce",
+    subcategory: "Organisation Masters",
+    description: "Every process with its client, branch, workload type, SLA and live headcount",
+    rowGrain: "One row per process",
+    primaryKey: ["process_code"],
+    columns: [
+      { key: "process_code", label: "Process Code", format: "text", width: 150 },
+      { key: "process_name", label: "Process", format: "text", width: 200 },
+      { key: "client_name", label: "Client", format: "text", width: 200 },
+      { key: "branch_name", label: "Branch", format: "text", width: 140 },
+      { key: "process_type", label: "Type", format: "text", width: 130 },
+      { key: "workload_type", label: "Workload", format: "text", width: 140 },
+      { key: "business_lob", label: "LOB", format: "text", width: 130 },
+      { key: "process_state", label: "Active / Inactive", format: "status", width: 120 },
+      { key: "active_headcount", label: "Active Headcount", format: "number", width: 130, align: "right" },
+      { key: "distinct_cost_centres", label: "Cost Centres", format: "number", width: 120, align: "right" },
+      { key: "process_owner_name", label: "Process Owner", format: "text", width: 160 },
+      { key: "sla_response_hours", label: "SLA Response (h)", format: "number", width: 130, align: "right" },
+      { key: "sla_resolution_hours", label: "SLA Resolution (h)", format: "number", width: 140, align: "right" },
+      { key: "close_date", label: "Closed", format: "date", width: 110 },
+    ],
+    filters: [F_BRANCH, F_PROCESS, F_STATUS],
+    viewRoles: ROLES_HR_ADMIN,
+    exportRoles: ROLES_HR_ADMIN,
+    sourceTables: ["process_master", "branch_master", "employees"],
+    branchScoped: true,
+    sensitivityLevel: "internal",
+    containsPII: false,
+    containsFinancialData: false,
+    // Verified against live 2026-08-07: 131 rows, headcount summing to 982 — exactly the
+    // active employees who resolve to a process.
+    availabilityStatus: "validated",
+  },
+
+  {
+    // The pairing the mandate implies. Driven from employees, not from either master,
+    // because cost_centre_master.process_id is empty on all 927 rows — where people
+    // actually sit is the only honest way to pair the two dimensions.
+    code: "headcount-by-cost-centre-and-process",
+    name: "Headcount by Cost Centre and Process",
+    category: "HR & Workforce",
+    subcategory: "Organisation Masters",
+    description: "Active headcount for every cost centre and process pairing, including unmapped",
+    rowGrain: "One row per cost centre and process pairing",
+    primaryKey: ["cost_centre_code", "process_name"],
+    columns: [
+      { key: "cost_centre_code", label: "Cost Centre Code", format: "text", width: 160 },
+      { key: "cost_centre_name", label: "Cost Centre", format: "text", width: 200 },
+      { key: "process_name", label: "Process", format: "text", width: 180 },
+      { key: "client_name", label: "Client", format: "text", width: 200 },
+      { key: "branch_name", label: "Branch", format: "text", width: 140 },
+      { key: "department_name", label: "Department", format: "text", width: 140 },
+      { key: "headcount", label: "Headcount", format: "number", width: 110, align: "right" },
+      { key: "unmapped_in_group", label: "Unmapped in Group", format: "number", width: 140, align: "right" },
+    ],
+    filters: [F_BRANCH, F_PROCESS, F_COST_CENTRE, F_DEPT],
+    viewRoles: ROLES_HR_ADMIN,
+    exportRoles: ROLES_HR_ADMIN,
+    sourceTables: ["employees", "cost_centre_master", "process_master", "branch_master", "department_master"],
+    branchScoped: true,
+    processScoped: true,
+    sensitivityLevel: "internal",
+    containsPII: false,
+    containsFinancialData: false,
+    // Verified against live 2026-08-07: 86 groups summing to 1,125 — every active
+    // employee, including the 64 with no cost centre and 143 with no process, which show
+    // as UNASSIGNED rather than being dropped. A version that totalled 1,061 would look
+    // tidier and be wrong.
+    availabilityStatus: "validated",
+  },
+
+  {
     // The safety net for standardising every report on active_status = 1. A row flagged
     // active_status = 1 with employment_status 'resigned' is now counted as a current
     // employee; that is the right call for consistency between reports, and this is where

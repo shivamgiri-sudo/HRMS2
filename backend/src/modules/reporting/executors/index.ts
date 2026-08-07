@@ -29,6 +29,13 @@ import {
   employeeStatusConflicts,
 } from "./employee.executor.js";
 
+// ─── Organisation masters ────────────────────────────────────────────────────
+import {
+  costCentreMasterReport,
+  processMasterReport,
+  headcountByCostCentreAndProcess,
+} from "./org-master.executor.js";
+
 // â”€â”€â”€ Attendance â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 import {
   attendanceDaily,
@@ -175,6 +182,11 @@ export const EXECUTOR_MAP: Record<string, ExecutorFn> = {
   // Exception reports backing the UNASSIGNED convention and the active_status ruling.
   "org-mapping-gaps":          orgMappingGaps,
   "employee-status-conflicts": employeeStatusConflicts,
+
+  // Organisation masters — cost centre and process were unreported until 2026-08-07.
+  "cost-centre-master-report":            costCentreMasterReport,
+  "process-master-report":                processMasterReport,
+  "headcount-by-cost-centre-and-process": headcountByCostCentreAndProcess,
 
   // Attendance
   "attendance-daily":          attendanceDaily,
