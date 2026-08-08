@@ -100,13 +100,51 @@ change reported figures.
 ## 6. Deploy-time facts, not questions
 
 **Migrations 1099 and 1102–1104 are on `main` but have NOT been run against production.** This
-codebase runs migrations at boot, so the next `pm2` restart applies them. All were
-execution-tested locally — applied repeatedly, FKs attach, unique keys reject duplicates — and
-all are additive. Nothing was run against production, per the charter.
+codebase runs migrations at boot, so the next `pm2` restart applies them. All are additive.
+Nothing was run against production, per the charter.
+
+Their verification is not uniform, and the difference is worth knowing:
+
+| Migration | How far it was verified |
+|---|---|
+| 1099 `grn_period_allocation` | **Executed** locally, repeatedly. FK attaches with CASCADE, both unique keys reject duplicates, orphans refused |
+| 1102 vendor applicability | **Executed** locally, repeatedly. Both conditional FKs attach, duplicates rejected, cascade verified |
+| 1103 payroll cohort + entity seed | **Executed** locally three times. Left exactly 2 entity rules and 1 cohort |
+| 1104 salary voucher page access | **Structurally verified only.** The local MySQL was gone by the time I reached it, and its data directory is not in a standard location, so starting one blind risked initialising a new store in the wrong place. It uses the same `INSERT … ON DUPLICATE KEY UPDATE` shape as migration 1066, which is already applied in production, plus the status `SELECT` every other migration here ends with |
+
+1104 touches only `page_catalog` and `role_page_access`, both additive and idempotent, so the
+downside of the gap is small — but it is a gap, and it should be run against a scratch schema
+before the deploy rather than discovered at boot.
 
 ---
 
-## 7. Fixed since this register was written — the "built but unreachable" sweep
+## 7. Who can actually reach the finance screens
+
+Counted from `user_roles` on 2026-08-08. Relevant because several new screens gate on roles held
+by very few people.
+
+| Role | Users | Active |
+|---|---:|---:|
+| `payroll_hr` | 6 | 6 |
+| `payroll` | 6 | 3 |
+| `super_admin` | 5 | 3 |
+| `finance` | 3 | 2 |
+| `payroll_head` | 2 | 1 |
+| `accounts_head` | 1 | 1 |
+| `finance_head` | 1 | 1 |
+
+**`finance_head` and `accounts_head` have one active user each.** A large amount of the finance
+module gates on them — imprest master maintenance, GRN finance approval, vendor payment dispatch
+— so a single absence stops those flows. That is an operational decision for you, not a code
+defect, but it is worth knowing before UAT.
+
+The Salary Voucher page grants `super_admin`, `finance_head` and `payroll_hr`, which reaches 10
+active users. `payroll` (3 active) and `payroll_head` (1 active) are deliberately NOT granted:
+widening access to a screen that renders a whole branch's payroll is your call, not mine.
+
+---
+
+## 8. Fixed since this register was written — the "built but unreachable" sweep
 
 Nine defects of one shape: every part present, tested and green, with nothing invoking it. A
 unit test proves a service WORKS; it never proves anything CALLS it. Recorded here because the
