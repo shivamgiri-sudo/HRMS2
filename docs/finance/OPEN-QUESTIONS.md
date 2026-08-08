@@ -103,3 +103,32 @@ change reported figures.
 codebase runs migrations at boot, so the next `pm2` restart applies them. All were
 execution-tested locally — applied repeatedly, FKs attach, unique keys reject duplicates — and
 all are additive. Nothing was run against production, per the charter.
+
+---
+
+## 7. Fixed since this register was written — the "built but unreachable" sweep
+
+Nine defects of one shape: every part present, tested and green, with nothing invoking it. A
+unit test proves a service WORKS; it never proves anything CALLS it. Recorded here because the
+pattern will recur, and because several were features previously reported as delivered.
+
+| What | What silently did not happen |
+|---|---|
+| Req 12 monthly GRN numbering | `grn_number_format` was read by nothing — flipping the flag did nothing at all |
+| Vendor applicability | A vendor restricted to one company or branch still appeared for everyone |
+| Imprest voucher debit | A float could only ever go UP; the Details report would show no outflows |
+| `assertSufficientBalance` | A float could go negative in silence |
+| Req 8 Manager master | Read paths only — nobody could be appointed, so the whole imprest chain was inert |
+| Approval history | Five writers, no reader wired: a returned voucher's reason could never be read back |
+| `imprest_ledger_entry_id` | Computed and discarded, so a voucher could not be traced to its posting |
+| Req 9 resubmit | Return had a UI, resubmit did not — a returned GRN was stuck forever |
+| Req 4 billing status | Displayed and filterable, and the setter had no caller |
+
+Two guards now exist so this cannot reopen quietly: a contract test asserting the CALL SITE of
+each finance service (proven non-vacuous by deleting one), and the route-contract test that
+already scans frontend calls against the registered route table.
+
+Two endpoints remain deliberately UI-less and are not defects: `/vendors/:id/ship-to` is a
+document helper with no document yet, and `/imprest/ledger` is the raw feed the Details report
+supersedes.
+
