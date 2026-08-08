@@ -14,6 +14,11 @@ export const processService = {
     return repository.list(filters);
   },
 
+  async listAssignedToUser(userId: string) {
+    const repository = getProcessRepository();
+    return repository.listAssignedToUser(userId);
+  },
+
   async getById(id: string): Promise<ProcessMaster> {
     const repository = getProcessRepository();
 

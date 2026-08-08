@@ -76,6 +76,52 @@ export const processRepositoryMySQL: ProcessRepository = {
     return (rows as RowDataPacket[]).map(mapRow);
   },
 
+  /**
+   * The processes a specific user is explicitly assigned to.
+   *
+   * Reads user_assignment_scope, the same table scopeAccess.ts uses for every other row-scope
+   * decision, so "assigned to me" means the same thing here as everywhere else.
+   *
+   * THREE DELIBERATE NARROWINGS, each measured against production on 2026-08-09:
+   *
+   * 1. Explicit assignments only — `process_id IS NOT NULL`. Live there are 36 rows of
+   *    scope_type 'all' and 34 of 'branch', none carrying a process_id. Expanding 'all' to
+   *    "every process" would hand those users 52 processes, and the only caller fires one
+   *    payroll-readiness request per process on a 120s interval against a pool of 10. The
+   *    26 rows that DO carry a process_id average exactly one process per user, so this
+   *    keeps the fan-out at one request. Broad views have their own endpoints already
+   *    (/grouped-summary, /branch/:branchId).
+   *
+   * 2. Active processes only. 131 rows exist, 52 are active; a closed process has no
+   *    readiness to declare.
+   *
+   * 3. branch_id must be present. The caller builds
+   *    /api/payroll/process-readiness/{branch_id}/{id}, so a process without a branch
+   *    produces a request that cannot resolve. Of the 26 explicit assignments only 10 clear
+   *    all three filters — returning the other 16 would render a permanently blank card,
+   *    whereas omitting them leaves the page's own "Contact your HR admin to map you to a
+   *    process" message, which is the truthful description of an incomplete mapping.
+   */
+  async listAssignedToUser(userId: string): Promise<Array<{ id: string; branch_id: string; process_name: string }>> {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT DISTINCT p.id, p.branch_id, p.process_name
+         FROM user_assignment_scope uas
+         JOIN process_master p ON p.id = uas.process_id
+        WHERE uas.user_id = ?
+          AND uas.active_status = 1
+          AND uas.process_id IS NOT NULL
+          AND p.active_status = 1
+          AND p.branch_id IS NOT NULL
+        ORDER BY p.process_name ASC`,
+      [userId]
+    );
+    return (rows as RowDataPacket[]).map((r) => ({
+      id: String(r.id),
+      branch_id: String(r.branch_id),
+      process_name: String(r.process_name),
+    }));
+  },
+
   async getById(id: string): Promise<ProcessMaster | null> {
     const [rows] = await db.execute<RowDataPacket[]>(
       "SELECT * FROM process_master WHERE id = ? LIMIT 1",
