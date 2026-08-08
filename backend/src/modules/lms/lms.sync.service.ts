@@ -106,7 +106,21 @@ export async function syncProgress(actorId?: string): Promise<{ count: number; e
            score = VALUES(score),
            status = VALUES(status),
            synced_at = NOW()`,
-        [randomUUID(), emp.id, learnerId, t.batch_no ?? null, t.classroom_name ?? t.batch_name ?? null, completionPct, score, status]
+        // course_id is varchar(128) NOT NULL DEFAULT '' and is half of the
+        // unique key uq_lms_prog_emp_course (employee_id, course_id) that the
+        // ON DUPLICATE KEY UPDATE above depends on. `t.batch_no ?? null` sent
+        // NULL for any trainee with no batch, and MySQL rejected the row with
+        // "Column 'course_id' cannot be null" — 914 of 1,125 trainees in the
+        // 2026-08-08 22:09 cycle, so 81% of LMS progress never reached HRMS
+        // while the sync reported itself as merely "partial".
+        //
+        // '' is the column's own default, i.e. the sentinel the schema already
+        // uses for "no course", and it keeps the unique key intact: one
+        // unbatched progress row per employee rather than a key MySQL cannot
+        // match on. Skipping these rows instead would have discarded those 914
+        // employees' progress entirely, which is worse than recording it against
+        // a blank course.
+        [randomUUID(), emp.id, learnerId, String(t.batch_no ?? "").trim(), t.classroom_name ?? t.batch_name ?? null, completionPct, score, status]
       );
       count++;
     } catch (e: any) {
