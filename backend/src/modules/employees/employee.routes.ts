@@ -1581,4 +1581,97 @@ router.get("/:id/stat-card", requireAuth, h(async (req: any, res: any) => {
   });
 }));
 
+// ── GET /api/employees/bank-quality/corrupt ─────────────────────────────────
+// HR Admin: list employees whose stored account number is corrupt (scientific
+// notation from legacy Excel import) and therefore unrecoverable. These employees
+// need to re-submit their bank details through the normal profile-update flow.
+router.get("/bank-quality/corrupt", requireAuth, requireRole("hr", "hr_admin", "super_admin", "payroll", "finance"), h(async (_req: any, res: any) => {
+  const SCIENTIFIC_RE = /[Ee][+-]/;
+  const VALID_ACCOUNT_RE = /^[0-9]{6,20}$/;
+
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT e.id AS employee_id, e.employee_code, e.full_name, e.mobile, e.email,
+            ebd.id AS bank_detail_id, ebd.bank_name, ebd.ifsc_code,
+            ebd.account_number, ebd.account_number_enc, ebd.updated_at AS bank_updated_at
+       FROM employee_bank_detail ebd
+       JOIN employees e ON e.id = ebd.employee_id
+      WHERE ebd.account_number_enc IS NULL
+        AND ebd.account_number IS NOT NULL
+        AND e.active_status = 1
+      ORDER BY e.employee_code ASC`
+  );
+
+  const corruptRows = (rows as any[]).filter((r) => {
+    const raw = r.account_number;
+    if (!raw) return false;
+    const txt = Buffer.isBuffer(raw) ? raw.toString("utf8") : String(raw);
+    const trimmed = txt.trim();
+    return !trimmed || SCIENTIFIC_RE.test(trimmed) || !VALID_ACCOUNT_RE.test(trimmed);
+  }).map((r) => {
+    const raw = r.account_number;
+    const txt = Buffer.isBuffer(raw) ? raw.toString("utf8") : String(raw);
+    const trimmed = txt.trim();
+    let reason = "unknown_format";
+    if (!trimmed) reason = "empty";
+    else if (SCIENTIFIC_RE.test(trimmed)) reason = "scientific_notation";
+    else if (!/^[0-9]{6,20}$/.test(trimmed)) reason = "non_numeric";
+    return {
+      employee_id: r.employee_id,
+      employee_code: r.employee_code,
+      full_name: r.full_name,
+      mobile: r.mobile,
+      email: r.email,
+      bank_detail_id: r.bank_detail_id,
+      bank_name: r.bank_name,
+      ifsc_code: r.ifsc_code,
+      corrupt_value_masked: trimmed.slice(0, 3) + "***",
+      reason,
+      bank_updated_at: r.bank_updated_at,
+    };
+  });
+
+  return res.json({
+    success: true,
+    count: corruptRows.length,
+    data: corruptRows,
+  });
+}));
+
+// ── POST /api/employees/bank-quality/:employeeId/request-resubmission ────────
+// HR Admin: send an in-app notification to the employee asking them to update
+// their bank details. Idempotent — creates one pending request per employee.
+router.post("/bank-quality/:employeeId/request-resubmission", requireAuth, requireRole("hr", "hr_admin", "super_admin"), h(async (req: any, res: any) => {
+  const { employeeId } = req.params;
+
+  const [empRows] = await db.execute<RowDataPacket[]>(
+    `SELECT e.id, e.employee_code, e.full_name, e.user_id FROM employees e WHERE e.id = ? AND e.active_status = 1 LIMIT 1`,
+    [employeeId]
+  );
+  if (!(empRows as any[])[0]) return res.status(404).json({ success: false, message: "Employee not found" });
+  const emp = (empRows as any[])[0];
+
+  // Queue an in-app notification via the notification_log channel
+  await db.execute(
+    `INSERT INTO notification_log
+       (id, template_code, recipient_type, recipient_id, recipient_email, channel, subject, body, status, created_at)
+     VALUES (UUID(), 'bank_resubmission_request', 'employee', ?, ?,
+       'in_app',
+       'Action Required: Update Bank Details',
+       'Your bank account details could not be verified. Please update your bank details in your employee profile to ensure salary is credited correctly.',
+       'pending', NOW())`,
+    [employeeId, emp.email ?? null]
+  );
+
+  void logSensitiveAction({
+    actor_user_id: req.authUser!.id,
+    action_type: "BANK_RESUBMISSION_REQUEST",
+    module_key: "employees",
+    entity_type: "employees",
+    entity_id: employeeId,
+    change_summary: { employee_code: emp.employee_code, full_name: emp.full_name },
+  });
+
+  return res.json({ success: true, message: `Resubmission request sent to ${emp.full_name}` });
+}));
+
 export { router as employeeRouter };

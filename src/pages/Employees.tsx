@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useQuery, useMutation } from "@tanstack/react-query";
+import { hrmsApi } from "@/lib/hrmsApi";
 import { Link } from "react-router-dom";
 import {
   Bar,
@@ -202,6 +204,29 @@ const Employees = () => {
   const { isAdminOrHR, isLoading: isLoadingRole, roleKeys } = useIsAdminOrHR();
   const canResetEmployeePassword =
     roleKeys.includes("super_admin") || roleKeys.includes("admin") || roleKeys.includes("wfm");
+  const isHROrPayroll = roleKeys.some(r => ["super_admin","admin","hr","hr_admin","payroll","finance"].includes(r));
+
+  const [bankQualityOpen, setBankQualityOpen] = useState(false);
+  const { data: bankCorruptData, refetch: refetchBankCorrupt } = useQuery({
+    queryKey: ["bank-quality-corrupt"],
+    queryFn: () => hrmsApi.get("/employees/bank-quality/corrupt").then(r => r.data),
+    enabled: isHROrPayroll,
+    staleTime: 5 * 60 * 1000,
+  });
+  const bankCorruptCount: number = bankCorruptData?.count ?? 0;
+  const bankCorruptRows: any[] = bankCorruptData?.data ?? [];
+
+  const requestResubmissionMutation = useMutation({
+    mutationFn: (employeeId: string) =>
+      hrmsApi.post(`/employees/bank-quality/${employeeId}/request-resubmission`).then(r => r.data),
+    onSuccess: () => { refetchBankCorrupt(); },
+  });
+
+  const bulkRequestResubmission = async () => {
+    for (const row of bankCorruptRows) {
+      await requestResubmissionMutation.mutateAsync(row.employee_id);
+    }
+  };
 
   const bulkDeleteMutation = useBulkDeleteEmployees();
   const bulkStatusMutation = useBulkUpdateEmployeeStatus();
@@ -552,7 +577,92 @@ const Employees = () => {
           </div>
         </section>
 
-        
+        {/* Bank Data Quality Alert — HR/Admin only, shown when corrupt records exist */}
+        {isHROrPayroll && bankCorruptCount > 0 && (
+          <div className="rounded-2xl border border-amber-200 bg-amber-50">
+            <div className="flex items-center justify-between px-5 py-3.5">
+              <div className="flex items-center gap-3">
+                <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-amber-100">
+                  <AlertTriangle className="h-4 w-4 text-amber-600" />
+                </div>
+                <div>
+                  <p className="text-sm font-semibold text-amber-900">
+                    {bankCorruptCount} employee{bankCorruptCount !== 1 ? "s" : ""} have unreadable bank account numbers
+                  </p>
+                  <p className="text-xs text-amber-700">
+                    These accounts were imported from legacy Excel data with scientific notation format (e.g. 3.03E+13) — the actual digits are unrecoverable. Employees must re-submit bank details.
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="rounded-xl border-amber-300 bg-white text-amber-800 hover:bg-amber-100 text-xs"
+                  onClick={() => setBankQualityOpen(v => !v)}
+                >
+                  {bankQualityOpen ? "Hide list" : "Show list"}
+                </Button>
+                <Button
+                  size="sm"
+                  className="rounded-xl bg-amber-600 text-white hover:bg-amber-700 text-xs"
+                  disabled={requestResubmissionMutation.isPending}
+                  onClick={bulkRequestResubmission}
+                >
+                  Notify all ({bankCorruptCount})
+                </Button>
+              </div>
+            </div>
+
+            {bankQualityOpen && (
+              <div className="border-t border-amber-200 px-5 pb-4">
+                <div className="mt-3 max-h-72 overflow-y-auto rounded-xl border border-amber-200 bg-white">
+                  <table className="w-full text-xs">
+                    <thead className="sticky top-0 bg-amber-50">
+                      <tr className="text-left text-amber-700">
+                        <th className="px-3 py-2 font-semibold">Code</th>
+                        <th className="px-3 py-2 font-semibold">Name</th>
+                        <th className="px-3 py-2 font-semibold">Mobile</th>
+                        <th className="px-3 py-2 font-semibold">Bank</th>
+                        <th className="px-3 py-2 font-semibold">Issue</th>
+                        <th className="px-3 py-2 font-semibold">Action</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-amber-100">
+                      {bankCorruptRows.map((row: any) => (
+                        <tr key={row.employee_id} className="hover:bg-amber-50/60">
+                          <td className="px-3 py-2 font-mono text-slate-600">{row.employee_code}</td>
+                          <td className="px-3 py-2 text-slate-800">{row.full_name}</td>
+                          <td className="px-3 py-2 text-slate-500">{row.mobile || "—"}</td>
+                          <td className="px-3 py-2 text-slate-500">{row.bank_name || "—"}</td>
+                          <td className="px-3 py-2">
+                            <span className="rounded-md bg-red-100 px-2 py-0.5 text-red-700 font-medium">
+                              {row.reason === "scientific_notation" ? "Scientific notation" : row.reason}
+                            </span>
+                          </td>
+                          <td className="px-3 py-2">
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="h-6 rounded-lg px-2 text-xs border-amber-300 text-amber-700 hover:bg-amber-100"
+                              disabled={requestResubmissionMutation.isPending}
+                              onClick={() => requestResubmissionMutation.mutate(row.employee_id)}
+                            >
+                              Notify
+                            </Button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <p className="mt-2 text-xs text-amber-600">
+                  "Notify" sends an in-app request for the employee to update their bank details via their profile page.
+                </p>
+              </div>
+            )}
+          </div>
+        )}
 
         <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
           {isLoading ? (
