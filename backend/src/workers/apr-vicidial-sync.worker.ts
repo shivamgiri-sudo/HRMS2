@@ -104,10 +104,25 @@ async function getDialerDb(): Promise<mysql.Connection> {
       dialerDb = null;
     }
   }
+  // The dialer password used to sit here as a literal fallback. This file compiles into
+  // dist/ and runs under pm2, so that put a live production credential into a PUBLIC
+  // repository — and the same value authenticates mas_hrms, db_bill and mcn_lms too, since
+  // all four share one password.
+  //
+  // Failing here is deliberate and is caught by the .catch() on both runAprSync call sites,
+  // so an unconfigured environment logs this message and skips the sync rather than
+  // connecting with an empty password and reporting a confusing MySQL auth error.
+  const dialerPassword = process.env.DIALER_DB_PASSWORD || process.env.DB_PASS;
+  if (!dialerPassword) {
+    throw new Error(
+      "[apr-vicidial-sync] DIALER_DB_PASSWORD (or DB_PASS) is not set, so the vicidial sync " +
+      "cannot run. Set it in the environment for this process — it is no longer hardcoded.",
+    );
+  }
   dialerDb = await mysql.createConnection({
     host:            process.env.DIALER_DB_HOST     || '192.168.10.6',
     user:            process.env.DIALER_DB_USER     || process.env.DB_USER || 'shivam_user',
-    password:        process.env.DIALER_DB_PASSWORD || process.env.DB_PASS || 'qwersdfg!@#hjk',
+    password:        dialerPassword,
     database:        'dialer_db',
     timezone:        '+05:30',   // vicidial stores IST — tell mysql2 not to shift
     connectTimeout:  30000,
