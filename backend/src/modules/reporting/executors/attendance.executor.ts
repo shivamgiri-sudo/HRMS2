@@ -445,6 +445,32 @@ export async function lateArrivalSummary(
 // ---------------------------------------------------------------------------
 // overtime-summary  (per employee, per month)
 // ---------------------------------------------------------------------------
+/**
+ * overtime-summary
+ *
+ * Hours, with the scheduled baseline the rest of the report is measured against — not a bare
+ * minute total.
+ *
+ * This executor returned total_overtime_minutes and overtime_days against a baseline of
+ * `ws.required_minutes`. The inline block returns days_attended, total_worked_hours,
+ * total_scheduled_hours, overtime_hours, overtime_duration and overtime_pay, measured against
+ * `arc.full_day_minutes` falling back to the rostered shift length and then to 480. Screen
+ * showed 787 rows, the downloaded file 789 — close enough to look like the same report and far
+ * enough apart to be a different one, since the two also disagree on which days count as
+ * overtime at all.
+ *
+ * The catalogue declares 14 columns, of which 8 of the 8 unique to the hours shape appear and 0
+ * of the 2 unique to the minutes shape do.
+ *
+ * Ported verbatim from the inline block, which already carries two fixes made earlier in this
+ * audit and which the executor never received: the overtime_pay subquery is pre-aggregated by
+ * employee so joining it cannot multiply the hours by that employee's payroll-line count, and
+ * the month range is a sargable half-open comparison rather than a DATE_FORMAT wrapper.
+ *
+ * Bind order matters here and is easy to get wrong: the otp subquery's run_month placeholder
+ * sits inside the JOIN, which binds before the WHERE, so its value must lead the list. Pushing
+ * it last shifts every subsequent binding by one — silently, since the values are all strings.
+ */
 export async function overtimeSummary(
   filters: ExecFilters,
   scope: ExecScope,
@@ -456,54 +482,80 @@ export async function overtimeSummary(
   const params: unknown[]  = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
-
-  clauses.push("adr.record_date >= ? AND adr.record_date < ?");
-  clauses.push("adr.raw_minutes > COALESCE(ws.required_minutes, 480)");
-  params.push(monthRange(month).start, monthRange(month).endExclusive);
-
-  if (options.mode === "worker" && options.cursor != null) {
-    clauses.push("e.id > ?");
-    params.push(options.cursor);
+  {
+    const [oy, om] = month.split("-").map(Number);
+    const nextMonth = `${om === 12 ? oy + 1 : oy}-${String(om === 12 ? 1 : om + 1).padStart(2, "0")}-01`;
+    clauses.push("adr.record_date >= ? AND adr.record_date < ?");
+    params.push(`${month}-01`, nextMonth);
   }
 
-  const base = `
-    SELECT e.id AS _cursor,
-           e.employee_code,
-           COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-           COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
-           COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
-           COALESCE(sp_cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
-           COALESCE(sp_cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
-           SUM(GREATEST(0, adr.raw_minutes - COALESCE(ws.required_minutes, 480))) AS total_overtime_minutes,
-           COUNT(*) AS overtime_days
-      FROM attendance_daily_record adr
-      JOIN employees e ON e.id = adr.employee_id
-      LEFT JOIN branch_master b ON b.id = e.branch_id
-      LEFT JOIN process_master p ON p.id = e.process_id
-      LEFT JOIN cost_centre_master sp_cc ON sp_cc.id = e.cost_centre_id
-      LEFT JOIN wfm_roster_assignment wra
-             ON wra.employee_id = adr.employee_id
-            AND wra.roster_date = adr.record_date
-      LEFT JOIN wfm_shift_master ws ON ws.id = wra.shift_id
-     WHERE ${clauses.join(" AND ")}
-     GROUP BY e.id, e.employee_code, employee_name, b.branch_name, p.process_name, sp_cc.cost_centre_code, sp_cc.cost_centre_name
-     ORDER BY e.id ASC`;
+  const base = `SELECT e.id AS _cursor,
+         e.employee_code,
+         COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
+         COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
+         COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
+         COALESCE(d.dept_name, 'UNASSIGNED') AS department_name,
+         COALESCE(occ.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
+         COALESCE(occ.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
+         dm.designation_name,
+         COUNT(DISTINCT adr.record_date) AS days_attended,
+         ROUND(SUM(adr.raw_minutes) / 60, 1) AS total_worked_hours,
+         ROUND(SUM(
+           CASE WHEN arc.full_day_minutes IS NOT NULL THEN arc.full_day_minutes
+                ELSE TIMESTAMPDIFF(MINUTE, sm.start_time, sm.end_time) END
+         ) / 60, 1) AS total_scheduled_hours,
+         ROUND(SUM(
+           GREATEST(0, adr.raw_minutes - COALESCE(arc.full_day_minutes, TIMESTAMPDIFF(MINUTE, sm.start_time, sm.end_time), 480))
+         ) / 60, 1) AS overtime_hours,
+         TIME_FORMAT(SEC_TO_TIME(SUM(
+           GREATEST(0, adr.raw_minutes - COALESCE(arc.full_day_minutes, TIMESTAMPDIFF(MINUTE, sm.start_time, sm.end_time), 480))
+         ) * 60), '%H:%i') AS overtime_duration,
+         ROUND(COALESCE(MAX(otp.overtime_pay), 0), 0) AS overtime_pay
+    FROM attendance_daily_record adr
+    JOIN employees e ON e.id = adr.employee_id
+    LEFT JOIN branch_master b ON b.id = e.branch_id
+    LEFT JOIN process_master p ON p.id = e.process_id
+    LEFT JOIN department_master d ON d.id = e.department_id
+    LEFT JOIN designation_master dm ON dm.id = e.designation_id
+    LEFT JOIN cost_centre_master occ ON occ.id = e.cost_centre_id
+    LEFT JOIN attendance_rule_config arc ON arc.id = adr.rule_config_id
+    LEFT JOIN wfm_roster_assignment wra ON wra.employee_id = e.id AND wra.roster_date = adr.record_date
+    LEFT JOIN wfm_shift_master sm ON sm.id = wra.shift_id
+    -- Pre-aggregated, not two open joins. spl2 was joined on employee_id ALONE, with
+    -- no run filter, and spr2 was a LEFT JOIN so it did not filter either — every
+    -- salary line the employee has ever had survived, then multiplied by every
+    -- attendance day. Measured: 5.8 salary lines per employee against ~20 attendance
+    -- days, so roughly a 116x row explosion before anything narrowed it. That is why
+    -- this report did not come back.
+    --
+    -- It was also summing across that explosion: SUM(spl2.overtime_pay) counted every
+    -- run's overtime once per attendance day. Harmless today only because overtime_pay
+    -- is 0.00 on all 80,338 salary lines — verified — so this rewrite cannot move a
+    -- number now, but it would have inflated real money the moment that column is used.
+    LEFT JOIN (
+      SELECT spl.employee_id,
+             SUM(COALESCE(spl.overtime_pay, 0)) AS overtime_pay
+        FROM salary_prep_line spl
+        JOIN salary_prep_run spr ON spr.id = spl.run_id
+       WHERE spr.run_month = ?
+       GROUP BY spl.employee_id
+    ) otp ON otp.employee_id = e.id
+   WHERE ${clauses.join(" AND ")} AND adr.attendance_status IN ('present','half_day')
+   GROUP BY e.id, e.employee_code, e.first_name, e.last_name, e.full_name,
+            b.branch_name, p.process_name, d.dept_name, dm.designation_name,
+            occ.cost_centre_code, occ.cost_centre_name
+   HAVING overtime_hours > 0
+   ORDER BY overtime_hours DESC`;
+
+  // The subquery's run_month placeholder is in the JOIN, which binds before the WHERE, so its
+  // value leads the list.
+  params.unshift(month);
 
   const total = options.includeTotal ? await count(base, params) : 0;
   const sql   = options.mode === "worker" ? `${base} LIMIT ${options.limit}` : applyPagination(base, options);
   const rows  = await query(sql, params) as Record<string, unknown>[];
-
-  const nextCursor = (options.mode === "worker" && rows.length > 0)
-    ? (rows[rows.length - 1]._cursor as number)
-    : null;
-
   const out = rows.map(({ _cursor: _, ...rest }) => rest);
-  return {
-    rows: out,
-    rowCount: options.includeTotal ? total : rows.length,
-    isTruncated: options.includeTotal ? total > out.length : rows.length === options.limit,
-    nextCursor,
-  };
+  return { rows: out, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > out.length, nextCursor: null };
 }
 
 // ---------------------------------------------------------------------------

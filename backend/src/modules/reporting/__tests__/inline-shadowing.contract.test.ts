@@ -106,7 +106,11 @@ const SHADOWED_BACKLOG = new Set<string>([
   // so the downloaded workbook carried the right numbers under keys nothing reads. The
   // executor now matches the inline SQL exactly and the block is gone.
   "monthly-shrinkage-trend",
-  "overtime-summary", "payroll-register", "payroll-variance", "punch-raw-export",
+  
+  // "overtime-summary" left this list on 2026-08-08 — the executor measured overtime in
+  // minutes against a different baseline from the screen, so the two disagreed on which days
+  // counted as overtime at all.
+  "payroll-register", "payroll-variance", "punch-raw-export",
   
   // "regularization-summary" left this list on 2026-08-08 — the inline block
   // returned one row per request while the executor counted per employee.
