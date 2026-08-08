@@ -107,7 +107,14 @@ export const payrollRouteElements = (
       <Route path="/payroll/disbursal"      element={<ProtectedRoute roles={['super_admin','payroll','payroll_head','finance']}><Gate pageCode="PAYROLL_DISBURSAL"><DisbursalManagement /></Gate></ProtectedRoute>} />
       <Route path="/payroll/config-flags"   element={<ProtectedRoute roles={['super_admin','admin','payroll_head','payroll_branch']}><Gate pageCode="PAYROLL_CONFIG_FLAGS"><PayrollConfigFlags /></Gate></ProtectedRoute>} />
       <Route path="/payroll/recalculation-queue" element={<ProtectedRoute roles={['super_admin','admin','payroll_head','payroll_branch']}><Gate pageCode="PAYROLL_RECALC_QUEUE"><RecalculationQueue /></Gate></ProtectedRoute>} />
-      <Route path="/payroll/attendance-control-tower" element={<ProtectedRoute roles={['super_admin','admin','payroll_head','payroll_branch','payroll','hr','wfm','branch_head']}><Gate pageCode="PAYROLL_ATTENDANCE_TOWER"><AttendanceControlTower /></Gate></ProtectedRoute>} />
+      {/* Double-gated until now: ProtectedRoute resolves this path to
+          PAYROLL_ATTENDANCE_CONTROL_TOWER via PAGE_CODE_BY_ROUTE (granted to 10 roles),
+          then the Gate demanded PAYROLL_ATTENDANCE_TOWER (granted to 1). A user needed
+          both, so 55 users across hr, wfm, admin, branch_head, payroll and payroll_head
+          passed the outer check and were refused by the inner one. Aligned onto the code
+          the grants actually sit on — the same consolidation 1101 did for TEAM_ATTENDANCE,
+          which had the identical two-code split. */}
+      <Route path="/payroll/attendance-control-tower" element={<ProtectedRoute roles={['super_admin','admin','payroll_head','payroll_branch','payroll','hr','wfm','branch_head']}><Gate pageCode="PAYROLL_ATTENDANCE_CONTROL_TOWER"><AttendanceControlTower /></Gate></ProtectedRoute>} />
       <Route path="/payroll/running-breakdown"   element={<ProtectedRoute roles={['super_admin','admin','payroll_head','payroll_branch','wfm','employee']}><Gate pageCode="PAYROLL_RUNNING_BREAKDOWN"><RunningPayrollBreakdown /></Gate></ProtectedRoute>} />
       <Route path="/payroll/holiday-master"      element={<ProtectedRoute roles={['super_admin','admin','payroll_head','payroll_branch']}><Gate pageCode="PAYROLL_HOLIDAY_MASTER"><HolidayMaster /></Gate></ProtectedRoute>} />
       <Route path="/payroll/holiday-work"           element={<ProtectedRoute roles={['super_admin','admin','wfm','payroll_head','payroll_branch']}><Gate pageCode="PAYROLL_HOLIDAY_WORK"><HolidayWork /></Gate></ProtectedRoute>} />
