@@ -40,25 +40,33 @@ async function run() {
     `SELECT COUNT(*) AS n FROM employee_bank_detail WHERE account_number IS NOT NULL AND account_number_enc IS NULL`
   );
   const pending = (total[0] as any).n as number;
-  console.log(`[bank-encrypt-backfill] rows to migrate: ${pending}`);
+  console.log(`[bank-encrypt-backfill] rows pending encryption: ${pending}`);
 
-  let offset = 0;
   let encrypted = 0;
   let skipped_corrupt = 0;
   let skipped_empty = 0;
   const corrupt_ids: string[] = [];
+  let processed = 0;
+
+  // Cursor-based pagination: always fetch from id > lastId so the shrinking
+  // enc IS NULL set does not cause OFFSET to skip unprocessed rows.
+  let lastId = "";
 
   while (true) {
+    const cursorClause = lastId ? `AND id > '${lastId.replace(/'/g, "''")}'` : "";
     const [rows] = await db.query<RowDataPacket[]>(
       `SELECT id, account_number, account_number_enc
          FROM employee_bank_detail
         WHERE account_number IS NOT NULL AND account_number_enc IS NULL
-        LIMIT ${BATCH_SIZE} OFFSET ${offset}`
+          ${cursorClause}
+        ORDER BY id ASC
+        LIMIT ${BATCH_SIZE}`
     );
 
     if (!rows.length) break;
 
     for (const row of rows as BankRow[]) {
+      lastId = row.id as unknown as string;
       const raw = row.account_number;
       if (!raw) { skipped_empty++; continue; }
 
@@ -68,9 +76,8 @@ async function run() {
       if (!trimmed) { skipped_empty++; continue; }
 
       if (SCIENTIFIC_RE.test(trimmed) || !VALID_ACCOUNT_RE.test(trimmed)) {
-        // Corrupt/unrecognised — cannot recover digits; skip and report.
         skipped_corrupt++;
-        corrupt_ids.push(row.id);
+        corrupt_ids.push(row.id as unknown as string);
         continue;
       }
 
@@ -84,8 +91,8 @@ async function run() {
       encrypted++;
     }
 
-    offset += rows.length;
-    process.stdout.write(`\r  progress: ${offset}/${pending} (encrypted=${encrypted} corrupt=${skipped_corrupt} empty=${skipped_empty})   `);
+    processed += rows.length;
+    process.stdout.write(`\r  progress: ${processed} scanned (encrypted=${encrypted} corrupt=${skipped_corrupt} empty=${skipped_empty})   `);
 
     if (rows.length < BATCH_SIZE) break;
   }
