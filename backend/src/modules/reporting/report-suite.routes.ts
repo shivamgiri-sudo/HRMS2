@@ -15,6 +15,7 @@ import { REPORT_CATALOG } from "./report-catalog.js";
 import type { SensitivityLevel } from "./report-catalog.js";
 import { resolveFullScope } from "./reporting.scope.js";
 import { executeReport, ReportExecutorNotFoundError } from "./executors/index.js";
+import { resolvePayrollMonth } from "./payroll-month.js";
 import type { ExecFilters, ExecOptions } from "./executors/types.js";
 import {
   buildSecureXlsxBuffer,
@@ -695,7 +696,7 @@ reportSuiteRouter.get("/:code", reportScopeMiddleware, reportCatalogAccessMiddle
     // 8-column shape. It now falls through to executeReport(), which is the single
     // source of truth for the report's format.
     case "payroll-register": {
-      const month = monthParam(req.query.month);
+      const month = await resolvePayrollMonth(req.query.month);
       addScopedEmployeeFilters(req, clauses, params);
       clauses.push("spr.run_month = ?"); params.push(month);
       clauses.push("LOWER(COALESCE(spr.status,'')) NOT IN ('draft','cancelled')");
@@ -742,7 +743,7 @@ reportSuiteRouter.get("/:code", reportScopeMiddleware, reportCatalogAccessMiddle
       break;
     }
     case "payroll-variance": {
-      const month = monthParam(req.query.month);
+      const month = await resolvePayrollMonth(req.query.month);
       const minVarianceAmount = Number(req.query.minVarianceAmount ?? 0);
       const minVariancePct = Number(req.query.minVariancePct ?? 0);
       addScopedEmployeeFilters(req, clauses, params);
@@ -1486,7 +1487,7 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
     // see ytdSalarySummary in executors/payroll.executor.ts.
 
     case "cost-centre-salary-summary": {
-      const month = monthParam(req.query.month);
+      const month = await resolvePayrollMonth(req.query.month);
       addScopedEmployeeFilters(req, clauses, params);
       clauses.push("spr.run_month = ?"); params.push(month);
       clauses.push("LOWER(COALESCE(spr.status,'')) NOT IN ('draft','cancelled')");
@@ -1508,7 +1509,7 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
     }
 
     case "process-lob-salary-cost": {
-      const month = monthParam(req.query.month);
+      const month = await resolvePayrollMonth(req.query.month);
       addScopedEmployeeFilters(req, clauses, params);
       clauses.push("spr.run_month = ?"); params.push(month);
       clauses.push("LOWER(COALESCE(spr.status,'')) NOT IN ('draft','cancelled')");
@@ -1567,7 +1568,7 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
       break;
 
     case "payroll-audit-trail": {
-      const month = monthParam(req.query.month);
+      const month = await resolvePayrollMonth(req.query.month);
       sql = `SELECT spr.id AS run_id, spr.run_month, spr.status AS run_status,
                     spr.created_at, spr.disbursed_at,
                     COALESCE(NULLIF(creator.full_name,''), CONCAT(creator.first_name,' ',COALESCE(creator.last_name,''))) AS created_by,
@@ -1623,7 +1624,7 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
       // the query and nowhere else. For an all-scope user this adds no predicate, which is
       // why super_admin output is unchanged.
       addScopedEmployeeFilters(req, clauses, params);
-      const month = monthParam(req.query.month);
+      const month = await resolvePayrollMonth(req.query.month);
       clauses.push("spr.run_month = ?"); params.push(month);
       clauses.push("LOWER(COALESCE(spr.status,'')) NOT IN ('draft','cancelled')");
       sql = `SELECT eu.uan AS UAN, eu.member_id AS PF_member_id,

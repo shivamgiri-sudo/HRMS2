@@ -15,6 +15,7 @@
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../../db/mysql.js";
 import type { ExecFilters, ExecScope, ExecOptions, ExecResult } from "./types.js";
+import { resolvePayrollMonth } from "../payroll-month.js";
 import {
   appendScopeConditions,
   appendFilterConditions,
@@ -48,7 +49,7 @@ export async function payrollRegister(
   scope: ExecScope,
   options: ExecOptions
 ): Promise<ExecResult> {
-  const runMonth = monthParam(filters.month);
+  const runMonth = await resolvePayrollMonth(filters.month);
 
   const clauses: string[] = ["e.id IS NOT NULL"];
   const params: unknown[] = [];
@@ -141,7 +142,7 @@ export async function payrollVariance(
   scope: ExecScope,
   options: ExecOptions
 ): Promise<ExecResult> {
-  const currentMonth = monthParam(filters.month);
+  const currentMonth = await resolvePayrollMonth(filters.month);
 
   // Resolve previous month: use explicit filter or subtract one calendar month
   let previousMonth: string;
@@ -217,7 +218,7 @@ export async function salarySheetOnfido(
   scope: ExecScope,
   options: ExecOptions
 ): Promise<ExecResult> {
-  const runMonth = monthParam(filters.month);
+  const runMonth = await resolvePayrollMonth(filters.month);
 
   // Sensitive field projections — masked when caller lacks canViewSensitiveFields
   const panField  = scope.canViewSensitiveFields ? "e.pan_number"          : "'***MASKED***' AS pan_number";
@@ -306,7 +307,7 @@ export async function bankAdvice(
   scope: ExecScope,
   options: ExecOptions
 ): Promise<ExecResult> {
-  const runMonth = monthParam(filters.month);
+  const runMonth = await resolvePayrollMonth(filters.month);
 
   // Bank fields are always present but masked when caller lacks canViewSensitiveFields
   const bankField = scope.canViewSensitiveFields ? "e.bank_account_number" : "'***MASKED***' AS bank_account_number";
@@ -369,46 +370,57 @@ export async function payrollReconciliation(
   const params: unknown[] = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
-  // Month is optional: omit to get multi-month view; supply to pin to one period
+  // This used to be optional — omit the month and get every payroll month at once. That was
+  // the default, because the report library opens a tile with no parameters, and it was both
+  // unusable and close to meaningless:
+  //
+  //   126s to answer, joining all 80,338 payroll lines and ordering by a computed variance, so
+  //   neither narrowing nor pagination can help;
+  //
+  //   and attendance only exists from 2026-06-13 while salary_prep_run spans 65 months back to
+  //   2021-03, so the large majority of those rows reported NO_ATTENDANCE_DATA. True, and not a
+  //   finding — this report compares attendance against payroll, and for 63 of 65 months there
+  //   is no attendance to compare.
+  //
+  // It now defaults to the latest month that has payroll, like every other payroll report. A
+  // caller who wants a different month still passes one and gets exactly that month.
+  const runMonth = await resolvePayrollMonth(filters.month);
   const attParams: unknown[] = [];
   let attWhere = "";
-  if (filters.month) {
-    const runMonth = monthParam(filters.month);
-    clauses.push("spr.run_month = ?");
-    params.push(runMonth);
+  clauses.push("spr.run_month = ?");
+  params.push(runMonth);
 
-    // Pin the attendance aggregate to the same month.
-    //
-    // Only rows whose ym equals spr.run_month can survive the join, so restricting the
-    // subquery cannot change a single output row — verified by checksumming the full 1,464-row
-    // output for 2026-07 both ways, not by comparing row counts.
-    //
-    // On the speed claim, which is smaller and more qualified than it first looked:
-    //
-    //   direct SQL, alternating runs, pinned first so any warm-cache advantage favours the
-    //   OLD shape:  62.8s unrestricted vs 16.3s pinned, median of four pairs — 3.9x.
-    //
-    //   through the endpoint, alternating against a build without this change: 16.4s vs 16.0s.
-    //   No measurable difference. MySQL 8 can push `spr.run_month = ?` into the derived table
-    //   on its own through the `att.ym = spr.run_month` equality, and when it picks that plan
-    //   this predicate is redundant. It is kept because the optimiser does not always pick it —
-    //   the direct-SQL pair above is the same statement without the LIMIT, and there it did not.
-    //
-    // Two earlier numbers for this change were wrong and are recorded here so they are not
-    // quoted again: a "6.9x" came from running the unrestricted query first and the pinned one
-    // second, so the second read a warm buffer pool; and a "120s to 7.2s" endpoint figure was
-    // measured against a backend another session had started from the main tree, which did not
-    // contain this change at all. The database also swings badly under concurrent load — the
-    // same statement measured 43s to 82s across four rounds — so single-run timings here are
-    // not evidence of anything.
-    //
-    // Half-open range against the raw column so the predicate is sargable and can use
-    // idx_adr_emp_date. A LEFT() or DATE_FORMAT() wrapper would not be — that is precisely
-    // why the GROUP BY below is the expensive half of this query (EXPLAIN: type=ALL,
-    // key=null, Using temporary) and why it is worth not feeding it the whole table.
-    attWhere = "WHERE adr.record_date >= ? AND adr.record_date < DATE_ADD(?, INTERVAL 1 MONTH)";
-    attParams.push(`${runMonth}-01`, `${runMonth}-01`);
-  }
+  // Pin the attendance aggregate to the same month.
+  //
+  // Only rows whose ym equals spr.run_month can survive the join, so restricting the
+  // subquery cannot change a single output row — verified by checksumming the full 1,464-row
+  // output for 2026-07 both ways, not by comparing row counts.
+  //
+  // On the speed claim, which is smaller and more qualified than it first looked:
+  //
+  //   direct SQL, alternating runs, pinned first so any warm-cache advantage favours the
+  //   OLD shape:  62.8s unrestricted vs 16.3s pinned, median of four pairs — 3.9x.
+  //
+  //   through the endpoint, alternating against a build without this change: 16.4s vs 16.0s.
+  //   No measurable difference. MySQL 8 can push `spr.run_month = ?` into the derived table
+  //   on its own through the `att.ym = spr.run_month` equality, and when it picks that plan
+  //   this predicate is redundant. It is kept because the optimiser does not always pick it —
+  //   the direct-SQL pair above is the same statement without the LIMIT, and there it did not.
+  //
+  // Two earlier numbers for this change were wrong and are recorded here so they are not
+  // quoted again: a "6.9x" came from running the unrestricted query first and the pinned one
+  // second, so the second read a warm buffer pool; and a "120s to 7.2s" endpoint figure was
+  // measured against a backend another session had started from the main tree, which did not
+  // contain this change at all. The database also swings badly under concurrent load — the
+  // same statement measured 43s to 82s across four rounds — so single-run timings here are
+  // not evidence of anything.
+  //
+  // Half-open range against the raw column so the predicate is sargable and can use
+  // idx_adr_emp_date. A LEFT() or DATE_FORMAT() wrapper would not be — that is precisely
+  // why the GROUP BY below is the expensive half of this query (EXPLAIN: type=ALL,
+  // key=null, Using temporary) and why it is worth not feeding it the whole table.
+  attWhere = "WHERE adr.record_date >= ? AND adr.record_date < DATE_ADD(?, INTERVAL 1 MONTH)";
+  attParams.push(`${runMonth}-01`, `${runMonth}-01`);
 
   // This query used to return branch/process/month financial totals: employee_count,
   // total_gross, total_net and so on. Its catalog entry describes something else
@@ -572,7 +584,7 @@ export async function payrollCostSummary(
   scope: ExecScope,
   options: ExecOptions
 ): Promise<ExecResult> {
-  const runMonth = monthParam(filters.month);
+  const runMonth = await resolvePayrollMonth(filters.month);
 
   const clauses: string[] = ["e.id IS NOT NULL"];
   const params: unknown[] = [];
@@ -699,7 +711,7 @@ export async function lwpDeductionRegister(
   scope: ExecScope,
   options: ExecOptions
 ): Promise<ExecResult> {
-  const runMonth = monthParam(filters.month);
+  const runMonth = await resolvePayrollMonth(filters.month);
 
   const clauses: string[] = ["e.id IS NOT NULL"];
   const params: unknown[] = [];
@@ -757,7 +769,7 @@ export async function neftTransferFile(
   scope: ExecScope,
   options: ExecOptions
 ): Promise<ExecResult> {
-  const runMonth = monthParam(filters.month);
+  const runMonth = await resolvePayrollMonth(filters.month);
 
   const clauses: string[] = ["e.id IS NOT NULL"];
   const params: unknown[] = [];
@@ -816,7 +828,7 @@ export async function payslipStatus(
   scope: ExecScope,
   options: ExecOptions
 ): Promise<ExecResult> {
-  const runMonth = monthParam(filters.month);
+  const runMonth = await resolvePayrollMonth(filters.month);
 
   const clauses: string[] = ["e.id IS NOT NULL"];
   const params: unknown[] = [];
@@ -881,7 +893,7 @@ export async function salarySheetExport(
   scope: ExecScope,
   options: ExecOptions
 ): Promise<ExecResult> {
-  const runMonth = monthParam(filters.month);
+  const runMonth = await resolvePayrollMonth(filters.month);
 
   const clauses: string[] = ["e.id IS NOT NULL"];
   const params: unknown[] = [];

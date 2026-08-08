@@ -7,6 +7,7 @@ import {
   reportScopeMiddleware,
 } from "./reporting-access.js";
 import { db } from "../../db/mysql.js";
+import { resolvePayrollMonth } from "./payroll-month.js";
 
 export const reportSuiteHighRiskRouter = Router();
 reportSuiteHighRiskRouter.use(requireAuth);
@@ -84,7 +85,7 @@ reportSuiteHighRiskRouter.get("/payroll-register", roles, h(async (req, res) => 
   const clauses: string[] = [];
   const params: unknown[] = [];
   addScopedEmployeeFilters(req, clauses, params);
-  clauses.push("spr.run_month = ?"); params.push(monthParam(req.query.month));
+  clauses.push("spr.run_month = ?"); params.push(await resolvePayrollMonth(req.query.month));
   clauses.push(payrollStatusClause("spr")); params.push(...PAYROLL_STATUSES);
   const sql = `SELECT spr.run_month, spr.status AS run_status,
                       e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
@@ -111,7 +112,7 @@ reportSuiteHighRiskRouter.get("/payroll-variance", roles, h(async (req, res) => 
   const clauses: string[] = [];
   const params: unknown[] = [];
   addScopedEmployeeFilters(req, clauses, params);
-  clauses.push("spr.run_month = ?"); params.push(monthParam(req.query.month));
+  clauses.push("spr.run_month = ?"); params.push(await resolvePayrollMonth(req.query.month));
   clauses.push(payrollStatusClause("spr")); params.push(...PAYROLL_STATUSES);
   const sql = `SELECT e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
                       COALESCE(hcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
@@ -142,7 +143,7 @@ reportSuiteHighRiskRouter.get("/payslip-status", roles, h(async (req, res) => {
   const clauses: string[] = [];
   const params: unknown[] = [];
   addScopedEmployeeFilters(req, clauses, params);
-  clauses.push("spr.run_month = ?"); params.push(monthParam(req.query.month));
+  clauses.push("spr.run_month = ?"); params.push(await resolvePayrollMonth(req.query.month));
   clauses.push(payrollStatusClause("spr")); params.push(...PAYROLL_STATUSES);
   const sql = `SELECT spr.run_month, spr.status AS run_status,
                       e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,

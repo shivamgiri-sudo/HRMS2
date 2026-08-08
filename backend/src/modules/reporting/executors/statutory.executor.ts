@@ -13,6 +13,7 @@
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../../db/mysql.js";
 import type { ExecFilters, ExecScope, ExecOptions, ExecResult } from "./types.js";
+import { resolvePayrollMonth } from "../payroll-month.js";
 import {
   appendScopeConditions,
   appendFilterConditions,
@@ -60,7 +61,7 @@ export async function pfContributionRegister(
   scope: ExecScope,
   options: ExecOptions
 ): Promise<ExecResult> {
-  const runMonth = monthParam(filters.month);
+  const runMonth = await resolvePayrollMonth(filters.month);
   // employees has no `uan` column — it is `uan_number`. The unmasked branch therefore threw
   // "Unknown column 'e.uan'" and the whole report 500'd, while the masked branch (a literal)
   // worked fine, so the failure only ever appeared for users entitled to see the real number.
@@ -128,7 +129,7 @@ export async function pfEcrFormat(
   scope: ExecScope,
   options: ExecOptions
 ): Promise<ExecResult> {
-  const runMonth = monthParam(filters.month);
+  const runMonth = await resolvePayrollMonth(filters.month);
   // employees has no `uan` column — it is `uan_number`. The unmasked branch therefore threw
   // "Unknown column 'e.uan'" and the whole report 500'd, while the masked branch (a literal)
   // worked fine, so the failure only ever appeared for users entitled to see the real number.
@@ -198,7 +199,7 @@ export async function esicContributionRegister(
   scope: ExecScope,
   options: ExecOptions
 ): Promise<ExecResult> {
-  const runMonth = monthParam(filters.month);
+  const runMonth = await resolvePayrollMonth(filters.month);
   const esicCol = scope.canViewSensitiveFields
     ? "e.esic_number"
     : "'***MASKED***' AS esic_number";
@@ -262,7 +263,7 @@ export async function ptRegister(
   scope: ExecScope,
   options: ExecOptions
 ): Promise<ExecResult> {
-  const runMonth = monthParam(filters.month);
+  const runMonth = await resolvePayrollMonth(filters.month);
 
   const clauses: string[] = ["e.id IS NOT NULL"];
   const params: unknown[] = [];
@@ -325,7 +326,7 @@ export async function tdsComputationRegister(
   scope: ExecScope,
   options: ExecOptions
 ): Promise<ExecResult> {
-  const runMonth = monthParam(filters.month);
+  const runMonth = await resolvePayrollMonth(filters.month);
   const panCol = scope.canViewSensitiveFields
     ? "e.pan_number"
     : "'***MASKED***' AS pan_number";
@@ -678,7 +679,7 @@ export async function ptMonthlyRegister(
   scope: ExecScope,
   options: ExecOptions
 ): Promise<ExecResult> {
-  const runMonth = monthParam(filters.month);
+  const runMonth = await resolvePayrollMonth(filters.month);
 
   const clauses: string[] = ["e.id IS NOT NULL"];
   const params: unknown[] = [];
@@ -729,7 +730,7 @@ export async function pfEsicSalaryRegister(
   scope: ExecScope,
   options: ExecOptions
 ): Promise<ExecResult> {
-  const runMonth = monthParam(filters.month);
+  const runMonth = await resolvePayrollMonth(filters.month);
 
   const clauses: string[] = ["e.id IS NOT NULL"];
   const params: unknown[] = [];
