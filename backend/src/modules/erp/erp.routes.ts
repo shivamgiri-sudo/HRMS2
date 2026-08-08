@@ -22,12 +22,21 @@ router.get(
   "/vendors",
   requireRole("admin", "hr", "finance"),
   h(async (req: AuthenticatedRequest, res: Response) => {
-    const data = await vendorService.list(req.query as {
+    const query = req.query as {
       is_active?: string;
       vendor_type?: string;
       q?: string;
       limit?: string;
       offset?: string;
+      companyCode?: string;
+      branchId?: string;
+    };
+    const data = await vendorService.list({
+      ...query,
+      // Applicability narrows the list only when the caller asks for a company or branch. A
+      // plain /vendors call is unchanged, which is what every existing screen sends.
+      companyCode: query.companyCode?.trim() || undefined,
+      branchId: query.branchId?.trim() || undefined,
     });
     res.json({ success: true, data });
   })

@@ -1,6 +1,7 @@
 import { randomUUID } from "crypto";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
+import { vendorApplicabilityService } from "../finance/vendor-applicability.service.js";
 
 // ─── Vendors ────────────────────────────────────────────────────────────────
 
@@ -11,11 +12,36 @@ export const vendorService = {
     q?: string;
     limit?: string | number;
     offset?: string | number;
+    /** Legal entity and branch the vendor must be applicable to. Both optional. */
+    companyCode?: string | null;
+    branchId?: string | null;
   }) {
     const conds: string[] = [];
     const params: unknown[] = [];
     if (filters.is_active !== undefined) { conds.push("is_active = ?"); params.push(filters.is_active); }
     if (filters.vendor_type)             { conds.push("vendor_type = ?"); params.push(filters.vendor_type); }
+
+    /*
+     * Vendor applicability, ENFORCED — legal entity and branch (Vendor Master, three concepts).
+     *
+     * This predicate existed, was tested and was called by nothing: a vendor could be restricted
+     * to IDC or to one branch in the UI and would still appear for everyone, which is a
+     * restriction feature that silently does not restrict.
+     *
+     * "No rows means unrestricted" is expressed as NOT EXISTS inside the clause, so all 1,821
+     * vendors with no applicability rows keep appearing exactly as before, and the query only
+     * narrows once somebody opts a vendor in.
+     */
+    if (filters.companyCode || filters.branchId) {
+      const applicability = vendorApplicabilityService.vendorFilterClause("vendor_master", {
+        companyCode: filters.companyCode,
+        branchId: filters.branchId,
+      });
+      if (applicability.sql !== "1=1") {
+        conds.push(applicability.sql);
+        params.push(...applicability.params);
+      }
+    }
 
     // Type-ahead search. Without this the whole vendor_master is returned and the
     // caller has to filter client-side.

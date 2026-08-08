@@ -1686,6 +1686,12 @@ async function postImprestVoucherDebit(
     return null;
   }
 
+  // Refuses a debit the float cannot cover. Also never called before — the guard existed and
+  // nothing consulted it, so a branch could spend a float it did not have and go negative
+  // silently. Checked before posting, inside the same transaction, so the approval fails
+  // rather than the ledger going into deficit.
+  await imprestLedgerService.assertSufficientBalance(managerId, amount, connection);
+
   return imprestLedgerService.post(
     {
       imprestManagerId: managerId,

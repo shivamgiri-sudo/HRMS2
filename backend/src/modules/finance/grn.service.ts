@@ -14,6 +14,11 @@ import { financeBranchFilter, type FinanceBranchScope } from "./finance-access-s
 import { budgetConsumptionService } from "../process-pnl/budget-consumption.service.js";
 import { isPeriodLocked } from "../process-pnl/finance-period-lock.js";
 import { allocateGrnNumber } from "./grn-number.service.js";
+import {
+  allocateMonthlyGrnNumber,
+  resolveAccountingPeriod,
+  resolveGrnNumberFormat,
+} from "./grn-number-monthly.service.js";
 import { grnSmartService } from "./grn-smart.service.js";
 import { vendorPaymentService } from "./vendor-payment.service.js";
 
@@ -57,6 +62,15 @@ export interface CreateGrnPayload {
   paymentTermsDays?: number;
   remarks?: string;
   financialYear?: string;
+  /**
+   * The month the GRN books to, when it differs from the bill month.
+   *
+   * Optional and NULL on every existing caller, which is what keeps this change inert: the
+   * number falls back to bill_date exactly as before. It matters only under the monthly
+   * numbering format, where the MM/YY is the accounting month rather than the vendor's
+   * invoice date.
+   */
+  accountingPeriod?: string;
 }
 
 export interface SubmitGrnPayload {
@@ -232,7 +246,29 @@ export const grnService = {
     }
 
     const id = randomUUID();
-    const grnNumber = await allocateGrnNumber(payload.branchId, financialYear);
+    /*
+     * Which numbering format runs is a CONFIG FLAG, not a deploy (Requirement 12).
+     *
+     * finance_config.grn_number_format ships as 'legacy_branch_fy', so this is byte-identical
+     * to the old behaviour until somebody switches it — at which point new GRNs get
+     * MAS/MM/YY/SERIAL and existing numbers are untouched, because the two formats use
+     * different sequence tables.
+     *
+     * Wiring this in was overdue: the monthly allocator, its sequence table and the flag all
+     * existed and were tested, but NOTHING read the flag, so flipping it did nothing at all.
+     * Requirement 12 was built and unreachable.
+     */
+    const numberFormat = await resolveGrnNumberFormat();
+    const grnNumber = numberFormat === "monthly_company"
+      ? await allocateMonthlyGrnNumber({
+          // The accounting period, not bill_date — the MM/YY belongs to the month the GRN books
+          // to, which is the decision taken when multi-month was specified.
+          periodCode: resolveAccountingPeriod({
+            accountingPeriod: payload.accountingPeriod,
+            billDate: payload.billDate,
+          }),
+        })
+      : await allocateGrnNumber(payload.branchId, financialYear);
     const dueDate = addDays(payload.billDate, paymentTermsDays);
     const costClass: "direct" | "indirect" =
       budgetLine.process_id || budgetLine.cost_centre_id ? "direct" : "indirect";
