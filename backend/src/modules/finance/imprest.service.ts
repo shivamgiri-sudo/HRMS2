@@ -116,28 +116,80 @@ export const imprestService = {
       throw new Error("Effective-to cannot be before effective-from");
     }
 
-    if (input.id) {
-      await db.execute(
-        `UPDATE imprest_manager
-            SET tally_name = ?, effective_to = ?, active_status = ?, updated_by = ?
-          WHERE id = ?`,
-        [input.tallyName ?? null, input.effectiveTo ?? null, input.activeStatus ?? 1, actorUserId, input.id],
-      );
-      return this.getManager(input.id);
-    }
+    /*
+     * ONE BRANCH, ONE HOLDER AT A TIME.
+     *
+     * The table's unique key is (user_id, branch_id, effective_from), which only stops the SAME
+     * person being appointed to the same branch on the same day. It does nothing to stop two
+     * DIFFERENT people holding one branch's float simultaneously, and that is the case that
+     * actually breaks:
+     *
+     *   - the allocation picker offers two holders for one branch's cash;
+     *   - the voucher debit resolves `ORDER BY effective_from DESC LIMIT 1` and picks whichever
+     *     started later, arbitrarily — so a voucher can debit one float while an allocation
+     *     credited the other;
+     *   - the balance is per-manager, so one physical cash box splits across two ledgers and
+     *     neither reconciles to what is actually in the drawer.
+     *
+     * Two periods overlap when each starts on or before the other ends, with a NULL end meaning
+     * open-ended. Checked under a row lock inside a transaction, because two appointments
+     * submitted at once would both pass a bare SELECT and both insert.
+     */
+    const connection = await db.getConnection();
+    try {
+      await connection.beginTransaction();
 
-    const id = randomUUID();
-    await db.execute(
-      `INSERT INTO imprest_manager
-         (id, branch_id, user_id, employee_id, tally_name, effective_from, effective_to,
-          active_status, created_by, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
-      [
-        id, input.branchId, input.userId, input.employeeId ?? null, input.tallyName ?? null,
-        input.effectiveFrom, input.effectiveTo ?? null, input.activeStatus ?? 1, actorUserId,
-      ],
-    );
-    return this.getManager(id);
+      const [clashes] = await connection.execute<RowDataPacket[]>(
+        `SELECT id, user_id, effective_from, effective_to
+           FROM imprest_manager
+          WHERE branch_id = ?
+            AND active_status = 1
+            AND id <> ?
+            AND effective_from <= COALESCE(?, '9999-12-31')
+            AND ? <= COALESCE(effective_to, '9999-12-31')
+          FOR UPDATE`,
+        [input.branchId, input.id ?? "", input.effectiveTo ?? null, input.effectiveFrom],
+      );
+      if (clashes.length && (input.activeStatus ?? 1) === 1) {
+        const clash = clashes[0];
+        throw new Error(
+          `This branch already has an imprest manager for that period `
+          + `(${String(clash.effective_from).slice(0, 10)} to `
+          + `${clash.effective_to ? String(clash.effective_to).slice(0, 10) : "open-ended"}). `
+          + `End that appointment before starting another.`,
+        );
+      }
+
+      if (input.id) {
+        await connection.execute(
+          `UPDATE imprest_manager
+              SET tally_name = ?, effective_to = ?, active_status = ?, updated_by = ?
+            WHERE id = ?`,
+          [input.tallyName ?? null, input.effectiveTo ?? null, input.activeStatus ?? 1, actorUserId, input.id],
+        );
+        await connection.commit();
+        return this.getManager(input.id);
+      }
+
+      const id = randomUUID();
+      await connection.execute(
+        `INSERT INTO imprest_manager
+           (id, branch_id, user_id, employee_id, tally_name, effective_from, effective_to,
+            active_status, created_by, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
+        [
+          id, input.branchId, input.userId, input.employeeId ?? null, input.tallyName ?? null,
+          input.effectiveFrom, input.effectiveTo ?? null, input.activeStatus ?? 1, actorUserId,
+        ],
+      );
+      await connection.commit();
+      return this.getManager(id);
+    } catch (error) {
+      await connection.rollback();
+      throw error;
+    } finally {
+      connection.release();
+    }
   },
 
   async getManager(id: string) {
