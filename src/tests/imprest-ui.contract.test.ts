@@ -26,6 +26,8 @@ const read = (rel: string) => readFileSync(resolve(process.cwd(), rel), "utf8");
 const ALLOCATION = read("src/components/finance/grn/imprest/ImprestAllocationPanel.tsx");
 const REPORT = read("src/components/finance/grn/imprest/ImprestReportPanel.tsx");
 const WORKSPACE = read("src/components/finance/grn/imprest/ImprestWorkspace.tsx");
+const MANAGERS = read("src/components/finance/grn/imprest/ImprestManagerPanel.tsx");
+const GRN_FORM = read("src/components/finance/grn/BudgetLinkedGrnForm.tsx");
 
 describe("the report exports through the API", () => {
   it("opens the export endpoint rather than building a file from state", () => {
@@ -95,11 +97,56 @@ describe("the three surfaces share one tab", () => {
   it("hosts approvals, allocation and report without new routed pages", () => {
     // Three routed pages would need three page_catalog rows, three nav entries and three sets
     // of role grants to stay reachable — the checklist FINANCE_COST_CENTRES failed.
-    for (const pane of ["approvals", "allocation", "report"]) {
+    for (const pane of ["approvals", "allocation", "report", "managers"]) {
       expect(WORKSPACE).toContain(`value: "${pane}"`);
     }
     expect(WORKSPACE).toContain("ImprestApprovalQueue");
     expect(WORKSPACE).toContain("ImprestAllocationPanel");
     expect(WORKSPACE).toContain("ImprestReportPanel");
+    expect(WORKSPACE).toContain("ImprestManagerPanel");
+  });
+});
+
+describe("the imprest manager master (Requirement 8)", () => {
+  it("can actually appoint somebody", () => {
+    // The API existed and was tested; there was nowhere to appoint anyone, so the whole chain
+    // was inert: no manager means no allocation to credit and no voucher debit to post.
+    expect(MANAGERS).toContain('hrmsApi.post<any>("/api/finance/imprest/managers"');
+  });
+
+  it("offers only employees who can operate a float", () => {
+    // Active, at the branch, and holding a login — 119 of 1,123 active employees have no user
+    // account, and appointing one creates a float nobody can operate.
+    expect(MANAGERS).toContain("/api/finance/imprest/manager-candidates?branchId=");
+  });
+
+  it("sends both the user and the employee", () => {
+    // user_id is who acts and is recorded on every posting; employee_id is who they are.
+    expect(MANAGERS).toContain("userId: chosen.user_id");
+    expect(MANAGERS).toContain("employeeId: chosen.employee_id");
+  });
+
+  it("ends an appointment rather than deleting it", () => {
+    // Ledger entries posted under an appointment must stay explainable; a deleted holder makes
+    // past postings anonymous.
+    expect(MANAGERS).toContain("effectiveTo: today()");
+    expect(MANAGERS).toContain("activeStatus: 0");
+    expect(MANAGERS).not.toMatch(/hrmsApi\.delete/);
+  });
+
+  it("refuses an end date before the start date", () => {
+    expect(MANAGERS).toContain("draft.effectiveTo < draft.effectiveFrom");
+  });
+});
+
+describe("vendor applicability bites where a vendor is chosen", () => {
+  it("scopes the GRN vendor picker by branch", () => {
+    // The Vendor Master can restrict a vendor to a branch; this is the one place that has to
+    // honour it, because this is where a vendor actually gets picked.
+    expect(GRN_FORM).toContain("&branchId=${encodeURIComponent(form.branchId)}");
+  });
+
+  it("refetches when the branch changes, so no stale list survives", () => {
+    expect(GRN_FORM).toContain('queryKey: ["grn-vendor-search", vendorSearch, form.branchId]');
   });
 });

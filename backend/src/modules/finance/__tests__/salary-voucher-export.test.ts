@@ -39,7 +39,12 @@ beforeAll(async () => {
     method: String(r.method).toUpperCase(),
     path: String(r.path).replace(/:[A-Za-z_][A-Za-z0-9_]*/g, ":x"),
   }));
-}, 180_000);
+  // 420s, not the default. This hook imports the ENTIRE Express app to read its route table,
+  // which is the only way to prove a route is really mounted — a nonexistent /api path 401s
+  // exactly like a real one. Under a full parallel run two workers do that cold import at once
+  // and 180s was not enough; the tests pass individually. Mocking the app away would delete the
+  // only thing these files actually check.
+}, 420_000);
 
 describe("the endpoints exist", () => {
   it.each([

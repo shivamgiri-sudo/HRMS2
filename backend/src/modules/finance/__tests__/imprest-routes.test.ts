@@ -32,7 +32,12 @@ beforeAll(async () => {
     method: String(route.method).toUpperCase(),
     path: String(route.path),
   }));
-}, 180_000);
+  // 420s, not the default. This hook imports the ENTIRE Express app to read its route table,
+  // which is the only way to prove a route is really mounted — a nonexistent /api path 401s
+  // exactly like a real one. Under a full parallel run two workers do that cold import at once
+  // and 180s was not enough; the tests pass individually. Mocking the app away would delete the
+  // only thing these files actually check.
+}, 420_000);
 
 /**
  * Parameter names are normalised away before comparing. enumerateRoutes recovers paths from
@@ -62,6 +67,9 @@ describe("the imprest endpoints are mounted", () => {
     // and leaving both would put a wrong export next to the right one for someone to pick.
     ["GET", "/api/finance/imprest/reports/details"],
     ["GET", "/api/finance/imprest/reports/details/export"],
+    // Without this, Requirement 8's master has read paths only — nobody can be appointed, so no
+    // float is ever funded and every approved voucher skips its debit.
+    ["GET", "/api/finance/imprest/manager-candidates"],
   ])("%s %s", (method, path) => {
     expect(has(method, path), `${method} ${path} is not registered`).toBe(true);
   });

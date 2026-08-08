@@ -357,11 +357,17 @@ export function BudgetLinkedGrnForm() {
   // Vendor master holds ~1.8k active rows, so the list is searched server-side
   // rather than dumped into the picker.
   const { data: vendorResponse, isFetching: vendorsLoading } = useQuery({
-    queryKey: ["grn-vendor-search", vendorSearch],
+    queryKey: ["grn-vendor-search", vendorSearch, form.branchId],
     enabled: isVendor,
     queryFn: () =>
       hrmsApi.get<any>(
+        // branchId applies the Vendor Master's branch applicability. Without it a vendor
+        // restricted to another branch still appears here — which is the one place the
+        // restriction is supposed to bite, since this is where a vendor gets chosen.
+        // Vendors with no applicability rows are unaffected, so the list is unchanged for
+        // all 1,821 of them today.
         `/api/erp/vendors?is_active=1&limit=50&q=${encodeURIComponent(vendorSearch.trim())}`
+          + (form.branchId ? `&branchId=${encodeURIComponent(form.branchId)}` : "")
       ),
   });
 

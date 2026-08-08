@@ -1,4 +1,6 @@
 import { Router } from "express";
+import type { RowDataPacket } from "mysql2";
+import { db } from "../../db/mysql.js";
 import {
   requireAuth,
   requireWriteAccess,
@@ -122,6 +124,41 @@ imprestRouter.put(
     } catch (error) {
       fail(res, error, "Unable to save the imprest manager");
     }
+  }),
+);
+
+/**
+ * Employees who could hold a branch float.
+ *
+ * A dedicated endpoint rather than bending the general employees API, for two reasons: the list
+ * must be branch-scoped to the caller's entitlement like everything else here, and it must
+ * exclude anyone with no `user_id`. An imprest manager is accountable for cash and has to be
+ * able to log in and be recorded as the actor on a posting — 119 of 1,123 active employees have
+ * no user account, and appointing one would create a float nobody can operate.
+ */
+imprestRouter.get(
+  "/manager-candidates",
+  requireRole(...IMPREST_MASTER_ROLES),
+  h(async (req, res) => {
+    const branchId = String(req.query.branchId ?? "").trim();
+    if (!branchId) {
+      return res.status(400).json({ success: false, error: "branchId is required" });
+    }
+    const scope = await scopeOf(req);
+    if (scope.mode === "branches" && !scope.branchIds.includes(branchId)) {
+      return res.status(403).json({ success: false, error: "You do not have access to this branch" });
+    }
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT e.id AS employee_id, e.user_id, e.employee_code, e.full_name
+         FROM employees e
+        WHERE e.branch_id = ?
+          AND e.employment_status = 'active'
+          AND e.user_id IS NOT NULL AND e.user_id <> ''
+        ORDER BY e.full_name
+        LIMIT 500`,
+      [branchId],
+    );
+    res.json({ success: true, data: rows });
   }),
 );
 
