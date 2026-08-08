@@ -48,18 +48,40 @@ const SITES = [
 const sources = SITES.map(path => ({ path, text: read(path) }));
 
 describe("account_number is cast to CHAR before it reaches JSON", () => {
-  it("every raw select of the column is a CAST, across all files that read it", () => {
-    const casts = sources.reduce(
-      (n, s) => n + (s.text.match(/CAST\(ebd\.account_number AS CHAR\)/g) ?? []).length,
-      0,
-    );
+  /**
+   * The invariant moved, so this guard moved with it.
+   *
+   * It used to require CAST(ebd.account_number AS CHAR) at every site, because the column is
+   * VARBINARY and mysql2 hands a bare select back as a Buffer, which JSON.stringify renders as
+   * {"type":"Buffer","data":[...]}. 851d78ca replaced that with a TypeScript decode: every read
+   * now goes through resolveAccountNumber(), which is typed `Buffer | string | null` and does
+   *
+   *   Buffer.isBuffer(row.account_number) ? row.account_number.toString("utf8") : String(...)
+   *
+   * and additionally prefers the decrypted account_number_enc when present. So the CAST count
+   * fell to 1 while nothing regressed — verified: every file selecting the raw column also calls
+   * resolveAccountNumber.
+   *
+   * Asserting the CAST would now fail on correct code, and the honest replacement is not "delete
+   * the check" but "check the thing that actually keeps a Buffer out of the response". Either
+   * mechanism is acceptable; having neither is the defect.
+   */
+  it("every site that reads the raw column either CASTs it or decodes it in TypeScript", () => {
+    const unprotected: string[] = [];
+    for (const { path, text } of sources) {
+      const readsLegacy = /ebd\.account_number(?!_enc)\b/.test(text);
+      if (!readsLegacy) continue;
+      const casts = /CAST\(ebd\.account_number AS CHAR\)/.test(text);
+      const decodes = /resolveAccountNumber\s*\(/.test(text);
+      if (!casts && !decodes) unprotected.push(path);
+    }
 
     expect(
-      casts,
-      "bank-change-requests, neft-transfer-file and the payroll statutory export (ac_no) " +
-        "should each CAST account_number. If this count changed, confirm whether a site " +
-        "was added or removed deliberately — a bare select ships a Buffer to the client.",
-    ).toBeGreaterThanOrEqual(3);
+      unprotected,
+      "These files select employee_bank_detail.account_number (VARBINARY) but neither CAST it " +
+        "in SQL nor pass it through resolveAccountNumber, so the value reaches JSON as a Buffer:\n" +
+        unprotected.join("\n"),
+    ).toEqual([]);
   });
 
   /**
@@ -82,16 +104,31 @@ describe("account_number is cast to CHAR before it reaches JSON", () => {
     // ON clauses may reference it raw — those never reach the response.
     const offenders: string[] = [];
     for (const { path, text } of sources) {
+      // A file that decodes in TypeScript is protected wherever it selects the column; the
+      // Buffer is unwrapped by resolveAccountNumber before serialisation. Checked per file
+      // rather than per line because the select and the decode are necessarily far apart —
+      // one is in the SQL string, the other in the row mapper below it.
+      const decodesInTs = /resolveAccountNumber\s*\(/.test(text);
       for (const m of text.matchAll(/^\s*ebd\.account_number\s*(?:AS\s+\w+)?\s*,/gm)) {
         // Attribute the hit to the nearest preceding `case "..."` so an exemption names a
         // report rather than a line number that moves.
         const before = text.slice(0, m.index);
+        // The same line shape appears inside GROUP BY, where the column never reaches the
+        // response — the third test in this file asserts that GROUP BY deliberately keeps it.
+        // Decide by whichever clause keyword is nearest behind the match.
+        const lastSelect = before.toUpperCase().lastIndexOf("SELECT");
+        const lastGroupBy = before.toUpperCase().lastIndexOf("GROUP BY");
+        if (lastGroupBy > lastSelect) continue;
         const owner = [...before.matchAll(/case\s+"([a-z0-9-]+)"/g)].pop()?.[1] ?? "unknown";
         if (KNOWN_BARE_SELECT.test(owner)) continue;
+        if (decodesInTs) continue;
         offenders.push(`${path}:${before.split("\n").length} (${owner})`);
       }
     }
-    expect(offenders, `account_number selected without CAST at:\n${offenders.join("\n")}`).toEqual([]);
+    expect(
+      offenders,
+      `account_number reaches a response without a CAST or a resolveAccountNumber decode at:\n${offenders.join("\n")}`,
+    ).toEqual([]);
   });
 
   it("neft-transfer-file's GROUP BY still includes the raw column (functional dependency, not a leak)", () => {

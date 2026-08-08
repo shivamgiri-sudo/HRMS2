@@ -81,13 +81,25 @@ describe("tripwire: no new ungated account-number export", () => {
     // account number reaches a response at all; whether it is read via AES_DECRYPT
     // or CAST is a storage question, and the earlier version of this test tracked
     // the wrapper and so went blind the moment that changed.
-    const count = (s: string) => (s.match(/ebd\.account_number/g) ?? []).length;
-    const total = count(ROUTES) + count(EXTENDED);
-    expect(
-      total,
+    // Counted separately, because `/ebd\.account_number/` has no word boundary and therefore
+    // also matches `ebd.account_number_enc`. Once 851d78ca added the encrypted column, each of
+    // the four sites read BOTH columns — the dual-read fallback — and this tripwire reported
+    // 8, reading as "four new ungated exports appeared" when no endpoint had been added at all.
+    // Measured: payroll.routes.ts 2 legacy + 2 enc, payroll-extended.routes.ts 2 legacy + 2 enc.
+    //
+    // Two counts rather than one total, so the tripwire still fires on a genuinely new site of
+    // either kind instead of being satisfied by a number that happens to add up. The enc count
+    // drops back to 0 when the legacy column is retired by the planned migration 1111, and that
+    // is a deliberate update, not a silent pass.
+    const countLegacy = (s: string) => (s.match(/ebd\.account_number(?!_enc)\b/g) ?? []).length;
+    const countEnc = (s: string) => (s.match(/ebd\.account_number_enc\b/g) ?? []).length;
+    const legacy = countLegacy(ROUTES) + countLegacy(EXTENDED);
+    const enc = countEnc(ROUTES) + countEnc(EXTENDED);
+    const message =
       "A payroll endpoint reading bank account numbers was added or removed. " +
-        "If added, gate it with hasOrgWideScope (payment file) or buildScopeWhereClause " +
-        "(report) and update this count deliberately.",
-    ).toBe(4);
+      "If added, gate it with hasOrgWideScope (payment file) or buildScopeWhereClause " +
+      "(report) and update this count deliberately.";
+    expect(legacy, `${message} (legacy account_number reads)`).toBe(4);
+    expect(enc, `${message} (encrypted account_number_enc reads)`).toBe(4);
   });
 });

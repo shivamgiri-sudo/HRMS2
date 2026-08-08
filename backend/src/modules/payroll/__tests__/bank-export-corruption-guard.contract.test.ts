@@ -19,7 +19,16 @@ const source = readFileSync(resolve(process.cwd(), "src/modules/payroll/disbursa
 describe("bank-export classifies and excludes corrupted account numbers", () => {
   it("classifies scientific-notation corruption, matching the established pattern", () => {
     expect(source).toMatch(/corrupt_scientific_notation/);
-    expect(source).toMatch(/REGEXP '\[Ee\]\[\+-\]'/);
+    // The classification moved out of SQL and into TypeScript when bank reads went through
+    // resolveAccountNumber for the AES-256-GCM work (851d78ca): the value now arrives already
+    // decrypted-or-decoded, so a `REGEXP '[Ee][+-]'` in the query could no longer see it. The
+    // rule is unchanged and still enforced a few lines later —
+    //   const SCIENTIFIC_RE_D = /[Ee][+-]/;
+    //   else if (SCIENTIFIC_RE_D.test(acct)) r.account_number_status = "corrupt_scientific_notation";
+    // — so this asserts the live form. Asserting the SQL text made the guard report a lost
+    // safety property when only its location had changed.
+    expect(source).toMatch(/SCIENTIFIC_RE_D\s*=\s*\/\[Ee\]\[\+-\]\//);
+    expect(source).toMatch(/SCIENTIFIC_RE_D\.test\([^)]*\)[^;]*corrupt_scientific_notation/);
   });
 
   it("builds the CSV only from rows classified 'ok' (excludes corrupt/missing/unrecognised)", () => {
