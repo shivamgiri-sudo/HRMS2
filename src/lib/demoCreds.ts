@@ -47,6 +47,16 @@ const ALL_PAGES = [
   // verbatim without unioning the common pages, so any common code missing here drops out
   // of the super-admin demo credential. /uat/feedback is a real route gated on this code.
   "UAT_FEEDBACK",
+  // The other three UAT pages, for the same reason one step further on. A real super_admin
+  // reaches every ACTIVE page_catalog row through getUserPageAccess(); a DEMO super_admin
+  // never calls that API at all and gets exactly this list. So without these three, the
+  // triage console, release board and checklist admin are unreachable on any demo login.
+  //
+  // UAT_CHECKLIST_ADMIN is the sharp one: it is granted to no role on purpose (segregation
+  // of duties — whoever views the guardrails should not be the population approving work
+  // evaluated under them), so super_admin is the ONLY way in. Omitting it here left it
+  // reachable by nobody at all under demo mode.
+  "UAT_TRIAGE_CONSOLE", "UAT_RELEASE_BOARD", "UAT_CHECKLIST_ADMIN",
 ];
 
 const ADMIN_DEMO_PAGES = getRolePageCodes("admin", ALL_PAGES);
