@@ -8,10 +8,6 @@
   "modules/payroll/payroll.routes.ts": [
     "employees.ctc_annual"
   ],
-  "modules/reporting/identity-mapping-report.ts": [
-    "report_identity_source_snapshot.matched_employee_name",
-    "report_identity_source_snapshot.source_employee_name"
-  ],
   "modules/reporting/report-suite.routes.ts": [
     "action_plan.action_plan_number",
     "action_plan.action_type",
@@ -84,8 +80,5 @@
     "wfm_roster_plan.ack_required",
     "wfm_roster_plan.published_at",
     "wfm_roster_plan.published_by"
-  ],
-  "modules/reporting/reporting.service.ts": [
-    "process_master.lob_id"
   ]
 }

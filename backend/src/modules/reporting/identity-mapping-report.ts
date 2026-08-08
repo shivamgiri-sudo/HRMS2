@@ -112,7 +112,22 @@ UNION ALL
 SELECT 'EXTERNAL_IDENTITY_UNMATCHED' AS exception_type,
        CASE WHEN ris.match_status = 'ambiguous' THEN 'CRITICAL' ELSE 'HIGH' END AS severity,
        COALESCE(ris.matched_employee_code, ris.source_employee_code, ris.source_agent_id) AS employee_code,
-       COALESCE(ris.matched_employee_name, ris.source_employee_name, ris.source_record_key) AS employee_name,
+       -- report_identity_source_snapshot has neither matched_employee_name nor
+       -- source_employee_name. It carries matched_employee_id / matched_employee_code and, for
+       -- the source side, source_name. Both invented columns made this SELECT throw
+       -- ER_BAD_FIELD_ERROR — and because it is a UNION ALL branch, the failure took every other
+       -- branch of the exception report down with it, not just this one.
+       --
+       -- The matched name is already reachable: the LEFT JOIN of employees e on
+       -- ris.matched_employee_id is right below, so it resolves the same way manager_name does
+       -- on the next line. Then the source's own name, then the record key, preserving the
+       -- original matched-then-source-then-key precedence.
+       COALESCE(
+         NULLIF(e.full_name, ''),
+         NULLIF(TRIM(CONCAT(e.first_name, ' ', COALESCE(e.last_name, ''))), ''),
+         ris.source_name,
+         ris.source_record_key
+       ) AS employee_name,
        b.branch_name,
        p.process_name,
        COALESCE(NULLIF(m.full_name,''), CONCAT(m.first_name,' ',COALESCE(m.last_name,''))) AS manager_name,
