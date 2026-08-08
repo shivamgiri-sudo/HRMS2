@@ -2021,6 +2021,18 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
     case "ff-settlement-register": {
       const from = dateParam(req.query.from, `${new Date().getFullYear()}-01-01`);
       const to = dateParam(req.query.to, new Date().toISOString().slice(0, 10));
+      // Row scope was absent. This block reads full_final_calculation — notice recovery,
+      // gratuity, salary hold and net payable — and built its WHERE inline, so it applied no
+      // branch restriction at all: every branch's settlement amounts were returned to anyone
+      // who could reach the report. Scope is enforced in the query and nowhere else; the
+      // middleware resolves the user's branches but does not filter rows.
+      //
+      // Called FIRST so its clauses and their parameters lead the bind list, with the report's
+      // own date range pushed after. For an all-scope user this adds no predicate, which is
+      // why super_admin output is byte-identical and why the gap was invisible.
+      addScopedEmployeeFilters(req, clauses, params);
+      clauses.push("COALESCE(er.last_working_day_confirmed, er.last_working_day_proposed) BETWEEN ? AND ?");
+      params.push(from, to);
       sql = `SELECT e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
                     b.branch_name,
                     COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
@@ -2037,9 +2049,8 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
                LEFT JOIN branch_master b ON b.id = e.branch_id
                LEFT JOIN process_master p ON p.id = e.process_id
                LEFT JOIN cost_centre_master cc ON cc.id = e.cost_centre_id
-              WHERE COALESCE(er.last_working_day_confirmed, er.last_working_day_proposed) BETWEEN ? AND ?
+              WHERE ${clauses.join(" AND ")}
               ORDER BY COALESCE(er.last_working_day_confirmed, er.last_working_day_proposed) DESC`;
-      params.push(from, to);
       break;
     }
 
