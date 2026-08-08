@@ -2,6 +2,7 @@ import { randomUUID } from "crypto";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
+import { columnExists, ifObjectExists, tableExists } from "../../shared/schema-object-cache.js";
 import {
   HALF_DAY_STATUS,
   LATEST_COMPLETE_ATTENDANCE_DATE_SQL,
@@ -350,6 +351,7 @@ export const managementService = {
         `SELECT
            SUM(
              e.active_status = 1
+             AND LOWER(COALESCE(e.employment_status, 'active')) = 'active'
              AND e.date_of_joining <= CURDATE()
            ) AS headcount,
            SUM(
@@ -448,7 +450,7 @@ export const managementService = {
     ] = await Promise.all([
       db.execute<RowDataPacket[]>("SELECT COUNT(*) AS total FROM auth_user"),
       db.execute<RowDataPacket[]>(
-        "SELECT COUNT(*) AS total FROM employees WHERE active_status = 1 AND date_of_joining <= CURDATE()"
+        "SELECT COUNT(*) AS total FROM employees WHERE active_status = 1 AND LOWER(COALESCE(employment_status,'active')) = 'active' AND date_of_joining <= CURDATE()"
       ),
       db.execute<RowDataPacket[]>("SELECT COUNT(*) AS total FROM workforce_role_catalog WHERE active_status = 1"),
       db.execute<RowDataPacket[]>("SELECT COUNT(*) AS total FROM page_catalog"),
@@ -463,9 +465,14 @@ export const managementService = {
       // rendered as "0 users without 2FA", i.e. the strongest possible security
       // reassurance produced by a query that had never run. null so the tile
       // reads as unavailable rather than as good news.
-      db.execute<RowDataPacket[]>(
-        `SELECT COUNT(*) AS count FROM auth_user WHERE two_fa_enabled = 0 OR two_fa_enabled IS NULL`
-      ).catch(() => [[{ count: null }]] as any),
+      ifObjectExists(
+        columnExists("auth_user", "two_fa_enabled"),
+        () =>
+          db.execute<RowDataPacket[]>(
+            `SELECT COUNT(*) AS count FROM auth_user WHERE two_fa_enabled = 0 OR two_fa_enabled IS NULL`
+          ).catch(() => [[{ count: null }]] as any),
+        [[{ count: null }]] as any,
+      ),
       db.execute<RowDataPacket[]>(
         `SELECT 'ATS' AS module_name, COUNT(*) AS record_count, MAX(updated_at) AS last_activity, 0 AS error_count
            FROM ats_candidate
@@ -572,8 +579,8 @@ export const managementService = {
     ] = await Promise.all([
       db.execute<RowDataPacket[]>(
         `SELECT
-           SUM(active_status = 1 AND date_of_joining <= CURDATE()) AS active_headcount,
-           SUM(active_status = 1 AND date_of_joining BETWEEN DATE_SUB(CURDATE(), INTERVAL 29 DAY) AND CURDATE()) AS new_joiners_30d,
+           SUM(active_status = 1 AND LOWER(COALESCE(employment_status,'active')) = 'active' AND date_of_joining <= CURDATE()) AS active_headcount,
+           SUM(active_status = 1 AND LOWER(COALESCE(employment_status,'active')) = 'active' AND date_of_joining BETWEEN DATE_SUB(CURDATE(), INTERVAL 29 DAY) AND CURDATE()) AS new_joiners_30d,
            SUM(
              COALESCE(date_of_leaving, resignation_date, date_of_exit)
              BETWEEN DATE_SUB(CURDATE(), INTERVAL 29 DAY) AND CURDATE()
@@ -817,7 +824,7 @@ export const managementService = {
                 dm.designation_name, e.date_of_joining as joining_date
          FROM employees e
          LEFT JOIN designation_master dm ON dm.id = e.designation_id
-         WHERE e.active_status = 1
+         WHERE LOWER(COALESCE(e.employment_status, 'active')) = 'active'
            AND e.date_of_joining >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
          ORDER BY e.date_of_joining DESC
          LIMIT 10`
@@ -909,20 +916,35 @@ export const managementService = {
       // table in the schema at all. Falling back to 0 rendered as "no pending
       // acknowledgements", which is indistinguishable from a fully compliant
       // workforce. null so the tile reads as unavailable.
-      db.execute<RowDataPacket[]>(
-        `SELECT COUNT(*) AS count FROM policy_acknowledgement
-         WHERE acknowledged = 0`
-      ).catch(() => [[{ count: null }]] as any),
+      // Skipped without querying when the table is absent — the `.catch` below
+      // is still the safety net, but firing a doomed query on every dashboard
+      // load put 14 ER_NO_SUCH_TABLE lines into the error log per window and
+      // helped bury a real onboarding failure. Self-healing: if the table is
+      // ever created, the cache expires and the tile starts working.
+      ifObjectExists(
+        tableExists("policy_acknowledgement"),
+        () =>
+          db.execute<RowDataPacket[]>(
+            `SELECT COUNT(*) AS count FROM policy_acknowledgement
+             WHERE acknowledged = 0`
+          ).catch(() => [[{ count: null }]] as any),
+        [[{ count: null }]] as any,
+      ),
       // Appraisal completion percentage
-      db.execute<RowDataPacket[]>(
-        `SELECT
-           ROUND(
-             SUM(pa.status IN ('completed','approved')) * 100.0
-             / NULLIF(COUNT(*), 0)
-           , 2) AS completion_pct
-         FROM performance_appraisal pa
-         WHERE YEAR(pa.appraisal_year) = YEAR(CURDATE())`
-      ).catch(() => [[{ completion_pct: null }]] as any),
+      ifObjectExists(
+        tableExists("performance_appraisal"),
+        () =>
+          db.execute<RowDataPacket[]>(
+            `SELECT
+               ROUND(
+                 SUM(pa.status IN ('completed','approved')) * 100.0
+                 / NULLIF(COUNT(*), 0)
+               , 2) AS completion_pct
+             FROM performance_appraisal pa
+             WHERE YEAR(pa.appraisal_year) = YEAR(CURDATE())`
+          ).catch(() => [[{ completion_pct: null }]] as any),
+        [[{ completion_pct: null }]] as any,
+      ),
       // Process breakdown for Operations dashboard
       db.execute<RowDataPacket[]>(
         `SELECT
