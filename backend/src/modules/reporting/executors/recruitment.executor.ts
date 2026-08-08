@@ -136,6 +136,11 @@ function appendJdScopeConditions(
 
 /**
  * Append branch/process scope conditions using the c alias (ats_candidates).
+ *
+ * job_requisition.branch_id is NULL on every row in production, so we cannot
+ * filter through jd. Instead we scope on c.applied_for_branch / applied_for_process
+ * via a sub-select against branch_master / process_master when the scope is
+ * restricted. For "all" scope this adds no predicate.
  */
 function appendCandidateScopeConditions(
   scope: ExecScope,
@@ -144,13 +149,16 @@ function appendCandidateScopeConditions(
 ): void {
   if (scope.branchScope.mode === "none") throw new ReportScopeAccessDeniedError("branchScope");
   if (scope.branchScope.mode === "restricted" && scope.branchScope.ids.length > 0) {
-    // candidates join via jd; filter on jd.branch_id
-    clauses.push(`jd.branch_id IN (${scope.branchScope.ids.map(() => "?").join(",")})`);
+    clauses.push(
+      `c.applied_for_branch IN (SELECT branch_name FROM branch_master WHERE id IN (${scope.branchScope.ids.map(() => "?").join(",")}))`
+    );
     params.push(...scope.branchScope.ids);
   }
   if (scope.processScope.mode === "none") throw new ReportScopeAccessDeniedError("processScope");
   if (scope.processScope.mode === "restricted" && scope.processScope.ids.length > 0) {
-    clauses.push(`jd.process_id IN (${scope.processScope.ids.map(() => "?").join(",")})`);
+    clauses.push(
+      `c.applied_for_process IN (SELECT process_name FROM process_master WHERE id IN (${scope.processScope.ids.map(() => "?").join(",")}))`
+    );
     params.push(...scope.processScope.ids);
   }
   if (scope.departmentScope.mode === "none") throw new ReportScopeAccessDeniedError("departmentScope");
@@ -233,10 +241,10 @@ export async function candidateTracker(
   const params: unknown[]  = [];
   appendCandidateScopeConditions(scope, clauses, params);
 
-  if (filters.branchId)  { clauses.push("jd.branch_id = ?");         params.push(String(filters.branchId)); }
-  if (filters.processId) { clauses.push("jd.process_id = ?");        params.push(String(filters.processId)); }
-  if (filters.status)    { clauses.push("c.application_status = ?"); params.push(String(filters.status)); }
-  clauses.push("c.applied_date BETWEEN ? AND ?");
+  if (filters.branchId)  { clauses.push("c.applied_for_branch  = (SELECT branch_name  FROM branch_master  WHERE id = ? LIMIT 1)"); params.push(String(filters.branchId)); }
+  if (filters.processId) { clauses.push("c.applied_for_process = (SELECT process_name FROM process_master WHERE id = ? LIMIT 1)"); params.push(String(filters.processId)); }
+  if (filters.status)    { clauses.push("c.status = ?");  params.push(String(filters.status)); }
+  clauses.push("c.created_at BETWEEN ? AND ?");
   params.push(from, to);
 
   if (options.mode === "worker" && options.cursor != null) {
@@ -250,18 +258,15 @@ export async function candidateTracker(
            c.full_name,
            c.mobile,
            c.email,
-           c.application_status,
+           c.status AS application_status,
            c.current_stage,
-           c.applied_date,
-           c.selected_date,
-           c.offer_date,
-           c.joining_date,
-           jd.job_title,
-           b.branch_name, p.process_name
+           c.created_at AS applied_date,
+           c.offer_doj AS joining_date,
+           jd.designation_name AS job_title,
+           c.applied_for_branch AS branch_name,
+           c.applied_for_process AS process_name
       FROM ats_candidate c
-      LEFT JOIN job_posting jd ON jd.id = c.job_id
-      LEFT JOIN branch_master b    ON b.id  = jd.branch_id
-      LEFT JOIN process_master p   ON p.id  = jd.process_id
+      LEFT JOIN job_requisition jd ON jd.id = c.requisition_id
      WHERE ${clauses.join(" AND ")}
      ORDER BY c.id ASC`;
 
@@ -285,29 +290,28 @@ export async function sourceEffectiveness(
   const clauses: string[] = ["1 = 1"];
   const params: unknown[]  = [];
 
-  // Branch scope narrowing via jd join
   if (scope.branchScope.mode === "none") throw new ReportScopeAccessDeniedError("branchScope");
   if (scope.branchScope.mode === "restricted" && scope.branchScope.ids.length > 0) {
-    clauses.push(`jd.branch_id IN (${scope.branchScope.ids.map(() => "?").join(",")})`);
+    clauses.push(`c.applied_for_branch IN (SELECT branch_name FROM branch_master WHERE id IN (${scope.branchScope.ids.map(() => "?").join(",")}))`);
     params.push(...scope.branchScope.ids);
   }
   if (scope.processScope.mode === "none") throw new ReportScopeAccessDeniedError("processScope");
   if (scope.departmentScope.mode === "none") throw new ReportScopeAccessDeniedError("departmentScope");
   if (scope.costCentreScope.mode === "none") throw new ReportScopeAccessDeniedError("costCentreScope");
 
-  if (filters.branchId) { clauses.push("jd.branch_id = ?");  params.push(String(filters.branchId)); }
+  if (filters.branchId)  { clauses.push("c.applied_for_branch  = (SELECT branch_name  FROM branch_master  WHERE id = ? LIMIT 1)"); params.push(String(filters.branchId)); }
+  if (filters.processId) { clauses.push("c.applied_for_process = (SELECT process_name FROM process_master WHERE id = ? LIMIT 1)"); params.push(String(filters.processId)); }
 
   const base = `
     SELECT COALESCE(c.sourcing_channel, 'Unknown') AS source_channel,
            COUNT(*) AS total_applications,
-           SUM(CASE WHEN c.application_status = 'selected' THEN 1 ELSE 0 END) AS selections,
+           SUM(CASE WHEN LOWER(c.status) IN ('selected','offered','onboarded','joined') THEN 1 ELSE 0 END) AS selections,
            ROUND(
-             SUM(CASE WHEN c.application_status = 'selected' THEN 1 ELSE 0 END) * 100.0
+             SUM(CASE WHEN LOWER(c.status) IN ('selected','offered','onboarded','joined') THEN 1 ELSE 0 END) * 100.0
              / NULLIF(COUNT(*), 0),
              2
            ) AS selection_rate_pct
       FROM ats_candidate c
-      LEFT JOIN job_posting jd ON jd.id = c.job_id
      WHERE ${clauses.join(" AND ")}
      GROUP BY source_channel
      ORDER BY total_applications DESC`;
@@ -331,15 +335,19 @@ export async function recruiterProductivity(
 
   if (scope.branchScope.mode === "none") throw new ReportScopeAccessDeniedError("branchScope");
   if (scope.branchScope.mode === "restricted" && scope.branchScope.ids.length > 0) {
-    clauses.push(`jd.branch_id IN (${scope.branchScope.ids.map(() => "?").join(",")})`);
+    clauses.push(`c.applied_for_branch IN (SELECT branch_name FROM branch_master WHERE id IN (${scope.branchScope.ids.map(() => "?").join(",")}))`);
     params.push(...scope.branchScope.ids);
   }
   if (scope.processScope.mode === "none") throw new ReportScopeAccessDeniedError("processScope");
+  if (scope.processScope.mode === "restricted" && scope.processScope.ids.length > 0) {
+    clauses.push(`c.applied_for_process IN (SELECT process_name FROM process_master WHERE id IN (${scope.processScope.ids.map(() => "?").join(",")}))`);
+    params.push(...scope.processScope.ids);
+  }
   if (scope.departmentScope.mode === "none") throw new ReportScopeAccessDeniedError("departmentScope");
   if (scope.costCentreScope.mode === "none") throw new ReportScopeAccessDeniedError("costCentreScope");
 
-  if (filters.branchId)  { clauses.push("jd.branch_id = ?");  params.push(String(filters.branchId)); }
-  if (filters.processId) { clauses.push("jd.process_id = ?"); params.push(String(filters.processId)); }
+  if (filters.branchId)  { clauses.push("c.applied_for_branch  = (SELECT branch_name  FROM branch_master  WHERE id = ? LIMIT 1)"); params.push(String(filters.branchId)); }
+  if (filters.processId) { clauses.push("c.applied_for_process = (SELECT process_name FROM process_master WHERE id = ? LIMIT 1)"); params.push(String(filters.processId)); }
 
   const base = `
     SELECT c.assigned_recruiter_id,
@@ -350,10 +358,9 @@ export async function recruiterProductivity(
              c.recruiter_assigned_name AS assigned_recruiter_name
            ) AS recruiter_name,
            COUNT(*) AS total_candidates,
-           SUM(CASE WHEN c.application_status = 'selected'    THEN 1 ELSE 0 END) AS offers_made,
-           SUM(CASE WHEN c.joining_date IS NOT NULL            THEN 1 ELSE 0 END) AS joinings
+           SUM(CASE WHEN LOWER(c.status) IN ('selected','offered','onboarded','joined') THEN 1 ELSE 0 END) AS offers_made,
+           SUM(CASE WHEN c.offer_doj IS NOT NULL THEN 1 ELSE 0 END) AS joinings
       FROM ats_candidate c
-      LEFT JOIN job_posting jd ON jd.id = c.job_id
       LEFT JOIN auth_user recruiter_user ON recruiter_user.id = c.assigned_recruiter_id
       LEFT JOIN employees recruiter_emp ON recruiter_emp.user_id = recruiter_user.id AND recruiter_emp.active_status = 1
      WHERE ${clauses.join(" AND ")}
@@ -382,10 +389,11 @@ export async function offerTracker(
   const params: unknown[]  = [];
   appendCandidateScopeConditions(scope, clauses, params);
 
-  if (filters.branchId)  { clauses.push("jd.branch_id = ?");  params.push(String(filters.branchId)); }
-  if (filters.processId) { clauses.push("jd.process_id = ?"); params.push(String(filters.processId)); }
-  clauses.push("c.offer_date IS NOT NULL");
-  clauses.push("c.offer_date BETWEEN ? AND ?");
+  if (filters.branchId)  { clauses.push("c.applied_for_branch  = (SELECT branch_name  FROM branch_master  WHERE id = ? LIMIT 1)"); params.push(String(filters.branchId)); }
+  if (filters.processId) { clauses.push("c.applied_for_process = (SELECT process_name FROM process_master WHERE id = ? LIMIT 1)"); params.push(String(filters.processId)); }
+  // offer_date does not exist; proxy: candidates whose current_stage reached offer
+  clauses.push("LOWER(c.current_stage) IN ('offered','offer','onboarded','joined')");
+  clauses.push("c.created_at BETWEEN ? AND ?");
   params.push(from, to);
 
   if (options.mode === "worker" && options.cursor != null) {
@@ -399,18 +407,16 @@ export async function offerTracker(
            c.full_name,
            c.mobile,
            c.email,
-           c.application_status,
-           c.offer_date,
-           c.offer_ctc,
-           c.offer_accepted,
-           c.joining_date,
-           c.offer_decline_reason,
-           jd.job_title,
-           b.branch_name, p.process_name
+           c.status AS application_status,
+           c.current_stage,
+           c.offer_salary AS offer_ctc,
+           c.joining_confirmation AS offer_accepted,
+           c.offer_doj AS joining_date,
+           jd.designation_name AS job_title,
+           c.applied_for_branch AS branch_name,
+           c.applied_for_process AS process_name
       FROM ats_candidate c
-      LEFT JOIN job_posting jd ON jd.id = c.job_id
-      LEFT JOIN branch_master b    ON b.id  = jd.branch_id
-      LEFT JOIN process_master p   ON p.id  = jd.process_id
+      LEFT JOIN job_requisition jd ON jd.id = c.requisition_id
      WHERE ${clauses.join(" AND ")}
      ORDER BY c.id ASC`;
 
@@ -435,10 +441,11 @@ export async function joiningPending(
   const params: unknown[]  = [];
   appendCandidateScopeConditions(scope, clauses, params);
 
-  if (filters.branchId)  { clauses.push("jd.branch_id = ?");  params.push(String(filters.branchId)); }
-  if (filters.processId) { clauses.push("jd.process_id = ?"); params.push(String(filters.processId)); }
-  clauses.push("c.application_status = 'selected'");
-  clauses.push("c.joining_date IS NULL");
+  if (filters.branchId)  { clauses.push("c.applied_for_branch  = (SELECT branch_name  FROM branch_master  WHERE id = ? LIMIT 1)"); params.push(String(filters.branchId)); }
+  if (filters.processId) { clauses.push("c.applied_for_process = (SELECT process_name FROM process_master WHERE id = ? LIMIT 1)"); params.push(String(filters.processId)); }
+  // Candidates who reached offer stage but have no confirmed joining date
+  clauses.push("LOWER(c.current_stage) IN ('offered','offer')");
+  clauses.push("c.offer_doj IS NULL");
 
   if (options.mode === "worker" && options.cursor != null) {
     clauses.push("c.id > ?");
@@ -451,16 +458,14 @@ export async function joiningPending(
            c.full_name,
            c.mobile,
            c.email,
-           c.application_status,
-           c.selected_date,
-           c.expected_joining_date,
-           DATEDIFF(CURDATE(), c.selected_date) AS days_since_selection,
-           jd.job_title,
-           b.branch_name, p.process_name
+           c.status AS application_status,
+           c.current_stage,
+           DATEDIFF(CURDATE(), c.created_at) AS days_since_application,
+           jd.designation_name AS job_title,
+           c.applied_for_branch AS branch_name,
+           c.applied_for_process AS process_name
       FROM ats_candidate c
-      LEFT JOIN job_posting jd ON jd.id = c.job_id
-      LEFT JOIN branch_master b    ON b.id  = jd.branch_id
-      LEFT JOIN process_master p   ON p.id  = jd.process_id
+      LEFT JOIN job_requisition jd ON jd.id = c.requisition_id
      WHERE ${clauses.join(" AND ")}
      ORDER BY c.id ASC`;
 
