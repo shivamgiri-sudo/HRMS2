@@ -21,8 +21,35 @@ vi.mock("../src/middleware/requireRole.js", () => ({
 vi.mock("../src/shared/roleResolver.js", () => ({
   getUserRoleContext: (...a: unknown[]) => getUserRoleContext(...a),
 }));
+// qa-audit.routes.ts imports resolveDashboardScopeForRequest, not resolveDashboardScope —
+// f0acbbc9 swapped it to close the demo-identity gap. This mock still supplied only the old
+// name, so the imported binding was undefined and the handler threw: both scope tests got a
+// 500 where they assert 403 and 200. A 500 on a scope check reads as a broken query, not as
+// a stale mock, and it silently removed the only coverage that a privileged reader stays
+// bounded by scope.
+//
+// The wrapper is mirrored rather than aliased, so the mock cannot lie about behaviour: the
+// real one short-circuits a DEMO super_admin/admin to ORG_ALL and otherwise delegates. Tests
+// drive it through the same resolveDashboardScope spy, so existing mockResolvedValue setups
+// keep working unchanged.
 vi.mock("../src/shared/dashboardScope.js", () => ({
   resolveDashboardScope: (...a: unknown[]) => resolveDashboardScope(...a),
+  resolveDashboardScopeForRequest: (
+    user: { id: string; role?: string; isDemo?: boolean },
+    primaryRole: string,
+  ) => {
+    if (user?.isDemo === true && (user.role === "super_admin" || user.role === "admin")) {
+      return Promise.resolve({
+        level: "ORG_ALL",
+        branchIds: [],
+        processIds: [],
+        employeeIds: [],
+        userId: user.id,
+        role: user.role,
+      });
+    }
+    return resolveDashboardScope(user?.id, primaryRole);
+  },
   buildScopeWhereEmployees: () => ({ sql: "1=1", params: [] }),
 }));
 const createForm = vi.fn();
