@@ -89,10 +89,12 @@ export function FilterMultiSelect({
     onChange(selected.includes(value) ? selected.filter((v) => v !== value) : [...selected, value]);
   };
 
+  // Label beside the control, not stacked above it. Stacked, four of these filled a tall
+  // full-width band to hold four short values.
   return (
-    <div className="flex min-w-[172px] flex-col gap-1" ref={containerRef}>
-      <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">{label}</span>
-      <div className="relative">
+    <div className="flex items-center gap-1.5" ref={containerRef}>
+      <span className="whitespace-nowrap text-[11px] font-semibold uppercase tracking-wide text-slate-500">{label}</span>
+      <div className="relative w-[168px]">
         <button
           type="button"
           id={id}

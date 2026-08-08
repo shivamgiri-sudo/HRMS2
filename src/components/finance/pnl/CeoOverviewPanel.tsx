@@ -127,7 +127,7 @@ export function CeoOverviewPanel({ period, branchId, onBranchChange }: CeoOvervi
 
       {/* Filters. Every option is drawn from data that exists for this period — an option that
           leads to an empty page is indistinguishable from a broken one. */}
-      <section className="flex flex-wrap items-end gap-2.5 rounded-2xl border border-slate-200 bg-white p-3.5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+      <section className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-xl border border-slate-200 bg-white px-3 py-2 shadow-sm dark:border-slate-800 dark:bg-slate-900">
         <FilterMultiSelect
           label="Branch"
           allLabel="All branches"
@@ -157,7 +157,7 @@ export function CeoOverviewPanel({ period, branchId, onBranchChange }: CeoOvervi
           <button
             type="button"
             onClick={() => { setProcessIds([]); setCostCentreIds([]); selectBranches([]); }}
-            className="ml-auto rounded-md border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-600 hover:border-slate-400 hover:text-slate-900 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-400"
+            className="ml-auto rounded-md border border-slate-200 bg-white px-2.5 py-1 text-xs text-slate-600 hover:border-slate-400 hover:text-slate-900 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-400"
           >
             Clear filters
           </button>
@@ -450,13 +450,13 @@ function Filter({
   onChange: (value: string) => void; children: React.ReactNode;
 }) {
   return (
-    <div className="flex min-w-[150px] flex-col gap-1">
-      <label className="text-[11px] font-semibold uppercase tracking-wider text-slate-500" htmlFor={id}>{label}</label>
+    <div className="flex items-center gap-1.5">
+      <label className="whitespace-nowrap text-[11px] font-semibold uppercase tracking-wide text-slate-500" htmlFor={id}>{label}</label>
       <select
         id={id}
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        className="rounded-md border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-[13px] dark:border-slate-700 dark:bg-slate-800"
+        className="rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-[13px] dark:border-slate-700 dark:bg-slate-800"
       >
         {children}
       </select>
