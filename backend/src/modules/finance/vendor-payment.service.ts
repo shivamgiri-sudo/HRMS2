@@ -687,11 +687,29 @@ export const vendorPaymentService = {
     const payment = await this.getPayment(id);
     if (!payment) return;
     const [accountsUsers] = await db.execute<RowDataPacket[]>(
+      /*
+       * Three faults in one statement, so no accounts_head has ever been notified of a pending
+       * vendor payment - the query threw before reaching the inbox writes below.
+       *
+       *   user_role_assignment  -> the table is user_roles
+       *   ura.role_name         -> the column is role_key
+       *   u.active_status       -> auth_user has no active_status; it records is_blocked
+       *
+       * The polarity is the one thing worth stating plainly: active_status = 1 meant "this user
+       * is active", and the equivalent on auth_user is NOT blocked. Reading it the other way
+       * round would notify exactly the blocked accounts and skip the working ones, silently.
+       * NULL is treated as not blocked, matching how listAgents and the access routes read this
+       * column elsewhere.
+       *
+       * user_roles carries its own active_status, so the role assignment's own active flag is
+       * kept as a separate condition rather than being folded into the user's.
+       */
       `SELECT DISTINCT u.id
          FROM auth_user u
-         JOIN user_role_assignment ura ON ura.user_id = u.id
-        WHERE ura.role_name = 'accounts_head'
-          AND u.active_status = 1
+         JOIN user_roles ur ON ur.user_id = u.id
+        WHERE ur.role_key = 'accounts_head'
+          AND ur.active_status = 1
+          AND (u.is_blocked IS NULL OR u.is_blocked = 0)
         LIMIT 100`
     );
 

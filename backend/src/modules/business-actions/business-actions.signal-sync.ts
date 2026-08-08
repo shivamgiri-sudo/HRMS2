@@ -436,19 +436,34 @@ export const businessActionSignalSync = {
 
     // Query roster shortages in next 7 days
     const [shortages] = await db.execute<RosterShortageRow[]>(
+      /*
+       * This statement was broken three separate ways and could never run:
+       *
+       *   wsr.required_hc   - no such column. It is required_productive_hc / required_planned_hc.
+       *   JOIN process p    - no such table. The master is process_master.
+       *   ra.process_id     - roster_assignment has no process_id (or any process column).
+       *
+       * Which headcount counts as "required" is not a guess: the column comments in the schema
+       * define it. required_productive_hc is "Base HC before shrinkage", required_planned_hc is
+       * "Final planned HC after shrinkage - roster engine uses this", and coverage_delta is
+       * documented as "roster_scheduled_hc - required_planned_hc (negative = shortage)". So a
+       * shortage is measured against the planned figure, and this now uses it.
+       *
+       * The roster join is dropped rather than repaired. wfm_slot_requirement already carries
+       * roster_scheduled_hc - "Actual HC scheduled by the roster engine for this slot" - so
+       * counting roster rows by hand recomputed a number the table already stores, and did it
+       * through a join key that does not exist.
+       */
       `SELECT wsr.requirement_date,
               wsr.process_id,
               p.process_name,
-              wsr.required_hc,
-              COUNT(DISTINCT ra.employee_id) AS planned_hc,
-              wsr.required_hc - COUNT(DISTINCT ra.employee_id) AS shortage
+              wsr.required_planned_hc AS required_hc,
+              COALESCE(wsr.roster_scheduled_hc, 0) AS planned_hc,
+              wsr.required_planned_hc - COALESCE(wsr.roster_scheduled_hc, 0) AS shortage
        FROM wfm_slot_requirement wsr
-       JOIN process p ON p.id = wsr.process_id
-       LEFT JOIN roster_assignment ra
-         ON ra.roster_date = wsr.requirement_date
-         AND ra.process_id = wsr.process_id
+       LEFT JOIN process_master p ON p.id = wsr.process_id
        WHERE wsr.requirement_date BETWEEN CURDATE() AND DATE_ADD(CURDATE(), INTERVAL 7 DAY)
-       GROUP BY wsr.requirement_date, wsr.process_id, p.process_name, wsr.required_hc
+         AND wsr.is_active = 1
        HAVING shortage > 0
        ORDER BY shortage DESC, wsr.requirement_date ASC
        LIMIT 100`

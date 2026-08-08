@@ -334,7 +334,7 @@ export async function getAttritionRiskSignal(branchId?: string, processId?: stri
   // LMS high risk
   const [lmsRiskRows] = await db.execute<RowDataPacket[]>(
     `SELECT COUNT(*) AS cnt FROM lms_learner_progress lp
-     JOIN employees e ON e.id = lp.employee_id
+     JOIN employees e ON e.id = lp.employee_id COLLATE utf8mb4_unicode_ci
      WHERE lp.attrition_risk_signal = 'red' AND lp.ops_handover_ready = 0
        AND ${empWhere}`,
     params
@@ -486,9 +486,9 @@ export async function getPayrollExposureSummary(): Promise<PayrollExposureSummar
 // ─── 3d: Training Readiness Pulse ────────────────────────────────────────────
 
 export interface TrainingReadinessPulse {
-  summary: { total_learners: number; certified_pct: number; at_risk_count: number; avg_completion_pct: number; avg_score: number; overdue_count: number };
+  summary: { total_learners: number; certified_pct: number; at_risk_count: number; avg_completion_pct: number | null; avg_score: number; overdue_count: number };
   by_process: Array<{ process: string; total: number; certified: number; certified_pct: number; at_risk: number; avg_score: number }>;
-  critical_agents: Array<{ employee_code: string; employee_name: string; risk_level: string; completion_pct: number; last_active?: string }>;
+  critical_agents: Array<{ employee_code: string; employee_name: string; risk_level: string; completion_pct: number | null; last_active?: string }>;
   intervention_flags: InterventionFlag[];
 }
 
@@ -502,13 +502,13 @@ export async function getTrainingReadinessPulse(branchId?: string, processId?: s
   const [summaryRows] = await db.execute<RowDataPacket[]>(
     `SELECT
        COUNT(DISTINCT lp.employee_id) AS total_learners,
-       ROUND(SUM(CASE WHEN lp.certification_status = 'Certified' THEN 1 ELSE 0 END) * 100.0 / NULLIF(COUNT(*),0), 1) AS certified_pct,
+       ROUND(SUM(CASE WHEN lp.ops_handover_ready = 1 THEN 1 ELSE 0 END) * 100.0 / NULLIF(COUNT(*),0), 1) AS certified_pct,
        SUM(CASE WHEN lp.attrition_risk_signal = 'red' THEN 1 ELSE 0 END) AS at_risk_count,
-       ROUND(AVG(lp.completion_pct), 1) AS avg_completion_pct,
+       NULL AS avg_completion_pct,
        ROUND(AVG(lp.mcq_best_score), 1) AS avg_score,
-       SUM(CASE WHEN lp.last_updated < DATE_SUB(NOW(), INTERVAL 7 DAY) THEN 1 ELSE 0 END) AS overdue_count
+       SUM(CASE WHEN lp.updated_at < DATE_SUB(NOW(), INTERVAL 7 DAY) THEN 1 ELSE 0 END) AS overdue_count
      FROM lms_learner_progress lp
-     JOIN employees e ON e.id = lp.employee_id
+     JOIN employees e ON e.id = lp.employee_id COLLATE utf8mb4_unicode_ci
      WHERE ${empWhere}`,
     params
   ).catch(() => [[null]] as any);
@@ -516,12 +516,12 @@ export async function getTrainingReadinessPulse(branchId?: string, processId?: s
   const [byProcessRows] = await db.execute<RowDataPacket[]>(
     `SELECT COALESCE(pm.process_name, 'Unknown') AS process,
             COUNT(DISTINCT lp.employee_id) AS total,
-            SUM(CASE WHEN lp.certification_status = 'Certified' THEN 1 ELSE 0 END) AS certified,
-            ROUND(SUM(CASE WHEN lp.certification_status = 'Certified' THEN 1 ELSE 0 END) * 100.0 / NULLIF(COUNT(*),0), 1) AS certified_pct,
+            SUM(CASE WHEN lp.ops_handover_ready = 1 THEN 1 ELSE 0 END) AS certified,
+            ROUND(SUM(CASE WHEN lp.ops_handover_ready = 1 THEN 1 ELSE 0 END) * 100.0 / NULLIF(COUNT(*),0), 1) AS certified_pct,
             SUM(CASE WHEN lp.attrition_risk_signal = 'red' THEN 1 ELSE 0 END) AS at_risk,
             ROUND(AVG(lp.mcq_best_score), 1) AS avg_score
      FROM lms_learner_progress lp
-     JOIN employees e ON e.id = lp.employee_id
+     JOIN employees e ON e.id = lp.employee_id COLLATE utf8mb4_unicode_ci
      LEFT JOIN process_master pm ON pm.id = e.process_id
      WHERE ${empWhere}
      GROUP BY e.process_id
@@ -534,14 +534,14 @@ export async function getTrainingReadinessPulse(branchId?: string, processId?: s
     `SELECT e.employee_code,
             COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
             lp.attrition_risk_signal AS risk_level,
-            COALESCE(lp.completion_pct, 0) AS completion_pct,
-            DATE_FORMAT(lp.last_updated, '%Y-%m-%d') AS last_active
+            NULL AS completion_pct,
+            DATE_FORMAT(lp.updated_at, '%Y-%m-%d') AS last_active
      FROM lms_learner_progress lp
-     JOIN employees e ON e.id = lp.employee_id
-     WHERE lp.attrition_risk_signal IN ('red','amber')
-       AND lp.certification_status != 'Certified'
+     JOIN employees e ON e.id = lp.employee_id COLLATE utf8mb4_unicode_ci
+     WHERE lp.attrition_risk_signal IN ('red','yellow')
+       AND lp.ops_handover_ready = 0
        AND ${empWhere}
-     ORDER BY lp.attrition_risk_signal DESC, lp.completion_pct ASC
+     ORDER BY lp.attrition_risk_signal DESC, lp.readiness_score ASC
      LIMIT 15`,
     params
   ).catch(() => [[] as any]);
@@ -571,7 +571,9 @@ export async function getTrainingReadinessPulse(branchId?: string, processId?: s
       total_learners: Number(s.total_learners ?? 0),
       certified_pct: certifiedPct,
       at_risk_count: atRisk,
-      avg_completion_pct: Number(s.avg_completion_pct ?? 0),
+      // null, not 0: the LMS sync computes no completion figure at all, and 0 would read
+      // as "nobody has completed anything" rather than "not measured".
+      avg_completion_pct: null,
       avg_score: Number(s.avg_score ?? 0),
       overdue_count: Number(s.overdue_count ?? 0),
     },
@@ -581,7 +583,7 @@ export async function getTrainingReadinessPulse(branchId?: string, processId?: s
     })),
     critical_agents: (criticalRows as any[]).map((r: any) => ({
       employee_code: r.employee_code, employee_name: r.employee_name,
-      risk_level: r.risk_level, completion_pct: Number(r.completion_pct), last_active: r.last_active,
+      risk_level: r.risk_level, completion_pct: null, last_active: r.last_active,
     })),
     intervention_flags: flags,
   };
