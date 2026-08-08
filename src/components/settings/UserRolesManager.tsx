@@ -27,6 +27,8 @@ interface UserRow {
   id: string;
   email: string;
   is_blocked: boolean;
+  locked_until: string | null;
+  failed_login_attempts: number;
   last_login_at: string | null;
   full_name: string | null;
   employee_code: string | null;
@@ -136,6 +138,12 @@ function formatLastLogin(dt: string | null) {
 }
 
 const PAGE_SIZE = 50;
+
+function getLockState(u: UserRow): "manual" | "auto" | "none" {
+  if (u.is_blocked) return "manual";
+  if (u.locked_until && new Date(u.locked_until) > new Date()) return "auto";
+  return "none";
+}
 
 // ── Main component ─────────────────────────────────────────────────────────────
 
@@ -346,7 +354,7 @@ export function UserRolesManager() {
                 checked={includeBlocked}
                 onChange={(e) => { setIncludeBlocked(e.target.checked); setOffset(0); }}
               />
-              Show locked
+              Show locked / auto-locked
             </label>
             <button
               onClick={() => queryClient.invalidateQueries({ queryKey: ["access-users"] })}
@@ -385,92 +393,101 @@ export function UserRolesManager() {
                   </tr>
                 </thead>
                 <tbody>
-                  {users.map((u) => (
-                    <tr key={u.id} className={`border-t transition-colors hover:bg-slate-50/80 ${u.is_blocked ? "opacity-60 bg-red-50/40" : ""}`}>
-                      <td className="px-4 py-3">
-                        <div className="flex items-center gap-3 min-w-0">
-                          <Avatar className="h-8 w-8 shrink-0">
-                            <AvatarFallback className="text-xs bg-slate-200 text-slate-700">
-                              {initials(u.full_name, u.email)}
-                            </AvatarFallback>
-                          </Avatar>
-                          <div className="min-w-0">
-                            <p className="font-semibold text-slate-900 truncate max-w-[180px]">
-                              {u.full_name ?? <span className="text-slate-400 font-normal italic">No name</span>}
-                            </p>
-                            <p className="text-xs text-slate-500 truncate max-w-[180px]">{u.email}</p>
-                          </div>
-                        </div>
-                      </td>
-                      <td className="px-4 py-3">
-                        {u.employee_code ? (
-                          <span className="inline-flex items-center rounded-full bg-blue-50 px-2.5 py-0.5 text-xs font-semibold text-blue-700">
-                            {u.employee_code}
-                          </span>
-                        ) : (
-                          <span className="text-xs text-slate-300 italic">not linked</span>
-                        )}
-                      </td>
-                      <td className="px-4 py-3">
-                        <div className="flex flex-wrap gap-1">
-                          {u.roles.length === 0 ? (
-                            <span className="text-xs text-slate-300 italic">no role</span>
-                          ) : (
-                            u.roles.map((rk) => roleBadge(rk, roleMap.get(rk) ?? rk))
-                          )}
-                        </div>
-                      </td>
-                      <td className="px-4 py-3">
-                        <span className={`inline-flex items-center gap-1 text-xs ${u.last_login_at ? "text-slate-600" : "text-slate-300"}`}>
-                          <Clock className="h-3 w-3" />
-                          {formatLastLogin(u.last_login_at)}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3">
-                        {u.is_blocked ? (
-                          <span className="inline-flex items-center gap-1 rounded-full bg-red-100 px-2.5 py-0.5 text-xs font-semibold text-red-700">
-                            Locked
-                          </span>
-                        ) : u.employment_status ? (
-                          <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold ${
-                            u.employment_status.toLowerCase() === "active"
-                              ? "bg-emerald-50 text-emerald-700"
-                              : "bg-slate-100 text-slate-500"
-                          }`}>
-                            {u.employment_status}
-                          </span>
-                        ) : (
-                          <span className="text-xs text-slate-300 italic">—</span>
-                        )}
-                      </td>
-                      <td className="px-4 py-3">
-                        <div className="flex items-center gap-1">
-                          <button
-                            onClick={() => openRoleDialog(u)}
-                            className="cursor-pointer rounded-xl border border-slate-200 p-1.5 text-slate-500 hover:bg-slate-100 hover:text-slate-800 transition-colors"
-                            title="Edit roles & scope"
-                          >
-                            <Pencil className="h-3.5 w-3.5" />
-                          </button>
-                          {u.id !== currentUser?.id && (
-                            <button
-                              onClick={() => setBlockDialogUser(u)}
-                              className={`cursor-pointer rounded-xl border p-1.5 transition-colors ${
-                                u.is_blocked
-                                  ? "border-emerald-200 text-emerald-600 hover:bg-emerald-50"
-                                  : "border-red-200 text-red-500 hover:bg-red-50"
-                              }`}
-                              title={u.is_blocked ? "Unlock account" : "Lock account"}
-                            >
-                              {u.is_blocked
-                                ? <CheckCircle className="h-3.5 w-3.5" />
-                                : <Ban className="h-3.5 w-3.5" />}
-                            </button>
-                          )}
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
+                  {users.map((u) => {
+                    const lockState = getLockState(u);
+                    const isLocked = lockState !== "none";
+                    return (
+                        <tr key={u.id} className={`border-t transition-colors hover:bg-slate-50/80 ${isLocked ? "opacity-60 bg-red-50/40" : ""}`}>
+                          <td className="px-4 py-3">
+                            <div className="flex items-center gap-3 min-w-0">
+                              <Avatar className="h-8 w-8 shrink-0">
+                                <AvatarFallback className="text-xs bg-slate-200 text-slate-700">
+                                  {initials(u.full_name, u.email)}
+                                </AvatarFallback>
+                              </Avatar>
+                              <div className="min-w-0">
+                                <p className="font-semibold text-slate-900 truncate max-w-[180px]">
+                                  {u.full_name ?? <span className="text-slate-400 font-normal italic">No name</span>}
+                                </p>
+                                <p className="text-xs text-slate-500 truncate max-w-[180px]">{u.email}</p>
+                              </div>
+                            </div>
+                          </td>
+                          <td className="px-4 py-3">
+                            {u.employee_code ? (
+                              <span className="inline-flex items-center rounded-full bg-blue-50 px-2.5 py-0.5 text-xs font-semibold text-blue-700">
+                                {u.employee_code}
+                              </span>
+                            ) : (
+                              <span className="text-xs text-slate-300 italic">not linked</span>
+                            )}
+                          </td>
+                          <td className="px-4 py-3">
+                            <div className="flex flex-wrap gap-1">
+                              {u.roles.length === 0 ? (
+                                <span className="text-xs text-slate-300 italic">no role</span>
+                              ) : (
+                                u.roles.map((rk) => roleBadge(rk, roleMap.get(rk) ?? rk))
+                              )}
+                            </div>
+                          </td>
+                          <td className="px-4 py-3">
+                            <span className={`inline-flex items-center gap-1 text-xs ${u.last_login_at ? "text-slate-600" : "text-slate-300"}`}>
+                              <Clock className="h-3 w-3" />
+                              {formatLastLogin(u.last_login_at)}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3">
+                            {lockState === "manual" ? (
+                              <span className="inline-flex items-center gap-1 rounded-full bg-red-100 px-2.5 py-0.5 text-xs font-semibold text-red-700">
+                                <Ban className="h-3 w-3" /> Locked
+                              </span>
+                            ) : lockState === "auto" ? (
+                              <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-semibold text-amber-700"
+                                title={`${u.failed_login_attempts} failed attempts — locked until ${new Date(u.locked_until!).toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata" })}`}>
+                                <Clock className="h-3 w-3" /> Auto-locked
+                              </span>
+                            ) : u.employment_status ? (
+                              <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold ${
+                                u.employment_status.toLowerCase() === "active"
+                                  ? "bg-emerald-50 text-emerald-700"
+                                  : "bg-slate-100 text-slate-500"
+                              }`}>
+                                {u.employment_status}
+                              </span>
+                            ) : (
+                              <span className="text-xs text-slate-300 italic">—</span>
+                            )}
+                          </td>
+                          <td className="px-4 py-3">
+                            <div className="flex items-center gap-1">
+                              <button
+                                onClick={() => openRoleDialog(u)}
+                                className="cursor-pointer rounded-xl border border-slate-200 p-1.5 text-slate-500 hover:bg-slate-100 hover:text-slate-800 transition-colors"
+                                title="Edit roles & scope"
+                              >
+                                <Pencil className="h-3.5 w-3.5" />
+                              </button>
+                              {u.id !== currentUser?.id && (
+                                <button
+                                  onClick={() => setBlockDialogUser(u)}
+                                  className={`cursor-pointer rounded-xl border p-1.5 transition-colors ${
+                                    isLocked
+                                      ? "border-emerald-200 text-emerald-600 hover:bg-emerald-50"
+                                      : "border-red-200 text-red-500 hover:bg-red-50"
+                                  }`}
+                                  title={isLocked ? "Unlock account" : "Lock account"}
+                                >
+                                  {isLocked
+                                    ? <CheckCircle className="h-3.5 w-3.5" />
+                                    : <Ban className="h-3.5 w-3.5" />}
+                                </button>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -677,33 +694,47 @@ export function UserRolesManager() {
       </Dialog>
 
       {/* ── Lock / unlock dialog ─────────────────────────────────────────────── */}
-      <AlertDialog open={!!blockDialogUser} onOpenChange={(o) => !o && setBlockDialogUser(null)}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>
-              {blockDialogUser?.is_blocked ? "Unlock Account" : "Lock Account"}
-            </AlertDialogTitle>
-            <AlertDialogDescription>
-              {blockDialogUser?.is_blocked
-                ? `Unlock ${blockDialogUser.full_name ?? blockDialogUser.email}? They will be able to log in again.`
-                : `Lock ${blockDialogUser?.full_name ?? blockDialogUser?.email}? They will be unable to log in until unlocked.`}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={() =>
-                blockDialogUser &&
-                blockMutation.mutate({ userId: blockDialogUser.id, block: !blockDialogUser.is_blocked })
-              }
-              className={blockDialogUser?.is_blocked ? "" : "bg-destructive text-destructive-foreground hover:bg-destructive/90"}
-            >
-              {blockMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              {blockDialogUser?.is_blocked ? "Unlock" : "Lock"}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      {blockDialogUser && (() => {
+        const lockState = getLockState(blockDialogUser);
+        const isLocked = lockState !== "none";
+        return (
+          <AlertDialog open onOpenChange={(o) => !o && setBlockDialogUser(null)}>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>
+                  {isLocked ? "Unlock Account" : "Lock Account"}
+                </AlertDialogTitle>
+                <AlertDialogDescription>
+                  {isLocked ? (
+                    <>
+                      Unlock <strong>{blockDialogUser.full_name ?? blockDialogUser.email}</strong>?
+                      {lockState === "auto" && (
+                        <span className="block mt-1 text-amber-700">
+                          Auto-locked after {blockDialogUser.failed_login_attempts} failed login attempts.
+                          Unlocking will reset the counter.
+                        </span>
+                      )}
+                      {lockState === "manual" && " They will be able to log in again."}
+                    </>
+                  ) : (
+                    <>Lock <strong>{blockDialogUser.full_name ?? blockDialogUser.email}</strong>? They will be unable to log in until manually unlocked.</>
+                  )}
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>Cancel</AlertDialogCancel>
+                <AlertDialogAction
+                  onClick={() => blockMutation.mutate({ userId: blockDialogUser.id, block: !isLocked })}
+                  className={isLocked ? "" : "bg-destructive text-destructive-foreground hover:bg-destructive/90"}
+                >
+                  {blockMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                  {isLocked ? "Unlock" : "Lock"}
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+        );
+      })()}
     </Card>
   );
 }

@@ -76,6 +76,10 @@ export const accountControlService = {
     reason: string,
     ip: string
   ): Promise<{ logged: true }> {
+    await db.execute(
+      `UPDATE auth_user SET is_blocked = 1 WHERE id = ?`,
+      [userId]
+    );
     await insertControlLog(userId, "account_locked", initiatedBy, ip, reason);
     await logSensitiveAction({
       actor_user_id: initiatedBy,
@@ -93,6 +97,12 @@ export const accountControlService = {
     initiatedBy: string,
     ip: string
   ): Promise<{ logged: true }> {
+    await db.execute(
+      `UPDATE auth_user
+       SET is_blocked = 0, failed_login_attempts = 0, locked_until = NULL
+       WHERE id = ?`,
+      [userId]
+    );
     await insertControlLog(userId, "account_unlocked", initiatedBy, ip);
     await logSensitiveAction({
       actor_user_id: initiatedBy,

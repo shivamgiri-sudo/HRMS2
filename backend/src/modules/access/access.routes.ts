@@ -41,6 +41,12 @@ type UserListRow = {
   email: string;
   full_name: string | null;
   employee_code: string | null;
+  employee_id: string | null;
+  employment_status: string | null;
+  is_blocked: number;
+  locked_until: string | null;
+  failed_login_attempts: number;
+  last_login_at: string | null;
   roles: string | null;
 };
 
@@ -119,47 +125,70 @@ router.get("/roles/catalog", requireRole("admin", "hr"), h(async (_req: Authenti
 }));
 
 // Fast searchable users endpoint for the redesigned access-control page.
-router.get("/users", requireRole("admin", "hr"), h(async (req: AuthenticatedRequest, res: Response) => {
+router.get("/users", requireRole("admin", "hr", "super_admin"), h(async (req: AuthenticatedRequest, res: Response) => {
   const search = String(req.query.search ?? "").trim();
-  const limit = Math.max(1, Math.min(Number(req.query.limit ?? 20), 50));
+  const limit = Math.max(1, Math.min(Number(req.query.limit ?? 50), 100));
   const offset = Math.max(0, Number(req.query.offset ?? 0));
+  const includeBlocked = req.query.includeBlocked === "true";
   const like = `%${search}%`;
 
-  const where = search
-    ? `WHERE au.is_blocked = 0 AND (
-         au.email LIKE ?
-         OR e.full_name LIKE ?
-         OR e.employee_code LIKE ?
-       )`
-    : "WHERE au.is_blocked = 0";
+  const blockFilter = includeBlocked ? "" : "AND au.is_blocked = 0 AND (au.locked_until IS NULL OR au.locked_until < NOW())";
+  const searchFilter = search
+    ? `AND (au.email LIKE ? OR e.full_name LIKE ? OR e.employee_code LIKE ?)`
+    : "";
   const params: unknown[] = search ? [like, like, like] : [];
 
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT
        au.id,
        au.email,
+       au.is_blocked,
+       au.locked_until,
+       au.failed_login_attempts,
+       au.last_login_at,
        COALESCE(e.full_name, au.email) AS full_name,
+       e.id AS employee_id,
        e.employee_code,
+       e.employment_status,
        GROUP_CONCAT(DISTINCT ur.role_key ORDER BY ur.role_key) AS roles
      FROM auth_user au
      LEFT JOIN employees e ON e.user_id = au.id AND e.active_status = 1
      LEFT JOIN user_roles ur ON ur.user_id = au.id AND ur.active_status = 1
-     ${where}
-     GROUP BY au.id, au.email, e.full_name, e.employee_code
+     WHERE 1=1 ${blockFilter} ${searchFilter}
+     GROUP BY au.id, au.email, au.is_blocked, au.locked_until, au.failed_login_attempts,
+              au.last_login_at, e.id, e.full_name, e.employee_code, e.employment_status
      ORDER BY COALESCE(e.full_name, au.email)
      LIMIT ${limit} OFFSET ${offset}`,
     params
   );
+
+  const [countRows] = await db.execute<RowDataPacket[]>(
+    `SELECT COUNT(DISTINCT au.id) AS total
+     FROM auth_user au
+     LEFT JOIN employees e ON e.user_id = au.id AND e.active_status = 1
+     WHERE 1=1 ${blockFilter} ${searchFilter}`,
+    params
+  );
+
+  const total = Number((countRows as RowDataPacket[])[0]?.total ?? 0);
 
   res.json({
     success: true,
     data: (rows as UserListRow[]).map((row) => ({
       id: row.id,
       email: row.email,
+      is_blocked: !!row.is_blocked,
+      locked_until: row.locked_until ?? null,
+      failed_login_attempts: row.failed_login_attempts ?? 0,
+      last_login_at: row.last_login_at ?? null,
       full_name: row.full_name,
-      employee_code: row.employee_code,
+      employee_id: row.employee_id ?? null,
+      employee_code: row.employee_code ?? null,
+      employment_status: row.employment_status ?? null,
       roles: row.roles ? String(row.roles).split(",") : [],
     })),
+    total,
+    meta: { limit, offset, total },
   });
 }));
 
