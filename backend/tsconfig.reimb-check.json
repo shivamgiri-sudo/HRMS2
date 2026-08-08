@@ -1,0 +1,5 @@
+{
+  "extends": "./tsconfig.json",
+  "include": ["src/modules/payroll/reimbursements.routes.ts"],
+  "compilerOptions": { "noEmit": true }
+}

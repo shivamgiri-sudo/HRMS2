@@ -131,8 +131,13 @@ reimbursementsRouter.get(
          LEFT JOIN employees e ON e.id = erc.employee_id
          ${where}
          ORDER BY erc.created_at DESC
-         LIMIT ? OFFSET ?`,
-      [...params, limit, offset]
+         -- Interpolated, not bound: db.execute prepares the statement and MySQL refuses a bound
+         -- parameter in LIMIT here, so this returned "Incorrect arguments to mysqld_stmt_execute"
+         -- on every call and /payroll/reimbursements never listed a claim. Safe to interpolate
+         -- because limit and offset are derived from parseInt above, NaN-guarded and clamped to
+         -- 1..200 before this point; every real filter stays a bound parameter.
+         LIMIT ${limit} OFFSET ${offset}`,
+      params
     );
 
     return res.json({ success: true, data: rows, total, page, limit });
