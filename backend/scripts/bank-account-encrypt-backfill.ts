@@ -49,12 +49,11 @@ async function run() {
   const corrupt_ids: string[] = [];
 
   while (true) {
-    const [rows] = await db.execute<RowDataPacket[]>(
+    const [rows] = await db.query<RowDataPacket[]>(
       `SELECT id, account_number, account_number_enc
          FROM employee_bank_detail
         WHERE account_number IS NOT NULL AND account_number_enc IS NULL
-        LIMIT ? OFFSET ?`,
-      [BATCH_SIZE, offset]
+        LIMIT ${BATCH_SIZE} OFFSET ${offset}`
     );
 
     if (!rows.length) break;
