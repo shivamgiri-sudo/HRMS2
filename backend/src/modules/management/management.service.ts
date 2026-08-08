@@ -351,7 +351,6 @@ export const managementService = {
         `SELECT
            SUM(
              e.active_status = 1
-             AND LOWER(COALESCE(e.employment_status, 'active')) = 'active'
              AND e.date_of_joining <= CURDATE()
            ) AS headcount,
            SUM(
@@ -450,7 +449,7 @@ export const managementService = {
     ] = await Promise.all([
       db.execute<RowDataPacket[]>("SELECT COUNT(*) AS total FROM auth_user"),
       db.execute<RowDataPacket[]>(
-        "SELECT COUNT(*) AS total FROM employees WHERE active_status = 1 AND LOWER(COALESCE(employment_status,'active')) = 'active' AND date_of_joining <= CURDATE()"
+        "SELECT COUNT(*) AS total FROM employees WHERE active_status = 1 AND date_of_joining <= CURDATE()"
       ),
       db.execute<RowDataPacket[]>("SELECT COUNT(*) AS total FROM workforce_role_catalog WHERE active_status = 1"),
       db.execute<RowDataPacket[]>("SELECT COUNT(*) AS total FROM page_catalog"),
@@ -579,8 +578,8 @@ export const managementService = {
     ] = await Promise.all([
       db.execute<RowDataPacket[]>(
         `SELECT
-           SUM(active_status = 1 AND LOWER(COALESCE(employment_status,'active')) = 'active' AND date_of_joining <= CURDATE()) AS active_headcount,
-           SUM(active_status = 1 AND LOWER(COALESCE(employment_status,'active')) = 'active' AND date_of_joining BETWEEN DATE_SUB(CURDATE(), INTERVAL 29 DAY) AND CURDATE()) AS new_joiners_30d,
+           SUM(active_status = 1 AND date_of_joining <= CURDATE()) AS active_headcount,
+           SUM(active_status = 1 AND date_of_joining BETWEEN DATE_SUB(CURDATE(), INTERVAL 29 DAY) AND CURDATE()) AS new_joiners_30d,
            SUM(
              COALESCE(date_of_leaving, resignation_date, date_of_exit)
              BETWEEN DATE_SUB(CURDATE(), INTERVAL 29 DAY) AND CURDATE()
@@ -824,7 +823,7 @@ export const managementService = {
                 dm.designation_name, e.date_of_joining as joining_date
          FROM employees e
          LEFT JOIN designation_master dm ON dm.id = e.designation_id
-         WHERE LOWER(COALESCE(e.employment_status, 'active')) = 'active'
+         WHERE e.active_status = 1
            AND e.date_of_joining >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
          ORDER BY e.date_of_joining DESC
          LIMIT 10`
