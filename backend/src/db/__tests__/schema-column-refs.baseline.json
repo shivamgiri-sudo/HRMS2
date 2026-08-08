@@ -1,7 +1,4 @@
 {
-  "modules/access/access.routes.ts": [
-    "user_assignment_scope.assigned_at"
-  ],
   "modules/ats/interview.service.ts": [
     "ats_interview_result.created_at"
   ],
@@ -24,30 +21,12 @@
   "modules/employees/employeeJoiningDocuments.service.ts": [
     "auth_user.full_name"
   ],
-  "modules/engagement/engagement-health.service.ts": [
-    "development_plan.id",
-    "development_plan_goal.development_plan_id"
-  ],
-  "modules/engagement/survey.service.ts": [
-    "survey_question.display_order",
-    "survey_response.response_id"
-  ],
-  "modules/expenses/expenseReport.service.ts": [
-    "employees.name"
-  ],
   "modules/finance/vendor-payment.service.ts": [
     "auth_user.active_status"
-  ],
-  "modules/lifecycle/lifecycle.routes.ts": [
-    "ats_candidate.converted_employee_id",
-    "ats_employment_offer.prepared_by"
   ],
   "modules/payroll-masters/payrollMasters.service.ts": [
     "salary_package_master.grade_id",
     "salary_package_master.slab_id"
-  ],
-  "modules/payroll/holiday-debug.routes.ts": [
-    "cost_centre_master.process_name"
   ],
   "modules/payroll/payroll-more.routes.ts": [
     "employees.branch_name",
@@ -55,12 +34,7 @@
   ],
   "modules/payroll/payroll.routes.ts": [
     "employee_documents.pan_number",
-    "employees.ctc_annual",
-    "salary_advance_log.advance_amount",
-    "salary_advance_log.approved_at",
-    "salary_advance_log.approved_by",
-    "salary_advance_log.recovery_month",
-    "salary_advance_log.rejection_reason"
+    "employees.ctc_annual"
   ],
   "modules/reporting/executors/assets.executor.ts": [
     "employee_documents.document_number",
@@ -69,19 +43,6 @@
   "modules/reporting/executors/employee.executor.ts": [
     "employees.contract_end_date",
     "employees.probation_days"
-  ],
-  "modules/reporting/executors/recruitment.executor.ts": [
-    "ats_candidate.application_status",
-    "ats_candidate.applied_date",
-    "ats_candidate.expected_joining_date",
-    "ats_candidate.job_id",
-    "ats_candidate.joining_date",
-    "ats_candidate.offer_accepted",
-    "ats_candidate.offer_ctc",
-    "ats_candidate.offer_date",
-    "ats_candidate.offer_decline_reason",
-    "ats_candidate.selected_date",
-    "job_posting.job_title"
   ],
   "modules/reporting/identity-mapping-report.ts": [
     "report_identity_source_snapshot.matched_employee_name",
@@ -162,9 +123,5 @@
   ],
   "modules/reporting/reporting.service.ts": [
     "process_master.lob_id"
-  ],
-  "modules/rta/rta.service.ts": [
-    "wfm_roster_assignment.branch_id",
-    "wfm_roster_assignment.process_id"
   ]
 }
