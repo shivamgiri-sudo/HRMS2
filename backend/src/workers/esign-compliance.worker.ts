@@ -268,13 +268,41 @@ async function processEsignCompliance(): Promise<void> {
 // ── Startup ──────────────────────────────────────────────────────────────────
 
 let intervalHandle: ReturnType<typeof setInterval> | null = null;
+let startupHandle: ReturnType<typeof setTimeout> | null = null;
+
+/**
+ * Delay before the first cycle after boot.
+ *
+ * Long enough that a crash-looping process never reaches it — pm2 here is
+ * configured restart_delay 5000 / max_restarts 10, so a loop dies out in under a
+ * minute — and short enough that the worker actually runs.
+ */
+const STARTUP_DELAY_MS = 5 * 60 * 1000;
 
 export async function startEsignComplianceWorker(): Promise<void> {
-  console.log("[EsignComplianceWorker] Starting (interval: 4h)");
-  // Deliberately no immediate cycle. The cooldown is durable now, so a restart
-  // would no longer re-send — but a process that mails candidates the instant it
-  // boots turns any crash-loop into a mail storm, and this one crash-looped for
-  // three days. The first cycle waits for the first interval.
+  console.log("[EsignComplianceWorker] Starting (first run in 5m, then every 4h)");
+
+  // This originally ran a cycle IMMEDIATELY at startup, which — combined with
+  // cooldowns held in memory — turned every restart into a fresh blast: 1,818
+  // messages over three days.
+  //
+  // Removing the startup cycle outright was my first fix and it was wrong. This
+  // box is restarted by several sessions deploying: seven restarts in five hours
+  // on 2026-08-08. A 4-hour interval that resets on every boot never elapses, so
+  // the worker sat with last_run_at NULL and an empty cooldown table for five
+  // hours after being enabled. The mail storm was cured by making the reminders
+  // silent, which is not a fix.
+  //
+  // The durable cooldown in esign_notification_cooldown is what actually makes a
+  // startup run safe — it caps a reminder at one per document per 24h no matter
+  // how often the process boots. So the cycle is restored, just delayed past the
+  // window a crash-loop lives in. unref() so a pending first run never holds a
+  // shutting-down process open.
+  startupHandle = setTimeout(() => {
+    void processEsignCompliance();
+  }, STARTUP_DELAY_MS);
+  if (typeof startupHandle.unref === "function") startupHandle.unref();
+
   intervalHandle = setInterval(async () => {
     await processEsignCompliance();
   }, CHECK_INTERVAL_MS);
@@ -284,5 +312,11 @@ export function stopEsignComplianceWorker(): void {
   if (intervalHandle) {
     clearInterval(intervalHandle);
     intervalHandle = null;
+  }
+  // The pending first run has to be cancelled too, or a shutdown inside the
+  // 5-minute window still fires one cycle on the way out.
+  if (startupHandle) {
+    clearTimeout(startupHandle);
+    startupHandle = null;
   }
 }
