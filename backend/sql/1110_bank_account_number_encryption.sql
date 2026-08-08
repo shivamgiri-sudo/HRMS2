@@ -14,7 +14,28 @@
 -- and therefore safe in a TEXT column; no charset/collation issues.
 -- FIELD_ENCRYPTION_KEY is required in production (fieldEncryption.ts enforces this).
 
-ALTER TABLE employee_bank_detail
-  ADD COLUMN IF NOT EXISTS account_number_enc TEXT NULL
-    COMMENT 'AES-256-GCM encrypted account number (fieldEncryption.ts format). NULL = not yet backfilled; fall back to legacy account_number column.'
-    AFTER account_number;
+-- Syntax note (2026-08-08): this was written as `ADD COLUMN IF NOT EXISTS`, which is MariaDB
+-- syntax. This server is MySQL 8.0.42 and rejects it with ER_PARSE_ERROR — verified directly
+-- against mas_hrms on a temporary table. So the migration could never have run here, which is
+-- why account_number_enc exists in production (applied by hand) while schema_migrations has no
+-- row for 1110 and the manifest never listed it. Migration 1064 was dropped from the manifest
+-- for exactly this mistake; see the note in runPendingMigrations.ts.
+--
+-- Rewritten with the PREPARE idiom used by 181 other migrations in this directory. Deliberately
+-- NOT a bare `ADD COLUMN`: the runner would tolerate the resulting ER_DUP_FIELDNAME, but only by
+-- pushing the file onto migrationHealth.skipped, which is not the same as recorded-as-applied.
+-- The conditional runs clean on both a database that already has the column and a fresh one.
+
+SET @col_exists := (
+  SELECT COUNT(1) FROM information_schema.columns
+   WHERE table_schema = DATABASE()
+     AND table_name = 'employee_bank_detail'
+     AND column_name = 'account_number_enc'
+);
+SET @ddl := IF(@col_exists = 0,
+  'ALTER TABLE employee_bank_detail ADD COLUMN account_number_enc TEXT NULL COMMENT ''AES-256-GCM encrypted account number (fieldEncryption.ts format). NULL = not yet backfilled; fall back to legacy account_number column.'' AFTER account_number',
+  'SELECT 1'
+);
+PREPARE stmt FROM @ddl;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
