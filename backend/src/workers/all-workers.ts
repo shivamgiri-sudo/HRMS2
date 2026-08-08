@@ -15,6 +15,8 @@ import { startAprVicidialSyncWorker, stopAprVicidialSyncWorker } from "./apr-vic
 import { startEsignComplianceWorker, stopEsignComplianceWorker } from "./esign-compliance.worker.js";
 import { startEsignReconciliationWorker, stopEsignReconciliationWorker } from "./esign-reconciliation.worker.js";
 import { legacySyncWorker } from "./legacy-sync-worker.js";
+import { startMcnmeetCron, stopMcnmeetCron } from "../modules/mcnmeet/mcnmeet.cron.js";
+import { startSocialFeedCron } from "../modules/social-feed/social-feed.cron.js";
 import { startTenureBadgeScheduler, stopTenureBadgeScheduler } from "../modules/engagement/tenure.cron.js";
 import { startCelebrationScheduler, stopCelebrationScheduler } from "../modules/engagement/celebration.cron.js";
 import { startFestivalGreetingScheduler, stopFestivalGreetingScheduler } from "../modules/engagement/festival-greeting.cron.js";
@@ -92,6 +94,19 @@ const WORKERS: Array<{ name: string; start: () => Promise<void> }> = [
   {
     name: "legacy-sync",
     start: () => { legacySyncWorker.start(); return Promise.resolve(); },
+  },
+  {
+    // Both were started at app.ts module scope and registered in no worker file,
+    // so they ran in the API process only — outside every guard, absent from
+    // worker_config, and stoppable only by a deploy. mcnmeet mails meeting
+    // reminders every 5 minutes and self-disables unless MCNMEET_ENABLED=true,
+    // which is the only reason it has not already behaved like esign-compliance.
+    name: "social-feed",
+    start: () => { startSocialFeedCron(); return Promise.resolve(); },
+  },
+  {
+    name: "mcnmeet",
+    start: () => { startMcnmeetCron(); return Promise.resolve(); },
   },
   {
     name: "it-provisioning-lock",
@@ -279,6 +294,8 @@ function shutdown(): void {
   stopAccessExpiryScheduler();
   stopIntegrationScheduler();
   stopEsignComplianceWorker();
+  // social-feed exports no stop — its timers are unref'd and die with the process.
+  stopMcnmeetCron();
   stopEsignReconciliationWorker();
   stopTenureBadgeScheduler();
   stopCelebrationScheduler();
