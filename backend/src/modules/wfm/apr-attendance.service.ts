@@ -70,12 +70,19 @@ export function composeIstDateTime(date: string | null, time: unknown): string |
   const m = /^(\d{1,3}):([0-5]\d)(?::([0-5]\d))?$/.exec(String(time).trim())!;
   const hours = Number(m[1]);
   const dayOffset = Math.floor(hours / 24);
-  const base = new Date(`${date}T00:00:00+05:30`);
+  // Calendar arithmetic only — deliberately done in UTC so the result cannot depend on
+  // the host's timezone. The previous form built the instant as +05:30 and then read it
+  // back with LOCAL getters: on any host west of +05:30 (UTC runners and servers included)
+  // 2026-07-29T00:00+05:30 is 2026-07-28T18:30Z, so getDate() returned the 28th and the
+  // function emitted "2026-07-28T09:15:00+05:30" for an input date of 2026-07-29 — every
+  // APR datetime tagged one day early. A dev machine in Asia/Kolkata hides this entirely,
+  // which is why it survived: the two failing cases pass in IST and fail under TZ=UTC.
+  const base = new Date(`${date}T00:00:00Z`);
   if (Number.isNaN(base.getTime())) return null;
-  base.setDate(base.getDate() + dayOffset);
-  const y = base.getFullYear();
-  const mo = String(base.getMonth() + 1).padStart(2, '0');
-  const d = String(base.getDate()).padStart(2, '0');
+  base.setUTCDate(base.getUTCDate() + dayOffset);
+  const y = base.getUTCFullYear();
+  const mo = String(base.getUTCMonth() + 1).padStart(2, '0');
+  const d = String(base.getUTCDate()).padStart(2, '0');
   const hh = String(hours % 24).padStart(2, '0');
   return `${y}-${mo}-${d}T${hh}:${m[2]}:${m[3] ?? '00'}+05:30`;
 }

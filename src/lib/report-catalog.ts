@@ -70,20 +70,23 @@ export function formatValue(value: unknown, format: ColumnFormat): string {
   const str = String(value);
 
   switch (format) {
-    case "currency":
+    case "currency": {
       const num = Number(value);
       if (isNaN(num)) return str;
       return `₹${num.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    }
 
-    case "percentage":
+    case "percentage": {
       const pct = Number(value);
       if (isNaN(pct)) return str;
       return `${pct.toFixed(2)}%`;
+    }
 
-    case "number":
+    case "number": {
       const n = Number(value);
       if (isNaN(n)) return str;
       return n.toLocaleString("en-IN");
+    }
 
     case "date":
       if (!str || str === "null") return "—";
@@ -123,16 +126,18 @@ export function formatValue(value: unknown, format: ColumnFormat): string {
       }
       return str;
 
-    case "minutes":
+    case "minutes": {
       const mins = Number(value);
       if (isNaN(mins)) return str;
       const h = Math.floor(mins / 60);
       const m = Math.round(mins % 60);
       return h > 0 ? `${h}h ${m}m` : `${m}m`;
+    }
 
-    case "boolean":
+    case "boolean": {
       const bool = value === true || value === 1 || str.toLowerCase() === "true" || str === "1";
       return bool ? "Yes" : "No";
+    }
 
     case "status":
       // Capitalize first letter, replace underscores with spaces

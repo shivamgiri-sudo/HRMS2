@@ -60,7 +60,16 @@ export function templateFileExists(storedPath: unknown): boolean {
  * class of breakage from being reintroduced by the next upload.
  */
 export function toStorableTemplatePath(absolutePath: string): string {
-  return path.basename(absolutePath);
+  // Split on BOTH separators for the same reason resolveTemplateFile does (see the note
+  // there): path.basename is platform-specific, and on Linux "\" is an ordinary filename
+  // character, so path.basename() on a Windows-style path returns the WHOLE string. The
+  // read path was hardened against that; this write path was not, so on the production
+  // server an upload carrying a backslash path persisted the full
+  // "C:\Users\...\NDA_CONFIDENTIALITY-v1.docx" — reintroducing on the very next upload the
+  // breakage this module exists to prevent. It passes on a Windows dev box, which is why
+  // it survived; the guarding test fails only on a POSIX runner.
+  const fileName = String(absolutePath ?? "").trim().split(/[\\/]/).pop();
+  return fileName ?? "";
 }
 
 function safeExists(candidate: string): boolean {

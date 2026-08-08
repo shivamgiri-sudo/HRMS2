@@ -429,9 +429,21 @@ jobs:
       - name: Backend typecheck
         run: npm --prefix backend run typecheck
 
+      # working-directory is load-bearing. `npm --prefix backend exec` changes package
+      # RESOLUTION, not the working directory, so vitest ran from the repo root and picked
+      # up the ROOT config — whose include is src/**/*.{test,spec}.{ts,tsx} and whose
+      # exclude list contains `backend`. The six paths below therefore matched nothing:
+      #
+      #   No test files found, exiting with code 1
+      #
+      # This job failed 12 of its last 15 runs on that alone. It is the gate over
+      # branch-budget, BPO P&L, GRN validation-override and the finance schema contracts,
+      # so the money calculations had NO passing gate — the step never executed a test.
+      # The 55 tests themselves pass; only the invocation was wrong.
       - name: Finance calculation and schema-contract tests
+        working-directory: backend
         run: >-
-          npm --prefix backend exec -- vitest run
+          npm exec -- vitest run
           src/modules/process-pnl/__tests__/branch-budget.calculation.test.ts
           src/modules/process-pnl/__tests__/bpo-pnl.calculation.test.ts
           src/modules/process-pnl/__tests__/bpo-pnl.schema-contract.test.ts
