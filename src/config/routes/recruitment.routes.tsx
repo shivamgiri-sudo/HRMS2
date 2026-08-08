@@ -69,7 +69,7 @@ export const recruitmentRouteElements = (
       {/* "Calling entry" was a duplicate — redirect to canonical */}
       <Route path="/ats/recruiter/calling-entry"    element={<Navigate to="/ats/recruiter/hiring-entry" replace />} />
       {/* CANONICAL hiring dashboard: /ats/recruiter/hiring-dashboard */}
-      <Route path="/ats/recruiter/hiring-dashboard" element={<ProtectedRoute><Gate pageCode="ATS_DASHBOARD"><NativeATSHiringDashboard /></Gate></ProtectedRoute>} />
+      <Route path="/ats/recruiter/hiring-dashboard" element={<ProtectedRoute><Gate pageCode="RECRUITER_DASHBOARD"><NativeATSHiringDashboard /></Gate></ProtectedRoute>} />
       {/* "Calling dashboard" was a duplicate — redirect to canonical */}
       <Route path="/ats/recruiter/calling-dashboard" element={<Navigate to="/ats/recruiter/hiring-dashboard" replace />} />
 
