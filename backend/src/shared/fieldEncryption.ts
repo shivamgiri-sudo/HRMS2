@@ -81,3 +81,26 @@ export function decryptField(ciphertext: string): string {
 export function blindIndex(plaintext: string): string {
   return createHmac("sha256", blindIndexKey).update(plaintext, "utf8").digest("hex");
 }
+
+/**
+ * Resolve account_number from a bank detail row that may be in the encrypted
+ * column (account_number_enc), the legacy plaintext varbinary (account_number),
+ * or neither. Returns null when no usable value is present.
+ *
+ * Used by all payroll/NEFT read paths so they transparently handle both
+ * pre-backfill (plaintext) and post-backfill (encrypted) rows.
+ */
+export function resolveAccountNumber(row: {
+  account_number_enc?: string | null;
+  account_number?: Buffer | string | null;
+}): string | null {
+  if (row.account_number_enc) {
+    try { return decryptField(row.account_number_enc); } catch { /* fall through */ }
+  }
+  if (row.account_number) {
+    return Buffer.isBuffer(row.account_number)
+      ? row.account_number.toString("utf8")
+      : String(row.account_number);
+  }
+  return null;
+}

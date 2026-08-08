@@ -14,6 +14,7 @@ import { statutoryRegimeForFinancialYear } from "./statutory-regime.js";
 import { loadFlatStatutoryConfig } from "./statutory-config.loader.js";
 import { getPartAAvailability } from "./tds-certificate-part-a.service.js";
 import { getEmployeeForUser, hasRole } from "../../shared/accessGuard.js";
+import { resolveAccountNumber } from "../../shared/fieldEncryption.js";
 
 // Synchronous role check against req.user.role (used for validate/reject guards)
 function hasAnyRole(req: any, roles: string[]): boolean {
@@ -2105,7 +2106,8 @@ router.get(
               ebd.bank_name,
               ebd.ifsc_code,
               COALESCE(ebd.account_holder_name, CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS account_holder_name,
-              CAST(ebd.account_number AS CHAR) AS account_number,
+              ebd.account_number_enc,
+              ebd.account_number AS account_number_legacy,
               spl.net_salary,
               spl.gross_salary,
               spl.total_deductions,
@@ -2121,7 +2123,7 @@ router.get(
 
     const lines = (rows as RowDataPacket[]).map((r: any) => ({
       ...r,
-      account_number: r.account_number?.toString() ?? null,
+      account_number: resolveAccountNumber({ account_number_enc: r.account_number_enc, account_number: r.account_number_legacy }),
     }));
 
     return res.json({
@@ -2168,7 +2170,7 @@ router.get("/runs/:id/neft-export", requireRole("admin", "super_admin", "finance
     `SELECT spl.employee_id, spl.net_salary, spl.gross_salary, spl.total_deductions,
             e.employee_code, e.full_name, e.email,
             ebd.bank_name, ebd.ifsc_code,
-            CAST(ebd.account_number AS CHAR) AS account_number
+            ebd.account_number_enc, ebd.account_number AS account_number_legacy
      FROM salary_prep_line spl
      JOIN employees e ON e.id = spl.employee_id
      LEFT JOIN employee_bank_detail ebd ON ebd.employee_id = spl.employee_id
@@ -2184,7 +2186,7 @@ router.get("/runs/:id/neft-export", requireRole("admin", "super_admin", "finance
   let totalAmount = 0;
 
   for (const line of lines as RowDataPacket[]) {
-    const accountNo = line.account_number ? String(line.account_number) : "NOT_LINKED";
+    const accountNo = resolveAccountNumber({ account_number_enc: (line as any).account_number_enc, account_number: (line as any).account_number_legacy }) ?? "NOT_LINKED";
     const ifsc = (line.ifsc_code as string | null) ?? "NOT_LINKED";
     const bank = ((line.bank_name as string | null) ?? "").replace(/,/g, " ");
     const name = ((line.full_name as string | null) ?? "").replace(/,/g, " ");

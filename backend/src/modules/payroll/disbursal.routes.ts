@@ -6,6 +6,7 @@ import { requireRole } from "../../middleware/requireRole.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { db } from "../../db/mysql.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
+import { resolveAccountNumber } from "../../shared/fieldEncryption.js";
 
 const router = Router();
 const h = (fn: Function) => (req: any, res: any, next: any) => fn(req, res).catch(next);
@@ -208,15 +209,9 @@ router.get(
            e.employee_code,
            srd.payment_mode,
            spl.net_salary,
-           CAST(ebd.account_number AS CHAR) AS account_number,
+           ebd.account_number_enc, ebd.account_number AS account_number_legacy,
            ebd.ifsc_code,
-           ebd.bank_name,
-           CASE
-             WHEN ebd.account_number IS NULL OR CAST(ebd.account_number AS CHAR) = '' THEN 'missing'
-             WHEN CAST(ebd.account_number AS CHAR) REGEXP '[Ee][+-]' THEN 'corrupt_scientific_notation'
-             WHEN CAST(ebd.account_number AS CHAR) NOT REGEXP '^[0-9]{6,20}$' THEN 'unrecognised_format'
-             ELSE 'ok'
-           END AS account_number_status
+           ebd.bank_name
          FROM salary_run_disbursal srd
          JOIN salary_prep_line spl
            ON spl.run_id = srd.run_id AND spl.employee_id = srd.employee_id
@@ -238,6 +233,17 @@ router.get(
         });
       }
 
+      // Resolve encrypted account numbers and classify in JS (col moved from SQL)
+      const VALID_ACCOUNT_RE_D = /^[0-9]{6,20}$/;
+      const SCIENTIFIC_RE_D = /[Ee][+-]/;
+      rows.forEach((r: any) => {
+        const acct = resolveAccountNumber({ account_number_enc: r.account_number_enc, account_number: r.account_number_legacy });
+        r.account_number = acct ?? "";
+        if (!acct || acct === "") r.account_number_status = "missing";
+        else if (SCIENTIFIC_RE_D.test(acct)) r.account_number_status = "corrupt_scientific_notation";
+        else if (!VALID_ACCOUNT_RE_D.test(acct)) r.account_number_status = "unrecognised_format";
+        else r.account_number_status = "ok";
+      });
       // Never write a corrupt/unreadable account number into a real bank file — exclude
       // and surface it instead. The digits behind 'corrupt_scientific_notation' are
       // genuinely gone (Excel precision loss upstream), not recoverable from this data.

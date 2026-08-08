@@ -5,6 +5,7 @@ import { requireRole } from "../../middleware/requireRole.js";
 import { db } from "../../db/mysql.js";
 import { excludeEmployeeShapedCandidatesSql } from "../ats/ats-reporting-scope.js";
 import { buildIdentityMappingExceptionsSql } from "./identity-mapping-report.js";
+import { resolveAccountNumber } from "../../shared/fieldEncryption.js";
 import { buildIdentitySourceSnapshotReportSql, runIdentitySourceSnapshotSync } from "./identity-source-snapshot.js";
 import {
   addScopedEmployeeFilters,
@@ -1559,7 +1560,7 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
       addScopedEmployeeFilters(req, clauses, params);
       clauses.push("ebd.verified = 0");
       sql = `SELECT e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-                    ebd.bank_name, CAST(ebd.account_number AS CHAR) AS account_number, ebd.ifsc_code, ebd.account_holder_name,
+                    ebd.bank_name, ebd.account_number_enc, ebd.account_number AS account_number_legacy, ebd.ifsc_code, ebd.account_holder_name,
                     ebd.is_primary, ebd.created_at AS requested_at
                FROM employee_bank_detail ebd
                JOIN employees e ON e.id = ebd.employee_id
@@ -4019,7 +4020,19 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
   }
 
   const offset = Number(req.query.offset ?? 0);
-  const { rows: data, totalCount } = await queryRowsWithCount(sql, params, limit, offset);
+  let { rows: data, totalCount } = await queryRowsWithCount(sql, params, limit, offset);
+
+  // Post-query account number resolution for the bank-change-requests report.
+  // account_number_enc / account_number_legacy are selected raw; surface a single
+  // resolved string before the rows leave this handler.
+  if (code === "bank-change-requests") {
+    data = (data as any[]).map((r: any) => {
+      const resolved = resolveAccountNumber({ account_number_enc: r.account_number_enc, account_number: r.account_number_legacy });
+      const { account_number_enc: _e, account_number_legacy: _l, ...rest } = r;
+      return { ...rest, account_number: resolved ? `****${resolved.slice(-4)}` : null };
+    });
+  }
+
   return res.json({
     success: true,
     code,

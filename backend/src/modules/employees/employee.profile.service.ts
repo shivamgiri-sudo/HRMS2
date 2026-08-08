@@ -13,6 +13,7 @@ import type {
 } from "./employee.profile.validation.js";
 import { isOfficialEmail } from "../../shared/officialEmail.js";
 import { maskPan } from "../privacy-engine/privacyMasking.service.js";
+import { encryptField, decryptField } from "../../shared/fieldEncryption.js";
 
 function notFound(message = "No employee record for this user"): Error {
   return Object.assign(new Error(message), { statusCode: 404 });
@@ -100,11 +101,9 @@ export const employeeProfileService = {
          COALESCE(ebd.ifsc_code, e.ifsc_code) AS ifsc_code,
          ebd.account_type,
          ebd.verified AS bank_verified,
-         COALESCE(
-           RIGHT(CAST(AES_DECRYPT(ebd.account_number, ?) AS CHAR), 4),
-           RIGHT(CAST(ebd.account_number AS CHAR), 4),
-           RIGHT(e.bank_account_number, 4)
-         ) AS bank_last4
+         ebd.account_number_enc,
+         ebd.account_number AS account_number_legacy,
+         RIGHT(e.bank_account_number, 4) AS bank_account_number_last4
        FROM employees e
        LEFT JOIN employees m ON m.id = e.reporting_manager_id
        LEFT JOIN department_master dept ON dept.id = e.department_id
@@ -124,11 +123,29 @@ export const employeeProfileService = {
          ON ebd.employee_id = e.id AND ebd.is_primary = 1 AND ebd.active_status = 1
        WHERE e.user_id = ? AND e.active_status = 1
        LIMIT 1`,
-      [env.PAYROLL_BANK_KEY, userId],
+      [userId],
     );
 
     const row = rows[0] as Record<string, any> | undefined;
     if (!row) throw notFound();
+
+    // Decrypt account number: try enc column first, fall back to legacy plaintext varbinary
+    let bankLast4: string | null = null;
+    if (row.account_number_enc) {
+      try {
+        const plain = decryptField(row.account_number_enc);
+        bankLast4 = plain.slice(-4) || null;
+      } catch { bankLast4 = null; }
+    }
+    if (!bankLast4 && row.account_number_legacy) {
+      const raw = Buffer.isBuffer(row.account_number_legacy)
+        ? row.account_number_legacy.toString("utf8")
+        : String(row.account_number_legacy);
+      bankLast4 = raw.slice(-4) || null;
+    }
+    if (!bankLast4 && row.bank_account_number_last4) {
+      bankLast4 = String(row.bank_account_number_last4).slice(-4) || null;
+    }
 
     let workingDays: number[] | null = null;
     if (row.working_days) {
@@ -141,7 +158,7 @@ export const employeeProfileService = {
       }
     }
 
-    const bankProvided = Boolean(row.bank_last4 || row.bank_name || row.ifsc_code);
+    const bankProvided = Boolean(bankLast4 || row.bank_name || row.ifsc_code);
     const statutoryProvided = Boolean(
       row.pan_last4 || row.aadhaar_last4 || row.pf_last4 || row.uan_last4,
     );
@@ -207,7 +224,7 @@ export const employeeProfileService = {
         bank_branch: row.bank_branch,
         ifsc_code: row.ifsc_code,
         account_type: row.account_type,
-        masked_account_number: maskLastFour(row.bank_last4),
+        masked_account_number: maskLastFour(bankLast4),
         verification_status: row.bank_verified ? "verified" : "pending",
       } : null,
       statutory_details: statutoryProvided ? {
@@ -336,10 +353,7 @@ export const employeeProfileService = {
     req?: Request,
   ) {
     const employeeId = await employeeIdForUser(userId);
-    const encryptedAccount = input.account_number
-      ? db.execute(`SELECT AES_ENCRYPT(?, ?) AS enc`, [input.account_number, env.PAYROLL_BANK_KEY]).then(([r]: any) => (r[0] as any).enc)
-      : Promise.resolve(null);
-    const encAcc = await encryptedAccount;
+    const encAcc = input.account_number ? encryptField(input.account_number) : null;
 
     const [existing] = await db.execute<RowDataPacket[]>(
       `SELECT id FROM employee_bank_detail WHERE employee_id = ? AND is_primary = 1 AND active_status = 1 LIMIT 1`,
@@ -362,7 +376,7 @@ export const employeeProfileService = {
         input.ifsc_code, input.account_type,
       ];
       if (encAcc !== null) {
-        sets.splice(5, 0, "account_number = ?");
+        sets.splice(5, 0, "account_number_enc = ?");
         vals.splice(5, 0, encAcc);
       }
       await db.execute(
@@ -373,7 +387,7 @@ export const employeeProfileService = {
       await db.execute(
         `INSERT INTO employee_bank_detail
            (id, employee_id, is_primary, account_seq, bank_name, account_holder_name,
-            bank_branch, account_number, ifsc_code, account_type, verified, active_status)
+            bank_branch, account_number_enc, ifsc_code, account_type, verified, active_status)
          VALUES (UUID(), ?, 1, 1, ?, ?, ?, ?, ?, ?, 0, 1)`,
         [
           employeeId, input.bank_name, input.account_holder_name,

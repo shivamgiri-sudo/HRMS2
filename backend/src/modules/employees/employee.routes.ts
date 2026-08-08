@@ -15,6 +15,7 @@ import { profileApprovalService } from "./profile-approval.service.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
 import { isOfficialEmail } from "../../shared/officialEmail.js";
 import { bootstrapCandidateForEmployee } from "./employee-bgv-bootstrap.service.js";
+import { encryptField, decryptField } from "../../shared/fieldEncryption.js";
 
 const router = Router();
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -114,9 +115,9 @@ router.get("/me", h(async (req: any, res: any) => {
   const empId = emp.id;
 
   const [bankRows, statRows, emergRows, nomineeRows] = await Promise.all([
-    // Bank details — account_number is varbinary; read as Buffer then mask last-4
+    // Bank details — read both columns; account_number_enc preferred over legacy plaintext
     db.execute(
-      "SELECT bank_name, account_holder_name, bank_branch, ifsc_code, account_type, account_number, verified FROM employee_bank_detail WHERE employee_id = ? AND active_status = 1 LIMIT 1",
+      "SELECT bank_name, account_holder_name, bank_branch, ifsc_code, account_type, account_number, account_number_enc, verified FROM employee_bank_detail WHERE employee_id = ? AND active_status = 1 LIMIT 1",
       [empId]
     ).then(([r]: any) => r).catch(() => []),
 
@@ -244,9 +245,12 @@ router.get("/me", h(async (req: any, res: any) => {
       bank_details: (() => {
         if (!bankRows.length) return null;
         const b = bankRows[0];
-        // account_number is stored as varbinary — convert Buffer to string then mask
+        // Prefer decrypted account_number_enc; fall back to legacy plaintext varbinary
         let rawAcct: string | null = null;
-        if (b.account_number) {
+        if (b.account_number_enc) {
+          try { rawAcct = decryptField(b.account_number_enc); } catch { rawAcct = null; }
+        }
+        if (!rawAcct && b.account_number) {
           rawAcct = Buffer.isBuffer(b.account_number)
             ? b.account_number.toString("utf8")
             : String(b.account_number);
@@ -426,7 +430,7 @@ router.post("/me/bank-change-request", h(async (req: any, res: any) => {
   // compute the mask in JS from the raw account_number instead, matching the pattern
   // already used for reads elsewhere in this file (see GET /me below).
   const [existing] = await db.execute<RowDataPacket[]>(
-    "SELECT bank_name, account_holder_name, bank_branch, ifsc_code, account_type, account_number FROM employee_bank_detail WHERE employee_id = ? AND is_primary = 1 LIMIT 1",
+    "SELECT bank_name, account_holder_name, bank_branch, ifsc_code, account_type, account_number, account_number_enc FROM employee_bank_detail WHERE employee_id = ? AND is_primary = 1 LIMIT 1",
     [empId]
   );
   const existingRow = existing[0];
@@ -438,10 +442,15 @@ router.post("/me/bank-change-request", h(async (req: any, res: any) => {
         ifsc_code: existingRow.ifsc_code,
         account_type: existingRow.account_type,
         masked_account_number: (() => {
-          const raw = existingRow.account_number;
-          if (!raw) return null;
-          const str = Buffer.isBuffer(raw) ? raw.toString("utf8") : String(raw);
-          return "****" + str.slice(-4);
+          let str: string | null = null;
+          if (existingRow.account_number_enc) {
+            try { str = decryptField(existingRow.account_number_enc); } catch { str = null; }
+          }
+          if (!str && existingRow.account_number) {
+            const raw = existingRow.account_number;
+            str = Buffer.isBuffer(raw) ? raw.toString("utf8") : String(raw);
+          }
+          return str ? "****" + str.slice(-4) : null;
         })(),
       }
     : {};
@@ -480,9 +489,10 @@ router.put("/me/bank-details", h(async (req: any, res: any) => {
   const onDup: string[] = ["bank_name = VALUES(bank_name)", "account_holder_name = VALUES(account_holder_name)", "bank_branch = VALUES(bank_branch)", "ifsc_code = VALUES(ifsc_code)", "account_type = VALUES(account_type)"];
 
   if (account_number) {
-    fields.push("account_number");
-    vals.push(account_number);
-    onDup.push("account_number = VALUES(account_number)");
+    const enc = encryptField(String(account_number));
+    fields.push("account_number_enc");
+    vals.push(enc);
+    onDup.push("account_number_enc = VALUES(account_number_enc)");
   }
 
   const placeholders = fields.map(() => "?").join(", ");
@@ -668,9 +678,10 @@ router.put("/:employeeId/bank-details", ...hrProfileGate, h(async (req: any, res
   const onDup: string[] = ["bank_name = VALUES(bank_name)", "account_holder_name = VALUES(account_holder_name)", "bank_branch = VALUES(bank_branch)", "ifsc_code = VALUES(ifsc_code)", "account_type = VALUES(account_type)"];
 
   if (account_number) {
-    fields.push("account_number");
-    vals.push(account_number);
-    onDup.push("account_number = VALUES(account_number)");
+    const enc = encryptField(String(account_number));
+    fields.push("account_number_enc");
+    vals.push(enc);
+    onDup.push("account_number_enc = VALUES(account_number_enc)");
   }
 
   const placeholders = fields.map(() => "?").join(", ");

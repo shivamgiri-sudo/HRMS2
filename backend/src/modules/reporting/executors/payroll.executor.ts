@@ -27,6 +27,7 @@ import {
   PRESENT_STATUSES,
   HALF_DAY_STATUS,
 } from "../../../shared/attendanceStatus.js";
+import { resolveAccountNumber } from "../../../shared/fieldEncryption.js";
 
 async function query(sql: string, params: unknown[]): Promise<RowDataPacket[]> {
   const [rows] = await db.execute<RowDataPacket[]>(sql, params);
@@ -788,7 +789,7 @@ export async function neftTransferFile(
            b.branch_name,
            COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
            ebd.bank_name,
-           CAST(ebd.account_number AS CHAR) AS account_number,
+           ebd.account_number_enc, ebd.account_number AS account_number_legacy,
            ebd.ifsc_code,
            ebd.account_holder_name,
            ebd.account_type,
@@ -804,14 +805,18 @@ export async function neftTransferFile(
              ON ebd.employee_id = e.id AND ebd.is_primary = 1 AND ebd.active_status = 1
      WHERE ${clauses.join(" AND ")}
      GROUP BY e.id, e.employee_code, e.full_name, e.first_name, e.last_name,
-              b.branch_name, p.process_name, ebd.bank_name, ebd.account_number,
-              ebd.ifsc_code, ebd.account_holder_name, ebd.account_type, spr.run_month,
-              sp_cc.cost_centre_code, sp_cc.cost_centre_name
+              b.branch_name, p.process_name, ebd.bank_name, ebd.account_number_enc,
+              ebd.account_number, ebd.ifsc_code, ebd.account_holder_name, ebd.account_type,
+              spr.run_month, sp_cc.cost_centre_code, sp_cc.cost_centre_name
      ORDER BY ebd.bank_name, employee_name`;
 
   const total = options.includeTotal ? await count(base, params) : 0;
   const sql   = applyPagination(base, options);
-  const rows  = await query(sql, params) as Record<string, unknown>[];
+  const rawRows = await query(sql, params) as Record<string, unknown>[];
+  const rows = rawRows.map((r: any) => ({
+    ...r,
+    account_number: resolveAccountNumber({ account_number_enc: r.account_number_enc, account_number: r.account_number_legacy }),
+  }));
   return { rows, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > rows.length };
 }
 
@@ -954,7 +959,8 @@ export async function salarySheetExport(
       COALESCE(e.esic_number, '') AS esic_no,
       COALESCE(e.employment_status, 'Active') AS left_status,
       'Bank Transfer' AS salary_payment_mode,
-      COALESCE(CAST(ebd.account_number AS CHAR), '') AS ac_no,
+      ebd.account_number_enc AS ac_no_enc,
+      ebd.account_number AS ac_no_legacy,
       COALESCE(ebd.ifsc_code, '') AS ifsc_code,
       COALESCE(ebd.bank_name, '') AS ac_bank,
       COALESCE(ebd.bank_branch, '') AS ac_branch
@@ -994,6 +1000,11 @@ export async function salarySheetExport(
     if (!compMap.has(key)) compMap.set(key, {});
     compMap.get(key)![String(c.component_code)] = Number(c.amount);
   }
+
+  // Resolve encrypted account numbers before building output rows
+  lineRows.forEach((r: any) => {
+    r.ac_no = resolveAccountNumber({ account_number_enc: r.ac_no_enc, account_number: r.ac_no_legacy }) ?? "";
+  });
 
   const rows = lineRows.map((row, idx) => {
     const comp = compMap.get(String(row.line_id)) ?? {};

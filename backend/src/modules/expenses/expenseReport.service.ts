@@ -1,6 +1,7 @@
 import { db } from '../../db/mysql.js';
 import type { RowDataPacket } from 'mysql2';
 import { ExpenseStatus, type ExpenseReportQuery } from './expense.model.js';
+import { resolveAccountNumber } from '../../shared/fieldEncryption.js';
 
 class ExpenseReportService {
   async getExpenseSummary(query: ExpenseReportQuery) {
@@ -56,7 +57,7 @@ class ExpenseReportService {
     if (startDate) { whereConditions.push('ec.submitted_date >= ?'); params.push(startDate); }
     if (endDate) { whereConditions.push('ec.submitted_date <= ?'); params.push(endDate); }
     const [rows] = await db.query<RowDataPacket[]>(
-      `SELECT e.full_name as employee_name, e.employee_code, ebd.bank_name, CAST(ebd.account_number AS CHAR) AS account_number, ebd.ifsc_code,
+      `SELECT e.full_name as employee_name, e.employee_code, ebd.bank_name, ebd.account_number_enc, ebd.account_number AS account_number_legacy, ebd.ifsc_code,
               ec.total_amount as amount, ec.claim_number, ec.submitted_date as expense_date
        FROM expense_claims ec
        JOIN employees e ON ec.employee_id = e.id
@@ -68,7 +69,7 @@ class ExpenseReportService {
       employee_name: r.employee_name,
       employee_code: r.employee_code,
       bank_name: r.bank_name || 'N/A',
-      account_number: r.account_number || 'N/A',
+      account_number: resolveAccountNumber({ account_number_enc: r.account_number_enc, account_number: r.account_number_legacy }) || 'N/A',
       ifsc_code: r.ifsc_code || 'N/A',
       amount: parseFloat(r.amount),
       claim_number: r.claim_number,

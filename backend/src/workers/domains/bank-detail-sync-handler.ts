@@ -1,5 +1,6 @@
 import { db } from '../../db/mysql.js';
 import { DomainSyncBase } from './domain-sync-base.js';
+import { encryptField } from '../../shared/fieldEncryption.js';
 
 const SYNC_MAP_ID = 'a1000000-0000-0000-0000-000000000002';
 
@@ -54,9 +55,11 @@ export class BankDetailSyncHandler extends DomainSyncBase {
       const empId = this.resolveEmployeeId(empMap, row.EmpCode);
       if (!empId) { skipped++; continue; }
 
-      // account_number is VARBINARY(500) — store as UTF-8 bytes
       const acNo = row.AcNo?.trim() ?? null;
       if (!acNo) { skipped++; continue; }
+
+      let acNoEnc: string;
+      try { acNoEnc = encryptField(acNo); } catch { skipped++; continue; }
 
       try {
         const [res] = await db.execute<any>(
@@ -71,11 +74,11 @@ export class BankDetailSyncHandler extends DomainSyncBase {
           // true and the safe default. Provenance is already implied by this handler being
           // the writer; inventing a column to carry it would be a schema change, not a fix.
           `INSERT INTO employee_bank_detail
-             (id, employee_id, account_number, bank_name, bank_branch,
+             (id, employee_id, account_number, account_number_enc, bank_name, bank_branch,
               ifsc_code, account_holder_name, is_primary, verified, created_at)
-           VALUES (UUID(), ?, ?, ?, ?, ?, ?, 1, 0, NOW())
+           VALUES (UUID(), ?, ?, ?, ?, ?, ?, ?, 1, 0, NOW())
            ON DUPLICATE KEY UPDATE
-             account_number      = VALUES(account_number),
+             account_number_enc  = VALUES(account_number_enc),
              bank_name           = VALUES(bank_name),
              bank_branch         = VALUES(bank_branch),
              ifsc_code           = VALUES(ifsc_code),
@@ -84,6 +87,7 @@ export class BankDetailSyncHandler extends DomainSyncBase {
           [
             empId,
             Buffer.from(acNo, 'utf8'),
+            acNoEnc,
             row.AcBank?.trim()   ?? null,
             row.AcBranch?.trim() ?? null,
             row.IFSCCode?.trim() ?? null,

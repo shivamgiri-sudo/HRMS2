@@ -4,6 +4,7 @@ import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
 import { sendSMS } from "../communication/sms.helper.js";
+import { encryptField } from "../../shared/fieldEncryption.js";
 
 export const profileApprovalService = {
   async submitBankDetailsForApproval(
@@ -120,22 +121,21 @@ export const profileApprovalService = {
       );
       const effectiveRunMonth = draftRuns[0]?.run_month ?? defaultEffective;
 
-      // Insert new primary account. account_number was previously hardcoded NULL here —
-      // the submitted value IS captured in new_values on submission (employee.routes.ts's
-      // bank-change-request handler) but was never bound into this INSERT, so every
-      // approved bank-detail change silently lost the account number. Written raw, matching
-      // the confirmed-live 100%-plaintext format of every existing row — no AES_ENCRYPT.
+      // Insert new primary account with encrypted account number.
+      const encAccountNumber = newVals.account_number
+        ? encryptField(String(newVals.account_number))
+        : null;
       await db.execute(
         `INSERT INTO employee_bank_detail
            (id, employee_id, is_primary, account_seq, bank_name, account_holder_name,
-            bank_branch, account_number, ifsc_code, account_type, verified, active_status)
+            bank_branch, account_number_enc, ifsc_code, account_type, verified, active_status)
          VALUES (UUID(), ?, 1, 1, ?, ?, ?, ?, ?, ?, 1, 1)`,
         [
           approval.employee_id,
           newVals.bank_name,
           newVals.account_holder_name,
           newVals.bank_branch || null,
-          newVals.account_number ?? null,
+          encAccountNumber,
           newVals.ifsc_code,
           newVals.account_type,
         ]

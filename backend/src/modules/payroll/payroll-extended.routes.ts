@@ -8,6 +8,7 @@ import { hasOrgWideScope, buildScopeWhereClause } from "../../shared/scopeAccess
 import type { Response } from "express";
 import type { RowDataPacket } from "mysql2";
 import * as XLSX from "xlsx";
+import { resolveAccountNumber } from "../../shared/fieldEncryption.js";
 
 /**
  * Roles whose payroll authority can be org-wide. Used with hasOrgWideScope for
@@ -134,7 +135,7 @@ payrollExtendedRouter.get("/runs/:id/neft-export", requireRole("admin", "finance
   // list here previously blocked NEFT export for every FINALIZED production run.
   if (!isRunClosed(run.status)) return res.status(400).json({ error: "Run must be locked, finalized, or disbursed to generate NEFT export" });
   const [lines] = await db.execute<RowDataPacket[]>(
-    `SELECT spl.employee_id, spl.net_salary, e.employee_code, e.full_name, ebd.bank_name, ebd.ifsc_code, CAST(ebd.account_number AS CHAR) AS account_number
+    `SELECT spl.employee_id, spl.net_salary, e.employee_code, e.full_name, ebd.bank_name, ebd.ifsc_code, ebd.account_number_enc, ebd.account_number
        FROM salary_prep_line spl
        JOIN employees e ON e.id = spl.employee_id
        LEFT JOIN employee_bank_detail ebd ON ebd.employee_id = spl.employee_id
@@ -156,8 +157,10 @@ payrollExtendedRouter.get("/runs/:id/neft-export", requireRole("admin", "finance
   // details would vanish from payroll with nothing to say so. The sibling exporter in
   // disbursal.routes.ts filters them with an INNER JOIN and says nothing, which is why
   // the two exporters disagreed about who was payable.
+  // Resolve encrypted account numbers before filtering
+  (lines as RowDataPacket[]).forEach((l: any) => { l.account_number = resolveAccountNumber(l) ?? ""; });
   const isPayable = (l: RowDataPacket) =>
-    Boolean(String(l.ifsc_code ?? "").trim()) && Boolean(String(l.account_number ?? "").trim());
+    Boolean(String((l as any).ifsc_code ?? "").trim()) && Boolean(String((l as any).account_number ?? "").trim());
   const payable = (lines as RowDataPacket[]).filter(isPayable);
   const unpayable = (lines as RowDataPacket[]).filter((l) => !isPayable(l));
 
@@ -349,7 +352,8 @@ payrollExtendedRouter.get("/runs/:id/salary-sheet-export", requireRole("admin", 
         NULL AS TaxDeductedTillPreviousMonth,
         NULL AS BalanceTax,
         'NEFT'                                             AS SalaryPaymentMode,
-        CAST(ebd.account_number AS CHAR)                   AS AcNo,
+        ebd.account_number_enc                             AS AcNo_enc,
+        ebd.account_number                                 AS AcNo_legacy,
         COALESCE(ebd.ifsc_code, '')                        AS IFSCCode,
         COALESCE(ebd.bank_name, '')                        AS AcBank,
         COALESCE(ebd.bank_branch, '')                      AS AcBranch
@@ -467,7 +471,7 @@ payrollExtendedRouter.get("/runs/:id/salary-sheet-export", requireRole("admin", 
     TaxDeductedTillPreviousMonth: row.TaxDeductedTillPreviousMonth ?? "",
     BalanceTax: row.BalanceTax ?? "",
     SalaryPaymentMode: row.SalaryPaymentMode,
-    AcNo: row.AcNo ? String(row.AcNo) : "",
+    AcNo: resolveAccountNumber({ account_number_enc: row.AcNo_enc, account_number: row.AcNo_legacy }) ?? "",
     IFSCCode: row.IFSCCode,
     AcBank: row.AcBank,
     AcBranch: row.AcBranch,

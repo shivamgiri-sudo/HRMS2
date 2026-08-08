@@ -6,6 +6,7 @@ import { db } from "../../db/mysql.js";
 import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { payrollComplianceService } from "./payrollCompliance.service.js";
+import { resolveAccountNumber } from "../../shared/fieldEncryption.js";
 
 const router = Router();
 const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any, next: any) => fn(req, res).catch(next);
@@ -170,17 +171,8 @@ router.get("/runs/:runId/register/:registerType", requireRole("admin", "hr", "fi
     // (12,768 of 12,768, none duplicated), but a second account added later
     // would otherwise duplicate a payment line.
     sql = `SELECT spl.employee_code, e.full_name, ebd.bank_name,
-                  CAST(ebd.account_number AS CHAR) AS account_number,
-                  ebd.ifsc_code, spl.net_salary,
-                  CASE
-                    WHEN ebd.account_number IS NULL OR CAST(ebd.account_number AS CHAR) = ''
-                      THEN 'missing'
-                    WHEN CAST(ebd.account_number AS CHAR) REGEXP '[Ee][+-]'
-                      THEN 'corrupt_scientific_notation'
-                    WHEN CAST(ebd.account_number AS CHAR) NOT REGEXP '^[0-9]{6,20}$'
-                      THEN 'unrecognised_format'
-                    ELSE 'ok'
-                  END AS account_number_status
+                  ebd.account_number_enc, ebd.account_number AS account_number_legacy,
+                  ebd.ifsc_code, spl.net_salary
              FROM salary_prep_line spl JOIN employees e ON e.id = spl.employee_id
              LEFT JOIN employee_bank_detail ebd
                     ON ebd.employee_id = e.id AND ebd.active_status = 1 AND ebd.is_primary = 1
@@ -204,6 +196,17 @@ router.get("/runs/:runId/register/:registerType", requireRole("admin", "hr", "fi
   // unpayable rows in the response rather than leaving whoever generates the
   // file to discover them at the bank.
   if (registerType === "bank") {
+    // Resolve encrypted account numbers and compute status in JS
+    const VALID_ACCOUNT_RE = /^[0-9]{6,20}$/;
+    const SCIENTIFIC_RE = /[Ee][+-]/;
+    (rows as RowDataPacket[]).forEach((r: any) => {
+      const acct = resolveAccountNumber({ account_number_enc: r.account_number_enc, account_number: r.account_number_legacy });
+      r.account_number = acct ?? "";
+      if (!acct || acct === "") r.account_number_status = "missing";
+      else if (SCIENTIFIC_RE.test(acct)) r.account_number_status = "corrupt_scientific_notation";
+      else if (!VALID_ACCOUNT_RE.test(acct)) r.account_number_status = "unrecognised_format";
+      else r.account_number_status = "ok";
+    });
     const unpayable = (rows as RowDataPacket[]).filter(
       (r) => String(r.account_number_status ?? "ok") !== "ok",
     );
