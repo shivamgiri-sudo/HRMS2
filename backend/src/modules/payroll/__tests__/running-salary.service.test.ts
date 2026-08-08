@@ -140,13 +140,20 @@ describe("computeRunningSalary", () => {
 
     // Projection figures updated for the roster-free projection (19990a4b,
     // 2026-07-28). Remaining days now come from the calendar instead of the
-    // roster rows mocked above, so the projected base is 5 future days rather
-    // than the single "Rostered" row: 2.5 present + 1 paid leave + 2 week-off
-    // + 5 future = 10.5, and 30000/31 x 10.5 = 10161.29.
-    expect(result.projected_payable_days).toBe(10.5);
-    expect(result.projected_salary).toBe(10161.29);
+    // roster rows mocked above, so the projected base is the days after the 25th
+    // rather than the single "Rostered" row: 2.5 present + 1 paid leave
+    // + 2 week-off + 6 future = 11.5, and 30000/31 x 11.5 = 11129.03.
+    //
+    // 6 future, not 5, and this is a money change. These numbers were recorded on an
+    // IST machine while monthEnd was `new Date(y, m, 0).toISOString()` — a local instant
+    // serialised as UTC, which resolved July to the 30th and silently dropped the 31st.
+    // The 26th to the 31st is six days. monthEnd is now built from the date string, so the
+    // figure is identical under TZ=UTC and TZ=Asia/Kolkata; previously this test passed
+    // only in IST and failed on CI's UTC runner, which is how the shortfall stayed hidden.
+    expect(result.projected_payable_days).toBe(11.5);
+    expect(result.projected_salary).toBe(11129.03);
     expect(calculateWeekoffEligibility).toHaveBeenNthCalledWith(1, "emp-1", 3.5, "2026-07-01");
-    expect(calculateWeekoffEligibility).toHaveBeenNthCalledWith(2, "emp-1", 8.5, "2026-07-01");
+    expect(calculateWeekoffEligibility).toHaveBeenNthCalledWith(2, "emp-1", 9.5, "2026-07-01");
   });
 
   it("treats locked night-shift half day in ADR as payroll-visible half day instead of splitting the post-midnight date", async () => {
@@ -225,8 +232,10 @@ describe("computeRunningSalary", () => {
     expect(result.earned_payable_days).toBe(0.5);
     expect(result.earned_salary_till_date).toBe(483.87);
 
-    // Roster-free projection (19990a4b): 0.5 earned + 5 remaining calendar days.
-    expect(result.projected_payable_days).toBe(5.5);
+    // Roster-free projection (19990a4b): 0.5 earned + 6 remaining calendar days
+    // (the 26th to the 31st). Was 5 while monthEnd dropped the month's last day on an
+    // IST host — see the note on the projection assertions in the test above.
+    expect(result.projected_payable_days).toBe(6.5);
   });
 
   it("counts an eligible holiday inside the till-date window, and resolves it with the correct YYYY-MM format", async () => {

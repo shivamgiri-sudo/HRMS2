@@ -43,8 +43,16 @@ export async function computeRunningSalary(
   const today = asOfDate ?? new Date(Date.now() + istOffset).toISOString().slice(0, 10);
   const monthStart = runMonth;
   const [y, m] = runMonth.split("-").map(Number);
-  const monthEnd = new Date(y, m, 0).toISOString().slice(0, 10); // last day of month
+  // `new Date(y, m, 0)` is a LOCAL instant; .toISOString() serialises it as UTC. On any host
+  // east of UTC — IST included, which is what this project runs on — that subtracts the
+  // offset and lands on the PREVIOUS day, so July resolved to 2026-07-30 while daysInMonth
+  // below said 31. The month's last day was dropped from every figure derived from it:
+  // `tillDate` (capped earned days on the final day of the month), the remaining-days count
+  // and the future-holiday window. Built from the date string instead — the same idiom this
+  // file already uses for the other monthEnd in computeEffectiveDays — so it is exact in
+  // every timezone. daysInMonth is unaffected: it constructs AND reads locally.
   const daysInMonth = new Date(y, m, 0).getDate();
+  const monthEnd = `${runMonth.slice(0, 7)}-${String(daysInMonth).padStart(2, "0")}`;
 
   // Get employee salary info
   const [empRows] = await db.execute<RowDataPacket[]>(

@@ -16,6 +16,21 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# GitHub runners are UTC; this platform is an IST business and the PM2 apps now pin
+# TZ=Asia/Kolkata, so CI ran in a timezone production does not use. That is not a
+# theoretical mismatch — it made seven tests pass locally and fail here, and the diagnosis
+# cost real time because the job names implicated the code rather than the clock:
+#
+#   composeIstDateTime  tagged every APR datetime one day early on a UTC host
+#   running-salary      dropped the month's last day on an IST host (opposite direction)
+#
+# Both are now timezone-independent, but CI should still exercise the timezone production
+# runs in. Note the trade-off: with this pinned, a NEW host-timezone dependency will pass
+# CI. The defence against that is writing date logic that does not read a local Date back
+# as UTC, not a UTC runner that happens to catch one direction of the mistake.
+env:
+  TZ: Asia/Kolkata
+
 jobs:
   lint:
     name: Lint

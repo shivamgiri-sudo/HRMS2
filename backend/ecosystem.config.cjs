@@ -23,6 +23,12 @@ module.exports = {
       exec_mode: "fork",
       env: {
         NODE_ENV: "production",
+        // This is an IST business: attendance dates, payroll month boundaries and shift
+        // roll-over are all reasoned about in IST. Nothing pinned the timezone before, so
+        // the process inherited the host's — which meant dev (IST) and CI (UTC) disagreed,
+        // and any date built with a local Date and read back as UTC (or vice versa) shifted
+        // by a day depending on where it ran. Pinned so every environment agrees.
+        TZ: "Asia/Kolkata",
         // CRITICAL: Workers must run externally
         WORKERS_PROCESS: "external",
         ENABLE_SCHEDULERS: "false",
@@ -50,6 +56,9 @@ module.exports = {
       exec_mode: "fork",
       env: {
         NODE_ENV: "production",
+        // Same reason as hrms-api above. Matters more here, if anything: the schedulers
+        // decide which calendar day a cron run belongs to.
+        TZ: "Asia/Kolkata",
       },
       // Graceful shutdown - workers need time to finish current jobs
       kill_timeout: 60000,
