@@ -144,12 +144,17 @@ describe('Quality Query Builders', () => {
       expect(result.query).toContain('OFFSET');
     });
 
-    it('includes required parameters (employeeCode, limit, offset)', () => {
+    it('binds the employee code and inlines a clamped LIMIT/OFFSET', () => {
       const result = buildCallsReviewQuery('EMP-STF-001', 10, 5, 'date');
 
-      expect(result.params).toContain('EMP-STF-001');
-      expect(result.params).toContain(10);
-      expect(result.params).toContain(5);
+      // employeeCode stays a bound parameter — it is user input.
+      expect(result.params).toEqual(['EMP-STF-001']);
+      // limit/offset are no longer bound. buildCallsReviewQuery moved to
+      // sqlLimitOffset(), which validates them and writes them into the SQL, because
+      // mysql2 does not reliably accept placeholders in LIMIT/OFFSET on a prepared
+      // statement. Safety comes from coercion and clamping instead of binding — see
+      // the injection test below, which exercises exactly that.
+      expect(result.query).toContain('LIMIT 10 OFFSET 5');
     });
 
     it('sorts by date (default)', () => {
@@ -177,15 +182,33 @@ describe('Quality Query Builders', () => {
     it('limits result to 50 records maximum', () => {
       const result = buildCallsReviewQuery('EMP-STF-001', 100, 0, 'date');
 
-      // Service should cap limit at 50
-      expect(result.params).toContain(50);
-      expect(result.params[1]).toBeLessThanOrEqual(50);
+      // Capped by sqlLimitOffset's maxLimit, and asserted in the SQL because that is
+      // where the number now lives.
+      expect(result.query).toContain('LIMIT 50');
+      expect(result.query).not.toContain('LIMIT 100');
     });
 
     it('validates offset is non-negative', () => {
-      const result = buildCallsReviewQuery('EMP-STF-001', 10, 0, 'date');
+      expect(buildCallsReviewQuery('EMP-STF-001', 10, 0, 'date').query).toContain('OFFSET 0');
+      // A negative offset is floored rather than emitted, which would be a syntax error.
+      expect(buildCallsReviewQuery('EMP-STF-001', 10, -5, 'date').query).toContain('OFFSET 0');
+    });
 
-      expect(result.params[2]).toBeGreaterThanOrEqual(0);
+    it('cannot be injected through limit or offset now that they are inlined', () => {
+      // The assertion that matters most after the move off bound parameters: hostile
+      // input must not reach the SQL. Number() makes each of these NaN, so sqlLimitOffset
+      // falls back to its default limit and a zero offset.
+      const hostile = buildCallsReviewQuery(
+        'EMP-STF-001',
+        '10; DROP TABLE call_quality_assessment' as unknown as number,
+        "0 UNION SELECT * FROM employees" as unknown as number,
+        'date',
+      );
+
+      expect(hostile.query).not.toMatch(/DROP\s+TABLE/i);
+      expect(hostile.query).not.toMatch(/UNION\s+SELECT/i);
+      expect(hostile.query).toMatch(/LIMIT \d+ OFFSET \d+/);
+      expect(hostile.params).toEqual(['EMP-STF-001']);
     });
 
     it('returns calls from 30 days period', () => {
@@ -201,12 +224,17 @@ describe('Quality Query Builders', () => {
     });
 
     it('parameter binding prevents SQL injection in sorting', () => {
-      // Even with sort parameter being user-controlled, it should be validated
+      // sort is user-controlled, so it must never reach the SQL verbatim. It selects
+      // from a fixed set of ORDER BY clauses; anything else falls back to the default.
       const result = buildCallsReviewQuery('EMP-STF-001', 10, 0, 'date');
-
-      // Query is constructed safely
-      expect(result.params).toEqual(['EMP-STF-001', 10, 0]);
+      expect(result.params).toEqual(['EMP-STF-001']);
       expect(typeof result.query).toBe('string');
+
+      const hostileSort = buildCallsReviewQuery(
+        'EMP-STF-001', 10, 0, "date; DROP TABLE employees" as unknown as 'date',
+      );
+      expect(hostileSort.query).not.toMatch(/DROP\s+TABLE/i);
+      expect(hostileSort.query).toContain('ORDER BY CallDate DESC');
     });
   });
 
@@ -415,12 +443,14 @@ describe('Quality Query Builders', () => {
     });
 
     it('no SQL injection via numeric parameters', () => {
-      // Even though limit/offset are numeric, ensure proper binding
+      // limit/offset are inlined by sqlLimitOffset rather than bound, so "proper
+      // binding" is now "proper coercion": only digits may appear after LIMIT/OFFSET.
       const result = buildCallsReviewQuery('EMP-STF-001', 10, 0, 'date');
 
       expect(Array.isArray(result.params)).toBe(true);
-      expect(typeof result.params[1]).toBe('number');
-      expect(typeof result.params[2]).toBe('number');
+      expect(result.params).toEqual(['EMP-STF-001']);
+      expect(result.query).toMatch(/LIMIT \d+ OFFSET \d+/);
+      expect(result.query).not.toMatch(/LIMIT\s+[^\d]/);
     });
   });
 
