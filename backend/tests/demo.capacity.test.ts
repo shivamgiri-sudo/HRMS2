@@ -161,10 +161,32 @@ describe("accountControlService.lockAccount", () => {
   it("inserts a row into account_control_log and returns { logged: true }", async () => {
     exec.mockResolvedValueOnce([{ affectedRows: 1 }, []]);
     exec.mockResolvedValueOnce([{ affectedRows: 1 }, []]);
+    exec.mockResolvedValueOnce([{ affectedRows: 1 }, []]);
     const result = await accountControlService.lockAccount("user-1", "admin-1", "policy violation", "127.0.0.1");
     expect(result).toEqual({ logged: true });
-    expect(exec).toHaveBeenCalledTimes(2);
-    expect(exec.mock.calls[0][0] as string).toMatch(/INSERT INTO account_control_log/i);
+
+    // 65b304e2 made locking actually lock: alongside the audit row it now sets
+    // auth_user.is_blocked, which is a third db.execute. The old assertion was
+    // toHaveBeenCalledTimes(2) and broke on that — a count is a magic number that tracks
+    // the implementation rather than the behaviour, and it fails the moment a legitimate
+    // query is added while saying nothing about whether the lock actually happened.
+    //
+    // Asserting on the two statements that MATTER instead: the audit row is written, and
+    // the account is really blocked. Those are the guarantees; the number of queries used
+    // to deliver them is not.
+    // Order-independent on purpose. The original assertion also pinned the INSERT to
+    // position 0, and the service in fact blocks the account first — so a positional check
+    // fails on a reordering that changes no guarantee at all. Both statements must happen;
+    // which comes first is the service's business.
+    const statements = exec.mock.calls.map((c) => String(c[0]));
+    expect(
+      statements.some((s) => /INSERT INTO account_control_log/i.test(s)),
+      "lockAccount must write the audit row"
+    ).toBe(true);
+    expect(
+      statements.some((s) => /UPDATE\s+auth_user[\s\S]*is_blocked\s*=\s*1/i.test(s)),
+      "lockAccount must set auth_user.is_blocked, not only write the audit row"
+    ).toBe(true);
   });
 });
 
