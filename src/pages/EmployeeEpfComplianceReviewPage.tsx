@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import { AlertTriangle, CheckCircle2, Download, Loader2, PenSquare, Send } from "lucide-react";
+import { readPublicJson } from "@/lib/publicJson";
 
 type PublicPayload = {
   session: {
@@ -57,7 +58,7 @@ export default function EmployeeEpfComplianceReviewPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(kyc),
       });
-      const body = await response.json();
+      const body = await readPublicJson(response);
       if (!response.ok) {
         if (Array.isArray(body?.errors)) {
           setKycErrors(Object.fromEntries(body.errors.map((e: { field: string; message: string }) => [e.field, e.message])));
@@ -84,7 +85,7 @@ export default function EmployeeEpfComplianceReviewPage() {
     setError(null);
     try {
       const response = await fetch(`/api/public/employee-documents/esign/${token}`);
-      const body = await response.json();
+      const body = await readPublicJson(response);
       if (!response.ok) throw new Error(body?.message || "Unable to load the EPF review link.");
       setPayload(body.data);
     } catch (err: any) {
@@ -116,7 +117,7 @@ export default function EmployeeEpfComplianceReviewPage() {
           record_epf_consent: action === "confirm",
         }),
       });
-      const body = await response.json();
+      const body = await readPublicJson(response);
       if (!response.ok) throw new Error(body?.message || "Unable to complete this action.");
       setResult(action === "esign" ? "EPF declaration signing completed." : action === "confirm" ? "EPF details confirmed and consent recorded." : "Correction request sent to HR.");
       await load();

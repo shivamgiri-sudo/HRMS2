@@ -10,9 +10,15 @@ export interface BuiltInCommunicationTemplate {
 }
 
 function emailFrame(eyebrow: string, title: string, body: string, actionLabel?: string, actionUrl?: string): string {
-  const action = actionLabel && actionUrl
+  const anchor = actionLabel && actionUrl
     ? `<p style="margin:28px 0 8px"><a href="${actionUrl}" style="display:inline-block;background:#1B6AB5;color:#fff;text-decoration:none;padding:13px 22px;border-radius:10px;font-weight:700">${actionLabel}</a></p>`
     : "";
+  // When the URL is a handlebars value it can render empty — a caller dispatched
+  // an event with no reachable target for this recipient. Guarding the button on
+  // the same expression makes it disappear instead of shipping href="", which is
+  // a button that silently reloads the reader's mail client.
+  const boundTo = actionUrl?.match(/^\{\{\s*([\w.]+)\s*\}\}$/)?.[1];
+  const action = anchor && boundTo ? `{{#if ${boundTo}}}${anchor}{{/if}}` : anchor;
   return `<!doctype html>
 <html>
 <body style="margin:0;background:#f1f5f9;font-family:Arial,sans-serif;color:#172033">
@@ -51,7 +57,7 @@ export const builtInTemplates: Record<string, BuiltInCommunicationTemplate> = {
 
 {{notification.message}}
 {{#if notification.reference}}Reference: {{notification.reference}}{{/if}}
-Open HRMS: {{notification.action_url}}
+{{#if notification.action_url}}Open HRMS: {{notification.action_url}}{{/if}}
 
 Mas Callnet India Pvt Ltd`,
     whatsapp_text: `*{{notification.title}}*
@@ -61,11 +67,11 @@ Hi {{employee.name}},
 {{notification.message}}
 {{#if notification.reference}}
 Reference: {{notification.reference}}{{/if}}
-
-Open HRMS: {{notification.action_url}}
+{{#if notification.action_url}}
+Open HRMS: {{notification.action_url}}{{/if}}
 
 _Mas Callnet India Pvt Ltd_`,
-    sms_text: `MCN HRMS: {{notification.title}}. {{notification.short_message}} View: {{notification.action_url}}`,
+    sms_text: `MCN HRMS: {{notification.title}}. {{notification.short_message}}{{#if notification.action_url}} View: {{notification.action_url}}{{/if}}`,
   },
   leave_submission: {
     subject: "Leave request submitted | {{leave_type}}",

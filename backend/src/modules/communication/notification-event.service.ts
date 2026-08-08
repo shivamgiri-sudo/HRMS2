@@ -1,4 +1,5 @@
 import Handlebars from "handlebars";
+import { env } from "../../config/env.js";
 import type { Channel, NotificationCategory } from "./communication.types.js";
 import { dispatchService } from "./dispatch.service.js";
 
@@ -411,7 +412,12 @@ export const NOTIFICATION_EVENT_CATALOG = {
     label: "eSign reminder",
     category: "onboarding",
     title: "Joining document eSign pending",
-    message: "Your {{document_name}} requires Aadhaar eSign. Please complete it before {{deadline}}. {{days_pending}} day(s) pending.",
+    // No signing link here on purpose. Only sha256(token) is stored, so the raw
+    // token cannot be rebuilt from the database — a reminder that carried its own
+    // button would have to mint a second live credential every time it fired. The
+    // outstanding link is still valid (the worker only selects rows whose token is
+    // active and unexpired), so the reminder points back at it instead.
+    message: "Your {{document_name}} requires Aadhaar eSign. Please complete it before {{deadline}} using the secure signing link already sent to you in your joining documents email — that link is still valid. {{days_pending}} day(s) pending.",
     shortMessage: "{{document_name}} eSign pending ({{days_pending}} days).",
     actionUrl: "/profile",
     priority: "high",
@@ -510,6 +516,26 @@ function render(value: string, data: Record<string, unknown>): string {
   return Handlebars.compile(value)(data).replace(/\s+/g, " ").trim();
 }
 
+/**
+ * Every actionUrl in the catalogue above is a bare path like "/profile".
+ *
+ * The portal inbox can use that as-is — it is rendered inside the app, which
+ * supplies the origin. Email, SMS and WhatsApp cannot: they arrive somewhere
+ * with no base to resolve against, so `<a href="/profile">Open HRMS</a>` reached
+ * the recipient as a link their mail client could only resolve against its own
+ * domain. Nothing in the delivery path ever prefixed a host, so the "Open HRMS"
+ * button in every system_event this platform has sent went nowhere.
+ *
+ * env.FRONTEND_URL is zod-defaulted and always a valid absolute URL, so this
+ * cannot itself emit a relative link.
+ */
+function absoluteActionUrl(path: string): string {
+  if (!path) return "";
+  if (/^https?:\/\//i.test(path)) return path;
+  const base = String(env.FRONTEND_URL).replace(/\/+$/, "");
+  return `${base}${path.startsWith("/") ? path : `/${path}`}`;
+}
+
 class NotificationEventService {
   listCatalog() {
     return Object.entries(NOTIFICATION_EVENT_CATALOG).map(([code, event]) => ({
@@ -528,6 +554,14 @@ class NotificationEventService {
     recipientEmployeeIds: string[];
     data?: Record<string, unknown>;
     channels?: Channel[];
+    /**
+     * Overrides the catalogue path for the OUTBOUND channels only. Pass "" when
+     * the caller knows no reachable target exists for this recipient — the
+     * button is then omitted rather than shipped pointing at a page they cannot
+     * open. The portal item keeps the catalogue path either way, because an
+     * in-app inbox row is only ever created for someone who has a login.
+     */
+    actionUrl?: string;
   }) {
     const definition = NOTIFICATION_EVENT_CATALOG[input.eventCode];
     if (!definition) throw new Error("Unknown notification event");
@@ -551,7 +585,7 @@ class NotificationEventService {
           message,
           short_message: shortMessage,
           category: definition.category,
-          action_url: definition.actionUrl,
+          action_url: absoluteActionUrl(input.actionUrl ?? definition.actionUrl),
           reference: data.reference ?? null,
         },
       },
