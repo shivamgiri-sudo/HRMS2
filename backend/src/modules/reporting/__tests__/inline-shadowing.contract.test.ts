@@ -74,7 +74,15 @@ const SHADOWED_BACKLOG = new Set<string>([
   "daily-shrinkage-report", "employee-master", "employee-movement",
   "gratuity-liability-register", "grievance-register",
   "holiday-master-list", "identity-source-snapshot", "increment-promotion-history",
-  "late-arrival-summary", "leave-allocation-register", "leave-balance-export",
+  // "late-arrival-summary" left this list on 2026-08-08. The shadow was hiding a genuine
+  // disagreement rather than a duplicate: the inline block returned one row per late arrival
+  // (2,199 live) and the executor grouped by employee into totals (577). Because the preview
+  // handler hits the inline block first and the export handler calls executeReport() directly,
+  // the screen and the downloaded spreadsheet were different reports at different grains.
+  // The catalogue settled it — 10 of the 10 columns unique to the detail shape are declared,
+  // 0 of the 3 unique to the aggregate — so the executor was rewritten to the detail and the
+  // inline block removed.
+  "leave-allocation-register", "leave-balance-export",
   // "leave-encashment-register" left this list on 2026-08-08. Its inline block queried a
   // table named leave_encashment that does not exist, so the shadow guaranteed a 500; the
   // executor it was hiding raises ReportSourceUnavailableError instead, which is the honest

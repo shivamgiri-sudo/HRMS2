@@ -2524,53 +2524,13 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
     }
 
     // ─── Missing Attendance ───────────────────────────────────────────────────
-    case "late-arrival-summary": {
-      const from = dateParam(req.query.from, `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}-01`);
-      const to = dateParam(req.query.to, new Date().toISOString().slice(0, 10));
-      const minLateMinutes = Number(req.query.minLateMinutes ?? 0);
-      addScopedEmployeeFilters(req, clauses, params);
-      clauses.push("adr.record_date BETWEEN ? AND ?"); params.push(from, to);
-      clauses.push("adr.late_mark = 1");
-      if (minLateMinutes > 0) {
-        clauses.push("adr.late_by_minutes >= ?"); params.push(minLateMinutes);
-      }
-      sql = `SELECT adr.record_date,
-                    e.employee_code,
-                    COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-                    COALESCE(rcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
-                    COALESCE(rcc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
-                    COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
-                    COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
-                    COALESCE(ws.shift_name, 'Roster Not Assigned') AS roster_shift,
-                    ws.start_time AS scheduled_start,
-                    was.login_time AS punch_in,
-                    adr.late_by_minutes AS late_minutes,
-                    COALESCE(arc.grace_minutes, 15) AS grace_minutes,
-                    GREATEST(0, adr.late_by_minutes - COALESCE(arc.grace_minutes, 15)) AS net_late_minutes,
-                    CASE
-                      WHEN adr.late_by_minutes <= COALESCE(arc.grace_minutes, 15) THEN 'Within Grace'
-                      WHEN adr.late_by_minutes <= 30 THEN 'Mild Late'
-                      WHEN adr.late_by_minutes <= 60 THEN 'Moderate Late'
-                      ELSE 'Severe Late'
-                    END AS late_status,
-                    CASE WHEN adr.regularization_id IS NOT NULL THEN 'Yes' ELSE 'No' END AS approved_exception,
-                    COALESCE(NULLIF(rm.full_name,''), CONCAT(rm.first_name,' ',COALESCE(rm.last_name,''))) AS reporting_manager
-               FROM attendance_daily_record adr
-               JOIN employees e ON e.id = adr.employee_id
-               LEFT JOIN branch_master b ON b.id = e.branch_id
-               LEFT JOIN process_master p ON p.id = e.process_id
-               LEFT JOIN employees rm ON rm.id = e.reporting_manager_id
-               LEFT JOIN wfm_roster_assignment wra ON wra.employee_id = adr.employee_id
-                 AND wra.roster_date = adr.record_date
-               LEFT JOIN wfm_shift_master ws ON ws.id = wra.shift_id
-               LEFT JOIN wfm_attendance_session was ON was.employee_id = adr.employee_id
-                 AND was.session_date = adr.record_date
-               LEFT JOIN attendance_rule_config arc ON arc.id = adr.rule_config_id
-               LEFT JOIN cost_centre_master rcc ON rcc.id = e.cost_centre_id
-              WHERE ${clauses.join(" AND ")}
-              ORDER BY adr.record_date DESC, adr.late_by_minutes DESC`;
-      break;
-    }
+    // "late-arrival-summary" is intentionally not handled here.
+    //
+    // It falls through to executeReport(), which now carries this exact SQL, so the screen
+    // and the downloaded XLSX are one implementation. They were two: this block returned one
+    // row per late arrival (2,199 live) while the executor grouped by employee and returned
+    // totals (577), and which one a user got depended on whether they looked or downloaded.
+    // The catalogue's 16 declared columns match the detail shape, so the detail is the report.
 
     case "regularization-summary": {
       const month = monthParam(req.query.month);

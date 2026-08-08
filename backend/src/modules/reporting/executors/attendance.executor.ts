@@ -345,61 +345,101 @@ export async function attendanceSummary(
 // ---------------------------------------------------------------------------
 // late-arrival-summary  (per employee, per month)
 // ---------------------------------------------------------------------------
+/**
+ * late-arrival-summary
+ *
+ * One row per late arrival, not per employee.
+ *
+ * This executor used to GROUP BY employee and return total_late_days / avg_late_minutes /
+ * max_late_minutes. The inline block in report-suite.routes.ts returns the detail: record_date,
+ * roster_shift, scheduled_start, punch_in, late_minutes, grace_minutes, net_late_minutes,
+ * late_status, approved_exception, reporting_manager.
+ *
+ * Both existed at once, and which one a user got depended on how they asked. The preview
+ * handler reaches the inline block first; the export handler calls executeReport() directly and
+ * got this. Measured live on 2026-08-08: the screen showed 2,199 rows and the downloaded
+ * spreadsheet 577 — the same report at two different grains, with no overlap in the columns
+ * that distinguish them.
+ *
+ * The catalogue decides which is intended, and it is not a matter of taste: src/lib/report-
+ * catalog.ts declares 16 columns for this code, and 10 of the 10 columns unique to the detail
+ * shape are among them while 0 of the 3 unique to the aggregate shape are. The detail is the
+ * report; the aggregate was drift.
+ *
+ * Ported from the inline block so both paths run one implementation. Two deliberate
+ * differences, neither of which changes a row:
+ *   - scope comes from appendScopeConditions(scope, ...) because an executor has no req;
+ *   - the inline block's optional minLateMinutes filter is not carried, because ExecFilters has
+ *     no such field. It defaults to 0 — no filtering — so this matches the inline default, and
+ *     the export path never offered that filter to begin with.
+ */
 export async function lateArrivalSummary(
   filters: ExecFilters,
   scope: ExecScope,
   options: ExecOptions
 ): Promise<ExecResult> {
-  const month = monthParam(filters.month);
+  const now = new Date();
+  const from = dateParam(filters.from, `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`);
+  const to   = dateParam(filters.to, now.toISOString().slice(0, 10));
 
   const clauses: string[] = ["e.id IS NOT NULL"];
   const params: unknown[]  = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
-
-  clauses.push("adr.record_date >= ? AND adr.record_date < ?", "adr.late_by_minutes > 0");
-  params.push(monthRange(month).start, monthRange(month).endExclusive);
+  clauses.push("adr.record_date BETWEEN ? AND ?");
+  params.push(from, to);
+  clauses.push("adr.late_mark = 1");
 
   if (options.mode === "worker" && options.cursor != null) {
-    clauses.push("e.id > ?");
+    clauses.push("adr.id > ?");
     params.push(options.cursor);
   }
 
   const base = `
-    SELECT e.id AS _cursor,
+    SELECT adr.id AS _cursor,
+           adr.record_date,
            e.employee_code,
            COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
+           COALESCE(rcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
+           COALESCE(rcc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
            COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
            COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
-           COALESCE(sp_cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
-           COALESCE(sp_cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
-           COUNT(*) AS total_late_days,
-           ROUND(AVG(adr.late_by_minutes), 1) AS avg_late_minutes,
-           MAX(adr.late_by_minutes) AS max_late_minutes
+           COALESCE(ws.shift_name, 'Roster Not Assigned') AS roster_shift,
+           ws.start_time AS scheduled_start,
+           was.login_time AS punch_in,
+           adr.late_by_minutes AS late_minutes,
+           COALESCE(arc.grace_minutes, 15) AS grace_minutes,
+           GREATEST(0, adr.late_by_minutes - COALESCE(arc.grace_minutes, 15)) AS net_late_minutes,
+           CASE
+             WHEN adr.late_by_minutes <= COALESCE(arc.grace_minutes, 15) THEN 'Within Grace'
+             WHEN adr.late_by_minutes <= 30 THEN 'Mild Late'
+             WHEN adr.late_by_minutes <= 60 THEN 'Moderate Late'
+             ELSE 'Severe Late'
+           END AS late_status,
+           CASE WHEN adr.regularization_id IS NOT NULL THEN 'Yes' ELSE 'No' END AS approved_exception,
+           COALESCE(NULLIF(rm.full_name,''), CONCAT(rm.first_name,' ',COALESCE(rm.last_name,''))) AS reporting_manager
       FROM attendance_daily_record adr
       JOIN employees e ON e.id = adr.employee_id
       LEFT JOIN branch_master b ON b.id = e.branch_id
       LEFT JOIN process_master p ON p.id = e.process_id
-      LEFT JOIN cost_centre_master sp_cc ON sp_cc.id = e.cost_centre_id
+      LEFT JOIN employees rm ON rm.id = e.reporting_manager_id
+      LEFT JOIN wfm_roster_assignment wra ON wra.employee_id = adr.employee_id
+        AND wra.roster_date = adr.record_date
+      LEFT JOIN wfm_shift_master ws ON ws.id = wra.shift_id
+      LEFT JOIN wfm_attendance_session was ON was.employee_id = adr.employee_id
+        AND was.session_date = adr.record_date
+      LEFT JOIN attendance_rule_config arc ON arc.id = adr.rule_config_id
+      LEFT JOIN cost_centre_master rcc ON rcc.id = e.cost_centre_id
      WHERE ${clauses.join(" AND ")}
-     GROUP BY e.id, e.employee_code, employee_name, b.branch_name, p.process_name, sp_cc.cost_centre_code, sp_cc.cost_centre_name
-     ORDER BY e.id ASC`;
+     ORDER BY adr.record_date DESC, adr.late_by_minutes DESC`;
 
   const total = options.includeTotal ? await count(base, params) : 0;
   const sql   = options.mode === "worker" ? `${base} LIMIT ${options.limit}` : applyPagination(base, options);
   const rows  = await query(sql, params) as Record<string, unknown>[];
-
   const nextCursor = (options.mode === "worker" && rows.length > 0)
-    ? (rows[rows.length - 1]._cursor as number)
-    : null;
-
+    ? (rows[rows.length - 1]._cursor as number) : null;
   const out = rows.map(({ _cursor: _, ...rest }) => rest);
-  return {
-    rows: out,
-    rowCount: options.includeTotal ? total : rows.length,
-    isTruncated: options.includeTotal ? total > out.length : rows.length === options.limit,
-    nextCursor,
-  };
+  return { rows: out, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > out.length, nextCursor };
 }
 
 // ---------------------------------------------------------------------------
