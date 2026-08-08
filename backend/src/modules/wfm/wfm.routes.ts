@@ -685,7 +685,12 @@ wfmRouter.post("/manager/weekoff-review/:assignmentId/realign", requireAuth, req
     const [scopeCheck] = await dbConn.execute<RowDataPacket[]>(
       `SELECT 1 FROM wfm_roster_assignment wra
         JOIN employees e ON e.id = wra.employee_id
-        JOIN process_master pm ON pm.process_name = wra.process_name
+        -- LEFT, not INNER: 333,762 of 413,386 roster rows carry process_name NULL, so an
+        -- inner join discards the row before the OR below is ever evaluated and the
+        -- reporting-manager branch can never match — a manager was refused on their own
+        -- direct report. pm.id is then NULL, and ups.process_id = pm.id cannot match a
+        -- NULL, so the scope branch is unchanged: this restores the manager path only.
+        LEFT JOIN process_master pm ON pm.process_name = wra.process_name
        WHERE wra.id = ? AND (e.reporting_manager_id = ? OR EXISTS (
          SELECT 1 FROM user_assignment_scope ups
           WHERE ups.user_id = ? AND ups.process_id = pm.id AND ups.active_status = 1
@@ -745,7 +750,12 @@ wfmRouter.post("/manager/weekoff-review/:assignmentId/force-approve", requireAut
     const [scopeCheck] = await dbConn.execute<RowDataPacket[]>(
       `SELECT 1 FROM wfm_roster_assignment wra
         JOIN employees e ON e.id = wra.employee_id
-        JOIN process_master pm ON pm.process_name = wra.process_name
+        -- LEFT, not INNER: 333,762 of 413,386 roster rows carry process_name NULL, so an
+        -- inner join discards the row before the OR below is ever evaluated and the
+        -- reporting-manager branch can never match — a manager was refused on their own
+        -- direct report. pm.id is then NULL, and ups.process_id = pm.id cannot match a
+        -- NULL, so the scope branch is unchanged: this restores the manager path only.
+        LEFT JOIN process_master pm ON pm.process_name = wra.process_name
        WHERE wra.id = ? AND (e.reporting_manager_id = ? OR EXISTS (
          SELECT 1 FROM user_assignment_scope ups
           WHERE ups.user_id = ? AND ups.process_id = pm.id AND ups.active_status = 1
@@ -795,7 +805,12 @@ wfmRouter.post("/manager/weekoff-review/:assignmentId/escalate", requireAuth, re
     const [scopeCheck] = await dbConn.execute<RowDataPacket[]>(
       `SELECT 1 FROM wfm_roster_assignment wra
         JOIN employees e ON e.id = wra.employee_id
-        JOIN process_master pm ON pm.process_name = wra.process_name
+        -- LEFT, not INNER: 333,762 of 413,386 roster rows carry process_name NULL, so an
+        -- inner join discards the row before the OR below is ever evaluated and the
+        -- reporting-manager branch can never match — a manager was refused on their own
+        -- direct report. pm.id is then NULL, and ups.process_id = pm.id cannot match a
+        -- NULL, so the scope branch is unchanged: this restores the manager path only.
+        LEFT JOIN process_master pm ON pm.process_name = wra.process_name
        WHERE wra.id = ? AND (e.reporting_manager_id = ? OR EXISTS (
          SELECT 1 FROM user_assignment_scope ups
           WHERE ups.user_id = ? AND ups.process_id = pm.id AND ups.active_status = 1
@@ -845,7 +860,12 @@ wfmRouter.post("/manager/weekoff-review/:assignmentId/reject-request", requireAu
     const [scopeCheck] = await dbConn.execute<RowDataPacket[]>(
       `SELECT 1 FROM wfm_roster_assignment wra
         JOIN employees e ON e.id = wra.employee_id
-        JOIN process_master pm ON pm.process_name = wra.process_name
+        -- LEFT, not INNER: 333,762 of 413,386 roster rows carry process_name NULL, so an
+        -- inner join discards the row before the OR below is ever evaluated and the
+        -- reporting-manager branch can never match — a manager was refused on their own
+        -- direct report. pm.id is then NULL, and ups.process_id = pm.id cannot match a
+        -- NULL, so the scope branch is unchanged: this restores the manager path only.
+        LEFT JOIN process_master pm ON pm.process_name = wra.process_name
        WHERE wra.id = ? AND (e.reporting_manager_id = ? OR EXISTS (
          SELECT 1 FROM user_assignment_scope ups
           WHERE ups.user_id = ? AND ups.process_id = pm.id AND ups.active_status = 1
