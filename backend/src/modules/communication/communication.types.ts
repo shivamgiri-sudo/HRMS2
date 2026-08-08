@@ -55,6 +55,12 @@ export interface SendMessageDTO {
    * Falls back to the normal address otherwise, so nobody is silenced.
    */
   prefer_official_email?: boolean;
+  /**
+   * Catalogue event this message belongs to, e.g. 'esign_reminder'. Used only to
+   * let an operator stop one event's outbound delivery via
+   * notification_dispatch_block without stopping everything.
+   */
+  event_code?: string;
 }
 export interface BulkSendDTO {
   template_id?: string; template_name?: string;
