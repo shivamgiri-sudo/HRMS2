@@ -2890,18 +2890,24 @@ export const REPORT_CATALOG: ReportDefinition[] = [
       { key: "month", label: "Month", format: "text", width: 100 },
       { key: "branch_name", label: "Branch", format: "text", width: 120 },
       { key: "process_name", label: "Process", format: "text", width: 140 },
-      { key: "opening_hc", label: "Opening HC", format: "number", width: 100, align: "right" },
       { key: "joiners", label: "Joiners", format: "number", width: 80, align: "right" },
       { key: "exits", label: "Exits", format: "number", width: 80, align: "right" },
-      { key: "closing_hc", label: "Closing HC", format: "number", width: 100, align: "right" },
-      { key: "attrition_pct", label: "Attrition %", format: "percentage", width: 100, align: "right" },
-      { key: "avg_hc", label: "Avg HC", format: "number", width: 80, align: "right" },
     ],
     filters: [F_DATE_FROM, F_DATE_TO, F_BRANCH, F_PROCESS],
     viewRoles: ROLES_ALL_MANAGEMENT,
     exportRoles: ROLES_HR_ADMIN,
     sourceTables: ["employees"],
-    calculationNotes: "Attrition % = (Exits / Avg HC) × 100. Avg HC = (Opening + Closing) / 2.",
+    // The attrition-% formula this once stated is not computable and is therefore not claimed.
+    // Avg HC needs opening and closing headcount, and point-in-time headcount is unanswerable
+    // here: 28,398 of 58,627 employees are inactive with no exit date (2026-08-08), so nothing
+    // in the data says who was employed on the first of a past month. Joiners and exits are
+    // exact — both reconciled against independently written control queries, all seven months
+    // of 2026 matching — so the report states those and stops there.
+    calculationNotes:
+      "Joiners = employees whose date_of_joining falls in the month. " +
+      "Exits = employees whose COALESCE(date_of_exit, resignation_date) falls in the month. " +
+      "Attrition % is not reported: it requires point-in-time headcount, which cannot be " +
+      "derived while 28,398 employees are inactive with no exit date recorded.",
     branchScoped: true,
     processScoped: true,
     sensitivityLevel: "confidential",

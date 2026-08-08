@@ -1830,16 +1830,19 @@ export const REPORT_CATALOG: ReportMeta[] = [
     description: "Monthly attrition metrics by branch and process",
     rowGrain: "One row per month per branch per process",
     primaryKey: ["month", "branch_name", "process_name"],
+    // opening_hc, closing_hc, avg_hc and attrition_pct were declared here and drew four blank
+    // columns: no implementation has ever produced them. They are not merely unbuilt, they are
+    // not derivable — 28,398 of 58,627 employees are inactive with no exit date recorded
+    // (2026-08-08), so "employed at the start of month M" cannot be answered from the data.
+    // Computing it from dates alone counts all 28,398 as still employed and yields an opening
+    // headcount near 29,500 against a real active headcount of 1,125. Restoring these columns
+    // needs a decision on the denominator first, not more SQL.
     columns: [
       { key: "month", label: "Month", format: "text", width: 100 },
       { key: "branch_name", label: "Branch", format: "text", width: 120 },
       { key: "process_name", label: "Process", format: "text", width: 140 },
-      { key: "opening_hc", label: "Opening HC", format: "number", width: 100, align: "right" },
       { key: "joiners", label: "Joiners", format: "number", width: 80, align: "right" },
       { key: "exits", label: "Exits", format: "number", width: 80, align: "right" },
-      { key: "closing_hc", label: "Closing HC", format: "number", width: 100, align: "right" },
-      { key: "attrition_pct", label: "Attrition %", format: "percentage", width: 100, align: "right" },
-      { key: "avg_hc", label: "Avg HC", format: "number", width: 80, align: "right" },
     ],
     viewRoles: ["super_admin", "admin", "hr", "hr_head", "finance", "payroll", "wfm", "manager", "process_manager", "branch_head", "ceo"],
     exportRoles: ["super_admin", "admin", "hr", "hr_head"],

@@ -296,24 +296,69 @@ export async function monthlyAttritionSummary(
   const from  = dateParam(filters.from, `${new Date().getFullYear()}-01-01`);
   const to    = dateParam(filters.to, today);
 
-  const clauses: string[] = ["e.id IS NOT NULL"];
-  const params: unknown[]  = [];
-  appendScopeConditions(scope, clauses, params);
-  appendFilterConditions(filters, clauses, params);
-  clauses.push("COALESCE(e.date_of_exit, e.resignation_date) BETWEEN ? AND ?");
-  params.push(from, to);
+  // Joiners and exits are counted in two passes and unioned, because they are different
+  // employees: someone who joined in July and someone who left in July share a month but
+  // nothing else, so no single GROUP BY over one date column can produce both.
+  //
+  // The scope and filter clauses have to be built — and bound — once per half. Both halves
+  // are identical in shape, so the parameter array is simply the first half's list followed
+  // by the second's, in the order the placeholders appear. That ordering is the whole
+  // correctness argument: mysql2 binds positionally, and a half-and-half query is exactly
+  // where an appended parameter silently lands in the wrong slot.
+  const joinClauses: string[] = ["e.id IS NOT NULL"];
+  const joinParams: unknown[] = [];
+  appendScopeConditions(scope, joinClauses, joinParams);
+  appendFilterConditions(filters, joinClauses, joinParams);
+  joinClauses.push("e.date_of_joining >= ? AND e.date_of_joining < DATE_ADD(?, INTERVAL 1 DAY)");
+  joinParams.push(from, to);
 
+  const exitClauses: string[] = ["e.id IS NOT NULL"];
+  const exitParams: unknown[] = [];
+  appendScopeConditions(scope, exitClauses, exitParams);
+  appendFilterConditions(filters, exitClauses, exitParams);
+  exitClauses.push(
+    "COALESCE(e.date_of_exit, e.resignation_date) >= ? " +
+    "AND COALESCE(e.date_of_exit, e.resignation_date) < DATE_ADD(?, INTERVAL 1 DAY)",
+  );
+  exitParams.push(from, to);
+
+  const params = [...joinParams, ...exitParams];
+
+  // opening_hc, closing_hc, avg_hc and attrition_pct are NOT emitted, though both catalogues
+  // once declared them. Point-in-time headcount cannot be derived from this data: 28,398 of
+  // 58,627 employees are inactive with no exit date recorded (2026-08-08), so "employed at
+  // the start of month M" is unanswerable — deriving it from dates alone counts all 28,398
+  // as still employed and reports an opening headcount near 29,500 against a real active
+  // headcount of 1,125. Choosing a substitute denominator changes a headline attrition
+  // figure, which is a business decision and not one to make inside a report executor.
+  // Joiners and exits are both exact and are what this report now states.
   const base = `
-    SELECT LEFT(COALESCE(e.date_of_exit, e.resignation_date), 7) AS exit_month,
-           b.branch_name,
-           p.process_name,
-           COUNT(*) AS attrition_count
-      FROM employees e
-      LEFT JOIN branch_master b  ON b.id = e.branch_id
-      LEFT JOIN process_master p ON p.id = e.process_id
-     WHERE ${clauses.join(" AND ")}
-     GROUP BY exit_month, b.branch_name, p.process_name
-     ORDER BY exit_month ASC, b.branch_name, p.process_name`;
+    SELECT u.month,
+           u.branch_name,
+           u.process_name,
+           SUM(u.is_joiner) AS joiners,
+           SUM(u.is_exit)   AS exits
+      FROM (
+        SELECT DATE_FORMAT(e.date_of_joining, '%Y-%m') AS month,
+               COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
+               COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
+               1 AS is_joiner, 0 AS is_exit
+          FROM employees e
+          LEFT JOIN branch_master b  ON b.id = e.branch_id
+          LEFT JOIN process_master p ON p.id = e.process_id
+         WHERE ${joinClauses.join(" AND ")}
+        UNION ALL
+        SELECT DATE_FORMAT(COALESCE(e.date_of_exit, e.resignation_date), '%Y-%m') AS month,
+               COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
+               COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
+               0 AS is_joiner, 1 AS is_exit
+          FROM employees e
+          LEFT JOIN branch_master b  ON b.id = e.branch_id
+          LEFT JOIN process_master p ON p.id = e.process_id
+         WHERE ${exitClauses.join(" AND ")}
+      ) u
+     GROUP BY u.month, u.branch_name, u.process_name
+     ORDER BY u.month DESC, u.branch_name, u.process_name`;
 
   try {
     const total = options.includeTotal ? await count(base, params) : 0;

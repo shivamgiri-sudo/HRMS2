@@ -58,6 +58,31 @@ describe("reports must read the table that holds the data", () => {
     expect(sql).toContain("COALESCE(er.submitted_at, er.created_at) BETWEEN ? AND ?");
   });
 
+  it("monthly-attrition-summary has no inline block reading the empty attrition_record", () => {
+    // attrition_record exists and holds 0 rows, so the report showed zero attrition for every
+    // month and every branch while 1,666 employees left between January and July 2026 — 165 in
+    // July alone. No error, no empty state: a valid query over an empty table. The executor it
+    // shadowed counts from employees.date_of_joining and COALESCE(date_of_exit,
+    // resignation_date), and reconciles exactly with an independent control for all 7 months.
+    expect(routes).not.toContain('case "monthly-attrition-summary":');
+    expect(routes, "nothing should read attrition_record — it is empty").not.toContain("FROM attrition_record");
+  });
+
+  it("the attrition executor counts joiners and exits from the employee dates", () => {
+    const exitExecutor = read("src/modules/reporting/executors/exit.executor.ts");
+    const start = exitExecutor.indexOf("export async function monthlyAttritionSummary");
+    expect(start, "monthlyAttritionSummary not found").toBeGreaterThan(-1);
+    const fn = exitExecutor.slice(start, exitExecutor.indexOf("\nexport async function", start + 1));
+    expect(fn).toContain("COALESCE(e.date_of_exit, e.resignation_date)");
+    expect(fn).toContain("e.date_of_joining");
+    // Point-in-time headcount is not derivable — 28,398 of 58,627 employees are inactive with
+    // no exit date — so the report must not claim an attrition percentage built on it.
+    // Comments are stripped first: the executor explains at length why these columns are
+    // absent, and naming them in prose must not read as emitting them.
+    const code = fn.replace(/^\s*\/\/.*$/gm, "").replace(/\/\*[\s\S]*?\*\//g, "");
+    expect(code, "attrition % needs a headcount this data cannot supply").not.toMatch(/attrition_pct|avg_hc|opening_hc/);
+  });
+
   it("leave-encashment-register has no inline block shadowing its executor", () => {
     // The inline block queried `leave_encashment`, which does not exist — ER_NO_SUCH_TABLE,
     // so a guaranteed 500. Falling through reaches leaveEncashmentRegister, which raises

@@ -2001,24 +2001,22 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
       break;
     }
 
-    case "monthly-attrition-summary": {
-      const from = dateParam(req.query.from, `${new Date().getFullYear()}-01-01`);
-      const to = dateParam(req.query.to, new Date().toISOString().slice(0, 10));
-      sql = `SELECT DATE_FORMAT(ar.exit_date,'%Y-%m') AS month,
-                    COUNT(*) AS exits,
-                    b.branch_name,
-                    ROUND(COUNT(*) / NULLIF(
-                      (SELECT COUNT(*) FROM employees e2 WHERE e2.active_status = 1),
-                    0) * 100, 2) AS attrition_rate_pct
-               FROM attrition_record ar
-               LEFT JOIN employees e ON e.id = ar.employee_id
-               LEFT JOIN branch_master b ON b.id = e.branch_id
-              WHERE ar.exit_date BETWEEN ? AND ?
-              GROUP BY DATE_FORMAT(ar.exit_date,'%Y-%m'), b.branch_name
-              ORDER BY month DESC`;
-      params.push(from, to);
-      break;
-    }
+    // "monthly-attrition-summary" is deliberately NOT handled here.
+    //
+    // The inline block that used to sit at this line read `attrition_record`, which exists
+    // and holds 0 rows. So the Monthly Attrition Summary reported zero attrition — every
+    // month, every branch — while 1,666 employees left between January and July 2026, 165 of
+    // them in July alone. A headline HR metric reading a confident zero, with no error and no
+    // empty state, because the query was valid and the table was simply empty.
+    //
+    // Falling through reaches monthlyAttritionSummary in executors/exit.executor.ts, which
+    // counts from employees.date_of_joining and COALESCE(date_of_exit, resignation_date) —
+    // the columns that actually carry this (29,198 employees have an exit date recorded).
+    // Its exit counts were reconciled against an independently written control query and
+    // match exactly for all seven months.
+    //
+    // It also applies row scope, which this inline block did not: attrition by branch was
+    // readable by anyone who could reach the report, regardless of their branch.
 
     case "ff-settlement-register": {
       const from = dateParam(req.query.from, `${new Date().getFullYear()}-01-01`);
@@ -2963,16 +2961,24 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
       addScopedEmployeeFilters(req, clauses, params);
       const year = String(req.query.year ?? new Date().getFullYear());
       if (req.query.branchId) { clauses.push("e.branch_id = ?"); params.push(String(req.query.branchId)); }
-      clauses.push("YEAR(ar.exit_date) = ?"); params.push(year);
+      // Drives off employees, not attrition_record. attrition_record exists with 0 rows, so
+      // this report returned nothing at all — the same empty-table fault that made
+      // monthly-attrition-summary report zero attrition. The exit date lives on the employee
+      // row: 29,198 employees carry COALESCE(date_of_exit, resignation_date).
+      //
+      // Nearly every row will read 'Not Specified'. exit_request holds 2 rows against ~29k
+      // exited employees, so the reason is genuinely unrecorded for almost everyone — that is
+      // a fact about the data and the report should show it rather than hide the exits.
+      clauses.push("YEAR(COALESCE(e.date_of_exit, e.resignation_date)) = ?"); params.push(year);
       sql = `SELECT COALESCE(er.exit_reason_category, 'Not Specified') AS exit_reason,
                     er.exit_type,
-                    b.branch_name,
+                    COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
                     COUNT(*) AS exit_count,
                     ROUND(COUNT(*) * 100.0 / SUM(COUNT(*)) OVER(), 1) AS pct_of_total,
-                    ROUND(AVG(TIMESTAMPDIFF(MONTH, e.date_of_joining, ar.exit_date)), 1) AS avg_tenure_months
-               FROM attrition_record ar
-               JOIN employees e ON e.id = ar.employee_id
-               LEFT JOIN exit_request er ON er.employee_id = ar.employee_id
+                    ROUND(AVG(TIMESTAMPDIFF(MONTH, e.date_of_joining,
+                          COALESCE(e.date_of_exit, e.resignation_date))), 1) AS avg_tenure_months
+               FROM employees e
+               LEFT JOIN exit_request er ON er.employee_id = e.id
                LEFT JOIN branch_master b ON b.id = e.branch_id
               WHERE ${clauses.join(" AND ")}
               GROUP BY er.exit_reason_category, er.exit_type, b.branch_name

@@ -81,7 +81,11 @@ const SHADOWED_BACKLOG = new Set<string>([
   // answer for a report whose source is genuinely absent.
   "leave-lapse-summary", "leave-lwp-reconciliation",
   "leave-trend-monthly", "lifecycle-events", "maternity-paternity-register",
-  "monthly-attrition-summary", "monthly-shrinkage-trend", "org-structure-snapshot",
+  // "monthly-attrition-summary" left this list on 2026-08-08. Its inline block read
+  // attrition_record, a table that exists with 0 rows, so the report showed zero attrition
+  // while 1,666 employees left in seven months. The executor it shadowed counts from the
+  // employee dates that actually carry this.
+  "monthly-shrinkage-trend", "org-structure-snapshot",
   "overtime-summary", "payroll-register", "payroll-variance", "punch-raw-export",
   "regularization-summary", "shift-adherence-detail",
 ]);
