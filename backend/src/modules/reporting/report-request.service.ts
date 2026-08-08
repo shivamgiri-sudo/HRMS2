@@ -445,8 +445,19 @@ export async function adminListReportRequests(f: AdminRequestFilter): Promise<{
   total: number;
 }> {
   await ensureReportingSchemaAvailable();
-  const page = f.page ?? 1;
-  const pageSize = f.pageSize ?? 50;
+  /*
+   * LIMIT and OFFSET are interpolated below, not bound - same defect and same remedy as
+   * cost-centre-management.service.ts. They were passed as `LIMIT ? OFFSET ?` to db.execute(),
+   * which prepares the statement, and MySQL refuses a bound parameter there: every call to
+   * GET /api/admin/report-requests failed with "Incorrect arguments to mysqld_stmt_execute", so
+   * the Report Audit page (/admin/report-audit) has returned 500 on load and never shown a row.
+   *
+   * Coerced to integers and clamped before reaching the string, so nothing user-supplied can
+   * survive into the SQL - a non-numeric page or pageSize collapses to the default. Every other
+   * filter stays a bound parameter.
+   */
+  const pageSize = Math.max(1, Math.min(Math.trunc(Number(f.pageSize)) || 50, 200));
+  const page = Math.max(1, Math.trunc(Number(f.page)) || 1);
   const offset = (page - 1) * pageSize;
 
   const conditions: string[] = [];
@@ -487,8 +498,8 @@ export async function adminListReportRequests(f: AdminRequestFilter): Promise<{
        LEFT JOIN report_generated_file rgf ON rgf.report_request_id = rr.id
        ${where}
        ORDER BY rr.requested_at DESC
-       LIMIT ? OFFSET ?`,
-      [...params, pageSize, offset]
+       LIMIT ${pageSize} OFFSET ${offset}`,
+      params
     );
     rows = r;
   } catch {
@@ -502,8 +513,8 @@ export async function adminListReportRequests(f: AdminRequestFilter): Promise<{
        FROM report_request rr
        ${where}
        ORDER BY rr.requested_at DESC
-       LIMIT ? OFFSET ?`,
-      [...params, pageSize, offset]
+       LIMIT ${pageSize} OFFSET ${offset}`,
+      params
     );
     rows = r;
   }

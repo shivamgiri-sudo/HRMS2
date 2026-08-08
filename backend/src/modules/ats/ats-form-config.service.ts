@@ -427,9 +427,21 @@ export const atsFormConfigService = {
     await db.execute('UPDATE ats_recruiter SET active_status = 0, updated_at = NOW() WHERE id = ?', [id]);
   },
 
+  /*
+   * ats_branch_alias_master has no created_at / updated_at column. Its sibling ats_recruiter does,
+   * and all three statements below were written as though this table matched it, so every one of
+   * them threw "Unknown column 'created_at' in 'field list'": the list endpoint
+   * (GET /api/ats/branch-aliases) 500'd outright, taking the Branch Alias section of the ATS form
+   * config page with it, and create and update were unreachable behind it.
+   *
+   * The queries are matched to the table that actually exists rather than the table adding two
+   * columns, so this needs no migration and no write to a shared database. If those timestamps are
+   * wanted later, an additive migration plus restoring the columns here is the follow-up - nothing
+   * here blocks it.
+   */
   async listBranchAliases() {
     const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT id, canonical_key, display_name, alias_text, active_status, created_at, updated_at
+      `SELECT id, canonical_key, display_name, alias_text, active_status
        FROM ats_branch_alias_master
        ORDER BY display_name ASC`
     );
@@ -437,12 +449,18 @@ export const atsFormConfigService = {
   },
 
   async createBranchAlias(canonical: string, display: string, alias: string | null) {
+    // The id is generated here rather than by UUID() in the INSERT so the new row can be read back
+    // by its own id. The previous "ORDER BY created_at DESC LIMIT 1" both referenced the missing
+    // column and, on a table with no insertion order to sort by, could return another row entirely.
+    const [idRows] = await db.execute<RowDataPacket[]>('SELECT UUID() AS id');
+    const id = String((idRows as RowDataPacket[])[0].id);
     await db.execute<ResultSetHeader>(
-      'INSERT INTO ats_branch_alias_master (id, canonical_key, display_name, alias_text) VALUES (UUID(), ?, ?, ?)',
-      [canonical.trim(), display.trim(), alias?.trim() || null]
+      'INSERT INTO ats_branch_alias_master (id, canonical_key, display_name, alias_text) VALUES (?, ?, ?, ?)',
+      [id, canonical.trim(), display.trim(), alias?.trim() || null]
     );
     const [rows] = await db.execute<RowDataPacket[]>(
-      'SELECT id, canonical_key, display_name, alias_text, active_status FROM ats_branch_alias_master ORDER BY created_at DESC LIMIT 1'
+      'SELECT id, canonical_key, display_name, alias_text, active_status FROM ats_branch_alias_master WHERE id = ?',
+      [id]
     );
     return (rows as RowDataPacket[])[0];
   },
@@ -456,7 +474,7 @@ export const atsFormConfigService = {
     if (data.active_status !== undefined) { sets.push('active_status = ?'); params.push(data.active_status); }
     if (sets.length === 0) return;
     params.push(id);
-    await db.execute(`UPDATE ats_branch_alias_master SET ${sets.join(', ')}, updated_at = NOW() WHERE id = ?`, params);
+    await db.execute(`UPDATE ats_branch_alias_master SET ${sets.join(', ')} WHERE id = ?`, params);
   },
 
   async deleteBranchAlias(id: string) {
