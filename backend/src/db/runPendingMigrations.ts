@@ -541,6 +541,30 @@ const MIGRATION_MANIFEST: string[] = [
   "1103_uat_governance_checklist.sql",                 // Phase 2 of the UAT platform: the checklist engine's tables, the LLM call log and effective-dated model pricing. Two things here are deliberate rather than incidental. Evaluations pin rule_version plus the shas of both control-plane JSON files, because "why was this allowed in March" is otherwise unanswerable and the natural wrong answer is to re-run today's rules against yesterday's decision. And pricing is a table, not a constant: a constant silently rewrites the cost of every historical call the next time someone edits it, so a spend report would disagree with itself between deploys. Also carries uat_job, the durable queue the validator runs through: an outbound call that can take a minute and fail halfway must not live inside a submit request, where a restart loses the work and leaves the item in `validating` forever with nobody aware. The seeded checklist rows are mirrors for the admin UI only — the engine reaches its floor verdict from uat/*.json, never from a DB row, and merges with worstOf() so a DB row can only make a verdict worse
   "1104_uat_prompt_governance.sql",                    // Phase 3: change-type governance and the build prompt. Two design choices carry the weight. Every switch in uat_pipeline_config ships OFF and is checked ALONGSIDE its env var with either able to veto - an env var needs a deploy to change and the moment you most want to stop the pipeline is the moment you least want to deploy, while a DB row is instant but absent if never seeded, so requiring both means a missing switch is a stop rather than a start. And the prompt is a stored row with its hash, template version and allowlist, not a string assembled on demand: it is the instruction set a coding agent acts on, so "what was it told to do" has to survive the answer being needed months later. change_type policy is a table too, so adding a signing function is a row and not a deploy, and `unclear` has its own row precisely so the gate points at triage rather than finding no policy and reading that as no approval required
   "1106_uat_build_run.sql",                            // Phase 4 schema, held behind gates. The tables ship; the feature does not. uat_gate_status carries G1-G8 with `met` defaulting to 0 and the seed supplying only the requirement text, so no gate can arrive attested - and assertDispatchAllowed() refuses while any row is unmet, which makes the hold a property of the running system rather than of everyone remembering the plan. An EMPTY gate table is read as all-unmet, not as no gates, because a migration that failed to seed would otherwise silently unlock the most dangerous feature here. uat_build_callback is keyed on (run, kind, attempt, gates_sha256) so a GitHub retry after a network ambiguity succeeds while a replay cannot record a second result. Note fk_uat_evobj_fb: FK names are database-global in MySQL and fk_uat_ev_fb was already taken by uat_feedback_event in 1095
+
+  // ── Registered late, out of numeric order — same reasoning as 1049 above ─────
+  // This file has sat in backend/sql since 2026-08-07 and was in NO manifest, so it has
+  // never run: report_master.CC_HEADCOUNT is still named "Call Centre Headcount" on live
+  // (verified read-only on 192.168.10.6, 2026-08-08). Its own header explains the omission
+  // — "production runs with SKIP_MIGRATIONS=true, so a deploy applies nothing" — and that
+  // premise is false for this deployment: there is no SKIP_MIGRATIONS, migrations run at
+  // boot, so the author's intended manual run never had to be manual.
+  //
+  // Leaving it unlisted is the worse half of a half-shipped change. The CODE side already
+  // landed (reporting.service.ts cc_headcount now filters e.active_status = 1, fixing a 52x
+  // overstatement), so the report computes call-centre headcount correctly while still
+  // being LABELLED in the way that made users read it as cost-centre headcount — which is
+  // the confusion the rename exists to remove.
+  //
+  // ⚠ Adding it here means the rename applies on the next restart. That is the intent, but
+  // it is a user-visible label change: "Call Centre Headcount" -> "Call Centre (Dialer)
+  // Headcount". Name only — report_code, query_key, category and permissions are untouched,
+  // so every link, saved filter and role grant keeps working, and no row is deleted.
+  //
+  // The 1084 prefix collides with 1084_job_requisition_interviewer_grant_removal.sql above.
+  // Harmless: this array is ordered by POSITION and schema_migrations tracks full filenames,
+  // exactly as the 1049 note records for its own sibling collision.
+  "1084_cc_headcount_disambiguate_cost_vs_call_centre.sql",
   "1105_revoke_unusable_alias_corrective_grants.sql", // self-correction to 1097: three of its five corrective grants opened a page whose APIs reject the role — interviewer on the recruiter workspace, finance_head/accounts_head on the joining control room. Reverted there; branch_head→ATS_DASHBOARD and payroll_hr→PAYROLL_EPF_COMPLIANCE were verified working and kept. Re-added after 334f16e1 dropped this line
   "1107_retire_duplicate_alias_page_grants.sql", // retires 37 page grants on alias codes no route gates on, only where the role already holds the canonical code for the same page — so access is unchanged and only a duplicate/dead launcher tile goes away. The 7 alias-ONLY grants are left alone: those are access questions, and 1097/1105 is the cautionary tale
   "1108_retire_alias_only_page_grants.sql", // retires the last 7 grants on alias page codes no route gates on, held by roles that do NOT hold the canonical code. Each was checked against what actually decides access before deciding: interviewer is rejected by every /ats/recruiter/* endpoint; hr_admin and payroll_admin are absent from their target routes' own role lists; branch_payroll/finance_head point at PAYROLL_DASHBOARD whose page_catalog row is inactive. Nobody loses reachable access

@@ -70,15 +70,6 @@
     "employees.contract_end_date",
     "employees.probation_days"
   ],
-  "modules/reporting/executors/identity.executor.ts": [
-    "employees.esic_applicable"
-  ],
-  "modules/reporting/executors/payroll.executor.ts": [
-    "salary_prep_line.arrear_amount",
-    "salary_prep_line.arrear_month",
-    "salary_prep_line.arrear_reason",
-    "salary_prep_line.other_allowances"
-  ],
   "modules/reporting/executors/recruitment.executor.ts": [
     "ats_candidate.application_status",
     "ats_candidate.applied_date",
