@@ -135,8 +135,13 @@ async function computeCareerGrowthScore(
   if (await tableExists("development_plan_goal")) {
     const completedGoals = await scalar(
       `SELECT COUNT(*) AS cnt
+         -- development_plan's key is plan_id, not id, and the goal's foreign key is plan_id too,
+         -- not development_plan_id. The join named neither correctly, so this raised
+         -- ER_BAD_FIELD_ERROR. tableExists() guards the table being absent, not the columns
+         -- being wrong, so the engagement-health score silently lost its dev_goals signal
+         -- wherever the table did exist.
          FROM development_plan_goal dpg
-         JOIN development_plan dp ON dp.id = dpg.development_plan_id
+         JOIN development_plan dp ON dp.plan_id = dpg.plan_id
         WHERE dp.employee_id = ? AND dpg.status = 'completed'
           AND dpg.completed_at >= DATE_SUB(NOW(), INTERVAL 6 MONTH)`,
       [employeeId]

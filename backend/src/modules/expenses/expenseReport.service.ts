@@ -56,7 +56,7 @@ class ExpenseReportService {
     if (startDate) { whereConditions.push('ec.submitted_date >= ?'); params.push(startDate); }
     if (endDate) { whereConditions.push('ec.submitted_date <= ?'); params.push(endDate); }
     const [rows] = await db.query<RowDataPacket[]>(
-      `SELECT e.name as employee_name, e.employee_code, ebd.bank_name, CAST(ebd.account_number AS CHAR) AS account_number, ebd.ifsc_code,
+      `SELECT e.full_name as employee_name, e.employee_code, ebd.bank_name, CAST(ebd.account_number AS CHAR) AS account_number, ebd.ifsc_code,
               ec.total_amount as amount, ec.claim_number, ec.submitted_date as expense_date
        FROM expense_claims ec
        JOIN employees e ON ec.employee_id = e.id
@@ -93,11 +93,11 @@ class ExpenseReportService {
 
   async getTopSpenders(processId: number, limit = 10) {
     const [rows] = await db.query<RowDataPacket[]>(
-      `SELECT e.name as employee_name, e.employee_code, COUNT(ec.id) as claim_count, SUM(ec.total_amount) as total_amount
+      `SELECT e.full_name as employee_name, e.employee_code, COUNT(ec.id) as claim_count, SUM(ec.total_amount) as total_amount
        FROM employees e
        JOIN expense_claims ec ON e.id = ec.employee_id
        WHERE ec.process_id = ? AND ec.status NOT IN (?, ?)
-       GROUP BY e.id, e.name, e.employee_code ORDER BY total_amount DESC LIMIT ?`,
+       GROUP BY e.id, e.full_name, e.employee_code ORDER BY total_amount DESC LIMIT ?`,
       [processId, ExpenseStatus.DRAFT, ExpenseStatus.REJECTED, limit]
     );
     return rows.map(r => ({
