@@ -8,7 +8,7 @@
  *   middleware runs before the miss), so it reads like a permissions problem instead of an
  *   absent feature.
  *
- *   A sweep on 2026-08-08 found SEVEN such calls, listed in KNOWN_MISSING below. None was a
+ *   A sweep on 2026-08-08 found seven such calls (one since built — see below), listed in KNOWN_MISSING below. None was a
  *   typo. Each was a UI built against a server side that was never finished — which is the
  *   failure CLAUDE.md rule 9 names directly: "UI enhancement must not hide missing backend
  *   functionality." They had accumulated silently because nothing was watching.
@@ -207,10 +207,6 @@ const KNOWN_MISSING: Record<string, string> = {
     "router serves /summary, /trend, /agents, /clients, /apr. No endpoint returns per-row quality_score AND fatal_count together; quality-executive.service.ts computes quality_score but is wired to no route at all.",
   "/api/performance-dashboard/ops":
     "router serves /goals, /ratings, /agent-matrix, /utilization. Unfixable by URL: handled_volume, target_volume and shrinkage_minutes appear NOWHERE in the backend, so no endpoint can supply this shape.",
-
-  // ProcessPayrollReadiness.tsx. Note the mount is /api/processES; there is no /api/process.
-  "/api/process/my-processes":
-    "no 'my processes' endpoint exists under any mount. GET /api/processes is NOT a substitute: processController.list applies no row scope, so repointing there would show every process to any authenticated user — a scope widening, not a fix.",
 
   // NativeSalesDashboard.tsx. The upload panel offers 7 Bellavita/GNC types; the backend
   // implements uploads for neemans only (/upload-neemans-sale-raw, -allocation, -apr).

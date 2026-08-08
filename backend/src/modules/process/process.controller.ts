@@ -20,6 +20,28 @@ export const processController = {
     });
   },
 
+  /**
+   * Processes assigned to the CALLER.
+   *
+   * The identity comes from the verified token, never from the request. The frontend used to
+   * send ?userId=..., and honouring that would let anyone read another user's process
+   * assignments by changing a query string. The parameter is ignored on purpose; the caller
+   * has been updated to stop sending it.
+   */
+  async listMyProcesses(req: AuthenticatedRequest, res: Response) {
+    const userId = req.authUser?.id;
+    if (!userId) {
+      return res.status(401).json({ success: false, error: "Not authenticated" });
+    }
+
+    const data = await processService.listAssignedToUser(userId);
+
+    return res.json({
+      success: true,
+      data
+    });
+  },
+
   async getById(req: AuthenticatedRequest, res: Response) {
     const data = await processService.getById(req.params.id);
 

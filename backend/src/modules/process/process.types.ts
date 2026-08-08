@@ -47,8 +47,16 @@ export interface ProcessFilters {
   activeStatus?: "all" | "active" | "inactive";
 }
 
+/** The minimum a caller needs to address a process: identity, branch, and a label. */
+export interface AssignedProcess {
+  id: string;
+  branch_id: string;
+  process_name: string;
+}
+
 export interface ProcessRepository {
   list(filters: ProcessFilters): Promise<ProcessMaster[]>;
+  listAssignedToUser(userId: string): Promise<AssignedProcess[]>;
   getById(id: string): Promise<ProcessMaster | null>;
   create(input: CreateProcessInput, userId: string): Promise<ProcessMaster>;
   update(

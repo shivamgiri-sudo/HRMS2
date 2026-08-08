@@ -1196,7 +1196,12 @@ function SingleProcessView({ userId, roleKeys, autoOpenProcessId }: { userId: st
   // Fetch processes assigned to this user
   const { data: assignedData } = useQuery({
     queryKey: ["my-processes", userId],
-    queryFn: () => apiFetch(`/api/process/my-processes?userId=${userId}`),
+    // The router is mounted at /api/processES; /api/process was served by nothing, so this
+    // call had always failed and assignedProcesses was permanently empty — which is why the
+    // page told every user "No processes are assigned to your account" regardless of their
+    // actual mapping. userId is no longer sent: the endpoint reads the caller's identity from
+    // the verified token, so passing it was both redundant and spoofable.
+    queryFn: () => apiFetch(`/api/processes/my-processes`),
     retry: false,
   });
 
