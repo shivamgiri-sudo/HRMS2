@@ -152,7 +152,9 @@ function TestRenderModal({
         template_key: templateKey,
         variables: vals,
       });
-      setResult(res.data.data);
+      // One unwrap: hrmsApi returns the parsed body, and the route replies
+      // { success, data }. res.data.data was undefined, so the render preview stayed blank.
+      setResult(res.data);
     } catch (e: any) {
       setErr(e?.response?.data?.error ?? "Render failed");
     } finally {
@@ -316,7 +318,7 @@ export default function NativeEmailTemplateBulkImport() {
         validRows: preview.validRows,
         originalFileName: fileName,
       });
-      setResult(res.data.data);
+      setResult(res.data);
       setStep("done");
     } catch (e: any) {
       setError(e?.response?.data?.error ?? "Import failed");
@@ -329,7 +331,7 @@ export default function NativeEmailTemplateBulkImport() {
   const loadHistory = async () => {
     try {
       const res = await hrmsApi.get("/api/admin/email-templates/import/history");
-      setHistory(res.data.data);
+      setHistory(res.data);
       setHistoryOpen(true);
     } catch {
       /* ignore */
