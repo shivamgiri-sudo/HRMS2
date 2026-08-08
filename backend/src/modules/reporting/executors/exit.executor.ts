@@ -47,7 +47,21 @@ export async function resignationRegister(
   const params: unknown[]  = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
-  clauses.push("eer.id IS NOT NULL");
+  // `eer.id IS NOT NULL` used to sit here, which turned the LEFT JOIN below into an inner
+  // join and required every resignation to have an exit_request row. exit_request holds 2
+  // rows in the whole database, and neither belongs to a 2026 resignation — so the register
+  // returned nothing while 1,543 people resigned in the default window and 29,070 have a
+  // resignation_date overall. Measured on live 2026-08-08: 1,543 in range, 0 of them with an
+  // exit_request row.
+  //
+  // The date source was already corrected to employees.resignation_date — the comment saying
+  // so is right below — but the guard requiring the exit workflow was left behind, so the
+  // report still could not return a row. Same shape as the attrition reports that read an
+  // empty attrition_record while 1,666 people left.
+  //
+  // exit_request stays a LEFT JOIN and supplies its detail where it exists. Where it does not,
+  // the workflow simply was not used; those columns say so rather than rendering blank, which
+  // in a register reads as missing data rather than an absent process.
   // exit_request has no resignation_date; employees.resignation_date is the real one
   // (29,070 rows populated).
   clauses.push("e.resignation_date BETWEEN ? AND ?");
@@ -67,14 +81,27 @@ export async function resignationRegister(
            -- last_working_day, and employees has date_of_exit rather than that name.
            COALESCE(eer.last_working_day_confirmed, eer.last_working_day_proposed, e.date_of_exit)
              AS last_working_day,
-           eer.exit_reason_category AS exit_reason,
-           eer.status,
+           COALESCE(eer.exit_reason_category, 'NOT_RECORDED') AS exit_reason,
+           COALESCE(eer.status, 'NO_EXIT_REQUEST') AS status,
            COALESCE(eer.notice_period_days, 0) AS notice_days,
-           b.branch_name, p.process_name
+           -- Cost centre was absent and process came through as a bare NULL. Both are
+           -- mandatory on an employee-grain report, and a register of leavers that cannot be
+           -- read by cost centre cannot be reconciled to anything. UNASSIGNED rather than
+           -- NULL: an employee with no mapping is a fact worth showing, not a blank cell.
+           COALESCE(cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
+           COALESCE(cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
+           b.branch_name,
+           COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
+           -- Both catalogues already declared these two, so the grid drew a Designation and a
+           -- DOJ column for a query that emitted neither. They come straight off employees.
+           des.designation_name,
+           e.date_of_joining
       FROM employees e
       LEFT JOIN exit_request eer ON eer.employee_id = e.id
       LEFT JOIN branch_master b           ON b.id = e.branch_id
       LEFT JOIN process_master p          ON p.id = e.process_id
+      LEFT JOIN cost_centre_master cc     ON cc.id = e.cost_centre_id
+      LEFT JOIN designation_master des    ON des.id = e.designation_id
      WHERE ${clauses.join(" AND ")}
      ORDER BY e.id ASC`;
 

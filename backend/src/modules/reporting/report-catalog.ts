@@ -2753,15 +2753,22 @@ export const REPORT_CATALOG: ReportDefinition[] = [
       { key: "employee_name", label: "Employee Name", format: "text", width: 180 },
       { key: "branch_name", label: "Branch", format: "text", width: 120 },
       { key: "process_name", label: "Process", format: "text", width: 140 },
+      { key: "cost_centre_code", label: "Cost Centre Code", format: "text", width: 140 },
+      { key: "cost_centre_name", label: "Cost Centre", format: "text", width: 180 },
       { key: "designation_name", label: "Designation", format: "text", width: 140 },
       { key: "date_of_joining", label: "DOJ", format: "date", width: 100 },
       { key: "resignation_date", label: "Resignation Date", format: "date", width: 100 },
-      { key: "last_working_date", label: "LWD", format: "date", width: 100 },
-      { key: "notice_period_days", label: "Notice Period", format: "number", width: 100, align: "right" },
-      { key: "notice_served_days", label: "Notice Served", format: "number", width: 100, align: "right" },
-      { key: "shortfall_days", label: "Shortfall Days", format: "number", width: 100, align: "right" },
-      { key: "resignation_reason", label: "Reason", format: "text", width: 160 },
+      // Keys follow what the query emits. `last_working_date`, `notice_period_days` and
+      // `resignation_reason` were declared under names the SQL never produced, so the grid
+      // drew three permanently empty columns.
+      { key: "last_working_day", label: "LWD", format: "date", width: 100 },
+      { key: "notice_days", label: "Notice Period", format: "number", width: 100, align: "right" },
+      { key: "exit_reason", label: "Reason", format: "text", width: 160 },
       { key: "status", label: "Status", format: "status", width: 100 },
+      // notice_served_days and shortfall_days are dropped rather than renamed. They can only be
+      // derived from an exit_request, and exit_request holds 2 rows against 1,543 resignations
+      // in the default window — a computed shortfall would be 0 for everyone and read as "no
+      // one served short notice", which is a claim the data cannot support.
     ],
     filters: [F_DATE_FROM, F_DATE_TO, F_BRANCH, F_PROCESS],
     viewRoles: ROLES_HR_ADMIN,
