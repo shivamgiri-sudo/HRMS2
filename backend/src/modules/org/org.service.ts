@@ -3,6 +3,7 @@ import type { RowDataPacket, ResultSetHeader } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { getEffectiveConfig } from "../customization/customization-engine.js";
 
+import { blankToNull } from "../../shared/sql-values.js";
 // ── Whitelisted master tables to prevent SQL injection ────────────────────────
 const MASTER_TABLE_WHITELIST = new Set([
   "branch_master",
@@ -676,7 +677,9 @@ export const policyService = {
   async update(id: string, data: Record<string, unknown>) {
     await db.execute(
       "UPDATE policy_master SET policy_name = COALESCE(?, policy_name), policy_code = COALESCE(?, policy_code), description = COALESCE(?, description), effective_date = COALESCE(?, effective_date), version = COALESCE(?, version), updated_at = NOW() WHERE id = ?",
-      [data.policy_name ?? null, data.policy_code ?? null, data.description ?? null, data.effective_date ?? null, data.version ?? null, id]
+      // effective_date is a DATE column behind COALESCE; "" aborts the policy
+      // update with ER_TRUNCATED_WRONG_VALUE instead of leaving the date alone.
+      [blankToNull(data.policy_name), blankToNull(data.policy_code), blankToNull(data.description), blankToNull(data.effective_date), blankToNull(data.version), id]
     );
     return getById("policy_master", id);
   },

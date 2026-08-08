@@ -6,7 +6,8 @@ import { requireRole } from "../../middleware/requireRole.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { db } from "../../db/mysql.js";
 import type { RowDataPacket } from "mysql2";
-
+
+import { blankToNull } from "../../shared/sql-values.js";
 const router = Router();
 const h = (fn: any) => (req: any, res: any, next: any) => fn(req, res).catch(next);
 router.use(requireAuth);
@@ -59,8 +60,13 @@ router.put("/:id", requireRole("admin", "hr"), h(async (req: AuthenticatedReques
        is_holiday = COALESCE(?, is_holiday),
        description = COALESCE(?, description)
      WHERE id = ?`,
-    [title ?? null, event_date ?? null, end_date ?? null, event_type ?? null,
-     is_holiday != null ? Number(is_holiday) : null, description ?? null, req.params.id]
+    // event_date/end_date are DATE columns bound through COALESCE, so "" is not
+    // a no-op — it reaches MySQL and throws ER_TRUNCATED_WRONG_VALUE, failing the
+    // whole edit. req.body is not schema-validated here, so a form that submits
+    // an empty date field hits it directly. blankToNull restores the NULL
+    // sentinel COALESCE expects.
+    [blankToNull(title), blankToNull(event_date), blankToNull(end_date), blankToNull(event_type),
+     is_holiday != null ? Number(is_holiday) : null, blankToNull(description), req.params.id]
   );
   const [rows] = await db.execute<RowDataPacket[]>("SELECT * FROM company_event_master WHERE id = ? LIMIT 1", [req.params.id]);
   res.json({ success: true, data: (rows as RowDataPacket[])[0] });

@@ -3,7 +3,8 @@ import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
 import type { Request } from "express";
-
+
+import { blankToNull } from "../../shared/sql-values.js";
 export const assetsService = {
   async list(filters: { status?: string; branch_id?: string; category?: string }) {
     const conds = ["a.active_status = 1"];
@@ -78,9 +79,14 @@ export const assetsService = {
          serial_number = COALESCE(?, serial_number), asset_category = COALESCE(?, asset_category),
          purchase_cost = COALESCE(?, purchase_cost), vendor = COALESCE(?, vendor),
          warranty_expiry = COALESCE(?, warranty_expiry), updated_at = NOW() WHERE id = ?`,
-      [data.asset_name ?? null, data.status ?? null, data.notes ?? null, data.branch_id ?? null,
-       data.serial_number ?? null, data.asset_category ?? null, data.purchase_cost ?? null,
-       data.vendor ?? null, data.warranty_expiry ?? null, id]
+      // warranty_expiry (DATE) and purchase_cost (DECIMAL) both reject "" with
+      // ER_TRUNCATED_WRONG_VALUE, which aborts the whole asset edit — clearing a
+      // warranty date in the UI is exactly how a user produces that. `data` is a
+      // Record<string, unknown> straight off the request, so nothing upstream
+      // turns "" into null.
+      [blankToNull(data.asset_name), blankToNull(data.status), blankToNull(data.notes), blankToNull(data.branch_id),
+       blankToNull(data.serial_number), blankToNull(data.asset_category), blankToNull(data.purchase_cost),
+       blankToNull(data.vendor), blankToNull(data.warranty_expiry), id]
     );
     return this.getById(id);
   },

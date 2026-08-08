@@ -2,7 +2,8 @@ import { randomUUID } from "crypto";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import type { BusinessActionCommentInput, BusinessActionInput } from "./business-actions.types.js";
-
+
+import { blankToNull } from "../../shared/sql-values.js";
 const OPEN_STATUSES = ["open", "in_progress", "blocked", "escalated", "overdue"];
 
 function normalizeSeverity(value?: string) {
@@ -159,7 +160,9 @@ export const businessActionsService = {
           completed_at = CASE WHEN ? = 'completed' THEN NOW() ELSE completed_at END,
           updated_at = NOW()
         WHERE id = ?`,
-      [input.severity ?? null, input.title ?? null, input.description ?? null, input.owner_user_id ?? null, input.owner_role ?? null, input.due_date ?? null, input.status ?? null, input.status ?? null, id]
+      // due_date is a DATE column behind COALESCE; "" throws
+      // ER_TRUNCATED_WRONG_VALUE and aborts the update rather than clearing it.
+      [blankToNull(input.severity), blankToNull(input.title), blankToNull(input.description), blankToNull(input.owner_user_id), blankToNull(input.owner_role), blankToNull(input.due_date), blankToNull(input.status), input.status ?? null, id]
     );
     await this.log(id, actorUserId, "UPDATED", input);
     return this.get(id);

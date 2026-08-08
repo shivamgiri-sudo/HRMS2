@@ -339,7 +339,10 @@ async function deriveSalaryValidationFromOffer(candidateId: string, actorUserId:
               payroll_hr_id = COALESCE(?, payroll_hr_id),
               validation_status = 'validated', validated_at = NOW(), updated_at = NOW()
         WHERE id = ?`,
-      [o.emp_type ?? 'onroll', o.gross, o.date_of_joining, o.date_of_salary ?? null,
+      // salary_start_date = COALESCE(?, joining_date): "" is not the NULL
+      // sentinel, so a blank salary-start date threw ER_TRUNCATED_WRONG_VALUE
+      // instead of falling back to the joining date.
+      [o.emp_type ?? 'onroll', o.gross, o.date_of_joining, blankToNull(o.date_of_salary),
        o.department_id ?? null, o.designation_id ?? null, o.cost_centre ?? null,
        o.reporting_manager_id ?? null, o.branch_id ?? null,
        o.basic ?? null, o.hra ?? null, o.conveyance ?? null, o.special_allowance ?? null,
@@ -585,6 +588,7 @@ export async function listPendingApprovals(scopeFilter: { sql: string; params: u
 
 import { createEmployeeFromCandidate } from '../employees/employee-creation-orchestrator.service.js';
 
+import { blankToNull } from "../../shared/sql-values.js";
 export async function approveOffer(offerId: string, approverId: string, remarks?: string) {
   // CHANGED: Delegate to Employee Creation Orchestrator (Phase 2)
   const [offerRows] = await db.execute<RowDataPacket[]>(

@@ -8,7 +8,8 @@ import { requireRole } from "../../middleware/requireRole.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
 import { privacyService } from "./privacy.service.js";
 import { db } from "../../db/mysql.js";
-import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
+import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
+import { blankToNull } from "../../shared/sql-values.js";
 /* eslint-enable @typescript-eslint/no-unused-vars */
 
 export const privacyRouter = Router();
@@ -417,11 +418,15 @@ privacyRouter.patch(
          updated_at = NOW()
        WHERE id = ?`,
       [
-        status ?? null,
-        notified_authority_at ?? null,
-        notified_principals_at ?? null,
-        authority_ref ?? null,
-        remediation_notes ?? null,
+        // notified_*_at are DATETIME columns behind COALESCE: "" throws
+        // ER_TRUNCATED_WRONG_VALUE and aborts the breach-log update. blankToNull
+        // rather than a date parser, because these carry full timestamps and a
+        // YYYY-MM-DD-only validator would silently discard valid input.
+        blankToNull(status),
+        blankToNull(notified_authority_at),
+        blankToNull(notified_principals_at),
+        blankToNull(authority_ref),
+        blankToNull(remediation_notes),
         req.params.id,
       ]
     );
