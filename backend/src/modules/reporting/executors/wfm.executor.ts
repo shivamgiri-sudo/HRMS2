@@ -232,7 +232,12 @@ export async function shiftSwapRegister(
 
 // ---------------------------------------------------------------------------
 // week-off-calendar
-// Derived from wfm_roster_assignment rows where is_week_off = 1 or shift_name = 'WO'.
+// Derived from wfm_roster_assignment rows where is_week_off = 1.
+//
+// This comment used to read "is_week_off = 1 or shift_name = 'WO'", while the query implemented
+// only the second half — the half that matches nothing, because no shift named 'WO' exists.
+// The 'WO' branch is not restored: it would be dead weight against a shift table holding
+// exactly General, Evening and Night.
 // ---------------------------------------------------------------------------
 export async function weekOffCalendar(
   filters: ExecFilters,
@@ -248,7 +253,22 @@ export async function weekOffCalendar(
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
   clauses.push("wra.roster_date BETWEEN ? AND ?");
-  clauses.push("ws.shift_name = 'WO'");
+  // Was `ws.shift_name = 'WO'`, which matched nothing and always would have:
+  // wfm_shift_master contains three shifts — General, Evening and Night — and no 'WO' row.
+  // Measured on live 2026-08-08: 0 of 413,386 roster assignments join to a shift by that name,
+  // so the week-off calendar had never returned a row.
+  //
+  // wfm_roster_assignment.is_week_off is the column that carries the meaning, and it is what
+  // the roster writer sets. Same shape as the maternity register that filtered on a leave_code
+  // list: a hard-coded code standing in for business meaning, where the code never existed.
+  //
+  // Worth stating plainly, because it bounds what this report can show: is_week_off is set on
+  // 170 of 413,386 assignments, covering 168 employees. That is far fewer week-offs than a
+  // roster of this size implies, so the report now reflects what the roster actually records
+  // rather than nothing at all. Whether the roster SHOULD be marking more is a WFM data
+  // question, and inventing week-offs here — by inferring Sundays, say — would be manufacturing
+  // the answer rather than reporting it.
+  clauses.push("wra.is_week_off = 1");
   params.push(from, to);
 
   if (options.mode === "worker" && options.cursor != null) {
