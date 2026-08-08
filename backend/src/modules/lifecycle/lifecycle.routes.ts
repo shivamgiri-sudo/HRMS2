@@ -159,9 +159,19 @@ router.get("/employees/:id/compliance-report", requireRole("admin", "hr", "super
        LEFT JOIN auth_user asgn_u           ON asgn_u.id = ob.assigned_to
        LEFT JOIN employees asgn_emp         ON asgn_emp.user_id = asgn_u.id AND asgn_emp.active_status = 1
        LEFT JOIN ats_employment_offer off   ON off.onboarding_request_id = ob.id
-       LEFT JOIN auth_user off_u            ON off_u.id = off.prepared_by
+       LEFT JOIN auth_user off_u            ON off_u.id = off.created_by
        LEFT JOIN employees off_emp          ON off_emp.user_id = off_u.id AND off_emp.active_status = 1
-      WHERE c.converted_employee_id = ?
+      /*
+       * ats_candidate has no converted_employee_id column, and ats_employment_offer records its
+       * author in created_by, not prepared_by. Both names threw ER_BAD_FIELD_ERROR, so the ATS
+       * section of the employee lifecycle timeline has never loaded for anyone.
+       *
+       * The candidate-to-employee link is candidate_code: measured against the live database it
+       * matches 29,926 of 37,630 candidates to an employee, where the employee_code column on
+       * ats_candidate matches only 2. Legacy employee records were loaded into ATS carrying their
+       * employee code as the candidate code, which is why.
+       */
+      WHERE c.candidate_code = (SELECT employee_code FROM employees WHERE id = ?)
       LIMIT 1`,
     [empId]
   );

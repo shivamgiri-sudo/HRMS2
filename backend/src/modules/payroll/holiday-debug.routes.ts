@@ -59,10 +59,17 @@ router.get('/:month', async (req, res) => {
           hccm.cost_centre_id,
           ccm.cost_centre_name,
           ccm.cost_centre_code,
-          ccm.process_name,
+          -- cost_centre_master has no process_name column, so this threw ER_BAD_FIELD_ERROR and
+          -- the holiday debug endpoint returned nothing. The name is resolved through the
+          -- process_id foreign key rather than from ccm.process_name_bill, which is the billing
+          -- system's label for the cost centre and disagrees with the mapped process on the large
+          -- majority of rows. Where the FK is unset this is NULL, which is the honest answer -
+          -- a cost centre is not a process and many carry no process at all.
+          pm.process_name,
           bm.branch_name
         FROM holiday_cost_centre_mapping hccm
         JOIN cost_centre_master ccm ON ccm.id = hccm.cost_centre_id
+        LEFT JOIN process_master pm ON pm.id = ccm.process_id
         LEFT JOIN branch_master bm ON bm.id = ccm.branch_id
         WHERE hccm.holiday_id = ?
         ORDER BY ccm.cost_centre_name
