@@ -16,6 +16,9 @@ const baseContext: PerformanceContext = {
   canSelectProcess: false,
   effectiveBranchIds: [],
   effectiveProcessIds: [],
+  // canSelectBranch/canSelectProcess are false above, so the server sends no options for either.
+  branchOptions: [],
+  processOptions: [],
   subjectEmployeeId: "employee-1",
 };
 

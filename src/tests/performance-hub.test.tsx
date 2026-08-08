@@ -15,6 +15,9 @@ const teamContext = {
   canSelectProcess: false,
   effectiveBranchIds: [],
   effectiveProcessIds: [],
+  // A team leader cannot select branch or process, so the server sends no options for either.
+  branchOptions: [],
+  processOptions: [],
   subjectEmployeeId: "employee-1",
 };
 
@@ -24,6 +27,8 @@ const verifiedMetric = {
   unit: "seconds" as const,
   value: 70,
   target: 80,
+  weightage: 0,
+  displayOrder: 1,
   achievementPct: 114.29,
   status: "on_track" as const,
   calculationStatus: "verified" as const,
@@ -41,6 +46,7 @@ describe("Performance Hub presentation contracts", () => {
         to="2026-07-18"
         latestComputedAt="2026-07-18T10:00:00.000Z"
         onPeriodChange={() => undefined}
+        onScopeChange={() => undefined}
       />,
     );
 

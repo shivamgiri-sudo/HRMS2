@@ -12,6 +12,8 @@ function metric(overrides: Partial<PerformanceMetric>): PerformanceMetric {
     unit: "currency",
     value: 2400,
     target: null,
+    weightage: 0,
+    displayOrder: 1,
     achievementPct: null,
     status: "no_target",
     calculationStatus: "verified",

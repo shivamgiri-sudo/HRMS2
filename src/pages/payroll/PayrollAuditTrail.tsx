@@ -12,9 +12,6 @@ import {
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
-import {
-  Collapsible, CollapsibleContent, CollapsibleTrigger,
-} from "@/components/ui/collapsible";
 import { RefreshCw, ChevronDown, ChevronRight, Shield, Calculator } from "lucide-react";
 
 interface AuditEntry {
@@ -55,46 +52,67 @@ function pretty(val: unknown): string {
   return JSON.stringify(val, null, 2);
 }
 
+/**
+ * Expand/collapse is done with local state rather than Radix `Collapsible`.
+ *
+ * `Collapsible` renders a `<div>` as its root and another around its content. Nested directly in
+ * `<tbody>`, those divs are not valid table children, so the browser hoisted them out and the data
+ * rows stopped sharing a table layout with `<thead>` — headers no longer sat above their own
+ * columns. Behaviour here is unchanged: click the row to toggle the JSON detail beneath it.
+ */
 function AuditRow({ entry }: { entry: AuditEntry }) {
   const [open, setOpen] = useState(false);
   return (
-    <Collapsible open={open} onOpenChange={setOpen}>
-      <CollapsibleTrigger asChild>
-        <tr className="hover:bg-slate-50/60 cursor-pointer transition-colors">
-          <td className="px-4 py-3 text-xs text-slate-400 whitespace-nowrap">
+    <>
+        <tr
+          onClick={() => setOpen(o => !o)}
+          className="hover:bg-slate-50/60 cursor-pointer transition-colors"
+        >
+          <td className="px-3 py-1.5 text-xs text-slate-400 whitespace-nowrap">
             {new Date(entry.created_at).toLocaleString("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}
           </td>
-          <td className="px-4 py-3">
-            <Badge variant="outline" className={`text-xs gap-1 ${SOURCE_COLOR[entry.source]}`}>
+          <td className="px-3 py-1.5">
+            <Badge variant="outline" className={`text-[11px] px-1.5 py-0 gap-1 ${SOURCE_COLOR[entry.source]}`}>
               {SOURCE_ICON[entry.source]}
               {entry.source}
             </Badge>
           </td>
-          <td className="px-4 py-3 font-mono text-xs max-w-[200px] truncate">{entry.event_type}</td>
-          <td className="px-4 py-3 text-xs">
+          <td className="px-3 py-1.5 font-mono text-xs max-w-[220px] truncate">{entry.event_type}</td>
+          {/* Name and code on one line: the stacked pair doubled every row's height for a value
+              most rows do not even have. */}
+          <td className="px-3 py-1.5 text-xs whitespace-nowrap">
             {entry.employee_name ? (
-              <div>
-                <div className="font-medium">{entry.employee_name}</div>
-                <div className="text-slate-400">{entry.employee_code}</div>
-              </div>
+              <>
+                <span className="font-medium">{entry.employee_name}</span>
+                {entry.employee_code && <span className="text-slate-400 ml-1.5">{entry.employee_code}</span>}
+              </>
             ) : "—"}
           </td>
-          <td className="px-4 py-3 text-xs text-slate-500">{entry.actor_name ?? entry.actor_user_id ?? "system"}</td>
-          <td className="px-4 py-3">
-            <span className="text-slate-400">{open ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}</span>
+          <td className="px-3 py-1.5 text-xs text-slate-500 whitespace-nowrap">{entry.actor_name ?? entry.actor_user_id ?? "system"}</td>
+          <td className="px-3 py-1.5 w-8">
+            <span className="text-slate-400">{open ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}</span>
           </td>
         </tr>
-      </CollapsibleTrigger>
-      <CollapsibleContent asChild>
+      {open && (
         <tr>
-          <td colSpan={6} className="px-6 pb-4 pt-0 bg-slate-50 border-b">
+          <td colSpan={6} className="px-4 pb-3 pt-0 bg-slate-50 border-b">
             <pre className="text-xs text-slate-600 whitespace-pre-wrap break-all max-h-64 overflow-auto font-mono bg-white border rounded p-3 mt-2">
               {pretty(entry.event_detail)}
             </pre>
           </td>
         </tr>
-      </CollapsibleContent>
-    </Collapsible>
+      )}
+    </>
+  );
+}
+
+/** Inline label + control, sized to its content — the unit the compact filter bar is built from. */
+function FilterField({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="flex items-center gap-1.5">
+      <Label className="text-[11px] font-medium uppercase tracking-wide text-slate-500 whitespace-nowrap">{label}</Label>
+      {children}
+    </div>
   );
 }
 
@@ -148,7 +166,7 @@ export default function PayrollAuditTrail() {
 
   return (
     <DashboardLayout>
-      <div className="p-6 max-w-6xl mx-auto space-y-6">
+      <div className="p-6 max-w-6xl mx-auto space-y-4">
         {/* Header */}
         <div className="flex items-center justify-between flex-wrap gap-3">
           <div>
@@ -160,65 +178,56 @@ export default function PayrollAuditTrail() {
           </Button>
         </div>
 
-        {/* Filters */}
-        <Card>
-          <CardContent className="pt-5">
-            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
-              <div>
-                <Label className="text-xs">Run</Label>
-                <Select value={runId || "all"} onValueChange={v => { setRunId(v === "all" ? "" : v); setPage(1); }}>
-                  <SelectTrigger className="mt-1 h-8 text-xs">
-                    <SelectValue placeholder="All runs" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All runs</SelectItem>
-                    {(runsData?.data ?? []).map(r => (
-                      <SelectItem key={r.id} value={r.id}>{r.run_month} ({r.status})</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div>
-                <Label className="text-xs">Event Type</Label>
-                <Select value={eventType || "all"} onValueChange={v => { setEventType(v === "all" ? "" : v); setPage(1); }}>
-                  <SelectTrigger className="mt-1 h-8 text-xs">
-                    <SelectValue placeholder="All types" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All types</SelectItem>
-                    {(eventTypesData?.data ?? []).map(t => (
-                      <SelectItem key={t} value={t}>{t}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div>
-                <Label className="text-xs">Source</Label>
-                <Select value={source} onValueChange={v => { setSource(v); setPage(1); }}>
-                  <SelectTrigger className="mt-1 h-8 text-xs">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All sources</SelectItem>
-                    <SelectItem value="calculation">Calculation</SelectItem>
-                    <SelectItem value="action">Sensitive action</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div>
-                <Label className="text-xs">From date</Label>
-                <Input type="date" value={dateFrom} onChange={e => { setDateFrom(e.target.value); setPage(1); }} className="mt-1 h-8 text-xs" />
-              </div>
-              <div>
-                <Label className="text-xs">To date</Label>
-                <Input type="date" value={dateTo} onChange={e => { setDateTo(e.target.value); setPage(1); }} className="mt-1 h-8 text-xs" />
-              </div>
-              <div className="flex items-end">
-                <Button variant="ghost" size="sm" onClick={reset} className="w-full h-8 text-xs">Clear</Button>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
+        {/* Filters — single compact toolbar row. The previous 6-column grid stretched every control
+            to an equal ~200px cell and stacked a label above it, so five short filters occupied a
+            tall full-width block. Inline label + intrinsically-sized control keeps it to one line. */}
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-md border bg-white px-3 py-2">
+          <FilterField label="Run">
+            <Select value={runId || "all"} onValueChange={v => { setRunId(v === "all" ? "" : v); setPage(1); }}>
+              <SelectTrigger className="h-7 w-[150px] text-xs">
+                <SelectValue placeholder="All runs" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All runs</SelectItem>
+                {(runsData?.data ?? []).map(r => (
+                  <SelectItem key={r.id} value={r.id}>{r.run_month} ({r.status})</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </FilterField>
+          <FilterField label="Event">
+            <Select value={eventType || "all"} onValueChange={v => { setEventType(v === "all" ? "" : v); setPage(1); }}>
+              <SelectTrigger className="h-7 w-[180px] text-xs">
+                <SelectValue placeholder="All types" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All types</SelectItem>
+                {(eventTypesData?.data ?? []).map(t => (
+                  <SelectItem key={t} value={t}>{t}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </FilterField>
+          <FilterField label="Source">
+            <Select value={source} onValueChange={v => { setSource(v); setPage(1); }}>
+              <SelectTrigger className="h-7 w-[130px] text-xs">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All sources</SelectItem>
+                <SelectItem value="calculation">Calculation</SelectItem>
+                <SelectItem value="action">Sensitive action</SelectItem>
+              </SelectContent>
+            </Select>
+          </FilterField>
+          <FilterField label="From">
+            <Input type="date" value={dateFrom} onChange={e => { setDateFrom(e.target.value); setPage(1); }} className="h-7 w-[140px] text-xs px-2" />
+          </FilterField>
+          <FilterField label="To">
+            <Input type="date" value={dateTo} onChange={e => { setDateTo(e.target.value); setPage(1); }} className="h-7 w-[140px] text-xs px-2" />
+          </FilterField>
+          <Button variant="ghost" size="sm" onClick={reset} className="ml-auto h-7 px-2 text-xs text-slate-500">Clear</Button>
+        </div>
 
         {/* Trail table */}
         <Card>
@@ -239,7 +248,7 @@ export default function PayrollAuditTrail() {
                   <thead className="bg-slate-50 border-b">
                     <tr>
                       {["Timestamp", "Source", "Event Type", "Employee", "Actor", ""].map(h => (
-                        <th key={h} className="px-4 py-3 text-left font-medium text-slate-600 whitespace-nowrap">{h}</th>
+                        <th key={h} className="px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-wide text-slate-500 whitespace-nowrap">{h}</th>
                       ))}
                     </tr>
                   </thead>

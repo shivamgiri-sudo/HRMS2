@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
-// @ts-expect-error — plain .mjs script, no type declarations
+// Plain .mjs script with no type declarations. It needed a @ts-expect-error until the app
+// tsconfig started resolving it; the directive then became an error in its own right
+// ("Unused '@ts-expect-error'"), so it is a plain comment now.
 import { assessDeletions, OVERRIDE_MARKER, BULK_DELETION_LIMIT } from "../../scripts/guard-mass-deletion.mjs";
 
 /**
