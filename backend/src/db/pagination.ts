@@ -39,3 +39,28 @@ export function sqlLimitOffset(
 
   return `LIMIT ${safeLimit} OFFSET ${safeOffset}`;
 }
+
+/**
+ * The same guarantee for a query that limits without an offset.
+ *
+ * A bare `LIMIT ?` is not automatically safe just because it has no OFFSET. Probing both live
+ * servers showed the tolerance differs by version, and in the direction most people assume
+ * backwards:
+ *
+ *   mas_hrms   (MySQL 8.0.42)  LIMIT ? bound to a NUMBER -> ER_WRONG_ARGUMENTS
+ *                              LIMIT ? bound to a STRING -> works
+ *   db_bill    (MySQL 5.5.44)  both work
+ *
+ * So on mas_hrms the query breaks precisely where the code was careful enough to call Number()
+ * or clamp with Math.min, and appears to work where a raw query-string value was passed straight
+ * through. Interpolating removes the version- and type-dependence entirely.
+ */
+export function sqlLimit(
+  limit: unknown,
+  options: { defaultLimit?: number; maxLimit?: number } = {},
+): string {
+  const { defaultLimit = 50, maxLimit = 500 } = options;
+  const raw = Math.trunc(Number(limit));
+  const usable = Number.isFinite(raw) && raw > 0 ? raw : defaultLimit;
+  return `LIMIT ${Math.max(1, Math.min(usable, maxLimit))}`;
+}

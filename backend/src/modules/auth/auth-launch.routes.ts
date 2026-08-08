@@ -1,4 +1,5 @@
 import { Router, type Response } from "express";
+import { sqlLimit } from "../../db/pagination.js";
 import bcrypt from "bcryptjs";
 import crypto, { randomUUID } from "crypto";
 import type { RowDataPacket } from "mysql2";
@@ -260,8 +261,8 @@ router.post("/send-invites", h(async (req, res) => {
        LEFT JOIN employees e ON e.id = il.employee_id
       WHERE ${whereStatus}
       ORDER BY il.created_at ASC
-      LIMIT ?`,
-    [limit]
+      ${sqlLimit(limit)}`,
+    []
   );
 
   const result = { attempted: pendingRows.length, sent: 0, failed: 0, skipped: 0 };

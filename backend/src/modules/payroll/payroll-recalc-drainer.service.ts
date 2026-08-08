@@ -1,4 +1,5 @@
 import type { RowDataPacket } from "mysql2";
+import { sqlLimit } from "../../db/pagination.js";
 import { db } from "../../db/mysql.js";
 import { recalculateOpenPayrollForEmployee } from "./payroll-targeted-recalculation.service.js";
 import { logger } from "../../lib/logger.js";
@@ -17,8 +18,8 @@ export async function drainPayrollRecalcQueue(
       WHERE payroll_month = ?
         AND status = 'pending'
       ORDER BY requested_at ASC
-      LIMIT ?`,
-    [monthDate, batchSize],
+      ${sqlLimit(batchSize)}`,
+    [monthDate],
   );
   const entries = rows as Array<{ id: string; employee_id: string; payroll_month: string; reason: string }>;
 

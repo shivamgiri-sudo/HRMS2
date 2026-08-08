@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { sqlLimit } from "../../db/pagination.js";
 import { requireAuth } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { getShivamgiriPool } from "../../db/shivamgiriDb.js";
@@ -271,7 +272,9 @@ router.get("/agents", requireRole(...ALLOWED_ROLES), h(async (req: Authenticated
     const clientCond = clientId ? " AND ClientId = ?" : "";
     if (clientId) params.push(clientId);
     const scopeCond = auditScopeCond(scope, params);
-    params.push(String(limit));
+    // limit is interpolated by sqlLimit below, not bound. It was being pushed as String(limit)
+    // specifically because binding the number fails - a workaround one Number() away from
+    // breaking again.
 
     const [rows] = await pool.execute<RowDataPacket[]>(`
       SELECT
@@ -294,7 +297,7 @@ router.get("/agents", requireRole(...ALLOWED_ROLES), h(async (req: Authenticated
       GROUP BY cqa.User
       HAVING COUNT(*) >= 3
       ORDER BY avg_score DESC
-      LIMIT ?
+      ${sqlLimit(limit, { maxLimit: 100 })}
     `, params);
 
     return res.json({ success: true, agents: rows });
@@ -391,8 +394,8 @@ router.get("/apr", requireRole(...ALLOWED_ROLES), h(async (req, res) => {
       LEFT JOIN mas_hrms.employees e ON e.employee_code = apr.UserID
       WHERE apr.ReportDate BETWEEN ? AND ?
       ORDER BY apr.ReportDate DESC
-      LIMIT ?
-    `, [from, to, limit]);
+      ${sqlLimit(limit)}
+    `, [from, to]);
 
     return res.json({ success: true, apr: rows });
   } catch (err: unknown) {
@@ -500,8 +503,8 @@ router.get("/objections", requireRole(...ALLOWED_ROLES), h(async (req, res) => {
       WHERE Objection IS NOT NULL AND Objection != ''
       GROUP BY Objection, Rebutal
       ORDER BY frequency DESC
-      LIMIT ?
-    `, [limit]);
+      ${sqlLimit(limit)}
+    `, []);
 
     return res.json({ success: true, objections: rows });
   } catch (err: unknown) {

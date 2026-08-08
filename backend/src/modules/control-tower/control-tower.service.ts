@@ -1,4 +1,5 @@
 import { randomUUID } from "crypto";
+import { sqlLimit } from "../../db/pagination.js";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { getEmployeeForUser } from "../../shared/accessGuard.js";
@@ -139,8 +140,8 @@ export const controlTowerService = {
     if (query.processId) { conds.push("process_id = ?"); params.push(query.processId); }
     const limit = Math.min(Number(query.limit ?? 50), 200);
     const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT * FROM global_event_log WHERE ${conds.join(" AND ")} ORDER BY created_at DESC LIMIT ?`,
-      [...params, limit]
+      `SELECT * FROM global_event_log WHERE ${conds.join(" AND ")} ORDER BY created_at DESC ${sqlLimit(limit)}`,
+      [...params]
     );
     const visible = [] as any[];
     for (const row of rows as any[]) {
@@ -201,8 +202,8 @@ export const controlTowerService = {
        LEFT JOIN employees e ON e.user_id = u.id
        WHERE ${conds.join(" AND ")}
        ORDER BY FIELD(wii.priority,'urgent','high','normal','low'), COALESCE(wii.created_at, '2999-12-31'), wii.created_at DESC
-       LIMIT ?`,
-      [...params, limit]
+       ${sqlLimit(limit)}`,
+      [...params]
     );
     const visible = [] as any[];
     for (const row of rows as any[]) {

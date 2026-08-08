@@ -1,4 +1,5 @@
 import type { RowDataPacket } from "mysql2";
+import { sqlLimit } from "../../db/pagination.js";
 import { getShivamgiriPool } from "../../db/shivamgiriDb.js";
 
 function getCiPool() {
@@ -48,8 +49,8 @@ export async function getTopObjectionPatterns(limit = 50): Promise<ObjectionPatt
       AND CustomerObjectionCategory IS NOT NULL
     GROUP BY OBJECTION
     ORDER BY CALL_COUNT DESC
-    LIMIT ?`,
-    [limit]
+    ${sqlLimit(limit)}`,
+    []
   );
 
   return rows as ObjectionPattern[];
@@ -98,8 +99,8 @@ export async function getTopObjectionHandlers(limit = 50): Promise<TopHandler[]>
     GROUP BY cd.User, e.full_name, e.first_name, e.last_name
     HAVING COUNT(*) >= 5
     ORDER BY SALES_CLOSE_RATE_AFTER_OBJ_PCT DESC
-    LIMIT ?`,
-    [limit]
+    ${sqlLimit(limit)}`,
+    []
   );
 
   return rows as TopHandler[];
@@ -142,8 +143,8 @@ export async function getSalesClosedAfterObjection(limit = 50): Promise<Objectio
       AND cd.OBJECTION != 'null'
     GROUP BY cd.OBJECTION
     ORDER BY SALES_CLOSED_AFTER_HANDLING DESC
-    LIMIT ?`,
-    [limit]
+    ${sqlLimit(limit)}`,
+    []
   );
 
   return rows as ObjectionSalesMetric[];
@@ -187,8 +188,8 @@ export async function getObjectionsByProcess(limit = 100): Promise<ProcessObject
       AND cd.OBJECTION != 'null'
     GROUP BY cd.campaign_id, pm.process_name, cd.OBJECTION
     ORDER BY PROCESS_CODE, OBJECTION_COUNT DESC
-    LIMIT ?`,
-    [limit]
+    ${sqlLimit(limit)}`,
+    []
   );
 
   return rows as ProcessObjectionMetric[];
@@ -216,8 +217,8 @@ export async function getObjectionRebuttalMatrix(limit = 100): Promise<Objection
       AND obj.Objection != 'null'
     GROUP BY obj.Objection, obj.Rebutal
     ORDER BY FREQUENCY DESC
-    LIMIT ?`,
-    [limit]
+    ${sqlLimit(limit)}`,
+    []
   );
 
   return rows as ObjectionRebuttal[];

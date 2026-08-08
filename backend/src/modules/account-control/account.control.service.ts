@@ -1,4 +1,5 @@
 import { randomUUID } from "crypto";
+import { sqlLimit } from "../../db/pagination.js";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
@@ -163,8 +164,8 @@ export const accountControlService = {
        FROM account_control_log
        WHERE user_id = ?
        ORDER BY created_at DESC
-       LIMIT ?`,
-      [userId, safeLimit]
+       ${sqlLimit(safeLimit)}`,
+      [userId]
     );
     return rows as RowDataPacket[];
   },

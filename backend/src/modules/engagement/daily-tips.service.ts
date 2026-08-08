@@ -9,7 +9,7 @@
  */
 
 import { randomUUID } from 'crypto';
-import { sqlLimitOffset } from "../../db/pagination.js";
+import { sqlLimit, sqlLimitOffset } from "../../db/pagination.js";
 import { db } from '../../db/mysql.js';
 import { addPoints } from './gamification.service.js';
 import type { RowDataPacket, ResultSetHeader } from 'mysql2/promise';
@@ -202,8 +202,8 @@ export async function getReadHistory(
      JOIN daily_tip_read tr ON tr.tip_id = t.id
      WHERE tr.employee_id = ?
      ORDER BY tr.read_at DESC
-     LIMIT ?`,
-    [employeeId, limit]
+     ${sqlLimit(limit)}`,
+    [employeeId]
   );
 
   return rows as Array<DailyTip & { read_at: string }>;

@@ -1,4 +1,5 @@
 import { randomUUID } from "crypto";
+import { sqlLimit } from "../../db/pagination.js";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { tableExists, scalar } from "../../shared/dbHelpers.js";
@@ -581,8 +582,8 @@ export async function getEngagementCommandCenter(filters?: {
 
 export async function scanEngagementHealth(limit = 500) {
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT id FROM employees WHERE LOWER(COALESCE(employment_status, 'active')) = 'active' LIMIT ?`,
-    [limit]
+    `SELECT id FROM employees WHERE LOWER(COALESCE(employment_status, 'active')) = 'active' ${sqlLimit(limit)}`,
+    []
   );
 
   const employees = rows as Array<{ id: string }>;

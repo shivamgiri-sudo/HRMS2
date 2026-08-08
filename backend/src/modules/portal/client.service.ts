@@ -1,4 +1,5 @@
 import { db } from "../../db/mysql.js";
+import { sqlLimit } from "../../db/pagination.js";
 import type { ResultSetHeader, RowDataPacket } from "mysql2";
 
 // ============================================================
@@ -310,8 +311,8 @@ export async function getBulkJobs(limit: number = 50): Promise<BulkOperationJob[
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT * FROM bulk_operation_jobs
      ORDER BY created_at DESC
-     LIMIT ?`,
-    [limit]
+     ${sqlLimit(limit)}`,
+    []
   );
   return rows as BulkOperationJob[];
 }

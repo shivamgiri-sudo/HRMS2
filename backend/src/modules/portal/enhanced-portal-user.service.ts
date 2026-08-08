@@ -1,4 +1,5 @@
 import { db } from "../../db/mysql.js";
+import { sqlLimit } from "../../db/pagination.js";
 import { randomUUID } from "crypto";
 import type { ResultSetHeader, RowDataPacket } from "mysql2";
 
@@ -178,8 +179,8 @@ export async function getRecentLogins(
      FROM portal_access_log
      WHERE client_user_id = ? AND page = 'LOGIN'
      ORDER BY created_at DESC
-     LIMIT ?`,
-    [userId, limit]
+     ${sqlLimit(limit)}`,
+    [userId]
   );
   return rows as Array<{ login_time: Date; ip_address: string }>;
 }

@@ -9,6 +9,7 @@
  */
 
 import type { Pool, RowDataPacket } from 'mysql2/promise';
+import { sqlLimit } from "../../db/pagination.js";
 import { getCredentialsForKey, getPoolForKey } from '../external-db/external-db.service.js';
 
 interface TraitExcellence {
@@ -356,8 +357,8 @@ export async function getTopPerformerProfiles(limit: number = 50): Promise<TopPe
       FROM quality_base qb, percentile_threshold pt
       WHERE qb.avg_quality >= pt.threshold
       ORDER BY qb.avg_quality DESC
-      LIMIT ?`,
-      [limit]
+      ${sqlLimit(limit)}`,
+      []
     );
 
     return (results as PerformerRow[] || []).map((row) => ({

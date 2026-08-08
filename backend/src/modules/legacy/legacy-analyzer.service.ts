@@ -1,5 +1,6 @@
 // @ts-nocheck
 import { getLegacyPool } from '../../db/legacyDb.js';
+import { sqlLimit } from "../../db/pagination.js";
 import { db as mysqlDb } from '../../db/mysql.js';
 import type { ScanResult, TableProfile, RelevanceFactors } from './types.js';
 import { randomUUID } from 'crypto';
@@ -209,8 +210,8 @@ export class LegacyAnalyzerService {
       `SELECT * FROM legacy_source_table_profile
        WHERE relevance_score >= 30
        ORDER BY relevance_score DESC, row_count DESC
-       LIMIT ?`,
-      [limit]
+       ${sqlLimit(limit)}`,
+      []
     );
     
     return rows;

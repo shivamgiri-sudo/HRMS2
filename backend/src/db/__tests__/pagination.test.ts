@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { sqlLimitOffset } from "../pagination.js";
+import { sqlLimit, sqlLimitOffset } from "../pagination.js";
 
 /**
  * sqlLimitOffset exists so that 27 call sites can interpolate LIMIT/OFFSET instead of binding it
@@ -47,5 +47,30 @@ describe("sqlLimitOffset", () => {
 
   it("honours a per-call default when the value is absent", () => {
     expect(sqlLimitOffset(undefined, 0, { defaultLimit: 100 })).toBe("LIMIT 100 OFFSET 0");
+  });
+});
+
+describe("sqlLimit", () => {
+  it("emits a plain integer limit", () => {
+    expect(sqlLimit(25)).toBe("LIMIT 25");
+  });
+
+  it("never emits anything but digits, whatever it is handed", () => {
+    const hostile: unknown[] = [
+      "10; DROP TABLE employees", "1 UNION SELECT password FROM auth_user", "'; --",
+      NaN, Infinity, -Infinity, null, undefined, "", {}, [], () => 1,
+    ];
+    for (const value of hostile) {
+      expect(sqlLimit(value)).toMatch(/^LIMIT \d+$/);
+    }
+  });
+
+  it("clamps and falls back the same way as sqlLimitOffset", () => {
+    expect(sqlLimit(0)).toBe("LIMIT 50");
+    expect(sqlLimit(-5)).toBe("LIMIT 50");
+    expect(sqlLimit(9999)).toBe("LIMIT 500");
+    expect(sqlLimit(9999, { maxLimit: 200 })).toBe("LIMIT 200");
+    expect(sqlLimit(undefined, { defaultLimit: 20 })).toBe("LIMIT 20");
+    expect(sqlLimit(10.9)).toBe("LIMIT 10");
   });
 });
