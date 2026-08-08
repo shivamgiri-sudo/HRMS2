@@ -17,11 +17,13 @@ export interface ExpenseCategory {
 }
 
 export interface ExpenseClaim {
-  id: number;
+  // char(36) UUIDs. These were declared number to match a claims-plus-items schema with
+  // AUTO_INCREMENT keys that was never created; the server now returns the real ids as strings.
+  id: string;
   claim_number: string;
-  employee_id: number;
-  process_id: number;
-  branch_id: number;
+  employee_id: string;
+  process_id: string | null;
+  branch_id: string | null;
   total_amount: number;
   currency: string;
   status: ExpenseStatus;
@@ -35,8 +37,8 @@ export interface ExpenseClaim {
 }
 
 export interface ExpenseItem {
-  id: number;
-  expense_claim_id: number;
+  id: string;
+  expense_claim_id: string;
   category_id: number;
   expense_date: string;
   amount: number;
@@ -48,9 +50,9 @@ export interface ExpenseItem {
 }
 
 export interface ExpenseApproval {
-  id: number;
-  expense_claim_id: number;
-  approver_id: number;
+  id: string;
+  expense_claim_id: string;
+  approver_id: string;
   approval_type: 'MANAGER' | 'FINANCE';
   action: 'APPROVED' | 'REJECTED';
   comments?: string;
@@ -58,12 +60,12 @@ export interface ExpenseApproval {
 }
 
 export interface ExpensePayment {
-  id: number;
-  expense_claim_id: number;
+  id: string;
+  expense_claim_id: string;
   payment_reference: string;
   payment_date: string;
   payment_method: string;
-  processed_by: number;
+  processed_by: string;
   created_at: string;
 }
 

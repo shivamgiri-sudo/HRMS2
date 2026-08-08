@@ -62,9 +62,10 @@ expenseRouter.post('/claims/:claimId/items/:itemId/receipt-upload', (req: any, r
   });
 }, h(async (req: any, res: any) => {
   if (!req.file) { res.status(400).json({ error: 'No file uploaded' }); return; }
-  const claimId = parseInt(req.params.claimId, 10);
-  const itemId = parseInt(req.params.itemId, 10);
-  if (isNaN(claimId) || isNaN(itemId)) { res.status(400).json({ error: 'Invalid ID' }); return; }
+  const claimId = String(req.params.claimId ?? '').trim();
+  // UUIDs, not integers - parseInt turned both into NaN and this always answered 400.
+  const itemId = String(req.params.itemId ?? '').trim();
+  if (!claimId || !itemId) { res.status(400).json({ error: 'Invalid ID' }); return; }
   const receiptPath = `/api/files/expense-receipts/${req.file.filename}`;
   await expenseService.updateItemReceipt(itemId, receiptPath);
   res.json({ receipt_path: receiptPath });

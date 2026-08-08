@@ -7,9 +7,9 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '.
 
 interface ExpenseItemsListProps {
   items: ExpenseItem[];
-  claimId: number;
+  claimId: string;
   editable?: boolean;
-  onDeleteItem?: (itemId: number) => void;
+  onDeleteItem?: (itemId: string) => void;
 }
 
 export function ExpenseItemsList({ items, claimId, editable, onDeleteItem }: ExpenseItemsListProps) {

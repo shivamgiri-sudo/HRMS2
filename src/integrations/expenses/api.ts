@@ -37,16 +37,16 @@ export const expenseApi = {
     return data.claim;
   },
 
-  async addClaimItem(claimId: number, dto: AddExpenseItemDto): Promise<ExpenseItem> {
+  async addClaimItem(claimId: string, dto: AddExpenseItemDto): Promise<ExpenseItem> {
     const data = await request<{ item: ExpenseItem }>('POST', `/api/expenses/claims/${claimId}/items`, dto);
     return data.item;
   },
 
-  async deleteClaimItem(itemId: number): Promise<void> {
+  async deleteClaimItem(itemId: string): Promise<void> {
     await request<void>('DELETE', `/api/expenses/claims/items/${itemId}`);
   },
 
-  async uploadReceipt(claimId: number, itemId: number, receiptPath: string): Promise<string> {
+  async uploadReceipt(claimId: string, itemId: string, receiptPath: string): Promise<string> {
     await request<{ success: boolean; receipt_path: string }>(
       'POST',
       `/api/expenses/claims/${claimId}/items/${itemId}/receipt`,
@@ -55,7 +55,7 @@ export const expenseApi = {
     return receiptPath;
   },
 
-  async submitClaim(claimId: number): Promise<ExpenseClaim> {
+  async submitClaim(claimId: string): Promise<ExpenseClaim> {
     const data = await request<{ claim: ExpenseClaim }>('POST', `/api/expenses/claims/${claimId}/submit`);
     return data.claim;
   },
@@ -66,7 +66,7 @@ export const expenseApi = {
     return request<{ claims: ExpenseClaim[]; total: number }>('GET', `/api/expenses/claims/my-claims?${params}`);
   },
 
-  async getClaimDetails(claimId: number): Promise<ExpenseClaimWithDetails> {
+  async getClaimDetails(claimId: string): Promise<ExpenseClaimWithDetails> {
     const data = await request<{ claim: ExpenseClaimWithDetails }>('GET', `/api/expenses/claims/${claimId}`);
     return data.claim;
   },
@@ -76,12 +76,12 @@ export const expenseApi = {
     return data.claims;
   },
 
-  async managerApprove(claimId: number, dto: ApproveClaimDto): Promise<ExpenseClaim> {
+  async managerApprove(claimId: string, dto: ApproveClaimDto): Promise<ExpenseClaim> {
     const data = await request<{ claim: ExpenseClaim }>('POST', `/api/expenses/claims/${claimId}/manager-approve`, dto);
     return data.claim;
   },
 
-  async rejectClaim(claimId: number, dto: RejectClaimDto): Promise<ExpenseClaim> {
+  async rejectClaim(claimId: string, dto: RejectClaimDto): Promise<ExpenseClaim> {
     const data = await request<{ claim: ExpenseClaim }>('POST', `/api/expenses/claims/${claimId}/reject`, dto);
     return data.claim;
   },
@@ -91,12 +91,12 @@ export const expenseApi = {
     return request<{ claims: ExpenseClaim[]; total: number }>('GET', `/api/expenses/claims/finance-queue?${params}`);
   },
 
-  async financeApprove(claimId: number, dto: ApproveClaimDto): Promise<ExpenseClaim> {
+  async financeApprove(claimId: string, dto: ApproveClaimDto): Promise<ExpenseClaim> {
     const data = await request<{ claim: ExpenseClaim }>('POST', `/api/expenses/claims/${claimId}/finance-approve`, dto);
     return data.claim;
   },
 
-  async markAsPaid(claimId: number, dto: MarkPaidDto): Promise<ExpenseClaim> {
+  async markAsPaid(claimId: string, dto: MarkPaidDto): Promise<ExpenseClaim> {
     const data = await request<{ claim: ExpenseClaim }>('POST', `/api/expenses/claims/${claimId}/mark-paid`, dto);
     return data.claim;
   },

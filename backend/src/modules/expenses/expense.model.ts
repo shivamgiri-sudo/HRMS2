@@ -27,11 +27,14 @@ export interface ExpenseCategory {
 }
 
 export interface ExpenseClaim {
-  id: number;
+  // char(36) UUIDs throughout. These were declared number, which is what a claims-plus-items
+  // schema with AUTO_INCREMENT keys would have used - but expense_claim.id, employees.id,
+  // process_master.id and branch_master.id are all char(36) in this system.
+  id: string;
   claim_number: string;
-  employee_id: number;
-  process_id: number;
-  branch_id: number;
+  employee_id: string;
+  process_id: string | null;
+  branch_id: string | null;
   total_amount: number;
   currency: string;
   status: ExpenseStatus;
@@ -45,8 +48,8 @@ export interface ExpenseClaim {
 }
 
 export interface ExpenseItem {
-  id: number;
-  expense_claim_id: number;
+  id: string;
+  expense_claim_id: string;
   category_id: number;
   expense_date: Date;
   amount: number;
@@ -58,9 +61,9 @@ export interface ExpenseItem {
 }
 
 export interface ExpenseApproval {
-  id: number;
-  expense_claim_id: number;
-  approver_id: number;
+  id: string;
+  expense_claim_id: string;
+  approver_id: string;
   approval_type: ApprovalType;
   action: ApprovalAction;
   comments?: string;
@@ -68,18 +71,18 @@ export interface ExpenseApproval {
 }
 
 export interface ExpensePayment {
-  id: number;
-  expense_claim_id: number;
+  id: string;
+  expense_claim_id: string;
   payment_reference: string;
   payment_date: Date;
   payment_method: string;
-  processed_by: number;
+  processed_by: string;
   created_at: Date;
 }
 
 export interface CreateExpenseClaimDto {
-  process_id: number;
-  branch_id: number;
+  process_id?: string | null;
+  branch_id?: string | null;
 }
 
 export interface AddExpenseItemDto {
@@ -105,8 +108,8 @@ export interface MarkPaidDto {
 }
 
 export interface ExpenseReportQuery {
-  process_id?: number;
-  branch_id?: number;
+  process_id?: string;
+  branch_id?: string;
   start_date?: string;
   end_date?: string;
   group_by?: 'category' | 'employee' | 'branch' | 'process';

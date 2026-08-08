@@ -5,8 +5,8 @@ import { useUploadReceipt } from '../../integrations/expenses/hooks';
 import { apiBaseUrl } from '@/lib/apiBase';
 
 interface ReceiptUploadProps {
-  claimId: number;
-  itemId: number;
+  claimId: string;
+  itemId: string;
   existingPath?: string;
   onUploaded?: (path: string) => void;
 }

@@ -17,13 +17,24 @@ import type {
   ExpenseReportQuery
 } from './expense.model.js';
 
-function parseId(val: string): number {
+// Ids in this system are char(36) UUIDs. This used parseInt, so every id-bearing expense
+// endpoint rejected its own route parameter with 400 "Invalid ID" before any query ran.
+// expense_categories.id is a genuine INT, unlike every other id in this module.
+function parseCategoryId(val: string): number {
   const n = parseInt(val, 10);
   if (isNaN(n)) throw Object.assign(new Error('Invalid ID'), { statusCode: 400 });
   return n;
 }
 
-async function getFullEmployee(userId: string): Promise<{ id: number; process_id: number; branch_id: number }> {
+function parseId(val: string): string {
+  const id = String(val ?? '').trim();
+  if (!id) throw Object.assign(new Error('Invalid ID'), { statusCode: 400 });
+  return id;
+}
+
+// Same reason: employees.id, process_id and branch_id are all char(36), and Number() on a UUID
+// is NaN, so the employee this module thought it had was never a real one.
+async function getFullEmployee(userId: string): Promise<{ id: string; process_id: string | null; branch_id: string | null }> {
   const base = await getEmployeeForUser(userId);
   if (!base) throw Object.assign(new Error('Employee not found'), { statusCode: 404 });
   const [rows] = await db.query<RowDataPacket[]>(
@@ -31,7 +42,11 @@ async function getFullEmployee(userId: string): Promise<{ id: number; process_id
     [base.id]
   );
   if (rows.length === 0) throw Object.assign(new Error('Employee not found'), { statusCode: 404 });
-  return { id: Number(rows[0].id), process_id: Number(rows[0].process_id), branch_id: Number(rows[0].branch_id) };
+  return {
+    id: String(rows[0].id),
+    process_id: rows[0].process_id ? String(rows[0].process_id) : null,
+    branch_id: rows[0].branch_id ? String(rows[0].branch_id) : null,
+  };
 }
 
 class ExpenseController {
@@ -47,11 +62,11 @@ class ExpenseController {
   }
 
   async updateCategory(req: AuthenticatedRequest, res: Response) {
-    res.json({ category: await expenseCategoryService.updateCategory(parseId(req.params.id), req.body) });
+    res.json({ category: await expenseCategoryService.updateCategory(parseCategoryId(req.params.id), req.body) });
   }
 
   async deleteCategory(req: AuthenticatedRequest, res: Response) {
-    await expenseCategoryService.deleteCategory(parseId(req.params.id));
+    await expenseCategoryService.deleteCategory(parseCategoryId(req.params.id));
     res.json({ success: true });
   }
 
@@ -68,10 +83,10 @@ class ExpenseController {
   }
 
   private async assertClaimOwner(
-    claimId: number,
+    claimId: string,
     userId: string,
     res: Response
-  ): Promise<{ employee: { id: number; process_id: number; branch_id: number } } | false> {
+  ): Promise<{ employee: { id: string; process_id: string | null; branch_id: string | null } } | false> {
     const employee = await getFullEmployee(userId);
     const claim = await expenseService.getClaimById(claimId);
     if (!claim) { res.status(404).json({ error: 'Claim not found' }); return false; }
@@ -201,10 +216,13 @@ class ExpenseController {
   async exportForPayment(req: AuthenticatedRequest, res: Response) {
     const { status, start_date, end_date } = req.query;
     const { primaryRole: role } = await getUserRoleContext((req as any).authUser?.id ?? '');
-    let processId: number | undefined;
+    // process ids are char(36) UUIDs. This was typed number, and the two siblings below parsed
+    // it with parseInt, which turns a UUID into NaN - so a non-admin's process filter could never
+    // match a row.
+    let processId: string | undefined;
     if (role !== 'admin') {
       const employee = await getFullEmployee(req.authUser!.id);
-      processId = employee.process_id;
+      processId = employee.process_id ? String(employee.process_id) : undefined;
     }
     const data = await expenseReportService.exportForPayment(
       status as any,
@@ -236,12 +254,13 @@ class ExpenseController {
 
   async getMonthlyTrends(req: AuthenticatedRequest, res: Response) {
     const { primaryRole: role } = await getUserRoleContext((req as any).authUser?.id ?? '');
-    let processId: number;
+    // UUID, not an integer - see exportForPayment above.
+    let processId: string;
     if (role !== 'admin') {
       const employee = await getFullEmployee(req.authUser!.id);
-      processId = employee.process_id;
+      processId = String(employee.process_id ?? '');
     } else {
-      processId = parseInt(req.query.process_id as string) || 0;
+      processId = String(req.query.process_id ?? '');
     }
     res.json({
       trends: await expenseReportService.getMonthlyTrends(
@@ -253,12 +272,13 @@ class ExpenseController {
 
   async getTopSpenders(req: AuthenticatedRequest, res: Response) {
     const { primaryRole: role } = await getUserRoleContext((req as any).authUser?.id ?? '');
-    let processId: number;
+    // UUID, not an integer - see exportForPayment above.
+    let processId: string;
     if (role !== 'admin') {
       const employee = await getFullEmployee(req.authUser!.id);
-      processId = employee.process_id;
+      processId = String(employee.process_id ?? '');
     } else {
-      processId = parseInt(req.query.process_id as string) || 0;
+      processId = String(req.query.process_id ?? '');
     }
     res.json({
       spenders: await expenseReportService.getTopSpenders(

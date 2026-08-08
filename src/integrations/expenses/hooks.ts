@@ -5,7 +5,7 @@ import type { CreateExpenseClaimDto, AddExpenseItemDto, ApproveClaimDto, RejectC
 export const EXPENSE_KEYS = {
   categories: ['expense-categories'] as const,
   myClaims: (status?: ExpenseStatus) => ['my-expense-claims', status] as const,
-  claimDetails: (id: number) => ['expense-claim', id] as const,
+  claimDetails: (id: string) => ['expense-claim', id] as const,
   pendingApprovals: ['expense-pending-approvals'] as const,
   financeQueue: (status: ExpenseStatus) => ['expense-finance-queue', status] as const,
   summary: (query: ExpenseReportQuery) => ['expense-summary', query] as const,
@@ -28,7 +28,7 @@ export function useCreateClaim() {
 export function useAddClaimItem() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ claimId, dto }: { claimId: number; dto: AddExpenseItemDto }) =>
+    mutationFn: ({ claimId, dto }: { claimId: string; dto: AddExpenseItemDto }) =>
       expenseApi.addClaimItem(claimId, dto),
     onSuccess: (_, { claimId }) => qc.invalidateQueries({ queryKey: EXPENSE_KEYS.claimDetails(claimId) })
   });
@@ -37,7 +37,7 @@ export function useAddClaimItem() {
 export function useUploadReceipt() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ claimId, itemId, receiptPath }: { claimId: number; itemId: number; receiptPath: string }) =>
+    mutationFn: ({ claimId, itemId, receiptPath }: { claimId: string; itemId: string; receiptPath: string }) =>
       expenseApi.uploadReceipt(claimId, itemId, receiptPath),
     onSuccess: (_, { claimId }) => qc.invalidateQueries({ queryKey: EXPENSE_KEYS.claimDetails(claimId) })
   });
@@ -46,7 +46,7 @@ export function useUploadReceipt() {
 export function useSubmitClaim() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (claimId: number) => expenseApi.submitClaim(claimId),
+    mutationFn: (claimId: string) => expenseApi.submitClaim(claimId),
     onSuccess: (claim) => {
       qc.invalidateQueries({ queryKey: EXPENSE_KEYS.myClaims() });
       qc.invalidateQueries({ queryKey: EXPENSE_KEYS.claimDetails(claim.id) });
@@ -61,7 +61,7 @@ export function useMyClaims(status?: ExpenseStatus) {
   });
 }
 
-export function useClaimDetails(claimId: number) {
+export function useClaimDetails(claimId: string) {
   return useQuery({
     queryKey: EXPENSE_KEYS.claimDetails(claimId),
     queryFn: () => expenseApi.getClaimDetails(claimId),
@@ -79,7 +79,7 @@ export function usePendingApprovals() {
 export function useManagerApprove() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ claimId, dto }: { claimId: number; dto: ApproveClaimDto }) =>
+    mutationFn: ({ claimId, dto }: { claimId: string; dto: ApproveClaimDto }) =>
       expenseApi.managerApprove(claimId, dto),
     onSuccess: () => qc.invalidateQueries({ queryKey: EXPENSE_KEYS.pendingApprovals })
   });
@@ -88,7 +88,7 @@ export function useManagerApprove() {
 export function useRejectClaim() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ claimId, dto }: { claimId: number; dto: RejectClaimDto }) =>
+    mutationFn: ({ claimId, dto }: { claimId: string; dto: RejectClaimDto }) =>
       expenseApi.rejectClaim(claimId, dto),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: EXPENSE_KEYS.pendingApprovals });
@@ -107,7 +107,7 @@ export function useFinanceQueue(status: ExpenseStatus) {
 export function useFinanceApprove() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ claimId, dto }: { claimId: number; dto: ApproveClaimDto }) =>
+    mutationFn: ({ claimId, dto }: { claimId: string; dto: ApproveClaimDto }) =>
       expenseApi.financeApprove(claimId, dto),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: EXPENSE_KEYS.financeQueue('MANAGER_APPROVED' as ExpenseStatus) });
@@ -119,7 +119,7 @@ export function useFinanceApprove() {
 export function useMarkAsPaid() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ claimId, dto }: { claimId: number; dto: MarkPaidDto }) =>
+    mutationFn: ({ claimId, dto }: { claimId: string; dto: MarkPaidDto }) =>
       expenseApi.markAsPaid(claimId, dto),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: EXPENSE_KEYS.financeQueue('FINANCE_APPROVED' as ExpenseStatus) });
