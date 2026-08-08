@@ -24,7 +24,22 @@ import { describe, expect, it } from "vitest";
 
 const read = (p: string) => readFileSync(resolve(process.cwd(), p), "utf8");
 
-/** Every file that selects employee_bank_detail.account_number. */
+/**
+ * Every file that selects employee_bank_detail.account_number **as literal SQL**.
+ *
+ * Scope correction (2026-08-08): the header above says this check "spans every file that reads
+ * this column". That was not true. A third reader — bpo-master-verified-workforce-adapters.ts,
+ * feeding BANK_ACCOUNT_NUMBER on the BPO master reports — never appears here because it does not
+ * spell the column out: it resolves columns at runtime and builds the reference through
+ * directField(), so there is no `CAST(ebd.account_number AS CHAR)` literal to count and adding
+ * the path to SITES would simply fail. It had no CAST at all and emitted a Buffer to anyone
+ * entitled to the unmasked value.
+ *
+ * That generated path is now covered by binary-column-cast.contract.test.ts, which asserts by
+ * DATA TYPE (via sourceColumnReference) rather than by matching text — so it also covers the next
+ * binary column without anyone remembering this. Keep both: this file guards hand-written SQL,
+ * that one guards generated SQL, and neither can see the other's sites.
+ */
 const SITES = [
   "src/modules/reporting/report-suite.routes.ts",
   "src/modules/reporting/executors/payroll.executor.ts",

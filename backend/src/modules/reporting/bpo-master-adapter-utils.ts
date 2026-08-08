@@ -3,7 +3,7 @@ import { sqlLimitOffset } from "../../db/pagination.js";
 import { db } from "../../db/mysql.js";
 import type { BranchScope } from "./reporting.scope.js";
 import { getBpoMasterReport } from "./bpo-master-report-registry.js";
-import type { SourceColumn, SourceFieldLineage } from "./bpo-master-source-registry.js";
+import { sourceColumnReference, type SourceColumn, type SourceFieldLineage } from "./bpo-master-source-registry.js";
 
 export interface VerifiedAdapterFilters {
   month?: string;
@@ -65,6 +65,28 @@ export function dateBounds(filters: VerifiedAdapterFilters) {
   };
 }
 
+/**
+ * MySQL binary types, which must never reach JSON unconverted.
+ *
+ * mysql2 hands a BINARY/VARBINARY/BLOB column back as a Node Buffer, and JSON.stringify turns
+ * a Buffer into {"type":"Buffer","data":[49,50,...]} — not a value any consumer can read. The
+ * only such column in either source schema is employee_bank_detail.account_number
+ * (varbinary(500)), which the BPO master reports expose as BANK_ACCOUNT_NUMBER, so an export
+ * emitted a byte array where the account number belongs.
+ *
+ * The asymmetry is why it went unseen: bpo-master-report.routes.ts masks sensitive columns for
+ * non-exporters via String(value), and String(buffer) decodes to text, so the masked view showed
+ * a correct "****1234". Only a caller entitled to the real value got the Buffer — and until
+ * ebcbae12 those reports 500'd before reaching this code at all.
+ *
+ * Handled here rather than at each call site because this helper is where a column becomes SQL:
+ * the three sites the bankAccountNumberCast contract test already tracks each had to remember a
+ * CAST by hand, and the fourth (this one) did not.
+ *
+ * The binary-type list itself lives in bpo-master-source-registry.ts, which owns dataType, so
+ * this helper and the registry's own sourceExpression() cannot drift apart on what counts as
+ * binary.
+ */
 export function directField(
   alias: string,
   tableRef: string,
@@ -76,7 +98,7 @@ export function directField(
     const column = columns.get(candidate.toLowerCase());
     if (!column) continue;
     return {
-      expression: `${alias}.${quote(column.column)}`,
+      expression: sourceColumnReference(alias, column),
       lineage: {
         sourceSchema: column.schema,
         sourceTable: column.table,

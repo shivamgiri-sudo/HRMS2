@@ -48,6 +48,32 @@ function quoteIdentifier(value: string) {
 }
 
 /**
+ * MySQL binary types, which must never reach JSON unconverted.
+ *
+ * mysql2 returns BINARY/VARBINARY/BLOB as a Node Buffer, and JSON.stringify renders a Buffer as
+ * {"type":"Buffer","data":[49,50,...]} rather than a readable value. Selecting such a column
+ * needs CAST(... AS CHAR).
+ *
+ * Exactly one column in either source schema is binary today —
+ * employee_bank_detail.account_number (varbinary(500)), surfaced by the BPO master reports as
+ * BANK_ACCOUNT_NUMBER — but the check is by data type rather than by name so the next binary
+ * column is handled without anyone remembering this.
+ */
+const BINARY_DATA_TYPES = new Set([
+  "binary", "varbinary", "blob", "tinyblob", "mediumblob", "longblob",
+]);
+
+export function isBinarySourceType(dataType: string | null | undefined): boolean {
+  return BINARY_DATA_TYPES.has(String(dataType ?? "").toLowerCase());
+}
+
+/** Reference a source column in SQL, CASTing binary types so they survive JSON. */
+export function sourceColumnReference(alias: string, column: SourceColumn): string {
+  const reference = `${alias}.${quoteIdentifier(column.column)}`;
+  return isBinarySourceType(column.dataType) ? `CAST(${reference} AS CHAR)` : reference;
+}
+
+/**
  * Read an information_schema column whichever case the server labels it.
  *
  * This is not defensive padding — it is the whole reason this registry never worked. Against
@@ -175,7 +201,7 @@ export async function sourceExpression(
     };
   }
   return {
-    expression: `${alias}.${quoteIdentifier(column.column)}`,
+    expression: sourceColumnReference(alias, column),
     lineage: {
       sourceSchema: column.schema,
       sourceTable: column.table,
