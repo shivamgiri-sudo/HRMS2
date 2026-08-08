@@ -1,6 +1,7 @@
 import { randomUUID } from 'crypto';
 import { db } from '../../db/mysql.js';
 import { isOfficialDomain } from '../../shared/email-domains.js';
+import { getDispatchBlock } from '../../shared/notification-dispatch-block.js';
 import type { RowDataPacket } from 'mysql2';
 import { providerFactory } from './providers/provider.factory.js';
 import { providerConfigService } from './provider-config.service.js';
@@ -157,9 +158,34 @@ class DispatchService {
 
         const preference = await notificationPreferencesService.getDeliveryPreference(emp.id, category);
         const preferredChannel = dto.channel ?? preference.channel;
-        const channels = !preference.enabled && !dto.is_critical
+        let channels = !preference.enabled && !dto.is_critical
           ? []
           : Array.from(new Set(dto.channels?.length ? dto.channels : [preferredChannel]));
+
+        // Operator emergency stop. This path had no enable flag of any kind, so
+        // the only way to halt a runaway event was `pm2 stop hrms2-workers` —
+        // all 45 workers — which is what the 1,863-message eSign storm in
+        // August 2026 actually required. `blocked = 1` in
+        // notification_dispatch_block now stops it in under 60s, globally or for
+        // one event, with no deploy.
+        //
+        // Outbound only: the portal item above is already written, so stopping
+        // the mail does not also erase the record that the event happened. And
+        // is_critical does NOT override this — critical is what bypasses the
+        // recipient's own channel preference, which is precisely how one worker
+        // put 214 SMS on a single number. An operator's explicit stop has to
+        // outrank that.
+        if (channels.length > 0) {
+          const stop = await getDispatchBlock(dto.event_code);
+          if (stop.blocked) {
+            console.warn(
+              `[dispatch] outbound suppressed for ${dto.event_code ?? resolvedTemplateName} ` +
+                `— notification_dispatch_block scope='${stop.scope}'` +
+                (stop.reason ? `: ${stop.reason}` : ""),
+            );
+            channels = [];
+          }
+        }
 
         for (const channel of channels) {
           const contact: string | null =

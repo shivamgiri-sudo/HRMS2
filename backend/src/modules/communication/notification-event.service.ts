@@ -595,6 +595,9 @@ class NotificationEventService {
       is_critical: critical,
       // Content about a third party must not land in a personal mailbox.
       prefer_official_email: "aboutThirdParty" in definition && Boolean(definition.aboutThirdParty),
+      // Lets an operator stop ONE runaway event via notification_dispatch_block
+      // instead of stopping every notification the platform sends.
+      event_code: input.eventCode,
       data: {
         ...data,
         notification: {
