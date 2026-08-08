@@ -369,9 +369,13 @@ router.get("/processes", requireRole("admin", "hr"), h(async (req: Authenticated
 
 // GET /api/access/roles/user-scopes/:userId — get all scope assignments for a user (admin)
 router.get("/roles/user-scopes/:userId", requireRole("admin"), h(async (req: AuthenticatedRequest, res: Response) => {
+  // user_assignment_scope has no assigned_at column; the timestamp it records is created_at.
+  // Selecting the missing name made this endpoint raise ER_BAD_FIELD_ERROR on every call, so no
+  // one could read a user's scope assignments. Aliased back to assigned_at so the response shape
+  // the client already consumes is unchanged. Same column the INSERT below was corrected for.
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT uas.id, uas.role_key, uas.scope_type, uas.branch_id, uas.process_id,
-            uas.department_id, uas.active_status, uas.assigned_at,
+            uas.department_id, uas.active_status, uas.created_at AS assigned_at,
             b.branch_name, pm.process_name,
             wrc.role_name
      FROM user_assignment_scope uas
@@ -379,7 +383,7 @@ router.get("/roles/user-scopes/:userId", requireRole("admin"), h(async (req: Aut
      LEFT JOIN process_master pm ON pm.id = uas.process_id
      LEFT JOIN workforce_role_catalog wrc ON wrc.role_key = uas.role_key
      WHERE uas.user_id = ? AND uas.active_status = 1
-     ORDER BY uas.role_key, uas.assigned_at DESC`,
+     ORDER BY uas.role_key, uas.created_at DESC`,
     [req.params.userId]
   );
   res.json({ success: true, data: rows });

@@ -689,11 +689,28 @@ router.get("/advances",
     }
 
     const [rows] = await db.execute<RowDataPacket[]>(
+      /*
+       * salary_advance_log is: id, employee_id, advance_date, amount, recovery_months,
+       * recovered_amount, status, notes, created_at, legacy_loan_id, loan_type.
+       *
+       * This query asked for advance_amount, recovery_month, approved_by, approved_at and
+       * rejection_reason. The first two are just the wrong spelling of amount and
+       * recovery_months; the last three do not exist in any form, so listing salary advances
+       * raised ER_BAD_FIELD_ERROR and the page behind it has never shown a row.
+       *
+       * The three approval columns are selected as NULL rather than dropped, so the response
+       * keeps the shape its client already reads. Recording an approver and a rejection reason
+       * against the row needs those columns added by an additive migration - flagged, not done
+       * here, because it is a schema change to a shared database. Nothing is lost meanwhile: the
+       * approve and reject routes below both write to the sensitive-action audit log, and the
+       * reject route already passes the reason there.
+       */
       `SELECT sal.id, sal.employee_id,
-              sal.advance_amount AS amount,
+              sal.amount,
               sal.advance_date,
-              sal.status, sal.approved_by, sal.approved_at, sal.rejection_reason,
-              sal.recovery_month AS recovery_months,
+              sal.status,
+              NULL AS approved_by, NULL AS approved_at, NULL AS rejection_reason,
+              sal.recovery_months,
               sal.notes AS purpose,
               sal.created_at,
               e.employee_code,
@@ -724,8 +741,11 @@ router.patch("/advances/:id/approve",
   h(async (req: AuthenticatedRequest, res: Response) => {
     const { id } = req.params;
     await db.execute(
-      `UPDATE salary_advance_log SET status = 'approved', approved_by = ?, approved_at = NOW() WHERE id = ?`,
-      [req.authUser!.id, id]
+      // approved_by / approved_at do not exist on this table, so this UPDATE threw and no advance
+      // could ever be approved. Who approved it and when is recorded by logSensitiveAction below,
+      // which is where the rest of payroll's approvals are audited anyway.
+      `UPDATE salary_advance_log SET status = 'approved' WHERE id = ?`,
+      [id]
     );
     await logSensitiveAction({ actor_user_id: req.authUser!.id, action_type: "advance_approved", module_key: "payroll", entity_type: "salary_advance_log", entity_id: id });
     res.json({ success: true, message: "Advance approved" });
@@ -739,8 +759,11 @@ router.patch("/advances/:id/reject",
     const { id } = req.params;
     const { reason } = req.body;
     await db.execute(
-      `UPDATE salary_advance_log SET status = 'rejected', rejection_reason = ?, approved_by = ?, approved_at = NOW() WHERE id = ?`,
-      [reason ?? null, req.authUser!.id, id]
+      // Same three missing columns as the approve route. The reason is not dropped - it is passed
+      // to logSensitiveAction below as metadata - and notes is deliberately left alone rather than
+      // overwritten, because it holds the employee's stated purpose for the advance.
+      `UPDATE salary_advance_log SET status = 'rejected' WHERE id = ?`,
+      [id]
     );
     await logSensitiveAction({ actor_user_id: req.authUser!.id, action_type: "advance_rejected", module_key: "payroll", entity_type: "salary_advance_log", entity_id: id, metadata: { reason } });
     res.json({ success: true, message: "Advance rejected" });

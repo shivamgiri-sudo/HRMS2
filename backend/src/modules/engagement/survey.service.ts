@@ -40,7 +40,7 @@ export async function createSurvey(data: CreateSurveyDTO, createdBy: string): Pr
   for (const question of data.questions) {
     await db.execute(
       `INSERT INTO survey_question
-         (id, survey_id, question_text, question_type, display_order,
+         (id, survey_id, question_text, question_type, question_order,
           is_required, options_json)
        VALUES (?, ?, ?, ?, ?, ?, ?)`,
       [
@@ -95,7 +95,7 @@ export async function getSurvey(id: string): Promise<SurveyWithQuestionsResponse
   );
   if (!surveyRows[0]) return null;
   const [questionRows] = await db.execute<RowDataPacket[]>(
-    "SELECT * FROM survey_question WHERE survey_id = ? ORDER BY display_order",
+    "SELECT * FROM survey_question WHERE survey_id = ? ORDER BY question_order",
     [id]
   );
   return { ...(surveyRows[0] as SurveyMaster), questions: questionRows as SurveyQuestion[] };
@@ -107,7 +107,7 @@ export async function submitSurveyResponse(data: SubmitSurveyResponseDTO): Promi
 
   if (data.employee_id && !survey.is_anonymous) {
     const [existing] = await db.execute<RowDataPacket[]>(
-      "SELECT response_id FROM survey_response WHERE survey_id = ? AND employee_id = ? LIMIT 1",
+      "SELECT id FROM survey_response WHERE survey_id = ? AND employee_id = ? LIMIT 1",
       [data.survey_id, data.employee_id]
     );
     if (existing.length) throw new Error("Survey already completed");
@@ -117,18 +117,28 @@ export async function submitSurveyResponse(data: SubmitSurveyResponseDTO): Promi
   for (const response of data.responses) {
     if (!validQuestions.has(response.question_id)) throw new Error("Invalid survey question");
     await db.execute(
+      /*
+       * survey_response has one answer column, not three. Its real shape is
+       * id, survey_id, question_id, employee_id, response_value, response_date, created_at -
+       * there is no response_id, no response_text and no response_choices_json, so this INSERT
+       * raised ER_BAD_FIELD_ERROR and no survey response has ever been stored.
+       *
+       * The three inbound shapes are collapsed onto response_value, which is what the read side
+       * already expects (getSurveyResults averages response_value). A scale answer stays a plain
+       * number so AVG() keeps working; free text is stored as-is; multiple choice is stored as
+       * its JSON array, which is the only lossless option in a single column.
+       */
       `INSERT INTO survey_response
-         (response_id, survey_id, question_id, employee_id, response_text,
-          response_value, response_choices_json)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+         (id, survey_id, question_id, employee_id, response_value)
+       VALUES (?, ?, ?, ?, ?)`,
       [
         randomUUID(),
         data.survey_id,
         response.question_id,
         survey.is_anonymous ? null : data.employee_id ?? null,
-        response.response_text ?? null,
-        response.response_value ?? null,
-        response.response_choices_json ? JSON.stringify(response.response_choices_json) : null,
+        response.response_value
+          ?? response.response_text
+          ?? (response.response_choices_json ? JSON.stringify(response.response_choices_json) : null),
       ]
     );
   }
@@ -150,13 +160,13 @@ export async function submitSurveyResponse(data: SubmitSurveyResponseDTO): Promi
 export async function getSurveyResults(id: string): Promise<RowDataPacket[]> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT sq.id AS question_id, sq.question_text, sq.question_type,
-            COUNT(sr.response_id) as response_count,
+            COUNT(sr.id) as response_count,
             AVG(sr.response_value) as average_value
        FROM survey_question sq
        LEFT JOIN survey_response sr ON sr.question_id = sq.id
       WHERE sq.survey_id = ?
-      GROUP BY sq.id, sq.question_text, sq.question_type, sq.display_order
-      ORDER BY sq.display_order`,
+      GROUP BY sq.id, sq.question_text, sq.question_type, sq.question_order
+      ORDER BY sq.question_order`,
     [id]
   );
   return rows;
