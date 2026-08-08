@@ -148,7 +148,7 @@ export const platformRouteElements = (
       {/* /employee/joining-documents/esign/:token and /employee/epf-compliance/review/:token are in public.routes */}
 
       {/* Helpdesk / Support */}
-      <Route path="/helpdesk"                        element={<ProtectedRoute><Gate pageCode="HELPDESK"><NativeHelpdesk /></Gate></ProtectedRoute>} />
+      <Route path="/helpdesk"                        element={<ProtectedRoute><Gate pageCode="HELPDESK_KB"><NativeHelpdesk /></Gate></ProtectedRoute>} />
       <Route path="/uat/feedback"                    element={<ProtectedRoute><Gate pageCode="UAT_FEEDBACK"><NativeUatFeedback /></Gate></ProtectedRoute>} />
       <Route path="/uat/triage"                      element={<ProtectedRoute><Gate pageCode="UAT_TRIAGE_CONSOLE"><NativeUatTriageConsole /></Gate></ProtectedRoute>} />
       <Route path="/uat/releases"                    element={<ProtectedRoute><Gate pageCode="UAT_RELEASE_BOARD"><NativeUatReleaseBoard /></Gate></ProtectedRoute>} />
@@ -174,8 +174,8 @@ export const platformRouteElements = (
       {/* Security / access */}
       <Route path="/security-center"             element={<ProtectedRoute roles={['admin','ceo','coo','hr']}><Gate pageCode="SECURITY_CENTER"><NativeSecurityCenter /></Gate></ProtectedRoute>} />
       <Route path="/settings/access-control"     element={<ProtectedRoute><Gate pageCode="ACCESS_CONTROL"><UnifiedAccessControl /></Gate></ProtectedRoute>} />
-      <Route path="/super-admin/page-access"     element={<ProtectedRoute roles={['admin']}><Gate pageCode="SUPER_ADMIN_PAGE_ACCESS"><SuperAdminAccessControl /></Gate></ProtectedRoute>} />
-      <Route path="/super-admin/module-access"   element={<ProtectedRoute roles={['admin']}><Gate pageCode="SUPER_ADMIN_MODULE_ACCESS"><SuperAdminModuleAccess /></Gate></ProtectedRoute>} />
+      <Route path="/super-admin/page-access"     element={<ProtectedRoute roles={['admin']}><Gate pageCode="ACCESS_CONTROL"><SuperAdminAccessControl /></Gate></ProtectedRoute>} />
+      <Route path="/super-admin/module-access"   element={<ProtectedRoute roles={['admin']}><Gate pageCode="MODULE_ACCESS"><SuperAdminModuleAccess /></Gate></ProtectedRoute>} />
       <Route path="/super-admin/policy-engine"   element={<ProtectedRoute roles={['super_admin']}><Gate pageCode="SUPER_ADMIN_POLICY_ENGINE"><NativePolicyEngine /></Gate></ProtectedRoute>} />
       <Route path="/super-admin/company-feed-creators" element={<ProtectedRoute roles={['super_admin']}><NativeCompanyFeedCreatorAccess /></ProtectedRoute>} />
       <Route path="/super-admin/live-location"   element={<ProtectedRoute roles={['super_admin','branch_head','hr_admin','operations_manager','process_manager']}><LiveLocationMap /></ProtectedRoute>} />

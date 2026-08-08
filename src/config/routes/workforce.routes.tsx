@@ -62,14 +62,14 @@ export const workforceRouteElements = (
           inline on the Leaves / Regularization / Disputes pages. */}
       <Route path="/admin/discard-center"       element={<ProtectedRoute roles={['super_admin','wfm']}><Gate pageCode="DISCARD_CENTER"><NativeDiscardCenter /></Gate></ProtectedRoute>} />
       <Route path="/attendance/billing-config"  element={<ProtectedRoute><Gate pageCode="ATTENDANCE_BILLING_CONFIG"><DashboardLayout><NativeAttendanceBillingConfig /></DashboardLayout></Gate></ProtectedRoute>} />
-      <Route path="/wfm/mismatch-queue"         element={<ProtectedRoute><Gate pageCode="ATTENDANCE_MISMATCH_QUEUE"><DashboardLayout><NativeAttendanceMismatchQueue /></DashboardLayout></Gate></ProtectedRoute>} />
+      <Route path="/wfm/mismatch-queue"         element={<ProtectedRoute><Gate pageCode="WFM_LIVE_TRACKER"><DashboardLayout><NativeAttendanceMismatchQueue /></DashboardLayout></Gate></ProtectedRoute>} />
       {/* Requires migration 1083 to have been applied — prod runs SKIP_MIGRATIONS=true, so
           deploying this ahead of the seed leaves the page dark for every role. */}
       <Route path="/wfm/attendance-exceptions"  element={<ProtectedRoute><Gate pageCode="WFM_ATTENDANCE_EXCEPTIONS"><NativeAttendanceExceptionEngine /></Gate></ProtectedRoute>} />
       <Route path="/attendance-rules-master"    element={<ProtectedRoute roles={['super_admin','admin','hr']}><Gate pageCode="ATTENDANCE_RULES_MASTER"><NativeAttendanceRulesMaster /></Gate></ProtectedRoute>} />
       <Route path="/hr/attendance-lookup"       element={
         <ProtectedRoute roles={['super_admin','admin','hr','payroll_head','payroll_admin','wfm']}>
-          <Gate pageCode="HR_ATTENDANCE_LOOKUP"><AdminAttendanceView /></Gate>
+          <Gate pageCode="ATTENDANCE_LOOKUP"><AdminAttendanceView /></Gate>
         </ProtectedRoute>
       } />
       {/* Manager closure screen: whole team, whole month, one page. The backend

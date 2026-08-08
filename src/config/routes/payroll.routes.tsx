@@ -106,7 +106,7 @@ export const payrollRouteElements = (
       <Route path="/payroll/overtime"       element={<ProtectedRoute roles={['admin','super_admin','wfm','payroll','payroll_head']}><Gate pageCode="PAYROLL_OVERTIME"><PayrollOvertimeManagement /></Gate></ProtectedRoute>} />
       <Route path="/payroll/disbursal"      element={<ProtectedRoute roles={['super_admin','payroll','payroll_head','finance']}><Gate pageCode="PAYROLL_DISBURSAL"><DisbursalManagement /></Gate></ProtectedRoute>} />
       <Route path="/payroll/config-flags"   element={<ProtectedRoute roles={['super_admin','admin','payroll_head','payroll_branch']}><Gate pageCode="PAYROLL_CONFIG_FLAGS"><PayrollConfigFlags /></Gate></ProtectedRoute>} />
-      <Route path="/payroll/recalculation-queue" element={<ProtectedRoute roles={['super_admin','admin','payroll_head','payroll_branch']}><Gate pageCode="PAYROLL_RECALC_QUEUE"><RecalculationQueue /></Gate></ProtectedRoute>} />
+      <Route path="/payroll/recalculation-queue" element={<ProtectedRoute roles={['super_admin','admin','payroll_head','payroll_branch']}><Gate pageCode="PAYROLL_RECALCULATION_QUEUE"><RecalculationQueue /></Gate></ProtectedRoute>} />
       {/* Double-gated until now: ProtectedRoute resolves this path to
           PAYROLL_ATTENDANCE_CONTROL_TOWER via PAGE_CODE_BY_ROUTE (granted to 10 roles),
           then the Gate demanded PAYROLL_ATTENDANCE_TOWER (granted to 1). A user needed
@@ -133,7 +133,7 @@ export const payrollRouteElements = (
       <Route path="/payroll/bulk-outputs"        element={<ProtectedRoute roles={['super_admin','payroll_head','admin']}><Gate pageCode="PAYROLL_BULK_OUTPUTS"><BulkOutputs /></Gate></ProtectedRoute>} />
       <Route path="/payroll/loans"               element={<ProtectedRoute roles={['super_admin','payroll_head','finance','admin','hr','employee']}><Gate pageCode="PAYROLL_LOANS"><LoanManagement /></Gate></ProtectedRoute>} />
       <Route path="/payroll/sign-off"            element={<ProtectedRoute roles={['super_admin','payroll_head','finance','ceo','admin']}><Gate pageCode="PAYROLL_SIGN_OFF"><PayrollSignOff /></Gate></ProtectedRoute>} />
-      <Route path="/payroll/salary-certificates" element={<ProtectedRoute roles={['super_admin','payroll_head','finance','admin','hr','employee']}><Gate pageCode="PAYROLL_SALARY_CERTIFICATES"><SalaryCertificate /></Gate></ProtectedRoute>} />
+      <Route path="/payroll/salary-certificates" element={<ProtectedRoute roles={['super_admin','payroll_head','finance','admin','hr','employee']}><Gate pageCode="SALARY_CERTIFICATE"><SalaryCertificate /></Gate></ProtectedRoute>} />
       {/* Roles mirror the backend's PAYROLL_ROLES for this router, so the screen
           is not offered to someone whose every request would 403. The API is the
           actual boundary. */}
