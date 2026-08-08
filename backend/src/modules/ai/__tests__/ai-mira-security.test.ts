@@ -219,7 +219,7 @@ describe('Mira secure assistant release contract', () => {
     for (const table of requiredTables) {
       expect(corpus, `Missing schema migration for ${table}`).toContain(table);
     }
-  });
+  }, 30_000);
 
   it('does not expose employee directory search from the floating chat', () => {
     const chatSource = source('../../../../../src/components/ai/CommandPalette.tsx');

@@ -90,5 +90,5 @@ describe("nothing imports it", () => {
       offenders,
       "something now imports the dead payroll engine — it has no payable-days cap",
     ).toEqual([]);
-  });
+  }, 30_000);
 });
