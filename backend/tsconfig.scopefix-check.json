@@ -1,0 +1,10 @@
+{
+  "extends": "./tsconfig.json",
+  "include": [
+    "src/modules/governance/tat.routes.ts",
+    "src/modules/work-inbox/work-inbox.routes.ts",
+    "src/modules/quality-dashboard/qa-audit.routes.ts",
+    "src/shared/dashboardScope.ts"
+  ],
+  "compilerOptions": { "noEmit": true }
+}

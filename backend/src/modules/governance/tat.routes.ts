@@ -7,7 +7,7 @@ import { randomUUID } from "crypto";
 import type { RowDataPacket } from "mysql2";
 import { createTatInstance, checkAndEscalateTat, completeTatInstance } from "./tat.service.js";
 import { getUserRoleContext } from "../../shared/roleResolver.js";
-import { resolveDashboardScope, scopeToSqlWhere } from "../../shared/dashboardScope.js";
+import { resolveDashboardScopeForRequest, scopeToSqlWhere } from "../../shared/dashboardScope.js";
 
 const router = Router();
 const h = (fn: Function) => (req: any, res: any, next: any) => fn(req, res).catch(next);
@@ -169,7 +169,11 @@ router.get("/tasks", h(async (req: AuthenticatedRequest, res: any) => {
 
   // Role-based scope filter on branch_id / process_id
   const ctx = await getUserRoleContext(req.authUser!.id);
-  const scope = await resolveDashboardScope(req.authUser!.id, ctx.primaryRole);
+  // resolveDashboardScopeForRequest, not resolveDashboardScope: this file was flagged in 714830f8
+  // as carrying the same demo-identity gap but was not confirmed live at the time. It is now -
+  // GET /api/governance/tat/tasks returns 409 DASHBOARD_SCOPE_NOT_CONFIGURED "for role employee"
+  // to a demo super_admin, so /governance/tat-dashboard and /governance/tat-matrix render nothing.
+  const scope = await resolveDashboardScopeForRequest(req.authUser!, ctx.primaryRole);
   const scopeWhere = scopeToSqlWhere(scope, "t");
   where += ` AND (${scopeWhere.sql})`;
   params.push(...scopeWhere.params);

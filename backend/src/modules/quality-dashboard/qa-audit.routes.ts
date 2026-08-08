@@ -4,7 +4,7 @@ import type { RowDataPacket } from "mysql2";
 import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { getUserRoleContext } from "../../shared/roleResolver.js";
-import { resolveDashboardScope, buildScopeWhereEmployees } from "../../shared/dashboardScope.js";
+import { resolveDashboardScopeForRequest, buildScopeWhereEmployees } from "../../shared/dashboardScope.js";
 import { submitQaAudit, listAuditsForEmployee, QaAuditError } from "./qa-audit.service.js";
 import { createForm, activateForm, listForms } from "./qa-form.service.js";
 
@@ -177,7 +177,11 @@ router.get("/audits", h(async (req, res) => {
   }
 
   // A privileged caller still only reads inside their branch/process scope.
-  const scope = await resolveDashboardScope(req.authUser!.id, roleContext.primaryRole);
+  // Flagged in 714830f8 as carrying the same demo-identity gap. Reached only after the
+  // employeeId guard above, so it does not 409 on page load the way tat/tasks and
+  // work-inbox/dashboard do - but it narrows a demo super_admin to role "employee" and would
+  // refuse a lookup they are entitled to.
+  const scope = await resolveDashboardScopeForRequest(req.authUser!, roleContext.primaryRole);
   const scopeWhere = buildScopeWhereEmployees(scope, "e");
   const [allowed] = await db.execute<RowDataPacket[]>(
     `SELECT e.id FROM employees e WHERE e.id = ? AND ${scopeWhere.sql} LIMIT 1`,

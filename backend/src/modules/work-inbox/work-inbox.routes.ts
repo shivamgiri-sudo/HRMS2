@@ -3,7 +3,7 @@ import { requireAuth } from "../../middleware/authMiddleware.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import * as svc from "./work-inbox.service.js";
-import { resolveDashboardScope } from "../../shared/dashboardScope.js";
+import { resolveDashboardScopeForRequest } from "../../shared/dashboardScope.js";
 import { getUserRoleContext } from "../../shared/roleResolver.js";
 
 interface ResolvedRequest extends AuthenticatedRequest {
@@ -79,7 +79,9 @@ router.get("/team", h(async (req: AuthenticatedRequest, res: any) => {
 }));
 
 router.get("/dashboard", h(async (req: ResolvedRequest, res: any) => {
-  const scope = await resolveDashboardScope(req.authUser!.id, req.resolvedRole);
+  // Flagged in 714830f8, now confirmed live: GET /api/work-inbox/dashboard returns 409
+  // DASHBOARD_SCOPE_NOT_CONFIGURED "for role employee" to a demo super_admin.
+  const scope = await resolveDashboardScopeForRequest(req.authUser!, req.resolvedRole);
   const requestedBranchId = req.query.branchId as string | undefined;
   const requestedProcessId = req.query.processId as string | undefined;
 
