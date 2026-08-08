@@ -4,6 +4,24 @@ vi.mock("../src/db/mysql.js", () => ({
   db: { execute: vi.fn().mockResolvedValue([[], []]) },
   pingDb: vi.fn(),
 }));
+
+// c59f21fb replaced rta.service's hardcoded alert thresholds with DB-driven config, so
+// fireAlertsForDate() now begins with loadAlertThresholds() → four getPolicyValue() calls,
+// each a db.execute. Those consumed the first four mockResolvedValueOnce entries queued
+// below, leaving the real alert queries to fall through to the default [[], []] — so no
+// no-shows were found, fired stayed 0, and the test read "expected 0 to be greater than 0"
+// as if the alert logic were broken.
+//
+// Returning the fallback rather than queueing four more db mocks, for two reasons. It
+// restores exactly the pre-refactor behaviour: these fallbacks (70/50/15/25) are the
+// constants the thresholds used to be. And getPolicyValue caches per key with a TTL on a
+// module-level map, so the query count depends on whether an earlier test warmed the cache —
+// which is why only the FIRST test to call fireAlertsForDate failed. Mocking the lookup
+// makes the file order-independent instead of correct only in its current order.
+vi.mock("../src/modules/policy-engine/policy-engine.cache.js", () => ({
+  getPolicyValue: (_domain: string, _section: string, _key: string, fallback: string) =>
+    Promise.resolve(fallback),
+}));
 import { db } from "../src/db/mysql.js";
 import {
   reconciliationService,
