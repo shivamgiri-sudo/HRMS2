@@ -512,7 +512,13 @@ reportSuiteRouter.get("/:code", reportScopeMiddleware, reportCatalogAccessMiddle
                LEFT JOIN cost_centre_master cc ON cc.id = e.cost_centre_id
               WHERE ${clauses.join(" AND ")}
               ORDER BY COALESCE(e.date_of_joining,e.date_of_exit,e.date_of_leaving,e.resignation_date) DESC`;
-      params.push(from, to);
+      // These values belong to placeholders that sit BEFORE the WHERE, so they must LEAD the
+      // bind array — unshift, not push. Appending them shifted every parameter by one.
+      // It looked fine for super_admin, whose array happened to hold the same value twice;
+      // a branch-scoped user's extra predicate exposed it, and the branch id landed on the
+      // month placeholder. Measured on leave-lwp-reconciliation: a scoped user got 0 rows,
+      // against 200 once corrected.
+      params.unshift(from, to);
       break;
     }
     case "attendance-daily": {
@@ -1380,7 +1386,13 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
               GROUP BY e.id, e.employee_code, e.first_name, e.last_name, spl.lwp_days
               HAVING lwp_days_attendance > 0
               ORDER BY ABS(variance) DESC`;
-      params.push(month);
+      // These values belong to placeholders that sit BEFORE the WHERE, so they must LEAD the
+      // bind array — unshift, not push. Appending them shifted every parameter by one.
+      // It looked fine for super_admin, whose array happened to hold the same value twice;
+      // a branch-scoped user's extra predicate exposed it, and the branch id landed on the
+      // month placeholder. Measured on leave-lwp-reconciliation: a scoped user got 0 rows,
+      // against 200 once corrected.
+      params.unshift(month);
       break;
     }
 
@@ -2319,7 +2331,13 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
               WHERE ${clauses.join(" AND ")}
               GROUP BY p.process_name, b.branch_name
               ORDER BY avg_kpi_score DESC`;
-      params.push(month, month);
+      // These values belong to placeholders that sit BEFORE the WHERE, so they must LEAD the
+      // bind array — unshift, not push. Appending them shifted every parameter by one.
+      // It looked fine for super_admin, whose array happened to hold the same value twice;
+      // a branch-scoped user's extra predicate exposed it, and the branch id landed on the
+      // month placeholder. Measured on leave-lwp-reconciliation: a scoped user got 0 rows,
+      // against 200 once corrected.
+      params.unshift(month, month);
       break;
     }
 
@@ -2347,7 +2365,13 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
               WHERE ${clauses.join(" AND ")}
               GROUP BY e.id, e.employee_code, e.full_name, e.first_name, e.last_name, p.process_name, kss.final_score
               ORDER BY composite_score ${tier === "bottom" ? "ASC" : "DESC"}`;
-      params.push(month, month);
+      // These values belong to placeholders that sit BEFORE the WHERE, so they must LEAD the
+      // bind array — unshift, not push. Appending them shifted every parameter by one.
+      // It looked fine for super_admin, whose array happened to hold the same value twice;
+      // a branch-scoped user's extra predicate exposed it, and the branch id landed on the
+      // month placeholder. Measured on leave-lwp-reconciliation: a scoped user got 0 rows,
+      // against 200 once corrected.
+      params.unshift(month, month);
       break;
     }
 
@@ -2391,7 +2415,13 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
               WHERE ${clauses.join(" AND ")}
               GROUP BY e.id, e.employee_code, e.full_name, e.first_name, e.last_name, p.process_name, kss.final_score, kss.rating
               ORDER BY attendance_pct ASC`;
-      params.push(month, month);
+      // These values belong to placeholders that sit BEFORE the WHERE, so they must LEAD the
+      // bind array — unshift, not push. Appending them shifted every parameter by one.
+      // It looked fine for super_admin, whose array happened to hold the same value twice;
+      // a branch-scoped user's extra predicate exposed it, and the branch id landed on the
+      // month placeholder. Measured on leave-lwp-reconciliation: a scoped user got 0 rows,
+      // against 200 once corrected.
+      params.unshift(month, month);
       break;
     }
 
@@ -3463,7 +3493,13 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
               WHERE ${clauses.join(" AND ")}
               GROUP BY e.id, e.employee_code, e.full_name, e.first_name, e.last_name, p.process_name, kss.final_score, kss.rating
               ORDER BY attendance_pct ASC`;
-      params.push(month, month);
+      // These values belong to placeholders that sit BEFORE the WHERE, so they must LEAD the
+      // bind array — unshift, not push. Appending them shifted every parameter by one.
+      // It looked fine for super_admin, whose array happened to hold the same value twice;
+      // a branch-scoped user's extra predicate exposed it, and the branch id landed on the
+      // month placeholder. Measured on leave-lwp-reconciliation: a scoped user got 0 rows,
+      // against 200 once corrected.
+      params.unshift(month, month);
       break;
     }
 

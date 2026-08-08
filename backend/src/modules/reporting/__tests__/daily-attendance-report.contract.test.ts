@@ -18,11 +18,20 @@ const read = (path: string) => readFileSync(resolve(process.cwd(), path), "utf8"
 describe("daily attendance report", () => {
   const routes = read("src/modules/reporting/report-suite.routes.ts");
 
-  /** The attendance-daily branch only. */
+  /**
+   * The attendance-daily branch only.
+   *
+   * Anchored on the case label, not on `params.unshift(from, to`. That string was unique when
+   * this test was written and stopped being so once other blocks were corrected to unshift
+   * their leading params too — the slice then began at an earlier report and ran through into
+   * this one, counting both reports' placeholders against one report's arguments. The label is
+   * unique by construction; the idiom is not.
+   */
   const block = (() => {
-    const start = routes.indexOf("params.unshift(from, to");
-    const end = routes.indexOf("ORDER BY adr.record_date DESC", start);
+    const start = routes.indexOf('case "attendance-daily"');
     expect(start, "attendance-daily branch not found").toBeGreaterThan(-1);
+    const end = routes.indexOf("ORDER BY adr.record_date DESC", start);
+    expect(end, "attendance-daily branch has no terminating ORDER BY").toBeGreaterThan(start);
     return routes.slice(start, end);
   })();
 
