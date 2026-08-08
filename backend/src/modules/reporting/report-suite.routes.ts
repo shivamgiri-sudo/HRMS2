@@ -1290,36 +1290,12 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
       break;
     }
 
-    case "leave-lwp-reconciliation": {
-      const month = monthParam(req.query.month);
-      addScopedEmployeeFilters(req, clauses, params);
-      clauses.push("DATE_FORMAT(adr.record_date,'%Y-%m') = ?"); params.push(month);
-      sql = `SELECT e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-                                        COALESCE(zpm.process_name, 'UNASSIGNED') AS process_name,
-COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
-                    COALESCE(zcc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
-                    SUM(adr.lwp_value) AS lwp_days_attendance,
-                    COALESCE(spl.lwp_days, 0) AS lwp_days_payroll,
-                    SUM(adr.lwp_value) - COALESCE(spl.lwp_days, 0) AS variance
-               FROM attendance_daily_record adr
-               JOIN employees e ON e.id = adr.employee_id
-               LEFT JOIN salary_prep_run spr ON spr.run_month = ?
-               LEFT JOIN salary_prep_line spl ON spl.employee_id = e.id AND spl.run_id = spr.id
-               LEFT JOIN cost_centre_master zcc ON zcc.id = e.cost_centre_id
-               LEFT JOIN process_master zpm ON zpm.id = e.process_id
-              WHERE ${clauses.join(" AND ")} AND adr.lwp_value > 0
-              GROUP BY e.id, e.employee_code, e.first_name, e.last_name, spl.lwp_days
-              HAVING lwp_days_attendance > 0
-              ORDER BY ABS(variance) DESC`;
-      // These values belong to placeholders that sit BEFORE the WHERE, so they must LEAD the
-      // bind array — unshift, not push. Appending them shifted every parameter by one.
-      // It looked fine for super_admin, whose array happened to hold the same value twice;
-      // a branch-scoped user's extra predicate exposed it, and the branch id landed on the
-      // month placeholder. Measured on leave-lwp-reconciliation: a scoped user got 0 rows,
-      // against 200 once corrected.
-      params.unshift(month);
-      break;
-    }
+    // "leave-lwp-reconciliation" is intentionally not handled here.
+    //
+    // It falls through to executeReport(), which now carries this exact SQL including the
+    // params.unshift(month) the LEFT JOIN placeholder requires. Screen and download returned
+    // 650 and 1,569 rows respectively; the eight columns the catalogue declares are the
+    // inline shape.
 
     case "maternity-paternity-register": {
       addScopedEmployeeFilters(req, clauses, params);
@@ -1353,26 +1329,11 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
       break;
     }
 
-    case "leave-lapse-summary": {
-      const currentYear = new Date().getFullYear();
-      addScopedEmployeeFilters(req, clauses, params);
-      clauses.push("lbl.balance_year < ?"); params.push(currentYear);
-      sql = `SELECT e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-                                        COALESCE(zpm.process_name, 'UNASSIGNED') AS process_name,
-COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
-                    COALESCE(zcc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
-                    lt.leave_code, lt.leave_name, lbl.balance_year,
-                    GREATEST(lbl.allocated_days + lbl.adjusted_days - lbl.used_days, 0) AS lapsed_days
-               FROM leave_balance_ledger lbl
-               JOIN employees e ON e.id = lbl.employee_id
-               JOIN leave_type_master lt ON lt.id = lbl.leave_type_id
-               LEFT JOIN cost_centre_master zcc ON zcc.id = e.cost_centre_id
-               LEFT JOIN process_master zpm ON zpm.id = e.process_id
-              WHERE ${clauses.join(" AND ")}
-                AND (lbl.allocated_days + lbl.adjusted_days - lbl.used_days) > 0
-              ORDER BY employee_name, lbl.balance_year`;
-      break;
-    }
+    // "leave-lapse-summary" is intentionally not handled here.
+    //
+    // It falls through to executeReport(), which now carries this exact SQL. Screen and
+    // download returned 3,000 and 2,916 rows; the nine columns the catalogue declares are the
+    // inline shape.
 
     case "holiday-master-list": {
       const year = Number(req.query.year ?? new Date().getFullYear());

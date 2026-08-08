@@ -94,7 +94,14 @@ const SHADOWED_BACKLOG = new Set<string>([
   // table named leave_encashment that does not exist, so the shadow guaranteed a 500; the
   // executor it was hiding raises ReportSourceUnavailableError instead, which is the honest
   // answer for a report whose source is genuinely absent.
-  "leave-lapse-summary", "leave-lwp-reconciliation",
+  
+  // "leave-lapse-summary" left this list on 2026-08-08 — screen and download returned 3,000
+  // and 2,916 rows for the same code.
+  
+  // "leave-lwp-reconciliation" left this list on 2026-08-08 — the shadow hid a different
+  // report entirely (650 rows against 1,569) and kept the executor from receiving the
+  // bind-order fix its LEFT JOIN placeholder needs.
+  
   "leave-trend-monthly", "lifecycle-events", "maternity-paternity-register",
   // "monthly-attrition-summary" left this list on 2026-08-08. Its inline block read
   // attrition_record, a table that exists with 0 rows, so the report showed zero attrition
