@@ -222,8 +222,38 @@ export async function runOnce(): Promise<"idle" | "done" | "retry" | "dead"> {
 let timer: NodeJS.Timeout | null = null;
 let running = false;
 
+/**
+ * Quiesce when uat_job does not exist, instead of complaining every 15 seconds.
+ *
+ * WHY THIS IS NOT THEORETICAL
+ *   Migrations run in server.ts only. all-workers.ts — the process this runner lives in —
+ *   does NOT run them, and in production the two are separate pm2 services. So on any deploy
+ *   there is a window where the worker is polling a table the API has not created yet, and
+ *   if migrations fail outright (which leaves health at 503) the window never closes.
+ *
+ *   At a 15s poll that is 5,760 error lines a day into the same pm2 log every other worker
+ *   reports to. Drowning real diagnostics is its own outage, and this runner has no business
+ *   causing one for a feature that is switched off.
+ *
+ * It still RETRIES, on a long interval, so it heals itself once the migration lands — no
+ * restart needed. Silence with no recovery would be the worse failure.
+ */
+const MISSING_TABLE_CODES = new Set(["ER_NO_SUCH_TABLE", "ER_BAD_DB_ERROR"]);
+const QUIET_TICKS = 20; // 20 x 15s = retry roughly every 5 minutes
+let schemaMissing = false;
+let ticksSinceSchemaCheck = 0;
+
+/** Exported for tests; module-level state must not leak between cases. */
+export function resetRunnerState(): void {
+  schemaMissing = false;
+  ticksSinceSchemaCheck = 0;
+  running = false;
+}
+
 async function tick(): Promise<void> {
   if (running) return; // a slow job must not overlap its own next poll
+  if (schemaMissing && ++ticksSinceSchemaCheck < QUIET_TICKS) return;
+
   running = true;
   try {
     // Drain rather than one-per-poll: a burst of submissions should not take a minute per
@@ -232,7 +262,25 @@ async function tick(): Promise<void> {
       const result = await runOnce();
       if (result === "idle") break;
     }
+    if (schemaMissing) {
+      console.log("[uat-job] uat_job is present again; resuming normal polling.");
+      schemaMissing = false;
+    }
+    ticksSinceSchemaCheck = 0;
   } catch (error) {
+    const code = (error as { code?: string })?.code;
+    if (code && MISSING_TABLE_CODES.has(code)) {
+      ticksSinceSchemaCheck = 0;
+      if (!schemaMissing) {
+        schemaMissing = true;
+        console.error(
+          "[uat-job] uat_job is missing — migration 1103 has not applied in this database. " +
+            `Polling every ${(QUIET_TICKS * POLL_INTERVAL_MS) / 60000} minutes until it does, ` +
+            "rather than logging this every poll. The UAT pipeline is inert until then."
+        );
+      }
+      return;
+    }
     console.error("[uat-job] runner tick failed:", error instanceof Error ? error.message : error);
   } finally {
     running = false;
