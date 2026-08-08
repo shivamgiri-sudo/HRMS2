@@ -52,7 +52,22 @@ async function requisitionScope(actor: EnterpriseUser, alias: "jr" | ""): Promis
   const scope = await resolveUserBusinessScope(actor);
   const table = alias || "job_requisition";
   return buildProcessScopeCondition(scope, {
-    branchId: `(SELECT bm.id FROM branch_master bm WHERE bm.branch_name = ${table}.branch_name)`,
+    // MIN(), not a bare SELECT. addAssignmentPredicates emits `<expr> = ?`, so this
+    // expression must yield at most one row — and branch_master has seven duplicated
+    // branch_name values live (Head Office x3, plus HYDERABAD / JAIPUR / JAIPUR IDC /
+    // KARNAL / MEERUT / MOHALI x2). A bare scalar subquery throws ER_SUBQUERY_NO_1_ROW
+    // (errno 1242) on any such row, and because the subquery is evaluated per row that
+    // would 500 the whole requisition list for every scoped user — one requisition
+    // raised at Head Office would take the module down. MIN() always returns exactly
+    // one value (NULL when the name matches nothing) so the query can no longer throw.
+    //
+    // No behaviour change today: all 15 live requisitions sit on AHMEDABAD-JALDARSHAN /
+    // NOIDA / NOIDA-2, none of which is duplicated, so every row resolves to the same id
+    // as before. The residual cost is that if a requisition is ever raised on a
+    // duplicated name, only the assignment holding the lowest branch id sees it — a
+    // narrowing, never a leak. The real fix is to de-duplicate branch_master, which is a
+    // data change and needs its own decision.
+    branchId: `(SELECT MIN(bm.id) FROM branch_master bm WHERE bm.branch_name = ${table}.branch_name)`,
     processId: `${table}.process_id`,
   });
 }
