@@ -36,6 +36,14 @@ export interface CostCentreRecord {
   process_id: string;
   department_id?: string;
   status: CostCentreStatus;
+  /**
+   * What the record actually is, for display: `status` with deactivation folded in.
+   *
+   * `status` is the approval stage (draft -> pending_l1 -> ... -> active) and keeps its value
+   * after a cost centre is closed, so a closed one still reads "draft" there. Deactivation lives
+   * in `active_status`/`close_date`. The server derives this so the badge and the tab agree.
+   */
+  effective_status?: CostCentreStatus;
   active_status: number;
 
   // Joined fields

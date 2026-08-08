@@ -46,7 +46,9 @@ export function CostCentreListView({ onView, onEdit, onCreate }: CostCentreListV
   const canCreate = useHasRole("finance_head", "accounts_head", "admin", "super_admin");
 
   const canEditRecord = (cc: CostCentreRecord) => {
-    return ["draft", "revision_required"].includes(cc.status) && canCreate;
+    // effective_status, so a closed cost centre is not offered for editing just because the
+    // approval stage it stopped at happens to be "draft".
+    return ["draft", "revision_required"].includes(cc.effective_status ?? cc.status) && canCreate;
   };
 
   return (
@@ -135,7 +137,7 @@ export function CostCentreListView({ onView, onEdit, onCreate }: CostCentreListV
                   <TableCell>{cc.branch_name ?? "-"}</TableCell>
                   <TableCell>{cc.process_name ?? "-"}</TableCell>
                   <TableCell>
-                    <StatusBadge status={cc.status} />
+                    <StatusBadge status={cc.effective_status ?? cc.status} />
                   </TableCell>
                   <TableCell>
                     <DropdownMenu>

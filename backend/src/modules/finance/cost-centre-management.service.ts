@@ -130,8 +130,23 @@ export const costCentreManagementService = {
     const where: string[] = [];
     const params: (string | number)[] = [];
 
-    if (status && status !== "all") {
+    /*
+     * "closed" is not a value of the status column, and never was.
+     *
+     * status tracks the approval workflow (draft -> pending_l1 -> pending_l2 -> approved ->
+     * active). Deactivation is recorded separately, in active_status and close_date. Nothing
+     * joined the two, so the Closed tab matched zero rows while 339 deactivated MAS cost centres
+     * sat under Draft - indistinguishable from ones still awaiting first approval - and one
+     * deactivated cost centre showed under Active.
+     *
+     * Filtering closed by active_status rather than status keeps the workflow column untouched:
+     * a closed cost centre still remembers which approval stage it had reached.
+     */
+    if (status === "closed") {
+      where.push("cc.active_status = 0");
+    } else if (status && status !== "all") {
       where.push("cc.status = ?");
+      where.push("cc.active_status = 1");
       params.push(status);
     }
 
@@ -170,6 +185,9 @@ export const costCentreManagementService = {
 
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT cc.*,
+              -- What the row actually is, for display. cc.status is left untouched so the
+              -- approval stage a closed cost centre had reached is still readable.
+              CASE WHEN cc.active_status = 0 THEN 'closed' ELSE cc.status END AS effective_status,
               cl.client_name, cl.client_code,
               l.lob_name, l.lob_code,
               b.branch_name, b.branch_code,
@@ -725,8 +743,14 @@ export const costCentreManagementService = {
    * Get status counts for dashboard
    */
   async getStatusCounts() {
+    // Counted the same way the list filters, so the tab badges and the tab contents agree.
+    // Previously every deactivated cost centre was counted under whatever approval stage it had
+    // reached, so Draft read 761 while 464 of those were closed, and Closed read nothing at all.
     const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT status, COUNT(*) AS count FROM cost_centre_master GROUP BY status`
+      `SELECT CASE WHEN active_status = 0 THEN 'closed' ELSE status END AS status,
+              COUNT(*) AS count
+         FROM cost_centre_master
+        GROUP BY CASE WHEN active_status = 0 THEN 'closed' ELSE status END`
     );
     const counts: Record<string, number> = {};
     for (const row of rows) {
