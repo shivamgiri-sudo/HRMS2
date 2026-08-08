@@ -210,7 +210,24 @@ const Employees = () => {
   const [bankQualityOpen, setBankQualityOpen] = useState(false);
   const { data: bankCorruptData, refetch: refetchBankCorrupt } = useQuery({
     queryKey: ["bank-quality-corrupt"],
-    queryFn: () => hrmsApi.get("/employees/bank-quality/corrupt").then(r => r.data),
+    /*
+     * Two bugs, both silent.
+     *
+     * The path was missing the /api prefix. hrmsApi does not add it - normalizeRequestPath only
+     * strips a duplicate when the base URL already ends in /api - so this requested
+     * /employees/bank-quality/corrupt and got 404 in dev, or the SPA's own index.html with a 200
+     * behind the same-origin proxy. Either way the query never returned data and nothing surfaced.
+     *
+     * The envelope was then unwrapped one level too far. The route replies
+     * { success, count, data }, and the two consumers below read .count and .data off the result,
+     * so .then(r => r.data) handed them the rows array and both reads were undefined.
+     *
+     * Verified against the running backend: the corrected path returns 200 with count 40.
+     */
+    queryFn: () =>
+      hrmsApi.get<{ success: boolean; count: number; data: any[] }>(
+        "/api/employees/bank-quality/corrupt",
+      ),
     enabled: isHROrPayroll,
     staleTime: 5 * 60 * 1000,
   });
@@ -219,7 +236,9 @@ const Employees = () => {
 
   const requestResubmissionMutation = useMutation({
     mutationFn: (employeeId: string) =>
-      hrmsApi.post(`/employees/bank-quality/${employeeId}/request-resubmission`).then(r => r.data),
+      // Same missing /api prefix as the query above; this POST silently 404'd, so the
+      // "request resubmission" button reported success without ever reaching the backend.
+      hrmsApi.post(`/api/employees/bank-quality/${employeeId}/request-resubmission`).then(r => r.data),
     onSuccess: () => { refetchBankCorrupt(); },
   });
 
