@@ -17,9 +17,9 @@ import { toast } from 'sonner';
 export default function NewExpenseClaim() {
   const navigate = useNavigate();
   const { claimId } = useParams<{ claimId?: string }>();
-  const [activeClaim, setActiveClaim] = useState<number | null>(claimId ? parseInt(claimId) : null);
+  const [activeClaim, setActiveClaim] = useState<string | null>(claimId ?? null);
 
-  const { data: claimData } = useClaimDetails(activeClaim ?? 0);
+  const { data: claimData } = useClaimDetails(activeClaim ?? '');
   const { mutate: createClaim, isPending: creatingClaim } = useCreateClaim();
   const { mutate: addItem, isPending: addingItem } = useAddClaimItem();
   const { mutate: submitClaim, isPending: submitting } = useSubmitClaim();

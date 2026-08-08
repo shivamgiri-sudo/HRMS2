@@ -1,5 +1,6 @@
+import { randomUUID } from 'crypto';
 import { db } from '../../db/mysql.js';
-import type { RowDataPacket, ResultSetHeader } from 'mysql2';
+import type { RowDataPacket } from 'mysql2';
 import {
   ExpenseStatus,
   type ExpenseClaim,
@@ -9,110 +10,187 @@ import {
 } from './expense.model.js';
 import { expenseCategoryService } from './expenseCategory.service.js';
 
-class ExpenseService {
-  private async generateClaimNumber(insertId: number): Promise<string> {
-    const now = new Date();
-    const year = now.getFullYear();
-    const month = String(now.getMonth() + 1).padStart(2, '0');
-    const prefix = `EXP-${year}-${month}`;
-    const [rows] = await db.query<RowDataPacket[]>(
-      'SELECT COUNT(*) as cnt FROM expense_claims WHERE claim_number LIKE ? AND id <= ?',
-      [`${prefix}%`, insertId]
-    );
-    const sequence = rows[0].cnt;
-    return `${prefix}-${String(sequence).padStart(4, '0')}`;
-  }
+/*
+ * Backed by expense_claim, the table that exists.
+ *
+ * This service targeted expense_claims, expense_items, expense_approvals and expense_payments.
+ * None of those is a table in mas_hrms - the module was written against a claims-plus-line-items
+ * schema that was never created - so every operation raised ER_NO_SUCH_TABLE and no expense claim
+ * has ever been created, submitted or approved through it.
+ *
+ * expense_claim is the real store (5,634 rows; 100 of them expense_type = 'employee_claim') and
+ * erp.service.ts already reads and writes it correctly. Creating the four missing tables would
+ * have given the same domain two competing stores, so the module is moved onto the existing one
+ * instead.
+ *
+ * ONE CLAIM IS ONE EXPENSE. That is the shape of the real data - the row carries expense_date,
+ * category, amount and description itself - so an "item" here is a view over the claim rather than
+ * a child row. addExpenseItem fills those fields in; a second item is refused explicitly rather
+ * than silently overwriting the first.
+ *
+ * The six module states survive on a five-value enum because the table carries approval_level for
+ * exactly this:
+ *   DRAFT            status='draft'
+ *   SUBMITTED        status='submitted', approval_level 0
+ *   MANAGER_APPROVED status='submitted', approval_level 1, reviewed_by/reviewed_at set
+ *   FINANCE_APPROVED status='approved',  approval_level 2, approved_by/approved_at set
+ *   PAID             status='paid'
+ *   REJECTED         status='rejected',  remarks carries the reason
+ *
+ * Columns that simply do not exist are not invented: there is no claim_number (the id is the
+ * reference), no process_id on the claim (the employee's process is used for reporting), and no
+ * per-stage date columns beyond reviewed_at/approved_at.
+ */
 
-  async createDraftClaim(employeeId: number, processId: number, branchId: number): Promise<ExpenseClaim> {
-    const [result] = await db.query<ResultSetHeader>(
-      'INSERT INTO expense_claims (claim_number, employee_id, process_id, branch_id, status, total_amount) VALUES (?, ?, ?, ?, ?, 0)',
-      ['PENDING', employeeId, processId, branchId, ExpenseStatus.DRAFT]
+/** Fields every read needs, aliased into the shape mapRowToClaim expects. */
+const CLAIM_SELECT = `
+  ec.id, ec.employee_id, ec.branch_id, ec.status, ec.approval_level,
+  ec.amount, ec.currency, ec.category, ec.expense_date, ec.description,
+  ec.receipt_ref, ec.remarks, ec.reviewed_by, ec.reviewed_at,
+  ec.approved_by, ec.approved_at, ec.payment_status, ec.created_at, ec.updated_at`;
+
+class ExpenseService {
+  async createDraftClaim(
+    employeeId: string,
+    _processId?: string | null,
+    branchId?: string | null
+  ): Promise<ExpenseClaim> {
+    // expense_date and amount are NOT NULL with no default, so a draft starts as today/0 and is
+    // filled in by addExpenseItem. expense_type is set so the reporting queries, which scope to
+    // employee_claim, pick this row up.
+    const id = randomUUID();
+    await db.query(
+      `INSERT INTO expense_claim
+         (id, employee_id, branch_id, expense_date, amount, status, expense_type)
+       VALUES (?, ?, ?, CURDATE(), 0, 'draft', 'employee_claim')`,
+      [id, employeeId, branchId ?? null]
     );
-    const claimNumber = await this.generateClaimNumber(result.insertId);
-    await db.query('UPDATE expense_claims SET claim_number = ? WHERE id = ?', [claimNumber, result.insertId]);
-    const claim = await this.getClaimById(result.insertId);
+    const claim = await this.getClaimById(id);
     if (!claim) throw new Error('Failed to create claim');
     return claim;
   }
 
-  async getClaimById(id: number): Promise<ExpenseClaim | null> {
-    const [rows] = await db.query<RowDataPacket[]>('SELECT * FROM expense_claims WHERE id = ?', [id]);
+  async getClaimById(id: string): Promise<ExpenseClaim | null> {
+    const [rows] = await db.query<RowDataPacket[]>(
+      `SELECT ${CLAIM_SELECT} FROM expense_claim ec WHERE ec.id = ?`, [id]
+    );
     if (rows.length === 0) return null;
     return this.mapRowToClaim(rows[0]);
   }
 
-  async getClaimWithDetails(id: number): Promise<ExpenseClaimWithDetails | null> {
+  async getClaimWithDetails(id: string): Promise<ExpenseClaimWithDetails | null> {
     const claim = await this.getClaimById(id);
     if (!claim) return null;
     const items = await this.getClaimItems(id);
-    const [approvalRows] = await db.query<RowDataPacket[]>(
-      'SELECT * FROM expense_approvals WHERE expense_claim_id = ? ORDER BY action_date DESC', [id]
+    const [rows] = await db.query<RowDataPacket[]>(
+      `SELECT ${CLAIM_SELECT} FROM expense_claim ec WHERE ec.id = ?`, [id]
     );
-    const [paymentRows] = await db.query<RowDataPacket[]>(
-      'SELECT * FROM expense_payments WHERE expense_claim_id = ?', [id]
-    );
+    const row = rows[0];
+
+    /*
+     * There is no approvals table, so the trail is reconstructed from the columns the claim
+     * itself keeps: reviewed_by/reviewed_at for the manager stage and approved_by/approved_at for
+     * finance. That is one entry per stage rather than a full history - the real table records the
+     * latest actor per stage, not every action - which is stated here rather than faked.
+     */
+    const approvals: ExpenseClaimWithDetails['approvals'] = [];
+    if (row?.reviewed_by) {
+      approvals.push({
+        id: `${id}:manager`, expense_claim_id: id, approver_id: String(row.reviewed_by),
+        approval_type: 'MANAGER' as never,
+        action: (claim.status === ExpenseStatus.REJECTED ? 'REJECTED' : 'APPROVED') as never,
+        comments: row.remarks ?? undefined,
+        action_date: row.reviewed_at ? new Date(row.reviewed_at) : new Date(row.updated_at)
+      });
+    }
+    if (row?.approved_by) {
+      approvals.push({
+        id: `${id}:finance`, expense_claim_id: id, approver_id: String(row.approved_by),
+        approval_type: 'FINANCE' as never,
+        action: (claim.status === ExpenseStatus.REJECTED ? 'REJECTED' : 'APPROVED') as never,
+        comments: row.remarks ?? undefined,
+        action_date: row.approved_at ? new Date(row.approved_at) : new Date(row.updated_at)
+      });
+    }
+
     return {
-      ...claim, items,
-      approvals: approvalRows.map(r => ({
-        id: r.id, expense_claim_id: r.expense_claim_id, approver_id: r.approver_id,
-        approval_type: r.approval_type, action: r.action, comments: r.comments,
-        action_date: new Date(r.action_date)
-      })),
-      payment: paymentRows.length > 0 ? {
-        id: paymentRows[0].id, expense_claim_id: paymentRows[0].expense_claim_id,
-        payment_reference: paymentRows[0].payment_reference,
-        payment_date: new Date(paymentRows[0].payment_date),
-        payment_method: paymentRows[0].payment_method,
-        processed_by: paymentRows[0].processed_by,
-        created_at: new Date(paymentRows[0].created_at)
+      ...claim,
+      items,
+      approvals,
+      // payment_status is a flag on the claim; there is no payment record to return.
+      payment: row?.payment_status === 'paid' ? {
+        id: `${id}:payment`, expense_claim_id: id,
+        payment_reference: row.receipt_ref ?? '',
+        payment_date: row.approved_at ? new Date(row.approved_at) : new Date(row.updated_at),
+        payment_method: 'unspecified',
+        processed_by: String(row.approved_by ?? ''),
+        created_at: new Date(row.updated_at)
       } : undefined
     };
   }
 
-  async addExpenseItem(claimId: number, itemData: AddExpenseItemDto): Promise<ExpenseItem> {
+  async addExpenseItem(claimId: string, itemData: AddExpenseItemDto): Promise<ExpenseItem> {
     const claim = await this.getClaimById(claimId);
     if (!claim) throw new Error('Claim not found');
     if (claim.status !== ExpenseStatus.DRAFT) throw new Error('Can only add items to draft claims');
     const category = await expenseCategoryService.getCategoryById(itemData.category_id);
     if (!category || !category.is_active) throw new Error('Category not found or inactive');
-    const [result] = await db.query<ResultSetHeader>(
-      'INSERT INTO expense_items (expense_claim_id, category_id, expense_date, amount, description, vendor_name) VALUES (?, ?, ?, ?, ?, ?)',
-      [claimId, itemData.category_id, itemData.expense_date, itemData.amount, itemData.description, itemData.vendor_name || null]
+
+    // One claim is one expense on this table, so the first item fills the claim in. A second is
+    // refused rather than overwriting the first silently.
+    if (Number(claim.total_amount) > 0) {
+      throw Object.assign(
+        new Error('This claim already has an expense. Raise a separate claim for another expense.'),
+        { statusCode: 409 }
+      );
+    }
+
+    await db.query(
+      `UPDATE expense_claim
+          SET category = ?, expense_date = ?, amount = ?, description = ?, updated_at = NOW()
+        WHERE id = ?`,
+      [this.toCategoryEnum(category.name), itemData.expense_date, itemData.amount,
+       itemData.description ?? null, claimId]
     );
-    const [rows] = await db.query<RowDataPacket[]>('SELECT * FROM expense_items WHERE id = ?', [result.insertId]);
-    return this.mapRowToItem(rows[0]);
+    const items = await this.getClaimItems(claimId);
+    return items[0];
   }
 
-  async getClaimItems(claimId: number): Promise<ExpenseItem[]> {
+  async getClaimItems(claimId: string): Promise<ExpenseItem[]> {
     const [rows] = await db.query<RowDataPacket[]>(
-      'SELECT * FROM expense_items WHERE expense_claim_id = ? ORDER BY expense_date DESC', [claimId]
+      `SELECT ${CLAIM_SELECT} FROM expense_claim ec WHERE ec.id = ?`, [claimId]
     );
-    return rows.map(r => this.mapRowToItem(r));
+    if (rows.length === 0) return [];
+    const row = rows[0];
+    // A draft with nothing filled in yet has no item to show.
+    if (Number(row.amount) === 0 && !row.description) return [];
+    return [this.mapRowToItem(row)];
   }
 
-  async updateItemReceipt(itemId: number, receiptPath: string): Promise<void> {
-    await db.query('UPDATE expense_items SET receipt_file_path = ? WHERE id = ?', [receiptPath, itemId]);
+  async updateItemReceipt(itemId: string, receiptPath: string): Promise<void> {
+    // The item and the claim are the same row, so the receipt lands on the claim's receipt_ref.
+    await db.query('UPDATE expense_claim SET receipt_ref = ?, updated_at = NOW() WHERE id = ?',
+      [receiptPath, itemId]);
   }
 
-  async calculateClaimTotal(claimId: number): Promise<number> {
+  async calculateClaimTotal(claimId: string): Promise<number> {
     const [rows] = await db.query<RowDataPacket[]>(
-      'SELECT SUM(amount) as total FROM expense_items WHERE expense_claim_id = ?', [claimId]
+      'SELECT amount FROM expense_claim WHERE id = ?', [claimId]
     );
-    return rows[0].total || 0;
+    return rows.length ? Number(rows[0].amount) || 0 : 0;
   }
 
-  async submitClaim(claimId: number): Promise<ExpenseClaim> {
+  async submitClaim(claimId: string): Promise<ExpenseClaim> {
     const claim = await this.getClaimById(claimId);
     if (!claim) throw new Error('Claim not found');
     if (claim.status !== ExpenseStatus.DRAFT) throw new Error('Can only submit draft claims');
     const items = await this.getClaimItems(claimId);
     if (items.length === 0) throw new Error('Claim must have at least one expense item');
-    const itemsWithoutReceipts = items.filter(item => !item.receipt_file_path);
-    if (itemsWithoutReceipts.length > 0) throw new Error('All expense items must have receipts');
-    const total = await this.calculateClaimTotal(claimId);
+    if (items.some(item => !item.receipt_file_path)) throw new Error('All expense items must have receipts');
     await db.query(
-      'UPDATE expense_claims SET status = ?, total_amount = ?, submitted_date = NOW() WHERE id = ?',
-      [ExpenseStatus.SUBMITTED, total, claimId]
+      `UPDATE expense_claim SET status = 'submitted', approval_level = 0, updated_at = NOW()
+        WHERE id = ?`,
+      [claimId]
     );
     const updatedClaim = await this.getClaimById(claimId);
     if (!updatedClaim) throw new Error('Failed to submit claim');
@@ -120,57 +198,118 @@ class ExpenseService {
   }
 
   async getEmployeeClaims(
-    employeeId: number,
+    employeeId: string,
     status?: ExpenseStatus,
     page = 1,
     limit = 20
   ): Promise<{ claims: ExpenseClaim[]; total: number }> {
-    const offset = (page - 1) * limit;
-    let query = 'SELECT * FROM expense_claims WHERE employee_id = ?';
-    const params: any[] = [employeeId];
-    if (status) { query += ' AND status = ?'; params.push(status); }
-    query += ' ORDER BY created_at DESC LIMIT ? OFFSET ?';
-    params.push(limit, offset);
-    const [rows] = await db.query<RowDataPacket[]>(query, params);
-    const countQuery = status
-      ? 'SELECT COUNT(*) as total FROM expense_claims WHERE employee_id = ? AND status = ?'
-      : 'SELECT COUNT(*) as total FROM expense_claims WHERE employee_id = ?';
-    const countParams = status ? [employeeId, status] : [employeeId];
-    const [countRows] = await db.query<RowDataPacket[]>(countQuery, countParams);
+    // LIMIT/OFFSET are clamped and interpolated - MySQL rejects a bound parameter there on a
+    // prepared statement, and this must not depend on db.query vs db.execute.
+    const safeLimit = Math.max(1, Math.min(Math.trunc(Number(limit)) || 20, 100));
+    const safePage = Math.max(1, Math.trunc(Number(page)) || 1);
+    const safeOffset = (safePage - 1) * safeLimit;
+
+    const where = ["ec.employee_id = ?", "ec.expense_type = 'employee_claim'"];
+    const params: unknown[] = [employeeId];
+    const stored = status ? this.toStoredStatus(status) : null;
+    if (stored) {
+      where.push('ec.status = ?');
+      params.push(stored.status);
+      if (stored.approvalLevel !== null) { where.push('ec.approval_level = ?'); params.push(stored.approvalLevel); }
+    }
+    const whereSql = `WHERE ${where.join(' AND ')}`;
+
+    const [rows] = await db.query<RowDataPacket[]>(
+      `SELECT ${CLAIM_SELECT} FROM expense_claim ec ${whereSql}
+        ORDER BY ec.created_at DESC LIMIT ${safeLimit} OFFSET ${safeOffset}`,
+      params
+    );
+    const [countRows] = await db.query<RowDataPacket[]>(
+      `SELECT COUNT(*) as total FROM expense_claim ec ${whereSql}`, params
+    );
     return { claims: rows.map(r => this.mapRowToClaim(r)), total: countRows[0].total };
   }
 
-  async deleteExpenseItem(itemId: number): Promise<void> {
-    const [rows] = await db.query<RowDataPacket[]>(
-      'SELECT ec.status FROM expense_items ei JOIN expense_claims ec ON ei.expense_claim_id = ec.id WHERE ei.id = ?', [itemId]
+  async deleteExpenseItem(itemId: string): Promise<void> {
+    const claim = await this.getClaimById(itemId);
+    if (!claim) throw new Error('Expense item not found');
+    if (claim.status !== ExpenseStatus.DRAFT) throw new Error('Can only delete items from draft claims');
+    // Clears the expense back to an empty draft rather than deleting the claim, which is what
+    // removing the only line item means when the claim and the line are one row.
+    await db.query(
+      `UPDATE expense_claim SET amount = 0, description = NULL, receipt_ref = NULL, updated_at = NOW()
+        WHERE id = ?`,
+      [itemId]
     );
-    if (rows.length === 0) throw new Error('Expense item not found');
-    if (rows[0].status !== ExpenseStatus.DRAFT) throw new Error('Can only delete items from draft claims');
-    await db.query('DELETE FROM expense_items WHERE id = ?', [itemId]);
+  }
+
+  /** expense_claim.category is an enum; the categories master is free text, so map by name. */
+  private toCategoryEnum(name: string): string {
+    const allowed = ['travel', 'accommodation', 'meals', 'transport', 'communication', 'office', 'other'];
+    const normalized = String(name ?? '').trim().toLowerCase();
+    return allowed.includes(normalized) ? normalized : 'other';
+  }
+
+  /** Module status -> what is actually stored. approvalLevel null means "do not filter on it". */
+  private toStoredStatus(status: ExpenseStatus): { status: string; approvalLevel: number | null } {
+    switch (status) {
+      case ExpenseStatus.DRAFT: return { status: 'draft', approvalLevel: null };
+      case ExpenseStatus.SUBMITTED: return { status: 'submitted', approvalLevel: 0 };
+      case ExpenseStatus.MANAGER_APPROVED: return { status: 'submitted', approvalLevel: 1 };
+      case ExpenseStatus.FINANCE_APPROVED: return { status: 'approved', approvalLevel: null };
+      case ExpenseStatus.PAID: return { status: 'paid', approvalLevel: null };
+      case ExpenseStatus.REJECTED: return { status: 'rejected', approvalLevel: null };
+      default: return { status: 'draft', approvalLevel: null };
+    }
+  }
+
+  /** What is stored -> the module's six states. */
+  private fromStoredStatus(status: string, approvalLevel: number): ExpenseStatus {
+    switch (String(status ?? '').toLowerCase()) {
+      case 'draft': return ExpenseStatus.DRAFT;
+      case 'submitted': return Number(approvalLevel) >= 1 ? ExpenseStatus.MANAGER_APPROVED : ExpenseStatus.SUBMITTED;
+      case 'approved': return ExpenseStatus.FINANCE_APPROVED;
+      case 'paid': return ExpenseStatus.PAID;
+      case 'rejected': return ExpenseStatus.REJECTED;
+      default: return ExpenseStatus.DRAFT;
+    }
   }
 
   mapRowToClaim(row: any): ExpenseClaim {
+    const status = this.fromStoredStatus(row.status, row.approval_level);
     return {
-      id: row.id, claim_number: row.claim_number, employee_id: row.employee_id,
-      process_id: row.process_id, branch_id: row.branch_id,
-      total_amount: parseFloat(row.total_amount), currency: row.currency,
-      status: row.status as ExpenseStatus,
-      submitted_date: row.submitted_date ? new Date(row.submitted_date) : undefined,
-      manager_approved_date: row.manager_approved_date ? new Date(row.manager_approved_date) : undefined,
-      finance_approved_date: row.finance_approved_date ? new Date(row.finance_approved_date) : undefined,
-      paid_date: row.paid_date ? new Date(row.paid_date) : undefined,
-      rejection_reason: row.rejection_reason,
-      created_at: new Date(row.created_at), updated_at: new Date(row.updated_at)
+      id: String(row.id),
+      // No claim_number column exists; the id is the claim's reference.
+      claim_number: String(row.id),
+      employee_id: String(row.employee_id),
+      process_id: null,
+      branch_id: row.branch_id ? String(row.branch_id) : null,
+      total_amount: parseFloat(row.amount) || 0,
+      currency: row.currency ?? 'INR',
+      status,
+      submitted_date: status === ExpenseStatus.DRAFT ? undefined : new Date(row.created_at),
+      manager_approved_date: row.reviewed_at ? new Date(row.reviewed_at) : undefined,
+      finance_approved_date: row.approved_at ? new Date(row.approved_at) : undefined,
+      paid_date: status === ExpenseStatus.PAID && row.approved_at ? new Date(row.approved_at) : undefined,
+      rejection_reason: status === ExpenseStatus.REJECTED ? (row.remarks ?? undefined) : undefined,
+      created_at: new Date(row.created_at),
+      updated_at: new Date(row.updated_at)
     };
   }
 
   mapRowToItem(row: any): ExpenseItem {
     return {
-      id: row.id, expense_claim_id: row.expense_claim_id, category_id: row.category_id,
-      expense_date: new Date(row.expense_date), amount: parseFloat(row.amount),
-      description: row.description, vendor_name: row.vendor_name,
-      receipt_file_path: row.receipt_file_path,
-      created_at: new Date(row.created_at), updated_at: new Date(row.updated_at)
+      // The item and the claim are the same row.
+      id: String(row.id),
+      expense_claim_id: String(row.id),
+      category_id: 0,
+      expense_date: new Date(row.expense_date),
+      amount: parseFloat(row.amount) || 0,
+      description: row.description ?? '',
+      vendor_name: undefined,
+      receipt_file_path: row.receipt_ref ?? undefined,
+      created_at: new Date(row.created_at),
+      updated_at: new Date(row.updated_at)
     };
   }
 }

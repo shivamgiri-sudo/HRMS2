@@ -55,7 +55,7 @@ interface PayForm {
 
 export default function FinanceQueue() {
   const [tab, setTab] = useState<ExpenseStatus>(ExpenseStatus.MANAGER_APPROVED);
-  const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
   const [payDialog, setPayDialog] = useState(false);
   const [payForm, setPayForm] = useState<PayForm>({
     payment_reference: '',
@@ -64,7 +64,7 @@ export default function FinanceQueue() {
   });
 
   const { data: queue } = useFinanceQueue(tab);
-  const { data: claim } = useClaimDetails(selectedId ?? 0);
+  const { data: claim } = useClaimDetails(selectedId ?? '');
   const { mutate: approve, isPending: approving } = useFinanceApprove();
   const { mutate: reject, isPending: rejecting } = useRejectClaim();
   const { mutate: markPaid, isPending: paying } = useMarkAsPaid();

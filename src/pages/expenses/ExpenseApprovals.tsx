@@ -10,7 +10,7 @@ import { toast } from 'sonner';
 import { formatISTDate } from "@/lib/utils";
 
 interface ClaimDetailProps {
-  claimId: number;
+  claimId: string;
   onApprove: (comments?: string) => void;
   onReject: (reason: string) => void;
   isLoading: boolean;
@@ -38,7 +38,7 @@ function ClaimDetail({ claimId, onApprove, onReject, isLoading }: ClaimDetailPro
 
 export default function ExpenseApprovals() {
   const { data: claims = [], isLoading } = usePendingApprovals();
-  const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
   const { mutate: approve, isPending: approving } = useManagerApprove();
   const { mutate: reject, isPending: rejecting } = useRejectClaim();
 
