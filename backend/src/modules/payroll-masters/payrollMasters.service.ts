@@ -132,10 +132,24 @@ export async function listPackages(filters: {
 
 export async function getPackageById(id: string) {
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT spm.*, gbm.grade_name, gbm.band, ssm.label AS slab_label
+    /*
+     * salary_package_master has neither grade_id nor slab_id. It is keyed by band_code ('A'..'E'),
+     * so both joins raised ER_BAD_FIELD_ERROR and no salary package could be fetched by id.
+     *
+     * The grade link is real but stored with a prefix on one side: grade_band_master.band reads
+     * 'Band A' where band_code reads 'A'. Measured against live data, that comparison matches 220
+     * of 295 packages one-to-one with no fan-out, while gbm.band = band_code and
+     * gbm.grade_code = band_code both match 0. LEFT, not INNER, so the 75 packages whose band_code
+     * has no grade row still return - the point of this function is to fetch the package.
+     *
+     * There is no slab link at all. No column references salary_slab_master, and joining on
+     * package_amount BETWEEN range_from AND range_to is not a substitute: it returns 847 rows for
+     * 295 packages, so the slab ranges overlap and it would silently multiply every package.
+     * slab_label is selected as NULL to keep the response shape rather than inventing a value.
+     */
+    `SELECT spm.*, gbm.grade_name, gbm.band, NULL AS slab_label
      FROM salary_package_master spm
-     JOIN grade_band_master gbm ON gbm.id = spm.grade_id
-     JOIN salary_slab_master ssm ON ssm.id = spm.slab_id
+     LEFT JOIN grade_band_master gbm ON gbm.band = CONCAT('Band ', spm.band_code)
      WHERE spm.id = ?`, [id]
   );
   return rows[0] ?? null;
