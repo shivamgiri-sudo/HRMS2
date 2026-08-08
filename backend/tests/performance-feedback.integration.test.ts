@@ -14,12 +14,66 @@
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import request from "supertest";
-import jwt from "jsonwebtoken";
 
 // Mock dependencies BEFORE imports
 vi.mock("../src/db/supabaseAdmin.js", () => ({
   supabaseAdmin: {},
   supabaseAuthClient: { auth: { getUser: vi.fn() } },
+}));
+
+// Identity is INJECTED, not authenticated. Real requireAuth resolves role and read-only
+// state first, issuing "SELECT is_read_only FROM auth_user WHERE id = ?" before the handler
+// — confirmed by logging every db.execute. That consumed the first mockResolvedValueOnce in
+// every test below, so each queued response landed one query early. It also caches per user
+// for 30s, so whether it queries at all depends on which test ran first; queueing an extra
+// mock would bake in the current test ORDER.
+//
+// Same approach as tests/qa-audit.routes.test.ts, which is why its mock sequences line up.
+// performance-feedback.routes.ts imports only requireAuth from this module.
+let currentUser: { id: string; email: string; role?: string } = {
+  id: "u-hr",
+  email: "hr@mcn.com",
+};
+
+// Spreads the real module rather than listing exports. This test imports the whole app, so
+// authMiddleware must keep every other export it publishes — requireWriteAccess among them.
+// A hand-written list is how routes.integration and qa-audit broke: a source file gains an
+// import, the mock does not, and the missing binding throws inside a handler.
+vi.mock("../src/middleware/authMiddleware.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../src/middleware/authMiddleware.js")>()),
+  requireAuth: (req: any, _res: any, next: () => void) => {
+    req.authUser = currentUser;
+    next();
+  },
+}));
+
+// resolveReportScope() in the controller calls hasRole() and getEmployeeForUser() from
+// accessGuard before the handler's own queries, and BOTH hit db.execute. Worse, how many
+// times depends on the branch taken: an HR caller stops after one hasRole, an employee makes
+// three. Those calls silently drew from each test's mockResolvedValueOnce queue, so the
+// report query below received a row meant for a scope lookup and returned 404 — after
+// earlier returning 403 for the same reason one query further up.
+//
+// Mocked rather than queued, exactly as tests/rta.package.c.test.ts does for the policy
+// cache: queueing extra db responses would encode one specific branch and break on any
+// other. Roles key off the injected identity, and getEmployeeForUser returns the same id so
+// the resulting scope filter matches the employee_id in the mocked report rows.
+//
+// importOriginal so every other accessGuard export survives — selfOrAdminHr among them,
+// which the routes use and which a hand-written list would have dropped.
+vi.mock("../src/shared/accessGuard.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../src/shared/accessGuard.js")>()),
+  hasRole: (userId: string, ...roles: string[]) => {
+    if (userId === "11111111-1111-1111-1111-111111111105") return Promise.resolve(false);
+    if (userId === "11111111-1111-1111-1111-111111111106") {
+      return Promise.resolve(
+        roles.some((r) => ["manager", "process_manager", "assistant_manager"].includes(r)),
+      );
+    }
+    return Promise.resolve(roles.some((r) => ["admin", "hr"].includes(r)));
+  },
+  getEmployeeForUser: (userId: string) =>
+    Promise.resolve({ id: userId, employee_code: "TEST-EMP" }),
 }));
 
 // Mock requireRole so privileged test tokens (hr.token, manager.token) pass
@@ -80,21 +134,17 @@ const mockExecuteRun = db.executeRun as ReturnType<typeof vi.fn>;
 const mockGetConnection = db.getConnection as ReturnType<typeof vi.fn>;
 const mockGetUser = supabaseAuthClient.auth.getUser as ReturnType<typeof vi.fn>;
 
-// Real JWTs, per the SOP in tests/setup.ts. `sub` carries the identity, because the
-// controllers compare req.authUser.id against the manager/employee UUIDs in the mocked SQL
-// rows below — so the subject must be stable per role, NOT uniquified per call the way
-// ats.wfm.completion.test.ts does it.
-const JWT_SECRET = process.env.JWT_SECRET || "change-me-jwt-secret-32characters!!";
-const bearer = (sub: string, email: string) => ({
-  Authorization: `Bearer ${jwt.sign({ sub, email }, JWT_SECRET, { expiresIn: "1h" })}`,
-});
-
-const HR_AUTH = bearer("u-hr", "hr@mcn.com");
-const MANAGER_AUTH = bearer("11111111-1111-1111-1111-111111111106", "manager@mcn.com");
-const EMPLOYEE_AUTH = bearer("11111111-1111-1111-1111-111111111105", "employee@mcn.com");
+// Kept so the .set(...) call sites stay unchanged. The header no longer decides anything —
+// requireAuth is mocked above and identity comes from mockHr()/mockManager()/mockEmployee().
+const HR_AUTH = { Authorization: "Bearer test-hr" };
+const MANAGER_AUTH = { Authorization: "Bearer test-manager" };
+const EMPLOYEE_AUTH = { Authorization: "Bearer test-employee" };
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // Default to HR, matching the requireRole mock's "any other identity -> hr/admin" branch,
+  // so a test that forgets to declare its actor cannot silently inherit the previous one's.
+  currentUser = { id: "u-hr", email: "hr@mcn.com", role: "hr" };
   // Reset Once queues so previous tests don't bleed into next
   mockExecute.mockReset();
   mockExecuteRun.mockReset();
@@ -108,23 +158,24 @@ beforeEach(() => {
   mockExecuteRun.mockResolvedValue([{ affectedRows: 0, insertId: 0 }, []]);
 });
 
-// These three were the file's authentication, and they never worked: they set a Supabase
-// getUser mock, and authMiddleware.ts does not reference supabase at all. Identity now comes
-// from the JWT `sub` in HR_AUTH / MANAGER_AUTH / EMPLOYEE_AUTH above, so the helpers are
-// kept only as intent markers at each call site — which request is acting as whom.
+// These three originally set a Supabase getUser mock, which authenticated nothing —
+// authMiddleware.ts does not reference supabase at all. They now set the identity that the
+// mocked requireAuth injects, which is the job they were always named for. The UUIDs match
+// the manager/employee ids in the mocked SQL rows, because the controllers compare
+// req.authUser.id against them.
 const MGR_UUID = "11111111-1111-1111-1111-111111111106";
 const EMP_UUID = "11111111-1111-1111-1111-111111111105";
 
 function mockHr() {
-  /* identity travels in HR_AUTH */
+  currentUser = { id: "u-hr", email: "hr@mcn.com", role: "hr" };
 }
 
 function mockManager() {
-  /* identity travels in MANAGER_AUTH */
+  currentUser = { id: MGR_UUID, email: "manager@mcn.com", role: "manager" };
 }
 
 function mockEmployee() {
-  /* identity travels in EMPLOYEE_AUTH */
+  currentUser = { id: EMP_UUID, email: "employee@mcn.com", role: "employee" };
 }
 
 describe("Performance Feedback - Full Workflow Integration", () => {
@@ -290,13 +341,15 @@ describe("Performance Feedback - Full Workflow Integration", () => {
 
   it("5. Manager submits feedback (generates report + training needs)", async () => {
     mockManager();
-    // getRequestById: service checks request.manager_id === req.authUser.id ('user-1' from test mock)
+    // getRequestById: the service checks request.manager_id === req.authUser.id, and
+    // mockManager() above authenticates as managerId — so the row must carry that id, not the
+    // 'user-1' a long-retired global auth mock used to return.
     mockExecute.mockResolvedValueOnce([
       [
         {
           request_id: requestId,
           employee_id: employeeId,
-          manager_id: 'user-1',  // must match authUser.id returned by global test mock
+          manager_id: managerId,
           cycle_id: cycleId,
           status: "pending",
         },
@@ -411,13 +464,13 @@ describe("Performance Feedback - Full Workflow Integration", () => {
 
   it("8. Verifies training need auto-creation for low scores", async () => {
     mockManager();
-    // getRequestById: manager_id must match authUser.id ('user-1' from global test mock)
+    // getRequestById: manager_id must match authUser.id, which mockManager() sets to managerId
     mockExecute.mockResolvedValueOnce([
       [
         {
           request_id: requestId,
           employee_id: employeeId,
-          manager_id: 'user-1',
+          manager_id: managerId,
           cycle_id: cycleId,
           status: "pending",
         },
@@ -576,10 +629,13 @@ describe("Performance Feedback - Edge Cases", () => {
 
   it("prevents non-manager from viewing other employees reports", async () => {
     mockEmployee();
-    mockExecute.mockResolvedValueOnce([
-      [{ request_id: "req-1", employee_id: "emp-other", status: "completed" }],
-      [],
-    ]);
+    // Empty, because that is what the database returns. getReportById appends
+    // "AND pfr.employee_id = ?" with the CALLER's employee id, so a report belonging to
+    // someone else cannot come back. The previous mock returned an emp-other row regardless —
+    // db.execute ignores the WHERE — and the test only passed because scope resolution was
+    // failing earlier for an unrelated reason and 403'ing. Once that was fixed the row came
+    // straight back as a 200: an employee reading another employee's report.
+    mockExecute.mockResolvedValueOnce([[], []]);
 
     const res = await request(app)
       .get("/api/performance-feedback/reports/req-1")
@@ -587,5 +643,15 @@ describe("Performance Feedback - Edge Cases", () => {
 
     // May be 403 (forbidden), 404 (not found), or 501 (not implemented)
     expect([403, 404, 501]).toContain(res.status);
+
+    // The status alone would also be satisfied by a handler that simply found nothing, so
+    // assert the BOUNDARY: the query must have been narrowed to the caller's own employee id.
+    // This is the part that fails if someone drops the scope filter from getReportById.
+    const scopedCall = mockExecute.mock.calls.find(([sql]) =>
+      String(sql).includes("performance_feedback_report"),
+    );
+    expect(scopedCall, "no report query was issued").toBeDefined();
+    expect(String(scopedCall![0])).toContain("pfr.employee_id = ?");
+    expect(scopedCall![1]).toContain(EMP_UUID);
   });
 });
