@@ -321,12 +321,21 @@ export const shrinkageService = {
   ): Promise<ShrinkageSnapshot> {
     // Get reconciliation stats for this date/process
     const [rows] = await db.execute<RowDataPacket[]>(
+      /*
+       * wfm_roster_assignment stores branch_name and process_name; it has no branch_id or
+       * process_id column. Filtering on the id columns raised ER_BAD_FIELD_ERROR, so the
+       * shrinkage snapshot threw whenever a process or branch filter was applied - and only
+       * then, which is why the unfiltered call kept working and hid it.
+       *
+       * The caller still passes an id, so the id is resolved to the name the roster table
+       * actually holds. Same pattern the rest of the codebase uses for this table.
+       */
       `SELECT attendance_status, COUNT(*) AS cnt
        FROM attendance_reconciliation_record r
        LEFT JOIN wfm_roster_assignment ra ON ra.employee_id = r.employee_id AND ra.roster_date = r.roster_date
        WHERE r.roster_date = ?
-         ${opts.processId ? "AND ra.process_id = ?" : ""}
-         ${opts.branchId  ? "AND ra.branch_id = ?"  : ""}
+         ${opts.processId ? "AND ra.process_name = (SELECT process_name FROM process_master WHERE id = ?)" : ""}
+         ${opts.branchId  ? "AND ra.branch_name  = (SELECT branch_name  FROM branch_master  WHERE id = ?)" : ""}
        GROUP BY attendance_status`,
       [date, ...(opts.processId ? [opts.processId] : []), ...(opts.branchId ? [opts.branchId] : [])]
     );
@@ -338,7 +347,7 @@ export const shrinkageService = {
        FROM attendance_reconciliation_record r
        LEFT JOIN wfm_roster_assignment ra ON ra.employee_id = r.employee_id AND ra.roster_date = r.roster_date
        WHERE r.roster_date = ?
-         ${opts.processId ? "AND ra.process_id = ?" : ""}`,
+         ${opts.processId ? "AND ra.process_name = (SELECT process_name FROM process_master WHERE id = ?)" : ""}`,
       [date, ...(opts.processId ? [opts.processId] : [])]
     );
 
