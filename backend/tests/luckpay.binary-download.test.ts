@@ -16,6 +16,29 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import axios from "axios";
+
+// Must run before the module imports below: config/env.ts parses process.env at import time,
+// and assertLuckpayEnabled() throws "Luckpay provider is disabled." (503) before any transport
+// logic runs. LUCKPAY_PROVIDER_ENABLED defaults to "false" and .env.test sets no LUCKPAY keys,
+// so without this every test here failed on the config gate and never reached the binary
+// decoding it exists to verify.
+//
+// Same block, and the same reason, as tests/luckpay.status.test.ts — which is why that file
+// passes and this one did not. Scoped to this file rather than .env.test on purpose: enabling
+// the provider globally would change the environment for all 536 test files, and env.ts:287
+// treats LUCKPAY_PROVIDER_ENABLED=true without LUCKPAY_WEBHOOK_SECRET as FATAL, so the secret
+// below is required, not decorative.
+//
+// Credentials fall through to these values because the global db mock in tests/setup.ts
+// returns no org_settings rows; luckpay.config.ts resolves org_settings first, env second.
+vi.hoisted(() => {
+  process.env.LUCKPAY_PROVIDER_ENABLED = "true";
+  process.env.LUCKPAY_ENV = "production";
+  process.env.LUCKPAY_BASIC_TOKEN = process.env.LUCKPAY_BASIC_TOKEN || "test-basic-token";
+  process.env.LUCKPAY_CLIENT_ID = process.env.LUCKPAY_CLIENT_ID || "TESTCLIENT";
+  process.env.LUCKPAY_WEBHOOK_SECRET = process.env.LUCKPAY_WEBHOOK_SECRET || "test-webhook-secret";
+});
+
 import { luckpayClient } from "../src/modules/integrations/luckpay/luckpay.client.js";
 import { resetLuckpayTokenCache } from "../src/modules/integrations/luckpay/luckpay.transport.js";
 
