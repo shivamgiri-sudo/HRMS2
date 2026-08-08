@@ -4,6 +4,7 @@
  */
 
 import { randomUUID } from "crypto";
+import { sqlLimitOffset } from "../../db/pagination.js";
 import type { RowDataPacket, ResultSetHeader } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
@@ -272,8 +273,8 @@ export async function listDeductionEntries(
      LEFT JOIN employees au_emp ON au_emp.user_id = ede.created_by
      ${where}
      ORDER BY ede.created_at DESC
-     LIMIT ? OFFSET ?`,
-    [...params, limit, offset]
+     ${sqlLimitOffset(limit, offset)}`,
+    params
   );
 
   return { entries: rows as DeductionEntry[], total };

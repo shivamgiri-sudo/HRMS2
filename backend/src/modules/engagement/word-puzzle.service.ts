@@ -1,4 +1,5 @@
 import { randomUUID } from 'crypto';
+import { sqlLimitOffset } from "../../db/pagination.js";
 import { db } from '../../db/mysql.js';
 import { addPoints } from './gamification.service.js';
 import type { RowDataPacket, ResultSetHeader } from 'mysql2/promise';
@@ -308,8 +309,8 @@ export async function getPuzzleBank(
   const { limit = 50, offset = 0 } = options;
   const [countRows] = await db.execute<RowDataPacket[]>(`SELECT COUNT(*) as total FROM daily_word_puzzle`);
   const [rows] = await db.execute<PuzzleRow[]>(
-    `SELECT id, puzzle_date, hint, category, difficulty, created_at FROM daily_word_puzzle ORDER BY puzzle_date DESC LIMIT ? OFFSET ?`,
-    [limit, offset]
+    `SELECT id, puzzle_date, hint, category, difficulty, created_at FROM daily_word_puzzle ORDER BY puzzle_date DESC ${sqlLimitOffset(limit, offset)}`,
+    []
   );
   return {
     puzzles: rows.map(p => ({ id: p.id, puzzle_date: p.puzzle_date, hint: p.hint, category: p.category, difficulty: p.difficulty })),

@@ -8,6 +8,7 @@
  */
 
 import { Router } from "express";
+import { sqlLimitOffset } from "../../db/pagination.js";
 import type { Response } from "express";
 import type { RowDataPacket, ResultSetHeader } from "mysql2";
 import { randomUUID } from "crypto";
@@ -92,8 +93,8 @@ loansRouter.get(
          LEFT JOIN employees e ON e.id = el.employee_id
          ${where}
          ORDER BY el.created_at DESC
-         LIMIT ? OFFSET ?`,
-      [...params, limit, offset]
+         ${sqlLimitOffset(limit, offset)}`,
+      params
     );
 
     return res.json({ success: true, data: rows, total, page, limit });

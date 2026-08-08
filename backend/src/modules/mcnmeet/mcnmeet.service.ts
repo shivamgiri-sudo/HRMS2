@@ -1,4 +1,5 @@
 import { v4 as uuidv4 } from "uuid";
+import { sqlLimitOffset } from "../../db/pagination.js";
 import crypto from "crypto";
 import { RowDataPacket, ResultSetHeader } from "mysql2";
 import { db } from "../../db/mysql.js";
@@ -202,8 +203,8 @@ export async function listMeetings(filters: ListFilters = {}) {
 
   const [[meetings], [countResult]] = await Promise.all([
     db.execute<MeetingRow[]>(
-      `SELECT * FROM mcnmeet_meeting ${where} ORDER BY start_at DESC LIMIT ? OFFSET ?`,
-      [...params, limit, offset]
+      `SELECT * FROM mcnmeet_meeting ${where} ORDER BY start_at DESC ${sqlLimitOffset(limit, offset)}`,
+      params
     ),
     db.execute<CountRow[]>(
       `SELECT COUNT(*) as cnt FROM mcnmeet_meeting ${where}`,
@@ -240,8 +241,8 @@ export async function listMyMeetings(employeeId: string, filters: ListFilters = 
       `SELECT m.* FROM mcnmeet_meeting m
        INNER JOIN mcnmeet_meeting_invitee i ON m.id = i.meeting_id
        WHERE ${where}
-       ORDER BY m.start_at DESC LIMIT ? OFFSET ?`,
-      [...params, limit, offset]
+       ORDER BY m.start_at DESC ${sqlLimitOffset(limit, offset)}`,
+      params
     ),
     db.execute<CountRow[]>(
       `SELECT COUNT(DISTINCT m.id) as cnt FROM mcnmeet_meeting m

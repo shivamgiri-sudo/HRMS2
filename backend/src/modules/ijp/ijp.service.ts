@@ -4,6 +4,7 @@
  */
 
 import { randomUUID } from 'crypto';
+import { sqlLimitOffset } from "../../db/pagination.js";
 import type { RowDataPacket } from 'mysql2';
 import { db } from '../../db/mysql.js';
 import type {
@@ -209,8 +210,8 @@ export async function listPostings(filters: {
      LEFT JOIN employees e ON e.id = p.posted_by
      WHERE ${where}
      ORDER BY p.created_at DESC
-     LIMIT ? OFFSET ?`,
-    [...params, limit, offset]
+     ${sqlLimitOffset(limit, offset)}`,
+    params
   );
 
   const postings = rows.map((row) => ({
@@ -604,8 +605,8 @@ export async function listApplicationsForPosting(
      JOIN ijp_posting p ON p.id = a.posting_id
      WHERE ${where}
      ORDER BY a.applied_at DESC
-     LIMIT ? OFFSET ?`,
-    [...params, limit, offset]
+     ${sqlLimitOffset(limit, offset)}`,
+    params
   );
 
   return {
@@ -652,8 +653,8 @@ export async function listMyApplications(
      JOIN ijp_posting p ON p.id = a.posting_id
      WHERE a.employee_id = ?
      ORDER BY a.applied_at DESC
-     LIMIT ? OFFSET ?`,
-    [employeeId, limit, offset]
+     ${sqlLimitOffset(limit, offset)}`,
+    [employeeId]
   );
 
   return {

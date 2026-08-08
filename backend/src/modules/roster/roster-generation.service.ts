@@ -1,4 +1,5 @@
 import { randomUUID } from "crypto";
+import { sqlLimitOffset } from "../../db/pagination.js";
 import { db } from "../../db/mysql.js";
 import type { RowDataPacket } from "mysql2";
 import { logSensitiveAction } from "../../shared/auditLog.js";
@@ -257,8 +258,8 @@ export const rosterGenerationService = {
          LEFT JOIN wfm_shift_template st ON st.id = rda.assigned_shift_template_id
         WHERE rda.run_id = ?
         ORDER BY rda.roster_date ASC, e.employee_code ASC
-        LIMIT ? OFFSET ?`,
-      [runId, limit, offset]
+        ${sqlLimitOffset(limit, offset)}`,
+      [runId]
     );
     const [countRows] = await db.execute<RowDataPacket[]>(
       "SELECT COUNT(*) AS total FROM roster_decision_audit WHERE run_id = ?",

@@ -1,4 +1,5 @@
 import { createHash } from 'crypto';
+import { sqlLimitOffset } from "../../db/pagination.js";
 import { db } from '../../db/mysql.js';
 import type {
   AiGenerateRequest,
@@ -182,8 +183,8 @@ class AiAuditService {
       `SELECT * FROM ai_provider_usage_log
        WHERE ${whereClause}
        ORDER BY created_at DESC
-       LIMIT ? OFFSET ?`,
-      [...params, limit, offset],
+       ${sqlLimitOffset(limit, offset)}`,
+      params,
     );
     return { logs: logs as AiUsageLogRow[], total: Number(countRows[0]?.total || 0) };
   }
@@ -213,8 +214,8 @@ class AiAuditService {
       `SELECT * FROM ai_prompt_audit_log
        WHERE ${whereClause}
        ORDER BY created_at DESC
-       LIMIT ? OFFSET ?`,
-      [...params, limit, offset],
+       ${sqlLimitOffset(limit, offset)}`,
+      params,
     );
     return { logs: logs as AiPromptAuditRow[], total: Number(countRows[0]?.total || 0) };
   }

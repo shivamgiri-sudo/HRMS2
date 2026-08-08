@@ -1,4 +1,5 @@
 import { randomUUID } from "crypto";
+import { sqlLimitOffset } from "../../db/pagination.js";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { validateEpfCompliance } from "../employees/epfComplianceValidation.service.js";
@@ -532,8 +533,8 @@ export const pfCreationService = {
          LEFT JOIN pf_creation_batch pcb ON pcb.id = bi.batch_id
         ${where}
         ORDER BY bi.updated_at DESC
-        LIMIT ? OFFSET ?`,
-      [...params, limit, offset],
+        ${sqlLimitOffset(limit, offset)}`,
+      params,
     );
 
     const [countRows] = await db.execute<RowDataPacket[]>(

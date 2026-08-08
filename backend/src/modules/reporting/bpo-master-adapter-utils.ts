@@ -1,4 +1,5 @@
 import type { RowDataPacket } from "mysql2";
+import { sqlLimitOffset } from "../../db/pagination.js";
 import { db } from "../../db/mysql.js";
 import type { BranchScope } from "./reporting.scope.js";
 import { getBpoMasterReport } from "./bpo-master-report-registry.js";
@@ -189,12 +190,8 @@ export async function executeVerifiedReport(options: {
   const totalCount = Number(summaryRows[0]?.total ?? 0);
   const distinctGrainCount = Number(summaryRows[0]?.distinct_grain ?? 0);
   const duplicateGrainCount = Math.max(0, totalCount - distinctGrainCount);
-  const paginatedSql = `${baseSql} ${options.orderBy ? `ORDER BY ${options.orderBy}` : ""} LIMIT ? OFFSET ?`;
-  const [rows] = await db.execute<RowDataPacket[]>(paginatedSql, [
-    ...(options.params ?? []),
-    options.filters.limit,
-    options.filters.offset,
-  ]);
+  const paginatedSql = `${baseSql} ${options.orderBy ? `ORDER BY ${options.orderBy}` : ""} ${sqlLimitOffset(options.filters.limit, options.filters.offset)}`;
+  const [rows] = await db.execute<RowDataPacket[]>(paginatedSql, options.params ?? []);
   const lineage = Object.fromEntries([...options.fields.entries()].map(([key, spec]) => [key, spec.lineage]));
   const exactMappedFieldCount = Object.values(lineage).filter((item) => item.confidence === "EXACT").length;
   const derivedMappedFieldCount = Object.values(lineage).filter((item) => item.confidence === "DERIVED").length;

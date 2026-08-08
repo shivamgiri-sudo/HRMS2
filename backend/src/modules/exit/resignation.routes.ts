@@ -7,6 +7,7 @@ import { exitService } from "./exit.service.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import type { Response, NextFunction } from "express";
 import { db } from "../../db/mysql.js";
+import { sqlLimitOffset } from "../../db/pagination.js";
 import { randomUUID } from "crypto";
 
 export const resignationRouter = Router();
@@ -479,7 +480,6 @@ resignationRouter.get(
     let where = "1=1";
     if (status) { where += " AND er.status = ?"; params.push(status); }
     if (branchId) { where += " AND e.branch_id = ?"; params.push(branchId); }
-    params.push(Number(limit), Number(offset));
     const [rows] = await db.execute(
       `SELECT er.*,
               COALESCE(NULLIF(e.full_name,''), CONCAT_WS(' ', e.first_name, e.last_name)) AS employee_name,
@@ -488,7 +488,7 @@ resignationRouter.get(
        LEFT JOIN employees e ON e.id = er.employee_id
        WHERE ${where}
        ORDER BY er.created_at DESC
-       LIMIT ? OFFSET ?`,
+       ${sqlLimitOffset(limit, offset, { defaultLimit: 100 })}`,
       params
     );
     return res.json({ success: true, data: rows });

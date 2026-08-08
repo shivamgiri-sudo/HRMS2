@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { sqlLimitOffset } from "../../db/pagination.js";
 import { randomUUID } from "crypto";
 import path from "path";
 import fs from "fs";
@@ -701,8 +702,8 @@ router.get("/advances",
          JOIN employees e ON e.id = sal.employee_id
         WHERE ${scoped.sql}
         ORDER BY sal.advance_date DESC
-        LIMIT ? OFFSET ?`,
-      [...scoped.params, limit, offset]
+        ${sqlLimitOffset(limit, offset)}`,
+      scoped.params
     );
 
     const [[countRow]] = await db.execute<RowDataPacket[]>(

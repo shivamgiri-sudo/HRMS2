@@ -1,4 +1,5 @@
 import type { RowDataPacket } from "mysql2";
+import { sqlLimitOffset } from "../../db/pagination.js";
 import { db } from "../../db/mysql.js";
 import type { BranchScope } from "./reporting.scope.js";
 import { BPO_MASTER_REPORTS, getBpoMasterReport } from "./bpo-master-report-registry.js";
@@ -273,7 +274,7 @@ async function auditReport(code: string, filters: VerifiedAdapterFilters, scope:
   const [countRows] = await db.execute<RowDataPacket[]>(countSql, params);
   const total = Number(countRows[0]?.total ?? 0);
   const distinct = Number(countRows[0]?.distinct_count ?? 0);
-  const [rows] = await db.execute<RowDataPacket[]>(`${sql} ORDER BY ACTIVITY_DATE_TIME DESC LIMIT ? OFFSET ?`, [...params, filters.limit, filters.offset]);
+  const [rows] = await db.execute<RowDataPacket[]>(`${sql} ORDER BY ACTIVITY_DATE_TIME DESC ${sqlLimitOffset(filters.limit, filters.offset)}`, params);
   return verifiedResult(code, events.map((event) => event.source).join("+"), rows, total, distinct, 24);
 }
 
@@ -495,7 +496,7 @@ async function journeyReport(code: string, filters: VerifiedAdapterFilters, scop
   const [countRows] = await db.execute<RowDataPacket[]>(countSql, params);
   const total = Number(countRows[0]?.total ?? 0);
   const distinct = Number(countRows[0]?.distinct_count ?? 0);
-  const [rows] = await db.execute<RowDataPacket[]>(`${sql} ORDER BY ACTIVITY_DATE_TIME DESC LIMIT ? OFFSET ?`, [...params, filters.limit, filters.offset]);
+  const [rows] = await db.execute<RowDataPacket[]>(`${sql} ORDER BY ACTIVITY_DATE_TIME DESC ${sqlLimitOffset(filters.limit, filters.offset)}`, params);
   return verifiedResult(code, events.map((event)=>event.source).join("+"), rows, total, distinct, 34);
 }
 

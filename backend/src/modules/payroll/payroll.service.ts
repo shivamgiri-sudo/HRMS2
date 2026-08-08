@@ -1,4 +1,5 @@
 import { randomUUID } from "crypto";
+import { sqlLimitOffset } from "../../db/pagination.js";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { getEffectiveConfig } from "../customization/customization-engine.js";
@@ -545,8 +546,7 @@ export const payrollService = {
       params.push(`%${search}%`, `%${search}%`, `%${search}%`);
     }
 
-    const query = baseSelect + whereExtra + " ORDER BY spl.employee_code ASC LIMIT ? OFFSET ?";
-    params.push(limit, offset);
+    const query = baseSelect + whereExtra + ` ORDER BY spl.employee_code ASC ${sqlLimitOffset(limit, offset)}`;
 
     const [rows] = await db.execute<RowDataPacket[]>(query, params);
 
@@ -839,8 +839,8 @@ export const payrollService = {
         dsg.designation_name AS designation`;
 
     const [rows] = await db.execute<RowDataPacket[]>(
-      `${selectSql} ${baseSql} ORDER BY spr.run_month DESC, employee_name ASC LIMIT ? OFFSET ?`,
-      [...allParams, limit, offset]
+      `${selectSql} ${baseSql} ORDER BY spr.run_month DESC, employee_name ASC ${sqlLimitOffset(limit, offset)}`,
+      allParams
     );
     const [countRow] = await db.execute<RowDataPacket[]>(
       `SELECT COUNT(*) as total ${baseSql}`,

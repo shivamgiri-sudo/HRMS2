@@ -7,6 +7,7 @@
  * Payroll Head can resolve / reject flags.
  */
 import { Router } from "express";
+import { sqlLimitOffset } from "../../db/pagination.js";
 import type { Response } from "express";
 import { randomUUID } from "crypto";
 import * as XLSX from "xlsx";
@@ -134,8 +135,8 @@ salaryVerificationRouter.get(
            LEFT JOIN designation_master d ON d.id = e.designation_id
           WHERE ${whereStr}
           ORDER BY e.full_name
-          LIMIT ? OFFSET ?`,
-        [...whereParams, limit, offset]
+          ${sqlLimitOffset(limit, offset)}`,
+        whereParams
       );
 
       const employees = empRows as Array<{

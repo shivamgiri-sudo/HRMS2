@@ -1,4 +1,5 @@
 import { randomUUID } from 'crypto';
+import { sqlLimitOffset } from "../../db/pagination.js";
 import { db } from '../../db/mysql.js';
 import { addPoints } from './gamification.service.js';
 import type { RowDataPacket, ResultSetHeader } from 'mysql2/promise';
@@ -194,8 +195,8 @@ export async function getAllPolls(
     `SELECT COUNT(*) as total FROM quick_poll ${where}`, params
   );
   const [rows] = await db.execute<PollRow[]>(
-    `SELECT * FROM quick_poll ${where} ORDER BY created_at DESC LIMIT ? OFFSET ?`,
-    [...params, limit, offset]
+    `SELECT * FROM quick_poll ${where} ORDER BY created_at DESC ${sqlLimitOffset(limit, offset)}`,
+    params
   );
   return { polls: rows, total: Number(countRows[0].total) };
 }

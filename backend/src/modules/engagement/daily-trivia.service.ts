@@ -1,4 +1,5 @@
 import { randomUUID } from 'crypto';
+import { sqlLimitOffset } from "../../db/pagination.js";
 import { db } from '../../db/mysql.js';
 import { addPoints } from './gamification.service.js';
 import type { RowDataPacket, ResultSetHeader } from 'mysql2/promise';
@@ -231,8 +232,8 @@ export async function getQuestionBank(
     `SELECT COUNT(*) as total FROM daily_trivia_question ${where}`, params
   );
   const [rows] = await db.execute<QuestionRow[]>(
-    `SELECT * FROM daily_trivia_question ${where} ORDER BY question_date DESC LIMIT ? OFFSET ?`,
-    [...params, limit, offset]
+    `SELECT * FROM daily_trivia_question ${where} ORDER BY question_date DESC ${sqlLimitOffset(limit, offset)}`,
+    params
   );
   return { questions: rows, total: Number(countRows[0].total) };
 }

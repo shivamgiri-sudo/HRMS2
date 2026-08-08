@@ -1,4 +1,5 @@
 import type { RowDataPacket } from "mysql2";
+import { sqlLimitOffset } from "../../db/pagination.js";
 import { db } from "../../db/mysql.js";
 import type { BranchScope } from "./reporting.scope.js";
 
@@ -264,7 +265,7 @@ export const journeyAuditReportService = {
     sql = `SELECT * FROM (${sql}) journey${outer.length ? ` WHERE ${outer.join(" AND ")}` : ""}`;
     const countSql = `SELECT COUNT(*) AS total FROM (${sql}) counted`;
     const [countRows] = await db.execute<RowDataPacket[]>(countSql, params);
-    const [rows] = await db.execute<RowDataPacket[]>(`${sql} ORDER BY ACTIVITY_DATETIME ASC, SOURCE_TABLE, SOURCE_RECORD_ID LIMIT ? OFFSET ?`, [...params, filters.limit, filters.offset]);
+    const [rows] = await db.execute<RowDataPacket[]>(`${sql} ORDER BY ACTIVITY_DATETIME ASC, SOURCE_TABLE, SOURCE_RECORD_ID ${sqlLimitOffset(filters.limit, filters.offset)}`, params);
 
     // Compute DAYS_FROM_PREVIOUS_EVENT per person key
     const lastEventDateByPerson = new Map<string, Date>();

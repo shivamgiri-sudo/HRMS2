@@ -4,6 +4,7 @@
  */
 
 import { Router } from "express";
+import { sqlLimitOffset } from "../../db/pagination.js";
 import type { Response } from "express";
 import type { RowDataPacket, ResultSetHeader } from "mysql2";
 import { randomUUID } from "crypto";
@@ -196,8 +197,8 @@ payrollCertificatesRouter.get(
          FROM salary_certificate_request scr
          LEFT JOIN employees e ON e.id = scr.employee_id
          ORDER BY scr.generated_at DESC
-         LIMIT ? OFFSET ?`,
-      [limit, offset]
+         ${sqlLimitOffset(limit, offset)}`,
+      []
     );
 
     return res.json({ success: true, data: rows, total });

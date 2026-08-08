@@ -9,6 +9,7 @@
  */
 
 import { randomUUID } from 'crypto';
+import { sqlLimitOffset } from "../../db/pagination.js";
 import { db } from '../../db/mysql.js';
 import { addPoints } from './gamification.service.js';
 import type { RowDataPacket, ResultSetHeader } from 'mysql2/promise';
@@ -181,8 +182,8 @@ export async function getTipArchive(
   const [tipRows] = await db.execute<TipRow[]>(
     `SELECT * FROM daily_tip ${whereClause}
      ORDER BY tip_date DESC
-     LIMIT ? OFFSET ?`,
-    [...params, limit, offset]
+     ${sqlLimitOffset(limit, offset)}`,
+    params
   );
 
   return { tips: tipRows, total };

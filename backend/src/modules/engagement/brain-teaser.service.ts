@@ -1,4 +1,5 @@
 import { randomUUID } from 'crypto';
+import { sqlLimitOffset } from "../../db/pagination.js";
 import { db } from '../../db/mysql.js';
 import { addPoints } from './gamification.service.js';
 import type { RowDataPacket, ResultSetHeader } from 'mysql2/promise';
@@ -251,8 +252,8 @@ export async function getTeaserBank(
     `SELECT COUNT(*) as total FROM brain_teaser ${where}`, params
   );
   const [rows] = await db.execute<TeaserRow[]>(
-    `SELECT * FROM brain_teaser ${where} ORDER BY teaser_date DESC LIMIT ? OFFSET ?`,
-    [...params, limit, offset]
+    `SELECT * FROM brain_teaser ${where} ORDER BY teaser_date DESC ${sqlLimitOffset(limit, offset)}`,
+    params
   );
   return { teasers: rows, total: Number(countRows[0].total) };
 }

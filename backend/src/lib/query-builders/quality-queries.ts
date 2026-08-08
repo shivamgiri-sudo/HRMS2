@@ -4,6 +4,8 @@
  * No schema changes - uses existing db_audit.call_quality_assessment + mas_hrms.employees
  */
 
+import { sqlLimitOffset } from "../../db/pagination.js";
+
 export interface QueryResult {
   query: string;
   params: (string | number | Date)[];
@@ -267,13 +269,12 @@ export function buildCallsReviewQuery(
       AND CallDate >= DATE_SUB(NOW(), INTERVAL 30 DAY)
       AND User IS NOT NULL AND User != ''
     ORDER BY ${orderBy}
-    LIMIT ? OFFSET ?
+    ${sqlLimitOffset(limit, offset, { defaultLimit: 10, maxLimit: 50 })}
   `;
 
-  const limitSafe = Math.min(limit, 50);
   return {
     query: query.replace(/\n\s+/g, ' ').trim(),
-    params: [employeeCode, limitSafe, offset]
+    params: [employeeCode]
   };
 }
 
