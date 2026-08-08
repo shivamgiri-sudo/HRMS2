@@ -380,9 +380,27 @@ export async function payrollReconciliation(
     // Pin the attendance aggregate to the same month.
     //
     // Only rows whose ym equals spr.run_month can survive the join, so restricting the
-    // subquery cannot change a single output row — but leaving it unrestricted made MySQL
-    // aggregate all 119,202 attendance rows to produce the ~1,549 that survive. Measured on
-    // live: 14.6s unrestricted, 3.0s pinned.
+    // subquery cannot change a single output row — verified by checksumming the full 1,464-row
+    // output for 2026-07 both ways, not by comparing row counts.
+    //
+    // On the speed claim, which is smaller and more qualified than it first looked:
+    //
+    //   direct SQL, alternating runs, pinned first so any warm-cache advantage favours the
+    //   OLD shape:  62.8s unrestricted vs 16.3s pinned, median of four pairs — 3.9x.
+    //
+    //   through the endpoint, alternating against a build without this change: 16.4s vs 16.0s.
+    //   No measurable difference. MySQL 8 can push `spr.run_month = ?` into the derived table
+    //   on its own through the `att.ym = spr.run_month` equality, and when it picks that plan
+    //   this predicate is redundant. It is kept because the optimiser does not always pick it —
+    //   the direct-SQL pair above is the same statement without the LIMIT, and there it did not.
+    //
+    // Two earlier numbers for this change were wrong and are recorded here so they are not
+    // quoted again: a "6.9x" came from running the unrestricted query first and the pinned one
+    // second, so the second read a warm buffer pool; and a "120s to 7.2s" endpoint figure was
+    // measured against a backend another session had started from the main tree, which did not
+    // contain this change at all. The database also swings badly under concurrent load — the
+    // same statement measured 43s to 82s across four rounds — so single-run timings here are
+    // not evidence of anything.
     //
     // Half-open range against the raw column so the predicate is sargable and can use
     // idx_adr_emp_date. A LEFT() or DATE_FORMAT() wrapper would not be — that is precisely
