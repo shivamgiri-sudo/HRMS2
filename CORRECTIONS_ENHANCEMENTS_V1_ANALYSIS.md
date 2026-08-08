@@ -339,10 +339,10 @@ cat /tmp/corrections-analysis/hrms-all-corrections-enhancements-v1/backend/sql/1
 **Step 2**: Apply Control Tower Migration
 ```bash
 # Backup first
-mysqldump -h 122.184.128.90 -u shivam_user -pqwersdfg!@#hjk mas_hrms > backup_before_control_tower.sql
+mysqldump -h 122.184.128.90 -u shivam_user -p<set DB_PASSWORD in backend/.env> mas_hrms > backup_before_control_tower.sql
 
 # Apply migration
-mysql -h 122.184.128.90 -u shivam_user -pqwersdfg!@#hjk mas_hrms < \
+mysql -h 122.184.128.90 -u shivam_user -p<set DB_PASSWORD in backend/.env> mas_hrms < \
   /tmp/corrections-analysis/hrms-all-corrections-enhancements-v1/backend/sql/111_control_tower_foundation.sql
 ```
 

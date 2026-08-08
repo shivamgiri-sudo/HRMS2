@@ -40,7 +40,7 @@
 
 ### Step 1: Verify Database (Already Done ✅)
 ```bash
-mysql -h 122.184.128.90 -u shivam_user -p'qwersdfg!@#hjk' mas_hrms \
+mysql -h 122.184.128.90 -u shivam_user -p'<set DB_PASSWORD in backend/.env>' mas_hrms \
   -e "DESCRIBE salary_prep_line;" | grep overtime
 
 # Expected output:
@@ -78,7 +78,7 @@ precache  291 entries (7440.88 KiB)
 #### A. Find User IDs
 ```sql
 -- Connect to database
-mysql -h 122.184.128.90 -u shivam_user -p'qwersdfg!@#hjk' mas_hrms
+mysql -h 122.184.128.90 -u shivam_user -p'<set DB_PASSWORD in backend/.env>' mas_hrms
 
 -- Find users who should have WFM role
 SELECT id, email, full_name FROM employees 

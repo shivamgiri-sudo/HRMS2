@@ -153,7 +153,7 @@ WHERE legacy_emp_id IS NOT NULL
 DB_HOST=122.184.128.90
 DB_PORT=3306
 DB_USER=root
-DB_PASSWORD=vicidialnow
+DB_PASSWORD=<set SOURCE_DB_PASSWORD in backend/.env>
 DB_NAME=mas_hrms
 
 # Legacy MySQL Database
@@ -161,7 +161,7 @@ LEGACY_MYSQL_HOST=14.97.30.236
 LEGACY_MYSQL_PORT=3306
 LEGACY_MYSQL_DATABASE=db_bill
 LEGACY_MYSQL_USER=shivam_user
-LEGACY_MYSQL_PASSWORD=qwersdfg!@#hjk
+LEGACY_MYSQL_PASSWORD=<set DB_PASSWORD in backend/.env>
 
 # Sync Configuration
 LEGACY_SYNC_ENABLED=false  # Set to true for continuous sync

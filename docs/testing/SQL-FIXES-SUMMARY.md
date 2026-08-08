@@ -11,7 +11,7 @@
 ### 1. MySQL Password Escaping (RESOLVED)
 **File**: `backend/.env`  
 **Issue**: Password truncated at `#` character  
-**Fix**: Quoted password: `DB_PASSWORD="qwersdfg!@#hjk"`  
+**Fix**: Quoted password: `DB_PASSWORD="<set DB_PASSWORD in backend/.env>"`  
 **Impact**: Restored database connectivity  
 **Result**: 5/30 tests passing (was 1/30) - **400% improvement**
 

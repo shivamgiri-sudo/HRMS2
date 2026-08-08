@@ -100,7 +100,7 @@ cd backend && node -e "
 const mysql = require('mysql2/promise');
 const fs = require('fs');
 (async () => {
-  const conn = await mysql.createConnection({ host:'192.168.10.6', port:3306, user:'shivam_user', password:'qwersdfg!@#hjk', database:'mas_hrms' });
+  const conn = await mysql.createConnection({ host:'192.168.10.6', port:3306, user:'shivam_user', password:'<set DB_PASSWORD in backend/.env>', database:'mas_hrms' });
   const sql = fs.readFileSync('sql/204_leave_type_master_fix.sql', 'utf8');
   for (const stmt of sql.split(';').filter(s => s.trim())) await conn.query(stmt);
   const [rows] = await conn.query('SELECT leave_code, leave_name, max_days_per_year, carry_forward, active_status FROM leave_type_master ORDER BY leave_code');
@@ -199,7 +199,7 @@ cd backend && node -e "
 const mysql = require('mysql2/promise');
 const fs = require('fs');
 (async () => {
-  const conn = await mysql.createConnection({ host:'192.168.10.6', port:3306, user:'shivam_user', password:'qwersdfg!@#hjk', database:'mas_hrms' });
+  const conn = await mysql.createConnection({ host:'192.168.10.6', port:3306, user:'shivam_user', password:'<set DB_PASSWORD in backend/.env>', database:'mas_hrms' });
   const sql = fs.readFileSync('sql/205_leave_policy_config_fix.sql', 'utf8');
   for (const stmt of sql.split(';').filter(s => s.trim())) await conn.query(stmt);
   const [rows] = await conn.query('SELECT lt.leave_code, lpc.monthly_credit_days, lpc.annual_credit_days, lpc.credit_on_jan_first, lpc.max_days_per_occurrence, lpc.pool_with FROM leave_policy_config lpc JOIN leave_type_master lt ON lt.id = lpc.leave_type_id ORDER BY lt.leave_code');
@@ -259,7 +259,7 @@ cd backend && node -e "
 const mysql = require('mysql2/promise');
 const fs = require('fs');
 (async () => {
-  const conn = await mysql.createConnection({ host:'192.168.10.6', port:3306, user:'shivam_user', password:'qwersdfg!@#hjk', database:'mas_hrms' });
+  const conn = await mysql.createConnection({ host:'192.168.10.6', port:3306, user:'shivam_user', password:'<set DB_PASSWORD in backend/.env>', database:'mas_hrms' });
   const sql = fs.readFileSync('sql/206_leave_el_accrual_ledger.sql', 'utf8');
   await conn.query(sql);
   const [rows] = await conn.query('DESCRIBE leave_el_accrual_ledger');
@@ -355,7 +355,7 @@ cd backend && node -e "
 const mysql = require('mysql2/promise');
 const fs = require('fs');
 (async () => {
-  const conn = await mysql.createConnection({ host:'192.168.10.6', port:3306, user:'shivam_user', password:'qwersdfg!@#hjk', database:'mas_hrms' });
+  const conn = await mysql.createConnection({ host:'192.168.10.6', port:3306, user:'shivam_user', password:'<set DB_PASSWORD in backend/.env>', database:'mas_hrms' });
   const sql = fs.readFileSync('sql/207_leave_2026_balance_correction.sql', 'utf8');
   for (const stmt of sql.split(';').filter(s => s.trim().length > 0)) await conn.query(stmt);
   const [rows] = await conn.query(\`
@@ -457,7 +457,7 @@ cd backend && node -e "
 const mysql = require('mysql2/promise');
 const fs = require('fs');
 (async () => {
-  const conn = await mysql.createConnection({ host:'192.168.10.6', port:3306, user:'shivam_user', password:'qwersdfg!@#hjk', database:'mas_hrms' });
+  const conn = await mysql.createConnection({ host:'192.168.10.6', port:3306, user:'shivam_user', password:'<set DB_PASSWORD in backend/.env>', database:'mas_hrms' });
   const sql = fs.readFileSync('sql/208_leave_2026_ml_el_accrual_seed.sql', 'utf8');
   for (const stmt of sql.split(';').filter(s => s.trim().length > 0)) await conn.query(stmt);
 
@@ -1100,7 +1100,7 @@ git commit -m "chore: enable schedulers and update worker import aliases for mon
 cd backend && node -e "
 const mysql = require('mysql2/promise');
 (async () => {
-  const conn = await mysql.createConnection({ host:'192.168.10.6', port:3306, user:'shivam_user', password:'qwersdfg!@#hjk', database:'mas_hrms' });
+  const conn = await mysql.createConnection({ host:'192.168.10.6', port:3306, user:'shivam_user', password:'<set DB_PASSWORD in backend/.env>', database:'mas_hrms' });
 
   // Check MAS47814 (Shivam Giri) balances for 2026
   const [rows] = await conn.query(\`

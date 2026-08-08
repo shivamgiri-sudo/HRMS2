@@ -244,13 +244,13 @@ HRMS DB (SAFE UPSERT)
 **Legacy MySQL (db_bill - READ ONLY):**
 - Host: 14.97.30.236:3306
 - User: shivam_user
-- Password: qwersdfg!@#hjk
+- Password: <set DB_PASSWORD in backend/.env>
 - Database: db_bill
 
 **HRMS MySQL (mas_hrms - WRITE):**
 - Host: 122.184.128.90:3306
 - User: shivam_user (READ) / root (WRITE - use carefully)
-- Password: qwersdfg!@#hjk / Tmc@0987#
+- Password: <set DB_PASSWORD in backend/.env> / Tmc@0987#
 - Database: mas_hrms
 
 **⚠️ CRITICAL:**

@@ -24,7 +24,7 @@
 | `employment_status` values | `'active'` (lowercase) in live DB |
 
 ### Root Cause of Initial Test Failures
-`.env` `DB_PASSWORD=qwersdfg!@#hjk` — dotenv treated `#` as comment, password was silently truncated to `qwersdfg!@`. Fixed by quoting: `DB_PASSWORD="qwersdfg!@#hjk"`.
+`.env` `DB_PASSWORD=<set DB_PASSWORD in backend/.env>` — dotenv treated `#` as comment, password was silently truncated to `qwersdfg!@`. Fixed by quoting: `DB_PASSWORD="<set DB_PASSWORD in backend/.env>"`.
 
 ---
 
@@ -53,7 +53,7 @@
 **Impact:** Payroll calculation found 0 employees. Attrition reports, RTA board, attendance engine, compliance all returned wrong/zero results.
 
 ### Bug 3 — `.env` DB password truncated by dotenv (# treated as comment)
-**File Fixed:** `backend/.env` — quoted password: `DB_PASSWORD="qwersdfg!@#hjk"`
+**File Fixed:** `backend/.env` — quoted password: `DB_PASSWORD="<set DB_PASSWORD in backend/.env>"`
 
 **Impact:** All integration tests were failing with "Access denied" from DB.
 

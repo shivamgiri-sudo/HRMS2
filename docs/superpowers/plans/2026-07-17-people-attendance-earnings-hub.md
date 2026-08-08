@@ -225,7 +225,7 @@ cd backend && node -e "
 const mysql = require('mysql2/promise');
 // Just verify the SQL shape works by checking the tables exist
 async function main() {
-  const db = await mysql.createConnection({ host:'192.168.10.6', port:3306, user:'shivam_user', password:'qwersdfg!@#hjk', database:'mas_hrms', connectTimeout:10000 });
+  const db = await mysql.createConnection({ host:'192.168.10.6', port:3306, user:'shivam_user', password:'<set DB_PASSWORD in backend/.env>', database:'mas_hrms', connectTimeout:10000 });
   const [r] = await db.execute('SELECT COUNT(*) AS c FROM employees WHERE active_status=1');
   console.log('Active employees:', r[0].c);
   await db.end();

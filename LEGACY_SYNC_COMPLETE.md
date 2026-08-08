@@ -295,7 +295,7 @@
 ```
 Host: 14.97.30.236:3306
 User: shivam_user
-Pass: qwersdfg!@#hjk
+Pass: <set DB_PASSWORD in backend/.env>
 DB:   db_bill
 ```
 
@@ -303,7 +303,7 @@ DB:   db_bill
 ```
 Host: 122.184.128.90:3306
 User: shivam_user (READ) / root (WRITE)
-Pass: qwersdfg!@#hjk / Tmc@0987#
+Pass: <set DB_PASSWORD in backend/.env> / Tmc@0987#
 DB:   mas_hrms
 ```
 

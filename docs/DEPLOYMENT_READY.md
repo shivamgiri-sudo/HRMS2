@@ -96,7 +96,7 @@ Protected: roles=['admin', 'wfm']
 ### Step 1: Verify Database
 ```bash
 # Check columns exist
-mysql -h 122.184.128.90 -u shivam_user -p'qwersdfg!@#hjk' mas_hrms -e "DESCRIBE salary_prep_line;" | grep overtime
+mysql -h 122.184.128.90 -u shivam_user -p'<set DB_PASSWORD in backend/.env>' mas_hrms -e "DESCRIBE salary_prep_line;" | grep overtime
 
 # Expected output:
 # overtime_hours   decimal(8,2)  YES    0.00
@@ -274,7 +274,7 @@ npm run build
 # Already configured in backend/.env
 DB_HOST=122.184.128.90
 DB_USER=shivam_user
-DB_PASSWORD=qwersdfg!@#hjk
+DB_PASSWORD=<set DB_PASSWORD in backend/.env>
 DB_NAME=mas_hrms
 ```
 

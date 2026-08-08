@@ -257,7 +257,7 @@ curl http://localhost:5055/api/employees/me \
 
 # Check database connection
 mysql --host=122.184.128.90 --port=3306 --user=shivam_user \
-  --password='qwersdfg!@#hjk' --database=mas_hrms \
+  --password='<set DB_PASSWORD in backend/.env>' --database=mas_hrms \
   --execute="SELECT COUNT(*) FROM employees;"
 ```
 
@@ -433,7 +433,7 @@ cd /home/shuvam/hrms-audit && npm run dev &
 ```bash
 # Test connection
 mysql --host=122.184.128.90 --port=3306 \
-  --user=shivam_user --password='qwersdfg!@#hjk' \
+  --user=shivam_user --password='<set DB_PASSWORD in backend/.env>' \
   --execute="SELECT 1;"
 ```
 

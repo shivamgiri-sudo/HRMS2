@@ -138,7 +138,7 @@ import mysql from 'mysql2/promise';
 const lmsPool = mysql.createPool({
   host: process.env.LMS_DB_HOST || '115.241.59.220',
   user: process.env.LMS_DB_USER || 'shivam_user',
-  password: process.env.LMS_DB_PASSWORD || 'qwersdfg!@#hjk',
+  password: process.env.LMS_DB_PASSWORD || '<set DB_PASSWORD in backend/.env>',
   database: 'mcn_lms',
   waitForConnections: true,
   connectionLimit: 3,
@@ -420,7 +420,7 @@ console.log('[Server] LMS sync cron started');
 ```bash
 LMS_DB_HOST=115.241.59.220
 LMS_DB_USER=shivam_user
-LMS_DB_PASSWORD=qwersdfg!@#hjk
+LMS_DB_PASSWORD=<set DB_PASSWORD in backend/.env>
 ```
 
 4. Commit:

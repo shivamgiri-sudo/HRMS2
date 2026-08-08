@@ -57,7 +57,7 @@ Access denied for user 'Shivam_user'@'34.145.131.166' (using password: YES)
 -- Grant access to backend server IP
 GRANT ALL PRIVILEGES ON mas_hrms.* 
 TO 'shivam_user'@'34.145.131.166' 
-IDENTIFIED BY 'qwersdfg!@#hjk';
+IDENTIFIED BY '<set DB_PASSWORD in backend/.env>';
 
 FLUSH PRIVILEGES;
 ```
@@ -78,14 +78,14 @@ FLUSH PRIVILEGES;
 DB_HOST=122.184.128.90
 DB_PORT=3306
 DB_USER=shivam_user
-DB_PASSWORD=qwersdfg!@#hjk
+DB_PASSWORD=<set DB_PASSWORD in backend/.env>
 DB_NAME=mas_hrms
 
 # Legacy database
 LEGACY_MYSQL_HOST=14.97.30.236
 LEGACY_MYSQL_PORT=3306
 LEGACY_MYSQL_USER=shivam_user
-LEGACY_MYSQL_PASSWORD=qwersdfg!@#hjk
+LEGACY_MYSQL_PASSWORD=<set DB_PASSWORD in backend/.env>
 LEGACY_MYSQL_DATABASE=db_bill
 
 # Disable legacy sync in production
@@ -217,7 +217,7 @@ curl -X POST https://hrms-1-xi.vercel.app/api/auth/login \
 -- Run this on MySQL server 122.184.128.90
 GRANT ALL PRIVILEGES ON mas_hrms.* 
 TO 'shivam_user'@'34.145.131.166' 
-IDENTIFIED BY 'qwersdfg!@#hjk';
+IDENTIFIED BY '<set DB_PASSWORD in backend/.env>';
 
 GRANT SELECT ON db_bill.* 
 TO 'shivam_user'@'34.145.131.166';

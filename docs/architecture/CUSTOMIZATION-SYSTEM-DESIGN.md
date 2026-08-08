@@ -494,7 +494,7 @@ Only applies when:
 
 ### Step 1: Create Tables
 ```bash
-mysql -h 122.184.128.90 -u shivam_user -p'qwersdfg!@#hjk' mas_hrms < backend/sql/050_customization.sql
+mysql -h 122.184.128.90 -u shivam_user -p'<set DB_PASSWORD in backend/.env>' mas_hrms < backend/sql/050_customization.sql
 ```
 
 ### Step 2: Implement Backend

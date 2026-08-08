@@ -1604,7 +1604,7 @@ const runMut = useMutation({
 
 ```bash
 "/c/Program Files/MySQL/MySQL Workbench 8.0 CE/mysql.exe" \
-  -h 192.168.10.6 -P 3306 -u shivam_user -p'qwersdfg!@#hjk' mas_hrms \
+  -h 192.168.10.6 -P 3306 -u shivam_user -p'<set DB_PASSWORD in backend/.env>' mas_hrms \
   < "/c/Users/shivamg/Desktop/HRMS1/backend/sql/143_report_builder.sql"
 ```
 
@@ -1612,7 +1612,7 @@ const runMut = useMutation({
 
 ```bash
 "/c/Program Files/MySQL/MySQL Workbench 8.0 CE/mysql.exe" \
-  -h 192.168.10.6 -P 3306 -u shivam_user -p'qwersdfg!@#hjk' mas_hrms \
+  -h 192.168.10.6 -P 3306 -u shivam_user -p'<set DB_PASSWORD in backend/.env>' mas_hrms \
   -e "SELECT report_code, report_name, report_category FROM report_master ORDER BY report_category, report_name;"
 ```
 

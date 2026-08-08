@@ -570,10 +570,10 @@ DROP TABLE candidate_bgv_exception;
 
 2. **Apply migrations 119 & 120**
    ```bash
-   mysql -h 122.184.128.90 -u shivam_user -pqwersdfg!@#hjk mas_hrms < \
+   mysql -h 122.184.128.90 -u shivam_user -p<set DB_PASSWORD in backend/.env> mas_hrms < \
      /home/shuvam/Downloads/hrms-candidate-onboarding-bgv-digital-verification-pack-v2/backend/sql/119_candidate_onboarding_full_profile.sql
    
-   mysql -h 122.184.128.90 -u shivam_user -pqwersdfg!@#hjk mas_hrms < \
+   mysql -h 122.184.128.90 -u shivam_user -p<set DB_PASSWORD in backend/.env> mas_hrms < \
      /home/shuvam/Downloads/hrms-candidate-onboarding-bgv-digital-verification-pack-v2/backend/sql/120_candidate_bgv_digital_verification.sql
    ```
 

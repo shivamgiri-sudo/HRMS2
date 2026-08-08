@@ -35,7 +35,7 @@
 
 ### 5. BGV Provider Activated
 - ✅ `BGV_PROVIDER=befisc_luckpay` in .env
-- ✅ `LUCKPAY_WEBHOOK_SECRET=mas-luckpay-webhook-2026` set
+- ✅ `LUCKPAY_WEBHOOK_SECRET=<set LUCKPAY_WEBHOOK_SECRET in backend/.env>` set
 - ✅ PAN, bank, UAN, DigiLocker now hit Luckpay staging
 - ✅ Aadhaar/court remain manual_review (vendor creds not yet configured)
 

@@ -18,7 +18,7 @@ DB connection for verification:
 node -e "
 const mysql = require('mysql2/promise');
 (async () => {
-  const c = await mysql.createConnection({ host:'192.168.10.6', port:3306, user:'shivam_user', password:'qwersdfg!@#hjk', database:'mas_hrms' });
+  const c = await mysql.createConnection({ host:'192.168.10.6', port:3306, user:'shivam_user', password:'<set DB_PASSWORD in backend/.env>', database:'mas_hrms' });
   const [r] = await c.query('YOUR QUERY HERE');
   console.log(r);
   await c.end();

@@ -40,9 +40,9 @@
 | Field | Value |
 |-------|-------|
 | **Severity** | CRITICAL — All DB integration tests fail |
-| **Root Cause** | `DB_PASSWORD=qwersdfg!@#hjk` — dotenv treats `#` as start of comment, silently truncates to `qwersdfg!@`. Tests connected with wrong password → "Access denied" from MySQL. |
+| **Root Cause** | `DB_PASSWORD=<set DB_PASSWORD in backend/.env>` — dotenv treats `#` as start of comment, silently truncates to `qwersdfg!@`. Tests connected with wrong password → "Access denied" from MySQL. |
 | **Affected File** | `backend/.env` |
-| **Fix** | Quoted the value: `DB_PASSWORD="qwersdfg!@#hjk"` |
+| **Fix** | Quoted the value: `DB_PASSWORD="<set DB_PASSWORD in backend/.env>"` |
 | **Verified** | 1278 tests now pass (was 0 passing before fix) |
 
 ---

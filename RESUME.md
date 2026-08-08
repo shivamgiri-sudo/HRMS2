@@ -48,7 +48,7 @@ npm run dev        # Runs on http://localhost:8080
 ```
 Host:     192.168.10.6:3306
 User:     shivam_user
-Password: qwersdfg!@#hjk
+Password: <set DB_PASSWORD in backend/.env>
 DB:       mas_hrms
 ```
 
@@ -56,7 +56,7 @@ DB:       mas_hrms
 ```
 Host:     192.168.10.22:3306
 User:     shivam_user
-Password: qwersdfg!@#hjk
+Password: <set DB_PASSWORD in backend/.env>
 DB:       db_bill
 ```
 
@@ -74,7 +74,7 @@ ACTIVE_DB_PROVIDER=mysql
 DB_HOST=192.168.10.6
 DB_PORT=3306
 DB_USER=shivam_user
-DB_PASSWORD=qwersdfg!@#hjk
+DB_PASSWORD=<set DB_PASSWORD in backend/.env>
 DB_NAME=mas_hrms
 DB_POOL_MAX=10
 PORTAL_JWT_SECRET=change-me-to-random-32-char-string-here

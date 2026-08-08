@@ -310,7 +310,7 @@ requireRosterPlanScope({
 ### Step 1: Testing (1.5 hours)
 ```bash
 # Setup test users
-mysql -h 122.184.128.90 -u shivam_user -pqwersdfg!@#hjk mas_hrms < test-users.sql
+mysql -h 122.184.128.90 -u shivam_user -p<set DB_PASSWORD in backend/.env> mas_hrms < test-users.sql
 
 # Get auth tokens
 ./scripts/get-test-tokens.sh

@@ -10,7 +10,7 @@
 
 **Error**: `Access denied for user 'shivam_user'@'122.161.72.232' (using password: YES)`
 
-**Root Cause**: Password `qwersdfg!@#hjk` contains `#` character, which .env parsers treat as comment delimiter.
+**Root Cause**: Password `<set DB_PASSWORD in backend/.env>` contains `#` character, which .env parsers treat as comment delimiter.
 
 **Actual parsed value**: `qwersdfg!@` (truncated at `#`)
 
@@ -22,10 +22,10 @@ Quote password in `backend/.env`:
 
 ```bash
 # Before (BROKEN):
-DB_PASSWORD=qwersdfg!@#hjk
+DB_PASSWORD=<set DB_PASSWORD in backend/.env>
 
 # After (FIXED):
-DB_PASSWORD="qwersdfg!@#hjk"
+DB_PASSWORD="<set DB_PASSWORD in backend/.env>"
 ```
 
 ---
@@ -157,10 +157,10 @@ Affected:
 # Verify password loads correctly
 cd /home/shuvam/mas-callnet-hrms/backend
 node -e "require('dotenv').config(); console.log('Password:', process.env.DB_PASSWORD);"
-# Expected: Password: qwersdfg!@#hjk
+# Expected: Password: <set DB_PASSWORD in backend/.env>
 
 # Test MySQL connection from CLI
-mysql -h 122.184.128.90 -u shivam_user -p'qwersdfg!@#hjk' mas_hrms -e "SELECT COUNT(*) FROM employees;"
+mysql -h 122.184.128.90 -u shivam_user -p'<set DB_PASSWORD in backend/.env>' mas_hrms -e "SELECT COUNT(*) FROM employees;"
 # Expected: 11 employees
 
 # Test MySQL connection from Node
@@ -170,7 +170,7 @@ const mysql = require('mysql2/promise');
   const pool = mysql.createPool({
     host: '122.184.128.90',
     user: 'shivam_user',
-    password: 'qwersdfg!@#hjk',
+    password: '<set DB_PASSWORD in backend/.env>',
     database: 'mas_hrms'
   });
   const [rows] = await pool.execute('SELECT COUNT(*) as cnt FROM employees');

@@ -539,7 +539,7 @@ grep "requireScopedRole\|buildScopeWhereClause" /home/shuvam/hrms-audit/backend/
 
 **Step 3**: Review migration SQL
 ```bash
-mysql -h 122.184.128.90 -u shivam_user -pqwersdfg!@#hjk mas_hrms -e "SHOW TABLES LIKE '%payroll%'"
+mysql -h 122.184.128.90 -u shivam_user -p<set DB_PASSWORD in backend/.env> mas_hrms -e "SHOW TABLES LIKE '%payroll%'"
 ```
 
 ---
@@ -548,19 +548,19 @@ mysql -h 122.184.128.90 -u shivam_user -pqwersdfg!@#hjk mas_hrms -e "SHOW TABLES
 
 **Step 1**: Backup
 ```bash
-mysqldump -h 122.184.128.90 -u shivam_user -pqwersdfg!@#hjk mas_hrms > \
+mysqldump -h 122.184.128.90 -u shivam_user -p<set DB_PASSWORD in backend/.env> mas_hrms > \
   backup_before_payroll_compliance_$(date +%Y%m%d_%H%M%S).sql
 ```
 
 **Step 2**: Apply migration
 ```bash
-mysql -h 122.184.128.90 -u shivam_user -pqwersdfg!@#hjk mas_hrms < \
+mysql -h 122.184.128.90 -u shivam_user -p<set DB_PASSWORD in backend/.env> mas_hrms < \
   /tmp/payroll-analysis/backend/sql/114_payroll_reporting_india_compliance.sql
 ```
 
 **Step 3**: Verify tables
 ```bash
-mysql -h 122.184.128.90 -u shivam_user -pqwersdfg!@#hjk mas_hrms -e "
+mysql -h 122.184.128.90 -u shivam_user -p<set DB_PASSWORD in backend/.env> mas_hrms -e "
 SHOW TABLES LIKE '%payroll%';
 SHOW TABLES LIKE '%tax%';
 SHOW TABLES LIKE '%dpdp%';
@@ -681,7 +681,7 @@ npm run build
 **Step 2**: Seed tax slabs
 ```bash
 # Already in migration 114, verify:
-mysql -h 122.184.128.90 -u shivam_user -pqwersdfg!@#hjk mas_hrms -e "
+mysql -h 122.184.128.90 -u shivam_user -p<set DB_PASSWORD in backend/.env> mas_hrms -e "
 SELECT * FROM income_tax_slab_master WHERE financial_year = '2025-26';
 "
 ```

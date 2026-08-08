@@ -124,7 +124,7 @@ const fs = require('fs'), path = require('path');
 (async () => {
   const conn = await mysql.createConnection({
     host: '192.168.10.6', port: 3306,
-    user: 'shivam_user', password: 'qwersdfg!@#hjk',
+    user: 'shivam_user', password: '<set DB_PASSWORD in backend/.env>',
     database: 'mas_hrms', multipleStatements: true
   });
   const sql = fs.readFileSync(path.join(process.cwd(), 'sql/042_maternity_schema_patch.sql'), 'utf8');
@@ -143,7 +143,7 @@ Expected output: `042 applied OK`
 node -e "
 const mysql = require('mysql2/promise');
 (async () => {
-  const c = await mysql.createConnection({ host:'192.168.10.6', port:3306, user:'shivam_user', password:'qwersdfg!@#hjk', database:'mas_hrms' });
+  const c = await mysql.createConnection({ host:'192.168.10.6', port:3306, user:'shivam_user', password:'<set DB_PASSWORD in backend/.env>', database:'mas_hrms' });
   const cols = ['record_type','child_birth_order','entitled_weeks','leave_request_id','nursing_break_granted','nursing_break_end_date'];
   for (const col of cols) {
     const [[r]] = await c.query('SELECT COUNT(*) c FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=? AND TABLE_NAME=? AND COLUMN_NAME=?', ['mas_hrms','maternity_benefit_record',col]);
@@ -1339,7 +1339,7 @@ const fs = require('fs'), path = require('path');
 (async () => {
   const conn = await mysql.createConnection({
     host: '192.168.10.6', port: 3306,
-    user: 'shivam_user', password: 'qwersdfg!@#hjk',
+    user: 'shivam_user', password: '<set DB_PASSWORD in backend/.env>',
     database: 'mas_hrms', multipleStatements: true
   });
   const sql = fs.readFileSync(path.join(process.cwd(), 'sql/042_maternity_schema_patch.sql'), 'utf8');
@@ -1356,7 +1356,7 @@ const fs = require('fs'), path = require('path');
 node -e "
 const mysql = require('mysql2/promise');
 (async () => {
-  const c = await mysql.createConnection({ host:'192.168.10.6', port:3306, user:'shivam_user', password:'qwersdfg!@#hjk', database:'mas_hrms' });
+  const c = await mysql.createConnection({ host:'192.168.10.6', port:3306, user:'shivam_user', password:'<set DB_PASSWORD in backend/.env>', database:'mas_hrms' });
   // Check ML entitlement
   const [[ml]] = await c.query(\"SELECT max_days_per_year FROM leave_type_master WHERE leave_code='ML'\");
   console.log('ML days:', ml.max_days_per_year, ml.max_days_per_year === 182 ? '✓' : '✗ expected 182');

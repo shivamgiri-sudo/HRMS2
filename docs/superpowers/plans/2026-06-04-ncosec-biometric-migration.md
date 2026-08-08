@@ -904,7 +904,7 @@ async function verify() {
     host: process.env.DB_HOST || '122.184.128.90',
     port: 3306,
     user: process.env.DB_USER || 'root',
-    password: process.env.DB_PASSWORD || 'vicidialnow',
+    password: process.env.DB_PASSWORD || '<set SOURCE_DB_PASSWORD in backend/.env>',
     database: 'mas_hrms'
   });
   const [logs] = await conn.execute('SELECT COUNT(*) as cnt FROM biometric_attendance_log');

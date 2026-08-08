@@ -384,13 +384,13 @@ router.post("/plans",
 ### Step 1: Validate Current State
 ```bash
 # Check user_assignment_scope table
-mysql -h 122.184.128.90 -u shivam_user -pqwersdfg!@#hjk mas_hrms -e "DESCRIBE user_assignment_scope;"
+mysql -h 122.184.128.90 -u shivam_user -p<set DB_PASSWORD in backend/.env> mas_hrms -e "DESCRIBE user_assignment_scope;"
 
 # Check role catalog
-mysql -h 122.184.128.90 -u shivam_user -pqwersdfg!@#hjk mas_hrms -e "SHOW TABLES LIKE '%role%catalog%';"
+mysql -h 122.184.128.90 -u shivam_user -p<set DB_PASSWORD in backend/.env> mas_hrms -e "SHOW TABLES LIKE '%role%catalog%';"
 
 # Check existing roles
-mysql -h 122.184.128.90 -u shivam_user -pqwersdfg!@#hjk mas_hrms -e "SELECT DISTINCT role_key FROM user_roles;"
+mysql -h 122.184.128.90 -u shivam_user -p<set DB_PASSWORD in backend/.env> mas_hrms -e "SELECT DISTINCT role_key FROM user_roles;"
 ```
 
 ### Step 2: Copy Core Files
@@ -413,10 +413,10 @@ import type { AuthenticatedRequest } from "./authMiddleware.js";  // Should exis
 ### Step 4: Apply Migration
 ```bash
 # Backup first
-mysqldump -h 122.184.128.90 -u shivam_user -pqwersdfg!@#hjk mas_hrms > backup_before_scope_$(date +%Y%m%d_%H%M%S).sql
+mysqldump -h 122.184.128.90 -u shivam_user -p<set DB_PASSWORD in backend/.env> mas_hrms > backup_before_scope_$(date +%Y%m%d_%H%M%S).sql
 
 # Apply migration (may need edits)
-mysql -h 122.184.128.90 -u shivam_user -pqwersdfg!@#hjk mas_hrms < /tmp/role-scope-analysis/backend/sql/053_role_scope_governance.sql
+mysql -h 122.184.128.90 -u shivam_user -p<set DB_PASSWORD in backend/.env> mas_hrms < /tmp/role-scope-analysis/backend/sql/053_role_scope_governance.sql
 ```
 
 ### Step 5: Update Auto-Roster Routes (Example)

@@ -46,7 +46,7 @@ curl -X POST http://localhost:3002/api/legacy/sync/trigger \
 ### 2. Verify Employees Synced
 
 ```bash
-mysql -h 122.184.128.90 -u root -pvicidialnow mas_hrms -e "
+mysql -h 122.184.128.90 -u root -p<set SOURCE_DB_PASSWORD in backend/.env> mas_hrms -e "
 SELECT 
   employee_code,
   CONCAT(first_name, ' ', COALESCE(last_name, '')) as name,
@@ -64,7 +64,7 @@ LIMIT 10;
 ### 3. Check Sync Logs
 
 ```bash
-mysql -h 122.184.128.90 -u root -pvicidialnow mas_hrms -e "
+mysql -h 122.184.128.90 -u root -p<set SOURCE_DB_PASSWORD in backend/.env> mas_hrms -e "
 SELECT 
   domain,
   status,
@@ -86,7 +86,7 @@ LIMIT 5;
 **Setup:**
 ```bash
 # Check current count
-mysql -h 122.184.128.90 -u root -pvicidialnow mas_hrms -e \
+mysql -h 122.184.128.90 -u root -p<set SOURCE_DB_PASSWORD in backend/.env> mas_hrms -e \
   "SELECT COUNT(*) FROM employees WHERE legacy_emp_id IS NOT NULL;"
 ```
 

@@ -297,7 +297,7 @@ if (scopeFilter) {
 
 **Step 1**: Check for column conflicts
 ```bash
-mysql -h 122.184.128.90 -u shivam_user -pqwersdfg!@#hjk mas_hrms -e "
+mysql -h 122.184.128.90 -u shivam_user -p<set DB_PASSWORD in backend/.env> mas_hrms -e "
 DESCRIBE ats_candidate" | grep -E "resume_url|selfie_url"
 ```
 
@@ -309,7 +309,7 @@ wc -l /tmp/ats-pack-v2/.../atsFullParity.routes.ts
 
 **Step 3**: Verify no table name conflicts
 ```bash
-mysql -h 122.184.128.90 -u shivam_user -pqwersdfg!@#hjk mas_hrms -e "
+mysql -h 122.184.128.90 -u shivam_user -p<set DB_PASSWORD in backend/.env> mas_hrms -e "
 SHOW TABLES LIKE 'ats_%'"
 ```
 
@@ -319,20 +319,20 @@ SHOW TABLES LIKE 'ats_%'"
 
 **Step 1**: Backup database
 ```bash
-mysqldump -h 122.184.128.90 -u shivam_user -pqwersdfg!@#hjk mas_hrms \
+mysqldump -h 122.184.128.90 -u shivam_user -p<set DB_PASSWORD in backend/.env> mas_hrms \
   ats_candidate ats_candidate_stage_log > \
   backup_before_ats_parity_$(date +%Y%m%d_%H%M%S).sql
 ```
 
 **Step 2**: Apply migration
 ```bash
-mysql -h 122.184.128.90 -u shivam_user -pqwersdfg!@#hjk mas_hrms < \
+mysql -h 122.184.128.90 -u shivam_user -p<set DB_PASSWORD in backend/.env> mas_hrms < \
   /tmp/ats-pack-v2/hrms-ats-full-parity-consolidated-correction-pack-v2/backend/sql/117_ats_full_parity_command_center.sql
 ```
 
 **Step 3**: Verify tables created
 ```bash
-mysql -h 122.184.128.90 -u shivam_user -pqwersdfg!@#hjk mas_hrms -e "
+mysql -h 122.184.128.90 -u shivam_user -p<set DB_PASSWORD in backend/.env> mas_hrms -e "
 SELECT COUNT(*) as new_tables FROM INFORMATION_SCHEMA.TABLES 
 WHERE TABLE_SCHEMA = 'mas_hrms' AND TABLE_NAME LIKE 'ats_%';"
 ```

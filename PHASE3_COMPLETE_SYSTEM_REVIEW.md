@@ -108,10 +108,10 @@ Complete Client Master Enhancement system with database, backend APIs, and enhan
 ### 1. Database Migration
 ```bash
 # Run migration
-mysql -h 122.184.128.90 -u shivam_user -pqwersdfg!@#hjk mas_hrms < backend/sql/101_client_master_enhancement.sql
+mysql -h 122.184.128.90 -u shivam_user -p<set DB_PASSWORD in backend/.env> mas_hrms < backend/sql/101_client_master_enhancement.sql
 
 # Verify tables
-mysql -h 122.184.128.90 -u shivam_user -pqwersdfg!@#hjk mas_hrms -e "SHOW TABLES LIKE '%client%';"
+mysql -h 122.184.128.90 -u shivam_user -p<set DB_PASSWORD in backend/.env> mas_hrms -e "SHOW TABLES LIKE '%client%';"
 
 # Expected output:
 # clients

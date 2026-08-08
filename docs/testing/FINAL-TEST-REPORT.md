@@ -42,11 +42,11 @@
 **Resolution Required**:
 ```sql
 -- On MySQL server (122.184.128.90), run as root:
-GRANT ALL PRIVILEGES ON mas_hrms.* TO 'shivam_user'@'122.161.72.232' IDENTIFIED BY 'qwersdfg!@#hjk';
+GRANT ALL PRIVILEGES ON mas_hrms.* TO 'shivam_user'@'122.161.72.232' IDENTIFIED BY '<set DB_PASSWORD in backend/.env>';
 FLUSH PRIVILEGES;
 
 -- Or allow from any IP (less secure):
-GRANT ALL PRIVILEGES ON mas_hrms.* TO 'shivam_user'@'%' IDENTIFIED BY 'qwersdfg!@#hjk';
+GRANT ALL PRIVILEGES ON mas_hrms.* TO 'shivam_user'@'%' IDENTIFIED BY '<set DB_PASSWORD in backend/.env>';
 FLUSH PRIVILEGES;
 ```
 
@@ -223,7 +223,7 @@ FLUSH PRIVILEGES;
    -- Run on MySQL server as root:
    GRANT ALL PRIVILEGES ON mas_hrms.* 
    TO 'shivam_user'@'122.161.72.232' 
-   IDENTIFIED BY 'qwersdfg!@#hjk';
+   IDENTIFIED BY '<set DB_PASSWORD in backend/.env>';
    FLUSH PRIVILEGES;
    ```
 

@@ -103,7 +103,7 @@
 
 **Use our prepared script**:
 ```bash
-mysql -h 122.184.128.90 -u shivam_user -p'qwersdfg!@#hjk' mas_hrms < scripts/allocate-2026-leave-balances.sql
+mysql -h 122.184.128.90 -u shivam_user -p'<set DB_PASSWORD in backend/.env>' mas_hrms < scripts/allocate-2026-leave-balances.sql
 ```
 
 **What it does**:
@@ -153,7 +153,7 @@ curl -X POST http://localhost:5055/api/leave/balance/seed \
 
 ### Check Total Count
 ```sql
-mysql -h 122.184.128.90 -u shivam_user -p'qwersdfg!@#hjk' mas_hrms -e "
+mysql -h 122.184.128.90 -u shivam_user -p'<set DB_PASSWORD in backend/.env>' mas_hrms -e "
 SELECT 
   balance_year,
   COUNT(*) as records,
@@ -174,7 +174,7 @@ ORDER BY balance_year DESC;
 
 ### Check Specific Employee (Naresh)
 ```sql
-mysql -h 122.184.128.90 -u shivam_user -p'qwersdfg!@#hjk' mas_hrms -e "
+mysql -h 122.184.128.90 -u shivam_user -p'<set DB_PASSWORD in backend/.env>' mas_hrms -e "
 SELECT 
   e.employee_code,
   e.first_name,
@@ -246,7 +246,7 @@ db_bill (Legacy System)
 ### Short-term (This Week)
 ⏸️ **Run SQL Script** - Allocate 2026 balances for all employees
 ```bash
-mysql -h 122.184.128.90 -u shivam_user -p'qwersdfg!@#hjk' mas_hrms < scripts/allocate-2026-leave-balances.sql
+mysql -h 122.184.128.90 -u shivam_user -p'<set DB_PASSWORD in backend/.env>' mas_hrms < scripts/allocate-2026-leave-balances.sql
 ```
 
 ### Medium-term (This Month)
@@ -291,7 +291,7 @@ mysql -h 122.184.128.90 -u shivam_user -p'qwersdfg!@#hjk' mas_hrms < scripts/all
 
 **Command**:
 ```bash
-mysql -h 122.184.128.90 -u shivam_user -p'qwersdfg!@#hjk' mas_hrms < /home/shuvam/hrms-audit/scripts/allocate-2026-leave-balances.sql
+mysql -h 122.184.128.90 -u shivam_user -p'<set DB_PASSWORD in backend/.env>' mas_hrms < /home/shuvam/hrms-audit/scripts/allocate-2026-leave-balances.sql
 ```
 
 ---

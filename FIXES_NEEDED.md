@@ -199,7 +199,7 @@ UNION ALL SELECT 'performance_reviews', COUNT(*) FROM performance_reviews;
 
 **To Check**:
 ```bash
-mysql -h 192.168.10.6 -u shivam_user -p'qwersdfg!@#hjk' mas_hrms -e "SHOW TABLES;"
+mysql -h 192.168.10.6 -u shivam_user -p'<set DB_PASSWORD in backend/.env>' mas_hrms -e "SHOW TABLES;"
 ```
 
 ---
@@ -236,7 +236,7 @@ mysql -h 192.168.10.6 -u shivam_user -p'qwersdfg!@#hjk' mas_hrms -e "SHOW TABLES
 **Next Command**:
 ```bash
 # Test database connection and check data
-mysql -h 192.168.10.6 -u shivam_user -p'qwersdfg!@#hjk' mas_hrms -e "
+mysql -h 192.168.10.6 -u shivam_user -p'<set DB_PASSWORD in backend/.env>' mas_hrms -e "
 SELECT 
   (SELECT COUNT(*) FROM employees WHERE active_status = 1) as total_employees,
   (SELECT COUNT(*) FROM employees WHERE active_status = 1 AND date_of_birth IS NOT NULL) as employees_with_dob,

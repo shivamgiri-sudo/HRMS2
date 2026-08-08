@@ -36,7 +36,7 @@ git pull origin main
 
 # Run the migration
 mysql -h 192.168.10.6 -u shivam_user -p mas_hrms < backend/sql/999_branch_alias_setup.sql
-# Password: qwersdfg!@#hjk
+# Password: <set DB_PASSWORD in backend/.env>
 ```
 
 ### Step 3: Verify the Setup

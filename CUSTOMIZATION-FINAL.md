@@ -374,18 +374,18 @@ async listShifts(filters?, employeeId?) {
 
 1. **Run Migration**:
 ```bash
-mysql -h 122.184.128.90 -u shivam_user -p'qwersdfg!@#hjk' mas_hrms < backend/sql/050_customization.sql
+mysql -h 122.184.128.90 -u shivam_user -p'<set DB_PASSWORD in backend/.env>' mas_hrms < backend/sql/050_customization.sql
 ```
 
 2. **Verify Tables**:
 ```bash
-mysql -h 122.184.128.90 -u shivam_user -p'qwersdfg!@#hjk' mas_hrms -e "SHOW TABLES LIKE 'customization%';"
+mysql -h 122.184.128.90 -u shivam_user -p'<set DB_PASSWORD in backend/.env>' mas_hrms -e "SHOW TABLES LIKE 'customization%';"
 # Should show 4 tables
 ```
 
 3. **Seed Demo Roles** (if not done):
 ```bash
-mysql -h 122.184.128.90 -u shivam_user -p'qwersdfg!@#hjk' mas_hrms -e "
+mysql -h 122.184.128.90 -u shivam_user -p'<set DB_PASSWORD in backend/.env>' mas_hrms -e "
 INSERT INTO user_roles (id, user_id, role_key) VALUES
 (UUID(), 'demo-admin-id', 'admin'),
 (UUID(), 'demo-hr-id', 'hr')
@@ -505,7 +505,7 @@ curl -H "Authorization: Bearer mock-token-admin" \
 **Issues**:
 - Backend logs: `/tmp/backend-integrated.log`
 - Frontend: Browser console
-- Database: `mysql -h 122.184.128.90 -u shivam_user -p'qwersdfg!@#hjk' mas_hrms`
+- Database: `mysql -h 122.184.128.90 -u shivam_user -p'<set DB_PASSWORD in backend/.env>' mas_hrms`
 
 ---
 
