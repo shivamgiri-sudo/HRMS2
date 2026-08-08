@@ -1,3 +1,34 @@
+-- SUPERSEDED - DO NOT RUN. Kept for the record, not for execution.
+--
+-- This migration cannot complete against this database, and partially applying it is how the
+-- expenses module ended up broken. What actually happened, reconstructed from the live schema:
+--
+--   1. CREATE TABLE expense_categories succeeded. It exists today, with exactly the shape below,
+--      and is empty.
+--   2. CREATE TABLE expense_claims FAILED. It declares
+--        employee_id INT NOT NULL, FOREIGN KEY (employee_id) REFERENCES employees(id)
+--      but employees.id is char(36), as are process_master.id and branch_master.id. MySQL rejects
+--      a foreign key whose type does not match the referenced key (errno 3780), so this statement
+--      could never succeed.
+--   3. Everything after it never ran. expense_items, expense_approvals and expense_payments do not
+--      exist.
+--
+-- The whole file assumes AUTO_INCREMENT integer keys. This system uses char(36) UUIDs throughout,
+-- so the design here was never creatable as written - it is not a case of the migration being
+-- forgotten.
+--
+-- It is also not in MIGRATION_MANIFEST in backend/src/db/runPendingMigrations.ts, so the runner
+-- does not pick it up. Note the 099 prefix is already taken by backend/sql/099_ats_candidate_
+-- uploads.sql, which IS applied; these are different files in different directories.
+--
+-- SUPERSEDED BY: expense_claim, the table the platform actually uses. It holds the employee-claim
+-- domain (erp.service.ts reads and writes it), carries the full lifecycle in status +
+-- approval_level + reviewed_by/at + approved_by/at + payment_status, and the expenses module was
+-- moved onto it. Creating the tables below would give one domain two competing stores.
+--
+-- If you are here because the expenses module looks broken: it is not this file that fixes it.
+-- Do not "repair" this migration by widening employees.id.
+
 -- Expense Categories Master Table
 CREATE TABLE expense_categories (
   id INT AUTO_INCREMENT PRIMARY KEY,
