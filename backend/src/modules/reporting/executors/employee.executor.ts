@@ -422,6 +422,42 @@ export async function newJoinExport(
   return { rows: out, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > out.length, nextCursor };
 }
 
+/**
+ * When probation ends, and therefore when confirmation falls due.
+ *
+ * This report used `COALESCE(e.probation_days, 90)`, and employees has no probation_days column —
+ * verified against mas_hrms, which answers
+ *
+ *   ER_BAD_FIELD_ERROR: Unknown column 'e.probation_days' in 'where clause'
+ *
+ * so every run of confirmation-due-list threw. It is dispatched in executors/index.ts and present
+ * in the frontend catalogue, so this was reachable and failing for every caller, not dead code.
+ *
+ * The real source is employee_probation, which the executor never joined. extended_end_date is
+ * preferred over probation_end_date because an extension moves the confirmation date out; reading
+ * the original would list someone as overdue whose probation was deliberately extended. The
+ * 90-day fallback is the one this code already documented, so an employee with no probation row
+ * behaves exactly as before.
+ *
+ * Aggregated in a subquery rather than joined directly: employee_probation holds one row per
+ * probation period, so a plain join would return an employee once per extension and inflate every
+ * count taken from this query.
+ *
+ * employee_probation currently holds 0 rows and no employee carries employment_status='probation',
+ * so today this returns an empty report rather than a 500 — the honest answer for the data that
+ * exists, and it starts producing rows the moment probation tracking is populated.
+ */
+const CONFIRMATION_DUE_DATE =
+  "COALESCE(ep.probation_end_date, DATE_ADD(e.date_of_joining, INTERVAL 90 DAY))";
+
+const CONFIRMATION_DUE_JOIN = `
+      LEFT JOIN (
+        SELECT employee_id,
+               MAX(COALESCE(extended_end_date, probation_end_date)) AS probation_end_date
+          FROM employee_probation
+         GROUP BY employee_id
+      ) ep ON ep.employee_id = e.id`;
+
 export async function confirmationDueList(
   filters: ExecFilters,
   scope: ExecScope,
@@ -435,7 +471,7 @@ export async function confirmationDueList(
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
   clauses.push("e.active_status = 1", "e.employment_status = 'probation'");
-  clauses.push("DATE_ADD(e.date_of_joining, INTERVAL COALESCE(e.probation_days,90) DAY) <= ?");
+  clauses.push(`${CONFIRMATION_DUE_DATE} <= ?`);
   params.push(to);
 
   if (options.mode === "worker" && options.cursor != null) {
@@ -447,8 +483,8 @@ export async function confirmationDueList(
            e.employee_code,
            COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
            e.date_of_joining,
-           DATE_ADD(e.date_of_joining, INTERVAL COALESCE(e.probation_days,90) DAY) AS confirmation_due_date,
-           DATEDIFF(CURDATE(), DATE_ADD(e.date_of_joining, INTERVAL COALESCE(e.probation_days,90) DAY)) AS overdue_days,
+           ${CONFIRMATION_DUE_DATE} AS confirmation_due_date,
+           DATEDIFF(CURDATE(), ${CONFIRMATION_DUE_DATE}) AS overdue_days,
            COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
            COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
            COALESCE(sp_cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
@@ -457,7 +493,7 @@ export async function confirmationDueList(
       LEFT JOIN branch_master b     ON b.id = e.branch_id
       LEFT JOIN process_master p    ON p.id = e.process_id
       LEFT JOIN cost_centre_master sp_cc ON sp_cc.id = e.cost_centre_id
-      LEFT JOIN department_master d ON d.id = e.department_id
+      LEFT JOIN department_master d ON d.id = e.department_id${CONFIRMATION_DUE_JOIN}
      WHERE ${clauses.join(" AND ")}
      ORDER BY e.id ASC`;
 
@@ -485,8 +521,8 @@ export async function contractExpiryList(
   const params: unknown[]  = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
-  clauses.push("e.active_status = 1", "e.contract_end_date IS NOT NULL");
-  clauses.push("e.contract_end_date <= ?");
+  clauses.push("e.active_status = 1", "ec.contract_end_date IS NOT NULL");
+  clauses.push("ec.contract_end_date <= ?");
   params.push(to);
 
   if (options.mode === "worker" && options.cursor != null) {
@@ -497,8 +533,8 @@ export async function contractExpiryList(
     SELECT e.id AS _cursor,
            e.employee_code,
            COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-           e.date_of_joining, e.contract_end_date,
-           DATEDIFF(e.contract_end_date, CURDATE()) AS days_to_expiry,
+           e.date_of_joining, ec.contract_end_date,
+           DATEDIFF(ec.contract_end_date, CURDATE()) AS days_to_expiry,
            COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
            COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
            COALESCE(sp_cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
@@ -508,6 +544,16 @@ export async function contractExpiryList(
       LEFT JOIN process_master p    ON p.id = e.process_id
       LEFT JOIN cost_centre_master sp_cc ON sp_cc.id = e.cost_centre_id
       LEFT JOIN department_master d ON d.id = e.department_id
+      -- employees has no contract_end_date; the real column is on employee_contract, which this
+      -- query never joined, so every run threw ER_BAD_FIELD_ERROR. Aggregated per employee because
+      -- employee_contract holds one row per contract, renewals included, and a plain join would
+      -- return an employee once per contract and inflate every count. MAX() is the latest expiry,
+      -- which is what an expiry report is asking about.
+      LEFT JOIN (
+        SELECT employee_id, MAX(contract_end_date) AS contract_end_date
+          FROM employee_contract
+         GROUP BY employee_id
+      ) ec ON ec.employee_id = e.id
      WHERE ${clauses.join(" AND ")}
      ORDER BY e.id ASC`;
 

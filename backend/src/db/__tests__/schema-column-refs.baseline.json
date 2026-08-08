@@ -27,10 +27,6 @@
     "employee_documents.document_number",
     "employee_documents.issuing_authority"
   ],
-  "modules/reporting/executors/employee.executor.ts": [
-    "employees.contract_end_date",
-    "employees.probation_days"
-  ],
   "modules/reporting/identity-mapping-report.ts": [
     "report_identity_source_snapshot.matched_employee_name",
     "report_identity_source_snapshot.source_employee_name"
