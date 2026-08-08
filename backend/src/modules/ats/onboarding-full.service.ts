@@ -387,7 +387,17 @@ async function faceMatchOnIdDocumentUpload(candidateId: string, idDocId: string)
         AND mime_type LIKE 'image/%'
         AND (LOWER(doc_type) LIKE '%selfie%' OR LOWER(doc_type) LIKE '%live%' OR LOWER(doc_type) LIKE '%photo%')
         AND id <> ?
-      ORDER BY created_at DESC
+      -- uploaded_at, not created_at: this table has no created_at column, so the
+      -- statement died with ER_BAD_FIELD_ERROR and every ID-upload face match
+      -- failed — "[FaceMatch] Retry on ID upload failed for candidate <id>".
+      -- The rewrite above was written precisely because "33 candidates hold both
+      -- documents today and not one was ever compared", and it kept comparing
+      -- none. 36 candidates hold both as of 2026-08-08.
+      --
+      -- Every other query against candidate_onboarding_document in this codebase
+      -- already orders by uploaded_at (ageVerification, bgv-verification x2, and
+      -- twice more in this file); this was the lone outlier.
+      ORDER BY uploaded_at DESC
       LIMIT 1`,
     [candidateId, idDocId]
   );
