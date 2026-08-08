@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import { AlertTriangle, CheckCircle2, Download, Loader2, PenSquare, Send } from "lucide-react";
+import { readPublicJson } from "@/lib/publicJson";
 
 type PublicPayload = {
   session: {
@@ -35,7 +36,7 @@ export default function EmployeeDocumentEsignReviewPage() {
     setError(null);
     try {
       const response = await fetch(`/api/public/employee-documents/esign/${token}`);
-      const body = await response.json();
+      const body = await readPublicJson(response);
       if (!response.ok) throw new Error(body?.message || "Unable to load the secure review link.");
       setPayload(body.data);
     } catch (err: unknown) {
@@ -65,7 +66,7 @@ export default function EmployeeDocumentEsignReviewPage() {
           comment,
         }),
       });
-      const body = await response.json();
+      const body = await readPublicJson(response);
       if (!response.ok) throw new Error(body?.message || "Unable to complete this action.");
       if (action === "esign") {
         const providerUrl = String(body?.data?.provider_url || payload?.session.provider_url || "");

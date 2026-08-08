@@ -9,6 +9,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import { AlertTriangle, CheckCircle2, Download, FileText, Loader2, Maximize2, Send, ShieldCheck } from "lucide-react";
+import { readPublicJson } from "@/lib/publicJson";
 
 type KitSession = {
   kitId: string;
@@ -43,7 +44,7 @@ export default function EmployeeJoiningKitEsignPage() {
     setError(null);
     try {
       const response = await fetch(`/api/public/joining-kit/esign/${token}`);
-      const body = await response.json();
+      const body = await readPublicJson(response);
       if (!response.ok) {
         if (response.status === 410) { setDone(body?.message || "These documents have already been signed."); return; }
         throw new Error(body?.message || "Unable to open this signing link.");
@@ -65,7 +66,7 @@ export default function EmployeeJoiningKitEsignPage() {
     setError(null);
     try {
       const response = await fetch(`/api/public/joining-kit/esign/${token}/start`, { method: "POST" });
-      const body = await response.json();
+      const body = await readPublicJson(response);
       if (!response.ok) throw new Error(body?.message || "Unable to start the signing session.");
       const providerUrl = String(body?.data?.providerUrl || session?.providerUrl || "");
       if (providerUrl && /^https?:/i.test(providerUrl)) {

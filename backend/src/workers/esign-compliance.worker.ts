@@ -1,4 +1,5 @@
 import { notificationEventService } from "../modules/communication/notification-event.service.js";
+import { isWorkerEnabled, markWorkerRun } from "../shared/worker-config.js";
 
 let db: any;
 try {
@@ -17,32 +18,78 @@ const ESCALATION_COOLDOWN_MS = 48 * 60 * 60 * 1000; // 48h cooldown for escalati
 const MANAGER_ESCALATION_DAYS = 5;
 const HR_ESCALATION_DAYS = 6;
 
-// ── In-Memory Cooldown Tracking ──────────────────────────────────────────────
+// ── Durable Cooldown Tracking ────────────────────────────────────────────────
+//
+// These cooldowns used to live in in-process Maps, and startEsignComplianceWorker
+// runs a full cycle the moment it starts. Together that meant every restart of
+// hrms-workers began with an empty cooldown and immediately re-sent everything.
+// Over 2026-08-05..08 that put 1,428 messages — email AND SMS — onto 10 contacts
+// from a standing set of three pending documents, at intervals of 7-30 minutes
+// that no 4-hour timer could produce. One preboarding candidate received 47.
+//
+// The state has to outlive the process, so it lives in esign_notification_cooldown
+// (migration 1109). Every read and write below fails CLOSED: if the table cannot
+// be reached we skip the send rather than fall back to sending, because the whole
+// failure being fixed here is a cooldown that silently evaluated to "go ahead".
 
-const reminderSent = new Map<string, number>();
-const managerEscalated = new Map<string, number>();
-const hrEscalated = new Map<string, number>();
+type CooldownKind = "reminder" | "manager_escalation" | "hr_escalation";
 
-function cooldownKey(employeeId: string, checklistId: string): string {
-  return `${employeeId}:${checklistId}`;
-}
-
-function canSend(map: Map<string, number>, key: string, cooldownMs: number): boolean {
-  const last = map.get(key);
-  if (!last) return true;
-  return (Date.now() - last) >= cooldownMs;
-}
-
-function markSent(map: Map<string, number>, key: string): void {
-  map.set(key, Date.now());
-}
-
-function cleanupCache(map: Map<string, number>, maxAgeMs: number): void {
-  const cutoff = Date.now() - maxAgeMs;
-  for (const [key, timestamp] of map.entries()) {
-    if (timestamp < cutoff) map.delete(key);
+async function canSend(
+  employeeId: string,
+  checklistId: string,
+  kind: CooldownKind,
+  cooldownMs: number,
+): Promise<boolean> {
+  try {
+    const [rows]: any = await db.execute(
+      `SELECT last_sent_at FROM esign_notification_cooldown
+        WHERE employee_id = ? AND checklist_id = ? AND notification_kind = ?
+        LIMIT 1`,
+      [employeeId, checklistId, kind],
+    );
+    const last = rows[0]?.last_sent_at;
+    if (!last) return true;
+    return (Date.now() - new Date(String(last)).getTime()) >= cooldownMs;
+  } catch (error: any) {
+    console.error(
+      `[EsignComplianceWorker] Cooldown read failed for ${kind} — skipping send:`,
+      error.message,
+    );
+    return false;
   }
 }
+
+/**
+ * Records the send. Returns false when the row could not be written, which the
+ * caller treats as a failed send: an unrecorded send is one that repeats on the
+ * next cycle, and repeating is the defect.
+ */
+async function markSent(
+  employeeId: string,
+  checklistId: string,
+  kind: CooldownKind,
+): Promise<boolean> {
+  try {
+    await db.execute(
+      `INSERT INTO esign_notification_cooldown
+         (id, employee_id, checklist_id, notification_kind, last_sent_at, send_count)
+       VALUES (UUID(), ?, ?, ?, NOW(), 1)
+       ON DUPLICATE KEY UPDATE last_sent_at = NOW(), send_count = send_count + 1`,
+      [employeeId, checklistId, kind],
+    );
+    return true;
+  } catch (error: any) {
+    console.error(`[EsignComplianceWorker] Cooldown write failed for ${kind}:`, error.message);
+    return false;
+  }
+}
+
+// The killswitch this worker never had. shared/worker-config.ts is the existing
+// reader and fails OPEN on a missing row — "unmanaged", not "disabled" — which is
+// safe here only because migration 1109 seeds an explicit enabled = 0 row. It
+// caches for 60s, so flipping that row stops or starts sending within a minute
+// with no deploy. Its fail-open on a DB error is covered from the other side: the
+// cooldown reads below fail CLOSED, so a database blip cannot produce a send.
 
 // ── Worker Logic ─────────────────────────────────────────────────────────────
 
@@ -108,6 +155,9 @@ async function getHrUsersForBranch(branchId: string | null): Promise<string[]> {
 }
 
 async function processEsignCompliance(): Promise<void> {
+  if (!await isWorkerEnabled("esign-compliance")) return;
+  await markWorkerRun("esign-compliance");
+
   const items = await findPendingEsignItems();
   if (items.length === 0) return;
 
@@ -116,26 +166,36 @@ async function processEsignCompliance(): Promise<void> {
   let hrEscalations = 0;
 
   for (const item of items) {
-    const key = cooldownKey(item.employee_id, item.checklist_id);
     const daysPending = Number(item.days_pending ?? 0);
     const deadline = item.expires_at
       ? new Date(item.expires_at).toLocaleDateString("en-IN")
       : "soon";
 
     // Daily reminder to employee (after day 1)
-    if (daysPending >= 1 && canSend(reminderSent, key, REMINDER_COOLDOWN_MS)) {
+    if (daysPending >= 1 && await canSend(item.employee_id, item.checklist_id, "reminder", REMINDER_COOLDOWN_MS)) {
       try {
-        await notificationEventService.dispatch({
-          eventCode: "esign_reminder",
-          recipientEmployeeIds: [item.employee_id],
-          data: {
-            document_name: item.document_name,
-            days_pending: String(daysPending),
-            deadline,
-          },
-        });
-        markSent(reminderSent, key);
-        reminders++;
+        // Claim the cooldown BEFORE dispatching. Claiming afterwards leaves a
+        // window where a send that succeeded is never recorded, and the next
+        // cycle sends it again.
+        if (await markSent(item.employee_id, item.checklist_id, "reminder")) {
+          await notificationEventService.dispatch({
+            eventCode: "esign_reminder",
+            recipientEmployeeIds: [item.employee_id],
+            // No outbound action button: the signing token is stored only as a
+            // hash, so no link to it can be rebuilt here. The mail names the
+            // document and points back at the still-valid link the signer already
+            // has. The portal item keeps /profile for anyone who has a login —
+            // and a preboarding candidate has none, which is exactly why the old
+            // /profile button was useless to the person it was chasing.
+            actionUrl: "",
+            data: {
+              document_name: item.document_name,
+              days_pending: String(daysPending),
+              deadline,
+            },
+          });
+          reminders++;
+        }
       } catch (err: any) {
         console.error("[EsignComplianceWorker] Reminder dispatch failed:", err.message);
       }
@@ -143,22 +203,23 @@ async function processEsignCompliance(): Promise<void> {
 
     // Manager escalation (after 5 days)
     if (daysPending >= MANAGER_ESCALATION_DAYS && item.reporting_manager_id) {
-      if (canSend(managerEscalated, key, ESCALATION_COOLDOWN_MS)) {
+      if (await canSend(item.employee_id, item.checklist_id, "manager_escalation", ESCALATION_COOLDOWN_MS)) {
         const managerId = await getEmployeeIdForUser(item.reporting_manager_id);
         if (managerId) {
           try {
-            await notificationEventService.dispatch({
-              eventCode: "esign_escalation_manager",
-              recipientEmployeeIds: [managerId],
-              data: {
-                employee_name: item.employee_name,
-                employee_code: item.employee_code,
-                document_name: item.document_name,
-                days_pending: String(daysPending),
-              },
-            });
-            markSent(managerEscalated, key);
-            managerEscalations++;
+            if (await markSent(item.employee_id, item.checklist_id, "manager_escalation")) {
+              await notificationEventService.dispatch({
+                eventCode: "esign_escalation_manager",
+                recipientEmployeeIds: [managerId],
+                data: {
+                  employee_name: item.employee_name,
+                  employee_code: item.employee_code,
+                  document_name: item.document_name,
+                  days_pending: String(daysPending),
+                },
+              });
+              managerEscalations++;
+            }
           } catch (err: any) {
             console.error("[EsignComplianceWorker] Manager escalation failed:", err.message);
           }
@@ -168,23 +229,24 @@ async function processEsignCompliance(): Promise<void> {
 
     // HR escalation (after 6 days — link about to expire)
     if (daysPending >= HR_ESCALATION_DAYS) {
-      if (canSend(hrEscalated, key, ESCALATION_COOLDOWN_MS)) {
+      if (await canSend(item.employee_id, item.checklist_id, "hr_escalation", ESCALATION_COOLDOWN_MS)) {
         const hrIds = await getHrUsersForBranch(item.branch_id);
         if (hrIds.length > 0) {
           try {
-            await notificationEventService.dispatch({
-              eventCode: "esign_escalation_hr",
-              recipientEmployeeIds: hrIds,
-              data: {
-                employee_name: item.employee_name,
-                employee_code: item.employee_code,
-                document_name: item.document_name,
-                days_pending: String(daysPending),
-                deadline,
-              },
-            });
-            markSent(hrEscalated, key);
-            hrEscalations++;
+            if (await markSent(item.employee_id, item.checklist_id, "hr_escalation")) {
+              await notificationEventService.dispatch({
+                eventCode: "esign_escalation_hr",
+                recipientEmployeeIds: hrIds,
+                data: {
+                  employee_name: item.employee_name,
+                  employee_code: item.employee_code,
+                  document_name: item.document_name,
+                  days_pending: String(daysPending),
+                  deadline,
+                },
+              });
+              hrEscalations++;
+            }
           } catch (err: any) {
             console.error("[EsignComplianceWorker] HR escalation failed:", err.message);
           }
@@ -209,11 +271,11 @@ let intervalHandle: ReturnType<typeof setInterval> | null = null;
 
 export async function startEsignComplianceWorker(): Promise<void> {
   console.log("[EsignComplianceWorker] Starting (interval: 4h)");
-  await processEsignCompliance();
+  // Deliberately no immediate cycle. The cooldown is durable now, so a restart
+  // would no longer re-send — but a process that mails candidates the instant it
+  // boots turns any crash-loop into a mail storm, and this one crash-looped for
+  // three days. The first cycle waits for the first interval.
   intervalHandle = setInterval(async () => {
-    cleanupCache(reminderSent, 7 * 24 * 60 * 60 * 1000);
-    cleanupCache(managerEscalated, 7 * 24 * 60 * 60 * 1000);
-    cleanupCache(hrEscalated, 7 * 24 * 60 * 60 * 1000);
     await processEsignCompliance();
   }, CHECK_INTERVAL_MS);
 }

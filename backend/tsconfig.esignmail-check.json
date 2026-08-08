@@ -1,0 +1,18 @@
+{
+  // Scoped typecheck for the e-sign mail-storm fix.
+  //
+  // Only builtin-templates.ts is listed. notification-event.service.ts and
+  // esign-compliance.worker.ts both reach dispatch.service.ts, and per
+  // tsconfig.notif.json that pulls the whole app graph — 7+ minutes and an
+  // unkillable ~130MB orphan if interrupted. Those two are verified with vitest
+  // and by building the module they live in, not here.
+  //
+  // Usage: npx tsc -p tsconfig.esignmail-check.json    (completes in seconds)
+  "extends": "./tsconfig.json",
+  "compilerOptions": { "noEmit": true },
+  "include": [
+    "src/modules/communication/builtin-templates.ts",
+    "src/modules/communication/communication.types.ts",
+    "src/shared/worker-config.ts"
+  ]
+}
