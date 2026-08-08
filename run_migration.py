@@ -1,3 +1,4 @@
+import os
 #!/usr/bin/env python3
 """
 ATS Fix Database Migration Script
@@ -15,7 +16,7 @@ DB_CONFIG = {
     'port': 3306,
     'database': 'mas_hrms',
     'user': 'shivam_user',
-    'password': 'qwersdfg!@#hjk'
+    'password': os.environ["DB_PASSWORD"]
 }
 
 def execute_query(cursor, query, description=""):

@@ -48,7 +48,7 @@ function fromEnvFile(key) {
 }
 
 const DB_USER = process.env.DB_USER ?? fromEnvFile('DB_USER') ?? 'shivam_user';
-const DB_PASSWORD = process.env.DB_PASSWORD ?? fromEnvFile('DB_PASSWORD') ?? 'qwersdfg!@#hjk';
+const DB_PASSWORD = process.env.DB_PASSWORD ?? fromEnvFile('DB_PASSWORD') ?? process.env.DB_PASSWORD;
 
 const HRMS = {
   host: arg('hrms-host', process.env.HRMS_DB_HOST ?? fromEnvFile('DB_HOST') ?? '192.168.10.6'),
