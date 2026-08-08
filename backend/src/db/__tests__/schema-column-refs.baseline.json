@@ -31,19 +31,6 @@
     "employees.contract_end_date",
     "employees.probation_days"
   ],
-  "modules/reporting/executors/recruitment.executor.ts": [
-    "ats_candidate.application_status",
-    "ats_candidate.applied_date",
-    "ats_candidate.expected_joining_date",
-    "ats_candidate.job_id",
-    "ats_candidate.joining_date",
-    "ats_candidate.offer_accepted",
-    "ats_candidate.offer_ctc",
-    "ats_candidate.offer_date",
-    "ats_candidate.offer_decline_reason",
-    "ats_candidate.selected_date",
-    "job_posting.job_title"
-  ],
   "modules/reporting/identity-mapping-report.ts": [
     "report_identity_source_snapshot.matched_employee_name",
     "report_identity_source_snapshot.source_employee_name"
