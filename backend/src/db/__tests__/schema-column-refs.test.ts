@@ -114,6 +114,14 @@ describe("schema column references", () => {
    * where fixing them needs a decision about what each report means, not a rename. This
    * test's job is to stop the count going UP while that work happens, and to notice when
    * a fix lets it come down.
+   *
+   * The explicit timeout is not padding. scanRepo() walks and parses all 1,434 .ts files
+   * under src/, which measured 2.5s to 9.3s on the same machine depending on cache warmth —
+   * straddling vitest's 5s default, and this project sets no global testTimeout. So the test
+   * fails intermittently on timing rather than on a real broken reference, and its failure
+   * message still says "New broken column reference(s)", which sends whoever sees it hunting
+   * for a column bug that is not there. A guard that cries wolf is a guard people learn to
+   * ignore, which costs more than the guard is worth.
    */
   it("introduces no column reference that the database cannot satisfy", () => {
     const snap = JSON.parse(readFileSync(SNAPSHOT, "utf8")) as Snapshot;
@@ -142,7 +150,7 @@ describe("schema column references", () => {
         `Check backend/sql/schema-snapshot.json for the real column name.\n` +
         regressions.map((r) => `  - ${r}`).join("\n")
     ).toEqual([]);
-  });
+  }, 60_000);
 
   it("keeps the baseline honest — every entry is still broken and still present", () => {
     if (WRITE_BASELINE) return;
@@ -167,5 +175,6 @@ describe("schema column references", () => {
         `schema-column-refs.baseline.json so the ratchet tightens and cannot regress:\n` +
         stale.map((s) => `  - ${s}`).join("\n")
     ).toEqual([]);
-  });
+    // Same full-repo scan as the ratchet above, so the same timeout applies.
+  }, 60_000);
 });
