@@ -1,10 +1,4 @@
 {
-  "modules/ats/interview.service.ts": [
-    "ats_interview_result.created_at"
-  ],
-  "modules/ats/recruiter-hiring.service.ts": [
-    "employees.branch_display_name"
-  ],
   "modules/business-actions/business-actions.signal-sync.ts": [
     "employees.reporting_manager_user_id",
     "roster_assignment.process_id",
@@ -15,9 +9,6 @@
     "lms_learner_progress.completion_pct",
     "lms_learner_progress.last_updated"
   ],
-  "modules/employees/employee.routes.ts": [
-    "employee_tier_status.tier_name"
-  ],
   "modules/employees/employeeJoiningDocuments.service.ts": [
     "auth_user.full_name"
   ],
@@ -27,10 +18,6 @@
   "modules/payroll-masters/payrollMasters.service.ts": [
     "salary_package_master.grade_id",
     "salary_package_master.slab_id"
-  ],
-  "modules/payroll/payroll-more.routes.ts": [
-    "employees.branch_name",
-    "employees.process_name"
   ],
   "modules/payroll/payroll.routes.ts": [
     "employee_documents.pan_number",
@@ -43,6 +30,19 @@
   "modules/reporting/executors/employee.executor.ts": [
     "employees.contract_end_date",
     "employees.probation_days"
+  ],
+  "modules/reporting/executors/recruitment.executor.ts": [
+    "ats_candidate.application_status",
+    "ats_candidate.applied_date",
+    "ats_candidate.expected_joining_date",
+    "ats_candidate.job_id",
+    "ats_candidate.joining_date",
+    "ats_candidate.offer_accepted",
+    "ats_candidate.offer_ctc",
+    "ats_candidate.offer_date",
+    "ats_candidate.offer_decline_reason",
+    "ats_candidate.selected_date",
+    "job_posting.job_title"
   ],
   "modules/reporting/identity-mapping-report.ts": [
     "report_identity_source_snapshot.matched_employee_name",
