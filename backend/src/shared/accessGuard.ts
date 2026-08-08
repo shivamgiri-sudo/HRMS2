@@ -72,6 +72,41 @@ export async function hasRole(userId: string, ...roles: string[]): Promise<boole
   return userRoles.some((role) => normalizedRequested.has(role));
 }
 
+/**
+ * Demo-bypass-aware wrapper around hasRole.
+ *
+ * Same root cause as resolveDashboardScopeForRequest in shared/dashboardScope.ts, in a second
+ * shape: hasRole answers purely from MySQL (fetchUserRoles below), and a demo-bypass identity
+ * has no row in user_roles or user_assignment_scope. So every hasRole() question about a demo
+ * session answers false, no matter which demo role signed in, and routes that branch on
+ * "is this caller an admin?" send an admin down the ordinary-employee path. On
+ * GET /api/helpdesk/tickets that produced a visible 403 "No employee record" for the demo
+ * super_admin — the admin branch was skipped, then the employee branch found no employees row.
+ *
+ * The demo short-circuit is gated exactly as requireRole gates its own (isDemo AND
+ * INTERNAL_DEMO_BYPASS === "true" AND NODE_ENV !== "production"), so it cannot widen access in
+ * production even if a token ever carried isDemo. Within that gate it mirrors hasRole's own
+ * rule on line 71 — super_admin and admin are true for any requested role — and otherwise
+ * matches the session's single demo role against what was asked for.
+ *
+ * Purely additive: hasRole itself is untouched, so every existing caller and test is unaffected
+ * unless it explicitly switches to this wrapper.
+ */
+export async function hasRoleForRequest(
+  user: { id: string; role?: string; isDemo?: boolean } | undefined,
+  ...roles: string[]
+): Promise<boolean> {
+  if (!user?.id) return false;
+
+  if (user.isDemo === true && process.env.INTERNAL_DEMO_BYPASS === "true" && process.env.NODE_ENV !== "production") {
+    const demoRole = String(user.role ?? "employee").trim().toLowerCase();
+    if (demoRole === "super_admin" || demoRole === "admin") return true;
+    return roles.map((role) => String(role).trim().toLowerCase()).includes(demoRole);
+  }
+
+  return hasRole(user.id, ...roles);
+}
+
 /** All active role keys for a user, from user_roles plus scoped assignments. */
 async function fetchUserRoles(userId: string): Promise<string[]> {
   const [rows] = await db.execute<RowDataPacket[]>(

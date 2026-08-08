@@ -54,8 +54,11 @@ describe("the timeline route exists", () => {
 
 describe("it is no more readable than the grievance itself", () => {
   it("applies the same admin/hr check as the detail route", () => {
-    expect(timelineRoute).toContain('hasRole(userId, "admin", "hr")');
-    expect(detailRoute).toContain('hasRole(userId, "admin", "hr")');
+    // hasRole -> hasRoleForRequest: the demo-bypass-aware wrapper in shared/accessGuard.ts.
+    // The assertion is unchanged in substance - both routes must run the identical admin/hr
+    // check - only the name of the call they both make has moved.
+    expect(timelineRoute).toContain('hasRoleForRequest(req.authUser, "admin", "hr")');
+    expect(detailRoute).toContain('hasRoleForRequest(req.authUser, "admin", "hr")');
   });
 
   it("falls back to the same ownership check for everyone else", () => {

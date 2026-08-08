@@ -680,22 +680,31 @@ export const helpdeskService = {
       params.push(filters.branch_id);
     }
 
+    // GROUP BY au.id collapses an agent who holds several helpdesk roles into one dropdown entry.
+    // Every other selected column reaches here through a JOIN, so none is functionally dependent
+    // on au.id and only_full_group_by rejected the whole query with a 500 - the assign dropdown
+    // could not load at all. MIN() keeps one row per agent, as intended, and makes the value
+    // chosen deterministic instead of whichever row the server happened to read first.
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT au.id, au.email,
-              COALESCE(NULLIF(e.full_name, ''), TRIM(CONCAT(COALESCE(e.first_name,''),' ',COALESCE(e.last_name,''))), au.email) AS full_name,
-              e.employee_code,
-              e.branch_id,
-              b.branch_name,
-              ur.role_key
+              -- NULLIF around the CONCAT: an agent with no employees row produces
+              -- TRIM(CONCAT('',' ','')) = '', which is not NULL, so COALESCE stopped there and the
+              -- au.email fallback behind it could never be reached. Those agents came back with a
+              -- blank name in the assign dropdown - unnoticed only because this query used to 500.
+              MIN(COALESCE(NULLIF(e.full_name, ''), NULLIF(TRIM(CONCAT(COALESCE(e.first_name,''),' ',COALESCE(e.last_name,''))), ''), au.email)) AS full_name,
+              MIN(e.employee_code) AS employee_code,
+              MIN(e.branch_id) AS branch_id,
+              MIN(b.branch_name) AS branch_name,
+              MIN(ur.role_key) AS role_key
          FROM auth_user au
          JOIN user_roles ur ON ur.user_id = au.id
          LEFT JOIN employees e ON e.user_id = au.id AND e.active_status = 1
          LEFT JOIN branch_master b ON b.id = e.branch_id
         WHERE ${conds.join(" AND ")}
-        GROUP BY au.id
+        GROUP BY au.id, au.email
         ORDER BY
-          CASE WHEN e.branch_id = ? THEN 0 ELSE 1 END,
-          COALESCE(NULLIF(e.full_name,''), au.email)
+          CASE WHEN MIN(e.branch_id) = ? THEN 0 ELSE 1 END,
+          MIN(COALESCE(NULLIF(e.full_name,''), au.email))
         LIMIT 100`,
       [...params, filters.branch_id ?? null]
     );

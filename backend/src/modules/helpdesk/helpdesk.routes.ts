@@ -3,7 +3,7 @@ import type { Response } from "express";
 import { requireAuth } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
-import { getEmployeeForUser, hasRole } from "../../shared/accessGuard.js";
+import { getEmployeeForUser, hasRoleForRequest } from "../../shared/accessGuard.js";
 import { helpdeskService, writeSensitiveAuditLog } from "./helpdesk.service.js";
 import {
   getHelpdeskDashboard,
@@ -75,7 +75,7 @@ router.get("/it-analysis", requireRole("admin", "hr", "super_admin", "it", "bran
 
 router.get("/tickets", h(async (req: AuthenticatedRequest, res: Response) => {
   const userId = req.authUser!.id;
-  if (await hasRole(userId, ...HELPDESK_ADMIN_ROLES)) {
+  if (await hasRoleForRequest(req.authUser, ...HELPDESK_ADMIN_ROLES)) {
     return res.json({ data: await helpdeskService.listTickets(req.query as any) });
   }
   const emp = await getEmployeeForUser(userId);
@@ -87,7 +87,7 @@ router.post("/tickets", h(async (req: AuthenticatedRequest, res: Response) => {
   const userId = req.authUser!.id;
   let employeeId: string;
 
-  if (await hasRole(userId, ...HELPDESK_ADMIN_ROLES)) {
+  if (await hasRoleForRequest(req.authUser, ...HELPDESK_ADMIN_ROLES)) {
     employeeId = req.body.employee_id;
     if (!employeeId) return res.status(400).json({ error: "employee_id required for admin/IT ticket creation on behalf of employee" });
   } else {
@@ -105,7 +105,7 @@ router.get("/tickets/:id", h(async (req: AuthenticatedRequest, res: Response) =>
   const ticket = await helpdeskService.getTicket(req.params.id) as (Record<string, unknown> & { employee_id: string; comments?: Record<string, unknown>[] }) | null;
   if (!ticket) return res.status(404).json({ error: "Not found" });
 
-  const isAdminHr = await hasRole(userId, ...HELPDESK_ADMIN_ROLES);
+  const isAdminHr = await hasRoleForRequest(req.authUser, ...HELPDESK_ADMIN_ROLES);
   if (!isAdminHr) {
     const emp = await getEmployeeForUser(userId);
     if (!emp || emp.id !== ticket.employee_id) {
@@ -171,7 +171,7 @@ router.post("/tickets/:id/reopen", h(async (req: AuthenticatedRequest, res: Resp
   const ticket = await helpdeskService.getTicket(req.params.id) as any;
   if (!ticket) return res.status(404).json({ error: "Not found" });
 
-  const isAdminHr = await hasRole(userId, ...HELPDESK_ADMIN_ROLES);
+  const isAdminHr = await hasRoleForRequest(req.authUser, ...HELPDESK_ADMIN_ROLES);
   if (!isAdminHr) {
     const emp = await getEmployeeForUser(userId);
     if (!emp || emp.id !== ticket.employee_id) {
@@ -212,13 +212,13 @@ router.post("/tickets/:id/comments", h(async (req: AuthenticatedRequest, res: Re
   if (!text) return res.status(400).json({ error: "text required" });
 
   const wantInternal = !!is_internal;
-  if (wantInternal && !(await hasRole(userId, ...HELPDESK_ADMIN_ROLES))) {
+  if (wantInternal && !(await hasRoleForRequest(req.authUser, ...HELPDESK_ADMIN_ROLES))) {
     return res.status(403).json({ success: false, message: "Only admin/hr/IT can post internal comments" });
   }
 
   const ticket = await helpdeskService.getTicket(req.params.id) as any;
   if (!ticket) return res.status(404).json({ error: "Not found" });
-  if (!(await hasRole(userId, ...HELPDESK_ADMIN_ROLES))) {
+  if (!(await hasRoleForRequest(req.authUser, ...HELPDESK_ADMIN_ROLES))) {
     const emp = await getEmployeeForUser(userId);
     if (!emp || emp.id !== ticket.employee_id) {
       return res.status(403).json({ success: false, message: "Forbidden" });
@@ -243,7 +243,7 @@ router.get("/grievances/dashboard", requireRole("admin", "hr", "super_admin"), h
 
 router.get("/grievances", h(async (req: AuthenticatedRequest, res: Response) => {
   const userId = req.authUser!.id;
-  if (await hasRole(userId, "admin", "hr")) {
+  if (await hasRoleForRequest(req.authUser, "admin", "hr")) {
     return res.json({ data: await helpdeskService.listGrievances(req.query as any) });
   }
   const emp = await getEmployeeForUser(userId);
@@ -267,7 +267,7 @@ router.post("/grievances", h(async (req: AuthenticatedRequest, res: Response) =>
 // Grievance detail — every privileged access is audit logged
 router.get("/grievances/:id", h(async (req: AuthenticatedRequest, res: Response) => {
   const userId = req.authUser!.id;
-  const isAdminHr = await hasRole(userId, "admin", "hr");
+  const isAdminHr = await hasRoleForRequest(req.authUser, "admin", "hr");
 
   if (!isAdminHr) {
     const emp = await getEmployeeForUser(userId);
@@ -316,7 +316,7 @@ router.get("/grievances/:id", h(async (req: AuthenticatedRequest, res: Response)
 // of their own case.
 router.get("/grievances/:id/timeline", h(async (req: AuthenticatedRequest, res: Response) => {
   const userId = req.authUser!.id;
-  const isAdminHr = await hasRole(userId, "admin", "hr");
+  const isAdminHr = await hasRoleForRequest(req.authUser, "admin", "hr");
 
   if (!isAdminHr) {
     const emp = await getEmployeeForUser(userId);
