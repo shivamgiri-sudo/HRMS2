@@ -18,13 +18,29 @@ router.post("/auth/verify-otp",  h(c.verifyOtp));
 
 // ── Internal ops (internal staff JWT) ── MUST be before requireClientAuth middleware ──
 router.use("/internal", requireAuth);
-router.post("/internal/glide-paths",          h(c.setGlideCommitment));
-router.post("/internal/action-plans",         h(c.createActionPlan));
-router.put ("/internal/action-plans/:id",     h(c.updateActionPlan));
-router.post("/internal/governance",           h(c.updateGovernance));
-router.post("/internal/commentary",           h(c.createCommentary));
-router.get ("/internal/client-users",         h(c.listClientUsers));
-router.post("/internal/client-users",         h(c.createClientUser));
+// These seven carried `requireAuth` (from the router.use above) but no role guard, while
+// every other /internal route below them is role-gated. That gap meant ANY authenticated
+// internal user — any employee with a login — could call them; the controllers do not
+// authorize either (createClientUser validates the body and INSERTs straight into
+// client_user with a caller-supplied client_id and process_ids). Creating a client portal
+// account, or listing the existing ones, is not something a general employee may do.
+//
+// Roles follow this file's own two tiers rather than a new invention: content writes match
+// the KPI-assignment endpoints (admin/hr/finance_head/operations_manager/ceo), while
+// account provisioning matches the administrative ones (admin/hr), as used by
+// /internal/snapshots/* and DELETE /internal/kpi-assignments/:id.
+//
+// No frontend calls any of the seven — the portal UI only uses the already-guarded
+// kpi-* and snapshots/* endpoints — so this closes the hole without changing a live flow.
+const PORTAL_CONTENT_ROLES = ["admin", "hr", "finance_head", "operations_manager", "ceo"] as const;
+
+router.post("/internal/glide-paths",          requireRole(...PORTAL_CONTENT_ROLES), h(c.setGlideCommitment));
+router.post("/internal/action-plans",         requireRole(...PORTAL_CONTENT_ROLES), h(c.createActionPlan));
+router.put ("/internal/action-plans/:id",     requireRole(...PORTAL_CONTENT_ROLES), h(c.updateActionPlan));
+router.post("/internal/governance",           requireRole(...PORTAL_CONTENT_ROLES), h(c.updateGovernance));
+router.post("/internal/commentary",           requireRole(...PORTAL_CONTENT_ROLES), h(c.createCommentary));
+router.get ("/internal/client-users",         requireRole("admin", "hr"), h(c.listClientUsers));
+router.post("/internal/client-users",         requireRole("admin", "hr"), h(c.createClientUser));
 
 // ── Internal: Snapshot approval workflow ─────────────────────────────────────
 router.post(
