@@ -71,6 +71,14 @@ interface BgvReport {
   locked_at: string | null;
 }
 
+interface DigilockerStatus {
+  session_status: string;
+  provider_key: string | null;
+  created_at: string;
+  updated_at: string;
+  documents_received: string[];
+}
+
 interface EmployeeBgvData {
   employeeId: string;
   candidateId: string | null;
@@ -78,6 +86,7 @@ interface EmployeeBgvData {
   status: OverallStatus;
   message?: string;
   score: number;
+  completion_rate: number;
   overall_status: OverallStatus;
   checks: BgvCheck[];
   missing_mandatory_checks: string[];
@@ -85,6 +94,7 @@ interface EmployeeBgvData {
   payroll_activation_ready: boolean;
   consent: { consent_status: string; granted_at: string } | null;
   report: BgvReport | null;
+  digilocker: DigilockerStatus | null;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -345,6 +355,16 @@ export default function NativeEmployeeBGVStatus() {
                 <p className="text-xs text-slate-500 mb-1">Employee</p>
                 <p className="text-base font-bold text-slate-900">{data.employeeName ?? "—"}</p>
                 <p className="text-xs text-slate-500 mt-0.5">ID: {data.employeeId}</p>
+                {/* Completion rate */}
+                <div className="mt-2 flex items-center gap-2">
+                  <div className="flex-1 bg-slate-100 rounded-full h-1.5 max-w-[140px]">
+                    <div
+                      className="h-1.5 rounded-full bg-[#073f78] transition-all"
+                      style={{ width: `${data.completion_rate ?? 0}%` }}
+                    />
+                  </div>
+                  <span className="text-[10px] text-slate-500 font-medium">{data.completion_rate ?? 0}% complete</span>
+                </div>
               </div>
               <div className={`flex items-center gap-2 px-4 py-2.5 rounded-xl border font-semibold text-sm ${verdictCfg.color}`}>
                 {verdictCfg.icon}
@@ -369,6 +389,20 @@ export default function NativeEmployeeBGVStatus() {
                     : <XCircle className="size-3.5 text-slate-300" />}
                   Consent: {data.consent?.consent_status ?? "not given"}
                 </span>
+                {/* DigiLocker status */}
+                <span className="flex items-center gap-1.5 mt-1">
+                  {data.digilocker?.session_status === "completed"
+                    ? <CheckCircle2 className="size-3.5 text-emerald-500" />
+                    : data.digilocker?.session_status
+                      ? <Clock className="size-3.5 text-blue-400" />
+                      : <XCircle className="size-3.5 text-slate-300" />}
+                  DigiLocker: {data.digilocker
+                    ? <span className="capitalize">{data.digilocker.session_status.replace(/_/g, " ")}</span>
+                    : "not started"}
+                  {data.digilocker?.documents_received?.length
+                    ? <span className="text-slate-400">({data.digilocker.documents_received.length} doc{data.digilocker.documents_received.length > 1 ? "s" : ""})</span>
+                    : null}
+                </span>
               </div>
             </div>
 
@@ -385,6 +419,59 @@ export default function NativeEmployeeBGVStatus() {
 
             {/* HR-issued report */}
             {data.report && <ReportSection report={data.report} />}
+
+            {/* DigiLocker status card */}
+            {data.digilocker && (
+              <div className="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+                <div className="px-5 py-3 border-b bg-slate-50 flex items-center gap-2">
+                  <Fingerprint className="size-4 text-[#073f78]" />
+                  <h2 className="text-sm font-semibold text-slate-700">DigiLocker Verification</h2>
+                  <span className={`ml-auto inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold ${
+                    data.digilocker.session_status === "completed"
+                      ? "bg-emerald-100 text-emerald-700"
+                      : data.digilocker.session_status === "initiated" || data.digilocker.session_status === "pending"
+                        ? "bg-blue-100 text-blue-700"
+                        : "bg-slate-100 text-slate-600"
+                  }`}>
+                    {data.digilocker.session_status === "completed"
+                      ? <CheckCircle2 className="size-3" />
+                      : <Clock className="size-3" />}
+                    {data.digilocker.session_status.replace(/_/g, " ").toUpperCase()}
+                  </span>
+                </div>
+                <div className="p-5 grid grid-cols-2 sm:grid-cols-3 gap-4 text-xs">
+                  <div>
+                    <p className="text-slate-400 mb-0.5">Provider</p>
+                    <p className="font-medium text-slate-700">{data.digilocker.provider_key ?? "DigiLocker"}</p>
+                  </div>
+                  <div>
+                    <p className="text-slate-400 mb-0.5">Session started</p>
+                    <p className="font-medium text-slate-700">{fmtDate(data.digilocker.created_at)}</p>
+                  </div>
+                  <div>
+                    <p className="text-slate-400 mb-0.5">Last updated</p>
+                    <p className="font-medium text-slate-700">{fmtDate(data.digilocker.updated_at)}</p>
+                  </div>
+                  {data.digilocker.documents_received?.length > 0 && (
+                    <div className="col-span-full">
+                      <p className="text-slate-400 mb-1.5">Documents received ({data.digilocker.documents_received.length})</p>
+                      <div className="flex flex-wrap gap-1.5">
+                        {data.digilocker.documents_received.map((doc, i) => (
+                          <span key={i} className="px-2 py-1 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-lg text-[10px] font-medium capitalize">
+                            {doc.replace(/_/g, " ")}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {data.digilocker.session_status !== "completed" && !data.digilocker.documents_received?.length && (
+                    <div className="col-span-full text-slate-400 italic">
+                      No documents received yet — session {data.digilocker.session_status === "initiated" ? "in progress" : "not completed"}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
 
             {/* Individual check cards */}
             {data.checks?.length > 0 && (

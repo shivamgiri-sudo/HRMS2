@@ -50,6 +50,14 @@ export interface BgvReport {
   locked_at: string | null;
 }
 
+export interface DigilockerStatus {
+  session_status: string;
+  provider_key: string | null;
+  created_at: string;
+  updated_at: string;
+  documents_received: string[];
+}
+
 export interface BgvConsent {
   consent_status: string;
   granted_at: string;
@@ -64,6 +72,7 @@ export interface EmployeeBgvData {
   status: OverallStatus;
   message?: string;
   score: number;
+  completion_rate: number;
   overall_status: OverallStatus;
   checks: BgvCheck[];
   missing_mandatory_checks: string[];
@@ -71,6 +80,7 @@ export interface EmployeeBgvData {
   payroll_activation_ready: boolean;
   consent: BgvConsent | null;
   report: BgvReport | null;
+  digilocker: DigilockerStatus | null;
 }
 
 /**
@@ -108,6 +118,7 @@ export async function getEmployeeBgvStatus(employeeId: string): Promise<Employee
       status: "no_bgv_record",
       message: "No candidate record linked to this employee. BGV data is unavailable.",
       score: 0,
+      completion_rate: 0,
       overall_status: "no_bgv_record",
       checks: [],
       missing_mandatory_checks: MANDATORY_CHECKS,
@@ -115,6 +126,7 @@ export async function getEmployeeBgvStatus(employeeId: string): Promise<Employee
       payroll_activation_ready: false,
       consent: null,
       report: null,
+      digilocker: null,
     };
   }
 
@@ -193,6 +205,33 @@ export async function getEmployeeBgvStatus(employeeId: string): Promise<Employee
       }
     : null;
 
+  // Get DigiLocker session status
+  const [digiRows] = await db.execute<RowDataPacket[]>(
+    `SELECT session_status, provider_key, created_at, updated_at, returned_documents_json
+     FROM candidate_digilocker_session
+     WHERE candidate_id = ?
+     ORDER BY created_at DESC
+     LIMIT 1`,
+    [candidateId]
+  );
+  const digiRow = digiRows[0];
+  const digilocker: DigilockerStatus | null = digiRow
+    ? {
+        session_status: digiRow.session_status,
+        provider_key: digiRow.provider_key,
+        created_at: digiRow.created_at,
+        updated_at: digiRow.updated_at,
+        documents_received: (() => {
+          try {
+            const docs = digiRow.returned_documents_json
+              ? JSON.parse(digiRow.returned_documents_json)
+              : [];
+            return Array.isArray(docs) ? docs.map((d: { type?: string; docType?: string }) => d.type ?? d.docType ?? "doc") : [];
+          } catch { return []; }
+        })(),
+      }
+    : null;
+
   // Calculate score from checks (or use stored score if available)
   let score = reportRow?.bgv_score ?? 0;
   if (!score && checks.length > 0) {
@@ -228,12 +267,20 @@ export async function getEmployeeBgvStatus(employeeId: string): Promise<Employee
   const employeeCreationReady = missingMandatory.length === 0 && score >= 40;
   const payrollActivationReady = missingMandatory.length === 0 && score >= 60 && overallStatus !== "hold";
 
+  // Completion rate = % of total weighted checks that are verified/waived
+  const totalWeight = Object.values(SCORE_WEIGHTS).reduce((a, b) => a + b, 0);
+  const completedWeight = checks
+    .filter(c => c.status === "verified" || c.status === "waived")
+    .reduce((acc, c) => acc + (SCORE_WEIGHTS[normalizeCheckType(c.check_type)] ?? 0), 0);
+  const completionRate = totalWeight > 0 ? Math.round((completedWeight / totalWeight) * 100) : 0;
+
   return {
     employeeId: employee.employee_id,
     candidateId,
     employeeName: employee.employee_name?.trim() || "Unknown",
     status: overallStatus,
     score,
+    completion_rate: completionRate,
     overall_status: overallStatus,
     checks,
     missing_mandatory_checks: missingMandatory,
@@ -241,6 +288,7 @@ export async function getEmployeeBgvStatus(employeeId: string): Promise<Employee
     payroll_activation_ready: payrollActivationReady,
     consent,
     report,
+    digilocker,
   };
 }
 
