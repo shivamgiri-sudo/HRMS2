@@ -92,7 +92,7 @@ export function AttendanceBreakdownPanel({ data }: { data: ReferenceDashboardDat
           <ReferenceListRow icon={Clock3} title="Late Marks" subtitle="Flagged late on arrival" value={metricDetail(m, "att", "late")} tone="amber" />
           <ReferenceListRow icon={TriangleAlert} title="Missing Punch" subtitle="Needs punch correction" value={metricDetail(m, "att", "missedPunch")} tone="red" href="/wfm/attendance-exceptions" />
           <ReferenceListRow icon={Users} title="Absent" subtitle="No attendance recorded" value={metricDetail(m, "att", "absent")} tone="red" />
-          <ReferenceListRow icon={CalendarClock} title="On Approved Leave" subtitle="Excluded from the attendance rate" value={metricDetail(m, "att", "onLeave")} tone="blue" href="/leave" />
+          <ReferenceListRow icon={CalendarClock} title="On Approved Leave" subtitle="Excluded from the attendance rate" value={metricDetail(m, "att", "onLeave")} tone="blue" href="/leaves" />
           {/*
             Distinguishes "cannot register a punch" from "did not attend". 352 of 1,344
             active employees have produced no biometric minute in 30 days, so a quarter of
@@ -496,11 +496,11 @@ export function RecruiterFunnelPanel({ data }: { data: ReferenceDashboardData })
         <p className="px-4 py-8 text-center text-sm text-[#a0aec0]">{reason}</p>
       ) : (
         <div className="divide-y divide-[#edf1f6]">
-          <ReferenceListRow icon={UserSearch} title="Leads Worked" subtitle="Activity rows in the last 30 days" value={metricDetail(m, "recruiterActivity", "leads")} tone="blue" href="/ats/recruiter-activity" />
-          <ReferenceListRow icon={Users} title="Contacted" subtitle="Recruiter reached the candidate" value={metricDetail(m, "recruiterActivity", "contacted")} tone="blue" href="/ats/recruiter-activity" />
+          <ReferenceListRow icon={UserSearch} title="Leads Worked" subtitle="Activity rows in the last 30 days" value={metricDetail(m, "recruiterActivity", "leads")} tone="blue" href="/ats/recruiter/hiring-dashboard" />
+          <ReferenceListRow icon={Users} title="Contacted" subtitle="Recruiter reached the candidate" value={metricDetail(m, "recruiterActivity", "contacted")} tone="blue" href="/ats/recruiter/hiring-dashboard" />
           <ReferenceListRow icon={CalendarClock} title="Walk-ins" subtitle="Candidate attended in person" value={metricDetail(m, "recruiterActivity", "walkins")} tone="blue" href="/ats/walkin-queue" />
-          <ReferenceListRow icon={FileCheck2} title="HR Screened" subtitle="HR interview outcome recorded" value={metricDetail(m, "recruiterActivity", "hrScreened")} tone="amber" href="/ats/interviews" />
-          <ReferenceListRow icon={UserCheck} title="Selected" subtitle="Final selection made" value={metricDetail(m, "recruiterActivity", "selected")} tone="green" href="/ats/candidates" />
+          <ReferenceListRow icon={FileCheck2} title="HR Screened" subtitle="HR interview outcome recorded" value={metricDetail(m, "recruiterActivity", "hrScreened")} tone="amber" href="/ats/recruiter/hiring-dashboard" />
+          <ReferenceListRow icon={UserCheck} title="Selected" subtitle="Final selection made" value={metricDetail(m, "recruiterActivity", "selected")} tone="green" href="/ats/candidate-master" />
           <ReferenceListRow
             icon={TrendingUp}
             title="Joined"
@@ -542,12 +542,12 @@ export function TrainingProgressPanel({ data }: { data: ReferenceDashboardData }
         <p className="px-4 py-8 text-center text-sm text-[#a0aec0]">{reason}</p>
       ) : (
         <div className="divide-y divide-[#edf1f6]">
-          <ReferenceListRow icon={GraduationCap} title="Completed" subtitle="Course finished" value={metricDetail(m, "training", "completed")} tone="green" href="/lms/management" />
-          <ReferenceListRow icon={BookOpen} title="In Progress" subtitle="Started but not finished" value={metricDetail(m, "training", "inProgress")} tone="amber" href="/lms/management" />
-          <ReferenceListRow icon={TriangleAlert} title="Not Started" subtitle="Assigned but never opened" value={metricDetail(m, "training", "notStarted")} tone="red" href="/lms/management" />
-          <ReferenceListRow icon={BookOpen} title="Courses Assigned" subtitle="Distinct courses in scope" value={metricDetail(m, "training", "courses")} tone="blue" href="/lms/management" />
+          <ReferenceListRow icon={GraduationCap} title="Completed" subtitle="Course finished" value={metricDetail(m, "training", "completed")} tone="green" href="/lms/progress-dashboard" />
+          <ReferenceListRow icon={BookOpen} title="In Progress" subtitle="Started but not finished" value={metricDetail(m, "training", "inProgress")} tone="amber" href="/lms/progress-dashboard" />
+          <ReferenceListRow icon={TriangleAlert} title="Not Started" subtitle="Assigned but never opened" value={metricDetail(m, "training", "notStarted")} tone="red" href="/lms/progress-dashboard" />
+          <ReferenceListRow icon={BookOpen} title="Courses Assigned" subtitle="Distinct courses in scope" value={metricDetail(m, "training", "courses")} tone="blue" href="/lms/progress-dashboard" />
           <ReferenceListRow icon={TrendingUp} title="Average Completion" subtitle="Mean progress across assignments" value={metricDetail(m, "training", "avgCompletionPct")} tone="blue" />
-          <ReferenceListRow icon={BookOpen} title="Total Assignments" subtitle="Denominator behind the completion rate" value={metricDetail(m, "training", "assignments")} tone="blue" href="/lms/management" />
+          <ReferenceListRow icon={BookOpen} title="Total Assignments" subtitle="Denominator behind the completion rate" value={metricDetail(m, "training", "assignments")} tone="blue" href="/lms/progress-dashboard" />
         </div>
       )}
     </ReferencePanel>
@@ -588,11 +588,11 @@ export function LeaveApprovalPanel({ data }: { data: ReferenceDashboardData }) {
         <p className="px-4 py-8 text-center text-sm text-[#a0aec0]">{reason}</p>
       ) : (
         <div className="divide-y divide-[#edf1f6]">
-          <ReferenceListRow icon={CalendarClock} title="Pending Approval" subtitle="Awaiting an approver decision" value={pending} tone="amber" href="/leave" />
-          <ReferenceListRow icon={TriangleAlert} title="Start Date Already Passed" subtitle="Cannot be approved in time" value={metricDetail(m, "leaveApprovals", "pendingAlreadyStarted")} tone="red" href="/leave" />
-          <ReferenceListRow icon={UserCheck} title="Needs Branch Head" subtitle="Escalated approval required" value={metricDetail(m, "leaveApprovals", "needsBranchHead")} tone="amber" href="/leave" />
-          <ReferenceListRow icon={UserCheck} title="Approved" subtitle="Decision recorded" value={metricDetail(m, "leaveApprovals", "approved")} tone="green" href="/leave" />
-          <ReferenceListRow icon={Users} title="Rejected" subtitle="Declined by an approver" value={metricDetail(m, "leaveApprovals", "rejected")} tone="blue" href="/leave" />
+          <ReferenceListRow icon={CalendarClock} title="Pending Approval" subtitle="Awaiting an approver decision" value={pending} tone="amber" href="/leaves" />
+          <ReferenceListRow icon={TriangleAlert} title="Start Date Already Passed" subtitle="Cannot be approved in time" value={metricDetail(m, "leaveApprovals", "pendingAlreadyStarted")} tone="red" href="/leaves" />
+          <ReferenceListRow icon={UserCheck} title="Needs Branch Head" subtitle="Escalated approval required" value={metricDetail(m, "leaveApprovals", "needsBranchHead")} tone="amber" href="/leaves" />
+          <ReferenceListRow icon={UserCheck} title="Approved" subtitle="Decision recorded" value={metricDetail(m, "leaveApprovals", "approved")} tone="green" href="/leaves" />
+          <ReferenceListRow icon={Users} title="Rejected" subtitle="Declined by an approver" value={metricDetail(m, "leaveApprovals", "rejected")} tone="blue" href="/leaves" />
         </div>
       )}
     </ReferencePanel>
