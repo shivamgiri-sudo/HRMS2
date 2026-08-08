@@ -110,7 +110,7 @@ router.get("/employee-salaries", requireRole("admin", "hr", "super_admin", "fina
 
   // Fetch all components for these structures in one query
   const structureIds = [...new Set((rows as any[]).map(r => r.structure_id).filter(Boolean))];
-  let componentMap: Record<string, Array<{component_code: string; component_name: string; calc_type: string; value: number}>> = {};
+  const componentMap: Record<string, Array<{component_code: string; component_name: string; calc_type: string; value: number}>> = {};
 
   if (structureIds.length > 0) {
     const placeholders = structureIds.map(() => '?').join(',');
