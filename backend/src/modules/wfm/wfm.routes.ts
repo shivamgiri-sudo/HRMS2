@@ -1177,6 +1177,32 @@ wfmRouter.get(
       }
     }
 
+    // cosec_punch_sync's last write was 2026-06-18 — it is the legacy mirror fed by the
+    // manual-only migrate-ncosec script, and cosec-sync.service.ts never writes it (grep
+    // it: not one reference). Live COSEC punches now land in biometric_attendance_log,
+    // which is current. So for every date after that the query above returns zero rows and
+    // the drawer renders an empty punch timeline under a summary that is showing real
+    // minutes — it reads as "this employee never punched" when they did.
+    //
+    // cosecAgg immediately above already solves this for the summary: when the frozen
+    // cosec_daily_agg misses, it falls back to a live NCOSEC read. Reuse that result rather
+    // than adding a query or leaving the list blank. Only fires when the mirror gave
+    // nothing, so historical dates keep their full per-punch detail untouched.
+    //
+    // These two are derived bounds, not per-punch events, so they carry derived: true —
+    // the client must not present them as a complete punch trail.
+    let rawPunches = punchRows as any[];
+    if (rawPunches.length === 0 && cosecAgg && (cosecAgg.first_punch_in || cosecAgg.last_punch_out)) {
+      rawPunches = [
+        cosecAgg.first_punch_in
+          ? { punch_time: cosecAgg.first_punch_in, io_type: 1, io_label: "In", device_id: null, derived: true }
+          : null,
+        cosecAgg.last_punch_out
+          ? { punch_time: cosecAgg.last_punch_out, io_type: 2, io_label: "Out", device_id: null, derived: true }
+          : null,
+      ].filter(Boolean) as any[];
+    }
+
     // APR / dialler source. Previously the drawer had no APR data at all beyond
     // attendance_daily_record.dialler_minutes, so Login/Logout rendered blank for
     // dialler employees. Read the real apr rows for this date.
@@ -1229,7 +1255,7 @@ wfmRouter.get(
       data: {
         attendance_record: (attRows as any[])[0] ?? null,
         cosec_daily_agg: cosecAgg,
-        raw_punches: punchRows as any[],
+        raw_punches: rawPunches,
         apr_record: aprRecord,
       },
     });
