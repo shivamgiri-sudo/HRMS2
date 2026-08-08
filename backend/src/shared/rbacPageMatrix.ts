@@ -538,6 +538,19 @@ export function uniquePageCodes(pageCodes: readonly string[]): string[] {
  */
 export const LIVE_IMPORTED_PAGE_CODES: Readonly<Record<string, readonly string[]>> = {
   admin: [
+    // Re-imported 2026-08-08 — live grants the matrix had fallen behind on.
+    "ADVANCED_REPORTS",
+    "FINANCE_BRANCH_BUDGET",
+    "FINANCE_GRN",
+    "FINANCE_PROCESS_PNL",
+    "FINANCE_VENDOR_PAYMENTS",
+    "PAYROLL_AUDIT_TRAIL",
+    "PAYROLL_BULK_OUTPUTS",
+    "PAYROLL_SIGN_OFF",
+    "PAYROLL_STATUTORY_FILING",
+    "PAYROLL_VARIANCE",
+    "QA_EVALUATION",
+    "WFM_ATTENDANCE_EXCEPTIONS",
     "ATTENDANCE_LOOKUP",
     "CONFIGURATION_CENTER",
     "EMAIL_COMMAND_CENTRE",
@@ -559,6 +572,18 @@ export const LIVE_IMPORTED_PAGE_CODES: Readonly<Record<string, readonly string[]
     "MODULE_LAUNCHER",
   ],
   branch_head: [
+    // Re-imported 2026-08-08 — live grants the matrix had fallen behind on.
+    "ATS_CANDIDATE_MASTER",
+    "ATS_DASHBOARD",
+    "ATS_OFFER",
+    "ATS_OFFER_APPROVALS",
+    "ATS_RECRUITER_QUEUE",
+    "EMPLOYEE_MANAGEMENT",
+    "FINANCE_BRANCH_BUDGET",
+    "FINANCE_GRN",
+    "KPI_MASTER",
+    "ORG_CHART",
+    "PAYROLL_PROCESS_READINESS",
     "ATS_BRANCH_HEAD_APPROVAL",
     "ATS_COMMAND_CENTER",
     "ATS_INTERVIEW_APPROVALS",
@@ -609,6 +634,8 @@ export const LIVE_IMPORTED_PAGE_CODES: Readonly<Record<string, readonly string[]
     "WEEK_OFF_PREFERENCES",
   ],
   employee: [
+    // Re-imported 2026-08-08 — live grants the matrix had fallen behind on.
+    "GOALS",
     "ENGAGEMENT_COMMAND_CENTER",
     "HELPDESK_KB",
     "PAYROLL_REIMBURSEMENTS",
@@ -616,17 +643,48 @@ export const LIVE_IMPORTED_PAGE_CODES: Readonly<Record<string, readonly string[]
     "PEOPLE_EXPERIENCE_COMMAND_CENTER",
   ],
   finance: [
+    // Re-imported 2026-08-08 — live grants the matrix had fallen behind on.
+    "FINANCE_BILLABILITY_SEAT_COST",
+    "FINANCE_BRANCH_BUDGET",
+    "FINANCE_GRN",
+    "FINANCE_PROCESS_PNL",
+    "FINANCE_VENDOR_PAYMENTS",
+    "PAYROLL_AUDIT_TRAIL",
+    "PAYROLL_COST_SUMMARY",
+    "PAYROLL_SIGN_OFF",
+    "PAYROLL_STATUTORY_FILING",
+    "PAYROLL_VARIANCE",
     "PAYROLL_BRANCH_READINESS",
     "PAYROLL_CHEQUE_VALIDATION",
     "PAYROLL_HO_QUEUES",
     "PAYROLL_REIMBURSEMENTS",
   ],
   finance_head: [
+    // Re-imported 2026-08-08 — live grants the matrix had fallen behind on.
+    "COMPLIANCE_DASHBOARD",
+    "FINANCE_BRANCH_BUDGET",
+    "FINANCE_BUDGET_CONSOLIDATION",
+    "FINANCE_GRN",
+    "FINANCE_HEAD_DASHBOARD",
+    "FINANCE_PNL_LOBS",
+    "FINANCE_PNL_PERIOD_CLOSE",
+    "FINANCE_PROCESS_PNL",
+    "FINANCE_VENDOR_PAYMENTS",
+    "VENDOR_MANAGEMENT",
     "PAYROLL_CHEQUE_VALIDATION",
     "PAYROLL_DASHBOARD",
     "PAYROLL_RUNNING_BREAKDOWN",
   ],
   hr: [
+    // Re-imported 2026-08-08 — live grants the matrix had fallen behind on.
+    "ATS_RECRUITER_PORTAL",
+    "ATS_RECRUITER_QUEUE",
+    "ATS_RECRUITER_WORKSPACE",
+    "ATS_WALKIN_QUEUE",
+    "EMPLOYEES",
+    "HELPDESK",
+    "RECRUITER_DASHBOARD",
+    "WFM_ATTENDANCE_DASHBOARD",
     "ATS_BRANCH_HEAD_APPROVAL",
     "ATS_INTERVIEW_QUEUE",
     "ATS_INTERVIEW_SUBMIT",
@@ -665,6 +723,8 @@ export const LIVE_IMPORTED_PAGE_CODES: Readonly<Record<string, readonly string[]
     "JOBS",
   ],
   payroll: [
+    // Re-imported 2026-08-08 — live grants the matrix had fallen behind on.
+    "BULK_UPLOAD",
     "ATTENDANCE_LOOKUP",
     "PAYROLL_ATTENDANCE_CONTROL_TOWER",
     "PAYROLL_ATTENDANCE_OVERRIDES",
@@ -697,6 +757,17 @@ export const LIVE_IMPORTED_PAGE_CODES: Readonly<Record<string, readonly string[]
     "PAYROLL_RUNNING_BREAKDOWN",
   ],
   payroll_head: [
+    // Re-imported 2026-08-08 — live grants the matrix had fallen behind on.
+    "FINANCE_BILLABILITY_SEAT_COST",
+    "FINANCE_GRN",
+    "FINANCE_PROCESS_PNL",
+    "FINANCE_VENDOR_PAYMENTS",
+    "PAYROLL_AUDIT_TRAIL",
+    "PAYROLL_BULK_OUTPUTS",
+    "PAYROLL_COST_SUMMARY",
+    "PAYROLL_SIGN_OFF",
+    "PAYROLL_STATUTORY_FILING",
+    "PAYROLL_VARIANCE",
     "ATTENDANCE_LOOKUP",
     "PAYROLL_ATTENDANCE_CONTROL_TOWER",
     "PAYROLL_BRANCH_READINESS",
@@ -724,6 +795,12 @@ export const LIVE_IMPORTED_PAGE_CODES: Readonly<Record<string, readonly string[]
     "JOBS",
   ],
   wfm: [
+    // Re-imported 2026-08-08 — live grants the matrix had fallen behind on.
+    "KPI_DASHBOARD",
+    "LEAVE_MANAGEMENT",
+    "PAYROLL_PROCESS_READINESS",
+    "TEAM_ATTENDANCE",
+    "WFM_ROSTER_MANAGER_QUEUE",
     "ATTENDANCE_LOOKUP",
     "PAYROLL_ATTENDANCE_CONTROL_TOWER",
     "PAYROLL_BRANCH_READINESS",
@@ -734,6 +811,95 @@ export const LIVE_IMPORTED_PAGE_CODES: Readonly<Record<string, readonly string[]
     "PAYROLL_RUNNING_BREAKDOWN",
     "TEAM_ROSTER",
     "WEEK_OFF_PREFERENCES",
+  ],
+  accounts_head: [
+    // Re-imported 2026-08-08 — live grants the matrix had fallen behind on.
+    "COMPLIANCE_DASHBOARD",
+    "FINANCE_BRANCH_BUDGET",
+    "FINANCE_GRN",
+    "FINANCE_HEAD_DASHBOARD",
+    "FINANCE_PROCESS_PNL",
+    "FINANCE_VENDOR_PAYMENTS",
+    "PAYROLL_HR_DASHBOARD",
+    "PROCESS_MANAGER_DASHBOARD",
+    "VENDOR_MANAGEMENT",
+  ],
+  branch_admin: [
+    // Re-imported 2026-08-08 — live grants the matrix had fallen behind on.
+    "FINANCE_BRANCH_BUDGET",
+    "FINANCE_BUDGET_CONSOLIDATION",
+    "FINANCE_GRN",
+  ],
+  branch_it: [
+    // Re-imported 2026-08-08 — live grants the matrix had fallen behind on.
+    "HELPDESK",
+    "PROVISIONING_DASHBOARD",
+  ],
+  ceo: [
+    // Re-imported 2026-08-08 — live grants the matrix had fallen behind on.
+    "FINANCE_PROCESS_PNL",
+    "PAYROLL_SIGN_OFF",
+  ],
+  coo: [
+    // Re-imported 2026-08-08 — live grants the matrix had fallen behind on.
+    "FINANCE_PROCESS_PNL",
+  ],
+  it: [
+    // Re-imported 2026-08-08 — live grants the matrix had fallen behind on.
+    "HELPDESK",
+    "PROVISIONING_DASHBOARD",
+  ],
+  it_head: [
+    // Re-imported 2026-08-08 — live grants the matrix had fallen behind on.
+    "HELPDESK",
+    "PROVISIONING_DASHBOARD",
+  ],
+  manager: [
+    // Re-imported 2026-08-08 — live grants the matrix had fallen behind on.
+    "KPI_DASHBOARD",
+    "OPERATIONS_DASHBOARD",
+  ],
+  operations_manager: [
+    // Re-imported 2026-08-08 — live grants the matrix had fallen behind on.
+    "WFM_ATTENDANCE_DASHBOARD",
+  ],
+  payroll_hr: [
+    // Re-imported 2026-08-08 — live grants the matrix had fallen behind on.
+    "BULK_UPLOAD",
+    "PAYROLL_EPF_COMPLIANCE",
+  ],
+  process_manager: [
+    // Re-imported 2026-08-08 — live grants the matrix had fallen behind on.
+    "KPI_DASHBOARD",
+  ],
+  qa: [
+    // Re-imported 2026-08-08 — live grants the matrix had fallen behind on.
+    "COACHING",
+    "KPI_DASHBOARD",
+    "KPI_MASTER",
+    "PERFORMANCE_DASHBOARD",
+    "QA_EVALUATION",
+    "TAT_DASHBOARD",
+    "TEAM_ATTENDANCE",
+  ],
+  quality_analyst: [
+    // Re-imported 2026-08-08 — live grants the matrix had fallen behind on.
+    "KPI_DASHBOARD",
+  ],
+  team_leader: [
+    // Re-imported 2026-08-08 — live grants the matrix had fallen behind on.
+    "MANAGEMENT_DASHBOARD",
+  ],
+  tl: [
+    // Re-imported 2026-08-08 — live grants the matrix had fallen behind on.
+    "MANAGEMENT_DASHBOARD",
+  ],
+  tq_head: [
+    // Re-imported 2026-08-08 — live grants the matrix had fallen behind on.
+    "KPI_DASHBOARD",
+    "PERFORMANCE_DASHBOARD",
+    "PROCESS_MANAGER_DASHBOARD",
+    "QA_EVALUATION",
   ],
 } as const;
 

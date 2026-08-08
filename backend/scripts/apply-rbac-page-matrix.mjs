@@ -83,17 +83,32 @@ try {
   const allowRevoke = process.argv.includes("--allow-revoke");
   if (apply && !allowRevoke) {
     const wouldRevoke = [];
+    const inertRevokes = [];
     for (const role of roles) {
       const desiredSet = new Set(
         getRolePageCodes(role, activePages).filter((pageCode) => activePageSet.has(pageCode)),
       );
       for (const pageCode of grants.get(role) ?? new Set()) {
-        if (!desiredSet.has(pageCode)) wouldRevoke.push(`${role}: ${pageCode}`);
+        if (desiredSet.has(pageCode)) continue;
+        // A grant on a page_catalog row with active_status = 0 reaches nothing: getAccessMe
+        // returns those codes as disabledPageCodes and ProtectedRoute denies them regardless
+        // of the grant. Revoking one removes no access a user could actually use, so it must
+        // not be the thing that blocks an otherwise-correct apply. Only a grant on a LIVE
+        // page is real access worth protecting.
+        (activePageSet.has(pageCode) ? wouldRevoke : inertRevokes).push(`${role}: ${pageCode}`);
       }
+    }
+    if (inertRevokes.length > 0) {
+      console.log(
+        `Note: ${inertRevokes.length} grant(s) on pages that are inactive in page_catalog will be ` +
+          `deactivated. These reach nothing today — ProtectedRoute already denies disabled pages — ` +
+          `so they are not treated as revocations:\n` +
+          inertRevokes.map((entry) => `  - ${entry}`).join("\n"),
+      );
     }
     if (wouldRevoke.length > 0) {
       console.error(
-        `Refusing to apply: this would deactivate ${wouldRevoke.length} existing grant(s).\n\n` +
+        `Refusing to apply: this would deactivate ${wouldRevoke.length} existing grant(s) on LIVE pages.\n\n` +
           wouldRevoke.map((entry) => `  - ${entry}`).join("\n") +
           `\n\nThe matrix is behind production. Either add these to LIVE_IMPORTED_PAGE_CODES in` +
           ` backend/src/shared/rbacPageMatrix.ts, or re-run with --allow-revoke if every` +
