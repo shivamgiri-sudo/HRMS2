@@ -150,28 +150,46 @@ export const controlTowerService = {
     return visible;
   },
 
+  /*
+   * work_inbox_item is the table created by migration 026, and the live table matches that
+   * definition exactly: id, user_id, type, title, description, entity_type, entity_id,
+   * action_url, priority, is_read, is_actioned, created_at.
+   *
+   * The three statements here were written against a different, larger table that was never
+   * created - event_id, module_key, task_type, assigned_role, assigned_employee_id,
+   * assigned_user_id, branch_id, process_id, due_at, created_by, status, completed_by,
+   * completed_at exist nowhere. So creating an item threw, listing threw on "Unknown column
+   * 'status'", and completing threw; the whole Control Tower work-inbox tab was dead.
+   *
+   * Nine other modules already read and write this table correctly through inbox.service, so the
+   * table is right and this module was the outlier. These queries are moved onto the real columns
+   * rather than 13 columns being added to satisfy one caller.
+   *
+   * The input keys callers pass are unchanged, so control-tower.routes and any client posting to
+   * it keep working; the ones with nowhere to live (event/branch/process/due/role) are simply not
+   * persisted, which is what was already happening - the INSERT never succeeded at all.
+   */
   async createInboxItem(input: any, userId: string) {
     const id = randomUUID();
+    // priority is an ENUM('low','normal','high','urgent'); the old default 'medium' is not a
+    // member and would have been coerced to '' even had the insert worked.
+    const priority = ["low", "normal", "high", "urgent"].includes(String(input.priority))
+      ? String(input.priority)
+      : "normal";
     await db.execute(
       `INSERT INTO work_inbox_item
-       (id, event_id, module_key, task_type, title, description, priority, assigned_role, assigned_employee_id, assigned_user_id, branch_id, process_id, due_at, action_url, created_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         (id, user_id, type, title, description, entity_type, entity_id, action_url, priority)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         id,
-        input.eventId ?? input.event_id ?? null,
-        input.moduleKey ?? input.module_key ?? "CONTROL_TOWER",
-        input.taskType ?? input.task_type ?? "manual_task",
+        input.assignedUserId ?? input.assigned_user_id ?? userId,
+        input.taskType ?? input.task_type ?? input.moduleKey ?? input.module_key ?? "manual_task",
         input.title,
         input.description ?? null,
-        input.priority ?? "medium",
-        input.assignedRole ?? input.assigned_role ?? null,
-        input.assignedEmployeeId ?? input.assigned_employee_id ?? null,
-        input.assignedUserId ?? input.assigned_user_id ?? null,
-        input.branchId ?? input.branch_id ?? null,
-        input.processId ?? input.process_id ?? null,
-        input.dueAt ?? input.due_at ?? null,
+        input.entityType ?? input.entity_type ?? null,
+        input.entityId ?? input.entity_id ?? input.eventId ?? input.event_id ?? null,
         input.actionUrl ?? input.action_url ?? null,
-        userId,
+        priority,
       ]
     );
     const [rows] = await db.execute<RowDataPacket[]>("SELECT * FROM work_inbox_item WHERE id = ?", [id]);
@@ -181,13 +199,20 @@ export const controlTowerService = {
   async listWorkInbox(query: any, userId: string) {
     const conds = ["1=1"];
     const params: unknown[] = [];
-    if (query.status) { conds.push("status = ?"); params.push(query.status); } else { conds.push("status IN ('open','in_progress')"); }
-    if (query.moduleKey) { conds.push("module_key = ?"); params.push(query.moduleKey); }
+    // There is no status column; the table tracks completion with is_actioned. 'open' and
+    // 'in_progress' both mean not yet actioned, which is also the default view.
+    if (query.status === "completed") conds.push("is_actioned = 1");
+    else if (query.status) conds.push("is_actioned = 0");
+    else conds.push("is_actioned = 0");
+    if (query.moduleKey) { conds.push("type = ?"); params.push(query.moduleKey); }
     if (query.priority) { conds.push("priority = ?"); params.push(query.priority); }
     const limit = Math.min(Number(query.limit ?? 100), 250);
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT
          wii.*,
+         -- canSeeScope matches ownership on assigned_user_id; on this table the owning column
+         -- is user_id, so it is aliased rather than the guard being loosened.
+         wii.user_id AS assigned_user_id,
          CONCAT(COALESCE(e.first_name, ''), ' ', COALESCE(e.last_name, '')) AS owner_name,
          TIMESTAMPDIFF(HOUR, wii.created_at, NOW()) AS aging_hours,
          CASE wii.priority
@@ -217,7 +242,9 @@ export const controlTowerService = {
     const row = (rows as any[])[0];
     if (!row) throw Object.assign(new Error("Inbox item not found"), { statusCode: 404 });
     if (!(await canSeeScope(userId, row))) throw Object.assign(new Error("Forbidden"), { statusCode: 403 });
-    await db.execute("UPDATE work_inbox_item SET status = 'completed', completed_by = ?, completed_at = NOW() WHERE id = ?", [userId, id]);
+    // No status/completed_by/completed_at columns. inbox.service marks completion the same way,
+    // setting is_read alongside so a completed item does not stay in the unread count.
+    await db.execute("UPDATE work_inbox_item SET is_actioned = 1, is_read = 1 WHERE id = ?", [id]);
     const [updated] = await db.execute<RowDataPacket[]>("SELECT * FROM work_inbox_item WHERE id = ?", [id]);
     return updated[0];
   },
