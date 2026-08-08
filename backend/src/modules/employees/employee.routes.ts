@@ -1525,8 +1525,18 @@ router.get("/:id/stat-card", requireAuth, h(async (req: any, res: any) => {
   let gamificationTier: RowDataPacket | null = null;
   try {
     const [tierRows] = await db.execute<RowDataPacket[]>(
-      `SELECT ets.tier_name, ets.total_points
+      /*
+       * employee_tier_status holds current_tier_id, not tier_name, so this threw
+       * ER_BAD_FIELD_ERROR. It sits inside a try/catch that leaves gamificationTier null, so the
+       * failure was silent: the employee profile simply never showed a tier.
+       *
+       * Two tier masters exist and the right one was measured rather than guessed. Of the 814
+       * rows in employee_tier_status, all 814 join gamification_tier_master.tier_id and 0 join
+       * gamification_tier.id.
+       */
+      `SELECT gtm.tier_name, ets.total_points
          FROM employee_tier_status ets
+         LEFT JOIN gamification_tier_master gtm ON gtm.tier_id = ets.current_tier_id
         WHERE ets.employee_id = ? LIMIT 1`,
       [targetId]
     );

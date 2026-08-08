@@ -483,7 +483,9 @@ export async function getInterviewHistory(candidateId: string) {
     FROM ats_interview_result ir
     LEFT JOIN employees e ON e.id = ir.recruiter_id
     WHERE ir.candidate_id = ?
-    ORDER BY ir.created_at DESC`,
+    -- ats_interview_result records interviewed_at; it has no created_at, so both this history
+    -- query and getRecruiterPerformance below threw ER_BAD_FIELD_ERROR.
+    ORDER BY ir.interviewed_at DESC`,
     [candidateId]
   );
 
@@ -497,10 +499,10 @@ export async function getRecruiterPerformance(recruiterId: string, fromDate?: st
   const params: unknown[] = [recruiterId];
   let dateFilter: string;
   if (fromDate && toDate) {
-    dateFilter = 'AND DATE(ir.created_at) BETWEEN ? AND ?';
+    dateFilter = 'AND DATE(ir.interviewed_at) BETWEEN ? AND ?';
     params.push(fromDate, toDate);
   } else {
-    dateFilter = 'AND DATE(ir.created_at) = CURDATE()';
+    dateFilter = 'AND DATE(ir.interviewed_at) = CURDATE()';
   }
 
   const [rows] = await db.execute<RowDataPacket[]>(

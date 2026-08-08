@@ -319,8 +319,11 @@ payrollMoreRouter.get(
     const [driftRows] = await db.execute<RowDataPacket[]>(
       `SELECT spl.employee_id,
               e.employee_code, e.first_name, e.last_name,
-              COALESCE(bm.branch_name, e.branch_name) AS branch_name,
-              COALESCE(pm.process_name, e.process_name) AS process_name,
+              -- employees has branch_id and process_id, never branch_name or process_name, so
+              -- the COALESCE fallbacks named columns that do not exist and the whole query threw.
+              -- The joins to branch_master/process_master above already supply the names.
+              bm.branch_name,
+              pm.process_name,
               spl.paid_working_days                       AS stored_paid_days,
               ROUND(adr.live_paid_base, 1)                AS live_paid_days,
               ROUND(adr.live_paid_base - spl.paid_working_days, 1) AS diff

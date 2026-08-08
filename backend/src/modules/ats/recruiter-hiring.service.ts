@@ -1445,9 +1445,10 @@ export async function sendOnboardingFromActivity(activityId: string, actorUserId
 
 async function getActorBranch(userId: string): Promise<string | null> {
   const [rows] = await db.execute<RowDataPacket[]>(
+    // employees has no branch_display_name column, so this COALESCE threw and getActorBranch
+    // could never resolve a branch. branch_master already supplies both the name and the code.
     `SELECT COALESCE(
        NULLIF(b.branch_name,''),
-       NULLIF(e.branch_display_name,''),
        NULLIF(b.branch_code,'')
      ) AS branch_name
        FROM employees e
