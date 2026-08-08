@@ -1,7 +1,8 @@
 import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { RefreshCw, Search, X } from "lucide-react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { RefreshCcw, RefreshCw, Search, Undo2, X } from "lucide-react";
 import { hrmsApi } from "@/lib/hrmsApi";
+import { useToast } from "@/hooks/use-toast";
 import { StatusStamp } from "@/components/finance/grn/StatusStamp";
 import {
   dateLabel,
@@ -110,6 +111,33 @@ export function GrnSearchWorkspace({
   /** Raises the shared review sheet. Kept as a prop so this file owns no detail surface. */
   onOpenGrn?: (grnId: string) => void;
 }) {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const refetchResults = () => queryClient.invalidateQueries({ queryKey: ["grn-search"] });
+
+  /**
+   * Requirement 9's other half. `returnGrn` had a UI and `resubmitReturnedGrn` did not, so a
+   * returned GRN was stuck: Finance could send it back and the raiser had no way to send it on
+   * again. The endpoint existed and was tested the whole time.
+   */
+  const resubmit = useMutation({
+    mutationFn: async (id: string) => hrmsApi.post<any>(`/api/finance/grns/${id}/resubmit`, {}),
+    onSuccess: () => {
+      toast({ title: "Resubmitted", description: "It goes back through Branch Head approval." });
+      refetchResults();
+    },
+    onError: (e: Error) => toast({ title: "Could not resubmit", description: e.message, variant: "destructive" }),
+  });
+
+  /** Requirement 4. The setter existed with no caller, so the status could be seen and never set. */
+  const billingCycle = useMutation({
+    mutationFn: async (input: { id: string; next: string | null }) =>
+      hrmsApi.patch<any>(`/api/finance/grns/${input.id}/billing-cycle`, {
+        billingCycleStatus: input.next,
+      }),
+    onSuccess: () => { toast({ title: "Billing status updated" }); refetchResults(); },
+    onError: (e: Error) => toast({ title: "Could not update", description: e.message, variant: "destructive" }),
+  });
   const [draft, setDraft] = useState<Filters>(EMPTY);
   const [applied, setApplied] = useState<Filters>(EMPTY);
 
@@ -229,6 +257,7 @@ export function GrnSearchWorkspace({
                   <GrnTh className="text-right">Amount</GrnTh>
                   <GrnTh>Workflow</GrnTh>
                   <GrnTh>Billing</GrnTh>
+                  <GrnTh>Action</GrnTh>
                 </tr>
               </thead>
               <tbody>
@@ -281,6 +310,35 @@ export function GrnSearchWorkspace({
                         {row.billing_cycle_status ?? "Not classified"}
                       </StatusStamp>
                     </GrnTd>
+                    <GrnTd>
+                      <div className="flex items-center gap-1">
+                        {/* Requirement 9's other half. Return was reachable and resubmit was
+                            not, so a returned GRN was stuck: Finance could send it back and the
+                            raiser had no way to send it on again. The endpoint existed. */}
+                        {String(row.status).startsWith("returned_") && (
+                          <GrnIconButton
+                            aria-label={`Resubmit ${row.grn_number}`}
+                            disabled={resubmit.isPending}
+                            onClick={() => resubmit.mutate(row.id)}
+                          >
+                            <Undo2 className="h-3.5 w-3.5" />
+                          </GrnIconButton>
+                        )}
+                        {/* Requirement 4. The setter existed with no caller, so the status was
+                            displayed and could never be set. Cycles OPEN -> BOOKED -> CLOSED ->
+                            unclassified, which keeps "not classified" reachable — historical
+                            rows are NULL and forcing a guess would be worse than leaving them. */}
+                        <GrnIconButton
+                          aria-label={`Change billing status of ${row.grn_number}`}
+                          disabled={billingCycle.isPending}
+                          onClick={() =>
+                            billingCycle.mutate({ id: row.id, next: nextBillingStatus(row.billing_cycle_status) })
+                          }
+                        >
+                          <RefreshCcw className="h-3.5 w-3.5" />
+                        </GrnIconButton>
+                      </div>
+                    </GrnTd>
                   </tr>
                 ))}
               </tbody>
@@ -290,4 +348,18 @@ export function GrnSearchWorkspace({
       </GrnCard>
     </div>
   );
+}
+
+/**
+ * OPEN -> BOOKED -> CLOSED -> unclassified, then round again.
+ *
+ * Cycling back to null on purpose: the column postdates most rows, so they are NULL and mean
+ * "nobody has classified this". Forcing a guess would be worse than leaving it, so the
+ * unclassified state has to stay reachable rather than being a one-way door out of it.
+ */
+function nextBillingStatus(current: string | null | undefined): string | null {
+  if (current === "OPEN") return "BOOKED";
+  if (current === "BOOKED") return "CLOSED";
+  if (current === "CLOSED") return null;
+  return "OPEN";
 }

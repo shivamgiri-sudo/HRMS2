@@ -29,6 +29,7 @@ const WORKSPACE = read("src/components/finance/grn/imprest/ImprestWorkspace.tsx"
 const MANAGERS = read("src/components/finance/grn/imprest/ImprestManagerPanel.tsx");
 const GRN_FORM = read("src/components/finance/grn/BudgetLinkedGrnForm.tsx");
 const QUEUE = read("src/components/finance/grn/ImprestApprovalQueue.tsx");
+const SEARCH = read("src/components/finance/grn/GrnSearchWorkspace.tsx");
 
 describe("the report exports through the API", () => {
   it("opens the export endpoint rather than building a file from state", () => {
@@ -175,5 +176,39 @@ describe("the queue can show the history it promises", () => {
   it("shows who acted and when", () => {
     expect(QUEUE).toContain("event.actor_name");
     expect(QUEUE).toContain("dateLabel(event.created_at)");
+  });
+});
+
+describe("a returned GRN can be sent on again (Requirement 9)", () => {
+  it("offers resubmit, which had an endpoint and no caller", () => {
+    // Return had a UI and resubmit did not, so a returned GRN was stuck: Finance could send it
+    // back and the raiser had no way to send it on. Half a workflow is worse than none, because
+    // the half that works is the one that takes the GRN out of circulation.
+    expect(SEARCH).toContain("/resubmit");
+    expect(SEARCH).toContain('String(row.status).startsWith("returned_")');
+  });
+
+  it("shows the action only on returned rows", () => {
+    // On anything else it would either 400 or, worse, look like a valid thing to do.
+    const cell = SEARCH.slice(SEARCH.indexOf('startsWith("returned_")'));
+    expect(cell.slice(0, 400)).toContain("Resubmit");
+  });
+});
+
+describe("billing status can be set, not just displayed (Requirement 4)", () => {
+  it("calls the setter that previously had no caller", () => {
+    expect(SEARCH).toContain("/billing-cycle");
+    expect(SEARCH).toContain("billingCycleStatus: input.next");
+  });
+
+  it("cycles back to unclassified rather than trapping a row", () => {
+    // Most rows are NULL because the column postdates them, and that means "nobody has
+    // classified this". Forcing a guess is worse than leaving it, so the state must stay
+    // reachable rather than being a one-way door out of.
+    expect(SEARCH).toContain('if (current === "CLOSED") return null;');
+  });
+
+  it("refetches after a change so the row reflects it", () => {
+    expect(SEARCH).toContain("refetchResults()");
   });
 });
