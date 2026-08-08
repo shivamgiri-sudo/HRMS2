@@ -82,10 +82,11 @@ const EMITS_IN_SUBQUERY_ONLY = new Set<string>(["team-performance-summary"]);
  * Shrink only — closing one means authoring a real entry with labels, formats and widths.
  */
 const NO_FRONTEND_ENTRY = new Set<string>([
-  "leave-allocation-register", "leave-lwp-reconciliation", "leave-lapse-summary",
-  "bank-missing", "increment-requests", "ytd-salary-summary", "uan-master-register",
-  "employee-document-compliance", "ff-settlement-register", "roster-adherence",
-  "productivity-individual-scorecard",
+  // Emptied 2026-08-08: all eleven now have real frontend entries, authored from their live
+  // API responses rather than the backend catalogue's declaration — the two disagreed on
+  // every one of them (12 columns declared and never returned, 20 returned and never
+  // declared). Every report that emits cost centre can now be selected in the Report
+  // Library and will draw it.
 ]);
 
 describe("a column the SQL emits must be declared in both catalogues", () => {

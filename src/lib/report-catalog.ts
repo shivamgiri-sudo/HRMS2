@@ -2827,6 +2827,330 @@ export const REPORT_CATALOG: ReportMeta[] = [
     viewRoles: ["super_admin", "admin", "hr", "hr_head", "finance", "payroll", "wfm", "ceo"],
     exportRoles: ["super_admin", "admin", "hr_head", "finance", "payroll"],
   },
+
+  // ─── Reports that returned data but could not be selected ────────────────────────
+  // Each of these emits cost centre and had no frontend entry, so the Report Library could
+  // not list them at all. Column keys are the live response's.
+  {
+    code: "leave-allocation-register",
+    name: "Leave Allocation Register",
+    category: "Leave",
+    subcategory: "Balance & Allocation",
+    description:
+      "Leave allocation history",
+    rowGrain: "One row per employee per leave type per year",
+    primaryKey: ["employee_code", "leave_code", "balance_year"],
+    // Keys taken from the live API response, not the backend catalogue's declaration — the
+    // two disagree here (4 declared and never returned, 3 returned and never declared)
+    // and the grid renders keys, so a declared-but-absent key is a permanent em dash.
+    columns: [
+      { key: "employee_code", label: "Emp Code", format: "text", width: 150 },
+      { key: "employee_name", label: "Employee Name", format: "text", width: 150 },
+      { key: "process_name", label: "Process", format: "text", width: 150 },
+      { key: "cost_centre_code", label: "Cost Centre Code", format: "text", width: 150 },
+      { key: "cost_centre_name", label: "Cost Centre", format: "text", width: 150 },
+      { key: "leave_code", label: "Leave Code", format: "text", width: 150 },
+      { key: "leave_name", label: "Leave Type", format: "text", width: 150 },
+      { key: "allocated_days", label: "Allocated", format: "number", width: 100, align: "right" },
+      { key: "adjusted_days", label: "Adjusted Days", format: "number", width: 100, align: "right" },
+      { key: "used_days", label: "Used Days", format: "number", width: 100, align: "right" },
+      { key: "remaining_days", label: "Remaining Days", format: "number", width: 100, align: "right" },
+      { key: "branch_name", label: "Branch", format: "text", width: 150 },
+    ],
+    viewRoles: ["super_admin", "admin", "hr", "hr_head", "finance", "payroll", "wfm", "ceo"],
+    exportRoles: ["super_admin", "admin", "hr_head", "finance", "payroll"],
+  },
+  {
+    code: "leave-lwp-reconciliation",
+    name: "Leave vs LWP Reconciliation",
+    category: "Leave",
+    subcategory: "Utilization & Trends",
+    description:
+      "Reconciliation of leave taken vs LWP deducted",
+    rowGrain: "One row per employee per month",
+    primaryKey: ["employee_code", "month"],
+    // Keys taken from the live API response, not the backend catalogue's declaration — the
+    // two disagree here (5 declared and never returned, 2 returned and never declared)
+    // and the grid renders keys, so a declared-but-absent key is a permanent em dash.
+    columns: [
+      { key: "employee_code", label: "Emp Code", format: "text", width: 150 },
+      { key: "employee_name", label: "Employee Name", format: "text", width: 150 },
+      { key: "process_name", label: "Process", format: "text", width: 150 },
+      { key: "cost_centre_code", label: "Cost Centre Code", format: "text", width: 150 },
+      { key: "cost_centre_name", label: "Cost Centre", format: "text", width: 150 },
+      { key: "lwp_days_attendance", label: "LWP Days Attendance", format: "text", width: 150 },
+      { key: "lwp_days_payroll", label: "LWP Days Payroll", format: "text", width: 150 },
+      { key: "variance", label: "Variance", format: "number", width: 100, align: "right" },
+    ],
+    viewRoles: ["super_admin", "admin", "hr", "hr_head", "finance", "payroll", "wfm", "ceo"],
+    exportRoles: ["super_admin", "admin", "hr_head", "finance", "payroll"],
+  },
+  {
+    code: "leave-lapse-summary",
+    name: "Leave Lapse Summary",
+    category: "Leave",
+    subcategory: "Special Categories",
+    description:
+      "Leave balance that will lapse at year end",
+    rowGrain: "One row per employee per leave type",
+    primaryKey: ["employee_code", "leave_code"],
+    // Keys taken from the live API response, not the backend catalogue's declaration — the
+    // two disagree here (3 declared and never returned, 0 returned and never declared)
+    // and the grid renders keys, so a declared-but-absent key is a permanent em dash.
+    columns: [
+      { key: "employee_code", label: "Emp Code", format: "text", width: 150 },
+      { key: "employee_name", label: "Employee Name", format: "text", width: 150 },
+      { key: "process_name", label: "Process", format: "text", width: 150 },
+      { key: "cost_centre_code", label: "Cost Centre Code", format: "text", width: 150 },
+      { key: "cost_centre_name", label: "Cost Centre", format: "text", width: 150 },
+      { key: "leave_code", label: "Leave Code", format: "text", width: 150 },
+      { key: "leave_name", label: "Leave Type", format: "text", width: 150 },
+      { key: "balance_year", label: "Balance Year", format: "number", width: 100, align: "right" },
+      { key: "lapsed_days", label: "Lapsing Days", format: "number", width: 100, align: "right" },
+    ],
+    viewRoles: ["super_admin", "admin", "hr", "hr_head", "finance", "payroll", "wfm", "ceo"],
+    exportRoles: ["super_admin", "admin", "hr_head", "finance", "payroll"],
+  },
+  {
+    code: "bank-missing",
+    name: "Missing/Unverified Bank Details",
+    category: "Payroll",
+    subcategory: "Data Compliance",
+    description:
+      "Active employees with no bank record or an unverified primary bank account",
+    rowGrain: "One row per active employee with a bank data gap",
+    primaryKey: ["employee_code"],
+    // Keys taken from the live API response, not the backend catalogue's declaration — the
+    // two disagree here (0 declared and never returned, 2 returned and never declared)
+    // and the grid renders keys, so a declared-but-absent key is a permanent em dash.
+    columns: [
+      { key: "employee_code", label: "Emp Code", format: "text", width: 150 },
+      { key: "employee_name", label: "Employee Name", format: "text", width: 150 },
+      { key: "branch_name", label: "Branch Name", format: "text", width: 150 },
+      { key: "process_name", label: "Process Name", format: "text", width: 150 },
+      { key: "cost_centre_code", label: "Cost Centre Code", format: "text", width: 150 },
+      { key: "cost_centre_name", label: "Cost Centre", format: "text", width: 150 },
+      { key: "bank_status", label: "Bank Status", format: "status", width: 130 },
+    ],
+    viewRoles: ["super_admin", "admin", "hr", "hr_head", "finance", "payroll", "wfm", "ceo"],
+    exportRoles: ["super_admin", "admin", "hr_head", "finance", "payroll"],
+  },
+  {
+    code: "increment-requests",
+    name: "Increment Requests",
+    category: "Payroll",
+    subcategory: "Compensation Audit",
+    description:
+      "Salary increment requests with current vs. proposed CTC and approval status",
+    rowGrain: "One row per increment request",
+    primaryKey: ["id"],
+    // Keys taken from the live API response, not the backend catalogue's declaration — the
+    // two disagree here (0 declared and never returned, 1 returned and never declared)
+    // and the grid renders keys, so a declared-but-absent key is a permanent em dash.
+    columns: [
+      { key: "id", label: "ID", format: "text", width: 150 },
+      { key: "employee_code", label: "Emp Code", format: "text", width: 150 },
+      { key: "employee_name", label: "Employee Name", format: "text", width: 150 },
+      { key: "branch_name", label: "Branch", format: "text", width: 150 },
+      { key: "process_name", label: "Process", format: "text", width: 150 },
+      { key: "cost_centre_code", label: "Cost Centre Code", format: "text", width: 150 },
+      { key: "cost_centre_name", label: "Cost Centre", format: "text", width: 150 },
+      { key: "current_ctc", label: "Current CTC", format: "currency", width: 120, align: "right" },
+      { key: "proposed_ctc", label: "Proposed CTC", format: "currency", width: 120, align: "right" },
+      { key: "increment_percentage", label: "Increment %", format: "percentage", width: 100, align: "right" },
+      { key: "effective_from", label: "Effective From", format: "date", width: 110 },
+      { key: "status", label: "Status", format: "status", width: 130 },
+      { key: "communication_status", label: "Communication Status", format: "status", width: 130 },
+      { key: "letter_status", label: "Letter Status", format: "status", width: 130 },
+      { key: "created_at", label: "Requested On", format: "datetime", width: 150 },
+    ],
+    viewRoles: ["super_admin", "admin", "hr", "hr_head", "finance", "payroll", "wfm", "ceo"],
+    exportRoles: ["super_admin", "admin", "hr_head", "finance", "payroll"],
+  },
+  {
+    code: "ytd-salary-summary",
+    name: "Year-to-Date Salary Summary",
+    category: "Payroll",
+    subcategory: "Cost Analysis",
+    description:
+      "Cumulative gross, basic, PF, TDS and net salary per employee across a calendar or financial year",
+    rowGrain: "One row per employee per requested year",
+    primaryKey: ["employee_code"],
+    // Keys taken from the live API response, not the backend catalogue's declaration — the
+    // two disagree here (0 declared and never returned, 0 returned and never declared)
+    // and the grid renders keys, so a declared-but-absent key is a permanent em dash.
+    columns: [
+      { key: "employee_code", label: "Emp Code", format: "text", width: 150 },
+      { key: "employee_name", label: "Employee Name", format: "text", width: 150 },
+      { key: "cost_centre_code", label: "Cost Centre Code", format: "text", width: 150 },
+      { key: "cost_centre_name", label: "Cost Centre", format: "text", width: 150 },
+      { key: "branch_name", label: "Branch", format: "text", width: 150 },
+      { key: "process_name", label: "Process", format: "text", width: 150 },
+      { key: "department_name", label: "Department", format: "text", width: 150 },
+      { key: "months_paid", label: "Months Paid", format: "number", width: 100, align: "right" },
+      { key: "ytd_gross", label: "YTD Gross", format: "currency", width: 120, align: "right" },
+      { key: "ytd_basic", label: "YTD Basic", format: "currency", width: 120, align: "right" },
+      { key: "ytd_pf", label: "YTD PF", format: "currency", width: 120, align: "right" },
+      { key: "ytd_tds", label: "YTD TDS", format: "currency", width: 120, align: "right" },
+      { key: "ytd_net", label: "YTD Net", format: "currency", width: 120, align: "right" },
+    ],
+    viewRoles: ["super_admin", "admin", "hr", "hr_head", "finance", "payroll", "wfm", "ceo"],
+    exportRoles: ["super_admin", "admin", "hr_head", "finance", "payroll"],
+  },
+  {
+    code: "uan-master-register",
+    name: "UAN Master Register",
+    category: "Statutory",
+    subcategory: "PF/EPF",
+    description:
+      "Active employees with a UAN on file — PF identity master for EPFO filings",
+    rowGrain: "One row per active employee with a UAN",
+    primaryKey: ["employee_code"],
+    // Keys taken from the live API response, not the backend catalogue's declaration — the
+    // two disagree here (0 declared and never returned, 2 returned and never declared)
+    // and the grid renders keys, so a declared-but-absent key is a permanent em dash.
+    columns: [
+      { key: "employee_code", label: "Emp Code", format: "text", width: 150 },
+      { key: "employee_name", label: "Employee Name", format: "text", width: 150 },
+      { key: "uan", label: "UAN", format: "masked", width: 120 },
+      { key: "uan_source", label: "UAN Source", format: "status", width: 130 },
+      { key: "epf_number", label: "EPF Number", format: "masked", width: 120 },
+      { key: "pf_member_id", label: "PF Member ID", format: "text", width: 150 },
+      { key: "pf_joining_date", label: "PF Joining Date", format: "date", width: 110 },
+      { key: "date_of_birth", label: "DOB", format: "date", width: 110 },
+      { key: "gender", label: "Gender", format: "text", width: 150 },
+      { key: "branch_name", label: "Branch", format: "text", width: 150 },
+      { key: "process_name", label: "Process Name", format: "text", width: 150 },
+      { key: "cost_centre_code", label: "Cost Centre Code", format: "text", width: 150 },
+      { key: "cost_centre_name", label: "Cost Centre", format: "text", width: 150 },
+    ],
+    viewRoles: ["super_admin", "admin", "hr", "hr_head", "finance", "payroll", "wfm", "ceo"],
+    exportRoles: ["super_admin", "admin", "hr_head", "finance", "payroll"],
+  },
+  {
+    code: "employee-document-compliance",
+    name: "Employee Document Compliance",
+    category: "Documents",
+    subcategory: "Compliance",
+    description:
+      "Document checklist completion per active employee — verified, missing and completion percentage",
+    rowGrain: "One row per active employee",
+    primaryKey: ["employee_code"],
+    // Keys taken from the live API response, not the backend catalogue's declaration — the
+    // two disagree here (0 declared and never returned, 7 returned and never declared)
+    // and the grid renders keys, so a declared-but-absent key is a permanent em dash.
+    columns: [
+      { key: "employee_code", label: "Emp Code", format: "text", width: 150 },
+      { key: "employee_name", label: "Employee Name", format: "text", width: 150 },
+      { key: "branch_name", label: "Branch", format: "text", width: 150 },
+      { key: "department_name", label: "Department", format: "text", width: 150 },
+      { key: "process_name", label: "Process Name", format: "text", width: 150 },
+      { key: "cost_centre_code", label: "Cost Centre Code", format: "text", width: 150 },
+      { key: "cost_centre_name", label: "Cost Centre", format: "text", width: 150 },
+      { key: "checklist_total", label: "Checklist Total", format: "number", width: 100, align: "right" },
+      { key: "checklist_verified", label: "Checklist Verified", format: "status", width: 130 },
+      { key: "checklist_missing", label: "Checklist Missing", format: "text", width: 150 },
+      { key: "ed_total", label: "Ed Total", format: "number", width: 100, align: "right" },
+      { key: "ed_verified", label: "Ed Verified", format: "status", width: 130 },
+      { key: "ed_missing", label: "Ed Missing", format: "text", width: 150 },
+      { key: "total_docs", label: "Total Docs", format: "number", width: 100, align: "right" },
+      { key: "verified_docs", label: "Verified", format: "number", width: 100, align: "right" },
+      { key: "missing_docs", label: "Missing", format: "number", width: 100, align: "right" },
+      { key: "completion_pct", label: "Completion %", format: "percentage", width: 100, align: "right" },
+      { key: "joining_document_status", label: "Joining Doc Status", format: "status", width: 130 },
+    ],
+    viewRoles: ["super_admin", "admin", "hr", "hr_head", "finance", "payroll", "wfm", "ceo"],
+    exportRoles: ["super_admin", "admin", "hr_head", "finance", "payroll"],
+  },
+  {
+    code: "ff-settlement-register",
+    name: "Full & Final Settlement Register",
+    category: "Exit",
+    subcategory: "Compliance",
+    description:
+      "Full & final settlement calculation per exited employee — recoveries, encashment, gratuity and net payable",
+    rowGrain: "One row per exit request with an F&F calculation",
+    primaryKey: ["employee_code", "last_working_day"],
+    // Keys taken from the live API response, not the backend catalogue's declaration — the
+    // two disagree here (0 declared and never returned, 2 returned and never declared)
+    // and the grid renders keys, so a declared-but-absent key is a permanent em dash.
+    columns: [
+      { key: "employee_code", label: "Emp Code", format: "text", width: 150 },
+      { key: "employee_name", label: "Employee Name", format: "text", width: 150 },
+      { key: "branch_name", label: "Branch Name", format: "text", width: 150 },
+      { key: "process_name", label: "Process Name", format: "text", width: 150 },
+      { key: "cost_centre_code", label: "Cost Centre Code", format: "text", width: 150 },
+      { key: "cost_centre_name", label: "Cost Centre", format: "text", width: 150 },
+      { key: "last_working_day", label: "Last Working Day", format: "date", width: 110 },
+      { key: "notice_recovery", label: "Notice Recovery", format: "currency", width: 120, align: "right" },
+      { key: "leave_encashment", label: "Leave Encashment", format: "currency", width: 120, align: "right" },
+      { key: "gratuity_amount", label: "Gratuity", format: "currency", width: 120, align: "right" },
+      { key: "advances_recovery", label: "Advances Recovery", format: "currency", width: 120, align: "right" },
+      { key: "salary_hold", label: "Salary Hold", format: "currency", width: 120, align: "right" },
+      { key: "net_ff_payable", label: "Net F&F Payable", format: "currency", width: 120, align: "right" },
+      { key: "status", label: "Status", format: "status", width: 130 },
+      { key: "is_ff_provisional", label: "Provisional", format: "boolean", width: 150 },
+    ],
+    viewRoles: ["super_admin", "admin", "hr", "hr_head", "finance", "payroll", "wfm", "ceo"],
+    exportRoles: ["super_admin", "admin", "hr_head", "finance", "payroll"],
+  },
+  {
+    code: "roster-adherence",
+    name: "Roster Adherence",
+    category: "Roster/WFM",
+    subcategory: "Adherence",
+    description:
+      "Daily roster-vs-actual adherence per employee — on-roster shift, attendance status and lateness",
+    rowGrain: "One row per employee per date",
+    primaryKey: ["employee_code", "record_date"],
+    // Keys taken from the live API response, not the backend catalogue's declaration — the
+    // two disagree here (0 declared and never returned, 0 returned and never declared)
+    // and the grid renders keys, so a declared-but-absent key is a permanent em dash.
+    columns: [
+      { key: "record_date", label: "Date", format: "date", width: 110 },
+      { key: "employee_code", label: "Emp Code", format: "text", width: 150 },
+      { key: "employee_name", label: "Employee Name", format: "text", width: 150 },
+      { key: "cost_centre_code", label: "Cost Centre Code", format: "text", width: 150 },
+      { key: "cost_centre_name", label: "Cost Centre", format: "text", width: 150 },
+      { key: "branch_name", label: "Branch", format: "text", width: 150 },
+      { key: "process_name", label: "Process", format: "text", width: 150 },
+      { key: "roster_shift", label: "Roster Shift", format: "text", width: 150 },
+      { key: "attendance_status", label: "Attendance Status", format: "status", width: 130 },
+      { key: "late_mark", label: "Late Mark", format: "boolean", width: 150 },
+      { key: "adherent", label: "Adherent", format: "text", width: 150 },
+    ],
+    viewRoles: ["super_admin", "admin", "hr", "hr_head", "finance", "payroll", "wfm", "ceo"],
+    exportRoles: ["super_admin", "admin", "hr_head", "finance", "payroll"],
+  },
+  {
+    code: "productivity-individual-scorecard",
+    name: "Individual Productivity Scorecard",
+    category: "Operations & Quality",
+    subcategory: "Productivity",
+    description:
+      "Per-employee login hours, biometric hours, attendance and KPI score for a payroll month",
+    rowGrain: "One row per employee per month",
+    primaryKey: ["employee_code"],
+    // Keys taken from the live API response, not the backend catalogue's declaration — the
+    // two disagree here (0 declared and never returned, 1 returned and never declared)
+    // and the grid renders keys, so a declared-but-absent key is a permanent em dash.
+    columns: [
+      { key: "employee_code", label: "Emp Code", format: "text", width: 150 },
+      { key: "employee_name", label: "Employee Name", format: "text", width: 150 },
+      { key: "cost_centre_code", label: "Cost Centre Code", format: "text", width: 150 },
+      { key: "cost_centre_name", label: "Cost Centre", format: "text", width: 150 },
+      { key: "branch_name", label: "Branch Name", format: "text", width: 150 },
+      { key: "process_name", label: "Process", format: "text", width: 150 },
+      { key: "login_hours", label: "Login Hours", format: "number", width: 100, align: "right" },
+      { key: "biometric_hours", label: "Biometric Hours", format: "number", width: 100, align: "right" },
+      { key: "present_days", label: "Present Days", format: "number", width: 100, align: "right" },
+      { key: "kpi_score", label: "KPI Score", format: "number", width: 100, align: "right" },
+      { key: "kpi_rating", label: "KPI Rating", format: "text", width: 150 },
+      { key: "attendance_pct", label: "Attendance %", format: "percentage", width: 100, align: "right" },
+    ],
+    viewRoles: ["super_admin", "admin", "hr", "hr_head", "finance", "payroll", "wfm", "ceo"],
+    exportRoles: ["super_admin", "admin", "hr_head", "finance", "payroll"],
+  },
 ];
 
 // ─── Helper Functions ──────────────────────────────────────────────────────────
