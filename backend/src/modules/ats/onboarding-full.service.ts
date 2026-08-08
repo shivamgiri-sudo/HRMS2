@@ -1340,19 +1340,41 @@ export async function saveEmployeeDetails(token: string, input: Record<string, u
        profile_status = IF(profile_status IN ('profile_submitted', 'onboarded', 'rejected'), profile_status, 'onboarding_sent'),
        updated_at = NOW()
      WHERE id = ?`,
+    // Every binding here is COALESCE(?, existing), which means the SENTINEL for
+    // "leave this column alone" is NULL — and `??` only falls back on
+    // null/undefined, so an untouched form field arriving as "" was passed
+    // straight through. Two failures came from that:
+    //
+    //   1. date_of_birth. COALESCE('', date_of_birth) evaluates to '', and MySQL
+    //      rejects '' as a datetime — ER_TRUNCATED_WRONG_VALUE: Incorrect
+    //      datetime value: ''. That aborts this whole UPDATE, so a candidate who
+    //      left DOB blank had their candidate_onboarding_profile row written by
+    //      the statement above and the ats_candidate mirror silently not written.
+    //      Observed live twice inside 20 seconds on 2026-08-08.
+    //   2. Every varchar. COALESCE('', father_name) is '' — verified against the
+    //      live DB — so a blank field WRITES an empty string instead of leaving
+    //      the column alone, defeating the point of COALESCE. Whether that ever
+    //      destroyed a previously captured value depends on step ordering, and
+    //      no such instance was proven: the 26 rows currently holding '' have
+    //      the same blank in candidate_onboarding_profile, i.e. blank in, blank
+    //      out. Latent rather than demonstrated — but '' and NULL must not be
+    //      allowed to mean different things in a column that is COALESCE-guarded.
+    //
+    // normalizedDob is computed ~100 lines above for exactly this reason and was
+    // simply not reused here. nonEmptyString is this file's existing idiom.
     [
-      input.fatherHusbandName ?? input.father_name ?? null,
-      input.gender ?? tokenData.gender ?? null,
-      input.dateOfBirth ?? tokenData.date_of_birth ?? null,
-      input.permanentAddress ?? null,
-      input.presentAddress ?? input.current_address ?? null,
-      input.mobileNumber ?? tokenData.mobile ?? null,
-      input.personalEmailId ?? tokenData.email ?? null,
+      nonEmptyString(input.fatherHusbandName ?? input.father_name),
+      nonEmptyString(input.gender ?? tokenData.gender),
+      normalizedDob,
+      nonEmptyString(input.permanentAddress),
+      nonEmptyString(input.presentAddress ?? input.current_address),
+      nonEmptyString(input.mobileNumber ?? tokenData.mobile),
+      nonEmptyString(input.personalEmailId ?? tokenData.email),
       panMasked,
       panHash,
       aadhaarMasked,
       aadhaarHash,
-      input.source ?? tokenData.source ?? null,
+      nonEmptyString(input.source ?? tokenData.source),
       candidateId,
     ]
   );
@@ -1375,7 +1397,10 @@ export async function saveEmployeeDetails(token: string, input: Record<string, u
        uan_number = COALESCE(?, uan_number),
        updated_at = NOW()
      WHERE id = ?`,
-    [input.uanNumber ?? null, candidateId]
+    // Same COALESCE sentinel problem as the UPDATE above: "" is not NULL, so a
+    // blank UAN field overwrote a stored UAN with an empty string instead of
+    // leaving it be.
+    [nonEmptyString(input.uanNumber), candidateId]
   ).catch((error) => {
     // Still non-fatal — a candidate must not lose their whole submission over
     // a mirrored field — but no longer silent.
