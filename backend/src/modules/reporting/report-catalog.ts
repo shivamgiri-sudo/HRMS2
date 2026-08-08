@@ -718,7 +718,10 @@ export const REPORT_CATALOG: ReportDefinition[] = [
     filters: [F_BRANCH, F_PROCESS, { key: "daysAhead", label: "Due in Next (days)", type: "number", placeholder: "30" }],
     viewRoles: ROLES_HR_MANAGER,
     exportRoles: ROLES_HR_ADMIN,
-    sourceTables: ["employees"],
+    // employee_probation is the driving table and it is INNER joined, so it decides the row
+    // count entirely. It holds 0 rows today — this report returns nothing until probation
+    // records are written, which is a data gap rather than a query fault.
+    sourceTables: ["employee_probation", "employees"],
     branchScoped: true,
   },
 
@@ -745,7 +748,9 @@ export const REPORT_CATALOG: ReportDefinition[] = [
     filters: [F_BRANCH, { key: "daysAhead", label: "Due in Next (days)", type: "number", placeholder: "30" }],
     viewRoles: ROLES_HR_ADMIN,
     exportRoles: ROLES_HR_ADMIN,
-    sourceTables: ["employees"],
+    // employee_contract is the driving table and is INNER joined, so it decides the row count.
+    // 0 rows today — nothing to expire until contracts are recorded.
+    sourceTables: ["employee_contract", "employees"],
     branchScoped: true,
   },
 
@@ -760,17 +765,24 @@ export const REPORT_CATALOG: ReportDefinition[] = [
     columns: [
       { key: "employee_code", label: "Emp Code", format: "text", width: 100 },
       { key: "employee_name", label: "Employee Name", format: "text", width: 180 },
+      { key: "cost_centre_code", label: "Cost Centre Code", format: "text", width: 140 },
+      { key: "cost_centre_name", label: "Cost Centre", format: "text", width: 180 },
+      { key: "process_name", label: "Process", format: "text", width: 140 },
       { key: "branch_name", label: "Branch", format: "text", width: 120 },
       { key: "event_type", label: "Event Type", format: "status", width: 120 },
       { key: "event_date", label: "Event Date", format: "date", width: 100 },
       { key: "old_value", label: "From", format: "text", width: 140 },
       { key: "new_value", label: "To", format: "text", width: 140 },
+      { key: "actor_name", label: "Actioned By", format: "text", width: 160 },
       { key: "remarks", label: "Remarks", format: "text", width: 200 },
     ],
     filters: [F_BRANCH, { key: "eventType", label: "Event Type", type: "text" }, F_DATE_FROM, F_DATE_TO],
     viewRoles: ROLES_HR_ADMIN,
     exportRoles: ROLES_HR_ADMIN,
-    sourceTables: ["employee_job_history", "employees"],
+    // employee_lifecycle_event is what the SQL reads; employee_job_history was never queried
+    // by this report. The table holds 0 rows today, so the report correctly returns nothing —
+    // an unused feature, not a broken query.
+    sourceTables: ["employee_lifecycle_event", "employees"],
     branchScoped: true,
   },
 
@@ -2856,7 +2868,9 @@ export const REPORT_CATALOG: ReportDefinition[] = [
     filters: [F_BRANCH, { key: "clearanceDept", label: "Clearance Dept", type: "text" }],
     viewRoles: ROLES_HR_ADMIN,
     exportRoles: ROLES_HR_ADMIN,
-    sourceTables: ["exit_clearance_checklist", "employees"],
+    // exit_clearance_task, not exit_clearance_checklist: both tables exist, the checklist has
+    // 0 rows and the task table is what the exit module writes (16 rows, 2026-08-08).
+    sourceTables: ["exit_clearance_task", "exit_request", "employees"],
     branchScoped: true,
   },
 

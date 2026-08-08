@@ -75,7 +75,11 @@ const SHADOWED_BACKLOG = new Set<string>([
   "gratuity-liability-register", "grievance-register",
   "holiday-master-list", "identity-source-snapshot", "increment-promotion-history",
   "late-arrival-summary", "leave-allocation-register", "leave-balance-export",
-  "leave-encashment-register", "leave-lapse-summary", "leave-lwp-reconciliation",
+  // "leave-encashment-register" left this list on 2026-08-08. Its inline block queried a
+  // table named leave_encashment that does not exist, so the shadow guaranteed a 500; the
+  // executor it was hiding raises ReportSourceUnavailableError instead, which is the honest
+  // answer for a report whose source is genuinely absent.
+  "leave-lapse-summary", "leave-lwp-reconciliation",
   "leave-trend-monthly", "lifecycle-events", "maternity-paternity-register",
   "monthly-attrition-summary", "monthly-shrinkage-trend", "org-structure-snapshot",
   "overtime-summary", "payroll-register", "payroll-variance", "punch-raw-export",

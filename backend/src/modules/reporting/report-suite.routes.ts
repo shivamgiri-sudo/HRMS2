@@ -923,6 +923,9 @@ reportSuiteRouter.get("/:code", reportScopeMiddleware, reportCatalogAccessMiddle
       clauses.push("ep.probation_end_date BETWEEN CURDATE() AND DATE_ADD(CURDATE(), INTERVAL ? DAY)");
       params.push(days);
       sql = `SELECT e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
+                    COALESCE(cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
+                    COALESCE(cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
+                    COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
                     e.date_of_joining, ep.probation_end_date,
                     DATEDIFF(ep.probation_end_date, CURDATE()) AS days_remaining,
                     b.branch_name, d.dept_name AS department_name
@@ -930,6 +933,8 @@ reportSuiteRouter.get("/:code", reportScopeMiddleware, reportCatalogAccessMiddle
                JOIN employee_probation ep ON ep.employee_id = e.id
                LEFT JOIN branch_master b ON b.id = e.branch_id
                LEFT JOIN department_master d ON d.id = e.department_id
+               LEFT JOIN cost_centre_master cc ON cc.id = e.cost_centre_id
+               LEFT JOIN process_master p ON p.id = e.process_id
               WHERE ${clauses.join(" AND ")}
               ORDER BY ep.probation_end_date ASC`;
       break;
@@ -946,6 +951,9 @@ reportSuiteRouter.get("/:code", reportScopeMiddleware, reportCatalogAccessMiddle
       clauses.push("ec.contract_end_date BETWEEN CURDATE() AND DATE_ADD(CURDATE(), INTERVAL ? DAY)");
       params.push(days);
       sql = `SELECT e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
+                    COALESCE(cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
+                    COALESCE(cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
+                    COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
                     e.date_of_joining, ec.contract_end_date, ec.contract_type,
                     DATEDIFF(ec.contract_end_date, CURDATE()) AS days_to_expiry,
                     e.employment_type, b.branch_name, d.dept_name AS department_name
@@ -953,6 +961,8 @@ reportSuiteRouter.get("/:code", reportScopeMiddleware, reportCatalogAccessMiddle
                JOIN employee_contract ec ON ec.employee_id = e.id AND ec.status = 'active'
                LEFT JOIN branch_master b ON b.id = e.branch_id
                LEFT JOIN department_master d ON d.id = e.department_id
+               LEFT JOIN cost_centre_master cc ON cc.id = e.cost_centre_id
+               LEFT JOIN process_master p ON p.id = e.process_id
               WHERE ${clauses.join(" AND ")}
               ORDER BY ec.contract_end_date ASC`;
       break;
@@ -964,12 +974,19 @@ reportSuiteRouter.get("/:code", reportScopeMiddleware, reportCatalogAccessMiddle
       addScopedEmployeeFilters(req, clauses, params);
       clauses.push("ele.effective_date BETWEEN ? AND ?"); params.push(from, to);
       sql = `SELECT e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
+                    COALESCE(cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
+                    COALESCE(cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
+                    COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
+                    b.branch_name,
                     ele.event_type, ele.effective_date AS event_date,
                     ele.old_value_json AS old_value, ele.new_value_json AS new_value, ele.remarks,
                     COALESCE(NULLIF(actor.full_name,''), CONCAT(actor.first_name,' ',COALESCE(actor.last_name,''))) AS actor_name
                FROM employee_lifecycle_event ele
                JOIN employees e ON e.id = ele.employee_id
                LEFT JOIN employees actor ON actor.id = ele.initiated_by
+               LEFT JOIN branch_master b ON b.id = e.branch_id
+               LEFT JOIN cost_centre_master cc ON cc.id = e.cost_centre_id
+               LEFT JOIN process_master p ON p.id = e.process_id
               WHERE ${clauses.join(" AND ")}
               ORDER BY ele.effective_date DESC`;
       break;
@@ -1398,14 +1415,31 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
 
     case "maternity-paternity-register": {
       addScopedEmployeeFilters(req, clauses, params);
-      clauses.push("lt.leave_code IN ('MAT','PAT','MATERNITY','PATERNITY','ML','PL')");
+      // Selected by leave NAME, not by a guessed code list.
+      //
+      // The previous filter was IN ('MAT','PAT','MATERNITY','PATERNITY','ML','PL'). Against
+      // live leave_type_master four of those six codes do not exist, 'PL' is unused, and
+      // 'ML' is **Medical Leave** — so the Maternity/Paternity Register returned 875 medical
+      // leave requests, 648 of them men, and none of the 13 actual maternity/paternity rows.
+      // The real codes are MTRL (Maternity Leave) and PTRL/PML/PL (Paternity Leave).
+      //
+      // Matching on leave_name is what makes this stay correct: the master spells the meaning
+      // out in the name, while the codes are per-tenant and have already drifted into four
+      // spellings of "paternity". A new code added tomorrow is picked up; a new code would
+      // have silently fallen out of a hardcoded list, which is the failure being fixed.
+      clauses.push("lt.leave_name REGEXP 'Maternity|Paternity'");
       sql = `SELECT e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
+                    COALESCE(cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
+                    COALESCE(cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
+                    COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
                     e.gender, lt.leave_code, lt.leave_name,
                     lr.from_date AS start_date, lr.to_date AS end_date, lr.total_days,
                     lr.status, lr.created_at AS applied_on
                FROM leave_request lr
                JOIN employees e ON e.id = lr.employee_id
                JOIN leave_type_master lt ON lt.id = lr.leave_type_id
+               LEFT JOIN cost_centre_master cc ON cc.id = e.cost_centre_id
+               LEFT JOIN process_master p ON p.id = e.process_id
               WHERE ${clauses.join(" AND ")}
               ORDER BY lr.from_date DESC`;
       break;
@@ -2018,20 +2052,53 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
       // Called FIRST so its clauses and params lead the bind list; the report's own
       // conditions are pushed after, in the order their placeholders appear.
       addScopedEmployeeFilters(req, clauses, params);
-      clauses.push("er.submitted_at BETWEEN ? AND ?");
+      // COALESCE, because submitted_at is NULL on 2 of 2 exit_request rows — every one.
+      // `submitted_at BETWEEN ? AND ?` on a NULL evaluates to UNKNOWN, so the row is dropped:
+      // the report returned nothing even once it was reading the right table. The exit module
+      // writes created_at and leaves submitted_at for a submission step that never sets it,
+      // so created_at is the date this report can actually filter on. Keeping submitted_at
+      // first means the filter starts using it the moment it is populated.
+      clauses.push("COALESCE(er.submitted_at, er.created_at) BETWEEN ? AND ?");
       params.push(from, to);
+      // Reads exit_clearance_task, not exit_clearance_checklist.
+      //
+      // Both tables exist. exit_clearance_checklist holds 0 rows and is the older, simpler
+      // shape (department/assigned_to); exit_clearance_task is what the exit module actually
+      // writes — 16 rows on 2026-08-08, all 16 resolving to both an employee and an exit
+      // request. So the Clearance Status Register reported "no outstanding clearances" while
+      // every real clearance task sat in the other table, unread. Same shape as
+      // attendance_exception vs attendance_reconciliation_issue: the dead table is the one
+      // with the more obvious name.
+      //
+      // clearance_area replaces the free-text department, and owner_role replaces assigned_to:
+      // the task table names the owning function ('payroll', 'wfm') rather than the user id
+      // the checklist held, which is what the report was trying to show anyway. task_title and
+      // due_date come along because the task table has them and a clearance register without a
+      // due date cannot be chased.
+      //
+      // cleared_by is deliberately not emitted. It holds a user id, not an employee id, so it
+      // cannot be resolved to a name through employees, and a raw uuid in a column labelled
+      // "Cleared By" is worse than no column. cleared_at still shows whether it was cleared.
       sql = `SELECT e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
+                    b.branch_name,
+                    COALESCE(cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
+                    COALESCE(cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
+                    COALESCE(pr.process_name, 'UNASSIGNED') AS process_name,
                     d.dept_name AS department_name,
                     COALESCE(er.last_working_day_confirmed, er.last_working_day_proposed) AS last_working_day,
-                    ecc.department AS clearance_department,
-                    ecc.status AS clearance_status,
-                    ecc.assigned_to, ecc.cleared_at, ecc.remarks
-               FROM exit_clearance_checklist ecc
-               JOIN exit_request er ON er.id = ecc.exit_request_id
+                    ect.clearance_area AS clearance_department,
+                    ect.task_title, ect.due_date,
+                    ect.status AS clearance_status,
+                    ect.owner_role AS assigned_to, ect.cleared_at, ect.remarks
+               FROM exit_clearance_task ect
+               JOIN exit_request er ON er.id = ect.exit_request_id
                JOIN employees e ON e.id = er.employee_id
+               LEFT JOIN branch_master b ON b.id = e.branch_id
                LEFT JOIN department_master d ON d.id = e.department_id
+               LEFT JOIN cost_centre_master cc ON cc.id = e.cost_centre_id
+               LEFT JOIN process_master pr ON pr.id = e.process_id
               WHERE ${clauses.join(" AND ")}
-              ORDER BY e.employee_code, ecc.department`;
+              ORDER BY e.employee_code, ect.clearance_area`;
       break;
     }
 
@@ -2561,23 +2628,23 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
     }
 
     // ─── Missing Leave ────────────────────────────────────────────────────────
-    case "leave-encashment-register": {
-      const year = String(req.query.year ?? new Date().getFullYear());
-      addScopedEmployeeFilters(req, clauses, params);
-      clauses.push("YEAR(le.encashment_date) = ?"); params.push(year);
-      sql = `SELECT e.employee_code,
-                    COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-                    b.branch_name, p.process_name,
-                    le.leave_type, le.days_encashed, le.encashment_amount,
-                    le.encashment_date, le.status, le.payroll_month
-               FROM leave_encashment le
-               JOIN employees e ON e.id = le.employee_id
-               LEFT JOIN branch_master b ON b.id = e.branch_id
-               LEFT JOIN process_master p ON p.id = e.process_id
-              WHERE ${clauses.join(" AND ")}
-              ORDER BY le.encashment_date DESC`;
-      break;
-    }
+    // "leave-encashment-register" is deliberately NOT handled here.
+    //
+    // The inline block that used to sit at this line queried a table named `leave_encashment`,
+    // which does not exist in mas_hrms — verified 2026-08-08, ER_NO_SUCH_TABLE. Because this
+    // router is consulted before the executor map, the report could only ever return a 500.
+    // It is deliberately absent from the frontend catalogue, so this is a deep-link and API
+    // path rather than a visible tile — but the executors stay registered precisely so old
+    // deep links resolve, and resolving to a 500 is not resolving.
+    //
+    // Falling through hands the code to leaveEncashmentRegister in executors/leave.executor.ts,
+    // which targets leave_encashment_request and, when that table is absent, raises
+    // ReportSourceUnavailableError — the report reads as "blocked, no source" instead of
+    // failing. That distinction matters here: an empty encashment register reads as a settled
+    // zero liability, which is a different and worse claim than "not recorded in this system".
+    //
+    // Restoring an inline handler for this code means restoring the shadow. If encashment
+    // data ever lands, give the executor the real table.
 
     // ─── Missing Payroll ──────────────────────────────────────────────────────
     case "payroll-readiness-status": {
@@ -3739,6 +3806,7 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
           CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')) AS emp_name,
           COALESCE(b.branch_name, '') AS branch_name,
           COALESCE(cc.cost_centre_name, e.cost_center_code, '') AS cost_center,
+          COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
           COALESCE(SUM(CASE WHEN lt.leave_code IN ('CL','CAS') THEN lbl.allocated_days END), 0) AS cl_current,
           COALESCE(SUM(CASE WHEN lt.leave_code IN ('ML','SL','MED') THEN lbl.allocated_days END), 0) AS ml_current,
           COALESCE(SUM(CASE WHEN lt.leave_code IN ('EL','PL_E') THEN lbl.allocated_days END), 0) AS el_current,
@@ -3754,10 +3822,11 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
         FROM employees e
         LEFT JOIN branch_master b ON b.id = e.branch_id
         LEFT JOIN cost_centre_master cc ON cc.id = e.cost_centre_id
+        LEFT JOIN process_master p ON p.id = e.process_id
         LEFT JOIN leave_balance_ledger lbl ON lbl.employee_id = e.id AND lbl.balance_year = ?
         LEFT JOIN leave_type_master lt ON lt.id = lbl.leave_type_id
         WHERE ${clauses.join(" AND ")}
-        GROUP BY e.id, e.employee_code, e.first_name, e.last_name, b.branch_name, cc.cost_centre_name, e.cost_center_code
+        GROUP BY e.id, e.employee_code, e.first_name, e.last_name, b.branch_name, cc.cost_centre_name, e.cost_center_code, p.process_name
         ORDER BY e.employee_code
       `;
       params.unshift(balYear);
@@ -3787,6 +3856,7 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
           COALESCE(desig.designation_name, '') AS designation,
           COALESCE(b.branch_name, '') AS branch_name,
           COALESCE(cc.cost_centre_name, '') AS cost_center,
+          COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
           COALESCE(e.mobile, '') AS mobile_no,
           DATE_FORMAT(e.date_of_joining, '%Y-%m-%d') AS doj,
           DATE_FORMAT(COALESCE(e.date_of_leaving, e.date_of_exit), '%Y-%m-%d') AS left_date,
@@ -3800,6 +3870,7 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
         LEFT JOIN designation_master desig ON desig.id = e.designation_id
         LEFT JOIN branch_master b ON b.id = e.branch_id
         LEFT JOIN cost_centre_master cc ON cc.id = e.cost_centre_id
+        LEFT JOIN process_master p ON p.id = e.process_id
         LEFT JOIN exit_request er ON er.employee_id = e.id
               AND er.status IN ('confirmed','cleared','completed')
               AND er.id = (SELECT id FROM exit_request WHERE employee_id = e.id ORDER BY created_at DESC LIMIT 1)
@@ -3833,6 +3904,7 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
           CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')) AS emp_name,
           COALESCE(b.branch_name, '') AS branch_name,
           COALESCE(cc.cost_centre_name, '') AS cost_center,
+          COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
           COALESCE(dept.dept_name, '') AS department,
           COALESCE(desig.designation_name, '') AS designation,
           DATE_FORMAT(e.date_of_joining, '%Y-%m-%d') AS doj,
@@ -3844,6 +3916,7 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
         FROM employees e
         LEFT JOIN branch_master b ON b.id = e.branch_id
         LEFT JOIN cost_centre_master cc ON cc.id = e.cost_centre_id
+        LEFT JOIN process_master p ON p.id = e.process_id
         LEFT JOIN department_master dept ON dept.id = e.department_id
         LEFT JOIN designation_master desig ON desig.id = e.designation_id
         LEFT JOIN (
