@@ -12,7 +12,7 @@
 
 **Root Cause**: Password `<set DB_PASSWORD in backend/.env>` contains `#` character, which .env parsers treat as comment delimiter.
 
-**Actual parsed value**: `qwersdfg!@` (truncated at `#`)
+**Actual parsed value**: `<redacted: truncated DB_PASSWORD>` (truncated at `#`)
 
 ---
 
