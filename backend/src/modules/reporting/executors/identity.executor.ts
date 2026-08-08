@@ -79,8 +79,8 @@ export async function uanStatusReport(
              WHEN e.uan_number IS NOT NULL AND TRIM(e.uan_number) != '' THEN 'HAS_UAN'
              ELSE 'MISSING_UAN'
            END AS uan_status,
-           b.branch_name,
-           p.process_name
+           COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
+           COALESCE(p.process_name, 'UNASSIGNED') AS process_name
       FROM employees e
       LEFT JOIN branch_master b  ON b.id = e.branch_id
       LEFT JOIN process_master p ON p.id = e.process_id
@@ -158,8 +158,8 @@ export async function esicStatusReport(
              WHEN ${hasNumber}                         THEN 'HAS_ESIC'
              ELSE 'NOT_APPLICABLE'
            END AS esic_status,
-           b.branch_name,
-           p.process_name,
+           COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
+           COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
            -- cost_centre_master was already joined here and never selected, so the mandatory
            -- cost centre columns were absent from a report that had them one line away.
            COALESCE(sp_cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
@@ -223,8 +223,8 @@ export async function panVerificationStatus(
              WHEN e.pan_verified_on IS NOT NULL                    THEN 'VERIFIED'
              ELSE 'UNVERIFIED'
            END AS pan_status,
-           b.branch_name,
-           p.process_name
+           COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
+           COALESCE(p.process_name, 'UNASSIGNED') AS process_name
       FROM employees e
       LEFT JOIN branch_master b  ON b.id = e.branch_id
       LEFT JOIN process_master p ON p.id = e.process_id
@@ -294,8 +294,8 @@ export async function bankAccountVerification(
              WHEN e.bank_account_number IS NULL OR TRIM(e.bank_account_number) = '' THEN 'MISSING_BANK'
              ELSE 'UNVERIFIED'
            END AS bank_status,
-           b.branch_name,
-           p.process_name
+           COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
+           COALESCE(p.process_name, 'UNASSIGNED') AS process_name
       FROM employees e
       LEFT JOIN branch_master b  ON b.id = e.branch_id
       LEFT JOIN process_master p ON p.id = e.process_id
@@ -366,7 +366,7 @@ export async function identitySourceSnapshot(
              ris.captured_at,
              COALESCE(sp_cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
              COALESCE(sp_cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
-             b.branch_name,
+             COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
              COALESCE(p.process_name, 'UNASSIGNED') AS process_name
         FROM report_identity_source_snapshot ris
         LEFT JOIN employees e          ON e.id  = ris.matched_employee_id

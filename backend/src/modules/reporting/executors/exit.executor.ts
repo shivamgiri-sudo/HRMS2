@@ -90,7 +90,7 @@ export async function resignationRegister(
            -- NULL: an employee with no mapping is a fact worth showing, not a blank cell.
            COALESCE(cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
            COALESCE(cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
-           b.branch_name,
+           COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
            COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
            -- Both catalogues already declared these two, so the grid drew a Designation and a
            -- DOJ column for a query that emitted neither. They come straight off employees.
@@ -169,7 +169,7 @@ export async function fnfPendingRegister(
                                         er.last_working_day_proposed)) AS days_since_exit,
            COALESCE(sp_cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
            COALESCE(sp_cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
-           b.branch_name,
+           COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
            COALESCE(p.process_name, 'UNASSIGNED') AS process_name
       FROM employees e
       LEFT JOIN exit_request er            ON er.employee_id = e.id
@@ -236,7 +236,8 @@ export async function fnfSettlementRegister(
            COALESCE(ffc.status, 'pending')    AS payment_status,
            ffc.is_ff_provisional,
            LEFT(COALESCE(ffc.approved_at, e.date_of_exit), 7) AS settlement_month,
-           b.branch_name, p.process_name
+           COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
+           COALESCE(p.process_name, 'UNASSIGNED') AS process_name
       FROM employees e
       LEFT JOIN exit_request er            ON er.employee_id = e.id
       LEFT JOIN full_final_calculation ffc ON ffc.exit_request_id = er.id
@@ -287,7 +288,7 @@ export async function clearanceStatusRegister(
            MAX(CASE WHEN ec.status NOT IN ('cleared','waived') THEN ec.department ELSE NULL END) AS pending_dept,
            COALESCE(sp_cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
            COALESCE(sp_cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
-           b.branch_name,
+           COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
            COALESCE(p.process_name, 'UNASSIGNED') AS process_name
       FROM employees e
       LEFT JOIN exit_request er              ON er.employee_id = e.id
@@ -421,8 +422,8 @@ export async function exitReasonAnalysis(
     -- will read 'Not Specified' — that is the truth about the data, not a defect here.
     SELECT COALESCE(er.resignation_reason, er.exit_reason_category, 'Not Specified') AS exit_reason,
            COUNT(*) AS count,
-           b.branch_name,
-           p.process_name
+           COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
+           COALESCE(p.process_name, 'UNASSIGNED') AS process_name
       FROM employees e
       LEFT JOIN exit_request er  ON er.employee_id = e.id
       LEFT JOIN branch_master b  ON b.id = e.branch_id
@@ -469,8 +470,8 @@ export async function tenureDistribution(
              ELSE '5+ years'
            END AS tenure_bucket,
            COUNT(*) AS headcount,
-           b.branch_name,
-           p.process_name
+           COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
+           COALESCE(p.process_name, 'UNASSIGNED') AS process_name
       FROM employees e
       LEFT JOIN branch_master b  ON b.id = e.branch_id
       LEFT JOIN process_master p ON p.id = e.process_id
@@ -521,7 +522,8 @@ export async function earlyAttritionReport(
            DATEDIFF(e.date_of_exit, e.date_of_joining) AS days_employed,
            -- see the note in exit-reason-analysis: the reason lives on exit_request
            COALESCE(er.resignation_reason, er.exit_reason_category) AS resignation_reason,
-           b.branch_name, p.process_name
+           COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
+           COALESCE(p.process_name, 'UNASSIGNED') AS process_name
       FROM employees e
       LEFT JOIN exit_request er  ON er.employee_id = e.id
       LEFT JOIN branch_master b  ON b.id = e.branch_id

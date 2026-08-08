@@ -76,7 +76,7 @@ export async function assetInventory(
            a.purchase_date,
            a.purchase_cost AS purchase_value,
            a.serial_number,
-           b.branch_name
+           COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name
       FROM asset_master a
       LEFT JOIN branch_master b      ON b.id  = a.branch_id
      WHERE ${clauses.join(" AND ")}
@@ -146,8 +146,8 @@ export async function assetAllocationRegister(
            aa.assigned_date AS allocation_date,
            aa.returned_date AS return_date,
            CASE WHEN aa.returned_date IS NULL THEN 'assigned' ELSE 'returned' END AS allocation_status,
-           b.branch_name,
-           p.process_name
+           COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
+           COALESCE(p.process_name, 'UNASSIGNED') AS process_name
       FROM asset_assignment aa
       JOIN asset_master a            ON a.id  = aa.asset_id
       JOIN employees e               ON e.id  = aa.employee_id
@@ -216,7 +216,7 @@ export async function assetMovementLog(
            e.employee_code,
            COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
            aml.moved_by,
-           b.branch_name
+           COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name
       FROM asset_movement_log aml
       JOIN asset_master a            ON a.id  = aml.asset_id
       LEFT JOIN employees e          ON e.id  = aml.employee_id
@@ -313,7 +313,7 @@ export async function documentExpiryTracker(
                 ELSE 'expiring_soon' END AS expiry_status,
            COALESCE(sp_cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
            COALESCE(sp_cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
-           b.branch_name,
+           COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
            COALESCE(p.process_name, 'UNASSIGNED') AS process_name
       FROM employee_documents ed
       JOIN employees e           ON e.id = ed.employee_id
@@ -381,7 +381,7 @@ export async function documentVerificationStatus(
            COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
            COALESCE(sp_cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
            COALESCE(sp_cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
-           b.branch_name,
+           COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
            COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
            ed.doc_type,
            ed.doc_name,
@@ -447,7 +447,7 @@ export async function certificationStatus(
            COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
            COALESCE(sp_cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
            COALESCE(sp_cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
-           b.branch_name,
+           COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
            COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
            lcs.certification_name,
            lcs.issued_date AS certified_date,

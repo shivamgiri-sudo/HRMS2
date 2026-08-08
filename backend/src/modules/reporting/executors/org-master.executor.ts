@@ -92,10 +92,10 @@ export async function costCentreMasterReport(
 
   const base = `
     SELECT cc.cost_centre_code,
-           cc.cost_centre_name,
+           COALESCE(cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
            cc.client_name,
-           b.branch_name,
-           d.dept_name AS department_name,
+           COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
+           COALESCE(d.dept_name, 'UNASSIGNED') AS department_name,
            cc.cc_category,
            cc.cc_type,
            cc.tower,
@@ -153,9 +153,9 @@ export async function processMasterReport(
 
   const base = `
     SELECT p.process_code,
-           p.process_name,
+           COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
            p.client_name,
-           b.branch_name,
+           COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
            p.process_type,
            p.workload_type,
            p.business_lob,
@@ -210,8 +210,8 @@ export async function headcountByCostCentreAndProcess(
            COALESCE(cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
            COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
            COALESCE(cc.client_name, p.client_name, 'UNKNOWN') AS client_name,
-           b.branch_name,
-           d.dept_name AS department_name,
+           COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
+           COALESCE(d.dept_name, 'UNASSIGNED') AS department_name,
            COUNT(*) AS headcount,
            SUM(CASE WHEN e.cost_centre_id IS NULL OR e.process_id IS NULL THEN 1 ELSE 0 END)
              AS unmapped_in_group

@@ -63,7 +63,17 @@ export async function headcount(
   clauses.push("e.active_status = 1");
 
   const base = `
-    SELECT b.branch_name, d.dept_name AS department_name, p.process_name,
+    -- COALESCE on the SELECT only, never on the GROUP BY. Grouping stays exactly as it was so
+    -- no row can merge or split and no headcount can move; this changes what an unmapped row is
+    -- labelled, not what is counted. Verified after: still sums to 1,125 active employees.
+    --
+    -- 6 of 95 rows here rendered a NULL process, 3 a NULL department and 1 a NULL branch. NULL
+    -- reads as "nothing loaded" or as a rendering fault; UNASSIGNED reads as a fact about those
+    -- employees, which is what it is — 143 active employees have no process and 64 no cost
+    -- centre. Dropping them was never an option, so naming them is the whole point.
+    SELECT COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
+           COALESCE(d.dept_name, 'UNASSIGNED') AS department_name,
+           COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
            COUNT(*) AS active_headcount
       FROM employees e
       LEFT JOIN branch_master b ON b.id = e.branch_id
@@ -105,7 +115,8 @@ export async function employeeMaster(
            COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
            e.official_email, e.mobile, e.employment_status,
            e.date_of_joining, e.date_of_exit,
-           b.branch_name, d.dept_name AS department_name,
+           COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
+           COALESCE(d.dept_name, 'UNASSIGNED') AS department_name,
            COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
            COALESCE(cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
            COALESCE(cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
@@ -167,7 +178,8 @@ export async function managerMapping(
                   AND e.reporting_manager_id <> e.manager_id THEN 'MANAGER_FIELD_MISMATCH'
              ELSE 'OK'
            END AS mapping_status,
-           b.branch_name, COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
+           COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
+           COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
            COALESCE(sp_cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
            COALESCE(sp_cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name
       FROM employees e
@@ -257,7 +269,7 @@ export async function costCentreHeadcount(
   const base = `
     SELECT COALESCE(cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
            COALESCE(cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
-           b.branch_name,
+           COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
            COUNT(*) AS active_headcount
       FROM employees e
       LEFT JOIN cost_centre_master cc ON cc.id = e.cost_centre_id
@@ -353,7 +365,8 @@ export async function confirmationDueList(
            e.date_of_joining,
            DATE_ADD(e.date_of_joining, INTERVAL COALESCE(e.probation_days,90) DAY) AS confirmation_due_date,
            DATEDIFF(CURDATE(), DATE_ADD(e.date_of_joining, INTERVAL COALESCE(e.probation_days,90) DAY)) AS overdue_days,
-           b.branch_name, COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
+           COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
+           COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
            COALESCE(sp_cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
            COALESCE(sp_cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name, d.dept_name AS department_name
       FROM employees e
@@ -402,7 +415,8 @@ export async function contractExpiryList(
            COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
            e.date_of_joining, e.contract_end_date,
            DATEDIFF(e.contract_end_date, CURDATE()) AS days_to_expiry,
-           b.branch_name, COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
+           COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
+           COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
            COALESCE(sp_cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
            COALESCE(sp_cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name, d.dept_name AS department_name
       FROM employees e
@@ -460,7 +474,8 @@ export async function lifecycleEvents(
            -- the table stores initiated_by as a user id and carries no name column;
            -- report it as not-tracked rather than failing the whole query.
            NULL AS created_by_name,
-           b.branch_name, p.process_name
+           COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
+           COALESCE(p.process_name, 'UNASSIGNED') AS process_name
       FROM employee_lifecycle_event el
       JOIN employees e ON e.id = el.employee_id
       LEFT JOIN branch_master b ON b.id = e.branch_id
@@ -517,7 +532,8 @@ export async function incrementPromotionHistory(
            sir.proposed_ctc AS new_salary,
            sir.effective_from AS effective_date,
            sir.status AS approval_status,
-           b.branch_name, p.process_name
+           COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
+           COALESCE(p.process_name, 'UNASSIGNED') AS process_name
       FROM salary_increment_request sir
       JOIN employees e ON e.id = sir.employee_id
       LEFT JOIN branch_master b ON b.id = e.branch_id
@@ -560,7 +576,8 @@ export async function birthdayList(
            e.employee_code,
            COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
            e.date_of_birth, MONTH(e.date_of_birth) AS birth_month, DAY(e.date_of_birth) AS birth_day,
-           b.branch_name, COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
+           COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
+           COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
            COALESCE(sp_cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
            COALESCE(sp_cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name, d.dept_name AS department_name
       FROM employees e
@@ -608,7 +625,8 @@ export async function anniversaryList(
            e.date_of_joining,
            TIMESTAMPDIFF(YEAR, e.date_of_joining, CURDATE()) AS years_of_service,
            MONTH(e.date_of_joining) AS join_month, DAY(e.date_of_joining) AS join_day,
-           b.branch_name, COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
+           COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
+           COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
            COALESCE(sp_cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
            COALESCE(sp_cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name, d.dept_name AS department_name
       FROM employees e

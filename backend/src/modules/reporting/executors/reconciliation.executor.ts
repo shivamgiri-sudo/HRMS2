@@ -89,7 +89,7 @@ export async function payrollPopulationReconciliation(
            COALESCE(cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
            COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
            COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
-           d.dept_name AS department_name,
+           COALESCE(d.dept_name, 'UNASSIGNED') AS department_name,
            e.employment_status,
            CASE WHEN e.active_status = 1 THEN 'ACTIVE' ELSE 'INACTIVE' END AS employee_state,
            CASE WHEN e.active_status = 1 THEN 'YES' ELSE 'NO' END AS in_hr_active,
@@ -232,8 +232,8 @@ export async function costCentreVsBillingReconciliation(
 
   const base = `
     SELECT cc.id AS _cursor,
-           cc.cost_centre_code,
-           cc.cost_centre_name,
+           COALESCE(cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
+           COALESCE(cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
            COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
            cl.client_name,
            TRIM(COALESCE(cc.process_name_bill, '')) AS billing_process_name,

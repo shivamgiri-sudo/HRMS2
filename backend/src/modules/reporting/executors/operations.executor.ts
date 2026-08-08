@@ -76,7 +76,7 @@ export async function agentPerformanceSummary(
 
   const empSql = `SELECT e.employee_code,
     COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-    b.branch_name,
+    COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
     COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
     COALESCE(cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
     COALESCE(cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name
@@ -165,7 +165,7 @@ export async function teamPerformanceSummary(
 
   const empSql = `SELECT e.employee_code,
     COALESCE(NULLIF(tm.full_name,''), CONCAT(tm.first_name,' ',COALESCE(tm.last_name,''))) AS team_lead_name,
-    b.branch_name,
+    COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
     COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
     COALESCE(cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
     COALESCE(cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name

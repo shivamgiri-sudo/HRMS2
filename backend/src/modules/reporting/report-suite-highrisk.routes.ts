@@ -98,7 +98,8 @@ reportSuiteHighRiskRouter.get("/employee-movement", roles, h(async (req, res) =>
                       e.date_of_joining,
                       COALESCE(e.date_of_exit,e.date_of_leaving,e.resignation_date) AS exit_date,
                       CASE WHEN e.date_of_joining BETWEEN ? AND ? THEN 'joining' ELSE 'exit' END AS movement_type,
-                      b.branch_name, d.dept_name AS department_name,
+                      COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
+                      COALESCE(d.dept_name, 'UNASSIGNED') AS department_name,
                       COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
                       COALESCE(cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
                       COALESCE(cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name
@@ -137,7 +138,8 @@ reportSuiteHighRiskRouter.get("/payroll-register", roles, h(async (req, res) => 
                       e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
                       COALESCE(hcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
                       COALESCE(hcc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
-                      b.branch_name, p.process_name,
+                      COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
+                      COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
                       spl.gross_salary, spl.total_deductions, spl.net_salary, spl.working_days, spl.present_days, spl.leave_days, spl.lwp_days, spl.status AS line_status,
                       (COALESCE(spl.gross_salary,0) - COALESCE(spl.total_deductions,0) - COALESCE(spl.net_salary,0)) AS net_mismatch_amount,
                       CASE WHEN COALESCE(spl.net_salary,0) < 0 THEN 'NEGATIVE_NET'

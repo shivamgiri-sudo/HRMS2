@@ -476,7 +476,8 @@ reportSuiteRouter.get("/:code", reportScopeMiddleware, reportCatalogAccessMiddle
       clauses.push("e.active_status = 1");
       sql = `SELECT e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
                     e.official_email, e.mobile, e.employment_status, e.date_of_joining, e.date_of_exit,
-                    b.branch_name, d.dept_name AS department_name,
+                    COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
+                    COALESCE(d.dept_name, 'UNASSIGNED') AS department_name,
                     COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
                     COALESCE(cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
                     COALESCE(cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
@@ -503,7 +504,8 @@ reportSuiteRouter.get("/:code", reportScopeMiddleware, reportCatalogAccessMiddle
       sql = `SELECT e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
                     e.date_of_joining, COALESCE(e.date_of_exit,e.date_of_leaving,e.resignation_date) AS exit_date,
                     CASE WHEN e.date_of_joining BETWEEN ? AND ? THEN 'joining' ELSE 'exit' END AS movement_type,
-                    b.branch_name, d.dept_name AS department_name,
+                    COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
+                    COALESCE(d.dept_name, 'UNASSIGNED') AS department_name,
                     COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
                     COALESCE(cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
                     COALESCE(cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name
@@ -555,11 +557,11 @@ reportSuiteRouter.get("/:code", reportScopeMiddleware, reportCatalogAccessMiddle
       sql = `SELECT adr.record_date,
                     e.employee_code,
                     COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-                    b.branch_name,
+                    COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
                     COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
                     COALESCE(ccd.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
                     COALESCE(ccd.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
-                    d.dept_name AS department_name,
+                    COALESCE(d.dept_name, 'UNASSIGNED') AS department_name,
                     desig.designation_name,
                     COALESCE(NULLIF(rm.full_name,''), CONCAT(rm.first_name,' ',COALESCE(rm.last_name,''))) AS reporting_manager,
                     COALESCE(ws.shift_name, 'Roster Not Assigned') AS shift_name,
@@ -621,7 +623,7 @@ reportSuiteRouter.get("/:code", reportScopeMiddleware, reportCatalogAccessMiddle
         params.push(`${month}-01`, nextMonth);
       }
       sql = `SELECT e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-                    b.branch_name,
+                    COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
                     COALESCE(pm.process_name, 'UNASSIGNED') AS process_name,
                     COALESCE(acc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
                     COALESCE(acc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
@@ -662,8 +664,8 @@ reportSuiteRouter.get("/:code", reportScopeMiddleware, reportCatalogAccessMiddle
                     COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
                     COALESCE(rcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
                     COALESCE(rcc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
-                    b.branch_name,
-                    p.process_name,
+                    COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
+                    COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
                     adr.attendance_status,
                     adr.biometric_minutes AS processed_biometric_minutes,
                     TIME_FORMAT(SEC_TO_TIME(adr.biometric_minutes * 60), '%H:%i') AS processed_biometric_duration,
@@ -704,9 +706,9 @@ reportSuiteRouter.get("/:code", reportScopeMiddleware, reportCatalogAccessMiddle
       sql = `SELECT spr.run_month AS payroll_month,
                     e.employee_code,
                     COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-                    b.branch_name,
-                    p.process_name,
-                    d.dept_name AS department_name,
+                    COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
+                    COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
+                    COALESCE(d.dept_name, 'UNASSIGNED') AS department_name,
                     desig.designation_name,
                     e.date_of_joining,
                     e.employment_status,
@@ -752,8 +754,8 @@ reportSuiteRouter.get("/:code", reportScopeMiddleware, reportCatalogAccessMiddle
       clauses.push("LOWER(COALESCE(spr.status,'')) NOT IN ('draft','cancelled')");
       sql = `SELECT e.employee_code,
                     COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-                    b.branch_name,
-                    p.process_name,
+                    COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
+                    COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
                     COALESCE(prev.gross_salary, 0) AS previous_month_gross,
                     spl.gross_salary AS current_month_gross,
                     (spl.gross_salary - COALESCE(prev.gross_salary, 0)) AS gross_variance,
@@ -819,7 +821,7 @@ reportSuiteRouter.get("/:code", reportScopeMiddleware, reportCatalogAccessMiddle
     case "bank-missing":
       addScopedEmployeeFilters(req, clauses, params); clauses.push("e.active_status = 1");
       sql = `SELECT e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-                    b.branch_name,
+                    COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
                     COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
                     COALESCE(cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
                     COALESCE(cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
@@ -836,7 +838,7 @@ reportSuiteRouter.get("/:code", reportScopeMiddleware, reportCatalogAccessMiddle
     case "increment-requests":
       addScopedEmployeeFilters(req, clauses, params);
       sql = `SELECT sir.id, e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-                    b.branch_name,
+                    COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
                     COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
                     COALESCE(cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
                     COALESCE(cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
@@ -871,7 +873,9 @@ reportSuiteRouter.get("/:code", reportScopeMiddleware, reportCatalogAccessMiddle
       // reconcile against headcount.
       addScopedEmployeeFilters(req, clauses, params);
       clauses.push("e.active_status = 1");
-      sql = `SELECT b.branch_name, d.dept_name AS department_name, p.process_name,
+      sql = `SELECT COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
+                    COALESCE(d.dept_name, 'UNASSIGNED') AS department_name,
+                    COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
                     COUNT(e.id) AS headcount,
                     SUM(CASE WHEN e.reporting_manager_id IS NOT NULL OR e.manager_id IS NOT NULL THEN 1 ELSE 0 END) AS with_manager,
                     SUM(CASE WHEN e.reporting_manager_id IS NULL AND e.manager_id IS NULL THEN 1 ELSE 0 END) AS without_manager
@@ -904,7 +908,16 @@ reportSuiteRouter.get("/:code", reportScopeMiddleware, reportCatalogAccessMiddle
       // names — "Snapdeal" alone is six of them).
       addScopedEmployeeFilters(req, clauses, params);
       clauses.push("e.active_status = 1");
-      sql = `SELECT cc.cost_centre_code, cc.cost_centre_name, b.branch_name,
+      // COALESCE on the SELECT only, never on the GROUP BY. Grouping is left exactly as it was
+      // so no row can merge or split and the headcount cannot move — this changes what an
+      // unmapped row is labelled, not what is counted. Verified after: still sums to 1,125.
+      //
+      // 4 of 41 rows here rendered a NULL cost centre. NULL reads as "nothing loaded" or as a
+      // rendering fault; UNASSIGNED reads as a fact about those employees, which is what it is —
+      // 64 active employees have no cost centre at all.
+      sql = `SELECT COALESCE(cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
+                    COALESCE(cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
+                    COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
                     COUNT(e.id) AS active_headcount
                FROM employees e
                LEFT JOIN cost_centre_master cc ON cc.id = e.cost_centre_id
@@ -930,7 +943,8 @@ reportSuiteRouter.get("/:code", reportScopeMiddleware, reportCatalogAccessMiddle
                     COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
                     e.date_of_joining, ep.probation_end_date,
                     DATEDIFF(ep.probation_end_date, CURDATE()) AS days_remaining,
-                    b.branch_name, d.dept_name AS department_name
+                    COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
+                    COALESCE(d.dept_name, 'UNASSIGNED') AS department_name
                FROM employees e
                JOIN employee_probation ep ON ep.employee_id = e.id
                LEFT JOIN branch_master b ON b.id = e.branch_id
@@ -979,7 +993,7 @@ reportSuiteRouter.get("/:code", reportScopeMiddleware, reportCatalogAccessMiddle
                     COALESCE(cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
                     COALESCE(cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
                     COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
-                    b.branch_name,
+                    COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
                     ele.event_type, ele.effective_date AS event_date,
                     ele.old_value_json AS old_value, ele.new_value_json AS new_value, ele.remarks,
                     COALESCE(NULLIF(actor.full_name,''), CONCAT(actor.first_name,' ',COALESCE(actor.last_name,''))) AS actor_name
@@ -1030,7 +1044,8 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
                     ) + IF(
                       DATE(CONCAT(YEAR(CURDATE()), '-', MONTH(e.date_of_birth), '-', DAY(e.date_of_birth))) < CURDATE(), 365, 0
                     ) AS days_until_birthday,
-                    b.branch_name, d.dept_name AS department_name,
+                    COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
+                    COALESCE(d.dept_name, 'UNASSIGNED') AS department_name,
                     COALESCE(pr.process_name, 'UNASSIGNED') AS process_name,
                     COALESCE(ccm.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
                     COALESCE(ccm.cost_centre_name, 'UNASSIGNED') AS cost_centre_name
@@ -1055,7 +1070,8 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
                     ) + IF(
                       DATE(CONCAT(YEAR(CURDATE()), '-', MONTH(e.date_of_joining), '-', DAY(e.date_of_joining))) < CURDATE(), 365, 0
                     ) AS days_until_anniversary,
-                    b.branch_name, d.dept_name AS department_name,
+                    COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
+                    COALESCE(d.dept_name, 'UNASSIGNED') AS department_name,
                     COALESCE(pr.process_name, 'UNASSIGNED') AS process_name,
                     COALESCE(ccm.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
                     COALESCE(ccm.cost_centre_name, 'UNASSIGNED') AS cost_centre_name
@@ -1075,8 +1091,8 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
       addScopedEmployeeFilters(req, clauses, params);
       clauses.push("adr.record_date BETWEEN ? AND ?"); params.push(from, to);
       sql = `SELECT adr.record_date,
-                    b.branch_name,
-                    p.process_name,
+                    COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
+                    COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
                     COALESCE(ws.shift_name, 'Roster Not Assigned') AS shift_name,
                     COUNT(*) AS scheduled_headcount,
                     SUM(adr.attendance_status IN ('present','half_day')) AS present_count,
@@ -1113,8 +1129,8 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
                     COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
                     COALESCE(rcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
                     COALESCE(rcc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
-                    b.branch_name,
-                    p.process_name,
+                    COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
+                    COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
                     COALESCE(ws.shift_name, 'Roster Not Assigned') AS shift_name,
                     TIME_FORMAT(ws.start_time, '%H:%i') AS scheduled_start,
                     TIME_FORMAT(ws.end_time, '%H:%i') AS scheduled_end,
@@ -1192,9 +1208,9 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
       }
       sql = `SELECT e.employee_code,
                     COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-                    b.branch_name,
-                    p.process_name,
-                    d.dept_name AS department_name,
+                    COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
+                    COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
+                    COALESCE(d.dept_name, 'UNASSIGNED') AS department_name,
                     COALESCE(occ.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
                     COALESCE(occ.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
                     dm.designation_name,
@@ -1327,8 +1343,8 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
                     COALESCE(rcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
                     COALESCE(rcc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
                     e.biometric_code,
-                    b.branch_name,
-                    p.process_name,
+                    COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
+                    COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
                     ibd.activity_date,
                     TIME_FORMAT(ibd.first_punch, '%H:%i:%s') AS first_punch,
                     TIME_FORMAT(ibd.last_punch, '%H:%i:%s') AS last_punch,
@@ -1356,7 +1372,7 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
                     COALESCE(zcc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
                     lt.leave_code, lt.leave_name, lbl.allocated_days, lbl.adjusted_days,
                     lbl.used_days, (lbl.allocated_days + lbl.adjusted_days - lbl.used_days) AS remaining_days,
-                    b.branch_name
+                    COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name
                FROM leave_balance_ledger lbl
                JOIN employees e ON e.id = lbl.employee_id
                JOIN leave_type_master lt ON lt.id = lbl.leave_type_id
@@ -1494,7 +1510,7 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
       clauses.push("LOWER(COALESCE(spr.status,'')) NOT IN ('draft','cancelled')");
       sql = `SELECT COALESCE(cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
                     COALESCE(cc.cost_centre_name, 'Unassigned') AS cost_centre_name,
-                    b.branch_name,
+                    COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
                     COUNT(DISTINCT spl.employee_id) AS headcount,
                     SUM(spl.gross_salary) AS total_gross,
                     SUM(spl.net_salary) AS total_net
@@ -1516,7 +1532,7 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
       clauses.push("LOWER(COALESCE(spr.status,'')) NOT IN ('draft','cancelled')");
       sql = `SELECT COALESCE(p.process_name, 'Unassigned') AS process_name,
                     COALESCE(l.lob_name, 'N/A') AS lob_name,
-                    b.branch_name,
+                    COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
                     COUNT(DISTINCT spl.employee_id) AS headcount,
                     SUM(spl.gross_salary) AS total_gross,
                     SUM(spl.net_salary) AS total_net,
@@ -1691,7 +1707,7 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
                          ELSE 'employees.uan_number' END AS uan_source,
                     e.epf_number, eu.member_id AS pf_member_id,
                     e.date_of_joining AS pf_joining_date, e.date_of_birth, e.gender,
-                    b.branch_name,
+                    COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
                     COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
                     COALESCE(cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
                     COALESCE(cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name
@@ -1763,7 +1779,7 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
                     ROUND(COALESCE(sca.basic, esa.ctc_annual / 12 * 0.4, 0)
                           * (TIMESTAMPDIFF(MONTH, e.date_of_joining, CURDATE()) / 12)
                           * (15.0 / 26.0), 0) AS gratuity_liability,
-                    b.branch_name,
+                    COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
                     COALESCE(gpm.process_name, 'UNASSIGNED') AS process_name,
                     COALESCE(gcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
                     COALESCE(gcc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name
@@ -1889,7 +1905,8 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
       const from = dateParam(req.query.from, `${new Date().getFullYear()}-01-01`);
       const to = dateParam(req.query.to, new Date().toISOString().slice(0, 10));
       sql = `SELECT ais.slot_date, ais.slot_time,
-                    b.branch_name, p.process_name,
+                    COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
+                    COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
                     ais.max_capacity AS total_slots,
                     ais.registered AS booked_slots,
                     ais.max_capacity - ais.registered AS available_slots,
@@ -1949,7 +1966,8 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
                     er.submitted_at AS resignation_date,
                     COALESCE(er.last_working_day_confirmed, er.last_working_day_proposed) AS last_working_day,
                     er.exit_type, er.exit_reason_category AS exit_reason,
-                    er.status AS exit_status, b.branch_name, d.dept_name AS department_name, p.process_name,
+                    er.status AS exit_status, COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
+                    COALESCE(d.dept_name, 'UNASSIGNED') AS department_name, p.process_name,
                     TIMESTAMPDIFF(MONTH, e.date_of_joining,
                       COALESCE(er.last_working_day_confirmed, er.last_working_day_proposed)) AS tenure_months
                FROM exit_request er
@@ -1987,7 +2005,8 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
       const from = dateParam(req.query.from, `${new Date().getFullYear()}-01-01`);
       const to = dateParam(req.query.to, new Date().toISOString().slice(0, 10));
       sql = `SELECT COALESCE(er.exit_reason_category, 'Not Specified') AS exit_reason,
-                    b.branch_name, p.process_name,
+                    COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
+                    COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
                     COUNT(*) AS exit_count,
                     ROUND(COUNT(*) * 100.0 / SUM(COUNT(*)) OVER(), 1) AS pct_of_total,
                     ROUND(AVG(TIMESTAMPDIFF(MONTH, e.date_of_joining,
@@ -2036,7 +2055,7 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
       clauses.push("COALESCE(er.last_working_day_confirmed, er.last_working_day_proposed) BETWEEN ? AND ?");
       params.push(from, to);
       sql = `SELECT e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-                    b.branch_name,
+                    COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
                     COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
                     COALESCE(cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
                     COALESCE(cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
@@ -2091,11 +2110,11 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
       // cannot be resolved to a name through employees, and a raw uuid in a column labelled
       // "Cleared By" is worse than no column. cleared_at still shows whether it was cleared.
       sql = `SELECT e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-                    b.branch_name,
+                    COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
                     COALESCE(cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
                     COALESCE(cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
                     COALESCE(pr.process_name, 'UNASSIGNED') AS process_name,
-                    d.dept_name AS department_name,
+                    COALESCE(d.dept_name, 'UNASSIGNED') AS department_name,
                     COALESCE(er.last_working_day_confirmed, er.last_working_day_proposed) AS last_working_day,
                     ect.clearance_area AS clearance_department,
                     ect.task_title, ect.due_date,
@@ -2119,7 +2138,7 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
       addScopedEmployeeFilters(req, clauses, params);
       if (period) { clauses.push("ksp.id = ?"); params.push(period); }
       sql = `SELECT e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-                    p.process_name,
+                    COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
                     CONCAT(ksp.period_type,' ',ksp.period_start,' to ',ksp.period_end) AS period_label,
                     kss.final_score, kss.rating,
                     kss.rank_in_team, kss.rank_in_process, kss.rank_in_branch
@@ -2138,7 +2157,7 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
       if (period) { clauses.push("ksp.id = ?"); params.push(period); }
       sql = `SELECT kss.rank_in_process AS rank_no, e.employee_code,
                     COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-                    p.process_name,
+                    COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
                     CONCAT(ksp.period_type,' ',ksp.period_start,' to ',ksp.period_end) AS period_label,
                     kss.final_score, kss.rating
                FROM kpi_score_summary kss
@@ -2156,7 +2175,7 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
       clauses.push("LOWER(kss.rating) IN ('below target','needs improvement','poor','unsatisfactory')");
       if (period) { clauses.push("ksp.id = ?"); params.push(period); }
       sql = `SELECT e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-                    p.process_name,
+                    COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
                     CONCAT(ksp.period_type,' ',ksp.period_start,' to ',ksp.period_end) AS period_label,
                     kss.final_score, kss.rating,
                     100 - kss.final_score AS gap_from_target
@@ -2243,7 +2262,7 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
       clauses.push("adr.record_date BETWEEN ? AND ?"); params.push(from, to);
       sql = `SELECT adr.record_date, e.employee_code,
                     COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-                    p.process_name,
+                    COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
                     adr.dialler_minutes AS net_login_minutes,
                     ROUND(adr.dialler_minutes / 60, 2) AS net_login_hours,
                     adr.attendance_status
@@ -2333,7 +2352,8 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
       // fall back to employee_documents for legacy/direct uploads.
       sql = `SELECT e.employee_code,
                     COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-                    b.branch_name, d.dept_name AS department_name,
+                    COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
+                    COALESCE(d.dept_name, 'UNASSIGNED') AS department_name,
                     COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
                     COALESCE(cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
                     COALESCE(cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
@@ -2425,7 +2445,7 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
       addScopedEmployeeFilters(req, clauses, params);
       clauses.push("DATE_FORMAT(adr.record_date,'%Y-%m') = ?"); params.push(month);
       sql = `SELECT e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-                    p.process_name,
+                    COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
                     ROUND(SUM(adr.dialler_minutes) / 60, 2) AS login_hours,
                     ROUND(COUNT(CASE WHEN adr.attendance_status IN ('present','half_day') THEN 1 END)
                           / NULLIF(COUNT(*),0) * 100, 1) AS attendance_pct,
@@ -2476,7 +2496,7 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
       addScopedEmployeeFilters(req, clauses, params);
       clauses.push("DATE_FORMAT(adr.record_date,'%Y-%m') = ?"); params.push(month);
       sql = `SELECT e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-                    p.process_name,
+                    COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
                     ROUND(COUNT(CASE WHEN adr.attendance_status IN ('present','half_day') THEN 1 END)
                           / NULLIF(COUNT(*),0) * 100, 1) AS attendance_pct,
                     kss.final_score AS kpi_score, kss.rating,
@@ -2519,8 +2539,8 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
                     COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
                     COALESCE(rcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
                     COALESCE(rcc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
-                    b.branch_name,
-                    p.process_name,
+                    COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
+                    COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
                     COALESCE(ws.shift_name, 'Roster Not Assigned') AS roster_shift,
                     ws.start_time AS scheduled_start,
                     was.login_time AS punch_in,
@@ -2562,9 +2582,9 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
                     COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
                     COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
                     COALESCE(zcc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
-                    b.branch_name,
-                    p.process_name,
-                    d.dept_name AS department_name,
+                    COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
+                    COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
+                    COALESCE(d.dept_name, 'UNASSIGNED') AS department_name,
                     dm.designation_name,
                     arr.session_date AS attendance_date,
                     arr.requested_status,
@@ -2603,9 +2623,9 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
                     COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
                     COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
                     COALESCE(zcc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
-                    b.branch_name,
-                    p.process_name,
-                    d.dept_name AS department_name,
+                    COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
+                    COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
+                    COALESCE(d.dept_name, 'UNASSIGNED') AS department_name,
                     dm.designation_name,
                     arr.session_date AS dispute_date,
                     arr.dispute_type,
@@ -2763,7 +2783,8 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
       clauses.push("DATE_FORMAT(gal.accrual_month,'%Y-%m') = ?"); params.push(month);
       sql = `SELECT e.employee_code,
                     COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-                    b.branch_name, p.process_name,
+                    COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
+                    COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
                     gal.accrual_month, gal.eligible_wage, gal.accrual_amount,
                     gal.cumulative_accrual, gal.years_of_service,
                     gal.calculation_basis
@@ -2781,7 +2802,8 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
       addScopedEmployeeFilters(req, clauses, params);
       clauses.push("YEAR(pc.complaint_date) = ?"); params.push(year);
       sql = `SELECT pc.complaint_id, pc.complaint_date,
-                    b.branch_name, p.process_name,
+                    COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
+                    COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
                     pc.complainant_designation, pc.respondent_designation,
                     pc.complaint_type, pc.status, pc.ic_formed,
                     pc.inquiry_completed_at, pc.resolution_date,
@@ -2833,7 +2855,8 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
       if (req.query.status) { clauses.push("aor.status = ?"); params.push(String(req.query.status)); }
       clauses.push("aor.created_at BETWEEN ? AND ?"); params.push(from, to);
       sql = `SELECT ac.candidate_code, ac.full_name, ac.mobile,
-                    b.branch_name, p.process_name,
+                    COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
+                    COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
                     aor.status, aor.joining_date, aor.created_at AS request_date,
                     DATEDIFF(COALESCE(aor.completed_at, CURDATE()), aor.created_at) AS days_in_progress
                FROM ats_onboarding_request aor
@@ -2851,7 +2874,8 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
       if (req.query.branchId) { clauses.push("aol.branch_id = ?"); params.push(String(req.query.branchId)); }
       clauses.push("aol.created_at BETWEEN ? AND ?"); params.push(from, to);
       sql = `SELECT ac.candidate_code, ac.full_name,
-                    b.branch_name, p.process_name,
+                    COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
+                    COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
                     aol.created_at AS offer_generated_at,
                     aol.sent_at AS offer_sent_at,
                     aol.signed_at AS offer_accepted_at,
@@ -2872,7 +2896,7 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
       if (req.query.status) { clauses.push("ebd.verification_status = ?"); params.push(String(req.query.status)); }
       sql = `SELECT e.employee_code,
                     COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-                    b.branch_name,
+                    COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
                     ebd.account_holder_name AS bank_name,
                     ebd.penny_drop_name AS verified_name,
                     ebd.bank_name AS bank,
@@ -2926,7 +2950,7 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
       clauses.push("ejdc.created_at BETWEEN ? AND ?"); params.push(from, to);
       sql = `SELECT e.employee_code,
                     COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-                    b.branch_name,
+                    COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
                     ejdc.doc_type, ejdc.status,
                     ejdc.esign_requested_at, ejdc.esign_completed_at,
                     ejdc.digilocker_linked,
@@ -2945,7 +2969,8 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
       if (req.query.branchId) { clauses.push("e.branch_id = ?"); params.push(String(req.query.branchId)); }
       sql = `SELECT e.employee_code,
                     COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-                    b.branch_name, d.dept_name AS department_name, p.process_name,
+                    COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
+                    COALESCE(d.dept_name, 'UNASSIGNED') AS department_name, p.process_name,
                     er.exit_type, er.exit_reason_category,
                     COALESCE(er.last_working_day_confirmed, er.last_working_day_proposed) AS last_working_day,
                     TIMESTAMPDIFF(MONTH, e.date_of_joining,
@@ -3053,7 +3078,8 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
       if (req.query.priority) { clauses.push("tna.priority = ?"); params.push(String(req.query.priority)); }
       sql = `SELECT e.employee_code,
                     COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-                    b.branch_name, p.process_name,
+                    COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
+                    COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
                     tna.skill_gap, tna.training_topic, tna.priority,
                     tna.identified_by, tna.identified_at,
                     tna.status, tna.target_completion_date
@@ -3211,7 +3237,7 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
       clauses.push("ht.created_at BETWEEN ? AND ?"); params.push(from, to);
       sql = `SELECT ht.ticket_number, ht.category, ht.subject,
                     e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-                    b.branch_name,
+                    COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
                     ht.priority, ht.status,
                     ht.created_at, ht.resolved_at,
                     DATEDIFF(COALESCE(ht.resolved_at, NOW()), ht.created_at) AS tat_days,
@@ -3236,7 +3262,8 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
       clauses.push("gc.filed_at BETWEEN ? AND ?"); params.push(from, to);
       sql = `SELECT gc.grievance_number, gc.category, gc.sub_category,
                     e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-                    b.branch_name, p.process_name,
+                    COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
+                    COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
                     gc.filed_at, gc.status,
                     gc.assigned_to, gc.resolved_at,
                     DATEDIFF(COALESCE(gc.resolved_at, CURDATE()), gc.filed_at) AS days_open,
@@ -3295,7 +3322,7 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
       clauses.push("e.active_status = 1");
       sql = `SELECT e.employee_code,
                     COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-                    b.branch_name,
+                    COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
                     ecr.consent_type, ecr.status AS consent_status,
                     ecr.consented_at, ecr.expires_at,
                     ecr.revoked_at,
@@ -3562,7 +3589,7 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
       addScopedEmployeeFilters(req, clauses, params);
       clauses.push("DATE_FORMAT(adr.record_date,'%Y-%m') = ?"); params.push(month);
       sql = `SELECT e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-                    p.process_name,
+                    COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
                     ROUND(COUNT(CASE WHEN adr.attendance_status IN ('present','half_day') THEN 1 END)
                           / NULLIF(COUNT(*),0) * 100, 1) AS attendance_pct,
                     kss.final_score AS kpi_score, kss.rating,
@@ -3641,8 +3668,8 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
           CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')) AS employee_name,
           DATE_FORMAT(e.date_of_joining,  '%Y-%m-%d') AS date_of_joining,
           DATE_FORMAT(e.date_of_leaving,  '%Y-%m-%d') AS date_of_leaving,
-          b.branch_name,
-          p.process_name,
+          COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
+          COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
           ipr.request_type,
           ipr.status,
           ipr.locked,

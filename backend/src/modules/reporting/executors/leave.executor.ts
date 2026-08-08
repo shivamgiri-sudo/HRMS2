@@ -229,7 +229,7 @@ export async function leaveAllocationRegister(
            la.balance_year, la.allocated_days, la.adjusted_days, la.used_days,
            COALESCE(sp_cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
            COALESCE(sp_cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
-           b.branch_name,
+           COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
            COALESCE(p.process_name, 'UNASSIGNED') AS process_name
       FROM leave_balance_ledger la
       JOIN employees e           ON e.id  = la.employee_id
@@ -369,7 +369,8 @@ export async function leaveTrendMonthly(
            lt.leave_name, lt.leave_code,
            SUM(lr.total_days) AS total_days,
            COUNT(DISTINCT lr.employee_id) AS employee_count,
-           b.branch_name, p.process_name
+           COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
+           COALESCE(p.process_name, 'UNASSIGNED') AS process_name
       FROM leave_request lr
       JOIN employees e           ON e.id  = lr.employee_id
       JOIN leave_type_master lt  ON lt.id = lr.leave_type_id
@@ -431,7 +432,7 @@ export async function leaveLwpReconciliation(
            COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
            COALESCE(sp_cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
            COALESCE(sp_cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
-           b.branch_name,
+           COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
            COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
            SUM(adr.lwp_value) AS total_lwp_days,
            COUNT(lr.id) AS leave_applications,
@@ -504,7 +505,8 @@ export async function maternityPaternityRegister(
            lt.leave_name,
            lr.from_date, lr.to_date, lr.total_days,
            lr.status AS approval_status,
-           b.branch_name, p.process_name
+           COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
+           COALESCE(p.process_name, 'UNASSIGNED') AS process_name
       FROM leave_request lr
       JOIN employees e           ON e.id  = lr.employee_id
       JOIN leave_type_master lt  ON lt.id = lr.leave_type_id
@@ -570,7 +572,8 @@ export async function leaveEncashmentRegister(
            lt.leave_name, lt.leave_code,
            ler.encashment_days, ler.amount,
            ler.approval_status, ler.requested_date,
-           b.branch_name, p.process_name
+           COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
+           COALESCE(p.process_name, 'UNASSIGNED') AS process_name
       FROM leave_encashment_request ler
       JOIN employees e           ON e.id  = ler.employee_id
       JOIN leave_type_master lt  ON lt.id = ler.leave_type_id
@@ -643,7 +646,7 @@ export async function leaveLapseSummary(
            COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
            COALESCE(sp_cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
            COALESCE(sp_cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
-           b.branch_name,
+           COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
            COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
            lt.leave_name, lt.leave_code,
            lbl.balance_year,
