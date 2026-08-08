@@ -14,7 +14,19 @@
  * 7. No duplicate mobile/email blocking
  * 8. Full transaction rollback on failure
  * 9. Provisioning failure doesn't block creation
- * 10. Statutory validation (PAN duplicate check, format validation)
+ * 10. Statutory validation (PAN + Aadhaar duplicate check, format validation)
+ *
+ * Rule 10 widened 2026-08-08. It matched only employee_statutory_info, which
+ * covers 36 of 1,125 active employees (3.2%), and Aadhaar had no duplicate check
+ * at all — so an already-employed person could be converted into a SECOND
+ * employee record. That happened: MAS63086 was raised on 2026-08-05, with a full
+ * joining kit and e-sign chase, for someone already working under MAS62457 whose
+ * attendance runs through 2026-08-06. Both IDs are now checked against the
+ * employees table too (Aadhaar 93% coverage, PAN 81%).
+ *
+ * Rule 7 is unchanged: mobile and email still do NOT block. Mobile is on 100% of
+ * active employees but is shared within families and mistyped constantly; PAN and
+ * Aadhaar identify a person, a phone number identifies a handset.
  */
 
 import { PoolConnection, RowDataPacket, ResultSetHeader } from 'mysql2/promise';
@@ -896,19 +908,20 @@ async function validateStatutoryInfo(
       });
     } else {
       // Check PAN duplicate (RULE 10)
-      const [dupPan] = await conn.execute<RowDataPacket[]>(
-        `SELECT e.employee_code, e.first_name, e.last_name
-         FROM employees e
-         JOIN employee_statutory_info s ON s.employee_id = e.id
-         WHERE s.pan_number = ? AND e.active_status = 1 LIMIT 1`,
-        [panNumber]
-      );
-
-      if (dupPan.length > 0) {
-        const existing = dupPan[0] as any;
+      //
+      // This used to read employee_statutory_info ALONE, and that made it a
+      // guard in name only. Measured 2026-08-08: the table holds 33,436 rows,
+      // but only 36 of the 1,125 ACTIVE employees join to one carrying a PAN —
+      // 3.2% coverage, so 97% of the workforce could be re-onboarded without
+      // tripping it. The employees table itself is the populated source:
+      // pan_number on 915 of 1,125 active (81%), aadhaar_number on 1,043 (93%).
+      // Both are consulted now; statutory_info stays because the few rows it
+      // does have are still true.
+      const existing = await findActiveEmployeeByStatutoryId(conn, 'pan', panNumber);
+      if (existing) {
         blockers.push({
           type: 'duplicate_pan',
-          reason: `PAN ${panNumber} already registered to employee ${existing.employee_code} (${existing.first_name} ${existing.last_name})`,
+          reason: `PAN ${panNumber} already registered to ACTIVE employee ${existing.employee_code} (${existing.full_name}). This candidate is already employed — converting them would create a second employee record for one person. If this is a genuine rehire, close the existing employment first.`,
           severity: 'critical',
         });
       }
@@ -922,9 +935,86 @@ async function validateStatutoryInfo(
       reason: `Invalid Aadhaar format: must be 12 digits`,
       severity: 'critical',
     });
+  } else if (aadhaarNumber) {
+    // Aadhaar had NO duplicate check at all — only a format test. It is the
+    // better key of the two here: 93% of active employees carry one against
+    // PAN's 81%. This is the check that would have stopped MAS63086, a full
+    // joining kit and e-sign chase raised on 2026-08-05 for someone already
+    // working under MAS62457 with attendance through 2026-08-06.
+    const existing = await findActiveEmployeeByStatutoryId(conn, 'aadhaar', aadhaarNumber);
+    if (existing) {
+      blockers.push({
+        type: 'duplicate_aadhaar',
+        reason: `Aadhaar already registered to ACTIVE employee ${existing.employee_code} (${existing.full_name}). This candidate is already employed — converting them would create a second employee record for one person. If this is a genuine rehire, close the existing employment first.`,
+        severity: 'critical',
+      });
+    }
   }
 
   return { valid: blockers.length === 0, blockers };
+}
+
+/**
+ * The employee, if any, currently ACTIVE under this PAN or Aadhaar.
+ *
+ * Keyed on active_status = 1 deliberately, so a genuine rehire still converts:
+ * a resigned or previously-onboarding record is active_status = 0 and does not
+ * block. It also means a half-finished conversion cannot block its own retry —
+ * a freshly created employee is still `preboarding` / active_status = 0.
+ *
+ * Reads the candidate's raw value against the employees table and against
+ * employee_statutory_info. Deliberately NOT pan_blind_index: that column is
+ * present but empty on every one of the 1,125 active employees, so joining on it
+ * would silently match nothing and reinstate the hole this closes.
+ */
+async function findActiveEmployeeByStatutoryId(
+  conn: PoolConnection,
+  kind: 'pan' | 'aadhaar',
+  value: string
+): Promise<{ employee_code: string; full_name: string } | null> {
+  const employeeColumn = kind === 'pan' ? 'e.pan_number' : 'e.aadhaar_number';
+  // employee_statutory_info spells it aadhaar_id, not aadhaar_number — the two
+  // tables disagree, and guessing the employees-table name here would throw
+  // ER_BAD_FIELD_ERROR on every conversion. Verified against live schema.
+  const statutoryColumn = kind === 'pan' ? 's.pan_number' : 's.aadhaar_id';
+
+  try {
+    const [rows] = await conn.execute<RowDataPacket[]>(
+      `SELECT e.employee_code,
+              TRIM(CONCAT_WS(' ', e.first_name, e.last_name)) AS full_name
+         FROM employees e
+    LEFT JOIN employee_statutory_info s ON s.employee_id = e.id
+        WHERE e.active_status = 1
+          AND ( (${employeeColumn} IS NOT NULL AND ${employeeColumn} <> '' AND ${employeeColumn} = ?)
+             OR (${statutoryColumn} IS NOT NULL AND ${statutoryColumn} <> '' AND ${statutoryColumn} = ?) )
+        LIMIT 1`,
+      [value, value]
+    );
+    const hit = rows[0] as { employee_code?: string; full_name?: string } | undefined;
+    return hit?.employee_code
+      ? { employee_code: String(hit.employee_code), full_name: String(hit.full_name ?? '').trim() }
+      : null;
+  } catch (error) {
+    // employee_statutory_info.aadhaar_number may not exist on every environment.
+    // A duplicate check that throws must not fail OPEN — that is how the
+    // original guard came to pass everything — so fall back to the employees
+    // table, which is the source with real coverage, and only give up if that
+    // also fails.
+    const [rows] = await conn.execute<RowDataPacket[]>(
+      `SELECT employee_code, TRIM(CONCAT_WS(' ', first_name, last_name)) AS full_name
+         FROM employees
+        WHERE active_status = 1
+          AND ${employeeColumn.replace('e.', '')} IS NOT NULL
+          AND ${employeeColumn.replace('e.', '')} <> ''
+          AND ${employeeColumn.replace('e.', '')} = ?
+        LIMIT 1`,
+      [value]
+    );
+    const hit = rows[0] as { employee_code?: string; full_name?: string } | undefined;
+    return hit?.employee_code
+      ? { employee_code: String(hit.employee_code), full_name: String(hit.full_name ?? '').trim() }
+      : null;
+  }
 }
 
 /**
