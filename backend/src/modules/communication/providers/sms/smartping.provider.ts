@@ -38,6 +38,11 @@ export class SmartPingProvider implements CommunicationProvider {
    * Send an SMS via SmartPing.
    * `subject` carries the DLT content ID (reusing the unused field).
    */
+  /** SmartPing rejects with "username is required" when these are absent. */
+  isConfigured(): boolean {
+    return Boolean(this.username && this.password);
+  }
+
   async send(recipient: string, subject: string, body: string, _attachments?: Attachment[]): Promise<ProviderResponse> {
     try {
       const mobile = this.normalizeMobile(recipient);

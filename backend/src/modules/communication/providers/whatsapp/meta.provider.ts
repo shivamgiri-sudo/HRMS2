@@ -15,6 +15,11 @@ export class MetaWhatsAppProvider implements CommunicationProvider {
     private readonly phoneNumberId: string,
   ) {}
 
+  /** Meta Cloud API needs an access token and phone number id. */
+  isConfigured(): boolean {
+    return Boolean(this.accessToken && this.phoneNumberId);
+  }
+
   async send(recipient: string, _subject: string, body: string): Promise<ProviderResponse> {
     try {
       const to = recipient.replace(/^\+/, '').replace(/\D/g, '');

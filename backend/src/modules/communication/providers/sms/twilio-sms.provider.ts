@@ -5,12 +5,19 @@ import type { ProviderResponse, DeliveryStatus } from '../../communication.types
 export class TwilioSMSProvider implements CommunicationProvider {
   private client: ReturnType<typeof twilio>;
   private sid: string;
+  private readonly hasCreds: boolean;
 
   constructor(accountSid?: string, authToken?: string, messagingServiceSid?: string) {
     const sid = accountSid ?? process.env.TWILIO_ACCOUNT_SID ?? '';
     const tok = authToken  ?? process.env.TWILIO_AUTH_TOKEN  ?? '';
     this.sid = messagingServiceSid ?? process.env.TWILIO_MESSAGING_SERVICE_SID ?? '';
     this.client = twilio(sid, tok);
+    this.hasCreds = Boolean(sid && tok && this.sid);
+  }
+
+  /** Needs account SID, auth token and messaging service SID to send anything. */
+  isConfigured(): boolean {
+    return this.hasCreds;
   }
 
   async send(recipient: string, _subject: string, body: string): Promise<ProviderResponse> {

@@ -19,6 +19,11 @@ export class MSG91Provider implements CommunicationProvider {
     private readonly templateId: string = '',
   ) {}
 
+  /** MSG91 needs an auth key and sender id. */
+  isConfigured(): boolean {
+    return Boolean(this.authKey && this.senderId);
+  }
+
   async send(recipient: string, _subject: string, body: string): Promise<ProviderResponse> {
     try {
       const mobile = recipient.replace(/^\+?91/, '').replace(/\D/g, '');
