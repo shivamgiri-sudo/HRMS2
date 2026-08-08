@@ -273,14 +273,27 @@ let startupHandle: ReturnType<typeof setTimeout> | null = null;
 /**
  * Delay before the first cycle after boot.
  *
- * Long enough that a crash-looping process never reaches it — pm2 here is
- * configured restart_delay 5000 / max_restarts 10, so a loop dies out in under a
- * minute — and short enough that the worker actually runs.
+ * Two competing constraints, and the first value chosen got the second one wrong.
+ *
+ * Long enough that a crash-looping process never reaches it: pm2 here runs
+ * restart_delay 5000 / max_restarts 10, so a genuine loop exhausts its restarts
+ * and stops in roughly 50 seconds. 90s clears that.
+ *
+ * Short enough that the worker actually gets there. 5 minutes did not. Measured
+ * on 2026-08-08: the workers process restarted 15 times in two hours (several
+ * sessions deploy to this box), and all-workers.ts starts its 45 workers
+ * SEQUENTIALLY — the boot at 21:30:30 only reached `✓ esign-compliance` at
+ * 21:32:19, nearly two minutes in. A 5-minute delay measured from there needed
+ * ~7 minutes of uninterrupted uptime, which this process rarely gets, so the
+ * cycle kept being cancelled by the next deploy.
+ *
+ * The durable cooldown, not this number, is what prevents a storm. This only has
+ * to outlast a crash-loop.
  */
-const STARTUP_DELAY_MS = 5 * 60 * 1000;
+const STARTUP_DELAY_MS = 90 * 1000;
 
 export async function startEsignComplianceWorker(): Promise<void> {
-  console.log("[EsignComplianceWorker] Starting (first run in 5m, then every 4h)");
+  console.log("[EsignComplianceWorker] Starting (first run in 90s, then every 4h)");
 
   // This originally ran a cycle IMMEDIATELY at startup, which — combined with
   // cooldowns held in memory — turned every restart into a fresh blast: 1,818
