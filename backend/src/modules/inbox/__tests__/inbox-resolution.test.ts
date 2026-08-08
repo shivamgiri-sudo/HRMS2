@@ -222,6 +222,33 @@ describe('inbox reconciliation rules', () => {
     expect(rule?.where).toContain('w.created_at <');
   });
 
+  it('stops at the next query parameter when date= is not last', () => {
+    // The inner SUBSTRING_INDEX alone was correct only while date= was the final
+    // parameter. Newer alerts append more:
+    //   …&date=2026-08-04&employeeName=KHUSHI&employeeCode=MAS62567
+    // which yielded "2026-08-04&employeeName=..." — rejected in a date
+    // comparison with ER_TRUNCATED_WRONG_VALUE. One bad row aborts the whole
+    // statement, so BOTH dated rules failed outright: measured on production
+    // 2026-08-08, 3,538 of 25,701 open dated alerts carry a trailing parameter,
+    // and none of the 25,701 were being auto-resolved.
+    for (const key of ['attendance_missing_punch', 'attendance_missing_punch_expired']) {
+      const rule = INBOX_RESOLUTION_RULES.find((r) => r.key === key);
+      expect(rule, `${key} missing`).toBeTruthy();
+      expect(
+        rule?.where,
+        `${key} reads to end-of-string and breaks on a trailing &param`,
+      ).toContain("SUBSTRING_INDEX(SUBSTRING_INDEX(w.action_url, 'date=', -1), '&', 1)");
+    }
+  });
+
+  it('the date parse is a no-op when date= really is the last parameter', () => {
+    // Trimming at the next & must not change rows that already worked.
+    const parse = (url: string) => url.split('date=').pop()!.split('&')[0];
+    expect(parse('/attendance?employeeId=abc&date=2026-08-04')).toBe('2026-08-04');
+    expect(parse('/attendance?date=2026-08-04&employeeName=KHUSHI&employeeCode=MAS62567'))
+      .toBe('2026-08-04');
+  });
+
   it('never retires a non-attendance alert on age alone', () => {
     // Age is scoped to the two dated attendance types and nothing else — a
     // pending leave or an uncalled candidate must never expire quietly.
