@@ -592,10 +592,17 @@ export async function lifecycleEvents(
   const clauses: string[] = ["el.id IS NOT NULL"];
   const params: unknown[]  = [];
   // Scope filtering on employee dimension
-  if (scope.branchScope.mode === "restricted") {
-    clauses.push(`e.branch_id IN (${scope.branchScope.ids.map(() => "?").join(",")})`);
-    params.push(...scope.branchScope.ids);
-  }
+  // Was branch-only, so a process-restricted viewer saw salary increments for
+  // every process in their branch. This report exposes current_ctc and
+  // proposed_ctc across 14,467 salary_increment_request rows; NOIDA alone runs
+  // 20 processes over 351 employees, 26 users hold an explicit
+  // scope_type='process' assignment, and any employee with a process_id
+  // resolves to a restricted process scope (983 active).
+  //
+  // appendScopeConditions is what the other 99 report functions use: branch AND
+  // process AND department AND cost centre, plus the access-denied and sentinel
+  // handling the inline version never had.
+  appendScopeConditions(scope, clauses, params, "e");
   // employee_lifecycle_event records effective_date, not event_date.
   clauses.push("el.effective_date BETWEEN ? AND ?");
   params.push(from, to);
@@ -647,10 +654,10 @@ export async function incrementPromotionHistory(
 
   const clauses: string[] = ["sir.id IS NOT NULL"];
   const params: unknown[]  = [];
-  if (scope.branchScope.mode === "restricted") {
-    clauses.push(`e.branch_id IN (${scope.branchScope.ids.map(() => "?").join(",")})`);
-    params.push(...scope.branchScope.ids);
-  }
+  // Same branch-only gap as incrementPromotionHistory: a process-restricted
+  // viewer saw every process in their branch. employee_lifecycle_event is
+  // per-employee (inner joins employees e), so it takes the full canonical scope.
+  appendScopeConditions(scope, clauses, params, "e");
   clauses.push("sir.effective_from BETWEEN ? AND ?");
   params.push(from, to);
 
