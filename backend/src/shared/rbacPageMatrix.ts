@@ -666,6 +666,9 @@ export const LIVE_IMPORTED_PAGE_CODES: Readonly<Record<string, readonly string[]
     "FINANCE_PNL_LOBS",
     "FINANCE_PNL_PERIOD_CLOSE",
     "FINANCE_PROCESS_PNL",
+    // Granted live after the 2026-08-08 re-import, so the matrix had fallen behind
+    // again and --apply would have revoked it from finance_head and payroll_hr.
+    "FINANCE_SALARY_VOUCHER",
     "FINANCE_VENDOR_PAYMENTS",
     "VENDOR_MANAGEMENT",
     "PAYROLL_CHEQUE_VALIDATION",
@@ -857,6 +860,8 @@ export const LIVE_IMPORTED_PAGE_CODES: Readonly<Record<string, readonly string[]
   payroll_hr: [
     // Re-imported 2026-08-08 — live grants the matrix had fallen behind on.
     "BULK_UPLOAD",
+    // Granted live after that re-import; see the finance_head entry above.
+    "FINANCE_SALARY_VOUCHER",
     "PAYROLL_EPF_COMPLIANCE",
   ],
   process_manager: [

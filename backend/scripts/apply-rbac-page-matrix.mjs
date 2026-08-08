@@ -80,8 +80,13 @@ try {
   // revocations are intended. So --apply now refuses when anything would be revoked,
   // and the operator must either refresh LIVE_IMPORTED_PAGE_CODES or pass
   // --allow-revoke having read the list.
+  // The split is computed on every run, not just under --apply. The refusal below tells
+  // the operator to "run without --apply first to see the full picture", and that was a
+  // lie while this block was gated on `apply`: a dry run printed only a per-role `extra`
+  // count, which merges live revocations with inert ones and so never showed the number
+  // that actually decides whether --apply is refused.
   const allowRevoke = process.argv.includes("--allow-revoke");
-  if (apply && !allowRevoke) {
+  {
     const wouldRevoke = [];
     const inertRevokes = [];
     for (const role of roles) {
@@ -107,16 +112,29 @@ try {
       );
     }
     if (wouldRevoke.length > 0) {
-      console.error(
-        `Refusing to apply: this would deactivate ${wouldRevoke.length} existing grant(s) on LIVE pages.\n\n` +
-          wouldRevoke.map((entry) => `  - ${entry}`).join("\n") +
-          `\n\nThe matrix is behind production. Either add these to LIVE_IMPORTED_PAGE_CODES in` +
-          ` backend/src/shared/rbacPageMatrix.ts, or re-run with --allow-revoke if every` +
-          ` revocation above is intended. Run without --apply first to see the full picture.`,
+      const detail =
+        `${wouldRevoke.length} existing grant(s) on LIVE pages are not in the matrix:\n\n` +
+        wouldRevoke.map((entry) => `  - ${entry}`).join("\n") +
+        `\n\nThe matrix is behind production. Either add these to LIVE_IMPORTED_PAGE_CODES in` +
+        ` backend/src/shared/rbacPageMatrix.ts (it is keyed by role, so add each code under` +
+        ` the role that holds it — never to a shared list, which would widen access to every` +
+        ` role), or re-run with --allow-revoke if every revocation above is intended.`;
+
+      // Only --apply refuses. A dry run reports the same list and exits 0, which is what
+      // makes "run without --apply first" actually useful.
+      if (apply && !allowRevoke) {
+        console.error(`Refusing to apply: applying would deactivate ${detail}`);
+        process.exitCode = 1;
+        await conn.end();
+        process.exit(1);
+      }
+      console.log(
+        (allowRevoke
+          ? `--allow-revoke is set, so these WILL be deactivated. `
+          : `Dry run — nothing was written. An --apply would be refused because `) + detail,
       );
-      process.exitCode = 1;
-      await conn.end();
-      process.exit(1);
+    } else if (!apply) {
+      console.log("Revocation guard: no live grant would be revoked; --apply would not be refused.");
     }
   }
 
