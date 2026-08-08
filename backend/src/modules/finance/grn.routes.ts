@@ -10,6 +10,7 @@ import {
 } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { db } from "../../db/mysql.js";
+import { listFinanceApprovalEvents } from "../../shared/financeApprovalEvent.js";
 import { budgetCoverageRouter } from "../process-pnl/budget-coverage.routes.js";
 import { financeExpenseMasterService } from "../process-pnl/finance-expense-master.service.js";
 import {
@@ -336,6 +337,32 @@ function grNExpenseMasterRoutes(router: Router) {
         res.status(400).json({
           success: false,
           error: error instanceof Error ? error.message : "Unable to load companies",
+        });
+      }
+    }
+  );
+
+  /**
+   * The approval history of one GRN — every transition, oldest first, with its reason.
+   *
+   * finance_approval_event had five writers and NO reader wired up. The imprest queue tells a
+   * reviewer "the reason is kept on the voucher's history"; until now that was a promise the
+   * system could not keep. A returned voucher recorded exactly why and nobody could read it back.
+   *
+   * Append-only, so a GRN returned twice shows BOTH reasons — which is the entire reason this
+   * table exists rather than a reviewed_by/review_note pair that each transition overwrites.
+   */
+  router.get(
+    "/grns/:id/approval-history",
+    requireRole(...GRN_READ_ROLES),
+    async (req: AuthenticatedRequest, res) => {
+      try {
+        const data = await listFinanceApprovalEvents("grn", req.params.id);
+        res.json({ success: true, data });
+      } catch (error: unknown) {
+        res.status(400).json({
+          success: false,
+          error: error instanceof Error ? error.message : "Unable to load the approval history",
         });
       }
     }

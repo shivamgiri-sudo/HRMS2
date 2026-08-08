@@ -67,6 +67,7 @@ describe("finance services are actually invoked", () => {
     ["recordFinanceApprovalEvent", "approval history is never written"],
     ["writePeriodSplits", "multi-month recognition never produces a schedule"],
     ["getDetailsReport", "the Imprest Details report has no endpoint"],
+    ["listFinanceApprovalEvents", "approval history is written and can never be read back"],
   ])("%s has a call site — otherwise %s", (symbol) => {
     expect(
       callSites(symbol),

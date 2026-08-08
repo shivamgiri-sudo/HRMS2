@@ -1424,6 +1424,16 @@ export const grnSmartService = {
             paymentId = await vendorPaymentService.createFromGrn(grnId, actorUserId, connection);
           } else if (grn.grn_type === "imprest") {
             imprestLedgerEntryId = await postImprestVoucherDebit(connection, grnId, grn, actorUserId);
+            if (imprestLedgerEntryId) {
+              // Links the voucher to the exact ledger row it produced. Migration 1094 created
+              // this column for it; leaving it NULL made the ledger posting untraceable from
+              // the GRN, so "which entry did this voucher create" had no answer but a guess by
+              // amount and date. Written in the same transaction as the posting itself.
+              await connection.execute(
+                `UPDATE grn_request SET imprest_ledger_entry_id = ? WHERE id = ?`,
+                [imprestLedgerEntryId, grnId],
+              );
+            }
           }
         } else {
           await releaseAllocations(connection, allocations);

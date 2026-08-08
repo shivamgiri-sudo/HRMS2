@@ -70,6 +70,9 @@ describe("the imprest endpoints are mounted", () => {
     // Without this, Requirement 8's master has read paths only — nobody can be appointed, so no
     // float is ever funded and every approved voucher skips its debit.
     ["GET", "/api/finance/imprest/manager-candidates"],
+    // finance_approval_event had five writers and no reader wired to an endpoint, so a returned
+    // voucher recorded exactly why and nobody could read it back.
+    ["GET", "/api/finance/imprest/allocations/:id/approval-history"],
   ])("%s %s", (method, path) => {
     expect(has(method, path), `${method} ${path} is not registered`).toBe(true);
   });

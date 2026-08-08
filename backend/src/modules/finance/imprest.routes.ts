@@ -10,6 +10,7 @@ import { requireRole } from "../../middleware/requireRole.js";
 import { resolveFinanceBranchScopeSet } from "./finance-access-scope.js";
 import { imprestLedgerService } from "./imprest-ledger.service.js";
 import { imprestService } from "./imprest.service.js";
+import { listFinanceApprovalEvents } from "../../shared/financeApprovalEvent.js";
 
 /**
  * Imprest API — manager master (Req 8), allocations (Req 6) and reports (Req 7).
@@ -227,6 +228,16 @@ imprestRouter.post(
     } catch (error) {
       fail(res, error, "Unable to review the imprest allocation");
     }
+  }),
+);
+
+/** Approval history of one allocation — approve/reject, who, when, and the reason. */
+imprestRouter.get(
+  "/allocations/:id/approval-history",
+  requireRole(...IMPREST_READ_ROLES),
+  h(async (req, res) => {
+    const data = await listFinanceApprovalEvents("imprest_allocation", req.params.id);
+    res.json({ success: true, data });
   }),
 );
 

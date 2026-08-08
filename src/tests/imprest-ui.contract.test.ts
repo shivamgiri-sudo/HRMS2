@@ -28,6 +28,7 @@ const REPORT = read("src/components/finance/grn/imprest/ImprestReportPanel.tsx")
 const WORKSPACE = read("src/components/finance/grn/imprest/ImprestWorkspace.tsx");
 const MANAGERS = read("src/components/finance/grn/imprest/ImprestManagerPanel.tsx");
 const GRN_FORM = read("src/components/finance/grn/BudgetLinkedGrnForm.tsx");
+const QUEUE = read("src/components/finance/grn/ImprestApprovalQueue.tsx");
 
 describe("the report exports through the API", () => {
   it("opens the export endpoint rather than building a file from state", () => {
@@ -148,5 +149,31 @@ describe("vendor applicability bites where a vendor is chosen", () => {
 
   it("refetches when the branch changes, so no stale list survives", () => {
     expect(GRN_FORM).toContain('queryKey: ["grn-vendor-search", vendorSearch, form.branchId]');
+  });
+});
+
+describe("the queue can show the history it promises", () => {
+  it("keeps the promise it makes in its own copy", () => {
+    // The reason box says "the reason is kept on the voucher's history". Until the endpoint was
+    // wired, five call sites wrote finance_approval_event and nothing could read any of it back.
+    expect(QUEUE).toContain("the reason is kept on the voucher's history");
+    expect(QUEUE).toContain("/approval-history");
+  });
+
+  it("fetches on demand, not once per row", () => {
+    // A queue of twenty would otherwise fire twenty requests to show nothing most of the time.
+    expect(QUEUE).toContain("enabled: Boolean(historyFor?.id)");
+  });
+
+  it("renders every event, so a twice-returned voucher shows both reasons", () => {
+    // The whole reason this is an append-only table rather than a column each transition
+    // overwrites. Rendering only the latest would throw that away at the last step.
+    expect(QUEUE).toContain("history.data.map((event)");
+    expect(QUEUE).toContain("event.remarks");
+  });
+
+  it("shows who acted and when", () => {
+    expect(QUEUE).toContain("event.actor_name");
+    expect(QUEUE).toContain("dateLabel(event.created_at)");
   });
 });

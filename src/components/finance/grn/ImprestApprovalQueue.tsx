@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { CornerUpLeft, Check, RefreshCw, X } from "lucide-react";
+import { CornerUpLeft, Check, History, RefreshCw, X } from "lucide-react";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { useToast } from "@/hooks/use-toast";
 import { StatusStamp } from "@/components/finance/grn/StatusStamp";
@@ -48,6 +48,17 @@ type ImprestRow = {
 
 type PendingAction = { row: ImprestRow; kind: "return" | "reject" } | null;
 
+type ApprovalEvent = {
+  id: string;
+  action: string;
+  from_status?: string | null;
+  to_status: string;
+  actor_name?: string | null;
+  actor_role?: string | null;
+  remarks?: string | null;
+  created_at: string;
+};
+
 /** Older than a week is the one that needs chasing, so it is the only one coloured. */
 function ageTone(bucket?: string | null) {
   return bucket === "7+" ? "crit" : bucket === "3-7" ? "warn" : "neutral";
@@ -58,6 +69,26 @@ export function ImprestApprovalQueue() {
   const queryClient = useQueryClient();
   const [action, setAction] = useState<PendingAction>(null);
   const [reason, setReason] = useState("");
+  const [historyFor, setHistoryFor] = useState<ImprestRow | null>(null);
+
+  /**
+   * The voucher's approval history.
+   *
+   * This queue already tells a reviewer "the reason is kept on the voucher's history". Until
+   * now that was a promise nothing could keep: five call sites wrote finance_approval_event and
+   * no reader was ever wired to an endpoint, so a returned voucher recorded exactly why and
+   * nobody could read it back. Fetched on demand rather than per row, because a queue of twenty
+   * would otherwise fire twenty requests to show nothing most of the time.
+   */
+  const history = useQuery({
+    queryKey: ["imprest-approval-history", historyFor?.id],
+    enabled: Boolean(historyFor?.id),
+    queryFn: async () => {
+      const r = await hrmsApi.get<any>(`/api/finance/grns/${historyFor!.id}/approval-history`);
+      const body = (r as any)?.data ?? r;
+      return ((body?.data ?? body ?? []) as ApprovalEvent[]);
+    },
+  });
 
   const query = useQuery({
     queryKey: ["imprest-approval-queue"],
@@ -204,12 +235,66 @@ export function ImprestApprovalQueue() {
                       >
                         <X className="h-3.5 w-3.5" />
                       </GrnIconButton>
+                      <GrnIconButton
+                        aria-label={`History of ${row.grn_number}`}
+                        onClick={() => setHistoryFor((current) => (current?.id === row.id ? null : row))}
+                      >
+                        <History className="h-3.5 w-3.5" />
+                      </GrnIconButton>
                     </div>
                   </GrnTd>
                 </tr>
               ))}
             </tbody>
           </GrnTable>
+        </div>
+      )}
+
+      {historyFor && (
+        <div className="border-t border-grn-line p-3">
+          <p className="text-xs font-semibold text-grn-ink">
+            History · <span className="font-mono">{historyFor.grn_number}</span>
+          </p>
+          {history.isLoading ? (
+            <p className="mt-2 text-[11px] text-grn-ink-soft">Loading…</p>
+          ) : !history.data?.length ? (
+            <p className="mt-2 text-[11px] text-grn-ink-soft">
+              Nothing recorded yet. Events are written from the point a voucher is submitted, so
+              anything raised before this existed shows no history.
+            </p>
+          ) : (
+            /* Oldest first: a history reads forwards. Every entry survives, so a voucher
+               returned twice shows BOTH reasons rather than only the most recent — which is why
+               this is an append-only table and not a column each transition overwrites. */
+            <ol className="mt-2 space-y-2">
+              {history.data.map((event) => (
+                <li key={event.id} className="border-l-2 border-grn-line pl-3">
+                  <div className="flex flex-wrap items-baseline gap-x-2">
+                    <span className="text-[11.5px] font-semibold text-grn-ink">
+                      {labelStatus(event.action)}
+                    </span>
+                    <span className="text-[10.5px] text-grn-ink-soft">
+                      {event.from_status ? `${labelStatus(event.from_status)} → ` : ""}
+                      {labelStatus(event.to_status)}
+                    </span>
+                    <span className="ml-auto text-[10.5px] text-grn-ink-soft">
+                      {dateLabel(event.created_at)}
+                    </span>
+                  </div>
+                  <GrnCellSub>
+                    {event.actor_name ?? "Unknown"}
+                    {event.actor_role ? ` · ${labelStatus(event.actor_role)}` : ""}
+                  </GrnCellSub>
+                  {event.remarks && (
+                    <p className="mt-1 text-[11px] text-grn-ink">{event.remarks}</p>
+                  )}
+                </li>
+              ))}
+            </ol>
+          )}
+          <div className="mt-2 flex justify-end">
+            <GrnChip active={false} onClick={() => setHistoryFor(null)}>Close</GrnChip>
+          </div>
         </div>
       )}
 
