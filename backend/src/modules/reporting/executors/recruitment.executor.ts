@@ -22,31 +22,88 @@ import {
   monthParam,
   applyPagination,
   ReportScopeAccessDeniedError,
+  ReportSourceUnavailableError,
 } from "./types.js";
 
-// ATS schema is being extended; gracefully return empty on missing column/table errors
-const ATS_SCHEMA_ERRORS = new Set(['ER_NO_SUCH_TABLE', 'ER_BAD_FIELD_ERROR', 'ER_PARSE_ERROR']);
+/**
+ * A schema error is not an empty result.
+ *
+ * These two helpers used to catch ER_NO_SUCH_TABLE, ER_BAD_FIELD_ERROR and ER_PARSE_ERROR and
+ * return `[]` / `0`. That turned "this report cannot run" into "there are no candidates", which
+ * the grid draws exactly like a real empty result — 200, clean, no warning anywhere.
+ *
+ * It was not hypothetical. Measured on live mas_hrms on 2026-08-08, all five reports in this
+ * file were in that state: ats_candidate holds 37,630 rows, and every one of them reported
+ * nothing, because the queries name columns the table does not have — application_status,
+ * applied_date, selected_date, offer_date, joining_date, offer_ctc, offer_accepted, job_id —
+ * and job_posting (0 rows) instead of job_requisition. The error was logged twice per request,
+ * once for the count and once for the page, and thrown away both times.
+ *
+ * So the error now surfaces. Five reports that returned a confident zero will return a plain
+ * failure naming the column, which is worse-looking and considerably more honest: an empty
+ * recruitment pipeline is the most expensive wrong answer this file can give.
+ *
+ * The real column mapping is known and recorded here for whoever repoints these — it is
+ * deliberately NOT applied in this commit, because two of the fields have no equivalent at all
+ * and that is a decision rather than a rename:
+ *
+ *   application_status  -> status            (Selected 1,574 / Rejected 2,589 / Waiting 1,359 /
+ *                                             No Show 489 / Inactive 31,354)
+ *   applied_date        -> created_at        (37,630 filled; created_date only 4,903)
+ *   joining_date        -> offer_doj
+ *   offer_ctc           -> offer_salary
+ *   offer_accepted      -> joining_confirmation
+ *   job_id              -> requisition_id    (only 200 of 37,630 filled — must stay a LEFT JOIN)
+ *   jd.job_title        -> job_requisition.designation_name
+ *   selected_date       -> NOTHING
+ *   offer_date          -> NOTHING           (offer_status is NULL on all 37,630 rows)
+ *   offer_decline_reason-> NOTHING
+ *
+ * offer-tracker filters on `offer_date IS NOT NULL`, so it has no answerable form against this
+ * schema and should be blocked with a stated reason rather than repointed. Note also that
+ * branch/process scoping through the requisition cannot work as written: job_requisition
+ * carries branch_name/process_name as text and its branch_id is NULL on every row.
+ */
+function rethrowSchemaError(err: unknown, sql: string): never {
+  const e = err as { code?: string; sqlMessage?: string };
+  const code = String(e?.code ?? "");
+
+  // A genuinely absent table is what ReportSourceUnavailableError describes, so use it — its
+  // message ("required table X does not exist") is then true.
+  if (code === "ER_NO_SUCH_TABLE") {
+    const table = /\bFROM\s+`?([a-z_][a-z0-9_]*)`?/i.exec(sql)?.[1] ?? "unknown";
+    throw new ReportSourceUnavailableError("recruitment", table, e.sqlMessage ?? "");
+  }
+
+  // A missing COLUMN is a different fault and must not borrow that wording: ats_candidate
+  // exists and holds 37,630 rows, so saying the table is absent would send whoever reads it
+  // looking for the wrong thing.
+  if (code === "ER_BAD_FIELD_ERROR" || code === "ER_PARSE_ERROR") {
+    throw new Error(
+      `Recruitment report cannot run against this database's schema — ${code}: ` +
+        `${e.sqlMessage ?? ""}. The table exists; the report asks for a column it does not have. ` +
+        `This previously returned an empty result, which read as "no candidates".`
+    );
+  }
+  throw err;
+}
 
 async function query(sql: string, params: unknown[]): Promise<RowDataPacket[]> {
   try {
     const [rows] = await db.execute<RowDataPacket[]>(sql, params);
     return rows;
   } catch (err: unknown) {
-    if (ATS_SCHEMA_ERRORS.has(String((err as Record<string, unknown>)?.["code"] ?? ""))) return [];
-    throw err;
+    rethrowSchemaError(err, sql);
   }
 }
 
 async function count(baseSql: string, params: unknown[]): Promise<number> {
+  const sql = `SELECT COUNT(*) AS total FROM (${baseSql}) AS _cnt`;
   try {
-    const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT COUNT(*) AS total FROM (${baseSql}) AS _cnt`,
-      params
-    );
+    const [rows] = await db.execute<RowDataPacket[]>(sql, params);
     return Number((rows as Array<{ total?: number }>)[0]?.total ?? 0);
   } catch (err: unknown) {
-    if (ATS_SCHEMA_ERRORS.has(String((err as Record<string, unknown>)?.["code"] ?? ""))) return 0;
-    throw err;
+    rethrowSchemaError(err, baseSql);
   }
 }
 
