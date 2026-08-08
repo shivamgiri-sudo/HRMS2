@@ -1153,7 +1153,7 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
                     TIME_FORMAT(SEC_TO_TIME(SUM(
                       GREATEST(0, adr.raw_minutes - COALESCE(arc.full_day_minutes, TIMESTAMPDIFF(MINUTE, sm.start_time, sm.end_time), 480))
                     ) * 60), '%H:%i') AS overtime_duration,
-                    ROUND(SUM(COALESCE(spl2.overtime_pay,0)), 0) AS overtime_pay
+                    ROUND(COALESCE(MAX(otp.overtime_pay), 0), 0) AS overtime_pay
                FROM attendance_daily_record adr
                JOIN employees e ON e.id = adr.employee_id
                LEFT JOIN branch_master b ON b.id = e.branch_id
@@ -1163,14 +1163,33 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
                LEFT JOIN attendance_rule_config arc ON arc.id = adr.rule_config_id
                LEFT JOIN wfm_roster_assignment wra ON wra.employee_id = e.id AND wra.roster_date = adr.record_date
                LEFT JOIN wfm_shift_master sm ON sm.id = wra.shift_id
-               LEFT JOIN salary_prep_line spl2 ON spl2.employee_id = e.id
-               LEFT JOIN salary_prep_run spr2 ON spr2.id = spl2.run_id AND spr2.run_month = ?
+               -- Pre-aggregated, not two open joins. spl2 was joined on employee_id ALONE, with
+               -- no run filter, and spr2 was a LEFT JOIN so it did not filter either — every
+               -- salary line the employee has ever had survived, then multiplied by every
+               -- attendance day. Measured: 5.8 salary lines per employee against ~20 attendance
+               -- days, so roughly a 116x row explosion before anything narrowed it. That is why
+               -- this report did not come back.
+               --
+               -- It was also summing across that explosion: SUM(spl2.overtime_pay) counted every
+               -- run's overtime once per attendance day. Harmless today only because overtime_pay
+               -- is 0.00 on all 80,338 salary lines — verified — so this rewrite cannot move a
+               -- number now, but it would have inflated real money the moment that column is used.
+               LEFT JOIN (
+                 SELECT spl.employee_id,
+                        SUM(COALESCE(spl.overtime_pay, 0)) AS overtime_pay
+                   FROM salary_prep_line spl
+                   JOIN salary_prep_run spr ON spr.id = spl.run_id
+                  WHERE spr.run_month = ?
+                  GROUP BY spl.employee_id
+               ) otp ON otp.employee_id = e.id
               WHERE ${clauses.join(" AND ")} AND adr.attendance_status IN ('present','half_day')
               GROUP BY e.id, e.employee_code, e.first_name, e.last_name, e.full_name,
                        b.branch_name, p.process_name, d.dept_name, dm.designation_name
               HAVING overtime_hours > 0
               ORDER BY overtime_hours DESC`;
-      params.push(month);
+      // The subquery's run_month placeholder is in the JOIN, which binds before the WHERE,
+      // so its value leads the list. Pushing it last left every binding shifted by one.
+      params.unshift(month);
       break;
     }
 
