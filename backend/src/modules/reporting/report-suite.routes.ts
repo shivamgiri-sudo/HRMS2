@@ -1140,6 +1140,8 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
                     b.branch_name,
                     p.process_name,
                     d.dept_name AS department_name,
+                    COALESCE(occ.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
+                    COALESCE(occ.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
                     dm.designation_name,
                     COUNT(DISTINCT adr.record_date) AS days_attended,
                     ROUND(SUM(adr.raw_minutes) / 60, 1) AS total_worked_hours,
@@ -1160,6 +1162,7 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
                LEFT JOIN process_master p ON p.id = e.process_id
                LEFT JOIN department_master d ON d.id = e.department_id
                LEFT JOIN designation_master dm ON dm.id = e.designation_id
+               LEFT JOIN cost_centre_master occ ON occ.id = e.cost_centre_id
                LEFT JOIN attendance_rule_config arc ON arc.id = adr.rule_config_id
                LEFT JOIN wfm_roster_assignment wra ON wra.employee_id = e.id AND wra.roster_date = adr.record_date
                LEFT JOIN wfm_shift_master sm ON sm.id = wra.shift_id
@@ -1184,7 +1187,8 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
                ) otp ON otp.employee_id = e.id
               WHERE ${clauses.join(" AND ")} AND adr.attendance_status IN ('present','half_day')
               GROUP BY e.id, e.employee_code, e.first_name, e.last_name, e.full_name,
-                       b.branch_name, p.process_name, d.dept_name, dm.designation_name
+                       b.branch_name, p.process_name, d.dept_name, dm.designation_name,
+                       occ.cost_centre_code, occ.cost_centre_name
               HAVING overtime_hours > 0
               ORDER BY overtime_hours DESC`;
       // The subquery's run_month placeholder is in the JOIN, which binds before the WHERE,
