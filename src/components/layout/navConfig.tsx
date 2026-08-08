@@ -73,7 +73,7 @@ export const navGroups: NavGroup[] = [
           { label: "Payslips",         href: "/profile?tab=payslips",      icon: ic(CreditCard), public: true, description: "Payslips" },
           { label: "Payslip Center",   href: "/payroll/payslips",          icon: ic(CreditCard), pageCode: "PAYROLL_PAYSLIPS", description: "Download payslips" },
           { label: "Tax Declaration",  href: "/payroll/tax-declaration",   icon: ic(Landmark),   public: true, description: "Tax" },
-          { label: "Reimbursements", href: "/payroll/reimbursements", icon: ic(Receipt), public: true, description: "Employee reimbursements" },
+          { label: "Reimbursements", href: "/payroll/reimbursements", icon: ic(Receipt), pageCode: "PAYROLL_REIMBURSEMENTS", description: "Employee reimbursements" },
         ],
       },
       {
@@ -123,7 +123,7 @@ export const navGroups: NavGroup[] = [
           { label: "Ops Round",         href: "/ats/walkin-queue",             icon: ic(UsersRound),   pageCode: "ATS_WALKIN_QUEUE",     roles: ["operations_manager"],    description: "Candidates pending ops round interview" },
           { label: "My Candidates",     href: "/ats/recruiter/my-candidates",  icon: ic(ClipboardList),pageCode: "ATS_RECRUITER_QUEUE",   description: "Candidates" },
           { label: "Hiring Entry",      href: "/ats/recruiter/hiring-entry",   icon: ic(UserPlus),     pageCode: "ATS_RECRUITER_QUEUE",   description: "Tracker entry" },
-          { label: "Hiring Dashboard",  href: "/ats/recruiter/hiring-dashboard", icon: ic(BarChart3),   pageCode: "ATS_DASHBOARD",         description: "Recruiter KPIs" },
+          { label: "Hiring Dashboard",  href: "/ats/recruiter/hiring-dashboard", icon: ic(BarChart3),   pageCode: "RECRUITER_DASHBOARD",         description: "Recruiter KPIs" },
           { label: "Waiting Queue", href: "/ats/waiting-queue", icon: ic(Users), pageCode: "ATS_WAITING_QUEUE", description: "Candidate waiting workflow" },
           { label: "Recruiter Portal", href: "/ats/recruiter-portal", icon: ic(Briefcase), pageCode: "ATS_RECRUITER_PORTAL", description: "Recruiter interview workspace" },
           { label: "ATS Sourcing",      href: "/ats/sourcing-analysis",        icon: ic(BarChart3),    pageCode: "ATS_DASHBOARD",         roles: ["admin","hr"], description: "Sourcing analytics" },
@@ -374,8 +374,8 @@ export const navGroups: NavGroup[] = [
   {
     title: "Expenses",
     items: [
-      { label: "My Reimbursements", href: "/payroll/reimbursements", icon: ic(Receipt),     pageCode: "MY_EXPENSES",    description: "My reimbursement claims" },
-      { label: "New Claim",         href: "/payroll/reimbursements", icon: ic(Plus),        pageCode: "EXPENSE_CREATE", description: "Raise a reimbursement claim" },
+      { label: "My Reimbursements", href: "/payroll/reimbursements", icon: ic(Receipt),     pageCode: "PAYROLL_REIMBURSEMENTS", description: "My reimbursement claims" },
+      { label: "New Claim",         href: "/payroll/reimbursements", icon: ic(Plus),        pageCode: "PAYROLL_REIMBURSEMENTS", description: "Raise a reimbursement claim" },
       { label: "Approvals",         href: "/payroll/reimbursements", icon: ic(CheckCircle), roles: ["manager", "admin"], description: "Approve team claims" },
     ],
   },
