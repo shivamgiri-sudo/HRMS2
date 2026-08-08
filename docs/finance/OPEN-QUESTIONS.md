@@ -103,18 +103,24 @@ change reported figures.
 codebase runs migrations at boot, so the next `pm2` restart applies them. All are additive.
 Nothing was run against production, per the charter.
 
-Their verification is not uniform, and the difference is worth knowing:
+**All five were executed against a scratch MySQL seeded with production's REAL DDL**, on
+2026-08-08 — `SHOW CREATE TABLE` for every parent, plus `finance_company`'s actual rows, captured
+read-only. Nothing was written to production.
 
-| Migration | How far it was verified |
+| | |
 |---|---|
-| 1099 `grn_period_allocation` | **Executed** locally, repeatedly. FK attaches with CASCADE, both unique keys reject duplicates, orphans refused |
-| 1102 vendor applicability | **Executed** locally, repeatedly. Both conditional FKs attach, duplicates rejected, cascade verified |
-| 1103 payroll cohort + entity seed | **Executed** locally three times. Left exactly 2 entity rules and 1 cohort |
-| 1104 salary voucher page access | **Structurally verified only.** The local MySQL was gone by the time I reached it, and its data directory is not in a standard location, so starting one blind risked initialising a new store in the wrong place. It uses the same `INSERT … ON DUPLICATE KEY UPDATE` shape as migration 1066, which is already applied in production, plus the status `SELECT` every other migration here ends with |
+| Migrations run | 1098, 1099, 1102, 1103, 1104 in manifest order |
+| Passes | **3**, all clean — a re-run must be a no-op, because `MIGRATION_STOP_ON_FAILURE` blocks every later migration |
+| Conditional FKs | all **3** attached (`grn_period_allocation`, `vendor_company_applicability`, `vendor_branch_applicability`) with `ON DELETE CASCADE` |
+| Seeds after 3 passes | `finance_company` IDC/MAS/**PIK** · entity rules IDC + MAS · cohort MAS/c_suite · ledger map 24 · voucher grants 3 |
+| Page catalog | `/finance/salary-voucher`, matching the route exactly |
 
-1104 touches only `page_catalog` and `role_page_access`, both additive and idempotent, so the
-downside of the gap is small — but it is a gap, and it should be run against a scratch schema
-before the deploy rather than discovered at boot.
+The FK result is the one that mattered: those constraints are guarded on the collations matching,
+and production's `grn_cost_allocation.id`, `vendor_master.id` and `grn_request.id` are all
+`utf8mb4_unicode_ci`, so they attach rather than being skipped.
+
+Seeds did not double across passes — `finance_company` started as IDC + MAS (from 1090, already
+applied in production) and finished as IDC + MAS + PIK, which is exactly what 1102 should add.
 
 ---
 
