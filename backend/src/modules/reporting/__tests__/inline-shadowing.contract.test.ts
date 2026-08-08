@@ -68,7 +68,10 @@ const inlineCodes = (): Set<string> => {
  * observable — which is exactly what the before/after capture showed.
  */
 const SHADOWED_BACKLOG = new Set<string>([
-  "anniversary-list", "attendance-daily", "attendance-dispute-summary", "attendance-summary",
+  "anniversary-list", "attendance-daily", 
+  // "attendance-dispute-summary" left this list on 2026-08-08 — the inline block
+  // same, and the executor also lacked the dispute_type filter that separates disputes from plain regularizations.
+  "attendance-summary",
   "biometric-reconciliation", "birthday-list", "clearance-status-register",
   "confirmation-due-list", "contract-expiry-list", "cost-centre-headcount", "daily-hc-shift",
   // "daily-shrinkage-report" left this list on 2026-08-08. The shadow hid disjoint column
@@ -104,7 +107,10 @@ const SHADOWED_BACKLOG = new Set<string>([
   // executor now matches the inline SQL exactly and the block is gone.
   "monthly-shrinkage-trend",
   "overtime-summary", "payroll-register", "payroll-variance", "punch-raw-export",
-  "regularization-summary", "shift-adherence-detail",
+  
+  // "regularization-summary" left this list on 2026-08-08 — the inline block
+  // returned one row per request while the executor counted per employee.
+  "shift-adherence-detail",
 ]);
 
 describe("inline route blocks must not shadow executors", () => {

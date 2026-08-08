@@ -509,61 +509,86 @@ export async function overtimeSummary(
 // ---------------------------------------------------------------------------
 // regularization-summary
 // ---------------------------------------------------------------------------
+/**
+ * regularization-summary
+ *
+ * One row per regularization request, not per employee.
+ *
+ * This grouped by employee and returned total_regularizations / approved / pending / rejected.
+ * The inline block in report-suite.routes.ts returned the request detail — session date,
+ * requested status, reason and reason label, who raised it, approval status, reviewer and
+ * reviewed_at. Because the preview handler hits the inline block first and the export handler
+ * calls executeReport() directly, the screen showed 2 rows and the downloaded spreadsheet 4:
+ * the same data counted two different ways, with no shared column between them.
+ *
+ * The catalogue settles which is intended: it declares 19 columns for this code, and 15 of the
+ * 15 unique to the detail shape are declared while 0 of the 4 unique to the aggregate are.
+ *
+ * Ported from the inline block verbatim so both paths run one implementation. Scope comes from
+ * appendScopeConditions(scope, ...) because an executor has no req; the month filter keeps the
+ * inline block's DATE_FORMAT form rather than being rewritten to a sargable range, so this
+ * remains a move rather than a move plus an optimisation.
+ */
 export async function regularizationSummary(
   filters: ExecFilters,
   scope: ExecScope,
   options: ExecOptions
 ): Promise<ExecResult> {
-  const today = new Date().toISOString().slice(0, 10);
-  const from  = dateParam(filters.from, `${new Date().getFullYear()}-01-01`);
-  const to    = dateParam(filters.to, today);
+  const month = monthParam(filters.month);
 
   const clauses: string[] = ["e.id IS NOT NULL"];
   const params: unknown[]  = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
-
-  clauses.push("ar.session_date BETWEEN ? AND ?");
-  params.push(from, to);
+  if (filters.status) { clauses.push("arr.status = ?"); params.push(String(filters.status)); }
+  clauses.push("DATE_FORMAT(arr.session_date,'%Y-%m') = ?");
+  params.push(month);
 
   if (options.mode === "worker" && options.cursor != null) {
-    clauses.push("e.id > ?");
+    clauses.push("arr.id > ?");
     params.push(options.cursor);
   }
 
   const base = `
-    SELECT e.id AS _cursor,
+    SELECT arr.id AS _cursor,
            e.employee_code,
            COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
+           COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
+           COALESCE(zcc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
            COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
            COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
-           COUNT(*) AS total_regularizations,
-           SUM(CASE WHEN ar.status = 'approved' THEN 1 ELSE 0 END) AS approved,
-           SUM(CASE WHEN ar.status = 'pending'  THEN 1 ELSE 0 END) AS pending,
-           SUM(CASE WHEN ar.status = 'rejected' THEN 1 ELSE 0 END) AS rejected
-      FROM attendance_regularization ar
-      JOIN employees e ON e.id = ar.employee_id
+           COALESCE(d.dept_name, 'UNASSIGNED') AS department_name,
+           dm.designation_name,
+           arr.session_date AS attendance_date,
+           arr.requested_status,
+           arr.reason,
+           arr.reason_code,
+           arm.label AS reason_label,
+           arr.requested_by_type,
+           arr.status AS approval_status,
+           arr.created_at AS submitted_at,
+           reviewer.full_name AS reviewer_name,
+           arr.reviewed_at AS approved_at,
+           arr.reviewer_note
+      FROM attendance_regularization arr
+      JOIN employees e ON e.id = arr.employee_id
       LEFT JOIN branch_master b ON b.id = e.branch_id
       LEFT JOIN process_master p ON p.id = e.process_id
+      LEFT JOIN department_master d ON d.id = e.department_id
+      LEFT JOIN designation_master dm ON dm.id = e.designation_id
+      LEFT JOIN attendance_reason_master arm ON arm.code = arr.reason_code
+      LEFT JOIN employees reviewer ON reviewer.id = arr.reviewed_by
+      LEFT JOIN cost_centre_master zcc ON zcc.id = e.cost_centre_id
      WHERE ${clauses.join(" AND ")}
-     GROUP BY e.id, e.employee_code, employee_name, b.branch_name, p.process_name
-     ORDER BY e.id ASC`;
+     ORDER BY arr.session_date DESC, employee_name`;
 
   const total = options.includeTotal ? await count(base, params) : 0;
   const sql   = options.mode === "worker" ? `${base} LIMIT ${options.limit}` : applyPagination(base, options);
   const rows  = await query(sql, params) as Record<string, unknown>[];
-
   const nextCursor = (options.mode === "worker" && rows.length > 0)
-    ? (rows[rows.length - 1]._cursor as number)
-    : null;
-
+    ? (rows[rows.length - 1]._cursor as number) : null;
   const out = rows.map(({ _cursor: _, ...rest }) => rest);
-  return {
-    rows: out,
-    rowCount: options.includeTotal ? total : rows.length,
-    isTruncated: options.includeTotal ? total > out.length : rows.length === options.limit,
-    nextCursor,
-  };
+  return { rows: out, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > out.length, nextCursor };
 }
 
 // ---------------------------------------------------------------------------
@@ -572,61 +597,91 @@ export async function regularizationSummary(
 // may not exist as a separate table. Returns same shape as regularizationSummary
 // with a dispute_type label column where available.
 // ---------------------------------------------------------------------------
+/**
+ * attendance-dispute-summary
+ *
+ * One row per dispute, not per employee.
+ *
+ * Same divergence as regularization-summary and from the same table: this grouped by employee
+ * into total_disputes / approved / pending / rejected while the inline block returned the
+ * dispute detail — dispute type, old and new status, the original and requested punch times,
+ * payroll impact, reviewer and resolution. Screen showed 2 rows, the downloaded file 4.
+ *
+ * The catalogue declares 25 columns here, of which 21 of the 21 unique to the detail shape
+ * appear and 0 of the 4 unique to the aggregate do.
+ *
+ * Note the `arr.dispute_type IS NOT NULL` predicate, which the aggregate did not carry at all:
+ * attendance_regularization holds both plain regularizations and disputes, and without it this
+ * report counted every regularization as a dispute. That is why the two reports could read the
+ * same table and both be wrong in different directions.
+ */
 export async function attendanceDisputeSummary(
   filters: ExecFilters,
   scope: ExecScope,
   options: ExecOptions
 ): Promise<ExecResult> {
-  const today = new Date().toISOString().slice(0, 10);
-  const from  = dateParam(filters.from, `${new Date().getFullYear()}-01-01`);
-  const to    = dateParam(filters.to, today);
+  const month = monthParam(filters.month);
 
   const clauses: string[] = ["e.id IS NOT NULL"];
   const params: unknown[]  = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
-
-  clauses.push("ar.session_date BETWEEN ? AND ?");
-  params.push(from, to);
+  if (filters.status) { clauses.push("arr.status = ?"); params.push(String(filters.status)); }
+  clauses.push("arr.dispute_type IS NOT NULL");
+  clauses.push("DATE_FORMAT(arr.session_date,'%Y-%m') = ?");
+  params.push(month);
 
   if (options.mode === "worker" && options.cursor != null) {
-    clauses.push("e.id > ?");
+    clauses.push("arr.id > ?");
     params.push(options.cursor);
   }
 
   const base = `
-    SELECT e.id AS _cursor,
+    SELECT arr.id AS _cursor,
            e.employee_code,
            COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
+           COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
+           COALESCE(zcc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
            COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
            COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
-           COUNT(*) AS total_disputes,
-           SUM(CASE WHEN ar.status = 'approved' THEN 1 ELSE 0 END) AS approved,
-           SUM(CASE WHEN ar.status = 'pending'  THEN 1 ELSE 0 END) AS pending,
-           SUM(CASE WHEN ar.status = 'rejected' THEN 1 ELSE 0 END) AS rejected
-      FROM attendance_regularization ar
-      JOIN employees e ON e.id = ar.employee_id
+           COALESCE(d.dept_name, 'UNASSIGNED') AS department_name,
+           dm.designation_name,
+           arr.session_date AS dispute_date,
+           arr.dispute_type,
+           arr.reason AS description,
+           arr.reason_code,
+           arm.label AS reason_label,
+           arr.old_status,
+           arr.new_status AS requested_status,
+           TIME_FORMAT(arr.old_punch_in, '%H:%i') AS original_punch_in,
+           TIME_FORMAT(arr.old_punch_out, '%H:%i') AS original_punch_out,
+           TIME_FORMAT(arr.new_punch_in, '%H:%i') AS requested_punch_in,
+           TIME_FORMAT(arr.new_punch_out, '%H:%i') AS requested_punch_out,
+           arr.payroll_impact,
+           arr.status AS approval_status,
+           arr.created_at AS submitted_at,
+           reviewer.full_name AS reviewer_name,
+           arr.reviewed_at,
+           arr.reviewer_note AS resolution
+      FROM attendance_regularization arr
+      JOIN employees e ON e.id = arr.employee_id
       LEFT JOIN branch_master b ON b.id = e.branch_id
       LEFT JOIN process_master p ON p.id = e.process_id
+      LEFT JOIN department_master d ON d.id = e.department_id
+      LEFT JOIN designation_master dm ON dm.id = e.designation_id
+      LEFT JOIN attendance_reason_master arm ON arm.code = arr.reason_code
+      LEFT JOIN employees reviewer ON reviewer.id = arr.reviewed_by
+      LEFT JOIN cost_centre_master zcc ON zcc.id = e.cost_centre_id
      WHERE ${clauses.join(" AND ")}
-     GROUP BY e.id, e.employee_code, employee_name, b.branch_name, p.process_name
-     ORDER BY e.id ASC`;
+     ORDER BY arr.session_date DESC, employee_name`;
 
   const total = options.includeTotal ? await count(base, params) : 0;
   const sql   = options.mode === "worker" ? `${base} LIMIT ${options.limit}` : applyPagination(base, options);
   const rows  = await query(sql, params) as Record<string, unknown>[];
-
   const nextCursor = (options.mode === "worker" && rows.length > 0)
-    ? (rows[rows.length - 1]._cursor as number)
-    : null;
-
+    ? (rows[rows.length - 1]._cursor as number) : null;
   const out = rows.map(({ _cursor: _, ...rest }) => rest);
-  return {
-    rows: out,
-    rowCount: options.includeTotal ? total : rows.length,
-    isTruncated: options.includeTotal ? total > out.length : rows.length === options.limit,
-    nextCursor,
-  };
+  return { rows: out, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > out.length, nextCursor };
 }
 
 // ---------------------------------------------------------------------------

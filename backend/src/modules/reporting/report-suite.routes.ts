@@ -2495,91 +2495,18 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
     // totals (577), and which one a user got depended on whether they looked or downloaded.
     // The catalogue's 16 declared columns match the detail shape, so the detail is the report.
 
-    case "regularization-summary": {
-      const month = monthParam(req.query.month);
-      addScopedEmployeeFilters(req, clauses, params);
-      if (req.query.status) { clauses.push("arr.status = ?"); params.push(String(req.query.status)); }
-      if (req.query.processId) { clauses.push("e.process_id = ?"); params.push(String(req.query.processId)); }
-      clauses.push("DATE_FORMAT(arr.session_date,'%Y-%m') = ?"); params.push(month);
-      sql = `SELECT e.employee_code,
-                    COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-                    COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
-                    COALESCE(zcc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
-                    COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
-                    COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
-                    COALESCE(d.dept_name, 'UNASSIGNED') AS department_name,
-                    dm.designation_name,
-                    arr.session_date AS attendance_date,
-                    arr.requested_status,
-                    arr.reason,
-                    arr.reason_code,
-                    arm.label AS reason_label,
-                    arr.requested_by_type,
-                    arr.status AS approval_status,
-                    arr.created_at AS submitted_at,
-                    reviewer.full_name AS reviewer_name,
-                    arr.reviewed_at AS approved_at,
-                    arr.reviewer_note
-               FROM attendance_regularization arr
-               JOIN employees e ON e.id = arr.employee_id
-               LEFT JOIN branch_master b ON b.id = e.branch_id
-               LEFT JOIN process_master p ON p.id = e.process_id
-               LEFT JOIN department_master d ON d.id = e.department_id
-               LEFT JOIN designation_master dm ON dm.id = e.designation_id
-               LEFT JOIN attendance_reason_master arm ON arm.code = arr.reason_code
-               LEFT JOIN employees reviewer ON reviewer.id = arr.reviewed_by
-               LEFT JOIN cost_centre_master zcc ON zcc.id = e.cost_centre_id
-              WHERE ${clauses.join(" AND ")}
-              ORDER BY arr.session_date DESC, employee_name`;
-      break;
-    }
+    // "regularization-summary" is intentionally not handled here.
+    //
+    // It falls through to executeReport(), which now carries this exact SQL. Screen and
+    // download were two implementations of two different reports: this block returned one row
+    // per request (2 live) and the executor grouped by employee into counts (4), sharing no
+    // column. The catalogue's 19 declared columns match the detail.
 
-    case "attendance-dispute-summary": {
-      const month = monthParam(req.query.month);
-      addScopedEmployeeFilters(req, clauses, params);
-      if (req.query.status) { clauses.push("arr.status = ?"); params.push(String(req.query.status)); }
-      if (req.query.processId) { clauses.push("e.process_id = ?"); params.push(String(req.query.processId)); }
-      if (req.query.disputeType) { clauses.push("arr.dispute_type = ?"); params.push(String(req.query.disputeType)); }
-      clauses.push("arr.dispute_type IS NOT NULL");
-      clauses.push("DATE_FORMAT(arr.session_date,'%Y-%m') = ?"); params.push(month);
-      sql = `SELECT e.employee_code,
-                    COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-                    COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
-                    COALESCE(zcc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
-                    COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
-                    COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
-                    COALESCE(d.dept_name, 'UNASSIGNED') AS department_name,
-                    dm.designation_name,
-                    arr.session_date AS dispute_date,
-                    arr.dispute_type,
-                    arr.reason AS description,
-                    arr.reason_code,
-                    arm.label AS reason_label,
-                    arr.old_status,
-                    arr.new_status AS requested_status,
-                    TIME_FORMAT(arr.old_punch_in, '%H:%i') AS original_punch_in,
-                    TIME_FORMAT(arr.old_punch_out, '%H:%i') AS original_punch_out,
-                    TIME_FORMAT(arr.new_punch_in, '%H:%i') AS requested_punch_in,
-                    TIME_FORMAT(arr.new_punch_out, '%H:%i') AS requested_punch_out,
-                    arr.payroll_impact,
-                    arr.status AS approval_status,
-                    arr.created_at AS submitted_at,
-                    reviewer.full_name AS reviewer_name,
-                    arr.reviewed_at,
-                    arr.reviewer_note AS resolution
-               FROM attendance_regularization arr
-               JOIN employees e ON e.id = arr.employee_id
-               LEFT JOIN branch_master b ON b.id = e.branch_id
-               LEFT JOIN process_master p ON p.id = e.process_id
-               LEFT JOIN department_master d ON d.id = e.department_id
-               LEFT JOIN designation_master dm ON dm.id = e.designation_id
-               LEFT JOIN attendance_reason_master arm ON arm.code = arr.reason_code
-               LEFT JOIN employees reviewer ON reviewer.id = arr.reviewed_by
-               LEFT JOIN cost_centre_master zcc ON zcc.id = e.cost_centre_id
-              WHERE ${clauses.join(" AND ")}
-              ORDER BY arr.session_date DESC, employee_name`;
-      break;
-    }
+    // "attendance-dispute-summary" is intentionally not handled here.
+    //
+    // It falls through to executeReport(), which now carries this exact SQL — including the
+    // `dispute_type IS NOT NULL` predicate the executor lacked entirely, without which every
+    // regularization in the shared table counted as a dispute.
 
     // ─── Missing Leave ────────────────────────────────────────────────────────
     // "leave-encashment-register" is deliberately NOT handled here.
