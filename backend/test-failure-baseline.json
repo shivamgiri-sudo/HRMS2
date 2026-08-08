@@ -1,25 +1,5 @@
 {
-  "note": "Tests known to be failing. Anything not listed here fails CI. When you fix one, delete its line \u2014 the checker also fails if a listed test starts passing, so this file cannot rot.",
-  "recorded": 137,
-  "failures": [
-    "tests/check-biometric-sync.test.ts :: Biometric Sync Investigation checks integration_config for cosec_biometric",
-    "tests/performance-feedback.integration.test.ts :: Performance Feedback - Edge Cases handles launching cycle with invalid employee IDs gracefully",
-    "tests/performance-feedback.integration.test.ts :: Performance Feedback - Edge Cases prevents creating development plan without goals",
-    "tests/performance-feedback.integration.test.ts :: Performance Feedback - Edge Cases prevents launching cycle with no employees",
-    "tests/performance-feedback.integration.test.ts :: Performance Feedback - Edge Cases prevents non-manager from viewing other employees reports",
-    "tests/performance-feedback.integration.test.ts :: Performance Feedback - Edge Cases prevents submitting feedback without required fields",
-    "tests/performance-feedback.integration.test.ts :: Performance Feedback - Full Workflow Integration 1. HR creates feedback cycle",
-    "tests/performance-feedback.integration.test.ts :: Performance Feedback - Full Workflow Integration 2. HR launches cycle for employee (auto-creates request)",
-    "tests/performance-feedback.integration.test.ts :: Performance Feedback - Full Workflow Integration 3. Manager gets their feedback assignments",
-    "tests/performance-feedback.integration.test.ts :: Performance Feedback - Full Workflow Integration 4. Manager gets feedback form template",
-    "tests/performance-feedback.integration.test.ts :: Performance Feedback - Full Workflow Integration 5. Manager submits feedback (generates report + training needs)",
-    "tests/performance-feedback.integration.test.ts :: Performance Feedback - Full Workflow Integration 6. Employee views own feedback report",
-    "tests/performance-feedback.integration.test.ts :: Performance Feedback - Full Workflow Integration 7. Manager creates development plan with goals",
-    "tests/performance-feedback.integration.test.ts :: Performance Feedback - Full Workflow Integration 8. Verifies training need auto-creation for low scores",
-    "tests/performance-feedback.integration.test.ts :: Performance Feedback - RBAC Enforcement prevents employee from creating competency",
-    "tests/performance-feedback.integration.test.ts :: Performance Feedback - RBAC Enforcement prevents employee from creating feedback cycle",
-    "tests/performance-feedback.integration.test.ts :: Performance Feedback - RBAC Enforcement prevents employee from launching cycle",
-    "tests/performance-feedback.integration.test.ts :: Performance Feedback - RBAC Enforcement prevents manager from creating cycle",
-    "tests/rta.package.c.test.ts :: alertService.fireAlertsForDate fires no-show alerts for absent employees"
-  ]
+  "note": "Tests known to be failing. Anything not listed here fails CI. When you fix one, delete its line — the checker also fails if a listed test starts passing, so this file cannot rot.",
+  "recorded": 0,
+  "failures": []
 }
