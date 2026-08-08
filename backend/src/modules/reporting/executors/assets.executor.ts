@@ -304,8 +304,12 @@ export async function documentExpiryTracker(
            COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
            ed.doc_type,
            ed.doc_name,
-           ed.document_number,
-           ed.issuing_authority,
+           -- document_number and issuing_authority were selected here and exist nowhere on
+           -- employee_documents, which is the file store: doc_type, doc_category, doc_name,
+           -- file_url, verified, expiry_date and the verification fields. So the query threw
+           -- ER_BAD_FIELD_ERROR on every run. Dropped rather than invented — there is no column
+           -- holding either fact, and emitting a hardcoded NULL under those names would state
+           -- that the document has no number, which is a different and unfounded claim.
            ed.expiry_date,
            DATEDIFF(ed.expiry_date, CURDATE()) AS days_until_expiry,
            CASE WHEN ed.expiry_date < CURDATE() THEN 'expired'
@@ -332,8 +336,22 @@ export async function documentExpiryTracker(
     const out = rows.map(({ _cursor: _, ...rest }) => rest);
     return { rows: out, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > out.length, nextCursor };
   } catch (err: unknown) {
-    // Graceful fallback if migration 415 not yet applied (expiry_date column missing)
-    if ((err as Record<string,unknown>)?.["code"] === "ER_BAD_FIELD_ERROR") {
+    // Narrowed to the column it was written for. It previously swallowed EVERY
+    // ER_BAD_FIELD_ERROR and returned an empty result, so the two columns above — which do not
+    // exist on employee_documents — turned this report into a silent blank for every caller.
+    // "No documents expiring" and "the query is broken" looked identical, and document-expiry-tracker
+    // is dispatched in executors/index.ts and listed in both the frontend and backend catalogues,
+    // so it is reachable.
+    //
+    // The blanket catch also would not have healed itself: with 0 documents currently carrying an
+    // expiry_date the report is empty either way today, but the moment expiry dates are populated
+    // it would still have returned nothing, because the throw was hidden rather than fixed.
+    //
+    // expiry_date exists in mas_hrms — migration 415 is applied — so this branch is now dead here
+    // and kept only for an environment that has not run it yet. Anything else is rethrown.
+    const code = (err as Record<string, unknown>)?.["code"];
+    const message = String((err as Record<string, unknown>)?.["sqlMessage"] ?? "");
+    if (code === "ER_BAD_FIELD_ERROR" && /expiry_date/.test(message)) {
       return { rows: [], rowCount: 0, isTruncated: false };
     }
     throw err;

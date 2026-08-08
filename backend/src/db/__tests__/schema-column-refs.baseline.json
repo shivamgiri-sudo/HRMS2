@@ -20,12 +20,7 @@
     "salary_package_master.slab_id"
   ],
   "modules/payroll/payroll.routes.ts": [
-    "employee_documents.pan_number",
     "employees.ctc_annual"
-  ],
-  "modules/reporting/executors/assets.executor.ts": [
-    "employee_documents.document_number",
-    "employee_documents.issuing_authority"
   ],
   "modules/reporting/identity-mapping-report.ts": [
     "report_identity_source_snapshot.matched_employee_name",
