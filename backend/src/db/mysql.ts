@@ -128,10 +128,35 @@ function recordSuccess(): void {
 
 /**
  * RELIABILITY: Record operation failure for circuit breaker.
+ *
+ * Logs the CAUSE, once, on the closed/half-open -> open transition.
+ *
+ * Without this the breaker was undiagnosable. Only isSchemaOrLogicDbError is
+ * logged in the retry loop below, and those never trip the breaker — the errors
+ * that do (connection pressure, transient) were swallowed. So production showed
+ * 241 "Database circuit breaker open" lines across 2026-08-08 20:00-21:10 with
+ * ZERO underlying errors recorded: every worker reporting the symptom, nothing
+ * reporting why. Grepping for ETIMEDOUT / ECONNREFUSED / ECONNRESET /
+ * "Too many connections" returned nothing at all, which reads as "no cause"
+ * rather than "cause never printed".
+ *
+ * Deliberately only on the transition, not per failure: when the database is
+ * unreachable EVERY query fails, and logging each one buries the line that
+ * matters — which is the mistake that produced the 28-of-50 dashboard noise this
+ * same log already suffered from.
  */
-function recordFailure(): void {
+function recordFailure(error?: unknown): void {
   const now = Date.now();
+  const previous = circuitBreaker.status;
   circuitBreaker = recordCircuitBreakerFailure(circuitBreaker, CIRCUIT_BREAKER_CONFIG, now);
+
+  if (circuitBreaker.status === "open" && previous !== "open") {
+    console.error(
+      `[mysql] circuit breaker OPEN after ${circuitBreaker.failures} consecutive failure(s); ` +
+        `probing again in ${Math.ceil(CIRCUIT_BREAKER_CONFIG.recoveryTimeMs / 1000)}s. ` +
+        `Tripped by: ${describeDbError(error)}`,
+    );
+  }
 }
 
 async function withTransientRetry<T>(operation: () => Promise<T>): Promise<T> {
@@ -158,14 +183,14 @@ async function withTransientRetry<T>(operation: () => Promise<T>): Promise<T> {
       // Connection pressure should fail fast for this request. Retrying would
       // add load, but one short deployment spike should not freeze all logins.
       if (isConnectionPressureDbError(error)) {
-        recordFailure();
+        recordFailure(error);
         throw error;
       }
 
       // Transient connection errors: retry with backoff, trip breaker only on exhaustion
       if (isTransientDbError(error)) {
         if (attempt === MAX_DB_RETRIES - 1) {
-          recordFailure();
+          recordFailure(error);
         }
         if (attempt < MAX_DB_RETRIES - 1) {
           await sleep(250 * (attempt + 1));
