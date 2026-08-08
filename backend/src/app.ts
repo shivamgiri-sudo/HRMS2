@@ -234,9 +234,7 @@ import { visitorSecurityRouter } from "./modules/visitor/visitor-security.routes
 import { pushRouter } from "./modules/push/push.routes.js";
 import { locationRouter } from "./modules/location/location.routes.js";
 import { socialFeedRouter } from "./modules/social-feed/social-feed.routes.js";
-import { startSocialFeedCron } from "./modules/social-feed/social-feed.cron.js";
 import { mcnmeetRouter } from "./modules/mcnmeet/mcnmeet.routes.js";
-import { startMcnmeetCron } from "./modules/mcnmeet/mcnmeet.cron.js";
 
 export const app = express();
 
@@ -644,8 +642,14 @@ app.use("/api/location", locationRouter);
 app.use("/api/social-feed", socialFeedRouter);
 app.use("/api/mcnmeet", mcnmeetRouter);
 
-startSocialFeedCron();
-startMcnmeetCron();
+// social-feed and mcnmeet crons used to start HERE, at module scope, so they ran
+// on any import of app.ts — including tests and scripts — in the API process
+// only, registered in no worker registry and stoppable only by a deploy. mcnmeet
+// mails meeting reminders every 5 minutes with an initial run 30s after boot,
+// which is the same start-on-boot shape that turned esign-compliance into a
+// 1,428-message storm; it is safe today only because MCNMEET_ENABLED defaults to
+// false. Both are now registered in workers/all-workers.ts and started from
+// server.ts behind the WORKERS_EXTERNAL guard like every other scheduler.
 
 app.use(notFoundHandler);
 app.use(errorHandler);

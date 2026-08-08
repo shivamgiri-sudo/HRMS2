@@ -13,6 +13,8 @@ import { startCommunicationCleanup } from "./modules/communication/cleanup.cron.
 import { startTenureBadgeScheduler } from "./modules/engagement/tenure.cron.js";
 import { startCelebrationScheduler } from "./modules/engagement/celebration.cron.js";
 import { startDailyGamesScheduler, stopDailyGamesScheduler } from "./modules/engagement/daily-games.cron.js";
+import { startMcnmeetCron, stopMcnmeetCron } from "./modules/mcnmeet/mcnmeet.cron.js";
+import { startSocialFeedCron } from "./modules/social-feed/social-feed.cron.js";
 import { migrateLegacyIntegrationSecrets } from "./modules/external-db/external-db.service.js";
 import { startITProvisioningLockScheduler } from "./modules/it-provisioning/it-provisioning.cron.js";
 import { startPayrollWindowClosureScheduler } from "./modules/payroll/payroll-window.cron.js";
@@ -146,10 +148,28 @@ function startServer() {
         console.warn("[schema] presence check skipped:", (err as Error).message);
       });
 
-    startOfficialEmailComplianceScheduler();
-    startIntegrationScheduler();
-    startDailyGamesScheduler(); // fills daily tip/trivia/brain-teaser/word-puzzle 14 days ahead
-    console.log("[scheduler] official-email, integration and daily-games schedulers started");
+    // These three sat OUTSIDE both guards, so they ran in the API unconditionally
+    // — while all-workers.ts registers all three as well. In the production
+    // topology (WORKERS_PROCESS=external on hrms-api) that meant official-email,
+    // integration and daily-games each executed TWICE, once per process. That is
+    // the exact failure worker-registration-parity documents for sla-breach:
+    // "every job executing twice, which is why sla-breach alerted the same person
+    // seconds apart and why the DB circuit breaker kept tripping."
+    //
+    // Guarded now, so the workers process owns them in production and a
+    // single-process dev run still gets them. Deliberately NOT also placed behind
+    // env.ENABLE_SCHEDULERS: these three never were, and moving that line too
+    // would silently stop them in any environment that leaves it false.
+    if (!WORKERS_EXTERNAL) {
+      startOfficialEmailComplianceScheduler();
+      startIntegrationScheduler();
+      startDailyGamesScheduler(); // fills daily tip/trivia/brain-teaser/word-puzzle 14 days ahead
+      // Moved off app.ts module scope, where they ran on any import of the app —
+      // ungoverned, unregistered and impossible to stop without a deploy.
+      startSocialFeedCron();
+      startMcnmeetCron();
+      console.log("[scheduler] official-email, integration, daily-games, social-feed and mcnmeet started");
+    }
 
     if (env.ENABLE_SCHEDULERS) {
       if (!WORKERS_EXTERNAL) {
