@@ -1,9 +1,17 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 
-// Skip if no live DB — honour explicit SKIP_LIVE_DB=false override
+// Skip if no live DB — honour explicit SKIP_LIVE_DB=false override.
+//
+// Do NOT gate this on NODE_ENV. tests/setup.ts sets NODE_ENV='test', but
+// backend/.env sets NODE_ENV=development and config/env.ts loads it with
+// dotenv `override: true`. The imports below reach env.ts (via dispatch.service),
+// so NODE_ENV was silently rewritten to 'development' before this const was
+// evaluated — the guard read false, this live-DB suite ran under the global
+// db mock from tests/setup.ts, and all 12 data assertions failed on empty rows.
+// VITEST is set by the runner and never appears in .env, so it cannot be clobbered.
 const SKIP_LIVE_DB = process.env.SKIP_LIVE_DB === 'false'
   ? false
-  : process.env.NODE_ENV === 'test';
+  : process.env.SKIP_LIVE_DB === 'true' || process.env.VITEST === 'true';
 
 import { db } from '../../../db/mysql.js';
 import { templateService } from '../template.service.js';

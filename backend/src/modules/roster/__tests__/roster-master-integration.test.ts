@@ -7,7 +7,10 @@ import { randomUUID } from 'crypto';
 // Skip if no live DB — honour explicit SKIP_LIVE_DB=false override
 const SKIP_LIVE_DB = process.env.SKIP_LIVE_DB === 'false'
   ? false
-  : process.env.SKIP_LIVE_DB === 'true' || process.env.NODE_ENV === 'test';
+  // Not NODE_ENV: config/env.ts loads backend/.env with dotenv `override: true`,
+  // so any import reaching env.ts rewrites the NODE_ENV='test' that tests/setup.ts
+  // sets and silently disables this guard. VITEST cannot be clobbered by .env.
+  : process.env.SKIP_LIVE_DB === 'true' || process.env.VITEST === 'true';
 
 describe.skipIf(SKIP_LIVE_DB)('Roster Master Integration Tests (MySQL)', () => {
   let testProcessId: string;

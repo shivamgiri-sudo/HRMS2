@@ -3,7 +3,12 @@ import { vi } from 'vitest';
 // ── Critical env overrides (before any module loads / dotenv runs) ──────────
 // These MUST be set early so env.ts schema validates correctly and auth bypass
 // checks (NODE_ENV !== "production", INTERNAL_DEMO_BYPASS === "true") pass.
-// dotenv.config() will NOT overwrite these because they are already set.
+// WARNING: dotenv DOES overwrite these. config/env.ts loads backend/.env with
+// `override: true`, so the moment a test imports anything that reaches env.ts,
+// these three are replaced by whatever .env says — NODE_ENV becomes 'development'.
+// The two bypass flags happen to be 'true' in .env so they survive by luck, not
+// by design. Never write a test guard as `process.env.NODE_ENV === 'test'`; use
+// `process.env.VITEST === 'true'`, which is set by the runner and absent from .env.
 process.env.NODE_ENV = 'test';
 process.env.INTERNAL_DEMO_BYPASS = 'true';
 process.env.PORTAL_DEMO_BYPASS = 'true';
