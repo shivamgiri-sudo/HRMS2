@@ -34,9 +34,55 @@ function limitParam(value: unknown) {
 function payrollStatusClause(alias = "spr") {
   return `LOWER(${alias}.status) IN (${PAYROLL_STATUSES.map(() => "?").join(",")})`;
 }
-async function sendRows(res: any, code: string, sql: string, params: unknown[], limit: number, meta: Record<string, unknown> = {}) {
-  const [rows] = await db.execute<RowDataPacket[]>(`${sql} LIMIT ${limit}`, params);
-  return res.json({ success: true, code, data: rows, meta: { count: rows.length, limit, highRiskRoute: true, ...meta } });
+function offsetParam(value: unknown) {
+  const n = Number(value ?? 0);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
+}
+
+/**
+ * These four reports were unpageable, and said so in a way nobody could see.
+ *
+ * sendRows appended LIMIT and nothing else: no OFFSET, so every page returned the same first
+ * rows, and no totalCount, so the grid fell back to `data.length` — see
+ * `res.totalCount ?? res.meta?.totalCount ?? data.length` in ReportLibraryView. The UI then
+ * computed totalPages = ceil(100/100) = 1.
+ *
+ * Measured on live 2026-08-08 with exactly what the UI sends (limit=100):
+ *
+ *   payroll-register    100 rows shown, "100 total"   actual 1,464 lines   93% understated
+ *   employee-movement   100 rows shown, "100 total"   actual 2,196 rows    95% understated
+ *   payroll-variance / payslip-status — same shape, same month, 1,464 each
+ *
+ * and requesting offset=100 returned a first row identical to offset=0, so the remaining rows
+ * were unreachable by any means short of an export. A payroll register that silently shows 7%
+ * of the run and labels it complete is the worst failure mode in this suite.
+ *
+ * The count follows the same rule as queryRowsWithCount in the sibling router: a short page
+ * needs no COUNT because the total is already known, so the extra query is only paid when
+ * there genuinely are more rows.
+ */
+async function sendRows(
+  res: any, code: string, sql: string, params: unknown[],
+  limit: number, meta: Record<string, unknown> = {}, offset = 0
+) {
+  const [rows] = await db.execute<RowDataPacket[]>(`${sql} LIMIT ${limit} OFFSET ${offset}`, params);
+
+  let totalCount: number;
+  if (rows.length < limit) {
+    totalCount = offset + rows.length;
+  } else {
+    const [countRows] = await db.execute<RowDataPacket[]>(
+      `SELECT COUNT(*) AS total FROM (${sql}) AS count_query`, params);
+    totalCount = Number((countRows as Array<{ total?: number }>)[0]?.total ?? rows.length);
+  }
+
+  return res.json({
+    success: true,
+    code,
+    data: rows,
+    totalCount,
+    meta: { count: rows.length, totalCount, limit, offset, highRiskRoute: true, ...meta },
+  });
 }
 
 reportSuiteHighRiskRouter.get("/employee-movement", roles, h(async (req, res) => {
@@ -67,7 +113,7 @@ reportSuiteHighRiskRouter.get("/employee-movement", roles, h(async (req, res) =>
                  LEFT JOIN cost_centre_master cc ON cc.id = e.cost_centre_id
                 WHERE ${clauses.join(" AND ")}
                 ORDER BY COALESCE(e.date_of_joining,e.date_of_exit,e.date_of_leaving,e.resignation_date) DESC`;
-  return sendRows(res, "employee-movement", sql, [from, to, ...filterParams], limitParam(req.query.limit));
+  return sendRows(res, "employee-movement", sql, [from, to, ...filterParams], limitParam(req.query.limit), {}, offsetParam(req.query.offset));
 }));
 
 // NOTE: "leave-balance" is deliberately NOT handled here.
@@ -105,7 +151,7 @@ reportSuiteHighRiskRouter.get("/payroll-register", roles, h(async (req, res) => 
                  LEFT JOIN cost_centre_master hcc ON hcc.id = e.cost_centre_id
                 WHERE ${clauses.join(" AND ")}
                 ORDER BY employee_name`;
-  return sendRows(res, "payroll-register", sql, params, limitParam(req.query.limit), { payrollStatuses: PAYROLL_STATUSES });
+  return sendRows(res, "payroll-register", sql, params, limitParam(req.query.limit), { payrollStatuses: PAYROLL_STATUSES }, offsetParam(req.query.offset));
 }));
 
 reportSuiteHighRiskRouter.get("/payroll-variance", roles, h(async (req, res) => {
@@ -136,7 +182,7 @@ reportSuiteHighRiskRouter.get("/payroll-variance", roles, h(async (req, res) => 
                  LEFT JOIN process_master hpm ON hpm.id = e.process_id
                 WHERE ${clauses.join(" AND ")}
                 ORDER BY ABS(COALESCE(net_variance_pct,0)) DESC`;
-  return sendRows(res, "payroll-variance", sql, [...PAYROLL_STATUSES, ...params], limitParam(req.query.limit), { payrollStatuses: PAYROLL_STATUSES });
+  return sendRows(res, "payroll-variance", sql, [...PAYROLL_STATUSES, ...params], limitParam(req.query.limit), { payrollStatuses: PAYROLL_STATUSES }, offsetParam(req.query.offset));
 }));
 
 reportSuiteHighRiskRouter.get("/payslip-status", roles, h(async (req, res) => {
@@ -157,5 +203,5 @@ reportSuiteHighRiskRouter.get("/payslip-status", roles, h(async (req, res) => {
                  LEFT JOIN salary_payslip sp ON sp.prep_line_id = spl.id
                 WHERE ${clauses.join(" AND ")}
                 ORDER BY payslip_status DESC, employee_name`;
-  return sendRows(res, "payslip-status", sql, params, limitParam(req.query.limit), { payrollStatuses: PAYROLL_STATUSES });
+  return sendRows(res, "payslip-status", sql, params, limitParam(req.query.limit), { payrollStatuses: PAYROLL_STATUSES }, offsetParam(req.query.offset));
 }));
