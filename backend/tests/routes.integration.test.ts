@@ -24,9 +24,27 @@ vi.mock("../src/modules/process/process.repository.js", () => ({
 // verifies, so both inputs have to be controlled here. Without this the real
 // verifySchemaVersion runs against a mocked database, finds migrations pending
 // and returns 503 regardless of what pingDb was told to do.
+// health.routes.ts imports THREE things from this module. The mock supplied two, so the
+// third threw "No export is defined on the mock" inside the handler — which meant the route
+// never responded and supertest sat there until the test timed out. Both /health tests
+// failed that way, reported only as a timeout, which reads like a slow database rather than
+// a missing mock export.
+//
+// getSchemaVerificationState is SYNCHRONOUS (it reads an in-memory cache — see the comment
+// in health.routes.ts about zero DB cost), so it must not be mocked as a promise. `valid:
+// true` also keeps the handler off its self-heal branch, which would otherwise fire a live
+// schema check from a unit test.
 vi.mock("../src/db/runPendingMigrations.js", () => ({
   verifySchemaVersion: vi.fn().mockResolvedValue({ valid: true, pendingCount: 0 }),
   getMigrationHealth: vi.fn().mockResolvedValue({ applied: 0, pending: 0, failed: 0 }),
+  getSchemaVerificationState: vi.fn(() => ({
+    state: "verified" as const,
+    appliedCount: 0,
+    pendingCount: 0,
+    pendingFiles: [] as string[],
+    lastCheckedAt: "2026-01-01T00:00:00.000Z",
+    valid: true,
+  })),
 }));
 
 import { supabaseAuthClient } from "../src/db/supabaseAdmin.js";
