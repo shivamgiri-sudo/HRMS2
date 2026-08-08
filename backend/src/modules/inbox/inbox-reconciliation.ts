@@ -47,9 +47,26 @@ const REGULARIZATION_CLOSED = `('approved','rejected','cancelled')`;
 /**
  * The date a dated attendance alert refers to is carried in the query string
  * of action_url (`…?employeeId=<id>&date=YYYY-MM-DD`), not in a column.
- * Verified against production: parses cleanly on all 13,632 open rows.
+ *
+ * The inner SUBSTRING_INDEX alone was correct only while `date=` was the LAST
+ * parameter, which is how it was verified on 13,632 rows. Newer alerts append
+ * more, e.g.
+ *
+ *     …&date=2026-08-04&employeeName=KHUSHI&employeeCode=MAS62567
+ *
+ * so it returned "2026-08-04&employeeName=KHUSHI&employeeCode=MAS62567". MySQL
+ * rejects that in a date comparison with ER_TRUNCATED_WRONG_VALUE — and because
+ * one bad row aborts the whole statement, BOTH dated rules failed outright.
+ * Measured on production 2026-08-08: 3,538 of 25,701 open dated alerts carry a
+ * trailing parameter, so none of the 25,701 were being auto-resolved, not just
+ * the 3,538. Errors were visible every cycle as
+ * `[inbox-reconciliation] rule "attendance_missing_punch" failed`.
+ *
+ * Trimming at the next `&` is a no-op when `date=` really is last, so the rows
+ * that already worked are unaffected. Verified on the same 25,701: the outer
+ * trim yields a clean YYYY-MM-DD on every one, 0 invalid.
  */
-const ALERT_DATE = `SUBSTRING_INDEX(w.action_url, 'date=', -1)`;
+const ALERT_DATE = `SUBSTRING_INDEX(SUBSTRING_INDEX(w.action_url, 'date=', -1), '&', 1)`;
 
 /**
  * How far back a dated attendance alert stays actionable. Past this the
