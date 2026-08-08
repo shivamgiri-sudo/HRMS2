@@ -19,6 +19,37 @@ import axios from "axios";
 import { luckpayClient } from "../src/modules/integrations/luckpay/luckpay.client.js";
 import { resetLuckpayTokenCache } from "../src/modules/integrations/luckpay/luckpay.transport.js";
 
+/**
+ * config/env.ts parses process.env through zod ONCE, at import time, and exports the
+ * frozen result. Assigning process.env.LUCKPAY_* from beforeEach therefore changes
+ * nothing: the module graph — including this file's imports above — is already loaded
+ * by the time any hook runs.
+ *
+ * So these tests passed only on a machine whose .env happened to define the Luckpay
+ * credentials, and failed everywhere clean. `.env.test` is not tracked (only
+ * .env.test.example), so CI could never satisfy them: downloadESignDocument resolves
+ * through digilockerConfig(), which calls assertLuckpayEnabled + assertLuckpayCredentials
+ * and threw "Luckpay provider is disabled." before a single byte was exercised.
+ *
+ * Mocking the env module supplies those values at import time. vi.mock is scoped to this
+ * file, so no other Luckpay suite is affected. The DB path is not involved — tests/setup.ts
+ * stubs db.execute to return empty, so resolveLuckpayConfig falls through to env for
+ * baseUrl, basicToken, clientId and enabled.
+ */
+vi.mock("../src/config/env.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/config/env.js")>();
+  return {
+    ...actual,
+    env: {
+      ...actual.env,
+      LUCKPAY_PROVIDER_ENABLED: true,
+      LUCKPAY_BASE_URL: "https://api-banking.luckpay.in/apibanking/api/v1",
+      LUCKPAY_BASIC_TOKEN: "test-token",
+      LUCKPAY_CLIENT_ID: "test-client",
+    },
+  };
+});
+
 const REF = { clientTransactionId: "joining-doc-abc", transactionId: "APIB1785567457469073" };
 
 /** A small but structurally real PDF, including high bytes that UTF-8 would mangle. */
@@ -37,9 +68,6 @@ beforeEach(() => {
   // response gets consumed by the download call instead of the auth call and the
   // PDF mock is never reached.
   resetLuckpayTokenCache();
-  process.env.LUCKPAY_BASE_URL ||= "https://api-banking.luckpay.in/apibanking/api/v1";
-  process.env.LUCKPAY_CLIENT_ID ||= "test-client";
-  process.env.LUCKPAY_BASIC_TOKEN ||= "test-token";
 });
 afterEach(() => vi.restoreAllMocks());
 

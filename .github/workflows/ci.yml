@@ -128,10 +128,22 @@ jobs:
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: package-lock.json
+          cache-dependency-path: |
+            package-lock.json
+            backend/package-lock.json
 
       - name: Install dependencies
         run: npm ci
+
+      # tsconfig.app.json declares types: ["vite/client", "./backend/node_modules/vitest/globals"].
+      # Installing only the root left that path missing, so this job failed every run with
+      # TS2688 "Cannot find type definition file for './backend/node_modules/vitest/globals'"
+      # — an environment fault, not a code fault. It made the gate useless (a real type error
+      # was indistinguishable from the permanent one) and, because `build` declares
+      # needs: [typecheck], the Build job was SKIPPED on every run, so nothing verified that
+      # the frontend still builds. frontend-tests and finance-validation already install both.
+      - name: Install backend dependencies
+        run: npm --prefix backend ci
 
       - name: Run TypeScript compiler
         run: npm run typecheck
