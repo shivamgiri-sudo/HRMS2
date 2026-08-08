@@ -26,6 +26,16 @@ export class SalarySnapshotSyncHandler extends DomainSyncBase {
   protected async fetchBatch(lastWatermark: string, batchSize: number): Promise<LegacySalary[]> {
     const pool = await this.getLegacy();
     // masjclrentry has salary columns inline; only pull rows where salary changed
+    //
+    // BROKEN - left as found, deliberately. This query raises
+    // ER_BAD_FIELD_ERROR: Unknown column 'Basic' in 'field list' on every call, verified live
+    // against db_bill. masjclrentry has no Basic, TA or Other; its component columns are
+    // bs, hra, conv, da, portf, ma, lta, mob, sa, oa (CTC, Gross and NetInhand do exist).
+    //
+    // Basic -> bs is obvious, but which of conv / lta is "TA" and which of oa / sa is "Other" is a
+    // payroll-semantics question, not a rename. Guessing here would silently populate a salary
+    // snapshot with the wrong component and no error, so the mapping needs whoever owns payroll to
+    // state it. Nothing imports salarySnapshotSyncHandler today, so this query never runs.
     const [rows] = await pool.execute<any[]>(
       `SELECT id, EmpCode, CTC, Gross, NetInHand, Basic, HRA, DA, TA, Other,
               lastUpdated, EntryDate

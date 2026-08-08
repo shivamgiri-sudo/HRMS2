@@ -42,7 +42,15 @@ import {
 
 async function requireEmployee(req: AuthenticatedRequest) {
   const employee = await getEmployeeForUser(req.authUser!.id);
-  if (!employee) throw new Error("No employee profile mapped to this account");
+  if (!employee) {
+    // 403, not 500. An account with no employees row is an ordinary, expected state - a real
+    // one on this deployment, where not every auth_user is mapped - and every other module
+    // answers it with 403 and this same sentence (helpdesk, mobility, management). A bare Error
+    // reaches the handler with no statusCode, so it became a 500 carrying an error reference:
+    // indistinguishable in the logs and in alerting from the server actually falling over, for
+    // a condition the caller can neither retry nor fix.
+    throw Object.assign(new Error("No employee profile mapped to this account"), { statusCode: 403 });
+  }
   return employee;
 }
 

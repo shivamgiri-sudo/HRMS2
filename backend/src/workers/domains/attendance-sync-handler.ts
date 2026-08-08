@@ -19,11 +19,22 @@ export class AttendanceSyncHandler extends DomainSyncBase {
 
   protected async fetchBatch(lastWatermark: string, batchSize: number): Promise<LegacyAttendance[]> {
     const pool = await this.getLegacy();
+    // db_bill.Attandence has no column AttDate - the real one is AttandDate, and the in/out
+    // columns are Intime/OutTime. Every call raised
+    // ER_BAD_FIELD_ERROR: Unknown column 'AttDate' in 'field list', so this handler could never
+    // read a row of the 1,471,224 in that table. Verified live against db_bill (MySQL 5.5.44).
+    //
+    // Aliased back to the names the rest of this class already uses (row.AttDate, row.InTime),
+    // so extractWatermark and processBatch below are untouched.
+    //
+    // NOTE: this handler is not registered anywhere - nothing imports attendanceSyncHandler - so
+    // this corrects a dormant query and starts no import on its own. Wiring it up would backfill
+    // 1.47M sessions into wfm_attendance_session and is a separate decision.
     const [rows] = await pool.execute<any[]>(
-      `SELECT id, EmpCode, AttDate, InTime, OutTime, Status
+      `SELECT Id AS id, EmpCode, AttandDate AS AttDate, Intime AS InTime, OutTime, Status
        FROM db_bill.Attandence
-       WHERE AttDate >= ?
-       ORDER BY AttDate ASC
+       WHERE AttandDate >= ?
+       ORDER BY AttandDate ASC
        LIMIT ?`,
       [lastWatermark, batchSize]
     );
