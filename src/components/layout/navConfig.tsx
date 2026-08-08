@@ -20,7 +20,7 @@ export const navGroups: NavGroup[] = [
     title: "Overview",
     items: [
       { label: "Dashboard",     href: "/dashboard",     icon: ic(Home),          public: true, description: "Workspace" },
-      { label: "My Modules",    href: "/modules",       icon: ic(Package),       public: true, description: "All allowed pages" },
+      { label: "My Modules",    href: "/modules",       icon: ic(Package),       pageCode: "MODULE_LAUNCHER", description: "All allowed pages" },
       { label: "Notifications", href: "/notifications", icon: ic(Bell),          public: true, description: "Personal updates" },
       { label: "Work Inbox",    href: "/work-inbox",    icon: ic(ClipboardList), pageCode: "WORK_INBOX", description: "Pending actions" },
       { label: "My Team",        href: "/my-team",       icon: ic(Users2),        roles: ["manager","process_manager","tl","team_leader","assistant_manager","branch_head"], description: "Team attendance, leave, KPI & approvals" },
