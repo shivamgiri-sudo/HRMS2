@@ -201,10 +201,13 @@ class ExpenseController {
   async exportForPayment(req: AuthenticatedRequest, res: Response) {
     const { status, start_date, end_date } = req.query;
     const { primaryRole: role } = await getUserRoleContext((req as any).authUser?.id ?? '');
-    let processId: number | undefined;
+    // process ids are char(36) UUIDs. This was typed number, and the two siblings below parsed
+    // it with parseInt, which turns a UUID into NaN - so a non-admin's process filter could never
+    // match a row.
+    let processId: string | undefined;
     if (role !== 'admin') {
       const employee = await getFullEmployee(req.authUser!.id);
-      processId = employee.process_id;
+      processId = employee.process_id ? String(employee.process_id) : undefined;
     }
     const data = await expenseReportService.exportForPayment(
       status as any,
@@ -236,12 +239,13 @@ class ExpenseController {
 
   async getMonthlyTrends(req: AuthenticatedRequest, res: Response) {
     const { primaryRole: role } = await getUserRoleContext((req as any).authUser?.id ?? '');
-    let processId: number;
+    // UUID, not an integer - see exportForPayment above.
+    let processId: string;
     if (role !== 'admin') {
       const employee = await getFullEmployee(req.authUser!.id);
-      processId = employee.process_id;
+      processId = String(employee.process_id ?? '');
     } else {
-      processId = parseInt(req.query.process_id as string) || 0;
+      processId = String(req.query.process_id ?? '');
     }
     res.json({
       trends: await expenseReportService.getMonthlyTrends(
@@ -253,12 +257,13 @@ class ExpenseController {
 
   async getTopSpenders(req: AuthenticatedRequest, res: Response) {
     const { primaryRole: role } = await getUserRoleContext((req as any).authUser?.id ?? '');
-    let processId: number;
+    // UUID, not an integer - see exportForPayment above.
+    let processId: string;
     if (role !== 'admin') {
       const employee = await getFullEmployee(req.authUser!.id);
-      processId = employee.process_id;
+      processId = String(employee.process_id ?? '');
     } else {
-      processId = parseInt(req.query.process_id as string) || 0;
+      processId = String(req.query.process_id ?? '');
     }
     res.json({
       spenders: await expenseReportService.getTopSpenders(
