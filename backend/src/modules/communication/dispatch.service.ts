@@ -99,6 +99,37 @@ class DispatchService {
       .replace(/\b\w/g, char => char.toUpperCase());
   }
 
+  /** Channels already reported as unconfigured — one log line each, not one per message. */
+  private readonly unconfiguredWarned = new Set<Channel>();
+
+  /**
+   * True when this channel's provider says it has no credentials.
+   *
+   * Fails to FALSE (i.e. attempt the send) on any error, and for any provider
+   * that does not implement isConfigured. A misjudgement here must degrade to
+   * today's behaviour — one failed row — never to silence.
+   */
+  private async channelUnconfigured(channel: Channel): Promise<boolean> {
+    try {
+      const dbConfig = await providerConfigService.loadActiveConfig(channel);
+      const provider = await providerFactory.getProviderAsync(channel, dbConfig);
+      if (typeof provider.isConfigured !== 'function') return false;
+      if (provider.isConfigured()) return false;
+
+      if (!this.unconfiguredWarned.has(channel)) {
+        this.unconfiguredWarned.add(channel);
+        console.warn(
+          `[dispatch] ${channel} provider (${provider.getName()}) has no credentials — ` +
+            `skipping this channel instead of logging a guaranteed failure per message. ` +
+            `Configure it in communication_provider_config or the matching env vars.`,
+        );
+      }
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   private plainText(value: string): string {
     return value
       .replace(/<style[\s\S]*?<\/style>/gi, ' ')
@@ -188,6 +219,24 @@ class DispatchService {
         }
 
         for (const channel of channels) {
+          // Do not attempt a channel whose provider holds no credentials.
+          //
+          // All time on production to 2026-08-08: email 907 sent / 4 failed, SMS
+          // 0 sent / 901 failed, WhatsApp 0 sent / 903 failed. Neither SMS nor
+          // WhatsApp has ever delivered a single message, yet every critical
+          // event fanned out to all three, so each notification minted two rows
+          // that could only fail. 1,804 of dispatch_log's 2,740 rows — 66% — are
+          // that, and a genuine SMS failure would be invisible inside it.
+          //
+          // Provably lossless: a channel with zero successes in its entire
+          // history loses nothing by not being attempted. isConfigured is
+          // optional and no email provider implements it, so the channel that
+          // actually works cannot be suppressed by this.
+          if (await this.channelUnconfigured(channel)) {
+            failed.push(`${emp.id}:${channel}`);
+            continue;
+          }
+
           const contact: string | null =
             channel === 'email' ? resolveEmailContact(emp, dto.prefer_official_email) : emp.phone;
           if (!contact) { failed.push(`${emp.id}:${channel}`); continue; }
