@@ -14,6 +14,7 @@
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import request from "supertest";
+import jwt from "jsonwebtoken";
 
 // Mock dependencies BEFORE imports
 vi.mock("../src/db/supabaseAdmin.js", () => ({
@@ -29,20 +30,21 @@ vi.mock("../src/db/supabaseAdmin.js", () => ({
 vi.mock("../src/middleware/requireRole.js", () => ({
   requireRole: (...allowedRoles: string[]) =>
     (req: any, _res: any, next: any) => {
-      // Derive a synthetic role from the test token name:
-      //   hr.token     → ["hr", "admin"]
-      //   manager.token → ["manager"]
-      //   employee.token → [] (no privileged roles)
-      // Any other .token suffix is treated as hr/admin (e.g. for edge-case tests)
-      const authHeader: string = req.headers?.authorization ?? "";
-      const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : authHeader;
+      // Keyed on the authenticated identity, not the raw Authorization string. The tokens
+      // are now real JWTs (see the SOP note in tests/setup.ts), so there is no ".token"
+      // suffix left to inspect — requireAuth has already resolved the JWT `sub` into
+      // req.authUser.id by the time this runs.
+      //   u-hr    → ["hr", "admin"]
+      //   MGR_UUID → ["manager"]
+      //   EMP_UUID → [] (no privileged roles)
+      const userId: string = req.authUser?.id ?? "";
       let userRoles: string[];
-      if (token === "employee.token") {
+      if (userId === "11111111-1111-1111-1111-111111111105") {
         userRoles = [];
-      } else if (token === "manager.token") {
+      } else if (userId === "11111111-1111-1111-1111-111111111106") {
         userRoles = ["manager"];
       } else {
-        // hr.token, admin.token, or any other test token → full HR/admin access
+        // u-hr, or any other identity → full HR/admin access
         userRoles = ["hr", "admin"];
       }
       const allowed = allowedRoles.some((r) => userRoles.includes(r));
@@ -78,9 +80,18 @@ const mockExecuteRun = db.executeRun as ReturnType<typeof vi.fn>;
 const mockGetConnection = db.getConnection as ReturnType<typeof vi.fn>;
 const mockGetUser = supabaseAuthClient.auth.getUser as ReturnType<typeof vi.fn>;
 
-const HR_AUTH = { Authorization: "Bearer hr.token" };
-const MANAGER_AUTH = { Authorization: "Bearer manager.token" };
-const EMPLOYEE_AUTH = { Authorization: "Bearer employee.token" };
+// Real JWTs, per the SOP in tests/setup.ts. `sub` carries the identity, because the
+// controllers compare req.authUser.id against the manager/employee UUIDs in the mocked SQL
+// rows below — so the subject must be stable per role, NOT uniquified per call the way
+// ats.wfm.completion.test.ts does it.
+const JWT_SECRET = process.env.JWT_SECRET || "change-me-jwt-secret-32characters!!";
+const bearer = (sub: string, email: string) => ({
+  Authorization: `Bearer ${jwt.sign({ sub, email }, JWT_SECRET, { expiresIn: "1h" })}`,
+});
+
+const HR_AUTH = bearer("u-hr", "hr@mcn.com");
+const MANAGER_AUTH = bearer("11111111-1111-1111-1111-111111111106", "manager@mcn.com");
+const EMPLOYEE_AUTH = bearer("11111111-1111-1111-1111-111111111105", "employee@mcn.com");
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -97,22 +108,23 @@ beforeEach(() => {
   mockExecuteRun.mockResolvedValue([{ affectedRows: 0, insertId: 0 }, []]);
 });
 
-// performance-feedback routes only use requireAuth (no requireRole at middleware level).
-// RBAC checks inside controllers use (req as any).authUser.id — not extra DB calls.
-// So mockHr/mockManager/mockEmployee only need to set up the Supabase auth mock.
+// These three were the file's authentication, and they never worked: they set a Supabase
+// getUser mock, and authMiddleware.ts does not reference supabase at all. Identity now comes
+// from the JWT `sub` in HR_AUTH / MANAGER_AUTH / EMPLOYEE_AUTH above, so the helpers are
+// kept only as intent markers at each call site — which request is acting as whom.
 const MGR_UUID = "11111111-1111-1111-1111-111111111106";
 const EMP_UUID = "11111111-1111-1111-1111-111111111105";
 
 function mockHr() {
-  mockGetUser.mockResolvedValue({ data: { user: { id: "u-hr" } }, error: null });
+  /* identity travels in HR_AUTH */
 }
 
 function mockManager() {
-  mockGetUser.mockResolvedValue({ data: { user: { id: MGR_UUID } }, error: null });
+  /* identity travels in MANAGER_AUTH */
 }
 
 function mockEmployee() {
-  mockGetUser.mockResolvedValue({ data: { user: { id: EMP_UUID } }, error: null });
+  /* identity travels in EMPLOYEE_AUTH */
 }
 
 describe("Performance Feedback - Full Workflow Integration", () => {
