@@ -355,6 +355,10 @@ function grNExpenseMasterRoutes(router: Router) {
   router.get(
     "/grns/:id/approval-history",
     requireRole(...GRN_READ_ROLES),
+    // Branch-guarded, not just role-guarded. The history carries rejection reasons and reviewer
+    // commentary — the most candid text in the module — and without this a branch_admin could
+    // read another branch's by id. A UUID is not an access control.
+    authorizeGrnBranch,
     async (req: AuthenticatedRequest, res) => {
       try {
         const data = await listFinanceApprovalEvents("grn", req.params.id);

@@ -93,6 +93,12 @@ imprestRouter.get(
   h(async (req, res) => {
     const data = await imprestService.getManager(req.params.id);
     if (!data) return res.status(404).json({ success: false, error: "Imprest manager not found" });
+    // Every other read here is branch-scoped; fetching one by id must not be the way around it.
+    const scope = await scopeOf(req);
+    if (scope.mode === "branches"
+        && !scope.branchIds.includes(String((data as { branch_id?: unknown }).branch_id ?? ""))) {
+      return res.status(403).json({ success: false, error: "You do not have access to this branch" });
+    }
     res.json({ success: true, data });
   }),
 );
@@ -236,6 +242,19 @@ imprestRouter.get(
   "/allocations/:id/approval-history",
   requireRole(...IMPREST_READ_ROLES),
   h(async (req, res) => {
+    // The allocation's own branch decides who may read its history, not the caller's role alone.
+    // Without this a reviewer at one branch could read another branch's rejection reasons by id.
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT branch_id FROM imprest_allocation WHERE id = ? LIMIT 1`,
+      [req.params.id],
+    );
+    if (!rows[0]) {
+      return res.status(404).json({ success: false, error: "Imprest allocation not found" });
+    }
+    const scope = await scopeOf(req);
+    if (scope.mode === "branches" && !scope.branchIds.includes(String(rows[0].branch_id))) {
+      return res.status(403).json({ success: false, error: "You do not have access to this branch" });
+    }
     const data = await listFinanceApprovalEvents("imprest_allocation", req.params.id);
     res.json({ success: true, data });
   }),
