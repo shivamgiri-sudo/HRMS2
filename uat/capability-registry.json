@@ -28,7 +28,7 @@
       ],
       "tables": [
         "payroll_*", "salary_*", "statutory_config", "pf_*", "esic_*", "tds_*",
-        "gratuity_*", "payslip*", "deduction_*", "loan_*", "reimbursement_*", "ff_*"
+        "gratuity_*", "*payslip*", "*deduction*", "employee_loans*", "reimbursement_*"
       ],
       "keywords": [
         "payroll", "pay\\s?slip", "salary", "\\bCTC\\b", "\\bPF\\b", "\\bUAN\\b", "\\bESIC?\\b",
@@ -59,7 +59,7 @@
         "src/contexts/AuthContext.tsx",
         "src/components/auth/**"
       ],
-      "tables": ["users", "user_*", "role_*", "page_catalog", "user_page_access", "refresh_token*", "session*"],
+      "tables": ["auth_*", "user_*", "role_*", "page_catalog", "user_page_access"],
       "keywords": [
         "login", "logout", "password", "\\bOTP\\b", "two.?factor", "\\b2FA\\b", "\\bJWT\\b",
         "token", "role", "permission", "access denied", "unauthori[sz]ed", "\\bRBAC\\b", "impersonat"
@@ -80,7 +80,7 @@
         "backend/src/modules/erp/**",
         "backend/src/modules/revenue-risk/**"
       ],
-      "tables": ["vendor_*", "grn_*", "budget_*", "pnl_*", "cost_centre*", "imprest_*", "payment_*", "invoice*"],
+      "tables": ["vendor_*", "grn_*", "finance_*", "billing_*", "pnl_*", "cost_centre*", "imprest_*", "*payment*"],
       "keywords": [
         "disburs", "payment", "penny.?drop", "bank transfer", "\\bNEFT\\b", "\\bIMPS\\b", "\\bRTGS\\b",
         "vendor payment", "\\bGRN\\b", "invoice", "budget", "\\bP&L\\b", "cost cent", "imprest"
@@ -106,7 +106,7 @@
         "backend/src/shared/attendanceSnapshot.ts",
         "backend/src/shared/attendanceRestore.ts"
       ],
-      "tables": ["attendance_*", "biometric_*", "punch_*", "cosec_*"],
+      "tables": ["attendance_*", "biometric_*", "*punch*", "cosec_*", "wfm_attendance_*"],
       "keywords": [
         "punch", "biometric", "cosec", "attendance", "\\blate\\b", "half.?day", "absent",
         "present", "missing punch", "in.?time", "out.?time", "shift timing", "\\bLWP\\b"
@@ -120,7 +120,7 @@
       "requiredApproverRoles": ["UAT_DOMAIN_OWNER_HR", "UAT_TECH_REVIEWER"],
       "mandatoryTests": [],
       "paths": ["backend/src/modules/leave/**"],
-      "tables": ["leave_*", "holiday_*", "comp_off*"],
+      "tables": ["leave_*", "holiday_*"],
       "keywords": [
         "leave", "accrual", "entitlement", "carry.?forward", "comp.?off", "\\bCL\\b", "\\bSL\\b",
         "\\bEL\\b", "\\bPL\\b", "encash", "leave balance", "holiday", "week.?off"
@@ -139,7 +139,7 @@
         "backend/src/modules/wfm/wfm.regularization.secure.routes.ts",
         "backend/src/modules/wfm-extensions/**"
       ],
-      "tables": ["roster_*", "shift_*", "week_off*", "overtime_*", "shrinkage_*"],
+      "tables": ["roster_*", "shift_*", "*weekoff*", "shrinkage_*", "wfm_*"],
       "keywords": [
         "roster", "shift", "week.?off", "\\bOT\\b", "overtime", "regulari[sz]ation",
         "shrinkage", "schedule", "duty"
@@ -174,7 +174,7 @@
       "requiredApproverRoles": ["UAT_DOMAIN_OWNER_HR", "UAT_DOMAIN_OWNER_FINANCE"],
       "mandatoryTests": [],
       "paths": ["backend/src/modules/exit/**"],
-      "tables": ["exit_*", "clearance_*", "resignation_*", "ff_*", "noc_*"],
+      "tables": ["exit_*", "*clearance*", "resignation_*", "*_noc"],
       "keywords": [
         "resignation", "exit", "clearance", "last working day", "\\bLWD\\b", "notice period",
         "relieving", "\\bNOC\\b", "settlement", "full and final"
@@ -196,7 +196,7 @@
         "backend/src/modules/job-requisition/**",
         "backend/src/modules/ijp/**"
       ],
-      "tables": ["candidate_*", "ats_*", "interview_*", "offer_*", "requisition_*"],
+      "tables": ["candidate_*", "ats_*", "*interview*", "offer_*", "*requisition*"],
       "keywords": [
         "candidate", "interview", "shortlist", "offer letter", "recruit", "hiring stage",
         "requisition", "selection", "rejected candidate", "joining kit"
@@ -219,7 +219,7 @@
         "backend/src/modules/performance-intelligence/**",
         "backend/src/modules/quality-dashboard/**"
       ],
-      "tables": ["kpi_*", "apr_*", "goal_*", "performance_*", "quality_*"],
+      "tables": ["kpi_*", "apr_*", "goal", "*goal", "performance_*", "*quality*"],
       "keywords": ["\\bKPI\\b", "\\bAPR\\b", "appraisal", "performance score", "rating", "quality score", "audit score"],
       "reason": "Performance scores drive increments and exits. One active config row silently disabled APR eligibility for an entire grade once already."
     },
@@ -246,7 +246,7 @@
       "requiredApproverRoles": ["UAT_DOMAIN_OWNER_TRAINING"],
       "mandatoryTests": [],
       "paths": ["backend/src/modules/lms/**", "backend/src/modules/lms-integration/**"],
-      "tables": ["lms_*", "course_*", "certification_*", "trainee_*"],
+      "tables": ["lms_*"],
       "keywords": ["\\bLMS\\b", "course", "curriculum", "certification", "trainee", "\\bMCQ\\b", "assessment", "training module"],
       "reason": "The deployed LMS is the external system of record. HRMS integrates only; building here creates a second source of truth."
     },

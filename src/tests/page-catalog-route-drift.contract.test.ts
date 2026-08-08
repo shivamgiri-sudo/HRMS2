@@ -177,7 +177,23 @@ describe("page catalog / router drift", () => {
   it("stops the launcher trusting a database path over the router", () => {
     const launcher = read("src/pages/ModuleLauncher.tsx");
     expect(launcher).toContain("ROUTE_BY_PAGE_CODE");
-    expect(launcher).toMatch(/route_path:\s*\n?\s*ROUTE_BY_PAGE_CODE\[page\.page_code\]/);
+
+    // The chain moved out of the object literal into resolveLaunchRoute(), so this asserts
+    // the ordering rather than one inline expression. Same guarantee, checked harder: the
+    // router lookup must come first AND return before any database path is consulted.
+    expect(launcher).toMatch(/route_path:\s*resolveLaunchRoute\(page\)/);
+
+    const resolver = launcher.slice(launcher.indexOf("function resolveLaunchRoute"));
+    const routerAt = resolver.indexOf("ROUTE_BY_PAGE_CODE[page.page_code]");
+    const dbPathAt = resolver.indexOf("page.route_path");
+    expect(routerAt).toBeGreaterThan(-1);
+    expect(dbPathAt).toBeGreaterThan(-1);
+    expect(routerAt).toBeLessThan(dbPathAt);
+
+    // And a catalog path is only trusted when it names a route the router actually serves —
+    // nine granted codes had a page_path matching no mounted route, so an unchecked
+    // fallback handed the user a tile that 404s.
+    expect(resolver).toMatch(/KNOWN_ROUTES\.has/);
   });
 
   it("no longer advertises pages that have no implementation to the CEO", () => {
