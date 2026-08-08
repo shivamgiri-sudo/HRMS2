@@ -291,4 +291,123 @@ export const imprestLedgerService = {
       closing_balance: fromPaise(opening + movement),
     };
   },
+
+  /**
+   * The Imprest Details report, in the format Finance actually uses.
+   *
+   *   S.No. | Date | GRN | Exp. Head | Exp. SubHead | INFLOW | OUTFLOW | Balance |
+   *   Mode | Chq No | Bank | Remarks
+   *
+   * Twelve columns, in that order. This is a FORMAT CONTRACT taken from the supplied
+   * `Imprest_Details` workbook, not a layout of my choosing — see the contract test.
+   *
+   * WHAT THE COLUMNS MEAN, verified against the reference file rather than assumed:
+   *
+   *   INFLOW / OUTFLOW are the credit and debit sides split into two columns, so a row carries
+   *   an amount in exactly one of them. The ledger stores one `amount` plus a `direction`; the
+   *   split happens here.
+   *
+   *   Balance is RUNNING and continues from an opening figure that the report never shows as a
+   *   row: in the reference, the first row's balance already has its own outflow applied
+   *   (19,817.96 opening, first row 40 out, balance 19,777.96). So opening comes from every
+   *   entry strictly BEFORE the window, which is also what makes consecutive months chain.
+   *
+   *   Mode / Chq No / Bank belong to allocations — money coming IN — and are blank on cash
+   *   vouchers. All 25 rows of the reference are outflows and all three columns are empty there,
+   *   so they are joined from imprest_allocation and left NULL rather than filled with a dash.
+   *
+   *   Head and Sub-head come from the voucher's GRN, which is also where the GRN number comes
+   *   from. A ledger row with no GRN behind it (an allocation, a manual adjustment) has none,
+   *   and shows blank.
+   *
+   * The running balance is computed here rather than read from `balance_after`. That column is
+   * the balance at WRITE time across the manager's whole history; this report is windowed and
+   * filtered, so its column has to be derived from the rows actually shown or it would not tie
+   * to its own opening figure.
+   */
+  async getDetailsReport(filters: {
+    imprestManagerId?: string;
+    branchScope?: FinanceBranchScope;
+    branchId?: string;
+    from: string;
+    to: string;
+  }) {
+    const scope: string[] = [];
+    const scopeParams: unknown[] = [];
+    if (filters.branchScope) {
+      const entitlement = financeBranchFilter(filters.branchScope, "l.branch_id");
+      if (entitlement.sql !== "1=1") {
+        scope.push(entitlement.sql);
+        scopeParams.push(...entitlement.params);
+      }
+    }
+    if (filters.imprestManagerId) {
+      scope.push("l.imprest_manager_id = ?");
+      scopeParams.push(filters.imprestManagerId);
+    }
+    if (filters.branchId) {
+      scope.push("l.branch_id = ?");
+      scopeParams.push(filters.branchId);
+    }
+    const scopeSql = scope.length ? ` AND ${scope.join(" AND ")}` : "";
+
+    // Opening: everything strictly before the window, under the SAME filters. Scoping the rows
+    // but not the opening would produce a balance column that does not tie to its own report.
+    const [openingRows] = await db.execute<RowDataPacket[]>(
+      `SELECT COALESCE(SUM(CASE WHEN l.direction='credit' THEN l.amount ELSE 0 END),0) AS credits,
+              COALESCE(SUM(CASE WHEN l.direction='debit'  THEN l.amount ELSE 0 END),0) AS debits
+         FROM imprest_transaction_ledger l
+        WHERE l.transaction_date < ?${scopeSql}`,
+      [filters.from, ...scopeParams],
+    );
+    const opening =
+      toPaise(Number(openingRows[0]?.credits ?? 0)) - toPaise(Number(openingRows[0]?.debits ?? 0));
+
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT l.id, l.transaction_date, l.direction, l.amount, l.narration, l.entry_type,
+              g.grn_number, g.head AS expense_head, g.sub_head AS expense_sub_head,
+              a.payment_mode, a.reference_no, a.bank_name
+         FROM imprest_transaction_ledger l
+         LEFT JOIN grn_request g
+                ON l.reference_type = 'grn_request' AND g.id = l.reference_id
+         LEFT JOIN imprest_allocation a
+                ON l.reference_type = 'imprest_allocation' AND a.id = l.reference_id
+        WHERE l.transaction_date >= ? AND l.transaction_date <= ?${scopeSql}
+        ORDER BY l.transaction_date ASC, l.created_at ASC, l.id ASC`,
+      [filters.from, filters.to, ...scopeParams],
+    );
+
+    let running = opening;
+    let inflow = 0;
+    let outflow = 0;
+    const details = (rows as RowDataPacket[]).map((row, index) => {
+      const paise = toPaise(Number(row.amount ?? 0));
+      const isCredit = String(row.direction) === "credit";
+      running += isCredit ? paise : -paise;
+      if (isCredit) inflow += paise; else outflow += paise;
+      return {
+        serial: index + 1,
+        transaction_date: String(row.transaction_date ?? "").slice(0, 10),
+        grn_number: row.grn_number ?? null,
+        expense_head: row.expense_head ?? null,
+        expense_sub_head: row.expense_sub_head ?? null,
+        inflow: isCredit ? fromPaise(paise) : 0,
+        outflow: isCredit ? 0 : fromPaise(paise),
+        balance: fromPaise(running),
+        payment_mode: row.payment_mode ?? null,
+        cheque_no: row.reference_no ?? null,
+        bank_name: row.bank_name ?? null,
+        remarks: row.narration ?? null,
+      };
+    });
+
+    return {
+      opening_balance: fromPaise(opening),
+      rows: details,
+      // The reference's total row carries INFLOW and OUTFLOW only; Balance is deliberately
+      // blank there, because a total of a running balance is meaningless.
+      totals: { inflow: fromPaise(inflow), outflow: fromPaise(outflow) },
+      closing_balance: fromPaise(running),
+    };
+  },
 };

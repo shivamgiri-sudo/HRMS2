@@ -230,54 +230,97 @@ imprestRouter.get(
 );
 
 /**
- * CSV of the float ledger.
+ * The Imprest Details report, and its CSV.
  *
- * Resolves rows through the same scopeOf() as GET /ledger — the rule is that no export may
- * return a row its list would not, and the only way to keep that true over time is for both to
- * call one helper.
+ * THE COLUMN LIST IS A FORMAT CONTRACT taken from the supplied `Imprest_Details` workbook:
+ *
+ *   S.No. | Date | GRN | Exp. Head | Exp. SubHead | INFLOW | OUTFLOW | Balance |
+ *   Mode | Chq No | Bank | Remarks
+ *
+ * Nothing here may be renamed, reordered or "improved" — Finance reconciles against this shape,
+ * and a helpfully-added column is the kind of change that looks harmless and quietly breaks a
+ * downstream sheet. The total row is part of the format too: the word "Total" sits in the
+ * Exp. SubHead column, INFLOW and OUTFLOW are summed, and Balance is left BLANK, because the
+ * total of a running balance means nothing.
+ *
+ * Rows resolve through the same scopeOf() as every other read, so the file can never contain a
+ * branch the list would not show.
  */
 imprestRouter.get(
-  "/ledger/export",
+  "/reports/details",
   requireRole(...IMPREST_READ_ROLES),
   h(async (req, res) => {
-    const rows = await imprestLedgerService.listEntries({
+    const from = String(req.query.from ?? "");
+    const to = String(req.query.to ?? "");
+    if (!from || !to) {
+      return res.status(400).json({ success: false, error: "from and to dates are required" });
+    }
+    const data = await imprestLedgerService.getDetailsReport({
       branchScope: await scopeOf(req),
       imprestManagerId: req.query.imprestManagerId ? String(req.query.imprestManagerId) : undefined,
-      from: req.query.from ? String(req.query.from) : undefined,
-      to: req.query.to ? String(req.query.to) : undefined,
-      limit: 1000,
+      from,
+      to,
+    });
+    res.json({ success: true, data });
+  }),
+);
+
+/** The same report as a CSV, in the reference workbook's exact column order. */
+const IMPREST_DETAIL_COLUMNS = [
+  "S.No.", "Date", "GRN", "Exp. Head", "Exp. SubHead", "INFLOW", "OUTFLOW", "Balance",
+  "Mode", "Chq No", "Bank", "Remarks",
+] as const;
+
+imprestRouter.get(
+  "/reports/details/export",
+  requireRole(...IMPREST_READ_ROLES),
+  h(async (req, res) => {
+    const from = String(req.query.from ?? "");
+    const to = String(req.query.to ?? "");
+    if (!from || !to) {
+      return res.status(400).json({ success: false, error: "from and to dates are required" });
+    }
+    const report = await imprestLedgerService.getDetailsReport({
+      branchScope: await scopeOf(req),
+      imprestManagerId: req.query.imprestManagerId ? String(req.query.imprestManagerId) : undefined,
+      from,
+      to,
     });
 
-    const columns = [
-      "Date", "Branch", "Entry Type", "Narration", "Reference",
-      "Debit", "Credit", "Running Balance",
-    ];
-    // Running balance is computed here rather than stored, for the same reason the service
-    // derives the closing balance: a stored balance and a summed one eventually disagree.
-    let running = 0;
-    const body = (rows as Record<string, unknown>[]).map((row) => {
-      const debit = String(row.direction) === "debit" ? Number(row.amount ?? 0) : 0;
-      const credit = String(row.direction) === "credit" ? Number(row.amount ?? 0) : 0;
-      running = Math.round((running + credit - debit) * 100) / 100;
-      return [
-        String(row.transaction_date ?? "").slice(0, 10),
-        row.branch_name ?? "",
-        row.entry_type ?? "",
-        row.narration ?? "",
-        row.reference_id ?? "",
-        debit ? debit.toFixed(2) : "",
-        credit ? credit.toFixed(2) : "",
-        running.toFixed(2),
-      ];
-    });
+    const money = (value: number) => (value === 0 ? "0" : value.toFixed(2));
+    const body = report.rows.map((row) => [
+      row.serial,
+      row.transaction_date,
+      row.grn_number ?? "",
+      row.expense_head ?? "",
+      row.expense_sub_head ?? "",
+      money(row.inflow),
+      money(row.outflow),
+      row.balance.toFixed(2),
+      row.payment_mode ?? "",
+      row.cheque_no ?? "",
+      row.bank_name ?? "",
+      row.remarks ?? "",
+    ]);
+    // "Total" in the Exp. SubHead column and a BLANK Balance, exactly as the reference has it.
+    body.push([
+      "", "", "", "", "Total",
+      money(report.totals.inflow), money(report.totals.outflow),
+      "", "", "", "", "",
+    ]);
 
+    // Remarks are free text written by whoever raised the voucher and routinely contain commas
+    // ("Cash was paid to purchase X, Approved by Y"), so quoting is load-bearing here, not
+    // defensive: an unquoted comma shifts every later column by one for that row alone.
     const escape = (value: unknown) => {
       const text = String(value ?? "");
-      return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+      return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
     };
-    const csv = [columns, ...body].map((row) => row.map(escape).join(",")).join("\n");
+    const csv = [[...IMPREST_DETAIL_COLUMNS], ...body]
+      .map((row) => row.map(escape).join(","))
+      .join("\n");
     res.setHeader("Content-Type", "text/csv; charset=utf-8");
-    res.setHeader("Content-Disposition", 'attachment; filename="imprest-ledger.csv"');
+    res.setHeader("Content-Disposition", 'attachment; filename="Imprest_Details.csv"');
     res.send(csv);
   }),
 );

@@ -25,7 +25,10 @@ export function useInactivityTimeout(
   timeoutMinutes: number,
   onTimeout: () => void
 ) {
-  const timeoutRef = useRef<NodeJS.Timeout>();
+  // ReturnType<typeof setTimeout>, not NodeJS.Timeout: this runs in the browser, and the app
+  // tsconfig does not pull in @types/node, so the NodeJS namespace does not exist here. It
+  // typechecked nowhere — a scoped check over any file that reaches this hook failed on it.
+  const timeoutRef = useRef<ReturnType<typeof setTimeout>>();
   const onTimeoutRef = useRef(onTimeout);
 
   // Keep callback ref up to date

@@ -56,8 +56,12 @@ describe("the imprest endpoints are mounted", () => {
     ["POST", "/api/finance/imprest/allocations"],
     ["POST", "/api/finance/imprest/allocations/:id/review"],
     ["GET", "/api/finance/imprest/ledger"],
-    ["GET", "/api/finance/imprest/ledger/export"],
     ["GET", "/api/finance/imprest/reports/balance"],
+    // The Imprest Details report, in the supplied workbook's format. It REPLACED a generic
+    // ledger CSV added earlier in the same session: that one produced a non-conforming file,
+    // and leaving both would put a wrong export next to the right one for someone to pick.
+    ["GET", "/api/finance/imprest/reports/details"],
+    ["GET", "/api/finance/imprest/reports/details/export"],
   ])("%s %s", (method, path) => {
     expect(has(method, path), `${method} ${path} is not registered`).toBe(true);
   });
@@ -89,7 +93,7 @@ describe("scope is resolved server-side, never trusted from the query", () => {
   });
 
   it("routes the export through the same resolver as its list", () => {
-    const exportBlock = SRC.slice(SRC.indexOf('"/ledger/export"'));
+    const exportBlock = SRC.slice(SRC.indexOf('"/reports/details/export"'));
     expect(exportBlock).toContain("branchScope: await scopeOf(req)");
   });
 

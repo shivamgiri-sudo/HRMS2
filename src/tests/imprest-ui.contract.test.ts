@@ -15,9 +15,10 @@ import { describe, expect, it } from "vitest";
  *      from an append-only ledger; a second implementation in the browser is exactly how two
  *      balances end up disagreeing, with neither obviously wrong.
  *
- * The running balance in the ledger table is the one permitted client-side arithmetic: it is a
- * per-row display of a figure whose opening and closing both come from the server, and the test
- * below pins it to open at the server's opening balance so the last row equals closing.
+ * The Balance column used to be the one permitted piece of client-side arithmetic — a running
+ * total seeded from the server's opening figure. It no longer is: the Imprest Details report
+ * returns a balance per row, so the client accumulates nothing and cannot drift from the
+ * report's own totals. The test below pins that stricter rule.
  */
 
 const read = (rel: string) => readFileSync(resolve(process.cwd(), rel), "utf8");
@@ -28,7 +29,7 @@ const WORKSPACE = read("src/components/finance/grn/imprest/ImprestWorkspace.tsx"
 
 describe("the report exports through the API", () => {
   it("opens the export endpoint rather than building a file from state", () => {
-    expect(REPORT).toContain("/api/finance/imprest/ledger/export?");
+    expect(REPORT).toContain("/api/finance/imprest/reports/details/export?");
     // No client-side CSV assembly. If one appears, the branch entitlement stops being enforced
     // on the file the user actually receives.
     expect(REPORT).not.toMatch(/new Blob\(/);
@@ -54,10 +55,13 @@ describe("balances are server-derived", () => {
     expect(ALLOCATION).not.toMatch(/allocations\s*\.\s*reduce/);
   });
 
-  it("the ledger's running balance opens at the server's opening figure", () => {
-    // Starting at zero would make every row wrong by the opening balance, and the last row
-    // would not equal the closing figure shown directly above it.
-    expect(REPORT).toContain("let running = summary?.opening_balance ?? 0;");
+  it("takes each row's balance from the server rather than accumulating one", () => {
+    // Stronger than the old rule that the client's running total had to START at the server's
+    // opening figure: the client now does no accumulation at all, so it cannot drift from the
+    // report's own totals. The Balance column renders exactly what the API returned.
+    expect(REPORT).toContain("money(row.balance)");
+    expect(REPORT).not.toMatch(/let running/);
+    expect(REPORT).not.toMatch(/running = Math\.round/);
   });
 
   it("shows the full identity, not just a closing number", () => {

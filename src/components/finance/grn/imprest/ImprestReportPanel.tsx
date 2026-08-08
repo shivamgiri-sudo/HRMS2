@@ -34,15 +34,27 @@ type Manager = {
   tally_name?: string | null;
 };
 
-type LedgerEntry = {
-  id: string;
+/** One row of the Imprest Details report, in the supplied workbook's own terms. */
+type DetailRow = {
+  serial: number;
   transaction_date: string;
-  branch_name?: string | null;
-  entry_type: string;
-  direction: "credit" | "debit";
-  amount: number;
-  narration?: string | null;
-  reference_type?: string | null;
+  grn_number?: string | null;
+  expense_head?: string | null;
+  expense_sub_head?: string | null;
+  inflow: number;
+  outflow: number;
+  balance: number;
+  payment_mode?: string | null;
+  cheque_no?: string | null;
+  bank_name?: string | null;
+  remarks?: string | null;
+};
+
+type DetailsReport = {
+  opening_balance: number;
+  rows: DetailRow[];
+  totals: { inflow: number; outflow: number };
+  closing_balance: number;
 };
 
 type Summary = {
@@ -91,23 +103,19 @@ export function ImprestReportPanel() {
       unwrap<Summary>(await hrmsApi.get<any>(`/api/finance/imprest/reports/balance?${query}`)),
   });
 
-  const ledgerQuery = useQuery({
-    queryKey: ["imprest-ledger", range.from, range.to, managerId],
+  const detailsQuery = useQuery({
+    queryKey: ["imprest-details", range.from, range.to, managerId],
     enabled: Boolean(range.from && range.to),
-    queryFn: async () => {
-      const rows = unwrap<LedgerEntry[]>(await hrmsApi.get<any>(`/api/finance/imprest/ledger?${query}`));
-      return Array.isArray(rows) ? rows : [];
-    },
+    queryFn: async () =>
+      unwrap<DetailsReport>(await hrmsApi.get<any>(`/api/finance/imprest/reports/details?${query}`)),
   });
 
   const summary = summaryQuery.data;
-  const entries = ledgerQuery.data ?? [];
+  const details = detailsQuery.data;
+  const entries = details?.rows ?? [];
   const managers = managersQuery.data ?? [];
 
-  // Running balance, opened at the period's opening figure so the last row equals closing.
-  let running = summary?.opening_balance ?? 0;
-
-  const refresh = () => { summaryQuery.refetch(); ledgerQuery.refetch(); };
+  const refresh = () => { summaryQuery.refetch(); detailsQuery.refetch(); };
 
   return (
     <div className="space-y-4">
@@ -122,7 +130,7 @@ export function ImprestReportPanel() {
                 onClick={() => {
                   // Straight to the API so the file is produced by the same scope resolution as
                   // the table — never serialised from what happens to be loaded on screen.
-                  window.open(`/api/finance/imprest/ledger/export?${query}`, "_blank", "noopener");
+                  window.open(`/api/finance/imprest/reports/details/export?${query}`, "_blank", "noopener");
                 }}
               >
                 <Download className="mr-1 h-3.5 w-3.5" />
@@ -130,7 +138,7 @@ export function ImprestReportPanel() {
               </GrnChip>
               <GrnIconButton aria-label="Refresh" onClick={refresh}>
                 <RefreshCw
-                  className={`h-3.5 w-3.5 ${summaryQuery.isFetching || ledgerQuery.isFetching ? "animate-spin" : ""}`}
+                  className={`h-3.5 w-3.5 ${summaryQuery.isFetching || detailsQuery.isFetching ? "animate-spin" : ""}`}
                 />
               </GrnIconButton>
             </div>
@@ -195,54 +203,83 @@ export function ImprestReportPanel() {
 
       <GrnCard>
         <GrnCardHeader
-          title="Ledger"
-          description={entries.length ? `${entries.length} entries` : undefined}
+          title="Imprest Details"
+          description={
+            entries.length
+              ? `${entries.length} entries · opening ${money(details?.opening_balance ?? 0)}`
+              : undefined
+          }
         />
         {entries.length === 0 ? (
           <GrnEmptyState
-            title={ledgerQuery.isLoading ? "Loading…" : "No movement in this window"}
+            title={detailsQuery.isLoading ? "Loading…" : "No movement in this window"}
             description={
-              ledgerQuery.isLoading
+              detailsQuery.isLoading
                 ? undefined
                 : "Nothing was allocated, spent or returned between these dates."
             }
           />
         ) : (
           <div className="overflow-x-auto">
+            {/* Columns and their order are the supplied Imprest_Details workbook's, exactly.
+                Finance reconciles against this shape, so it is a contract rather than a layout
+                choice — see imprest-details-report.contract.test.ts. */}
             <GrnTable>
               <thead>
                 <tr>
+                  <GrnTh>S.No.</GrnTh>
                   <GrnTh>Date</GrnTh>
-                  <GrnTh>Branch</GrnTh>
-                  <GrnTh>Entry</GrnTh>
-                  <GrnTh>Narration</GrnTh>
-                  <GrnTh className="text-right">Debit</GrnTh>
-                  <GrnTh className="text-right">Credit</GrnTh>
+                  <GrnTh>GRN</GrnTh>
+                  <GrnTh>Exp. Head</GrnTh>
+                  <GrnTh>Exp. SubHead</GrnTh>
+                  <GrnTh className="text-right">INFLOW</GrnTh>
+                  <GrnTh className="text-right">OUTFLOW</GrnTh>
                   <GrnTh className="text-right">Balance</GrnTh>
+                  <GrnTh>Mode</GrnTh>
+                  <GrnTh>Chq No</GrnTh>
+                  <GrnTh>Bank</GrnTh>
+                  <GrnTh>Remarks</GrnTh>
                 </tr>
               </thead>
               <tbody>
-                {entries.map((entry) => {
-                  const debit = entry.direction === "debit" ? Number(entry.amount ?? 0) : 0;
-                  const credit = entry.direction === "credit" ? Number(entry.amount ?? 0) : 0;
-                  running = Math.round((running + credit - debit) * 100) / 100;
-                  return (
-                    <tr key={entry.id} className={GRN_TR}>
-                      <GrnTd>{dateLabel(entry.transaction_date)}</GrnTd>
-                      <GrnTd>{entry.branch_name ?? "—"}</GrnTd>
-                      <GrnTd>
-                        {entry.entry_type.replace(/_/g, " ")}
-                        <GrnCellSub>{(entry.reference_type ?? "").replace(/_/g, " ")}</GrnCellSub>
-                      </GrnTd>
-                      <GrnTd>
-                        <span className="line-clamp-2">{entry.narration ?? "—"}</span>
-                      </GrnTd>
-                      <GrnTd className="text-right tabular-nums">{debit ? money(debit) : "—"}</GrnTd>
-                      <GrnTd className="text-right tabular-nums">{credit ? money(credit) : "—"}</GrnTd>
-                      <GrnTd className="text-right font-semibold tabular-nums">{money(running)}</GrnTd>
-                    </tr>
-                  );
-                })}
+                {entries.map((row) => (
+                  <tr key={`${row.serial}-${row.grn_number ?? row.transaction_date}`} className={GRN_TR}>
+                    <GrnTd className="tabular-nums">{row.serial}</GrnTd>
+                    <GrnTd>{dateLabel(row.transaction_date)}</GrnTd>
+                    <GrnTd><span className="font-mono">{row.grn_number ?? ""}</span></GrnTd>
+                    <GrnTd>{row.expense_head ?? ""}</GrnTd>
+                    <GrnTd>{row.expense_sub_head ?? ""}</GrnTd>
+                    {/* Zero prints as a bare 0, as the workbook has it — not a dash and not a
+                        blank, both of which would break a column someone sums. */}
+                    <GrnTd className="text-right tabular-nums">
+                      {row.inflow ? money(row.inflow) : "0"}
+                    </GrnTd>
+                    <GrnTd className="text-right tabular-nums">
+                      {row.outflow ? money(row.outflow) : "0"}
+                    </GrnTd>
+                    <GrnTd className="text-right font-semibold tabular-nums">{money(row.balance)}</GrnTd>
+                    <GrnTd>{row.payment_mode ?? ""}</GrnTd>
+                    <GrnTd>{row.cheque_no ?? ""}</GrnTd>
+                    <GrnTd>{row.bank_name ?? ""}</GrnTd>
+                    <GrnTd>
+                      <span className="line-clamp-2">{row.remarks ?? ""}</span>
+                    </GrnTd>
+                  </tr>
+                ))}
+                {/* The total row is part of the format: "Total" sits in the Exp. SubHead column
+                    and Balance is deliberately blank — the total of a running balance is
+                    meaningless. Closing is shown in the strip above instead. */}
+                <tr className={GRN_TR}>
+                  <GrnTd /><GrnTd /><GrnTd /><GrnTd />
+                  <GrnTd className="font-semibold">Total</GrnTd>
+                  <GrnTd className="text-right font-semibold tabular-nums">
+                    {details ? money(details.totals.inflow) : "0"}
+                  </GrnTd>
+                  <GrnTd className="text-right font-semibold tabular-nums">
+                    {details ? money(details.totals.outflow) : "0"}
+                  </GrnTd>
+                  <GrnTd /><GrnTd /><GrnTd /><GrnTd /><GrnTd />
+                </tr>
               </tbody>
             </GrnTable>
           </div>

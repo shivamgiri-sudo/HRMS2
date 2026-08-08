@@ -27,6 +27,10 @@ So they are not additional figures. They are the same figure, cut in two.
 
 ### col4 is C-suite remuneration
 
+> **Confirmed by the business on 2026-08-08:** splitting CEO/COO remuneration onto its own
+> ledger is deliberate policy, not an artefact of how the reference vouchers were assembled.
+> The generator keeps doing it.
+
 At each branch a **single employee** reproduces all four of col4's headline figures
 simultaneously — gross, Salary Payable, employer PF and TDS:
 
