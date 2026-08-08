@@ -370,10 +370,26 @@ export async function payrollReconciliation(
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
   // Month is optional: omit to get multi-month view; supply to pin to one period
+  const attParams: unknown[] = [];
+  let attWhere = "";
   if (filters.month) {
     const runMonth = monthParam(filters.month);
     clauses.push("spr.run_month = ?");
     params.push(runMonth);
+
+    // Pin the attendance aggregate to the same month.
+    //
+    // Only rows whose ym equals spr.run_month can survive the join, so restricting the
+    // subquery cannot change a single output row — but leaving it unrestricted made MySQL
+    // aggregate all 119,202 attendance rows to produce the ~1,549 that survive. Measured on
+    // live: 14.6s unrestricted, 3.0s pinned.
+    //
+    // Half-open range against the raw column so the predicate is sargable and can use
+    // idx_adr_emp_date. A LEFT() or DATE_FORMAT() wrapper would not be — that is precisely
+    // why the GROUP BY below is the expensive half of this query (EXPLAIN: type=ALL,
+    // key=null, Using temporary) and why it is worth not feeding it the whole table.
+    attWhere = "WHERE adr.record_date >= ? AND adr.record_date < DATE_ADD(?, INTERVAL 1 MONTH)";
+    attParams.push(`${runMonth}-01`, `${runMonth}-01`);
   }
 
   // This query used to return branch/process/month financial totals: employee_count,
@@ -438,11 +454,17 @@ export async function payrollReconciliation(
                         ELSE 0 END) AS present_days,
                SUM(COALESCE(adr.lwp_value, 0)) AS lwp_days
           FROM attendance_daily_record adr
+         ${attWhere}
          GROUP BY adr.employee_id, LEFT(adr.record_date, 7)
       ) att ON att.employee_id = spl.employee_id AND att.ym = spr.run_month
      WHERE ${clauses.join(" AND ")}
      ORDER BY ABS(COALESCE(spl.final_payable_days, spl.working_days, 0)
                   - COALESCE(att.present_days, 0)) DESC, spl.id ASC`;
+
+  // The att subquery's placeholders sit inside the JOIN, ahead of the WHERE, and MySQL binds
+  // positionally — so they lead the list. Appending them would hand the date range whatever
+  // the scope filter contributed and silently shift every later value by one.
+  params.unshift(...attParams);
 
   const total = options.includeTotal ? await count(base, params) : 0;
   const sql   = applyPagination(base, options);
