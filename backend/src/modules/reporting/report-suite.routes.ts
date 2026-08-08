@@ -3622,7 +3622,26 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
       const from = dateParam(req.query.from, `${new Date().getFullYear()}-01-01`);
       const to   = dateParam(req.query.to,   new Date().toISOString().slice(0, 10));
       addScopedEmployeeFilters(req, clauses, params);
-      clauses.push("e.active_status = 0 OR e.employment_status IN ('resigned','inactive','Resigned','Exit')");
+      // The parentheses are load-bearing. This clause joins an array with " AND ", and AND binds
+      // tighter than OR, so without them the composed WHERE is not what it reads as:
+      //
+      //   scope AND active_status = 0 OR employment_status IN (...) AND date BETWEEN ? AND ?
+      //
+      // parses as
+      //
+      //   (scope AND active_status = 0) OR (employment_status IN (...) AND date BETWEEN ? AND ?)
+      //
+      // — a left branch with no date filter and a right branch with no row scope. Measured on
+      // live 2026-08-09:
+      //
+      //   super_admin        57,501 rows returned where 1,574 is correct  (every inactive
+      //                      employee ever, the date range ignored entirely)
+      //   branch-scoped user  1,338 rows returned where 0 is correct, and ALL 1,338 of them
+      //                      belonged to other branches
+      //
+      // So this was simultaneously a 36x row inflation and a complete row-scope bypass, and it
+      // is also why the report took ~58s: it was building 57,501 rows to show 1,574.
+      clauses.push("(e.active_status = 0 OR e.employment_status IN ('resigned','inactive','Resigned','Exit'))");
       clauses.push("COALESCE(e.date_of_leaving, e.date_of_exit) BETWEEN ? AND ?");
       params.push(from, to);
 
