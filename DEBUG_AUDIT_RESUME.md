@@ -24,7 +24,7 @@
 | `employment_status` values | `'active'` (lowercase) in live DB |
 
 ### Root Cause of Initial Test Failures
-`.env` `DB_PASSWORD=<set DB_PASSWORD in backend/.env>` — dotenv treated `#` as comment, password was silently truncated to `qwersdfg!@`. Fixed by quoting: `DB_PASSWORD="<set DB_PASSWORD in backend/.env>"`.
+`.env` `DB_PASSWORD=<set DB_PASSWORD in backend/.env>` — dotenv treated `#` as comment, password was silently truncated to `<redacted: truncated DB_PASSWORD>`. Fixed by quoting: `DB_PASSWORD="<set DB_PASSWORD in backend/.env>"`.
 
 ---
 
