@@ -71,7 +71,11 @@ const SHADOWED_BACKLOG = new Set<string>([
   "anniversary-list", "attendance-daily", "attendance-dispute-summary", "attendance-summary",
   "biometric-reconciliation", "birthday-list", "clearance-status-register",
   "confirmation-due-list", "contract-expiry-list", "cost-centre-headcount", "daily-hc-shift",
-  "daily-shrinkage-report", "employee-master", "employee-movement",
+  // "daily-shrinkage-report" left this list on 2026-08-08. The shadow hid disjoint column
+  // sets: the inline block emitted the nine metrics the catalogue declares and the executor
+  // emitted three of its own, so the downloaded workbook shared no metric column with the
+  // screen. The executor now carries the inline SQL and the block is gone.
+  "employee-master", "employee-movement",
   "gratuity-liability-register", "grievance-register",
   "holiday-master-list", "identity-source-snapshot", "increment-promotion-history",
   // "late-arrival-summary" left this list on 2026-08-08. The shadow was hiding a genuine
@@ -93,7 +97,12 @@ const SHADOWED_BACKLOG = new Set<string>([
   // attrition_record, a table that exists with 0 rows, so the report showed zero attrition
   // while 1,666 employees left in seven months. The executor it shadowed counts from the
   // employee dates that actually carry this.
-  "monthly-shrinkage-trend", "org-structure-snapshot",
+  // "org-structure-snapshot" left this list on 2026-08-08. The shadow hid a naming
+  // disagreement that made two columns unreachable: the executor emitted has_manager /
+  // missing_manager where the catalogue and the grid expect with_manager / without_manager,
+  // so the downloaded workbook carried the right numbers under keys nothing reads. The
+  // executor now matches the inline SQL exactly and the block is gone.
+  "monthly-shrinkage-trend",
   "overtime-summary", "payroll-register", "payroll-variance", "punch-raw-export",
   "regularization-summary", "shift-adherence-detail",
 ]);

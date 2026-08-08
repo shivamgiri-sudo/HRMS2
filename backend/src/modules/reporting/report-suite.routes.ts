@@ -861,32 +861,14 @@ reportSuiteRouter.get("/:code", reportScopeMiddleware, reportCatalogAccessMiddle
       break;
 
     // ─── A1: HR & Workforce ───────────────────────────────────────────────────
-    case "org-structure-snapshot":
-      // Same two defects cost-centre-headcount had, in the same shape.
-      //
-      // No row scope: the WHERE was hardcoded, so a branch-scoped user saw the org structure
-      // of every branch. Scope is enforced in the query and nowhere else. An all-scope user
-      // gains no predicate, so super_admin output is unchanged.
-      //
-      // And the superseded two-flag active test, which counts 1,123 where the agreed
-      // definition — active_status alone — counts 1,125, leaving this report unable to
-      // reconcile against headcount.
-      addScopedEmployeeFilters(req, clauses, params);
-      clauses.push("e.active_status = 1");
-      sql = `SELECT COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
-                    COALESCE(d.dept_name, 'UNASSIGNED') AS department_name,
-                    COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
-                    COUNT(e.id) AS headcount,
-                    SUM(CASE WHEN e.reporting_manager_id IS NOT NULL OR e.manager_id IS NOT NULL THEN 1 ELSE 0 END) AS with_manager,
-                    SUM(CASE WHEN e.reporting_manager_id IS NULL AND e.manager_id IS NULL THEN 1 ELSE 0 END) AS without_manager
-               FROM employees e
-               LEFT JOIN branch_master b ON b.id = e.branch_id
-               LEFT JOIN department_master d ON d.id = e.department_id
-               LEFT JOIN process_master p ON p.id = e.process_id
-              WHERE ${clauses.join(" AND ")}
-              GROUP BY b.branch_name, d.dept_name, p.process_name
-              ORDER BY b.branch_name, d.dept_name, p.process_name`;
-      break;
+    // "org-structure-snapshot" is intentionally not handled here.
+    //
+    // It falls through to executeReport(), which now carries this exact SQL — including the
+    // row scope and the active_status = 1 test this block added, and the UNASSIGNED
+    // rendering. Screen and download were previously two implementations: same 95 rows, but
+    // the file named the manager counts has_manager / missing_manager while the catalogue and
+    // the grid expect with_manager / without_manager, so those two columns were unreachable
+    // in the workbook.
 
     case "cost-centre-headcount":
       // Two corrections, both to the predicate rather than the shape.
@@ -1269,31 +1251,12 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
     }
 
 
-    case "daily-shrinkage-report": {
-      const from = dateParam(req.query.from, new Date().toISOString().slice(0, 10));
-      const to = dateParam(req.query.to, from);
-      addScopedEmployeeFilters(req, clauses, params);
-      if (req.query.processId) { clauses.push("e.process_id = ?"); params.push(String(req.query.processId)); }
-      clauses.push("adr.record_date BETWEEN ? AND ?"); params.push(from, to);
-      sql = `SELECT adr.record_date, b.branch_name, p.process_name,
-                    COUNT(*) AS total_scheduled,
-                    SUM(adr.attendance_status IN ('present','half_day')) AS present_hc,
-                    SUM(adr.attendance_status = 'absent') AS absent_hc,
-                    SUM(adr.attendance_status = 'leave_approved') AS leave_hc,
-                    SUM(adr.attendance_status = 'week_off') AS week_off_hc,
-                    SUM(adr.attendance_status = 'holiday') AS holiday_hc,
-                    COUNT(*) - SUM(adr.attendance_status IN ('present','half_day','leave_approved','week_off','holiday')) AS unplanned_shrinkage_hc,
-                    ROUND((COUNT(*) - SUM(adr.attendance_status IN ('present','half_day'))) / NULLIF(COUNT(*), 0) * 100, 2) AS total_shrinkage_pct,
-                    ROUND((SUM(adr.attendance_status = 'absent')) / NULLIF(COUNT(*), 0) * 100, 2) AS unplanned_shrinkage_pct
-               FROM attendance_daily_record adr
-               JOIN employees e ON e.id = adr.employee_id
-               LEFT JOIN branch_master b ON b.id = e.branch_id
-               LEFT JOIN process_master p ON p.id = e.process_id
-              WHERE ${clauses.join(" AND ")}
-              GROUP BY adr.record_date, b.branch_name, p.process_name
-              ORDER BY adr.record_date DESC, total_shrinkage_pct DESC`;
-      break;
-    }
+    // "daily-shrinkage-report" is intentionally not handled here.
+    //
+    // It falls through to executeReport(), which now carries this exact SQL. Screen and
+    // download previously returned the same 33 rows with disjoint columns: this block emitted
+    // the nine metrics the catalogue declares, the executor emitted three of its own, and the
+    // workbook therefore contained none of the columns the grid draws.
 
     case "monthly-shrinkage-trend": {
       const from = dateParam(req.query.from, `${new Date().getFullYear()}-01-01`);

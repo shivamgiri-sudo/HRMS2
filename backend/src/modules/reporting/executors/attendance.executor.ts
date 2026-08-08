@@ -710,15 +710,30 @@ export async function dailyShrinkageReport(
   params.push(from, to);
 
   const base = `
+    -- Aligned with the inline block this used to disagree with, and with the catalogue.
+    --
+    -- This emitted three metrics — scheduled, absent_count, shrinkage_pct — where the catalogue
+    -- declares nine: total_scheduled, present_hc, absent_hc, leave_hc, week_off_hc, holiday_hc,
+    -- unplanned_shrinkage_hc, total_shrinkage_pct, unplanned_shrinkage_pct. Same 33 rows on
+    -- screen and in the file, but the downloaded workbook carried none of the columns the grid
+    -- draws, so a shrinkage report opened from a spreadsheet answered a different question from
+    -- the one reviewed on screen.
+    --
+    -- Ported verbatim, including the status vocabulary. 'week_off' has zero rows live, which is
+    -- a known gap in the shared attendance vocabulary and a separate question — porting it
+    -- unchanged keeps this a move rather than a redefinition.
     SELECT adr.record_date,
            COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
            COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
-           COUNT(*) AS scheduled,
-           SUM(CASE WHEN adr.attendance_status IN ('absent','lwp') THEN 1 ELSE 0 END) AS absent_count,
-           ROUND(
-             SUM(CASE WHEN adr.attendance_status IN ('absent','lwp') THEN 1 ELSE 0 END) * 100.0
-             / NULLIF(COUNT(*), 0),
-           2) AS shrinkage_pct
+           COUNT(*) AS total_scheduled,
+           SUM(adr.attendance_status IN ('present','half_day')) AS present_hc,
+           SUM(adr.attendance_status = 'absent') AS absent_hc,
+           SUM(adr.attendance_status = 'leave_approved') AS leave_hc,
+           SUM(adr.attendance_status = 'week_off') AS week_off_hc,
+           SUM(adr.attendance_status = 'holiday') AS holiday_hc,
+           COUNT(*) - SUM(adr.attendance_status IN ('present','half_day','leave_approved','week_off','holiday')) AS unplanned_shrinkage_hc,
+           ROUND((COUNT(*) - SUM(adr.attendance_status IN ('present','half_day'))) / NULLIF(COUNT(*), 0) * 100, 2) AS total_shrinkage_pct,
+           ROUND((SUM(adr.attendance_status = 'absent')) / NULLIF(COUNT(*), 0) * 100, 2) AS unplanned_shrinkage_pct
       FROM attendance_daily_record adr
       JOIN employees e ON e.id = adr.employee_id
       LEFT JOIN branch_master b ON b.id = e.branch_id

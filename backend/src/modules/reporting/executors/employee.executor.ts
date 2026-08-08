@@ -214,10 +214,21 @@ export async function orgStructureSnapshot(
   clauses.push("e.active_status = 1");
 
   const base = `
-    SELECT b.branch_name, d.dept_name AS department_name, p.process_name,
-           COUNT(*) AS headcount,
-           SUM(CASE WHEN COALESCE(e.reporting_manager_id, e.manager_id) IS NOT NULL THEN 1 ELSE 0 END) AS has_manager,
-           SUM(CASE WHEN COALESCE(e.reporting_manager_id, e.manager_id) IS NULL     THEN 1 ELSE 0 END) AS missing_manager
+    -- Aligned with the inline block this used to disagree with, and with the catalogue.
+    --
+    -- The names were has_manager / missing_manager here and with_manager / without_manager on
+    -- screen, for the same two numbers. The grid maps catalogue keys onto row keys, so the
+    -- downloaded workbook carried two columns the catalogue does not declare and lacked the two
+    -- it does — the values were right and unreachable.
+    --
+    -- The three name columns were also still selected bare here, so an unmapped branch,
+    -- department or process reached the file as an empty cell while the screen said UNASSIGNED.
+    SELECT COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
+           COALESCE(d.dept_name, 'UNASSIGNED') AS department_name,
+           COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
+           COUNT(e.id) AS headcount,
+           SUM(CASE WHEN e.reporting_manager_id IS NOT NULL OR e.manager_id IS NOT NULL THEN 1 ELSE 0 END) AS with_manager,
+           SUM(CASE WHEN e.reporting_manager_id IS NULL AND e.manager_id IS NULL THEN 1 ELSE 0 END) AS without_manager
       FROM employees e
       LEFT JOIN branch_master b     ON b.id = e.branch_id
       LEFT JOIN department_master d ON d.id = e.department_id
