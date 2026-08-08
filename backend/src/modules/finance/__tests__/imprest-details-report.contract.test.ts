@@ -201,3 +201,62 @@ describe("the CSV column contract", () => {
     expect(exportBlock).toContain("from and to dates are required");
   });
 });
+
+describe("the voucher debit reaches the ledger at all", () => {
+  /**
+   * The gap this closes: allocations posted their credits, but NOTHING ever posted a voucher
+   * debit. A float could only go up, the Details report would have shown inflows and no
+   * outflows — the exact inverse of the reference workbook, which is 25 outflows and no inflow —
+   * and the "float in hand" on the allocation form would have been overstated by everything ever
+   * spent. Every piece existed and tested green; only the call site was missing.
+   */
+  let SRC: string;
+  beforeAll(() => {
+    SRC = readFileSync(at("../grn-smart.service.ts"), "utf8");
+  });
+
+  it("posts a debit when an imprest GRN is approved", () => {
+    expect(SRC).toContain("postImprestVoucherDebit(connection, grnId, grn, actorUserId)");
+    const helper = SRC.slice(SRC.indexOf("async function postImprestVoucherDebit"));
+    expect(helper).toContain('entryType: "voucher"');
+    expect(helper).toContain('direction: "debit"');
+  });
+
+  it("references the GRN, which is what the report joins on for Head and Sub-head", () => {
+    // reference_type must be 'grn_request' or the report's join finds nothing and the GRN,
+    // Exp. Head and Exp. SubHead columns are silently blank on every outflow row.
+    const helper = SRC.slice(SRC.indexOf("async function postImprestVoucherDebit"));
+    expect(helper).toContain('referenceType: "grn_request"');
+    expect(helper).toContain("referenceId: grnId");
+  });
+
+  it("posts inside the approval transaction, not after it", () => {
+    // A debit outside the transaction would move money for a voucher whose approval rolled back.
+    const call = SRC.indexOf("postImprestVoucherDebit(connection,");
+    const commit = SRC.indexOf("await connection.commit();", call);
+    expect(call).toBeGreaterThan(-1);
+    expect(commit).toBeGreaterThan(call);
+    // The helper takes the caller's connection rather than opening its own.
+    expect(SRC).toContain("connection: PoolConnection,");
+  });
+
+  it("only fires for imprest GRNs, leaving the vendor path untouched", () => {
+    expect(SRC).toContain('} else if (grn.grn_type === "imprest") {');
+    expect(SRC).toContain('if (grn.grn_type === "vendor") {');
+  });
+
+  it("audits a skipped debit rather than swallowing it", () => {
+    // imprest_manager is empty in production, so throwing would block every imprest approval on
+    // deploy. Skipping is right; skipping silently is not.
+    const helper = SRC.slice(SRC.indexOf("async function postImprestVoucherDebit"));
+    expect(helper).toContain("IMPREST_LEDGER_SKIPPED");
+    expect(helper).toContain("No active imprest manager is appointed");
+  });
+
+  it("honours the manager's effective dating when resolving one", () => {
+    // A manager whose term ended must not be debited for today's spend.
+    const helper = SRC.slice(SRC.indexOf("async function postImprestVoucherDebit"));
+    expect(helper).toContain("effective_from <= CURDATE()");
+    expect(helper).toContain("effective_to >= CURDATE()");
+  });
+});

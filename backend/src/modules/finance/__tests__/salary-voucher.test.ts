@@ -317,3 +317,50 @@ describe("Gross Salary and GROSS SALARY are different ledgers", () => {
     expect(v.totals.balanced).toBe(true);
   });
 });
+
+describe("two branch rows sharing a name", () => {
+  /**
+   * branch_master holds "HEAD OFFICE" three times under three different ids, plus a
+   * "Head Office", and two of those ids carry MAS payroll in the June-2026 run.
+   *
+   * Bucketing by NAME merged them into one voucher whose branch_id was then whichever row the
+   * database happened to return first — and branch_id is exactly what the API scopes on. A
+   * finance user entitled to one id could be denied their own branch's voucher while being
+   * shown one full of the other's money. Bucketing by id makes it deterministic.
+   */
+  const HO_A = { ...CEO, branch_id: "br-ho-a", branch_name: "HEAD OFFICE" };
+  const HO_B = { ...STAFF, employee_code: "MAS90001", branch_id: "br-ho-b", branch_name: "HEAD OFFICE" };
+
+  it("keeps them as separate vouchers rather than merging them", async () => {
+    script([HO_A, HO_B]);
+    const { vouchers } = await svc.salaryVoucherService.generate("run1", { serialFrom: 614 });
+    expect(vouchers).toHaveLength(2);
+    expect(vouchers.map((v) => v.branch_id).sort()).toEqual(["br-ho-a", "br-ho-b"]);
+  });
+
+  it("gives each voucher the branch id its own money belongs to", async () => {
+    // The defect this replaces: one id labelling the other's payroll.
+    script([HO_A, HO_B]);
+    const { vouchers } = await svc.salaryVoucherService.generate("run1");
+    const a = vouchers.find((v) => v.branch_id === "br-ho-a")!;
+    const b = vouchers.find((v) => v.branch_id === "br-ho-b")!;
+    expect(lineOf(a, "Salary Payable A/C").amount).toBe(CEO.net_salary);
+    expect(lineOf(b, "Salary Payable A/C").amount).toBe(STAFF.net_salary);
+  });
+
+  it("orders them deterministically, so serials do not shuffle between runs", async () => {
+    script([HO_B, HO_A]);
+    const first = (await svc.salaryVoucherService.generate("run1", { serialFrom: 614 })).vouchers;
+    script([HO_A, HO_B]);
+    const second = (await svc.salaryVoucherService.generate("run1", { serialFrom: 614 })).vouchers;
+    expect(first.map((v) => v.branch_id)).toEqual(second.map((v) => v.branch_id));
+    expect(first.map((v) => v.voucher_no)).toEqual(second.map((v) => v.voucher_no));
+  });
+
+  it("excludes a payroll line carrying a branch name but no id", async () => {
+    // Without an id there is no branch to scope the voucher to, and no honest bucket for it.
+    script([CEO, { ...STAFF, employee_code: "MAS90002", branch_id: "", branch_name: "HEAD OFFICE" }]);
+    const out = await svc.salaryVoucherService.generate("run1");
+    expect(out.unassigned).toContain("MAS90002");
+  });
+});

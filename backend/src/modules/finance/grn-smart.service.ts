@@ -13,6 +13,7 @@ import {
 import { budgetConsumptionService } from "../process-pnl/budget-consumption.service.js";
 import { isPeriodLocked } from "../process-pnl/finance-period-lock.js";
 import { vendorPaymentService } from "./vendor-payment.service.js";
+import { imprestLedgerService } from "./imprest-ledger.service.js";
 import { grnPeriodAllocationService } from "./grn-period-allocation.service.js";
 
 export interface SmartAllocationInput {
@@ -1369,6 +1370,7 @@ export const grnSmartService = {
     }
     const connection = await db.getConnection();
     let paymentId: string | null = null;
+    let imprestLedgerEntryId: string | null = null;
     let newStatus = "";
     try {
       await connection.beginTransaction();
@@ -1420,6 +1422,8 @@ export const grnSmartService = {
           );
           if (grn.grn_type === "vendor") {
             paymentId = await vendorPaymentService.createFromGrn(grnId, actorUserId, connection);
+          } else if (grn.grn_type === "imprest") {
+            imprestLedgerEntryId = await postImprestVoucherDebit(connection, grnId, grn, actorUserId);
           }
         } else {
           await releaseAllocations(connection, allocations);
@@ -1629,4 +1633,72 @@ async function writePeriodSplits(
     );
   }
   return summary;
+}
+
+/**
+ * Debits the branch float when an imprest voucher is approved.
+ *
+ * THIS WAS MISSING ENTIRELY. The ledger service, its tests and the Imprest Details report all
+ * existed, and allocations posted their credits — but nothing ever posted the voucher DEBIT, so
+ * a float could only ever go up. The report would have shown inflows and no outflows, the exact
+ * inverse of the reference workbook, and the "float in hand" on the allocation form would have
+ * been overstated by everything ever spent.
+ *
+ * Posted inside the approval transaction, so a voucher that fails to approve never moves money,
+ * and a debit that fails takes the approval down with it.
+ *
+ * A MISSING MANAGER DOES NOT BLOCK APPROVAL. imprest_manager is a new master and is EMPTY in
+ * production, so throwing here would stop every imprest approval the moment this deploys. The
+ * debit is skipped and the skip is AUDITED with its reason — visible rather than silent, which
+ * is the whole failure mode this function exists to close.
+ */
+async function postImprestVoucherDebit(
+  connection: PoolConnection,
+  grnId: string,
+  grn: RowDataPacket,
+  actorUserId: string,
+): Promise<string | null> {
+  const branchId = String(grn.branch_id ?? "");
+  const amount = Number(grn.amount_with_tax ?? grn.amount ?? 0);
+  if (!(amount > 0)) return null;
+
+  // The manager named on the GRN wins; otherwise the branch's live appointment. Effective dating
+  // matters — a manager whose term ended must not be debited for today's spend.
+  let managerId = String(grn.imprest_manager_id ?? "").trim();
+  if (!managerId) {
+    const [rows] = await connection.execute<RowDataPacket[]>(
+      `SELECT id FROM imprest_manager
+        WHERE branch_id = ? AND active_status = 1
+          AND (effective_from IS NULL OR effective_from <= CURDATE())
+          AND (effective_to IS NULL OR effective_to >= CURDATE())
+        ORDER BY effective_from DESC LIMIT 1`,
+      [branchId],
+    );
+    managerId = String(rows[0]?.id ?? "");
+  }
+
+  if (!managerId) {
+    await writeAudit("IMPREST_LEDGER_SKIPPED", grnId, actorUserId, "finance_head", {
+      reason: "No active imprest manager is appointed for this branch, so the float was not debited",
+      branch_id: branchId,
+      amount,
+    });
+    return null;
+  }
+
+  return imprestLedgerService.post(
+    {
+      imprestManagerId: managerId,
+      branchId,
+      entryType: "voucher",
+      direction: "debit",
+      amount,
+      transactionDate: String(grn.bill_date ?? "").slice(0, 10),
+      referenceType: "grn_request",
+      referenceId: grnId,
+      narration: String(grn.description ?? grn.remarks ?? "Imprest voucher"),
+      actorUserId,
+    },
+    connection,
+  );
 }

@@ -262,9 +262,10 @@ export const salaryVoucherService = {
         continue;
       }
       const branchName = String(raw.branch_name ?? "").trim();
+      const branchId = String(raw.branch_id ?? "").trim();
       // A payroll line with no branch cannot be posted to a cost centre, and inventing one
       // would put real money against the wrong branch. Reported, not guessed.
-      if (!branchName) { unassigned.push(raw.employee_code); continue; }
+      if (!branchName || !branchId) { unassigned.push(raw.employee_code); continue; }
 
       // An employee who was not paid contributes nothing to the voucher.
       //
@@ -275,9 +276,22 @@ export const salaryVoucherService = {
       // for this branch, so it excludes them, and so does this.
       const paid = toPaise(raw.gross_salary) !== 0 || toPaise(raw.net_salary) !== 0;
       if (!paid) { unpaid.push(raw.employee_code); continue; }
-      const key = `${company}|${branchName}`;
+      // Bucketed by branch ID, never by branch NAME.
+      //
+      // branch_master contains "HEAD OFFICE" THREE times under three different ids (plus a
+      // "Head Office"), and two of those ids carry MAS payroll in the June-2026 run. Keying by
+      // name merges them into one voucher whose branch_id is then whichever row the database
+      // happened to return first — and that id is exactly what the API scopes on. The result is
+      // non-deterministic: a finance user entitled to one of the ids could be denied their own
+      // branch's voucher while being shown one full of the other's money.
+      //
+      // Keying by id makes each branch_master row its own voucher, which is also the honest
+      // answer: as far as every other table is concerned they ARE separate branches. Merging
+      // duplicate spellings is a master-data decision, not one to take inside a voucher
+      // generator. The duplicates are listed in docs/finance/OPEN-QUESTIONS.md.
+      const key = `${company}|${branchId}`;
       if (!buckets.has(key)) {
-        buckets.set(key, { company, branchId: String(raw.branch_id ?? ""), branchName, rows: [] });
+        buckets.set(key, { company, branchId, branchName, rows: [] });
       }
       buckets.get(key)!.rows.push(raw);
     }
@@ -285,7 +299,11 @@ export const salaryVoucherService = {
     const vouchers: Voucher[] = [];
     let serial = options.serialFrom ?? 1;
     for (const bucket of [...buckets.values()].sort(
-      (a, b) => a.company.localeCompare(b.company) || a.branchName.localeCompare(b.branchName),
+      (a, b) => a.company.localeCompare(b.company)
+        || a.branchName.localeCompare(b.branchName)
+        // Two branch rows can share a name, so the id is the tie-break that keeps serial
+        // allocation stable between runs.
+        || a.branchId.localeCompare(b.branchId),
     )) {
       if (!cohortCache.has(bucket.company)) {
         cohortCache.set(bucket.company, await loadCohortRules(bucket.company));
