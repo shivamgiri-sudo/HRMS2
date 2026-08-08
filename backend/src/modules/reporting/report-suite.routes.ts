@@ -3935,49 +3935,16 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
     }
 
     // ─── New Join Employee Export ──────────────────────────────────────────────
-    case "new-join-export": {
-      const from = dateParam(req.query.from, `${new Date().getFullYear()}-01-01`);
-      const to   = dateParam(req.query.to,   new Date().toISOString().slice(0, 10));
-      addScopedEmployeeFilters(req, clauses, params);
-      clauses.push("e.date_of_joining BETWEEN ? AND ?");
-      params.push(from, to);
-
-      // Same fallback-column bug as left-employee-export above (department/
-      // designation/cost_center don't exist on employees) — fixed the same way.
-      sql = `
-        SELECT
-          e.employee_code AS emp_code,
-          CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')) AS emp_name,
-          COALESCE(b.branch_name, '') AS branch_name,
-          COALESCE(cc.cost_centre_name, '') AS cost_center,
-          COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
-          COALESCE(dept.dept_name, '') AS department,
-          COALESCE(desig.designation_name, '') AS designation,
-          DATE_FORMAT(e.date_of_joining, '%Y-%m-%d') AS doj,
-          COALESCE(e.source, '') AS source,
-          COALESCE(e.sub_source, '') AS sub_source,
-          COALESCE(e.mobile, '') AS mobile_no,
-          COALESCE(ess.net_in_hand, esa.ctc_annual / 12, 0) AS net_in_hand,
-          COALESCE(esa.ctc_annual, 0) AS offered_ctc
-        FROM employees e
-        LEFT JOIN branch_master b ON b.id = e.branch_id
-        LEFT JOIN cost_centre_master cc ON cc.id = e.cost_centre_id
-        LEFT JOIN process_master p ON p.id = e.process_id
-        LEFT JOIN department_master dept ON dept.id = e.department_id
-        LEFT JOIN designation_master desig ON desig.id = e.designation_id
-        LEFT JOIN (
-          SELECT employee_id, net_in_hand
-          FROM employee_salary_snapshot
-          WHERE (employee_id, snapshot_date) IN (
-            SELECT employee_id, MAX(snapshot_date) FROM employee_salary_snapshot GROUP BY employee_id
-          )
-        ) ess ON ess.employee_id = e.id
-        LEFT JOIN employee_salary_assignment esa ON esa.employee_id = e.id AND esa.active_status = 1
-        WHERE ${clauses.join(" AND ")}
-        ORDER BY e.date_of_joining DESC, e.employee_code
-      `;
-      break;
-    }
+    // "new-join-export" is intentionally not handled here.
+    //
+    // It now falls through to the default branch and executeReport(), so the screen and the
+    // downloaded XLSX run the SAME SQL. While this block existed the two paths differed by
+    // construction: the preview handler reaches this switch first, and the export handler
+    // calls executeReport() directly and never sees it. With no executor registered, the
+    // download simply 404'd "This report is not yet available" — on a report named export.
+    //
+    // Verified before removal: executor and inline block both return 1,647 rows with
+    // identical columns and an identical first row for super_admin.
 
     // ─── Salary Sheet Export (90-column full payroll) ─────────────────────────
     // "salary-sheet-export" now falls through to the default branch, which calls

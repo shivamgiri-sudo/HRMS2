@@ -338,6 +338,90 @@ export async function employeeMovement(
 // ---------------------------------------------------------------------------
 // confirmation-due-list
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// new-join-export
+//
+// Promoted verbatim from the inline `case` block in report-suite.routes.ts.
+//
+// The screen and the download are not the same code path: the preview handler runs a
+// 126-branch `switch (code)` and only reaches executeReport() in its default branch, while the
+// export handler calls executeReport() directly and always. A report with an inline block and
+// no executor therefore renders perfectly on screen and returns 404 "This report is not yet
+// available" when downloaded. Confirmed live on 2026-08-08 for eight reachable reports, two of
+// them — new-join-export and left-employee-export — named for the very thing they could not do.
+//
+// The SQL is copied exactly, including `COALESCE(..., '')` on branch, cost centre, department
+// and designation. Those blanks are not the NULLs the UNASSIGNED convention is about; they are
+// this sheet's existing rendering, and changing them here would mean the promotion could not be
+// verified as a no-op. Worth revisiting separately, not while moving code.
+//
+// Scope differs by necessity: the inline block used addScopedEmployeeFilters(req, ...) and an
+// executor has no req, so it uses appendScopeConditions(scope, ...). Both are the codebase's
+// own scope mechanisms and both add nothing for an all-scope user, which is why parity is
+// verified against super_admin — where the two must agree exactly — and the branch-scoped
+// behaviour is left to the shared helper rather than reimplemented here.
+// ---------------------------------------------------------------------------
+export async function newJoinExport(
+  filters: ExecFilters,
+  scope: ExecScope,
+  options: ExecOptions
+): Promise<ExecResult> {
+  const from = dateParam(filters.from, `${new Date().getFullYear()}-01-01`);
+  const to   = dateParam(filters.to, new Date().toISOString().slice(0, 10));
+
+  const clauses: string[] = ["e.id IS NOT NULL"];
+  const params: unknown[] = [];
+  appendScopeConditions(scope, clauses, params);
+  appendFilterConditions(filters, clauses, params);
+  clauses.push("e.date_of_joining BETWEEN ? AND ?");
+  params.push(from, to);
+
+  if (options.mode === "worker" && options.cursor != null) {
+    clauses.push("e.id > ?"); params.push(options.cursor);
+  }
+
+  const base = `
+    SELECT
+      e.id AS _cursor,
+      e.employee_code AS emp_code,
+      CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')) AS emp_name,
+      COALESCE(b.branch_name, '') AS branch_name,
+      COALESCE(cc.cost_centre_name, '') AS cost_center,
+      COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
+      COALESCE(dept.dept_name, '') AS department,
+      COALESCE(desig.designation_name, '') AS designation,
+      DATE_FORMAT(e.date_of_joining, '%Y-%m-%d') AS doj,
+      COALESCE(e.source, '') AS source,
+      COALESCE(e.sub_source, '') AS sub_source,
+      COALESCE(e.mobile, '') AS mobile_no,
+      COALESCE(ess.net_in_hand, esa.ctc_annual / 12, 0) AS net_in_hand,
+      COALESCE(esa.ctc_annual, 0) AS offered_ctc
+    FROM employees e
+    LEFT JOIN branch_master b ON b.id = e.branch_id
+    LEFT JOIN cost_centre_master cc ON cc.id = e.cost_centre_id
+    LEFT JOIN process_master p ON p.id = e.process_id
+    LEFT JOIN department_master dept ON dept.id = e.department_id
+    LEFT JOIN designation_master desig ON desig.id = e.designation_id
+    LEFT JOIN (
+      SELECT employee_id, net_in_hand
+      FROM employee_salary_snapshot
+      WHERE (employee_id, snapshot_date) IN (
+        SELECT employee_id, MAX(snapshot_date) FROM employee_salary_snapshot GROUP BY employee_id
+      )
+    ) ess ON ess.employee_id = e.id
+    LEFT JOIN employee_salary_assignment esa ON esa.employee_id = e.id AND esa.active_status = 1
+    WHERE ${clauses.join(" AND ")}
+    ORDER BY e.date_of_joining DESC, e.employee_code`;
+
+  const total = options.includeTotal ? await count(base, params) : 0;
+  const sql   = options.mode === "worker" ? `${base} LIMIT ${options.limit}` : applyPagination(base, options);
+  const rows  = await query(sql, params) as Record<string, unknown>[];
+  const nextCursor = (options.mode === "worker" && rows.length > 0)
+    ? (rows[rows.length - 1]._cursor as number) : null;
+  const out = rows.map(({ _cursor: _, ...rest }) => rest);
+  return { rows: out, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > out.length, nextCursor };
+}
+
 export async function confirmationDueList(
   filters: ExecFilters,
   scope: ExecScope,
