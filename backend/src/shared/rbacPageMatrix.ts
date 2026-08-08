@@ -539,7 +539,6 @@ export function uniquePageCodes(pageCodes: readonly string[]): string[] {
 export const LIVE_IMPORTED_PAGE_CODES: Readonly<Record<string, readonly string[]>> = {
   admin: [
     // Re-imported 2026-08-08 — live grants the matrix had fallen behind on.
-    "ADVANCED_REPORTS",
     "FINANCE_BRANCH_BUDGET",
     "FINANCE_GRN",
     "FINANCE_PROCESS_PNL",
@@ -661,11 +660,9 @@ export const LIVE_IMPORTED_PAGE_CODES: Readonly<Record<string, readonly string[]
   ],
   finance_head: [
     // Re-imported 2026-08-08 — live grants the matrix had fallen behind on.
-    "COMPLIANCE_DASHBOARD",
     "FINANCE_BRANCH_BUDGET",
     "FINANCE_BUDGET_CONSOLIDATION",
     "FINANCE_GRN",
-    "FINANCE_HEAD_DASHBOARD",
     "FINANCE_PNL_LOBS",
     "FINANCE_PNL_PERIOD_CLOSE",
     "FINANCE_PROCESS_PNL",
@@ -814,14 +811,11 @@ export const LIVE_IMPORTED_PAGE_CODES: Readonly<Record<string, readonly string[]
   ],
   accounts_head: [
     // Re-imported 2026-08-08 — live grants the matrix had fallen behind on.
-    "COMPLIANCE_DASHBOARD",
     "FINANCE_BRANCH_BUDGET",
     "FINANCE_GRN",
-    "FINANCE_HEAD_DASHBOARD",
     "FINANCE_PROCESS_PNL",
     "FINANCE_VENDOR_PAYMENTS",
     "PAYROLL_HR_DASHBOARD",
-    "PROCESS_MANAGER_DASHBOARD",
     "VENDOR_MANAGEMENT",
   ],
   branch_admin: [
@@ -851,12 +845,9 @@ export const LIVE_IMPORTED_PAGE_CODES: Readonly<Record<string, readonly string[]
   ],
   it_head: [
     // Re-imported 2026-08-08 — live grants the matrix had fallen behind on.
-    "HELPDESK",
-    "PROVISIONING_DASHBOARD",
   ],
   manager: [
     // Re-imported 2026-08-08 — live grants the matrix had fallen behind on.
-    "KPI_DASHBOARD",
     "OPERATIONS_DASHBOARD",
   ],
   operations_manager: [
@@ -870,12 +861,10 @@ export const LIVE_IMPORTED_PAGE_CODES: Readonly<Record<string, readonly string[]
   ],
   process_manager: [
     // Re-imported 2026-08-08 — live grants the matrix had fallen behind on.
-    "KPI_DASHBOARD",
   ],
   qa: [
     // Re-imported 2026-08-08 — live grants the matrix had fallen behind on.
     "COACHING",
-    "KPI_DASHBOARD",
     "KPI_MASTER",
     "PERFORMANCE_DASHBOARD",
     "QA_EVALUATION",
@@ -884,7 +873,6 @@ export const LIVE_IMPORTED_PAGE_CODES: Readonly<Record<string, readonly string[]
   ],
   quality_analyst: [
     // Re-imported 2026-08-08 — live grants the matrix had fallen behind on.
-    "KPI_DASHBOARD",
   ],
   team_leader: [
     // Re-imported 2026-08-08 — live grants the matrix had fallen behind on.
@@ -896,9 +884,6 @@ export const LIVE_IMPORTED_PAGE_CODES: Readonly<Record<string, readonly string[]
   ],
   tq_head: [
     // Re-imported 2026-08-08 — live grants the matrix had fallen behind on.
-    "KPI_DASHBOARD",
-    "PERFORMANCE_DASHBOARD",
-    "PROCESS_MANAGER_DASHBOARD",
     "QA_EVALUATION",
   ],
 } as const;
