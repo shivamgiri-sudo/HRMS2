@@ -47,6 +47,14 @@ export interface SendMessageDTO {
   recipient_employee_ids: string[]; data: Record<string, unknown>;
   channel?: Channel; channels?: Channel[]; is_critical?: boolean;
   portal?: PortalNotificationInput | false;
+  /**
+   * Set for messages whose CONTENT is about a third party — an escalation naming
+   * another employee, an engagement-risk alert, an internal job application.
+   * Those must not be delivered to a personal mailbox, so the email channel
+   * prefers the recipient's official_email when it sits on a company domain.
+   * Falls back to the normal address otherwise, so nobody is silenced.
+   */
+  prefer_official_email?: boolean;
 }
 export interface BulkSendDTO {
   template_id?: string; template_name?: string;

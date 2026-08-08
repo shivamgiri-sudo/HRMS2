@@ -15,6 +15,15 @@ interface NotificationEventDefinition {
   priority: Priority;
   channels: Channel[];
   critical?: boolean;
+  /**
+   * The message names SOMEONE OTHER than the recipient — an escalation about an
+   * employee, an engagement-risk assessment, an internal job application. Such
+   * mail is routed to the recipient's official_email when they have one on a
+   * company domain, rather than to `employees.email`, which holds a personal
+   * address for 354 of 1,125 active employees. Falls back, so nobody is
+   * silenced. Orthogonal to `critical`, which is about channel fan-out.
+   */
+  aboutThirdParty?: boolean;
 }
 
 const allChannels: Channel[] = ["email", "whatsapp", "sms"];
@@ -302,6 +311,7 @@ export const NOTIFICATION_EVENT_CATALOG = {
     priority: "high",
     channels: allChannels,
     critical: true,
+    aboutThirdParty: true,
   },
   people_experience_action_assigned: {
     label: "People experience action assigned",
@@ -312,6 +322,7 @@ export const NOTIFICATION_EVENT_CATALOG = {
     actionUrl: "/people-experience/command-center",
     priority: "normal",
     channels: allChannels,
+    aboutThirdParty: true,
   },
   people_experience_action_overdue: {
     label: "People experience action overdue",
@@ -322,6 +333,7 @@ export const NOTIFICATION_EVENT_CATALOG = {
     actionUrl: "/people-experience/command-center",
     priority: "high",
     channels: allChannels,
+    aboutThirdParty: true,
   },
   // ── Support / Helpdesk Events ─────────────────────────────────────────────
   support_ticket_created: {
@@ -434,6 +446,7 @@ export const NOTIFICATION_EVENT_CATALOG = {
     priority: "urgent",
     channels: allChannels,
     critical: true,
+    aboutThirdParty: true,
   },
   esign_escalation_hr: {
     label: "eSign escalation to HR",
@@ -445,6 +458,7 @@ export const NOTIFICATION_EVENT_CATALOG = {
     priority: "urgent",
     channels: allChannels,
     critical: true,
+    aboutThirdParty: true,
   },
 
   // ─── IJP (Internal Job Posting) Events ────────────────────────────────────
@@ -477,6 +491,7 @@ export const NOTIFICATION_EVENT_CATALOG = {
     actionUrl: "/people/ijp",
     priority: "high",
     channels: allChannels,
+    aboutThirdParty: true,
   },
   ijp_application_status_update: {
     label: "IJP application status update",
@@ -578,6 +593,8 @@ class NotificationEventService {
       // events fan out across all configured channels unless explicitly scoped.
       channels: input.channels ?? (critical ? definition.channels : undefined),
       is_critical: critical,
+      // Content about a third party must not land in a personal mailbox.
+      prefer_official_email: "aboutThirdParty" in definition && Boolean(definition.aboutThirdParty),
       data: {
         ...data,
         notification: {

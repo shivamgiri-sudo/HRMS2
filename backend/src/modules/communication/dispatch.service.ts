@@ -1,5 +1,6 @@
 import { randomUUID } from 'crypto';
 import { db } from '../../db/mysql.js';
+import { isOfficialDomain } from '../../shared/email-domains.js';
 import type { RowDataPacket } from 'mysql2';
 import { providerFactory } from './providers/provider.factory.js';
 import { providerConfigService } from './provider-config.service.js';
@@ -22,7 +23,38 @@ interface EmployeeRecipientRow extends RowDataPacket {
   user_id: string | null;
   full_name: string;
   email: string | null;
+  official_email: string | null;
   phone: string | null;
+}
+
+/**
+ * Which address an email actually goes to.
+ *
+ * Default is unchanged: `employees.email`. But that column holds a personal
+ * address for 354 of the 1,125 active employees, and some notifications are
+ * ABOUT SOMEONE ELSE — an eSign escalation naming an employee and their code, an
+ * engagement/attrition risk assessment, an internal job application. Those were
+ * being delivered to Gmail. It surfaced on 2026-08-08: a preboarding candidate
+ * received 29 HR escalations naming a different employee's unsigned declaration,
+ * because the branch-HR lookup returned a colleague whose `email` is personal.
+ *
+ * When `prefer_official_email` is set, an official_email on a company domain wins.
+ * Anything else falls back to the normal address, so this can only ever redirect
+ * a message — never drop one. Measured against live data: 354 recipients move off
+ * personal mail and **0** lose delivery.
+ *
+ * isOfficialDomain is the same allowlist the notification gateway and report
+ * delivery enforce; a second copy of a security allowlist drifts.
+ */
+export function resolveEmailContact(
+  emp: Pick<EmployeeRecipientRow, 'email' | 'official_email'>,
+  preferOfficial?: boolean,
+): string | null {
+  if (preferOfficial) {
+    const official = (emp.official_email ?? '').trim();
+    if (official && isOfficialDomain(official)) return official;
+  }
+  return emp.email;
 }
 
 interface SubjectRow extends RowDataPacket {
@@ -79,7 +111,7 @@ class DispatchService {
   async send(dto: SendMessageDTO): Promise<DispatchResult> {
     const placeholders = dto.recipient_employee_ids.map(() => '?').join(',');
     const [employees] = await db.execute<EmployeeRecipientRow[]>(
-      `SELECT id, user_id, full_name, email, mobile AS phone FROM employees WHERE id IN (${placeholders})`,
+      `SELECT id, user_id, full_name, email, official_email, mobile AS phone FROM employees WHERE id IN (${placeholders})`,
       dto.recipient_employee_ids
     );
 
@@ -130,7 +162,8 @@ class DispatchService {
           : Array.from(new Set(dto.channels?.length ? dto.channels : [preferredChannel]));
 
         for (const channel of channels) {
-          const contact: string | null = channel === 'email' ? emp.email : emp.phone;
+          const contact: string | null =
+            channel === 'email' ? resolveEmailContact(emp, dto.prefer_official_email) : emp.phone;
           if (!contact) { failed.push(`${emp.id}:${channel}`); continue; }
 
           const rendered = await templateService.renderTemplate({
