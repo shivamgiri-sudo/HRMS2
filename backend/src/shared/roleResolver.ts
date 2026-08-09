@@ -1,6 +1,7 @@
 import { db } from "../db/mysql.js";
 import type { RowDataPacket } from "mysql2";
 import { normalizeDashboardRole } from "./dashboardAccessRegistry.js";
+import { columnExists } from "./schema-object-cache.js";
 
 /**
  * Role priority is shared by authentication and dashboard scope resolution.
@@ -99,8 +100,24 @@ export async function getUserRoleKeys(userId: string): Promise<string[]> {
     // Older databases may not have this table yet; user_roles still works.
   }
 
-  // Compatibility fallback for installations that still store one role on auth_user.
-  if (resolved.length === 0) {
+  /*
+   * Compatibility fallback for installations that still store one role on auth_user.
+   *
+   * Guarded by columnExists rather than by the catch alone. This schema has no auth_user.role, so
+   * the query threw ER_BAD_FIELD_ERROR every time it ran - and it runs whenever a user has no
+   * user_roles and no assignment scope, which is often. It was the single most frequent error in
+   * the log: 102 occurrences in the retained window, against 24 each for policy_acknowledgement
+   * and performance_appraisal and 14 for two_fa_enabled.
+   *
+   * That volume is the problem. db/mysql.ts logs schema and logic errors deliberately, so a wrong
+   * column is distinguishable from "no rows matched" - the mechanism that surfaced several real
+   * bugs here. Flooding it with an error we already expect is what makes a real one easy to miss.
+   *
+   * Same treatment management.service already applies to its three known-absent objects, using the
+   * same cache, which fails OPEN: if information_schema cannot be read it assumes the column is
+   * present and the query still runs, so the worst case is today's behaviour.
+   */
+  if (resolved.length === 0 && await columnExists("auth_user", "role")) {
     try {
       const [rows] = await db.execute<RowDataPacket[]>(
         "SELECT role FROM auth_user WHERE id = ? LIMIT 1",
@@ -108,7 +125,7 @@ export async function getUserRoleKeys(userId: string): Promise<string[]> {
       );
       if (rows[0]?.role) resolved.push(rows[0].role);
     } catch {
-      // The role column is optional in current schema.
+      // Still guarded: the column can disappear between the cache entry and this query.
     }
   }
 
