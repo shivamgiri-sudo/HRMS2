@@ -1,4 +1,5 @@
 import { db } from "../../db/mysql.js";
+import { sqlLimit } from "../../db/pagination.js";
 import type { ResultSetHeader, RowDataPacket } from "mysql2";
 import { logSensitiveAction } from "../../shared/auditLog.js";
 
@@ -322,8 +323,16 @@ export async function getUserPageAccessAuditLog(userId?: string, pageCode?: stri
     params.push(pageCode);
   }
 
-  query += ` ORDER BY upa.created_at DESC LIMIT ?`;
-  params.push(limit);
+  /*
+   * The limit is built into the SQL rather than bound. db.execute prepares the statement, and
+   * MySQL 8 rejects a NUMBER bound to LIMIT with "Incorrect arguments to mysqld_stmt_execute" -
+   * and limit is always a number here, either the default 100 or parseInt of the query string.
+   * So this endpoint raised ER_WRONG_ARGUMENTS on every call and the page-access audit log has
+   * never returned a row, though the table holds 137 of them going back to 2026-06-23.
+   *
+   * sqlLimit clamps and integer-truncates, so nothing caller-supplied reaches the SQL text.
+   */
+  query += ` ORDER BY upa.created_at DESC ${sqlLimit(limit, { defaultLimit: 100, maxLimit: 500 })}`;
 
   const [rows] = await db.execute<AuditRow[]>(query, params);
   return rows;
