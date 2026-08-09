@@ -130,6 +130,60 @@ class DispatchService {
     }
   }
 
+  /**
+   * Log an attempt that could not be made because the recipient has no address.
+   *
+   * Written as `failed` with an explicit reason so it lands in the same place
+   * every other delivery outcome does — getDispatchStats already counts
+   * status='failed', and the undeliverable-recipients report can now be answered
+   * from the ledger rather than by re-deriving it from the employees table.
+   *
+   * recipient_contact is NOT NULL, so it carries a marker rather than a fake
+   * address: an empty string would read as "we tried to send to nobody", and a
+   * placeholder that looks like a contact could be retried. This value can never
+   * be mistaken for a destination.
+   *
+   * Best-effort by design. This is the audit trail for a send that already
+   * failed; if writing it also fails, that must not turn one unreachable
+   * recipient into a thrown exception that abandons everybody after them in the
+   * loop.
+   */
+  private async recordUndeliverable(
+    dto: SendMessageDTO,
+    emp: EmployeeRecipientRow,
+    channel: Channel,
+    templateName: string,
+    subject: string | undefined,
+  ): Promise<void> {
+    const reason = channel === 'email'
+      ? 'No deliverable email address on the employee record'
+      : 'No mobile number on the employee record';
+    try {
+      await db.execute(
+        `INSERT INTO dispatch_log
+         (id, template_id, template_name, recipient_employee_id, recipient_contact,
+          channel, status, subject, body_preview, error_message, is_critical, retention_category)
+         VALUES (?, ?, ?, ?, '(no address)', ?, 'failed', ?, NULL, ?, ?, ?)`,
+        [
+          randomUUID(),
+          dto.template_id ?? null,
+          templateName,
+          emp.id,
+          channel,
+          // subject is varchar(200) and STRICT_TRANS_TABLES is on, so an
+          // over-long title would throw — on the path whose whole job is to make
+          // a failure visible.
+          (subject ?? this.humanizeTemplateName(templateName)).slice(0, 200),
+          reason,
+          dto.is_critical ? 1 : 0,
+          dto.is_critical ? 'critical' : 'standard',
+        ],
+      );
+    } catch (err) {
+      console.error(`[dispatch] could not record undeliverable ${channel} for ${emp.id}:`, err);
+    }
+  }
+
   private plainText(value: string): string {
     return value
       .replace(/<style[\s\S]*?<\/style>/gi, ' ')
@@ -239,7 +293,25 @@ class DispatchService {
 
           const contact: string | null =
             channel === 'email' ? resolveEmailContact(emp, dto.prefer_official_email) : emp.phone;
-          if (!contact) { failed.push(`${emp.id}:${channel}`); continue; }
+          if (!contact) {
+            failed.push(`${emp.id}:${channel}`);
+            // Record the non-delivery instead of dropping it silently.
+            //
+            // This branch used to `continue` with no dispatch_log row and no log
+            // line, so a notification to somebody with no address left NO trace
+            // anywhere — "we sent it" and "we had nowhere to send it" were
+            // indistinguishable after the fact. 173 of the 1,125 active employees
+            // have no usable email (measured 2026-08-09), and the charter
+            // requires every state-changing action to be auditable.
+            //
+            // Deliberately per-RECIPIENT, unlike the unconfigured-channel skip
+            // above, which is logged once per process: "this person cannot be
+            // reached" is a fact about a person and belongs in the ledger, while
+            // "this channel has no credentials" is one fact about the system and
+            // would be pure noise repeated per message.
+            await this.recordUndeliverable(dto, emp, channel, resolvedTemplateName, portalRendered.subject);
+            continue;
+          }
 
           const rendered = await templateService.renderTemplate({
             template_id: dto.template_id,

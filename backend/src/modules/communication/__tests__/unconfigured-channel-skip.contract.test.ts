@@ -71,9 +71,14 @@ describe("dispatch skips unconfigured channels", () => {
   const code = dispatchSrc.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
 
   it("checks before building a dispatch_log row", () => {
-    const guard = code.indexOf("channelUnconfigured(channel)");
-    const insert = code.indexOf("INSERT INTO dispatch_log");
-    expect(guard).toBeGreaterThan(-1);
+    // Scoped to send(). There is a second INSERT INTO dispatch_log in
+    // recordUndeliverable, which sits earlier in the class, so searching the
+    // whole file finds that one and compares against the wrong statement.
+    const sendBody = code.slice(code.indexOf("async send(dto: SendMessageDTO)"));
+    const guard = sendBody.indexOf("channelUnconfigured(channel)");
+    const insert = sendBody.indexOf("INSERT INTO dispatch_log");
+    expect(guard, "guard missing from send()").toBeGreaterThan(-1);
+    expect(insert, "message insert missing from send()").toBeGreaterThan(-1);
     expect(guard, "the row is written before the check, so noise is still logged").toBeLessThan(insert);
   });
 
