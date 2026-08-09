@@ -8,10 +8,11 @@
  *   middleware runs before the miss), so it reads like a permissions problem instead of an
  *   absent feature.
  *
- *   A sweep on 2026-08-08 found seven such calls (one since built — see below), listed in KNOWN_MISSING below. None was a
- *   typo. Each was a UI built against a server side that was never finished — which is the
- *   failure CLAUDE.md rule 9 names directly: "UI enhancement must not hide missing backend
- *   functionality." They had accumulated silently because nothing was watching.
+ *   A sweep on 2026-08-08 found seven such calls. Four have since been built; the rest are in
+ *   KNOWN_MISSING below with the reason. None was a typo — each was a UI built against a
+ *   server side that was never finished, which is the failure CLAUDE.md rule 9 names directly:
+ *   "UI enhancement must not hide missing backend functionality." They accumulated silently
+ *   because nothing was watching.
  *
  * WHAT IT DOES AND DOES NOT PROVE
  *   Proves: the path matches some mounted route. Does NOT prove the handler returns the shape
@@ -208,28 +209,19 @@ const KNOWN_MISSING: Record<string, string> = {
   "/api/performance-dashboard/ops":
     "router serves /goals, /ratings, /agent-matrix, /utilization. Unfixable by URL: handled_volume, target_volume and shrinkage_minutes appear NOWHERE in the backend, so no endpoint can supply this shape.",
 
-  // NativeSalesDashboard.tsx. The upload panel offers 7 Bellavita/GNC types; the backend
-  // implements uploads for neemans only (/upload-neemans-sale-raw, -allocation, -apr).
-  // DO NOT "FIX" THESE TWO BY ADDING ROUTES. The handlers already exist —
-  // sales-upload.service.ts exports uploadBellavitaSales/Apr/Chat/Cart,
-  // uploadGncSales/Apr/Allocation and deleteUploadBatch, matching the page's seven upload
-  // types exactly, and the routes file already imports multer and even carries the comment
-  // "Upload/delete endpoints keep the tighter guard enforced per-route". Wiring them looks
-  // like a five-minute win. It is not.
+  // The two sales-upload entries that used to sit here are gone: POST /upload/:type and
+  // DELETE /batch/:batchId are now wired to the handlers that had always existed.
   //
-  // Every one of those functions goes through queryMasmis, and the application user has NO
-  // ACCESS to db_masmis: verified live 2026-08-09, `SELECT COUNT(*) FROM db_masmis.bb_sale`
-  // returns ER_TABLEACCESS_DENIED_ERROR, as do gnc_sale and upload_log. The service hardcodes
-  // the `db_masmis.` prefix 33 times and never calls getMasmisDbName(), so MASMIS_DB_NAME
-  // cannot redirect it either.
+  // Worth recording why they were held back, because the reasoning was half wrong. They were
+  // left unwired on the grounds that db_masmis returns ER_TABLEACCESS_DENIED_ERROR to the
+  // application user, so adding routes would only turn a 401 into a 500 — "needs a GRANT,
+  // not a route". The access error was real, but the cause was not a missing grant: masmisDb.ts
+  // built its pool from DB_HOST/DB_USER, and db_masmis is on a different server, so the code
+  // could only ever look for it in the one place it is not. MASMIS_DB_HOST/PORT/USER/PASSWORD
+  // now exist (falling back to DB_* when unset), which is what makes these routes reachable.
   //
-  // The whole module is therefore already dead in production — /bellavita-dashboard,
-  // /gnc-dashboard, /logs and the neemans endpoints all hit the same wall. Adding these two
-  // routes would only turn a 401 into a 500. The blocker is a database GRANT, not code.
-  "/api/sales-upload/upload/:x":
-    "handler exists (uploadBellavitaSales etc.) but db_masmis is unreadable by the app user — ER_TABLEACCESS_DENIED_ERROR. Needs a GRANT, not a route.",
-  "/api/sales-upload/batch/:x":
-    "deleteUploadBatch() exists and is unwired, but it DELETEs across seven db_masmis tables the app user cannot even read. Needs a GRANT, not a route.",
+  // The lesson worth keeping: "permission denied" answered the question "may I read this
+  // table" when the question that mattered was "am I connected to the right server at all".
 
   // Not a fetch, but still a promise the product makes and does not keep.
   "/api/webhooks/:x":
