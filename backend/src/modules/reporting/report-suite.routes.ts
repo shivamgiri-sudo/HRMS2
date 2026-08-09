@@ -977,37 +977,8 @@ reportSuiteRouter.get("/:code", reportScopeMiddleware, reportCatalogAccessMiddle
     // only means anything across the whole year.
 
     // ─── A2: Attendance ───────────────────────────────────────────────────────
-    case "daily-hc-shift": {
-      const from = dateParam(req.query.from, new Date().toISOString().slice(0, 10));
-      const to = dateParam(req.query.to, from);
-      addScopedEmployeeFilters(req, clauses, params);
-      clauses.push("adr.record_date BETWEEN ? AND ?"); params.push(from, to);
-      sql = `SELECT adr.record_date,
-                    COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
-                    COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
-                    COALESCE(ws.shift_name, 'Roster Not Assigned') AS shift_name,
-                    COUNT(*) AS scheduled_headcount,
-                    SUM(adr.attendance_status IN ('present','half_day')) AS present_count,
-                    SUM(adr.attendance_status = 'absent') AS absent_count,
-                    SUM(adr.attendance_status = 'leave_approved') AS leave_count,
-                    SUM(adr.attendance_status = 'week_off') AS week_off_count,
-                    SUM(adr.attendance_status = 'holiday') AS holiday_count,
-                    SUM(CASE WHEN adr.attendance_status = 'unreconciled' THEN 1 ELSE 0 END) AS missing_punch_count,
-                    SUM(CASE WHEN wra.id IS NULL THEN 1 ELSE 0 END) AS unassigned_roster_count,
-                    SUM(adr.late_mark = 1) AS late_count,
-                    ROUND(SUM(adr.attendance_status IN ('present','half_day')) / NULLIF(COUNT(*), 0) * 100, 1) AS attendance_pct
-               FROM attendance_daily_record adr
-               JOIN employees e ON e.id = adr.employee_id
-               LEFT JOIN branch_master b ON b.id = e.branch_id
-               LEFT JOIN process_master p ON p.id = e.process_id
-               LEFT JOIN wfm_roster_assignment wra ON wra.employee_id = adr.employee_id
-                 AND wra.roster_date = adr.record_date
-               LEFT JOIN wfm_shift_master ws ON ws.id = wra.shift_id
-              WHERE ${clauses.join(" AND ")}
-              GROUP BY adr.record_date, b.branch_name, p.process_name, ws.shift_name
-              ORDER BY adr.record_date DESC, b.branch_name, p.process_name, shift_name`;
-      break;
-    }
+    // "daily-hc-shift" falls through to executeReport(), which now carries this SQL.
+    // Screen and download returned the same 14 rows with disjoint columns.
 
     case "shift-adherence-detail": {
       const from = dateParam(req.query.from, new Date().toISOString().slice(0, 10));
@@ -1127,39 +1098,8 @@ reportSuiteRouter.get("/:code", reportScopeMiddleware, reportCatalogAccessMiddle
       break;
     }
 
-    case "punch-raw-export": {
-      // Row scope was absent: this block read employee data with no branch/process
-      // restriction, so a scoped user received every branch's rows. Scope is enforced in
-      // the query and nowhere else. For an all-scope user this adds no predicate, which is
-      // why super_admin output is unchanged.
-      addScopedEmployeeFilters(req, clauses, params);
-      const from = dateParam(req.query.from, new Date().toISOString().slice(0, 10));
-      const to = dateParam(req.query.to, from);
-      clauses.push("ibd.activity_date BETWEEN ? AND ?"); params.push(from, to);
-      if (req.query.branchId) { clauses.push("e.branch_id = ?"); params.push(String(req.query.branchId)); }
-      if (req.query.processId) { clauses.push("e.process_id = ?"); params.push(String(req.query.processId)); }
-      sql = `SELECT ibd.employee_code,
-                    COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-                    COALESCE(rcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
-                    COALESCE(rcc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
-                    e.biometric_code,
-                    COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
-                    COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
-                    ibd.activity_date,
-                    TIME_FORMAT(ibd.first_punch, '%H:%i:%s') AS first_punch,
-                    TIME_FORMAT(ibd.last_punch, '%H:%i:%s') AS last_punch,
-                    ibd.biometric_minutes,
-                    TIME_FORMAT(SEC_TO_TIME(ibd.biometric_minutes * 60), '%H:%i:%s') AS total_duration,
-                    ibd.total_punches
-               FROM integration_biometric_daily ibd
-               LEFT JOIN employees e ON e.employee_code = ibd.employee_code
-               LEFT JOIN branch_master b ON b.id = e.branch_id
-               LEFT JOIN process_master p ON p.id = e.process_id
-               LEFT JOIN cost_centre_master rcc ON rcc.id = e.cost_centre_id
-              WHERE ${clauses.join(" AND ")}
-              ORDER BY ibd.activity_date DESC, ibd.employee_code`;
-      break;
-    }
+    // "punch-raw-export" falls through to executeReport(), which now carries this SQL.
+    // Screen and download returned the same 160 rows with disjoint columns.
 
     // ─── A3: Leave ────────────────────────────────────────────────────────────
     case "leave-allocation-register": {

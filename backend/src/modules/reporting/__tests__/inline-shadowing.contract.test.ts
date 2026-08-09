@@ -79,7 +79,10 @@ const SHADOWED_BACKLOG = new Set<string>([
   // "birthday-list" left this list on 2026-08-09 — the executor filtered to the current
   // month while the screen listed the whole year, so the download held a tenth of the rows.
   "clearance-status-register",
-  "confirmation-due-list", "contract-expiry-list", "cost-centre-headcount", "daily-hc-shift",
+  "confirmation-due-list", "contract-expiry-list", "cost-centre-headcount", 
+  // "daily-hc-shift" left this list on 2026-08-09 — same row count as the screen,
+  // disjoint columns, and the catalogue names the screen's.
+  
   // "daily-shrinkage-report" left this list on 2026-08-08. The shadow hid disjoint column
   // sets: the inline block emitted the nine metrics the catalogue declares and the executor
   // emitted three of its own, so the downloaded workbook shared no metric column with the
@@ -132,7 +135,10 @@ const SHADOWED_BACKLOG = new Set<string>([
   // "overtime-summary" left this list on 2026-08-08 — the executor measured overtime in
   // minutes against a different baseline from the screen, so the two disagreed on which days
   // counted as overtime at all.
-  "payroll-register", "payroll-variance", "punch-raw-export",
+  "payroll-register", "payroll-variance", 
+  // "punch-raw-export" left this list on 2026-08-09 — same row count as the screen,
+  // disjoint columns, and the catalogue names the screen's.
+  
   
   // "regularization-summary" left this list on 2026-08-08 — the inline block
   // returned one row per request while the executor counted per employee.

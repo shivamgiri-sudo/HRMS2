@@ -272,23 +272,30 @@ export async function attendanceDaily(
   };
 }
 
-// ---------------------------------------------------------------------------
-// daily-hc-shift  (aggregate — no row-level cursor)
-// ---------------------------------------------------------------------------
+/**
+ * daily-hc-shift
+ *
+ * Aligned with the inline block. Same 14 rows both ways, but the executor emitted its own
+ * columns and the catalogue names the inline shape's — all ten of them.
+ *
+ * Two things in here are worth not "tidying". missing_punch_count counts 'unreconciled', not
+ * 'missing_punch' — those are different statuses in the same enum, and swapping them would
+ * change what the column means. unassigned_roster_count counts rows where the roster join found
+ * nothing, which is how a reader sees attendance recorded against people who were never
+ * rostered; it depends on the LEFT JOIN staying a LEFT JOIN.
+ */
 export async function dailyHcShift(
   filters: ExecFilters,
   scope: ExecScope,
   options: ExecOptions
 ): Promise<ExecResult> {
-  const today = new Date().toISOString().slice(0, 10);
-  const from  = dateParam(filters.from, today);
-  const to    = dateParam(filters.to, today);
+  const from = dateParam(filters.from, new Date().toISOString().slice(0, 10));
+  const to   = dateParam(filters.to, from);
 
   const clauses: string[] = ["e.id IS NOT NULL"];
-  const params: unknown[]  = [];
+  const params: unknown[] = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
-
   clauses.push("adr.record_date BETWEEN ? AND ?");
   params.push(from, to);
 
@@ -296,24 +303,32 @@ export async function dailyHcShift(
     SELECT adr.record_date,
            COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
            COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
-           ws.shift_name,
-           COUNT(*) AS headcount
+           COALESCE(ws.shift_name, 'Roster Not Assigned') AS shift_name,
+           COUNT(*) AS scheduled_headcount,
+           SUM(adr.attendance_status IN ('present','half_day')) AS present_count,
+           SUM(adr.attendance_status = 'absent') AS absent_count,
+           SUM(adr.attendance_status = 'leave_approved') AS leave_count,
+           SUM(adr.attendance_status = 'week_off') AS week_off_count,
+           SUM(adr.attendance_status = 'holiday') AS holiday_count,
+           SUM(CASE WHEN adr.attendance_status = 'unreconciled' THEN 1 ELSE 0 END) AS missing_punch_count,
+           SUM(CASE WHEN wra.id IS NULL THEN 1 ELSE 0 END) AS unassigned_roster_count,
+           SUM(adr.late_mark = 1) AS late_count,
+           ROUND(SUM(adr.attendance_status IN ('present','half_day')) / NULLIF(COUNT(*), 0) * 100, 1) AS attendance_pct
       FROM attendance_daily_record adr
       JOIN employees e ON e.id = adr.employee_id
       LEFT JOIN branch_master b ON b.id = e.branch_id
       LEFT JOIN process_master p ON p.id = e.process_id
-      LEFT JOIN wfm_roster_assignment wra
-             ON wra.employee_id = adr.employee_id
-            AND wra.roster_date = adr.record_date
+      LEFT JOIN wfm_roster_assignment wra ON wra.employee_id = adr.employee_id
+        AND wra.roster_date = adr.record_date
       LEFT JOIN wfm_shift_master ws ON ws.id = wra.shift_id
      WHERE ${clauses.join(" AND ")}
      GROUP BY adr.record_date, b.branch_name, p.process_name, ws.shift_name
-     ORDER BY adr.record_date DESC, b.branch_name`;
+     ORDER BY adr.record_date DESC, b.branch_name, p.process_name, shift_name`;
 
   const total = options.includeTotal ? await count(base, params) : 0;
   const sql   = applyPagination(base, options);
   const rows  = await query(sql, params) as Record<string, unknown>[];
-  return { rows, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > rows.length };
+  return { rows, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > rows.length, nextCursor: null };
 }
 
 // ---------------------------------------------------------------------------
@@ -1122,72 +1137,58 @@ export async function biometricReconciliation(
   };
 }
 
-// ---------------------------------------------------------------------------
-// punch-raw-export
-// ---------------------------------------------------------------------------
+/**
+ * punch-raw-export
+ *
+ * Aligned with the inline block. Same 160 rows both ways; the catalogue names all seven columns
+ * unique to the inline shape and none of the five unique to this executor's.
+ *
+ * Reads integration_biometric_daily, the raw device feed, and joins employees by employee_code
+ * rather than by id — that is how the feed identifies people. The join stays a LEFT JOIN on
+ * purpose: a punch from a code with no matching employee is exactly what a raw export should
+ * still show, since it is the evidence that someone is punching without being mapped.
+ */
 export async function punchRawExport(
   filters: ExecFilters,
   scope: ExecScope,
   options: ExecOptions
 ): Promise<ExecResult> {
-  const today = new Date().toISOString().slice(0, 10);
-  const from  = dateParam(filters.from, today);
-  const to    = dateParam(filters.to, today);
+  const from = dateParam(filters.from, new Date().toISOString().slice(0, 10));
+  const to   = dateParam(filters.to, from);
 
-  const clauses: string[] = ["e.id IS NOT NULL"];
-  const params: unknown[]  = [];
+  const clauses: string[] = ["1 = 1"];
+  const params: unknown[] = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
-
-  clauses.push("was.session_date BETWEEN ? AND ?");
+  clauses.push("ibd.activity_date BETWEEN ? AND ?");
   params.push(from, to);
 
-  if (options.asOf) {
-    clauses.push("was.session_date <= ?");
-    params.push(options.asOf);
-  }
-
-  if (options.mode === "worker" && options.cursor != null) {
-    clauses.push("was.id > ?");
-    params.push(options.cursor);
-  }
-
   const base = `
-    SELECT was.id AS _cursor,
-           e.employee_code,
+    SELECT ibd.employee_code,
            COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
+           COALESCE(rcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
+           COALESCE(rcc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
+           e.biometric_code,
            COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
            COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
-           COALESCE(sp_cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
-           COALESCE(sp_cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
-           was.session_date,
-           TIME_FORMAT(was.login_time,'%H:%i:%s') AS login_time,
-           TIME_FORMAT(was.logout_time,'%H:%i:%s') AS logout_time,
-           was.total_login_minutes,
-           was.punch_source
-      FROM wfm_attendance_session was
-      JOIN employees e ON e.id = was.employee_id
+           ibd.activity_date,
+           TIME_FORMAT(ibd.first_punch, '%H:%i:%s') AS first_punch,
+           TIME_FORMAT(ibd.last_punch, '%H:%i:%s') AS last_punch,
+           ibd.biometric_minutes,
+           TIME_FORMAT(SEC_TO_TIME(ibd.biometric_minutes * 60), '%H:%i:%s') AS total_duration,
+           ibd.total_punches
+      FROM integration_biometric_daily ibd
+      LEFT JOIN employees e ON e.employee_code = ibd.employee_code
       LEFT JOIN branch_master b ON b.id = e.branch_id
       LEFT JOIN process_master p ON p.id = e.process_id
-      LEFT JOIN cost_centre_master sp_cc ON sp_cc.id = e.cost_centre_id
+      LEFT JOIN cost_centre_master rcc ON rcc.id = e.cost_centre_id
      WHERE ${clauses.join(" AND ")}
-     ORDER BY was.id ASC`;
+     ORDER BY ibd.activity_date DESC, ibd.employee_code`;
 
   const total = options.includeTotal ? await count(base, params) : 0;
-  const sql   = options.mode === "worker" ? `${base} LIMIT ${options.limit}` : applyPagination(base, options);
+  const sql   = applyPagination(base, options);
   const rows  = await query(sql, params) as Record<string, unknown>[];
-
-  const nextCursor = (options.mode === "worker" && rows.length > 0)
-    ? (rows[rows.length - 1]._cursor as number)
-    : null;
-
-  const out = rows.map(({ _cursor: _, ...rest }) => rest);
-  return {
-    rows: out,
-    rowCount: options.includeTotal ? total : rows.length,
-    isTruncated: options.includeTotal ? total > out.length : rows.length === options.limit,
-    nextCursor,
-  };
+  return { rows, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > rows.length, nextCursor: null };
 }
 
 // ---------------------------------------------------------------------------
