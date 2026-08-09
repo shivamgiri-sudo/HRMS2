@@ -28,6 +28,7 @@ const REPORT = read("src/components/finance/grn/imprest/ImprestReportPanel.tsx")
 const WORKSPACE = read("src/components/finance/grn/imprest/ImprestWorkspace.tsx");
 const MANAGERS = read("src/components/finance/grn/imprest/ImprestManagerPanel.tsx");
 const GRN_FORM = read("src/components/finance/grn/BudgetLinkedGrnForm.tsx");
+const VOUCHER = read("src/components/finance/payroll/SalaryVoucherPanel.tsx");
 const QUEUE = read("src/components/finance/grn/ImprestApprovalQueue.tsx");
 const SEARCH = read("src/components/finance/grn/GrnSearchWorkspace.tsx");
 
@@ -210,5 +211,30 @@ describe("billing status can be set, not just displayed (Requirement 4)", () => 
 
   it("refetches after a change so the row reflects it", () => {
     expect(SEARCH).toContain("refetchResults()");
+  });
+});
+
+describe("the salary voucher's number is asked for, not invented", () => {
+  it("sends a starting serial the user supplies", () => {
+    // Tally owns this sequence. Defaulting silently to 1 printed ".../1" on every voucher —
+    // authoritative-looking, wrong, and identical across generations.
+    expect(VOUCHER).toContain("serialFrom=");
+    expect(VOUCHER).toContain("setSerialFrom");
+  });
+
+  it("says the numbers are provisional when none is given", () => {
+    // Silence would let somebody export ".../1" believing it was real.
+    expect(VOUCHER).toContain("provisional");
+    expect(VOUCHER).toContain("Tally owns this sequence");
+  });
+
+  it("refetches when the serial changes", () => {
+    expect(VOUCHER).toContain('queryKey: ["salary-vouchers", runId, companyCode, serialFrom]');
+  });
+
+  it("sends the same serial to the export as to the preview", () => {
+    // An export numbered differently from the screen it was checked on is the worst outcome.
+    const uses = VOUCHER.match(/\$\{query\}/g) ?? [];
+    expect(uses.length).toBeGreaterThanOrEqual(2);
   });
 });

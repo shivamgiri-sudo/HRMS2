@@ -5,7 +5,7 @@ import { hrmsApi } from "@/lib/hrmsApi";
 import { money } from "@/components/finance/grn/grn-format";
 import {
   GRN_TR, GrnAlert, GrnCard, GrnCardHeader, GrnCellSub, GrnChip, GrnEmptyState, GrnIconButton,
-  GrnSelect, GrnTable, GrnTd, GrnTh,
+  GrnInput, GrnSelect, GrnTable, GrnTd, GrnTh,
 } from "@/components/finance/grn/grn-ui";
 
 /**
@@ -66,6 +66,17 @@ function unwrap<T>(response: unknown): T {
 export function SalaryVoucherPanel() {
   const [runId, setRunId] = useState("");
   const [companyCode, setCompanyCode] = useState("");
+  /*
+   * The voucher number's serial comes from TALLY's own numbering, which HRMS2 does not own and
+   * cannot see. The reference files run 612, 614, 615, 616 — a sequence continuing from whatever
+   * was posted before.
+   *
+   * So it is asked for rather than invented. Defaulting silently to 1 printed
+   * "HEAD OFFICE/MAS/06/26/1" on every voucher: a number that looks authoritative, is wrong, and
+   * collides with every other generation — which is a duplicate posting if anyone imports two of
+   * them. Blank means "not decided yet" and the numbers show as provisional.
+   */
+  const [serialFrom, setSerialFrom] = useState("");
 
   const runsQuery = useQuery({
     queryKey: ["payroll-runs-for-voucher"],
@@ -79,13 +90,17 @@ export function SalaryVoucherPanel() {
   // Hiding path segments inside a variable defeats the route-contract check, which reads the
   // client's literals to prove every call has a registered route — and a wrong /api path 401s
   // exactly like a real one, so that check is the only thing that catches a typo here.
-  const search = companyCode ? `?companyCode=${encodeURIComponent(companyCode)}` : "";
+  const search = [
+    companyCode ? `companyCode=${encodeURIComponent(companyCode)}` : "",
+    serialFrom.trim() ? `serialFrom=${encodeURIComponent(serialFrom.trim())}` : "",
+  ].filter(Boolean).join("&");
+  const query = search ? `?${search}` : "";
 
   const voucherQuery = useQuery({
-    queryKey: ["salary-vouchers", runId, companyCode],
+    queryKey: ["salary-vouchers", runId, companyCode, serialFrom],
     enabled: Boolean(runId),
     queryFn: async () =>
-      unwrap<Payload>(await hrmsApi.get<any>(`/api/finance/payroll/runs/${runId}/vouchers${search}`)),
+      unwrap<Payload>(await hrmsApi.get<any>(`/api/finance/payroll/runs/${runId}/vouchers${query}`)),
   });
 
   const runs = runsQuery.data ?? [];
@@ -108,7 +123,7 @@ export function SalaryVoucherPanel() {
                   // Straight to the API so the file is produced by the same scope resolution as
                   // the table, and in the column order Tally imports by position.
                   window.open(
-                    `/api/finance/payroll/runs/${runId}/vouchers/export${search}`,
+                    `/api/finance/payroll/runs/${runId}/vouchers/export${query}`,
                     "_blank", "noopener",
                   );
                 }}
@@ -144,7 +159,29 @@ export function SalaryVoucherPanel() {
               <option value="PIK">PIK</option>
             </GrnSelect>
           </label>
+          <label className="text-[11px] font-semibold text-grn-ink">
+            Starting voucher no.
+            <GrnInput
+              type="number"
+              min="1"
+              className="mt-1 w-[160px] tabular-nums"
+              placeholder="e.g. 614"
+              value={serialFrom}
+              onChange={(e) => setSerialFrom(e.target.value)}
+            />
+          </label>
         </div>
+
+        {!serialFrom.trim() && runId && (
+          <div className="px-4 pt-3">
+            <GrnAlert tone="warn">
+              No starting voucher number given, so these are numbered from 1 and are
+              <span className="font-semibold"> provisional</span>. Tally owns this sequence — enter
+              the next number from Tally before exporting, or the file will collide with vouchers
+              already posted.
+            </GrnAlert>
+          </div>
+        )}
 
         {voucherQuery.error && (
           <div className="p-4">
