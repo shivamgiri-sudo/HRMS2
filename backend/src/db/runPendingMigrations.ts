@@ -577,6 +577,7 @@ const MIGRATION_MANIFEST: string[] = [
   "1115_reactivate_operational_branches.sql", // flips active_status 0 -> 1 on Delhi Office (DELHI) and Head Office (HQ, Mumbai). Both carry live staff — 51 of 51 and 11 of 12 have attendance in the last 30 days (newest 2026-08-06) — and neither has a close_date, so neither was deliberately closed; 63 people work at branches the platform treats as shut. Moving the employees instead is not available: every active branch is Ahmedabad or Noida. Note these are NOT duplicate rows to merge — HEAD OFFICE (CORP) is Sector 62 Noida and Head Office (HQ) is Mumbai, so merging on name would relocate 12 Mumbai employees and corrupt their ID-card address, payroll voucher grouping and attendance scoping. Guarded on active_status = 0 AND close_date IS NULL AND an EXISTS on live employees, so it is idempotent and declines to force a row whose state has since changed
   "1114_seed_expense_categories.sql", // seeds the seven expense categories. expense_categories has existed and been empty since backend/sql/migrations/099_create_expense_tables.sql half-applied: that file created this table as its first statement then died on its second, where expense_claims declares employee_id INT with a foreign key to employees(id), which is char(36) — MySQL rejects a foreign key whose type does not match the referenced key (errno 3780) — so the master was created, never populated, and the three tables after it never created at all. With an empty master the expenses module cannot accept a line, because addExpenseItem validates category_id against it. The seven names map one-to-one onto expense_claim.category ENUM(travel,accommodation,meals,transport,communication,office,other), which toCategoryEnum() matches by lowercased name; anything outside that set would silently store as 'other'. Idempotent by name rather than INSERT IGNORE, since the table has no unique key on name. Applied to mas_hrms 2026-08-08 (ids 1-7) and then re-executed inside a rolled-back transaction to prove it: 7 statements, 0 affectedRows, count unchanged. expense_claim and the CEO P&L were verified unchanged either side
   "1116_create_kpi_template_and_process_assignment.sql", // creates kpi_process_assignment, which /api/portal/internal/kpi-assignments joins to kpi_template and process_master and which its POST and DELETE write to. The table does not exist, so all three raised ER_NO_SUCH_TABLE and the KPI Assignments tab in EnhancedClientMaster.tsx could not list, save or delete. This re-runs DDL that 509_portal_client_master_fixes.sql already contains rather than designing anything new: 509 is listed here and schema_migrations records it applied on 2026-07-19, yet none of its three declared tables exists — portal_user_sessions, portal_user_permissions and kpi_process_assignment are all absent, so that file was recorded as applied without its statements taking effect. Only the table the endpoints need is repaired here; the two portal tables are left alone deliberately, because whatever allowed 509 to be recorded without running may have done the same to other files and wants investigating rather than patching file by file. The definition matches 509's exactly — same UNIQUE KEY, index, FK, charset and collation — so the two cannot drift. That UNIQUE KEY on (process_id, template_id, effective_from) is load-bearing: the POST uses ON DUPLICATE KEY UPDATE and without a unique constraint to update against would insert a duplicate on every re-assignment. char(36) utf8mb4_unicode_ci matches kpi_template.id; the server default is utf8mb4_0900_ai_ci and an FK whose collation differs from the referenced key is rejected with errno 3780, which is what half-applied 099. kpi_template is NOT created here — it already exists, created 2026-05-29, and is owned by 010_kpi.sql earlier in this manifest. CREATE TABLE IF NOT EXISTS, so it is idempotent; not executed by hand — it applies on the next backend start
+  "1118_complete_509_portal_client_master.sql", // applies the part of 509_portal_client_master_fixes.sql that never took effect. 509 is recorded applied on 2026-07-19 and its first two column additions did land (client_master.legal_entity_name, process_master.process_owner_name), but nothing after them. Cause, traced statement by statement: 509 guards its client_user ALTER on one column (COUNT(*) ... COLUMN_NAME='phone'), phone was absent so the guard passed, but the ALTER adds eleven columns and an index in a single all-or-nothing statement and access_level already existed — so it failed ER_DUP_FIELDNAME, which is on the runner's idempotent list and was swallowed as benign, ending the file before its three CREATE TABLEs. Each column here is guarded on itself, which is the whole point; access_level is deliberately excluded since re-adding it is the exact statement that broke 509, and the index is guarded on INFORMATION_SCHEMA.STATISTICS because the column can exist while the index does not. The two CREATE TABLEs are copied from 509 unchanged so the files cannot disagree — those two were executed 2026-08-09 and already exist; the ten columns had not applied at that point. No application code reads portal_user_sessions or portal_user_permissions today, so this restores intended schema without changing behaviour on its own. Every statement is individually guarded, so re-running is a no-op
   ];
 
 export type MigrationHealth = {
@@ -900,8 +901,37 @@ async function runFileOnConnection(
     return !upper.startsWith("SOURCE ") && !upper.startsWith("USE ");
   });
 
-  for (const stmt of statements) {
-    await conn.query(stmt);
+  /*
+   * An idempotent error is tolerated per statement, not per file.
+   *
+   * This loop used to let any throw propagate, and the caller then classified the whole file as
+   * "idempotent - already exists" and moved on. So one benign duplicate silently discarded every
+   * statement after it, while schema_migrations still reported the file applied.
+   *
+   * 509_portal_client_master_fixes.sql is what that looks like. It guards an ALTER on a single
+   * column - COUNT(*) ... COLUMN_NAME='phone' - but the ALTER adds eleven columns and an index in
+   * one statement, and access_level already existed on client_user. A multi-ADD ALTER is
+   * all-or-nothing, so it failed with ER_DUP_FIELDNAME, which is on the idempotent list. The file
+   * stopped there: the ten other columns were never added and the three CREATE TABLE statements
+   * after it never ran, one of which the portal's KPI Assignments tab needs. schema_migrations
+   * has recorded it applied since 2026-07-19.
+   *
+   * Continuing is the conservative choice, not the risky one. Every statement here is one the
+   * manifest already intends to run; the previous behaviour ran an arbitrary prefix of them
+   * decided by whichever duplicate happened to come first. A genuine error - a bad column, a
+   * missing table, a syntax error - is not on the idempotent list and still aborts the file.
+   */
+  for (const [index, stmt] of statements.entries()) {
+    try {
+      await conn.query(stmt);
+    } catch (error) {
+      if (!isIdempotentMigrationError(error)) throw error;
+      const code = (error as { code?: string }).code ?? "idempotent";
+      console.warn(
+        `[migration] ${path.basename(filePath)}: statement ${index + 1}/${statements.length} ` +
+        `already applied (${code}); continuing with the rest of the file`
+      );
+    }
   }
 }
 
