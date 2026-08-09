@@ -220,6 +220,28 @@ export async function teamPerformanceSummary(
   return { rows: paged, rowCount: aggregated.length, isTruncated: aggregated.length > paged.length };
 }
 
+/**
+ * Total matching audit rows, for the case where a page probe came back full.
+ *
+ * Takes the same IN-list, date range and cursor clause the page query used, minus its
+ * LIMIT/OFFSET, so the number describes the same set the caller is paging through.
+ */
+async function countAudits(
+  placeholders: string,
+  qParams: (string | number | null)[],
+  cursorClause: string
+): Promise<number> {
+  const sql = `
+    SELECT COUNT(*) AS total
+      FROM db_audit.call_quality_assessment cqa
+     WHERE cqa.User IN (${placeholders})
+       AND cqa.CallDate BETWEEN ? AND ?
+       ${cursorClause}`;
+  const rows = await querySource<{ total: number }>(sql, qParams);
+  return Number(rows[0]?.total ?? 0);
+}
+
+
 // ---------------------------------------------------------------------------
 // quality-audit-log
 // Source: db_audit.call_quality_assessment (cross-DB via sourceDb / qualified refs)
@@ -270,6 +292,19 @@ export async function qualityAuditLog(
     qParams.push(cursor as string);
   }
 
+  // Fetch beyond the page so the true total comes from the same round trip.
+  //
+  // These two reported rowCount: rows.length — the size of the page, not the size of the
+  // result. The grid reads that as the total, so a register with thousands of audits showed
+  // "100 total", offered one page, and put the rest out of reach. Confirmed live: page 1 and
+  // page 2 each returned 100 different rows while both declared a total of 100.
+  //
+  // Same shape as the payroll-register pagination defect fixed earlier in this audit, and the
+  // same remedy: over-fetch a bounded amount, slice the caller's page from it, and only pay for
+  // a COUNT when the result genuinely exceeds the probe.
+  const PROBE_ROWS = 2000;
+  const probeLimit = Math.max(options.limit, PROBE_ROWS);
+
   const sql = `
     SELECT cqa.id AS call_id,
            cqa.User AS employee_code,
@@ -283,7 +318,7 @@ export async function qualityAuditLog(
      WHERE cqa.User IN (${placeholders})
        AND cqa.CallDate BETWEEN ? AND ?
        ${cursorClause}
-     ORDER BY cqa.id ASC${options.mode === "worker" ? ` LIMIT ${options.limit}` : ` LIMIT ${options.limit} OFFSET ${options.offset}`}`;
+     ORDER BY cqa.id ASC${options.mode === "worker" ? ` LIMIT ${options.limit}` : ` LIMIT ${probeLimit} OFFSET ${options.offset}`}`;
 
   const ccByCode = new Map(empRows.map(r => [r.employee_code, r]));
   const rawRows = await querySource<Record<string,unknown>>(sql, qParams);
@@ -294,7 +329,36 @@ export async function qualityAuditLog(
   }));
   const nextCursor = (options.mode === "worker" && rows.length > 0)
     ? (rows[rows.length - 1].call_id as string) : null;
-  return { rows, rowCount: rows.length, isTruncated: rows.length === options.limit, nextCursor };
+
+  // Worker mode keysets and takes what it asked for; preview slices its page out of the probe.
+  if (options.mode === "worker") {
+    return { rows, rowCount: rows.length, isTruncated: rows.length === options.limit, nextCursor };
+  }
+
+  const page = rows.slice(0, options.limit);
+
+  // Short of the probe AND non-empty means the result ends here, so the total is exact. An
+  // offset past the end returns nothing, where offset + 0 would report the offset itself as the
+  // total — the same trap found when paging monthly-shrinkage-trend.
+  //
+  // When the probe fills, the result is genuinely larger and only a COUNT can say by how much.
+  // Reporting the probe size instead would understate the total, which is the very defect this
+  // change exists to remove — just with a bigger wrong number.
+  let total: number;
+  if (rows.length > 0 && rows.length < probeLimit) {
+    total = options.offset + rows.length;
+  } else if (rows.length === 0) {
+    total = options.offset === 0 ? 0 : await countAudits(placeholders, qParams, cursorClause);
+  } else {
+    total = await countAudits(placeholders, qParams, cursorClause);
+  }
+
+  return {
+    rows: page,
+    rowCount: total,
+    isTruncated: total > options.offset + page.length,
+    nextCursor,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -345,6 +409,19 @@ export async function fatalErrorRegister(
     qParams.push(cursor as string);
   }
 
+  // Fetch beyond the page so the true total comes from the same round trip.
+  //
+  // These two reported rowCount: rows.length — the size of the page, not the size of the
+  // result. The grid reads that as the total, so a register with thousands of audits showed
+  // "100 total", offered one page, and put the rest out of reach. Confirmed live: page 1 and
+  // page 2 each returned 100 different rows while both declared a total of 100.
+  //
+  // Same shape as the payroll-register pagination defect fixed earlier in this audit, and the
+  // same remedy: over-fetch a bounded amount, slice the caller's page from it, and only pay for
+  // a COUNT when the result genuinely exceeds the probe.
+  const PROBE_ROWS = 2000;
+  const probeLimit = Math.max(options.limit, PROBE_ROWS);
+
   const sql = `
     SELECT cqa.id AS call_id,
            cqa.User AS employee_code,
@@ -357,7 +434,7 @@ export async function fatalErrorRegister(
        AND cqa.quality_percentage < 50
        AND (cqa.professionalism_maintained = 0 OR cqa.active_listening = 0)
        ${cursorClause}
-     ORDER BY cqa.id ASC${options.mode === "worker" ? ` LIMIT ${options.limit}` : ` LIMIT ${options.limit} OFFSET ${options.offset}`}`;
+     ORDER BY cqa.id ASC${options.mode === "worker" ? ` LIMIT ${options.limit}` : ` LIMIT ${probeLimit} OFFSET ${options.offset}`}`;
 
   const ccByCode = new Map(empRows.map(r => [r.employee_code, r]));
   const rawRows = await querySource<Record<string,unknown>>(sql, qParams);
@@ -368,5 +445,34 @@ export async function fatalErrorRegister(
   }));
   const nextCursor = (options.mode === "worker" && rows.length > 0)
     ? (rows[rows.length - 1].call_id as string) : null;
-  return { rows, rowCount: rows.length, isTruncated: rows.length === options.limit, nextCursor };
+
+  // Worker mode keysets and takes what it asked for; preview slices its page out of the probe.
+  if (options.mode === "worker") {
+    return { rows, rowCount: rows.length, isTruncated: rows.length === options.limit, nextCursor };
+  }
+
+  const page = rows.slice(0, options.limit);
+
+  // Short of the probe AND non-empty means the result ends here, so the total is exact. An
+  // offset past the end returns nothing, where offset + 0 would report the offset itself as the
+  // total — the same trap found when paging monthly-shrinkage-trend.
+  //
+  // When the probe fills, the result is genuinely larger and only a COUNT can say by how much.
+  // Reporting the probe size instead would understate the total, which is the very defect this
+  // change exists to remove — just with a bigger wrong number.
+  let total: number;
+  if (rows.length > 0 && rows.length < probeLimit) {
+    total = options.offset + rows.length;
+  } else if (rows.length === 0) {
+    total = options.offset === 0 ? 0 : await countAudits(placeholders, qParams, cursorClause);
+  } else {
+    total = await countAudits(placeholders, qParams, cursorClause);
+  }
+
+  return {
+    rows: page,
+    rowCount: total,
+    isTruncated: total > options.offset + page.length,
+    nextCursor,
+  };
 }
