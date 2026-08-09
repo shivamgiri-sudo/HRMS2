@@ -67,12 +67,25 @@ const QUERIES: Record<string, Builder> = {
       // lob_master is dropped rather than re-joined on the name: business_lob already IS the name
       // lob_name would have supplied, so the join would only risk dropping or duplicating rows
       // whose text does not match a lob_master entry.
+      //
+      // business_lob is only populated on 98 of the 131 rows, so 33 processes reported a blank
+      // LOB. process_lob_master is the governed per-process LOB mapping (approval_status,
+      // effective_from/to) and carries lob_name itself; it fills 32 of those 33. It is joined on
+      // process_id, NOT on the LOB text, so the duplication risk noted above does not apply:
+      // measured live there is exactly one active row per process, and MAX() under GROUP BY p.id
+      // makes fan-out impossible regardless.
+      //
+      // business_lob stays FIRST in the COALESCE so this cannot restate any value the report
+      // already showed — it only fills blanks. Verified against mas_hrms: 131 rows before and
+      // after, 0 existing LOB values changed, 0 headcount differences, 32 blanks filled.
       sql: `SELECT p.id, p.process_code, p.process_name, p.call_centre_code,
-                   b.branch_name, p.business_lob AS lob_name,
+                   b.branch_name,
+                   COALESCE(NULLIF(p.business_lob, ''), MAX(pl.lob_name)) AS lob_name,
                    COUNT(DISTINCT e.id) AS headcount,
                    p.active_status
               FROM process_master p
               LEFT JOIN branch_master b ON b.id = p.branch_id
+              LEFT JOIN process_lob_master pl ON pl.process_id = p.id AND pl.active_status = 1
               LEFT JOIN employees e ON e.process_id = p.id AND e.active_status = 1
              WHERE ${sc.sql} ${f.branch ? 'AND p.branch_id = ?' : ''}
              GROUP BY p.id ORDER BY b.branch_name, p.process_name`,
