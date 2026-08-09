@@ -29,6 +29,22 @@ const h =
   (req: AuthenticatedRequest, res: any, next: any) =>
     fn(req, res).catch(next);
 
+/**
+ * The starting voucher serial, or undefined.
+ *
+ * Validated rather than coerced: `Number("abc")` is NaN, and an unguarded NaN reaches the
+ * voucher number as "HEAD OFFICE/MAS/06/26/NaN" — printed on a document that posts money, and
+ * accepted by a CSV import without complaint. A bad value is treated as absent, which falls
+ * back to the provisional numbering the UI already warns about.
+ */
+function parseSerial(raw: unknown): number | undefined {
+  const text = String(raw ?? "").trim();
+  if (!text) return undefined;
+  const value = Number(text);
+  if (!Number.isFinite(value) || !Number.isInteger(value) || value < 1) return undefined;
+  return value;
+}
+
 salaryVoucherRouter.use(requireAuth);
 
 /** Filters vouchers to the caller's branch entitlement. */
@@ -51,7 +67,7 @@ salaryVoucherRouter.get(
     try {
       const generated = await salaryVoucherService.generate(req.params.runId, {
         companyCode: req.query.companyCode ? String(req.query.companyCode) : undefined,
-        serialFrom: req.query.serialFrom ? Number(req.query.serialFrom) : undefined,
+        serialFrom: parseSerial(req.query.serialFrom),
       });
       res.json({
         success: true,
@@ -87,7 +103,7 @@ salaryVoucherRouter.get(
     try {
       const generated = await salaryVoucherService.generate(req.params.runId, {
         companyCode: req.query.companyCode ? String(req.query.companyCode) : undefined,
-        serialFrom: req.query.serialFrom ? Number(req.query.serialFrom) : undefined,
+        serialFrom: parseSerial(req.query.serialFrom),
       });
       const vouchers = await scopeVouchers(req, generated.vouchers);
 

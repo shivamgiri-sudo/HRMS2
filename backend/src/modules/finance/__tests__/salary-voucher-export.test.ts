@@ -142,3 +142,32 @@ describe("CSV safety", () => {
     expect(SRC).toContain('text.replace(/"/g, \'""\')');
   });
 });
+
+describe("the voucher serial is Tally's, not ours", () => {
+  /**
+   * The serial in HEAD OFFICE/MAS/06/26/614 continues Tally's own sequence — 612, 614, 615, 616
+   * across the reference files. HRMS2 does not own that counter and cannot see it.
+   *
+   * It used to default silently to 1, so every generated voucher printed
+   * "HEAD OFFICE/MAS/06/26/1": a number that looks authoritative, is wrong, and is identical on
+   * every generation — which is a duplicate posting the moment two of them are imported.
+   */
+  it("validates the serial instead of coercing it", () => {
+    // Number("abc") is NaN, and an unguarded NaN reaches the voucher number as ".../NaN" on a
+    // document that posts money. A CSV import accepts that without complaint.
+    expect(SRC).toContain("function parseSerial");
+    expect(SRC).toContain("Number.isInteger(value)");
+    expect(SRC).toContain("value < 1");
+  });
+
+  it("uses the validated parser on both the list and the export", () => {
+    const uses = SRC.match(/serialFrom: parseSerial\(req\.query\.serialFrom\)/g) ?? [];
+    expect(uses, "list and export must parse it the same way").toHaveLength(2);
+  });
+
+  it("treats a bad serial as absent rather than failing the request", () => {
+    // Falling back to the provisional numbering the UI warns about is better than a 400 on a
+    // read-only preview, and better than printing NaN.
+    expect(SRC).toContain("return undefined;");
+  });
+});
