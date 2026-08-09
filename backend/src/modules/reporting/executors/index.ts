@@ -109,6 +109,7 @@ import {
   ptMonthlyRegister,
   pfEsicSalaryRegister,
   pfEsiOptOutRegister,
+  uanMasterRegister,
 } from "./statutory.executor.js";
 
 // ─── Exit & Attrition ────────────────────────────────────────────────────────
@@ -121,6 +122,7 @@ import {
   exitReasonAnalysis,
   tenureDistribution,
   earlyAttritionReport,
+  ffSettlementRegister,
 } from "./exit.executor.js";
 
 // ─── Recruitment ─────────────────────────────────────────────────────────────
@@ -196,6 +198,8 @@ export const EXECUTOR_MAP: Record<string, ExecutorFn> = {
   "new-join-export":            newJoinExport,
   "left-employee-export":       leftEmployeeExport,
   "increment-requests":        incrementRequests,
+  "uan-master-register":       uanMasterRegister,
+  "ff-settlement-register":    ffSettlementRegister,
   "bank-missing":              bankMissing,
   "confirmation-due-list":     confirmationDueList,
   "contract-expiry-list":      contractExpiryList,

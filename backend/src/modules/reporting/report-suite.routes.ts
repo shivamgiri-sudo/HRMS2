@@ -1509,38 +1509,9 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
       break;
     }
 
-    case "uan-master-register":
-      // Two rival sources for one fact, and this read the dead one. employee_uan exists but
-      // holds 0 rows, so the INNER JOIN eliminated every employee and the register returned
-      // nothing — indistinguishable from "no one has a UAN". The live data is on
-      // employees.uan_number: 467 of the 1,125 active employees have one.
-      //
-      // Driven off employees with a LEFT JOIN to employee_uan, so the register works today
-      // and automatically picks up member_id / epf_join_date if that table is ever populated.
-      // uan_source names which one answered, so this cannot silently regress the same way.
-      addScopedEmployeeFilters(req, clauses, params);
-      clauses.push(
-        "e.active_status = 1",
-        "COALESCE(NULLIF(TRIM(eu.uan), ''), NULLIF(TRIM(e.uan_number), '')) IS NOT NULL",
-      );
-      sql = `SELECT e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-                    COALESCE(NULLIF(TRIM(eu.uan), ''), NULLIF(TRIM(e.uan_number), '')) AS uan,
-                    CASE WHEN NULLIF(TRIM(eu.uan), '') IS NOT NULL THEN 'employee_uan'
-                         ELSE 'employees.uan_number' END AS uan_source,
-                    e.epf_number, eu.member_id AS pf_member_id,
-                    e.date_of_joining AS pf_joining_date, e.date_of_birth, e.gender,
-                    COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
-                    COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
-                    COALESCE(cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
-                    COALESCE(cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name
-               FROM employees e
-               LEFT JOIN employee_uan eu ON eu.employee_id = e.id AND eu.is_active = 1
-               LEFT JOIN branch_master b ON b.id = e.branch_id
-               LEFT JOIN process_master p ON p.id = e.process_id
-               LEFT JOIN cost_centre_master cc ON cc.id = e.cost_centre_id
-              WHERE ${clauses.join(" AND ")}
-              ORDER BY employee_name`;
-      break;
+    // "uan-master-register" is intentionally not handled here — it falls through to
+    // executeReport(), which now carries this exact SQL. Its download previously 404'd, on a
+    // statutory register that exists to be filed.
 
     case "esic-monthly-summary": {
       const from = dateParam(req.query.from, `${new Date().getFullYear()}-01-01`);
@@ -1861,41 +1832,9 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
     // It also applies row scope, which this inline block did not: attrition by branch was
     // readable by anyone who could reach the report, regardless of their branch.
 
-    case "ff-settlement-register": {
-      const from = dateParam(req.query.from, `${new Date().getFullYear()}-01-01`);
-      const to = dateParam(req.query.to, new Date().toISOString().slice(0, 10));
-      // Row scope was absent. This block reads full_final_calculation — notice recovery,
-      // gratuity, salary hold and net payable — and built its WHERE inline, so it applied no
-      // branch restriction at all: every branch's settlement amounts were returned to anyone
-      // who could reach the report. Scope is enforced in the query and nowhere else; the
-      // middleware resolves the user's branches but does not filter rows.
-      //
-      // Called FIRST so its clauses and their parameters lead the bind list, with the report's
-      // own date range pushed after. For an all-scope user this adds no predicate, which is
-      // why super_admin output is byte-identical and why the gap was invisible.
-      addScopedEmployeeFilters(req, clauses, params);
-      clauses.push("COALESCE(er.last_working_day_confirmed, er.last_working_day_proposed) BETWEEN ? AND ?");
-      params.push(from, to);
-      sql = `SELECT e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-                    COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
-                    COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
-                    COALESCE(cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
-                    COALESCE(cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
-                    COALESCE(er.last_working_day_confirmed, er.last_working_day_proposed) AS last_working_day,
-                    ffc.notice_recovery, ffc.earned_leave_encashment AS leave_encashment,
-                    ffc.gratuity_amount, ffc.advances_recovery, ffc.salary_hold,
-                    ffc.net_payable AS net_ff_payable,
-                    ffc.status, ffc.is_ff_provisional
-               FROM full_final_calculation ffc
-               JOIN exit_request er ON er.id = ffc.exit_request_id
-               JOIN employees e ON e.id = er.employee_id
-               LEFT JOIN branch_master b ON b.id = e.branch_id
-               LEFT JOIN process_master p ON p.id = e.process_id
-               LEFT JOIN cost_centre_master cc ON cc.id = e.cost_centre_id
-              WHERE ${clauses.join(" AND ")}
-              ORDER BY COALESCE(er.last_working_day_confirmed, er.last_working_day_proposed) DESC`;
-      break;
-    }
+    // "ff-settlement-register" is intentionally not handled here — it falls through to
+    // executeReport(), which now carries this exact SQL including the row scope added earlier
+    // in this audit. Without that scope, settlement amounts were visible across every branch.
 
     case "clearance-status-register": {
       const from = dateParam(req.query.from, `${new Date().getFullYear()}-01-01`);

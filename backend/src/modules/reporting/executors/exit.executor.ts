@@ -34,6 +34,69 @@ async function count(baseSql: string, params: unknown[]): Promise<number> {
 // ---------------------------------------------------------------------------
 // resignation-register
 // ---------------------------------------------------------------------------
+/**
+ * ff-settlement-register
+ *
+ * Promoted from the inline case block, which had no executor and so could not be downloaded —
+ * on a register of final settlement amounts.
+ *
+ * The row scope moved with it and is the reason this must not be simplified: the inline block
+ * originally had none, so notice recovery, gratuity, advances recovery, salary hold and net
+ * payable were returned for every branch to anyone who could open the report. Scope is enforced
+ * in the query and nowhere else.
+ *
+ * appendScopeConditions is called before the date range so its clauses and parameters lead the
+ * list, matching the order the placeholders appear in.
+ */
+export async function ffSettlementRegister(
+  filters: ExecFilters,
+  scope: ExecScope,
+  options: ExecOptions
+): Promise<ExecResult> {
+  const from = dateParam(filters.from, `${new Date().getFullYear()}-01-01`);
+  const to   = dateParam(filters.to, new Date().toISOString().slice(0, 10));
+
+  const clauses: string[] = ["e.id IS NOT NULL"];
+  const params: unknown[] = [];
+  appendScopeConditions(scope, clauses, params);
+  appendFilterConditions(filters, clauses, params);
+  clauses.push("COALESCE(er.last_working_day_confirmed, er.last_working_day_proposed) BETWEEN ? AND ?");
+  params.push(from, to);
+
+  if (options.mode === "worker" && options.cursor != null) {
+    clauses.push("ffc.id > ?"); params.push(options.cursor);
+  }
+
+  const base = `    SELECT
+           ffc.id AS _cursor,
+           e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
+           COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
+           COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
+           COALESCE(cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
+           COALESCE(cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
+           COALESCE(er.last_working_day_confirmed, er.last_working_day_proposed) AS last_working_day,
+           ffc.notice_recovery, ffc.earned_leave_encashment AS leave_encashment,
+           ffc.gratuity_amount, ffc.advances_recovery, ffc.salary_hold,
+           ffc.net_payable AS net_ff_payable,
+           ffc.status, ffc.is_ff_provisional
+      FROM full_final_calculation ffc
+      JOIN exit_request er ON er.id = ffc.exit_request_id
+      JOIN employees e ON e.id = er.employee_id
+      LEFT JOIN branch_master b ON b.id = e.branch_id
+      LEFT JOIN process_master p ON p.id = e.process_id
+      LEFT JOIN cost_centre_master cc ON cc.id = e.cost_centre_id
+     WHERE ${clauses.join(" AND ")}
+     ORDER BY COALESCE(er.last_working_day_confirmed, er.last_working_day_proposed) DESC`;
+
+  const total = options.includeTotal ? await count(base, params) : 0;
+  const sql   = options.mode === "worker" ? `${base} LIMIT ${options.limit}` : applyPagination(base, options);
+  const rows  = await query(sql, params) as Record<string, unknown>[];
+  const nextCursor = (options.mode === "worker" && rows.length > 0)
+    ? (rows[rows.length - 1]._cursor as number) : null;
+  const out = rows.map(({ _cursor: _, ...rest }) => rest);
+  return { rows: out, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > out.length, nextCursor };
+}
+
 export async function resignationRegister(
   filters: ExecFilters,
   scope: ExecScope,

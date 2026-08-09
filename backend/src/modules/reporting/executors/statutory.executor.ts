@@ -56,6 +56,65 @@ function currentFinancialYear(): string {
 // ---------------------------------------------------------------------------
 // pf-contribution-register
 // ---------------------------------------------------------------------------
+/**
+ * uan-master-register
+ *
+ * Promoted from the inline case block. It had no executor, so its download answered 404 while
+ * the screen rendered — on a statutory register, which is exactly the kind of report someone
+ * needs as a file rather than on screen.
+ *
+ * The uan_source column is not decoration and is carried deliberately. UAN lives in two places:
+ * employee_uan, and a uan_number column on employees. The register prefers the former and falls
+ * back to the latter, and states per row which one it used, so a reader can see when a number
+ * came from the legacy column rather than the mapping table.
+ */
+export async function uanMasterRegister(
+  filters: ExecFilters,
+  scope: ExecScope,
+  options: ExecOptions
+): Promise<ExecResult> {
+  const clauses: string[] = ["e.id IS NOT NULL"];
+  const params: unknown[] = [];
+  appendScopeConditions(scope, clauses, params);
+  appendFilterConditions(filters, clauses, params);
+  clauses.push(
+    "e.active_status = 1",
+    "COALESCE(NULLIF(TRIM(eu.uan), ''), NULLIF(TRIM(e.uan_number), '')) IS NOT NULL",
+  );
+
+  if (options.mode === "worker" && options.cursor != null) {
+    clauses.push("e.id > ?"); params.push(options.cursor);
+  }
+
+  const base = `    SELECT
+           e.id AS _cursor,
+           e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
+           COALESCE(NULLIF(TRIM(eu.uan), ''), NULLIF(TRIM(e.uan_number), '')) AS uan,
+           CASE WHEN NULLIF(TRIM(eu.uan), '') IS NOT NULL THEN 'employee_uan'
+           ELSE 'employees.uan_number' END AS uan_source,
+           e.epf_number, eu.member_id AS pf_member_id,
+           e.date_of_joining AS pf_joining_date, e.date_of_birth, e.gender,
+           COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
+           COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
+           COALESCE(cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
+           COALESCE(cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name
+      FROM employees e
+      LEFT JOIN employee_uan eu ON eu.employee_id = e.id AND eu.is_active = 1
+      LEFT JOIN branch_master b ON b.id = e.branch_id
+      LEFT JOIN process_master p ON p.id = e.process_id
+      LEFT JOIN cost_centre_master cc ON cc.id = e.cost_centre_id
+     WHERE ${clauses.join(" AND ")}
+     ORDER BY employee_name`;
+
+  const total = options.includeTotal ? await count(base, params) : 0;
+  const sql   = options.mode === "worker" ? `${base} LIMIT ${options.limit}` : applyPagination(base, options);
+  const rows  = await query(sql, params) as Record<string, unknown>[];
+  const nextCursor = (options.mode === "worker" && rows.length > 0)
+    ? (rows[rows.length - 1]._cursor as number) : null;
+  const out = rows.map(({ _cursor: _, ...rest }) => rest);
+  return { rows: out, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > out.length, nextCursor };
+}
+
 export async function pfContributionRegister(
   filters: ExecFilters,
   scope: ExecScope,
