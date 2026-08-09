@@ -82,6 +82,50 @@ export function blindIndex(plaintext: string): string {
   return createHmac("sha256", blindIndexKey).update(plaintext, "utf8").digest("hex");
 }
 
+export interface KeyParityResult {
+  sampled: number;
+  decrypted: number;
+  ok: boolean;
+}
+
+/**
+ * Verify that the key currently loaded can read ciphertext that is ALREADY stored.
+ *
+ * Why this exists: loadKey() throws only when NODE_ENV === "production". Anywhere else it
+ * silently substitutes DEV_ENCRYPTION_KEY (all zeros). A backfill run from a dev machine against
+ * a production database therefore encrypts real rows with a key production cannot read — and
+ * reports success, because nothing in the write path ever attempts a decrypt.
+ *
+ * The damage stays invisible afterwards: resolveAccountNumber() swallows the decrypt failure and
+ * falls back to the legacy plaintext column, so reads keep working until that column is dropped,
+ * at which point the affected rows are unrecoverable.
+ *
+ * Callers that write encrypted columns in bulk MUST gate on this and refuse to proceed when
+ * ok === false. Requires every sample to decrypt: a partial pass means mixed keys, which is a
+ * worse problem than a uniformly wrong one, not a lesser one.
+ */
+export function checkKeyParity(ciphertexts: string[]): KeyParityResult {
+  let decrypted = 0;
+  for (const ct of ciphertexts) {
+    try {
+      decryptField(ct);
+      decrypted++;
+    } catch {
+      /* counted as a failure below */
+    }
+  }
+  return {
+    sampled: ciphertexts.length,
+    decrypted,
+    ok: ciphertexts.length > 0 && decrypted === ciphertexts.length,
+  };
+}
+
+/** True when the process is running on the built-in all-zeros development key. */
+export function isUsingDevEncryptionKey(): boolean {
+  return encryptionKey.equals(Buffer.from(DEV_ENCRYPTION_KEY, "hex"));
+}
+
 /**
  * Resolve account_number from a bank detail row that may be in the encrypted
  * column (account_number_enc), the legacy plaintext varbinary (account_number),

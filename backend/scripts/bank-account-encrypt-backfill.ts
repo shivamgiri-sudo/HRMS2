@@ -15,7 +15,11 @@
 
 import "dotenv/config";
 import { db } from "../src/db/mysql.js";
-import { encryptField } from "../src/shared/fieldEncryption.js";
+import {
+  encryptField,
+  checkKeyParity,
+  isUsingDevEncryptionKey,
+} from "../src/shared/fieldEncryption.js";
 import type { RowDataPacket } from "mysql2";
 
 const DRY_RUN = process.argv.includes("--dry-run");
@@ -33,8 +37,68 @@ interface BankRow {
   account_number_enc: string | null;
 }
 
+const ALLOW_FIRST_RUN = process.argv.includes("--allow-first-run");
+const PARITY_SAMPLE = 25;
+
+/**
+ * Refuse to write unless the loaded key can read ciphertext that is already in the table.
+ *
+ * Without this the script happily encrypts production rows with the all-zeros development key
+ * (substituted by loadKey() whenever NODE_ENV !== "production") and exits 0. Nothing downstream
+ * notices, because resolveAccountNumber() catches the decrypt failure and falls back to the
+ * legacy plaintext column — so the rows only become unrecoverable later, when that column goes.
+ *
+ * Measured 2026-08-09 against production: 0 of 50 stored rows decrypted with the dev key.
+ */
+async function assertKeyParity(): Promise<void> {
+  const [rows] = await db.query<RowDataPacket[]>(
+    `SELECT account_number_enc
+       FROM employee_bank_detail
+      WHERE account_number_enc IS NOT NULL
+      LIMIT ${PARITY_SAMPLE}`
+  );
+  const samples = rows
+    .map((r) => (r as { account_number_enc: string | null }).account_number_enc)
+    .filter((v): v is string => typeof v === "string" && v.length > 0);
+
+  if (samples.length === 0) {
+    if (ALLOW_FIRST_RUN) {
+      console.log("[bank-encrypt-backfill] no existing ciphertext to compare against; " +
+        "proceeding under --allow-first-run");
+      return;
+    }
+    throw new Error(
+      "No existing encrypted rows to verify the key against. If this really is the first run, " +
+      "re-invoke with --allow-first-run — but confirm FIELD_ENCRYPTION_KEY is the production key first."
+    );
+  }
+
+  const parity = checkKeyParity(samples);
+  console.log(
+    `[bank-encrypt-backfill] key parity: ${parity.decrypted}/${parity.sampled} existing rows decrypt` +
+    (isUsingDevEncryptionKey() ? "  (WARNING: using the built-in development key)" : "")
+  );
+
+  if (!parity.ok) {
+    throw new Error(
+      `KEY MISMATCH — only ${parity.decrypted} of ${parity.sampled} existing rows decrypt with the ` +
+      `loaded key. Writing now would produce ciphertext this database cannot read, and the failure ` +
+      `would be silent. ` +
+      (isUsingDevEncryptionKey()
+        ? "FIELD_ENCRYPTION_KEY is unset, so the all-zeros development key is in use. Run this on the " +
+          "server where the real key is configured."
+        : "Check FIELD_ENCRYPTION_KEY matches the key these rows were written with.") +
+      " Refusing to write."
+    );
+  }
+}
+
 async function run() {
   console.log(`[bank-encrypt-backfill] DRY_RUN=${DRY_RUN} BATCH_SIZE=${BATCH_SIZE}`);
+
+  // Gate BEFORE any write, and before the dry run too, so a dry run reports the same verdict
+  // the real run would reach rather than a falsely reassuring row count.
+  await assertKeyParity();
 
   const [total] = await db.execute<RowDataPacket[]>(
     `SELECT COUNT(*) AS n FROM employee_bank_detail WHERE account_number IS NOT NULL AND account_number_enc IS NULL`
