@@ -818,40 +818,11 @@ reportSuiteRouter.get("/:code", reportScopeMiddleware, reportCatalogAccessMiddle
                 AND (COALESCE(e.pan_number,'')='' OR eu.uan IS NULL OR COALESCE(e.esic_number,'')='')
               ORDER BY employee_name`;
       break;
-    case "bank-missing":
-      addScopedEmployeeFilters(req, clauses, params); clauses.push("e.active_status = 1");
-      sql = `SELECT e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-                    COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
-                    COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
-                    COALESCE(cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
-                    COALESCE(cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
-                    CASE WHEN ebd.id IS NULL THEN 'MISSING_BANK' WHEN COALESCE(ebd.verified,0)=0 THEN 'UNVERIFIED_BANK' ELSE 'OK' END AS bank_status
-               FROM employees e
-               LEFT JOIN employee_bank_detail ebd ON ebd.employee_id = e.id AND ebd.active_status = 1 AND ebd.is_primary = 1
-               LEFT JOIN branch_master b ON b.id = e.branch_id
-               LEFT JOIN process_master p ON p.id = e.process_id
-               LEFT JOIN cost_centre_master cc ON cc.id = e.cost_centre_id
-              WHERE ${clauses.join(" AND ")}
-                AND (ebd.id IS NULL OR COALESCE(ebd.verified,0)=0)
-              ORDER BY bank_status DESC, employee_name`;
-      break;
-    case "increment-requests":
-      addScopedEmployeeFilters(req, clauses, params);
-      sql = `SELECT sir.id, e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-                    COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
-                    COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
-                    COALESCE(cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
-                    COALESCE(cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
-                    sir.current_ctc, sir.proposed_ctc, sir.increment_percentage, sir.effective_from, sir.status,
-                    sir.communication_status, sir.letter_status, sir.created_at
-               FROM salary_increment_request sir
-               JOIN employees e ON e.id = sir.employee_id
-               LEFT JOIN branch_master b ON b.id = e.branch_id
-               LEFT JOIN process_master p ON p.id = e.process_id
-               LEFT JOIN cost_centre_master cc ON cc.id = e.cost_centre_id
-              WHERE ${clauses.length ? clauses.join(" AND ") : "1=1"}
-              ORDER BY sir.created_at DESC`;
-      break;
+    // "bank-missing" is intentionally not handled here — it falls through to executeReport(),
+    // which now carries this exact SQL. Without a registered executor its download answered
+    // 404 while the screen rendered normally.
+    // "increment-requests" is intentionally not handled here — it falls through to
+    // executeReport(), which now carries this exact SQL. Its download previously 404'd.
     case "cosec-unmapped":
       sql = `SELECT ibd.employee_code, ibd.activity_date, ibd.first_punch, ibd.last_punch, ibd.biometric_minutes
                FROM integration_biometric_daily ibd
