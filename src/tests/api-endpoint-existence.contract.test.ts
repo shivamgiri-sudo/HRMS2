@@ -210,10 +210,26 @@ const KNOWN_MISSING: Record<string, string> = {
 
   // NativeSalesDashboard.tsx. The upload panel offers 7 Bellavita/GNC types; the backend
   // implements uploads for neemans only (/upload-neemans-sale-raw, -allocation, -apr).
+  // DO NOT "FIX" THESE TWO BY ADDING ROUTES. The handlers already exist —
+  // sales-upload.service.ts exports uploadBellavitaSales/Apr/Chat/Cart,
+  // uploadGncSales/Apr/Allocation and deleteUploadBatch, matching the page's seven upload
+  // types exactly, and the routes file already imports multer and even carries the comment
+  // "Upload/delete endpoints keep the tighter guard enforced per-route". Wiring them looks
+  // like a five-minute win. It is not.
+  //
+  // Every one of those functions goes through queryMasmis, and the application user has NO
+  // ACCESS to db_masmis: verified live 2026-08-09, `SELECT COUNT(*) FROM db_masmis.bb_sale`
+  // returns ER_TABLEACCESS_DENIED_ERROR, as do gnc_sale and upload_log. The service hardcodes
+  // the `db_masmis.` prefix 33 times and never calls getMasmisDbName(), so MASMIS_DB_NAME
+  // cannot redirect it either.
+  //
+  // The whole module is therefore already dead in production — /bellavita-dashboard,
+  // /gnc-dashboard, /logs and the neemans endpoints all hit the same wall. Adding these two
+  // routes would only turn a 401 into a 500. The blocker is a database GRANT, not code.
   "/api/sales-upload/upload/:x":
-    "no generic upload route. Bellavita and GNC have dashboards (/bellavita-dashboard, /gnc-dashboard) but no upload endpoint was ever written.",
+    "handler exists (uploadBellavitaSales etc.) but db_masmis is unreadable by the app user — ER_TABLEACCESS_DENIED_ERROR. Needs a GRANT, not a route.",
   "/api/sales-upload/batch/:x":
-    "no batch route at all, so the 'delete this upload batch' action cannot succeed.",
+    "deleteUploadBatch() exists and is unwired, but it DELETEs across seven db_masmis tables the app user cannot even read. Needs a GRANT, not a route.",
 
   // Not a fetch, but still a promise the product makes and does not keep.
   "/api/webhooks/:x":
