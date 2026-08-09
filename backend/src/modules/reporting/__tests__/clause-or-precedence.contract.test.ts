@@ -81,10 +81,20 @@ describe("WHERE clause OR precedence", () => {
     ).toEqual([]);
   });
 
-  it("left-employee-export keeps its parentheses", () => {
+  it("left-employee-export keeps its parentheses, wherever the clause lives", () => {
     // The specific regression: this one cost a 36x row inflation and a scope bypass.
-    const src = read(`${R}/report-suite.routes.ts`);
-    expect(src).toContain(
-      "(e.active_status = 0 OR e.employment_status IN ('resigned','inactive','Resigned','Exit'))");
+    //
+    // Searched across every candidate file rather than pinned to one, because the clause has
+    // already moved once — from the inline case block into employee.executor.ts when the report
+    // was promoted so its download would work. A guard that names the file would have failed on
+    // that move and taught the next person to delete it; a guard that follows the clause keeps
+    // testing the thing that matters.
+    const wanted = "(e.active_status = 0 OR e.employment_status IN ('resigned','inactive','Resigned','Exit'))";
+    const homes = files.filter(p => read(p).includes(wanted));
+    expect(
+      homes.length,
+      "the leaver predicate must exist, parenthesised, in exactly one place. Found in: " +
+        (homes.join(", ") || "nowhere — check whether it was unwrapped or renamed"),
+    ).toBe(1);
   });
 });

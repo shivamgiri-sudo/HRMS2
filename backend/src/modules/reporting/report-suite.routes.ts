@@ -3618,78 +3618,15 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
     }
 
     // ─── Left Employee Export ──────────────────────────────────────────────────
-    case "left-employee-export": {
-      const from = dateParam(req.query.from, `${new Date().getFullYear()}-01-01`);
-      const to   = dateParam(req.query.to,   new Date().toISOString().slice(0, 10));
-      addScopedEmployeeFilters(req, clauses, params);
-      // The parentheses are load-bearing. This clause joins an array with " AND ", and AND binds
-      // tighter than OR, so without them the composed WHERE is not what it reads as:
-      //
-      //   scope AND active_status = 0 OR employment_status IN (...) AND date BETWEEN ? AND ?
-      //
-      // parses as
-      //
-      //   (scope AND active_status = 0) OR (employment_status IN (...) AND date BETWEEN ? AND ?)
-      //
-      // — a left branch with no date filter and a right branch with no row scope. Measured on
-      // live 2026-08-09:
-      //
-      //   super_admin        57,501 rows returned where 1,574 is correct  (every inactive
-      //                      employee ever, the date range ignored entirely)
-      //   branch-scoped user  1,338 rows returned where 0 is correct, and ALL 1,338 of them
-      //                      belonged to other branches
-      //
-      // So this was simultaneously a 36x row inflation and a complete row-scope bypass, and it
-      // is also why the report took ~58s: it was building 57,501 rows to show 1,574.
-      clauses.push("(e.active_status = 0 OR e.employment_status IN ('resigned','inactive','Resigned','Exit'))");
-      clauses.push("COALESCE(e.date_of_leaving, e.date_of_exit) BETWEEN ? AND ?");
-      params.push(from, to);
-
-      // department/designation/cost_center/uan fallback columns below
-      // (e.department, e.designation, e.cost_center_code, e.uan) and
-      // employee_salary_snapshot.snapshot_month don't exist — verified live.
-      // Master-table joins are the only real source for the first three; the
-      // snapshot table's real column is snapshot_date. Never caught because
-      // this report was unreachable (missing from REPORT_CATALOG) until now.
-      sql = `
-        SELECT
-          e.employee_code AS emp_code,
-          CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')) AS emp_name,
-          COALESCE(dept.dept_name, '') AS department,
-          COALESCE(desig.designation_name, '') AS designation,
-          COALESCE(b.branch_name, '') AS branch_name,
-          COALESCE(cc.cost_centre_name, '') AS cost_center,
-          COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
-          COALESCE(e.mobile, '') AS mobile_no,
-          DATE_FORMAT(e.date_of_joining, '%Y-%m-%d') AS doj,
-          DATE_FORMAT(COALESCE(e.date_of_leaving, e.date_of_exit), '%Y-%m-%d') AS left_date,
-          COALESCE(er.exit_reason_category, '') AS left_remarks,
-          COALESCE(e.source, '') AS source,
-          COALESCE(e.sub_source, '') AS sub_source,
-          COALESCE(ess.net_in_hand, esa.ctc_annual / 12, 0) AS net_in_hand,
-          COALESCE(esa.ctc_annual, 0) AS offered_ctc
-        FROM employees e
-        LEFT JOIN department_master dept ON dept.id = e.department_id
-        LEFT JOIN designation_master desig ON desig.id = e.designation_id
-        LEFT JOIN branch_master b ON b.id = e.branch_id
-        LEFT JOIN cost_centre_master cc ON cc.id = e.cost_centre_id
-        LEFT JOIN process_master p ON p.id = e.process_id
-        LEFT JOIN exit_request er ON er.employee_id = e.id
-              AND er.status IN ('confirmed','cleared','completed')
-              AND er.id = (SELECT id FROM exit_request WHERE employee_id = e.id ORDER BY created_at DESC LIMIT 1)
-        LEFT JOIN (
-          SELECT employee_id, net_in_hand
-          FROM employee_salary_snapshot
-          WHERE (employee_id, snapshot_date) IN (
-            SELECT employee_id, MAX(snapshot_date) FROM employee_salary_snapshot GROUP BY employee_id
-          )
-        ) ess ON ess.employee_id = e.id
-        LEFT JOIN employee_salary_assignment esa ON esa.employee_id = e.id AND esa.active_status = 1
-        WHERE ${clauses.join(" AND ")}
-        ORDER BY left_date DESC, e.employee_code
-      `;
-      break;
-    }
+    // "left-employee-export" is intentionally not handled here.
+    //
+    // It falls through to executeReport(), which now carries this exact SQL. With no executor
+    // registered the download answered 404 on a report named export, because the export
+    // handler calls executeReport() directly and never reaches this switch.
+    //
+    // The parenthesised OR moved with it and must stay parenthesised: unwrapped, that clause
+    // re-associated the whole WHERE and produced 57,501 rows for super_admin against 1,574
+    // correct, and a full row-scope bypass for anyone scoped to a branch.
 
     // ─── New Join Employee Export ──────────────────────────────────────────────
     // "new-join-export" is intentionally not handled here.

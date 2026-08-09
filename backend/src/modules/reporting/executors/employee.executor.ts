@@ -469,6 +469,99 @@ const CONFIRMATION_DUE_JOIN = `
          GROUP BY employee_id
       ) ep ON ep.employee_id = e.id`;
 
+/**
+ * left-employee-export
+ *
+ * Promoted from the inline case block so the screen and the downloaded XLSX run one
+ * implementation. It had no executor at all, so the export handler — which calls
+ * executeReport() directly and never sees the inline switch — answered 404 "This report is not
+ * yet available" on a report whose entire purpose is to be exported.
+ *
+ * Moved only after the operator-precedence defect in its WHERE was fixed. The clause
+ * "active_status = 0 OR employment_status IN (...)" was pushed unparenthesised into an array
+ * joined with AND, which re-associated the whole predicate: super_admin received 57,501 rows
+ * where 1,574 was correct, and a branch-scoped user received 1,338 rows every one of which
+ * belonged to another branch. Promoting it before that would have carried a scope bypass into
+ * a second code path.
+ *
+ * SQL copied verbatim, including the COALESCE(..., '') blanks. Those are this sheet's
+ * existing rendering, not the NULLs the UNASSIGNED convention addresses, and changing them here
+ * would mean the promotion could not be verified as a no-op.
+ *
+ * The two correlated subqueries are also carried unchanged: the latest exit_request per
+ * employee, and the latest salary snapshot per employee via a row-constructor IN. Both are
+ * slow — this report takes roughly 15s even with the predicate corrected — but rewriting them
+ * is an optimisation, and an optimisation hidden inside a move is not verifiable as either.
+ */
+export async function leftEmployeeExport(
+  filters: ExecFilters,
+  scope: ExecScope,
+  options: ExecOptions
+): Promise<ExecResult> {
+  const from = dateParam(filters.from, `${new Date().getFullYear()}-01-01`);
+  const to   = dateParam(filters.to, new Date().toISOString().slice(0, 10));
+
+  const clauses: string[] = ["e.id IS NOT NULL"];
+  const params: unknown[] = [];
+  appendScopeConditions(scope, clauses, params);
+  appendFilterConditions(filters, clauses, params);
+  // Parentheses are load-bearing: this array is joined with AND, which binds tighter than OR.
+  clauses.push("(e.active_status = 0 OR e.employment_status IN ('resigned','inactive','Resigned','Exit'))");
+  clauses.push("COALESCE(e.date_of_leaving, e.date_of_exit) BETWEEN ? AND ?");
+  params.push(from, to);
+
+  if (options.mode === "worker" && options.cursor != null) {
+    clauses.push("e.id > ?"); params.push(options.cursor);
+  }
+
+  const base = `
+    SELECT
+      e.id AS _cursor,
+      e.employee_code AS emp_code,
+      CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')) AS emp_name,
+      COALESCE(dept.dept_name, '') AS department,
+      COALESCE(desig.designation_name, '') AS designation,
+      COALESCE(b.branch_name, '') AS branch_name,
+      COALESCE(cc.cost_centre_name, '') AS cost_center,
+      COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
+      COALESCE(e.mobile, '') AS mobile_no,
+      DATE_FORMAT(e.date_of_joining, '%Y-%m-%d') AS doj,
+      DATE_FORMAT(COALESCE(e.date_of_leaving, e.date_of_exit), '%Y-%m-%d') AS left_date,
+      COALESCE(er.exit_reason_category, '') AS left_remarks,
+      COALESCE(e.source, '') AS source,
+      COALESCE(e.sub_source, '') AS sub_source,
+      COALESCE(ess.net_in_hand, esa.ctc_annual / 12, 0) AS net_in_hand,
+      COALESCE(esa.ctc_annual, 0) AS offered_ctc
+    FROM employees e
+    LEFT JOIN department_master dept ON dept.id = e.department_id
+    LEFT JOIN designation_master desig ON desig.id = e.designation_id
+    LEFT JOIN branch_master b ON b.id = e.branch_id
+    LEFT JOIN cost_centre_master cc ON cc.id = e.cost_centre_id
+    LEFT JOIN process_master p ON p.id = e.process_id
+    LEFT JOIN exit_request er ON er.employee_id = e.id
+          AND er.status IN ('confirmed','cleared','completed')
+          AND er.id = (SELECT id FROM exit_request WHERE employee_id = e.id ORDER BY created_at DESC LIMIT 1)
+    LEFT JOIN (
+      SELECT employee_id, net_in_hand
+      FROM employee_salary_snapshot
+      WHERE (employee_id, snapshot_date) IN (
+        SELECT employee_id, MAX(snapshot_date) FROM employee_salary_snapshot GROUP BY employee_id
+      )
+    ) ess ON ess.employee_id = e.id
+    LEFT JOIN employee_salary_assignment esa ON esa.employee_id = e.id AND esa.active_status = 1
+    WHERE ${clauses.join(" AND ")}
+    ORDER BY left_date DESC, e.employee_code
+  `;
+
+  const total = options.includeTotal ? await count(base, params) : 0;
+  const sql   = options.mode === "worker" ? `${base} LIMIT ${options.limit}` : applyPagination(base, options);
+  const rows  = await query(sql, params) as Record<string, unknown>[];
+  const nextCursor = (options.mode === "worker" && rows.length > 0)
+    ? (rows[rows.length - 1]._cursor as number) : null;
+  const out = rows.map(({ _cursor: _, ...rest }) => rest);
+  return { rows: out, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > out.length, nextCursor };
+}
+
 export async function confirmationDueList(
   filters: ExecFilters,
   scope: ExecScope,
