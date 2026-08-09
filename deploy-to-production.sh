@@ -1,100 +1,159 @@
 #!/bin/bash
 # Production Deployment Script
 # Server: <deploy host — see backend/.env> | User: masadmin | Project: /var/www/HRMS2
+#
+# Order matters here, and it is the order below for reasons that have each cost an
+# outage at least once:
+#
+#   pull -> PREFLIGHT -> build -> restart -> POST-CHECK -> nginx
+#
+# The preflight runs BEFORE anything is built or restarted, because /api/health is
+# `dbStatus === "ok" && schemaStatus.valid` — a migration in the manifest that the
+# runner cannot apply puts the whole service at 503 while the API carries on serving
+# traffic perfectly well. On 2026-08-09 a migration renumbered 1116 -> 1117 left
+# production's manifest naming a file that no longer existed; the runner logged
+# `skipping missing file`, carried on, and health sat at 503 for twelve minutes after
+# the restart while waiting-room displays were being served 200s the whole time.
+# Aborting before the restart costs seconds; finding out afterwards costs an outage.
 
-set -e  # Exit on error
+set -euo pipefail
 
 echo "=========================================="
 echo "HRMS2 Production Deployment"
-echo "Phase 1: Waiting Room + Sidebar Updates"
 echo "=========================================="
 echo
 
-# Colors
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 RED='\033[0;31m'
-NC='\033[0m' # No Color
+NC='\033[0m'
 
-echo -e "${YELLOW}Step 1: Deploy Backend${NC}"
+ROOT=/var/www/HRMS2
+STAMP=$(date +%Y%m%d-%H%M%S)
+BACKUP_DIR="$ROOT/.deploy-backups/deploy-$STAMP"
+
+cd "$ROOT" || exit 1
+ROLLBACK_SHA=$(git rev-parse --short HEAD)
+
+# Reported on any failure. The old script printed a rollback commit hardcoded months
+# earlier, which would have rolled production back to whatever that commit happened to
+# be rather than to where it actually was a moment ago.
+on_failure() {
+  echo
+  echo -e "${RED}✗ Deployment failed.${NC}"
+  echo "  Production was at $ROLLBACK_SHA before this run."
+  echo "  Rollback:"
+  echo "    cd $ROOT && git reset --hard $ROLLBACK_SHA"
+  echo "    tar xzf $BACKUP_DIR/frontend-dist.tar.gz -C $ROOT"
+  echo "    cd backend && npm run build && pm2 restart hrms2-backend hrms2-workers --update-env"
+}
+trap on_failure ERR
+
+echo -e "${YELLOW}Step 0: Backup${NC}"
 echo "--------------------------------------"
-cd /var/www/HRMS2/backend || exit 1
-echo "Pulling latest code..."
-git pull origin main
+mkdir -p "$BACKUP_DIR"
+tar czf "$BACKUP_DIR/frontend-dist.tar.gz" dist 2>/dev/null || true
+tar czf "$BACKUP_DIR/backend-dist.tar.gz" backend/dist 2>/dev/null || true
+cp backend/.env "$BACKUP_DIR/env.bak" 2>/dev/null || true
+echo "Backup: $BACKUP_DIR (was at $ROLLBACK_SHA)"
+echo
 
-echo "Building backend..."
+echo -e "${YELLOW}Step 1: Pull${NC}"
+echo "--------------------------------------"
+# --ff-only, never a plain pull: a merge commit created on the production box is not
+# reachable from origin and silently diverges the deploy from what was reviewed.
+git pull --ff-only origin main
+echo "Now at $(git rev-parse --short HEAD)"
+echo
+
+echo -e "${YELLOW}Step 2: Preflight — will a restart leave health at 503?${NC}"
+echo "--------------------------------------"
+cd "$ROOT/backend"
+npm run preflight
+echo
+
+echo -e "${YELLOW}Step 3: Build backend${NC}"
+echo "--------------------------------------"
+# set -e stops here on a non-zero tsc. That matters: tsc emits output even when it
+# reports errors, so a failed build still overwrites dist — building and restarting
+# regardless is how a broken dist reaches production.
 npm run build
+echo -e "${GREEN}✓ Backend built${NC}"
+echo
 
-echo "Restarting PM2 process..."
+echo -e "${YELLOW}Step 4: Build frontend${NC}"
+echo "--------------------------------------"
+cd "$ROOT"
+# Built from source, in place. The previous version of this script extracted a
+# pre-built tarball from /tmp and ran `rm -rf dist/*` BEFORE checking the tarball was
+# there — a missing or half-copied tarball emptied the directory nginx serves and took
+# the site down with no way back except the backup.
+npm run build
+echo -e "${GREEN}✓ Frontend built${NC}"
+echo
+
+echo -e "${YELLOW}Step 5: Restart${NC}"
+echo "--------------------------------------"
+# Both processes. hrms2-workers runs the same backend dist and was never restarted by
+# the old script, so every worker kept running the previous build until something else
+# happened to bounce it.
 pm2 restart hrms2-backend --update-env
-
-echo "Checking backend status..."
-sleep 3
-pm2 logs hrms2-backend --lines 20 --nostream
-
-echo
-echo -e "${GREEN}✓ Backend deployed${NC}"
+pm2 restart hrms2-workers --update-env
 echo
 
-echo -e "${YELLOW}Step 2: Verify Backend API${NC}"
+echo -e "${YELLOW}Step 6: Verify${NC}"
 echo "--------------------------------------"
-curl -s http://localhost:5055/api/ats/queue/branches | jq '.' || echo "API check failed"
-echo
-echo -e "${GREEN}✓ Backend API responding${NC}"
-echo
+echo "Waiting for the backend to come up..."
+for _ in $(seq 1 30); do
+  code=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:5055/api/health || true)
+  [ "$code" = "200" ] && break
+  sleep 2
+done
 
-echo -e "${YELLOW}Step 3: Deploy Frontend${NC}"
-echo "--------------------------------------"
-cd /var/www/HRMS2 || exit 1
+cd "$ROOT/backend"
+# Confirms every manifest migration actually applied. A 503 here is the schema, not the
+# network — read the failing filename it prints rather than restarting again.
+npm run preflight:post
 
-echo "Creating backup..."
-BACKUP_DIR="dist-backup-$(date +%Y%m%d-%H%M%S)"
-sudo cp -r dist "$BACKUP_DIR"
-echo "Backup created: $BACKUP_DIR"
-
-echo "Extracting new build..."
-sudo rm -rf dist/*
-sudo tar -xzf /tmp/dist-final-deploy.tar.gz -C dist/
-sudo chown -R www-data:www-data dist/
-
-echo "Cleaning up..."
-rm -f /tmp/dist-final-deploy.tar.gz
-
-echo
-echo -e "${GREEN}✓ Frontend deployed${NC}"
-echo
-
-echo -e "${YELLOW}Step 4: Reload Nginx${NC}"
-echo "--------------------------------------"
-echo "Testing Nginx configuration..."
-sudo nginx -t
-
-if [ $? -eq 0 ]; then
-    echo "Reloading Nginx..."
-    sudo systemctl reload nginx
-    echo -e "${GREEN}✓ Nginx reloaded${NC}"
-else
-    echo -e "${RED}✗ Nginx configuration test failed!${NC}"
-    exit 1
+code=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:5055/api/health || true)
+if [ "$code" != "200" ]; then
+  echo -e "${RED}✗ /api/health returned $code${NC}"
+  curl -s http://localhost:5055/api/health || true
+  exit 1
 fi
+echo -e "${GREEN}✓ /api/health 200${NC}"
+echo
 
+echo -e "${YELLOW}Step 7: Nginx (only if it can be done unattended)${NC}"
+echo "--------------------------------------"
+# Deliberately optional and non-fatal, both halves of which matter.
+#
+# Optional: nginx serves dist as static files and picks up a rebuild immediately. A
+# reload is only needed when the nginx CONFIG changes, which a deploy does not do.
+#
+# Non-fatal: sudo on this host requires a password, so `sudo nginx -t` under `set -e`
+# would hang for the prompt and then abort — reporting failure and printing rollback
+# instructions for a deploy that had already succeeded, restart and health check
+# included. Failing a green deploy at the last step is worse than skipping a step
+# that changes nothing.
+if sudo -n true 2>/dev/null; then
+  sudo nginx -t && sudo systemctl reload nginx && echo -e "${GREEN}✓ Nginx reloaded${NC}"
+else
+  echo "Skipped — sudo needs a password here, and a static rebuild needs no reload."
+  echo "If you changed nginx config: sudo nginx -t && sudo systemctl reload nginx"
+fi
+echo
+
+trap - ERR
+pm2 list | grep hrms2 || true
 echo
 echo "=========================================="
-echo -e "${GREEN}Deployment Complete!${NC}"
+echo -e "${GREEN}Deployment Complete${NC}"
 echo "=========================================="
+echo "  from $ROLLBACK_SHA -> $(git -C "$ROOT" rev-parse --short HEAD)"
+echo "  backup:   $BACKUP_DIR"
+echo "  rollback: cd $ROOT && git reset --hard $ROLLBACK_SHA && tar xzf $BACKUP_DIR/frontend-dist.tar.gz -C $ROOT"
 echo
-echo "Verification URLs:"
-echo "  - Homepage: https://mcnhrms.teammas.in/"
-echo "  - Waiting Room: https://mcnhrms.teammas.in/display/waiting-room?branch=NOIDA"
-echo
-echo "Next Steps:"
-echo "  1. Open waiting room URL in browser"
-echo "  2. Verify recruiter names display"
-echo "  3. Login to HRMS and check Operations > Payroll sidebar"
-echo "  4. Test one or two new payroll pages"
-echo
-echo "Rollback command (if needed):"
-echo "  cd /var/www/HRMS2 && git checkout 22d5155e && npm run build"
-echo "  cd backend && npm run build && pm2 restart hrms2-backend"
-echo
-echo -e "${GREEN}Deployment successful! 🚀${NC}"
+echo "Verify:"
+echo "  https://mcnhrms.teammas.in/"
+echo "  https://mcnhrms.teammas.in/api/health"
