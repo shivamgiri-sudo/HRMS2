@@ -8,7 +8,12 @@ import {
 } from "./reporting-access.js";
 import { db } from "../../db/mysql.js";
 import { resolvePayrollMonth } from "./payroll-month.js";
-import { PAYROLL_REGISTER_BODY } from "./executors/payroll.executor.js";
+import {
+  PAYROLL_RUN_STATUSES,
+  PAYROLL_REGISTER_BODY,
+  PAYROLL_VARIANCE_BODY,
+  PAYSLIP_STATUS_BODY,
+} from "./executors/payroll.executor.js";
 
 export const reportSuiteHighRiskRouter = Router();
 reportSuiteHighRiskRouter.use(requireAuth);
@@ -18,7 +23,9 @@ const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any,
 const roles = reportCatalogAccessMiddleware;
 // Include all post-calculation statuses so reports show data regardless of approval stage
 // "draft" is excluded — draft runs have no calculated lines yet
-const PAYROLL_STATUSES = ["processing", "reviewed", "calculated", "approved", "locked", "disbursed", "finalized", "released", "paid"];
+// Imported rather than declared here: this list decides which payroll runs every report on
+// this router can see, and a second copy would eventually disagree with the executors.
+const PAYROLL_STATUSES = [...PAYROLL_RUN_STATUSES];
 
 function dateParam(value: unknown, fallback: string) {
   const text = String(value ?? "").trim();
@@ -160,26 +167,10 @@ reportSuiteHighRiskRouter.get("/payroll-variance", roles, h(async (req, res) => 
   addScopedEmployeeFilters(req, clauses, params);
   clauses.push("spr.run_month = ?"); params.push(await resolvePayrollMonth(req.query.month));
   clauses.push(payrollStatusClause("spr")); params.push(...PAYROLL_STATUSES);
-  const sql = `SELECT e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-                      COALESCE(hcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
-                      COALESCE(hcc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
-                      COALESCE(hpm.process_name, 'UNASSIGNED') AS process_name,
-                      spr.run_month, spl.net_salary AS current_net,
-                      prev.net_salary AS previous_net,
-                      ROUND(((spl.net_salary - COALESCE(prev.net_salary,0)) / NULLIF(prev.net_salary,0))*100,2) AS net_variance_pct,
-                      spl.lwp_days,
-                      CASE WHEN prev.id IS NULL THEN 'NO_PREVIOUS_MONTH'
-                           WHEN ABS(ROUND(((spl.net_salary - COALESCE(prev.net_salary,0)) / NULLIF(prev.net_salary,0))*100,2)) >= 20 THEN 'HIGH_VARIANCE'
-                           WHEN spl.net_salary < 0 THEN 'NEGATIVE_NET'
-                           ELSE 'OK' END AS variance_status
-                 FROM salary_prep_line spl
-                 JOIN salary_prep_run spr ON spr.id = spl.run_id
-                 JOIN employees e ON e.id = spl.employee_id
-                 LEFT JOIN salary_prep_run pspr ON pspr.run_month = DATE_FORMAT(DATE_SUB(STR_TO_DATE(CONCAT(spr.run_month,'-01'),'%Y-%m-%d'), INTERVAL 1 MONTH),'%Y-%m')
-                   AND ${payrollStatusClause("pspr")}
-                 LEFT JOIN salary_prep_line prev ON prev.run_id = pspr.id AND prev.employee_id = spl.employee_id
-                 LEFT JOIN cost_centre_master hcc ON hcc.id = e.cost_centre_id
-                 LEFT JOIN process_master hpm ON hpm.id = e.process_id
+  // Shared with the executor that serves the download — see PAYROLL_VARIANCE_BODY. The
+  // status placeholders sit inside the previous-month JOIN, ahead of the WHERE, so the
+  // status list is prepended to the parameters below.
+  const sql = `${PAYROLL_VARIANCE_BODY.replace("__STATUS_PLACEHOLDERS__", PAYROLL_STATUSES.map(() => "?").join(","))}
                 WHERE ${clauses.join(" AND ")}
                 ORDER BY ABS(COALESCE(net_variance_pct,0)) DESC`;
   return sendRows(res, "payroll-variance", sql, [...PAYROLL_STATUSES, ...params], limitParam(req.query.limit), { payrollStatuses: PAYROLL_STATUSES }, offsetParam(req.query.offset));
@@ -191,16 +182,10 @@ reportSuiteHighRiskRouter.get("/payslip-status", roles, h(async (req, res) => {
   addScopedEmployeeFilters(req, clauses, params);
   clauses.push("spr.run_month = ?"); params.push(await resolvePayrollMonth(req.query.month));
   clauses.push(payrollStatusClause("spr")); params.push(...PAYROLL_STATUSES);
-  const sql = `SELECT spr.run_month, spr.status AS run_status,
-                      e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-                      sp.payslip_ref, sp.file_url, sp.acknowledged_at,
-                      CASE WHEN sp.id IS NULL THEN 'NOT_GENERATED'
-                           WHEN sp.acknowledged_at IS NULL THEN 'RELEASED_NOT_ACKNOWLEDGED'
-                           ELSE 'ACKNOWLEDGED' END AS payslip_status
-                 FROM salary_prep_line spl
-                 JOIN salary_prep_run spr ON spr.id = spl.run_id
-                 JOIN employees e ON e.id = spl.employee_id
-                 LEFT JOIN salary_payslip sp ON sp.prep_line_id = spl.id
+  // Shared with the executor that serves the download — see PAYSLIP_STATUS_BODY. The union
+  // of the two former shapes, which is also the only one carrying employee code, cost
+  // centre and process together.
+  const sql = `${PAYSLIP_STATUS_BODY}
                 WHERE ${clauses.join(" AND ")}
                 ORDER BY payslip_status DESC, employee_name`;
   return sendRows(res, "payslip-status", sql, params, limitParam(req.query.limit), { payrollStatuses: PAYROLL_STATUSES }, offsetParam(req.query.offset));

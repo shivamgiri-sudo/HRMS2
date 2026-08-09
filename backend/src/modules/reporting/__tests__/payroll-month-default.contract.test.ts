@@ -60,6 +60,8 @@ function blocks(): Block[] {
  */
 const SHARED_BODIES: Record<string, string> = {
   PAYROLL_REGISTER_BODY: read(`${R}/executors/payroll.executor.ts`),
+  PAYROLL_VARIANCE_BODY: read(`${R}/executors/payroll.executor.ts`),
+  PAYSLIP_STATUS_BODY: read(`${R}/executors/payroll.executor.ts`),
 };
 
 /**

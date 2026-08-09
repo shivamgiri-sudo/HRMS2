@@ -43,6 +43,87 @@ async function count(baseSql: string, params: unknown[]): Promise<number> {
 }
 
 /**
+ * Payroll run statuses a report may read.
+ *
+ * 'draft' is excluded because a draft run has no calculated lines yet. Defined here and imported
+ * by the high-risk router rather than declared in both, for the same reason the SELECTs are
+ * shared: a status list that exists twice is a status list that will eventually differ, and the
+ * two copies decide which payroll runs a report can see.
+ */
+export const PAYROLL_RUN_STATUSES = [
+  "processing", "reviewed", "calculated", "approved",
+  "locked", "disbursed", "finalized", "released", "paid",
+] as const;
+
+/**
+ * payroll-variance and payslip-status SELECTs, shared with the high-risk router that serves the
+ * screen — same reasoning as PAYROLL_REGISTER_BODY. Two separately maintained copies is what
+ * made these two disagree; one copy cannot.
+ *
+ * payroll-variance: the screen's shape is authoritative here because the catalogue declares
+ * exactly its eleven columns. The executor's own version returned a different set and, without
+ * the run-month filter the screen applies, more than 5,000 rows — enough for the download to
+ * refuse outright with TOO_LARGE while the screen showed 1,464.
+ *
+ * payslip-status: the catalogue declares NO columns for this code, so it cannot arbitrate, and
+ * neither side was complete. The screen carried run_status and employee_code but no cost centre,
+ * branch or process; the executor carried those three but not run_status or employee_code. The
+ * union is used, which is also the only shape that satisfies the standing requirement that every
+ * employee-grain report carry employee code, cost centre and process.
+ *
+ * The previous-month join in payroll-variance is the report: it self-joins salary_prep_run one
+ * calendar month back, restricted to the same payroll statuses, so "previous_net" means the
+ * prior run rather than whatever row happened to sort first. Its placeholders sit inside that
+ * JOIN, ahead of the WHERE, which is why the caller prepends the status list to the parameters.
+ */
+export const PAYROLL_VARIANCE_BODY = `
+    SELECT e.employee_code,
+           COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
+           COALESCE(hcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
+           COALESCE(hcc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
+           COALESCE(hpm.process_name, 'UNASSIGNED') AS process_name,
+           spr.run_month,
+           spl.net_salary AS current_net,
+           prev.net_salary AS previous_net,
+           ROUND(((spl.net_salary - COALESCE(prev.net_salary,0)) / NULLIF(prev.net_salary,0))*100,2) AS net_variance_pct,
+           spl.lwp_days,
+           CASE WHEN prev.id IS NULL THEN 'NO_PREVIOUS_MONTH'
+                WHEN ABS(ROUND(((spl.net_salary - COALESCE(prev.net_salary,0)) / NULLIF(prev.net_salary,0))*100,2)) >= 20 THEN 'HIGH_VARIANCE'
+                WHEN spl.net_salary < 0 THEN 'NEGATIVE_NET'
+                ELSE 'OK' END AS variance_status
+      FROM salary_prep_line spl
+      JOIN salary_prep_run spr ON spr.id = spl.run_id
+      JOIN employees e ON e.id = spl.employee_id
+      LEFT JOIN salary_prep_run pspr ON pspr.run_month = DATE_FORMAT(DATE_SUB(STR_TO_DATE(CONCAT(spr.run_month,'-01'),'%Y-%m-%d'), INTERVAL 1 MONTH),'%Y-%m')
+        AND LOWER(pspr.status) IN (__STATUS_PLACEHOLDERS__)
+      LEFT JOIN salary_prep_line prev ON prev.run_id = pspr.id AND prev.employee_id = spl.employee_id
+      LEFT JOIN cost_centre_master hcc ON hcc.id = e.cost_centre_id
+      LEFT JOIN process_master hpm ON hpm.id = e.process_id`;
+
+export const PAYSLIP_STATUS_BODY = `
+    SELECT spr.run_month,
+           spr.status AS run_status,
+           e.employee_code,
+           COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
+           COALESCE(sp_cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
+           COALESCE(sp_cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
+           COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
+           COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
+           sp.payslip_ref,
+           sp.file_url,
+           sp.acknowledged_at,
+           CASE WHEN sp.id IS NULL THEN 'NOT_GENERATED'
+                WHEN sp.acknowledged_at IS NULL THEN 'RELEASED_NOT_ACKNOWLEDGED'
+                ELSE 'ACKNOWLEDGED' END AS payslip_status
+      FROM salary_prep_line spl
+      JOIN salary_prep_run spr ON spr.id = spl.run_id
+      JOIN employees e ON e.id = spl.employee_id
+      LEFT JOIN salary_payslip sp ON sp.prep_line_id = spl.id
+      LEFT JOIN branch_master b ON b.id = e.branch_id
+      LEFT JOIN process_master p ON p.id = e.process_id
+      LEFT JOIN cost_centre_master sp_cc ON sp_cc.id = e.cost_centre_id`;
+
+/**
  * The payroll register's SELECT and joins, shared by the executor below and by the high-risk
  * router that serves the screen.
  *
@@ -175,80 +256,47 @@ export async function payrollRegister(
   return { rows: out, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > out.length, nextCursor };
 }
 
-// ---------------------------------------------------------------------------
-// payroll-variance
-// ---------------------------------------------------------------------------
+/**
+ * payroll-variance
+ *
+ * Uses PAYROLL_VARIANCE_BODY, shared with the high-risk router that serves the screen, so the
+ * two cannot drift again.
+ *
+ * This executor previously ran its own query with no run-month restriction, so the download
+ * gathered over 5,000 rows and refused with TOO_LARGE while the screen showed 1,464 for the
+ * month. The catalogue declares exactly the screen's eleven columns, which is why the screen's
+ * shape is the shared one.
+ *
+ * Bind order: the previous-month JOIN carries the payroll-status placeholders and sits ahead of
+ * the WHERE, so the status list is prepended to the parameters.
+ */
 export async function payrollVariance(
   filters: ExecFilters,
   scope: ExecScope,
   options: ExecOptions
 ): Promise<ExecResult> {
-  const currentMonth = await resolvePayrollMonth(filters.month);
+  const runMonth = await resolvePayrollMonth(filters.month);
 
-  // Resolve previous month: use explicit filter or subtract one calendar month
-  let previousMonth: string;
-  if (typeof filters.previousMonth === "string" && /^\d{4}-\d{2}$/.test(filters.previousMonth)) {
-    previousMonth = filters.previousMonth;
-  } else {
-    const [y, m] = currentMonth.split("-").map(Number);
-    const prevDate = new Date(y, m - 2, 1); // JS months 0-indexed; m-2 yields prior month
-    previousMonth = `${prevDate.getFullYear()}-${String(prevDate.getMonth() + 1).padStart(2, "0")}`;
-  }
-
-  // JOIN ON params must precede WHERE params in positional binding
-  const joinParams: unknown[] = [currentMonth, previousMonth];
   const clauses: string[] = ["e.id IS NOT NULL"];
-  const whereParams: unknown[] = [];
-  appendScopeConditions(scope, clauses, whereParams);
-  appendFilterConditions(filters, clauses, whereParams);
+  const params: unknown[] = [];
+  appendScopeConditions(scope, clauses, params);
+  appendFilterConditions(filters, clauses, params);
+  clauses.push("spr.run_month = ?");
+  params.push(runMonth);
+  clauses.push(`LOWER(spr.status) IN (${PAYROLL_RUN_STATUSES.map(() => "?").join(",")})`);
+  params.push(...PAYROLL_RUN_STATUSES);
 
-  if (options.mode === "worker" && options.cursor != null) {
-    clauses.push("curr.id > ?");
-    whereParams.push(options.cursor);
-  }
-
-  const params = [...joinParams, ...whereParams];
-
-  const base = `
-    SELECT curr.id AS _cursor,
-           e.employee_code,
-           COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-           COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
-           COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
-           COALESCE(sp_cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
-           COALESCE(sp_cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
-           COALESCE(d.dept_name, 'UNASSIGNED') AS department_name,
-           curr_run.run_month,
-           COALESCE(curr.gross_salary,0) AS current_gross,
-           COALESCE(prev.gross_salary,0) AS previous_gross,
-           COALESCE(curr.gross_salary,0) - COALESCE(prev.gross_salary,0) AS variance_gross,
-           COALESCE(curr.net_salary,0) AS current_net,
-           COALESCE(prev.net_salary,0) AS previous_net,
-           COALESCE(curr.net_salary,0) - COALESCE(prev.net_salary,0) AS variance_net,
-           CASE
-             WHEN ABS(COALESCE(curr.net_salary,0) - COALESCE(prev.net_salary,0)) > 5000 THEN 'HIGH_VARIANCE'
-             WHEN ABS(COALESCE(curr.net_salary,0) - COALESCE(prev.net_salary,0)) > 1000 THEN 'MEDIUM_VARIANCE'
-             ELSE 'NORMAL'
-           END AS variance_flag
-      FROM salary_prep_line curr
-      JOIN salary_prep_run curr_run ON curr_run.id = curr.run_id AND curr_run.run_month = ?
-      LEFT JOIN salary_prep_line prev ON prev.employee_id = curr.employee_id
-      LEFT JOIN salary_prep_run prev_run ON prev_run.id = prev.run_id AND prev_run.run_month = ?
-      JOIN employees e ON e.id = curr.employee_id
-      LEFT JOIN branch_master b ON b.id = e.branch_id
-      LEFT JOIN process_master p ON p.id = e.process_id
-      LEFT JOIN cost_centre_master sp_cc ON sp_cc.id = e.cost_centre_id
-      LEFT JOIN department_master d ON d.id = e.department_id
+  const body = PAYROLL_VARIANCE_BODY.replace(
+    "__STATUS_PLACEHOLDERS__", PAYROLL_RUN_STATUSES.map(() => "?").join(","));
+  const base = `${body}
      WHERE ${clauses.join(" AND ")}
-     ORDER BY curr.id ASC`;
+     ORDER BY ABS(COALESCE(net_variance_pct,0)) DESC`;
 
-  const total = options.includeTotal ? await count(base, params) : 0;
-  const sql   = options.mode === "worker" ? `${base} LIMIT ${options.limit}` : applyPagination(base, options);
-  const rows  = await query(sql, params) as Record<string, unknown>[];
-  const nextCursor = (options.mode === "worker" && rows.length > 0)
-    ? (rows[rows.length - 1]._cursor as number) : null;
-  const out = rows.map(({ _cursor: _, ...rest }) => rest);
-  return { rows: out, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > out.length, nextCursor };
+  const all = [...PAYROLL_RUN_STATUSES, ...params];
+  const total = options.includeTotal ? await count(base, all) : 0;
+  const sql   = applyPagination(base, options);
+  const rows  = await query(sql, all) as Record<string, unknown>[];
+  return { rows, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > rows.length, nextCursor: null };
 }
 
 // ---------------------------------------------------------------------------
@@ -860,14 +908,17 @@ export async function neftTransferFile(
   return { rows, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > rows.length };
 }
 
-// ---------------------------------------------------------------------------
-// payslip-status
-//
-// Folded in from an inline `case` block, behaviour preserved. One row per payroll line
-// with the payslip's generation and acknowledgement state; a NULL salary_payslip row means
-// NOT_GENERATED, which is the state this report exists to surface. Gains cost centre,
-// process and branch — a payslip chase-list is worked branch by branch.
-// ---------------------------------------------------------------------------
+/**
+ * payslip-status
+ *
+ * Uses PAYSLIP_STATUS_BODY, shared with the high-risk router that serves the screen.
+ *
+ * The catalogue declares no columns for this code, so it could not arbitrate between the two
+ * shapes, and neither was complete: the screen had run_status and employee_code but no cost
+ * centre, branch or process; this executor had those three but neither run_status nor
+ * employee_code. The shared body is the union, which is also the only shape that satisfies the
+ * standing requirement for employee code, cost centre and process on an employee-grain report.
+ */
 export async function payslipStatus(
   filters: ExecFilters,
   scope: ExecScope,
@@ -882,36 +933,14 @@ export async function payslipStatus(
   clauses.push("spr.run_month = ?");
   params.push(runMonth);
 
-  const base = `
-    SELECT spr.run_month,
-           e.employee_code,
-           COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-           COALESCE(sp_cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
-           COALESCE(sp_cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
-           COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
-           COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
-           sp.payslip_ref,
-           sp.file_url,
-           sp.acknowledged_at,
-           CASE
-             WHEN sp.id IS NULL THEN 'NOT_GENERATED'
-             WHEN sp.acknowledged_at IS NULL THEN 'RELEASED_NOT_ACKNOWLEDGED'
-             ELSE 'ACKNOWLEDGED'
-           END AS payslip_status
-      FROM salary_prep_line spl
-      JOIN salary_prep_run spr ON spr.id = spl.run_id
-      JOIN employees e ON e.id = spl.employee_id
-      LEFT JOIN salary_payslip sp ON sp.prep_line_id = spl.id
-      LEFT JOIN branch_master b ON b.id = e.branch_id
-      LEFT JOIN process_master p ON p.id = e.process_id
-      LEFT JOIN cost_centre_master sp_cc ON sp_cc.id = e.cost_centre_id
+  const base = `${PAYSLIP_STATUS_BODY}
      WHERE ${clauses.join(" AND ")}
      ORDER BY payslip_status DESC, employee_name`;
 
   const total = options.includeTotal ? await count(base, params) : 0;
   const sql   = applyPagination(base, options);
   const rows  = await query(sql, params) as Record<string, unknown>[];
-  return { rows, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > rows.length };
+  return { rows, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > rows.length, nextCursor: null };
 }
 
 // ---------------------------------------------------------------------------
