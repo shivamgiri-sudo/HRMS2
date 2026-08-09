@@ -4,6 +4,7 @@ import { requireRole } from "../../middleware/requireRole.js";
 import { requireClientAuth } from "../../middleware/requireClientAuth.js";
 import { portalController as c } from "./portal.controller.js";
 import { portalSnapshotService } from "./portal.snapshot.service.js";
+import { portalPermissionsService } from "./portal-permissions.service.js";
 
 const router = Router();
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -118,6 +119,63 @@ router.get(
       `SELECT id, template_name FROM kpi_template WHERE active_status = 1 ORDER BY template_name`
     );
     return res.json({ data: rows });
+  })
+);
+
+/*
+ * ── Granular client-portal permissions ──────────────────────────────────────
+ * GET    /api/portal/internal/client-permissions?client_user_id=X
+ * POST   /api/portal/internal/client-permissions
+ * DELETE /api/portal/internal/client-permissions/:id
+ *
+ * These manage portal_user_permissions, which nothing has ever written to. Grants are additive:
+ * a client user with no rows behaves exactly as they do today, since portal access is still
+ * governed by the processIds carried in the token. Enforcement is opt-in per endpoint via
+ * portalPermissionsService.hasPermission, so recording a grant here does not by itself change
+ * what anyone can see. Admin-only, and every write records who granted it.
+ */
+router.get(
+  "/internal/client-permissions",
+  requireRole("admin", "hr", "super_admin"),
+  h(async (req, res) => {
+    const clientUserId = req.query.client_user_id ? String(req.query.client_user_id) : undefined;
+    return res.json({ success: true, data: await portalPermissionsService.list(clientUserId) });
+  })
+);
+
+router.post(
+  "/internal/client-permissions",
+  requireRole("admin", "super_admin"),
+  h(async (req, res) => {
+    const { client_user_id, permission_type, resource_scope, resource_ids, expires_at } =
+      req.body as Record<string, unknown>;
+    if (!client_user_id || !permission_type) {
+      throw Object.assign(new Error("client_user_id and permission_type are required"), { statusCode: 400 });
+    }
+    if (resource_ids !== undefined && resource_ids !== null && !Array.isArray(resource_ids)) {
+      throw Object.assign(new Error("resource_ids must be an array of ids"), { statusCode: 400 });
+    }
+    await portalPermissionsService.grant({
+      clientUserId: String(client_user_id),
+      permissionType: String(permission_type),
+      resourceScope: resource_scope == null ? null : String(resource_scope),
+      resourceIds: (resource_ids as string[] | undefined) ?? null,
+      grantedBy: (req as { authUser?: { id?: string } }).authUser?.id ?? "system",
+      expiresAt: expires_at == null ? null : String(expires_at),
+    });
+    return res.status(201).json({ success: true });
+  })
+);
+
+router.delete(
+  "/internal/client-permissions/:id",
+  requireRole("admin", "super_admin"),
+  h(async (req, res) => {
+    const revoked = await portalPermissionsService.revoke(String(req.params.id));
+    if (!revoked) {
+      throw Object.assign(new Error("No active permission with that id"), { statusCode: 404 });
+    }
+    return res.json({ success: true });
   })
 );
 
