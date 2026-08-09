@@ -391,7 +391,10 @@ router.get("/apr", requireRole(...ALLOWED_ROLES), h(async (req, res) => {
           ELSE NULL
         END as shrinkage_pct
       FROM Shivamgiri.apr apr
-      LEFT JOIN mas_hrms.employees e ON e.employee_code = apr.UserID
+      -- Shivamgiri.apr.UserID is utf8mb4_0900_ai_ci and mas_hrms.employees.employee_code is
+      -- utf8mb4_unicode_ci, so comparing them raised ER_CANT_AGGREGATE_2COLLATIONS and this
+      -- endpoint returned 500 for every request against 27,374 rows of agent performance.
+      LEFT JOIN mas_hrms.employees e ON e.employee_code = apr.UserID COLLATE utf8mb4_unicode_ci
       WHERE apr.ReportDate BETWEEN ? AND ?
       ORDER BY apr.ReportDate DESC
       ${sqlLimit(limit)}
