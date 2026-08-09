@@ -8,8 +8,8 @@
  *   middleware runs before the miss), so it reads like a permissions problem instead of an
  *   absent feature.
  *
- *   A sweep on 2026-08-08 found seven such calls. Six have since been built; the rest are in
- *   KNOWN_MISSING below with the reason. None was a typo — each was a UI built against a
+ *   A sweep on 2026-08-08 found seven such calls. All seven have since been built; anything that
+ *   reappears here is a new one. None was a typo — each was a UI built against a
  *   server side that was never finished, which is the failure CLAUDE.md rule 9 names directly:
  *   "UI enhancement must not hide missing backend functionality." They accumulated silently
  *   because nothing was watching.
@@ -202,8 +202,15 @@ const KNOWN_MISSING: Record<string, string> = {
   // "Some performance data sources are unavailable … This is not an all-clear" rather than
   // letting an empty array become a real zero. But three of its seven feeds can never load,
   // so that banner is permanent and its quality/ops alerts never actually evaluate.
-  "/api/quality-dashboard/scores":
-    "router serves /summary, /trend, /agents, /clients, /apr. No endpoint returns per-row quality_score AND fatal_count together; quality-executive.service.ts computes quality_score but is wired to no route at all.",
+  // /api/quality-dashboard/scores used to sit here too, described as unbuildable because no
+  // endpoint returned quality_score and fatal_count together. The real obstacle was
+  // ATTRIBUTION, and it was solvable: db_audit identifies an agent only by an 8-char dialer
+  // login, and employees.call_centre_code — the obvious bridge — is NULL on all 58,627 rows.
+  // Shivamgiri.employee_source_alias maps employee_code to source_agent_name per source_system
+  // and resolves 17,949 of 19,827 audits (90.5%), every one with a branch.
+  //
+  // The lesson matches the ops entry above: "the data does not exist" was really "I looked for
+  // it under one name, in one database". Both feeds were built once the right table was found.
   // /api/performance-dashboard/ops used to sit here, described as "unfixable by URL:
   // handled_volume, target_volume and shrinkage_minutes appear NOWHERE in the backend". That
   // was wrong, and wrong in an instructive way: those exact column NAMES appear nowhere, but
