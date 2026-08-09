@@ -1,13 +1,13 @@
 -- ═══════════════════════════════════════════════════════════════════════════════
 -- ATS FIX MIGRATION - RUN THIS ON PRODUCTION DATABASE
 -- ═══════════════════════════════════════════════════════════════════════════════
--- Server: 122.184.128.90
+-- Server: <DB_HOST — see backend/.env>
 -- Database: mas_hrms
 -- User: root
 --
 -- HOW TO RUN:
 -- Option 1 (SSH to server):
---   ssh masadmin@122.184.128.90
+--   ssh masadmin@<DB_HOST — see backend/.env>
 --   mysql -u root -p mas_hrms < /path/to/this/file.sql
 --
 -- Option 2 (MySQL Workbench / phpMyAdmin):

@@ -320,7 +320,7 @@ describe("Composite Befisc/Luckpay adapter", () => {
         status: 403,
         data: {
           code: "AUTH_023",
-          message: "IP address 115.241.59.220 is not whitelisted",
+          message: "IP address 203.0.113.10 is not whitelisted",
         },
       },
       config: {
@@ -332,7 +332,7 @@ describe("Composite Befisc/Luckpay adapter", () => {
 
     const adapter = buildAdapterFromDbConfig(luckpayCfg);
     await adapter.verifyPan({ panNumber: "ABCDE1234F" }).catch((error) => {
-      expect(String(error.message)).toContain("IP address 115.241.59.220 is not whitelisted");
+      expect(String(error.message)).toContain("IP address 203.0.113.10 is not whitelisted");
       expect(String(error.message)).not.toContain("test-basic-token");
     });
   });
@@ -344,7 +344,7 @@ describe("Composite Befisc/Luckpay adapter", () => {
     vi.spyOn(axios, "post").mockRejectedValueOnce({
       response: {
         status: 403,
-        data: { code: "AUTH_023", status: "Failed", message: "IP address 14.97.31.38 is not whitelisted" },
+        data: { code: "AUTH_023", status: "Failed", message: "IP address 203.0.113.11 is not whitelisted" },
       },
     });
 

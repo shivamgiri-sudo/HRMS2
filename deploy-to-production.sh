@@ -1,6 +1,6 @@
 #!/bin/bash
 # Production Deployment Script
-# Server: 115.241.59.220 | User: masadmin | Project: /var/www/HRMS2
+# Server: <deploy host — see backend/.env> | User: masadmin | Project: /var/www/HRMS2
 
 set -e  # Exit on error
 

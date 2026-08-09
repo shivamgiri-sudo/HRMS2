@@ -22,7 +22,7 @@
  * Hosts default to the office LAN. Off-LAN, pass the public addresses — which one works
  * flips with the network the machine is on, and the wrong one gives ETIMEDOUT rather than
  * an auth error, so it reads like the database is down when it is not:
- *   --hrms-host=122.184.128.90 --bill-host=14.97.30.236
+ *   --hrms-host=${process.env.DB_HOST} --bill-host=${process.env.BILL_DB_HOST}
  */
 
 import mysql from 'mysql2/promise';

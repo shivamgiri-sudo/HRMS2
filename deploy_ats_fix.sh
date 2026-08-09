@@ -1,12 +1,12 @@
 #!/bin/bash
 # ═══════════════════════════════════════════════════════════════════════════════
 # ATS Fix Deployment Script
-# Run this on production server: 122.184.128.90
+# Run this on the production server named by ATS_DEPLOY_SERVER
 # ═══════════════════════════════════════════════════════════════════════════════
 
 set -e  # Exit on error
 
-SERVER="122.184.128.90"
+SERVER="${ATS_DEPLOY_SERVER:?set ATS_DEPLOY_SERVER to the target host, e.g. set -a; . backend/.env; set +a}"
 USER="masadmin"
 DB_NAME="mas_hrms"
 DB_USER="root"

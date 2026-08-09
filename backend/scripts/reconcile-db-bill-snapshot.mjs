@@ -21,7 +21,7 @@
  *
  * Usage:
  *   node backend/scripts/reconcile-db-bill-snapshot.mjs
- *   node backend/scripts/reconcile-db-bill-snapshot.mjs --hrms-host=122.184.128.90 --bill-host=14.97.30.236
+ *   node backend/scripts/reconcile-db-bill-snapshot.mjs --hrms-host=${process.env.DB_HOST} --bill-host=${process.env.BILL_DB_HOST}
  *   node backend/scripts/reconcile-db-bill-snapshot.mjs --months=6
  */
 

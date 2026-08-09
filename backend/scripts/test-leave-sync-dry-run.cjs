@@ -15,7 +15,7 @@ require('dotenv').config();
 
 // Legacy MySQL (db_bill - READ ONLY)
 const legacyConfig = {
-  host: '14.97.30.236',
+  host: process.env.BILL_DB_HOST,
   port: 3306,
   user: 'shivam_user',
   password: process.env.DB_PASSWORD,
@@ -24,7 +24,7 @@ const legacyConfig = {
 
 // HRMS MySQL (mas_hrms - READ ONLY for this test)
 const hrmsConfig = {
-  host: '122.184.128.90',
+  host: process.env.DB_HOST,
   port: 3306,
   user: 'shivam_user',
   password: process.env.DB_PASSWORD,

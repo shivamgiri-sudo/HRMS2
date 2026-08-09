@@ -2,7 +2,7 @@
  * Dispatch a consolidated joining kit from the production server.
  *
  * This cannot be run from a developer machine. The Aadhaar eSign provider
- * accepts only the deployment's egress IP (115.241.59.220); from anywhere else
+ * accepts only the deployment's egress IP (${process.env.LMS_DB_HOST}); from anywhere else
  * the handshake fails with "IP address <yours> is not whitelisted", and because
  * the kit email is sent after that step, nothing goes out.
  *

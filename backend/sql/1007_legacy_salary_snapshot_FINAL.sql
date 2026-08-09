@@ -3,7 +3,7 @@
 --
 -- RUN THIS ON PRODUCTION SERVER where both db_bill and mas_hrms are accessible
 --
--- db_bill: 14.97.30.236 (or 192.168.10.22 from internal)
+-- db_bill: <BILL_DB_HOST — see backend/.env> (or 192.168.10.22 from internal)
 -- mas_hrms: 192.168.10.6
 --
 -- Command: mysql -h 192.168.10.6 -u shivam_user -p'<set DB_PASSWORD in backend/.env>' mas_hrms < 1007_legacy_salary_snapshot_FINAL.sql

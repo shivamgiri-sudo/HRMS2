@@ -14,7 +14,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const DB_CONFIG = {
-  host: '122.184.128.90',
+  host: process.env.DB_HOST,
   port: 3306,
   user: 'shivam_user',
   password: process.env.DB_PASSWORD,
