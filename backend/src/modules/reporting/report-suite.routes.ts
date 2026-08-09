@@ -2106,55 +2106,9 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
       break;
     }
 
-    case "employee-document-compliance":
-      addScopedEmployeeFilters(req, clauses, params);
-      clauses.push("e.active_status = 1");
-      // Use checklist counts when available (employees onboarded via ATS),
-      // fall back to employee_documents for legacy/direct uploads.
-      sql = `SELECT e.employee_code,
-                    COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-                    COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
-                    COALESCE(d.dept_name, 'UNASSIGNED') AS department_name,
-                    COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
-                    COALESCE(cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
-                    COALESCE(cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
-                    -- Checklist counts (primary for ATS-onboarded employees)
-                    COALESCE(cl_agg.total_cl, 0)    AS checklist_total,
-                    COALESCE(cl_agg.verified_cl, 0) AS checklist_verified,
-                    COALESCE(cl_agg.missing_cl, 0)  AS checklist_missing,
-                    -- General employee_documents counts (fallback)
-                    COUNT(ed.id)                                                                                         AS ed_total,
-                    SUM(CASE WHEN ed.verified = 1 THEN 1 ELSE 0 END)                                                   AS ed_verified,
-                    SUM(CASE WHEN ed.file_url IS NULL OR ed.file_url = '' THEN 1 ELSE 0 END)                           AS ed_missing,
-                    -- Resolved counts: prefer checklist when it has rows
-                    CASE WHEN COALESCE(cl_agg.total_cl,0) > 0 THEN COALESCE(cl_agg.total_cl,0)    ELSE COUNT(ed.id) END AS total_docs,
-                    CASE WHEN COALESCE(cl_agg.total_cl,0) > 0 THEN COALESCE(cl_agg.verified_cl,0) ELSE SUM(CASE WHEN ed.verified=1 THEN 1 ELSE 0 END) END AS verified_docs,
-                    CASE WHEN COALESCE(cl_agg.total_cl,0) > 0 THEN COALESCE(cl_agg.missing_cl,0)  ELSE SUM(CASE WHEN ed.file_url IS NULL OR ed.file_url='' THEN 1 ELSE 0 END) END AS missing_docs,
-                    COALESCE(e.joining_document_completion_pct, 0) AS completion_pct,
-                    e.joining_document_status
-               FROM employees e
-               LEFT JOIN employee_documents ed ON ed.employee_id = e.id
-               LEFT JOIN branch_master b ON b.id = e.branch_id
-               LEFT JOIN department_master d ON d.id = e.department_id
-               LEFT JOIN process_master p ON p.id = e.process_id
-               LEFT JOIN cost_centre_master cc ON cc.id = e.cost_centre_id
-               LEFT JOIN (
-                 SELECT employee_id,
-                        COUNT(*) AS total_cl,
-                        SUM(CASE WHEN status IN ('verified','signed_verified','completed') THEN 1 ELSE 0 END) AS verified_cl,
-                        SUM(CASE WHEN status IN ('pending_hr_upload','pending_candidate_esign','pending_generation','rejected') AND mandatory=1 THEN 1 ELSE 0 END) AS missing_cl
-                   FROM employee_joining_document_checklist
-                  GROUP BY employee_id
-               ) cl_agg ON cl_agg.employee_id = e.id
-              WHERE ${clauses.join(" AND ")}
-              -- ONLY_FULL_GROUP_BY is enabled on this server, so the three columns added to the
-              -- SELECT must be repeated here or the whole report fails rather than degrading.
-              GROUP BY e.id, e.employee_code, e.full_name, e.first_name, e.last_name, b.branch_name, d.dept_name,
-                       p.process_name, cc.cost_centre_code, cc.cost_centre_name,
-                       cl_agg.total_cl, cl_agg.verified_cl, cl_agg.missing_cl,
-                       e.joining_document_completion_pct, e.joining_document_status
-              ORDER BY missing_docs DESC, employee_name`;
-      break;
+    // "employee-document-compliance" is intentionally not handled here — it falls through to
+    // executeReport(), which now carries this exact SQL including the two-source resolution
+    // between the ATS joining checklist and employee_documents. Its download previously 404'd.
 
     case "asset-service-log":
       sql = `SELECT am.asset_code, am.asset_name, am.asset_category,

@@ -41,6 +41,87 @@ function sensitiveCol(canView: boolean, expr: string, alias: string): string {
 // ---------------------------------------------------------------------------
 // uan-status-report
 // ---------------------------------------------------------------------------
+/**
+ * employee-document-compliance
+ *
+ * Promoted from the inline case block, which had no executor and so could not be downloaded.
+ *
+ * Two document sources are reconciled here and the resolution rule is the report, not an
+ * implementation detail: employee_joining_document_checklist is authoritative for anyone
+ * onboarded through ATS, and employee_documents is the fallback for everyone else. Each source
+ * is reported on its own (checklist_total / ed_total and so on) AND resolved into total_docs,
+ * verified_docs and missing_docs, preferring the checklist whenever it has any rows.
+ *
+ * That is why both sets of columns exist and why neither can be dropped as duplication: an
+ * employee with a checklist and stale employee_documents rows would otherwise look
+ * non-compliant, and the separate columns are what let a reader see which source answered.
+ *
+ * The GROUP BY repeats every non-aggregated SELECT column because ONLY_FULL_GROUP_BY is enabled
+ * on this server — omitting one fails the whole report rather than degrading it.
+ */
+export async function employeeDocumentCompliance(
+  filters: ExecFilters,
+  scope: ExecScope,
+  options: ExecOptions
+): Promise<ExecResult> {
+  const clauses: string[] = ["e.id IS NOT NULL"];
+  const params: unknown[] = [];
+  appendScopeConditions(scope, clauses, params);
+  appendFilterConditions(filters, clauses, params);
+  clauses.push("e.active_status = 1");
+
+  const base = `SELECT e.id AS _cursor,
+         e.employee_code,
+         COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
+         COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
+         COALESCE(d.dept_name, 'UNASSIGNED') AS department_name,
+         COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
+         COALESCE(cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
+         COALESCE(cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
+         -- Checklist counts (primary for ATS-onboarded employees)
+         COALESCE(cl_agg.total_cl, 0)    AS checklist_total,
+         COALESCE(cl_agg.verified_cl, 0) AS checklist_verified,
+         COALESCE(cl_agg.missing_cl, 0)  AS checklist_missing,
+         -- General employee_documents counts (fallback)
+         COUNT(ed.id)                                                                                         AS ed_total,
+         SUM(CASE WHEN ed.verified = 1 THEN 1 ELSE 0 END)                                                   AS ed_verified,
+         SUM(CASE WHEN ed.file_url IS NULL OR ed.file_url = '' THEN 1 ELSE 0 END)                           AS ed_missing,
+         -- Resolved counts: prefer checklist when it has rows
+         CASE WHEN COALESCE(cl_agg.total_cl,0) > 0 THEN COALESCE(cl_agg.total_cl,0)    ELSE COUNT(ed.id) END AS total_docs,
+         CASE WHEN COALESCE(cl_agg.total_cl,0) > 0 THEN COALESCE(cl_agg.verified_cl,0) ELSE SUM(CASE WHEN ed.verified=1 THEN 1 ELSE 0 END) END AS verified_docs,
+         CASE WHEN COALESCE(cl_agg.total_cl,0) > 0 THEN COALESCE(cl_agg.missing_cl,0)  ELSE SUM(CASE WHEN ed.file_url IS NULL OR ed.file_url='' THEN 1 ELSE 0 END) END AS missing_docs,
+         COALESCE(e.joining_document_completion_pct, 0) AS completion_pct,
+         e.joining_document_status
+    FROM employees e
+    LEFT JOIN employee_documents ed ON ed.employee_id = e.id
+    LEFT JOIN branch_master b ON b.id = e.branch_id
+    LEFT JOIN department_master d ON d.id = e.department_id
+    LEFT JOIN process_master p ON p.id = e.process_id
+    LEFT JOIN cost_centre_master cc ON cc.id = e.cost_centre_id
+    LEFT JOIN (
+      SELECT employee_id,
+             COUNT(*) AS total_cl,
+             SUM(CASE WHEN status IN ('verified','signed_verified','completed') THEN 1 ELSE 0 END) AS verified_cl,
+             SUM(CASE WHEN status IN ('pending_hr_upload','pending_candidate_esign','pending_generation','rejected') AND mandatory=1 THEN 1 ELSE 0 END) AS missing_cl
+        FROM employee_joining_document_checklist
+       GROUP BY employee_id
+    ) cl_agg ON cl_agg.employee_id = e.id
+   WHERE ${clauses.join(" AND ")}
+   -- ONLY_FULL_GROUP_BY is enabled on this server, so the three columns added to the
+   -- SELECT must be repeated here or the whole report fails rather than degrading.
+   GROUP BY e.id, e.employee_code, e.full_name, e.first_name, e.last_name, b.branch_name, d.dept_name,
+            p.process_name, cc.cost_centre_code, cc.cost_centre_name,
+            cl_agg.total_cl, cl_agg.verified_cl, cl_agg.missing_cl,
+            e.joining_document_completion_pct, e.joining_document_status
+   ORDER BY missing_docs DESC, employee_name`;
+
+  const total = options.includeTotal ? await count(base, params) : 0;
+  const sql   = options.mode === "worker" ? `${base} LIMIT ${options.limit}` : applyPagination(base, options);
+  const rows  = await query(sql, params) as Record<string, unknown>[];
+  const out = rows.map(({ _cursor: _, ...rest }) => rest);
+  return { rows: out, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > out.length, nextCursor: null };
+}
+
 export async function uanStatusReport(
   filters: ExecFilters,
   scope: ExecScope,
