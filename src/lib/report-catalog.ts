@@ -2484,6 +2484,8 @@ export const REPORT_CATALOG: ReportMeta[] = [
     columns: [
       { key: "employee_code", label: "Emp Code", format: "text", width: 100 },
       { key: "employee_name", label: "Employee Name", format: "text", width: 180 },
+      { key: "cost_centre_code", label: "Cost Centre Code", format: "text", width: 120 },
+      { key: "cost_centre_name", label: "Cost Centre", format: "text", width: 160 },
       { key: "branch_name", label: "Branch", format: "text", width: 120 },
       { key: "process_name", label: "Process", format: "text", width: 140 },
       { key: "date_of_joining", label: "DOJ", format: "date", width: 100 },

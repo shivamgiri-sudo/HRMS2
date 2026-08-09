@@ -126,6 +126,156 @@ export async function employeeDocumentCompliance(
   return { rows: out, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > out.length, nextCursor: null };
 }
 
+// ---------------------------------------------------------------------------
+/**
+ * missing-documents-report
+ *
+ * Previously returned the PENDING_DATA_BUILDER stub, then was marked `blocked` on the grounds
+ * that no org-wide list of required documents existed. That was wrong: `document_type_master` is
+ * indeed absent from mas_hrms, but `onboarding_document_master` is present, populated and
+ * active — 11 rows, of which 6 are unconditionally mandatory (Aadhaar, PAN, Address Proof,
+ * Education Proof, Photo, Resume) and 5 are conditional. It is the requirement master this
+ * report needed. Measured 2026-08-09.
+ *
+ * The master drives the list; this file supplies only the STORAGE mapping — where a satisfied
+ * requirement is actually recorded — because that mapping cannot be derived from the master.
+ * Conditional documents are excluded: `condition_rule` holds predicates like
+ * {"required_when":"candidate_experienced"} that this report has no way to evaluate, and
+ * reporting an unmet condition as a missing document would manufacture false non-compliance.
+ *
+ * What it will show, and why that is the answer rather than a bug: of 1,117 active employees only
+ * 74 hold any document row at all in employee_documents, and the three other document stores add
+ * 2, 5 and 11 employees respectively. So the report is dominated by employees missing everything.
+ * That is a real compliance exposure, not a join defect — the 207,616 document rows are genuine
+ * but belong overwhelmingly to the ~22,000 historical employees, not to current staff.
+ *
+ * Two mapping decisions worth stating, both measured before being made:
+ *   - Photo resolves against employees.photo_url / avatar_url, NOT employee_documents. There is
+ *     no photo doc_category, and matching on doc_type text finds exactly 1 employee org-wide, so
+ *     reporting it from there would mark 1,116 of 1,117 falsely missing.
+ *   - PAN accepts either doc_category 'pan' or a doc_type mentioning PAN, because the identity
+ *     rows are filed under the generic 'identity' category and only 1,325 employees org-wide
+ *     have a PAN document at all — the PAN *number* is captured on employees instead.
+ *
+ * A master row whose document_name has no entry in DOCUMENT_HELD_EXPR is treated as HELD, never
+ * as missing, so a newly seeded requirement cannot silently mark the whole workforce
+ * non-compliant. The contract test asserts every active mandatory master row has a mapping, so
+ * the omission fails loudly instead.
+ */
+
+/**
+ * Where a satisfied requirement is recorded, keyed by onboarding_document_master.document_name.
+ * `held` is the per-employee aggregate of employee_documents built in the query below.
+ */
+export const DOCUMENT_HELD_EXPR: Record<string, string> = {
+  aadhaar:         "COALESCE(held.has_aadhaar, 0)",
+  pan:             "COALESCE(held.has_pan, 0)",
+  address_proof:   "COALESCE(held.has_address_proof, 0)",
+  education_proof: "COALESCE(held.has_education_proof, 0)",
+  resume:          "COALESCE(held.has_resume, 0)",
+  // Photos are not documents in this schema; they are columns on the employee master.
+  photo:           "CASE WHEN COALESCE(NULLIF(e.photo_url,''), NULLIF(e.avatar_url,'')) IS NOT NULL THEN 1 ELSE 0 END",
+};
+
+/** The mandatory, non-conditional requirements, straight from the master. */
+async function mandatoryDocuments(): Promise<Array<{ name: string; label: string }>> {
+  const rows = await query(
+    `SELECT document_name, COALESCE(NULLIF(display_name,''), document_name) AS display_name
+       FROM onboarding_document_master
+      WHERE active_flag = 1 AND mandatory_flag = 1 AND conditional_flag = 0
+      ORDER BY sort_order, document_name`,
+    []
+  );
+  return (rows as Array<{ document_name: string; display_name: string }>).map(r => ({
+    name: String(r.document_name),
+    label: String(r.display_name),
+  }));
+}
+
+export async function missingDocumentsReport(
+  filters: ExecFilters,
+  scope: ExecScope,
+  options: ExecOptions
+): Promise<ExecResult> {
+  const required = await mandatoryDocuments();
+
+  // No mandatory requirement configured is a real, reportable state — an empty grid here means
+  // "nothing is mandatory", which is different from "nobody is missing anything". Returning
+  // early also keeps the CASE below from being built with no WHEN branches, which is invalid SQL.
+  if (required.length === 0) {
+    return { rows: [], rowCount: 0, isTruncated: false, nextCursor: null };
+  }
+
+  const clauses: string[] = ["e.id IS NOT NULL"];
+  const params: unknown[] = [];
+  appendScopeConditions(scope, clauses, params);
+  appendFilterConditions(filters, clauses, params);
+  clauses.push("e.active_status = 1");
+
+  // Requirement list as an inline relation, cross-joined against employees. One pass — the
+  // alternative, a UNION ALL branch per document, rescans employee_documents once per branch,
+  // and this server cannot afford that (see docs/reports-slow-queries-root-cause.md).
+  const reqRelation = required
+    .map(() => `SELECT ? AS doc_key, ? AS document_type`)
+    .join(" UNION ALL ");
+  const reqParams: unknown[] = required.flatMap(r => [r.name, r.label]);
+
+  // Unmapped requirements evaluate to 1 (held) so they can never mark everyone non-compliant.
+  const heldCase =
+    `CASE req.doc_key\n` +
+    required
+      .map(r => `             WHEN ${JSON.stringify(r.name)} THEN ${DOCUMENT_HELD_EXPR[r.name] ?? "1"}`)
+      .join("\n") +
+    `\n             ELSE 1 END`;
+
+  // Placeholders inside the JOIN bind BEFORE those in WHERE, so the requirement parameters must
+  // lead. Binding them after the scope clauses silently pairs each value with the wrong marker.
+  const allParams = [...reqParams, ...params];
+
+  const base = `
+    SELECT e.id AS _cursor,
+           e.employee_code,
+           COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
+           COALESCE(cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
+           COALESCE(cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
+           COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
+           COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
+           e.date_of_joining,
+           req.document_type,
+           1 AS mandatory,
+           CASE WHEN e.date_of_joining IS NULL THEN NULL
+                ELSE DATEDIFF(CURDATE(), e.date_of_joining) END AS days_since_joining
+      FROM employees e
+      JOIN (${reqRelation}) req
+      LEFT JOIN branch_master b       ON b.id  = e.branch_id
+      LEFT JOIN process_master p      ON p.id  = e.process_id
+      LEFT JOIN cost_centre_master cc ON cc.id = e.cost_centre_id
+      LEFT JOIN (
+        SELECT ed.employee_id,
+               MAX(CASE WHEN ed.doc_category IN ('aadhaar','identity')                    THEN 1 ELSE 0 END) AS has_aadhaar,
+               MAX(CASE WHEN ed.doc_category = 'pan' OR ed.doc_type LIKE '%PAN%'          THEN 1 ELSE 0 END) AS has_pan,
+               MAX(CASE WHEN ed.doc_category = 'address_proof'                            THEN 1 ELSE 0 END) AS has_address_proof,
+               MAX(CASE WHEN ed.doc_category = 'education'                                THEN 1 ELSE 0 END) AS has_education_proof,
+               MAX(CASE WHEN ed.doc_type LIKE 'Resume%' OR ed.doc_category = 'experience' THEN 1 ELSE 0 END) AS has_resume
+          FROM employee_documents ed
+         WHERE ed.file_url IS NOT NULL AND ed.file_url <> ''
+         GROUP BY ed.employee_id
+      ) held ON held.employee_id = e.id
+     WHERE ${clauses.join(" AND ")}
+       AND (${heldCase}) = 0
+     ORDER BY e.employee_code, req.document_type`;
+
+  const paged = await fetchPageWithTotal(base, allParams, options, query, count);
+  const rows  = paged.rows as Record<string, unknown>[];
+  const out   = rows.map(({ _cursor: _, ...rest }) => rest);
+  return {
+    rows: out,
+    rowCount: options.includeTotal ? paged.total : out.length,
+    isTruncated: paged.total > out.length,
+    nextCursor: null,
+  };
+}
+
 export async function uanStatusReport(
   filters: ExecFilters,
   scope: ExecScope,

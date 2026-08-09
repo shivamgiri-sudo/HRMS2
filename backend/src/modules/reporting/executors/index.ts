@@ -176,6 +176,7 @@ import {
   bankAccountVerification,
   identitySourceSnapshot,
   employeeDocumentCompliance,
+  missingDocumentsReport,
 } from "./identity.executor.js";
 
 // ─── Governance (placeholders) ───────────────────────────────────────────────
@@ -203,6 +204,7 @@ export const EXECUTOR_MAP: Record<string, ExecutorFn> = {
   "uan-master-register":       uanMasterRegister,
   "ff-settlement-register":    ffSettlementRegister,
   "employee-document-compliance": employeeDocumentCompliance,
+  "missing-documents-report":     missingDocumentsReport,
   "attendance-register-monthly": attendanceRegisterMonthly,
   "bank-missing":              bankMissing,
   "confirmation-due-list":     confirmationDueList,

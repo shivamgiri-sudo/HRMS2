@@ -3755,6 +3755,8 @@ export const REPORT_CATALOG: ReportDefinition[] = [
     columns: [
       { key: "employee_code", label: "Emp Code", format: "text", width: 100 },
       { key: "employee_name", label: "Employee Name", format: "text", width: 180 },
+      { key: "cost_centre_code", label: "Cost Centre Code", format: "text", width: 120 },
+      { key: "cost_centre_name", label: "Cost Centre", format: "text", width: 160 },
       { key: "branch_name", label: "Branch", format: "text", width: 120 },
       { key: "process_name", label: "Process", format: "text", width: 140 },
       { key: "date_of_joining", label: "DOJ", format: "date", width: 100 },
@@ -3765,21 +3767,19 @@ export const REPORT_CATALOG: ReportDefinition[] = [
     filters: [F_BRANCH, F_PROCESS],
     viewRoles: ROLES_HR_ADMIN,
     exportRoles: ROLES_HR_ADMIN,
-    sourceTables: ["employee_documents", "employees"],
+    sourceTables: ["onboarding_document_master", "employee_documents", "employees"],
     branchScoped: true,
     processScoped: true,
-    // Blocked, with a reason. Reporting a MISSING document needs a list of documents that
-    // are required, and no org-wide one exists: document_type_master is absent from
-    // mas_hrms, and employee_joining_document_checklist — which does carry a `mandatory`
-    // flag — holds 92 rows covering 11 employees out of 22,672 (measured 2026-08-07). A
-    // report built on that would tell 11 people what they are missing and silently imply
-    // the other 22,661 are complete, which is worse than showing nothing.
+    // Was marked `blocked` on the grounds that no org-wide list of required documents existed.
+    // That was wrong, and the correction is worth recording: document_type_master is genuinely
+    // absent from mas_hrms, but onboarding_document_master is present, active and populated —
+    // 11 rows, 6 of them unconditionally mandatory. The earlier note reached the right verdict
+    // about employee_joining_document_checklist (92 rows, 11 employees, useless as a
+    // requirement source) and then stopped looking.
     //
-    // Until a mandatory-document master exists, use document-verification-status, which
-    // shows what HAS been submitted and its verification state across all 207,616
-    // documents. This entry stays listed so the gap is visible rather than forgotten;
-    // it previously returned the PENDING_DATA_BUILDER stub with no explanation.
-    availabilityStatus: "blocked",
+    // Now served by missingDocumentsReport. The master supplies the requirement list; the
+    // executor supplies only the storage mapping, which the master cannot express. Conditional
+    // documents are excluded because their condition_rule predicates are not evaluable here.
   },
 
   // ═══════════════════════════════════════════════════════════════════════════════
