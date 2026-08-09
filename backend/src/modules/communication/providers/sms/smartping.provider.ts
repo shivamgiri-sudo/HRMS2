@@ -53,6 +53,33 @@ export class SmartPingProvider implements CommunicationProvider {
       // subject carries dltContentId when called via sms.helper; fall back to env
       const dltContentId = subject || process.env.SMARTPING_DEFAULT_DLT_CONTENT_ID || '';
 
+      // Refuse anything that is not a registered DLT content id.
+      //
+      // The second parameter is named `subject` for interface reasons but must be
+      // a DLT template id — sms.helper passes one from SMARTPING_DLT_REGISTRY
+      // (19-digit, e.g. 1707178351079130369). dispatchService passes
+      // dispatch_log.subject instead, so every notification SMS sent a human
+      // sentence such as "eSign link expiring — employee non-responsive" in that
+      // slot. SmartPing answered HTTP 400 every time: 901 failures, 0 successes,
+      // all time.
+      //
+      // Rejecting here rather than letting it 400 matters for two reasons. The
+      // error becomes true — "400" told nobody what was wrong for months — and
+      // under India's TRAI DLT rules the content must MATCH its registered
+      // template, so firing arbitrary notification text at the gateway is a
+      // compliance problem, not merely a failed send. If an event genuinely
+      // needs SMS, register a template and route it through buildSMS() like the
+      // OTP paths do.
+      if (!/^\d{12,25}$/.test(dltContentId)) {
+        return {
+          success: false,
+          error:
+            "No registered DLT template for this message. SmartPing requires a numeric " +
+            "dltContentId from SMARTPING_DLT_REGISTRY (route via buildSMS), but received " +
+            `${dltContentId ? `"${dltContentId.slice(0, 40)}"` : "nothing"}. Not sent.`,
+        };
+      }
+
       const params = new URLSearchParams({
         username: this.username,
         password: this.password,
