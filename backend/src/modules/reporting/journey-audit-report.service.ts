@@ -53,8 +53,18 @@ const SOURCE_REGISTRY: SourceSpec[] = [
 async function schemaColumns() {
   const tables = SOURCE_REGISTRY.map((source) => source.table);
   const placeholders = tables.map(() => "?").join(",");
+  // Alias to lowercase explicitly — information_schema hands back UPPERCASE keys.
+  //
+  // MySQL 8 returns TABLE_NAME / COLUMN_NAME as the result-set labels no matter how
+  // the SELECT is written, so `row.table_name` was undefined and this map ended up
+  // with a single key, the string "undefined". Every columns.get(source.table) then
+  // missed, so every source scored TABLE_MISSING and the has() gate below never
+  // opened: the report claimed all 14 sources were absent AND returned no rows,
+  // against tables that are present and populated. Verified on live 8.0.42 — an
+  // explicit alias is what restores the lowercase key, and legacy-analyzer.service.ts
+  // already reads it this way.
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT table_name, column_name
+    `SELECT TABLE_NAME AS table_name, COLUMN_NAME AS column_name
        FROM information_schema.columns
       WHERE table_schema = DATABASE()
         AND table_name IN (${placeholders})`,

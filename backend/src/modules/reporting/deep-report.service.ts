@@ -383,8 +383,15 @@ export const deepReportService = {
 
     if (candidateTables.length) {
       const tablePlaceholders = candidateTables.map(() => "?").join(",");
+      // Alias to lowercase explicitly — information_schema hands back UPPERCASE keys.
+      //
+      // MySQL 8 labels these TABLE_NAME / COLUMN_NAME / TABLE_ROWS however the SELECT
+      // is written, so String(table.table_name) was "undefined" and both maps below
+      // collapsed to a single "undefined" key. Every later lookup by real table name
+      // missed, which silently emptied the column metadata the pack builder filters
+      // on. Verified against live 8.0.42.
       const [tables] = await db.execute<TableMetadata[]>(
-        `SELECT table_name, table_rows
+        `SELECT TABLE_NAME AS table_name, TABLE_ROWS AS table_rows
            FROM information_schema.tables
           WHERE table_schema = DATABASE()
             AND table_name IN (${tablePlaceholders})`,
@@ -393,7 +400,7 @@ export const deepReportService = {
       for (const table of tables) tableMap.set(String(table.table_name), table);
 
       const [columns] = await db.execute<ColumnMetadata[]>(
-        `SELECT table_name, column_name, data_type
+        `SELECT TABLE_NAME AS table_name, COLUMN_NAME AS column_name, DATA_TYPE AS data_type
            FROM information_schema.columns
           WHERE table_schema = DATABASE()
             AND table_name IN (${tablePlaceholders})`,
