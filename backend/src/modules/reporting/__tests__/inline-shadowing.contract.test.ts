@@ -71,7 +71,11 @@ const SHADOWED_BACKLOG = new Set<string>([
   
   // "anniversary-list" left this list on 2026-08-09 — the executor filtered to the current
   // month while the screen listed the whole year, so the download held a tenth of the rows.
-  "attendance-daily", 
+  
+  // "attendance-daily" left this list on 2026-08-09 — the executor returned 160 rows
+  // against the screen's 1,127, because it drove from attendance_daily_record instead of
+  // employees and so could not see anyone without an attendance row.
+  
   // "attendance-dispute-summary" left this list on 2026-08-08 — the inline block
   // same, and the executor also lacked the dispute_type filter that separates disputes from plain regularizations.
   

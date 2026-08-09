@@ -525,91 +525,13 @@ reportSuiteRouter.get("/:code", reportScopeMiddleware, reportCatalogAccessMiddle
       params.unshift(from, to);
       break;
     }
-    case "attendance-daily": {
-      const from = dateParam(req.query.from, new Date().toISOString().slice(0, 10));
-      const to = dateParam(req.query.to, from);
-      addScopedEmployeeFilters(req, clauses, params);
-      if (req.query.processId) { clauses.push("e.process_id = ?"); params.push(String(req.query.processId)); }
-      // Only active staff — the report is about who was expected to attend.
-      clauses.push("e.active_status = 1");
-      // Pre-aggregate wfm_attendance_session to avoid multi-session row duplication.
-      // One logical attendance day = earliest punch in, latest punch out, sum of minutes.
-      //
-      // DRIVEN FROM employees, NOT attendance_daily_record.
-      //
-      // This report declares its grain as "One row per employee per attendance date"
-      // (rowGrain, above) but drove from attendance_daily_record with an inner join to
-      // employees, so anyone with no ADR row for the date simply vanished. The CEO UAT
-      // of 31-Jul-2026 reported 350 rows against a headcount of 1,152 — the missing 800
-      // were not absent employees, they were employees the report could not see, which
-      // is precisely the population an attendance report exists to surface (no COSEC
-      // sync, no roster, not yet processed by the attendance engine).
-      //
-      // The date predicate moves into the LEFT JOIN condition. Leaving it in WHERE
-      // would filter out the NULL side and silently degrade this back to an inner join.
-      //
-      // Four placeholders now sit ahead of the WHERE — two in the adr JOIN and two in the
-      // date-restricted session subquery — and mysql2 binds positionally, so they must be
-      // prepended. unshift preserves argument order, so this yields
-      // [adrFrom, adrTo, sesFrom, sesTo, ...whereParams] which is the order they appear in
-      // the statement.
-      params.unshift(from, to, from, to);
-      sql = `SELECT adr.record_date,
-                    e.employee_code,
-                    COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-                    COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
-                    COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
-                    COALESCE(ccd.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
-                    COALESCE(ccd.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
-                    COALESCE(d.dept_name, 'UNASSIGNED') AS department_name,
-                    desig.designation_name,
-                    COALESCE(NULLIF(rm.full_name,''), CONCAT(rm.first_name,' ',COALESCE(rm.last_name,''))) AS reporting_manager,
-                    COALESCE(ws.shift_name, 'Roster Not Assigned') AS shift_name,
-                    TIME_FORMAT(ws.start_time, '%H:%i') AS shift_start,
-                    TIME_FORMAT(ws.end_time, '%H:%i') AS shift_end,
-                    TIME_FORMAT(agg_ses.earliest_punch, '%H:%i') AS punch_in,
-                    TIME_FORMAT(agg_ses.latest_punch, '%H:%i') AS punch_out,
-                    CASE
-                      WHEN agg_ses.earliest_punch IS NOT NULL AND agg_ses.latest_punch IS NOT NULL
-                      THEN TIME_FORMAT(SEC_TO_TIME(TIMESTAMPDIFF(SECOND, agg_ses.earliest_punch, agg_ses.latest_punch)), '%H:%i')
-                      ELSE NULL
-                    END AS total_login_duration,
-                    adr.raw_minutes AS productive_minutes,
-                    adr.attendance_source,
-                    adr.attendance_status,
-                    adr.late_by_minutes,
-                    adr.lwp_value,
-                    CASE WHEN adr.regularization_id IS NOT NULL THEN 'Regularized' ELSE NULL END AS regularization_status,
-                    adr.is_locked
-               FROM employees e
-               LEFT JOIN attendance_daily_record adr
-                      ON adr.employee_id = e.id
-                     AND adr.record_date BETWEEN ? AND ?
-               LEFT JOIN branch_master b ON b.id = e.branch_id
-               LEFT JOIN process_master p ON p.id = e.process_id
-               LEFT JOIN cost_centre_master ccd ON ccd.id = e.cost_centre_id
-               LEFT JOIN department_master d ON d.id = e.department_id
-               LEFT JOIN designation_master desig ON desig.id = e.designation_id
-               LEFT JOIN employees rm ON rm.id = e.reporting_manager_id
-               LEFT JOIN wfm_roster_assignment wra ON wra.employee_id = e.id AND wra.roster_date = adr.record_date
-               LEFT JOIN wfm_shift_master ws ON ws.id = wra.shift_id
-               LEFT JOIN (
-                 -- Date-restricted. Without the WHERE this grouped the whole of
-                 -- wfm_attendance_session — 34,398 rows — on every request, against 792 for
-                 -- the single-day default. It is also joined to the nullable side of a LEFT
-                 -- JOIN, so nothing downstream could narrow it either.
-                 SELECT employee_id, session_date,
-                        MIN(login_time) AS earliest_punch,
-                        MAX(logout_time) AS latest_punch,
-                        SUM(total_login_minutes) AS total_login_minutes
-                   FROM wfm_attendance_session
-                  WHERE session_date BETWEEN ? AND ?
-                  GROUP BY employee_id, session_date
-               ) agg_ses ON agg_ses.employee_id = e.id AND agg_ses.session_date = adr.record_date
-              WHERE ${clauses.join(" AND ")}
-              ORDER BY adr.record_date DESC, b.branch_name, employee_name`;
-      break;
-    }
+    // "attendance-daily" falls through to executeReport(), which now carries this SQL.
+    //
+    // Everything that made this report correct moved with it: it drives from employees with a
+    // LEFT JOIN to attendance_daily_record so people with no attendance row still appear (a
+    // UAT found 350 rows against a headcount of 1,152 before that was fixed), the date
+    // predicate stays in the JOIN rather than the WHERE, and four leading placeholders are
+    // unshifted for the attendance join and the session subquery.
     // "attendance-summary" falls through to executeReport(), which now carries this SQL
     // including the sargable half-open month range fixed earlier in this audit. Screen and
     // download returned the same 1,123 rows with almost no shared columns.

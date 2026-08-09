@@ -16,7 +16,11 @@ const read = (path: string) => readFileSync(resolve(process.cwd(), path), "utf8"
  * queryRowsWithCount runs the statement twice, so that was ~23s of database time per load.
  */
 describe("daily attendance report", () => {
-  const routes = read("src/modules/reporting/report-suite.routes.ts");
+  // Reads the executor, not the routes file. This report was served by an inline case block
+  // until 2026-08-09, when it was promoted so the screen and the downloaded XLSX would run
+  // one implementation — the export handler calls executeReport() directly and never sees
+  // that switch. Every assertion below still describes the same query; only its home moved.
+  const routes = read("src/modules/reporting/executors/attendance.executor.ts");
 
   /**
    * The attendance-daily branch only.
@@ -28,10 +32,10 @@ describe("daily attendance report", () => {
    * unique by construction; the idiom is not.
    */
   const block = (() => {
-    const start = routes.indexOf('case "attendance-daily"');
-    expect(start, "attendance-daily branch not found").toBeGreaterThan(-1);
+    const start = routes.indexOf("export async function attendanceDaily");
+    expect(start, "attendanceDaily executor not found").toBeGreaterThan(-1);
     const end = routes.indexOf("ORDER BY adr.record_date DESC", start);
-    expect(end, "attendance-daily branch has no terminating ORDER BY").toBeGreaterThan(start);
+    expect(end, "attendanceDaily has no terminating ORDER BY").toBeGreaterThan(start);
     return routes.slice(start, end);
   })();
 
@@ -46,7 +50,13 @@ describe("daily attendance report", () => {
     // mysql2 binds positionally. Every placeholder added to a JOIN ahead of the WHERE has
     // to be unshifted, and a miscount silently shifts every subsequent value by one rather
     // than raising — the report would return wrong data, not an error.
-    const sql = block.slice(block.indexOf("sql = `"));
+    // The template is named `base` in the executor and was named `sql` in the inline block.
+    // Accept either, and fail loudly rather than silently measuring nothing: indexOf returning
+    // -1 would slice from the end of the string, leaving zero placeholders and an assertion
+    // that passes only because it compared nothing to nothing.
+    const tplAt = Math.max(block.indexOf("base = `"), block.indexOf("sql = `"));
+    expect(tplAt, "no SQL template found in the block").toBeGreaterThan(-1);
+    const sql = block.slice(tplAt);
     const beforeWhere = sql.slice(0, sql.indexOf("WHERE ${clauses"));
     const placeholders = (beforeWhere.match(/\?/g) ?? []).length;
 
