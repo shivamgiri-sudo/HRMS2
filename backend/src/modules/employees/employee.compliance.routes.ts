@@ -1078,10 +1078,16 @@ publicEmployeeDocumentRouter.get("/esign/:token/download", h(async (req, res) =>
  *   from that session, never from the request body — a caller cannot aim this at someone
  *   else's document by changing a field.
  *
- *   Note the router itself carries no rate limiter, so token guessing is bounded only by the
- *   token's entropy. That is pre-existing and applies equally to the signing route beside
- *   this one; it is worth adding publicRegistrationLimiter to the mount, but that is a change
- *   to an existing line and is left for its own review.
+ *   An earlier revision of this comment said the router carries no rate limiter and suggested
+ *   adding publicRegistrationLimiter to the mount. That was wrong on the first point and a
+ *   bad idea on the second. globalLimiter is applied app-wide in app.ts BEFORE this mount and
+ *   allows 500 requests per minute per IP, so these routes are throttled. And the token is
+ *   randomBytes(24) — 192 bits — so guessing one is infeasible at any rate; a limiter here
+ *   would not be preventing enumeration, only abuse that globalLimiter already caps.
+ *
+ *   Adding publicRegistrationLimiter (15 requests per 10 minutes) would meanwhile be actively
+ *   harmful: a branch office shares one public IP, so a dozen employees signing documents on
+ *   the same morning would lock each other out of their own onboarding.
  */
 publicEmployeeDocumentRouter.post("/esign/:token/epf-kyc", h(async (req, res) => {
   const session = await getPublicJoiningDocumentEsignSession(req.params.token);
