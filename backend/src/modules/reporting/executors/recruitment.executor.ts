@@ -355,7 +355,13 @@ export async function recruiterProductivity(
              NULLIF(recruiter_emp.full_name, ''),
              NULLIF(TRIM(CONCAT(COALESCE(recruiter_emp.first_name, ''), ' ', COALESCE(recruiter_emp.last_name, ''))), ''),
              recruiter_user.email,
-             c.recruiter_assigned_name AS assigned_recruiter_name
+             -- An "AS assigned_recruiter_name" used to sit here, inside the COALESCE argument
+             -- list, which is not valid SQL: an argument cannot carry an alias. The statement
+             -- failed to parse, so recruiter-productivity was the one ATS report still
+             -- returning 500 after the other four were repaired in 8947ac1f. The catalogue
+             -- declares recruiter_name and no assigned_recruiter_name, so the outer alias is
+             -- the intended one and this is a leftover from moving the column into COALESCE.
+             c.recruiter_assigned_name
            ) AS recruiter_name,
            COUNT(*) AS total_candidates,
            SUM(CASE WHEN LOWER(c.status) IN ('selected','offered','onboarded','joined') THEN 1 ELSE 0 END) AS offers_made,
@@ -364,7 +370,23 @@ export async function recruiterProductivity(
       LEFT JOIN auth_user recruiter_user ON recruiter_user.id = c.assigned_recruiter_id
       LEFT JOIN employees recruiter_emp ON recruiter_emp.user_id = recruiter_user.id AND recruiter_emp.active_status = 1
      WHERE ${clauses.join(" AND ")}
-     GROUP BY c.assigned_recruiter_id, recruiter_name
+     -- ONLY_FULL_GROUP_BY is enabled and MySQL resolves the alias to its underlying expression,
+     -- so grouping by the alias alone fails: recruiter_emp.full_name is then a nonaggregated
+     -- column outside the grouping.
+     --
+     -- The expression is repeated here rather than its inputs being listed separately. Listing
+     -- the inputs also compiles and, on today's data, returns the same 52 rows — but it groups
+     -- by what the name is BUILT from rather than by the name itself, so the moment two
+     -- candidates resolve to the same recruiter through different fallbacks they would split
+     -- into separate rows. Grouping by the whole COALESCE states the intended grain directly:
+     -- one row per recruiter as named.
+     GROUP BY c.assigned_recruiter_id,
+              COALESCE(
+                NULLIF(recruiter_emp.full_name, ''),
+                NULLIF(TRIM(CONCAT(COALESCE(recruiter_emp.first_name, ''), ' ', COALESCE(recruiter_emp.last_name, ''))), ''),
+                recruiter_user.email,
+                c.recruiter_assigned_name
+              )
      ORDER BY total_candidates DESC`;
 
   const total = options.includeTotal ? await count(base, params) : 0;
