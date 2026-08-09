@@ -2013,8 +2013,21 @@ async function finalizeChecklistEsign(params: {
       );
       const emp = empRows[0] as { employee_code: string; full_name: string; branch_id: string | null } | undefined;
       if (emp) {
+        // The name comes from employees, not auth_user.
+        //
+        // auth_user is a credentials table — id, email, password_hash and friends —
+        // with no full_name, so this SELECT threw ER_BAD_FIELD_ERROR every time. The
+        // catch below then swallowed it as a generic notification failure, which is
+        // why nothing ever looked broken: the eSign itself succeeded and only the
+        // "document is ready to verify" inbox item went missing. Payroll HR has been
+        // finding out that an Aadhaar eSign completed by chance rather than by being
+        // told. Verified against live: the old shape errors, this one returns the
+        // 3 payroll_hr recipients that exist.
+        //
+        // employees is already joined here as `e`, so the fix needs no extra join.
+        // Same bug and same fix as employee-creation-orchestrator.service.ts:622.
         const [hrRows] = await db.execute<RowDataPacket[]>(
-          `SELECT DISTINCT u.id as user_id, u.email, u.full_name
+          `SELECT DISTINCT u.id as user_id, u.email, e.full_name
            FROM auth_user u
            JOIN user_roles ur ON ur.user_id = u.id
            JOIN employees e ON e.user_id = u.id AND e.active_status = 1
