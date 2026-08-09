@@ -5,6 +5,7 @@ import { requireAuth } from '../../middleware/authMiddleware.js';
 import { requireRole } from '../../middleware/requireRole.js';
 import type { AuthenticatedRequest } from '../../middleware/authMiddleware.js';
 import { db } from '../../db/mysql.js';
+import { hasRole } from '../../shared/accessGuard.js';
 import { logSensitiveAction } from '../../shared/auditLog.js';
 
 const router = Router();
@@ -26,15 +27,29 @@ router.post('/request', requireRole('employee', 'hr', 'super_admin'), h(async (r
     return res.status(400).json({ success: false, message: 'override_type must be pf_opt_out or esic_opt_out' });
   }
 
-  // Resolve employee_id: employees submit for themselves; hr/admin can submit on behalf
-  let empId = employee_id;
-  if (!empId) {
-    const [empRows] = await db.execute<RowDataPacket[]>(
-      `SELECT id FROM employees WHERE user_id = ? AND active_status = 1 LIMIT 1`,
-      [actorUserId]
-    );
-    empId = (empRows[0] as any)?.id;
+  // Resolve employee_id: employees submit for themselves; hr/admin can submit on behalf.
+  //
+  // The on-behalf path must be role-checked, and was not. employee_id was taken straight
+  // from the body whenever it was present, so any caller holding the plain `employee` role
+  // this route allows could file a PF/ESI opt-out in a colleague's name. That is not just a
+  // spurious row: the duplicate guard below would then refuse that colleague's own genuine
+  // request with a 409, and an approval by Payroll HO would change their statutory
+  // deduction. Same shape as the tax-declaration routes in payroll.routes.ts — privileged
+  // role, or your own record.
+  const [selfRows] = await db.execute<RowDataPacket[]>(
+    `SELECT id FROM employees WHERE user_id = ? AND active_status = 1 LIMIT 1`,
+    [actorUserId]
+  );
+  const selfEmpId = (selfRows[0] as any)?.id as string | undefined;
+
+  if (employee_id && employee_id !== selfEmpId && !(await hasRole(actorUserId, 'hr', 'super_admin'))) {
+    return res.status(403).json({
+      success: false,
+      message: 'Forbidden: you may only submit a statutory opt-out for yourself',
+    });
   }
+
+  const empId = employee_id ?? selfEmpId;
   if (!empId) {
     return res.status(400).json({ success: false, message: 'Employee record not found for this user' });
   }
