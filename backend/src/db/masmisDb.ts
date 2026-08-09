@@ -6,10 +6,16 @@ let pool: mysql.Pool | null = null;
 export function getMasmisPool(): mysql.Pool {
   if (!pool) {
     pool = mysql.createPool({
-      host: env.DB_HOST,
-      port: env.DB_PORT,
-      user: env.DB_USER,
-      password: env.DB_PASSWORD,
+      // db_masmis is on its own server. Hardcoding the mas_hrms connection here is what
+      // made the entire sales-upload module dead in production: the application user has no
+      // grant on db_masmis, so every read returned ER_TABLEACCESS_DENIED_ERROR.
+      //
+      // Each setting falls back to the main connection when unset, so an installation where
+      // db_masmis genuinely sits beside mas_hrms behaves exactly as before.
+      host: env.MASMIS_DB_HOST || env.DB_HOST,
+      port: env.MASMIS_DB_PORT || env.DB_PORT,
+      user: env.MASMIS_DB_USER || env.DB_USER,
+      password: env.MASMIS_DB_PASSWORD || env.DB_PASSWORD,
       // No default database — tables are qualified as db_masmis.* (or MASMIS_DB_NAME.*)
       // MASMIS_DB_NAME is available via env for queries that need it explicitly
       waitForConnections: true,
