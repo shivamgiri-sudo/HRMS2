@@ -8,7 +8,7 @@
  *   middleware runs before the miss), so it reads like a permissions problem instead of an
  *   absent feature.
  *
- *   A sweep on 2026-08-08 found seven such calls. Four have since been built; the rest are in
+ *   A sweep on 2026-08-08 found seven such calls. Five have since been built; the rest are in
  *   KNOWN_MISSING below with the reason. None was a typo — each was a UI built against a
  *   server side that was never finished, which is the failure CLAUDE.md rule 9 names directly:
  *   "UI enhancement must not hide missing backend functionality." They accumulated silently
@@ -202,8 +202,6 @@ const KNOWN_MISSING: Record<string, string> = {
   // "Some performance data sources are unavailable … This is not an all-clear" rather than
   // letting an empty array become a real zero. But three of its seven feeds can never load,
   // so that banner is permanent and its quality/ops alerts never actually evaluate.
-  "/api/ats-full-parity/submissions":
-    "router serves /intake, /queue, /journey, /web-data, /jobs/*. The rows it wants (final_decision) do exist, in webData().candidateRows — but /queue excludes _selected and _rejected, so repointing there would report a permanent zero 'Selected' count.",
   "/api/quality-dashboard/scores":
     "router serves /summary, /trend, /agents, /clients, /apr. No endpoint returns per-row quality_score AND fatal_count together; quality-executive.service.ts computes quality_score but is wired to no route at all.",
   "/api/performance-dashboard/ops":

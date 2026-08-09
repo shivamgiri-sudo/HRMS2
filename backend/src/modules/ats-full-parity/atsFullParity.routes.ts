@@ -105,6 +105,36 @@ atsFullParityRouter.get("/queue", requireRole("admin", "hr", "recruiter", "manag
   res.json({ success: true, data: data.queueRows });
 }));
 
+/**
+ * Candidate submissions for a date range.
+ *
+ * UnifiedPerformanceCommandCenter has called this since it was written, and it did not exist:
+ * the page counts submissions by final_decision to produce its "Selected" and "ATS client
+ * pending" figures, and its safe() wrapper turned the failure into an empty array, so both
+ * tiles read zero and the page's own "sources unavailable" banner stayed up permanently.
+ *
+ * candidateRows is the right dataset. /queue is NOT — it filters to open candidates and
+ * explicitly drops _selected and _rejected, so a "Selected" count taken from it would be
+ * permanently zero, which is worse than the honest failure it replaced.
+ *
+ * from/to are mapped onto fromDate/toDate deliberately. webData pushes those into SQL; the
+ * page's own query-string names are `from` and `to`, and passing them through unmapped would
+ * be silently ignored — the page would then show ALL-TIME counts under a date-range heading.
+ * period is pinned to "ALL" so the in-memory filter cannot narrow the SQL range further.
+ */
+atsFullParityRouter.get("/submissions", requireRole("admin", "hr", "recruiter", "manager", "branch_head", "process_manager", "ceo"), h(async (req: AuthenticatedRequest, res) => {
+  const { primaryRole: role, isSuperAdmin } = await getUserRoleContext(req.authUser?.id ?? "");
+  const bypassScope = isSuperAdmin || role === "hr" || role === "ceo";
+  const data = await svc.webData({
+    fromDate: req.query.from ? String(req.query.from) : undefined,
+    toDate: req.query.to ? String(req.query.to) : undefined,
+    period: "ALL",
+    actorId: req.authUser?.id,
+    bypassScope,
+  });
+  res.json({ success: true, data: data.candidateRows });
+}));
+
 atsFullParityRouter.get("/journey", requireRole("admin", "hr", "recruiter", "manager", "branch_head", "process_manager", "ceo"), h(async (req: AuthenticatedRequest, res) => {
   const query = String(req.query.query || "").trim();
   if (!query) return res.status(400).json({ success: false, message: "query required" });
