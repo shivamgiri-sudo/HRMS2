@@ -985,57 +985,17 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
       break;
     }
 
-    case "birthday-list":
-      addScopedEmployeeFilters(req, clauses, params);
-      clauses.push("e.active_status = 1", "e.date_of_birth IS NOT NULL");
-      sql = `SELECT e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-                    e.date_of_birth,
-                    DATE_FORMAT(e.date_of_birth, '%d %b') AS birthday_display,
-                    DATEDIFF(
-                      DATE(CONCAT(YEAR(CURDATE()), '-', MONTH(e.date_of_birth), '-', DAY(e.date_of_birth))),
-                      CURDATE()
-                    ) + IF(
-                      DATE(CONCAT(YEAR(CURDATE()), '-', MONTH(e.date_of_birth), '-', DAY(e.date_of_birth))) < CURDATE(), 365, 0
-                    ) AS days_until_birthday,
-                    COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
-                    COALESCE(d.dept_name, 'UNASSIGNED') AS department_name,
-                    COALESCE(pr.process_name, 'UNASSIGNED') AS process_name,
-                    COALESCE(ccm.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
-                    COALESCE(ccm.cost_centre_name, 'UNASSIGNED') AS cost_centre_name
-               FROM employees e
-               LEFT JOIN branch_master b ON b.id = e.branch_id
-               LEFT JOIN department_master d ON d.id = e.department_id
-               LEFT JOIN process_master pr ON pr.id = e.process_id
-               LEFT JOIN cost_centre_master ccm ON ccm.id = e.cost_centre_id
-              WHERE ${clauses.join(" AND ")}
-              ORDER BY days_until_birthday ASC`;
-      break;
+    // "birthday-list" is intentionally not handled here — it falls through to executeReport(),
+    // which now carries this exact SQL. The executor used to filter to the current month,
+    // so the screen listed every employee by upcoming date and the download listed only
+    // this month — a tenth of the rows. The catalogue declares a days-until column, which
+    // only means anything across the whole year.
 
-    case "anniversary-list":
-      addScopedEmployeeFilters(req, clauses, params);
-      clauses.push("e.active_status = 1", "e.date_of_joining IS NOT NULL");
-      sql = `SELECT e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-                    e.date_of_joining,
-                    TIMESTAMPDIFF(YEAR, e.date_of_joining, CURDATE()) AS years_of_service,
-                    DATEDIFF(
-                      DATE(CONCAT(YEAR(CURDATE()), '-', MONTH(e.date_of_joining), '-', DAY(e.date_of_joining))),
-                      CURDATE()
-                    ) + IF(
-                      DATE(CONCAT(YEAR(CURDATE()), '-', MONTH(e.date_of_joining), '-', DAY(e.date_of_joining))) < CURDATE(), 365, 0
-                    ) AS days_until_anniversary,
-                    COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
-                    COALESCE(d.dept_name, 'UNASSIGNED') AS department_name,
-                    COALESCE(pr.process_name, 'UNASSIGNED') AS process_name,
-                    COALESCE(ccm.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
-                    COALESCE(ccm.cost_centre_name, 'UNASSIGNED') AS cost_centre_name
-               FROM employees e
-               LEFT JOIN branch_master b ON b.id = e.branch_id
-               LEFT JOIN department_master d ON d.id = e.department_id
-               LEFT JOIN process_master pr ON pr.id = e.process_id
-               LEFT JOIN cost_centre_master ccm ON ccm.id = e.cost_centre_id
-              WHERE ${clauses.join(" AND ")}
-              ORDER BY days_until_anniversary ASC`;
-      break;
+    // "anniversary-list" is intentionally not handled here — it falls through to executeReport(),
+    // which now carries this exact SQL. The executor used to filter to the current month,
+    // so the screen listed every employee by upcoming date and the download listed only
+    // this month — a tenth of the rows. The catalogue declares a days-until column, which
+    // only means anything across the whole year.
 
     // ─── A2: Attendance ───────────────────────────────────────────────────────
     case "daily-hc-shift": {

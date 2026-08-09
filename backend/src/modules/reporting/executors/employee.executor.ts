@@ -897,40 +897,57 @@ export async function incrementPromotionHistory(
 // ---------------------------------------------------------------------------
 // birthday-list
 // ---------------------------------------------------------------------------
+/**
+ * birthday-list
+ *
+ * Every active employee with a date_of_birth, ordered by how soon the date falls — not just the
+ * current month.
+ *
+ * This executor filtered MONTH(date_of_birth) = the current month, so the screen listed 1,116
+ * people and the downloaded file 126. The catalogue settles it: it declares
+ * days_until_birthday, which only makes sense across the whole year, and the month filter
+ * would make that column constant within a single page.
+ *
+ * Ported from the inline block verbatim so both paths run one implementation.
+ */
 export async function birthdayList(
   filters: ExecFilters,
   scope: ExecScope,
   options: ExecOptions
 ): Promise<ExecResult> {
-  const month = Number(filters.month ?? new Date().getMonth() + 1);
-
   const clauses: string[] = ["e.id IS NOT NULL"];
-  const params: unknown[]  = [];
+  const params: unknown[] = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
-  clauses.push("e.active_status = 1", "MONTH(e.date_of_birth) = ?");
-  params.push(month);
+  clauses.push("e.active_status = 1", "e.date_of_birth IS NOT NULL");
 
   if (options.mode === "worker" && options.cursor != null) {
     clauses.push("e.id > ?"); params.push(options.cursor);
   }
 
-  const base = `
-    SELECT e.id AS _cursor,
-           e.employee_code,
-           COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-           e.date_of_birth, MONTH(e.date_of_birth) AS birth_month, DAY(e.date_of_birth) AS birth_day,
+  const base = `    SELECT
+           e.id AS _cursor,
+           e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
+           e.date_of_birth,
+           DATE_FORMAT(e.date_of_birth, '%d %b') AS birthday_display,
+           DATEDIFF(
+           DATE(CONCAT(YEAR(CURDATE()), '-', MONTH(e.date_of_birth), '-', DAY(e.date_of_birth))),
+           CURDATE()
+           ) + IF(
+           DATE(CONCAT(YEAR(CURDATE()), '-', MONTH(e.date_of_birth), '-', DAY(e.date_of_birth))) < CURDATE(), 365, 0
+           ) AS days_until_birthday,
            COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
-           COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
-           COALESCE(sp_cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
-           COALESCE(sp_cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name, d.dept_name AS department_name
+           COALESCE(d.dept_name, 'UNASSIGNED') AS department_name,
+           COALESCE(pr.process_name, 'UNASSIGNED') AS process_name,
+           COALESCE(ccm.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
+           COALESCE(ccm.cost_centre_name, 'UNASSIGNED') AS cost_centre_name
       FROM employees e
-      LEFT JOIN branch_master b     ON b.id = e.branch_id
-      LEFT JOIN process_master p    ON p.id = e.process_id
-      LEFT JOIN cost_centre_master sp_cc ON sp_cc.id = e.cost_centre_id
+      LEFT JOIN branch_master b ON b.id = e.branch_id
       LEFT JOIN department_master d ON d.id = e.department_id
+      LEFT JOIN process_master pr ON pr.id = e.process_id
+      LEFT JOIN cost_centre_master ccm ON ccm.id = e.cost_centre_id
      WHERE ${clauses.join(" AND ")}
-     ORDER BY birth_month ASC, birth_day ASC, e.id ASC`;
+     ORDER BY days_until_birthday ASC`;
 
   const total = options.includeTotal ? await count(base, params) : 0;
   const sql   = options.mode === "worker" ? `${base} LIMIT ${options.limit}` : applyPagination(base, options);
@@ -944,42 +961,57 @@ export async function birthdayList(
 // ---------------------------------------------------------------------------
 // anniversary-list
 // ---------------------------------------------------------------------------
+/**
+ * anniversary-list
+ *
+ * Every active employee with a date_of_joining, ordered by how soon the date falls — not just the
+ * current month.
+ *
+ * This executor filtered MONTH(date_of_joining) = the current month, so the screen listed 1,127
+ * people and the downloaded file 66. The catalogue settles it: it declares
+ * days_until_anniversary, which only makes sense across the whole year, and the month filter
+ * would make that column constant within a single page.
+ *
+ * Ported from the inline block verbatim so both paths run one implementation.
+ */
 export async function anniversaryList(
   filters: ExecFilters,
   scope: ExecScope,
   options: ExecOptions
 ): Promise<ExecResult> {
-  const month = Number(filters.month ?? new Date().getMonth() + 1);
-
   const clauses: string[] = ["e.id IS NOT NULL"];
-  const params: unknown[]  = [];
+  const params: unknown[] = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
-  clauses.push("e.active_status = 1", "MONTH(e.date_of_joining) = ?");
-  params.push(month);
+  clauses.push("e.active_status = 1", "e.date_of_joining IS NOT NULL");
 
   if (options.mode === "worker" && options.cursor != null) {
     clauses.push("e.id > ?"); params.push(options.cursor);
   }
 
-  const base = `
-    SELECT e.id AS _cursor,
-           e.employee_code,
-           COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
+  const base = `    SELECT
+           e.id AS _cursor,
+           e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
            e.date_of_joining,
            TIMESTAMPDIFF(YEAR, e.date_of_joining, CURDATE()) AS years_of_service,
-           MONTH(e.date_of_joining) AS join_month, DAY(e.date_of_joining) AS join_day,
+           DATEDIFF(
+           DATE(CONCAT(YEAR(CURDATE()), '-', MONTH(e.date_of_joining), '-', DAY(e.date_of_joining))),
+           CURDATE()
+           ) + IF(
+           DATE(CONCAT(YEAR(CURDATE()), '-', MONTH(e.date_of_joining), '-', DAY(e.date_of_joining))) < CURDATE(), 365, 0
+           ) AS days_until_anniversary,
            COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
-           COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
-           COALESCE(sp_cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
-           COALESCE(sp_cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name, d.dept_name AS department_name
+           COALESCE(d.dept_name, 'UNASSIGNED') AS department_name,
+           COALESCE(pr.process_name, 'UNASSIGNED') AS process_name,
+           COALESCE(ccm.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
+           COALESCE(ccm.cost_centre_name, 'UNASSIGNED') AS cost_centre_name
       FROM employees e
-      LEFT JOIN branch_master b     ON b.id = e.branch_id
-      LEFT JOIN process_master p    ON p.id = e.process_id
-      LEFT JOIN cost_centre_master sp_cc ON sp_cc.id = e.cost_centre_id
+      LEFT JOIN branch_master b ON b.id = e.branch_id
       LEFT JOIN department_master d ON d.id = e.department_id
+      LEFT JOIN process_master pr ON pr.id = e.process_id
+      LEFT JOIN cost_centre_master ccm ON ccm.id = e.cost_centre_id
      WHERE ${clauses.join(" AND ")}
-     ORDER BY join_month ASC, join_day ASC, e.id ASC`;
+     ORDER BY days_until_anniversary ASC`;
 
   const total = options.includeTotal ? await count(base, params) : 0;
   const sql   = options.mode === "worker" ? `${base} LIMIT ${options.limit}` : applyPagination(base, options);

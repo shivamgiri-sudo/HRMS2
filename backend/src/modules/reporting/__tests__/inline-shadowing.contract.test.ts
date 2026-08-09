@@ -68,11 +68,17 @@ const inlineCodes = (): Set<string> => {
  * observable — which is exactly what the before/after capture showed.
  */
 const SHADOWED_BACKLOG = new Set<string>([
-  "anniversary-list", "attendance-daily", 
+  
+  // "anniversary-list" left this list on 2026-08-09 — the executor filtered to the current
+  // month while the screen listed the whole year, so the download held a tenth of the rows.
+  "attendance-daily", 
   // "attendance-dispute-summary" left this list on 2026-08-08 — the inline block
   // same, and the executor also lacked the dispute_type filter that separates disputes from plain regularizations.
   "attendance-summary",
-  "biometric-reconciliation", "birthday-list", "clearance-status-register",
+  "biometric-reconciliation", 
+  // "birthday-list" left this list on 2026-08-09 — the executor filtered to the current
+  // month while the screen listed the whole year, so the download held a tenth of the rows.
+  "clearance-status-register",
   "confirmation-due-list", "contract-expiry-list", "cost-centre-headcount", "daily-hc-shift",
   // "daily-shrinkage-report" left this list on 2026-08-08. The shadow hid disjoint column
   // sets: the inline block emitted the nine metrics the catalogue declares and the executor
