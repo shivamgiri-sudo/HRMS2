@@ -188,7 +188,7 @@ router.get(
   requireRole(...BUDGET_CONSOLIDATION_ROLES),
   h(async (req, res) => {
     const periodCode = String(req.query.period ?? "");
-    if (!/^\d{4}-\d{2}$/.test(periodCode)) throw new Error("A valid period (YYYY-MM) is required");
+    if (!/^\d{4}-\d{2}$/.test(periodCode)) throw Object.assign(new Error("A valid period (YYYY-MM) is required"), { statusCode: 400 });
     const [branchSummaries, headBreakdown, periodLocked] = await Promise.all([
       branchBudgetService.list({ period: periodCode }),
       getCompanyBudgetConsolidation(periodCode),
@@ -235,7 +235,7 @@ router.get(
       userRoles: user.roles,
       requestedBranchId: req.query.branchId ? String(req.query.branchId) : undefined,
     });
-    if (!branchId) throw new Error("Branch is required");
+    if (!branchId) throw Object.assign(new Error("Branch is required"), { statusCode: 400 });
     const data = await branchBudgetService.availableLines({
       branchId,
       processId: req.query.processId ? String(req.query.processId) : undefined,
@@ -262,7 +262,7 @@ router.post(
     const budget = await scopedBudget(req, req.params.id);
     const decision = String(req.body?.decision ?? "") as "approve" | "reject" | "revision";
     if (!["approve", "reject", "revision"].includes(decision)) {
-      throw new Error("Invalid budget decision");
+      throw Object.assign(new Error("Invalid budget decision"), { statusCode: 400 });
     }
     const effectiveRole = resolveFinanceStageRole({
       primaryRole: user.role,
@@ -398,7 +398,7 @@ router.post(
   h(async (req, res) => {
     const user = actor(req);
     const budgetLineId = String(req.body?.budgetLineId ?? "");
-    if (!budgetLineId) throw new Error("A budget line is required");
+    if (!budgetLineId) throw Object.assign(new Error("A budget line is required"), { statusCode: 400 });
     const lineBranchId = await budgetTopupService.getLineBranch(budgetLineId);
     await assertFinanceRecordBranch({
       userId: user.id,
@@ -434,7 +434,7 @@ router.post(
       recordBranchId: String((request as any).branch_id),
     });
     const decision = String(req.body?.decision ?? "") as "approve" | "reject";
-    if (!["approve", "reject"].includes(decision)) throw new Error("Invalid top-up decision");
+    if (!["approve", "reject"].includes(decision)) throw Object.assign(new Error("Invalid top-up decision"), { statusCode: 400 });
     const effectiveRole = resolveFinanceStageRole({
       primaryRole: user.role,
       userRoles: user.roles,
@@ -463,7 +463,7 @@ router.get(
       userRoles: user.roles,
       requestedBranchId: req.query.branchId ? String(req.query.branchId) : undefined,
     });
-    if (!branchId) throw new Error("Branch is required");
+    if (!branchId) throw Object.assign(new Error("Branch is required"), { statusCode: 400 });
     const data = await branchBudgetAllocationService.listActiveCostCentres(branchId);
     res.json({ success: true, data });
   })
@@ -480,9 +480,9 @@ router.get(
       userRoles: user.roles,
       requestedBranchId: req.query.branchId ? String(req.query.branchId) : undefined,
     });
-    if (!branchId) throw new Error("Branch is required");
+    if (!branchId) throw Object.assign(new Error("Branch is required"), { statusCode: 400 });
     const periodCode = String(req.query.period ?? "");
-    if (!/^\d{4}-\d{2}$/.test(periodCode)) throw new Error("A valid budget period (YYYY-MM) is required");
+    if (!/^\d{4}-\d{2}$/.test(periodCode)) throw Object.assign(new Error("A valid budget period (YYYY-MM) is required"), { statusCode: 400 });
     const data = await branchBudgetAllocationService.getMonthlyDrivers(branchId, periodCode);
     res.json({ success: true, data });
   })
@@ -500,9 +500,9 @@ router.put(
       userRoles: user.roles,
       requestedBranchId: req.body?.branchId,
     });
-    if (!branchId) throw new Error("Branch is required");
+    if (!branchId) throw Object.assign(new Error("Branch is required"), { statusCode: 400 });
     const periodCode = String(req.body?.periodCode ?? "");
-    if (!/^\d{4}-\d{2}$/.test(periodCode)) throw new Error("A valid budget period (YYYY-MM) is required");
+    if (!/^\d{4}-\d{2}$/.test(periodCode)) throw Object.assign(new Error("A valid budget period (YYYY-MM) is required"), { statusCode: 400 });
     const drivers = Array.isArray(req.body?.drivers) ? req.body.drivers : [];
     const data = await branchBudgetAllocationService.saveMonthlyDrivers(
       branchId,
@@ -537,7 +537,7 @@ router.get(
       userRoles: user.roles,
       requestedBranchId: req.query.branchId ? String(req.query.branchId) : undefined,
     });
-    if (!branchId) throw new Error("Branch is required");
+    if (!branchId) throw Object.assign(new Error("Branch is required"), { statusCode: 400 });
     const data = await meterService.listMeters(branchId);
     res.json({ success: true, data });
   })
@@ -555,7 +555,7 @@ router.post(
       userRoles: user.roles,
       requestedBranchId: req.body?.branchId,
     });
-    if (!branchId) throw new Error("Branch is required");
+    if (!branchId) throw Object.assign(new Error("Branch is required"), { statusCode: 400 });
     const data = await meterService.createMeter(
       {
         branchId,
@@ -578,7 +578,7 @@ router.get(
   requireRole(...BUDGET_READ_ROLES),
   h(async (req, res) => {
     const periodCode = String(req.query.period ?? "");
-    if (!/^\d{4}-\d{2}$/.test(periodCode)) throw new Error("A valid budget period (YYYY-MM) is required");
+    if (!/^\d{4}-\d{2}$/.test(periodCode)) throw Object.assign(new Error("A valid budget period (YYYY-MM) is required"), { statusCode: 400 });
     await assertBranchOf(req, await meterService.getMeterBranchId(String(req.params.id)));
     const data = await meterService.listReadings(String(req.params.id), periodCode);
     res.json({ success: true, data });
@@ -660,7 +660,7 @@ router.get(
   h(async (req, res) => {
     const user = actor(req);
     const moduleKey = String(req.query.moduleKey ?? "");
-    if (!moduleKey) throw new Error("moduleKey is required");
+    if (!moduleKey) throw Object.assign(new Error("moduleKey is required"), { statusCode: 400 });
     const data = await savedViewService.listSavedViews(user.id, moduleKey);
     res.json({ success: true, data });
   })
@@ -699,8 +699,8 @@ router.get(
   h(async (req, res) => {
     const costCentreId = String(req.query.costCentreId ?? "");
     const periodCode = String(req.query.period ?? "");
-    if (!costCentreId) throw new Error("Cost centre is required");
-    if (!/^\d{4}-\d{2}$/.test(periodCode)) throw new Error("A valid budget period (YYYY-MM) is required");
+    if (!costCentreId) throw Object.assign(new Error("Cost centre is required"), { statusCode: 400 });
+    if (!/^\d{4}-\d{2}$/.test(periodCode)) throw Object.assign(new Error("A valid budget period (YYYY-MM) is required"), { statusCode: 400 });
     // The sibling PUT already resolves scope from its body's branchId; this GET is addressed by
     // cost centre alone, so the branch has to come off the cost centre itself.
     await assertBranchOf(req, await costCentreMappingService.getCostCentreBranchId(costCentreId));
@@ -721,11 +721,11 @@ router.put(
       userRoles: user.roles,
       requestedBranchId: req.body?.branchId,
     });
-    if (!branchId) throw new Error("Branch is required");
+    if (!branchId) throw Object.assign(new Error("Branch is required"), { statusCode: 400 });
     const costCentreId = String(req.body?.costCentreId ?? "");
     const periodCode = String(req.body?.periodCode ?? "");
-    if (!costCentreId) throw new Error("Cost centre is required");
-    if (!/^\d{4}-\d{2}$/.test(periodCode)) throw new Error("A valid budget period (YYYY-MM) is required");
+    if (!costCentreId) throw Object.assign(new Error("Cost centre is required"), { statusCode: 400 });
+    if (!/^\d{4}-\d{2}$/.test(periodCode)) throw Object.assign(new Error("A valid budget period (YYYY-MM) is required"), { statusCode: 400 });
     const drivers = Array.isArray(req.body?.drivers) ? req.body.drivers : [];
     const data = await gradeEngineService.saveGradeDrivers(
       branchId,
@@ -753,9 +753,9 @@ router.get(
       userRoles: user.roles,
       requestedBranchId: req.query.branchId ? String(req.query.branchId) : undefined,
     });
-    if (!branchId) throw new Error("Branch is required");
+    if (!branchId) throw Object.assign(new Error("Branch is required"), { statusCode: 400 });
     const periodCode = String(req.query.period ?? "");
-    if (!/^\d{4}-\d{2}$/.test(periodCode)) throw new Error("A valid budget period (YYYY-MM) is required");
+    if (!/^\d{4}-\d{2}$/.test(periodCode)) throw Object.assign(new Error("A valid budget period (YYYY-MM) is required"), { statusCode: 400 });
     const data = await checkSharingMethodReadiness(branchId, periodCode);
     res.json({ success: true, data });
   })
