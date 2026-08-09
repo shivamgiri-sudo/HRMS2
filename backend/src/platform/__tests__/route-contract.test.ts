@@ -78,15 +78,11 @@ const KNOWN_GAPS: Record<string, string> = {
     "Blocked on a schema decision. The client sends review_period/status/comments/acknowledged_*; performance_feedback_report has none of them and is a generated artifact (report_generated_at, total_reviewers), not a hand-authored record. Needs a separate employee review table.",
   "PATCH /api/performance-feedback/reports/:p":
     "Same schema decision as POST /reports. The delete flow is PATCH {status:'deleted'} against a status column that does not exist.",
-  "DELETE /api/sales-upload/batch/:p":
-    "deleteUploadBatch() exists and is correct, but db_masmis is not granted to the app user, so the module returns empty for every read and there is no batch to delete. Blocked on DB provisioning, not on this route.",
   "GET /api/wfm/roster":
     "Deliberately unbuilt. /roster/assignments cannot serve it: requireRosterPlanScope throws when planId is absent, before the global-role bypass, and the caller is a plan-agnostic date-range view. Needs a cross-plan read model.",
   "GET /api/quality-dashboard/scores":
     "Command centre tile, unbuilt pending a decision on what a row contains.",
   "GET /api/performance-dashboard/ops":
-    "Command centre tile, unbuilt pending a decision on what a row contains.",
-  "GET /api/ats-full-parity/submissions":
     "Command centre tile, unbuilt pending a decision on what a row contains.",
 };
 
