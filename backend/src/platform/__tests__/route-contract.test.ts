@@ -82,8 +82,6 @@ const KNOWN_GAPS: Record<string, string> = {
     "Deliberately unbuilt. /roster/assignments cannot serve it: requireRosterPlanScope throws when planId is absent, before the global-role bypass, and the caller is a plan-agnostic date-range view. Needs a cross-plan read model.",
   "GET /api/quality-dashboard/scores":
     "Command centre tile, unbuilt pending a decision on what a row contains.",
-  "GET /api/performance-dashboard/ops":
-    "Command centre tile, unbuilt pending a decision on what a row contains.",
 };
 
 function collectSourceFiles(dir: string, acc: string[] = []): string[] {
