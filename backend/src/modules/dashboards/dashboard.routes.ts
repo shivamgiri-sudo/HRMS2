@@ -426,7 +426,7 @@ router.get("/PAYROLL_HR_DASHBOARD/operational-summary", requireFixedDashboard("P
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT
          (SELECT COUNT(*) FROM salary_payslip
-           WHERE run_month COLLATE utf8mb4_unicode_ci = ? COLLATE utf8mb4_unicode_ci) AS generated,
+           WHERE run_month COLLATE utf8mb4_unicode_ci = ? COLLATE utf8mb4_unicode_ci) AS \`generated\`,
          (SELECT COUNT(*) FROM salary_prep_line WHERE run_id = ?) AS expected`,
       [currentRun.run_month, currentRun.id],
     );
