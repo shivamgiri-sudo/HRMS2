@@ -215,10 +215,6 @@ const KNOWN_MISSING: Record<string, string> = {
   "/api/sales-upload/batch/:x":
     "no batch route at all, so the 'delete this upload batch' action cannot succeed.",
 
-  // EmployeeEpfComplianceReviewPage.tsx — the most serious of the seven.
-  "/api/public/employee-documents/esign/:x/epf-kyc":
-    "the public esign router serves /esign/:token, /esign/:token/download and /esign/:token/start only. This page POSTs bank account, PAN, AADHAAR and UAN to a route that does not exist. Building it is a DPDP hard gate — a public unauthenticated endpoint accepting identity documents needs its own design and approval, not a quick add.",
-
   // Not a fetch, but still a promise the product makes and does not keep.
   "/api/webhooks/:x":
     "SimpleConnectorWizard DISPLAYS this to the user as 'your webhook URL will be /api/webhooks/{key}'. No /api/webhooks is mounted anywhere, so any external system configured against it posts into nothing. Listed here rather than ignored because the URL is published to third parties.",
