@@ -1603,9 +1603,9 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
       clauses.push("adr.record_date BETWEEN ? AND ?"); params.push(from, to);
       sql = `SELECT adr.record_date, p.process_name, b.branch_name,
                     COALESCE(wm.mandated_hc, 0) AS mandated_hc,
-                    SUM(adr.attendance_status IN ('present','half_day')) AS actual_hc,
-                    COALESCE(wm.mandated_hc, 0) - SUM(adr.attendance_status IN ('present','half_day')) AS gap,
-                    ROUND((COALESCE(wm.mandated_hc,0) - SUM(adr.attendance_status IN ('present','half_day')))
+                    SUM(adr.attendance_status IN ('present','half_day','week_off_worked')) AS actual_hc,
+                    COALESCE(wm.mandated_hc, 0) - SUM(adr.attendance_status IN ('present','half_day','week_off_worked')) AS gap,
+                    ROUND((COALESCE(wm.mandated_hc,0) - SUM(adr.attendance_status IN ('present','half_day','week_off_worked')))
                           / NULLIF(wm.mandated_hc,0) * 100, 1) AS gap_pct
                FROM attendance_daily_record adr
                JOIN employees e ON e.id = adr.employee_id
@@ -1766,7 +1766,7 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
       sql = `SELECT e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
                     COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
                     ROUND(SUM(adr.dialler_minutes) / 60, 2) AS login_hours,
-                    ROUND(COUNT(CASE WHEN adr.attendance_status IN ('present','half_day') THEN 1 END)
+                    ROUND(COUNT(CASE WHEN adr.attendance_status IN ('present','half_day','week_off_worked') THEN 1 END)
                           / NULLIF(COUNT(*),0) * 100, 1) AS attendance_pct,
                     kss.final_score AS kpi_score,
                     ROUND(
@@ -1800,7 +1800,7 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
       sql = `SELECT DATE_FORMAT(adr.record_date,'%Y-%m') AS month, p.process_name,
                     ROUND(SUM(adr.dialler_minutes) / 60, 2) AS total_login_hours,
                     ROUND(SUM(adr.dialler_minutes) / NULLIF(COUNT(CASE WHEN adr.dialler_minutes > 0 THEN 1 END), 0), 1) AS avg_daily_login_minutes,
-                    COUNT(CASE WHEN adr.attendance_status IN ('present','half_day') THEN 1 END) AS present_days
+                    COUNT(CASE WHEN adr.attendance_status IN ('present','half_day','week_off_worked') THEN 1 END) AS present_days
                FROM attendance_daily_record adr
                JOIN employees e ON e.id = adr.employee_id
                LEFT JOIN process_master p ON p.id = e.process_id
@@ -1816,10 +1816,10 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
       clauses.push("DATE_FORMAT(adr.record_date,'%Y-%m') = ?"); params.push(month);
       sql = `SELECT e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
                     COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
-                    ROUND(COUNT(CASE WHEN adr.attendance_status IN ('present','half_day') THEN 1 END)
+                    ROUND(COUNT(CASE WHEN adr.attendance_status IN ('present','half_day','week_off_worked') THEN 1 END)
                           / NULLIF(COUNT(*),0) * 100, 1) AS attendance_pct,
                     kss.final_score AS kpi_score, kss.rating,
-                    CASE WHEN COUNT(CASE WHEN adr.attendance_status IN ('present','half_day') THEN 1 END)
+                    CASE WHEN COUNT(CASE WHEN adr.attendance_status IN ('present','half_day','week_off_worked') THEN 1 END)
                               / NULLIF(COUNT(*),0) < 0.85 AND kss.final_score < 70
                          THEN 'HIGH_RISK' ELSE 'OK' END AS correlation_flag
                FROM attendance_daily_record adr
@@ -2661,8 +2661,8 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
                     ROUND(SUM(adr.dialler_minutes) / 60, 2) AS total_login_hours,
                     ROUND(SUM(adr.dialler_minutes) / 60 / NULLIF(COUNT(DISTINCT e.id),0), 2) AS avg_login_hours_per_agent,
                     ROUND(AVG(kda.actual_value), 2) AS avg_kpi_score,
-                    SUM(CASE WHEN adr.attendance_status IN ('present','half_day') THEN 1 ELSE 0 END) AS present_days,
-                    ROUND(SUM(CASE WHEN adr.attendance_status IN ('present','half_day') THEN 1 ELSE 0 END)
+                    SUM(CASE WHEN adr.attendance_status IN ('present','half_day','week_off_worked') THEN 1 ELSE 0 END) AS present_days,
+                    ROUND(SUM(CASE WHEN adr.attendance_status IN ('present','half_day','week_off_worked') THEN 1 ELSE 0 END)
                           / NULLIF(COUNT(*),0) * 100, 1) AS attendance_pct
                FROM attendance_daily_record adr
                JOIN employees e ON e.id = adr.employee_id
@@ -2684,7 +2684,7 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
       sql = `SELECT DATE_FORMAT(adr.record_date,'%Y-%m') AS month, p.process_name,
                     ROUND(SUM(adr.dialler_minutes) / 60, 2) AS total_login_hours,
                     ROUND(SUM(adr.dialler_minutes) / NULLIF(COUNT(CASE WHEN adr.dialler_minutes > 0 THEN 1 END), 0), 1) AS avg_daily_login_minutes,
-                    COUNT(CASE WHEN adr.attendance_status IN ('present','half_day') THEN 1 END) AS present_days
+                    COUNT(CASE WHEN adr.attendance_status IN ('present','half_day','week_off_worked') THEN 1 END) AS present_days
                FROM attendance_daily_record adr
                JOIN employees e ON e.id = adr.employee_id
                LEFT JOIN process_master p ON p.id = e.process_id
@@ -2704,7 +2704,7 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
                     ROUND(SUM(adr.dialler_minutes) / 60, 2) AS total_login_hours,
                     ROUND(SUM(adr.dialler_minutes) / 60 / NULLIF(COUNT(DISTINCT e.id),0), 2) AS avg_login_hours_per_agent,
                     ROUND(AVG(kda.actual_value), 2) AS avg_kpi_score,
-                    ROUND(SUM(CASE WHEN adr.attendance_status IN ('present','half_day') THEN 1 ELSE 0 END)
+                    ROUND(SUM(CASE WHEN adr.attendance_status IN ('present','half_day','week_off_worked') THEN 1 ELSE 0 END)
                           / NULLIF(COUNT(*),0) * 100, 1) AS attendance_pct
                FROM attendance_daily_record adr
                JOIN employees e ON e.id = adr.employee_id
@@ -2751,11 +2751,11 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
       clauses.push("adr.record_date BETWEEN ? AND ?"); params.push(from, to);
       sql = `SELECT DATE_FORMAT(adr.record_date,'%Y-%m-%d') AS report_date,
                     COUNT(DISTINCT e.id) AS active_agents,
-                    SUM(CASE WHEN adr.attendance_status IN ('present','half_day') THEN 1 ELSE 0 END) AS present_count,
+                    SUM(CASE WHEN adr.attendance_status IN ('present','half_day','week_off_worked') THEN 1 ELSE 0 END) AS present_count,
                     ROUND(SUM(adr.dialler_minutes) / 60, 2) AS total_login_hours,
                     ROUND(SUM(adr.dialler_minutes) / 60 / NULLIF(COUNT(DISTINCT CASE WHEN adr.dialler_minutes > 0 THEN e.id END),0), 2) AS avg_login_hours_per_agent,
                     ROUND(AVG(kda.actual_value), 2) AS avg_kpi_score,
-                    ROUND(SUM(CASE WHEN adr.attendance_status IN ('present','half_day') THEN 1 ELSE 0 END)
+                    ROUND(SUM(CASE WHEN adr.attendance_status IN ('present','half_day','week_off_worked') THEN 1 ELSE 0 END)
                           / NULLIF(COUNT(*),0) * 100, 1) AS attendance_pct
                FROM attendance_daily_record adr
                JOIN employees e ON e.id = adr.employee_id
@@ -2775,10 +2775,10 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
       sql = `SELECT p.process_name, b.branch_name,
                     adr.record_date,
                     COUNT(DISTINCT e.id) AS scheduled_hc,
-                    SUM(CASE WHEN adr.attendance_status IN ('present','half_day') THEN 1 ELSE 0 END) AS present_hc,
+                    SUM(CASE WHEN adr.attendance_status IN ('present','half_day','week_off_worked') THEN 1 ELSE 0 END) AS present_hc,
                     ROUND(SUM(adr.dialler_minutes) / NULLIF(
-                      SUM(CASE WHEN adr.attendance_status IN ('present','half_day') THEN 480 ELSE 0 END), 0) * 100, 1) AS occupancy_pct,
-                    ROUND(SUM(CASE WHEN adr.attendance_status IN ('present','half_day') THEN 1 ELSE 0 END)
+                      SUM(CASE WHEN adr.attendance_status IN ('present','half_day','week_off_worked') THEN 480 ELSE 0 END), 0) * 100, 1) AS occupancy_pct,
+                    ROUND(SUM(CASE WHEN adr.attendance_status IN ('present','half_day','week_off_worked') THEN 1 ELSE 0 END)
                           / NULLIF(COUNT(*),0) * 100, 1) AS utilization_pct
                FROM attendance_daily_record adr
                JOIN employees e ON e.id = adr.employee_id
@@ -2796,10 +2796,10 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
       clauses.push("DATE_FORMAT(adr.record_date,'%Y-%m') = ?"); params.push(month);
       sql = `SELECT e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
                     COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
-                    ROUND(COUNT(CASE WHEN adr.attendance_status IN ('present','half_day') THEN 1 END)
+                    ROUND(COUNT(CASE WHEN adr.attendance_status IN ('present','half_day','week_off_worked') THEN 1 END)
                           / NULLIF(COUNT(*),0) * 100, 1) AS attendance_pct,
                     kss.final_score AS kpi_score, kss.rating,
-                    CASE WHEN COUNT(CASE WHEN adr.attendance_status IN ('present','half_day') THEN 1 END)
+                    CASE WHEN COUNT(CASE WHEN adr.attendance_status IN ('present','half_day','week_off_worked') THEN 1 END)
                               / NULLIF(COUNT(*),0) < 0.85 AND kss.final_score < 70
                          THEN 'HIGH_RISK' ELSE 'OK' END AS correlation_flag
                FROM attendance_daily_record adr
@@ -2829,12 +2829,12 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
       clauses.push("adr.record_date BETWEEN ? AND ?"); params.push(from, to);
       sql = `SELECT adr.record_date, p.process_name, b.branch_name,
                     COUNT(DISTINCT e.id) AS total_scheduled,
-                    SUM(CASE WHEN adr.attendance_status IN ('present','half_day') THEN 1 ELSE 0 END) AS present_count,
-                    COUNT(DISTINCT e.id) - SUM(CASE WHEN adr.attendance_status IN ('present','half_day') THEN 1 ELSE 0 END) AS shrinkage_count,
-                    ROUND((COUNT(DISTINCT e.id) - SUM(CASE WHEN adr.attendance_status IN ('present','half_day') THEN 1 ELSE 0 END))
+                    SUM(CASE WHEN adr.attendance_status IN ('present','half_day','week_off_worked') THEN 1 ELSE 0 END) AS present_count,
+                    COUNT(DISTINCT e.id) - SUM(CASE WHEN adr.attendance_status IN ('present','half_day','week_off_worked') THEN 1 ELSE 0 END) AS shrinkage_count,
+                    ROUND((COUNT(DISTINCT e.id) - SUM(CASE WHEN adr.attendance_status IN ('present','half_day','week_off_worked') THEN 1 ELSE 0 END))
                           / NULLIF(COUNT(DISTINCT e.id),0) * 100, 1) AS shrinkage_pct,
                     ROUND(SUM(adr.dialler_minutes) / 60, 2) AS actual_login_hours,
-                    ROUND(SUM(CASE WHEN adr.attendance_status IN ('present','half_day') THEN 480 ELSE 0 END) / 60, 2) AS expected_login_hours
+                    ROUND(SUM(CASE WHEN adr.attendance_status IN ('present','half_day','week_off_worked') THEN 480 ELSE 0 END) / 60, 2) AS expected_login_hours
                FROM attendance_daily_record adr
                JOIN employees e ON e.id = adr.employee_id
                LEFT JOIN process_master p ON p.id = e.process_id

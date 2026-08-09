@@ -349,7 +349,7 @@ export async function dailyHcShift(
            COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
            COALESCE(ws.shift_name, 'Roster Not Assigned') AS shift_name,
            COUNT(*) AS scheduled_headcount,
-           SUM(adr.attendance_status IN ('present','half_day')) AS present_count,
+           SUM(adr.attendance_status IN ('present','half_day','week_off_worked')) AS present_count,
            SUM(adr.attendance_status = 'absent') AS absent_count,
            SUM(adr.attendance_status = 'leave_approved') AS leave_count,
            SUM(adr.attendance_status = 'week_off') AS week_off_count,
@@ -357,7 +357,7 @@ export async function dailyHcShift(
            SUM(CASE WHEN adr.attendance_status = 'unreconciled' THEN 1 ELSE 0 END) AS missing_punch_count,
            SUM(CASE WHEN wra.id IS NULL THEN 1 ELSE 0 END) AS unassigned_roster_count,
            SUM(adr.late_mark = 1) AS late_count,
-           ROUND(SUM(adr.attendance_status IN ('present','half_day')) / NULLIF(COUNT(*), 0) * 100, 1) AS attendance_pct
+           ROUND(SUM(adr.attendance_status IN ('present','half_day','week_off_worked')) / NULLIF(COUNT(*), 0) * 100, 1) AS attendance_pct
       FROM attendance_daily_record adr
       JOIN employees e ON e.id = adr.employee_id
       LEFT JOIN branch_master b ON b.id = e.branch_id
@@ -747,7 +747,7 @@ export async function overtimeSummary(
        WHERE spr.run_month = ?
        GROUP BY spl.employee_id
     ) otp ON otp.employee_id = e.id
-   WHERE ${clauses.join(" AND ")} AND adr.attendance_status IN ('present','half_day')
+   WHERE ${clauses.join(" AND ")} AND adr.attendance_status IN ('present','half_day','week_off_worked')
    GROUP BY e.id, e.employee_code, e.first_name, e.last_name, e.full_name,
             b.branch_name, p.process_name, d.dept_name, dm.designation_name,
             occ.cost_centre_code, occ.cost_centre_name
@@ -1050,13 +1050,13 @@ export async function dailyShrinkageReport(
            COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
            COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
            COUNT(*) AS total_scheduled,
-           SUM(adr.attendance_status IN ('present','half_day')) AS present_hc,
+           SUM(adr.attendance_status IN ('present','half_day','week_off_worked')) AS present_hc,
            SUM(adr.attendance_status = 'absent') AS absent_hc,
            SUM(adr.attendance_status = 'leave_approved') AS leave_hc,
            SUM(adr.attendance_status = 'week_off') AS week_off_hc,
            SUM(adr.attendance_status = 'holiday') AS holiday_hc,
            COUNT(*) - SUM(adr.attendance_status IN ('present','half_day','leave_approved','week_off','holiday')) AS unplanned_shrinkage_hc,
-           ROUND((COUNT(*) - SUM(adr.attendance_status IN ('present','half_day'))) / NULLIF(COUNT(*), 0) * 100, 2) AS total_shrinkage_pct,
+           ROUND((COUNT(*) - SUM(adr.attendance_status IN ('present','half_day','week_off_worked'))) / NULLIF(COUNT(*), 0) * 100, 2) AS total_shrinkage_pct,
            ROUND((SUM(adr.attendance_status = 'absent')) / NULLIF(COUNT(*), 0) * 100, 2) AS unplanned_shrinkage_pct
       FROM attendance_daily_record adr
       JOIN employees e ON e.id = adr.employee_id
@@ -1116,10 +1116,10 @@ export async function monthlyShrinkageTrend(
         SELECT DATE_FORMAT(adr.record_date,'%Y-%m') AS month, b.branch_name, p.process_name,
                COUNT(DISTINCT adr.record_date) AS working_days,
                COUNT(*) AS total_employee_days,
-               SUM(adr.attendance_status IN ('present','half_day')) AS present_days,
+               SUM(adr.attendance_status IN ('present','half_day','week_off_worked')) AS present_days,
                SUM(adr.attendance_status = 'absent') AS absent_days,
                SUM(adr.attendance_status = 'leave_approved') AS leave_days,
-               ROUND((COUNT(*) - SUM(adr.attendance_status IN ('present','half_day'))) / NULLIF(COUNT(*), 0) * 100, 2) AS total_shrinkage_pct,
+               ROUND((COUNT(*) - SUM(adr.attendance_status IN ('present','half_day','week_off_worked'))) / NULLIF(COUNT(*), 0) * 100, 2) AS total_shrinkage_pct,
                ROUND(SUM(adr.attendance_status = 'absent') / NULLIF(COUNT(*), 0) * 100, 2) AS unplanned_shrinkage_pct
           FROM attendance_daily_record adr
           JOIN employees e ON e.id = adr.employee_id
@@ -1163,7 +1163,7 @@ export async function biometricReconciliation(
   const from = dateParam(filters.from, new Date().toISOString().slice(0, 10));
   const to   = dateParam(filters.to, from);
 
-  const RECONCILIATION_CASE = `CASE WHEN ibd.first_punch IS NULL AND adr.attendance_status IN ('present','half_day') THEN 'NO_BIOMETRIC_FOR_PRESENT'
+  const RECONCILIATION_CASE = `CASE WHEN ibd.first_punch IS NULL AND adr.attendance_status IN ('present','half_day','week_off_worked') THEN 'NO_BIOMETRIC_FOR_PRESENT'
                           WHEN ibd.first_punch IS NOT NULL AND adr.attendance_status='absent' THEN 'PUNCHED_BUT_ABSENT'
                           ELSE 'OK' END`;
 
@@ -1194,7 +1194,7 @@ export async function biometricReconciliation(
            ibd.biometric_minutes AS raw_biometric_minutes,
            TIME_FORMAT(SEC_TO_TIME(ibd.biometric_minutes * 60), '%H:%i') AS raw_biometric_duration,
            ${RECONCILIATION_CASE} AS reconciliation_status,
-           CASE WHEN ibd.first_punch IS NULL AND adr.attendance_status IN ('present','half_day') THEN 'No biometric record for marked present'
+           CASE WHEN ibd.first_punch IS NULL AND adr.attendance_status IN ('present','half_day','week_off_worked') THEN 'No biometric record for marked present'
                 WHEN ibd.first_punch IS NOT NULL AND adr.attendance_status='absent' THEN 'Biometric punch exists but marked absent'
                 ELSE 'Reconciled' END AS reconciliation_description
       FROM attendance_daily_record adr
@@ -1583,10 +1583,10 @@ export async function productivityIndividualScorecard(
            COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
            ROUND(SUM(adr.dialler_minutes) / 60, 2) AS login_hours,
            ROUND(SUM(adr.biometric_minutes) / 60, 2) AS biometric_hours,
-           COUNT(CASE WHEN adr.attendance_status IN ('present','half_day') THEN 1 END) AS present_days,
+           COUNT(CASE WHEN adr.attendance_status IN ('present','half_day','week_off_worked') THEN 1 END) AS present_days,
            kss.final_score AS kpi_score,
            kss.rating AS kpi_rating,
-           ROUND(COUNT(CASE WHEN adr.attendance_status IN ('present','half_day') THEN 1 END)
+           ROUND(COUNT(CASE WHEN adr.attendance_status IN ('present','half_day','week_off_worked') THEN 1 END)
                  / NULLIF(COUNT(*),0) * 100, 1) AS attendance_pct
       FROM attendance_daily_record adr
       JOIN employees e ON e.id = adr.employee_id
