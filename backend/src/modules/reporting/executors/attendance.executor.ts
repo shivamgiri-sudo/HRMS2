@@ -1133,6 +1133,12 @@ export async function monthlyShrinkageTrend(
   // One execution instead of two wherever the result fits the probe. This report costs ~35s and
   // the COUNT it used to force cost another ~42s, for a number the same scan already knew — see
   // COUNT_FREE_PROBE. Identical rows either way; only the number of round trips changes.
+  //
+  // Before rewriting the SQL above to make this faster: don't. Six rewrites have been measured
+  // and rejected, and the cost is not in the query. The server runs a 128 MB InnoDB buffer pool
+  // against a 3.4 GB database with 0 MB free, so the plan's "single-row PK lookup" into employees
+  // costs ~160µs of disk seek, 105k times. Full measurements, and the list of rewrites already
+  // ruled out, are in docs/reports-slow-queries-root-cause.md.
   const { rows, total } = await fetchPageWithTotal(base, params, options, query, count);
   return { rows, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > rows.length, nextCursor: null };
 }
