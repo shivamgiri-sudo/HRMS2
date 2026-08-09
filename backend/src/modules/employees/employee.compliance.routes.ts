@@ -1,4 +1,5 @@
 import { randomUUID } from "crypto";
+import { applyEpfKycAndRegenerate } from "./epfKycCapture.service.js";
 import fs from "fs";
 import path from "path";
 import PDFDocument from "pdfkit";
@@ -1050,6 +1051,74 @@ publicEmployeeDocumentRouter.get("/esign/:token/download", h(async (req, res) =>
   res.setHeader("Content-Type", file.mimeType);
   res.setHeader("Content-Disposition", `attachment; filename="${file.fileName.replace(/"/g, "")}"`);
   fs.createReadStream(file.storagePath).pipe(res);
+}));
+
+/**
+ * Statutory KYC supplied by the employee from the public e-sign review page.
+ *
+ * WHY THIS ROUTE DID NOT EXIST
+ *   epfKycCapture.service.ts was written for exactly this — validateEpfKyc() and
+ *   applyEpfKycAndRegenerate(), masking and hashing at the point of save — and had NO callers.
+ *   EmployeeEpfComplianceReviewPage has been POSTing here the whole time, and its error
+ *   handling already reads `body.errors` as [{field, message}], which is precisely what
+ *   validateEpfKyc returns. The service and the page were built to meet; only the wire was
+ *   missing, so every submission failed and the employee's bank, PAN, Aadhaar and UAN went
+ *   nowhere.
+ *
+ * WHAT IS AND IS NOT STORED
+ *   Nothing here writes a raw identifier. applyEpfKycAndRegenerate passes the values straight
+ *   into the generated PDF as transient field values and records only the masked form plus a
+ *   hash — see that file's header. This route adds no storage of its own and deliberately
+ *   logs nothing: the body is the most sensitive payload in the application.
+ *
+ * AUTHENTICATION
+ *   The same one the sibling routes use. getPublicJoiningDocumentEsignSession resolves the
+ *   token by SHA2 hash and throws 404 for an unknown link, 410 for one that is inactive or
+ *   expired, so an invalid token never reaches the service. The employee and checklist come
+ *   from that session, never from the request body — a caller cannot aim this at someone
+ *   else's document by changing a field.
+ *
+ *   Note the router itself carries no rate limiter, so token guessing is bounded only by the
+ *   token's entropy. That is pre-existing and applies equally to the signing route beside
+ *   this one; it is worth adding publicRegistrationLimiter to the mount, but that is a change
+ *   to an existing line and is left for its own review.
+ */
+publicEmployeeDocumentRouter.post("/esign/:token/epf-kyc", h(async (req, res) => {
+  const session = await getPublicJoiningDocumentEsignSession(req.params.token);
+
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  const text = (value: unknown): string | null => {
+    const s = typeof value === "string" ? value.trim() : "";
+    return s === "" ? null : s;
+  };
+
+  // The page posts snake_case; the service takes camelCase. Mapped explicitly rather than
+  // transformed, so a renamed field fails to compile instead of silently arriving as null.
+  const result = await applyEpfKycAndRegenerate({
+    checklistId: String(session.checklist_id),
+    employeeId: String(session.employee_id),
+    input: {
+      panNumber:           text(body.pan_number),
+      panNameAsPerKyc:     text(body.pan_name),
+      aadhaarNumber:       text(body.aadhaar_number),
+      aadhaarNameAsPerKyc: text(body.aadhaar_name),
+      uanNumber:           text(body.uan_number),
+      bankAccountNumber:   text(body.bank_account_number),
+      bankIfsc:            text(body.bank_ifsc),
+      bankAccountName:     text(body.bank_account_name),
+    },
+  });
+
+  if (result.errors.length) {
+    // Shape fixed by the caller: it maps errors[] into per-field messages.
+    return res.status(400).json({
+      success: false,
+      message: "Please correct the highlighted details.",
+      errors: result.errors,
+    });
+  }
+
+  return res.json({ success: true, regenerated: result.regenerated });
 }));
 
 publicEmployeeDocumentRouter.post("/esign/:token", h(async (req, res) => {
