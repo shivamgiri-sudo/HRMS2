@@ -1,7 +1,7 @@
 # HRMS-db-bill-sync Status Report
 
 **Date**: 2026-06-11 21:52 IST  
-**Database**: mas_hrms @ 122.184.128.90
+**Database**: mas_hrms @ <mas_hrms DB host — see backend/.env>
 
 ---
 
@@ -169,7 +169,7 @@ mysql -h 192.168.10.6 -u shivam_user -p'<set DB_PASSWORD in backend/.env>' mas_h
 
 ## 📊 Database Connection Status
 
-### Public IP (122.184.128.90)
+### Public IP (<mas_hrms DB host — see backend/.env>)
 ✅ **Connected Successfully**
 - mas_hrms accessible
 - Can query and modify data
@@ -188,7 +188,7 @@ mysql -h 192.168.10.6 -u shivam_user -p'<set DB_PASSWORD in backend/.env>' mas_h
 
 ### Check if 2026 balances exist in mas_hrms
 ```sql
-mysql -h 122.184.128.90 -u shivam_user -p'<set DB_PASSWORD in backend/.env>' mas_hrms -e "
+mysql -h <mas_hrms DB host — see backend/.env> -u shivam_user -p'<set DB_PASSWORD in backend/.env>' mas_hrms -e "
 SELECT 
   COUNT(*) as total_2026_balances,
   COUNT(DISTINCT employee_id) as employees_with_2026
@@ -203,7 +203,7 @@ WHERE balance_year = 2026;
 
 ### Check specific employee (Naresh)
 ```sql
-mysql -h 122.184.128.90 -u shivam_user -p'<set DB_PASSWORD in backend/.env>' mas_hrms -e "
+mysql -h <mas_hrms DB host — see backend/.env> -u shivam_user -p'<set DB_PASSWORD in backend/.env>' mas_hrms -e "
 SELECT lbl.*, ltm.leave_name
 FROM leave_balance_ledger lbl
 JOIN leave_type_master ltm ON ltm.id = lbl.leave_type_id
@@ -244,7 +244,7 @@ Since we already have the frontend fix that falls back to 2025:
 
 3. **If 2026 data NOT in db_bill**: Run allocation script:
    ```bash
-   mysql -h 122.184.128.90 -u shivam_user -p'<set DB_PASSWORD in backend/.env>' mas_hrms < scripts/allocate-2026-leave-balances.sql
+   mysql -h <mas_hrms DB host — see backend/.env> -u shivam_user -p'<set DB_PASSWORD in backend/.env>' mas_hrms < scripts/allocate-2026-leave-balances.sql
    ```
 
 ---
@@ -267,7 +267,7 @@ GROUP BY balance_year;
 ### Step 2B: If 2026 NOT in db_bill  
 - Run the allocation script we created:
 ```bash
-mysql -h 122.184.128.90 -u shivam_user -p'<set DB_PASSWORD in backend/.env>' mas_hrms < scripts/allocate-2026-leave-balances.sql
+mysql -h <mas_hrms DB host — see backend/.env> -u shivam_user -p'<set DB_PASSWORD in backend/.env>' mas_hrms < scripts/allocate-2026-leave-balances.sql
 ```
 
 ---

@@ -4,7 +4,7 @@
 
 READ-ONLY integration with ViciDial call center database (`dialer_db`) providing real-time agent activity tracking and call data retrieval for HRMS WFM and productivity monitoring.
 
-**Database**: `dialer_db` @ 122.184.128.90:3306  
+**Database**: `dialer_db` @ <mas_hrms DB host — see backend/.env>:3306  
 **Security**: READ-ONLY enforced at session and query level  
 **Authentication**: All endpoints require valid HRMS auth token
 

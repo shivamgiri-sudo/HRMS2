@@ -25,10 +25,15 @@ Two consequences worth stating plainly:
   its own password (correct, more work) or accept that changing one means changing all four
   in the same window.
 
-Every one of those databases now answers from the internet — `122.184.128.90:3306`,
-`14.97.30.236:3306`, `115.241.59.220:3306`, and COSEC SQL on `14.97.30.234:1433`. Closing
-those ports is faster than rotation and reduces risk immediately; do it first if you can only
-do one thing today.
+All four of those databases answer from the public internet on 3306, as does the COSEC SQL
+Server on 1433. **The specific addresses are deliberately not written here.** They are in
+`backend/.env`, which is not tracked; this file is, and the repository is public, so listing
+them would publish a target list next to a password that is already in this repository's
+history. The earlier revision of this document did list them — assume they are known and
+prioritise closing the ports accordingly.
+
+Closing those ports is faster than rotation and reduces risk immediately; do it first if you
+can only do one thing today.
 
 ---
 

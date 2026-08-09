@@ -7,7 +7,7 @@
 
 ## What's Built
 
-✅ **MySQL Connection** - Connected to 14.97.30.236:3306/db_bill  
+✅ **MySQL Connection** - Connected to <db_bill host — see backend/.env>:3306/db_bill  
 ✅ **Source Table** - masjclrentry (32,634 employees, updated 2026-06-06)  
 ✅ **Target Table** - employees (30 new columns added)  
 ✅ **Sync Worker** - Timestamp-based incremental sync (60s interval)  
@@ -46,7 +46,7 @@ curl -X POST http://localhost:3002/api/legacy/sync/trigger \
 ### 2. Verify Employees Synced
 
 ```bash
-mysql -h 122.184.128.90 -u root -p<set SOURCE_DB_PASSWORD in backend/.env> mas_hrms -e "
+mysql -h <mas_hrms DB host — see backend/.env> -u root -p<set SOURCE_DB_PASSWORD in backend/.env> mas_hrms -e "
 SELECT 
   employee_code,
   CONCAT(first_name, ' ', COALESCE(last_name, '')) as name,
@@ -64,7 +64,7 @@ LIMIT 10;
 ### 3. Check Sync Logs
 
 ```bash
-mysql -h 122.184.128.90 -u root -p<set SOURCE_DB_PASSWORD in backend/.env> mas_hrms -e "
+mysql -h <mas_hrms DB host — see backend/.env> -u root -p<set SOURCE_DB_PASSWORD in backend/.env> mas_hrms -e "
 SELECT 
   domain,
   status,
@@ -86,7 +86,7 @@ LIMIT 5;
 **Setup:**
 ```bash
 # Check current count
-mysql -h 122.184.128.90 -u root -p<set SOURCE_DB_PASSWORD in backend/.env> mas_hrms -e \
+mysql -h <mas_hrms DB host — see backend/.env> -u root -p<set SOURCE_DB_PASSWORD in backend/.env> mas_hrms -e \
   "SELECT COUNT(*) FROM employees WHERE legacy_emp_id IS NOT NULL;"
 ```
 
@@ -108,7 +108,7 @@ curl -X POST http://localhost:3002/api/legacy/sync/trigger \
 
 **Setup:**
 ```sql
--- Update an employee in legacy (on 14.97.30.236)
+-- Update an employee in legacy (on <db_bill host — see backend/.env>)
 UPDATE db_bill.masjclrentry
 SET Mobile = '9999999999', lastUpdated = NOW()
 WHERE EmpCode = 'MAS00001';
@@ -244,8 +244,8 @@ WHERE domain = 'employee';
 **Cause:** Legacy database not reachable  
 **Fix:**
 - Check VPN connection
-- Verify IP: 14.97.30.236:3306
-- Test: `mysql -h 14.97.30.236 -u shivam_user -p db_bill`
+- Verify IP: <db_bill host — see backend/.env>:3306
+- Test: `mysql -h <db_bill host — see backend/.env> -u shivam_user -p db_bill`
 
 ### Issue: "Duplicate entry for key 'employee_code'"
 
@@ -306,7 +306,7 @@ Authorization: Bearer <admin-token>
 ```json
 {
   "ok": true,
-  "host": "14.97.30.236",
+  "host": "<db_bill host — see backend/.env>",
   "database": "db_bill",
   "connected": true
 }
@@ -348,7 +348,7 @@ Authorization: Bearer <admin-token>
 
 ```bash
 # Legacy MySQL Database
-LEGACY_MYSQL_HOST=14.97.30.236
+LEGACY_MYSQL_HOST=<db_bill host — see backend/.env>
 LEGACY_MYSQL_PORT=3306
 LEGACY_MYSQL_DATABASE=db_bill
 LEGACY_MYSQL_USER=shivam_user

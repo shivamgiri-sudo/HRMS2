@@ -48,7 +48,7 @@ roster_template
 **Validation Required**:
 ```bash
 # Run preflight check FIRST
-mysql -h 122.184.128.90 -u shivam_user -p<set DB_PASSWORD in backend/.env> mas_hrms < /tmp/roster-analysis/scripts/wfm_auto_roster_preflight.sql
+mysql -h <mas_hrms DB host — see backend/.env> -u shivam_user -p<set DB_PASSWORD in backend/.env> mas_hrms < /tmp/roster-analysis/scripts/wfm_auto_roster_preflight.sql
 ```
 
 **Solution**:
@@ -349,10 +349,10 @@ import { db } from '../../db/mysql.js'; // May need adjustment
 ### Step 1: Analyze Current State
 ```bash
 # Check existing roster tables
-mysql -h 122.184.128.90 -u shivam_user -p<set DB_PASSWORD in backend/.env> mas_hrms -e "SHOW TABLES LIKE '%roster%';"
+mysql -h <mas_hrms DB host — see backend/.env> -u shivam_user -p<set DB_PASSWORD in backend/.env> mas_hrms -e "SHOW TABLES LIKE '%roster%';"
 
 # Run preflight
-mysql -h 122.184.128.90 -u shivam_user -p<set DB_PASSWORD in backend/.env> mas_hrms < /tmp/roster-analysis/scripts/wfm_auto_roster_preflight.sql
+mysql -h <mas_hrms DB host — see backend/.env> -u shivam_user -p<set DB_PASSWORD in backend/.env> mas_hrms < /tmp/roster-analysis/scripts/wfm_auto_roster_preflight.sql
 ```
 
 ### Step 2: Review Patch File
@@ -362,12 +362,12 @@ cat /tmp/roster-analysis/patches/AUTO_ROSTER_SYNCED_PROJECT_PATCH.diff
 
 ### Step 3: Backup Database
 ```bash
-mysqldump -h 122.184.128.90 -u shivam_user -p<set DB_PASSWORD in backend/.env> mas_hrms > hrms_backup_before_roster.sql
+mysqldump -h <mas_hrms DB host — see backend/.env> -u shivam_user -p<set DB_PASSWORD in backend/.env> mas_hrms > hrms_backup_before_roster.sql
 ```
 
 ### Step 4: Apply Migration
 ```bash
-mysql -h 122.184.128.90 -u shivam_user -p<set DB_PASSWORD in backend/.env> mas_hrms < /tmp/roster-analysis/backend/sql/052_wfm_auto_roster_synced.sql
+mysql -h <mas_hrms DB host — see backend/.env> -u shivam_user -p<set DB_PASSWORD in backend/.env> mas_hrms < /tmp/roster-analysis/backend/sql/052_wfm_auto_roster_synced.sql
 ```
 
 ### Step 5: Seed Page Access
@@ -384,7 +384,7 @@ VALUES
 ON DUPLICATE KEY UPDATE can_view=VALUES(can_view);
 EOF
 
-mysql -h 122.184.128.90 -u shivam_user -p<set DB_PASSWORD in backend/.env> mas_hrms < /tmp/seed_roster_access.sql
+mysql -h <mas_hrms DB host — see backend/.env> -u shivam_user -p<set DB_PASSWORD in backend/.env> mas_hrms < /tmp/seed_roster_access.sql
 ```
 
 ### Step 6: Copy Files

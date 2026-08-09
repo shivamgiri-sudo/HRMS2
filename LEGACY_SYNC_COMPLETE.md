@@ -205,7 +205,7 @@
 
 ```
 ┌─────────────────────┐
-│  Legacy DB (READ)   │  db_bill @ 14.97.30.236
+│  Legacy DB (READ)   │  db_bill @ <db_bill host — see backend/.env>
 └──────────┬──────────┘
            │ Fetch (timestamp-based)
            ▼
@@ -218,7 +218,7 @@
            │
            ▼
 ┌─────────────────────┐
-│  HRMS DB (WRITE)    │  mas_hrms @ 122.184.128.90
+│  HRMS DB (WRITE)    │  mas_hrms @ <mas_hrms DB host — see backend/.env>
 │  - INSERT/UPDATE    │
 │  - Track legacy_id  │
 └─────────────────────┘
@@ -293,7 +293,7 @@
 
 **Legacy MySQL (READ-ONLY):**
 ```
-Host: 14.97.30.236:3306
+Host: <db_bill host — see backend/.env>:3306
 User: shivam_user
 Pass: <set DB_PASSWORD in backend/.env>
 DB:   db_bill
@@ -301,7 +301,7 @@ DB:   db_bill
 
 **HRMS MySQL (WRITE):**
 ```
-Host: 122.184.128.90:3306
+Host: <mas_hrms DB host — see backend/.env>:3306
 User: shivam_user (READ) / root (WRITE)
 Pass: <set DB_PASSWORD in backend/.env> / Tmc@0987#
 DB:   mas_hrms

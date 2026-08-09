@@ -901,7 +901,7 @@ node -e "
 const mysql = require('mysql2/promise');
 async function verify() {
   const conn = await mysql.createConnection({
-    host: process.env.DB_HOST || '122.184.128.90',
+    host: process.env.DB_HOST || '<mas_hrms DB host — see backend/.env>',
     port: 3306,
     user: process.env.DB_USER || 'root',
     password: process.env.DB_PASSWORD || '<set SOURCE_DB_PASSWORD in backend/.env>',

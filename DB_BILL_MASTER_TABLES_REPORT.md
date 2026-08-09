@@ -1,7 +1,7 @@
 # db_bill Database - Master Tables Report
 
 **Database**: `db_bill`  
-**Server**: `14.97.30.236`  
+**Server**: `<db_bill host — see backend/.env>`  
 **Total Master Tables**: 117 tables  
 **Date**: 2026-06-13
 
@@ -371,6 +371,6 @@ incentive_name_master (IncentiveName by branch)
 ---
 
 **Generated**: 2026-06-13  
-**Database**: db_bill @ 14.97.30.236  
+**Database**: db_bill @ <db_bill host — see backend/.env>  
 **Total Master Tables**: 117  
 **Key Tables for Integration**: Department_Master, AddCostcenter, cost_master, incentive_name_master, upload_incentive_breakup

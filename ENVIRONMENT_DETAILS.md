@@ -32,7 +32,7 @@ FRONTEND_URL=http://localhost:8080
 ACTIVE_DB_PROVIDER=mysql
 
 # Production MySQL Database
-DB_HOST=122.184.128.90
+DB_HOST=<mas_hrms DB host — see backend/.env>
 DB_PORT=3306
 DB_USER=root
 DB_PASSWORD=<set SOURCE_DB_PASSWORD in backend/.env>
@@ -364,7 +364,7 @@ npm run dev  # Port 5173
 ```bash
 # Backend
 NODE_ENV=production
-DB_HOST=122.184.128.90
+DB_HOST=<mas_hrms DB host — see backend/.env>
 PORT=5055
 
 # Frontend

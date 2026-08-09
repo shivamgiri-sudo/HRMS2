@@ -18,7 +18,7 @@ Network:            192.168.1.0/24
 
 ### COSEC Server:
 ```
-Destination IP: 14.97.30.234
+Destination IP: <COSEC SQL host — see backend/.env>
 Port:           1433
 Status:         BLOCKED (timeout)
 ```
@@ -45,7 +45,7 @@ Subject: URGENT - Port 1433 Still Blocked
 
 Hi IT Team,
 
-I tested the connection to 14.97.30.234:1433 but it's still timing out.
+I tested the connection to <COSEC SQL host — see backend/.env>:1433 but it's still timing out.
 
 Can you please verify the firewall rule?
 
@@ -58,15 +58,15 @@ Source IPs to whitelist (one of these):
 OR better: Whitelist the entire office network subnet
 
 Destination:
-- IP:   14.97.30.234
+- IP:   <COSEC SQL host — see backend/.env>
 - Port: 1433 (TCP)
 
 Test commands showing timeout:
 ```bash
-nc -zv 14.97.30.234 1433
+nc -zv <COSEC SQL host — see backend/.env> 1433
 # Result: Connection timed out
 
-telnet 14.97.30.234 1433
+telnet <COSEC SQL host — see backend/.env> 1433
 # Result: Connection refused/timeout
 ```
 
@@ -100,7 +100,7 @@ If yes:
 sudo openvpn --config /path/to/vpn.ovpn
 
 # Then test
-nc -zv 14.97.30.234 1433
+nc -zv <COSEC SQL host — see backend/.env> 1433
 ```
 
 ### **Option 3: SSH Tunnel via Jump Server**
@@ -108,7 +108,7 @@ nc -zv 14.97.30.234 1433
 If there's a server that CAN reach COSEC:
 ```bash
 # Create SSH tunnel
-ssh -L 1433:14.97.30.234:1433 user@jump-server
+ssh -L 1433:<COSEC SQL host — see backend/.env>:1433 user@jump-server
 
 # Update .env
 NCOSEC_DB_HOST=localhost
@@ -123,7 +123,7 @@ npx tsx scripts/test-cosec-connection.ts
 SQL Server might be on a different port:
 ```bash
 # Scan common SQL Server ports
-nmap -p 1433,1434,49152-49160 14.97.30.234
+nmap -p 1433,1434,49152-49160 <COSEC SQL host — see backend/.env>
 
 # If found on different port (e.g. 49152):
 # Update .env
@@ -138,7 +138,7 @@ Ask IT to run these from THEIR side:
 
 ```powershell
 # From IT's machine (should work from their side):
-Test-NetConnection -ComputerName 14.97.30.234 -Port 1433
+Test-NetConnection -ComputerName <COSEC SQL host — see backend/.env> -Port 1433
 
 # Check if SQL Server is running:
 Get-Service -Name MSSQL*
@@ -154,14 +154,14 @@ netstat -ano | findstr 1433
 ### **Immediate Actions:**
 
 1. **Call IT** (faster than email):
-   - "Port 1433 to 14.97.30.234 is still blocked"
+   - "Port 1433 to <COSEC SQL host — see backend/.env> is still blocked"
    - "Can you test from your side?"
    - "Do I need VPN?"
 
 2. **While Waiting, Check:**
    ```bash
    # Every 5 minutes, test:
-   nc -zv 14.97.30.234 1433
+   nc -zv <COSEC SQL host — see backend/.env> 1433
    
    # When you see "succeeded", run:
    cd /home/shuvam/hrms-audit/backend
@@ -184,9 +184,9 @@ Save this to check connectivity every minute:
 # File: check-cosec-port.sh
 
 while true; do
-  echo "$(date): Testing 14.97.30.234:1433..."
+  echo "$(date): Testing <COSEC SQL host — see backend/.env>:1433..."
   
-  if timeout 5 nc -zv 14.97.30.234 1433 2>&1 | grep -q "succeeded"; then
+  if timeout 5 nc -zv <COSEC SQL host — see backend/.env> 1433 2>&1 | grep -q "succeeded"; then
     echo "✅ PORT IS OPEN! Running test script..."
     cd /home/shuvam/hrms-audit/backend
     npx tsx scripts/test-cosec-connection.ts

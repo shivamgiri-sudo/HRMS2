@@ -136,7 +136,7 @@ Co-Authored-By: Claude Haiku 4.5 <noreply@anthropic.com>"
 import mysql from 'mysql2/promise';
 
 const lmsPool = mysql.createPool({
-  host: process.env.LMS_DB_HOST || '115.241.59.220',
+  host: process.env.LMS_DB_HOST || '<mcn_lms host — see backend/.env>',
   user: process.env.LMS_DB_USER || 'shivam_user',
   password: process.env.LMS_DB_PASSWORD || '<set DB_PASSWORD in backend/.env>',
   database: 'mcn_lms',
@@ -418,7 +418,7 @@ console.log('[Server] LMS sync cron started');
 3. Add .env vars:
 
 ```bash
-LMS_DB_HOST=115.241.59.220
+LMS_DB_HOST=<mcn_lms host — see backend/.env>
 LMS_DB_USER=shivam_user
 LMS_DB_PASSWORD=<set DB_PASSWORD in backend/.env>
 ```

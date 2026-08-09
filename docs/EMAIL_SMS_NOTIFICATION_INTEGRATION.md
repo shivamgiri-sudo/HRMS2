@@ -152,7 +152,7 @@ const ALERT_COOLDOWN_MS = 60 * 60 * 1000; // 1-hour cooldown
 ### Step 1: Run SQL Migration
 
 ```bash
-mysql -h 122.184.128.90 -u shuvam -p mas_hrms < backend/sql/132_email_sms_notification_system.sql
+mysql -h <mas_hrms DB host — see backend/.env> -u shuvam -p mas_hrms < backend/sql/132_email_sms_notification_system.sql
 ```
 
 **Verify Tables**:

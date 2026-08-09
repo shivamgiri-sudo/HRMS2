@@ -27,7 +27,7 @@ The API query tries to SELECT from `designation_band_matrix` table, but the tabl
 cd /home/shuvam/hrms-audit/backend
 
 # Run the migration script
-mysql -h 122.184.128.90 -u shivam_user -p'Mas@2024$secure' mas_hrms < sql/135_payroll_masters.sql
+mysql -h <mas_hrms DB host — see backend/.env> -u shivam_user -p'Mas@2024$secure' mas_hrms < sql/135_payroll_masters.sql
 ```
 
 ### **Step 2: Verify Table Created**
@@ -258,13 +258,13 @@ If any of these are empty, the dropdowns in the form will be empty.
 ```bash
 # 1. Create table
 cd /home/shuvam/hrms-audit/backend
-mysql -h 122.184.128.90 -u shivam_user -p'Mas@2024$secure' mas_hrms < sql/135_payroll_masters.sql
+mysql -h <mas_hrms DB host — see backend/.env> -u shivam_user -p'Mas@2024$secure' mas_hrms < sql/135_payroll_masters.sql
 
 # 2. Verify
-mysql -h 122.184.128.90 -u shivam_user -p'Mas@2024$secure' mas_hrms -e "DESC designation_band_matrix"
+mysql -h <mas_hrms DB host — see backend/.env> -u shivam_user -p'Mas@2024$secure' mas_hrms -e "DESC designation_band_matrix"
 
 # 3. Check prerequisites
-mysql -h 122.184.128.90 -u shivam_user -p'Mas@2024$secure' mas_hrms -e "
+mysql -h <mas_hrms DB host — see backend/.env> -u shivam_user -p'Mas@2024$secure' mas_hrms -e "
 SELECT 
     (SELECT COUNT(*) FROM department_master WHERE active_status=1) AS departments,
     (SELECT COUNT(*) FROM designation_master WHERE active_status=1) AS designations,

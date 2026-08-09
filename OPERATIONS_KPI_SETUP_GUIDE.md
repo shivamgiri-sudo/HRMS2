@@ -40,7 +40,7 @@ const OPS_DISPLAY_CODES = [
 
 Run the verification script:
 ```bash
-mysql -h 122.184.128.90 -u shivam_user -p'Mas@2024$secure' mas_hrms < scripts/verify-kpi-metrics.sql
+mysql -h <mas_hrms DB host — see backend/.env> -u shivam_user -p'Mas@2024$secure' mas_hrms < scripts/verify-kpi-metrics.sql
 ```
 
 **Expected Output:**
@@ -55,7 +55,7 @@ mysql -h 122.184.128.90 -u shivam_user -p'Mas@2024$secure' mas_hrms < scripts/ve
 
 If Step 1 shows missing metrics, run:
 ```bash
-mysql -h 122.184.128.90 -u shivam_user -p'Mas@2024$secure' mas_hrms < scripts/create-missing-kpi-metrics.sql
+mysql -h <mas_hrms DB host — see backend/.env> -u shivam_user -p'Mas@2024$secure' mas_hrms < scripts/create-missing-kpi-metrics.sql
 ```
 
 **This will:**
@@ -182,7 +182,7 @@ npm run dev
 
 **Fix:**
 ```bash
-mysql -h 122.184.128.90 -u shivam_user -p'Mas@2024$secure' mas_hrms < scripts/create-missing-kpi-metrics.sql
+mysql -h <mas_hrms DB host — see backend/.env> -u shivam_user -p'Mas@2024$secure' mas_hrms < scripts/create-missing-kpi-metrics.sql
 ```
 
 ### **Issue 2: No Data in Leaderboard**

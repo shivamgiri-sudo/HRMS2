@@ -48,7 +48,7 @@ Decision: **v1 builds on `db_audit.call_quality_assessment`, not on the empty `q
 ### Operations — backend
 `operations-live.routes.ts` (`/api/operations` — `live-status`, `roster-vs-actual`, `attrition-risk`; already uses `dashboardScope.ts` server-side scoping), `kpi.routes.ts` (`/api/kpi` — metrics/templates/assignments/scores/leaderboard/org-summary), `performance-dashboard.routes.ts`, `performance-intelligence.routes.ts` (`/api/performance-hub`), `performance-feedback.routes.ts`, `operations.executor.ts` (reporting).
 
-### Operations — real data (verified live, `mas_hrms` on 122.184.128.90 / 192.168.10.6)
+### Operations — real data (verified live, `mas_hrms` on <mas_hrms DB host — see backend/.env> / 192.168.10.6)
 | Table | Rows | Usable? |
 |---|---|---|
 | `attendance_daily_record` | 114,593 | Yes — `process_id` 94% populated, `branch_id` 98% populated |

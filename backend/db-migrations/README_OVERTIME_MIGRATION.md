@@ -29,11 +29,11 @@ Adds index for performance optimization on overtime queries.
 
 ### Option 1: Direct MySQL Command
 ```bash
-mysql -h 122.184.128.90 -u shuvam -p mas_hrms < 007_add_overtime_to_payroll.sql
+mysql -h <mas_hrms DB host — see backend/.env> -u shuvam -p mas_hrms < 007_add_overtime_to_payroll.sql
 ```
 
 ### Option 2: MySQL Workbench
-1. Connect to `122.184.128.90` (mas_hrms database)
+1. Connect to `<mas_hrms DB host — see backend/.env>` (mas_hrms database)
 2. Open `007_add_overtime_to_payroll.sql`
 3. Execute SQL
 
@@ -152,7 +152,7 @@ WHERE NOT EXISTS (
 **Solution**: 
 - Verify database credentials in `.env`
 - Check user has ALTER privileges: `SHOW GRANTS FOR 'shuvam'@'%'`
-- Use correct host IP (122.184.128.90)
+- Use correct host IP (<mas_hrms DB host — see backend/.env>)
 
 ### Error: "Table doesn't exist"
 **Solution**:
@@ -179,12 +179,12 @@ WHERE overtime_hours IS NULL;
 
 ### Before Migration
 ```bash
-mysqldump -h 122.184.128.90 -u shuvam -p mas_hrms salary_prep_line > salary_prep_line_backup_$(date +%Y%m%d).sql
+mysqldump -h <mas_hrms DB host — see backend/.env> -u shuvam -p mas_hrms salary_prep_line > salary_prep_line_backup_$(date +%Y%m%d).sql
 ```
 
 ### Restore if Needed
 ```bash
-mysql -h 122.184.128.90 -u shuvam -p mas_hrms < salary_prep_line_backup_20260616.sql
+mysql -h <mas_hrms DB host — see backend/.env> -u shuvam -p mas_hrms < salary_prep_line_backup_20260616.sql
 ```
 
 ---

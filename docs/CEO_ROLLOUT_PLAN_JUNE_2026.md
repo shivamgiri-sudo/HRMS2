@@ -51,7 +51,7 @@ The PeopleOS platform is **feature-complete for all critical workflows** — ATS
   - Tables: `process_master` already in MySQL (created in `001_core_org.sql`)
   - Methods: `list()`, `getById()`, `create()`, `update()`, `updateStatus()`
   - ~2 hours of work
-- [ ] Run all 71 SQL migrations on production MySQL (122.184.128.90)
+- [ ] Run all 71 SQL migrations on production MySQL (<mas_hrms DB host — see backend/.env>)
   - Command: `mysql -u root -p mas_hrms < backend/sql/000_run_all.sql`
   - Verify 40+ tables created: `SHOW TABLES;`
 - [ ] Build backend: `cd backend && npm install && npm run build`
@@ -299,7 +299,7 @@ OR: Nginx on same VPS
 
 **Database:**
 ```
-MySQL 8.0+ at 122.184.128.90 (already running)
+MySQL 8.0+ at <mas_hrms DB host — see backend/.env> (already running)
 Database: mas_hrms
 Storage: minimum 50 GB
 Backups: daily automated

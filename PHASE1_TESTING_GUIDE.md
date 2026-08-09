@@ -6,13 +6,13 @@ Comprehensive testing for database schema and backend services introduced in Pha
 ## Prerequisites
 
 1. **Database Access**:
-   - MySQL server running at `122.184.128.90:3306`
+   - MySQL server running at `<mas_hrms DB host — see backend/.env>:3306`
    - Database: `mas_hrms`
    - User: `shivam_user`
    - Password: `<set DB_PASSWORD in backend/.env>`
 
 2. **Migration Status**:
-   - Run migration: `mysql -h 122.184.128.90 -u shivam_user -p<set DB_PASSWORD in backend/.env> mas_hrms < backend/sql/101_client_master_enhancement.sql`
+   - Run migration: `mysql -h <mas_hrms DB host — see backend/.env> -u shivam_user -p<set DB_PASSWORD in backend/.env> mas_hrms < backend/sql/101_client_master_enhancement.sql`
 
 3. **Node.js Environment**:
    - Node.js >= 16
@@ -38,7 +38,7 @@ Comprehensive testing for database schema and backend services introduced in Pha
 **How to run**:
 ```bash
 # From project root
-mysql -h 122.184.128.90 -u shivam_user -p<set DB_PASSWORD in backend/.env> mas_hrms < backend/tests/phase1-client-master.test.sql
+mysql -h <mas_hrms DB host — see backend/.env> -u shivam_user -p<set DB_PASSWORD in backend/.env> mas_hrms < backend/tests/phase1-client-master.test.sql
 
 # Expected output: Series of ✅ PASS or ❌ FAIL results
 # All tests should show ✅ PASS
@@ -165,7 +165,7 @@ Tests:       24 passed, 24 total
 
 ```bash
 # Connect to database
-mysql -h 122.184.128.90 -u shivam_user -p<set DB_PASSWORD in backend/.env> mas_hrms
+mysql -h <mas_hrms DB host — see backend/.env> -u shivam_user -p<set DB_PASSWORD in backend/.env> mas_hrms
 
 # Verify tables
 SHOW TABLES LIKE '%client%';
@@ -255,7 +255,7 @@ ERROR 2002 (HY000): Can't connect to MySQL server
 
 **Solution**: Verify remote database is accessible:
 ```bash
-mysql -h 122.184.128.90 -u shivam_user -p<set DB_PASSWORD in backend/.env> -e "SELECT 1"
+mysql -h <mas_hrms DB host — see backend/.env> -u shivam_user -p<set DB_PASSWORD in backend/.env> -e "SELECT 1"
 ```
 
 ### Issue: Table Already Exists

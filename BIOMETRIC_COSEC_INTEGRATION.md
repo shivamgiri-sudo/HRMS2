@@ -311,7 +311,7 @@ const ATTENDANCE_RULES = {
                      │ (cosec-to-mas_hrms-attendance-sync.js)
                      ▼
 ┌─────────────────────────────────────────────────────────────┐
-│         mas_hrms @ 122.184.128.90                          │
+│         mas_hrms @ <mas_hrms DB host — see backend/.env>                          │
 │                                                             │
 │  - attendance_daily_record                                 │
 │  - wfm_attendance_session                                  │

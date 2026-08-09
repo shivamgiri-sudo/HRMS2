@@ -9,7 +9,7 @@
 
 ### **COSEC Database Details:**
 ```
-Host:     14.97.30.234
+Host:     <COSEC SQL host — see backend/.env>
 Port:     1433 (SQL Server)
 User:     shivamg
 Password: ************ (configured)
@@ -21,7 +21,7 @@ Encrypt:  false
 
 1. ✅ **Credentials Added** to `backend/.env`
    ```bash
-   NCOSEC_DB_HOST=14.97.30.234
+   NCOSEC_DB_HOST=<COSEC SQL host — see backend/.env>
    NCOSEC_DB_PORT=1433
    NCOSEC_DB_USER=shivamg
    NCOSEC_DB_PASSWORD=<set-securely-in-backend-env>
@@ -42,7 +42,7 @@ Encrypt:  false
 
 ### **Step 1: Test Connection**
 
-**IMPORTANT:** You may need to be on VPN or office network to access 14.97.30.234
+**IMPORTANT:** You may need to be on VPN or office network to access <COSEC SQL host — see backend/.env>
 
 ```bash
 cd /home/shuvam/hrms-audit/backend
@@ -58,7 +58,7 @@ npx tsx scripts/test-cosec-connection.ts
 └────────────────────────────────────────────┘
 
 Configuration:
-  Host:     14.97.30.234
+  Host:     <COSEC SQL host — see backend/.env>
   Port:     1433
   User:     shivamg
   Password: ************
@@ -117,7 +117,7 @@ npx tsx scripts/migrate-ncosec-biometric.ts
 └─────────────────────────────────────────┘
 
 [NCOSEC] Testing connection...
-[NCOSEC] ✓ Connected to 14.97.30.234:1433
+[NCOSEC] ✓ Connected to <COSEC SQL host — see backend/.env>:1433
 [HRMS] Building UserID → employee_id map...
 [HRMS] Loaded 45 existing enrollment mappings
 [HRMS] Fallback: matched 120 via employee_code
@@ -147,7 +147,7 @@ Day 31/31: 2026-06-15 ... 195 rows → 190 inserted, 5 updated
 
 ```bash
 # Connect to HRMS MySQL
-mysql -h 122.184.128.90 -u shivam_user -p'Mas@2024$secure' mas_hrms
+mysql -h <mas_hrms DB host — see backend/.env> -u shivam_user -p'Mas@2024$secure' mas_hrms
 
 # Check imported data
 SELECT 
@@ -239,21 +239,21 @@ sudo systemctl status cosec-sync.timer
 
 **Error:**
 ```
-ConnectionError: Failed to connect to 14.97.30.234:1433 - timeout
+ConnectionError: Failed to connect to <COSEC SQL host — see backend/.env>:1433 - timeout
 ```
 
 **Solutions:**
 
 1. **Check Network Connectivity:**
    ```bash
-   ping 14.97.30.234
+   ping <COSEC SQL host — see backend/.env>
    ```
 
 2. **Test Port:**
    ```bash
-   nc -zv 14.97.30.234 1433
+   nc -zv <COSEC SQL host — see backend/.env> 1433
    # or
-   telnet 14.97.30.234 1433
+   telnet <COSEC SQL host — see backend/.env> 1433
    ```
 
 3. **Connect to VPN:**
@@ -282,7 +282,7 @@ Login failed for user 'shivamg'
 
 2. **Test on SQL Server Management Studio:**
    - Open SSMS
-   - Connect to: 14.97.30.234,1433
+   - Connect to: <COSEC SQL host — see backend/.env>,1433
    - Authentication: SQL Server Authentication
    - Login: shivamg
    - Password: use the rotated credential stored securely in `backend/.env`
@@ -482,7 +482,7 @@ Before marking setup as complete:
    npx tsx scripts/test-cosec-connection.ts
    
    # Test MySQL connection
-   mysql -h 122.184.128.90 -u shivam_user -p
+   mysql -h <mas_hrms DB host — see backend/.env> -u shivam_user -p
    ```
 
 3. **Contact:**
@@ -514,7 +514,7 @@ npx tsx scripts/test-cosec-connection.ts
 npx tsx scripts/migrate-ncosec-biometric.ts
 
 # 3. Verify data in MySQL
-mysql -h 122.184.128.90 -u shivam_user -p'Mas@2024$secure' mas_hrms \
+mysql -h <mas_hrms DB host — see backend/.env> -u shivam_user -p'Mas@2024$secure' mas_hrms \
   -e "SELECT COUNT(*) FROM biometric_attendance_log"
 
 # 4. Set up daily sync (choose one)

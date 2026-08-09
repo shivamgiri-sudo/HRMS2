@@ -6,7 +6,7 @@
 
 ---
 
-## LMS Schema (mcn_lms @ 115.241.59.220)
+## LMS Schema (mcn_lms @ <mcn_lms host — see backend/.env>)
 
 | Table | Rows | Key Fields | Purpose |
 |-------|------|-----------|---------|

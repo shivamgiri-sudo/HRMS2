@@ -468,12 +468,12 @@ SELECT 'Migration 060 applied: legacy sync schema created' AS status;
 
 - [ ] **Step 2: Run migration**
 
-Run: `mysql -h 122.184.128.90 -u root -p mas_hrms < backend/sql/060_legacy_sync_schema.sql`
+Run: `mysql -h <mas_hrms DB host — see backend/.env> -u root -p mas_hrms < backend/sql/060_legacy_sync_schema.sql`
 Expected: "Migration 060 applied: legacy sync schema created"
 
 - [ ] **Step 3: Verify tables created**
 
-Run: `mysql -h 122.184.128.90 -u root -p mas_hrms -e "SHOW TABLES LIKE 'legacy_%';"`
+Run: `mysql -h <mas_hrms DB host — see backend/.env> -u root -p mas_hrms -e "SHOW TABLES LIKE 'legacy_%';"`
 Expected: List of 10 tables starting with `legacy_`
 
 - [ ] **Step 4: Commit**
@@ -572,7 +572,7 @@ Edit `backend/sql/061_admin_setup.sql` and replace `<BCRYPT_HASH>` with the hash
 
 - [ ] **Step 5: Run admin setup migration**
 
-Run: `mysql -h 122.184.128.90 -u root -p mas_hrms < backend/sql/061_admin_setup.sql`
+Run: `mysql -h <mas_hrms DB host — see backend/.env> -u root -p mas_hrms < backend/sql/061_admin_setup.sql`
 Expected: "Admin setup complete for shivam.giri@teammas.in"
 
 - [ ] **Step 6: Verify admin access (manual test)**

@@ -1,6 +1,6 @@
 # Dialer DB Integration - READ ONLY Data Tunnel
 
-**Database:** dialer_db @ 122.184.128.90  
+**Database:** dialer_db @ <mas_hrms DB host — see backend/.env>  
 **Access:** READ-ONLY (NO ALTER, ADD, DELETE operations)  
 **Purpose:** Live call data integration with HRMS for WFM/reporting
 
@@ -9,7 +9,7 @@
 ## 🔐 **CONNECTION DETAILS**
 
 ```env
-DIALER_DB_HOST=122.184.128.90
+DIALER_DB_HOST=<mas_hrms DB host — see backend/.env>
 DIALER_DB_PORT=3306
 DIALER_DB_USER=root
 DIALER_DB_PASSWORD=<set SOURCE_DB_PASSWORD in backend/.env>
@@ -469,7 +469,7 @@ GET  /api/dialer/live/team/:teamName
 ### **1. Add Environment Variables**
 ```bash
 # backend/.env
-DIALER_DB_HOST=122.184.128.90
+DIALER_DB_HOST=<mas_hrms DB host — see backend/.env>
 DIALER_DB_PORT=3306
 DIALER_DB_USER=root
 DIALER_DB_PASSWORD=<set SOURCE_DB_PASSWORD in backend/.env>

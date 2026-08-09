@@ -308,7 +308,7 @@ Fixes audit issues:
 
 2. **Run SQL migration**
    ```bash
-   mysql -h 122.184.128.90 -u root -p mas_hrms < backend/sql/059_ats_file_uploads.sql
+   mysql -h <mas_hrms DB host — see backend/.env> -u root -p mas_hrms < backend/sql/059_ats_file_uploads.sql
    ```
 
 3. **Deploy backend** (Railway/production server)

@@ -206,7 +206,7 @@ Create cron job to sync previous day's data:
 Ensure `.env` has:
 
 ```env
-DIALER_DB_HOST=122.184.128.90
+DIALER_DB_HOST=<mas_hrms DB host — see backend/.env>
 DIALER_DB_PORT=3306
 DIALER_DB_USER=root
 DIALER_DB_PASSWORD=<set SOURCE_DB_PASSWORD in backend/.env>
@@ -253,7 +253,7 @@ grep "DIALER.*Error" /var/log/backend.log | tail -20
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │                    ViciDial Dialer Database                     │
-│                    (dialer_db @ 122.184.128.90)                 │
+│                    (dialer_db @ <mas_hrms DB host — see backend/.env>)                 │
 ├─────────────────────────────────────────────────────────────────┤
 │  - vicidial_agent_log_11_5  (17.8M records)                     │
 │  - vw_inbound_cdr           (Call records)                      │

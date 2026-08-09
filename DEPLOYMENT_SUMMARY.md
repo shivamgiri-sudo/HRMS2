@@ -170,7 +170,7 @@ npm run build
 ## 📞 Support
 
 **Database Connection**:
-- Host: 122.184.128.90:3306
+- Host: <mas_hrms DB host — see backend/.env>:3306
 - Database: mas_hrms
 - User: shivam_user
 

@@ -2,8 +2,8 @@
 
 **Date**: 2026-06-12  
 **Status**: ✅ **PRODUCTION READY**  
-**Source Database**: db_bill @ 14.97.30.236  
-**Target Database**: mas_hrms @ 122.184.128.90
+**Source Database**: db_bill @ <db_bill host — see backend/.env>  
+**Target Database**: mas_hrms @ <mas_hrms DB host — see backend/.env>
 
 ---
 
@@ -67,7 +67,7 @@ Historical depth: 5.2 years complete history
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │                    db_bill (Source)                         │
-│                  14.97.30.236:3306                          │
+│                  <db_bill host — see backend/.env>:3306                          │
 │                                                             │
 │  Tables:                                                    │
 │  - salary_data (complete monthly records)                  │
@@ -81,7 +81,7 @@ Historical depth: 5.2 years complete history
                         ▼
 ┌─────────────────────────────────────────────────────────────┐
 │                    mas_hrms (Target)                        │
-│                  122.184.128.90:3306                        │
+│                  <mas_hrms DB host — see backend/.env>:3306                        │
 │                                                             │
 │  Tables:                                                    │
 │  - salary_prep_run (monthly run headers)                   │

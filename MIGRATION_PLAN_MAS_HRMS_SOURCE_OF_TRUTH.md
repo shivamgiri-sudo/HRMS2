@@ -10,7 +10,7 @@
 
 ### **Current State (Phase 1)**
 ```
-db_bill (14.97.30.236)                   mas_hrms (122.184.128.90)
+db_bill (<db_bill host — see backend/.env>)                   mas_hrms (<mas_hrms DB host — see backend/.env>)
    ├── Salary data entered           ──────→  ├── Synced daily
    ├── Manual payroll processing              ├── HRMS application
    └── Source of truth (CURRENT)              └── Read-only replica
@@ -20,7 +20,7 @@ db_bill (14.97.30.236)                   mas_hrms (122.184.128.90)
 
 ### **Target State (Phase 2)**
 ```
-mas_hrms (122.184.128.90)                db_bill (14.97.30.236)
+mas_hrms (<mas_hrms DB host — see backend/.env>)                db_bill (<db_bill host — see backend/.env>)
    ├── Salary data entered           ──────→  ├── Legacy archive
    ├── Automated payroll processing           ├── Historical reference
    └── Source of truth (FUTURE)               └── Sync DISABLED

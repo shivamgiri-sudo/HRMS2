@@ -10,7 +10,7 @@
 
 **Backend**: ✅ Running on `http://localhost:5055`  
 **Frontend**: ✅ Running on `http://localhost:8080`  
-**Database**: MySQL (mas_hrms@122.184.128.90:3306)
+**Database**: MySQL (mas_hrms@<mas_hrms DB host — see backend/.env>:3306)
 
 **Auth Method**: Supabase Auth (client-side), backend validates JWT tokens
 

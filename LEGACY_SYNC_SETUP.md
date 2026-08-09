@@ -19,7 +19,7 @@ Legacy SQL Server (192.168.10.22:1433/db_bill)
               ↓
     Staging Tables (validation)
               ↓
-  HRMS MySQL (122.184.128.90/mas_hrms)
+  HRMS MySQL (<mas_hrms DB host — see backend/.env>/mas_hrms)
   
 Conflict Resolution: Legacy WINS (source of truth during transition)
 ```
@@ -34,8 +34,8 @@ Conflict Resolution: Legacy WINS (source of truth during transition)
 
 ```bash
 # Already applied migrations:
-mysql -h 122.184.128.90 -u root -p mas_hrms < backend/sql/060_legacy_sync_schema.sql
-mysql -h 122.184.128.90 -u root -p mas_hrms < backend/sql/061_admin_setup.sql
+mysql -h <mas_hrms DB host — see backend/.env> -u root -p mas_hrms < backend/sql/060_legacy_sync_schema.sql
+mysql -h <mas_hrms DB host — see backend/.env> -u root -p mas_hrms < backend/sql/061_admin_setup.sql
 ```
 
 ### 2. Backend Implementation

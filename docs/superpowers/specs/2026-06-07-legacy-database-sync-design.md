@@ -36,7 +36,7 @@ Build a comprehensive real-time sync system to migrate data from legacy SQL Serv
 ### 1.2 Technical Context
 
 **Existing HRMS Architecture**:
-- MySQL primary database (`mas_hrms` on 122.184.128.90)
+- MySQL primary database (`mas_hrms` on <mas_hrms DB host — see backend/.env>)
 - Node.js/Express backend with TypeScript
 - SQL Server integration already exists (NCOSEC biometric)
 - Modular backend structure (40+ modules)
@@ -110,7 +110,7 @@ Build a comprehensive real-time sync system to migrate data from legacy SQL Serv
                          ▼
 ┌─────────────────────────────────────────────────────┐
 │               HRMS MySQL Database                   │
-│            (mas_hrms @ 122.184.128.90)             │
+│            (mas_hrms @ <mas_hrms DB host — see backend/.env>)             │
 │                                                     │
 │  ┌───────────────────────────────────────────────┐ │
 │  │   Staging Tables                              │ │

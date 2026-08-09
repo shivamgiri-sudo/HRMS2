@@ -27,7 +27,7 @@ A single TypeScript CLI script:
 ### 2.2 Source Connection (Placeholder)
 
 ```
-host:     <LEGACY_HOST>       // user fills in: 122.184.128.90
+host:     <LEGACY_HOST>       // user fills in: <mas_hrms DB host — see backend/.env>
 user:     <LEGACY_USER>       // user fills in: root
 password: <LEGACY_PASSWORD>   // user fills in: (provided separately)
 database: <LEGACY_DB>         // user fills in: source DB name

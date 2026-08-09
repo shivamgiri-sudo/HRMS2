@@ -1,7 +1,7 @@
 # HRMS Database Investigation Results
 
 **Date**: 2026-06-11  
-**Database Host**: 122.184.128.90  
+**Database Host**: <mas_hrms DB host — see backend/.env>  
 **Database User**: shivam_user  
 **Primary DB**: mas_hrms
 

@@ -23,7 +23,7 @@
 |-----------|--------|---------|
 | **Backend** | ✅ Running | Port 5055, Node.js + Express |
 | **Frontend** | ✅ Running | Port 8080, Vite + React |
-| **Database** | ❌ **BLOCKED** | MySQL 122.184.128.90:3306 - **Access Denied** |
+| **Database** | ❌ **BLOCKED** | MySQL <mas_hrms DB host — see backend/.env>:3306 - **Access Denied** |
 | **Auth Method** | ✅ Configured | Demo tokens (mock-token-*) |
 
 **Root Cause**: Database user `shivam_user` denied from IP `122.161.72.232` (backend server's public IP)
@@ -37,11 +37,11 @@
 **Impact**: Cannot execute ANY database operations  
 **Error**: `Access denied for user 'shivam_user'@'122.161.72.232' (using password: YES)`  
 
-**Cause**: MySQL server (122.184.128.90) has IP whitelist. Backend server IP (122.161.72.232) not whitelisted.
+**Cause**: MySQL server (<mas_hrms DB host — see backend/.env>) has IP whitelist. Backend server IP (122.161.72.232) not whitelisted.
 
 **Resolution Required**:
 ```sql
--- On MySQL server (122.184.128.90), run as root:
+-- On MySQL server (<mas_hrms DB host — see backend/.env>), run as root:
 GRANT ALL PRIVILEGES ON mas_hrms.* TO 'shivam_user'@'122.161.72.232' IDENTIFIED BY '<set DB_PASSWORD in backend/.env>';
 FLUSH PRIVILEGES;
 
