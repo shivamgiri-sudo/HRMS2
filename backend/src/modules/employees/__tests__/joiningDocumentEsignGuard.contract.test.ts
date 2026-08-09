@@ -22,7 +22,15 @@ import path from "path";
 const SERVICE = path.resolve(__dirname, "..", "employeeJoiningDocuments.service.ts");
 
 function serviceSource(): string {
-  return fs.readFileSync(SERVICE, "utf8");
+  // Normalise line endings before any assertion reads this.
+  //
+  // The slice below looks for "\n}\n" to find the end of a function body. On a
+  // Windows checkout git hands out CRLF, where that closing brace is "\r\n}\r\n",
+  // so indexOf returns -1, slice(0, 2) yields two characters, and the console.error
+  // assertion fails against code that is perfectly correct. The test passed in CI
+  // and failed for every Windows developer — which is worse than a plain failure,
+  // because it reads as a real regression in the service.
+  return fs.readFileSync(SERVICE, "utf8").replace(/\r\n/g, "\n");
 }
 
 /** Columns the migrations actually define for the template table. */
