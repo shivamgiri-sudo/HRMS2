@@ -8,7 +8,7 @@
  *   middleware runs before the miss), so it reads like a permissions problem instead of an
  *   absent feature.
  *
- *   A sweep on 2026-08-08 found seven such calls. Five have since been built; the rest are in
+ *   A sweep on 2026-08-08 found seven such calls. Six have since been built; the rest are in
  *   KNOWN_MISSING below with the reason. None was a typo — each was a UI built against a
  *   server side that was never finished, which is the failure CLAUDE.md rule 9 names directly:
  *   "UI enhancement must not hide missing backend functionality." They accumulated silently
@@ -204,8 +204,13 @@ const KNOWN_MISSING: Record<string, string> = {
   // so that banner is permanent and its quality/ops alerts never actually evaluate.
   "/api/quality-dashboard/scores":
     "router serves /summary, /trend, /agents, /clients, /apr. No endpoint returns per-row quality_score AND fatal_count together; quality-executive.service.ts computes quality_score but is wired to no route at all.",
-  "/api/performance-dashboard/ops":
-    "router serves /goals, /ratings, /agent-matrix, /utilization. Unfixable by URL: handled_volume, target_volume and shrinkage_minutes appear NOWHERE in the backend, so no endpoint can supply this shape.",
+  // /api/performance-dashboard/ops used to sit here, described as "unfixable by URL:
+  // handled_volume, target_volume and shrinkage_minutes appear NOWHERE in the backend". That
+  // was wrong, and wrong in an instructive way: those exact column NAMES appear nowhere, but
+  // the metrics do. mas_hrms.apr carries Calls, Net_Login and BIO/LUNCH/QA/DISMX/TRAINING for
+  // 37,867 rows, with branch_name and process_name already denormalised. Searching for the
+  // caller's field names found nothing; searching for the concept found the table.
+  // target_volume genuinely does not exist and is omitted rather than invented.
 
   // The two sales-upload entries that used to sit here are gone: POST /upload/:type and
   // DELETE /batch/:batchId are now wired to the handlers that had always existed.

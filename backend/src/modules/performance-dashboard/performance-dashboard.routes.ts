@@ -449,4 +449,102 @@ performanceDashboardRouter.get('/utilization', requireRole(...PERF_ROLES),
     }
   }))
 
+/**
+ * GET /api/performance-dashboard/ops
+ *
+ * The operations feed for UnifiedPerformanceCommandCenter. It has called this since it was
+ * written and the route did not exist, so its safe() wrapper turned the failure into an empty
+ * array and the ops tiles read zero behind a permanent "sources unavailable" banner.
+ *
+ * SOURCE
+ *   mas_hrms.apr — 37,867 rows, 20,724 in the last 90 days, and it already carries every
+ *   metric the page reads plus denormalised branch_name/process_name. Measured before
+ *   building: 19,617 rows with a non-zero login, 1,509,778 calls, 8,050,607 login minutes and
+ *   207,544 shrinkage minutes over 90 days — a ~2.6% shrinkage, which is plausible rather than
+ *   an artefact.
+ *
+ *   apr_manual_upload looks like the intended home — it has calls_handled, login_minutes and
+ *   the four shrinkage components under exactly those names — but it holds 0 rows and nothing
+ *   in the codebase writes it. apr is where the data actually is.
+ *
+ * THE TIME COLUMNS ARE 'HH:MM:SS' STRINGS, NOT MINUTES
+ *   Net_Login/BIO/LUNCH/QA/DISMX/TRAINING are TIME. Summing them as numbers yields nonsense,
+ *   so every one goes through TIME_TO_SEC()/60. This is the kind of column that silently
+ *   produces a plausible wrong total.
+ *
+ * target_volume IS NOT AVAILABLE and is deliberately omitted rather than invented. The page
+ * computes opsAchievement = pct(opsVolume, opsTarget) and only raises the target-gap alert
+ * when opsTarget > 0, so an absent target degrades safely to "no alert" instead of a false
+ * one. Inventing a target would manufacture achievement percentages against a number nobody
+ * set.
+ *
+ * SCOPE
+ *   Follows the module's own convention via getScopeFilter: wide-scope roles see everything,
+ *   everyone else is restricted to their branches, and an unresolvable scope returns no rows
+ *   rather than everyone's. apr has no employee_code, so the restriction is applied on
+ *   branch_name — verified safe: all 9,788 branch names and 8,863 process names in the last
+ *   90 days match branch_master/process_master exactly, so this is not the free-text matching
+ *   that has misfired elsewhere in this codebase.
+ *
+ *   Rows with no branch_name (about half) are therefore invisible to a scoped caller. That is
+ *   fail-closed and correct: an unattributed row cannot be shown to a branch manager as if it
+ *   were theirs.
+ */
+performanceDashboardRouter.get('/ops', requireRole(...PERF_ROLES),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const from = String(req.query.from ?? '').trim()
+      const to = String(req.query.to ?? '').trim()
+
+      const where: string[] = ["a.ReportDate IS NOT NULL"]
+      const params: unknown[] = []
+      if (from) { where.push('a.ReportDate >= ?'); params.push(from) }
+      if (to) { where.push('a.ReportDate <= ?'); params.push(to) }
+
+      const { codes } = await getScopeFilter(req)
+      if (codes !== null) {
+        // Scoped caller. Resolve the branches they may see and filter on the name.
+        const scope = await resolveDashboardScope(req.authUser!.id, (await getUserRoleContext(req.authUser!.id)).primaryRole)
+        const branchIds = scope.branchIds ?? []
+        if (branchIds.length === 0) return res.json({ success: true, data: [] })
+        const [branchRows] = await db.execute<RowDataPacket[]>(
+          `SELECT branch_name FROM branch_master WHERE id IN (${branchIds.map(() => '?').join(',')})`,
+          branchIds
+        )
+        const names = (branchRows as RowDataPacket[]).map((r) => String(r.branch_name)).filter(Boolean)
+        if (names.length === 0) return res.json({ success: true, data: [] })
+        where.push(`a.branch_name IN (${names.map(() => '?').join(',')})`)
+        params.push(...names)
+      }
+
+      // Aggregated per branch+process, not per agent-day. The page SUMs these and passes
+      // limit=1000; 20k raw rows would be truncated and every total would be quietly short.
+      const [rows] = await db.execute<RowDataPacket[]>(
+        `SELECT COALESCE(NULLIF(a.branch_name, ''), 'Unmapped')  AS branch_name,
+                COALESCE(NULLIF(a.process_name, ''), 'Unmapped') AS process_name,
+                SUM(COALESCE(a.Calls, 0))                                    AS handled_volume,
+                ROUND(SUM(TIME_TO_SEC(COALESCE(a.Net_Login, '00:00:00')))/60) AS login_minutes,
+                ROUND(SUM(
+                  TIME_TO_SEC(COALESCE(a.BIO, '00:00:00')) +
+                  TIME_TO_SEC(COALESCE(a.LUNCH, '00:00:00')) +
+                  TIME_TO_SEC(COALESCE(a.QA, '00:00:00')) +
+                  TIME_TO_SEC(COALESCE(a.DISMX, '00:00:00')) +
+                  TIME_TO_SEC(COALESCE(a.TRAINING, '00:00:00'))
+                )/60)                                                        AS shrinkage_minutes
+           FROM apr a
+          WHERE ${where.join(' AND ')}
+          GROUP BY branch_name, process_name
+          ORDER BY handled_volume DESC`,
+        params
+      )
+
+      return res.json({ success: true, data: rows })
+    } catch (err) {
+      // Matches the module's convention: a source failure is logged and reported as an empty
+      // feed, which the page then names in its "unavailable" banner rather than charting zero.
+      logSourceFailure('performance-dashboard', err, { endpoint: 'ops' })
+      return res.json({ success: true, data: [] })
+    }
+  }))
+
 export { performanceDashboardRouter }
