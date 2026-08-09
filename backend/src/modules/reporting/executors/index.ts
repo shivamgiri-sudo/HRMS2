@@ -65,6 +65,7 @@ import {
   breakDailySummary,
   breakSessionLog,
   productivityIndividualScorecard,
+  attendanceRegisterMonthly,
 } from "./attendance.executor.js";
 
 // ─── Leave ───────────────────────────────────────────────────────────────────
@@ -202,6 +203,7 @@ export const EXECUTOR_MAP: Record<string, ExecutorFn> = {
   "uan-master-register":       uanMasterRegister,
   "ff-settlement-register":    ffSettlementRegister,
   "employee-document-compliance": employeeDocumentCompliance,
+  "attendance-register-monthly": attendanceRegisterMonthly,
   "bank-missing":              bankMissing,
   "confirmation-due-list":     confirmationDueList,
   "contract-expiry-list":      contractExpiryList,

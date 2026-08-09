@@ -3321,125 +3321,15 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
     }
 
     // ─── Attendance Register Monthly (Day-wise Pivot Grid) ────────────────────
-    case "attendance-register-monthly": {
-      const month = monthParam(req.query.month);
-      const [yr, mo] = month.split("-").map(Number);
-      const daysInMonth = new Date(yr, mo, 0).getDate();
-      const firstDay = `${month}-01`;
-      const lastDay  = `${month}-${String(daysInMonth).padStart(2, "0")}`;
-
-      addScopedEmployeeFilters(req, clauses, params);
-      clauses.push("e.active_status = 1");
-      clauses.push("adr.record_date BETWEEN ? AND ?");
-      params.push(firstDay, lastDay);
-
-      // department/designation/cost_center fallback columns don't exist on
-      // employees — verified live (same bug as salary-sheet-export /
-      // left-employee-export / new-join-export, fixed the same way).
-      const attSql = `
-        SELECT
-          e.id AS employee_id,
-          e.employee_code,
-          COALESCE(e.biometric_code, '') AS bio_code,
-          CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')) AS emp_name,
-          COALESCE(dept.dept_name, '') AS department,
-          COALESCE(desig.designation_name, '') AS designation,
-          COALESCE(e.profile_type, '') AS profile,
-          COALESCE(cc.cost_centre_name, '') AS cost_center,
-          COALESCE(b.branch_name, '') AS emp_location,
-          CASE WHEN COALESCE(e.is_billable, 1) = 1 THEN 'Yes' ELSE 'No' END AS billable,
-          DAY(adr.record_date) AS day_num,
-          adr.attendance_status
-        FROM attendance_daily_record adr
-        JOIN employees e ON e.id = adr.employee_id
-        LEFT JOIN department_master dept ON dept.id = e.department_id
-        LEFT JOIN designation_master desig ON desig.id = e.designation_id
-        LEFT JOIN cost_centre_master cc ON cc.id = e.cost_centre_id
-        LEFT JOIN branch_master b ON b.id = e.branch_id
-        WHERE ${clauses.join(" AND ")}
-        ORDER BY e.employee_code, adr.record_date
-      `;
-
-      const [attRows] = await db.execute<RowDataPacket[]>(attSql, params);
-
-      // Status code mapping
-      const statusCode: Record<string, string> = {
-        present: "P", absent: "A", half_day: "HD", week_off: "W",
-        holiday: "H", leave_approved: "L", on_duty: "OD",
-        unreconciled: "A",
-      };
-
-      // Pivot into per-employee rows
-      const empMap = new Map<string, any>();
-      for (const row of attRows) {
-        if (!empMap.has(row.employee_id)) {
-          empMap.set(row.employee_id, {
-            emp_code:    row.employee_code,
-            bio_code:    row.bio_code,
-            emp_name:    row.emp_name,
-            department:  row.department,
-            designation: row.designation,
-            profile:     row.profile,
-            cost_center: row.cost_center,
-            emp_location:row.emp_location,
-            billable:    row.billable,
-          });
-        }
-        const emp = empMap.get(row.employee_id);
-        const code = statusCode[row.attendance_status] ?? row.attendance_status ?? "";
-        emp[`day_${row.day_num}`] = code;
-      }
-
-      const pivotRows = Array.from(empMap.values()).map((emp, idx) => {
-        let absent = 0, present = 0, od = 0, hd = 0, leave = 0, holiday = 0, weekoff = 0;
-        for (let d = 1; d <= daysInMonth; d++) {
-          const v = emp[`day_${d}`] ?? "";
-          if (v === "A") absent++;
-          else if (v === "P") present++;
-          else if (v === "OD") od++;
-          else if (v === "HD") hd++;
-          else if (v === "L") leave++;
-          else if (v === "H") holiday++;
-          else if (v === "W") weekoff++;
-        }
-        const salDays = present + hd * 0.5 + od + holiday + weekoff;
-        return {
-          sno: idx + 1,
-          emp_code: emp.emp_code,
-          bio_code: emp.bio_code,
-          emp_name: emp.emp_name,
-          department: emp.department,
-          designation: emp.designation,
-          profile: emp.profile,
-          cost_center: emp.cost_center,
-          emp_location: emp.emp_location,
-          billable: emp.billable,
-          ...Object.fromEntries(
-            Array.from({ length: daysInMonth }, (_, i) => [`day_${i + 1}`, emp[`day_${i + 1}`] ?? ""])
-          ),
-          absent_count: absent,
-          present_count: present,
-          od_count: od,
-          hd_count: hd,
-          leave_count: leave,
-          holiday_count: holiday,
-          weekoff_count: weekoff,
-          sal_days: salDays,
-          total: daysInMonth,
-        };
-      });
-
-      return res.json({
-        success: true, code,
-        data: pivotRows,
-        totalCount: pivotRows.length,
-        meta: {
-          count: pivotRows.length, totalCount: pivotRows.length,
-          limit: "unlimited", offset: 0, page: 1, totalPages: 1,
-          isFullExport: true, daysInMonth, month,
-        },
-      });
-    }
+    // "attendance-register-monthly" is intentionally not handled here.
+    //
+    // It falls through to executeReport(), which now carries both the SQL and the JavaScript
+    // pivot into day_1..day_31. This block never set sql and returned its own response, so
+    // there was nothing for the export handler to call and the download answered 404.
+    //
+    // The move drops two report-specific meta fields, daysInMonth and month, which the shared
+    // envelope has no channel for. No frontend component reads either — the calendars compute
+    // daysInMonth locally from the selected month.
 
     // ─── Leave Balance Export (Wide Pivot Format) ─────────────────────────────
     case "leave-balance-export": {

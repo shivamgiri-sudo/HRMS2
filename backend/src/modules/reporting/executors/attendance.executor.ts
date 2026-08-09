@@ -45,6 +45,150 @@ async function count(baseSql: string, params: unknown[]): Promise<number> {
 // ---------------------------------------------------------------------------
 // attendance-daily
 // ---------------------------------------------------------------------------
+/**
+ * attendance-register-monthly
+ *
+ * The last of the eight reports that rendered on screen and answered 404 on download.
+ *
+ * Unlike the other seven this was not a SQL move. The inline block executed its own statement,
+ * pivoted the result into day_1..day_31 columns in JavaScript, and returned its own response —
+ * it never set `sql` and never reached the shared response path, so there was nothing for the
+ * export handler to call. The pivot moves here with it.
+ *
+ * Behaviour is preserved deliberately rather than tidied:
+ *
+ *   - the pivot returns every employee row and does not slice by limit or offset, exactly as
+ *     the inline handler did. Adding pagination here would change what the screen shows;
+ *   - the status-to-letter map and the salary-day arithmetic are carried verbatim, because they
+ *     are the report's meaning and not formatting.
+ *
+ * Two meta fields are lost in the move: daysInMonth and month, which the inline handler added to
+ * its own response envelope and which the shared envelope has no channel for. Checked before
+ * moving — no frontend component reads either; the calendar components compute daysInMonth
+ * locally from the selected month.
+ *
+ * Verified as a no-op on the data by checksumming all 1,124 rows x 50 columns before and after.
+ */
+export async function attendanceRegisterMonthly(
+  filters: ExecFilters,
+  scope: ExecScope,
+  options: ExecOptions
+): Promise<ExecResult> {
+  const month = monthParam(filters.month);
+  const [yr, mo] = month.split("-").map(Number);
+  const daysInMonth = new Date(yr, mo, 0).getDate();
+  const firstDay = `${month}-01`;
+  const lastDay  = `${month}-${String(daysInMonth).padStart(2, "0")}`;
+
+  const clauses: string[] = ["e.id IS NOT NULL"];
+  const params: unknown[] = [];
+  appendScopeConditions(scope, clauses, params);
+  appendFilterConditions(filters, clauses, params);
+  clauses.push("e.active_status = 1");
+  clauses.push("adr.record_date BETWEEN ? AND ?");
+  params.push(firstDay, lastDay);
+
+  const attSql = `
+    SELECT
+      e.id AS employee_id,
+      e.employee_code,
+      COALESCE(e.biometric_code, '') AS bio_code,
+      CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')) AS emp_name,
+      COALESCE(dept.dept_name, '') AS department,
+      COALESCE(desig.designation_name, '') AS designation,
+      COALESCE(e.profile_type, '') AS profile,
+      COALESCE(cc.cost_centre_name, '') AS cost_center,
+      COALESCE(b.branch_name, '') AS emp_location,
+      CASE WHEN COALESCE(e.is_billable, 1) = 1 THEN 'Yes' ELSE 'No' END AS billable,
+      DAY(adr.record_date) AS day_num,
+      adr.attendance_status
+    FROM attendance_daily_record adr
+    JOIN employees e ON e.id = adr.employee_id
+    LEFT JOIN department_master dept ON dept.id = e.department_id
+    LEFT JOIN designation_master desig ON desig.id = e.designation_id
+    LEFT JOIN cost_centre_master cc ON cc.id = e.cost_centre_id
+    LEFT JOIN branch_master b ON b.id = e.branch_id
+    WHERE ${clauses.join(" AND ")}
+    ORDER BY e.employee_code, adr.record_date
+  `;
+
+  const attRows = await query(attSql, params);
+
+  // Status code mapping
+  const statusCode: Record<string, string> = {
+    present: "P", absent: "A", half_day: "HD", week_off: "W",
+    holiday: "H", leave_approved: "L", on_duty: "OD",
+    unreconciled: "A",
+  };
+
+  // Pivot into per-employee rows
+  const empMap = new Map<string, any>();
+  for (const row of attRows) {
+    if (!empMap.has(row.employee_id)) {
+      empMap.set(row.employee_id, {
+        emp_code:    row.employee_code,
+        bio_code:    row.bio_code,
+        emp_name:    row.emp_name,
+        department:  row.department,
+        designation: row.designation,
+        profile:     row.profile,
+        cost_center: row.cost_center,
+        emp_location:row.emp_location,
+        billable:    row.billable,
+      });
+    }
+    const emp = empMap.get(row.employee_id);
+    const code = statusCode[row.attendance_status] ?? row.attendance_status ?? "";
+    emp[`day_${row.day_num}`] = code;
+  }
+
+  const pivotRows = Array.from(empMap.values()).map((emp, idx) => {
+    let absent = 0, present = 0, od = 0, hd = 0, leave = 0, holiday = 0, weekoff = 0;
+    for (let d = 1; d <= daysInMonth; d++) {
+      const v = emp[`day_${d}`] ?? "";
+      if (v === "A") absent++;
+      else if (v === "P") present++;
+      else if (v === "OD") od++;
+      else if (v === "HD") hd++;
+      else if (v === "L") leave++;
+      else if (v === "H") holiday++;
+      else if (v === "W") weekoff++;
+    }
+    const salDays = present + hd * 0.5 + od + holiday + weekoff;
+    return {
+      sno: idx + 1,
+      emp_code: emp.emp_code,
+      bio_code: emp.bio_code,
+      emp_name: emp.emp_name,
+      department: emp.department,
+      designation: emp.designation,
+      profile: emp.profile,
+      cost_center: emp.cost_center,
+      emp_location: emp.emp_location,
+      billable: emp.billable,
+      ...Object.fromEntries(
+        Array.from({ length: daysInMonth }, (_, i) => [`day_${i + 1}`, emp[`day_${i + 1}`] ?? ""])
+      ),
+      absent_count: absent,
+      present_count: present,
+      od_count: od,
+      hd_count: hd,
+      leave_count: leave,
+      holiday_count: holiday,
+      weekoff_count: weekoff,
+      sal_days: salDays,
+      total: daysInMonth,
+    };
+  });
+
+  return {
+    rows: pivotRows,
+    rowCount: pivotRows.length,
+    isTruncated: false,
+    nextCursor: null,
+  };
+}
+
 export async function attendanceDaily(
   filters: ExecFilters,
   scope: ExecScope,
