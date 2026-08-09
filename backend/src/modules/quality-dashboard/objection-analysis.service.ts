@@ -10,7 +10,7 @@ function getCiPool() {
  * Top Objection Types with Resolution and Sales Metrics
  */
 export interface ObjectionPattern {
-  OBJECTION: string;
+  CustomerObjectionCategory: string;
   CALL_COUNT: number;
   HANDLED_COUNT: number;
   RESOLUTION_RATE_PCT: number;
@@ -22,7 +22,7 @@ export async function getTopObjectionPatterns(limit = 50): Promise<ObjectionPatt
   const pool = getCiPool();
   const [rows] = await pool.execute<RowDataPacket[]>(
     `SELECT
-      OBJECTION,
+      CustomerObjectionCategory AS OBJECTION,
       COUNT(*) as CALL_COUNT,
       SUM(CASE WHEN ObjectionHandling IS NOT NULL AND ObjectionHandling NOT IN ('', 'null') THEN 1 ELSE 0 END) as HANDLED_COUNT,
       ROUND(
@@ -43,11 +43,12 @@ export async function getTopObjectionPatterns(limit = 50): Promise<ObjectionPatt
         NULLIF(SUM(CASE WHEN ObjectionHandling IS NOT NULL AND ObjectionHandling NOT IN ('', 'null') THEN 1 ELSE 0 END), 0), 2
       ) as SALES_CLOSE_RATE_AFTER_OBJECTION_PCT
     FROM db_external.CallDetails
-    WHERE OBJECTION IS NOT NULL
-      AND OBJECTION != ''
-      AND OBJECTION != 'null'
+    WHERE CustomerObjectionCategory IS NOT NULL
+      AND CustomerObjectionCategory != ''
+      AND CustomerObjectionCategory != 'null'
+      AND CustomerObjectionCategory != 'None'
       AND CustomerObjectionCategory IS NOT NULL
-    GROUP BY OBJECTION
+    GROUP BY CustomerObjectionCategory
     ORDER BY CALL_COUNT DESC
     ${sqlLimit(limit)}`,
     []
@@ -72,10 +73,10 @@ export async function getTopObjectionHandlers(limit = 50): Promise<TopHandler[]>
   const pool = getCiPool();
   const [rows] = await pool.execute<RowDataPacket[]>(
     `SELECT
-      cd.User as HANDLER_CODE,
-      COALESCE(NULLIF(e.full_name,''), CONCAT_WS(' ', e.first_name, COALESCE(e.last_name,'')), cd.User) AS HANDLER_NAME,
+      cd.AgentName as HANDLER_CODE,
+      COALESCE(NULLIF(e.full_name,''), CONCAT_WS(' ', e.first_name, COALESCE(e.last_name,'')), cd.AgentName) AS HANDLER_NAME,
       COUNT(*) as OBJECTIONS_HANDLED,
-      COUNT(DISTINCT cd.OBJECTION) as UNIQUE_OBJECTION_TYPES,
+      COUNT(DISTINCT cd.CustomerObjectionCategory) as UNIQUE_OBJECTION_TYPES,
       ROUND(
         (SUM(CASE
           WHEN cd.ObjectionHandling IS NOT NULL AND cd.ObjectionHandling NOT IN ('', 'null')
@@ -89,14 +90,15 @@ export async function getTopObjectionHandlers(limit = 50): Promise<TopHandler[]>
         THEN 1 ELSE 0
       END) as SALES_CLOSED_COUNT
     FROM db_external.CallDetails cd
-    LEFT JOIN mas_hrms.employees e ON e.employee_code = cd.User
-    WHERE cd.OBJECTION IS NOT NULL
-      AND cd.OBJECTION != ''
-      AND cd.OBJECTION != 'null'
+    LEFT JOIN mas_hrms.employees e ON e.employee_code = cd.AgentName COLLATE utf8mb4_unicode_ci
+    WHERE cd.CustomerObjectionCategory IS NOT NULL
+      AND cd.CustomerObjectionCategory != ''
+      AND cd.CustomerObjectionCategory != 'null'
+      AND cd.CustomerObjectionCategory != 'None'
       AND cd.ObjectionHandling IS NOT NULL
       AND cd.ObjectionHandling NOT IN ('', 'null')
-      AND cd.User IS NOT NULL
-    GROUP BY cd.User, e.full_name, e.first_name, e.last_name
+      AND cd.AgentName IS NOT NULL
+    GROUP BY cd.AgentName, e.full_name, e.first_name, e.last_name
     HAVING COUNT(*) >= 5
     ORDER BY SALES_CLOSE_RATE_AFTER_OBJ_PCT DESC
     ${sqlLimit(limit)}`,
@@ -110,7 +112,7 @@ export async function getTopObjectionHandlers(limit = 50): Promise<TopHandler[]>
  * Sales Closed After Objection Handling
  */
 export interface ObjectionSalesMetric {
-  OBJECTION: string;
+  CustomerObjectionCategory: string;
   OBJECTION_RAISED_COUNT: number;
   HANDLED_COUNT: number;
   SALES_CLOSED_AFTER_HANDLING: number;
@@ -121,7 +123,7 @@ export async function getSalesClosedAfterObjection(limit = 50): Promise<Objectio
   const pool = getCiPool();
   const [rows] = await pool.execute<RowDataPacket[]>(
     `SELECT
-      cd.OBJECTION,
+      cd.CustomerObjectionCategory AS OBJECTION,
       COUNT(*) as OBJECTION_RAISED_COUNT,
       SUM(CASE WHEN cd.ObjectionHandling IS NOT NULL AND cd.ObjectionHandling NOT IN ('', 'null') THEN 1 ELSE 0 END) as HANDLED_COUNT,
       SUM(CASE
@@ -138,10 +140,11 @@ export async function getSalesClosedAfterObjection(limit = 50): Promise<Objectio
         NULLIF(SUM(CASE WHEN cd.ObjectionHandling IS NOT NULL AND cd.ObjectionHandling NOT IN ('', 'null') THEN 1 ELSE 0 END), 0), 2
       ) as CONVERSION_RATE_AFTER_HANDLING_PCT
     FROM db_external.CallDetails cd
-    WHERE cd.OBJECTION IS NOT NULL
-      AND cd.OBJECTION != ''
-      AND cd.OBJECTION != 'null'
-    GROUP BY cd.OBJECTION
+    WHERE cd.CustomerObjectionCategory IS NOT NULL
+      AND cd.CustomerObjectionCategory != ''
+      AND cd.CustomerObjectionCategory != 'null'
+      AND cd.CustomerObjectionCategory != 'None'
+    GROUP BY cd.CustomerObjectionCategory
     ORDER BY SALES_CLOSED_AFTER_HANDLING DESC
     ${sqlLimit(limit)}`,
     []
@@ -156,7 +159,7 @@ export async function getSalesClosedAfterObjection(limit = 50): Promise<Objectio
 export interface ProcessObjectionMetric {
   PROCESS_CODE: string;
   PROCESS_NAME: string;
-  OBJECTION: string;
+  CustomerObjectionCategory: string;
   OBJECTION_COUNT: number;
   HANDLED_COUNT: number;
   RESOLUTION_RATE_PCT: number;
@@ -169,7 +172,7 @@ export async function getObjectionsByProcess(limit = 100): Promise<ProcessObject
     `SELECT
       COALESCE(cd.campaign_id, 'UNASSIGNED') as PROCESS_CODE,
       COALESCE(pm.process_name, cd.campaign_id, 'UNASSIGNED') as PROCESS_NAME,
-      cd.OBJECTION,
+      cd.CustomerObjectionCategory AS OBJECTION,
       COUNT(*) as OBJECTION_COUNT,
       SUM(CASE WHEN cd.ObjectionHandling IS NOT NULL AND cd.ObjectionHandling NOT IN ('', 'null') THEN 1 ELSE 0 END) as HANDLED_COUNT,
       ROUND(
@@ -182,11 +185,14 @@ export async function getObjectionsByProcess(limit = 100): Promise<ProcessObject
         THEN 1 ELSE 0
       END) as SALES_AFTER_OBJECTION
     FROM db_external.CallDetails cd
-    LEFT JOIN mas_hrms.process_master pm ON pm.process_code = cd.campaign_id
-    WHERE cd.OBJECTION IS NOT NULL
-      AND cd.OBJECTION != ''
-      AND cd.OBJECTION != 'null'
-    GROUP BY cd.campaign_id, pm.process_name, cd.OBJECTION
+    -- Same collation boundary as the employees join above: CallDetails is utf8mb4_0900_ai_ci,
+    -- mas_hrms.process_master is utf8mb4_unicode_ci.
+    LEFT JOIN mas_hrms.process_master pm ON pm.process_code = cd.campaign_id COLLATE utf8mb4_unicode_ci
+    WHERE cd.CustomerObjectionCategory IS NOT NULL
+      AND cd.CustomerObjectionCategory != ''
+      AND cd.CustomerObjectionCategory != 'null'
+      AND cd.CustomerObjectionCategory != 'None'
+    GROUP BY cd.campaign_id, pm.process_name, cd.CustomerObjectionCategory
     ORDER BY PROCESS_CODE, OBJECTION_COUNT DESC
     ${sqlLimit(limit)}`,
     []
@@ -199,7 +205,7 @@ export async function getObjectionsByProcess(limit = 100): Promise<ProcessObject
  * Objection & Rebuttal Reference Matrix
  */
 export interface ObjectionRebuttal {
-  OBJECTION: string;
+  CustomerObjectionCategory: string;
   RECOMMENDED_REBUTTAL: string;
   FREQUENCY: number;
 }
@@ -239,12 +245,20 @@ export interface ObjectionHealthDashboard {
   UNIQUE_PROCESSES: number;
 }
 
+/*
+ * 'None' is the sentinel db_external.CallDetails writes when the customer raised no objection,
+ * and it is by far the most common value: of 503,072 calls, 306,250 are 'None' and 68,453 are
+ * NULL, leaving 128,365 real objections. Excluding NULL, '' and the string 'null' but not 'None'
+ * counts a call where nothing was objected to as an objection - here that inflated
+ * TOTAL_OBJECTIONS_RAISED to 434,618, and dragged every rate computed against it down by the
+ * same factor, because the denominator grew while the sales numerator did not.
+ */
 export async function getObjectionHealthDashboard(): Promise<ObjectionHealthDashboard> {
   const pool = getCiPool();
   const [rows] = await pool.execute<RowDataPacket[]>(
     `SELECT
       COUNT(*) as TOTAL_OBJECTIONS_RAISED,
-      COUNT(DISTINCT OBJECTION) as UNIQUE_OBJECTION_TYPES,
+      COUNT(DISTINCT CustomerObjectionCategory) as UNIQUE_OBJECTION_TYPES,
       SUM(CASE WHEN ObjectionHandling IS NOT NULL AND ObjectionHandling NOT IN ('', 'null') THEN 1 ELSE 0 END) as TOTAL_OBJECTIONS_HANDLED,
       ROUND(
         (SUM(CASE WHEN ObjectionHandling IS NOT NULL AND ObjectionHandling NOT IN ('', 'null') THEN 1 ELSE 0 END) * 100.0) /
@@ -263,13 +277,14 @@ export async function getObjectionHealthDashboard(): Promise<ObjectionHealthDash
         END) * 100.0) /
         NULLIF(SUM(CASE WHEN ObjectionHandling IS NOT NULL AND ObjectionHandling NOT IN ('', 'null') THEN 1 ELSE 0 END), 0), 2
       ) as SALES_CONVERSION_AFTER_OBJECTION_PCT,
-      COUNT(DISTINCT User) as UNIQUE_HANDLERS,
+      COUNT(DISTINCT AgentName) as UNIQUE_HANDLERS,
       COUNT(DISTINCT client_id) as UNIQUE_CLIENTS,
       COUNT(DISTINCT campaign_id) as UNIQUE_PROCESSES
     FROM db_external.CallDetails
-    WHERE OBJECTION IS NOT NULL
-      AND OBJECTION != ''
-      AND OBJECTION != 'null'`
+    WHERE CustomerObjectionCategory IS NOT NULL
+      AND CustomerObjectionCategory != ''
+      AND CustomerObjectionCategory != 'null'
+      AND CustomerObjectionCategory != 'None'`
   );
 
   if (rows.length === 0) {
