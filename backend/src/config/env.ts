@@ -181,6 +181,21 @@ const envSchema = z.object({
   SHIVAMGIRI_DB_NAME: z.string().default("Shivamgiri"),
 
   // MASMIS uploaded/processed sales data (Neemans, Bellavita, GNC)
+  //
+  // db_masmis is NOT on the mas_hrms server. masmisDb.ts connected with DB_HOST/DB_USER,
+  // which is why every query in the sales-upload module returned
+  // ER_TABLEACCESS_DENIED_ERROR — verified live 2026-08-09 on db_masmis.bb_sale, gnc_sale
+  // and upload_log. That took out the whole module, not just the two unwired upload routes:
+  // /bellavita-dashboard, /gnc-dashboard, /logs and the neemans endpoints all hit the same
+  // wall.
+  //
+  // These follow the BILL_DB_* pattern above, but EMPTY-DEFAULT TO THE MAIN CONNECTION so
+  // this change alters nothing until the values are actually set: an installation where
+  // db_masmis really does live beside mas_hrms keeps working untouched.
+  MASMIS_DB_HOST:     z.string().default(""),
+  MASMIS_DB_PORT:     z.coerce.number().default(0),
+  MASMIS_DB_USER:     z.string().default(""),
+  MASMIS_DB_PASSWORD: z.string().default(""),
   MASMIS_DB_NAME: z.string().default("db_masmis"),
 
   // Cross-DB source credentials — used by sourceDb.ts for db_audit, db_external, dialer_db queries
