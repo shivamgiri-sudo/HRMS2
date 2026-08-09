@@ -961,29 +961,8 @@ reportSuiteRouter.get("/:code", reportScopeMiddleware, reportCatalogAccessMiddle
       break;
     }
 
-    case "increment-promotion-history": {
-      const from = dateParam(req.query.from, `${new Date().getFullYear()}-01-01`);
-      const to = dateParam(req.query.to, new Date().toISOString().slice(0, 10));
-      addScopedEmployeeFilters(req, clauses, params);
-      clauses.push("ejh.effective_date BETWEEN ? AND ?"); params.push(from, to);
-      sql = `SELECT e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-                                        COALESCE(zpm.process_name, 'UNASSIGNED') AS process_name,
-COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
-                    COALESCE(zcc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
-                    ejh.change_type, ejh.effective_date,
-                    fd.designation_name AS old_designation, td.designation_name AS new_designation,
-                    ejh.from_ctc_annual AS old_ctc, ejh.to_ctc_annual AS new_ctc,
-                    ejh.reason AS remarks
-               FROM employee_job_history ejh
-               JOIN employees e ON e.id = ejh.employee_id
-               LEFT JOIN designation_master fd ON fd.id = ejh.from_designation_id
-               LEFT JOIN designation_master td ON td.id = ejh.to_designation_id
-               LEFT JOIN cost_centre_master zcc ON zcc.id = e.cost_centre_id
-               LEFT JOIN process_master zpm ON zpm.id = e.process_id
-              WHERE ${clauses.join(" AND ")}
-              ORDER BY ejh.effective_date DESC`;
-      break;
-    }
+    // "increment-promotion-history" falls through to executeReport(), which now carries this
+    // SQL. Screen and download previously returned 1,408 and 1,368 rows.
 
     // "birthday-list" is intentionally not handled here — it falls through to executeReport(),
     // which now carries this exact SQL. The executor used to filter to the current month,
@@ -1266,17 +1245,7 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
     // download returned 3,000 and 2,916 rows; the nine columns the catalogue declares are the
     // inline shape.
 
-    case "holiday-master-list": {
-      const year = Number(req.query.year ?? new Date().getFullYear());
-      sql = `SELECT lhm.holiday_date, lhm.holiday_name, lhm.holiday_type,
-                    lhm.active_status, b.branch_name
-               FROM leave_holiday_master lhm
-               LEFT JOIN branch_master b ON b.id = lhm.branch_id
-              WHERE YEAR(lhm.holiday_date) = ?
-              ORDER BY lhm.holiday_date ASC`;
-      params.push(year);
-      break;
-    }
+    // "holiday-master-list" falls through to executeReport(), which now carries this SQL.
 
     // ─── A4: Payroll ─────────────────────────────────────────────────────────
     // "ytd-salary-summary" was implemented inline here. It now falls through to the
@@ -1521,31 +1490,8 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
       break;
     }
 
-    case "gratuity-liability-register":
-      addScopedEmployeeFilters(req, clauses, params);
-      clauses.push("e.active_status = 1", "e.date_of_joining IS NOT NULL");
-      sql = `SELECT e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-                    e.date_of_joining,
-                    TIMESTAMPDIFF(YEAR, e.date_of_joining, CURDATE()) AS tenure_years,
-                    ROUND(TIMESTAMPDIFF(MONTH, e.date_of_joining, CURDATE()) / 12, 2) AS tenure_years_exact,
-                    COALESCE(sca.basic, esa.ctc_annual / 12 * 0.4, 0) AS last_drawn_basic,
-                    ROUND(COALESCE(sca.basic, esa.ctc_annual / 12 * 0.4, 0)
-                          * (TIMESTAMPDIFF(MONTH, e.date_of_joining, CURDATE()) / 12)
-                          * (15.0 / 26.0), 0) AS gratuity_liability,
-                    COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
-                    COALESCE(gpm.process_name, 'UNASSIGNED') AS process_name,
-                    COALESCE(gcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
-                    COALESCE(gcc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name
-               FROM employees e
-               LEFT JOIN employee_salary_assignment esa ON esa.employee_id = e.id AND esa.active_status = 1
-               LEFT JOIN salary_component_assignments sca ON sca.employee_id = e.id
-                 AND sca.status = 'active'
-               LEFT JOIN branch_master b ON b.id = e.branch_id
-               LEFT JOIN process_master gpm ON gpm.id = e.process_id
-               LEFT JOIN cost_centre_master gcc ON gcc.id = e.cost_centre_id
-              WHERE ${clauses.join(" AND ")} AND TIMESTAMPDIFF(YEAR, e.date_of_joining, CURDATE()) >= 5
-              ORDER BY gratuity_liability DESC`;
-      break;
+    // "gratuity-liability-register" falls through to executeReport(), which now carries this
+    // SQL including the five-year qualifying filter. Screen 175 rows, download 131.
 
     case "statutory-compliance-calendar": {
       const year = Number(req.query.year ?? new Date().getFullYear());

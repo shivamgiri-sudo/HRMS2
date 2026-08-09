@@ -656,71 +656,34 @@ export async function leaveLapseSummary(
   return { rows: out, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > out.length, nextCursor: null };
 }
 
-// ---------------------------------------------------------------------------
-// holiday-master-list
-// ---------------------------------------------------------------------------
 /**
- * Reads leave_holiday_master (NOT "holiday_master" — that table does not exist).
+ * holiday-master-list
  *
- * The table is not employee-scoped, so branch scope is applied directly on
- * hm.branch_id; process / department / cost-centre dimensions do not apply.
+ * Aligned with the inline block. The screen ran that block and the download ran this executor,
+ * which returned a different column set — the catalogue names the inline shape.
  *
- * An empty result means the table has no rows for the selected branch/year, not
- * a failure — holiday masters are often sparsely populated.
+ * No row scope, deliberately and unchanged: a holiday calendar is organisation-wide reference
+ * data, not employee data, so there is nothing to scope by. The branch join is descriptive — a
+ * holiday may be branch-specific or apply everywhere, in which case branch_name is NULL.
  */
 export async function holidayMasterList(
   filters: ExecFilters,
   scope: ExecScope,
   options: ExecOptions
 ): Promise<ExecResult> {
-  const clauses: string[] = ["hm.holiday_date IS NOT NULL"];
-  const params: unknown[] = [];
-
-  // Branch scope applied directly on hm.branch_id (no employees table in this query)
-  if (scope.branchScope.mode === "none") {
-    throw new ReportScopeAccessDeniedError("branchScope");
-  }
-  if (scope.branchScope.mode === "restricted" && scope.branchScope.ids.length > 0) {
-    clauses.push(`hm.branch_id IN (${scope.branchScope.ids.map(() => "?").join(",")})`);
-    params.push(...scope.branchScope.ids);
-  }
-
-  // User-selected branch narrowing
-  if (filters.branchId) {
-    clauses.push("hm.branch_id = ?");
-    params.push(String(filters.branchId));
-  }
-
-  // Year filter
-  if (filters.year) {
-    clauses.push("YEAR(hm.holiday_date) = ?");
-    params.push(yearParam(filters.year));
-  }
-
-  if (options.mode === "worker" && options.cursor != null) {
-    clauses.push("hm.id > ?");
-    params.push(options.cursor);
-  }
+  const year = Number(filters.year ?? new Date().getFullYear());
+  const params: unknown[] = [year];
 
   const base = `
-    SELECT hm.id AS _cursor,
-           hm.holiday_date, hm.holiday_name, hm.holiday_type,
-           b.branch_name, YEAR(hm.holiday_date) AS applicable_year
-      FROM leave_holiday_master hm
-      LEFT JOIN branch_master b ON b.id = hm.branch_id
-     WHERE ${clauses.join(" AND ")}
-     ORDER BY hm.holiday_date ASC`;
+    SELECT lhm.holiday_date, lhm.holiday_name, lhm.holiday_type,
+           lhm.active_status, b.branch_name
+      FROM leave_holiday_master lhm
+      LEFT JOIN branch_master b ON b.id = lhm.branch_id
+     WHERE YEAR(lhm.holiday_date) = ?
+     ORDER BY lhm.holiday_date ASC`;
 
   const total = options.includeTotal ? await count(base, params) : 0;
-  const sql   = options.mode === "worker" ? `${base} LIMIT ${options.limit}` : applyPagination(base, options);
+  const sql   = applyPagination(base, options);
   const rows  = await query(sql, params) as Record<string, unknown>[];
-  const nextCursor = (options.mode === "worker" && rows.length > 0)
-    ? (rows[rows.length - 1]._cursor as number) : null;
-  const out = rows.map(({ _cursor: _, ...rest }) => rest);
-  return {
-    rows: out,
-    rowCount: options.includeTotal ? total : rows.length,
-    isTruncated: options.includeTotal ? total > out.length : rows.length === options.limit,
-    nextCursor,
-  };
+  return { rows, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > rows.length, nextCursor: null };
 }

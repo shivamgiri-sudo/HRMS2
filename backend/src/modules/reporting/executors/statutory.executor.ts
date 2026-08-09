@@ -644,11 +644,17 @@ export async function investmentDeclarationStatus(
   };
 }
 
-// ---------------------------------------------------------------------------
-// gratuity-liability-register
-// Includes employees with >= 4 years service (approaching or eligible for
-// the statutory 5-year threshold). Formula: basic * years * 15 / 26.
-// ---------------------------------------------------------------------------
+/**
+ * gratuity-liability-register
+ *
+ * Aligned with the inline block. Screen showed 175 rows and the download 131.
+ *
+ * The five-year qualifying filter is part of the report, not an optimisation: gratuity is only
+ * payable after five years of continuous service, so a register without it states a liability
+ * that does not exist. last_drawn_basic falls back to 40% of monthly CTC when no salary
+ * component is assigned, and the 15/26 factor is the statutory formula — both carried unchanged,
+ * because this report quantifies an existing obligation and must not invent a different one.
+ */
 export async function gratuityLiabilityRegister(
   filters: ExecFilters,
   scope: ExecScope,
@@ -658,72 +664,36 @@ export async function gratuityLiabilityRegister(
   const params: unknown[] = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
-  clauses.push(
-    "e.active_status = 1",
-    "TIMESTAMPDIFF(YEAR, e.date_of_joining, CURDATE()) >= 4"
-  );
-
-  if (options.mode === "worker" && options.cursor != null) {
-    clauses.push("e.id > ?");
-    params.push(options.cursor);
-  }
+  clauses.push("e.active_status = 1", "e.date_of_joining IS NOT NULL");
 
   const base = `
-    SELECT e.id AS _cursor,
-           e.employee_code,
+    SELECT e.employee_code,
            COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-           COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
-           COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
-           COALESCE(sp_cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
-           COALESCE(sp_cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
            e.date_of_joining,
-           TIMESTAMPDIFF(YEAR, e.date_of_joining, CURDATE()) AS years_of_service,
-           -- employees has no last_drawn_basic. The gratuity base is taken as the basic
-           -- from the employee's most recent FINALIZED payroll run — the literal "last
-           -- drawn" basic. Only FINALIZED runs count, so a draft or abandoned run cannot
-           -- move a liability figure. salary_prep_line carries no DA column, so the base
-           -- is basic alone, which is what the existing formula already assumed.
-           -- 772 of 1,123 active employees have one; the rest report NULL rather than 0,
-           -- because a 0 liability is a claim and an absent base is not.
-           ldb.basic AS last_drawn_basic,
-           CASE WHEN ldb.basic IS NULL THEN NULL ELSE ROUND(
-             ldb.basic
-             * TIMESTAMPDIFF(YEAR, e.date_of_joining, CURDATE())
-             * 15 / 26,
-           2) END AS gratuity_liability
+           TIMESTAMPDIFF(YEAR, e.date_of_joining, CURDATE()) AS tenure_years,
+           ROUND(TIMESTAMPDIFF(MONTH, e.date_of_joining, CURDATE()) / 12, 2) AS tenure_years_exact,
+           COALESCE(sca.basic, esa.ctc_annual / 12 * 0.4, 0) AS last_drawn_basic,
+           ROUND(COALESCE(sca.basic, esa.ctc_annual / 12 * 0.4, 0)
+                 * (TIMESTAMPDIFF(MONTH, e.date_of_joining, CURDATE()) / 12)
+                 * (15.0 / 26.0), 0) AS gratuity_liability,
+           COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
+           COALESCE(gpm.process_name, 'UNASSIGNED') AS process_name,
+           COALESCE(gcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
+           COALESCE(gcc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name
       FROM employees e
-      -- LATERAL, not a ranked derived table: ranking every one of the 80,338
-      -- salary_prep_line rows took 20.5s, while the correlated form hits
-      -- idx_spl_employee_run and returns in under a second.
-      LEFT JOIN LATERAL (
-        SELECT spl.basic
-          FROM salary_prep_line spl
-          JOIN salary_prep_run spr ON spr.id = spl.run_id
-         WHERE spl.employee_id = e.id
-           AND UPPER(spr.status) = 'FINALIZED'
-           AND spl.basic > 0
-         ORDER BY spr.run_month DESC
-         LIMIT 1
-      ) ldb ON TRUE
+      LEFT JOIN employee_salary_assignment esa ON esa.employee_id = e.id AND esa.active_status = 1
+      LEFT JOIN salary_component_assignments sca ON sca.employee_id = e.id
+        AND sca.status = 'active'
       LEFT JOIN branch_master b ON b.id = e.branch_id
-      LEFT JOIN process_master p ON p.id = e.process_id
-      LEFT JOIN cost_centre_master sp_cc ON sp_cc.id = e.cost_centre_id
-     WHERE ${clauses.join(" AND ")}
-     ORDER BY e.id ASC`;
+      LEFT JOIN process_master gpm ON gpm.id = e.process_id
+      LEFT JOIN cost_centre_master gcc ON gcc.id = e.cost_centre_id
+     WHERE ${clauses.join(" AND ")} AND TIMESTAMPDIFF(YEAR, e.date_of_joining, CURDATE()) >= 5
+     ORDER BY gratuity_liability DESC`;
 
   const total = options.includeTotal ? await count(base, params) : 0;
-  const sql = options.mode === "worker" ? `${base} LIMIT ${options.limit}` : applyPagination(base, options);
-  const rows = await query(sql, params) as Record<string, unknown>[];
-  const nextCursor = (options.mode === "worker" && rows.length > 0)
-    ? (rows[rows.length - 1]._cursor as number)
-    : null;
-  const out = rows.map(({ _cursor: _, ...rest }) => rest);
-  return {
-    rows: out,
-    rowCount: options.includeTotal ? total : rows.length,
-    isTruncated: options.includeTotal ? total > out.length : rows.length === options.limit,
-    nextCursor,
-  };
+  const sql   = applyPagination(base, options);
+  const rows  = await query(sql, params) as Record<string, unknown>[];
+  return { rows, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > rows.length, nextCursor: null };
 }
 
 // ---------------------------------------------------------------------------

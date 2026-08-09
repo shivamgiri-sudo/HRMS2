@@ -836,62 +836,54 @@ export async function lifecycleEvents(
   return { rows: out, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > out.length, nextCursor };
 }
 
-// ---------------------------------------------------------------------------
-// increment-promotion-history
-// ---------------------------------------------------------------------------
+/**
+ * increment-promotion-history
+ *
+ * Aligned with the inline block. Screen showed 1,408 rows and the download 1,368, with five
+ * columns in the file that the catalogue does not name and six on screen that it does.
+ *
+ * Reads employee_job_history, which records both increments and promotions — change_type
+ * distinguishes them, and the old/new designation and CTC pairs are what make a row meaningful.
+ * Dropping either pair would leave a row saying something changed without saying what.
+ */
 export async function incrementPromotionHistory(
   filters: ExecFilters,
   scope: ExecScope,
   options: ExecOptions
 ): Promise<ExecResult> {
-  const today = new Date().toISOString().slice(0, 10);
-  const from  = dateParam(filters.from, `${new Date().getFullYear()}-01-01`);
-  const to    = dateParam(filters.to, today);
+  const from = dateParam(filters.from, `${new Date().getFullYear()}-01-01`);
+  const to   = dateParam(filters.to, new Date().toISOString().slice(0, 10));
 
-  const clauses: string[] = ["sir.id IS NOT NULL"];
-  const params: unknown[]  = [];
-  // Same branch-only gap as incrementPromotionHistory: a process-restricted
-  // viewer saw every process in their branch. employee_lifecycle_event is
-  // per-employee (inner joins employees e), so it takes the full canonical scope.
+  const clauses: string[] = ["e.id IS NOT NULL"];
+  const params: unknown[] = [];
   appendScopeConditions(scope, clauses, params, "e");
-  clauses.push("sir.effective_from BETWEEN ? AND ?");
+  appendFilterConditions(filters, clauses, params);
+  clauses.push("ejh.effective_date BETWEEN ? AND ?");
   params.push(from, to);
 
-  if (options.mode === "worker" && options.cursor != null) {
-    clauses.push("sir.id > ?"); params.push(options.cursor);
-  }
-
   const base = `
-    SELECT sir.id AS _cursor,
-           e.employee_code,
+    SELECT e.employee_code,
            COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-           -- Six of this query's columns did not exist. salary_increment_request keeps
-           -- the money as current_ctc/proposed_ctc, the date as effective_from and the
-           -- state as status; it records no designation change at all, so those two are
-           -- reported as not-tracked rather than failing the whole report.
-           sir.reason_code AS request_type,
-           NULL AS old_designation,
-           NULL AS new_designation,
-           sir.current_ctc  AS old_salary,
-           sir.proposed_ctc AS new_salary,
-           sir.effective_from AS effective_date,
-           sir.status AS approval_status,
-           COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
-           COALESCE(p.process_name, 'UNASSIGNED') AS process_name
-      FROM salary_increment_request sir
-      JOIN employees e ON e.id = sir.employee_id
-      LEFT JOIN branch_master b ON b.id = e.branch_id
-      LEFT JOIN process_master p ON p.id = e.process_id
+           COALESCE(zpm.process_name, 'UNASSIGNED') AS process_name,
+           COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
+           COALESCE(zcc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
+           ejh.change_type, ejh.effective_date,
+           fd.designation_name AS old_designation, td.designation_name AS new_designation,
+           ejh.from_ctc_annual AS old_ctc, ejh.to_ctc_annual AS new_ctc,
+           ejh.reason AS remarks
+      FROM employee_job_history ejh
+      JOIN employees e ON e.id = ejh.employee_id
+      LEFT JOIN designation_master fd ON fd.id = ejh.from_designation_id
+      LEFT JOIN designation_master td ON td.id = ejh.to_designation_id
+      LEFT JOIN cost_centre_master zcc ON zcc.id = e.cost_centre_id
+      LEFT JOIN process_master zpm ON zpm.id = e.process_id
      WHERE ${clauses.join(" AND ")}
-     ORDER BY sir.id ASC`;
+     ORDER BY ejh.effective_date DESC`;
 
   const total = options.includeTotal ? await count(base, params) : 0;
-  const sql   = options.mode === "worker" ? `${base} LIMIT ${options.limit}` : applyPagination(base, options);
+  const sql   = applyPagination(base, options);
   const rows  = await query(sql, params) as Record<string, unknown>[];
-  const nextCursor = (options.mode === "worker" && rows.length > 0)
-    ? (rows[rows.length - 1]._cursor as number) : null;
-  const out = rows.map(({ _cursor: _, ...rest }) => rest);
-  return { rows: out, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > out.length, nextCursor };
+  return { rows, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > rows.length, nextCursor: null };
 }
 
 // ---------------------------------------------------------------------------

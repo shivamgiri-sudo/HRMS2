@@ -85,8 +85,17 @@ const SHADOWED_BACKLOG = new Set<string>([
   // emitted three of its own, so the downloaded workbook shared no metric column with the
   // screen. The executor now carries the inline SQL and the block is gone.
   "employee-master", "employee-movement",
-  "gratuity-liability-register", "grievance-register",
-  "holiday-master-list", "identity-source-snapshot", "increment-promotion-history",
+  
+  // "gratuity-liability-register" left this list on 2026-08-09 —
+  // screen 175 rows, download 131 — the executor lacked the five-year qualifying filter.
+  "grievance-register",
+  
+  // "holiday-master-list" left this list on 2026-08-09 —
+  // the executor returned a different column set from the screen.
+  "identity-source-snapshot", 
+  // "increment-promotion-history" left this list on 2026-08-09 —
+  // screen and download returned 1,408 and 1,368 rows.
+  
   // "late-arrival-summary" left this list on 2026-08-08. The shadow was hiding a genuine
   // disagreement rather than a duplicate: the inline block returned one row per late arrival
   // (2,199 live) and the executor grouped by employee into totals (577). Because the preview
