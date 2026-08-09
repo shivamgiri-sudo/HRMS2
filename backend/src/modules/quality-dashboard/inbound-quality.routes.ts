@@ -58,8 +58,9 @@ router.get("/clap-voc-quotes",         h(async (req, res) => res.json({ data: aw
 router.get("/clap-product-voc-summary",h(async (req, res) => res.json({ data: await svc.getClapProductVocSummary(parseFilters(req.query as Record<string, unknown>)) })));
 router.get("/clap-product-voc-quotes", h(async (req, res) => {
   const f = parseFilters(req.query as Record<string, unknown>);
-  const branch = (req.query.branch as string | undefined) as ("customer" | "logistic" | "agent" | "product") | undefined;
-  res.json({ data: await svc.getClapProductVocQuotes({ ...f, branch }) });
+  // Passed through unnarrowed on purpose: the service owns the allowlist, because it is the
+  // service that interpolates this value into a column name. A cast here proved nothing.
+  res.json({ data: await svc.getClapProductVocQuotes({ ...f, branch: req.query.branch }) });
 }));
 router.get("/clap-intelligence",       h(async (req, res) => res.json({ data: await svc.getClapIntelligence(parseFilters(req.query as Record<string, unknown>)) })));
 
