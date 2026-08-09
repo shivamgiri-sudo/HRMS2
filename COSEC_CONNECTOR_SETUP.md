@@ -1,6 +1,6 @@
 # COSEC Biometric Connector Setup Guide
 
-**Public IP:** 14.97.30.234  
+**Public IP:** <COSEC SQL host — see backend/.env>  
 **Port:** 1433 (SQL Server default)  
 **System:** Matrix COSEC NCOSEC Biometric Attendance System
 
@@ -19,7 +19,7 @@ Your project has complete COSEC biometric integration infrastructure:
 
 ### ⚠️ **Connectivity Test**
 ```bash
-# Port 1433 (SQL Server) on 14.97.30.234
+# Port 1433 (SQL Server) on <COSEC SQL host — see backend/.env>
 ✗ Port 1433 CLOSED (from your current location)
 ```
 
@@ -33,11 +33,11 @@ Your project has complete COSEC biometric integration infrastructure:
 
 ## 📊 System Architecture
 
-### **COSEC System (14.97.30.234)**
+### **COSEC System (<COSEC SQL host — see backend/.env>)**
 ```
 ┌──────────────────────────────────────┐
 │  Matrix COSEC NCOSEC                 │
-│  IP: 14.97.30.234:1433               │
+│  IP: <COSEC SQL host — see backend/.env>:1433               │
 │                                      │
 │  Database: NCOSEC (SQL Server)       │
 │                                      │
@@ -53,7 +53,7 @@ Your project has complete COSEC biometric integration infrastructure:
          ↓ (ETL Migration)
 ┌──────────────────────────────────────┐
 │  HRMS (mas_hrms)                     │
-│  IP: 122.184.128.90:3306             │
+│  IP: <mas_hrms DB host — see backend/.env>:3306             │
 │                                      │
 │  Tables:                             │
 │  ├─ employee_biometric_enrollment    │
@@ -75,7 +75,7 @@ Your project has complete COSEC biometric integration infrastructure:
 
 ```bash
 # ── NCOSEC Biometric DB Configuration ──
-NCOSEC_DB_HOST=14.97.30.234
+NCOSEC_DB_HOST=<COSEC SQL host — see backend/.env>
 NCOSEC_DB_PORT=1433
 NCOSEC_DB_USER=your_username
 NCOSEC_DB_PASSWORD=your_password
@@ -113,7 +113,7 @@ NCOSEC_DB_ENCRYPT=false
    Connector Type:    mssql (SQL Server)
    
    Database Details:
-   - Host:            14.97.30.234
+   - Host:            <COSEC SQL host — see backend/.env>
    - Port:            1433
    - Database:        NCOSEC
    - Username:        [COSEC DB Username]
@@ -136,7 +136,7 @@ NCOSEC_DB_ENCRYPT=false
 ### **Method 1: Port Check**
 ```bash
 # From your server
-timeout 5 bash -c 'cat < /dev/null > /dev/tcp/14.97.30.234/1433'
+timeout 5 bash -c 'cat < /dev/null > /dev/tcp/<COSEC SQL host — see backend/.env>/1433'
 ```
 
 **Expected:**
@@ -152,7 +152,7 @@ cat > test-cosec-connection.js << 'EOF'
 import sql from 'mssql';
 
 const config = {
-  server: '14.97.30.234',
+  server: '<COSEC SQL host — see backend/.env>',
   port: 1433,
   user: 'YOUR_USERNAME',
   password: 'YOUR_PASSWORD',
@@ -196,7 +196,7 @@ curl -X POST http://localhost:5055/api/integration-hub/test-connection \
   -d '{
     "connector_key": "cosec_biometric",
     "db_type": "mssql",
-    "host": "14.97.30.234",
+    "host": "<COSEC SQL host — see backend/.env>",
     "port": 1433,
     "database": "NCOSEC",
     "username": "YOUR_USERNAME",
@@ -341,7 +341,7 @@ npx tsx scripts/migrate-ncosec-biometric.ts
 # └─────────────────────────────────────────┘
 # 
 # [NCOSEC] Testing connection...
-# [NCOSEC] ✓ Connected to 14.97.30.234:1433
+# [NCOSEC] ✓ Connected to <COSEC SQL host — see backend/.env>:1433
 # [HRMS] Building UserID → employee_id map...
 # [HRMS] Loaded 45 existing enrollment mappings
 # [HRMS] Fallback: matched 120 via employee_code
@@ -427,13 +427,13 @@ sudo ufw status
 
 2. **Allow from HRMS server IP:**
 ```bash
-# On COSEC server (14.97.30.234)
-sudo ufw allow from 122.184.128.90 to any port 1433
+# On COSEC server (<COSEC SQL host — see backend/.env>)
+sudo ufw allow from <mas_hrms DB host — see backend/.env> to any port 1433
 ```
 
 3. **Or allow from specific subnet:**
 ```bash
-sudo ufw allow from 122.184.128.0/24 to any port 1433
+sudo ufw allow from <office egress subnet — see backend/.env>/24 to any port 1433
 ```
 
 ### **VPN Requirements**
@@ -442,12 +442,12 @@ If COSEC is on a private network:
 
 1. **Check VPN connectivity:**
 ```bash
-ping 14.97.30.234
+ping <COSEC SQL host — see backend/.env>
 ```
 
 2. **Verify routing:**
 ```bash
-traceroute 14.97.30.234
+traceroute <COSEC SQL host — see backend/.env>
 ```
 
 3. **Connect to VPN before migration:**
@@ -478,7 +478,7 @@ GRANT SELECT ON Mx_UserMst TO hrms_reader;
 
 ### **Check COSEC Data**
 ```sql
--- Connect to COSEC (14.97.30.234)
+-- Connect to COSEC (<COSEC SQL host — see backend/.env>)
 USE NCOSEC;
 
 -- Total events
@@ -498,7 +498,7 @@ WHERE CAST(EDateTime AS DATE) >= DATEADD(DAY, -30, CAST(GETDATE() AS DATE));
 
 ### **Check HRMS Data**
 ```sql
--- Connect to HRMS (122.184.128.90)
+-- Connect to HRMS (<mas_hrms DB host — see backend/.env>)
 USE mas_hrms;
 
 -- Enrolled employees
@@ -527,12 +527,12 @@ ORDER BY punch_date DESC;
 
 ### **Issue 1: Connection Timeout**
 
-**Error:** `ConnectionError: Failed to connect to 14.97.30.234:1433 - timeout`
+**Error:** `ConnectionError: Failed to connect to <COSEC SQL host — see backend/.env>:1433 - timeout`
 
 **Solutions:**
 1. Check firewall rules
-2. Verify IP is correct (not 14.97.30.236 or similar)
-3. Try telnet: `telnet 14.97.30.234 1433`
+2. Verify IP is correct (not <upstream host — see backend/.env> or similar)
+3. Try telnet: `telnet <COSEC SQL host — see backend/.env> 1433`
 4. Connect via VPN if required
 5. Check if SQL Server is running: `netstat -an | grep 1433`
 
@@ -627,12 +627,12 @@ connectionTimeout: 15000, // 15 seconds
 ### **1. Verify Network Connectivity**
 ```bash
 # Check if IP is reachable
-ping 14.97.30.234
+ping <COSEC SQL host — see backend/.env>
 
 # Check if port 1433 is open
-nc -zv 14.97.30.234 1433
+nc -zv <COSEC SQL host — see backend/.env> 1433
 # or
-telnet 14.97.30.234 1433
+telnet <COSEC SQL host — see backend/.env> 1433
 ```
 
 ### **2. Get COSEC Credentials**
@@ -684,13 +684,13 @@ npx tsx scripts/migrate-ncosec-biometric.ts
 
 ### **What You Need:**
 ❓ COSEC database credentials (username/password)  
-❓ Network access to 14.97.30.234:1433  
+❓ Network access to <COSEC SQL host — see backend/.env>:1433  
 ❓ VPN configuration (if required)  
 
 ### **Quick Start Command:**
 ```bash
 # Once you have credentials, add to .env:
-echo "NCOSEC_DB_HOST=14.97.30.234" >> backend/.env
+echo "NCOSEC_DB_HOST=<COSEC SQL host — see backend/.env>" >> backend/.env
 echo "NCOSEC_DB_PORT=1433" >> backend/.env
 echo "NCOSEC_DB_USER=your_username" >> backend/.env
 echo "NCOSEC_DB_PASSWORD=your_password" >> backend/.env

@@ -328,7 +328,7 @@ WHERE active_status = 1;
 
 **Step 1**: Check for table conflicts
 ```bash
-mysql -h 122.184.128.90 -u shivam_user -p<set DB_PASSWORD in backend/.env> mas_hrms -e "
+mysql -h <mas_hrms DB host — see backend/.env> -u shivam_user -p<set DB_PASSWORD in backend/.env> mas_hrms -e "
 SHOW TABLES LIKE '%bank%';
 SHOW TABLES LIKE '%profile%extra%';
 SHOW TABLES LIKE '%readiness%';
@@ -351,19 +351,19 @@ grep "INSERT INTO readiness_check_master" /tmp/verification-analysis/backend/sql
 
 **Step 1**: Backup
 ```bash
-mysqldump -h 122.184.128.90 -u shivam_user -p<set DB_PASSWORD in backend/.env> mas_hrms > \
+mysqldump -h <mas_hrms DB host — see backend/.env> -u shivam_user -p<set DB_PASSWORD in backend/.env> mas_hrms > \
   backup_before_readiness_$(date +%Y%m%d_%H%M%S).sql
 ```
 
 **Step 2**: Apply migration
 ```bash
-mysql -h 122.184.128.90 -u shivam_user -p<set DB_PASSWORD in backend/.env> mas_hrms < \
+mysql -h <mas_hrms DB host — see backend/.env> -u shivam_user -p<set DB_PASSWORD in backend/.env> mas_hrms < \
   /tmp/verification-analysis/backend/sql/112_readiness_verification_engine.sql
 ```
 
 **Step 3**: Verify tables
 ```bash
-mysql -h 122.184.128.90 -u shivam_user -p<set DB_PASSWORD in backend/.env> mas_hrms -e "
+mysql -h <mas_hrms DB host — see backend/.env> -u shivam_user -p<set DB_PASSWORD in backend/.env> mas_hrms -e "
 SHOW TABLES LIKE '%readiness%';
 SHOW TABLES LIKE '%employee_bank%';
 SHOW TABLES LIKE '%employee_profile%';

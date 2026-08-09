@@ -1,7 +1,7 @@
 # COSEC Connection Diagnosis Report
 
 **Date:** June 15, 2026  
-**Server:** 14.97.30.234
+**Server:** <COSEC SQL host — see backend/.env>
 
 ---
 
@@ -9,7 +9,7 @@
 
 ### ✅ **Server is Reachable**
 ```bash
-PING 14.97.30.234
+PING <COSEC SQL host — see backend/.env>
 ✓ Response time: 6-8 ms
 ✓ 0% packet loss
 ✓ Server is online
@@ -45,13 +45,13 @@ The server is accessible (ping works, HTTP works), but SQL Server port is not ex
 
 **Ask IT team to:**
 1. Open firewall rule for port 1433
-2. Allow traffic from HRMS server IP: `122.184.128.90`
+2. Allow traffic from HRMS server IP: `<mas_hrms DB host — see backend/.env>`
 3. Or allow from your current IP: `192.168.1.12`
 
 **Firewall Rule Needed:**
 ```
-Source: 122.184.128.90 (or your office subnet)
-Destination: 14.97.30.234
+Source: <mas_hrms DB host — see backend/.env> (or your office subnet)
+Destination: <COSEC SQL host — see backend/.env>
 Port: 1433 (TCP)
 Action: ALLOW
 ```
@@ -64,7 +64,7 @@ If you have SSH access to a machine that CAN reach the SQL Server:
 
 ```bash
 # Create SSH tunnel
-ssh -L 1433:14.97.30.234:1433 user@jump-server
+ssh -L 1433:<COSEC SQL host — see backend/.env>:1433 user@jump-server
 
 # Then update .env to use localhost
 NCOSEC_DB_HOST=localhost
@@ -82,7 +82,7 @@ Some SQL Server instances run on non-standard ports.
 # Test other common ports
 for port in 1433 1434 14330 14331 49152; do
   echo "Testing port $port..."
-  timeout 2 nc -zv 14.97.30.234 $port 2>&1
+  timeout 2 nc -zv <COSEC SQL host — see backend/.env> $port 2>&1
 done
 ```
 
@@ -91,9 +91,9 @@ Run this to scan:
 cd /home/shuvam/hrms-audit/backend
 cat > test-ports.sh << 'EOF'
 #!/bin/bash
-echo "Scanning SQL Server ports on 14.97.30.234..."
+echo "Scanning SQL Server ports on <COSEC SQL host — see backend/.env>..."
 for port in 1433 1434 14330 14331 49152 49153 49154; do
-  timeout 2 nc -zv 14.97.30.234 $port 2>&1 | grep -q "succeeded" && echo "✓ Port $port is OPEN" || echo "✗ Port $port is closed"
+  timeout 2 nc -zv <COSEC SQL host — see backend/.env> $port 2>&1 | grep -q "succeeded" && echo "✓ Port $port is OPEN" || echo "✗ Port $port is closed"
 done
 EOF
 chmod +x test-ports.sh
@@ -128,9 +128,9 @@ If COSEC provides a REST API over HTTP/HTTPS:
 **Check for API endpoints:**
 ```bash
 # Try common API paths
-curl -v http://14.97.30.234/api 2>&1 | grep -i "200\|404\|api"
-curl -v http://14.97.30.234/cosec 2>&1 | grep -i "200\|404"
-curl -v http://14.97.30.234/WebAPI 2>&1 | grep -i "200\|404"
+curl -v http://<COSEC SQL host — see backend/.env>/api 2>&1 | grep -i "200\|404\|api"
+curl -v http://<COSEC SQL host — see backend/.env>/cosec 2>&1 | grep -i "200\|404"
+curl -v http://<COSEC SQL host — see backend/.env>/WebAPI 2>&1 | grep -i "200\|404"
 ```
 
 **If API exists, we can:**
@@ -147,12 +147,12 @@ SQL Server might be using dynamic ports.
 **Query SQL Server Browser (port 1434 UDP):**
 ```bash
 # Check if SQL Browser is responding
-timeout 2 nc -u 14.97.30.234 1434 2>&1
+timeout 2 nc -u <COSEC SQL host — see backend/.env> 1434 2>&1
 ```
 
 **If Browser is available:**
 - SQL Server might be on a named instance
-- Try connection string: `14.97.30.234\INSTANCENAME`
+- Try connection string: `<COSEC SQL host — see backend/.env>\INSTANCENAME`
 
 ---
 
@@ -175,13 +175,13 @@ timeout 2 nc -u 14.97.30.234 1434 2>&1
 1. **Scan for alternative ports:**
    ```bash
    cd /home/shuvam/hrms-audit/backend
-   nmap -p 1433,1434,14330-14335,49152-49160 14.97.30.234
+   nmap -p 1433,1434,14330-14335,49152-49160 <COSEC SQL host — see backend/.env>
    ```
 
 2. **Check if COSEC has REST API:**
    ```bash
-   curl -I http://14.97.30.234/api/attendance
-   curl -I http://14.97.30.234/cosec/api
+   curl -I http://<COSEC SQL host — see backend/.env>/api/attendance
+   curl -I http://<COSEC SQL host — see backend/.env>/cosec/api
    ```
 
 3. **Contact COSEC Administrator:**
@@ -194,7 +194,7 @@ timeout 2 nc -u 14.97.30.234 1434 2>&1
 ### **Short Term (Next 24 Hours):**
 
 1. **Work with IT Team:**
-   - Request firewall rule: Allow 122.184.128.90 → 14.97.30.234:1433
+   - Request firewall rule: Allow <mas_hrms DB host — see backend/.env> → <COSEC SQL host — see backend/.env>:1433
    - Or whitelist your office subnet
    - Get VPN credentials if required
 
@@ -230,19 +230,19 @@ timeout 2 nc -u 14.97.30.234 1434 2>&1
 cd /home/shuvam/hrms-audit/backend
 
 # 1. Full port scan
-nmap -p 1433,1434,1435,14330-14335,49152-49160 14.97.30.234
+nmap -p 1433,1434,1435,14330-14335,49152-49160 <COSEC SQL host — see backend/.env>
 
 # 2. Check for COSEC web API
 for path in /api /cosec /WebAPI /attendance /punch; do
-  echo "Testing: http://14.97.30.234$path"
-  curl -I http://14.97.30.234$path 2>&1 | grep "HTTP"
+  echo "Testing: http://<COSEC SQL host — see backend/.env>$path"
+  curl -I http://<COSEC SQL host — see backend/.env>$path 2>&1 | grep "HTTP"
 done
 
 # 3. Check HTTPS
-curl -k -I https://14.97.30.234 2>&1 | head -5
+curl -k -I https://<COSEC SQL host — see backend/.env> 2>&1 | head -5
 
 # 4. Try SQL Server Browser
-echo -n "" | nc -u 14.97.30.234 1434 -w 2
+echo -n "" | nc -u <COSEC SQL host — see backend/.env> 1434 -w 2
 
 # 5. Check if on VPN
 ip addr | grep -E "tun|ppp|vpn"
@@ -254,7 +254,7 @@ ip addr | grep -E "tun|ppp|vpn"
 
 **Get from IT/DBA:**
 
-1. ✅ Server IP: 14.97.30.234 (confirmed)
+1. ✅ Server IP: <COSEC SQL host — see backend/.env> (confirmed)
 2. ❓ SQL Server Port: ____ (default 1433 blocked, need actual port)
 3. ❓ VPN Required: Yes / No
 4. ❓ VPN Config: ____ (if required)
@@ -280,7 +280,7 @@ If direct SQL Server access is not possible, we can integrate via REST API.
 // New adapter: backend/src/modules/wfm/cosec-api-adapter.ts
 async function fetchAttendanceViaAPI(date: string) {
   const response = await axios.get(
-    `http://14.97.30.234/api/attendance`,
+    `http://<COSEC SQL host — see backend/.env>/api/attendance`,
     {
       params: { date },
       auth: {

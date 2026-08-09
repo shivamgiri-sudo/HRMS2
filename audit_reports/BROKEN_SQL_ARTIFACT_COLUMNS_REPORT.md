@@ -1,7 +1,7 @@
 # BROKEN_SQL_ARTIFACT_COLUMNS_REPORT
 
 **Generated:** 2026-06-25  
-**Database:** mas_hrms (122.184.128.90:3306)  
+**Database:** mas_hrms (<mas_hrms DB host — see backend/.env>:3306)  
 **Latest Commit:** eb0f12b fix: wire DB-resolved roles in expenses/DPDP, add onboarding link endpoint, add ATS status machine
 
 ## Query Executed

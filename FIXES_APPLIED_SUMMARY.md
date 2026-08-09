@@ -254,7 +254,7 @@ npm run dev
 
 **Solution:** Run this from a machine with MySQL access:
 ```bash
-mysql -h 122.184.128.90 -u shivam_user -p'Mas@2024$secure' mas_hrms < backend/sql/135_payroll_masters.sql
+mysql -h <mas_hrms DB host — see backend/.env> -u shivam_user -p'Mas@2024$secure' mas_hrms < backend/sql/135_payroll_masters.sql
 ```
 
 **Or manually create table:**

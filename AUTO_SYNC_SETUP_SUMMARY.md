@@ -253,9 +253,9 @@ node db_bill-to-mas_hrms-salary-sync.js --mode=delta --months=1
 node db_bill-to-mas_hrms-salary-sync.js --employee=MAS12345
 
 # Check database directly
-mysql -h 14.97.30.236 -u shivam_user -p db_bill -e "SELECT * FROM salary_data WHERE EmpCode='MAS12345' ORDER BY SalayDate DESC LIMIT 5"
+mysql -h <db_bill host — see backend/.env> -u shivam_user -p db_bill -e "SELECT * FROM salary_data WHERE EmpCode='MAS12345' ORDER BY SalayDate DESC LIMIT 5"
 
-mysql -h 122.184.128.90 -u shivam_user -p mas_hrms -e "SELECT * FROM salary_prep_line WHERE employee_code='MAS12345' ORDER BY run_id DESC LIMIT 5"
+mysql -h <mas_hrms DB host — see backend/.env> -u shivam_user -p mas_hrms -e "SELECT * FROM salary_prep_line WHERE employee_code='MAS12345' ORDER BY run_id DESC LIMIT 5"
 ```
 
 ---

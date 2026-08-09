@@ -246,7 +246,7 @@ import { resolve } from 'path';
 dotenv.config({ path: resolve(process.cwd(), '.env') });
 
 export const LEGACY_SRC: ConnectionOptions = {
-  host:        '<LEGACY_HOST>',       // Fill in: 122.184.128.90
+  host:        '<LEGACY_HOST>',       // Fill in: <mas_hrms DB host — see backend/.env>
   port:        3306,
   user:        '<LEGACY_USER>',       // Fill in: root
   password:    '<LEGACY_PASSWORD>',   // Fill in: (provided separately)

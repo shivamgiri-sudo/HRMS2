@@ -10,7 +10,7 @@
 
 **Backend**: ❌ Not running (Port 3002)  
 **Frontend**: ❌ Not running (Port 5173)  
-**Database**: MySQL (mas_hrms on 122.184.128.90:3306)
+**Database**: MySQL (mas_hrms on <mas_hrms DB host — see backend/.env>:3306)
 
 **Action Required**: Start backend + frontend before executing tests
 

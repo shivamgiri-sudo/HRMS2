@@ -497,7 +497,7 @@ ORDER BY role_name;
 ### **Test 1: Assign Role**
 ```bash
 # 1. Get user ID
-USER_ID=$(mysql -h 122.184.128.90 -u shivam_user -p'Mas@2024$secure' mas_hrms -se "SELECT id FROM users WHERE email='test@company.com' LIMIT 1")
+USER_ID=$(mysql -h <mas_hrms DB host — see backend/.env> -u shivam_user -p'Mas@2024$secure' mas_hrms -se "SELECT id FROM users WHERE email='test@company.com' LIMIT 1")
 
 # 2. Assign manager role
 curl -X POST http://localhost:5055/api/admin/roles/users/$USER_ID/roles \

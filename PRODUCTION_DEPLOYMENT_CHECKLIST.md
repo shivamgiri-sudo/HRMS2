@@ -18,7 +18,7 @@
 - Features: Login, forgot password UI functional
 
 ### **3. Database Migrations ✅**
-All migrations already applied on production database (122.184.128.90):
+All migrations already applied on production database (<mas_hrms DB host — see backend/.env>):
 - ✅ 062_employees_legacy_fields.sql (partial - columns exist)
 - ✅ 063_password_reset.sql (password_reset_tokens table exists)
 - ✅ 064_leave_legacy_sync.sql (leave_request has legacy columns)
@@ -43,7 +43,7 @@ Access denied for user 'Shivam_user'@'34.145.131.166' (using password: YES)
 
 **Root Cause:**
 - Production backend hosted at IP: 34.145.131.166
-- MySQL server (122.184.128.90) doesn't allow connections from this IP
+- MySQL server (<mas_hrms DB host — see backend/.env>) doesn't allow connections from this IP
 - Database firewall/whitelist needs updating
 
 ---
@@ -52,7 +52,7 @@ Access denied for user 'Shivam_user'@'34.145.131.166' (using password: YES)
 
 ### **Option A: Whitelist Backend IP on Database Server (Recommended)**
 
-**On MySQL server (122.184.128.90):**
+**On MySQL server (<mas_hrms DB host — see backend/.env>):**
 ```sql
 -- Grant access to backend server IP
 GRANT ALL PRIVILEGES ON mas_hrms.* 
@@ -64,7 +64,7 @@ FLUSH PRIVILEGES;
 
 **OR update firewall rules to allow:**
 - Source IP: 34.145.131.166
-- Destination: 122.184.128.90:3306
+- Destination: <mas_hrms DB host — see backend/.env>:3306
 - Protocol: TCP
 
 ---
@@ -75,14 +75,14 @@ FLUSH PRIVILEGES;
 
 ```bash
 # Database connection
-DB_HOST=122.184.128.90
+DB_HOST=<mas_hrms DB host — see backend/.env>
 DB_PORT=3306
 DB_USER=shivam_user
 DB_PASSWORD=<set DB_PASSWORD in backend/.env>
 DB_NAME=mas_hrms
 
 # Legacy database
-LEGACY_MYSQL_HOST=14.97.30.236
+LEGACY_MYSQL_HOST=<db_bill host — see backend/.env>
 LEGACY_MYSQL_PORT=3306
 LEGACY_MYSQL_USER=shivam_user
 LEGACY_MYSQL_PASSWORD=<set DB_PASSWORD in backend/.env>
@@ -207,14 +207,14 @@ curl -X POST https://hrms-1-xi.vercel.app/api/auth/login \
 ## 📞 **WHO NEEDS TO DO WHAT:**
 
 ### **Backend/DevOps Team:**
-1. Whitelist IP 34.145.131.166 on MySQL server (122.184.128.90)
+1. Whitelist IP 34.145.131.166 on MySQL server (<mas_hrms DB host — see backend/.env>)
 2. Verify backend .env has correct DB credentials
 3. Restart backend service after changes
 4. Configure SMTP for email sending
 
 ### **Database Admin:**
 ```sql
--- Run this on MySQL server 122.184.128.90
+-- Run this on MySQL server <mas_hrms DB host — see backend/.env>
 GRANT ALL PRIVILEGES ON mas_hrms.* 
 TO 'shivam_user'@'34.145.131.166' 
 IDENTIFIED BY '<set DB_PASSWORD in backend/.env>';

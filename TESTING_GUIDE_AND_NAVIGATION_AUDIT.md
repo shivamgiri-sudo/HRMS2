@@ -256,7 +256,7 @@ curl http://localhost:5055/api/employees/me \
   -H "Authorization: Bearer mock-token-employee"
 
 # Check database connection
-mysql --host=122.184.128.90 --port=3306 --user=shivam_user \
+mysql --host=<mas_hrms DB host — see backend/.env> --port=3306 --user=shivam_user \
   --password='<set DB_PASSWORD in backend/.env>' --database=mas_hrms \
   --execute="SELECT COUNT(*) FROM employees;"
 ```
@@ -432,7 +432,7 @@ cd /home/shuvam/hrms-audit && npm run dev &
 **If Database Connection Fails**:
 ```bash
 # Test connection
-mysql --host=122.184.128.90 --port=3306 \
+mysql --host=<mas_hrms DB host — see backend/.env> --port=3306 \
   --user=shivam_user --password='<set DB_PASSWORD in backend/.env>' \
   --execute="SELECT 1;"
 ```

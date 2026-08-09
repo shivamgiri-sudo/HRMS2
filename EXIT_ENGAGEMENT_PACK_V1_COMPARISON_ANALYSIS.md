@@ -279,7 +279,7 @@ DROP TABLE reward_catalog;
 
 2. **Apply migration 118**
    ```bash
-   mysql -h 122.184.128.90 -u shivam_user -p<set DB_PASSWORD in backend/.env> mas_hrms < \
+   mysql -h <mas_hrms DB host — see backend/.env> -u shivam_user -p<set DB_PASSWORD in backend/.env> mas_hrms < \
      /tmp/exit-pack-v1/.../backend/sql/118_exit_engagement_intelligence.sql
    ```
 

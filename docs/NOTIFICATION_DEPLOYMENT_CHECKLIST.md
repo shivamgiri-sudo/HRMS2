@@ -46,10 +46,10 @@ npm list nodemailer twilio handlebars
 
 ```bash
 # Option A: From MySQL client
-mysql -h 122.184.128.90 -u shuvam -p'MCN@1234$' mas_hrms < backend/sql/132_email_sms_notification_system.sql
+mysql -h <mas_hrms DB host — see backend/.env> -u shuvam -p'MCN@1234$' mas_hrms < backend/sql/132_email_sms_notification_system.sql
 
 # Option B: From MySQL console
-mysql -h 122.184.128.90 -u shuvam -p'MCN@1234$' mas_hrms
+mysql -h <mas_hrms DB host — see backend/.env> -u shuvam -p'MCN@1234$' mas_hrms
 source backend/sql/132_email_sms_notification_system.sql;
 ```
 
@@ -409,13 +409,13 @@ FLUSH PRIVILEGES;
 crontab -e
 
 # Add line:
-*/15 * * * * /usr/bin/mysql -h 122.184.128.90 -u shuvam -p'MCN@1234$' mas_hrms -e "SELECT COUNT(*) as failed FROM notification_log WHERE status='failed' AND created_at >= DATE_SUB(NOW(), INTERVAL 1 HOUR)" | awk 'NR==2 {if ($1 > 10) print "HIGH FAILURE RATE: " $1 " failed notifications in last hour"}' | mail -s "HRMS Notification Alert" admin@example.com
+*/15 * * * * /usr/bin/mysql -h <mas_hrms DB host — see backend/.env> -u shuvam -p'MCN@1234$' mas_hrms -e "SELECT COUNT(*) as failed FROM notification_log WHERE status='failed' AND created_at >= DATE_SUB(NOW(), INTERVAL 1 HOUR)" | awk 'NR==2 {if ($1 > 10) print "HIGH FAILURE RATE: " $1 " failed notifications in last hour"}' | mail -s "HRMS Notification Alert" admin@example.com
 ```
 
 **12.3. Save Monitoring Queries**:
 ```bash
 # Run monitoring queries from file
-mysql -h 122.184.128.90 -u shuvam -p'MCN@1234$' mas_hrms < backend/scripts/monitoring-queries.sql
+mysql -h <mas_hrms DB host — see backend/.env> -u shuvam -p'MCN@1234$' mas_hrms < backend/scripts/monitoring-queries.sql
 ```
 
 ---

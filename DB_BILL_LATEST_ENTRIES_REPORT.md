@@ -1,7 +1,7 @@
 # db_bill Database - Latest Entries Report
 
 **Database**: `db_bill`  
-**Server**: `14.97.30.236`  
+**Server**: `<db_bill host — see backend/.env>`  
 **Analysis Date**: 2026-06-13  
 **Purpose**: Identify which tables have the most recent data entries
 
@@ -259,6 +259,6 @@ Day 16+:  Payment/adjustments
 ---
 
 **Generated**: 2026-06-13  
-**Database**: db_bill @ 14.97.30.236  
+**Database**: db_bill @ <db_bill host — see backend/.env>  
 **Analysis Period**: 2020-01-10 to 2026-06-12  
 **Key Finding**: ✅ Incentive system is ACTIVELY USED (updated yesterday!)

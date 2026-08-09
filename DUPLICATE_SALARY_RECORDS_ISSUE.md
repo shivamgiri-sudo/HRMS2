@@ -137,7 +137,7 @@ AND SalayDate >= '2026-03-01' AND SalayDate < '2026-04-01';
 **Usage**:
 ```bash
 # Run cleanup (after sync completes)
-mysql -h 122.184.128.90 -u shivam_user -p mas_hrms < cleanup-duplicate-salary-records.sql
+mysql -h <mas_hrms DB host — see backend/.env> -u shivam_user -p mas_hrms < cleanup-duplicate-salary-records.sql
 ```
 
 **What it does**:

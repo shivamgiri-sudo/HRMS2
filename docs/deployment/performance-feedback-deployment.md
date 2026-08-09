@@ -18,7 +18,7 @@ This guide covers the deployment of the Performance Feedback System (Parts 1 & 2
 - [ ] Performance benchmarks met
 
 ### 2. Environment Verification
-- [ ] Database connection verified (122.184.128.90:3306)
+- [ ] Database connection verified (<mas_hrms DB host — see backend/.env>:3306)
 - [ ] MySQL credentials confirmed (mas_hrms database)
 - [ ] Backend environment variables set
 - [ ] Frontend environment variables configured
@@ -45,7 +45,7 @@ This guide covers the deployment of the Performance Feedback System (Parts 1 & 2
 
 ```bash
 # Connect to MySQL
-mysql -h 122.184.128.90 -u root -p mas_hrms
+mysql -h <mas_hrms DB host — see backend/.env> -u root -p mas_hrms
 
 # Execute schema migrations
 source backend/migrations/001_performance_feedback_tables.sql
@@ -124,7 +124,7 @@ npm run build
 cat .env
 
 # Required variables:
-# DB_HOST=122.184.128.90
+# DB_HOST=<mas_hrms DB host — see backend/.env>
 # DB_PORT=3306
 # DB_USER=root
 # DB_PASSWORD=<password>
@@ -251,7 +251,7 @@ sudo systemctl reload nginx
 ### 1. Database Connectivity
 ```bash
 # From backend server
-mysql -h 122.184.128.90 -u root -p mas_hrms -e "SELECT COUNT(*) FROM performance_feedback_forms;"
+mysql -h <mas_hrms DB host — see backend/.env> -u root -p mas_hrms -e "SELECT COUNT(*) FROM performance_feedback_forms;"
 
 # Expected: Query successful (count may be 0 initially)
 ```
@@ -336,11 +336,11 @@ cp -r /backup/hrms-backend-<timestamp>/* /home/shuvam/mas-callnet-hrms/backend/
 #### 3. Rollback Database (if needed)
 ```bash
 # Restore from backup
-mysql -h 122.184.128.90 -u root -p mas_hrms < backup_<timestamp>.sql
+mysql -h <mas_hrms DB host — see backend/.env> -u root -p mas_hrms < backup_<timestamp>.sql
 
 # OR drop new tables (only if no production data)
-mysql -h 122.184.128.90 -u root -p mas_hrms -e "DROP TABLE IF EXISTS performance_feedback_answers;"
-mysql -h 122.184.128.90 -u root -p mas_hrms -e "DROP TABLE IF EXISTS performance_feedback_questions;"
+mysql -h <mas_hrms DB host — see backend/.env> -u root -p mas_hrms -e "DROP TABLE IF EXISTS performance_feedback_answers;"
+mysql -h <mas_hrms DB host — see backend/.env> -u root -p mas_hrms -e "DROP TABLE IF EXISTS performance_feedback_questions;"
 # ... (drop all new tables in reverse dependency order)
 ```
 

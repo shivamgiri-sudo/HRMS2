@@ -8,7 +8,7 @@
 ## Source Database (Legacy)
 
 **Connection:**
-- Host: 14.97.30.236
+- Host: <db_bill host — see backend/.env>
 - Port: 3306
 - Database: `db_bill`
 - User: `shivam_user`
@@ -26,7 +26,7 @@
 ## Target Database (HRMS)
 
 **Connection:**
-- Host: 122.184.128.90
+- Host: <mas_hrms DB host — see backend/.env>
 - Port: 3306
 - Database: `mas_hrms`
 - User: `root`
@@ -337,7 +337,7 @@ node scripts/test-mysql-legacy.ts
 
 ### Phase 2: Schema Migration
 ```bash
-mysql -h 122.184.128.90 -u root -p mas_hrms < backend/sql/062_employees_legacy_fields.sql
+mysql -h <mas_hrms DB host — see backend/.env> -u root -p mas_hrms < backend/sql/062_employees_legacy_fields.sql
 # Adds all missing columns to employees table
 ```
 

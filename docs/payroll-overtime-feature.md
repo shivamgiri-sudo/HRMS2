@@ -393,7 +393,7 @@ describe('WFM Access Control', () => {
 ### 1. Database Migration
 ```bash
 # Run migration to add overtime columns
-mysql -h 122.184.128.90 -u shuvam -p'Shuvam1234@' mas_hrms < backend/db-migrations/007_add_overtime_to_payroll.sql
+mysql -h <mas_hrms DB host — see backend/.env> -u shuvam -p'Shuvam1234@' mas_hrms < backend/db-migrations/007_add_overtime_to_payroll.sql
 ```
 
 ### 2. Backend Deployment

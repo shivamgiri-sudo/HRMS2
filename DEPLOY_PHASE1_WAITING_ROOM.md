@@ -30,7 +30,7 @@
 
 ### 1. Connect to Production Server
 ```bash
-ssh masadmin@115.241.59.220
+ssh masadmin@<mcn_lms host — see backend/.env>
 # Password: Support#123
 ```
 
@@ -74,7 +74,7 @@ curl http://localhost:5055/api/ats/queue/branches
 #### 1. Upload Deployment Package
 From your local machine:
 ```bash
-scp dist-phase1-deploy.tar.gz masadmin@115.241.59.220:/tmp/
+scp dist-phase1-deploy.tar.gz masadmin@<mcn_lms host — see backend/.env>:/tmp/
 ```
 
 #### 2. Extract to Frontend Directory
@@ -269,7 +269,7 @@ pm2 restart hrms2-backend --update-env
 
 ## Production Server Details
 
-**Server IP:** 115.241.59.220  
+**Server IP:** <mcn_lms host — see backend/.env>  
 **Username:** masadmin  
 **Password:** Support#123
 

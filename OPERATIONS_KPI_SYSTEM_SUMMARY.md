@@ -547,7 +547,7 @@ requireRole("admin", "manager", "process_manager")
 
 ## 📞 Contact & Support
 
-**Database Server:** 122.184.128.90  
+**Database Server:** <mas_hrms DB host — see backend/.env>  
 **Database User:** shivam_user  
 **Main DB:** mas_hrms  
 **External DBs:** Shivamgiri, db_audit, db_external, dialer_db

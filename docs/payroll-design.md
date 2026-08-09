@@ -1611,7 +1611,7 @@ Response: {
 **Daily Backups**:
 ```bash
 # Cron job: 2 AM daily
-0 2 * * * mysqldump -h 122.184.128.90 -u shuvam -p'Shuvam1234@' mas_hrms \
+0 2 * * * mysqldump -h <mas_hrms DB host — see backend/.env> -u shuvam -p'Shuvam1234@' mas_hrms \
   salary_structure_master \
   employee_salary_assignment \
   salary_prep_run \

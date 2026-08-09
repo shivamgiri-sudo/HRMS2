@@ -1,7 +1,7 @@
 # Legacy Database Sync - Status Report
 
 **Date:** 2026-06-07  
-**Database:** db_bill (14.97.30.236:3306) → mas_hrms (122.184.128.90:3306)
+**Database:** db_bill (<db_bill host — see backend/.env>:3306) → mas_hrms (<mas_hrms DB host — see backend/.env>:3306)
 
 ---
 
@@ -242,13 +242,13 @@ HRMS DB (SAFE UPSERT)
 ## 📞 **CREDENTIALS (SENSITIVE)**
 
 **Legacy MySQL (db_bill - READ ONLY):**
-- Host: 14.97.30.236:3306
+- Host: <db_bill host — see backend/.env>:3306
 - User: shivam_user
 - Password: <set DB_PASSWORD in backend/.env>
 - Database: db_bill
 
 **HRMS MySQL (mas_hrms - WRITE):**
-- Host: 122.184.128.90:3306
+- Host: <mas_hrms DB host — see backend/.env>:3306
 - User: shivam_user (READ) / root (WRITE - use carefully)
 - Password: <set DB_PASSWORD in backend/.env> / Tmc@0987#
 - Database: mas_hrms

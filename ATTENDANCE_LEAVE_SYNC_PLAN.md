@@ -13,7 +13,7 @@ Sync attendance, leave, and biometric data from multiple sources into mas_hrms f
 
 ## 📊 **Data Sources Identified**
 
-### **Source 1: db_bill @ 14.97.30.236**
+### **Source 1: db_bill @ <db_bill host — see backend/.env>**
 
 #### **Attendance Data**
 **Table**: `qual_attendance`
@@ -65,7 +65,7 @@ Fields:
 
 ---
 
-### **Source 2: dialer_db @ 122.184.128.90 (Biometric/Dialer)**
+### **Source 2: dialer_db @ <mas_hrms DB host — see backend/.env> (Biometric/Dialer)**
 
 **Tables**: `vicidial_agent_log_*` (multiple tables by process)
 ```sql
@@ -82,7 +82,7 @@ Fields:
 
 ---
 
-### **Source 3: Shivamgiri @ 122.184.128.90 (COSE System)**
+### **Source 3: Shivamgiri @ <mas_hrms DB host — see backend/.env> (COSE System)**
 
 **Table**: `ci_call_master` (Call data)
 - Has agent_id, call_datetime, duration_sec
@@ -94,7 +94,7 @@ Fields:
 
 ---
 
-### **Target: mas_hrms @ 122.184.128.90**
+### **Target: mas_hrms @ <mas_hrms DB host — see backend/.env>**
 
 #### **Attendance Tables**
 

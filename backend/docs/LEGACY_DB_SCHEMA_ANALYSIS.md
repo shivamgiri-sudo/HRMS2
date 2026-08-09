@@ -1,7 +1,7 @@
 # Legacy Database Schema Analysis
 
 **Database:** db_bill (MySQL 5.5.44)  
-**Host:** 14.97.30.236:3306  
+**Host:** <db_bill host — see backend/.env>:3306  
 **Connection:** ✅ Verified
 
 ---
@@ -242,7 +242,7 @@ Likely backups or historical snapshots.
 
 ## Next Steps
 
-1. ✅ Connection verified to 14.97.30.236:3306
+1. ✅ Connection verified to <db_bill host — see backend/.env>:3306
 2. ⏳ Create MySQL-based sync adapter (replace SQL Server Change Tracking)
 3. ⏳ Map NewJclrMaster → employees table
 4. ⏳ Test incremental sync with timestamp-based detection

@@ -1,7 +1,7 @@
 # COSEC Integration - Final Status Report
 
 **Date:** June 15, 2026  
-**Server:** 14.97.30.234
+**Server:** <COSEC SQL host — see backend/.env>
 
 ---
 
@@ -9,7 +9,7 @@
 
 ### ✅ **Discovery:** COSEC has Web Interface!
 
-The COSEC server at 14.97.30.234 is running **Matrix COSEC version 20.1.1** with a full web application interface.
+The COSEC server at <COSEC SQL host — see backend/.env> is running **Matrix COSEC version 20.1.1** with a full web application interface.
 
 ---
 
@@ -29,7 +29,7 @@ The COSEC server at 14.97.30.234 is running **Matrix COSEC version 20.1.1** with
 
 ### **1. COSEC Web Application**
 ```
-URL: http://14.97.30.234/COSEC/Login
+URL: http://<COSEC SQL host — see backend/.env>/COSEC/Login
 Version: Matrix COSEC 20.1.1
 Technology: ASP.NET MVC, AngularJS, Bootstrap
 Status: Running
@@ -43,7 +43,7 @@ Status: Running
 
 ### **2. SQL Server Database**
 ```
-Host: 14.97.30.234
+Host: <COSEC SQL host — see backend/.env>
 Port: 1433 (BLOCKED)
 Database: NCOSEC (assumed)
 Credentials: configure the username and rotated password outside source control.
@@ -60,7 +60,7 @@ Status: Firewall blocked
 
 **Steps:**
 1. Ask IT to whitelist port 1433
-2. Allow from HRMS server IP: `122.184.128.90`
+2. Allow from HRMS server IP: `<mas_hrms DB host — see backend/.env>`
 3. Or allow from office subnet
 4. Run existing migration script
 
@@ -81,7 +81,7 @@ Status: Firewall blocked
 **Action Required:** Explore COSEC API documentation
 
 **Steps:**
-1. Login to http://14.97.30.234/COSEC/Login
+1. Login to http://<COSEC SQL host — see backend/.env>/COSEC/Login
 2. Check for API documentation
 3. Test API endpoints with credentials
 4. Write new adapter for REST API
@@ -129,7 +129,7 @@ GET  /COSEC/api/punches?userId=XXX&from=YYYY-MM-DD&to=YYYY-MM-DD
 **1. Get COSEC Login Access:**
 ```bash
 # Test login with your credentials
-curl -X POST http://14.97.30.234/COSEC/api/auth/login \
+curl -X POST http://<COSEC SQL host — see backend/.env>/COSEC/api/auth/login \
   -H "Content-Type: application/json" \
   -d '{
     "username": "shivamg",
@@ -138,7 +138,7 @@ curl -X POST http://14.97.30.234/COSEC/api/auth/login \
 ```
 
 **2. Explore COSEC Web Interface:**
-- Login at: http://14.97.30.234/COSEC/Login
+- Login at: http://<COSEC SQL host — see backend/.env>/COSEC/Login
 - Navigate to Reports/Attendance section
 - Look for "API" or "Web Services" menu
 - Check for download/export options
@@ -180,7 +180,7 @@ Look for API calls like:
 ```typescript
 import axios from 'axios';
 
-const COSEC_BASE_URL = 'http://14.97.30.234/COSEC/api';
+const COSEC_BASE_URL = 'http://<COSEC SQL host — see backend/.env>/COSEC/api';
 const COSEC_USER = process.env.COSEC_API_USER || 'shivamg';
 const COSEC_PASS = process.env.COSEC_API_PASSWORD;
 
@@ -239,10 +239,10 @@ npx tsx scripts/migrate-ncosec-biometric.ts
 ### **1. Test COSEC Web Interface:**
 ```bash
 # Check if login page loads
-curl -I http://14.97.30.234/COSEC/Login
+curl -I http://<COSEC SQL host — see backend/.env>/COSEC/Login
 
 # Try to login (adjust endpoint based on actual API)
-curl -X POST http://14.97.30.234/COSEC/api/login \
+curl -X POST http://<COSEC SQL host — see backend/.env>/COSEC/api/login \
   -H "Content-Type: application/json" \
   -d '{"username":"shivamg","password":"<secure-password>"}' \
   -v
@@ -252,17 +252,17 @@ curl -X POST http://14.97.30.234/COSEC/api/login \
 ```bash
 # Common API paths
 for path in /COSEC/api /COSEC/webapi /COSEC/services /COSEC/rest; do
-  echo "Testing: http://14.97.30.234$path"
-  curl -I http://14.97.30.234$path 2>&1 | grep HTTP
+  echo "Testing: http://<COSEC SQL host — see backend/.env>$path"
+  curl -I http://<COSEC SQL host — see backend/.env>$path 2>&1 | grep HTTP
 done
 ```
 
 ### **3. Check API documentation:**
 ```bash
 # Common doc paths
-curl -s http://14.97.30.234/COSEC/api/docs | head -100
-curl -s http://14.97.30.234/COSEC/swagger | head -100
-curl -s http://14.97.30.234/COSEC/api-docs | head -100
+curl -s http://<COSEC SQL host — see backend/.env>/COSEC/api/docs | head -100
+curl -s http://<COSEC SQL host — see backend/.env>/COSEC/swagger | head -100
+curl -s http://<COSEC SQL host — see backend/.env>/COSEC/api-docs | head -100
 ```
 
 ---
@@ -279,7 +279,7 @@ curl -s http://14.97.30.234/COSEC/api-docs | head -100
 
 ### **For IT Team:**
 
-- [ ] Open firewall port 1433 for 122.184.128.90 → 14.97.30.234
+- [ ] Open firewall port 1433 for <mas_hrms DB host — see backend/.env> → <COSEC SQL host — see backend/.env>
 - [ ] Or provide VPN access for COSEC network
 - [ ] Confirm SQL Server instance details
 

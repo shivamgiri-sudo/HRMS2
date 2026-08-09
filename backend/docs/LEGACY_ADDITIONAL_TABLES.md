@@ -1,6 +1,6 @@
 # Legacy Database - Additional Critical Tables
 
-**Database:** db_bill (14.97.30.236:3306)  
+**Database:** db_bill (<db_bill host — see backend/.env>:3306)  
 **Date:** 2026-06-07  
 **Priority:** Tables updated in last 30 days
 
@@ -226,7 +226,7 @@ CREATE TABLE employee_loans (
 ### **Step 1: Analyze Table Schemas**
 ```bash
 # Run for each priority table
-mysql -h 14.97.30.236 -u shivam_user -p db_bill -e "
+mysql -h <db_bill host — see backend/.env> -u shivam_user -p db_bill -e "
   DESCRIBE leave_management;
   SELECT * FROM leave_management LIMIT 5;
 "

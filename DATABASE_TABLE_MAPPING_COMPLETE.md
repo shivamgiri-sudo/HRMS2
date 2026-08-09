@@ -1,7 +1,7 @@
 # Database Table & Header Mapping - Complete Reference
 
 **Date**: 2026-06-11  
-**Database**: mas_hrms @ 122.184.128.90:3306  
+**Database**: mas_hrms @ <mas_hrms DB host — see backend/.env>:3306  
 **Purpose**: Complete mapping of Page → API → Backend → Database → Frontend
 
 ---
@@ -564,6 +564,6 @@ GROUP BY spl.id;
 ---
 
 **Generated**: 2026-06-11  
-**Database**: mas_hrms @ 122.184.128.90:3306  
+**Database**: mas_hrms @ <mas_hrms DB host — see backend/.env>:3306  
 **Status**: Complete mapping of 10 major modules  
 **Purpose**: Technical reference for developers and QA

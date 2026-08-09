@@ -160,7 +160,7 @@ node -e "require('dotenv').config(); console.log('Password:', process.env.DB_PAS
 # Expected: Password: <set DB_PASSWORD in backend/.env>
 
 # Test MySQL connection from CLI
-mysql -h 122.184.128.90 -u shivam_user -p'<set DB_PASSWORD in backend/.env>' mas_hrms -e "SELECT COUNT(*) FROM employees;"
+mysql -h <mas_hrms DB host — see backend/.env> -u shivam_user -p'<set DB_PASSWORD in backend/.env>' mas_hrms -e "SELECT COUNT(*) FROM employees;"
 # Expected: 11 employees
 
 # Test MySQL connection from Node
@@ -168,7 +168,7 @@ node -e "
 const mysql = require('mysql2/promise');
 (async () => {
   const pool = mysql.createPool({
-    host: '122.184.128.90',
+    host: '<mas_hrms DB host — see backend/.env>',
     user: 'shivam_user',
     password: '<set DB_PASSWORD in backend/.env>',
     database: 'mas_hrms'

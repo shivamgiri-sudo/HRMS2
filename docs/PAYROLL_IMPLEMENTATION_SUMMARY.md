@@ -88,7 +88,7 @@ UPDATE salary_prep_line SET overtime_hours = 0, overtime_amount = 0 WHERE overti
 
 **To Apply**:
 ```bash
-mysql -h 122.184.128.90 -u shuvam -p mas_hrms < backend/db-migrations/007_add_overtime_to_payroll.sql
+mysql -h <mas_hrms DB host — see backend/.env> -u shuvam -p mas_hrms < backend/db-migrations/007_add_overtime_to_payroll.sql
 ```
 
 **⚠️ Note**: Database credentials need verification before running migration.
@@ -186,7 +186,7 @@ LIMIT 1
 
 ### 1. Database Migration ⏳
 ```bash
-mysql -h 122.184.128.90 -u shuvam -p mas_hrms < backend/db-migrations/007_add_overtime_to_payroll.sql
+mysql -h <mas_hrms DB host — see backend/.env> -u shuvam -p mas_hrms < backend/db-migrations/007_add_overtime_to_payroll.sql
 ```
 
 ### 2. Backend Deployment ✅ Ready

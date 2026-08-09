@@ -227,7 +227,7 @@ curl -X POST -H "Authorization: Bearer mock-token-hr" \
 
 ## Support
 
-**Production DB**: `122.184.128.90:3306/mas_hrms`  
+**Production DB**: `<mas_hrms DB host — see backend/.env>:3306/mas_hrms`  
 **Backend**: Express + TypeScript  
 **Frontend**: React 18 + TypeScript + Vite  
 

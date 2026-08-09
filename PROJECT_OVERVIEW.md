@@ -34,7 +34,7 @@ Full-stack HRMS (Human Resource Management System) built for MAS Callnet — a B
     ┌──────────▼──────┐    ┌──────────▼──────────┐
     │  MySQL          │    │  Supabase            │
     │  mas_hrms DB    │    │  PostgreSQL + Auth   │
-    │  122.184.128.90 │    │  + Storage           │
+    │  <mas_hrms DB host — see backend/.env> │    │  + Storage           │
     │  (primary ops)  │    │  (auth + files)      │
     └─────────────────┘    └─────────────────────-┘
 ```
@@ -432,7 +432,7 @@ Located in `/supabase/functions/`:
 |---|---|---|
 | Frontend | Vercel | `vercel.json`, `vite.config.ts` |
 | Backend | Railway | `railway.json`, `nixpacks.toml` |
-| DB | Self-hosted MySQL | `122.184.128.90 / mas_hrms` |
+| DB | Self-hosted MySQL | `<mas_hrms DB host — see backend/.env> / mas_hrms` |
 | Auth/Storage | Supabase | Project: `bebminxoqdjzzfhnrsge` |
 
 **Build**: `npm run build` → tsc → `dist/`  

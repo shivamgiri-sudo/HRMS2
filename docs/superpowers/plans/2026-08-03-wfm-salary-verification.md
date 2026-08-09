@@ -1031,7 +1031,7 @@ Expected: no `error TS` lines.
 - [ ] **Step 4: Apply migration on local MySQL (if running locally)**
 
 ```bash
-mysql -h 122.184.128.90 -u root -p'root@123' mas_hrms < backend/sql/1057_salary_verification.sql
+mysql -h <mas_hrms DB host — see backend/.env> -u root -p'root@123' mas_hrms < backend/sql/1057_salary_verification.sql
 ```
 Expected: command completes with no errors.
 
@@ -2260,8 +2260,8 @@ discrepancy flags with Recalculate / Acknowledge / Reject actions."
 - [ ] **Step 1: Apply migration to production DB**
 
 ```bash
-plink -ssh -pw "Support#123" masadmin@115.241.59.220 \
-  "mysql -h 122.184.128.90 -u root -p'root@123' mas_hrms < /var/www/HRMS2/backend/sql/1057_salary_verification.sql 2>&1"
+plink -ssh -pw "Support#123" masadmin@<mcn_lms host — see backend/.env> \
+  "mysql -h <mas_hrms DB host — see backend/.env> -u root -p'root@123' mas_hrms < /var/www/HRMS2/backend/sql/1057_salary_verification.sql 2>&1"
 ```
 Expected: no errors (MySQL may warn about IF NOT EXISTS — that's fine).
 
@@ -2283,7 +2283,7 @@ git push origin main
 - [ ] **Step 4: Deploy to production**
 
 ```bash
-plink -ssh -pw "Support#123" masadmin@115.241.59.220 \
+plink -ssh -pw "Support#123" masadmin@<mcn_lms host — see backend/.env> \
   "cd /var/www/HRMS2 && git pull origin main && \
    cd backend && npm run build && cd .. && npm run build && \
    fuser -k 5055/tcp 2>/dev/null; sleep 2; \

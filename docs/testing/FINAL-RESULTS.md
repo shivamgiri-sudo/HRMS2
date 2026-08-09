@@ -162,7 +162,7 @@ Despite fixes, 2 endpoints still failing with SQL errors:
 
 **Backend**: http://localhost:5055 ✅ Running  
 **Frontend**: http://localhost:8080 ✅ Running  
-**Database**: MySQL mas_hrms@122.184.128.90 ✅ Connected  
+**Database**: MySQL mas_hrms@<mas_hrms DB host — see backend/.env> ✅ Connected  
 **Auth**: Demo tokens (mock-token-*) ✅ Working  
 
 **Demo Users**:

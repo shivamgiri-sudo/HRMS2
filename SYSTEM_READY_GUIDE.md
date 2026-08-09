@@ -150,14 +150,14 @@ WHERE legacy_emp_id IS NOT NULL
 ### Backend Environment (.env)
 ```bash
 # HRMS MySQL Database
-DB_HOST=122.184.128.90
+DB_HOST=<mas_hrms DB host — see backend/.env>
 DB_PORT=3306
 DB_USER=root
 DB_PASSWORD=<set SOURCE_DB_PASSWORD in backend/.env>
 DB_NAME=mas_hrms
 
 # Legacy MySQL Database
-LEGACY_MYSQL_HOST=14.97.30.236
+LEGACY_MYSQL_HOST=<db_bill host — see backend/.env>
 LEGACY_MYSQL_PORT=3306
 LEGACY_MYSQL_DATABASE=db_bill
 LEGACY_MYSQL_USER=shivam_user
@@ -357,7 +357,7 @@ await client.messages.create({
 2. Backend logs show sync errors?
 3. Legacy database reachable?
    ```bash
-   mysql -h 14.97.30.236 -u shivam_user -p db_bill -e "SELECT 1"
+   mysql -h <db_bill host — see backend/.env> -u shivam_user -p db_bill -e "SELECT 1"
    ```
 
 ---
