@@ -33,16 +33,38 @@ export function requireClientAuth(req: ClientAuthRequest, res: Response, next: N
     return next();
   }
 
-  // Revocation check — ensure the user account is still active in DB.
-  // This lets admins cut off a client instantly by deactivating the user,
-  // without waiting for the 7-day JWT to expire.
+  /*
+   * Two revocation checks in one round trip.
+   *
+   * The account check is unchanged: deactivating a client_user cuts off every token they hold,
+   * without waiting out the 7-day JWT.
+   *
+   * The session check is new. Each token now carries a jti recorded in portal_user_sessions, so
+   * one session can be ended without disabling the account - a single device, or a token that
+   * leaked. It is a correlated subquery rather than a second query because this runs on every
+   * portal request.
+   *
+   * A token minted before session tracking has no jti. It is treated as live, not revoked: those
+   * tokens are valid for up to seven more days and rejecting them would sign out every client
+   * holding one. The account check still covers them, which is exactly the protection that
+   * existed before.
+   */
   db.execute<RowDataPacket[]>(
-    "SELECT is_active FROM client_user WHERE id = ? LIMIT 1",
-    [payload.clientUserId]
+    `SELECT cu.is_active,
+            EXISTS (
+              SELECT 1 FROM portal_user_sessions s
+               WHERE s.jti = ? AND s.revoked_at IS NOT NULL
+            ) AS session_revoked
+       FROM client_user cu
+      WHERE cu.id = ? LIMIT 1`,
+    [payload.jti ?? null, payload.clientUserId]
   )
     .then(([rows]) => {
       if (!rows.length || !rows[0].is_active) {
         return res.status(401).json({ error: "Account deactivated" });
+      }
+      if (payload.jti && Number(rows[0].session_revoked) === 1) {
+        return res.status(401).json({ error: "Session revoked" });
       }
       req.portalUser = payload;
       return next();
