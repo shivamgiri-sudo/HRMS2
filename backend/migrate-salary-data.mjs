@@ -49,7 +49,7 @@ console.log('');
 let hrms, bill;
 try {
   hrms = await mysql.createConnection({
-    host:     process.env.DB_HOST     || '122.184.128.90',
+    host:     process.env.DB_HOST     || process.env.DB_HOST,
     port:    +process.env.DB_PORT     || 3306,
     user:     process.env.DB_USER,
     password: process.env.DB_PASSWORD,
@@ -63,14 +63,14 @@ try {
 
 try {
   bill = await mysql.createConnection({
-    host:     process.env.BILL_DB_HOST     || '14.97.30.236',
+    host:     process.env.BILL_DB_HOST     || process.env.BILL_DB_HOST,
     port:    +process.env.BILL_DB_PORT     || 3306,
     user:     process.env.BILL_DB_USER     || process.env.DB_USER,
     password: process.env.BILL_DB_PASSWORD || process.env.DB_PASSWORD,
     database: process.env.BILL_DB_NAME     || 'db_bill',
     connectTimeout: 15000,
   });
-  console.log(`✓ db_bill   @ ${process.env.BILL_DB_HOST || '14.97.30.236'}/db_bill`);
+  console.log(`✓ db_bill   @ ${process.env.BILL_DB_HOST || process.env.BILL_DB_HOST}/db_bill`);
 } catch (e) {
   console.error('✗ db_bill connect failed:', e.message); process.exit(1);
 }

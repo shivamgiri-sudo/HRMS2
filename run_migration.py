@@ -12,7 +12,7 @@ from datetime import datetime
 
 # Database configuration
 DB_CONFIG = {
-    'host': '122.184.128.90',
+    'host': os.environ["DB_HOST"],
     'port': 3306,
     'database': 'mas_hrms',
     'user': 'shivam_user',

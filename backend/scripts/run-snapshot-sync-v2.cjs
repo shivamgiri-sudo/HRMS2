@@ -4,7 +4,7 @@ const path = require('path');
 
 async function run() {
   const conn = await mysql.createConnection({
-    host: '122.184.128.90',
+    host: process.env.DB_HOST,
     port: 3306,
     user: 'shivam_user',
     password: process.env.DB_PASSWORD,
@@ -41,7 +41,7 @@ async function run() {
     // Close and reconnect to get fresh data
     await conn.end();
     const conn2 = await mysql.createConnection({
-      host: '122.184.128.90',
+      host: process.env.DB_HOST,
       port: 3306,
       user: 'shivam_user',
       password: process.env.DB_PASSWORD,
