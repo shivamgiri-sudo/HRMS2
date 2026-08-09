@@ -331,77 +331,101 @@ export async function dailyHcShift(
   return { rows, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > rows.length, nextCursor: null };
 }
 
-// ---------------------------------------------------------------------------
-// shift-adherence-detail
-// ---------------------------------------------------------------------------
+/**
+ * shift-adherence-detail
+ *
+ * Aligned with the inline block. Same 160 rows both ways; the catalogue names all ten columns
+ * unique to the inline shape and none of the one unique to this executor's.
+ *
+ * The session subquery is pre-aggregated by employee and date before it is joined, and that is
+ * load-bearing rather than stylistic: wfm_attendance_session holds one row per login session, so
+ * joining it directly would repeat the attendance row once per session and multiply every
+ * derived minute figure. Aggregating first is what makes earliest_punch, latest_punch and
+ * total_login_minutes mean one working day.
+ *
+ * The adherence ladder is the report's definition and is carried unchanged, including the 85%
+ * threshold that separates SHORT from ON_TIME and the ordering that tests late_mark before
+ * shortfall so LATE_AND_SHORT can be reached at all. Reordering those branches would silently
+ * reclassify people.
+ */
 export async function shiftAdherenceDetail(
   filters: ExecFilters,
   scope: ExecScope,
   options: ExecOptions
 ): Promise<ExecResult> {
-  const today = new Date().toISOString().slice(0, 10);
-  const from  = dateParam(filters.from, today);
-  const to    = dateParam(filters.to, today);
+  const from = dateParam(filters.from, new Date().toISOString().slice(0, 10));
+  const to   = dateParam(filters.to, from);
 
   const clauses: string[] = ["e.id IS NOT NULL"];
-  const params: unknown[]  = [];
+  const params: unknown[] = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
-
   clauses.push("adr.record_date BETWEEN ? AND ?");
   params.push(from, to);
 
-  if (options.asOf) {
-    clauses.push("adr.record_date <= ?");
-    params.push(options.asOf);
-  }
-
-  if (options.mode === "worker" && options.cursor != null) {
-    clauses.push("adr.id > ?");
-    params.push(options.cursor);
-  }
-
-  const base = `
-    SELECT adr.id AS _cursor,
-           e.employee_code,
-           COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-           COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
-           COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
-           COALESCE(sp_cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
-           COALESCE(sp_cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
-           adr.record_date,
-           ws.shift_name,
-           TIME_FORMAT(ws.start_time,'%H:%i') AS scheduled_start,
-           adr.late_by_minutes,
-           CASE WHEN adr.late_by_minutes > 0 THEN 'LATE' ELSE 'ON_TIME' END AS adherence_status,
-           adr.attendance_status
-      FROM attendance_daily_record adr
-      JOIN employees e ON e.id = adr.employee_id
-      LEFT JOIN branch_master b ON b.id = e.branch_id
-      LEFT JOIN process_master p ON p.id = e.process_id
-      LEFT JOIN cost_centre_master sp_cc ON sp_cc.id = e.cost_centre_id
-      LEFT JOIN wfm_roster_assignment wra
-             ON wra.employee_id = adr.employee_id
-            AND wra.roster_date = adr.record_date
-      LEFT JOIN wfm_shift_master ws ON ws.id = wra.shift_id
-     WHERE ${clauses.join(" AND ")}
-     ORDER BY adr.id ASC`;
+  const base = `SELECT adr.record_date,
+         e.employee_code,
+         COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
+         COALESCE(rcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
+         COALESCE(rcc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
+         COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
+         COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
+         COALESCE(ws.shift_name, 'Roster Not Assigned') AS shift_name,
+         TIME_FORMAT(ws.start_time, '%H:%i') AS scheduled_start,
+         TIME_FORMAT(ws.end_time, '%H:%i') AS scheduled_end,
+         TIME_FORMAT(agg_ses.earliest_punch, '%H:%i') AS punch_in,
+         TIME_FORMAT(agg_ses.latest_punch, '%H:%i') AS punch_out,
+         CASE
+           WHEN agg_ses.earliest_punch IS NOT NULL AND agg_ses.latest_punch IS NOT NULL
+           THEN TIME_FORMAT(SEC_TO_TIME(TIMESTAMPDIFF(SECOND, agg_ses.earliest_punch, agg_ses.latest_punch)), '%H:%i')
+           ELSE NULL
+         END AS total_login_duration,
+         COALESCE(ws.required_minutes, 540) AS scheduled_minutes,
+         COALESCE(agg_ses.total_login_minutes, 0) AS actual_minutes,
+         adr.late_by_minutes AS late_minutes,
+         CASE
+           WHEN agg_ses.latest_punch IS NOT NULL AND ws.end_time IS NOT NULL
+                AND TIME(agg_ses.latest_punch) < ws.end_time
+           THEN TIMESTAMPDIFF(MINUTE, TIME(agg_ses.latest_punch), ws.end_time)
+           ELSE 0
+         END AS early_logout_minutes,
+         CASE
+           WHEN ws.required_minutes IS NOT NULL AND ws.required_minutes > 0
+           THEN ROUND(LEAST(COALESCE(agg_ses.total_login_minutes, 0), ws.required_minutes) / ws.required_minutes * 100, 1)
+           ELSE NULL
+         END AS adherence_pct,
+         adr.attendance_status,
+         CASE
+           WHEN adr.attendance_status = 'absent' THEN 'ABSENT'
+           WHEN adr.late_mark = 1 AND COALESCE(agg_ses.total_login_minutes, 0) < COALESCE(ws.required_minutes, 540) * 0.85 THEN 'LATE_AND_SHORT'
+           WHEN adr.late_mark = 1 THEN 'LATE'
+           WHEN COALESCE(agg_ses.total_login_minutes, 0) < COALESCE(ws.required_minutes, 540) * 0.85 THEN 'SHORT'
+           ELSE 'ON_TIME'
+         END AS adherence_status,
+         CASE WHEN adr.regularization_id IS NOT NULL THEN 'Yes' ELSE 'No' END AS exception_applied
+    FROM attendance_daily_record adr
+    JOIN employees e ON e.id = adr.employee_id
+    LEFT JOIN branch_master b ON b.id = e.branch_id
+    LEFT JOIN process_master p ON p.id = e.process_id
+    LEFT JOIN wfm_roster_assignment wra ON wra.employee_id = adr.employee_id
+      AND wra.roster_date = adr.record_date
+    LEFT JOIN wfm_shift_master ws ON ws.id = wra.shift_id
+    LEFT JOIN (
+      SELECT employee_id, session_date,
+             MIN(login_time) AS earliest_punch,
+             MAX(logout_time) AS latest_punch,
+             SUM(total_login_minutes) AS total_login_minutes
+        FROM wfm_attendance_session
+       GROUP BY employee_id, session_date
+    ) agg_ses ON agg_ses.employee_id = adr.employee_id AND agg_ses.session_date = adr.record_date
+    LEFT JOIN cost_centre_master rcc ON rcc.id = e.cost_centre_id
+              WHERE ${clauses.join(" AND ")}
+              ORDER BY adr.record_date DESC, adherence_status DESC, employee_name`;
 
   const total = options.includeTotal ? await count(base, params) : 0;
-  const sql   = options.mode === "worker" ? `${base} LIMIT ${options.limit}` : applyPagination(base, options);
+  const sql   = applyPagination(base, options);
   const rows  = await query(sql, params) as Record<string, unknown>[];
-
-  const nextCursor = (options.mode === "worker" && rows.length > 0)
-    ? (rows[rows.length - 1]._cursor as number)
-    : null;
-
-  const out = rows.map(({ _cursor: _, ...rest }) => rest);
-  return {
-    rows: out,
-    rowCount: options.includeTotal ? total : rows.length,
-    isTruncated: options.includeTotal ? total > out.length : rows.length === options.limit,
-    nextCursor,
-  };
+  return { rows, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > rows.length, nextCursor: null };
 }
 
 /**
@@ -1043,83 +1067,79 @@ export async function monthlyShrinkageTrend(
   return { rows, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > rows.length, nextCursor: null };
 }
 
-// ---------------------------------------------------------------------------
-// biometric-reconciliation
-// ---------------------------------------------------------------------------
+/**
+ * biometric-reconciliation
+ *
+ * Aligned with the inline block. Same 375 rows both ways; the catalogue names all seven columns
+ * unique to the inline shape and none of the one unique to this executor's.
+ *
+ * The report compares two independent records of the same day and names where they disagree:
+ * attendance_daily_record, which is what payroll reads, against integration_biometric_daily,
+ * which is the raw device feed. Both the processed and the raw minutes are reported side by
+ * side on purpose — collapsing them to one number would remove the comparison the report exists
+ * to make.
+ *
+ * Two details that must move together. The reconciliation CASE is repeated in the WHERE when a
+ * status filter is supplied, because MySQL cannot filter on a SELECT alias; the two copies have
+ * to stay identical or filtering silently selects a different set from the one displayed. And
+ * the join to the raw feed is on employee_code, not employee id, because that is how the device
+ * feed identifies people — the same reason punch-raw-export joins that way.
+ */
 export async function biometricReconciliation(
   filters: ExecFilters,
   scope: ExecScope,
   options: ExecOptions
 ): Promise<ExecResult> {
-  const today = new Date().toISOString().slice(0, 10);
-  const from  = dateParam(filters.from, today);
-  const to    = dateParam(filters.to, today);
+  const from = dateParam(filters.from, new Date().toISOString().slice(0, 10));
+  const to   = dateParam(filters.to, from);
+
+  const RECONCILIATION_CASE = `CASE WHEN ibd.first_punch IS NULL AND adr.attendance_status IN ('present','half_day') THEN 'NO_BIOMETRIC_FOR_PRESENT'
+                          WHEN ibd.first_punch IS NOT NULL AND adr.attendance_status='absent' THEN 'PUNCHED_BUT_ABSENT'
+                          ELSE 'OK' END`;
 
   const clauses: string[] = ["e.id IS NOT NULL"];
-  const params: unknown[]  = [];
+  const params: unknown[] = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
-
+  if (filters.status) {
+    clauses.push(`${RECONCILIATION_CASE} = ?`);
+    params.push(String(filters.status));
+  }
   clauses.push("adr.record_date BETWEEN ? AND ?");
   params.push(from, to);
 
-  if (options.asOf) {
-    clauses.push("adr.record_date <= ?");
-    params.push(options.asOf);
-  }
-
-  if (options.mode === "worker" && options.cursor != null) {
-    clauses.push("adr.id > ?");
-    params.push(options.cursor);
-  }
-
   const base = `
-    SELECT adr.id AS _cursor,
+    SELECT adr.record_date,
            e.employee_code,
            COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
+           COALESCE(rcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
+           COALESCE(rcc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
            COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
            COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
-           COALESCE(sp_cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
-           COALESCE(sp_cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
-           adr.record_date,
            adr.attendance_status,
-           CASE WHEN ibd.id IS NOT NULL THEN 'HAS_BIOMETRIC' ELSE 'NO_BIOMETRIC' END AS biometric_presence,
-           CASE
-             WHEN adr.attendance_status IN ('present','half_day') AND ibd.id IS NULL
-               THEN 'PRESENT_NO_BIOMETRIC'
-             WHEN adr.attendance_status = 'absent' AND ibd.id IS NOT NULL
-               THEN 'ABSENT_WITH_BIOMETRIC'
-             ELSE 'OK'
-           END AS reconciliation_status
+           adr.biometric_minutes AS processed_biometric_minutes,
+           TIME_FORMAT(SEC_TO_TIME(adr.biometric_minutes * 60), '%H:%i') AS processed_biometric_duration,
+           TIME_FORMAT(ibd.first_punch, '%H:%i:%s') AS biometric_punch_in,
+           TIME_FORMAT(ibd.last_punch, '%H:%i:%s') AS biometric_punch_out,
+           ibd.biometric_minutes AS raw_biometric_minutes,
+           TIME_FORMAT(SEC_TO_TIME(ibd.biometric_minutes * 60), '%H:%i') AS raw_biometric_duration,
+           ${RECONCILIATION_CASE} AS reconciliation_status,
+           CASE WHEN ibd.first_punch IS NULL AND adr.attendance_status IN ('present','half_day') THEN 'No biometric record for marked present'
+                WHEN ibd.first_punch IS NOT NULL AND adr.attendance_status='absent' THEN 'Biometric punch exists but marked absent'
+                ELSE 'Reconciled' END AS reconciliation_description
       FROM attendance_daily_record adr
       JOIN employees e ON e.id = adr.employee_id
       LEFT JOIN branch_master b ON b.id = e.branch_id
       LEFT JOIN process_master p ON p.id = e.process_id
-      LEFT JOIN cost_centre_master sp_cc ON sp_cc.id = e.cost_centre_id
-      -- integration_biometric_daily keys on employee_code + activity_date. It has neither
-      -- employee_id nor record_date, so the previous join threw ER_BAD_FIELD_ERROR on every
-      -- run and this report has never returned a row (36,190 biometric rows sat unjoinable).
-      LEFT JOIN integration_biometric_daily ibd
-             ON ibd.employee_code = e.employee_code
-            AND ibd.activity_date = adr.record_date
+      LEFT JOIN integration_biometric_daily ibd ON ibd.employee_code = e.employee_code AND ibd.activity_date = adr.record_date
+      LEFT JOIN cost_centre_master rcc ON rcc.id = e.cost_centre_id
      WHERE ${clauses.join(" AND ")}
-     ORDER BY adr.id ASC`;
+     ORDER BY adr.record_date DESC, reconciliation_status DESC`;
 
   const total = options.includeTotal ? await count(base, params) : 0;
-  const sql   = options.mode === "worker" ? `${base} LIMIT ${options.limit}` : applyPagination(base, options);
+  const sql   = applyPagination(base, options);
   const rows  = await query(sql, params) as Record<string, unknown>[];
-
-  const nextCursor = (options.mode === "worker" && rows.length > 0)
-    ? (rows[rows.length - 1]._cursor as number)
-    : null;
-
-  const out = rows.map(({ _cursor: _, ...rest }) => rest);
-  return {
-    rows: out,
-    rowCount: options.includeTotal ? total : rows.length,
-    isTruncated: options.includeTotal ? total > out.length : rows.length === options.limit,
-    nextCursor,
-  };
+  return { rows, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > rows.length, nextCursor: null };
 }
 
 /**

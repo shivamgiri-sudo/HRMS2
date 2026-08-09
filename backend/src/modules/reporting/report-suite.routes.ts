@@ -613,48 +613,10 @@ reportSuiteRouter.get("/:code", reportScopeMiddleware, reportCatalogAccessMiddle
     // "attendance-summary" falls through to executeReport(), which now carries this SQL
     // including the sargable half-open month range fixed earlier in this audit. Screen and
     // download returned the same 1,123 rows with almost no shared columns.
-    case "biometric-reconciliation": {
-      const from = dateParam(req.query.from, new Date().toISOString().slice(0, 10));
-      const to = dateParam(req.query.to, from);
-      addScopedEmployeeFilters(req, clauses, params);
-      if (req.query.processId) { clauses.push("e.process_id = ?"); params.push(String(req.query.processId)); }
-      if (req.query.reconciliationStatus) {
-        clauses.push(`CASE WHEN ibd.first_punch IS NULL AND adr.attendance_status IN ('present','half_day') THEN 'NO_BIOMETRIC_FOR_PRESENT'
-                          WHEN ibd.first_punch IS NOT NULL AND adr.attendance_status='absent' THEN 'PUNCHED_BUT_ABSENT'
-                          ELSE 'OK' END = ?`);
-        params.push(String(req.query.reconciliationStatus));
-      }
-      clauses.push("adr.record_date BETWEEN ? AND ?"); params.push(from, to);
-      sql = `SELECT adr.record_date,
-                    e.employee_code,
-                    COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-                    COALESCE(rcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
-                    COALESCE(rcc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
-                    COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
-                    COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
-                    adr.attendance_status,
-                    adr.biometric_minutes AS processed_biometric_minutes,
-                    TIME_FORMAT(SEC_TO_TIME(adr.biometric_minutes * 60), '%H:%i') AS processed_biometric_duration,
-                    TIME_FORMAT(ibd.first_punch, '%H:%i:%s') AS biometric_punch_in,
-                    TIME_FORMAT(ibd.last_punch, '%H:%i:%s') AS biometric_punch_out,
-                    ibd.biometric_minutes AS raw_biometric_minutes,
-                    TIME_FORMAT(SEC_TO_TIME(ibd.biometric_minutes * 60), '%H:%i') AS raw_biometric_duration,
-                    CASE WHEN ibd.first_punch IS NULL AND adr.attendance_status IN ('present','half_day') THEN 'NO_BIOMETRIC_FOR_PRESENT'
-                         WHEN ibd.first_punch IS NOT NULL AND adr.attendance_status='absent' THEN 'PUNCHED_BUT_ABSENT'
-                         ELSE 'OK' END AS reconciliation_status,
-                    CASE WHEN ibd.first_punch IS NULL AND adr.attendance_status IN ('present','half_day') THEN 'No biometric record for marked present'
-                         WHEN ibd.first_punch IS NOT NULL AND adr.attendance_status='absent' THEN 'Biometric punch exists but marked absent'
-                         ELSE 'Reconciled' END AS reconciliation_description
-               FROM attendance_daily_record adr
-               JOIN employees e ON e.id = adr.employee_id
-               LEFT JOIN branch_master b ON b.id = e.branch_id
-               LEFT JOIN process_master p ON p.id = e.process_id
-               LEFT JOIN integration_biometric_daily ibd ON ibd.employee_code = e.employee_code AND ibd.activity_date = adr.record_date
-               LEFT JOIN cost_centre_master rcc ON rcc.id = e.cost_centre_id
-              WHERE ${clauses.join(" AND ")}
-              ORDER BY adr.record_date DESC, reconciliation_status DESC`;
-      break;
-    }
+    // "biometric-reconciliation" falls through to executeReport(), which now carries this SQL.
+    // The reconciliation CASE appears twice — once in the SELECT and once in the WHERE when a
+    // status filter is supplied — because MySQL cannot filter on a SELECT alias. The two
+    // copies must stay identical or filtering selects a different set from the one shown.
     // "leave-balance" has no case here on purpose. A case in this switch takes
     // precedence over the executor fallback below, and this one returned the old
     // one-row-per-employee-per-leave-type shape, silently overriding the canonical
@@ -946,73 +908,9 @@ reportSuiteRouter.get("/:code", reportScopeMiddleware, reportCatalogAccessMiddle
     // "daily-hc-shift" falls through to executeReport(), which now carries this SQL.
     // Screen and download returned the same 14 rows with disjoint columns.
 
-    case "shift-adherence-detail": {
-      const from = dateParam(req.query.from, new Date().toISOString().slice(0, 10));
-      const to = dateParam(req.query.to, from);
-      addScopedEmployeeFilters(req, clauses, params);
-      if (req.query.processId) { clauses.push("e.process_id = ?"); params.push(String(req.query.processId)); }
-      clauses.push("adr.record_date BETWEEN ? AND ?"); params.push(from, to);
-      // Aggregate sessions to prevent multi-session duplication before joining.
-      sql = `SELECT adr.record_date,
-                    e.employee_code,
-                    COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-                    COALESCE(rcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
-                    COALESCE(rcc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
-                    COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
-                    COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
-                    COALESCE(ws.shift_name, 'Roster Not Assigned') AS shift_name,
-                    TIME_FORMAT(ws.start_time, '%H:%i') AS scheduled_start,
-                    TIME_FORMAT(ws.end_time, '%H:%i') AS scheduled_end,
-                    TIME_FORMAT(agg_ses.earliest_punch, '%H:%i') AS punch_in,
-                    TIME_FORMAT(agg_ses.latest_punch, '%H:%i') AS punch_out,
-                    CASE
-                      WHEN agg_ses.earliest_punch IS NOT NULL AND agg_ses.latest_punch IS NOT NULL
-                      THEN TIME_FORMAT(SEC_TO_TIME(TIMESTAMPDIFF(SECOND, agg_ses.earliest_punch, agg_ses.latest_punch)), '%H:%i')
-                      ELSE NULL
-                    END AS total_login_duration,
-                    COALESCE(ws.required_minutes, 540) AS scheduled_minutes,
-                    COALESCE(agg_ses.total_login_minutes, 0) AS actual_minutes,
-                    adr.late_by_minutes AS late_minutes,
-                    CASE
-                      WHEN agg_ses.latest_punch IS NOT NULL AND ws.end_time IS NOT NULL
-                           AND TIME(agg_ses.latest_punch) < ws.end_time
-                      THEN TIMESTAMPDIFF(MINUTE, TIME(agg_ses.latest_punch), ws.end_time)
-                      ELSE 0
-                    END AS early_logout_minutes,
-                    CASE
-                      WHEN ws.required_minutes IS NOT NULL AND ws.required_minutes > 0
-                      THEN ROUND(LEAST(COALESCE(agg_ses.total_login_minutes, 0), ws.required_minutes) / ws.required_minutes * 100, 1)
-                      ELSE NULL
-                    END AS adherence_pct,
-                    adr.attendance_status,
-                    CASE
-                      WHEN adr.attendance_status = 'absent' THEN 'ABSENT'
-                      WHEN adr.late_mark = 1 AND COALESCE(agg_ses.total_login_minutes, 0) < COALESCE(ws.required_minutes, 540) * 0.85 THEN 'LATE_AND_SHORT'
-                      WHEN adr.late_mark = 1 THEN 'LATE'
-                      WHEN COALESCE(agg_ses.total_login_minutes, 0) < COALESCE(ws.required_minutes, 540) * 0.85 THEN 'SHORT'
-                      ELSE 'ON_TIME'
-                    END AS adherence_status,
-                    CASE WHEN adr.regularization_id IS NOT NULL THEN 'Yes' ELSE 'No' END AS exception_applied
-               FROM attendance_daily_record adr
-               JOIN employees e ON e.id = adr.employee_id
-               LEFT JOIN branch_master b ON b.id = e.branch_id
-               LEFT JOIN process_master p ON p.id = e.process_id
-               LEFT JOIN wfm_roster_assignment wra ON wra.employee_id = adr.employee_id
-                 AND wra.roster_date = adr.record_date
-               LEFT JOIN wfm_shift_master ws ON ws.id = wra.shift_id
-               LEFT JOIN (
-                 SELECT employee_id, session_date,
-                        MIN(login_time) AS earliest_punch,
-                        MAX(logout_time) AS latest_punch,
-                        SUM(total_login_minutes) AS total_login_minutes
-                   FROM wfm_attendance_session
-                  GROUP BY employee_id, session_date
-               ) agg_ses ON agg_ses.employee_id = adr.employee_id AND agg_ses.session_date = adr.record_date
-               LEFT JOIN cost_centre_master rcc ON rcc.id = e.cost_centre_id
-              WHERE ${clauses.join(" AND ")}
-              ORDER BY adr.record_date DESC, adherence_status DESC, employee_name`;
-      break;
-    }
+    // "shift-adherence-detail" falls through to executeReport(), which now carries this SQL
+    // including the pre-aggregated session subquery that stops multi-session days from
+    // multiplying every minute figure.
 
     // attendance-register-grid is REMOVED — superseded by attendance-summary.
     // Any API call to this code returns a redirect hint, not data.

@@ -78,7 +78,10 @@ const SHADOWED_BACKLOG = new Set<string>([
   // "attendance-summary" left this list on 2026-08-09 — same rows as the screen,
   // disjoint columns, catalogue matches the screen.
   
-  "biometric-reconciliation", 
+  
+  // "biometric-reconciliation" left this list on 2026-08-09 — same rows as the screen,
+  // disjoint columns, catalogue matches the screen.
+  
   // "birthday-list" left this list on 2026-08-09 — the executor filtered to the current
   // month while the screen listed the whole year, so the download held a tenth of the rows.
   "clearance-status-register",
@@ -148,7 +151,10 @@ const SHADOWED_BACKLOG = new Set<string>([
   
   // "regularization-summary" left this list on 2026-08-08 — the inline block
   // returned one row per request while the executor counted per employee.
-  "shift-adherence-detail",
+  
+  // "shift-adherence-detail" left this list on 2026-08-09 — same rows as the screen,
+  // disjoint columns, catalogue matches the screen.
+  
 ]);
 
 describe("inline route blocks must not shadow executors", () => {
