@@ -1141,7 +1141,7 @@ payrollMoreRouter.get("/runs/:id/bulk-payslip-summary",
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT
          COUNT(*) AS total,
-         SUM(CASE WHEN COALESCE(payslip_generated,0) = 1 THEN 1 ELSE 0 END) AS generated,
+         SUM(CASE WHEN COALESCE(payslip_generated,0) = 1 THEN 1 ELSE 0 END) AS \`generated\`,
          SUM(CASE WHEN COALESCE(payslip_emailed,0)   = 1 THEN 1 ELSE 0 END) AS emailed,
          MIN(payslip_generated_at) AS first_generated_at,
          MAX(payslip_generated_at) AS last_generated_at

@@ -547,8 +547,8 @@ export const payrollBranchReadinessService = {
         const [lineRows] = await db.execute<RowDataPacket[]>(
           `SELECT
              COUNT(DISTINCT employee_id) AS emp_count,
-             COALESCE(SUM(gross_pay), SUM(gross_salary), SUM(gross_amount)) AS total_gross,
-             COALESCE(SUM(net_pay), SUM(net_salary), SUM(net_amount)) AS total_net
+             SUM(gross_salary) AS total_gross,
+             SUM(net_salary) AS total_net
            FROM salary_prep_line
            WHERE run_id = ?`,
           [runId]

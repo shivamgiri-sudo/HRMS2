@@ -421,8 +421,11 @@ export async function getPayrollExposureSummary(): Promise<PayrollExposureSummar
   const monthStart = getIstMonthStart();
 
   const [runRows] = await db.execute<RowDataPacket[]>(
-    `SELECT COALESCE(SUM(gross_pay),0) AS gross_liability,
-            COALESCE(SUM(net_pay),0) AS net_disbursable,
+    // salary_prep_line has no gross_pay/net_pay; the computed finals are gross_salary and
+    // net_salary. base_gross_pay/base_net_pay exist too but are pre-adjustment and base_net_pay
+    // is all zeros, so they are not the liability figure.
+    `SELECT COALESCE(SUM(gross_salary),0) AS gross_liability,
+            COALESCE(SUM(net_salary),0) AS net_disbursable,
             COUNT(DISTINCT run_id) AS run_count
      FROM salary_prep_line spl
      JOIN salary_prep_run spr ON spr.id = spl.run_id

@@ -54,8 +54,8 @@ export const businessCommandService = {
         : Promise.resolve({ open: 0, critical: 0 }),
       hasPayroll
         ? Promise.all([
-            scalar("SELECT COALESCE(SUM(gross_pay),0) FROM salary_prep_line WHERE run_id = (SELECT id FROM salary_prep_run ORDER BY created_at DESC LIMIT 1)"),
-            scalar("SELECT COALESCE(SUM(net_pay),0) FROM salary_prep_line WHERE run_id = (SELECT id FROM salary_prep_run ORDER BY created_at DESC LIMIT 1)"),
+            scalar("SELECT COALESCE(SUM(gross_salary),0) FROM salary_prep_line WHERE run_id = (SELECT id FROM salary_prep_run ORDER BY created_at DESC LIMIT 1)"),
+            scalar("SELECT COALESCE(SUM(net_salary),0) FROM salary_prep_line WHERE run_id = (SELECT id FROM salary_prep_run ORDER BY created_at DESC LIMIT 1)"),
           ]).then(([latest_gross, latest_net]) => ({ latest_gross, latest_net }))
         : Promise.resolve({ latest_gross: 0, latest_net: 0 }),
     ]);
