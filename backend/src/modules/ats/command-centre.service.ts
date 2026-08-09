@@ -312,16 +312,16 @@ export async function getRoleMetrics(): Promise<{ role: string; count: number }[
 export async function getExperienceDistribution(): Promise<{ experience: string; count: number }[]> {
   const [results] = await db.execute<RowDataPacket[]>(
     `SELECT
-      years_of_experience as experience,
+      experience,
       COUNT(*) as count
     FROM ats_candidate
-    WHERE active_status = 1 AND years_of_experience IS NOT NULL AND ${EXCLUDE_EMPLOYEE_SHAPED}
-    GROUP BY years_of_experience
+    WHERE active_status = 1 AND experience IS NOT NULL AND ${EXCLUDE_EMPLOYEE_SHAPED}
+    GROUP BY experience
     ORDER BY
       CASE
-        WHEN years_of_experience = 'Fresher' THEN 0
-        WHEN years_of_experience LIKE '%-%' THEN CAST(SUBSTRING_INDEX(years_of_experience, '-', 1) AS UNSIGNED)
-        WHEN years_of_experience LIKE '%+%' THEN CAST(SUBSTRING_INDEX(years_of_experience, '+', 1) AS UNSIGNED)
+        WHEN experience = 'Fresher' THEN 0
+        WHEN experience LIKE '%-%' THEN CAST(SUBSTRING_INDEX(experience, '-', 1) AS UNSIGNED)
+        WHEN experience LIKE '%+%' THEN CAST(SUBSTRING_INDEX(experience, '+', 1) AS UNSIGNED)
         ELSE 999
       END`
   );

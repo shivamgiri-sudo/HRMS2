@@ -50,7 +50,7 @@ async function scopedEmployees(scope: PeopleExperienceScope, filters: FilterMap)
             e.reporting_manager_id,
             b.branch_name,
             p.process_name,
-            d.department_name,
+            d.dept_name AS department_name,
             mgr.full_name AS manager_name
        FROM employees e
        LEFT JOIN branch_master b ON b.id = e.branch_id

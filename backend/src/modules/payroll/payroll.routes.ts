@@ -110,7 +110,7 @@ router.get("/employee-salaries", requireRole("admin", "hr", "super_admin", "fina
 
   // Fetch all components for these structures in one query
   const structureIds = [...new Set((rows as any[]).map(r => r.structure_id).filter(Boolean))];
-  let componentMap: Record<string, Array<{component_code: string; component_name: string; calc_type: string; value: number}>> = {};
+  const componentMap: Record<string, Array<{component_code: string; component_name: string; calc_type: string; value: number}>> = {};
 
   if (structureIds.length > 0) {
     const placeholders = structureIds.map(() => '?').join(',');
@@ -1575,12 +1575,25 @@ router.get(
 
     // Load employee details
     const [empRows] = await db.execute<RowDataPacket[]>(
+      // PAN comes from employees, not employee_documents. employee_documents is the file store —
+      // its columns are doc_type, doc_name, file_url and friends, with no pan_number at all — so
+      // `ed.pan_number` made this query fail outright:
+      //
+      //   ER_BAD_FIELD_ERROR: Unknown column 'ed.pan_number' in 'field list'
+      //
+      // Verified against mas_hrms. This is GET /form16-data/:runId/:employeeId, so Form 16 — a
+      // statutory certificate that cannot be issued without a PAN — returned nothing for anyone,
+      // employee or payroll. employees.pan_number exists and is populated for 915 of the 1,125
+      // active employees; the remaining 210 now render an empty PAN instead of failing the whole
+      // request, which is the same treatment every other nullable field here already gets.
+      //
+      // The employee_documents join went with it: `ed` was referenced for pan_number and nothing
+      // else, so it was scanning a 207,616-row table to contribute one column that did not exist.
       `SELECT CONCAT_WS(' ', e.first_name, e.last_name) AS name,
-              ed.pan_number AS pan,
+              e.pan_number AS pan,
               dm.designation_name AS designation,
               e.date_of_joining
          FROM employees e
-         LEFT JOIN employee_documents ed  ON ed.employee_id = e.id
          LEFT JOIN designation_master dm  ON dm.id = e.designation_id
         WHERE e.id = ? LIMIT 1`,
       [employeeId]

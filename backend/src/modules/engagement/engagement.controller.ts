@@ -554,7 +554,7 @@ export const engagementController = {
         COALESCE(ts.current_streak, 0)                         AS current_streak,
         COALESCE(ts.longest_streak, 0)                         AS longest_streak,
         ts.last_login_date,
-        (SELECT COUNT(*) FROM employee_badge eb WHERE eb.employee_id = e.id) AS badges_count,
+        (SELECT COUNT(*) FROM employee_badge_earned eb WHERE eb.employee_id = e.id) AS badges_count,
         (SELECT COUNT(*) FROM kudos k WHERE k.receiver_id = e.id)            AS kudos_received,
         (SELECT COUNT(DISTINCT survey_id) FROM survey_response sr WHERE sr.employee_id = e.id) AS surveys_completed,
         (SELECT COUNT(*) FROM gamification_points_ledger l WHERE l.employee_id = e.id AND l.transaction_type = 'trivia_correct') AS trivia_correct,

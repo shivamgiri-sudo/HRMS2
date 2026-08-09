@@ -1,39 +1,12 @@
 {
   "modules/business-actions/business-actions.signal-sync.ts": [
-    "employees.reporting_manager_user_id",
-    "roster_assignment.process_id",
-    "wfm_slot_requirement.required_hc"
-  ],
-  "modules/business-intelligence/bi.service.ts": [
-    "lms_learner_progress.certification_status",
-    "lms_learner_progress.completion_pct",
-    "lms_learner_progress.last_updated"
+    "employees.reporting_manager_user_id"
   ],
   "modules/employees/employeeJoiningDocuments.service.ts": [
     "auth_user.full_name"
   ],
-  "modules/finance/vendor-payment.service.ts": [
-    "auth_user.active_status"
-  ],
-  "modules/payroll-masters/payrollMasters.service.ts": [
-    "salary_package_master.grade_id",
-    "salary_package_master.slab_id"
-  ],
   "modules/payroll/payroll.routes.ts": [
-    "employee_documents.pan_number",
     "employees.ctc_annual"
-  ],
-  "modules/reporting/executors/assets.executor.ts": [
-    "employee_documents.document_number",
-    "employee_documents.issuing_authority"
-  ],
-  "modules/reporting/executors/employee.executor.ts": [
-    "employees.contract_end_date",
-    "employees.probation_days"
-  ],
-  "modules/reporting/identity-mapping-report.ts": [
-    "report_identity_source_snapshot.matched_employee_name",
-    "report_identity_source_snapshot.source_employee_name"
   ],
   "modules/reporting/report-suite.routes.ts": [
     "action_plan.action_plan_number",
@@ -107,8 +80,5 @@
     "wfm_roster_plan.ack_required",
     "wfm_roster_plan.published_at",
     "wfm_roster_plan.published_by"
-  ],
-  "modules/reporting/reporting.service.ts": [
-    "process_master.lob_id"
   ]
 }

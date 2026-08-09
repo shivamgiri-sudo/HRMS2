@@ -636,7 +636,7 @@ export const procurementService = {
       `SELECT p.*,
               CONCAT(emp.first_name, ' ', emp.last_name) AS requester_name,
               v.vendor_name,
-              d.department_name
+              d.dept_name AS department_name
        FROM procurement_request p
        LEFT JOIN employees emp ON emp.id = p.requested_by
        LEFT JOIN vendor_master v ON v.id = p.vendor_id

@@ -140,7 +140,7 @@ export const journeyAuditReportService = {
         c.id AS SOURCE_RECORD_ID, 'ats_candidate' AS SOURCE_TABLE, 'ats_candidate.created_at' AS SOURCE_FIELD,
         'AUTHORITATIVE' AS SOURCE_CONFIDENCE, NULL AS OLD_VALUE, c.current_stage AS NEW_VALUE,
         c.sourcing_channel AS ACTIVITY_DETAIL, c.remarks AS REMARKS,
-        b.branch_name AS BRANCH, p.process_name AS PROCESS, d.department_name AS DEPARTMENT
+        b.branch_name AS BRANCH, p.process_name AS PROCESS, d.dept_name AS DEPARTMENT
        FROM ats_candidate c
        LEFT JOIN ats_onboarding_bridge ob ON ob.candidate_id = c.id
        LEFT JOIN employees e ON e.id = ob.employee_id
@@ -165,7 +165,7 @@ export const journeyAuditReportService = {
         l.id AS SOURCE_RECORD_ID, 'ats_candidate_stage_log' AS SOURCE_TABLE, 'ats_candidate_stage_log.stage_date' AS SOURCE_FIELD,
         'AUTHORITATIVE' AS SOURCE_CONFIDENCE, l.from_stage AS OLD_VALUE, l.to_stage AS NEW_VALUE,
         l.remarks AS ACTIVITY_DETAIL, l.remarks AS REMARKS,
-        b.branch_name AS BRANCH, p.process_name AS PROCESS, d.department_name AS DEPARTMENT
+        b.branch_name AS BRANCH, p.process_name AS PROCESS, d.dept_name AS DEPARTMENT
        FROM ats_candidate_stage_log l
        JOIN ats_candidate c ON c.id = l.candidate_id
        LEFT JOIN ats_onboarding_bridge ob ON ob.candidate_id = c.id
@@ -188,7 +188,7 @@ export const journeyAuditReportService = {
         j.id AS SOURCE_RECORD_ID, 'employee_journey_log' AS SOURCE_TABLE, 'employee_journey_log.created_at' AS SOURCE_FIELD,
         'AUTHORITATIVE' AS SOURCE_CONFIDENCE, j.old_value AS OLD_VALUE, j.new_value AS NEW_VALUE,
         j.description AS ACTIVITY_DETAIL, j.description AS REMARKS,
-        b.branch_name AS BRANCH, p.process_name AS PROCESS, d.department_name AS DEPARTMENT
+        b.branch_name AS BRANCH, p.process_name AS PROCESS, d.dept_name AS DEPARTMENT
        FROM employee_journey_log j JOIN employees e ON e.id = j.employee_id
        LEFT JOIN branch_master b ON b.id=e.branch_id LEFT JOIN process_master p ON p.id=e.process_id LEFT JOIN department_master d ON d.id=e.department_id
        ${commonActorJoins("j.triggered_by")}

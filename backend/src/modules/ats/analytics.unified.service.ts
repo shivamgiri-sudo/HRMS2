@@ -343,12 +343,12 @@ export async function getTimeToHireMetrics(): Promise<{
 // Whitelist: only these column names may appear in filter keys or groupBy
 const ALLOWED_FILTER_COLUMNS = new Set([
   'applied_for_branch', 'current_stage', 'sourcing_channel',
-  'years_of_experience', 'gender', 'branch_display_name', 'active_status',
+  'experience', 'gender', 'branch_display_name', 'active_status',
 ]);
 
 const ALLOWED_GROUP_BY = new Set([
   'applied_for_branch', 'current_stage', 'sourcing_channel',
-  'years_of_experience', 'gender', 'branch_display_name',
+  'experience', 'gender', 'branch_display_name',
   'MONTH(created_at)', 'YEAR(created_at)', 'DATE(created_at)',
 ]);
 

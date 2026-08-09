@@ -195,7 +195,7 @@ export async function getJoiningControlRoomCandidate(candidateId: string) {
   // Fetch employment offer (salary source of truth set in onboarding-requests)
   const [offerRows] = await db.execute<RowDataPacket[]>(
     `SELECT o.*,
-            d.department_name, des.designation_name, cc.cost_centre_name,
+            d.dept_name AS department_name, des.designation_name, cc.cost_centre_name,
             CONCAT(m.first_name, ' ', m.last_name) AS manager_name
        FROM ats_employment_offer o
        LEFT JOIN department_master d ON d.id = o.department_id
