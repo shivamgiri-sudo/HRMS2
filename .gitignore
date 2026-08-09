@@ -74,3 +74,15 @@ backend/backend-dev-restart.err
 # Agent/tool scratch worktrees
 .claude/worktrees/
 .codex-tmp/finance-pr58-worktree/
+
+# Privacy scan output — a map of every PII column in the database.
+#
+# backend/src/scripts/privacy-inventory-scan.ts defaults to writing
+# privacy-inventory-findings.json into whatever directory it is run from, and that file
+# enumerates 505 candidate PII columns across 173 tables. This repository is public, so one
+# `git add -A` (which the concurrent-agent rules forbid and agents keep doing anyway) would
+# publish an index of exactly where the sensitive data lives. Ignored by name and by pattern
+# so it cannot land wherever the script happens to be run.
+privacy-inventory-findings.json
+**/privacy-inventory-findings.json
+*privacy-findings*.json
