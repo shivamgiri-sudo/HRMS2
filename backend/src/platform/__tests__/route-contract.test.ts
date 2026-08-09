@@ -80,8 +80,6 @@ const KNOWN_GAPS: Record<string, string> = {
     "Same schema decision as POST /reports. The delete flow is PATCH {status:'deleted'} against a status column that does not exist.",
   "GET /api/wfm/roster":
     "Deliberately unbuilt. /roster/assignments cannot serve it: requireRosterPlanScope throws when planId is absent, before the global-role bypass, and the caller is a plan-agnostic date-range view. Needs a cross-plan read model.",
-  "GET /api/quality-dashboard/scores":
-    "Command centre tile, unbuilt pending a decision on what a row contains.",
 };
 
 function collectSourceFiles(dir: string, acc: string[] = []): string[] {

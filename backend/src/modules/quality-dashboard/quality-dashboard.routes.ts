@@ -804,4 +804,76 @@ router.get("/objections/comprehensive-report", requireRole(...ALLOWED_ROLES), h(
   }
 }));
 
+/**
+ * GET /api/quality-dashboard/scores
+ *
+ * The quality feed for UnifiedPerformanceCommandCenter. It has called this since it was
+ * written and the route did not exist, so its safe() wrapper turned the failure into an empty
+ * array: avgQuality read 0, critical read 0, and because neither crossed a threshold the alert
+ * panel settled on "Stable control — no major alert" using data it never received.
+ *
+ * ATTRIBUTION — the part that made this look unbuildable
+ *   db_audit.call_quality_assessment identifies an agent only by `User`, an 8-character dialer
+ *   login. employees.call_centre_code, the obvious bridge, is NULL on all 58,627 rows, so that
+ *   join resolves nothing and the feed appeared impossible to scope.
+ *
+ *   Shivamgiri.employee_source_alias is the real bridge: employee_code ↔ source_agent_name per
+ *   source_system, with 2,033 rows for 'db_audit'. Measured over the last 90 days it resolves
+ *   17,949 of 19,827 audits (90.5%) to an employee, and every one of those has a branch. The
+ *   remaining ~9% are agents with no alias row and are simply absent rather than lumped into
+ *   an "Unmapped" bucket that would silently distort a branch average.
+ *
+ *   COLLATE is required and not cosmetic: db_audit is utf8mb4_0900_ai_ci and Shivamgiri is
+ *   utf8mb4_unicode_ci, so the unqualified join dies with ER_CANT_AGGREGATE_2COLLATIONS.
+ *
+ * SHAPE
+ *   One row per employee, which is what the page's maths wants: it averages quality_score
+ *   across rows and SUMs fatal_count. Per-agent keeps that average meaningful and the row
+ *   count small (55 agents in 90 days) against its limit=1000.
+ *
+ *   fatal_count follows the classification already established in client-drill.service.ts —
+ *   quality_percentage = 0 is a fatal audit — rather than inventing a second definition.
+ */
+router.get("/scores", requireRole(...ALLOWED_ROLES), h(async (req: AuthenticatedRequest, res) => {
+  try {
+    const { from, to } = dateDefaults(req.query);
+    const pool = getCiPool();
+    const scope = await resolveScope(req);
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const params: any[] = [from, to];
+    const scopeCond = auditScopeCond(scope, params);
+
+    const [rows] = await pool.query(
+      `SELECT e.employee_code,
+              COALESCE(NULLIF(e.full_name, ''), CONCAT(e.first_name, ' ', COALESCE(e.last_name, ''))) AS employee_name,
+              COALESCE(NULLIF(b.branch_name, ''), 'Unmapped')  AS branch_name,
+              COALESCE(NULLIF(p.process_name, ''), 'Unmapped') AS process_name,
+              COUNT(*)                                                        AS audit_count,
+              ROUND(AVG(cqa.quality_percentage), 1)                           AS quality_score,
+              SUM(CASE WHEN cqa.quality_percentage = 0 THEN 1 ELSE 0 END)     AS fatal_count
+         FROM db_audit.call_quality_assessment cqa
+         JOIN Shivamgiri.employee_source_alias a
+           ON a.source_agent_name = cqa.User COLLATE utf8mb4_unicode_ci
+          AND a.source_system = 'db_audit'
+          AND a.active_status = 1
+         JOIN mas_hrms.employees e
+           ON e.employee_code = a.employee_code COLLATE utf8mb4_unicode_ci
+         LEFT JOIN mas_hrms.branch_master b  ON b.id = e.branch_id
+         LEFT JOIN mas_hrms.process_master p ON p.id = e.process_id
+        WHERE DATE(cqa.CallDate) BETWEEN ? AND ?${scopeCond}
+        GROUP BY e.employee_code, employee_name, branch_name, process_name
+        ORDER BY fatal_count DESC, audit_count DESC`,
+      params
+    );
+
+    return res.json({ success: true, data: rows });
+  } catch (err) {
+    // The module's convention: report the source failure and return an empty feed, which the
+    // page then names in its "unavailable" banner rather than charting a fabricated zero.
+    logSourceFailure("quality-dashboard", err, { endpoint: "scores" });
+    return res.json({ success: true, data: [] });
+  }
+}));
+
 export const qualityDashboardRouter = router;
