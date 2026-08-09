@@ -53,8 +53,27 @@ router.patch("/development-plans/:planId/goals/:goalId", h(c.updateGoal));
 router.delete("/development-plans/:id", requireRole("admin", "hr"), h(c.deleteDevelopmentPlan));
 
 // ================== Quality Data Integration (3 routes) ==================
+// These three read call-audit quality scores for arbitrary employee codes — the two
+// :employeeCode routes take whatever code is in the path, and /quality/team takes an
+// unbounded array in the body. They carried only requireAuth, and the service applies no
+// scope of its own (getTeamQualityMetrics queries straight on the codes it is handed), so
+// any employee with a login could read any colleague's audit scores. The write beside them,
+// /quality/upload, has been requireRole("admin","hr","qa") all along — these reads were the
+// odd ones out.
+//
+// Roles are the union of the audience the nav already assigns to "Team Quality"
+// (super_admin/admin/manager/process_manager/branch_head/team_leader) and the quality owners
+// on /quality/upload (hr, qa). super_admin passes implicitly inside requireRole.
+//
+// Residual, deliberately not fixed here: a permitted role can still request codes outside
+// their own team, because these endpoints have no row scope at all. Adding one is a scoping
+// decision (which relationship defines "my team") rather than a mechanical change, and no
+// caller exists yet to model it on — no frontend calls any of the three; the /quality/team
+// path in the router is a UI route that redirects to /quality-dashboard, not this API.
+const QUALITY_READ_ROLES = ["admin", "hr", "qa", "manager", "process_manager", "branch_head", "team_leader"] as const;
+
 // GET /api/performance-feedback/quality/:employeeCode - Get quality metrics for employee
-router.get("/quality/:employeeCode", h(async (req: any, res: any) => {
+router.get("/quality/:employeeCode", requireRole(...QUALITY_READ_ROLES), h(async (req: any, res: any) => {
   const { employeeCode } = req.params;
   const { startDate, endDate } = req.query;
 
@@ -78,7 +97,7 @@ router.get("/quality/:employeeCode", h(async (req: any, res: any) => {
 }));
 
 // GET /api/performance-feedback/quality/:employeeCode/trend - Get quality trend
-router.get("/quality/:employeeCode/trend", h(async (req: any, res: any) => {
+router.get("/quality/:employeeCode/trend", requireRole(...QUALITY_READ_ROLES), h(async (req: any, res: any) => {
   const { employeeCode } = req.params;
   const { startDate, endDate } = req.query;
 
@@ -95,7 +114,7 @@ router.get("/quality/:employeeCode/trend", h(async (req: any, res: any) => {
 }));
 
 // POST /api/performance-feedback/quality/team - Get quality metrics for multiple employees
-router.post("/quality/team", h(async (req: any, res: any) => {
+router.post("/quality/team", requireRole(...QUALITY_READ_ROLES), h(async (req: any, res: any) => {
   const { employeeCodes, startDate, endDate } = req.body;
 
   if (!employeeCodes || !Array.isArray(employeeCodes) || !startDate || !endDate) {
