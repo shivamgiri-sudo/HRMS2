@@ -76,9 +76,9 @@ export const migrationService = {
     const executedSet = new Set<string>();
     try {
       const [rows] = await db.execute<RowDataPacket[]>(
-        'SELECT migration_file FROM schema_migrations ORDER BY executed_at ASC'
+        'SELECT filename FROM schema_migrations ORDER BY applied_at ASC'
       );
-      for (const r of rows) executedSet.add(r.migration_file as string);
+      for (const r of rows) executedSet.add(r.filename as string);
     } catch {
       // schema_migrations table may not exist in all environments
     }

@@ -245,12 +245,27 @@ export async function listPulseChecks(filters: PulseCheckFilters = {}): Promise<
 
 export async function getPulseSummary(): Promise<RowDataPacket | null> {
   const [rows] = await db.execute<RowDataPacket[]>(
+    /*
+     * pulse_check is the question definition, not the answers. Its columns are pulse_question,
+     * pulse_type, response_type and active_status - it has no mood_rating, energy_level,
+     * stress_level or week_start_date, so this raised ER_BAD_FIELD_ERROR and the pulse summary
+     * has never returned a figure.
+     *
+     * The answers are in pulse_response (response_value), and the dimension is pulse_check
+     * .pulse_type, whose live values are mood, workload, satisfaction and stress. So mood and
+     * stress are averaged by pivoting on that type.
+     *
+     * average_energy is NULL because there is no energy pulse type. Mapping it onto workload or
+     * satisfaction would put a number under a label that does not describe it; null renders as
+     * "not measured", which is what it is.
+     */
     `SELECT COUNT(*) as response_count,
-            ROUND(AVG(mood_rating), 2) as average_mood,
-            ROUND(AVG(energy_level), 2) as average_energy,
-            ROUND(AVG(stress_level), 2) as average_stress
-       FROM pulse_check
-      WHERE week_start_date = DATE_SUB(CURDATE(), INTERVAL WEEKDAY(CURDATE()) DAY)`
+            ROUND(AVG(CASE WHEN pc.pulse_type = 'mood'   THEN CAST(pr.response_value AS DECIMAL(10,2)) END), 2) as average_mood,
+            NULL as average_energy,
+            ROUND(AVG(CASE WHEN pc.pulse_type = 'stress' THEN CAST(pr.response_value AS DECIMAL(10,2)) END), 2) as average_stress
+       FROM pulse_response pr
+       JOIN pulse_check pc ON pc.id = pr.pulse_id
+      WHERE pr.response_date >= DATE_SUB(CURDATE(), INTERVAL WEEKDAY(CURDATE()) DAY)`
   );
   return rows[0] ?? null;
 }
