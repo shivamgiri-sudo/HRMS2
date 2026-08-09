@@ -182,10 +182,30 @@ export async function attendanceRegisterMonthly(
     };
   });
 
+  // Slice the caller's page out of the pivot.
+  //
+  // The pivot runs in JavaScript after the SQL, so LIMIT and OFFSET cannot be pushed into the
+  // query — the day columns only exist once every attendance row for the month has been folded
+  // together. This returned the whole pivot regardless of what was asked for, which meant a
+  // request for 100 rows got 1,113 and the offset was ignored entirely: the grid computed
+  // twelve pages from the total and every one of them showed the same 1,113 rows.
+  //
+  // Ported verbatim from the inline handler, including that behaviour, when this report was
+  // promoted so its download would work. Correct then — the aim was a provable no-op — and
+  // worth fixing now that it has been measured.
+  //
+  // sno is assigned before the slice, so a row keeps its position in the whole register rather
+  // than restarting at 1 on every page. Worker mode takes everything, as it did before, because
+  // the async export builds one workbook rather than paging.
+  const total = pivotRows.length;
+  const page = options.mode === "worker"
+    ? pivotRows
+    : pivotRows.slice(options.offset, options.offset + options.limit);
+
   return {
-    rows: pivotRows,
-    rowCount: pivotRows.length,
-    isTruncated: false,
+    rows: page,
+    rowCount: total,
+    isTruncated: total > options.offset + page.length,
     nextCursor: null,
   };
 }
