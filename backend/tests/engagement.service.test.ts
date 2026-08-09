@@ -159,7 +159,16 @@ describe("engagement auto awards", () => {
     mockBadgeAward("Survey Champion");
 
     await expect(checkAutoAwards("employee-1", "survey_completed")).resolves.toHaveLength(1);
-    expect(mockExecute.mock.calls[0][0]).toContain("pulse_check");
+    // pulse_check is the QUESTION table, not the response table: 8 rows live, columns
+    // pulse_question / pulse_type / response_type, and NO employee_id at all — so a
+    // participation count cannot be taken from it, and the query this test used to pin
+    // would have thrown on the missing column. Responses live in pulse_response, keyed by
+    // employee_id and response_date, which is what the service reads now.
+    //
+    // Asserting the absence too, because naming only the new table would let a revert to
+    // pulse_check slip through as long as both appeared.
+    expect(mockExecute.mock.calls[0][0]).toContain("pulse_response");
+    expect(mockExecute.mock.calls[0][0]).not.toContain("pulse_check");
   });
 
   it("awards Top Performer for three KPI periods at or above target", async () => {
