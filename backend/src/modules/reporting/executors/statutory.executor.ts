@@ -682,8 +682,36 @@ export async function gratuityLiabilityRegister(
            COALESCE(gcc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name
       FROM employees e
       LEFT JOIN employee_salary_assignment esa ON esa.employee_id = e.id AND esa.active_status = 1
-      LEFT JOIN salary_component_assignments sca ON sca.employee_id = e.id
-        AND sca.status = 'active'
+      -- One row per employee, not one per assignment record.
+      --
+      -- Joining salary_component_assignments directly fanned this register out: 1,049 active
+      -- employees hold more than one active row, so employees repeated and every total taken
+      -- from the report was inflated. Measured on live 2026-08-09 over the qualifying
+      -- population: 175 rows for 99 employees, and a gratuity liability of 2,73,00,717 against
+      -- a true 1,04,14,721 — an overstatement of 1,68,85,996, or 162%.
+      --
+      -- The duplicates are duplicates, not revisions: of those 1,049 employees, ZERO have a
+      -- differing basic between their active rows. So deduplicating cannot change any
+      -- individual's gratuity figure; it only stops people being counted more than once.
+      -- Nothing here recomputes the gratuity formula, which is untouched.
+      --
+      -- The row is picked by latest effective_date, then created_at, then id, rather than by
+      -- MAX(basic). Both give the same answer today precisely because the values agree — but a
+      -- rule that is only correct while the data happens to agree is not a rule, and if a real
+      -- revision ever lands this takes the current one rather than the largest.
+      LEFT JOIN (
+        SELECT employee_id, basic
+          FROM (
+            SELECT employee_id, basic,
+                   ROW_NUMBER() OVER (
+                     PARTITION BY employee_id
+                     ORDER BY effective_date DESC, created_at DESC, id DESC
+                   ) AS rn
+              FROM salary_component_assignments
+             WHERE status = 'active'
+          ) ranked
+         WHERE rn = 1
+      ) sca ON sca.employee_id = e.id
       LEFT JOIN branch_master b ON b.id = e.branch_id
       LEFT JOIN process_master gpm ON gpm.id = e.process_id
       LEFT JOIN cost_centre_master gcc ON gcc.id = e.cost_centre_id
