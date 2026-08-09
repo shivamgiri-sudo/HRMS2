@@ -404,9 +404,23 @@ export async function shiftAdherenceDetail(
   };
 }
 
-// ---------------------------------------------------------------------------
-// attendance-summary  (monthly aggregate per employee)
-// ---------------------------------------------------------------------------
+/**
+ * attendance-summary
+ *
+ * Aligned with the inline block. Same 1,123 rows both ways, but the executor emitted eight
+ * columns the catalogue does not name and omitted the one it does.
+ *
+ * The month filter is a half-open range on the raw column, not DATE_FORMAT(record_date,'%Y-%m').
+ * That is deliberate and was fixed earlier in this audit: wrapping record_date in a function
+ * makes every one of the eight indexes on it unusable and full-scans the table. Porting the
+ * executor's own month handling instead would have undone that.
+ *
+ * total_hours prefers raw_minutes, then biometric_minutes, then dialler_minutes — three feeds of
+ * decreasing authority, and the COALESCE order is the report's definition of a worked hour.
+ *
+ * The GROUP BY repeats every non-aggregated identity column because ONLY_FULL_GROUP_BY is
+ * enabled here; omitting one fails the report outright rather than degrading it.
+ */
 export async function attendanceSummary(
   filters: ExecFilters,
   scope: ExecScope,
@@ -415,90 +429,44 @@ export async function attendanceSummary(
   const month = monthParam(filters.month);
 
   const clauses: string[] = ["e.id IS NOT NULL"];
-  const params: unknown[]  = [];
+  const params: unknown[] = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
-
-  clauses.push("adr.record_date >= ? AND adr.record_date < ?");
-  params.push(monthRange(month).start, monthRange(month).endExclusive);
-
-  if (options.mode === "worker" && options.cursor != null) {
-    clauses.push("e.id > ?");
-    params.push(options.cursor);
+  {
+    const [my, mm] = month.split("-").map(Number);
+    const nextMonth = `${mm === 12 ? my + 1 : my}-${String(mm === 12 ? 1 : mm + 1).padStart(2, "0")}-01`;
+    clauses.push("adr.record_date >= ? AND adr.record_date < ?");
+    params.push(`${month}-01`, nextMonth);
   }
 
-  // Two defects fixed here, both verified against live mas_hrms on 2026-08-07:
-  //
-  //   1. lwp_days counted `attendance_status = 'lwp'`. There is no 'lwp' member of the
-  //      ENUM — LWP is the numeric `lwp_value` column — so the figure was 0 on all
-  //      118,350 rows. July 2026 alone carries 13,731.5 LWP days across 16,386 rows, and
-  //      LWP drives pay. This is the same defect class the header of
-  //      shared/attendanceStatus.ts documents for 'late'.
-  //
-  //   2. The buckets did not account for the month. present + absent + half_day left
-  //      9,778 of July's 41,106 rows unexplained — 9,773 of them `missing_punch` (23.8%
-  //      of the month) — so the columns silently failed to sum to the total and there was
-  //      no way to see why the attendance rate was what it was. Every ENUM member now has
-  //      a column, and missing_punch is named rather than absorbed.
-  //
-  // attendance_pct keeps the shared definition (approved leave and non-working days out
-  // of the denominator, missing_punch left in it, since an unresolved missing punch is
-  // not a verified attendance). Emitting the bucket makes that judgement auditable
-  // instead of invisible.
   const base = `
-    SELECT e.id AS _cursor,
-           e.employee_code,
+    SELECT e.employee_code,
            COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
            COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
-           COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
-           COALESCE(sp_cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
-           COALESCE(sp_cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
-           COALESCE(d.dept_name, 'UNASSIGNED') AS department_name,
-           COUNT(*) AS total_days,
-           ${presentSql("adr.attendance_status")} AS present_days,
-           SUM(CASE WHEN adr.attendance_status = 'absent'          THEN 1 ELSE 0 END) AS absent_days,
-           SUM(CASE WHEN adr.attendance_status = 'half_day'        THEN 1 ELSE 0 END) AS half_days,
-           SUM(CASE WHEN adr.attendance_status IN (${statusList(LEAVE_STATUSES)}) THEN 1 ELSE 0 END) AS leave_days,
-           SUM(CASE WHEN adr.attendance_status = 'week_off'        THEN 1 ELSE 0 END) AS week_off_days,
-           SUM(CASE WHEN adr.attendance_status = 'holiday'         THEN 1 ELSE 0 END) AS holiday_days,
-           SUM(CASE WHEN adr.attendance_status = 'missing_punch'   THEN 1 ELSE 0 END) AS missing_punch_days,
-           SUM(CASE WHEN adr.attendance_status = 'unreconciled'    THEN 1 ELSE 0 END) AS unreconciled_days,
-           ROUND(SUM(COALESCE(adr.lwp_value, 0)), 2) AS lwp_days,
-           SUM(CASE WHEN adr.late_mark = 1 THEN 1 ELSE 0 END) AS late_days,
-           ROUND(SUM(COALESCE(adr.biometric_minutes, 0)) / 60, 2) AS total_productive_hours,
-           ROUND(
-             100 * ${attendedDaysSql("adr.attendance_status")}
-             / NULLIF(${expectedToWorkSql("adr.attendance_status")}, 0)
-           , 2) AS attendance_pct
+           COALESCE(pm.process_name, 'UNASSIGNED') AS process_name,
+           COALESCE(acc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
+           COALESCE(acc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
+           SUM(adr.attendance_status='present') AS present_days,
+           SUM(adr.attendance_status='half_day') AS half_days,
+           SUM(adr.attendance_status='absent') AS absent_days,
+           SUM(adr.attendance_status='leave_approved') AS leave_days,
+           SUM(adr.lwp_value) AS lwp_days,
+           SUM(adr.late_mark=1) AS late_days,
+           ROUND(SUM(COALESCE(adr.raw_minutes,adr.biometric_minutes,adr.dialler_minutes,0))/60,2) AS total_hours
       FROM attendance_daily_record adr
       JOIN employees e ON e.id = adr.employee_id
       LEFT JOIN branch_master b ON b.id = e.branch_id
-      LEFT JOIN process_master p ON p.id = e.process_id
-      LEFT JOIN department_master d ON d.id = e.department_id
-      LEFT JOIN cost_centre_master sp_cc ON sp_cc.id = e.cost_centre_id
+      LEFT JOIN process_master pm ON pm.id = e.process_id
+      LEFT JOIN cost_centre_master acc ON acc.id = e.cost_centre_id
      WHERE ${clauses.join(" AND ")}
-     -- The server runs with ONLY_FULL_GROUP_BY, so every non-aggregated selected column
-     -- has to appear here too; omitting the cost centre columns would make this report
-     -- fail outright rather than degrade.
-     GROUP BY e.id, e.employee_code, employee_name, b.branch_name, p.process_name,
-              sp_cc.cost_centre_code, sp_cc.cost_centre_name, d.dept_name
-     ORDER BY e.id ASC`;
+     GROUP BY e.id, e.employee_code, e.first_name, e.last_name, e.full_name,
+              b.branch_name, pm.process_name, acc.cost_centre_code, acc.cost_centre_name
+     ORDER BY employee_name`;
 
   const total = options.includeTotal ? await count(base, params) : 0;
-  const sql   = options.mode === "worker" ? `${base} LIMIT ${options.limit}` : applyPagination(base, options);
+  const sql   = applyPagination(base, options);
   const rows  = await query(sql, params) as Record<string, unknown>[];
-
-  const nextCursor = (options.mode === "worker" && rows.length > 0)
-    ? (rows[rows.length - 1]._cursor as number)
-    : null;
-
-  const out = rows.map(({ _cursor: _, ...rest }) => rest);
-  return {
-    rows: out,
-    rowCount: options.includeTotal ? total : rows.length,
-    isTruncated: options.includeTotal ? total > out.length : rows.length === options.limit,
-    nextCursor,
-  };
+  return { rows, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > rows.length, nextCursor: null };
 }
 
 // ---------------------------------------------------------------------------
@@ -1014,48 +982,65 @@ export async function dailyShrinkageReport(
   return { rows, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > rows.length };
 }
 
-// ---------------------------------------------------------------------------
-// monthly-shrinkage-trend  (aggregate — no row-level cursor)
-// ---------------------------------------------------------------------------
+/**
+ * monthly-shrinkage-trend
+ *
+ * Aligned with the inline block. Same 430 rows both ways; the catalogue names all nine columns
+ * unique to the inline shape and none of the four unique to this executor's.
+ *
+ * The derived table is structural, not stylistic: MySQL will not accept a window function over
+ * aggregates computed at the same SELECT level, so the per-month aggregate has to be complete
+ * before the three-month rolling average can read it. Flattening it would not compile.
+ *
+ * Known and not addressed here: this is the slowest report in the suite, because
+ * GROUP BY DATE_FORMAT(record_date,'%Y-%m') cannot use any index (EXPLAIN reports type=ALL,
+ * key=null, Using temporary) and the range covers the whole year. Making it sargable is a
+ * separate change with its own before/after — folding it into a port would leave neither
+ * verifiable.
+ */
 export async function monthlyShrinkageTrend(
   filters: ExecFilters,
   scope: ExecScope,
   options: ExecOptions
 ): Promise<ExecResult> {
-  const today = new Date().toISOString().slice(0, 10);
-  const from  = dateParam(filters.from, `${new Date().getFullYear()}-01-01`);
-  const to    = dateParam(filters.to, today);
+  const from = dateParam(filters.from, `${new Date().getFullYear()}-01-01`);
+  const to   = dateParam(filters.to, new Date().toISOString().slice(0, 10));
 
   const clauses: string[] = ["e.id IS NOT NULL"];
-  const params: unknown[]  = [];
+  const params: unknown[] = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
-
   clauses.push("adr.record_date BETWEEN ? AND ?");
   params.push(from, to);
 
   const base = `
-    SELECT LEFT(adr.record_date, 7) AS report_month,
-           COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
-           COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
-           COUNT(*) AS total_scheduled,
-           SUM(CASE WHEN adr.attendance_status IN ('absent','lwp') THEN 1 ELSE 0 END) AS absent_count,
-           ROUND(
-             SUM(CASE WHEN adr.attendance_status IN ('absent','lwp') THEN 1 ELSE 0 END) * 100.0
-             / NULLIF(COUNT(*), 0),
-           2) AS shrinkage_pct
-      FROM attendance_daily_record adr
-      JOIN employees e ON e.id = adr.employee_id
-      LEFT JOIN branch_master b ON b.id = e.branch_id
-      LEFT JOIN process_master p ON p.id = e.process_id
-     WHERE ${clauses.join(" AND ")}
-     GROUP BY report_month, b.branch_name, p.process_name
-     ORDER BY report_month DESC, b.branch_name, p.process_name`;
+    SELECT *, ROUND(AVG(total_shrinkage_pct) OVER (
+           PARTITION BY branch_name, process_name
+           ORDER BY month
+           ROWS BETWEEN 2 PRECEDING AND CURRENT ROW
+         ), 2) AS three_month_avg_shrinkage
+      FROM (
+        SELECT DATE_FORMAT(adr.record_date,'%Y-%m') AS month, b.branch_name, p.process_name,
+               COUNT(DISTINCT adr.record_date) AS working_days,
+               COUNT(*) AS total_employee_days,
+               SUM(adr.attendance_status IN ('present','half_day')) AS present_days,
+               SUM(adr.attendance_status = 'absent') AS absent_days,
+               SUM(adr.attendance_status = 'leave_approved') AS leave_days,
+               ROUND((COUNT(*) - SUM(adr.attendance_status IN ('present','half_day'))) / NULLIF(COUNT(*), 0) * 100, 2) AS total_shrinkage_pct,
+               ROUND(SUM(adr.attendance_status = 'absent') / NULLIF(COUNT(*), 0) * 100, 2) AS unplanned_shrinkage_pct
+          FROM attendance_daily_record adr
+          JOIN employees e ON e.id = adr.employee_id
+          LEFT JOIN branch_master b ON b.id = e.branch_id
+          LEFT JOIN process_master p ON p.id = e.process_id
+         WHERE ${clauses.join(" AND ")}
+         GROUP BY DATE_FORMAT(adr.record_date,'%Y-%m'), b.branch_name, p.process_name
+      ) base_data
+     ORDER BY month DESC, total_shrinkage_pct DESC`;
 
   const total = options.includeTotal ? await count(base, params) : 0;
   const sql   = applyPagination(base, options);
   const rows  = await query(sql, params) as Record<string, unknown>[];
-  return { rows, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > rows.length };
+  return { rows, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > rows.length, nextCursor: null };
 }
 
 // ---------------------------------------------------------------------------

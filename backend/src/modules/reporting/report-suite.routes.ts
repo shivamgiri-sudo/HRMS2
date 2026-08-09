@@ -610,43 +610,9 @@ reportSuiteRouter.get("/:code", reportScopeMiddleware, reportCatalogAccessMiddle
               ORDER BY adr.record_date DESC, b.branch_name, employee_name`;
       break;
     }
-    case "attendance-summary": {
-      const month = monthParam(req.query.month);
-      addScopedEmployeeFilters(req, clauses, params);
-      // Same non-sargable month filter fixed elsewhere in this audit, in its DATE_FORMAT
-      // spelling: wrapping record_date in a function means none of the eight indexes on it
-      // can be used, so this full-scans attendance_daily_record. Half-open range instead.
-      {
-        const [my, mm] = month.split("-").map(Number);
-        const nextMonth = `${mm === 12 ? my + 1 : my}-${String(mm === 12 ? 1 : mm + 1).padStart(2, "0")}-01`;
-        clauses.push("adr.record_date >= ? AND adr.record_date < ?");
-        params.push(`${month}-01`, nextMonth);
-      }
-      sql = `SELECT e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-                    COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
-                    COALESCE(pm.process_name, 'UNASSIGNED') AS process_name,
-                    COALESCE(acc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
-                    COALESCE(acc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
-                    SUM(adr.attendance_status='present') AS present_days,
-                    SUM(adr.attendance_status='half_day') AS half_days,
-                    SUM(adr.attendance_status='absent') AS absent_days,
-                    SUM(adr.attendance_status='leave_approved') AS leave_days,
-                    SUM(adr.lwp_value) AS lwp_days,
-                    SUM(adr.late_mark=1) AS late_days,
-                    ROUND(SUM(COALESCE(adr.raw_minutes,adr.biometric_minutes,adr.dialler_minutes,0))/60,2) AS total_hours
-               FROM attendance_daily_record adr
-               JOIN employees e ON e.id = adr.employee_id
-               LEFT JOIN branch_master b ON b.id = e.branch_id
-               LEFT JOIN process_master pm ON pm.id = e.process_id
-               LEFT JOIN cost_centre_master acc ON acc.id = e.cost_centre_id
-              WHERE ${clauses.join(" AND ")}
-              -- ONLY_FULL_GROUP_BY: the four identity columns added above are not aggregates,
-              -- so they must appear here too or the report fails outright rather than degrading.
-              GROUP BY e.id, e.employee_code, e.first_name, e.last_name, e.full_name,
-                       b.branch_name, pm.process_name, acc.cost_centre_code, acc.cost_centre_name
-              ORDER BY employee_name`;
-      break;
-    }
+    // "attendance-summary" falls through to executeReport(), which now carries this SQL
+    // including the sargable half-open month range fixed earlier in this audit. Screen and
+    // download returned the same 1,123 rows with almost no shared columns.
     case "biometric-reconciliation": {
       const from = dateParam(req.query.from, new Date().toISOString().slice(0, 10));
       const to = dateParam(req.query.to, from);
@@ -1066,37 +1032,9 @@ reportSuiteRouter.get("/:code", reportScopeMiddleware, reportCatalogAccessMiddle
     // the nine metrics the catalogue declares, the executor emitted three of its own, and the
     // workbook therefore contained none of the columns the grid draws.
 
-    case "monthly-shrinkage-trend": {
-      const from = dateParam(req.query.from, `${new Date().getFullYear()}-01-01`);
-      const to = dateParam(req.query.to, new Date().toISOString().slice(0, 10));
-      addScopedEmployeeFilters(req, clauses, params);
-      if (req.query.processId) { clauses.push("e.process_id = ?"); params.push(String(req.query.processId)); }
-      clauses.push("adr.record_date BETWEEN ? AND ?"); params.push(from, to);
-      // Derived table required — MySQL forbids window functions over aggregates in the same SELECT level.
-      sql = `SELECT *, ROUND(AVG(total_shrinkage_pct) OVER (
-                    PARTITION BY branch_name, process_name
-                    ORDER BY month
-                    ROWS BETWEEN 2 PRECEDING AND CURRENT ROW
-                  ), 2) AS three_month_avg_shrinkage
-               FROM (
-                 SELECT DATE_FORMAT(adr.record_date,'%Y-%m') AS month, b.branch_name, p.process_name,
-                        COUNT(DISTINCT adr.record_date) AS working_days,
-                        COUNT(*) AS total_employee_days,
-                        SUM(adr.attendance_status IN ('present','half_day')) AS present_days,
-                        SUM(adr.attendance_status = 'absent') AS absent_days,
-                        SUM(adr.attendance_status = 'leave_approved') AS leave_days,
-                        ROUND((COUNT(*) - SUM(adr.attendance_status IN ('present','half_day'))) / NULLIF(COUNT(*), 0) * 100, 2) AS total_shrinkage_pct,
-                        ROUND(SUM(adr.attendance_status = 'absent') / NULLIF(COUNT(*), 0) * 100, 2) AS unplanned_shrinkage_pct
-                   FROM attendance_daily_record adr
-                   JOIN employees e ON e.id = adr.employee_id
-                   LEFT JOIN branch_master b ON b.id = e.branch_id
-                   LEFT JOIN process_master p ON p.id = e.process_id
-                  WHERE ${clauses.join(" AND ")}
-                  GROUP BY DATE_FORMAT(adr.record_date,'%Y-%m'), b.branch_name, p.process_name
-               ) base_data
-               ORDER BY month DESC, total_shrinkage_pct DESC`;
-      break;
-    }
+    // "monthly-shrinkage-trend" falls through to executeReport(), which now carries this SQL
+    // including the derived table the window function requires. Same 430 rows both ways
+    // before, with disjoint columns.
 
     // "punch-raw-export" falls through to executeReport(), which now carries this SQL.
     // Screen and download returned the same 160 rows with disjoint columns.

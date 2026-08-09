@@ -74,7 +74,10 @@ const SHADOWED_BACKLOG = new Set<string>([
   "attendance-daily", 
   // "attendance-dispute-summary" left this list on 2026-08-08 — the inline block
   // same, and the executor also lacked the dispute_type filter that separates disputes from plain regularizations.
-  "attendance-summary",
+  
+  // "attendance-summary" left this list on 2026-08-09 — same rows as the screen,
+  // disjoint columns, catalogue matches the screen.
+  
   "biometric-reconciliation", 
   // "birthday-list" left this list on 2026-08-09 — the executor filtered to the current
   // month while the screen listed the whole year, so the download held a tenth of the rows.
@@ -130,7 +133,10 @@ const SHADOWED_BACKLOG = new Set<string>([
   // missing_manager where the catalogue and the grid expect with_manager / without_manager,
   // so the downloaded workbook carried the right numbers under keys nothing reads. The
   // executor now matches the inline SQL exactly and the block is gone.
-  "monthly-shrinkage-trend",
+  
+  // "monthly-shrinkage-trend" left this list on 2026-08-09 — same rows as the screen,
+  // disjoint columns, catalogue matches the screen.
+  
   
   // "overtime-summary" left this list on 2026-08-08 — the executor measured overtime in
   // minutes against a different baseline from the screen, so the two disagreed on which days
