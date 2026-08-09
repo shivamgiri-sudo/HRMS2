@@ -287,9 +287,12 @@ export async function attendanceDaily(
               WHERE ${clauses.join(" AND ")}
               ORDER BY adr.record_date DESC, b.branch_name, employee_name`;
 
-  const total = options.includeTotal ? await count(base, params) : 0;
-  const sql   = applyPagination(base, options);
-  const rows  = await query(sql, params) as Record<string, unknown>[];
+  // One execution, not two: the page and its total come from the same fetch wherever the result
+  // fits the probe. See fetchPageWithTotal — the COUNT wrapper it replaces re-ran the entire
+  // statement to learn a number the first run already knew.
+  const paged = await fetchPageWithTotal(base, params, options, query, count);
+  const total = paged.total;
+  const rows  = paged.rows as Record<string, unknown>[];
   return { rows, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > rows.length, nextCursor: null };
 }
 
@@ -346,9 +349,12 @@ export async function dailyHcShift(
      GROUP BY adr.record_date, b.branch_name, p.process_name, ws.shift_name
      ORDER BY adr.record_date DESC, b.branch_name, p.process_name, shift_name`;
 
-  const total = options.includeTotal ? await count(base, params) : 0;
-  const sql   = applyPagination(base, options);
-  const rows  = await query(sql, params) as Record<string, unknown>[];
+  // One execution, not two: the page and its total come from the same fetch wherever the result
+  // fits the probe. See fetchPageWithTotal — the COUNT wrapper it replaces re-ran the entire
+  // statement to learn a number the first run already knew.
+  const paged = await fetchPageWithTotal(base, params, options, query, count);
+  const total = paged.total;
+  const rows  = paged.rows as Record<string, unknown>[];
   return { rows, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > rows.length, nextCursor: null };
 }
 
@@ -443,9 +449,12 @@ export async function shiftAdherenceDetail(
               WHERE ${clauses.join(" AND ")}
               ORDER BY adr.record_date DESC, adherence_status DESC, employee_name`;
 
-  const total = options.includeTotal ? await count(base, params) : 0;
-  const sql   = applyPagination(base, options);
-  const rows  = await query(sql, params) as Record<string, unknown>[];
+  // One execution, not two: the page and its total come from the same fetch wherever the result
+  // fits the probe. See fetchPageWithTotal — the COUNT wrapper it replaces re-ran the entire
+  // statement to learn a number the first run already knew.
+  const paged = await fetchPageWithTotal(base, params, options, query, count);
+  const total = paged.total;
+  const rows  = paged.rows as Record<string, unknown>[];
   return { rows, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > rows.length, nextCursor: null };
 }
 
@@ -508,9 +517,12 @@ export async function attendanceSummary(
               b.branch_name, pm.process_name, acc.cost_centre_code, acc.cost_centre_name
      ORDER BY employee_name`;
 
-  const total = options.includeTotal ? await count(base, params) : 0;
-  const sql   = applyPagination(base, options);
-  const rows  = await query(sql, params) as Record<string, unknown>[];
+  // One execution, not two: the page and its total come from the same fetch wherever the result
+  // fits the probe. See fetchPageWithTotal — the COUNT wrapper it replaces re-ran the entire
+  // statement to learn a number the first run already knew.
+  const paged = await fetchPageWithTotal(base, params, options, query, count);
+  const total = paged.total;
+  const rows  = paged.rows as Record<string, unknown>[];
   return { rows, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > rows.length, nextCursor: null };
 }
 
@@ -605,9 +617,12 @@ export async function lateArrivalSummary(
      WHERE ${clauses.join(" AND ")}
      ORDER BY adr.record_date DESC, adr.late_by_minutes DESC`;
 
-  const total = options.includeTotal ? await count(base, params) : 0;
-  const sql   = options.mode === "worker" ? `${base} LIMIT ${options.limit}` : applyPagination(base, options);
-  const rows  = await query(sql, params) as Record<string, unknown>[];
+  // One execution, not two: the page and its total come from the same fetch wherever the result
+  // fits the probe. See fetchPageWithTotal — the COUNT wrapper it replaces re-ran the entire
+  // statement to learn a number the first run already knew.
+  const paged = await fetchPageWithTotal(base, params, options, query, count);
+  const total = paged.total;
+  const rows  = paged.rows as Record<string, unknown>[];
   const nextCursor = (options.mode === "worker" && rows.length > 0)
     ? (rows[rows.length - 1]._cursor as number) : null;
   const out = rows.map(({ _cursor: _, ...rest }) => rest);
@@ -807,9 +822,12 @@ export async function regularizationSummary(
      WHERE ${clauses.join(" AND ")}
      ORDER BY arr.session_date DESC, employee_name`;
 
-  const total = options.includeTotal ? await count(base, params) : 0;
-  const sql   = options.mode === "worker" ? `${base} LIMIT ${options.limit}` : applyPagination(base, options);
-  const rows  = await query(sql, params) as Record<string, unknown>[];
+  // One execution, not two: the page and its total come from the same fetch wherever the result
+  // fits the probe. See fetchPageWithTotal — the COUNT wrapper it replaces re-ran the entire
+  // statement to learn a number the first run already knew.
+  const paged = await fetchPageWithTotal(base, params, options, query, count);
+  const total = paged.total;
+  const rows  = paged.rows as Record<string, unknown>[];
   const nextCursor = (options.mode === "worker" && rows.length > 0)
     ? (rows[rows.length - 1]._cursor as number) : null;
   const out = rows.map(({ _cursor: _, ...rest }) => rest);
@@ -900,9 +918,12 @@ export async function attendanceDisputeSummary(
      WHERE ${clauses.join(" AND ")}
      ORDER BY arr.session_date DESC, employee_name`;
 
-  const total = options.includeTotal ? await count(base, params) : 0;
-  const sql   = options.mode === "worker" ? `${base} LIMIT ${options.limit}` : applyPagination(base, options);
-  const rows  = await query(sql, params) as Record<string, unknown>[];
+  // One execution, not two: the page and its total come from the same fetch wherever the result
+  // fits the probe. See fetchPageWithTotal — the COUNT wrapper it replaces re-ran the entire
+  // statement to learn a number the first run already knew.
+  const paged = await fetchPageWithTotal(base, params, options, query, count);
+  const total = paged.total;
+  const rows  = paged.rows as Record<string, unknown>[];
   const nextCursor = (options.mode === "worker" && rows.length > 0)
     ? (rows[rows.length - 1]._cursor as number) : null;
   const out = rows.map(({ _cursor: _, ...rest }) => rest);
@@ -952,9 +973,12 @@ export async function habitualAbsenteeList(
      HAVING absent_days >= ${Number.isFinite(threshold) && threshold > 0 ? threshold : 3}
      ORDER BY e.id ASC`;
 
-  const total = options.includeTotal ? await count(base, params) : 0;
-  const sql   = options.mode === "worker" ? `${base} LIMIT ${options.limit}` : applyPagination(base, options);
-  const rows  = await query(sql, params) as Record<string, unknown>[];
+  // One execution, not two: the page and its total come from the same fetch wherever the result
+  // fits the probe. See fetchPageWithTotal — the COUNT wrapper it replaces re-ran the entire
+  // statement to learn a number the first run already knew.
+  const paged = await fetchPageWithTotal(base, params, options, query, count);
+  const total = paged.total;
+  const rows  = paged.rows as Record<string, unknown>[];
 
   const nextCursor = (options.mode === "worker" && rows.length > 0)
     ? (rows[rows.length - 1]._cursor as number)
@@ -1022,9 +1046,12 @@ export async function dailyShrinkageReport(
      GROUP BY adr.record_date, b.branch_name, p.process_name
      ORDER BY adr.record_date DESC, b.branch_name, p.process_name`;
 
-  const total = options.includeTotal ? await count(base, params) : 0;
-  const sql   = applyPagination(base, options);
-  const rows  = await query(sql, params) as Record<string, unknown>[];
+  // One execution, not two: the page and its total come from the same fetch wherever the result
+  // fits the probe. See fetchPageWithTotal — the COUNT wrapper it replaces re-ran the entire
+  // statement to learn a number the first run already knew.
+  const paged = await fetchPageWithTotal(base, params, options, query, count);
+  const total = paged.total;
+  const rows  = paged.rows as Record<string, unknown>[];
   return { rows, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > rows.length };
 }
 
@@ -1159,9 +1186,12 @@ export async function biometricReconciliation(
      WHERE ${clauses.join(" AND ")}
      ORDER BY adr.record_date DESC, reconciliation_status DESC`;
 
-  const total = options.includeTotal ? await count(base, params) : 0;
-  const sql   = applyPagination(base, options);
-  const rows  = await query(sql, params) as Record<string, unknown>[];
+  // One execution, not two: the page and its total come from the same fetch wherever the result
+  // fits the probe. See fetchPageWithTotal — the COUNT wrapper it replaces re-ran the entire
+  // statement to learn a number the first run already knew.
+  const paged = await fetchPageWithTotal(base, params, options, query, count);
+  const total = paged.total;
+  const rows  = paged.rows as Record<string, unknown>[];
   return { rows, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > rows.length, nextCursor: null };
 }
 
@@ -1213,9 +1243,12 @@ export async function punchRawExport(
      WHERE ${clauses.join(" AND ")}
      ORDER BY ibd.activity_date DESC, ibd.employee_code`;
 
-  const total = options.includeTotal ? await count(base, params) : 0;
-  const sql   = applyPagination(base, options);
-  const rows  = await query(sql, params) as Record<string, unknown>[];
+  // One execution, not two: the page and its total come from the same fetch wherever the result
+  // fits the probe. See fetchPageWithTotal — the COUNT wrapper it replaces re-ran the entire
+  // statement to learn a number the first run already knew.
+  const paged = await fetchPageWithTotal(base, params, options, query, count);
+  const total = paged.total;
+  const rows  = paged.rows as Record<string, unknown>[];
   return { rows, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > rows.length, nextCursor: null };
 }
 
@@ -1273,9 +1306,12 @@ export async function attendanceRegisterGrid(
      ORDER BY e.id ASC`;
   params.push(from, to);
 
-  const total = options.includeTotal ? await count(base, params) : 0;
-  const sql   = options.mode === "worker" ? `${base} LIMIT ${options.limit}` : applyPagination(base, options);
-  const rows  = await query(sql, params) as Record<string, unknown>[];
+  // One execution, not two: the page and its total come from the same fetch wherever the result
+  // fits the probe. See fetchPageWithTotal — the COUNT wrapper it replaces re-ran the entire
+  // statement to learn a number the first run already knew.
+  const paged = await fetchPageWithTotal(base, params, options, query, count);
+  const total = paged.total;
+  const rows  = paged.rows as Record<string, unknown>[];
 
   const nextCursor = (options.mode === "worker" && rows.length > 0)
     ? (rows[rows.length - 1]._cursor as number)
@@ -1359,9 +1395,12 @@ export async function breakDailySummary(
               e.last_name, b.branch_name, p.process_name, sp_cc.cost_centre_code, sp_cc.cost_centre_name
      ORDER BY bs.shift_date DESC, e.employee_code ASC`;
 
-  const total = options.includeTotal ? await count(base, params) : 0;
-  const sql   = applyPagination(base, options);
-  const rows  = await query(sql, params) as Record<string, unknown>[];
+  // One execution, not two: the page and its total come from the same fetch wherever the result
+  // fits the probe. See fetchPageWithTotal — the COUNT wrapper it replaces re-ran the entire
+  // statement to learn a number the first run already knew.
+  const paged = await fetchPageWithTotal(base, params, options, query, count);
+  const total = paged.total;
+  const rows  = paged.rows as Record<string, unknown>[];
 
   return {
     rows,
@@ -1449,9 +1488,12 @@ export async function breakSessionLog(
      WHERE ${clauses.join(" AND ")}
      ORDER BY ${orderBy}`;
 
-  const total = options.includeTotal ? await count(base, params) : 0;
-  const sql   = options.mode === "worker" ? `${base} LIMIT ${options.limit}` : applyPagination(base, options);
-  const rows  = await query(sql, params) as Record<string, unknown>[];
+  // One execution, not two: the page and its total come from the same fetch wherever the result
+  // fits the probe. See fetchPageWithTotal — the COUNT wrapper it replaces re-ran the entire
+  // statement to learn a number the first run already knew.
+  const paged = await fetchPageWithTotal(base, params, options, query, count);
+  const total = paged.total;
+  const rows  = paged.rows as Record<string, unknown>[];
 
   // break_sessions.id is a UUID, not an auto-increment. Keyset pagination still
   // works — ORDER BY bs.id ASC combined with bs.id > cursor is a stable total
@@ -1543,8 +1585,11 @@ export async function productivityIndividualScorecard(
      ORDER BY login_hours DESC`;
 
   const params = [...joinParams, ...whereParams];
-  const total = options.includeTotal ? await count(base, params) : 0;
-  const sql   = applyPagination(base, options);
-  const rows  = await query(sql, params) as Record<string, unknown>[];
+  // One execution, not two: the page and its total come from the same fetch wherever the result
+  // fits the probe. See fetchPageWithTotal — the COUNT wrapper it replaces re-ran the entire
+  // statement to learn a number the first run already knew.
+  const paged = await fetchPageWithTotal(base, params, options, query, count);
+  const total = paged.total;
+  const rows  = paged.rows as Record<string, unknown>[];
   return { rows, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > rows.length };
 }

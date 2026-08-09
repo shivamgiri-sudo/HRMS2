@@ -16,6 +16,7 @@ import {
   dateParam,
   monthParam,
   applyPagination,
+  fetchPageWithTotal,
 } from "./types.js";
 
 async function query(sql: string, params: unknown[]): Promise<RowDataPacket[]> {
@@ -88,9 +89,12 @@ export async function ffSettlementRegister(
      WHERE ${clauses.join(" AND ")}
      ORDER BY COALESCE(er.last_working_day_confirmed, er.last_working_day_proposed) DESC`;
 
-  const total = options.includeTotal ? await count(base, params) : 0;
-  const sql   = options.mode === "worker" ? `${base} LIMIT ${options.limit}` : applyPagination(base, options);
-  const rows  = await query(sql, params) as Record<string, unknown>[];
+  // One execution, not two: the page and its total come from the same fetch wherever the result
+  // fits the probe. See fetchPageWithTotal — the COUNT wrapper it replaces re-ran the entire
+  // statement to learn a number the first run already knew.
+  const paged = await fetchPageWithTotal(base, params, options, query, count);
+  const total = paged.total;
+  const rows  = paged.rows as Record<string, unknown>[];
   const nextCursor = (options.mode === "worker" && rows.length > 0)
     ? (rows[rows.length - 1]._cursor as number) : null;
   const out = rows.map(({ _cursor: _, ...rest }) => rest);
@@ -310,9 +314,12 @@ export async function fnfSettlementRegister(
      WHERE ${clauses.join(" AND ")}
      ORDER BY e.id ASC`;
 
-  const total = options.includeTotal ? await count(base, params) : 0;
-  const sql   = options.mode === "worker" ? `${base} LIMIT ${options.limit}` : applyPagination(base, options);
-  const rows  = await query(sql, params) as Record<string, unknown>[];
+  // One execution, not two: the page and its total come from the same fetch wherever the result
+  // fits the probe. See fetchPageWithTotal — the COUNT wrapper it replaces re-ran the entire
+  // statement to learn a number the first run already knew.
+  const paged = await fetchPageWithTotal(base, params, options, query, count);
+  const total = paged.total;
+  const rows  = paged.rows as Record<string, unknown>[];
   const nextCursor = (options.mode === "worker" && rows.length > 0)
     ? (rows[rows.length - 1]._cursor as number) : null;
   const out = rows.map(({ _cursor: _, ...rest }) => rest);
@@ -366,9 +373,12 @@ export async function clearanceStatusRegister(
               sp_cc.cost_centre_code, sp_cc.cost_centre_name
      ORDER BY e.id ASC`;
 
-  const total = options.includeTotal ? await count(base, params) : 0;
-  const sql   = options.mode === "worker" ? `${base} LIMIT ${options.limit}` : applyPagination(base, options);
-  const rows  = await query(sql, params) as Record<string, unknown>[];
+  // One execution, not two: the page and its total come from the same fetch wherever the result
+  // fits the probe. See fetchPageWithTotal — the COUNT wrapper it replaces re-ran the entire
+  // statement to learn a number the first run already knew.
+  const paged = await fetchPageWithTotal(base, params, options, query, count);
+  const total = paged.total;
+  const rows  = paged.rows as Record<string, unknown>[];
   const nextCursor = (options.mode === "worker" && rows.length > 0)
     ? (rows[rows.length - 1]._cursor as number) : null;
   const out = rows.map(({ _cursor: _, ...rest }) => rest);
@@ -542,9 +552,12 @@ export async function tenureDistribution(
      GROUP BY tenure_bucket, b.branch_name, p.process_name
      ORDER BY b.branch_name, p.process_name, tenure_bucket`;
 
-  const total = options.includeTotal ? await count(base, params) : 0;
-  const sql   = applyPagination(base, options);
-  const rows  = await query(sql, params) as Record<string, unknown>[];
+  // One execution, not two: the page and its total come from the same fetch wherever the result
+  // fits the probe. See fetchPageWithTotal — the COUNT wrapper it replaces re-ran the entire
+  // statement to learn a number the first run already knew.
+  const paged = await fetchPageWithTotal(base, params, options, query, count);
+  const total = paged.total;
+  const rows  = paged.rows as Record<string, unknown>[];
   return { rows, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > rows.length };
 }
 
@@ -595,9 +608,12 @@ export async function earlyAttritionReport(
      WHERE ${clauses.join(" AND ")}
      ORDER BY e.id ASC`;
 
-  const total = options.includeTotal ? await count(base, params) : 0;
-  const sql   = options.mode === "worker" ? `${base} LIMIT ${options.limit}` : applyPagination(base, options);
-  const rows  = await query(sql, params) as Record<string, unknown>[];
+  // One execution, not two: the page and its total come from the same fetch wherever the result
+  // fits the probe. See fetchPageWithTotal — the COUNT wrapper it replaces re-ran the entire
+  // statement to learn a number the first run already knew.
+  const paged = await fetchPageWithTotal(base, params, options, query, count);
+  const total = paged.total;
+  const rows  = paged.rows as Record<string, unknown>[];
   const nextCursor = (options.mode === "worker" && rows.length > 0)
     ? (rows[rows.length - 1]._cursor as number) : null;
   const out = rows.map(({ _cursor: _, ...rest }) => rest);
