@@ -42,6 +42,86 @@ async function count(baseSql: string, params: unknown[]): Promise<number> {
   return Number((rows as Array<{ total?: number }>)[0]?.total ?? 0);
 }
 
+/**
+ * The payroll register's SELECT and joins, shared by the executor below and by the high-risk
+ * router that serves the screen.
+ *
+ * It is a shared constant rather than two copies because two copies is exactly what went wrong:
+ * the screen showed run_status, net_mismatch_amount and payroll_risk while the download showed a
+ * component breakdown plus employee_state, deduction_applied and line_flag, and neither side
+ * carried the other's columns. Both were deliberately maintained — this is the one divergence in
+ * the suite where the executor had NOT rotted — so the shapes are merged rather than one being
+ * chosen over the other, and now they cannot drift apart again.
+ *
+ * The three diagnostics are the reason the merge goes this way rather than trimming the download
+ * to match the screen. Measured on the 2026-07 run:
+ *
+ *   employee_state      1,464 lines, 350 of them for employees with active_status = 0. Without
+ *                       it an exited employee is indistinguishable from a current one.
+ *   deduction_applied   454 lines carry a 200 deduction against zero gross while net_salary
+ *                       floors at 0, so SUM(total_deductions) overstates money actually
+ *                       deducted by 38,800.
+ *   line_flag           146 of those lines pay net_salary = 200 against zero gross and zero
+ *                       attendance — 29,200 in total, every one an inactive employee.
+ *
+ * Column names follow the catalogue where the two sides disagreed: run_month (not
+ * payroll_month) and net_salary (not net_pay).
+ *
+ * Payroll arithmetic is untouched. Verified against live mas_hrms: gross - total_deductions =
+ * net_salary holds on every line where gross_salary > 0. Nothing here recomputes a figure; it
+ * makes facts visible that a total taken from the register would otherwise flatten.
+ */
+export const PAYROLL_REGISTER_BODY = `
+    SELECT spl.id AS _cursor,
+           spr.run_month,
+           spr.status AS run_status,
+           e.employee_code,
+           COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
+           COALESCE(cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
+           COALESCE(cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
+           COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
+           COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
+           COALESCE(d.dept_name, 'UNASSIGNED') AS department_name,
+           des.designation_name,
+           e.employment_status,
+           CASE WHEN e.active_status = 1 THEN 'ACTIVE' ELSE 'INACTIVE' END AS employee_state,
+           COALESCE(spl.basic,0) AS basic_pay,
+           COALESCE(spl.hra,0) AS hra,
+           COALESCE(spl.gross_salary,0) AS gross_salary,
+           COALESCE(spl.pf_employee,0) AS pf_employee,
+           COALESCE(spl.esic_employee,0) AS esic_employee,
+           COALESCE(spl.professional_tax,0) AS professional_tax,
+           COALESCE(spl.tds,0) AS tds,
+           COALESCE(spl.lwp_deduction,0) AS lwp_deduction,
+           COALESCE(spl.total_deductions,0) AS total_deductions,
+           CASE WHEN COALESCE(spl.gross_salary,0) > 0
+                THEN COALESCE(spl.total_deductions,0) ELSE 0 END AS deduction_applied,
+           spl.net_salary,
+           (COALESCE(spl.gross_salary,0) - COALESCE(spl.total_deductions,0) - COALESCE(spl.net_salary,0)) AS net_mismatch_amount,
+           CASE WHEN COALESCE(spl.net_salary,0) < 0 THEN 'NEGATIVE_NET'
+                WHEN ABS(COALESCE(spl.gross_salary,0) - COALESCE(spl.total_deductions,0) - COALESCE(spl.net_salary,0)) > 1 THEN 'NET_MISMATCH'
+                ELSE 'OK' END AS payroll_risk,
+           CASE
+             WHEN COALESCE(spl.gross_salary,0) = 0 AND COALESCE(spl.net_salary,0) > 0
+               THEN 'PAID_WITHOUT_GROSS'
+             WHEN COALESCE(spl.gross_salary,0) = 0 THEN 'ZERO_GROSS'
+             ELSE 'OK'
+           END AS line_flag,
+           spl.status AS line_status,
+           COALESCE(spl.working_days,0) AS working_days,
+           COALESCE(spl.present_days,0) AS present_days,
+           COALESCE(spl.leave_days,0) AS leave_days,
+           COALESCE(spl.final_payable_days, spl.working_days, 0) AS payable_days,
+           COALESCE(spl.lwp_days,0) AS lwp_days
+      FROM salary_prep_line spl
+      JOIN salary_prep_run spr ON spr.id = spl.run_id
+      JOIN employees e ON e.id = spl.employee_id
+      LEFT JOIN branch_master b ON b.id = e.branch_id
+      LEFT JOIN process_master p ON p.id = e.process_id
+      LEFT JOIN department_master d ON d.id = e.department_id
+      LEFT JOIN designation_master des ON des.id = e.designation_id
+      LEFT JOIN cost_centre_master cc ON cc.id = e.cost_centre_id`;
+
 // ---------------------------------------------------------------------------
 // payroll-register
 // ---------------------------------------------------------------------------
@@ -82,47 +162,7 @@ export async function payrollRegister(
   //
   // cost_centre_code / cost_centre_name are added because a payroll register without a
   // cost centre cannot be reconciled to finance.
-  const base = `
-    SELECT spl.id AS _cursor,
-           spr.run_month AS payroll_month,
-           e.employee_code,
-           COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-           COALESCE(cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
-           COALESCE(cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
-           COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
-           COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
-           COALESCE(d.dept_name, 'UNASSIGNED') AS department_name,
-           des.designation_name,
-           e.employment_status,
-           CASE WHEN e.active_status = 1 THEN 'ACTIVE' ELSE 'INACTIVE' END AS employee_state,
-           COALESCE(spl.basic,0) AS basic_pay,
-           COALESCE(spl.hra,0) AS hra,
-           COALESCE(spl.gross_salary,0) AS gross_salary,
-           COALESCE(spl.pf_employee,0) AS pf_employee,
-           COALESCE(spl.esic_employee,0) AS esic_employee,
-           COALESCE(spl.professional_tax,0) AS professional_tax,
-           COALESCE(spl.tds,0) AS tds,
-           COALESCE(spl.lwp_deduction,0) AS lwp_deduction,
-           COALESCE(spl.total_deductions,0) AS total_deductions,
-           CASE WHEN COALESCE(spl.gross_salary,0) > 0
-                THEN COALESCE(spl.total_deductions,0) ELSE 0 END AS deduction_applied,
-           spl.net_salary AS net_pay,
-           CASE
-             WHEN COALESCE(spl.gross_salary,0) = 0 AND COALESCE(spl.net_salary,0) > 0
-               THEN 'PAID_WITHOUT_GROSS'
-             WHEN COALESCE(spl.gross_salary,0) = 0 THEN 'ZERO_GROSS'
-             ELSE 'OK'
-           END AS line_flag,
-           COALESCE(spl.final_payable_days, spl.working_days, 0) AS payable_days,
-           COALESCE(spl.lwp_days,0) AS lwp_days
-      FROM salary_prep_line spl
-      JOIN salary_prep_run spr ON spr.id = spl.run_id
-      JOIN employees e ON e.id = spl.employee_id
-      LEFT JOIN branch_master b ON b.id = e.branch_id
-      LEFT JOIN process_master p ON p.id = e.process_id
-      LEFT JOIN department_master d ON d.id = e.department_id
-      LEFT JOIN designation_master des ON des.id = e.designation_id
-      LEFT JOIN cost_centre_master cc ON cc.id = e.cost_centre_id
+  const base = `${PAYROLL_REGISTER_BODY}
      WHERE ${clauses.join(" AND ")}
      ORDER BY spl.id ASC`;
 

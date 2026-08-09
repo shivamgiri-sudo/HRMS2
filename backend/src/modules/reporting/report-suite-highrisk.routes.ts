@@ -8,6 +8,7 @@ import {
 } from "./reporting-access.js";
 import { db } from "../../db/mysql.js";
 import { resolvePayrollMonth } from "./payroll-month.js";
+import { PAYROLL_REGISTER_BODY } from "./executors/payroll.executor.js";
 
 export const reportSuiteHighRiskRouter = Router();
 reportSuiteHighRiskRouter.use(requireAuth);
@@ -65,7 +66,14 @@ async function sendRows(
   res: any, code: string, sql: string, params: unknown[],
   limit: number, meta: Record<string, unknown> = {}, offset = 0
 ) {
-  const [rows] = await db.execute<RowDataPacket[]>(`${sql} LIMIT ${limit} OFFSET ${offset}`, params);
+  const [raw] = await db.execute<RowDataPacket[]>(`${sql} LIMIT ${limit} OFFSET ${offset}`, params);
+
+  // Drop the internal keyset column before the rows leave the server, exactly as the executors
+  // do. It became visible here when payroll-register started sharing its SELECT with the
+  // executor: the executor stripped _cursor and this did not, so the screen carried one column
+  // the downloaded file did not and the two disagreed by a column that is not part of the
+  // report at all.
+  const rows = raw.map(({ _cursor: _cursor, ...rest }) => rest) as RowDataPacket[];
 
   let totalCount: number;
   if (rows.length < limit) {
@@ -134,23 +142,13 @@ reportSuiteHighRiskRouter.get("/payroll-register", roles, h(async (req, res) => 
   addScopedEmployeeFilters(req, clauses, params);
   clauses.push("spr.run_month = ?"); params.push(await resolvePayrollMonth(req.query.month));
   clauses.push(payrollStatusClause("spr")); params.push(...PAYROLL_STATUSES);
-  const sql = `SELECT spr.run_month, spr.status AS run_status,
-                      e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-                      COALESCE(hcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
-                      COALESCE(hcc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
-                      COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
-                      COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
-                      spl.gross_salary, spl.total_deductions, spl.net_salary, spl.working_days, spl.present_days, spl.leave_days, spl.lwp_days, spl.status AS line_status,
-                      (COALESCE(spl.gross_salary,0) - COALESCE(spl.total_deductions,0) - COALESCE(spl.net_salary,0)) AS net_mismatch_amount,
-                      CASE WHEN COALESCE(spl.net_salary,0) < 0 THEN 'NEGATIVE_NET'
-                           WHEN ABS(COALESCE(spl.gross_salary,0) - COALESCE(spl.total_deductions,0) - COALESCE(spl.net_salary,0)) > 1 THEN 'NET_MISMATCH'
-                           ELSE 'OK' END AS payroll_risk
-                 FROM salary_prep_line spl
-                 JOIN salary_prep_run spr ON spr.id = spl.run_id
-                 JOIN employees e ON e.id = spl.employee_id
-                 LEFT JOIN branch_master b ON b.id = e.branch_id
-                 LEFT JOIN process_master p ON p.id = e.process_id
-                 LEFT JOIN cost_centre_master hcc ON hcc.id = e.cost_centre_id
+  // One SQL body, shared with the executor that serves the download. These were two
+  // separately maintained SELECTs and they had drifted into different reports: this side
+  // carried run_status, net_mismatch_amount and payroll_risk, the executor carried the
+  // component breakdown plus employee_state, deduction_applied and line_flag, and neither
+  // had the other's. Merged rather than one trimmed to the other, because both sets were
+  // deliberate — see the note on PAYROLL_REGISTER_BODY.
+  const sql = `${PAYROLL_REGISTER_BODY}
                 WHERE ${clauses.join(" AND ")}
                 ORDER BY employee_name`;
   return sendRows(res, "payroll-register", sql, params, limitParam(req.query.limit), { payrollStatuses: PAYROLL_STATUSES }, offsetParam(req.query.offset));
