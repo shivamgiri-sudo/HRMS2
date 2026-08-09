@@ -20,6 +20,7 @@ import {
   monthParam,
   monthRange,
   applyPagination,
+  fetchPageWithTotal,
 } from "./types.js";
 import {
   presentSql,
@@ -722,11 +723,12 @@ export async function overtimeSummary(
   // value leads the list.
   params.unshift(month);
 
-  const total = options.includeTotal ? await count(base, params) : 0;
-  const sql   = options.mode === "worker" ? `${base} LIMIT ${options.limit}` : applyPagination(base, options);
-  const rows  = await query(sql, params) as Record<string, unknown>[];
-  const out = rows.map(({ _cursor: _, ...rest }) => rest);
-  return { rows: out, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > out.length, nextCursor: null };
+  // One execution instead of two wherever the result fits the probe — see COUNT_FREE_PROBE.
+  // This report takes about 250s for a full month and the COUNT it used to force doubled that,
+  // to produce a number the same scan already knew. Identical rows; fewer round trips.
+  const { rows, total } = await fetchPageWithTotal(base, params, options, query, count);
+  const out = (rows as Record<string, unknown>[]).map(({ _cursor: _, ...rest }) => rest);
+  return { rows: out, rowCount: options.includeTotal ? total : out.length, isTruncated: total > out.length, nextCursor: null };
 }
 
 // ---------------------------------------------------------------------------
@@ -1081,9 +1083,10 @@ export async function monthlyShrinkageTrend(
       ) base_data
      ORDER BY month DESC, total_shrinkage_pct DESC`;
 
-  const total = options.includeTotal ? await count(base, params) : 0;
-  const sql   = applyPagination(base, options);
-  const rows  = await query(sql, params) as Record<string, unknown>[];
+  // One execution instead of two wherever the result fits the probe. This report costs ~35s and
+  // the COUNT it used to force cost another ~42s, for a number the same scan already knew — see
+  // COUNT_FREE_PROBE. Identical rows either way; only the number of round trips changes.
+  const { rows, total } = await fetchPageWithTotal(base, params, options, query, count);
   return { rows, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > rows.length, nextCursor: null };
 }
 
