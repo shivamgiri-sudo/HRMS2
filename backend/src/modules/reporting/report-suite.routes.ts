@@ -3771,7 +3771,11 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
   }
 
   const offset = Number(req.query.offset ?? 0);
-  let { rows: data, totalCount } = await queryRowsWithCount(sql, params, limit, offset);
+  // Split rather than `let { rows: data, totalCount }`: totalCount is never reassigned, and
+  // prefer-const defaults to destructuring:"any", so it reports the whole declaration even
+  // though `data` genuinely is reassigned below when account numbers are masked.
+  const { rows: initialRows, totalCount } = await queryRowsWithCount(sql, params, limit, offset);
+  let data = initialRows;
 
   // Post-query account number resolution for the bank-change-requests report.
   // account_number_enc / account_number_legacy are selected raw; surface a single
