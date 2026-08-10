@@ -37,6 +37,23 @@ CREATE TABLE IF NOT EXISTS generated_letter (
   FOREIGN KEY (template_id) REFERENCES letter_template(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- Ensure description and created_by columns exist (016 created the table without them)
+SET @_277_desc = (SELECT COUNT(*) FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='letter_template' AND COLUMN_NAME='description');
+SET @_277_sql = IF(@_277_desc=0,
+  'ALTER TABLE letter_template ADD COLUMN description TEXT NULL AFTER letter_type',
+  'SELECT 1');
+PREPARE _277_stmt FROM @_277_sql; EXECUTE _277_stmt; DEALLOCATE PREPARE _277_stmt;
+
+-- created_by in 016 is CHAR(36), but templates seed 'system' (6 chars) — widen to VARCHAR(100)
+SET @_277_cb = (SELECT COUNT(*) FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='letter_template' AND COLUMN_NAME='created_by'
+    AND COLUMN_TYPE NOT LIKE 'varchar%');
+SET @_277_sql = IF(@_277_cb>0,
+  'ALTER TABLE letter_template MODIFY COLUMN created_by VARCHAR(100) NOT NULL DEFAULT ''system''',
+  'SELECT 1');
+PREPARE _277_stmt FROM @_277_sql; EXECUTE _277_stmt; DEALLOCATE PREPARE _277_stmt;
+
 -- =====================================================================
 -- 1. APPOINTMENT LETTER
 -- =====================================================================
