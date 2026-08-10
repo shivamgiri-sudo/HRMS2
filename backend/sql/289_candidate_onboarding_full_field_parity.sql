@@ -3,9 +3,9 @@
 
 -- ── candidate_onboarding_profile additions ────────────────────────────────────
 ALTER TABLE candidate_onboarding_profile
-  ADD COLUMN IF NOT EXISTS mother_name                  VARCHAR(255)  NULL AFTER father_husband_name,
-  ADD COLUMN IF NOT EXISTS emergency_contact_name       VARCHAR(255)  NULL AFTER alt_mobile_number,
-  ADD COLUMN IF NOT EXISTS emergency_contact_relation   VARCHAR(100)  NULL AFTER emergency_contact_name,
+  ADD COLUMN IF NOT EXISTS mother_name                  VARCHAR(255)  NULL,
+  ADD COLUMN IF NOT EXISTS emergency_contact_name       VARCHAR(255)  NULL,
+  ADD COLUMN IF NOT EXISTS emergency_contact_relation   VARCHAR(100)  NULL,
   ADD COLUMN IF NOT EXISTS nationality                  VARCHAR(100)  NULL DEFAULT 'Indian',
   ADD COLUMN IF NOT EXISTS religion                     VARCHAR(100)  NULL,
   ADD COLUMN IF NOT EXISTS category                     VARCHAR(100)  NULL COMMENT 'SC/ST/OBC/General/Other',
