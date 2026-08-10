@@ -46,14 +46,19 @@
  */
 import "dotenv/config";
 import { createRequire } from "node:module";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import path from "node:path";
 
 const require = createRequire(import.meta.url);
 const mysql = require("mysql2/promise");
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const fe = await import(path.join(here, "..", "dist", "src", "shared", "fieldEncryption.js"));
+// pathToFileURL, not the bare path. A dynamic import() specifier is resolved as a URL,
+// so an absolute POSIX path happens to work on the server while a Windows path throws
+// ERR_UNSUPPORTED_ESM_URL_SCHEME ("Received protocol 'c:'"). Converting to a file:// URL
+// is correct on both, and lets this run from a dev machine against the LAN DB — which is
+// exactly where the dev-key guard below has to be trusted to fire.
+const fe = await import(pathToFileURL(path.join(here, "..", "dist", "src", "shared", "fieldEncryption.js")).href);
 
 const APPLY = process.argv.includes("--apply");
 const BATCH = 500;
@@ -67,9 +72,23 @@ const FIELDS = [
   { name: "pan", src: "pan_number", dst: "pan_number_encrypted", ver: "pan_enc_key_version" },
 ];
 
+// The guard must exist before it can be trusted. A dist/ built before
+// isUsingDevEncryptionKey() was added leaves this undefined, and calling it throws a
+// bare TypeError — which does abort, but reads like a broken script rather than a
+// refused unsafe operation. Fail closed, and say why.
+if (typeof fe.isUsingDevEncryptionKey !== "function") {
+  console.error("REFUSING: this dist/ build predates isUsingDevEncryptionKey().");
+  console.error("Without that guard the script cannot prove it is not about to write");
+  console.error("dev-key ciphertext that production could never decrypt. Rebuild the backend first.");
+  process.exit(1);
+}
+
 if (fe.isUsingDevEncryptionKey()) {
   console.error("REFUSING: running on the all-zeros DEV encryption key.");
-  console.error("Ciphertext written now would be undecryptable by production. Aborting.");
+  console.error("Ciphertext written now would be undecryptable by production.");
+  console.error("FIELD_ENCRYPTION_KEY is set only on the production server, so a run from a");
+  console.error("dev machine lands here. Set the real key in this environment, verify it");
+  console.error("matches production with scripts/field-key-fingerprint.mjs, then re-run.");
   process.exit(1);
 }
 console.log(`mode=${APPLY ? "APPLY (writes)" : "DRY-RUN (no writes)"}  dev_key=false  node_env=${process.env.NODE_ENV}`);
