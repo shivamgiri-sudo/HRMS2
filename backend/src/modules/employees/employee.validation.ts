@@ -26,6 +26,9 @@ export const createEmployeeSchema = z.object({
   // Optional: auto-assign salary at creation
   structureId: z.string().uuid().optional(),
   ctcAnnual: z.number().positive().optional(),
+  // Optional statutory info for dedup at creation time
+  panNumber: z.string().trim().max(20).nullable().optional(),
+  aadhaarNumber: z.string().trim().max(20).nullable().optional(),
 });
 
 export const updateEmployeeSchema = z.object({
@@ -58,7 +61,6 @@ export const updateEmployeeSchema = z.object({
   workingHoursEnd: z.string().regex(/^\d{2}:\d{2}(?::\d{2})?$/).nullable().optional(),
   workingDays: z.array(z.number().int().min(0).max(6)).max(7).nullable().optional(),
   photoUrl: z.string().trim().url().nullable().optional(),
-  userId: z.string().uuid().nullable().optional(),
   ctc: z.coerce.number().nonnegative().nullable().optional(),
   annualIncome: z.coerce.number().nonnegative().nullable().optional(),
   countOfDependents: z.coerce.number().int().nonnegative().nullable().optional(),

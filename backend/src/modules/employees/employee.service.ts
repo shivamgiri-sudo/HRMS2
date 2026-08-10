@@ -93,6 +93,52 @@ export const employeeService = {
     );
     if ((dup as RowDataPacket[]).length > 0) throw new Error("Employee code already exists");
 
+    // Dedup checks: PAN, Aadhaar, email, mobile against both employees and
+    // employee_statutory_info — mirrors the ATS orchestrator path so that a
+    // manual HR entry cannot create a second record for an existing employee.
+    if (input.panNumber) {
+      const pan = String(input.panNumber).trim().toUpperCase();
+      const [panDup] = await db.execute<RowDataPacket[]>(
+        `SELECT e.employee_code FROM employees e WHERE e.pan_number = ? AND e.active_status = 1 LIMIT 1`,
+        [pan]
+      );
+      if ((panDup as RowDataPacket[]).length > 0)
+        throw new Error(`PAN ${pan} already registered under employee ${(panDup as RowDataPacket[])[0].employee_code}`);
+      const [panStat] = await db.execute<RowDataPacket[]>(
+        `SELECT e.employee_code FROM employee_statutory_info si JOIN employees e ON e.id = si.employee_id WHERE si.pan_number = ? AND e.active_status = 1 LIMIT 1`,
+        [pan]
+      );
+      if ((panStat as RowDataPacket[]).length > 0)
+        throw new Error(`PAN ${pan} already registered under employee ${(panStat as RowDataPacket[])[0].employee_code}`);
+    }
+    if (input.aadhaarNumber) {
+      const aadhaar = String(input.aadhaarNumber).trim();
+      const [aaDup] = await db.execute<RowDataPacket[]>(
+        `SELECT e.employee_code FROM employee_statutory_info si JOIN employees e ON e.id = si.employee_id WHERE si.aadhaar_id = ? AND e.active_status = 1 LIMIT 1`,
+        [aadhaar]
+      );
+      if ((aaDup as RowDataPacket[]).length > 0)
+        throw new Error(`Aadhaar already registered under employee ${(aaDup as RowDataPacket[])[0].employee_code}`);
+    }
+    if (input.email) {
+      const emailNorm = String(input.email).toLowerCase().trim();
+      const [emailDup] = await db.execute<RowDataPacket[]>(
+        `SELECT employee_code FROM employees WHERE (LOWER(email) = ? OR LOWER(official_email) = ?) AND active_status = 1 LIMIT 1`,
+        [emailNorm, emailNorm]
+      );
+      if ((emailDup as RowDataPacket[]).length > 0)
+        throw new Error(`Email ${emailNorm} already registered under employee ${(emailDup as RowDataPacket[])[0].employee_code}`);
+    }
+    if (input.mobile) {
+      const mobile = String(input.mobile).trim();
+      const [mobDup] = await db.execute<RowDataPacket[]>(
+        `SELECT employee_code FROM employees WHERE mobile = ? AND active_status = 1 LIMIT 1`,
+        [mobile]
+      );
+      if ((mobDup as RowDataPacket[]).length > 0)
+        throw new Error(`Mobile ${mobile} already registered under employee ${(mobDup as RowDataPacket[])[0].employee_code}`);
+    }
+
     const id = randomUUID();
     // salary_start_date defaults to date_of_joining when not explicitly set
     const salaryStartDate = input.salaryStartDate ?? input.dateOfJoining;
@@ -283,7 +329,6 @@ export const employeeService = {
     if (input.designationId     !== undefined) { sets.push("designation_id = ?");       params.push(input.designationId ?? null); }
     if (input.reportingManagerId !== undefined) { sets.push("reporting_manager_id = ?"); params.push(input.reportingManagerId ?? null); }
     if (input.photoUrl          !== undefined) { sets.push("photo_url = ?");            params.push(input.photoUrl ?? null); }
-    if (input.userId            !== undefined) { sets.push("user_id = ?");              params.push(input.userId ?? null); }
     if (input.designationName   !== undefined) { sets.push("designation = ?");          params.push(input.designationName ?? null); }
     if (input.address1          !== undefined) { sets.push("address1 = ?");             params.push(input.address1 ?? null); }
     if (input.city              !== undefined) { sets.push("city = ?");                 params.push(input.city ?? null); }
