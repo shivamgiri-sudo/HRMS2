@@ -60,6 +60,52 @@ echo
 
 echo -e "${YELLOW}Step 1: Pull${NC}"
 echo "--------------------------------------"
+git fetch origin main
+
+# Clear untracked files that are byte-identical to what is arriving.
+#
+# People hand-place new backend/sql/*.sql and backend/scripts/*.mjs on this box before
+# committing them, so `git pull` aborts with "untracked working tree files would be
+# overwritten by merge". This blocked three deploys on 2026-08-03 and three more on
+# 2026-08-10 — and a new file appeared BETWEEN two attempts on the same afternoon,
+# because another session was working on the box at the time. The manual fix was
+# identical every time: compare each blocker against origin/main, move the matching
+# ones aside, pull again.
+#
+# Only files whose content already matches origin/main are moved, compared ignoring
+# line endings. Anything that DIFFERS is left in place and the deploy stops: a differing
+# file may be work that exists nowhere else, and quietly discarding it to let a deploy
+# proceed is how someone's afternoon disappears.
+#
+# The first pull is captured rather than fatal so its error can be read; `|| true`
+# because set -e would otherwise abort on the very failure being handled.
+PULL_OUTPUT=$(git pull --ff-only origin main 2>&1) || true
+BLOCKERS=$(printf '%s\n' "$PULL_OUTPUT" \
+           | sed -n '/untracked working tree files would be overwritten/,/^Please/p' \
+           | grep -E '^[[:space:]]+[^[:space:]]' || true)
+
+if [ -n "$BLOCKERS" ]; then
+  echo "Untracked files are blocking the pull; checking each against origin/main..."
+  UNSAFE=0
+  for f in $BLOCKERS; do
+    [ -f "$f" ] || continue
+    if git cat-file -e "origin/main:$f" 2>/dev/null \
+       && git show "origin/main:$f" | sed 's/\r$//' | diff -q - <(sed 's/\r$//' "$f") >/dev/null 2>&1; then
+      mkdir -p "$BACKUP_DIR/untracked/$(dirname "$f")"
+      mv "$f" "$BACKUP_DIR/untracked/$f"
+      echo "  identical to incoming, moved aside: $f"
+    else
+      echo -e "  ${RED}DIFFERS from origin/main — left in place: $f${NC}"
+      UNSAFE=$((UNSAFE + 1))
+    fi
+  done
+  if [ "$UNSAFE" -gt 0 ]; then
+    echo -e "${RED}Stopping: $UNSAFE untracked file(s) differ from what is being pulled.${NC}"
+    echo "Review them and move them yourself — they may exist nowhere else."
+    exit 1
+  fi
+fi
+
 # --ff-only, never a plain pull: a merge commit created on the production box is not
 # reachable from origin and silently diverges the deploy from what was reviewed.
 git pull --ff-only origin main
