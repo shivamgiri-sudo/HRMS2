@@ -7,7 +7,16 @@ what has already been built around it so nothing is idle while it waits.
 marked *(legacy)* are ones where reading that code should settle it without anyone having to
 write a spec.
 
-Last updated 2026-08-08.
+Last updated 2026-08-10.
+
+> **2026-08-10 — three of these are now RESOLVED** with read-only LAN access to the upstream
+> finance databases. Details in [DB-BILL-FINDINGS-2026-08-10.md](DB-BILL-FINDINGS-2026-08-10.md).
+> In short: **IDC payroll lives in `db_bill.salary_data`** (reconciles to the IDC voucher to the
+> rupee, and the voucher number is stored there as `VchNo`); **Req 17's provision workflow** is a
+> revenue-collection milestone tracker (Agreement→PO→GRN→Receipt→Bill Ready→PTP→EPTP) that
+> becomes a `tbl_invoice`; **Req 15's imprest voucher** is the OUTFLOW side of the already-built
+> `Imprest_Details` report. The one thing still needing a human is a data-movement decision:
+> whether to sync `db_bill.salary_data` into `mas_hrms` or live-read it (§4 of the findings doc).
 
 ---
 
