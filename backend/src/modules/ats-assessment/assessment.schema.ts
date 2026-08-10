@@ -185,6 +185,7 @@ const TABLE_DDL = [
     paste_attempts INT UNSIGNED NOT NULL DEFAULT 0,
     score_percentage DECIMAL(5,2) NULL,
     passed_benchmark TINYINT(1) NULL,
+    score_version VARCHAR(40) NOT NULL DEFAULT 'typing-score-v1',
     result_json JSON NULL,
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -307,6 +308,11 @@ async function upgradeEarlierDraftSchema() {
 
   await addColumnIfMissing("ats_typing_test_attempt", "edit_distance", "INT UNSIGNED NULL");
   await addColumnIfMissing("ats_typing_test_attempt", "passed_benchmark", "TINYINT(1) NULL");
+  await addColumnIfMissing(
+    "ats_typing_test_attempt",
+    "score_version",
+    "VARCHAR(40) NOT NULL DEFAULT 'typing-score-v1'",
+  );
 
   await addIndexIfMissing(
     "ats_candidate_assessment",

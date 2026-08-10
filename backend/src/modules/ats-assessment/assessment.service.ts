@@ -11,7 +11,12 @@ import {
   type AssessmentTemplateDefinition,
 } from "./assessment.catalog.js";
 import { ensureAssessmentSchema } from "./assessment.schema.js";
-import { calculateTypingScore } from "./typing-scoring.js";
+import {
+  calculateTypingScore,
+  canSubmitEarly,
+  selectBestTypingAttempt,
+  TYPING_SCORE_VERSION,
+} from "./typing-scoring.js";
 import { questionBankService } from "./question-bank.service.js";
 import { emailService } from "../communication/email.service.js";
 import { assessmentInvitationEmail } from "../ats/email.templates.js";
@@ -182,6 +187,7 @@ type TypingRow = RowDataPacket & {
   paste_attempts: number;
   score_percentage: number | null;
   passed_benchmark: number | null;
+  score_version: string | null;
   result_json: unknown;
 };
 
@@ -1411,6 +1417,15 @@ export async function submitTypingAttempt(
     }
 
     const actualElapsed = Math.max(1, Math.max(0, Number(typing.elapsed_since_start_seconds ?? 1)));
+    const remainingSeconds = Math.max(0, Number(typing.duration_limit_seconds) - actualElapsed);
+    // Reject tiny-sample early manual submissions; a genuinely completed passage is always allowed.
+    if (remainingSeconds > 0 && !canSubmitEarly(typing.reference_text, String(input.typedText ?? ""))) {
+      throw appError(
+        "Too little typed to submit early. Continue typing or wait for the timer to expire.",
+        400,
+        "TYPING_EARLY_SUBMIT_TOO_SHORT",
+      );
+    }
     // Cap at duration only — grace window is for network latency, not for WPM denominator.
     const elapsed = Math.min(actualElapsed, Number(typing.duration_limit_seconds));
     const scored = calculateTypingScore({
@@ -1430,7 +1445,7 @@ export async function submitTypingAttempt(
            correct_characters = ?, incorrect_characters = ?, missing_characters = ?,
            extra_characters = ?, correct_words = ?, incorrect_words = ?,
            backspace_count = ?, paste_attempts = ?, score_percentage = ?,
-           passed_benchmark = ?, result_json = CAST(? AS JSON)
+           passed_benchmark = ?, score_version = ?, result_json = CAST(? AS JSON)
        WHERE id = ?`,
       [
         String(input.typedText ?? ""),
@@ -1449,6 +1464,7 @@ export async function submitTypingAttempt(
         pasteAttempts,
         scored.score,
         scored.passedBenchmark ? 1 : 0,
+        TYPING_SCORE_VERSION,
         JSON.stringify(scored),
         typing.id,
       ],
@@ -1622,7 +1638,7 @@ async function finalizeAssessment(
            gross_wpm = ?, net_wpm = ?, accuracy_percentage = ?, edit_distance = ?,
            correct_characters = ?, incorrect_characters = ?, missing_characters = ?,
            extra_characters = ?, correct_words = ?, incorrect_words = ?,
-           score_percentage = ?, passed_benchmark = ?, result_json = CAST(? AS JSON)
+           score_percentage = ?, passed_benchmark = ?, score_version = ?, result_json = CAST(? AS JSON)
        WHERE id = ?`,
       [
         elapsed,
@@ -1638,6 +1654,7 @@ async function finalizeAssessment(
         scored.incorrectWords,
         scored.score,
         scored.passedBenchmark ? 1 : 0,
+        TYPING_SCORE_VERSION,
         JSON.stringify(scored),
         activeTyping[0].id,
       ],
@@ -1649,12 +1666,11 @@ async function finalizeAssessment(
     `SELECT *
      FROM ats_typing_test_attempt
      WHERE assessment_id = ? AND submitted_at IS NOT NULL
-     ORDER BY score_percentage DESC, attempt_no ASC
-     LIMIT 1
      FOR UPDATE`,
     [attempt.id],
   );
-  const bestTyping = typingAttempts[0];
+  // Passed attempt always outranks failed before score comparison.
+  const bestTyping = selectBestTypingAttempt(typingAttempts);
   if (definition.typing.required && !bestTyping && !options.allowIncomplete) {
     throw appError("Complete at least one typing attempt", 400, "TYPING_REQUIRED");
   }
@@ -1836,15 +1852,15 @@ export async function getCandidateAssessmentSummary(candidateId: string) {
   );
   const attempt = attempts[0];
   if (!attempt) return null;
-  const typing = await rows<TypingRow>(
+  const typingRows = await rows<TypingRow>(
     db,
     `SELECT *
      FROM ats_typing_test_attempt
-     WHERE assessment_id = ? AND submitted_at IS NOT NULL
-     ORDER BY score_percentage DESC, attempt_no ASC
-     LIMIT 1`,
+     WHERE assessment_id = ? AND submitted_at IS NOT NULL`,
     [attempt.id],
   );
+  // Passed attempt always outranks failed before score comparison.
+  const bestTypingRow = selectBestTypingAttempt(typingRows);
   return {
     id: attempt.id,
     candidateId: attempt.candidate_id,
@@ -1864,14 +1880,14 @@ export async function getCandidateAssessmentSummary(candidateId: string) {
     integrityFlags: parseJson(attempt.integrity_flags, []),
     manualReviewRequired: Boolean(attempt.manual_review_required),
     reviewRemarks: attempt.review_remarks,
-    typing: typing[0]
+    typing: bestTypingRow
       ? {
-          attemptNo: Number(typing[0].attempt_no),
-          grossWpm: typing[0].gross_wpm,
-          netWpm: typing[0].net_wpm,
-          accuracy: typing[0].accuracy_percentage,
-          score: typing[0].score_percentage,
-          passedBenchmark: Boolean(typing[0].passed_benchmark),
+          attemptNo: Number(bestTypingRow.attempt_no),
+          grossWpm: bestTypingRow.gross_wpm,
+          netWpm: bestTypingRow.net_wpm,
+          accuracy: bestTypingRow.accuracy_percentage,
+          score: bestTypingRow.score_percentage,
+          passedBenchmark: Boolean(bestTypingRow.passed_benchmark),
         }
       : null,
     assignedAt: attempt.assigned_at,

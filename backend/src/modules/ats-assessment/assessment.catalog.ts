@@ -1311,14 +1311,21 @@ const ROLE_LABELS: Record<AssessmentRole, string> = {
   quality_auditor: "Quality Auditor",
 };
 
-const typingFor = (process: AssessmentProcess, role: AssessmentRole): TypingDefinition => ({
-  required: ["backoffice", "document", "email"].includes(process),
-  durationSeconds: 180,
-  minNetWpm: role === "team_leader" ? 35 : role === "quality_auditor" ? 32 : 30,
-  minAccuracy: role === "executive" ? 92 : 95,
-  maxAttempts: 2,
-  passage: PASSAGES[process],
-});
+const typingFor = (process: AssessmentProcess, role: AssessmentRole): TypingDefinition => {
+  // Document/data-entry processes require the highest accuracy (98%).
+  // QA auditors require 97%. All other roles require the standard 95%.
+  const isDocProcess = process === "document";
+  const baseAccuracy = role === "quality_auditor" ? 97 : 95;
+  const minAccuracy = isDocProcess ? 98 : baseAccuracy;
+  return {
+    required: ["backoffice", "document", "email"].includes(process),
+    durationSeconds: 180,
+    minNetWpm: role === "team_leader" ? 35 : role === "quality_auditor" ? 32 : 30,
+    minAccuracy,
+    maxAttempts: 2,
+    passage: PASSAGES[process],
+  };
+};
 
 export const DEFAULT_ASSESSMENT_TEMPLATES: AssessmentTemplateDefinition[] = (
   ["inbound", "outbound", "backoffice", "document", "email"] as AssessmentProcess[]
