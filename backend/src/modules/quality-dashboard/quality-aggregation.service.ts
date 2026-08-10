@@ -200,15 +200,15 @@ export class QualityAggregationService {
     }, 120); // 2 min TTL
   }
 
-  async getCallDetail(callId: string): Promise<CallDetail> {
-    const { query, params } = buildCallDetailQuery(callId);
+  async getCallDetail(callId: string, ownerEmployeeCode: string): Promise<CallDetail> {
+    const { query, params } = buildCallDetailQuery(callId, ownerEmployeeCode);
     const conn = await this.db.getConnection();
 
     try {
       const [rows] = await conn.execute<RowDataPacket[]>(query, params);
 
       if (!rows || rows.length === 0) {
-        throw new Error(`Call ${callId} not found`);
+        throw new Error(`Call ${callId} not found for agent`);
       }
 
       const row = rows[0];

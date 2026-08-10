@@ -256,7 +256,7 @@ qualityAggregationRouter.get(
 
       logger.info(`Call Detail request: callId=${callId}, agent=${employeeCode}`);
 
-      const result = await qualityService.getCallDetail(callId);
+      const result = await qualityService.getCallDetail(callId, employeeCode);
 
       res.status(200).json({
         success: true,

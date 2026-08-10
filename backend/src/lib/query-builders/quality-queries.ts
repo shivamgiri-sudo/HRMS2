@@ -281,7 +281,7 @@ export function buildCallsReviewQuery(
 /**
  * Single call detail with sub-scores
  */
-export function buildCallDetailQuery(callId: string): QueryResult {
+export function buildCallDetailQuery(callId: string, ownerEmployeeCode: string): QueryResult {
   const query = `
     SELECT
       id as call_id,
@@ -300,19 +300,20 @@ export function buildCallDetailQuery(callId: string): QueryResult {
       ROUND((proper_hold_procedure + dead_air_under_10_seconds) / 2 * 100, 2) as hold_procedure_score,
       ROUND((accurate_issue_probing + proper_grammar) / 2 * 100, 2) as resolution_score,
       ROUND((proper_call_closure + further_assistance_offered) / 2 * 100, 2) as closing_score,
-      CONCAT('https://recordings.internal/call_', id) as recording_url,
-      'Transcript text here' as transcript_text,
-      'Coach feedback goes here' as feedback,
+      NULL as recording_url,
+      NULL as transcript_text,
+      NULL as feedback,
       (SELECT ROUND(AVG(quality_percentage), 2)
        FROM db_audit.call_quality_assessment
-       WHERE scenario = ? AND CallDate >= DATE_SUB(NOW(), INTERVAL 7 DAY)) as peer_scenario_avg
-    FROM db_audit.call_quality_assessment
+       WHERE scenario = cqa.scenario AND CallDate >= DATE_SUB(NOW(), INTERVAL 7 DAY)) as peer_scenario_avg
+    FROM db_audit.call_quality_assessment cqa
     WHERE id = ?
+      AND User = ?
   `;
 
   return {
     query: query.replace(/\n\s+/g, ' ').trim(),
-    params: ['Query', callId]
+    params: [callId, ownerEmployeeCode]
   };
 }
 
