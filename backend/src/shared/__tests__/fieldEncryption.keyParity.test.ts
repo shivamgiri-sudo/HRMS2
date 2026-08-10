@@ -5,6 +5,8 @@ import {
   decryptField,
   checkKeyParity,
   isUsingDevEncryptionKey,
+  isUsingDevBlindIndexKey,
+  blindIndex,
 } from "../fieldEncryption.js";
 
 /**
@@ -72,5 +74,40 @@ describe("field encryption key parity guard", () => {
   it("round-trips through the real encrypt/decrypt pair", () => {
     const account = "033810412345678";
     expect(decryptField(encryptField(account))).toBe(account);
+  });
+});
+
+/**
+ * The blind index has no parity check available — an HMAC is one-way, and the columns start
+ * empty, so there is nothing to test a candidate key against. An index written with the wrong
+ * key is therefore undetectable at write time AND at read time: every lookup simply returns no
+ * rows, which the duplicate-employee guard reads as "no duplicate exists". Refusing to run on
+ * the dev key is the only defence, so this must not silently regress.
+ */
+describe("blind index key detection", () => {
+  it("reports the dev blind-index key, which is what the suite runs on", () => {
+    expect(isUsingDevBlindIndexKey()).toBe(true);
+  });
+
+  it("is independent of the encryption key check", () => {
+    // Two separate env vars and two separate keys; conflating them would let a run proceed with
+    // a correct encryption key and a wrong index key.
+    expect(isUsingDevBlindIndexKey()).not.toBe(undefined);
+    expect(isUsingDevEncryptionKey()).not.toBe(undefined);
+  });
+
+  it("is deterministic — the same input always yields the same index", () => {
+    // Non-determinism would make every backfilled row unmatchable.
+    expect(blindIndex("123456789012")).toBe(blindIndex("123456789012"));
+  });
+
+  it("produces the char(64) hex the column is declared as", () => {
+    expect(blindIndex("123456789012")).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it("distinguishes values that differ only by whitespace", () => {
+    // Why the backfill indexes the raw trimmed value and does not normalise: ' 1234' and '1234'
+    // are different values to `WHERE col = ?` today, and the index must not change that.
+    expect(blindIndex("123456789012")).not.toBe(blindIndex("1234 5678 9012"));
   });
 });

@@ -127,6 +127,23 @@ export function isUsingDevEncryptionKey(): boolean {
 }
 
 /**
+ * True when the process is running on the built-in development blind-index key.
+ *
+ * checkKeyParity() cannot cover this one. A blind index is a one-way HMAC, so there is nothing
+ * to decrypt and compare against — and the columns start empty, so there is no existing value to
+ * check a candidate key against either. The only available signal is whether the key is the dev
+ * fallback.
+ *
+ * This matters more than it looks. An index written with the wrong key is not detectably wrong:
+ * every lookup simply returns no rows. For the duplicate-employee guard that reads as "no
+ * duplicate exists", so the guard would pass everything and silently reopen the hole it was
+ * written to close. Any bulk writer of a blind-index column must refuse to run when this is true.
+ */
+export function isUsingDevBlindIndexKey(): boolean {
+  return blindIndexKey.equals(Buffer.from(DEV_BLIND_INDEX_KEY, "hex"));
+}
+
+/**
  * Resolve account_number from a bank detail row that may be in the encrypted
  * column (account_number_enc), the legacy plaintext varbinary (account_number),
  * or neither. Returns null when no usable value is present.
