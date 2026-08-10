@@ -66,7 +66,45 @@ const unscoped = (() => {
   return found;
 })();
 
+/**
+ * What the scan CAN see, used only to prove it is not blind.
+ *
+ * Every assertion below is of the form "this set is empty", and an empty set is also what a
+ * scan that matched nothing produces. The block splitter keys on `\n    case "` — exactly four
+ * spaces — so reindenting the switch, wrapping it in a helper, or moving these blocks to
+ * another file would make `unscoped` empty and turn all three tests green while enforcing
+ * nothing at all. This counts the blocks the scan positively identified, so that failure mode
+ * announces itself instead of reading as success.
+ */
+const scanned = (() => {
+  let cases = 0;
+  let scoped = 0;
+  for (const part of routes.split(/(?=\n {4}case ")/)) {
+    if (!/^\n {4}case "([a-z0-9-]+)"/.test(part)) continue;
+    cases++;
+    if (/addScopedEmployeeFilters\s*\(/.test(part)) scoped++;
+  }
+  return { cases, scoped };
+})();
+
 describe("report row scope", () => {
+  it("the scan can still see the switch — otherwise every assertion below passes vacuously", () => {
+    // Floors, not counts. Measured on this file at the time of writing: 98 case blocks, 53 of
+    // them scoped. The thresholds sit far below that so ordinary churn never trips them — they
+    // only fire when the scan has stopped seeing the switch at all.
+    expect(
+      scanned.cases,
+      "no `case` blocks matched in report-suite.routes.ts. The splitter expects exactly four " +
+        "spaces of indentation; if the switch was reindented, wrapped, or moved to another " +
+        "file, this suite now enforces nothing. Fix the parser before trusting a green run.",
+    ).toBeGreaterThan(50);
+    expect(
+      scanned.scoped,
+      "almost no block appears to call addScopedEmployeeFilters. Either the helper was renamed " +
+        "or the scan is reading the wrong file — in both cases the assertions below are hollow.",
+    ).toBeGreaterThan(20);
+  });
+
   it("no report reachable from the report library is unscoped", () => {
     // Reachable means listed in the frontend catalogue — that is what puts a tile on the
     // page. ff-settlement-register was the last one: it read full_final_calculation (notice

@@ -318,6 +318,36 @@ export async function esicContributionRegister(
   };
 }
 
+/**
+ * The professional-tax jurisdiction for a payroll line: the state the employee WORKS in.
+ *
+ * Reading b.state alone left the state blank on 172 of the 235 PT-paying lines in 2026-07 —
+ * 73% of a register whose whole purpose is a state-levied tax, where the state decides the slab
+ * and the filing. The cause is not missing data. branch_master holds DUPLICATE rows for the same
+ * branch name, one populated and one blank, and those employees are linked to the blank twin:
+ * KARNAL exists twice as blank and 'HARYANA', MOHALI as blank and 'PUNJAB', JAIPUR as blank and
+ * 'Rajasthan', MEERUT as blank and 'Uttar Pradesh'. The state was in the database all along.
+ *
+ * So the fallback resolves by branch NAME — the same shape used elsewhere in this codebase where
+ * an id points at an unpopulated row — but ONLY when every same-named branch that carries a
+ * state agrees. HEAD OFFICE exists three times, as 'Maharashtra', blank, and 'Uttar Pradesh';
+ * picking one of those for a tax report would be inventing a jurisdiction, so an ambiguous name
+ * stays UNKNOWN and says so rather than guessing.
+ *
+ * Measured on 2026-07: unresolved drops from 172 to 49, and the 49 that remain are genuinely
+ * ambiguous or absent everywhere. Nothing here is inferred from a city or a branch name spelling.
+ *
+ * The real fix is upstream — populate the blank duplicates, or re-point employees at the row that
+ * has the data — and that is a production data change, not a reporting one.
+ */
+const PT_STATE_JURISDICTION = `COALESCE(
+             NULLIF(b.state, ''),
+             (SELECT CASE WHEN COUNT(DISTINCT UPPER(TRIM(b2.state))) = 1 THEN MAX(b2.state) END
+                FROM branch_master b2
+               WHERE b2.branch_name = b.branch_name
+                 AND b2.state IS NOT NULL AND b2.state <> ''),
+             'UNKNOWN')`;
+
 // ---------------------------------------------------------------------------
 // pt-register
 // ---------------------------------------------------------------------------
@@ -356,7 +386,7 @@ export async function ptRegister(
            -- employee's own (home) state, which is what e.state holds. On live data the
            -- two disagree for 326 of 1,042 active employees, so this is not cosmetic.
            -- Branch state also covers more people: 1,113 of 1,123 against 1,042.
-           b.state AS pt_state
+           ${PT_STATE_JURISDICTION} AS pt_state
       FROM salary_prep_line spl
       JOIN salary_prep_run spr ON spr.id = spl.run_id
       JOIN employees e ON e.id = spl.employee_id
@@ -761,7 +791,11 @@ export async function ptMonthlyRegister(
            COALESCE(sp_cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
            COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
            COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
-           COALESCE(e.state, 'Unknown') AS state,
+           -- Was COALESCE(e.state,'Unknown') — the employee's HOME state, which is the wrong
+           -- jurisdiction: professional tax is levied where the employee works. Its sibling
+           -- pt-register has always used the branch state for that reason, so the two registers
+           -- disagreed about the state of the same employee. Now both resolve identically.
+           ${PT_STATE_JURISDICTION} AS state,
            spl.gross_salary,
            spl.professional_tax AS pt_deducted,
            spr.run_month
@@ -772,7 +806,10 @@ export async function ptMonthlyRegister(
       LEFT JOIN process_master p ON p.id = e.process_id
       LEFT JOIN cost_centre_master sp_cc ON sp_cc.id = e.cost_centre_id
      WHERE ${clauses.join(" AND ")}
-     ORDER BY e.state, employee_name`;
+     -- Order by the state actually shown, not e.state: the displayed column is now the work
+     -- jurisdiction, and sorting a PT register by the employee's home state would group rows
+     -- under a heading they do not carry.
+     ORDER BY state, employee_name`;
 
   // One execution, not two: the page and its total come from the same fetch wherever the result
   // fits the probe. See fetchPageWithTotal — the COUNT wrapper it replaces re-ran the entire

@@ -3717,7 +3717,15 @@ export const REPORT_CATALOG: ReportDefinition[] = [
     name: "Document Expiry Tracker",
     category: "Documents",
     subcategory: "Compliance",
-    description: "Employee documents with upcoming expiry",
+    // Reads as a clean bill of health and is not one. employee_documents.expiry_date is NULL on
+    // ALL 207,616 rows (measured 2026-08-10), and this report's first predicate is
+    // `expiry_date IS NOT NULL` — so it returns zero rows today and will keep doing so until
+    // expiry dates are actually captured at upload. An empty compliance report that means "no
+    // expiry dates are recorded" is dangerous when it is read as "nothing is expiring", which is
+    // exactly how an empty grid reads. The description says so rather than leaving the reader to
+    // infer it. Deliberately NOT marked blocked: the SQL is correct and the report starts working
+    // the moment the column is populated.
+    description: "Employee documents with upcoming expiry. NOTE: expiry_date is currently unset on every document in the system, so this report returns nothing — that means no expiry dates are recorded, not that nothing is expiring.",
     rowGrain: "One row per employee per document type",
     primaryKey: ["employee_code", "document_type"],
     columns: [
