@@ -72,9 +72,16 @@ export const billSalaryVoucherService = {
     const prefix = String(options.entityPrefix ?? "").trim();
     if (!prefix) throw new Error("An entity prefix (e.g. 'IDC') is required");
 
-    const [year, month] = period.split("-");
-    const monthStart = `${year}-${month}-01`;
-    const monthEnd = `${year}-${month}-31`;
+    // Half-open month interval: [first of this month, first of next month). NOT
+    // `BETWEEN '…-01' AND '…-31'` — day 31 does not exist in a 30-day month and is wildly
+    // invalid for February, so the closed form is a fragile string→date coercion that happens to
+    // work for 31-day months and silently mis-bounds the rest. `< nextMonthStart` is exact for
+    // every month and needs no knowledge of month length.
+    const [year, month] = period.split("-").map(Number);
+    const monthStart = `${year}-${String(month).padStart(2, "0")}-01`;
+    const nextMonthStart = month === 12
+      ? `${year + 1}-01-01`
+      : `${year}-${String(month + 1).padStart(2, "0")}-01`;
 
     // READ-ONLY. billQuery rejects anything that is not SELECT/SHOW. The LIKE prefix is
     // parameterised; only this company's rows come back.
@@ -82,9 +89,9 @@ export const billSalaryVoucherService = {
       `SELECT EmpCode, Branch, Designation, NetSalary, Gross, EPF, EPFCompany,
               ESIC, ESICCompany, ProTaxDeduction, IncomeTax, LoanDed, OtherDeduction
          FROM salary_data
-        WHERE SalDate BETWEEN ? AND ?
+        WHERE SalDate >= ? AND SalDate < ?
           AND EmpCode LIKE ?`,
-      [monthStart, monthEnd, `${prefix}%`],
+      [monthStart, nextMonthStart, `${prefix}%`],
     );
 
     // db_bill has the branch NAME but no branch_id; the voucher buckets by id, and "HEAD OFFICE"
