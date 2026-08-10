@@ -398,9 +398,28 @@ export const attendanceEngineService = {
 
     // 3. Week off from roster — signal caller with isRosterWeekOff=true so it can
     //    cross-validate against actual Cosec/APR data (G12).
+    //
+    // This tested roster_status = 'Week Off', a literal that matches ZERO of the 413,386 rows in
+    // wfm_roster_assignment — the column only ever holds 'Present' (412,032) or 'published'
+    // (1,354). Measured live 2026-08-09. The real marker is the dedicated `is_week_off` tinyint,
+    // set on 170 rows. Two engine outcomes were therefore unreachable, and attendance_daily_record
+    // holds 0 rows of either status across its whole history: `week_off` never applied, so a
+    // rostered day off was graded as an ordinary working day, and G12's `week_off_worked` could
+    // never fire.
+    //
+    // THIS CHANGES PAY, which is why it is called out rather than slipped in. All 170
+    // is_week_off rows overlap an attendance record: 16 present, 22 half_day, 23 absent, 109
+    // missing_punch. Once the override applies, those 23 stop being absent on their own week-off
+    // and the 16 who genuinely worked one regain the flag WFM reviews. Only re-processed days are
+    // affected — rows already written are not rewritten by this change.
+    //
+    // Both predicates are kept. is_week_off is the column the roster actually populates;
+    // roster_status is retained so that if any future writer does use the string, it still
+    // registers rather than silently reverting to the bug this replaces.
     const [woffRows] = await db.execute<RowDataPacket[]>(
       `SELECT id FROM wfm_roster_assignment
-       WHERE employee_id = ? AND roster_date = ? AND roster_status = 'Week Off' LIMIT 1`,
+       WHERE employee_id = ? AND roster_date = ?
+         AND (is_week_off = 1 OR roster_status = 'Week Off') LIMIT 1`,
       [employeeId, date]
     );
     if ((woffRows as RowDataPacket[]).length > 0) return { status: 'week_off', isRosterWeekOff: true };
