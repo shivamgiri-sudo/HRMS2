@@ -67,15 +67,43 @@ const ENTITY_QUERIES: Record<string, string> = {
   `,
 };
 
-// Anonymize handlers — minimal: NULL out PII fields
+/**
+ * Anonymize handlers — erase the personal data a subject-erasure request covers.
+ *
+ * Two defects fixed here, both verified against live mas_hrms on 2026-08-10:
+ *
+ * 1. `mobile` is NOT NULL and the statement set it to NULL. With STRICT_TRANS_TABLES on
+ *    (it is, globally and per-session) that raises ER_BAD_NULL_ERROR and the whole UPDATE
+ *    aborts — so NOTHING was erased. `ats_candidate` has 0 rows marked ANONYMIZED, and one
+ *    data_rights_request is already pending against this path. Set an empty sentinel instead;
+ *    there is no unique index on `mobile`, so a shared value cannot collide.
+ *
+ * 2. The column list omitted most of the raw identifiers while diligently clearing their
+ *    masks and hashes — erasing the derived copies and leaving the originals. Populated
+ *    counts for what was being left behind:
+ *      father_name 32,078 | bank_account_no 31,191 | bank_ifsc 31,177 | aadhar_number 28,764
+ *      uan_number 12,364 | offer_salary 1,073 | current_address 75 | permanent_address 67
+ *    Note `address` was cleared but `current_address` / `permanent_address` were not.
+ *
+ * Deliberately NOT cleared: recruiter_email / recruiter_mobile. Those identify the recruiter
+ * (staff), not the data subject, and erasing them would destroy unrelated records.
+ *
+ * Every column below is nullable — checked, not assumed. Adding a NOT NULL column here
+ * reintroduces defect 1 and silently disables erasure again.
+ */
 const ANONYMIZE_HANDLERS: Record<string, (entityId: string) => Promise<void>> = {
   ats_candidate: async (id) => {
     await db.execute(
       `UPDATE ats_candidate
-       SET full_name = 'ANONYMIZED', mobile = NULL, email = NULL,
-           address = NULL, pan_number = NULL, pan_number_masked = NULL,
-           aadhar_number_masked = NULL, bank_account_no_masked = NULL,
-           aadhar_number_hash = NULL, pan_number_hash = NULL, bank_account_no_hash = NULL,
+       SET full_name = 'ANONYMIZED', mobile = '', email = NULL,
+           address = NULL, current_address = NULL, permanent_address = NULL,
+           emergency_contact_mobile = NULL, father_name = NULL, photo_url = NULL,
+           pan_number = NULL, pan_number_masked = NULL, pan_number_hash = NULL,
+           aadhar_number = NULL, aadhar_number_masked = NULL, aadhar_number_hash = NULL,
+           uan_number = NULL,
+           bank_account_no = NULL, bank_account_no_encrypted = NULL,
+           bank_account_no_masked = NULL, bank_account_no_hash = NULL, bank_ifsc = NULL,
+           offer_salary = NULL,
            date_of_birth = NULL, updated_at = NOW()
        WHERE id = ?`,
       [id]
