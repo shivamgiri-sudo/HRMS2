@@ -47,11 +47,14 @@ function normaliseForMySQL8(sql: string): string {
   // be converted to an unconditional form (the column either exists or the statement
   // is idempotent-safe on a fresh DB).
   return sql
-    // ALTER TABLE … ADD COLUMN / ADD INDEX variants
+    // ALTER TABLE … ADD COLUMN / ADD INDEX/KEY variants (KEY is a synonym for INDEX)
     .replace(/\bADD\s+COLUMN\s+IF\s+NOT\s+EXISTS\b/gi, "ADD COLUMN")
     .replace(/\bADD\s+INDEX\s+IF\s+NOT\s+EXISTS\b/gi, "ADD INDEX")
+    .replace(/\bADD\s+KEY\s+IF\s+NOT\s+EXISTS\b/gi, "ADD KEY")
     .replace(/\bADD\s+UNIQUE\s+INDEX\s+IF\s+NOT\s+EXISTS\b/gi, "ADD UNIQUE INDEX")
     .replace(/\bADD\s+UNIQUE\s+KEY\s+IF\s+NOT\s+EXISTS\b/gi, "ADD UNIQUE KEY")
+    .replace(/\bADD\s+FULLTEXT\s+INDEX\s+IF\s+NOT\s+EXISTS\b/gi, "ADD FULLTEXT INDEX")
+    .replace(/\bADD\s+SPATIAL\s+INDEX\s+IF\s+NOT\s+EXISTS\b/gi, "ADD SPATIAL INDEX")
     // Standalone CREATE INDEX IF NOT EXISTS
     .replace(/\bCREATE\s+INDEX\s+IF\s+NOT\s+EXISTS\b/gi, "CREATE INDEX")
     .replace(/\bCREATE\s+UNIQUE\s+INDEX\s+IF\s+NOT\s+EXISTS\b/gi, "CREATE UNIQUE INDEX")
