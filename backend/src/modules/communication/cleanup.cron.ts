@@ -1,12 +1,61 @@
-import type { ResultSetHeader } from "mysql2";
+import type { ResultSetHeader, RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 
 const RUN_HOUR = 2;
+/** Older than this and a 'queued' row is not in flight — it was abandoned. */
+const STALE_QUEUED_HOURS = 6;
 let nextRun: NodeJS.Timeout | undefined;
+
+/**
+ * Report dispatches abandoned in 'queued', without touching them.
+ *
+ * dispatchService inserts a dispatch_log row as 'queued', calls the provider, then
+ * updates the row to 'sent' or 'failed'. Nothing anywhere scans for 'queued' — so if
+ * the process dies between the insert and the update, the row stays 'queued' for good:
+ * never sent, never retried, and invisible because nobody queries a status that is
+ * supposed to be transient.
+ *
+ * It has already happened, and at more than one moment: 25 rows sit at 'queued' across
+ * all three channels, the oldest from 2026-08-04, with the largest cluster at
+ * 2026-08-07 03:31 when the workers process was stopped mid-dispatch to halt the mail
+ * storm. Every one of the 25 is flagged is_critical = 1 — critical is precisely the
+ * class that must not vanish quietly, and it is the class this gap has swallowed.
+ *
+ * Deliberately reports rather than resends. The row is written BEFORE the provider
+ * call, so a stale 'queued' cannot distinguish "never sent" from "sent, then the
+ * process died before recording it" — retrying would double-send to real people, and
+ * for a financial notification that is worse than the original loss. Making it visible
+ * lets a human decide; guessing does not.
+ */
+export async function reportStaleQueuedDispatches(): Promise<number> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT COUNT(*) AS stuck,
+            MIN(created_at) AS oldest,
+            COUNT(DISTINCT channel) AS channels,
+            SUM(is_critical = 1) AS critical
+       FROM dispatch_log
+      WHERE status = 'queued'
+        AND created_at < NOW() - INTERVAL ? HOUR`,
+    [STALE_QUEUED_HOURS],
+  );
+
+  const stuck = Number(rows[0]?.stuck ?? 0);
+  if (stuck > 0) {
+    console.warn(
+      `[CommunicationCleanup] ${stuck} dispatch(es) abandoned in 'queued' for over `
+      + `${STALE_QUEUED_HOURS}h (oldest ${String(rows[0]?.oldest)}, ${rows[0]?.critical ?? 0} critical). `
+      + `These were never sent and nothing retries them — a process died between writing the `
+      + `row and calling the provider. Not auto-resent: the row predates the provider call, so `
+      + `a resend risks delivering twice.`,
+    );
+  }
+  return stuck;
+}
 
 export async function runCommunicationCleanup(): Promise<{
   routineDeleted: number;
   standardDeleted: number;
+  staleQueued: number;
 }> {
   const [routineResult] = await db.execute<ResultSetHeader>(
     `DELETE FROM dispatch_log
@@ -28,7 +77,16 @@ export async function runCommunicationCleanup(): Promise<{
     `[CommunicationCleanup] Deleted ${routineDeleted} routine rows (>30d), ${standardDeleted} standard rows (>90d)`
   );
 
-  return { routineDeleted, standardDeleted };
+  // After the deletes, so the count reflects what is actually left. Never allowed to
+  // fail the cleanup: pruning old rows is the job here, reporting is the addition.
+  let staleQueued = 0;
+  try {
+    staleQueued = await reportStaleQueuedDispatches();
+  } catch (error) {
+    console.error("[CommunicationCleanup] stale-queued check failed", error);
+  }
+
+  return { routineDeleted, standardDeleted, staleQueued };
 }
 
 export function millisecondsUntilNextCleanup(now = new Date()): number {
