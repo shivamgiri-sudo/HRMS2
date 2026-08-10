@@ -45,14 +45,6 @@ SET @_277_sql = IF(@_277_desc=0,
   'SELECT 1');
 PREPARE _277_stmt FROM @_277_sql; EXECUTE _277_stmt; DEALLOCATE PREPARE _277_stmt;
 
--- created_by in 016 is CHAR(36), but templates seed 'system' (6 chars) — widen to VARCHAR(100)
-SET @_277_cb = (SELECT COUNT(*) FROM information_schema.COLUMNS
-  WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='letter_template' AND COLUMN_NAME='created_by'
-    AND COLUMN_TYPE NOT LIKE 'varchar%');
-SET @_277_sql = IF(@_277_cb>0,
-  'ALTER TABLE letter_template MODIFY COLUMN created_by VARCHAR(100) NOT NULL DEFAULT ''system''',
-  'SELECT 1');
-PREPARE _277_stmt FROM @_277_sql; EXECUTE _277_stmt; DEALLOCATE PREPARE _277_stmt;
 
 -- =====================================================================
 -- 1. APPOINTMENT LETTER
