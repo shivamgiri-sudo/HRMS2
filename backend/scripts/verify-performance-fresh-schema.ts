@@ -42,14 +42,24 @@ function checksum(filePath: string): string {
 }
 
 function normaliseForMySQL8(sql: string): string {
-  // MySQL 8.x does not support ADD COLUMN IF NOT EXISTS or ADD INDEX IF NOT EXISTS
-  // (MariaDB extensions). On a fresh empty schema every ADD is safe without the guard.
+  // Strip MariaDB-only conditional DDL guards. On a fresh empty schema every ADD/CREATE
+  // is safe without the guard, and every CHANGE/MODIFY that would fail silently can
+  // be converted to an unconditional form (the column either exists or the statement
+  // is idempotent-safe on a fresh DB).
   return sql
+    // ALTER TABLE … ADD COLUMN / ADD INDEX variants
     .replace(/\bADD\s+COLUMN\s+IF\s+NOT\s+EXISTS\b/gi, "ADD COLUMN")
     .replace(/\bADD\s+INDEX\s+IF\s+NOT\s+EXISTS\b/gi, "ADD INDEX")
     .replace(/\bADD\s+UNIQUE\s+INDEX\s+IF\s+NOT\s+EXISTS\b/gi, "ADD UNIQUE INDEX")
     .replace(/\bADD\s+UNIQUE\s+KEY\s+IF\s+NOT\s+EXISTS\b/gi, "ADD UNIQUE KEY")
-    .replace(/\bMODIFY\s+COLUMN\s+IF\s+EXISTS\b/gi, "MODIFY COLUMN");
+    // Standalone CREATE INDEX IF NOT EXISTS
+    .replace(/\bCREATE\s+INDEX\s+IF\s+NOT\s+EXISTS\b/gi, "CREATE INDEX")
+    .replace(/\bCREATE\s+UNIQUE\s+INDEX\s+IF\s+NOT\s+EXISTS\b/gi, "CREATE UNIQUE INDEX")
+    // ALTER TABLE … CHANGE COLUMN IF EXISTS / MODIFY COLUMN IF EXISTS
+    .replace(/\bCHANGE\s+COLUMN\s+IF\s+EXISTS\b/gi, "CHANGE COLUMN")
+    .replace(/\bMODIFY\s+COLUMN\s+IF\s+EXISTS\b/gi, "MODIFY COLUMN")
+    // ALTER TABLE … DROP INDEX IF EXISTS (MariaDB) → DROP INDEX (MySQL uses DROP INDEX name ON tbl)
+    .replace(/\bDROP\s+INDEX\s+IF\s+EXISTS\b/gi, "DROP INDEX");
 }
 
 function executableStatements(rawSql: string): string[] {
