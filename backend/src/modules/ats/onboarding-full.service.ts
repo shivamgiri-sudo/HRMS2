@@ -11,6 +11,11 @@ import { luckpayClient, sanitizeProviderPayload } from "../integrations/luckpay/
 import { withProviderFailureLogged } from "./bgv-api-log.service.js";
 import { getConfiguredBgvProviderAdapter } from "./bgv-provider.adapter.js";
 import { encrypt, decrypt } from "../../utils/encryption.js";
+// Reads go through the format-aware resolver, not utils/encryption.decrypt directly.
+// ats_candidate.bank_account_no_encrypted and candidate_onboarding_profile.pan_number_encrypted
+// receive BOTH the legacy AES-CBC shape written below and the canonical AES-GCM shape written by
+// the DPDP backfill; decrypt() rejects the latter as "Invalid encrypted format".
+import { decryptPii } from "../../shared/piiCiphertext.js";
 import { resolveOnboardingDocumentFile } from "./onboardingDocumentPath.js";
 import { extractFromDocument, crossValidateDocument, checkDuplicates } from "./ocr.service.js";
 import { assertEmployableAge, persistMinorFlag, resolveVerifiedDob } from "./ageVerification.service.js";
@@ -819,7 +824,7 @@ function decryptPanForProvider(encrypted: unknown): string | null {
   const value = nonEmptyString(encrypted);
   if (!value) return null;
   try {
-    const pan = String(decrypt(value)).trim().toUpperCase();
+    const pan = String(decryptPii(value)).trim().toUpperCase();
     return /^[A-Z]{5}[0-9]{4}[A-Z]$/.test(pan) ? pan : null;
   } catch (error) {
     console.warn("[BGV] Could not decrypt stored PAN - falling back to manual review:", error instanceof Error ? error.message : String(error));
@@ -829,7 +834,7 @@ function decryptPanForProvider(encrypted: unknown): string | null {
 
 export async function loadAsyncBgvTriggerContext(
   candidateId: string,
-  decryptAccountNumber: (value: string) => string = decrypt,
+  decryptAccountNumber: (value: string) => string = decryptPii,
 ): Promise<AsyncBgvTriggerContext> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT

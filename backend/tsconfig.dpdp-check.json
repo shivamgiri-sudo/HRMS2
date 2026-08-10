@@ -1,0 +1,14 @@
+{
+  "extends": "./tsconfig.json",
+  "include": [
+    "src/shared/piiCiphertext.ts",
+    "src/shared/__tests__/piiCiphertext.test.ts",
+    "src/modules/ats/onboarding-full.service.ts",
+    "src/modules/ats/bgv-verification.service.ts",
+    "scripts/statutory-identifier-encrypt-backfill.ts"
+  ],
+  // "multer" is added on top of the project's ["node"] because Express.Multer.File is a global
+  // augmentation contributed by a file outside this scoped include. Without it the check reports
+  // a TS2694 that the full build does not have — a scoping artefact, not a defect.
+  "compilerOptions": { "noEmit": true, "types": ["node", "multer"] }
+}

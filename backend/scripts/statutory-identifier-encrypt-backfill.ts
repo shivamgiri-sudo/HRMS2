@@ -8,9 +8,10 @@
  *   cd backend
  *   npx tsx scripts/statutory-identifier-encrypt-backfill.ts [--dry-run] [--batch=500]
  *
- * SCOPE (measured 2026-08-10)
+ * SCOPE (measured against production 2026-08-10)
  *   ats_candidate.aadhar_number         28,764
  *   ats_candidate.pan_number            24,929
+ *   ats_candidate.bank_account_no       31,142  (49 more already hold legacy AES-CBC ciphertext)
  *   employee_statutory_info.pan_number   3,341  (+ pan_blind_index, for the duplicate guard)
  *   vendor_master.pan_number             1,373
  *
@@ -71,6 +72,22 @@ const TARGETS: Target[] = [
     blindIndexColumn: "pan_blind_index",
   },
   { table: "vendor_master", source: "pan_number", encrypted: "pan_number_encrypted" },
+  /**
+   * Not a statutory identifier, but it belongs in this pass rather than in a rival script:
+   * same table, same key, same guards, and a second script would be a second thing to keep
+   * correct. 31,142 of ats_candidate's 31,191 bank accounts have no ciphertext at all.
+   *
+   * The other 49 already hold LEGACY AES-CBC ciphertext written by the ATS onboarding flow
+   * (utils/encryption.ts, keyed off BANK_ENCRYPTION_KEY || JWT_SECRET). This backfill writes
+   * only WHERE <encrypted> IS NULL, so it never touches them and never double-encrypts —
+   * and shared/piiCiphertext.ts reads both shapes, so the mixed column is safe.
+   *
+   * bank_account_no_hash is deliberately NOT populated here. It feeds the onboarding
+   * duplicate-account fraud check; filling 31,142 hashes in one pass would fire that check
+   * across the entire historical candidate base at once. That is a business decision about
+   * fraud review capacity, not a side effect a privacy backfill gets to cause.
+   */
+  { table: "ats_candidate", source: "bank_account_no", encrypted: "bank_account_no_encrypted" },
 ];
 
 const one = (rows: RowDataPacket[]): Record<string, unknown> => rows[0] as Record<string, unknown>;
