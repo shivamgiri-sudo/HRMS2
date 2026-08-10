@@ -99,9 +99,27 @@ change reported figures.
 
 ## 6. Deploy-time facts, not questions
 
-**Migrations 1099 and 1102–1104 are on `main` but have NOT been run against production.** This
-codebase runs migrations at boot, so the next `pm2` restart applies them. All are additive.
-Nothing was run against production, per the charter.
+**UPDATE 2026-08-10 — these migrations are now APPLIED IN PRODUCTION and verified live.** A
+`pm2` restart on 2026-08-08 applied them at boot. Confirmed read-only against the live database
+(`dialer-report-server`, server_id 1), reached over the LAN (`192.168.10.6`) because the public
+IP in `.env` no longer routes from this network:
+
+| Live check | Result |
+|---|---|
+| `schema_migrations` | 1093, 1094, 1098, 1099, 1102, 1103, 1104 all recorded, applied 2026-08-08 |
+| Conditional FKs | all **3** attached with `ON DELETE CASCADE` |
+| `finance_company` | IDC, MAS, **PIK** — 1102's PIK seed landed |
+| Seeds | 2 entity rules, 1 cohort, 24 ledger-map rows |
+| Salary Voucher page | `page_catalog` row active, 3 grants active |
+
+Nothing needed remediation. The scratch-schema test below predicted the production outcome
+exactly. The pre-deploy note is kept for the record.
+
+---
+
+**(Pre-deploy, now superseded.) Migrations 1099 and 1102–1104 were on `main`, not yet run
+against production.** The codebase runs migrations at boot, so a `pm2` restart applies them. All
+additive. Nothing was written to production at that point, per the charter.
 
 **All five were executed against a scratch MySQL seeded with production's REAL DDL**, on
 2026-08-08 — `SHOW CREATE TABLE` for every parent, plus `finance_company`'s actual rows, captured
