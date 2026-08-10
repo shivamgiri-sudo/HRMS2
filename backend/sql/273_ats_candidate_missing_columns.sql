@@ -27,10 +27,12 @@ SET @_273_sql = IF(@_273_enum = 0,
 PREPARE _273_stmt FROM @_273_sql; EXECUTE _273_stmt; DEALLOCATE PREPARE _273_stmt;
 
 -- 3. Backfill candidate_status for existing rows (no-op on empty fresh DB)
+-- Note: final_decision does not exist on ats_candidate (it lives on ats_interview_submission);
+-- use only current_stage which is the canonical status column on this table.
 UPDATE ats_candidate SET candidate_status = CASE
-  WHEN LOWER(COALESCE(final_decision, current_stage, '')) = 'selected' THEN 'selected'
-  WHEN LOWER(COALESCE(final_decision, current_stage, '')) IN ('rejected','no show','no_show') THEN 'rejected'
-  WHEN LOWER(current_stage) IN ('converted','onboarded','active_employee') THEN 'onboarded'
+  WHEN LOWER(COALESCE(current_stage, '')) = 'selected' THEN 'selected'
+  WHEN LOWER(COALESCE(current_stage, '')) IN ('rejected','no show','no_show') THEN 'rejected'
+  WHEN LOWER(COALESCE(current_stage, '')) IN ('converted','onboarded','active_employee') THEN 'onboarded'
   ELSE 'registered'
 END
 WHERE candidate_status IS NULL;
