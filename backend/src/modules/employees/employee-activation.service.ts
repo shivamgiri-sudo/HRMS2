@@ -73,7 +73,7 @@ export async function activateEmployee(
   // Activate
   await db.execute(
     `UPDATE employees
-     SET active_status = 1, employment_status = 'active', updated_at = NOW()
+     SET active_status = 1, employment_status = 'Active', updated_at = NOW()
      WHERE id = ?`,
     [employeeId]
   );
