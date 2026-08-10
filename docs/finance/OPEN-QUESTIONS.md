@@ -106,6 +106,24 @@ change reported figures.
 
 ---
 
+## 5b. The no-IDC-in-mas_hrms ruling — currently honoured (2026-08-10)
+
+Business ruling: no IDC/iSpark data in `mas_hrms`. Status check:
+
+- `mas_hrms` holds **0 IDC-coded employees** today, so the ruling is honoured in practice.
+- The IDC salary voucher reads db_bill live and writes nothing to `mas_hrms` (see the findings
+  doc); it cannot introduce IDC data.
+- The capability to onboard an IDC employee into `mas_hrms` technically exists but is **dead**:
+  `ats.enhanced.service.generateEmployeeCode('MAS'|'IDC', …)` has no callers, and the live
+  onboarding generator produces MAS codes (its IDC regex tracks a sequence that is empty).
+
+**A policy decision, not a defect:** if the ruling should be enforced *structurally* rather than
+just being currently-true, a guard rejecting an IDC-prefixed `employee_code` insert into `mas_hrms`
+would do it. Left unbuilt because it changes existing onboarding behaviour, which needs sign-off —
+and nothing is violating the ruling today.
+
+---
+
 ## 6. Deploy-time facts, not questions
 
 **UPDATE 2026-08-10 — these migrations are now APPLIED IN PRODUCTION and verified live.** A
