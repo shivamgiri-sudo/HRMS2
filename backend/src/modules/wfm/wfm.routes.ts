@@ -685,7 +685,12 @@ wfmRouter.post("/manager/weekoff-review/:assignmentId/realign", requireAuth, req
     const [scopeCheck] = await dbConn.execute<RowDataPacket[]>(
       `SELECT 1 FROM wfm_roster_assignment wra
         JOIN employees e ON e.id = wra.employee_id
-        JOIN process_master pm ON pm.process_name = wra.process_name
+        -- LEFT, not INNER: 333,762 of 413,386 roster rows carry process_name NULL, so an
+        -- inner join discards the row before the OR below is ever evaluated and the
+        -- reporting-manager branch can never match — a manager was refused on their own
+        -- direct report. pm.id is then NULL, and ups.process_id = pm.id cannot match a
+        -- NULL, so the scope branch is unchanged: this restores the manager path only.
+        LEFT JOIN process_master pm ON pm.process_name = wra.process_name
        WHERE wra.id = ? AND (e.reporting_manager_id = ? OR EXISTS (
          SELECT 1 FROM user_assignment_scope ups
           WHERE ups.user_id = ? AND ups.process_id = pm.id AND ups.active_status = 1
@@ -745,7 +750,12 @@ wfmRouter.post("/manager/weekoff-review/:assignmentId/force-approve", requireAut
     const [scopeCheck] = await dbConn.execute<RowDataPacket[]>(
       `SELECT 1 FROM wfm_roster_assignment wra
         JOIN employees e ON e.id = wra.employee_id
-        JOIN process_master pm ON pm.process_name = wra.process_name
+        -- LEFT, not INNER: 333,762 of 413,386 roster rows carry process_name NULL, so an
+        -- inner join discards the row before the OR below is ever evaluated and the
+        -- reporting-manager branch can never match — a manager was refused on their own
+        -- direct report. pm.id is then NULL, and ups.process_id = pm.id cannot match a
+        -- NULL, so the scope branch is unchanged: this restores the manager path only.
+        LEFT JOIN process_master pm ON pm.process_name = wra.process_name
        WHERE wra.id = ? AND (e.reporting_manager_id = ? OR EXISTS (
          SELECT 1 FROM user_assignment_scope ups
           WHERE ups.user_id = ? AND ups.process_id = pm.id AND ups.active_status = 1
@@ -795,7 +805,12 @@ wfmRouter.post("/manager/weekoff-review/:assignmentId/escalate", requireAuth, re
     const [scopeCheck] = await dbConn.execute<RowDataPacket[]>(
       `SELECT 1 FROM wfm_roster_assignment wra
         JOIN employees e ON e.id = wra.employee_id
-        JOIN process_master pm ON pm.process_name = wra.process_name
+        -- LEFT, not INNER: 333,762 of 413,386 roster rows carry process_name NULL, so an
+        -- inner join discards the row before the OR below is ever evaluated and the
+        -- reporting-manager branch can never match — a manager was refused on their own
+        -- direct report. pm.id is then NULL, and ups.process_id = pm.id cannot match a
+        -- NULL, so the scope branch is unchanged: this restores the manager path only.
+        LEFT JOIN process_master pm ON pm.process_name = wra.process_name
        WHERE wra.id = ? AND (e.reporting_manager_id = ? OR EXISTS (
          SELECT 1 FROM user_assignment_scope ups
           WHERE ups.user_id = ? AND ups.process_id = pm.id AND ups.active_status = 1
@@ -845,7 +860,12 @@ wfmRouter.post("/manager/weekoff-review/:assignmentId/reject-request", requireAu
     const [scopeCheck] = await dbConn.execute<RowDataPacket[]>(
       `SELECT 1 FROM wfm_roster_assignment wra
         JOIN employees e ON e.id = wra.employee_id
-        JOIN process_master pm ON pm.process_name = wra.process_name
+        -- LEFT, not INNER: 333,762 of 413,386 roster rows carry process_name NULL, so an
+        -- inner join discards the row before the OR below is ever evaluated and the
+        -- reporting-manager branch can never match — a manager was refused on their own
+        -- direct report. pm.id is then NULL, and ups.process_id = pm.id cannot match a
+        -- NULL, so the scope branch is unchanged: this restores the manager path only.
+        LEFT JOIN process_master pm ON pm.process_name = wra.process_name
        WHERE wra.id = ? AND (e.reporting_manager_id = ? OR EXISTS (
          SELECT 1 FROM user_assignment_scope ups
           WHERE ups.user_id = ? AND ups.process_id = pm.id AND ups.active_status = 1
@@ -1157,6 +1177,32 @@ wfmRouter.get(
       }
     }
 
+    // cosec_punch_sync's last write was 2026-06-18 — it is the legacy mirror fed by the
+    // manual-only migrate-ncosec script, and cosec-sync.service.ts never writes it (grep
+    // it: not one reference). Live COSEC punches now land in biometric_attendance_log,
+    // which is current. So for every date after that the query above returns zero rows and
+    // the drawer renders an empty punch timeline under a summary that is showing real
+    // minutes — it reads as "this employee never punched" when they did.
+    //
+    // cosecAgg immediately above already solves this for the summary: when the frozen
+    // cosec_daily_agg misses, it falls back to a live NCOSEC read. Reuse that result rather
+    // than adding a query or leaving the list blank. Only fires when the mirror gave
+    // nothing, so historical dates keep their full per-punch detail untouched.
+    //
+    // These two are derived bounds, not per-punch events, so they carry derived: true —
+    // the client must not present them as a complete punch trail.
+    let rawPunches = punchRows as any[];
+    if (rawPunches.length === 0 && cosecAgg && (cosecAgg.first_punch_in || cosecAgg.last_punch_out)) {
+      rawPunches = [
+        cosecAgg.first_punch_in
+          ? { punch_time: cosecAgg.first_punch_in, io_type: 1, io_label: "In", device_id: null, derived: true }
+          : null,
+        cosecAgg.last_punch_out
+          ? { punch_time: cosecAgg.last_punch_out, io_type: 2, io_label: "Out", device_id: null, derived: true }
+          : null,
+      ].filter(Boolean) as any[];
+    }
+
     // APR / dialler source. Previously the drawer had no APR data at all beyond
     // attendance_daily_record.dialler_minutes, so Login/Logout rendered blank for
     // dialler employees. Read the real apr rows for this date.
@@ -1209,7 +1255,7 @@ wfmRouter.get(
       data: {
         attendance_record: (attRows as any[])[0] ?? null,
         cosec_daily_agg: cosecAgg,
-        raw_punches: punchRows as any[],
+        raw_punches: rawPunches,
         apr_record: aprRecord,
       },
     });
@@ -1424,4 +1470,34 @@ wfmRouter.patch("/branch-spoc-config/:id", requireRole("super_admin", "admin"), 
   if (!id) return res.status(400).json({ success: false, message: "Invalid id" });
   await updateSPOCConfig(id, req.body);
   return res.json({ success: true });
+}));
+
+// ─── G12 week_off_worked historical impact simulator (read-only) ─────────────
+//
+// GET /api/wfm/wow-impact-simulator
+//   Returns ALL affected employee-dates (locked and unlocked, any run status).
+//   Query params: from=YYYY-MM-DD&to=YYYY-MM-DD (default 2026-01-01 .. yesterday)
+//
+// GET /api/wfm/wow-impact-simulator/finalized
+//   Returns only rows that fell inside a finalized/disbursed/locked payroll run.
+//   These require explicit Payroll Head approval before any reprocessing.
+//
+// Both endpoints are read-only; no attendance row is written or modified.
+// Restricted to payroll_head, admin and super_admin to avoid exposing gross
+// salary data to non-payroll roles.
+
+wfmRouter.get("/wow-impact-simulator", requireRole("super_admin", "admin", "hr", "payroll_head"), h(async (req, res) => {
+  const { simulateWowImpact } = await import("./weekoff-worked-impact-simulator.service.js");
+  const from = typeof req.query.from === "string" ? req.query.from : undefined;
+  const to   = typeof req.query.to   === "string" ? req.query.to   : undefined;
+  const result = await simulateWowImpact(from, to);
+  return res.json({ success: true, data: result });
+}));
+
+wfmRouter.get("/wow-impact-simulator/finalized", requireRole("super_admin", "admin", "payroll_head"), h(async (req, res) => {
+  const { simulateWowFinalizedImpact } = await import("./weekoff-worked-impact-simulator.service.js");
+  const from = typeof req.query.from === "string" ? req.query.from : undefined;
+  const to   = typeof req.query.to   === "string" ? req.query.to   : undefined;
+  const result = await simulateWowFinalizedImpact(from, to);
+  return res.json({ success: true, data: result });
 }));
