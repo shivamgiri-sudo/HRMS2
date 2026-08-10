@@ -2,6 +2,7 @@ import { getLegacyPool } from '../../db/legacyDb.js';
 import { db as mysqlDb } from '../../db/mysql.js';
 import { randomUUID } from 'crypto';
 import { provisionLmsIdentityForEmployee } from '../../modules/lms/lms-provisioning.service.js';
+import { encryptPanForSync } from '../../shared/syncPiiEncryption.js';
 
 interface LegacyEmployee {
   id: number;
@@ -222,6 +223,7 @@ export class EmployeeSyncHandler {
             date_of_birth, date_of_joining, date_of_leaving,
             mobile, email, official_email,
             pan_number, aadhaar_last4, passport_number, epf_number, esic_number, uan,
+            pan_number_encrypted, pan_enc_key_version,
             department, designation, branch, client_name, process, cost_center,
             bank_account_number, bank_name, bank_branch, ifsc_code, account_holder_name,
             marital_status, blood_group, qualification,
@@ -232,6 +234,7 @@ export class EmployeeSyncHandler {
             ?, ?, ?,
             ?, ?, ?,
             ?, ?, ?, ?, ?, ?,
+            ?, ?,
             ?, ?, ?, ?, ?, ?,
             ?, ?, ?, ?, ?,
             ?, ?, ?,
@@ -251,6 +254,11 @@ export class EmployeeSyncHandler {
             email = VALUES(email),
             official_email = VALUES(official_email),
             pan_number = IF(pan_number IS NULL, VALUES(pan_number), pan_number),
+            -- Mirrors the plaintext rule above exactly: fill only when empty, never
+            -- overwrite. Anything else would let a legacy record clobber ciphertext that
+            -- the backfill or a later HRMS edit produced.
+            pan_number_encrypted = IF(pan_number_encrypted IS NULL, VALUES(pan_number_encrypted), pan_number_encrypted),
+            pan_enc_key_version = IF(pan_number_encrypted IS NULL, VALUES(pan_enc_key_version), pan_enc_key_version),
             aadhaar_last4 = IF(aadhaar_last4 IS NULL, VALUES(aadhaar_last4), aadhaar_last4),
             passport_number = VALUES(passport_number),
             epf_number = IF(epf_number IS NULL, VALUES(epf_number), epf_number),
@@ -286,6 +294,9 @@ export class EmployeeSyncHandler {
           record.mobile, record.email, record.official_email,
           record.pan_number, record.aadhaar_last4, record.passport_number,
           record.epf_number, record.esic_number, record.uan,
+          // pan_enc_key_version is NOT NULL DEFAULT 1, so it takes 1 even when there is
+          // no ciphertext to go with it.
+          encryptPanForSync(record.pan_number), 1,
           record.department, record.designation, record.branch,
           record.client_name, record.process, record.cost_center,
           record.bank_account_number, record.bank_name, record.bank_branch,
