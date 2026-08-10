@@ -62,5 +62,5 @@ SET nominee_distribution_status = CASE
 END
 WHERE nominee_distribution_status = 'not_applicable';
 
-INSERT INTO audit_log (action, module, details, created_at)
-VALUES ('nominee_gratuity_distribution_setup', 'exit', 'Created gratuity_distribution table, standardized address fields, added permanent address columns', NOW());
+INSERT INTO audit_log (action_type, module_key, metadata_json, created_at)
+VALUES ('nominee_gratuity_distribution_setup', 'exit', '{"details":"Created gratuity_distribution table, standardized address fields, added permanent address columns"}', NOW());
