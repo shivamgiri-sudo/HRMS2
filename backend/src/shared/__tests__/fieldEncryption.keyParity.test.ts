@@ -7,6 +7,7 @@ import {
   isUsingDevEncryptionKey,
   isUsingDevBlindIndexKey,
   blindIndex,
+  SUPPORTED_KEY_VERSION,
 } from "../fieldEncryption.js";
 
 /**
@@ -74,6 +75,31 @@ describe("field encryption key parity guard", () => {
   it("round-trips through the real encrypt/decrypt pair", () => {
     const account = "033810412345678";
     expect(decryptField(encryptField(account))).toBe(account);
+  });
+});
+
+/**
+ * Key rotation is unimplemented, and everything around it implies otherwise — the envelope
+ * carries `v`, and employees/legacy_payslip_snapshot carry *_enc_key_version columns. Nothing
+ * reads either. Rotating the key would not yield a working mixed v1/v2 table; it would make
+ * every stored row unreadable, hidden for a while by the plaintext fallback.
+ */
+describe("key version handling", () => {
+  it("writes version 1, which is what every stored row is", () => {
+    const payload = JSON.parse(Buffer.from(encryptField("123456789012"), "base64").toString("utf8"));
+    expect(payload.v).toBe(SUPPORTED_KEY_VERSION);
+  });
+
+  it("refuses an unsupported version explicitly rather than failing as a bad auth tag", () => {
+    // Hand-build a v2 envelope with otherwise valid, correctly-keyed contents: the ONLY thing
+    // wrong is the version, so a passing decrypt here would prove `v` is ignored.
+    const real = JSON.parse(Buffer.from(encryptField("123456789012"), "base64").toString("utf8"));
+    const v2 = Buffer.from(JSON.stringify({ ...real, v: 2 })).toString("base64");
+    expect(() => decryptField(v2)).toThrow(/key version 2.*rotation is not implemented/s);
+  });
+
+  it("still reads a genuine v1 envelope", () => {
+    expect(decryptField(encryptField("9876543210987654"))).toBe("9876543210987654");
   });
 });
 

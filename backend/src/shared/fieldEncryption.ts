@@ -66,8 +66,35 @@ export function encryptField(plaintext: string, keyVersion = 1): string {
   return Buffer.from(JSON.stringify(payload)).toString("base64");
 }
 
+/** The only key version this module can read. `v` is recorded but rotation is unimplemented. */
+export const SUPPORTED_KEY_VERSION = 1;
+
 export function decryptField(ciphertext: string): string {
   const payload: EncryptedField = JSON.parse(Buffer.from(ciphertext, "base64").toString("utf8"));
+
+  /**
+   * Rotation is NOT implemented, despite everything around it implying otherwise: the envelope
+   * carries `v`, and employees/legacy_payslip_snapshot carry *_enc_key_version columns. Nothing
+   * reads either — there is one key, loaded once at module init, and it is used for every row.
+   *
+   * So rotating FIELD_ENCRYPTION_KEY does not produce a mixed v1/v2 table that both work; it
+   * makes every existing row permanently unreadable. Reads survive only while the legacy
+   * plaintext columns are still there, because resolveAccountNumber() swallows the failure and
+   * falls back to them — which is exactly the kind of silent survival that hides the damage
+   * until the plaintext is dropped.
+   *
+   * Failing explicitly here turns that into a legible error instead of an opaque GCM auth-tag
+   * failure. It changes nothing today: encryptField() writes v1 and every stored row is v1.
+   * Implementing real rotation means keeping the old key available and selecting by `v` — a
+   * deliberate project, not a config change.
+   */
+  if (payload.v !== SUPPORTED_KEY_VERSION) {
+    throw new Error(
+      `[fieldEncryption] ciphertext declares key version ${payload.v}, but only version ` +
+      `${SUPPORTED_KEY_VERSION} can be read — key rotation is not implemented.`
+    );
+  }
+
   const iv = Buffer.from(payload.iv, "hex");
   const tag = Buffer.from(payload.tag, "hex");
   const ct = Buffer.from(payload.ct, "hex");
