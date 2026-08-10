@@ -86,12 +86,28 @@ describe("it is opt-in and read-only", () => {
     expect(String(sql).trim().toUpperCase().startsWith("SELECT")).toBe(true);
   });
 
-  it("scopes the read to the requested month", async () => {
+  it("scopes the read to the requested month with a half-open interval", async () => {
+    // [first of month, first of next month) — never a day-31 that does not exist in the month.
     scriptMasHrms();
     billQuery.mockResolvedValue([]);
     await svc.generateForPeriod("2026-06", { companyCode: "IDC", entityPrefix: "IDC" });
-    const [, params] = billQuery.mock.calls[0];
-    expect(params).toEqual(["2026-06-01", "2026-06-31", "IDC%"]);
+    expect(billQuery.mock.calls[0][1]).toEqual(["2026-06-01", "2026-07-01", "IDC%"]);
+    expect(String(billQuery.mock.calls[0][0])).toContain("SalDate >= ? AND SalDate < ?");
+  });
+
+  it("bounds a 30-day month and February correctly, not with an invalid day 31", async () => {
+    // The bug this replaces: BETWEEN '…-01' AND '…-31' passes an invalid date for these months.
+    scriptMasHrms();
+    billQuery.mockResolvedValue([]);
+    await svc.generateForPeriod("2026-02", { companyCode: "IDC", entityPrefix: "IDC" });
+    expect(billQuery.mock.calls[0][1].slice(0, 2)).toEqual(["2026-02-01", "2026-03-01"]);
+  });
+
+  it("rolls the year over for December", async () => {
+    scriptMasHrms();
+    billQuery.mockResolvedValue([]);
+    await svc.generateForPeriod("2026-12", { companyCode: "IDC", entityPrefix: "IDC" });
+    expect(billQuery.mock.calls[0][1].slice(0, 2)).toEqual(["2026-12-01", "2027-01-01"]);
   });
 });
 
