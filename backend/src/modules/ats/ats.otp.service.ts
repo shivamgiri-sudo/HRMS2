@@ -1,6 +1,14 @@
 import { providerFactory } from '../communication/providers/provider.factory.js';
 import { providerConfigService } from '../communication/provider-config.service.js';
+import { buildSMS } from '../communication/smartping-dlt-registry.js';
 import { sendOnboardingOtp } from './ats.email.service.js';
+
+/**
+ * Must match the caller's expiry. onboarding-full.routes.ts inserts the OTP with
+ * `expires_at = DATE_ADD(NOW(), INTERVAL 10 MINUTE)`, and the SMS states this number to the
+ * candidate, so the two cannot drift without telling people the wrong thing.
+ */
+const OTP_VALIDITY_MINUTES = 10;
 
 interface SendOtpResult {
   success: boolean;
@@ -37,10 +45,27 @@ export async function sendOnboardingOtpViaSms(params: SendOtpParams): Promise<Se
       console.warn(`[OTP] Invalid mobile format for SMS provider: ${formattedMobile}`);
       // Fall through to email fallback
     } else {
-      // Compose OTP SMS message
-      const message = `Your OTP for MAS Callnet Onboarding is: ${otp}. Valid for 10 minutes. Do not share this code with anyone.`;
+      // Built from the registered DLT template, never hand-written.
+      //
+      // This call used to pass the literal string 'OTP Verification' in the dltContentId slot
+      // along with a bespoke message. SmartPing requires a numeric DLT id there, so the
+      // provider rejected every send — observed live in production:
+      //   [OTP] SMS send failed: No registered DLT template for this message ...
+      //   received "OTP Verification". Not sent.
+      // Candidates therefore never got an onboarding OTP by SMS; every request silently fell
+      // through to the email branch below.
+      //
+      // The bespoke wording was the second half of the bug. Under India's TRAI DLT rules the
+      // delivered text must MATCH the registered template, so even had the id been right, a
+      // hand-written sentence would have been a compliance failure rather than a delivery one.
+      // buildSMS interpolates the registered text and returns its id, which is the only way to
+      // keep both correct together.
+      const { body, dltContentId } = buildSMS('candidate_mobile_otp', {
+        otp,
+        validity_minutes: OTP_VALIDITY_MINUTES,
+      });
 
-      const result = await smsProvider.send(formattedMobile, 'OTP Verification', message);
+      const result = await smsProvider.send(formattedMobile, dltContentId, body);
 
       if (result.success) {
         console.info(`[OTP] SMS sent successfully to ${mobile.slice(-4).padStart(mobile.length, '*')}`);
