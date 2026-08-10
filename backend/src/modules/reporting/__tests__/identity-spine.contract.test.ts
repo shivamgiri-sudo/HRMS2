@@ -131,11 +131,13 @@ describe("mandatory identity columns on employee-grain reports", () => {
       "EPFO ECR upload file. Column set and order are dictated by EPFO (uan, gross_wages, " +
       "epf_wages, eps_wages, edli_wages, ...). Adding employee code or cost centre would " +
       "break the upload. Use pf-contribution-register for the internal view.",
-    "missing-documents-report":
-      "Blocked in the catalog. Reporting a MISSING document needs a list of required " +
-      "documents and no org-wide one exists: document_type_master is absent, and the " +
-      "joining checklist carries a mandatory flag for 11 of 22,672 employees. Building on " +
-      "that would imply the other 22,661 are complete.",
+    // missing-documents-report was exempted here on the grounds that it was "blocked in the
+    // catalog" because no org-wide list of required documents existed. Both halves of that are
+    // now false: onboarding_document_master is present, active and populated, the report was
+    // built on it, and it declares employee_code, cost_centre_code, cost_centre_name and
+    // process_name. The exemption is removed rather than reworded — leaving it would mean this
+    // guard silently stopped checking a report that now complies, which is how an exemption list
+    // rots into a blind spot.
   };
 
   /**
