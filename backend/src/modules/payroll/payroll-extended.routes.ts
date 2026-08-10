@@ -488,3 +488,266 @@ payrollExtendedRouter.get("/runs/:id/salary-sheet-export", requireRole("admin", 
   res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
   return res.send(buf);
 }));
+
+// ─── P0: Bank exception report ────────────────────────────────────────────────
+//
+// Required gate before bank advice generation.  Returns two lists:
+//   missing   — payable employees with no usable account in either source
+//   conflicts — employees where both sources exist but decode to different values
+//
+// HR/Finance must resolve every entry to zero before the bank file is generated.
+// Org-wide scope required (same gate as the NEFT export endpoints).
+payrollExtendedRouter.get(
+  "/runs/:runId/bank-exception-report",
+  requireRole("super_admin", "admin", "finance", "payroll_head", "finance_head", "payroll_admin"),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const { runId } = req.params;
+
+    if (!(await hasOrgWideScope(req.authUser!.id, PAYROLL_EXPORT_ROLES))) {
+      return res.status(403).json({ success: false, message: ORG_WIDE_REQUIRED_MSG });
+    }
+
+    const [runRows] = await db.execute<RowDataPacket[]>(
+      `SELECT id, run_month, status FROM salary_prep_run WHERE id = ? LIMIT 1`,
+      [runId],
+    );
+    const run = (runRows as any[])[0];
+    if (!run) return res.status(404).json({ success: false, message: "Payroll run not found" });
+
+    // Fetch all payable lines joined to bank detail for conflict detection
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT
+         spl.employee_id,
+         spl.employee_code,
+         COALESCE(NULLIF(TRIM(e.full_name),''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
+         spl.net_salary,
+         ebd.id            AS bank_detail_id,
+         ebd.bank_name,
+         ebd.ifsc_code,
+         ebd.account_number_enc,
+         ebd.account_number AS account_number_legacy,
+         ebd.verified,
+         ebd.is_primary
+       FROM salary_prep_line spl
+       JOIN employees e ON e.id = spl.employee_id
+       LEFT JOIN employee_bank_detail ebd
+         ON ebd.employee_id = e.id
+        AND ebd.active_status = 1
+        AND ebd.is_primary = 1
+       WHERE spl.run_id = ?
+       ORDER BY spl.employee_code ASC`,
+      [runId],
+    );
+
+    const missing: any[] = [];
+    const conflicts: any[] = [];
+    const resolved_ok: number[] = [];
+
+    for (const r of rows as any[]) {
+      if (!r.bank_detail_id) {
+        // No bank record at all
+        missing.push({
+          employee_id: r.employee_id,
+          employee_code: r.employee_code,
+          employee_name: r.employee_name,
+          net_salary: Number(r.net_salary ?? 0),
+          reason: "no_bank_record",
+        });
+        continue;
+      }
+
+      const resolution = resolveAccountNumberWithConflict({
+        account_number_enc: r.account_number_enc,
+        account_number: r.account_number_legacy,
+      });
+
+      if (resolution.status === "missing") {
+        missing.push({
+          employee_id: r.employee_id,
+          employee_code: r.employee_code,
+          employee_name: r.employee_name,
+          net_salary: Number(r.net_salary ?? 0),
+          bank_name: r.bank_name,
+          ifsc_code: r.ifsc_code,
+          reason: "both_sources_empty",
+        });
+      } else if (resolution.status === "conflict") {
+        conflicts.push({
+          employee_id: r.employee_id,
+          employee_code: r.employee_code,
+          employee_name: r.employee_name,
+          net_salary: Number(r.net_salary ?? 0),
+          bank_name: r.bank_name,
+          ifsc_code: r.ifsc_code,
+          // Mask both — only last 4 visible, so neither raw value escapes in a report
+          enc_account_masked: resolution.encValue
+            ? `XXXX${resolution.encValue.slice(-4)}`
+            : null,
+          legacy_account_masked: resolution.legacyValue
+            ? `XXXX${resolution.legacyValue.slice(-4)}`
+            : null,
+          conflict_detail: "encrypted and legacy columns disagree — HR must verify and re-upload",
+        });
+      } else {
+        resolved_ok.push(r.employee_id);
+      }
+    }
+
+    const total_payable = (rows as any[]).length;
+    const unresolved_count = missing.length + conflicts.length;
+    const gate_clear = unresolved_count === 0;
+
+    return res.json({
+      success: true,
+      run_id: runId,
+      run_month: run.run_month,
+      total_payable,
+      gate_clear,
+      unresolved_count,
+      missing_count: missing.length,
+      conflict_count: conflicts.length,
+      missing,
+      conflicts,
+      message: gate_clear
+        ? "All payable employees have a usable, unambiguous bank account. Bank advice may proceed."
+        : `${unresolved_count} employee(s) require HR/Finance resolution before bank advice can be generated.`,
+    });
+  }),
+);
+
+// ─── P0: Golden-month reconciliation ─────────────────────────────────────────
+//
+// Accepts an optional external control-file payload (headcount, gross, deductions,
+// net, bank_advice_total, payslip_count) and produces a side-by-side diff against
+// the locked run.  When no control payload is supplied, returns the run's own
+// figures so the caller can build the comparison offline.
+//
+// Pre-production sign-off gate: all variances must be zero (or within the
+// tolerance_rupees the caller supplies) before the run is considered golden.
+payrollExtendedRouter.post(
+  "/runs/:runId/golden-month-reconcile",
+  requireRole("super_admin", "admin", "finance_head", "payroll_head", "payroll_admin"),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const { runId } = req.params;
+
+    if (!(await hasOrgWideScope(req.authUser!.id, PAYROLL_EXPORT_ROLES))) {
+      return res.status(403).json({ success: false, message: ORG_WIDE_REQUIRED_MSG });
+    }
+
+    const [runRows] = await db.execute<RowDataPacket[]>(
+      `SELECT id, run_month, status, total_employees, total_gross, total_deductions, total_net
+         FROM salary_prep_run WHERE id = ? LIMIT 1`,
+      [runId],
+    );
+    const run = (runRows as any[])[0];
+    if (!run) return res.status(404).json({ success: false, message: "Payroll run not found" });
+
+    // Recompute from prep lines rather than trusting the run totals column —
+    // the totals column is updated on each calculation but could lag a manual edit.
+    const [aggRows] = await db.execute<RowDataPacket[]>(
+      `SELECT
+         COUNT(*)                         AS headcount,
+         COALESCE(SUM(gross_salary), 0)   AS gross,
+         COALESCE(SUM(total_deductions),0) AS deductions,
+         COALESCE(SUM(net_salary), 0)     AS net
+       FROM salary_prep_line WHERE run_id = ?`,
+      [runId],
+    );
+    const agg = (aggRows as any[])[0];
+
+    // Payable bank total: sum net for employees whose account resolves ok
+    const [bankRows] = await db.execute<RowDataPacket[]>(
+      `SELECT spl.net_salary, ebd.account_number_enc, ebd.account_number AS account_number_legacy
+         FROM salary_prep_line spl
+         LEFT JOIN employee_bank_detail ebd
+           ON ebd.employee_id = spl.employee_id
+          AND ebd.active_status = 1
+          AND ebd.is_primary = 1
+        WHERE spl.run_id = ?`,
+      [runId],
+    );
+    const SCIENTIFIC_RE = /[Ee][+-]/;
+    const VALID_ACCT_RE = /^[0-9]{6,20}$/;
+    let bank_advice_total = 0;
+    let bank_payable_count = 0;
+    for (const b of bankRows as any[]) {
+      const acct = resolveAccountNumber({ account_number_enc: b.account_number_enc, account_number: b.account_number_legacy });
+      const ok = acct && !SCIENTIFIC_RE.test(acct) && VALID_ACCT_RE.test(acct);
+      if (ok) { bank_advice_total += Number(b.net_salary ?? 0); bank_payable_count++; }
+    }
+    bank_advice_total = Math.round(bank_advice_total * 100) / 100;
+
+    const [payslipRows] = await db.execute<RowDataPacket[]>(
+      `SELECT COUNT(*) AS cnt FROM salary_payslip sp
+         JOIN salary_prep_line spl ON spl.id = sp.prep_line_id
+        WHERE spl.run_id = ?`,
+      [runId],
+    );
+    const payslip_count = Number((payslipRows as any[])[0]?.cnt ?? 0);
+
+    const system: Record<string, number> = {
+      headcount:         Number(agg.headcount),
+      gross:             Math.round(Number(agg.gross) * 100) / 100,
+      deductions:        Math.round(Number(agg.deductions) * 100) / 100,
+      net:               Math.round(Number(agg.net) * 100) / 100,
+      bank_advice_total,
+      bank_payable_count,
+      payslip_count,
+    };
+
+    // Optional control file from request body
+    const control: Record<string, number> | null = req.body?.control ?? null;
+    const tolerance = Number(req.body?.tolerance_rupees ?? 0);
+
+    if (!control) {
+      return res.json({
+        success: true,
+        run_id: runId,
+        run_month: run.run_month,
+        status: run.status,
+        system,
+        control: null,
+        variances: null,
+        golden: null,
+        message: "System figures returned. POST with { control: { headcount, gross, deductions, net, bank_advice_total, payslip_count }, tolerance_rupees } to reconcile.",
+      });
+    }
+
+    const variances: Record<string, { system: number; control: number; diff: number; pass: boolean }> = {};
+    let golden = true;
+    for (const key of ["headcount", "gross", "deductions", "net", "bank_advice_total", "payslip_count"] as const) {
+      const sys = system[key] ?? 0;
+      const ctrl = control[key] ?? 0;
+      const diff = Math.round((sys - ctrl) * 100) / 100;
+      const pass = Math.abs(diff) <= tolerance;
+      if (!pass) golden = false;
+      variances[key] = { system: sys, control: ctrl, diff, pass };
+    }
+
+    // Audit the reconciliation attempt
+    const { logSensitiveAction } = await import("../../shared/auditLog.js");
+    await logSensitiveAction({
+      actor_user_id: req.authUser!.id,
+      action_type: "GOLDEN_MONTH_RECONCILE",
+      module_key: "payroll",
+      entity_type: "salary_prep_run",
+      entity_id: runId,
+      change_summary: { run_month: run.run_month, golden, variances, tolerance },
+    });
+
+    return res.json({
+      success: true,
+      run_id: runId,
+      run_month: run.run_month,
+      status: run.status,
+      system,
+      control,
+      variances,
+      golden,
+      tolerance_rupees: tolerance,
+      message: golden
+        ? `Golden month PASS — all figures reconcile within ±₹${tolerance}.`
+        : "Golden month FAIL — variances exceed tolerance. Resolve before production sign-off.",
+    });
+  }),
+);

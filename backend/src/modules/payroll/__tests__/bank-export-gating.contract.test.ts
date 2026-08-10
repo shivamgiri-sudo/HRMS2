@@ -86,6 +86,10 @@ describe("tripwire: no new ungated account-number export", () => {
     // the four sites read BOTH columns — the dual-read fallback — and this tripwire reported
     // 8, reading as "four new ungated exports appeared" when no endpoint had been added at all.
     // Measured: payroll.routes.ts 2 legacy + 2 enc, payroll-extended.routes.ts 2 legacy + 2 enc.
+    // 2026-08-10 audit: +2 legacy +2 enc for the two new gated endpoints in payroll-extended.routes.ts:
+    //   GET /runs/:runId/bank-exception-report  — gated by hasOrgWideScope (P0 gate)
+    //   POST /runs/:runId/golden-month-reconcile — gated by hasOrgWideScope (P0 gate)
+    // New totals: payroll.routes.ts 2+2, payroll-extended.routes.ts 4+4 = 6 legacy + 6 enc.
     //
     // Two counts rather than one total, so the tripwire still fires on a genuinely new site of
     // either kind instead of being satisfied by a number that happens to add up. The enc count
@@ -99,7 +103,7 @@ describe("tripwire: no new ungated account-number export", () => {
       "A payroll endpoint reading bank account numbers was added or removed. " +
       "If added, gate it with hasOrgWideScope (payment file) or buildScopeWhereClause " +
       "(report) and update this count deliberately.";
-    expect(legacy, `${message} (legacy account_number reads)`).toBe(4);
-    expect(enc, `${message} (encrypted account_number_enc reads)`).toBe(4);
+    expect(legacy, `${message} (legacy account_number reads)`).toBe(6);
+    expect(enc, `${message} (encrypted account_number_enc reads)`).toBe(6);
   });
 });

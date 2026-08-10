@@ -101,7 +101,11 @@ export const payslipService = {
       throw new Error("Prep line not found for this run and employee");
     }
 
-    const payslipRef = `PS-${line.run_month}-${line.employee_code}`;
+    // Include run_id prefix so correction runs (multiple runs for the same month)
+    // each produce a distinct ref rather than colliding on PS-{month}-{code}.
+    // The short suffix is the first 8 chars of the UUID — unique enough for a
+    // display reference; the true unique key is prep_line_id in the DB.
+    const payslipRef = `PS-${line.run_month}-${line.employee_code}-${runId.slice(0, 8)}`;
     const id = randomUUID();
 
     // Upsert: if payslip already exists for this run+employee, overwrite it
@@ -177,7 +181,7 @@ export const payslipService = {
               spl.final_payable_days,
               spl.active_calendar_days,
               e.first_name, e.last_name,
-              e.ctc              AS ctc_annual,
+              COALESCE(esa.ctc_annual, e.ctc) AS ctc_annual,
               e.ctc,
               e.pan_number,
               COALESCE(eu.uan, eu.member_id, e.epf_number) AS epf_number,
@@ -213,6 +217,8 @@ export const payslipService = {
            ON br.id = e.branch_id
          LEFT JOIN location_master loc
            ON loc.id = CONVERT(e.location_id USING utf8mb4) COLLATE utf8mb4_0900_ai_ci
+         LEFT JOIN employee_salary_assignment esa
+           ON esa.employee_id = spl.employee_id AND esa.active_status = 1
          LEFT JOIN salary_run_disbursal srd
           ON srd.run_id = spl.run_id
           AND srd.employee_id = spl.employee_id

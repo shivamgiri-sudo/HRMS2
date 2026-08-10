@@ -267,8 +267,13 @@ export const payrollGovernanceService = {
           )`,
         params,
         "MISSING_VERIFIED_BANK",
-        "warning",
-        "Employees missing verified primary bank account; resolve before disbursement",
+        // Promoted to blocker: an unresolved missing bank prevents bank advice
+        // generation. Previously this was a warning, meaning calculation proceeded
+        // and the employee appeared in unpayableRows at export time — no active
+        // gate. Blocking calculation ensures HR/Finance resolve it before the run
+        // reaches disbursement, not at the moment someone clicks "generate NEFT".
+        "blocker",
+        "Employees missing verified primary bank account — resolve via bank-exception-report before disbursement",
       ),
       countIssue(
         `${eligibleSql}
@@ -455,8 +460,16 @@ export const payrollGovernanceService = {
           AND COALESCE(e.pan_number, '') = ''`,
         params,
         "MISSING_PAN",
-        "warning",
-        "Employees missing PAN number",
+        // Under the Income Tax Act, an employee without PAN must be deducted at
+        // the maximum slab rate (currently 20%). When tds_mode = 'auto' the engine
+        // cannot compute the correct rate without PAN; leaving this as a warning
+        // means under-deduction, which is the employer's liability.
+        // Remains a warning for manual-TDS runs: the HR team controls the manual
+        // amount and is responsible for applying the correct rate.
+        tdsMode === "auto" ? "blocker" : "warning",
+        tdsMode === "auto"
+          ? "Employees missing PAN — auto-TDS cannot apply the correct rate without PAN; under-deduction is employer liability. Resolve or switch to manual TDS before calculation."
+          : "Employees missing PAN number (manual TDS run — verify rate is applied correctly)",
       ),
       countIssue(
         `${eligibleSql}

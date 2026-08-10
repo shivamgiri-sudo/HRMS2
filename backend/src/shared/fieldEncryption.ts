@@ -192,3 +192,59 @@ export function resolveAccountNumber(row: {
   }
   return null;
 }
+
+export type AccountSourceStatus =
+  | "ok"               // single source, usable value
+  | "conflict"         // both sources present and decode to different values
+  | "missing"          // no usable value in either source
+  | "encrypt_only"     // encrypted source only (no legacy column)
+  | "legacy_only";     // legacy source only (no encrypted column)
+
+export interface AccountResolution {
+  resolved: string | null;
+  status: AccountSourceStatus;
+  encValue: string | null;
+  legacyValue: string | null;
+}
+
+/**
+ * Resolve account_number with full source-conflict visibility.
+ *
+ * Unlike resolveAccountNumber(), this variant decodes both sources independently
+ * and compares them. When both are present but differ it returns status='conflict'
+ * so the bank-exception-report endpoint can enumerate the 6 known conflicts rather
+ * than silently selecting the encrypted value.
+ */
+export function resolveAccountNumberWithConflict(row: {
+  account_number_enc?: string | null;
+  account_number?: Buffer | string | null;
+}): AccountResolution {
+  let encValue: string | null = null;
+  if (row.account_number_enc) {
+    try { encValue = decryptField(row.account_number_enc); } catch { /* decrypt failed */ }
+  }
+
+  let legacyValue: string | null = null;
+  if (row.account_number) {
+    legacyValue = Buffer.isBuffer(row.account_number)
+      ? row.account_number.toString("utf8")
+      : String(row.account_number);
+  }
+
+  const hasEnc = encValue !== null && encValue !== "";
+  const hasLegacy = legacyValue !== null && legacyValue !== "";
+
+  if (!hasEnc && !hasLegacy) {
+    return { resolved: null, status: "missing", encValue: null, legacyValue: null };
+  }
+  if (hasEnc && hasLegacy) {
+    if (encValue !== legacyValue) {
+      return { resolved: encValue, status: "conflict", encValue, legacyValue };
+    }
+    return { resolved: encValue, status: "ok", encValue, legacyValue };
+  }
+  if (hasEnc) {
+    return { resolved: encValue, status: "encrypt_only", encValue, legacyValue: null };
+  }
+  return { resolved: legacyValue, status: "legacy_only", encValue: null, legacyValue };
+}

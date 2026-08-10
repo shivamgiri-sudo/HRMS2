@@ -17,6 +17,7 @@ import { checkAndReverseLeave } from "./leave-reversal.service.js";
 import { detectAndCalculateHolidayWork, isHolidayWorkAutoGenEnabled } from "./holiday-work-auto.service.js";
 import { taxEngineService } from "../payroll-compliance/taxEngine.service.js";
 import { getPolicyValue } from "../policy-engine/policy-engine.cache.js";
+import { esiContributionPeriodStart } from "./payroll-governance.service.js";
 
 interface TaxDeclarationRow {
   declared_hra: number;
@@ -344,6 +345,7 @@ interface EmployeeRow {
   date_of_leaving: string | null;
   process_id: string | null;
   branch_id: string | null;
+  pan_number: string | null;
 }
 
 interface AttendanceRow {
@@ -539,7 +541,8 @@ export async function calculatePayrollRunScoped(
             bm.state AS state_code,
             e.process_id, e.branch_id,
             COALESCE(e.salary_start_date, e.date_of_joining) AS salary_start_date,
-            e.date_of_leaving
+            e.date_of_leaving,
+            TRIM(COALESCE(e.pan_number, '')) AS pan_number
        FROM employees e
        -- Point-in-time salary selection. See the block comment above this query for why
        -- this is not a join on employee_id plus active_status, and why the COALESCE
@@ -951,7 +954,25 @@ export async function calculatePayrollRunScoped(
     // In manual mode, Payroll HO uploads per-employee TDS via POST /runs/:id/manual-tds.
     // Those amounts are applied in a post-calculation pass (see applyManualTds below).
     let tdsMonthly = 0;
-    if (tdsMode === 'auto') {
+
+    // Placeholder PAN guard — these strings are submission proxies, not real PANs.
+    // Treating them as valid would compute and deduct TDS that cannot be remitted
+    // to the income-tax portal, creating a recoverable shortfall at year-end.
+    const PLACEHOLDER_PANS = new Set([
+      "PANNOTAVBL", "PANAPPLIED", "PANINVALID", "PANANONYMOUS",
+      "PANPENDING", "NOTAVAILABLE", "NOTAPPLICABLE", "NA", "N/A",
+    ]);
+    const empPan = (emp.pan_number as string | null | undefined)?.trim().toUpperCase() ?? "";
+    const hasMissingOrPlaceholderPan = !empPan || PLACEHOLDER_PANS.has(empPan);
+    let panAuditWarning: string | null = null;
+    if (hasMissingOrPlaceholderPan) {
+      tdsMonthly = 0;
+      panAuditWarning = empPan
+        ? `TDS_SKIPPED_PLACEHOLDER_PAN: "${empPan}" is a placeholder; TDS forced to 0.`
+        : "TDS_SKIPPED_NO_PAN: no PAN recorded; TDS forced to 0.";
+    }
+
+    if (!hasMissingOrPlaceholderPan && tdsMode === 'auto') {
       // monthsRemaining: months left in FY from this run month (April=start, March=end)
       // e.g. run_month April(4) → 12 months; October(10) → 6 months; March(3) → 1 month
       const fyEndMonth = 3; // March
@@ -1027,6 +1048,41 @@ export async function calculatePayrollRunScoped(
       // employee_loans table may not exist — non-fatal
     }
 
+    // 5f. Approved incentives from incentive_upload_batch for the run month
+    let approvedIncentives = 0;
+    try {
+      const runMonthPfx = run.run_month.slice(0, 7);
+      const [incentiveRows] = await db.execute<RowDataPacket[]>(
+        `SELECT SUM(COALESCE(iul.amount, 0)) AS total_incentives
+           FROM incentive_upload_line iul
+           JOIN incentive_upload_batch ibu ON ibu.id = iul.batch_id
+          WHERE iul.employee_id = ?
+            AND ibu.pay_month = ?
+            AND ibu.status = 'approved'`,
+        [emp.employee_id, runMonthPfx]
+      );
+      approvedIncentives = Number((incentiveRows as Array<{ total_incentives: number }>)[0]?.total_incentives ?? 0);
+    } catch {
+      // incentive_upload_batch / incentive_upload_line may not exist — non-fatal
+    }
+
+    // 5g. Approved reimbursement claims for the run month (added to net earnings, not gross)
+    let approvedReimbursements = 0;
+    try {
+      const runMonthPfx = run.run_month.slice(0, 7);
+      const [reimRows] = await db.execute<RowDataPacket[]>(
+        `SELECT SUM(COALESCE(claim_amount, 0)) AS total_reimbursements
+           FROM employee_reimbursement_claim
+          WHERE employee_id = ?
+            AND claim_month = ?
+            AND status = 'approved'`,
+        [emp.employee_id, runMonthPfx]
+      );
+      approvedReimbursements = Number((reimRows as Array<{ total_reimbursements: number }>)[0]?.total_reimbursements ?? 0);
+    } catch {
+      // employee_reimbursement_claim may not exist or claim_month column may differ — non-fatal
+    }
+
     // Custom deductions from employee_deduction_entries (canteen, uniform, etc.)
     let miscDeductions = 0;
     const miscComponents: Array<{ code: string; name: string; amount: number }> = [];
@@ -1078,8 +1134,50 @@ export async function calculatePayrollRunScoped(
          AND (effective_from_month IS NULL OR effective_from_month <= ?)`,
       [emp.employee_id, run.run_month]
     );
-    const pfOptOut   = (overrideRows as Array<{ override_type: string }>).some(r => r.override_type === 'pf_opt_out');
-    const esicOptOut = (overrideRows as Array<{ override_type: string }>).some(r => r.override_type === 'esic_opt_out');
+    const pfOptOut           = (overrideRows as Array<{ override_type: string }>).some(r => r.override_type === 'pf_opt_out');
+    const esicOptOutDeclared = (overrideRows as Array<{ override_type: string }>).some(r => r.override_type === 'esic_opt_out');
+
+    // ESI Act contribution-period rule (section 2(6A) / Reg 3):
+    // Once covered at the start of a contribution period (Apr-Sep or Oct-Mar),
+    // an employee remains covered until that period ends — even if a mid-period
+    // increment pushes their gross above the wage ceiling.
+    //
+    // Previous code re-evaluated gross > esic_wage_limit every month, so a raise
+    // in month 3 of a 6-month period silently dropped ESI for months 3–6.
+    // This check forces coverage on for those months.
+    //
+    // The contribution-period start is the later of: the first month of the
+    // current Apr-Sep / Oct-Mar window, or the employee's own first month on
+    // record (they cannot be "carried over" from a period before they joined).
+    let esicOptOut = esicOptOutDeclared;
+    if (!esicOptOutDeclared) {
+      try {
+        const periodStart = esiContributionPeriodStart(run.run_month);
+        if (periodStart < run.run_month) {
+          // Check if the employee had a salary_prep_line in an earlier month of
+          // this period where gross was at or below the ESI wage limit.
+          const esicWageLimit = stat.esic_wage_limit;
+          const [esiPriorRows] = await db.execute<RowDataPacket[]>(
+            `SELECT 1 FROM salary_prep_line spl
+               JOIN salary_prep_run spr ON spr.id = spl.run_id
+              WHERE spl.employee_id = ?
+                AND spr.run_month >= ?
+                AND spr.run_month < ?
+                AND LOWER(spr.status) NOT IN ('draft', 'cancelled')
+                AND spl.gross_salary > 0
+                AND spl.gross_salary <= ?
+              LIMIT 1`,
+            [emp.employee_id, periodStart, run.run_month, esicWageLimit],
+          );
+          if ((esiPriorRows as any[]).length > 0) {
+            // Covered at period start → must stay covered this month regardless of current gross
+            esicOptOut = false;
+          }
+        }
+      } catch {
+        // Non-fatal: if the check fails, fall through to the standard gross-ceiling test
+      }
+    }
 
     const effectiveBasicPct = hasFixedComponents
       ? (fixedBasic / monthlyGrossBase) * 100
@@ -1106,9 +1204,11 @@ export async function calculatePayrollRunScoped(
       gratuityPct: statConfig["gratuity_pct"],
     });
 
-    // Net pay = payrollService net + holiday work extra payout - advance recovery - loan EMI - misc deductions.
+    // Net pay = payrollService net + holiday work extra payout + incentives + reimbursements
+    //           - advance recovery - loan EMI - misc deductions.
+    // Incentives and reimbursements are non-gross additions; they do not affect PF/ESI/TDS base.
     const { totalDeductions: totalDedFinal, netSalary: netPayFinal } = reconcileNetAndDeductions(
-      calc.gross_salary + holidayWorkExtraPayout,
+      calc.gross_salary + holidayWorkExtraPayout + approvedIncentives + approvedReimbursements,
       calc.total_deductions + advanceRecovery + loanEmi + miscDeductions
     );
 
@@ -1125,6 +1225,8 @@ export async function calculatePayrollRunScoped(
       effectivePaidBase, finalWeekoffs, finalHolidays, finalPayableDays, activeCals, holidayWorkExtraPayout,
       miscDeductions,
       hasEngineData ? 'ADR' : 'SESSION_FALLBACK',
+      approvedIncentives,
+      approvedReimbursements,
     ]);
 
     // 6b. Insert component-level breakdown for payslip display
@@ -1161,6 +1263,13 @@ export async function calculatePayrollRunScoped(
     for (const comp of payslipEarnings) {
       if (comp.amount <= 0) continue;
       batchComponents.push([randomUUID(), runId, prepLineId, emp.employee_id, comp.code, comp.name, 'earning', comp.amount, 'structure', 1]);
+    }
+    // Record incentive and reimbursement as distinct earning components
+    if (approvedIncentives > 0) {
+      batchComponents.push([randomUUID(), runId, prepLineId, emp.employee_id, 'INCENTIVE', 'Incentive', 'earning', approvedIncentives, 'incentive_upload', 0]);
+    }
+    if (approvedReimbursements > 0) {
+      batchComponents.push([randomUUID(), runId, prepLineId, emp.employee_id, 'REIMBURSEMENT', 'Reimbursement', 'reimbursement', approvedReimbursements, 'reimbursement_claim', 0]);
     }
 
     const statutoryDeductions = [
@@ -1211,6 +1320,7 @@ export async function calculatePayrollRunScoped(
         leave_reversed: reversalResult.daysReversed,
         gross: grossAfterLwp,
         net: netPayFinal,
+        ...(panAuditWarning ? { pan_warning: panAuditWarning } : {}),
       }),
     ]);
 
@@ -1242,7 +1352,7 @@ export async function calculatePayrollRunScoped(
       );
     }
 
-    const placeholders = batchPrepLines.map(() => '(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, \'calculated\')').join(',');
+    const placeholders = batchPrepLines.map(() => '(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, \'calculated\', ?, ?)').join(',');
     await conn.execute(
       `INSERT INTO salary_prep_line
          (id, run_id, employee_id, employee_code,
@@ -1256,7 +1366,9 @@ export async function calculatePayrollRunScoped(
           final_payable_days, active_calendar_days, holiday_work_extra_payout,
           other_deductions,
           attendance_data_source,
-          status)
+          status,
+          incentive_total,
+          reimbursement_total)
        VALUES ${placeholders}
        ON DUPLICATE KEY UPDATE
          working_days = VALUES(working_days), present_days = VALUES(present_days),
@@ -1280,6 +1392,8 @@ export async function calculatePayrollRunScoped(
          holiday_work_extra_payout = VALUES(holiday_work_extra_payout),
          other_deductions = VALUES(other_deductions),
          attendance_data_source = VALUES(attendance_data_source),
+         incentive_total = VALUES(incentive_total),
+         reimbursement_total = VALUES(reimbursement_total),
          status = 'calculated'`,
       batchPrepLines.flat()
     );
