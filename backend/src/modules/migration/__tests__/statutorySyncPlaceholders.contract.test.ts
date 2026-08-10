@@ -6,12 +6,13 @@
  * the exact string '0' as blank and nothing else — so every other placeholder in the
  * legacy system was copied across as though it were a real number.
  *
- * Measured against live db_bill.employee_master (35,902 rows, MySQL 5.5):
+ * Measured against the table the sync actually reads — db_bill.masjclrentry, 33,144
+ * rows, MySQL 5.5, matched on EmpCode:
  *
- *   PanNo   3,875 placeholder tokens ('NA' 2,863, 'N/A' 897, 'A' 62, 'AN' 32, 'N' 11,
- *           '0' 5) and 3,898 values failing the PAN format, against 651 that pass
- *   EPFNo   113 placeholder tokens
- *   ESICNo  115 placeholder tokens
+ *   PanNo   19,248 non-blank, of which only 15,323 are a valid PAN. The guard blocks
+ *           3,925: 'NA' 2,477, 'N/A' 907, 'AN' 32, 'NO' 24, 'N' 8, '-' 8, 'NAN' 2
+ *   ESICNo  4 blocked      AcNo  5 blocked      IFSCCode  8 blocked
+ *   UAN and EPFNo are clean in this table
  *
  * A placeholder is worse than a NULL. NULL reads as "still to collect"; 'NA' reads as
  * collected, satisfies any presence check, and reaches Form 16 and the TDS return —

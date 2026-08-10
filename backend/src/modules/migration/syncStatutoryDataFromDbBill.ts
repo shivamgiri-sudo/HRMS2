@@ -58,9 +58,15 @@ function isEmpty(value: string | null | undefined): boolean {
  *
  * `isEmpty` above catches the exact string '0' and nothing else, so every other
  * placeholder was copied into `employees` as though it were a real statutory number.
- * Measured against live db_bill.employee_master (35,902 rows): PanNo holds **3,875**
- * such tokens — 'NA' 2,863, 'N/A' 897, 'A' 62, 'AN' 32, 'N' 11, '0' 5 — against only
- * 651 correctly formatted PANs. EPFNo has 113 and ESICNo 115.
+ * Measured against the table this sync actually reads — db_bill.masjclrentry, 33,144
+ * rows, matched on EmpCode. Of 19,248 non-blank PanNo values only **15,323** are a
+ * valid PAN; the guard blocks **3,925**, almost all of them 'NA' (2,477) and 'N/A'
+ * (907), with 'AN' 32, 'NO' 24, 'N' 8, '-' 8. UAN and EPFNo are clean in this table;
+ * ESICNo loses 4, AcNo 5, IFSCCode 8.
+ *
+ * (An earlier version of this comment quoted db_bill.employee_master. That table has
+ * far worse data — 651 valid PANs in 35,902 rows — but nothing reads it, so its
+ * numbers say nothing about this sync.)
  *
  * A placeholder in `pan_number` is worse than a NULL: NULL reads as "we must collect
  * this", while 'NA' reads as collected, passes any presence check, and reaches Form 16
@@ -84,10 +90,10 @@ export function isUsable(value: string | null | undefined): boolean {
   const normalised = String(value).trim().toUpperCase();
 
   // Anything one or two characters long is junk for every field this sync writes.
-  // db_bill holds 'A' (62 rows), 'N' (11) and 'AN' (32) in PanNo, and no real PAN, UAN,
-  // ESIC, EPF, IFSC, account number, bank name or account-holder name in this dataset is
-  // that short. Enumerating such fragments as tokens does not scale — the first version
-  // of this list missed exactly these three.
+  // masjclrentry holds 'AN' (32 rows), 'NO' (24), 'N' (8) and 'NS' (2) in PanNo, and no
+  // real PAN, UAN, ESIC, EPF, IFSC, account number, bank name or account-holder name in
+  // this dataset is that short. Enumerating such fragments as tokens does not scale —
+  // the first version of this list missed exactly these.
   if (normalised.length <= 2) return false;
 
   return !PLACEHOLDER_VALUES.has(normalised);
