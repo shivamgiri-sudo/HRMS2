@@ -200,16 +200,24 @@ export async function runIdentitySourceSnapshotSync(
   capturedAt = new Date().toISOString().slice(0, 19).replace("T", " "),
 ) {
   const statements = buildIdentitySourceSnapshotSyncStatements(snapshotRunId, capturedAt);
-  const sources: Array<{ sourceSystem: IdentitySourceSystem; affectedRows: number }> = [];
+  const sources: Array<{ sourceSystem: IdentitySourceSystem; affectedRows: number; error?: string }> = [];
 
   await database.execute(
     "UPDATE report_identity_source_snapshot SET is_current = 0 WHERE is_current = 1",
   );
 
   for (const statement of statements) {
-    const [result] = await database.execute(statement.sql, statement.params);
-    const affectedRows = Number((result as ResultSetHeader | undefined)?.affectedRows ?? 0);
-    sources.push({ sourceSystem: statement.sourceSystem, affectedRows });
+    // One source being unreadable — e.g. the application DB user has no SELECT grant on
+    // Masbiometric / db_masmis — must NOT abort the whole sync and silently lose the readable
+    // sources with it. Record the failure and carry on so every accessible source still loads.
+    try {
+      const [result] = await database.execute(statement.sql, statement.params);
+      const affectedRows = Number((result as ResultSetHeader | undefined)?.affectedRows ?? 0);
+      sources.push({ sourceSystem: statement.sourceSystem, affectedRows });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      sources.push({ sourceSystem: statement.sourceSystem, affectedRows: 0, error: message });
+    }
   }
 
   return {
@@ -217,6 +225,7 @@ export async function runIdentitySourceSnapshotSync(
     capturedAt,
     totalAffectedRows: sources.reduce((sum, row) => sum + row.affectedRows, 0),
     sources,
+    failedSources: sources.filter((row) => row.error).map((row) => row.sourceSystem),
   };
 }
 

@@ -67,6 +67,17 @@ export function buildIdentityMappingExceptionsSql(
     ? ` AND ${snapshotEmployeeClauses.join(" AND ")}`
     : "";
 
+  // A source with ZERO current rows in the snapshot (never synced, or the application DB user has
+  // no SELECT grant on its schema — Masbiometric and db_masmis are denied to this user) must NOT be
+  // reported as a per-employee gap on all ~1,100 active employees. Gate each source's per-employee
+  // "missing" condition on that source actually being loaded; a source that never loaded is surfaced
+  // once below as IDENTITY_SOURCE_NOT_LOADED instead of flagging everyone.
+  const sourceLoaded = (systems: string) =>
+    `EXISTS (SELECT 1 FROM report_identity_source_snapshot WHERE is_current = 1 AND source_system IN (${systems}))`;
+  const bmLoaded = sourceLoaded("'MASBIOMETRIC_EMPLOYEE'");
+  const seLoaded = sourceLoaded("'SHIVAMGIRI_EMPLOYEE'");
+  const agentLoaded = sourceLoaded("'MASMIS_AGENT','SHIVAMGIRI_AGENT'");
+
   const sql = `
 SELECT 'MISSING_BIOMETRIC_CODE' AS exception_type,
        'HIGH' AS severity,
@@ -148,9 +159,9 @@ SELECT 'HRMS_MISSING_SOURCE_MAPPING' AS exception_type,
        'MEDIUM' AS severity,
        ${baseSelect},
        CONCAT('HRMS employee is missing current source mapping for: ', CONCAT_WS(', ',
-         CASE WHEN bm.id IS NULL THEN 'MASBIOMETRIC_EMPLOYEE' END,
-         CASE WHEN se.id IS NULL THEN 'SHIVAMGIRI_EMPLOYEE' END,
-         CASE WHEN COALESCE(e.call_centre_code,'') <> '' AND ma.id IS NULL THEN 'MASMIS_AGENT_OR_SHIVAMGIRI_AGENT' END
+         CASE WHEN ${bmLoaded} AND bm.id IS NULL THEN 'MASBIOMETRIC_EMPLOYEE' END,
+         CASE WHEN ${seLoaded} AND se.id IS NULL THEN 'SHIVAMGIRI_EMPLOYEE' END,
+         CASE WHEN ${agentLoaded} AND COALESCE(e.call_centre_code,'') <> '' AND ma.id IS NULL THEN 'MASMIS_AGENT_OR_SHIVAMGIRI_AGENT' END
        )) AS exception_detail,
        'Run or review the identity source snapshot, then update employee biometric_code/call_centre_code/source records until every active employee has expected source coverage.' AS recommended_action
   ${baseJoins}
@@ -179,7 +190,28 @@ SELECT 'HRMS_MISSING_SOURCE_MAPPING' AS exception_type,
      GROUP BY matched_employee_id
   ) ma ON ma.matched_employee_id = e.id
  WHERE ${employeeClauses.join(" AND ")}
-   AND (bm.id IS NULL OR se.id IS NULL OR (COALESCE(e.call_centre_code,'') <> '' AND ma.id IS NULL))
+   AND ((${bmLoaded} AND bm.id IS NULL)
+        OR (${seLoaded} AND se.id IS NULL)
+        OR (${agentLoaded} AND COALESCE(e.call_centre_code,'') <> '' AND ma.id IS NULL))
+UNION ALL
+SELECT 'IDENTITY_SOURCE_NOT_LOADED' AS exception_type,
+       'MEDIUM' AS severity,
+       NULL AS employee_code,
+       NULL AS employee_name,
+       NULL AS branch_name,
+       NULL AS process_name,
+       NULL AS manager_name,
+       NULL AS biometric_code,
+       NULL AS call_centre_code,
+       NULL AS updated_at,
+       CONCAT('Identity source ', s.src, ' has no current rows in the snapshot (never synced, or the application DB user lacks SELECT on its schema), so its coverage is reported here once rather than as a gap on every active employee.') AS exception_detail,
+       'Sync the identity source snapshot; if this source stays empty, grant the application DB user SELECT on its schema.' AS recommended_action
+  FROM (SELECT 'MASBIOMETRIC_EMPLOYEE' AS src
+        UNION ALL SELECT 'SHIVAMGIRI_EMPLOYEE'
+        UNION ALL SELECT 'SHIVAMGIRI_AGENT'
+        UNION ALL SELECT 'MASMIS_AGENT') s
+ WHERE NOT EXISTS (SELECT 1 FROM report_identity_source_snapshot r
+                    WHERE r.is_current = 1 AND r.source_system = s.src)
 UNION ALL
 SELECT 'IDENTITY_SNAPSHOT_STALE' AS exception_type,
        'HIGH' AS severity,
