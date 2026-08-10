@@ -8,7 +8,7 @@ import { hasOrgWideScope, buildScopeWhereClause } from "../../shared/scopeAccess
 import type { Response } from "express";
 import type { RowDataPacket } from "mysql2";
 import * as XLSX from "xlsx";
-import { resolveAccountNumber } from "../../shared/fieldEncryption.js";
+import { resolveAccountNumber, resolveAccountNumberWithConflict } from "../../shared/fieldEncryption.js";
 
 /**
  * Roles whose payroll authority can be org-wide. Used with hasOrgWideScope for

@@ -11,7 +11,7 @@ import { employeeService } from "./employee.service.js";
 import { employeeFiltersSchema } from "./employee.validation.js";
 import { appendJourneyEvent, listJourneyEvents, listComprehensiveJourney } from "./journeyLog.service.js";
 import { getEmployeeForUser, hasRole } from "../../shared/accessGuard.js";
-import { profileApprovalService } from "./profile-approval.service.js";
+import { profileApprovalService, submitStatutoryDetailsForApproval } from "./profile-approval.service.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
 import { isOfficialEmail } from "../../shared/officialEmail.js";
 import { bootstrapCandidateForEmployee } from "./employee-bgv-bootstrap.service.js";
@@ -472,83 +472,22 @@ router.put("/me/statutory-details", h(async (req: any, res: any) => {
 
   const { epf_number, esi_number, uan_number, pan_number, aadhaar_id, pf_eligible, esi_eligible, epf_date } = req.body;
 
-  const STAT_FIELDS: string[] = ["employee_id"];
-  const statVals: any[] = [empId];
-  const statOnDup: string[] = [];
+  const newValues: Record<string, unknown> = {};
+  if (epf_number   !== undefined) newValues.epf_number   = epf_number;
+  if (esi_number   !== undefined) newValues.esi_number   = esi_number;
+  if (uan_number   !== undefined) newValues.uan_number   = uan_number;
+  if (pan_number   !== undefined) newValues.pan_number   = pan_number;
+  if (aadhaar_id   !== undefined) newValues.aadhaar_id   = aadhaar_id;
+  if (pf_eligible  !== undefined) newValues.pf_eligible  = pf_eligible;
+  if (esi_eligible !== undefined) newValues.esi_eligible = esi_eligible;
+  if (epf_date     !== undefined) newValues.epf_date     = epf_date;
 
-  const addStat = (col: string, val: any) => {
-    if (val !== undefined) {
-      STAT_FIELDS.push(col);
-      statVals.push(val);
-      statOnDup.push(`${col} = VALUES(${col})`);
-    }
-  };
-  addStat("epf_number", epf_number);
-  addStat("esi_number", esi_number);
-  addStat("uan_number", uan_number);
-  addStat("pan_number", pan_number);
-  addStat("aadhaar_id", aadhaar_id);
-  addStat("pf_eligible", pf_eligible);
-  addStat("esi_eligible", esi_eligible);
-  addStat("epf_date", epf_date);
-
-  if (STAT_FIELDS.length > 1) {
-    const placeholders = STAT_FIELDS.map(() => "?").join(", ");
-    const dupClause = statOnDup.length ? `ON DUPLICATE KEY UPDATE ${statOnDup.join(", ")}` : "";
-    // Log the failure rather than swallowing it.
-    //
-    // The original comment here read "If ON DUPLICATE KEY not applicable (no unique
-    // key), fall through silently". That justification is obsolete: employee_statutory_info
-    // HAS a unique index on employee_id, verified against live, and the table holds
-    // exactly 33,436 rows across 33,436 distinct employees — one each, no duplicates.
-    // ON DUPLICATE KEY UPDATE fires correctly.
-    //
-    // What the empty catch still did was hide every OTHER failure. This is the
-    // self-service statutory write — EPF, ESI, UAN, PAN, Aadhaar, the fields that feed
-    // PF filings and TDS — and on any error the employee was told their details were
-    // saved when nothing had been written. Behaviour is unchanged (still non-fatal, so
-    // an existing flow cannot start failing); the error is now diagnosable instead of
-    // invisible.
-    await db.execute(
-      `INSERT INTO employee_statutory_info (${STAT_FIELDS.join(", ")}) VALUES (${placeholders}) ${dupClause}`,
-      statVals
-    ).catch((error) => {
-      console.error(`[statutory] employee_statutory_info write failed for ${empId}:`, error);
-    });
+  if (!Object.keys(newValues).length) {
+    return res.status(400).json({ success: false, error: "No statutory fields provided" });
   }
 
-  // Also sync uan_number to employees table if provided
-  if (uan_number !== undefined) {
-    await db.execute("UPDATE employees SET uan_number = ? WHERE id = ?", [uan_number, empId])
-      .catch((error) => {
-        console.error(`[statutory] employees.uan_number sync failed for ${empId}:`, error);
-      });
-  }
-
-  // Audit every self-service statutory change — these fields feed payroll, PF filings, and TDS.
-  // Record which fields were submitted (not values — PAN/Aadhaar are sensitive).
-  const changedFields = [
-    epf_number  !== undefined && "epf_number",
-    esi_number  !== undefined && "esi_number",
-    uan_number  !== undefined && "uan_number",
-    pan_number  !== undefined && "pan_number",
-    aadhaar_id  !== undefined && "aadhaar_id",
-    pf_eligible !== undefined && "pf_eligible",
-    esi_eligible!== undefined && "esi_eligible",
-    epf_date    !== undefined && "epf_date",
-  ].filter(Boolean);
-
-  void logSensitiveAction({
-    actor_user_id: userId,
-    action_type: "STATUTORY_SELF_UPDATE",
-    module_key: "employees",
-    entity_type: "employee",
-    entity_id: empId,
-    change_summary: { fields_updated: changedFields },
-    req,
-  });
-
-  return res.json({ success: true, message: "Statutory details saved" });
+  const result = await submitStatutoryDetailsForApproval(userId, empId, newValues);
+  return res.json({ success: true, message: result.message, approval_id: result.id });
 }));
 
 // PUT /api/employees/me/emergency-contact — upsert primary emergency contact for logged-in user

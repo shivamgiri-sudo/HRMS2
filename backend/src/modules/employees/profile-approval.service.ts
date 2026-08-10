@@ -188,3 +188,33 @@ export const profileApprovalService = {
     } catch { /* non-fatal */ }
   },
 };
+
+export async function submitStatutoryDetailsForApproval(
+  userId: string,
+  employeeId: string,
+  newValues: Record<string, unknown>
+): Promise<{ id: string; message: string }> {
+  const id = randomUUID();
+  await db.execute(
+    `INSERT INTO profile_update_approval
+       (id, employee_id, request_type, old_values, new_values, status,
+        requested_by_role, routed_to_role, reviewed_by)
+     VALUES (?, ?, 'statutory_details', '{}', ?, 'pending', 'employee', 'hr', NULL)
+     ON DUPLICATE KEY UPDATE
+       new_values = VALUES(new_values),
+       routed_to_role = 'hr',
+       requested_at = NOW()`,
+    [id, employeeId, JSON.stringify(newValues)]
+  );
+
+  await logSensitiveAction({
+    actor_user_id: userId,
+    action_type: 'STATUTORY_DETAILS_APPROVAL_REQUESTED',
+    module_key: 'EMPLOYEE_PROFILE',
+    entity_type: 'profile_update_approval',
+    entity_id: id,
+    change_summary: { fields: Object.keys(newValues), routed_to: 'hr' },
+  });
+
+  return { id, message: 'Statutory details submitted for HR approval' };
+}
