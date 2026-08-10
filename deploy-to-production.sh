@@ -149,25 +149,46 @@ echo
 
 echo -e "${YELLOW}Step 6: Verify${NC}"
 echo "--------------------------------------"
-echo "Waiting for the backend to come up..."
-for _ in $(seq 1 30); do
-  code=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:5055/api/health || true)
-  [ "$code" = "200" ] && break
-  sleep 2
-done
+
+# Poll until healthy, and give it long enough.
+#
+# The first version waited 30 x 2s and then treated a single non-200 as fatal. On
+# 2026-08-10 that reported "Deployment failed" — rollback instructions and all — for a
+# deploy that had in fact succeeded: HEAD moved, both builds were clean, preflight:post
+# said 0 pending, and health was 200 moments later. The backend simply had not finished
+# binding, because boot verifies 478 manifest entries before it listens.
+#
+# A false failure on a green deploy is worse than no check. It teaches whoever runs this
+# to ignore the output, which is the same habit that let a real 503 sit unnoticed for
+# twelve minutes. 000 means "nothing listening yet" — that is the boot window, not an
+# outage — so it is retried, and only a persistent non-200 fails the deploy.
+wait_for_health() {
+  local attempts=$1 code=""
+  for _ in $(seq 1 "$attempts"); do
+    code=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:5055/api/health || true)
+    [ "$code" = "200" ] && { echo "$code"; return 0; }
+    sleep 2
+  done
+  echo "$code"
+  return 1
+}
+
+echo "Waiting for the backend to come up (up to 3 minutes)..."
+wait_for_health 90 > /dev/null || true
 
 cd "$ROOT/backend"
 # Confirms every manifest migration actually applied. A 503 here is the schema, not the
 # network — read the failing filename it prints rather than restarting again.
 npm run preflight:post
 
-code=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:5055/api/health || true)
-if [ "$code" != "200" ]; then
-  echo -e "${RED}✗ /api/health returned $code${NC}"
+# Re-check after the preflight, still tolerating a slow boot.
+if code=$(wait_for_health 30); then
+  echo -e "${GREEN}✓ /api/health 200${NC}"
+else
+  echo -e "${RED}✗ /api/health still $code after 60s of retries${NC}"
   curl -s http://localhost:5055/api/health || true
   exit 1
 fi
-echo -e "${GREEN}✓ /api/health 200${NC}"
 echo
 
 echo -e "${YELLOW}Step 7: Nginx (only if it can be done unattended)${NC}"
