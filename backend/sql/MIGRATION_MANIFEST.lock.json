@@ -506,6 +506,7 @@
     "1037_salary_prep_line_adjustment.sql",
     "1038_reimbursement_claim_collation.sql",
     "1038_salary_prep_line_component_reason.sql",
+    "1126_salary_prep_line_component_unique_key.sql",
     "1040_social_feed.sql",
     "1041_ats_sla_tat_rules_seed.sql",
     "1042_tat_hours_fractional.sql",
