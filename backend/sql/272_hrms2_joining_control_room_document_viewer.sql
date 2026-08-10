@@ -289,6 +289,21 @@ PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 SET @sql = (SELECT IF(COUNT(*) = 0, 'ALTER TABLE ats_candidate_documents ADD COLUMN name_match_status ENUM(''pending'',''matched'',''mismatch'',''not_applicable'') NOT NULL DEFAULT ''pending'' AFTER consent_purpose', 'SELECT 1') FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'ats_candidate_documents' AND COLUMN_NAME = 'name_match_status');
 PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
+-- Ensure candidate_onboarding_document exists before adding columns
+-- (on production it exists from early setup; on a fresh schema it needs to be seeded)
+CREATE TABLE IF NOT EXISTS candidate_onboarding_document (
+  id               CHAR(36)     NOT NULL DEFAULT (UUID()) PRIMARY KEY,
+  candidate_id     CHAR(36)     NOT NULL,
+  document_type    VARCHAR(100) NOT NULL,
+  document_status  ENUM('pending','uploaded','verified','failed') NOT NULL DEFAULT 'pending',
+  file_path        VARCHAR(500) NULL,
+  uploaded_at      DATETIME     NULL,
+  created_at       DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at       DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  INDEX idx_cod_candidate (candidate_id),
+  INDEX idx_cod_status (document_status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 SET @sql = (SELECT IF(COUNT(*) = 0, 'ALTER TABLE candidate_onboarding_document ADD COLUMN name_match_status ENUM(''pending'',''matched'',''mismatch'',''not_applicable'') NOT NULL DEFAULT ''pending'' AFTER document_status', 'SELECT 1') FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'candidate_onboarding_document' AND COLUMN_NAME = 'name_match_status');
 PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 SET @sql = (SELECT IF(COUNT(*) = 0, 'ALTER TABLE candidate_onboarding_document ADD COLUMN verified_by CHAR(36) NULL AFTER name_match_status', 'SELECT 1') FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'candidate_onboarding_document' AND COLUMN_NAME = 'verified_by');
