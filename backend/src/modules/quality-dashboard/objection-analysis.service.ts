@@ -253,8 +253,26 @@ export interface ObjectionHealthDashboard {
  * TOTAL_OBJECTIONS_RAISED to 434,618, and dragged every rate computed against it down by the
  * same factor, because the denominator grew while the sales numerator did not.
  */
-export async function getObjectionHealthDashboard(): Promise<ObjectionHealthDashboard> {
+/*
+ * Optional date bounds. Omitting them keeps the previous all-time behaviour exactly, so no
+ * existing caller changes meaning.
+ *
+ * They exist because this is the one objection query with no way to narrow it, and it aggregates
+ * six SUM(CASE ...) expressions over every row of db_external.CallDetails - 503,072 of them, with
+ * the objection and handling columns both TEXT, which cannot be indexed usefully. Measured over
+ * HTTP, three consecutive runs: 33.0s, 33.6s, 28.2s. That is slow enough to sit past a proxy
+ * timeout, and the endpoint takes no parameters, so a caller had no way out of it.
+ *
+ * CallDate does carry an index (Index_3), so bounding the range lets the optimiser seek instead
+ * of scanning the table.
+ */
+export async function getObjectionHealthDashboard(
+  filters: { startDate?: string; endDate?: string } = {}
+): Promise<ObjectionHealthDashboard> {
   const pool = getCiPool();
+  const bounded = Boolean(filters.startDate && filters.endDate);
+  const dateClause = bounded ? " AND CallDate BETWEEN ? AND ?" : "";
+  const dateParams = bounded ? [filters.startDate as string, filters.endDate as string] : [];
   const [rows] = await pool.execute<RowDataPacket[]>(
     `SELECT
       COUNT(*) as TOTAL_OBJECTIONS_RAISED,
@@ -284,7 +302,8 @@ export async function getObjectionHealthDashboard(): Promise<ObjectionHealthDash
     WHERE CustomerObjectionCategory IS NOT NULL
       AND CustomerObjectionCategory != ''
       AND CustomerObjectionCategory != 'null'
-      AND CustomerObjectionCategory != 'None'`
+      AND CustomerObjectionCategory != 'None'${dateClause}`,
+    dateParams
   );
 
   if (rows.length === 0) {

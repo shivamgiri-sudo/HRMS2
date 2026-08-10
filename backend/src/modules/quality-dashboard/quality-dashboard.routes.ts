@@ -737,7 +737,12 @@ router.get("/objections/rebuttals", requireRole(...ALLOWED_ROLES), h(async (req,
 // Overall objection health dashboard metrics
 router.get("/objections/health", requireRole(...ALLOWED_ROLES), h(async (req, res) => {
   try {
-    const dashboard = await getObjectionHealthDashboard();
+    // Optional bounds. Passing neither keeps the all-time figures this returned before; passing
+    // both lets the query seek on CallDate's index instead of scanning 503k rows.
+    const dashboard = await getObjectionHealthDashboard({
+      startDate: req.query.from ? String(req.query.from) : undefined,
+      endDate: req.query.to ? String(req.query.to) : undefined,
+    });
     return res.json({ success: true, dashboard });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : "External DB unavailable";
