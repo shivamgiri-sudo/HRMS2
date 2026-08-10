@@ -60,8 +60,34 @@ interface Finding {
   plaintextPopulated: number | null;
   sampled: number;
   decryptable: number;
+  foreign: number;
   roundTripMatched: number | null;
   verdict: string;
+}
+
+/**
+ * Is this value even a fieldEncryption envelope?
+ *
+ * Not every `*_encrypted` column in this schema belongs to fieldEncryption. utils/encryption.ts
+ * is a separate module with its own key, and it owns at least
+ * company_signing_certificate.p12_encrypted / .passphrase_encrypted (dscConfig.service.ts) and
+ * ats_candidate.bank_account_no_encrypted, candidate_onboarding_bank_detail.account_no_encrypted
+ * and candidate_onboarding_profile.pan_number_encrypted (onboarding-full.service.ts).
+ *
+ * Judging those by whether decryptField() can read them reported all five as UNREADABLE on the
+ * production server — which reads as "87 rows of corrupted PII, including the e-signing
+ * certificate" when nothing is wrong at all. A name suffix is not evidence of ownership, so
+ * check the envelope shape before drawing any conclusion from a failed decrypt.
+ */
+function isFieldEncryptionEnvelope(value: string): boolean {
+  try {
+    const parsed: unknown = JSON.parse(Buffer.from(value, "base64").toString("utf8"));
+    if (typeof parsed !== "object" || parsed === null) return false;
+    const p = parsed as Record<string, unknown>;
+    return typeof p.iv === "string" && typeof p.tag === "string" && typeof p.ct === "string";
+  } catch {
+    return false;
+  }
 }
 
 async function main(): Promise<void> {
@@ -127,7 +153,12 @@ async function main(): Promise<void> {
       let decryptable = 0;
       let matched = 0;
       let comparable = 0;
+      let foreign = 0;
       for (const row of rows as Array<{ ct: string; pt?: string | null }>) {
+        if (!isFieldEncryptionEnvelope(row.ct)) {
+          foreign++;
+          continue;
+        }
         let plain: string | null = null;
         try {
           plain = decryptField(row.ct);
@@ -141,21 +172,27 @@ async function main(): Promise<void> {
         }
       }
 
+      // Owned by another module — this tool has nothing to say about it either way.
+      const ours = rows.length - foreign;
       const verdict =
-        decryptable === 0
-          ? "UNREADABLE — ciphertext does not decrypt with the loaded key"
-          : decryptable < rows.length
-            ? "MIXED KEYS — some rows decrypt and some do not"
-            : comparable > 0 && matched < comparable
-              ? "MISMATCH — decrypts, but not to the plaintext beside it"
-              : plaintextPopulated !== null && populated < plaintextPopulated
-                ? "INCOMPLETE — plaintext rows still have no ciphertext"
-                : "OK";
+        foreign === rows.length
+          ? "FOREIGN — not a fieldEncryption envelope; owned by utils/encryption or similar"
+          : foreign > 0
+            ? "MIXED FORMAT — some rows are fieldEncryption envelopes and some are not"
+            : decryptable === 0
+              ? "UNREADABLE — ciphertext does not decrypt with the loaded key"
+              : decryptable < ours
+                ? "MIXED KEYS — some rows decrypt and some do not"
+                : comparable > 0 && matched < comparable
+                  ? "MISMATCH — decrypts, but not to the plaintext beside it"
+                  : plaintextPopulated !== null && populated < plaintextPopulated
+                    ? "INCOMPLETE — plaintext rows still have no ciphertext"
+                    : "OK";
 
       findings.push({
         table, column: col, source,
         populated, plaintextPopulated,
-        sampled: rows.length, decryptable,
+        sampled: rows.length, decryptable, foreign,
         roundTripMatched: comparable > 0 ? matched : null,
         verdict,
       });
@@ -164,23 +201,30 @@ async function main(): Promise<void> {
 
   await db.end();
 
-  const order = ["UNREADABLE", "MIXED KEYS", "MISMATCH", "INCOMPLETE", "OK"];
+  const order = ["UNREADABLE", "MIXED KEYS", "MIXED FORMAT", "MISMATCH", "INCOMPLETE", "FOREIGN", "OK"];
   findings.sort((a, b) =>
     order.findIndex((o) => a.verdict.startsWith(o)) - order.findIndex((o) => b.verdict.startsWith(o)));
 
   for (const f of findings) {
     console.log(
-      `${f.verdict.split(" —")[0].padEnd(11)} ${f.table}.${f.column}  ` +
+      `${f.verdict.split(" —")[0].padEnd(13)} ${f.table}.${f.column}  ` +
       `rows=${f.populated}${f.plaintextPopulated !== null ? `/${f.plaintextPopulated} plaintext` : ""}  ` +
       `sampled=${f.sampled} decrypted=${f.decryptable}` +
+      (f.foreign ? ` foreign=${f.foreign}` : "") +
       (f.roundTripMatched !== null ? ` round_trip_ok=${f.roundTripMatched}` : "") +
       (f.verdict === "OK" ? "" : `  <-- ${f.verdict}`),
     );
   }
-  const bad = findings.filter((f) => f.verdict !== "OK");
+
+  // FOREIGN is not a defect: the column simply belongs to another encryption module. Counting it
+  // as one is what turned a healthy server into a "87 rows corrupted, e-signing cert unreadable"
+  // report on the first production run.
+  const bad = findings.filter((f) => f.verdict !== "OK" && !f.verdict.startsWith("FOREIGN"));
+  const foreignCount = findings.filter((f) => f.verdict.startsWith("FOREIGN")).length;
   console.log(
-    `\n[encryption-verify] ${findings.length} encrypted column(s); ${bad.length} needing attention. ` +
-    `READ-ONLY: no value was printed, nothing modified.`,
+    `\n[encryption-verify] ${findings.length} encrypted column(s); ${bad.length} needing attention` +
+    (foreignCount ? `; ${foreignCount} owned by another module (not assessed)` : "") +
+    `. READ-ONLY: no value was printed, nothing modified.`,
   );
   // Non-zero exit so this can gate a deploy step, but not when the dev key explains it.
   if (bad.length && !isUsingDevEncryptionKey()) process.exitCode = 1;
