@@ -672,7 +672,7 @@ function deriveStatus(row: any, settings: BreakSettingsRow, shiftDate: string) {
   if (row.leave_name) {
     return { label: "Leave", tone: "leave", activeMinutes, isExceeded };
   }
-  if (String(row.roster_status ?? "").toLowerCase().includes("week off")) {
+  if (Number(row.is_week_off) === 1 || String(row.roster_status ?? "").toLowerCase().includes("week off")) {
     return { label: "W/O", tone: "weekoff", activeMinutes, isExceeded };
   }
   if (row.active_break_id) {
@@ -715,7 +715,7 @@ async function rebuildDailySummary(employeeId: string, employeeCode: string, shi
   );
 
   const [rosterRows] = await db.execute<RowDataPacket[]>(
-    `SELECT roster_status
+    `SELECT roster_status, is_week_off
        FROM wfm_roster_assignment
       WHERE employee_id = ?
         AND roster_date = ?
@@ -736,6 +736,7 @@ async function rebuildDailySummary(employeeId: string, employeeCode: string, shi
 
   const totals = (sessionRows as any[])[0] ?? {};
   const rosterStatus = (rosterRows as any[])[0]?.roster_status ?? null;
+  const isWeekOff = Number((rosterRows as any[])[0]?.is_week_off ?? 0) === 1;
   const leaveName = (leaveRows as any[])[0]?.leave_name ?? null;
   const workedMinutes = resolveShiftWorkedMinutes({
     biometric_minutes: biometric.biometricMinutes,
@@ -744,7 +745,7 @@ async function rebuildDailySummary(employeeId: string, employeeCode: string, shi
   });
   const attendanceStatus = leaveName
     ? "Leave"
-    : String(rosterStatus ?? "").toLowerCase().includes("week off")
+    : (isWeekOff || String(rosterStatus ?? "").toLowerCase().includes("week off"))
       ? "W/O"
       : biometric.punchIn && biometric.punchOut && workedMinutes >= MINIMUM_SHIFT_COMPLETION_MINUTES
         ? "Shift Completed"
@@ -1201,6 +1202,7 @@ async function fetchDeskRows(kiosk: KioskDevice, filters: DeskFilters, includeAl
           ELSE NULL
         END AS shift_name,
         ra.roster_status,
+        ra.is_week_off,
         lt.leave_name,
         agg.total_break_minutes,
         agg.mini_break_count,
