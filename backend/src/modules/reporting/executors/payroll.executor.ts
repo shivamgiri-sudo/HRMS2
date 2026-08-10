@@ -417,6 +417,27 @@ export async function bankAdvice(
   clauses.push("spr.run_month = ?");
   params.push(runMonth);
 
+  // A bank advice is an instruction to pay. It had no run-status guard at all, so a run still in
+  // draft — or one that had been cancelled — would produce a fully formed payable file complete
+  // with account number, IFSC and amount. neft-transfer-file does the same job from the same run
+  // and has always excluded those states; this brings the two into line rather than inventing a
+  // rule. Verified on 2026-07, where the only run is 'processing': 1,464 rows and the same
+  // 13,951,142.07 total before and after, so no current output moves. The guard is not
+  // hypothetical though — 1,148 payroll lines sit in draft runs across other months, and opening
+  // this report for one of those would have produced a fully payable file from an uncommitted
+  // run.
+  //
+  // Two related defects are deliberately NOT changed here, because each needs a decision rather
+  // than a guess, and both are recorded so they are not lost:
+  //   - the two payment files read DIFFERENT account sources — this one
+  //     employees.bank_account_number, neft-transfer-file employee_bank_detail. Seven employees
+  //     in the 2026-07 run hold conflicting numbers between the two, so the same salary would
+  //     reach a different account depending on which file the bank is given.
+  //   - this report emits 308 rows with net_salary <= 0 that neft-transfer-file excludes. A zero
+  //     value transfer instruction is meaningless, but quietly dropping 308 rows from a payment
+  //     report is not a change to make unasked.
+  clauses.push("LOWER(COALESCE(spr.status,'')) NOT IN ('draft','cancelled')");
+
   if (options.mode === "worker" && options.cursor != null) {
     clauses.push("spl.id > ?");
     params.push(options.cursor);
