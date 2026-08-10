@@ -474,7 +474,7 @@ async function getAttendanceOverrides(
      FROM wfm_roster_assignment
      WHERE employee_id IN (${ph})
        AND roster_date BETWEEN ? AND ?
-       AND roster_status = 'Week Off'`,
+       AND (is_week_off = 1 OR roster_status = 'Week Off')`,
     [...employeeIds, fromDate, toDate],
   );
   for (const row of weekoffs as any[]) {

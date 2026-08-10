@@ -469,6 +469,7 @@ async function checkAttendanceBadges(employeeId: string): Promise<EmployeeBadgeE
        ON s.employee_id = ra.employee_id AND s.session_date = ra.roster_date
      WHERE ra.employee_id = ?
        AND ra.roster_date >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)
+       AND ra.is_week_off = 0
        AND ra.roster_status NOT IN ('Week Off', 'Holiday')`,
     [employeeId]
   );

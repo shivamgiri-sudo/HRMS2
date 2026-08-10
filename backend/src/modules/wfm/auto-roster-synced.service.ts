@@ -400,6 +400,7 @@ async function recomputeCoverage(planId: string): Promise<{ rows: AnyRow[]; scor
          WHERE plan_id = ?
            AND roster_date = ?
            AND publish_status IN ('draft','published')
+           AND is_week_off = 0
            AND roster_status NOT IN ('Week Off','Leave','Absent')
            AND (
              (shift_start_time IS NULL AND shift_end_time IS NULL)
@@ -760,9 +761,9 @@ export const autoRosterSyncedService = {
         const assignmentId = randomUUID();
         await db.execute(
           `INSERT INTO wfm_roster_assignment
-           (id, employee_id, shift_id, plan_id, roster_date, roster_status, shift_start_time, shift_end_time, branch_name, process_name, publish_status)
-           VALUES (?, ?, NULL, ?, ?, 'Week Off', NULL, NULL, ?, ?, 'draft')
-           ON DUPLICATE KEY UPDATE roster_status = 'Week Off', shift_id = NULL, shift_start_time = NULL, shift_end_time = NULL, publish_status = 'draft'`,
+           (id, employee_id, shift_id, plan_id, roster_date, roster_status, is_week_off, shift_start_time, shift_end_time, branch_name, process_name, publish_status)
+           VALUES (?, ?, NULL, ?, ?, 'Week Off', 1, NULL, NULL, ?, ?, 'draft')
+           ON DUPLICATE KEY UPDATE roster_status = 'Week Off', is_week_off = 1, shift_id = NULL, shift_start_time = NULL, shift_end_time = NULL, publish_status = 'draft'`,
           [assignmentId, emp.id, planId, rosterDate, branchName, processName]
         );
         await db.execute(
