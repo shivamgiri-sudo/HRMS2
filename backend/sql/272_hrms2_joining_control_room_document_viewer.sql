@@ -354,48 +354,79 @@ ON DUPLICATE KEY UPDATE
   module = VALUES(module),
   active_status = VALUES(active_status);
 
-INSERT INTO role_page_access (role_key, page_code, can_view, can_create, can_edit, can_delete, can_export, active_status)
-SELECT roles.role_key, pages.page_code, 1, 1, 1, 0, 1, 1
-  FROM (
-    SELECT 'super_admin' AS role_key UNION ALL
-    SELECT 'admin' UNION ALL
-    SELECT 'hr' UNION ALL
-    SELECT 'payroll_hr' UNION ALL
-    SELECT 'branch_head' UNION ALL
-    SELECT 'finance' UNION ALL
-    SELECT 'operations' UNION ALL
-    SELECT 'it_admin'
-  ) roles
-  JOIN (
-    SELECT 'ATS_JOINING_CONTROL_ROOM' AS page_code UNION ALL
-    SELECT 'SALARY_PROPOSAL_APPROVALS' UNION ALL
-    SELECT 'SALARY_REGISTER' UNION ALL
-    SELECT 'ATS_STATUTORY_ONBOARDING' UNION ALL
-    SELECT 'ATS_DPDP_CONSENT' UNION ALL
-    SELECT 'PROVISIONING_IT' UNION ALL
-    SELECT 'PROVISIONING_ADMIN' UNION ALL
-    SELECT 'PROVISIONING_APPOINTMENT_LETTER'
-  ) pages
-ON DUPLICATE KEY UPDATE
-  can_view = VALUES(can_view),
-  can_create = VALUES(can_create),
-  can_edit = VALUES(can_edit),
-  can_export = VALUES(can_export),
-  active_status = VALUES(active_status);
+INSERT IGNORE INTO role_page_access (role_key, page_code, can_view, can_create, can_edit, can_delete, can_export, active_status)
+VALUES
+  ('super_admin','ATS_JOINING_CONTROL_ROOM',1,1,1,0,1,1),
+  ('super_admin','SALARY_PROPOSAL_APPROVALS',1,1,1,0,1,1),
+  ('super_admin','SALARY_REGISTER',1,1,1,0,1,1),
+  ('super_admin','ATS_STATUTORY_ONBOARDING',1,1,1,0,1,1),
+  ('super_admin','ATS_DPDP_CONSENT',1,1,1,0,1,1),
+  ('super_admin','PROVISIONING_IT',1,1,1,0,1,1),
+  ('super_admin','PROVISIONING_ADMIN',1,1,1,0,1,1),
+  ('super_admin','PROVISIONING_APPOINTMENT_LETTER',1,1,1,0,1,1),
+  ('admin','ATS_JOINING_CONTROL_ROOM',1,1,1,0,1,1),
+  ('admin','SALARY_PROPOSAL_APPROVALS',1,1,1,0,1,1),
+  ('admin','SALARY_REGISTER',1,1,1,0,1,1),
+  ('admin','ATS_STATUTORY_ONBOARDING',1,1,1,0,1,1),
+  ('admin','ATS_DPDP_CONSENT',1,1,1,0,1,1),
+  ('admin','PROVISIONING_IT',1,1,1,0,1,1),
+  ('admin','PROVISIONING_ADMIN',1,1,1,0,1,1),
+  ('admin','PROVISIONING_APPOINTMENT_LETTER',1,1,1,0,1,1),
+  ('hr','ATS_JOINING_CONTROL_ROOM',1,1,1,0,1,1),
+  ('hr','SALARY_PROPOSAL_APPROVALS',1,1,1,0,1,1),
+  ('hr','SALARY_REGISTER',1,1,1,0,1,1),
+  ('hr','ATS_STATUTORY_ONBOARDING',1,1,1,0,1,1),
+  ('hr','ATS_DPDP_CONSENT',1,1,1,0,1,1),
+  ('hr','PROVISIONING_IT',1,1,1,0,1,1),
+  ('hr','PROVISIONING_ADMIN',1,1,1,0,1,1),
+  ('hr','PROVISIONING_APPOINTMENT_LETTER',1,1,1,0,1,1),
+  ('payroll_hr','ATS_JOINING_CONTROL_ROOM',1,1,1,0,1,1),
+  ('payroll_hr','SALARY_PROPOSAL_APPROVALS',1,1,1,0,1,1),
+  ('payroll_hr','SALARY_REGISTER',1,1,1,0,1,1),
+  ('payroll_hr','ATS_STATUTORY_ONBOARDING',1,1,1,0,1,1),
+  ('payroll_hr','ATS_DPDP_CONSENT',1,1,1,0,1,1),
+  ('payroll_hr','PROVISIONING_IT',1,1,1,0,1,1),
+  ('payroll_hr','PROVISIONING_ADMIN',1,1,1,0,1,1),
+  ('payroll_hr','PROVISIONING_APPOINTMENT_LETTER',1,1,1,0,1,1),
+  ('branch_head','ATS_JOINING_CONTROL_ROOM',1,1,1,0,1,1),
+  ('branch_head','SALARY_PROPOSAL_APPROVALS',1,1,1,0,1,1),
+  ('branch_head','SALARY_REGISTER',1,1,1,0,1,1),
+  ('branch_head','ATS_STATUTORY_ONBOARDING',1,1,1,0,1,1),
+  ('branch_head','ATS_DPDP_CONSENT',1,1,1,0,1,1),
+  ('branch_head','PROVISIONING_IT',1,1,1,0,1,1),
+  ('branch_head','PROVISIONING_ADMIN',1,1,1,0,1,1),
+  ('branch_head','PROVISIONING_APPOINTMENT_LETTER',1,1,1,0,1,1),
+  ('finance','ATS_JOINING_CONTROL_ROOM',1,1,1,0,1,1),
+  ('finance','SALARY_PROPOSAL_APPROVALS',1,1,1,0,1,1),
+  ('finance','SALARY_REGISTER',1,1,1,0,1,1),
+  ('finance','ATS_STATUTORY_ONBOARDING',1,1,1,0,1,1),
+  ('finance','ATS_DPDP_CONSENT',1,1,1,0,1,1),
+  ('finance','PROVISIONING_IT',1,1,1,0,1,1),
+  ('finance','PROVISIONING_ADMIN',1,1,1,0,1,1),
+  ('finance','PROVISIONING_APPOINTMENT_LETTER',1,1,1,0,1,1),
+  ('operations','ATS_JOINING_CONTROL_ROOM',1,1,1,0,1,1),
+  ('operations','SALARY_PROPOSAL_APPROVALS',1,1,1,0,1,1),
+  ('operations','SALARY_REGISTER',1,1,1,0,1,1),
+  ('operations','ATS_STATUTORY_ONBOARDING',1,1,1,0,1,1),
+  ('operations','ATS_DPDP_CONSENT',1,1,1,0,1,1),
+  ('operations','PROVISIONING_IT',1,1,1,0,1,1),
+  ('operations','PROVISIONING_ADMIN',1,1,1,0,1,1),
+  ('operations','PROVISIONING_APPOINTMENT_LETTER',1,1,1,0,1,1),
+  ('it_admin','ATS_JOINING_CONTROL_ROOM',1,1,1,0,1,1),
+  ('it_admin','SALARY_PROPOSAL_APPROVALS',1,1,1,0,1,1),
+  ('it_admin','SALARY_REGISTER',1,1,1,0,1,1),
+  ('it_admin','ATS_STATUTORY_ONBOARDING',1,1,1,0,1,1),
+  ('it_admin','ATS_DPDP_CONSENT',1,1,1,0,1,1),
+  ('it_admin','PROVISIONING_IT',1,1,1,0,1,1),
+  ('it_admin','PROVISIONING_ADMIN',1,1,1,0,1,1),
+  ('it_admin','PROVISIONING_APPOINTMENT_LETTER',1,1,1,0,1,1);
 
-INSERT INTO user_page_access (id, user_id, page_code, can_view, can_create, can_edit, can_delete, can_export, assigned_by, active_status, notes)
+INSERT IGNORE INTO user_page_access (id, user_id, page_code, can_view, can_create, can_edit, can_delete, can_export, assigned_by, active_status, notes)
 SELECT UUID(), u.id, p.page_code, 1, 1, 1, 0, 1, u.id, 1, 'HRMS2 Joining Control Room direct access'
-  FROM auth_user u
-  JOIN page_catalog p ON p.page_code IN (
+  FROM auth_user u, page_catalog p
+ WHERE LOWER(u.email) = 'shivam.giri@teammas.in'
+   AND p.page_code IN (
     'ATS_JOINING_CONTROL_ROOM','SALARY_PROPOSAL_APPROVALS','SALARY_REGISTER',
     'ATS_STATUTORY_ONBOARDING','ATS_DPDP_CONSENT','PROVISIONING_IT',
     'PROVISIONING_ADMIN','PROVISIONING_APPOINTMENT_LETTER'
-  )
- WHERE LOWER(u.email) = 'shivam.giri@teammas.in'
-ON DUPLICATE KEY UPDATE
-  can_view = VALUES(can_view),
-  can_create = VALUES(can_create),
-  can_edit = VALUES(can_edit),
-  can_export = VALUES(can_export),
-  active_status = VALUES(active_status),
-  notes = VALUES(notes);
+  );
