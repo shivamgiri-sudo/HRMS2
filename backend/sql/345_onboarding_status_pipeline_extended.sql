@@ -11,7 +11,7 @@ CREATE TABLE IF NOT EXISTS _migrations (
   migration_id VARCHAR(100) PRIMARY KEY,
   applied_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   checksum VARCHAR(64) DEFAULT NULL
-) ENGINE=InnoDB;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 SET @migration_id = '345_onboarding_status_pipeline_extended';
 SET @migration_checksum = SHA2('phase5-onboarding-status-pipeline-v2-full-enum', 256);
