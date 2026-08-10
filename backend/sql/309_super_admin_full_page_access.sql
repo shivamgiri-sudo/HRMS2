@@ -45,6 +45,4 @@ VALUES
   (UUID(), 'super_admin', 'EMAIL_TEMPLATE_BULK_IMPORT', 1,1,1,1,1, 1, NOW()),
   (UUID(), 'admin',       'EMAIL_TEMPLATE_BULK_IMPORT', 1,1,1,1,1, 1, NOW());
 
--- 4. Record this migration as applied
-INSERT IGNORE INTO schema_migrations (filename, applied_at)
-VALUES ('309_super_admin_full_page_access.sql', NOW());
+-- (schema_migrations recording handled by migration runner)

@@ -31,6 +31,7 @@ type CurrentLineageRow = RowDataPacket & {
   branch_id_at_event: string | null;
   aggregation_method: string | null;
   unit: string | null;
+  metric_code: string | null;
   created_at: string;
 };
 
@@ -47,7 +48,61 @@ function factKey(fact: FactKey): string {
   return `${fact.employeeId}|${fact.metricId}|${fact.scoreDate}`;
 }
 
-function canonicalValue(rows: CurrentLineageRow[]): {
+/**
+ * The ratio multiplier the APPROVED MAPPING configured, not one inferred here.
+ *
+ * Staging computes each row as (numerator / denominator) * ratioMultiplier and
+ * stores that in performance_fact_lineage. Publication re-derives the canonical
+ * value from the summed numerator and denominator, so it has to apply the same
+ * multiplier or the two disagree.
+ *
+ * It previously inferred it from the metric's unit string
+ * (`unit === 'percent' ? 100 : 1`). Any metric whose unit is spelled '%',
+ * 'percentage' or 'rate' therefore staged 95.0 into lineage and published 0.95
+ * into kpi_daily_actual — the same fact, 100x apart, with nothing failing.
+ *
+ * Falls back to the old unit-based behaviour only when no mapping is resolvable,
+ * so pre-existing rows keep the value they were published with.
+ */
+export async function configuredRatioMultiplier(
+  connection: PoolConnection,
+  rows: CurrentLineageRow[],
+): Promise<number> {
+  const mappingVersionId = rows.find((row) => row.mapping_version_id)?.mapping_version_id;
+  const metricCode = String(rows[0]?.metric_code ?? "").trim().toUpperCase();
+
+  if (mappingVersionId && metricCode) {
+    const [versions] = await connection.execute<RowDataPacket[]>(
+      `SELECT mapping_json FROM performance_mapping_version WHERE id = ? LIMIT 1`,
+      [mappingVersionId],
+    );
+    const raw = versions[0]?.mapping_json;
+    if (raw != null) {
+      try {
+        const mapping = typeof raw === "string" ? JSON.parse(raw) : raw;
+        const metrics: Array<Record<string, unknown>> = Array.isArray(mapping?.metrics)
+          ? mapping.metrics
+          : [];
+        const binding = metrics.find(
+          (m) => String(m?.metricCode ?? "").trim().toUpperCase() === metricCode,
+        );
+        if (binding && binding.ratioMultiplier != null) {
+          const configured = Number(binding.ratioMultiplier);
+          if (Number.isFinite(configured)) return configured;
+        }
+        // A mapping that names the metric but omits the multiplier means the
+        // default the ingestion service already applied at staging.
+        if (binding) return 100;
+      } catch {
+        // Fall through to the unit-based default rather than failing a publish.
+      }
+    }
+  }
+
+  return String(rows[0]?.unit ?? "").toLowerCase() === "percent" ? 100 : 1;
+}
+
+export function canonicalValue(rows: CurrentLineageRow[], ratioMultiplier: number): {
   actualValue: number;
   numeratorValue: number | null;
   denominatorValue: number | null;
@@ -65,8 +120,7 @@ function canonicalValue(rows: CurrentLineageRow[]): {
   if (method === "sum") {
     actualValue = rows.reduce((sum, row) => sum + numeric(row.actual_value), 0);
   } else if (method === "ratio" && denominator > 0) {
-    const multiplier = String(rows[0]?.unit ?? "").toLowerCase() === "percent" ? 100 : 1;
-    actualValue = (numerator / denominator) * multiplier;
+    actualValue = (numerator / denominator) * ratioMultiplier;
   } else if (method === "latest") {
     const latest = [...rows].sort((left, right) =>
       String(left.created_at).localeCompare(String(right.created_at))).at(-1);
@@ -106,6 +160,7 @@ async function currentLineage(
        pfl.branch_id_at_event,
        kmm.aggregation_method,
        kmm.unit,
+       kmm.metric_code,
        pfl.created_at
      FROM performance_fact_lineage pfl
      JOIN kpi_metric_master kmm ON kmm.id = pfl.metric_id
@@ -166,7 +221,7 @@ async function writeCanonicalFact(input: {
     return;
   }
 
-  const canonical = canonicalValue(rows);
+  const canonical = canonicalValue(rows, await configuredRatioMultiplier(input.connection, rows));
   const datasetIds = uniqueNonBlank(rows.map((row) => row.source_dataset_id));
   const mappingVersionIds = uniqueNonBlank(rows.map((row) => row.mapping_version_id));
   const datasetKeys = uniqueNonBlank(rows.map((row) => row.dataset_key));

@@ -11,12 +11,12 @@ CREATE TABLE IF NOT EXISTS _migrations (
   migration_id VARCHAR(100) PRIMARY KEY,
   applied_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   checksum VARCHAR(64) DEFAULT NULL
-) ENGINE=InnoDB;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 SET @migration_id = '345_onboarding_status_pipeline_extended';
 SET @migration_checksum = SHA2('phase5-onboarding-status-pipeline-v2-full-enum', 256);
 SET @migration_applied = (
-  SELECT COUNT(*) FROM _migrations WHERE migration_id = @migration_id AND checksum = @migration_checksum
+  SELECT COUNT(*) FROM _migrations WHERE migration_id = @migration_id AND CONVERT(checksum USING utf8mb4) = CONVERT(@migration_checksum USING utf8mb4)
 );
 
 SELECT IF(@migration_applied > 0, 'SKIPPED', 'APPLYING') AS migration_345;

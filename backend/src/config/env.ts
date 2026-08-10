@@ -11,10 +11,33 @@ const envCandidates = [
   path.resolve(moduleDir, "../../.env"),
 ];
 
+/**
+ * A real environment variable beats the .env file.
+ *
+ * This used to load each file with overriding enabled, which inverted the normal
+ * precedence and made backend/.env win over the process environment for every
+ * code path that imports this module — which is nearly all of them.
+ *
+ * The consequence was worse than untidy. It made it IMPOSSIBLE to point any
+ * backend script at a test database:
+ *
+ *     DB_HOST=127.0.0.1 DB_PORT=3399 npx tsx scripts/migrate-fresh-test.ts
+ *
+ * silently connected to whatever backend/.env named — in this checkout, the
+ * production host. A script whose own header says "NEVER run against the
+ * production database" could not be pointed anywhere else. The only reason that
+ * surfaced here is that production is unreachable from this network and the
+ * connection timed out; on the office LAN it would have connected and run 400+
+ * migrations against production.
+ *
+ * With override off, .env still supplies everything the environment does not,
+ * so a normal `npm run dev` is unchanged. Only an explicitly-set variable wins,
+ * which is the standard contract and the one every deployment tool assumes.
+ */
 const loadedEnvPaths = new Set<string>();
 for (const envPath of envCandidates) {
   if (!fs.existsSync(envPath) || loadedEnvPaths.has(envPath)) continue;
-  dotenv.config({ path: envPath, override: true });
+  dotenv.config({ path: envPath, override: false });
   loadedEnvPaths.add(envPath);
 }
 

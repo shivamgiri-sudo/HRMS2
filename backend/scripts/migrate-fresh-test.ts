@@ -30,20 +30,63 @@ const SQL_DIR = path.resolve(__dirname, "../sql");
 const PROD_DB = process.env.DB_NAME ?? "mas_hrms";
 const TEST_DB = process.env.TEST_DB_NAME ?? `${PROD_DB}_test`;
 
-if (TEST_DB === PROD_DB) {
-  console.error(
-    `[migrate-fresh-test] FATAL: TEST_DB_NAME '${TEST_DB}' matches DB_NAME '${PROD_DB}'. ` +
-      "Refusing to drop production database."
-  );
-  process.exit(1);
-}
-
 const connBase = {
   host: process.env.DB_HOST ?? "127.0.0.1",
   port: Number(process.env.DB_PORT ?? 3306),
   user: process.env.DB_USER ?? "root",
   password: process.env.DB_PASSWORD ?? "",
 };
+
+/**
+ * This script is intentionally destructive. A name comparison alone is not a
+ * sufficient guard because a production server can still contain a database
+ * named `mas_hrms_test`. Refuse to connect unless both the host and database
+ * name prove this is a disposable local target.
+ */
+export function assertDisposableFreshMigrationTarget(input: {
+  host: string;
+  productionDatabase: string;
+  testDatabase: string;
+}): void {
+  const host = input.host.trim().toLowerCase();
+  const productionDatabase = input.productionDatabase.trim().toLowerCase();
+  const testDatabase = input.testDatabase.trim().toLowerCase();
+  const loopbackHosts = new Set(["127.0.0.1", "localhost", "::1"]);
+
+  if (!loopbackHosts.has(host)) {
+    throw new Error(
+      `[migrate-fresh-test] FATAL: DB_HOST '${input.host}' is not loopback. ` +
+        "This destructive command is restricted to a disposable local MySQL instance.",
+    );
+  }
+  if (!testDatabase || testDatabase === productionDatabase) {
+    throw new Error(
+      `[migrate-fresh-test] FATAL: TEST_DB_NAME '${input.testDatabase}' is empty or matches DB_NAME '${input.productionDatabase}'.`,
+    );
+  }
+  if (!/(^|_)(test|tmp|scratch|disposable|perfcert)(_|$)/i.test(testDatabase)) {
+    throw new Error(
+      `[migrate-fresh-test] FATAL: TEST_DB_NAME '${input.testDatabase}' does not contain an approved disposable marker ` +
+        "(test, tmp, scratch, disposable, or perfcert).",
+    );
+  }
+  if (["mas_hrms", "hrms", "production", "prod"].includes(testDatabase)) {
+    throw new Error(
+      `[migrate-fresh-test] FATAL: TEST_DB_NAME '${input.testDatabase}' is production-like.`,
+    );
+  }
+}
+
+try {
+  assertDisposableFreshMigrationTarget({
+    host: connBase.host,
+    productionDatabase: PROD_DB,
+    testDatabase: TEST_DB,
+  });
+} catch (error) {
+  console.error(error instanceof Error ? error.message : String(error));
+  process.exit(1);
+}
 
 // Canonical migration manifest (must stay in sync with runPendingMigrations.ts)
 const MIGRATION_MANIFEST: string[] = [
@@ -175,7 +218,7 @@ async function main() {
     mysqlVersion = row?.v ?? "unknown";
   } catch (error: unknown) {
     console.warn(
-      `[migrate-fresh-test] Unable to determine MySQL version: ${error instanceof Error ? error.message : String(error)}`
+      `[migrate-fresh-test] Unable to determine MySQL version: ${error instanceof Error ? error.message : String(error)}`,
     );
   }
 
@@ -186,7 +229,7 @@ async function main() {
   await adminConn.query(`DROP DATABASE IF EXISTS \`${TEST_DB}\``);
   console.log(`[migrate-fresh-test] Creating '${TEST_DB}' ...`);
   await adminConn.query(
-    `CREATE DATABASE \`${TEST_DB}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`
+    `CREATE DATABASE \`${TEST_DB}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`,
   );
   await adminConn.end();
 
@@ -252,7 +295,7 @@ async function main() {
 
   console.log(
     `\n[migrate-fresh-test] All migrations passed.\n` +
-      `  Applied: ${applied}  Skipped: ${skipped}  MySQL: ${mysqlVersion}\n`
+      `  Applied: ${applied}  Skipped: ${skipped}  MySQL: ${mysqlVersion}\n`,
   );
 }
 

@@ -105,8 +105,4 @@ WHERE pc.active_status = 1
     WHERE rpa.role_key = 'super_admin' AND rpa.page_code = pc.page_code
   );
 
--- ----------------------------------------------------------------
--- 4. Migration record
--- ----------------------------------------------------------------
-INSERT IGNORE INTO schema_migrations (filename, applied_at)
-VALUES ('520_missing_page_codes_seed.sql', NOW());
+-- (schema_migrations recording handled by migration runner)

@@ -17,5 +17,4 @@ VALUES
   (UUID(), 'dpo',         'DPDP_WITHDRAWAL_ADMIN', 1,1,1,1,1, 1, NOW()),
   (UUID(), 'compliance',  'DPDP_WITHDRAWAL_ADMIN', 1,1,1,0,1, 1, NOW());
 
-INSERT IGNORE INTO schema_migrations (filename, applied_at)
-VALUES ('522_dpdp_withdrawal_admin_rerun.sql', NOW());
+-- (schema_migrations recording handled by migration runner)

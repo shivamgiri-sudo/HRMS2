@@ -34,7 +34,7 @@ BEGIN
       AND INDEX_NAME   = 'idx_ats_candidate_created_status'
   ) THEN
     ALTER TABLE ats_candidate
-      ADD INDEX idx_ats_candidate_created_status (created_at, status);
+      ADD INDEX idx_ats_candidate_created_status (created_at, current_stage);
   END IF;
 END;;
 DELIMITER ;

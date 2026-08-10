@@ -111,6 +111,19 @@ CREATE TABLE IF NOT EXISTS ats_candidate_portal_login (
   FOREIGN KEY (candidate_id) REFERENCES ats_candidate(id) ON DELETE CASCADE
 );
 
+-- ── 5B. Create candidate onboarding profile base table ───────────────────────
+-- Production installations may already have this table from an earlier manual
+-- rollout, but it was absent from the canonical migration manifest. Define the
+-- stable identity/timestamp base before section 6 adds the journey fields.
+CREATE TABLE IF NOT EXISTS candidate_onboarding_profile (
+  id CHAR(36) NOT NULL DEFAULT (UUID()) PRIMARY KEY,
+  candidate_id CHAR(36) NOT NULL UNIQUE,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  INDEX idx_candidate_onboarding_candidate (candidate_id),
+  FOREIGN KEY (candidate_id) REFERENCES ats_candidate(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 -- ── 6. Enhance candidate_onboarding_profile ───────────────────────────────────
 -- NOTE: Migration runner handles "Duplicate column" errors as idempotent
 ALTER TABLE candidate_onboarding_profile ADD COLUMN full_name_aadhaar VARCHAR(255) NULL COMMENT 'Name as per Aadhaar';
@@ -170,7 +183,7 @@ CREATE TABLE IF NOT EXISTS ats_bgv_initiation (
 CREATE TABLE IF NOT EXISTS ats_payroll_hr_validation (
   id CHAR(36) NOT NULL DEFAULT (UUID()) PRIMARY KEY,
   candidate_id CHAR(36) NOT NULL,
-  branch_id CHAR(36) NOT NULL,
+  branch_id VARCHAR(36) NOT NULL,
   payroll_hr_id CHAR(36) NULL COMMENT 'HR who validates',
   validation_status ENUM('pending','validated','rejected','correction_requested') DEFAULT 'pending',
   employment_type ENUM('onroll','offrole') NULL,
@@ -253,7 +266,7 @@ CREATE TABLE IF NOT EXISTS cost_centre_master (
   cost_centre_code VARCHAR(50) NOT NULL UNIQUE,
   cost_centre_name VARCHAR(255) NOT NULL,
   description TEXT NULL,
-  branch_id CHAR(36) NULL,
+  branch_id VARCHAR(36) NULL,
   process_id CHAR(36) NULL,
   company_id CHAR(36) NULL,
   active_status TINYINT(1) DEFAULT 1,
@@ -293,13 +306,41 @@ CREATE TABLE IF NOT EXISTS module_access_audit_log (
   INDEX idx_performed_by (performed_by)
 );
 
+-- ── 14B. Create ATS notification log base table ─────────────────────────────
+-- The general notification migration creates `notification_log`, while this
+-- ATS journey historically enhanced a separate `ats_notification_log` that
+-- was never present in the canonical manifest. Define its stable delivery
+-- fields before adding journey-specific recipient/read metadata below.
+CREATE TABLE IF NOT EXISTS ats_notification_log (
+  id CHAR(36) NOT NULL DEFAULT (UUID()) PRIMARY KEY,
+  candidate_id CHAR(36) NULL,
+  template_code VARCHAR(100) NULL,
+  channel ENUM('email','sms','portal','push') NOT NULL DEFAULT 'email',
+  recipient_email VARCHAR(255) NULL,
+  recipient_mobile VARCHAR(20) NULL,
+  subject VARCHAR(500) NULL,
+  body TEXT NULL,
+  status VARCHAR(50) NOT NULL DEFAULT 'pending',
+  error_message TEXT NULL,
+  sent_at DATETIME NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  INDEX idx_ats_notification_candidate (candidate_id),
+  INDEX idx_ats_notification_status (status),
+  INDEX idx_ats_notification_created (created_at),
+  FOREIGN KEY (candidate_id) REFERENCES ats_candidate(id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 -- ── 15. Enhance notification systems ──────────────────────────────────────────
-ALTER TABLE ats_notification_log
-ADD COLUMN IF NOT EXISTS notification_type VARCHAR(50) NULL COMMENT 'Type of notification',
-ADD COLUMN IF NOT EXISTS recipient_type ENUM('candidate','recruiter','hr','branch_head','admin') NULL,
-ADD COLUMN IF NOT EXISTS recipient_id CHAR(36) NULL,
-ADD COLUMN IF NOT EXISTS read_status TINYINT(1) DEFAULT 0,
-ADD COLUMN IF NOT EXISTS read_at DATETIME NULL;
+SET @exists = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='ats_notification_log' AND COLUMN_NAME='notification_type');
+SET @sql = IF(@exists=0, 'ALTER TABLE ats_notification_log ADD COLUMN notification_type VARCHAR(50) NULL COMMENT ''Type of notification''', 'SELECT ''ats_notification_log.notification_type exists'' AS migration_note'); PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+SET @exists = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='ats_notification_log' AND COLUMN_NAME='recipient_type');
+SET @sql = IF(@exists=0, 'ALTER TABLE ats_notification_log ADD COLUMN recipient_type ENUM(''candidate'',''recruiter'',''hr'',''branch_head'',''admin'') NULL', 'SELECT ''ats_notification_log.recipient_type exists'' AS migration_note'); PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+SET @exists = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='ats_notification_log' AND COLUMN_NAME='recipient_id');
+SET @sql = IF(@exists=0, 'ALTER TABLE ats_notification_log ADD COLUMN recipient_id CHAR(36) NULL', 'SELECT ''ats_notification_log.recipient_id exists'' AS migration_note'); PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+SET @exists = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='ats_notification_log' AND COLUMN_NAME='read_status');
+SET @sql = IF(@exists=0, 'ALTER TABLE ats_notification_log ADD COLUMN read_status TINYINT(1) DEFAULT 0', 'SELECT ''ats_notification_log.read_status exists'' AS migration_note'); PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+SET @exists = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='ats_notification_log' AND COLUMN_NAME='read_at');
+SET @sql = IF(@exists=0, 'ALTER TABLE ats_notification_log ADD COLUMN read_at DATETIME NULL', 'SELECT ''ats_notification_log.read_at exists'' AS migration_note'); PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 -- ── 16. Create in-portal notification table ───────────────────────────────────
 CREATE TABLE IF NOT EXISTS portal_notification (
@@ -321,11 +362,18 @@ CREATE TABLE IF NOT EXISTS portal_notification (
 );
 
 -- ── 17. Add indexes for performance ───────────────────────────────────────────
-CREATE INDEX IF NOT EXISTS idx_ats_candidate_branch ON ats_candidate(branch_name);
-CREATE INDEX IF NOT EXISTS idx_ats_candidate_status ON ats_candidate(candidate_status);
-CREATE INDEX IF NOT EXISTS idx_ats_candidate_created ON ats_candidate(created_at);
-CREATE INDEX IF NOT EXISTS idx_ats_queue_status ON ats_queue_token(queue_status);
-CREATE INDEX IF NOT EXISTS idx_ats_queue_branch ON ats_queue_token(branch_name);
+-- Canonical ats_candidate uses applied_for_branch/current_stage; canonical
+-- ats_queue_token uses status and stores no branch column. Reuse an existing
+-- equivalent index when one already covers the same column.
+SET @exists = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='ats_candidate' AND COLUMN_NAME='applied_for_branch');
+SET @sql = IF(@exists=0, 'ALTER TABLE ats_candidate ADD INDEX idx_ats_candidate_branch (applied_for_branch)', 'SELECT ''ats_candidate branch index exists'' AS migration_note'); PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+SET @exists = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='ats_candidate' AND COLUMN_NAME='current_stage');
+SET @sql = IF(@exists=0, 'ALTER TABLE ats_candidate ADD INDEX idx_ats_candidate_status (current_stage)', 'SELECT ''ats_candidate stage index exists'' AS migration_note'); PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+SET @exists = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='ats_candidate' AND COLUMN_NAME='created_at');
+SET @sql = IF(@exists=0, 'ALTER TABLE ats_candidate ADD INDEX idx_ats_candidate_created (created_at)', 'SELECT ''ats_candidate created index exists'' AS migration_note'); PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+SET @exists = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='ats_queue_token' AND COLUMN_NAME='status');
+SET @sql = IF(@exists=0, 'ALTER TABLE ats_queue_token ADD INDEX idx_ats_queue_status (status)', 'SELECT ''ats_queue_token status index exists'' AS migration_note'); PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+SELECT 'ats_queue_token has no branch column; branch filtering resolves through ats_candidate' AS migration_note;
 
 -- ── 18. Super admin employee access ───────────────────────────────────────────
 -- Grant super admin access to MAS47814

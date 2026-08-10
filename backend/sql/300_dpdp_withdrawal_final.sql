@@ -31,7 +31,7 @@ DELIMITER ;
 CALL _m300_add_col(
   'dpdp_consent_withdrawal',
   'withdrawal_scope_json',
-  'JSON NULL COMMENT ''Which data categories to restrict'' AFTER scope_json'
+  'JSON NULL COMMENT ''Which data categories to restrict'''
 );
 
 CALL _m300_add_col(

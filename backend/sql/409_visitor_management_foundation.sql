@@ -14,7 +14,7 @@ CREATE TABLE IF NOT EXISTS visitor_profile (
   updated_at         DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   INDEX idx_visitor_profile_mobile (mobile_normalized),
   INDEX idx_visitor_profile_name (full_name)
-);
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS visitor_visit (
   id                    CHAR(36)      NOT NULL DEFAULT (UUID()) PRIMARY KEY,
@@ -45,7 +45,7 @@ CREATE TABLE IF NOT EXISTS visitor_visit (
   INDEX idx_visitor_visit_branch_status (branch_id, status, scheduled_start),
   INDEX idx_visitor_visit_host_status (host_employee_id, status, scheduled_start),
   INDEX idx_visitor_visit_visitor (visitor_id, created_at)
-);
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS visitor_companion (
   id                 CHAR(36)     NOT NULL DEFAULT (UUID()) PRIMARY KEY,
@@ -56,7 +56,7 @@ CREATE TABLE IF NOT EXISTS visitor_companion (
   created_at         DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT fk_visitor_companion_visit FOREIGN KEY (visit_id) REFERENCES visitor_visit(id) ON DELETE CASCADE,
   INDEX idx_visitor_companion_visit (visit_id)
-);
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS visitor_consent (
   id              CHAR(36)     NOT NULL DEFAULT (UUID()) PRIMARY KEY,
@@ -72,7 +72,7 @@ CREATE TABLE IF NOT EXISTS visitor_consent (
   CONSTRAINT fk_visitor_consent_profile FOREIGN KEY (visitor_id) REFERENCES visitor_profile(id),
   CONSTRAINT fk_visitor_consent_visit FOREIGN KEY (visit_id) REFERENCES visitor_visit(id) ON DELETE CASCADE,
   UNIQUE KEY uq_visitor_consent_version (visit_id, consent_type, consent_version)
-);
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS visitor_approval (
   id                CHAR(36)     NOT NULL DEFAULT (UUID()) PRIMARY KEY,
@@ -87,7 +87,7 @@ CREATE TABLE IF NOT EXISTS visitor_approval (
   CONSTRAINT fk_visitor_approval_visit FOREIGN KEY (visit_id) REFERENCES visitor_visit(id) ON DELETE CASCADE,
   CONSTRAINT fk_visitor_approval_employee FOREIGN KEY (approver_employee_id) REFERENCES employees(id) ON DELETE SET NULL,
   INDEX idx_visitor_approval_queue (status, approver_employee_id, created_at)
-);
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS visitor_badge (
   id              CHAR(36)     NOT NULL DEFAULT (UUID()) PRIMARY KEY,
@@ -102,7 +102,7 @@ CREATE TABLE IF NOT EXISTS visitor_badge (
   CONSTRAINT fk_visitor_badge_visit FOREIGN KEY (current_visit_id) REFERENCES visitor_visit(id) ON DELETE SET NULL,
   UNIQUE KEY uq_visitor_badge_branch_number (branch_id, badge_number),
   INDEX idx_visitor_badge_branch_status (branch_id, status)
-);
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS visitor_check_event (
   id              CHAR(36)    NOT NULL DEFAULT (UUID()) PRIMARY KEY,
@@ -117,7 +117,7 @@ CREATE TABLE IF NOT EXISTS visitor_check_event (
   CONSTRAINT fk_visitor_check_event_badge FOREIGN KEY (badge_id) REFERENCES visitor_badge(id) ON DELETE SET NULL,
   INDEX idx_visitor_check_event_visit (visit_id, occurred_at),
   INDEX idx_visitor_check_event_type_time (event_type, occurred_at)
-);
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS visitor_belonging (
   id             CHAR(36)     NOT NULL DEFAULT (UUID()) PRIMARY KEY,
@@ -129,7 +129,7 @@ CREATE TABLE IF NOT EXISTS visitor_belonging (
   created_at     DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT fk_visitor_belonging_visit FOREIGN KEY (visit_id) REFERENCES visitor_visit(id) ON DELETE CASCADE,
   INDEX idx_visitor_belonging_visit (visit_id)
-);
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS visitor_vehicle (
   id             CHAR(36)     NOT NULL DEFAULT (UUID()) PRIMARY KEY,
@@ -141,7 +141,7 @@ CREATE TABLE IF NOT EXISTS visitor_vehicle (
   CONSTRAINT fk_visitor_vehicle_visit FOREIGN KEY (visit_id) REFERENCES visitor_visit(id) ON DELETE CASCADE,
   INDEX idx_visitor_vehicle_number (vehicle_number),
   INDEX idx_visitor_vehicle_visit (visit_id)
-);
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS visitor_security_exception (
   id              CHAR(36)     NOT NULL DEFAULT (UUID()) PRIMARY KEY,
@@ -156,7 +156,7 @@ CREATE TABLE IF NOT EXISTS visitor_security_exception (
   created_at      DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT fk_visitor_exception_visit FOREIGN KEY (visit_id) REFERENCES visitor_visit(id) ON DELETE CASCADE,
   INDEX idx_visitor_exception_queue (status, severity, created_at)
-);
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS visitor_configuration (
   id           CHAR(36)     NOT NULL DEFAULT (UUID()) PRIMARY KEY,
@@ -170,4 +170,4 @@ CREATE TABLE IF NOT EXISTS visitor_configuration (
   updated_at   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   CONSTRAINT fk_visitor_config_branch FOREIGN KEY (branch_id) REFERENCES branch_master(id) ON DELETE CASCADE,
   UNIQUE KEY uq_visitor_config_scope (scope_key, config_key)
-);
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

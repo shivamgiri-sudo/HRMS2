@@ -22,10 +22,10 @@ END$$
 DELIMITER ;
 
 -- ── candidate_onboarding_profile additions ────────────────────────────────────
-CALL _289_add_col('candidate_onboarding_profile', 'mother_name',                  "VARCHAR(255) NULL AFTER father_husband_name");
-CALL _289_add_col('candidate_onboarding_profile', 'emergency_contact_name',       "VARCHAR(255) NULL AFTER alt_mobile_number");
-CALL _289_add_col('candidate_onboarding_profile', 'emergency_contact_relation',   "VARCHAR(100) NULL AFTER emergency_contact_name");
-CALL _289_add_col('candidate_onboarding_profile', 'emergency_contact_mobile',     "VARCHAR(20) NULL AFTER emergency_contact_relation");
+CALL _289_add_col('candidate_onboarding_profile', 'mother_name',                  "VARCHAR(255) NULL");
+CALL _289_add_col('candidate_onboarding_profile', 'emergency_contact_name',       "VARCHAR(255) NULL");
+CALL _289_add_col('candidate_onboarding_profile', 'emergency_contact_relation',   "VARCHAR(100) NULL");
+CALL _289_add_col('candidate_onboarding_profile', 'emergency_contact_mobile',     "VARCHAR(20) NULL");
 CALL _289_add_col('candidate_onboarding_profile', 'nationality',                  "VARCHAR(100) NULL DEFAULT 'Indian'");
 CALL _289_add_col('candidate_onboarding_profile', 'religion',                     "VARCHAR(100) NULL");
 CALL _289_add_col('candidate_onboarding_profile', 'category',                     "VARCHAR(100) NULL COMMENT 'SC/ST/OBC/General/Other'");
@@ -42,8 +42,8 @@ CALL _289_add_col('candidate_onboarding_profile', 'otp_verified_at',            
 CALL _289_add_col('candidate_onboarding_profile', 'otp_mobile',                   "VARCHAR(20) NULL COMMENT 'Mobile used for OTP'");
 
 -- ── candidate_onboarding_experience additions ─────────────────────────────────
-CALL _289_add_col('candidate_onboarding_experience', 'from_date',          "DATE NULL AFTER employer_name");
-CALL _289_add_col('candidate_onboarding_experience', 'to_date',            "DATE NULL AFTER from_date");
+CALL _289_add_col('candidate_onboarding_experience', 'from_date',          "DATE NULL");
+CALL _289_add_col('candidate_onboarding_experience', 'to_date',            "DATE NULL");
 CALL _289_add_col('candidate_onboarding_experience', 'reason_for_leaving', "VARCHAR(500) NULL");
 
 -- ── candidate_onboarding_otp ─────────────────────────────────────────────────

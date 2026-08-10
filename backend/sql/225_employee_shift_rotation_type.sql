@@ -3,17 +3,25 @@
 -- weekly   = shift rotates on a weekly basis per roster_template pattern
 -- daily    = shift may change day-to-day per roster_template pattern
 -- rotating = follows a rolling rotation cycle (e.g. 14-day or 28-day pattern)
+-- MySQL 8.4 compatibility: guard the additive column through INFORMATION_SCHEMA.
 
-ALTER TABLE employees
-  ADD COLUMN IF NOT EXISTS shift_rotation_type
-    ENUM('frozen', 'weekly', 'daily', 'rotating')
-    NOT NULL DEFAULT 'frozen'
-    COMMENT 'Controls how the auto-roster engine assigns shifts for this employee'
-  AFTER designation;
-
--- Index for roster engine queries (frequently filtered by process + rotation type)
 SET @dbname = DATABASE();
 SET @tblname = 'employees';
+
+SET @cnt = (
+  SELECT COUNT(1)
+  FROM information_schema.columns
+  WHERE table_schema = @dbname
+    AND table_name   = @tblname
+    AND column_name  = 'shift_rotation_type'
+);
+SET @sql = IF(@cnt = 0,
+  'ALTER TABLE employees ADD COLUMN shift_rotation_type ENUM(''frozen'', ''weekly'', ''daily'', ''rotating'') NOT NULL DEFAULT ''frozen'' COMMENT ''Controls how the auto-roster engine assigns shifts for this employee'' AFTER designation',
+  'SELECT ''employees.shift_rotation_type exists'' AS note'
+);
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+-- Index for roster engine queries (frequently filtered by process + rotation type)
 SET @idxname = 'idx_emp_shift_rotation_type';
 SET @cnt = (
   SELECT COUNT(1)
@@ -24,7 +32,7 @@ SET @cnt = (
 );
 SET @sql = IF(@cnt = 0,
   CONCAT('ALTER TABLE `', @tblname, '` ADD INDEX `', @idxname, '` (shift_rotation_type)'),
-  'SELECT ''idx already exists'' AS note'
+  'SELECT ''idx_emp_shift_rotation_type exists'' AS note'
 );
 PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 

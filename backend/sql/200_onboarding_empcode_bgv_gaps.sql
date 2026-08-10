@@ -99,16 +99,15 @@ BEGIN
    WHERE employee_code REGEXP '^IDC[0-9]+C$';
 
   SET v_global_max = GREATEST(v_max_onroll_mas, v_max_onroll_idc, v_max_offrole_mas, v_max_offrole_idc);
-
-  -- Ensure the 4 rows exist, then sync all to global_max
-  INSERT INTO employee_code_sequence (company_prefix, is_offrole, current_sequence)
+  -- Migration 138 owns one sequence row per company prefix. On-roll and
+  -- off-role codes share the same numeric counter, so both prefixes advance to
+  -- the global maximum observed across all four employee-code formats.
+  INSERT INTO employee_code_sequence (company_prefix, last_sequence_number)
   VALUES
-    ('MAS', FALSE, v_global_max),
-    ('MAS', TRUE,  v_global_max),
-    ('IDC', FALSE, v_global_max),
-    ('IDC', TRUE,  v_global_max)
+    ('MAS', v_global_max),
+    ('IDC', v_global_max)
   ON DUPLICATE KEY UPDATE
-    current_sequence = GREATEST(current_sequence, v_global_max);
+    last_sequence_number = GREATEST(last_sequence_number, v_global_max);
 
 END //
 DELIMITER ;
@@ -164,6 +163,28 @@ END //
 DELIMITER ;
 CALL _add_offer_hr_fields();
 DROP PROCEDURE IF EXISTS _add_offer_hr_fields;
+
+-- ── 3B. Candidate onboarding bank-detail base table ─────────────────────────
+-- Earlier rollout code expected this table but no canonical migration created
+-- it. Define the stable candidate/account/proof fields before the validation
+-- procedure below adds reviewer evidence and decision status.
+CREATE TABLE IF NOT EXISTS candidate_onboarding_bank_detail (
+  id CHAR(36) NOT NULL DEFAULT (UUID()) PRIMARY KEY,
+  candidate_id CHAR(36) NOT NULL,
+  account_holder_name VARCHAR(255) NULL,
+  bank_name VARCHAR(255) NULL,
+  bank_branch VARCHAR(255) NULL,
+  account_number VARCHAR(100) NULL,
+  ifsc_code VARCHAR(20) NULL,
+  account_type ENUM('savings','current','salary','other') NULL,
+  cancelled_cheque_url VARCHAR(500) NULL,
+  bank_proof_url VARCHAR(500) NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY uq_candidate_onboarding_bank (candidate_id),
+  INDEX idx_candidate_onboarding_bank_ifsc (ifsc_code),
+  FOREIGN KEY (candidate_id) REFERENCES ats_candidate(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ── 4. Add missing candidate onboarding profile fields ────────────────────────
 DROP PROCEDURE IF EXISTS _add_candidate_profile_fields;
