@@ -286,6 +286,11 @@ export async function documentExpiryTracker(
   const params: unknown[]  = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
+  // This predicate is correct and currently fatal: employee_documents.expiry_date is NULL on ALL
+  // 207,616 rows (measured live 2026-08-10), so the report returns zero rows and will until
+  // expiry dates are captured at upload time. Left as-is on purpose — the SQL is right, the data
+  // is absent, and loosening it would invent expiries. The catalogue description now states the
+  // precondition so an empty grid is not misread as "nothing is expiring".
   clauses.push("ed.expiry_date IS NOT NULL");
   clauses.push("ed.expiry_date BETWEEN ? AND ?");
   params.push(today, lookaheadDate);
