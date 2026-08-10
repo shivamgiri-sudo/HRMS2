@@ -15,8 +15,11 @@ Last updated 2026-08-10.
 > rupee, and the voucher number is stored there as `VchNo`); **Req 17's provision workflow** is a
 > revenue-collection milestone tracker (Agreement→PO→GRN→Receipt→Bill Ready→PTP→EPTP) that
 > becomes a `tbl_invoice`; **Req 15's imprest voucher** is the OUTFLOW side of the already-built
-> `Imprest_Details` report. The one thing still needing a human is a data-movement decision:
-> whether to sync `db_bill.salary_data` into `mas_hrms` or live-read it (§4 of the findings doc).
+> `Imprest_Details` report. **The sync-vs-live-read decision is now made (ruling 2026-08-10: no
+> IDC data in `mas_hrms`)** — the IDC voucher is built as a read-only live read of db_bill, gated
+> behind BILL_DB config, and reproduces both IDC vouchers to the rupee. Nothing here is blocked on
+> engineering anymore; §1, §2 and the IDC voucher are done, and what remains is operational
+> (enable BILL_DB) or a policy call (§5b).
 
 ---
 
