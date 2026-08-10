@@ -21,6 +21,10 @@ describe("identity source snapshot SQL", () => {
     expect(statements[2].sql).toContain("Shivamgiri.AgentMaster");
     expect(statements[3].sql).toContain("db_masmis.nms_Agent_Details");
     expect(statements.every((s) => s.params[0] === "run-1")).toBe(true);
+    // Every upsert must restore is_current = 1 in the ON DUPLICATE KEY UPDATE branch, or a re-sync
+    // (which resets all rows to 0 first) leaves already-seen records at 0 and the report goes blank
+    // after the first sync.
+    expect(statements.every((s) => /ON DUPLICATE KEY UPDATE[\s\S]*is_current = 1/.test(s.sql))).toBe(true);
   });
 
   it("builds the report from the local HRMS snapshot table only", () => {

@@ -76,6 +76,12 @@ ON DUPLICATE KEY UPDATE
   matched_employee_code = VALUES(matched_employee_code),
   match_status = VALUES(match_status),
   snapshot_run_id = VALUES(snapshot_run_id),
+  -- Restore current status on re-sync. runIdentitySourceSnapshotSync resets every row to
+  -- is_current = 0 before re-inserting; without setting it back to 1 here, a record that already
+  -- exists (unique key source_system + source_record_key) stays 0 forever, so the report — which
+  -- filters is_current = 1 — silently shows the snapshot only after the FIRST sync and goes blank
+  -- on every sync thereafter.
+  is_current = 1,
   captured_at = VALUES(captured_at),
   source_updated_at = VALUES(source_updated_at),
   updated_at = CURRENT_TIMESTAMP`;
