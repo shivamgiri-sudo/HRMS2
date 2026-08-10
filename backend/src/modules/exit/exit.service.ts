@@ -264,7 +264,7 @@ export const exitService = {
       if (decision) void notifyResignationDecision(id, decision);
     });
 
-    if (["accepted", "notice_serving"].includes(nextStatus)) {
+    if (["accepted", "notice_serving", "exited"].includes(nextStatus)) {
       await createDefaultClearanceTasks(id, (existing as any).employee_id).catch((err: unknown) => {
         logger.error({ err, exitRequestId: id }, '[exit] Clearance task creation failed');
         return null;
@@ -272,13 +272,17 @@ export const exitService = {
     }
 
     if (nextStatus === "exited") {
+      const exitRec = existing as any;
+      const employeeId: string = exitRec.employee_id;
+
       // active_status is what every headcount/payroll-eligibility query in the app filters
       // on — employment_status alone was previously updated here, leaving an exited employee
       // still counted as active everywhere else. Confirmed live 2026-08-06: 93 employees with
       // an exit date recorded still carried active_status=1.
+      const lastWorkingDay = (existing as any).last_working_day_proposed ?? new Date().toISOString().slice(0, 10);
       await db.execute(
-        `UPDATE employees SET active_status = 0, employment_status = 'inactive', updated_at = NOW() WHERE id = ?`,
-        [(existing as any).employee_id]
+        `UPDATE employees SET active_status = 0, employment_status = 'inactive', date_of_exit = ?, updated_at = NOW() WHERE id = ?`,
+        [lastWorkingDay, employeeId]
       ).catch((err: unknown) => {
         logger.error({ err, exitRequestId: id }, '[exit] Employee status update failed');
         return null;
@@ -292,11 +296,43 @@ export const exitService = {
             earned_leave_encashment, gratuity_amount, salary_hold,
             advances_recovery, net_payable, status, is_ff_provisional, prepared_by)
          VALUES (UUID(), ?, ?, CURDATE(), 0, 0, 0, 0, 0, 0, 0, 0, 'draft', 1, ?)`,
-        [id, (existing as any).employee_id, userId]
+        [id, employeeId, userId]
       ).catch((err: unknown) => logger.warn({ err }, '[exit] F&F record creation failed'));
 
+      // Cancel all pending/approved leave requests for the exiting employee
+      await db.execute(
+        `UPDATE leave_requests
+            SET status = 'cancelled', updated_at = NOW(),
+                cancellation_reason = 'Employee exited'
+          WHERE employee_id = ? AND status IN ('pending', 'approved')`,
+        [employeeId]
+      ).catch((err: unknown) => logger.warn({ err, employeeId }, '[exit] Leave cancellation failed'));
+
+      // Nullify reporting_manager_id for direct reports so they are not orphaned
+      await db.execute(
+        `UPDATE employees
+            SET reporting_manager_id = NULL, updated_at = NOW()
+          WHERE reporting_manager_id = ? AND active_status = 1`,
+        [employeeId]
+      ).catch((err: unknown) => logger.warn({ err, employeeId }, '[exit] Direct-report RM nullification failed'));
+
+      // Flag assigned assets for return — creates a return-pending task per asset
+      await db.execute(
+        `UPDATE employee_asset_assignment
+            SET return_status = 'return_pending', updated_at = NOW()
+          WHERE employee_id = ? AND return_status IS NULL`,
+        [employeeId]
+      ).catch((err: unknown) => logger.warn({ err, employeeId }, '[exit] Asset return flagging failed'));
+
+      // Revoke LMS access by marking the learner mapping as inactive
+      await db.execute(
+        `UPDATE lms_employee_mapping
+            SET active_status = 0, deprovisioned_at = NOW(), deprovisioned_reason = 'employee_exit'
+          WHERE employee_id = ? AND active_status = 1`,
+        [employeeId]
+      ).catch((err: unknown) => logger.warn({ err, employeeId }, '[exit] LMS deprovisioning failed'));
+
       // Fire IT exit provisioning tasks — fire-and-forget, must not throw
-      const exitRec = existing as any;
       import('../it-provisioning/it-provisioning.service.js').then(({ dispatchExitProvisioningTasks }) => {
         dispatchExitProvisioningTasks({
           employeeId:     exitRec.employee_id,

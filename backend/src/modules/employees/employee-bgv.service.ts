@@ -340,12 +340,12 @@ export async function canViewEmployeeBgv(
       return actorScope.branch_id === targetScope.branch_id;
     }
 
-    // HR can view same branch or unassigned
-    if (actorScope.branch_id && targetScope.branch_id) {
-      return actorScope.branch_id === targetScope.branch_id;
-    }
-
-    return true; // HR without branch restriction can view all
+    // HR can only view employees in their own branch.
+    // If the HR user has no branch_id on their employee record, deny by default —
+    // unrestricted HR access requires super_admin or admin role (checked above).
+    if (!actorScope.branch_id) return false;
+    if (!targetScope.branch_id) return true; // target has no branch → unassigned, HR can view
+    return actorScope.branch_id === targetScope.branch_id;
   }
 
   return false;

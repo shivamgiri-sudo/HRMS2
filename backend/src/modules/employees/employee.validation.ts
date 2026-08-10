@@ -46,7 +46,7 @@ export const updateEmployeeSchema = z.object({
   salaryStartDate: z.string().regex(DATE_REGEX, "Date must be YYYY-MM-DD").nullable().optional(),
   dateOfExit: z.string().regex(DATE_REGEX, "Date must be YYYY-MM-DD").nullable().optional(),
   employmentType: z.string().trim().optional(),
-  employmentStatus: z.enum(["Active", "Inactive", "On Notice", "Absconded", "Terminated", "Onboarding"]).optional(),
+  employmentStatus: z.enum(["Active", "Inactive", "On Notice", "Onboarding"]).optional(),
   branchId: z.string().uuid().nullable().optional(),
   departmentId: z.string().uuid().nullable().optional(),
   processId: z.string().uuid().nullable().optional(),

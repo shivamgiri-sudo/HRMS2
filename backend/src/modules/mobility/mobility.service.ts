@@ -100,45 +100,37 @@ export const mobilityService = {
     const record = (rows as RowDataPacket[])[0] ?? null;
 
     if (data.action === "approved" && record) {
-      const { employee_id, transfer_type, from_value, to_value } = record as {
+      const { employee_id, transfer_type, from_value, to_value, effective_date } = record as {
         employee_id: string;
         transfer_type: string;
         from_value: string;
         to_value: string;
+        effective_date: string | null;
       };
 
-      if (transfer_type === "branch") {
-        await db.execute(
-          `UPDATE employees SET branch_id = (SELECT id FROM branch_master WHERE branch_name COLLATE utf8mb4_unicode_ci = ? LIMIT 1) WHERE id = ?`,
-          [to_value, employee_id]
-        );
-      } else if (transfer_type === "department") {
-        await db.execute(
-          `UPDATE employees SET department_id = (SELECT id FROM department_master WHERE dept_name COLLATE utf8mb4_unicode_ci = ? LIMIT 1) WHERE id = ?`,
-          [to_value, employee_id]
-        );
-      } else if (transfer_type === "designation") {
-        await db.execute(
-          `UPDATE employees SET designation_id = (SELECT id FROM designation_master WHERE designation_name COLLATE utf8mb4_unicode_ci = ? LIMIT 1) WHERE id = ?`,
-          [to_value, employee_id]
-        );
-      } else if (transfer_type === "process") {
-        await db.execute(
-          `UPDATE employees SET process_id = (SELECT id FROM process_master WHERE process_name COLLATE utf8mb4_unicode_ci = ? LIMIT 1) WHERE id = ?`,
-          [to_value, employee_id]
-        );
+      // Only apply the employee-row update when the effective date has been reached.
+      // Future-dated transfers are approved but held; a nightly job (or re-calling
+      // applyPendingTransfers) will apply them on effective_date.
+      const today = new Date().toISOString().slice(0, 10);
+      const effectiveDateStr = effective_date ? String(effective_date).slice(0, 10) : today;
+      const isDue = effectiveDateStr <= today;
+
+      if (isDue) {
+        await mobilityService.applyTransferToEmployee(employee_id, transfer_type, to_value, id);
       }
+      // else: employee row stays unchanged until effective_date arrives.
 
       await db.execute(
         `INSERT INTO employee_journey_log
            (id, employee_id, event_type, event_date, description, module, triggered_by, metadata)
-         VALUES (?, ?, 'transfer', CURDATE(), ?, 'MOBILITY', ?, ?)`,
+         VALUES (?, ?, 'transfer', ?, ?, 'MOBILITY', ?, ?)`,
         [
           randomUUID(),
           employee_id,
-          `Transfer: ${from_value} → ${to_value}`,
+          effectiveDateStr,
+          `Transfer: ${from_value} → ${to_value}${isDue ? "" : ` (effective ${effectiveDateStr})`}`,
           data.approved_by,
-          JSON.stringify({ transfer_id: id, transfer_type, from_value, to_value }),
+          JSON.stringify({ transfer_id: id, transfer_type, from_value, to_value, effective_date: effectiveDateStr, applied: isDue }),
         ]
       );
 
@@ -148,7 +140,7 @@ export const mobilityService = {
         module_key: "MOBILITY",
         entity_type: "employee",
         entity_id: employee_id,
-        change_summary: { transfer_type, from_value, to_value },
+        change_summary: { transfer_type, from_value, to_value, effective_date: effectiveDateStr, applied: isDue },
       });
     }
 
@@ -158,6 +150,93 @@ export const mobilityService = {
       [id]
     );
     return (updated as RowDataPacket[])[0] ?? null;
+  },
+
+  // Applies a single approved transfer's employee-row update. Called at approval
+  // time when effective_date <= today, and by the nightly deferred-transfer job.
+  // Throws if the master-table lookup returns NULL — callers must not silently null a FK.
+  async applyTransferToEmployee(
+    employee_id: string,
+    transfer_type: string,
+    to_value: string,
+    transfer_id: string
+  ): Promise<void> {
+    if (transfer_type === "branch") {
+      const [r] = await db.execute<RowDataPacket[]>(
+        "SELECT id FROM branch_master WHERE id = ? OR branch_name COLLATE utf8mb4_unicode_ci = ? LIMIT 1",
+        [to_value, to_value]
+      );
+      const masterId = (r[0] as any)?.id ?? null;
+      if (!masterId) throw new Error(`Transfer: branch '${to_value}' not found in branch_master`);
+      await db.execute("UPDATE employees SET branch_id = ? WHERE id = ?", [masterId, employee_id]);
+
+    } else if (transfer_type === "department") {
+      const [r] = await db.execute<RowDataPacket[]>(
+        "SELECT id FROM department_master WHERE id = ? OR dept_name COLLATE utf8mb4_unicode_ci = ? LIMIT 1",
+        [to_value, to_value]
+      );
+      const masterId = (r[0] as any)?.id ?? null;
+      if (!masterId) throw new Error(`Transfer: department '${to_value}' not found in department_master`);
+      await db.execute("UPDATE employees SET department_id = ? WHERE id = ?", [masterId, employee_id]);
+
+    } else if (transfer_type === "designation") {
+      const [r] = await db.execute<RowDataPacket[]>(
+        "SELECT id FROM designation_master WHERE id = ? OR designation_name COLLATE utf8mb4_unicode_ci = ? LIMIT 1",
+        [to_value, to_value]
+      );
+      const masterId = (r[0] as any)?.id ?? null;
+      if (!masterId) throw new Error(`Transfer: designation '${to_value}' not found in designation_master`);
+      await db.execute("UPDATE employees SET designation_id = ? WHERE id = ?", [masterId, employee_id]);
+
+    } else if (transfer_type === "process") {
+      const [r] = await db.execute<RowDataPacket[]>(
+        "SELECT id FROM process_master WHERE id = ? OR process_name COLLATE utf8mb4_unicode_ci = ? LIMIT 1",
+        [to_value, to_value]
+      );
+      const masterId = (r[0] as any)?.id ?? null;
+      if (!masterId) throw new Error(`Transfer: process '${to_value}' not found in process_master`);
+      await db.execute("UPDATE employees SET process_id = ? WHERE id = ?", [masterId, employee_id]);
+
+    } else if (transfer_type === "reporting_manager") {
+      // to_value is the new manager's employee_id for RM transfers.
+      await db.execute(
+        `UPDATE employees SET reporting_manager_id = ? WHERE id = ?`,
+        [to_value, employee_id]
+      );
+    }
+
+    // Mark applied so the deferred job does not re-apply.
+    await db.execute(
+      `UPDATE transfer_record SET applied_at = NOW() WHERE id = ?`,
+      [transfer_id]
+    );
+  },
+
+  // Apply all approved transfers whose effective_date has been reached but
+  // whose applied_at is still NULL. Called by a nightly scheduled job.
+  async applyPendingTransfers(): Promise<number> {
+    const [pending] = await db.execute<RowDataPacket[]>(
+      `SELECT id, employee_id, transfer_type, to_value
+         FROM transfer_record
+        WHERE status = 'completed'
+          AND applied_at IS NULL
+          AND effective_date <= CURDATE()`
+    );
+    let applied = 0;
+    for (const row of pending as RowDataPacket[]) {
+      try {
+        await mobilityService.applyTransferToEmployee(
+          String(row.employee_id),
+          String(row.transfer_type),
+          String(row.to_value),
+          String(row.id)
+        );
+        applied++;
+      } catch (err) {
+        console.error(`[mobility] Failed to apply deferred transfer ${row.id}:`, err);
+      }
+    }
+    return applied;
   },
 
   // ── Promotions ───────────────────────────────────────────────────────────
@@ -209,18 +288,41 @@ export const mobilityService = {
   async updatePromotion(id: string, data: ApproveRejectData) {
     const finalStatus = data.action === "approved" ? "completed" : "rejected";
 
-    await db.execute(
-      `UPDATE promotion_record SET status = ?, approved_by = ?, updated_at = NOW() WHERE id = ?`,
-      [finalStatus, data.approved_by, id]
-    );
+    if (data.action !== "approved") {
+      // Rejection is a simple status update — no downstream writes, no transaction needed.
+      await db.execute(
+        `UPDATE promotion_record SET status = ?, approved_by = ?, updated_at = NOW() WHERE id = ?`,
+        [finalStatus, data.approved_by, id]
+      );
+      const [updated] = await db.execute<RowDataPacket[]>(
+        "SELECT * FROM promotion_record WHERE id = ? LIMIT 1",
+        [id]
+      );
+      return (updated as RowDataPacket[])[0] ?? null;
+    }
 
-    const [rows] = await db.execute<RowDataPacket[]>(
-      "SELECT * FROM promotion_record WHERE id = ? LIMIT 1",
-      [id]
-    );
-    const record = (rows as RowDataPacket[])[0] ?? null;
+    // Approval: all downstream writes (status, designation, salary, journey log) must be
+    // atomic. Previously none of these were wrapped in a transaction, so a salary-revision
+    // failure left the designation already changed and the record marked completed.
+    const conn = await db.getConnection();
+    try {
+      await conn.execute("START TRANSACTION");
 
-    if (data.action === "approved" && record) {
+      await conn.execute(
+        `UPDATE promotion_record SET status = ?, approved_by = ?, updated_at = NOW() WHERE id = ?`,
+        [finalStatus, data.approved_by, id]
+      );
+
+      const [rows] = await conn.execute<RowDataPacket[]>(
+        "SELECT * FROM promotion_record WHERE id = ? LIMIT 1",
+        [id]
+      );
+      const record = (rows as RowDataPacket[])[0] ?? null;
+      if (!record) {
+        await conn.execute("ROLLBACK");
+        return null;
+      }
+
       const { employee_id, from_designation, to_designation, salary_revision } = record as {
         employee_id: string;
         from_designation: string | null;
@@ -228,24 +330,25 @@ export const mobilityService = {
         salary_revision: number | null;
       };
 
-      await db.execute(
-        `UPDATE employees
-         SET designation_id = (SELECT id FROM designation_master WHERE designation_name COLLATE utf8mb4_unicode_ci = ? LIMIT 1)
-         WHERE id = ?`,
-        [to_designation, employee_id]
+      const [desigRows] = await conn.execute<RowDataPacket[]>(
+        "SELECT id FROM designation_master WHERE id = ? OR designation_name COLLATE utf8mb4_unicode_ci = ? LIMIT 1",
+        [to_designation, to_designation]
+      );
+      const newDesigId = (desigRows as RowDataPacket[])[0]?.id as string | undefined;
+      if (!newDesigId) {
+        await conn.execute("ROLLBACK");
+        (conn as any).release?.();
+        throw new Error(
+          `Promotion ${id}: designation '${to_designation}' not found in designation_master`
+        );
+      }
+      await conn.execute(
+        `UPDATE employees SET designation_id = ? WHERE id = ?`,
+        [newDesigId, employee_id]
       );
 
       if (salary_revision != null && salary_revision > 0) {
-        // This INSERT could never succeed: it wrote ctc / effective_date / created_by, none
-        // of which exist — the columns are ctc_annual / effective_from / assigned_by. Every
-        // approved promotion carrying a salary revision threw ER_BAD_FIELD_ERROR here, after
-        // the designation UPDATE above had already committed. The employee was promoted, the
-        // record marked completed, and the new CTC was never recorded.
-        //
-        // structure_id is NOT NULL with no default, and a promotion does not choose a new
-        // salary structure — it carries the current one forward. Read it from the active
-        // assignment rather than inventing a value.
-        const [currentRows] = await db.execute<RowDataPacket[]>(
+        const [currentRows] = await conn.execute<RowDataPacket[]>(
           `SELECT structure_id
              FROM employee_salary_assignment
             WHERE employee_id = ? AND active_status = 1
@@ -256,41 +359,37 @@ export const mobilityService = {
         const structureId = (currentRows as RowDataPacket[])[0]?.structure_id as string | undefined;
 
         if (!structureId) {
-          // Loudly, not silently: without an existing structure there is nothing to carry
-          // forward, and quietly skipping is how a missing salary revision goes unnoticed.
-          console.error(
-            `[mobility] promotion ${id}: employee ${employee_id} has no active salary assignment, ` +
-              `so the revision to ${salary_revision} was NOT recorded. Assign a salary structure first.`
-          );
-        } else {
-          // One active assignment per employee is the invariant — 0 of 29,927 employees have
-          // more than one. Supersede the current row before inserting, matching
-          // employee.service.ts. ON DUPLICATE KEY is deliberately absent: the only unique key
-          // is PRIMARY(id) and every insert supplies a fresh UUID, so the clause could never
-          // have fired, and appending is correct for an effective-dated history table.
-          await db.execute(
-            `UPDATE employee_salary_assignment
-                SET active_status = 0, effective_to = CURDATE()
-              WHERE employee_id = ? AND active_status = 1`,
-            [employee_id]
-          );
-          await db.execute(
-            `INSERT INTO employee_salary_assignment
-               (id, employee_id, structure_id, ctc_annual, effective_from, assigned_by, assignment_reason)
-             VALUES (?, ?, ?, ?, CURDATE(), ?, ?)`,
-            [
-              randomUUID(),
-              employee_id,
-              structureId,
-              salary_revision,
-              data.approved_by,
-              `Promotion: ${from_designation ?? "–"} → ${to_designation}`,
-            ]
+          // No active salary assignment: roll back the whole promotion so the record
+          // does not end up in a partial state (designation changed, salary not revised).
+          await conn.execute("ROLLBACK");
+          throw new Error(
+            `Promotion ${id}: employee ${employee_id} has no active salary assignment. ` +
+            `Assign a salary structure before approving a promotion with a salary revision.`
           );
         }
+
+        await conn.execute(
+          `UPDATE employee_salary_assignment
+              SET active_status = 0, effective_to = CURDATE()
+            WHERE employee_id = ? AND active_status = 1`,
+          [employee_id]
+        );
+        await conn.execute(
+          `INSERT INTO employee_salary_assignment
+             (id, employee_id, structure_id, ctc_annual, effective_from, assigned_by, assignment_reason)
+           VALUES (?, ?, ?, ?, CURDATE(), ?, ?)`,
+          [
+            randomUUID(),
+            employee_id,
+            structureId,
+            salary_revision,
+            data.approved_by,
+            `Promotion: ${from_designation ?? "–"} → ${to_designation}`,
+          ]
+        );
       }
 
-      await db.execute(
+      await conn.execute(
         `INSERT INTO employee_journey_log
            (id, employee_id, event_type, event_date, description, module, triggered_by, metadata)
          VALUES (?, ?, 'promotion', CURDATE(), ?, 'MOBILITY', ?, ?)`,
@@ -303,6 +402,8 @@ export const mobilityService = {
         ]
       );
 
+      await conn.execute("COMMIT");
+
       await logSensitiveAction({
         actor_user_id: data.approved_by,
         action_type: "PROMOTION_APPROVED",
@@ -311,6 +412,11 @@ export const mobilityService = {
         entity_id: employee_id,
         change_summary: { from_designation, to_designation, salary_revision },
       });
+    } catch (err) {
+      await conn.execute("ROLLBACK").catch(() => {});
+      throw err;
+    } finally {
+      (conn as any).release?.();
     }
 
     const [updated] = await db.execute<RowDataPacket[]>(
