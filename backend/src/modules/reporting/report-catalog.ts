@@ -3153,6 +3153,19 @@ export const REPORT_CATALOG: ReportDefinition[] = [
     // here would offer filters that silently do nothing. Fix the query to
     // scope on e.branch_id/e.process_id (nullable — many rows have no
     // employee yet) before adding those filters back.
+    // branchScoped: false below is correct, and this records the evidence so nobody "fixes" it
+    // to true on the assumption that an unscoped employee-joining report must be an oversight.
+    // The grain is the ATS onboarding bridge — a candidate between offer and joining — and
+    // nothing on that row carries a branch. Verified live 2026-08-10:
+    //   - ats_onboarding_bridge has no branch column at all, and only 2 of its 351 rows link to
+    //     an employee, so scoping through employees.branch_id would drop 349 of 351 rows for
+    //     every scoped user;
+    //   - ats_candidate.applied_for_branch is populated on 4,987 of 37,637 rows (13%), so
+    //     scoping on it would hide the 87% that are unmapped — the opposite of this audit's
+    //     rule that unmapped rows render UNASSIGNED and are never dropped.
+    // The employees table appears in this report's SQL only as a LEFT JOIN supplying the actual
+    // date of joining, which is why a scope-gap scan flags it. It is not a leak: the report
+    // cannot be branch-scoped at all until the bridge carries a branch of its own.
     code: "offer-to-joining-tracker",
     name: "Offer to Joining Tracker",
     category: "Recruitment",

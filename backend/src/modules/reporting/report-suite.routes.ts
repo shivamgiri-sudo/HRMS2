@@ -1885,27 +1885,62 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
 
     // ─── Missing Payroll ──────────────────────────────────────────────────────
     case "payroll-readiness-status": {
-      const month = monthParam(req.query.month);
+      // Defaults to the latest month that actually HAS a payroll run, not to today. Payroll is
+      // closed in arrears, so for most of any month there is no run yet and monthParam's
+      // calendar default drew an empty grid — indistinguishable from "payroll ran and produced
+      // nothing". This block evaded the guard that catches exactly this until now: the old
+      // process filter contained a `FROM process_master` subquery, which appeared before the
+      // real FROM, so the check read the driving table as process_master and exempted it.
+      const month = await resolvePayrollMonth(req.query.month);
       const prsClauses = ["spr.run_month = ?"];
       const prsParams: unknown[] = [month];
-      if (req.query.branchId) { prsClauses.push("spr.branch_id = ?"); prsParams.push(String(req.query.branchId)); }
-      if (req.query.processId) { prsClauses.push("spr.branch_id IN (SELECT branch_id FROM process_master WHERE id = ?)"); prsParams.push(String(req.query.processId)); }
+
+      // The branch dimension used to be sourced from spr.branch_id, which is NULL on ALL 66
+      // runs — verified live 2026-08-10. That is not missing data: a payroll run is org-wide and
+      // covers 4 to 13 branches at once, so the column has nothing to hold. Three defects
+      // followed from reading it anyway, none of which announced itself:
+      //   - the Branch column rendered blank on every row;
+      //   - the branch filter (spr.branch_id = ?) could never match, so choosing a branch
+      //     silently returned an empty grid rather than an error;
+      //   - the process filter had the same defect, and additionally looked branch up from
+      //     process_master, conflating two different dimensions.
+      // A row-scope predicate on spr.branch_id would have been worse still — it would have
+      // dropped all 66 runs for every scoped user while looking like a security fix.
+      //
+      // The branch a run touches is carried by its LINES, via the employee on each line. Joining
+      // that way makes the grain the catalogue already declared — one row per run per branch —
+      // true for the first time, and lets the declared branch filter and branch scoping work.
+      // addScopedEmployeeFilters handles both: an explicit ?branchId, and the caller's own
+      // entitlement when they do not pass one. No catalogue change was needed; the entry has
+      // described this shape all along and only the SQL failed to implement it.
+      //
+      // Verified on 2026-07: 11 branch rows summing to 1,464 lines, which reconciles exactly
+      // with an independent count of that run's lines. The run touches 13 distinct branch_ids
+      // but yields 11 rows because three ids share one branch_name — grouping by name is
+      // deliberate and consistent with the rest of the suite, and loses no lines.
+      addScopedEmployeeFilters(req, prsClauses, prsParams);
+
       // spr.finalized_at doesn't exist — verified live. salary_prep_run has no
       // "finalized" timestamp column at all; disbursed_at is the closest real
       // analog (the run reaching its final, paid state). Never caught because
       // this report was unreachable (missing from REPORT_CATALOG) until now.
-      sql = `SELECT spr.run_month AS payroll_month, b.branch_name,
+      //
+      // LEFT JOIN to the lines, not JOIN: a run that has produced no lines yet is precisely the
+      // "not ready" state this report exists to show, and an inner join would hide it.
+      sql = `SELECT spr.run_month AS payroll_month,
+                    COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
                     spr.status AS run_status,
                     COUNT(spl.id) AS total_lines,
                     spr.disbursed_at AS finalized_at,
                     COALESCE(NULLIF(fin.full_name,''), CONCAT(fin.first_name,' ',COALESCE(fin.last_name,''))) AS finalized_by
                FROM salary_prep_run spr
-               LEFT JOIN branch_master b ON b.id = spr.branch_id
                LEFT JOIN salary_prep_line spl ON spl.run_id = spr.id
+               LEFT JOIN employees e ON e.id = spl.employee_id
+               LEFT JOIN branch_master b ON b.id = e.branch_id
                LEFT JOIN employees fin ON fin.id = spr.approved_by
               WHERE ${prsClauses.join(" AND ")}
               GROUP BY spr.id, spr.run_month, b.branch_name, spr.status, spr.disbursed_at, fin.full_name, fin.first_name, fin.last_name
-              ORDER BY spr.run_month DESC, b.branch_name`;
+              ORDER BY spr.run_month DESC, branch_name`;
       params.length = 0; params.push(...prsParams);
       break;
     }
