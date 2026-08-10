@@ -80,16 +80,29 @@ if (Number(pre.unprotected) > 0) {
   process.exit(1);
 }
 
-let cleared = 0, skipped = 0, scanned = 0;
+let cleared = 0, skipped = 0, scanned = 0, lastId = 0;
 for (;;) {
   if (cleared + skipped >= MAX) { console.log(`  reached --max=${MAX}, stopping.`); break; }
+  // Keyset pagination on the primary key, identical whether applying or not.
+  //
+  // Two earlier shapes were both wrong, and only running it showed that. A plain LIMIT with
+  // no cursor re-reads the same page forever in dry-run, because nothing is cleared and the
+  // WHERE keeps matching — it reported "WOULD CLEAR=116000" against 115,698 real rows, having
+  // checked one 500-row page 232 times. Switching to OFFSET produced the right count but made
+  // it O(n^2), since MySQL walks and discards every skipped row.
+  //
+  // `id > lastId` advances in both modes, costs one index seek per page, and can neither
+  // re-read nor skip a row.
   const [rows] = await conn.query(
     `SELECT id, account_number AS val, account_number_enc AS ct
        FROM legacy_payslip_snapshot
       WHERE account_number IS NOT NULL AND TRIM(account_number) <> ''
-      LIMIT ${Math.min(BATCH, MAX - cleared - skipped)}`);
+        AND id > ?
+      ORDER BY id
+      LIMIT ${Math.min(BATCH, MAX - cleared - skipped)}`, [lastId]);
   if (rows.length === 0) break;
   scanned += rows.length;
+  lastId = rows[rows.length - 1].id;
 
   const safe = [];
   for (const r of rows) {
@@ -100,7 +113,7 @@ for (;;) {
 
   if (!APPLY) {
     cleared += safe.length;
-    if (scanned >= Math.min(Number(pre.plaintext), MAX)) break;
+    if (rows.length < BATCH) break;   // last page
     continue;
   }
 
