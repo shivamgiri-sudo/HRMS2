@@ -31,3 +31,25 @@ describe('updateEmployeeSchema — userId not patchable', () => {
     expect(src).not.toMatch(/input\.userId[^}]+user_id\s*=\s*\?/);
   });
 });
+
+// ── Task 3: official_email must not be self-serviceable ──────────────────────
+describe('PATCH /me — official_email not self-serviceable', () => {
+  it('updateMyProfile must not contain officialEmailSet/officialEmailValues variables', () => {
+    const src = fs.readFileSync(
+      path.resolve(__dirname, '../employee.profile.service.ts'),
+      'utf8'
+    );
+    expect(src).not.toContain('officialEmailSet');
+    expect(src).not.toContain('officialEmailValues');
+  });
+
+  it('updateMyProfile must not write official_email column in UPDATE statement', () => {
+    const src = fs.readFileSync(
+      path.resolve(__dirname, '../employee.profile.service.ts'),
+      'utf8'
+    );
+    const updateFnIdx = src.indexOf('async updateMyProfile(');
+    const updateFnSection = src.slice(updateFnIdx, updateFnIdx + 2000);
+    expect(updateFnSection).not.toMatch(/official_email\s*=\s*\?/);
+  });
+});

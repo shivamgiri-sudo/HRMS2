@@ -291,14 +291,19 @@ router.patch("/me", h(async (req: any, res: any) => {
   if (!rows.length) return res.status(404).json({ success: false, error: "No employee record for this user" });
   const empId = rows[0].id;
 
-  // official_email is the canonical login identity — keep it out of self-service
-  // address→address_line1, no "address" or "country" column in prod schema
+  // official_email is the canonical login identity — HR-only, never self-service.
+  // address→address_line1, no "address" or "country" column in prod schema.
   const ALLOWED_FIELDS = [
     "mobile", "personal_email", "personal_phone", "alternate_mobile",
     "address_line1", "address_line2", "city", "state", "pincode",
     "date_of_birth", "gender", "marital_status",
     "blood_group", "working_hours_start", "working_hours_end", "working_days"
   ];
+
+  // Reject any attempt to update official_email through self-service.
+  if (req.body.official_email !== undefined) {
+    return res.status(403).json({ success: false, error: "official_email cannot be changed through self-service. Contact HR." });
+  }
 
   const updates: string[] = [];
   const values: any[] = [];
@@ -309,33 +314,10 @@ router.patch("/me", h(async (req: any, res: any) => {
     }
   }
 
-  // official_email update: sync to auth_user.email as login identity
-  const newOfficialEmail = req.body.official_email !== undefined
-    ? String(req.body.official_email).toLowerCase().trim()
-    : null;
-
-  if (newOfficialEmail) {
-    updates.push("`official_email` = ?");
-    values.push(newOfficialEmail);
-  }
-
   if (!updates.length) return res.status(400).json({ success: false, error: "No updatable fields provided" });
 
   values.push(empId);
   await db.execute(`UPDATE employees SET ${updates.join(", ")} WHERE id = ?`, values);
-
-  // Sync auth_user.email = official_email (login identity)
-  if (newOfficialEmail) {
-    const [conflict] = await db.execute(
-      "SELECT id FROM auth_user WHERE LOWER(email) = ? AND id != ? LIMIT 1",
-      [newOfficialEmail, userId]
-    ) as any[];
-    if (!(conflict as any[]).length) {
-      await db.execute("UPDATE auth_user SET email = ? WHERE id = ?", [newOfficialEmail, userId]);
-    } else {
-      return res.status(409).json({ success: false, error: "This official email is already used by another account." });
-    }
-  }
 
   return res.json({ success: true, message: "Profile updated" });
 }));
@@ -465,42 +447,15 @@ router.post("/me/bank-change-request", h(async (req: any, res: any) => {
   return res.json({ success: true, ...result });
 }));
 
-// PUT /api/employees/me/bank-details — upsert bank details for logged-in user
-router.put("/me/bank-details", h(async (req: any, res: any) => {
-  const userId = req.authUser?.id;
-  if (!userId) return res.status(401).json({ success: false, error: "Unauthorized" });
-
-  const [rows] = await db.execute(
-    "SELECT id FROM employees WHERE user_id = ? AND active_status = 1 LIMIT 1",
-    [userId]
-  ) as any[];
-  if (!rows.length) return res.status(404).json({ success: false, error: "No employee record for this user" });
-  const empId = rows[0].id;
-
-  const { bank_name, account_holder_name, bank_branch, ifsc_code, account_type, account_number } = req.body;
-
-  // verification_status and masked_account_number are not real columns on
-  // employee_bank_detail (this INSERT 500'd on every call — confirmed live). The real
-  // verification flag is `verified` (tinyint) — see dashboardSqlManifest.ts and
-  // dashboard-drilldown.service.ts, which already document this. masked_account_number
-  // is computed in JS from account_number on read (see GET /me below), never stored.
-  const fields: string[] = ["employee_id", "bank_name", "account_holder_name", "bank_branch", "ifsc_code", "account_type"];
-  const vals: any[] = [empId, bank_name, account_holder_name, bank_branch, ifsc_code, account_type];
-  const onDup: string[] = ["bank_name = VALUES(bank_name)", "account_holder_name = VALUES(account_holder_name)", "bank_branch = VALUES(bank_branch)", "ifsc_code = VALUES(ifsc_code)", "account_type = VALUES(account_type)"];
-
-  if (account_number) {
-    const enc = encryptField(String(account_number));
-    fields.push("account_number_enc");
-    vals.push(enc);
-    onDup.push("account_number_enc = VALUES(account_number_enc)");
-  }
-
-  const placeholders = fields.map(() => "?").join(", ");
-  await db.execute(
-    `INSERT INTO employee_bank_detail (${fields.join(", ")}) VALUES (${placeholders}) ON DUPLICATE KEY UPDATE ${onDup.join(", ")}`,
-    vals
-  );
-  return res.json({ success: true, message: "Bank details saved" });
+// PUT /api/employees/me/bank-details — REMOVED self-service direct write.
+// Bank detail changes must go through the Payroll HO approval workflow via
+// POST /me/bank-change-request. Keeping the route as a 410 tombstone so that
+// any old client that still calls it gets a clear error rather than a silent 404.
+router.put("/me/bank-details", h(async (_req: any, res: any) => {
+  return res.status(410).json({
+    success: false,
+    error: "Direct bank detail updates are no longer permitted. Submit a change request via POST /api/employees/me/bank-change-request for Payroll approval.",
+  });
 }));
 
 // PUT /api/employees/me/statutory-details — upsert statutory info for logged-in user

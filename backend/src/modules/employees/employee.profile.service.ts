@@ -279,12 +279,10 @@ export const employeeProfileService = {
       return value;
     });
     const sets = entries.map(([key]) => `${mapping[key]} = ?`).join(", ");
-    const officialEmailSet = input.email !== undefined ? ", official_email = ?" : "";
-    const officialEmailValues = input.email !== undefined ? [input.email] : [];
 
     await db.execute(
-      `UPDATE employees SET ${sets}${officialEmailSet}, updated_at = NOW() WHERE id = ?`,
-      [...values, ...officialEmailValues, employeeId],
+      `UPDATE employees SET ${sets}, updated_at = NOW() WHERE id = ?`,
+      [...values, employeeId],
     );
     await auditProfileChange(
       userId,
