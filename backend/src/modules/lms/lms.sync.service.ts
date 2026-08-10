@@ -5,6 +5,21 @@ import { lmsQuery } from "./lms.service.js";
 import { lmsEmployeeMapper } from "./lms-employee-mapper.js";
 import { lmsSyncService } from "../lms-integration/lms-sync.service.js";
 
+/**
+ * Upper bound on trainees pulled per sync, shared by both queries below.
+ *
+ * Both were `LIMIT 2000` with no ORDER BY. trainee_master holds 1,226 non-Dropped rows today —
+ * under the cap, so nothing is being lost yet, but 61% of the way there and climbing. The
+ * sibling sync in modules/lms-integration had exactly this shape at LIMIT 1000 and quietly
+ * dropped 226 trainees once the table outgrew it (fixed in 54e19f10); this is the same bug
+ * waiting for the same trigger.
+ *
+ * Two changes, neither of which alters behaviour below the cap: ORDER BY makes the set stable
+ * so a trainee cannot sync one run and vanish the next, and the guard below makes truncation
+ * announce itself instead of being invisible. A bound nobody is told about is the bug.
+ */
+const TRAINEE_SYNC_CAP = 5000;
+
 export interface SyncResult {
   mapped: number;
   progress: number;
@@ -30,8 +45,16 @@ export async function syncMappings(actorId?: string): Promise<{ count: number; e
     `SELECT employee_id, permanent_emp_id, lms_id, email, trainee_name
        FROM trainee_master
       WHERE status != 'Dropped'
-      LIMIT 2000`
+      ORDER BY lms_id
+      LIMIT ${TRAINEE_SYNC_CAP}`
   ).catch((e: any) => { errors.push(`fetchTrainees: ${e?.message}`); return [] as RowDataPacket[]; });
+
+  if (trainees.length >= TRAINEE_SYNC_CAP) {
+    errors.push(
+      `fetchTrainees: trainee cap reached at ${TRAINEE_SYNC_CAP} rows — trainees beyond it were NOT synced. ` +
+      `Raise TRAINEE_SYNC_CAP or paginate before trusting these counts.`
+    );
+  }
 
   for (const t of trainees) {
     const learnerId = String(t.lms_id || t.permanent_emp_id || t.employee_id || "").trim();
@@ -78,8 +101,16 @@ export async function syncProgress(actorId?: string): Promise<{ count: number; e
        LEFT JOIN batch_master b ON b.batch_no = t.batch_no
        LEFT JOIN classroom_master c ON c.classroom_id = t.classroom_id
       WHERE t.status != 'Dropped'
-      LIMIT 2000`
+      ORDER BY t.lms_id
+      LIMIT ${TRAINEE_SYNC_CAP}`
   ).catch((e: any) => { errors.push(`fetchProgress: ${e?.message}`); return [] as RowDataPacket[]; });
+
+  if (trainees.length >= TRAINEE_SYNC_CAP) {
+    errors.push(
+      `fetchProgress: trainee cap reached at ${TRAINEE_SYNC_CAP} rows — trainees beyond it were NOT synced. ` +
+      `Raise TRAINEE_SYNC_CAP or paginate before trusting these counts.`
+    );
+  }
 
   for (const t of trainees) {
     const learnerId = String(t.lms_id || t.permanent_emp_id || t.employee_id || "").trim();
