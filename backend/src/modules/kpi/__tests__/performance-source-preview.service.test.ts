@@ -64,11 +64,14 @@ describe("performance source preview", () => {
   });
 
   it("previews all source formulas without writing kpi facts", async () => {
-    aprExecute.mockResolvedValueOnce([[
-      { agent_user: "MAS1001", total_talk: 600, total_dispo: 120, total_calls: 12, source_records: 2 },
-      { agent_user: "BIO1002", total_talk: 300, total_dispo: 60, total_calls: 6, source_records: 1 },
-      { agent_user: "UNKNOWN", total_talk: 50, total_dispo: 10, total_calls: 1, source_records: 1 },
-    ], []]);
+    aprExecute.mockImplementation(async (sql: string) => {
+      if (!sql.includes("vicidial_agent_log_10_25")) return [[], []];
+      return [[
+        { agent_user: "MAS1001", total_talk: 600, total_dispo: 120, total_calls: 12, source_records: 2 },
+        { agent_user: "BIO1002", total_talk: 300, total_dispo: 60, total_calls: 6, source_records: 1 },
+        { agent_user: "UNKNOWN", total_talk: 50, total_dispo: 10, total_calls: 1, source_records: 1 },
+      ], []];
+    });
     qualityExecute.mockResolvedValueOnce([[
       { agent_user: "MAS1001", points_earned: 180, points_possible: 200, fatal_audits: 1, total_audits: 4, last_audit_date: "2026-07-18" },
     ], []]);
@@ -106,5 +109,31 @@ describe("performance source preview", () => {
 
     expect(result.sources.apr.ok).toBe(false);
     expect(result.sources.apr.errors).toEqual(["No credentials configured for integration: apr_productivity"]);
+  });
+
+  it("keeps healthy APR source tables visible when one dialer table fails", async () => {
+    aprExecute.mockImplementation(async (sql: string) => {
+      if (sql.includes("vicidial_agent_log_11_5")) {
+        throw new Error("Query execution was interrupted, maximum statement execution time exceeded");
+      }
+      if (sql.includes("vicidial_agent_log_10_25")) {
+        return [[
+          { agent_user: "MAS1001", total_talk: 600, total_dispo: 120, total_calls: 12, source_records: 2 },
+        ], []];
+      }
+      return [[], []];
+    });
+
+    qualityExecute.mockResolvedValueOnce([[], []]);
+    outboundExecute.mockResolvedValueOnce([[], []]);
+    salesBrandExecute.mockResolvedValueOnce([[], []]);
+    salesBrandExecute.mockResolvedValueOnce([[], []]);
+
+    const result = await previewPerformanceSources({ date: "2026-07-18", yearMonth: "2026-07" });
+
+    expect(result.sources.apr).toMatchObject({ ok: false, sourceRows: 1, mappedRows: 1, unmappedRows: 0 });
+    expect(result.sources.apr.metrics).toContainEqual(expect.objectContaining({ metricCode: "AHT", value: 60 }));
+    expect(result.sources.apr.errors[0]).toContain("vicidial_agent_log_11_5");
+    expect(result.sources.apr.errors[0]).toContain("maximum statement execution time exceeded");
   });
 });

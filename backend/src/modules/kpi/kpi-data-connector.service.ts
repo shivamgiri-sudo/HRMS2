@@ -3,6 +3,7 @@ import { getPoolForKey } from '../external-db/external-db.service.js';
 import type { Pool } from 'mysql2/promise';
 import type { RowDataPacket, ResultSetHeader } from 'mysql2';
 import { recordMappingException } from './mapping-exception.service.js';
+import { readAprSourceAggregates } from './performance-apr-source-reader.js';
 
 type KpiSource = 'apr' | 'attendance' | 'quality' | 'manual' | 'calculated';
 
@@ -390,21 +391,9 @@ export async function syncAprMetrics(date: string): Promise<SyncResult> {
   const { pool, errors } = await readSourcePool('apr_productivity');
   if (!pool) return { synced: 0, skipped: 0, errors };
 
-  const sql = `
-    SELECT
-      UPPER(TRIM(user)) AS agent_user,
-      SUM(COALESCE(talk_sec, 0)) AS total_talk,
-      SUM(COALESCE(dispo_sec, 0)) AS total_dispo,
-      COUNT(*) AS total_calls,
-      COUNT(*) AS source_records
-    FROM vw_agent_log_all
-    WHERE event_time >= ? AND event_time < ?
-    GROUP BY UPPER(TRIM(user))
-  `;
-
   try {
-    const [rows] = await pool.execute(sql, [date, nextDate(date)]);
-    return writeFacts(rows as SourceAggregate[], ['AHT', 'TALK_TIME', 'DIALS', 'ACW'], (row, employeeId) => {
+    const result = await readAprSourceAggregates(pool, date);
+    const written = await writeFacts(result.rows as SourceAggregate[], ['AHT', 'TALK_TIME', 'DIALS', 'ACW'], (row, employeeId) => {
       const totalCalls = numberValue(row.total_calls);
       const totalTalk = numberValue(row.total_talk);
       const totalDispo = numberValue(row.total_dispo);
@@ -416,7 +405,7 @@ export async function syncAprMetrics(date: string): Promise<SyncResult> {
           date,
           value: round1((totalTalk + totalDispo) / totalCalls),
           source: 'apr',
-          sourceSystem: 'dialer_vw_agent_log_all',
+          sourceSystem: 'dialer_vicidial_agent_log_tables',
           numerator: totalTalk + totalDispo,
           denominator: totalCalls,
           sourceRecordCount: numberValue(row.source_records),
@@ -427,7 +416,7 @@ export async function syncAprMetrics(date: string): Promise<SyncResult> {
           date,
           value: round1(totalTalk / totalCalls),
           source: 'apr',
-          sourceSystem: 'dialer_vw_agent_log_all',
+          sourceSystem: 'dialer_vicidial_agent_log_tables',
           numerator: totalTalk,
           denominator: totalCalls,
           sourceRecordCount: numberValue(row.source_records),
@@ -438,7 +427,7 @@ export async function syncAprMetrics(date: string): Promise<SyncResult> {
           date,
           value: totalCalls,
           source: 'apr',
-          sourceSystem: 'dialer_vw_agent_log_all',
+          sourceSystem: 'dialer_vicidial_agent_log_tables',
           numerator: totalCalls,
           sourceRecordCount: numberValue(row.source_records),
         },
@@ -448,13 +437,14 @@ export async function syncAprMetrics(date: string): Promise<SyncResult> {
           date,
           value: round1(totalDispo / totalCalls),
           source: 'apr',
-          sourceSystem: 'dialer_vw_agent_log_all',
+          sourceSystem: 'dialer_vicidial_agent_log_tables',
           numerator: totalDispo,
           denominator: totalCalls,
           sourceRecordCount: numberValue(row.source_records),
         },
       ];
     });
+    return { ...written, errors: [...result.errors, ...written.errors] };
   } catch (error) {
     return { synced: 0, skipped: 0, errors: [errorMessage(error)] };
   }
