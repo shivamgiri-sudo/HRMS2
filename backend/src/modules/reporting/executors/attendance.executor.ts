@@ -1134,11 +1134,13 @@ export async function monthlyShrinkageTrend(
   // the COUNT it used to force cost another ~42s, for a number the same scan already knew — see
   // COUNT_FREE_PROBE. Identical rows either way; only the number of round trips changes.
   //
-  // Before rewriting the SQL above to make this faster: don't. Six rewrites have been measured
-  // and rejected, and the cost is not in the query. The server runs a 128 MB InnoDB buffer pool
-  // against a 3.4 GB database with 0 MB free, so the plan's "single-row PK lookup" into employees
-  // costs ~160µs of disk seek, 105k times. Full measurements, and the list of rewrites already
-  // ruled out, are in docs/reports-slow-queries-root-cause.md.
+  // Before rewriting the SQL above to make this faster: don't, and be careful how you measure.
+  // Seven rewrites have been tried and rejected. Run-to-run variance on this server is about
+  // ±80% on identical SQL — removing the window function measured SLOWER than keeping it, which
+  // is how the noise floor was found — so a handful of timings cannot support any query-shape
+  // conclusion. Timings also depend heavily on which DB address you reached: the public route is
+  // 3-4x slower than the office LAN for the same statement on the same server.
+  // See docs/reports-slow-queries-root-cause.md before spending time here.
   const { rows, total } = await fetchPageWithTotal(base, params, options, query, count);
   return { rows, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > rows.length, nextCursor: null };
 }
