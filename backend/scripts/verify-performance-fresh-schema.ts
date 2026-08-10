@@ -59,7 +59,14 @@ function normaliseForMySQL8(sql: string): string {
     .replace(/\bCHANGE\s+COLUMN\s+IF\s+EXISTS\b/gi, "CHANGE COLUMN")
     .replace(/\bMODIFY\s+COLUMN\s+IF\s+EXISTS\b/gi, "MODIFY COLUMN")
     // ALTER TABLE … DROP INDEX IF EXISTS (MariaDB) → DROP INDEX (MySQL uses DROP INDEX name ON tbl)
-    .replace(/\bDROP\s+INDEX\s+IF\s+EXISTS\b/gi, "DROP INDEX");
+    .replace(/\bDROP\s+INDEX\s+IF\s+EXISTS\b/gi, "DROP INDEX")
+    // Tables declared with DEFAULT CHARSET=utf8mb4 but no explicit collation inherit
+    // MySQL 8.4's default utf8mb4_0900_ai_ci, which differs from the test DB's
+    // utf8mb4_unicode_ci, causing FK incompatibility errors on CHAR/VARCHAR columns.
+    // Append the matching collation so every table is consistent with the DB.
+    .replace(/\bCHARSET\s*=\s*utf8mb4\s*;/gi, "CHARSET=utf8mb4 COLLATE utf8mb4_unicode_ci;")
+    .replace(/\bCHARSET\s*=\s*utf8mb4\s*\n/gi, "CHARSET=utf8mb4 COLLATE utf8mb4_unicode_ci\n")
+    .replace(/\bCHARSET\s*=\s*utf8mb4\s*$/gim, "CHARSET=utf8mb4 COLLATE utf8mb4_unicode_ci");
 }
 
 function executableStatements(rawSql: string): string[] {
