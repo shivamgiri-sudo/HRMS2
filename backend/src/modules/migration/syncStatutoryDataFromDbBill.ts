@@ -26,6 +26,7 @@ interface SyncResult {
 interface MasHrmsEmployee extends RowDataPacket {
   id: string;
   employee_code: string;
+  full_name: string | null;
   uan_number: string | null;
   epf_number: string | null;
   pan_number: string | null;
@@ -38,6 +39,7 @@ interface MasHrmsEmployee extends RowDataPacket {
 
 interface MasjclrEntry extends RowDataPacket {
   EmpCode: string;
+  EmpName: string | null;
   UAN: string | null;
   NewEpfNo: string | null;
   EPFNo: string | null;
@@ -99,6 +101,38 @@ export function isUsable(value: string | null | undefined): boolean {
   return !PLACEHOLDER_VALUES.has(normalised);
 }
 
+/**
+ * Do these two names plausibly describe the same person?
+ *
+ * Deliberately generous, because the two systems spell people differently — initials,
+ * dropped middle names, "MOHAMMED" vs "MOHD", trailing spaces, honorifics. Requiring an
+ * exact match would refuse legitimate rows: of 691 EmpCode matches, 669 agree exactly
+ * but 12 only partially, and those 12 are the same people written two ways.
+ *
+ * One shared word of 3+ characters is enough. That is a low bar on purpose — this is a
+ * corroboration check on an identifier that is already supposed to be unique, not an
+ * identity resolver. It separates "SOFIYA SULTAN vs NAYANDEEP KAUR" from
+ * "NAGORI MOHAMMED SAMIR MOHAMMED vs NAGORI MOHAMMED SAMIR", which is all it needs to do.
+ *
+ * A blank name on either side fails closed: unverifiable is not the same as verified.
+ */
+export function namesCorroborate(a: string | null | undefined, b: string | null | undefined): boolean {
+  const clean = (value: string | null | undefined) =>
+    String(value ?? '').toUpperCase().replace(/[^A-Z ]/g, ' ').replace(/\s+/g, ' ').trim();
+
+  const left = clean(a);
+  const right = clean(b);
+  if (!left || !right) return false;
+  if (left === right) return true;
+
+  const words = (value: string) => new Set(value.split(' ').filter((w) => w.length > 2));
+  const rightWords = words(right);
+  for (const word of words(left)) {
+    if (rightWords.has(word)) return true;
+  }
+  return false;
+}
+
 export async function syncEmployeeStatutoryData(options: SyncOptions): Promise<SyncResult> {
   const { dryRun = false, employeeCodeFilter, actorUserId } = options;
 
@@ -115,7 +149,7 @@ export async function syncEmployeeStatutoryData(options: SyncOptions): Promise<S
     const billPool = await getBillPool();
 
     // Fetch all active employees from mas_hrms
-    let employeeQuery = 'SELECT id, employee_code, uan_number, epf_number, pan_number, esic_number, bank_account_number, bank_name, ifsc_code, account_holder_name FROM employees WHERE active_status = 1';
+    let employeeQuery = 'SELECT id, employee_code, full_name, uan_number, epf_number, pan_number, esic_number, bank_account_number, bank_name, ifsc_code, account_holder_name FROM employees WHERE active_status = 1';
     const params: any[] = [];
 
     if (employeeCodeFilter) {
@@ -130,7 +164,7 @@ export async function syncEmployeeStatutoryData(options: SyncOptions): Promise<S
       try {
         // Query masjclrentry for this employee
         const [legacyRows] = await billPool.execute<MasjclrEntry[]>(
-          'SELECT EmpCode, UAN, NewEpfNo, EPFNo, PanNo, ESICNo, AcNo, AcBank, IFSCCode, AccHolder FROM masjclrentry WHERE EmpCode = ? LIMIT 1',
+          'SELECT EmpCode, EmpName, UAN, NewEpfNo, EPFNo, PanNo, ESICNo, AcNo, AcBank, IFSCCode, AccHolder FROM masjclrentry WHERE EmpCode = ? LIMIT 1',
           [employee.employee_code]
         );
 
@@ -138,8 +172,32 @@ export async function syncEmployeeStatutoryData(options: SyncOptions): Promise<S
           continue; // No match in legacy DB
         }
 
-        result.matched++;
         const legacy = legacyRows[0];
+
+        // EmpCode alone does not identify a person. Corroborate with the name.
+        //
+        // Employee codes have been reused. Measured across the 756 active employees this
+        // sync would consider: 691 match an EmpCode in masjclrentry, 669 of those names
+        // agree exactly and 12 partially — but **10 name a completely different human**.
+        // MAS62921 is SHEELU GARG here and KRISHNA there; MAS63086 is SOFIYA SULTAN here
+        // and NAYANDEEP KAUR there. Both are real employees, not fixtures.
+        //
+        // Without this check the sync writes that stranger's UAN, EPF, ESIC, PAN — and
+        // `bank_account_number`, which is where salary is paid. A wrong PAN misfiles a
+        // tax return; a wrong account number pays the wrong person. Neither announces
+        // itself, because every value written is individually well-formed.
+        //
+        // Counted as skipped rather than matched, and surfaced in errors, because an
+        // identity mismatch is a finding someone should look at, not a silent no-op.
+        if (!namesCorroborate(employee.full_name, legacy.EmpName)) {
+          result.skipped++;
+          result.errors.push(
+            `${employee.employee_code}: name mismatch — mas_hrms "${employee.full_name ?? ''}" vs db_bill "${legacy.EmpName ?? ''}"; skipped, EmpCode appears to be reused`,
+          );
+          continue;
+        }
+
+        result.matched++;
         const fieldsToUpdate: string[] = [];
         const updateData: Record<string, string> = {};
 
