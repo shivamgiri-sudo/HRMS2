@@ -472,6 +472,22 @@ export const payrollGovernanceService = {
           : "Employees missing PAN number (manual TDS run — verify rate is applied correctly)",
       ),
       countIssue(
+        // PAN format: 5 uppercase letters, 4 digits, 1 uppercase letter (Income Tax Act).
+        // A stored value that is non-empty but fails this pattern is a placeholder or typo
+        // (e.g. "AAAAA0000A", "PANAPPLIED", "N/A") — the engine cannot treat it as a
+        // genuine identity any more than a missing PAN can. Same TDS-mode severity rule
+        // as MISSING_PAN: auto-TDS needs a valid PAN to look up the correct slab.
+        `${eligibleSql}
+          AND COALESCE(e.pan_number, '') <> ''
+          AND e.pan_number NOT REGEXP '^[A-Z]{5}[0-9]{4}[A-Z]{1}$'`,
+        params,
+        "INVALID_PAN_FORMAT",
+        tdsMode === "auto" ? "blocker" : "warning",
+        tdsMode === "auto"
+          ? "Employees have a PAN stored but it does not match the 10-character format (AAAAA0000A). Auto-TDS treats these as placeholder/invalid and cannot compute correct rate — resolve before calculation."
+          : "Employees have a PAN stored that does not match the valid 10-character format (AAAAA0000A) — verify before TDS filing.",
+      ),
+      countIssue(
         `${eligibleSql}
           AND NOT EXISTS (
             SELECT 1 FROM employee_uan eu

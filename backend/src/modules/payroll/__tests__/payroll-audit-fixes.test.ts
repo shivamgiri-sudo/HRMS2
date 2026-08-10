@@ -239,6 +239,35 @@ describe("P1-B — MISSING_PAN severity depends on tds_mode", () => {
   });
 });
 
+// ─── TDS PAN format validation ───────────────────────────────────────────────
+
+describe("TDS — INVALID_PAN_FORMAT governance check", () => {
+  it("INVALID_PAN_FORMAT check is present in governance service", () => {
+    expect(GOVERNANCE).toContain('"INVALID_PAN_FORMAT"');
+  });
+
+  it("uses REGEXP to validate the 10-char PAN pattern", () => {
+    const idx = GOVERNANCE.indexOf("INVALID_PAN_FORMAT");
+    const surrounding = GOVERNANCE.slice(Math.max(0, idx - 300), idx + 300);
+    expect(surrounding).toContain("REGEXP");
+    expect(surrounding).toContain("[A-Z]{5}[0-9]{4}[A-Z]{1}");
+  });
+
+  it("only fires for non-empty PANs (does not duplicate MISSING_PAN)", () => {
+    const idx = GOVERNANCE.indexOf("INVALID_PAN_FORMAT");
+    const surrounding = GOVERNANCE.slice(Math.max(0, idx - 300), idx + 100);
+    expect(surrounding).toContain("<> ''");
+  });
+
+  it("applies the same tdsMode blocker/warning rule as MISSING_PAN", () => {
+    const idx = GOVERNANCE.indexOf('"INVALID_PAN_FORMAT"');
+    const forward = GOVERNANCE.slice(idx, idx + 600);
+    expect(forward).toContain("tdsMode");
+    expect(forward).toContain('"blocker"');
+    expect(forward).toContain('"warning"');
+  });
+});
+
 // ─── P2-A: salary_prep_line_component unique key migration ───────────────────
 
 describe("P2-A — unique constraint migration 1126 exists", () => {
