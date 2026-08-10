@@ -92,10 +92,33 @@ for (const e of needy) {
   if (m.length === 10) byMobile.set(m, norm(e.employee_code));
 }
 
+/**
+ * Same rule as namesCorroborate() in syncStatutoryDataFromDbBill.ts — kept in step with
+ * it deliberately. EmpCode does not identify a person here: codes have been reused, and
+ * the first dry run of this script proposed giving real people's PANs to "Codex E2E
+ * Candidate" and "dsd dsd" before this check existed.
+ */
+function namesCorroborate(a, b) {
+  const clean = (v) => String(v ?? "").toUpperCase().replace(/[^A-Z ]/g, " ").replace(/\s+/g, " ").trim();
+  const left = clean(a);
+  const right = clean(b);
+  if (!left || !right) return false;
+  if (left === right) return true;
+  const words = (v) => new Set(v.split(" ").filter((w) => w.length > 2));
+  const rightWords = words(right);
+  for (const w of words(left)) if (rightWords.has(w)) return true;
+  return false;
+}
+
 /** code -> Map(pan -> Set(source)) */
 const candidates = new Map();
-const offer = (code, source, pan) => {
+const rejectedByName = [];
+const offer = (code, source, pan, sourceName) => {
   if (!PAN_RE.test(pan) || !byCode.has(code)) return;
+  if (!namesCorroborate(byCode.get(code).full_name, sourceName)) {
+    rejectedByName.push({ code, source, theirs: String(sourceName ?? "").slice(0, 24) });
+    return;
+  }
   if (!candidates.has(code)) candidates.set(code, new Map());
   const forCode = candidates.get(code);
   if (!forCode.has(pan)) forCode.set(pan, new Set());
@@ -105,20 +128,20 @@ const offer = (code, source, pan) => {
 for (const [table, column] of [["masjclrentry", "PanNo"], ["his_masjsclrentry", "PanNo"]]) {
   for (const part of chunk([...byCode.keys()], 300)) {
     const [rows] = await bill.query(
-      `SELECT EmpCode, \`${column}\` AS pan FROM \`${table}\`
+      `SELECT EmpCode, EmpName, \`${column}\` AS pan FROM \`${table}\`
         WHERE EmpCode IN (${part.map(() => "?").join(",")})`, part);
-    for (const r of rows) offer(norm(r.EmpCode), table, norm(r.pan));
+    for (const r of rows) offer(norm(r.EmpCode), table, norm(r.pan), r.EmpName);
   }
 }
 for (const part of chunk([...byMobile.keys()], 300)) {
   const marks = part.map(() => "?").join(",");
   const [rows] = await bill.query(
-    `SELECT Mobile_No, Mobile_Number, Pan_Number AS pan FROM Interview_master
+    `SELECT Mobile_No, Mobile_Number, Employee_Name, Name, Pan_Number AS pan FROM Interview_master
       WHERE RIGHT(REPLACE(COALESCE(Mobile_No,''),' ',''),10) IN (${marks})
          OR RIGHT(REPLACE(COALESCE(Mobile_Number,''),' ',''),10) IN (${marks})`, [...part, ...part]);
   for (const r of rows) {
     const code = byMobile.get(digits(r.Mobile_No)) ?? byMobile.get(digits(r.Mobile_Number));
-    if (code) offer(code, "Interview_master", norm(r.pan));
+    if (code) offer(code, "Interview_master", norm(r.pan), r.Employee_Name || r.Name);
   }
 }
 await bill.end();
@@ -134,6 +157,12 @@ for (const [code, pans] of candidates) {
   }
 }
 
+console.log(`\nrejected — code/mobile hit, but the NAME is someone else: ${rejectedByName.length}`);
+for (const r of rejectedByName) {
+  const ours = String(byCode.get(r.code)?.full_name ?? "").slice(0, 24);
+  console.log(`  x ${r.code.padEnd(10)} ours "${ours}"  theirs "${r.theirs}"  [${r.source}]`);
+}
+
 console.log(`\nrecoverable with sources agreeing : ${agreed.length}`);
 console.log(`sources DISAGREE — skipped        : ${conflicted.length}`);
 for (const c of conflicted) console.log(`  ! ${c.code}: ${c.distinct} different PANs offered`);
@@ -142,6 +171,35 @@ console.log("\nplan:");
 for (const a of agreed) {
   const e = byCode.get(a.code);
   console.log(`  ${a.code.padEnd(10)} ${String(e.full_name).slice(0, 26).padEnd(28)} ${mask(a.pan)}  [${a.sources}]`);
+}
+
+// Would any proposed PAN already belong to a DIFFERENT employee?
+//
+// Assigning a PAN that another employee already holds recreates the exact defect that
+// started this: four active employees sharing one PAN, which makes both people's Form 16
+// wrong rather than one person's missing. Checked against live immediately before the
+// write, not from the earlier read.
+const proposed = agreed.map((a) => a.pan);
+if (proposed.length) {
+  const [clashes] = await hrms.query(
+    `SELECT employee_code, full_name, UPPER(TRIM(pan_number)) AS pan FROM employees
+      WHERE active_status = 1 AND UPPER(TRIM(pan_number)) IN (${proposed.map(() => "?").join(",")})`,
+    proposed,
+  );
+  if (clashes.length) {
+    console.log(`
+PAN COLLISIONS — these are already held by another employee:`);
+    for (const c of clashes) {
+      const taker = agreed.find((a) => a.pan === c.pan);
+      console.log(`  ! ${mask(c.pan)} held by ${c.employee_code} (${c.full_name}) — would also go to ${taker?.code}`);
+    }
+    const blocked = new Set(clashes.map((c) => c.pan));
+    for (let i = agreed.length - 1; i >= 0; i--) if (blocked.has(agreed[i].pan)) agreed.splice(i, 1);
+    console.log(`  dropped from the plan; ${agreed.length} remain`);
+  } else {
+    console.log(`
+no PAN collisions with existing employees — ${agreed.length} safe to write`);
+  }
 }
 
 if (!APPLY) {
