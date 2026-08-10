@@ -18,12 +18,33 @@ export const lmsSyncService = {
       const lms = await getLmsConnection();
 
       // Get unique trainees from trainee_master (has HRMS employee_id mapped)
+      //
+      // This was `LIMIT 1000` with no ORDER BY. trainee_master passed that months ago —
+      // measured 2026-08-10 it holds 1,226 rows, every one with an employee_id — so 226
+      // trainees (18%) were silently never synced. Worse, without an ORDER BY the rows MySQL
+      // returns are not stable, so which 226 got dropped could change between runs: a trainee
+      // could sync one day, vanish the next, and nothing anywhere said so. The run reported
+      // "synced N" and looked healthy either way.
+      //
+      // The cap is kept, because an unbounded query over a table that only grows is its own
+      // hazard, but it is now ordered (stable, and the same set every run) and loud when it
+      // actually truncates. A bound nobody is told about is the bug; a bound that announces
+      // itself is a safeguard.
+      const TRAINEE_SYNC_CAP = 5000;
       const [trainees] = await lms.execute<RowDataPacket[]>(`
         SELECT DISTINCT tm.employee_id, tm.lms_id, tm.email, tm.mobile, tm.batch_no, tm.process, tm.branch
         FROM trainee_master tm
         WHERE tm.employee_id IS NOT NULL
-        LIMIT 1000
+        ORDER BY tm.lms_id
+        LIMIT ${TRAINEE_SYNC_CAP}
       `);
+
+      if (trainees.length >= TRAINEE_SYNC_CAP) {
+        console.warn(
+          `[LMS Sync] trainee cap reached: ${trainees.length} rows returned at the ${TRAINEE_SYNC_CAP} limit. ` +
+          `Trainees beyond it are NOT synced — raise TRAINEE_SYNC_CAP or paginate before trusting these totals.`
+        );
+      }
 
       for (const trainee of trainees) {
         try {
