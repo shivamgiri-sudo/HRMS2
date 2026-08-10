@@ -41,8 +41,19 @@ function checksum(filePath: string): string {
   return crypto.createHash("sha256").update(fs.readFileSync(filePath)).digest("hex");
 }
 
+function normaliseForMySQL8(sql: string): string {
+  // MySQL 8.x does not support ADD COLUMN IF NOT EXISTS or ADD INDEX IF NOT EXISTS
+  // (MariaDB extensions). On a fresh empty schema every ADD is safe without the guard.
+  return sql
+    .replace(/\bADD\s+COLUMN\s+IF\s+NOT\s+EXISTS\b/gi, "ADD COLUMN")
+    .replace(/\bADD\s+INDEX\s+IF\s+NOT\s+EXISTS\b/gi, "ADD INDEX")
+    .replace(/\bADD\s+UNIQUE\s+INDEX\s+IF\s+NOT\s+EXISTS\b/gi, "ADD UNIQUE INDEX")
+    .replace(/\bADD\s+UNIQUE\s+KEY\s+IF\s+NOT\s+EXISTS\b/gi, "ADD UNIQUE KEY")
+    .replace(/\bMODIFY\s+COLUMN\s+IF\s+EXISTS\b/gi, "MODIFY COLUMN");
+}
+
 function executableStatements(rawSql: string): string[] {
-  return splitSql(rawSql).filter((statement) => {
+  return splitSql(normaliseForMySQL8(rawSql)).filter((statement) => {
     const upper = statement.trim().toUpperCase();
     return !upper.startsWith("SOURCE ")
       && !upper.startsWith("USE ")
