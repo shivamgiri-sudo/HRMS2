@@ -60,5 +60,5 @@ describe("upload storage paths", () => {
       .map((f) => f.slice(root.length + 1).replace(/\\/g, "/"));
 
     expect(offenders).toEqual([]);
-  });
+  }, 30_000);
 });

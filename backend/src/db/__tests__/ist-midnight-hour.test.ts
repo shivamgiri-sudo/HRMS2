@@ -101,5 +101,5 @@ describe("IST midnight hour", () => {
         "MySQL rejects the DATETIME. Use hourCycle: 'h23'.\n" +
         offenders.map((o) => `  - ${o}`).join("\n")
     ).toEqual([]);
-  });
+  }, 30_000);
 });

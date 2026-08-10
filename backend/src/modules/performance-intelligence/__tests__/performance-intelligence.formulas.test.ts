@@ -43,6 +43,7 @@ function fact(
     actualValue,
     numeratorValue: null,
     denominatorValue: null,
+    calculationMultiplier: null,
     targetValue: metricCode === "AHT" ? 100 : 90,
     weightage: 100,
     maxAchievementPct: 120,
@@ -81,11 +82,13 @@ describe("aggregateMetricFacts", () => {
       fact("AHT", 100, {
         numeratorValue: 200,
         denominatorValue: 2,
+        calculationMultiplier: 1,
         formulaVersion: "AHT_WEIGHTED:v1",
       }),
       fact("AHT", 50, {
         numeratorValue: 150,
         denominatorValue: 3,
+        calculationMultiplier: 1,
         formulaVersion: "AHT_WEIGHTED:v1",
       }),
     ]);
@@ -99,16 +102,76 @@ describe("aggregateMetricFacts", () => {
       fact("QUALITY_SCORE", 80, {
         numeratorValue: 80,
         denominatorValue: 100,
+        calculationMultiplier: 100,
         formulaVersion: "QUALITY_WEIGHTED:v1",
       }),
       fact("QUALITY_SCORE", 90, {
         numeratorValue: 45,
         denominatorValue: 50,
+        calculationMultiplier: 100,
         formulaVersion: "QUALITY_WEIGHTED:v1",
       }),
     ]);
 
     expect(byCode(result, "QUALITY_SCORE").value).toBeCloseTo(83.33, 2);
+  });
+
+  it("uses explicit ratio multipliers instead of display units", () => {
+    expect(byCode(aggregateMetricFacts([
+      fact("QUALITY_SCORE", 95, {
+        numeratorValue: 95,
+        denominatorValue: 100,
+        calculationMultiplier: 100,
+        unit: "%",
+        formulaVersion: "QUALITY_RATIO:v1",
+      }),
+    ]), "QUALITY_SCORE").value).toBe(95);
+
+    expect(byCode(aggregateMetricFacts([
+      fact("QUALITY_SCORE", 0.95, {
+        numeratorValue: 95,
+        denominatorValue: 100,
+        calculationMultiplier: 1,
+        unit: "percent",
+        formulaVersion: "QUALITY_RATIO:v1",
+      }),
+    ]), "QUALITY_SCORE").value).toBe(0.95);
+
+    expect(byCode(aggregateMetricFacts([
+      fact("QUALITY_SCORE", 750, {
+        numeratorValue: 3,
+        denominatorValue: 4,
+        calculationMultiplier: 1000,
+        unit: "percentage",
+        formulaVersion: "QUALITY_RATIO:v1",
+      }),
+    ]), "QUALITY_SCORE").value).toBe(750);
+  });
+
+  it("keeps simple and weighted averages explicit", () => {
+    const simple = aggregateMetricFacts([
+      fact("CUSTOM_SCORE", 100, {
+        aggregationMethod: "average",
+        sourceRecordCount: 1,
+      }),
+      fact("CUSTOM_SCORE", 50, {
+        aggregationMethod: "average",
+        sourceRecordCount: 9,
+      }),
+    ]);
+    const weighted = aggregateMetricFacts([
+      fact("CUSTOM_SCORE", 100, {
+        aggregationMethod: "weighted_average",
+        sourceRecordCount: 1,
+      }),
+      fact("CUSTOM_SCORE", 50, {
+        aggregationMethod: "weighted_average",
+        sourceRecordCount: 9,
+      }),
+    ]);
+
+    expect(byCode(simple, "CUSTOM_SCORE").value).toBe(75);
+    expect(byCode(weighted, "CUSTOM_SCORE").value).toBe(55);
   });
 
   it("sums revenue and sales while deriving AOV from stored sales components", () => {
@@ -130,6 +193,7 @@ describe("aggregateMetricFacts", () => {
       fact("AOV", 0, {
         numeratorValue: 2000,
         denominatorValue: 3,
+        calculationMultiplier: 1,
         formulaVersion: "AOV_WEIGHTED:v1",
       }),
     ]);

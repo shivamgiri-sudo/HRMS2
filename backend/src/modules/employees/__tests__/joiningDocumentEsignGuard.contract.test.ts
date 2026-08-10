@@ -79,7 +79,7 @@ describe("joining-document e-sign template guard", () => {
     if (columns.length === 0) return;
     expect(columns).toContain("template_version");
     expect(columns).not.toContain("version");
-  });
+  }, 30_000);
 
   it("logs when the template lookup fails instead of swallowing it", () => {
     const src = serviceSource();

@@ -106,9 +106,10 @@ jobs:
       - name: Finance calculations and contracts
         id: finance-tests
         shell: bash
+        working-directory: backend
         run: |
           set -o pipefail
-          if ! npm --prefix backend exec -- vitest run \
+          if ! npm test -- --run \
             src/modules/process-pnl/__tests__/branch-budget.calculation.test.ts \
             src/modules/process-pnl/__tests__/bpo-pnl.calculation.test.ts \
             src/modules/process-pnl/__tests__/bpo-pnl.schema-contract.test.ts \

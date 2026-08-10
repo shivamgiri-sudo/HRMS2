@@ -100,6 +100,7 @@ describe("leaveService.submitRequest", () => {
     // Routed by SQL: submitRequest runs policy and eligibility reads before the
     // INSERT, and their number is not something this test should depend on.
     exec.mockImplementation((sql: string) => {
+      if (/SELECT id FROM leave_request/i.test(sql)) return Promise.resolve([[], []]);
       if (/FROM leave_request/i.test(sql)) return Promise.resolve([[fakeRequest], []]);
       if (/^\s*INSERT/i.test(sql)) return Promise.resolve([{ affectedRows: 1 }, []]);
       return Promise.resolve([[], []]);

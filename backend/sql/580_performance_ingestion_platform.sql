@@ -1,4 +1,4 @@
--- Migration 520: Governed multi-source performance ingestion platform
+-- Migration 580: Governed multi-source performance ingestion platform
 -- Additive only. No external source is activated and no KPI facts are modified by this migration.
 USE mas_hrms;
 
@@ -203,12 +203,18 @@ CREATE TABLE IF NOT EXISTS performance_fact_lineage (
   actual_value          DECIMAL(20,6)   NULL,
   numerator_value       DECIMAL(20,6)   NULL,
   denominator_value     DECIMAL(20,6)   NULL,
+  calculation_multiplier DECIMAL(20,6)  NULL,
+  source_event_timestamp DATETIME       NULL,
+  source_record_count   INT UNSIGNED    NULL,
+  process_id_at_event   CHAR(36)        NULL,
+  branch_id_at_event    CHAR(36)        NULL,
   lineage_status        VARCHAR(20)     NOT NULL DEFAULT 'current',
   superseded_by_id      BIGINT UNSIGNED NULL,
   created_at            DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
   INDEX idx_performance_lineage_fact (employee_id, metric_id, score_date, lineage_status),
-  INDEX idx_performance_lineage_batch (publication_batch_id, run_id)
+  INDEX idx_performance_lineage_batch (publication_batch_id, run_id),
+  INDEX idx_performance_lineage_latest (employee_id, metric_id, score_date, source_event_timestamp, source_record_key)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- Dynamic metric presentation and aggregation metadata.
@@ -243,6 +249,8 @@ PREPARE stmt FROM @ddl; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 SET @ddl = IF(EXISTS(SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'kpi_daily_actual' AND COLUMN_NAME = 'team_leader_id_at_event'), 'SELECT 1', 'ALTER TABLE kpi_daily_actual ADD COLUMN team_leader_id_at_event CHAR(36) NULL AFTER branch_id_at_event');
 PREPARE stmt FROM @ddl; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 SET @ddl = IF(EXISTS(SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'kpi_daily_actual' AND COLUMN_NAME = 'published_at'), 'SELECT 1', 'ALTER TABLE kpi_daily_actual ADD COLUMN published_at DATETIME NULL AFTER computed_at');
+PREPARE stmt FROM @ddl; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+SET @ddl = IF(EXISTS(SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'kpi_daily_actual' AND COLUMN_NAME = 'calculation_multiplier'), 'SELECT 1', 'ALTER TABLE kpi_daily_actual ADD COLUMN calculation_multiplier DECIMAL(20,6) NULL AFTER source_record_count');
 PREPARE stmt FROM @ddl; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 SET @ddl = IF(EXISTS(SELECT 1 FROM INFORMATION_SCHEMA.STATISTICS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'kpi_daily_actual' AND INDEX_NAME = 'idx_kpi_daily_dataset_date'), 'SELECT 1', 'ALTER TABLE kpi_daily_actual ADD INDEX idx_kpi_daily_dataset_date (source_dataset_id, score_date)');
