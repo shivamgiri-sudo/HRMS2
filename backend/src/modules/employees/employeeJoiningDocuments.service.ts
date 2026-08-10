@@ -2020,10 +2020,14 @@ async function finalizeChecklistEsign(params: {
            * ER_BAD_FIELD_ERROR, the outer catch logged it, and payroll HR was never told an
            * eSign had completed. The notification looked implemented and delivered nothing.
            *
-           * Dropped rather than repointed at e.full_name: the loop below reads only hr.user_id,
-           * so the column was never used. Selecting a name nobody reads is what hid the fault.
+           * Repointed at e.full_name rather than dropped. My first fix removed it, on the
+           * grounds that the loop below reads only hr.user_id - true today, but
+           * esignHrNotificationColumns.contract.test.ts asserts this query carries the name from
+           * the employees join, and it is right to: the recipient's name belongs in a
+           * notification payload, and removing the column would have quietly closed off the
+           * obvious next use. The join was already there; only the table qualifier was wrong.
            */
-          `SELECT DISTINCT u.id as user_id, u.email
+          `SELECT DISTINCT u.id as user_id, u.email, e.full_name
            FROM auth_user u
            JOIN user_roles ur ON ur.user_id = u.id
            JOIN employees e ON e.user_id = u.id AND e.active_status = 1
