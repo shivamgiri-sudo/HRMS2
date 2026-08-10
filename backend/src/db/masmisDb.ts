@@ -6,9 +6,12 @@ let pool: mysql.Pool | null = null;
 export function getMasmisPool(): mysql.Pool {
   if (!pool) {
     pool = mysql.createPool({
-      // db_masmis is on its own server. Hardcoding the mas_hrms connection here is what
-      // made the entire sales-upload module dead in production: the application user has no
-      // grant on db_masmis, so every read returned ER_TABLEACCESS_DENIED_ERROR.
+      // The application user has no grant on db_masmis, so every read returns
+      // ER_TABLEACCESS_DENIED_ERROR and the whole sales-upload module is dead in production.
+      //
+      // Whether db_masmis is on this server or another is NOT settled — see the note in
+      // env.ts. The error code does not distinguish "ungranted" from "absent", and an earlier
+      // version of this comment claimed otherwise on that basis.
       //
       // Each setting falls back to the main connection when unset, so an installation where
       // db_masmis genuinely sits beside mas_hrms behaves exactly as before.

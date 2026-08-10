@@ -225,13 +225,18 @@ const KNOWN_MISSING: Record<string, string> = {
   // Worth recording why they were held back, because the reasoning was half wrong. They were
   // left unwired on the grounds that db_masmis returns ER_TABLEACCESS_DENIED_ERROR to the
   // application user, so adding routes would only turn a 401 into a 500 — "needs a GRANT,
-  // not a route". The access error was real, but the cause was not a missing grant: masmisDb.ts
-  // built its pool from DB_HOST/DB_USER, and db_masmis is on a different server, so the code
-  // could only ever look for it in the one place it is not. MASMIS_DB_HOST/PORT/USER/PASSWORD
-  // now exist (falling back to DB_* when unset), which is what makes these routes reachable.
+  // not a route".
   //
-  // The lesson worth keeping: "permission denied" answered the question "may I read this
-  // table" when the question that mattered was "am I connected to the right server at all".
+  // I then over-corrected and claimed the real cause was that db_masmis sits on a different
+  // server. That was an inference from the same error code, and it is invalid: MySQL returns
+  // ER_TABLEACCESS_DENIED_ERROR for any database the user lacks privileges on, existing or
+  // not — `SELECT ... FROM db_definitely_not_here.x` returns the identical code. The original
+  // "needs a GRANT" reading may well have been right.
+  //
+  // What is established: the routes are wired now, and MASMIS_DB_HOST/PORT/USER/PASSWORD exist
+  // (defaulting to DB_* when unset) so the module can reach db_masmis wherever it turns out to
+  // be. The lesson worth keeping is about the diagnosis, not the location: an error code that
+  // answers "may I read this" was twice read as answering "where is this".
 
   // Not a fetch, but still a promise the product makes and does not keep.
   "/api/webhooks/:x":
