@@ -30,11 +30,27 @@ interface BalanceRow {
   balance_days: number; // alias: allocated_days + adjusted_days - used_days
 }
 
-// ─── Helper ───────────────────────────────────────────────────────────────────
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function lastDayOfMonth(runMonth: string): number {
   const [year, month] = runMonth.split("-").map(Number);
   return new Date(year, month, 0).getDate();
+}
+
+/**
+ * Calendar days that [leaveFrom..leaveTo] intersects [windowFrom..windowTo].
+ * Exported for unit testing.
+ */
+export function daysIntersectWithMonth(
+  leaveFrom: string,
+  leaveTo: string,
+  windowFrom: string,
+  windowTo: string,
+): number {
+  const start = leaveFrom > windowFrom ? leaveFrom : windowFrom;
+  const end   = leaveTo   < windowTo   ? leaveTo   : windowTo;
+  if (start > end) return 0;
+  return Math.floor((new Date(end).getTime() - new Date(start).getTime()) / 86_400_000) + 1;
 }
 
 // ─── Main function ────────────────────────────────────────────────────────────
@@ -79,6 +95,9 @@ export async function checkAndReverseLeave(params: {
   const dateFrom = `${runMonth}-01`;
   const dateTo   = `${runMonth}-${String(lastDay).padStart(2, "0")}`;
 
+  // Use date-range overlap (A<=D AND B>=C) instead of from_date BETWEEN.
+  // The old BETWEEN missed cross-month leaves whose from_date preceded the
+  // month window even though some of their days fell inside this month.
   const [leaveRows] = await db.execute<RowDataPacket[]>(
     `SELECT lr.id, lr.leave_type_id, lr.from_date, lr.to_date, lr.total_days, lt.paid_leave AS is_paid
      FROM leave_request lr
@@ -86,9 +105,10 @@ export async function checkAndReverseLeave(params: {
      WHERE lr.employee_id = ?
        AND lr.status = 'approved'
        AND lt.paid_leave = 1
-       AND lr.from_date BETWEEN ? AND ?
+       AND lr.from_date <= ?
+       AND lr.to_date   >= ?
      ORDER BY lr.from_date ASC`,
-    [employeeId, dateFrom, dateTo]
+    [employeeId, dateTo, dateFrom]
   );
 
   const leaveRequests = leaveRows as LeaveRequestRow[];
@@ -100,8 +120,16 @@ export async function checkAndReverseLeave(params: {
 
   for (let i = leaveRequests.length - 1; i >= 0 && excessDays > 0; i--) {
     const leave = leaveRequests[i];
-    const daysAvailable = leave.total_days;
-    const daysToReverse = Math.min(daysAvailable, excessDays);
+    // Only the days that actually fall inside this month are payroll-relevant.
+    // Reversing the full total_days of a cross-month leave would over-restore
+    // balance for days that belong to a different pay period.
+    const daysInMonth = daysIntersectWithMonth(
+      String(leave.from_date).slice(0, 10),
+      String(leave.to_date).slice(0, 10),
+      dateFrom,
+      dateTo,
+    );
+    const daysToReverse = Math.min(daysInMonth, excessDays);
 
     // ── 6a. Current balance (available = allocated + adjusted - used) ─────
     const balanceYear = runMonth.slice(0, 4);

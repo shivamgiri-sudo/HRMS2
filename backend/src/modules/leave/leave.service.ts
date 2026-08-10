@@ -143,6 +143,25 @@ export const leaveService = {
       }
     }
 
+    // Reject if an approved/pending request already covers any of the same dates.
+    // Two requests for the same range each pass individual policy checks but would
+    // double-deduct the balance on approval without this guard.
+    const [overlapRows] = await db.execute<RowDataPacket[]>(
+      `SELECT id FROM leave_request
+        WHERE employee_id = ?
+          AND status IN ('approved', 'pending', 'pending_branch_head')
+          AND from_date <= ?
+          AND to_date   >= ?
+        LIMIT 1`,
+      [input.employeeId, input.toDate, input.fromDate]
+    );
+    if ((overlapRows as RowDataPacket[]).length > 0) {
+      throw new Error(
+        `A leave request already exists for one or more dates in the range ` +
+        `${input.fromDate} – ${input.toDate}. Cancel the existing request before applying again.`
+      );
+    }
+
     await db.execute(
       `INSERT INTO leave_request (id, employee_id, leave_type_id, from_date, to_date, total_days, reason, status)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -272,8 +291,11 @@ export const leaveService = {
     try {
       await conn.beginTransaction();
 
-      // Handle approval - deduct leave balance
-      if (input.status === 'approved') {
+      // Handle approval - deduct leave balance.
+      // branch_head_approved is the terminal approval status for the two EL
+      // exception paths (>12-day EL and 3rd occurrence in year), so it must
+      // trigger the same balance deduction and attendance write as 'approved'.
+      if (input.status === 'approved' || input.status === 'branch_head_approved') {
         if (!request.leave_type_id) {
           throw new Error("Leave type is required for approval");
         }
@@ -363,8 +385,10 @@ export const leaveService = {
         );
       }
 
-      // Restore balance when rejecting or cancelling a previously approved leave
-      if ((input.status === 'rejected' || input.status === 'cancelled') && request.status === 'approved') {
+      // Restore balance when rejecting or cancelling a previously approved leave.
+      // branch_head_approved is treated as approved for balance/ADR purposes.
+      if ((input.status === 'rejected' || input.status === 'cancelled') &&
+          (request.status === 'approved' || request.status === 'branch_head_approved')) {
         const duration = request.total_days;
         const employeeId = request.employee_id;
         const leaveTypeId = request.leave_type_id;
@@ -439,9 +463,10 @@ export const leaveService = {
 
     // Email notification (fire-and-forget), alongside the SMS below rather than
     // instead of it. Ships in shadow.
-    if (input.status === 'approved' || input.status === 'rejected' || input.status === 'cancelled') {
+    if (['approved', 'branch_head_approved', 'rejected', 'cancelled'].includes(input.status)) {
+      const notifyStatus = input.status === 'branch_head_approved' ? 'approved' : input.status as 'approved' | 'rejected' | 'cancelled';
       setImmediate(() => {
-        void notifyLeaveDecision(id, input.status as 'approved' | 'rejected' | 'cancelled', input.remarks);
+        void notifyLeaveDecision(id, notifyStatus, input.remarks);
       });
     }
 
@@ -454,8 +479,9 @@ export const leaveService = {
       );
       const emp = (empRow[0] as any);
       const phone = emp?.mobile ?? emp?.personal_phone ?? null;
-      if (phone && (input.status === 'approved' || input.status === 'rejected')) {
-        const key = input.status === 'approved' ? 'leave_approved' : 'request_rejected' as const;
+      const isApproved = input.status === 'approved' || input.status === 'branch_head_approved';
+      if (phone && (isApproved || input.status === 'rejected')) {
+        const key = isApproved ? 'leave_approved' : 'request_rejected' as const;
         const vars = input.status === 'approved'
           ? { name: emp.name, from_date: updated.from_date, to_date: updated.to_date }
           : { name: emp.name, request_type: 'Leave', approver_name: 'Manager' };
@@ -609,10 +635,13 @@ export const leaveService = {
 
     // Fetch pending leave requests that overlap this month for the run's employees
     const placeholders = employeeIds.map(() => '?').join(', ');
+    // pending_branch_head requests are also unresolved at payroll close:
+    // they reached the branch-head stage but were never actioned, so they
+    // must be lapsed alongside ordinary pending requests.
     const [pendingRows] = await db.execute<RowDataPacket[]>(
       `SELECT id, employee_id, leave_type_id, from_date, to_date, total_days
          FROM leave_request
-        WHERE status = 'pending'
+        WHERE status IN ('pending', 'pending_branch_head')
           AND from_date <= ?
           AND to_date >= ?
           AND employee_id IN (${placeholders})`,

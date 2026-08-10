@@ -63,11 +63,25 @@ async function checkMonthlyCapExceeded(
     const daysInThisMonth = daysInRange(overlapStart, overlapEnd);
 
     const excludeClause = excludeRequestId ? "AND lr.id != ?" : "";
-    const params: unknown[] = [employeeId, year, month, year, month, year, month];
+    // param order matches the SQL:
+    //   LEAST(to_date, LAST_DAY(y-m))         → year, month  (1-2)
+    //   GREATEST(from_date, y-m-01)            → year, month  (3-4)
+    //   employee_id                            → (5)
+    //   overlap window LAST_DAY(y-m)           → year, month  (6-7)
+    //   overlap window y-m-01                  → year, month  (8-9)
+    const params: unknown[] = [year, month, year, month, employeeId, year, month, year, month];
     if (excludeRequestId) params.push(excludeRequestId);
 
+    // Count only the calendar days that each existing request overlaps with
+    // this specific month — not total_days, which over-counts cross-month
+    // leaves by including days that belong to adjacent pay periods.
     const sql = `
-      SELECT COALESCE(SUM(lr.total_days), 0) AS used_days
+      SELECT COALESCE(SUM(
+        DATEDIFF(
+          LEAST(lr.to_date,   LAST_DAY(CONCAT(?, '-', LPAD(?, 2, '0'), '-01'))),
+          GREATEST(lr.from_date, CONCAT(?, '-', LPAD(?, 2, '0'), '-01'))
+        ) + 1
+      ), 0) AS used_days
       FROM leave_request lr
       WHERE lr.employee_id = ?
         AND lr.leave_type_id IN (
