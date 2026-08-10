@@ -23,6 +23,19 @@ function getLmsPool(): Pool {
         "set in the environment — no hardcoded fallback is used for the external LMS DB."
       );
     }
+    /*
+     * connectTimeout and enableKeepAlive match the other external pools (billDb, dialerDb,
+     * legacyDb, masmisDb all use connectTimeout: 15000 with keep-alive on). This pool set
+     * neither, so it silently took mysql2's 10s default and never kept an idle socket alive -
+     * and it is the only one of the five that reaches its host across the public internet,
+     * where an idle NAT mapping is dropped without either end being told.
+     *
+     * What that looked like: /api/lms/connection reported ok with latency_ms 15542 and
+     * /api/lms/batch-planner returned "connect ETIMEDOUT" at 15s, on a server that had been
+     * up for five hours - while a fresh process connected to the same host in 2.3-6.7s over
+     * six consecutive attempts, never once above 10s. Calls that reused a live connection kept
+     * working, which is why the failure looked like it belonged to one route.
+     */
     _lmsPool = mysql.createPool({
       host:               LMS_HOST,
       port:               LMS_PORT,
@@ -32,6 +45,9 @@ function getLmsPool(): Pool {
       connectionLimit:    5,
       waitForConnections: true,
       queueLimit:         0,
+      connectTimeout:     15000,
+      enableKeepAlive:    true,
+      keepAliveInitialDelay: 0,
       timezone:           "+05:30",
       dateStrings:        true,
       decimalNumbers:     true,

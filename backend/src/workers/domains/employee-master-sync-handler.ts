@@ -1,6 +1,7 @@
 import { db } from '../../db/mysql.js';
 import { DomainSyncBase } from './domain-sync-base.js';
 import { provisionLmsIdentityForEmployee } from '../../modules/lms/lms-provisioning.service.js';
+import { encryptPanForSync } from '../../shared/syncPiiEncryption.js';
 
 const SYNC_MAP_ID = 'a1000000-0000-0000-0000-000000000001';
 
@@ -97,6 +98,7 @@ export class EmployeeMasterSyncHandler extends DomainSyncBase {
              date_of_birth, date_of_joining, date_of_leaving,
              mobile, email, official_email,
              pan_number, aadhaar_last4, passport_number, epf_number, esic_number, uan,
+             pan_number_encrypted, pan_enc_key_version,
              department, designation, branch, client_name, process, cost_center,
              marital_status, blood_group, qualification,
              address_line1, address_line2, city, state, pincode,
@@ -107,6 +109,7 @@ export class EmployeeMasterSyncHandler extends DomainSyncBase {
              ?, ?, ?,
              ?, ?, ?,
              ?, ?, ?, ?, ?, ?,
+             ?, ?,
              ?, ?, ?, ?, ?, ?,
              ?, ?, ?,
              ?, ?, ?, ?, ?,
@@ -126,6 +129,11 @@ export class EmployeeMasterSyncHandler extends DomainSyncBase {
              email               = VALUES(email),
              official_email      = VALUES(official_email),
              pan_number          = VALUES(pan_number),
+             -- Mirrors the plaintext rule on the line above, which overwrites
+             -- unconditionally. Making the ciphertext conditional here instead would let
+             -- it survive a plaintext wipe and the two columns would silently disagree.
+             pan_number_encrypted = VALUES(pan_number_encrypted),
+             pan_enc_key_version  = VALUES(pan_enc_key_version),
              aadhaar_last4       = VALUES(aadhaar_last4),
              passport_number     = VALUES(passport_number),
              epf_number          = VALUES(epf_number),
@@ -154,6 +162,9 @@ export class EmployeeMasterSyncHandler extends DomainSyncBase {
             row.DOB, row.DOJ, row.DOL,
             row.Mobile, row.EmailId, row.OfficeEmailId,
             row.PanNo, aadhaarLast4, row.PassportNo, row.EPFNo, row.ESICNo, row.UAN,
+            // pan_enc_key_version is NOT NULL DEFAULT 1, so it takes 1 even when there is
+            // no ciphertext to accompany it.
+            encryptPanForSync(row.PanNo, 'Employee Master Sync'), 1,
             row.Dept, row.Desgination, row.BranchName, row.ClientName, row.Process, row.CostCenter,
             row.MaritalStatus, row.BloodGruop, row.Qualification,
             row.Adrress1, row.Adrress2, row.City, row.State, row.PinCode,

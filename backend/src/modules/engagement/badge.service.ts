@@ -504,11 +504,20 @@ async function checkSurveyBadges(employeeId: string): Promise<EmployeeBadgeEarne
   const awarded: EmployeeBadgeEarned[] = [];
 
   // Survey Champion: Completed 10+ surveys or pulse checks
+  /*
+   * pulse_check is the question bank and has no employee_id, so this raised ER_BAD_FIELD_ERROR.
+   * It runs from queueAutoAwards on a timer, where the throw is caught and logged, so the Survey
+   * Champion badge has silently never been awarded to anyone for anything.
+   *
+   * The answers are in pulse_response, and the count is DISTINCT response_date rather than rows:
+   * one pulse check submits an answer per question - three today - so counting rows would reach
+   * the badge's threshold of 10 after four submissions instead of ten.
+   */
   const [surveyRows] = await db.execute<RowDataPacket[]>(
     `SELECT
        (SELECT COUNT(DISTINCT survey_id) FROM survey_response WHERE employee_id = ?)
        +
-       (SELECT COUNT(*) FROM pulse_check WHERE employee_id = ?) as participation_count`,
+       (SELECT COUNT(DISTINCT response_date) FROM pulse_response WHERE employee_id = ?) as participation_count`,
     [employeeId, employeeId]
   );
 

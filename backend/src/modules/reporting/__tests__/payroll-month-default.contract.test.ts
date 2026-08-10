@@ -54,8 +54,33 @@ function blocks(): Block[] {
   return out;
 }
 
-const drivingTable = (body: string) =>
-  (/\bFROM\s+`?([a-z_][a-z0-9_]*)`?/i.exec(strip(body))?.[1] ?? "").toLowerCase();
+/**
+ * SQL bodies shared between more than one serving layer, so a block that references one can be
+ * resolved to the table it really reads.
+ */
+const SHARED_BODIES: Record<string, string> = {
+  PAYROLL_REGISTER_BODY: read(`${R}/executors/payroll.executor.ts`),
+  PAYROLL_VARIANCE_BODY: read(`${R}/executors/payroll.executor.ts`),
+  PAYSLIP_STATUS_BODY: read(`${R}/executors/payroll.executor.ts`),
+};
+
+/**
+ * The driving table for a block, following shared SQL constants.
+ *
+ * payroll-register's SELECT now lives in PAYROLL_REGISTER_BODY so the screen and the download
+ * cannot drift apart again — which means its own block contains no literal FROM. Reading only
+ * the block would find no driving table and quietly exempt it from this check: the failure mode
+ * where a guard keeps passing while the thing it guards moves out from under it.
+ */
+const drivingTable = (body: string) => {
+  let text = strip(body);
+  for (const [name, source] of Object.entries(SHARED_BODIES)) {
+    if (!text.includes(name)) continue;
+    const at = source.indexOf(`export const ${name}`);
+    if (at !== -1) text += "\n" + strip(source.slice(at, at + 6000));
+  }
+  return (/\bFROM\s+`?([a-z_][a-z0-9_]*)`?/i.exec(text)?.[1] ?? "").toLowerCase();
+};
 
 describe("payroll month default", () => {
   const all = blocks().filter(b => /monthParam\(|resolvePayrollMonth\(/.test(strip(b.body)));

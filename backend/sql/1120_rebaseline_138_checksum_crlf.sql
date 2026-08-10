@@ -1,0 +1,63 @@
+-- Migration: re-baseline the stored checksum for 138_ats_complete_journey.sql
+-- Date: 2026-08-09
+--
+-- WHAT IS WRONG
+--   Every backend boot logs:
+--     [migration] checksum mismatch for already-applied 138_ats_complete_journey.sql
+--   It has fired on every restart for weeks. A warning that always fires is one nobody
+--   reads, which is how a real mismatch would go unnoticed.
+--
+-- IT IS NOT CONTENT DRIFT — IT IS LINE ENDINGS
+--   runPendingMigrations hashes the raw file BYTES (`fs.readFileSync(filePath)` with no
+--   encoding, then sha256), so CRLF and LF versions of an identical file hash differently.
+--   Measured 2026-08-09:
+--
+--     stored in schema_migrations : 4b6b01841eb186f06d080fc823654a467fc695b212703762303b57f6db7deda3
+--     file on the server (LF)     : 0157b52b99b129a1af8a62a746034382667abfe9916b322c97242feafdd4ce81
+--     origin/main (LF)            : 0157b52b...  (identical to the server)
+--     a Windows working copy (CRLF): 4b6b0184...  (identical to the stored value)
+--
+--   Stripping CR from the CRLF copy reproduces 0157b52b exactly, so the two differ in line
+--   endings and nothing else. `git diff` on that file is empty and `git ls-files -v` reports
+--   `H` (no assume-unchanged flag), confirming the tracked content never changed.
+--
+--   The row records `executor = 'manual:manual-repair'`, applied 2026-07-26 05:19:27. So the
+--   migration was applied by a manual repair run from a Windows checkout, and the checksum
+--   captured was of the CRLF bytes. Every Linux environment reads the LF file and will
+--   mismatch forever. This is a recording artefact, not divergence between what ran and what
+--   is committed.
+--
+-- WHY RE-BASELINE RATHER THAN EDIT THE FILE
+--   The committed file is already correct and is what every environment computes. Rewriting
+--   it to change its hash would be fixing the wrong side. Nothing about the applied schema
+--   is in question: the five columns section 15 adds to ats_notification_log
+--   (notification_type, recipient_type, recipient_id, read_status, read_at) are all present
+--   in mas_hrms, verified.
+--
+-- SAFETY
+--   Touches one metadata column on one row. It does not re-run 138 and cannot alter schema:
+--   the runner skips already-applied files regardless of checksum (the mismatch is a
+--   console.warn, fatal only under MIGRATION_STRICT_MODE, which is not set).
+--
+--   Guarded on the exact known-bad value, so it is idempotent, cannot touch any other
+--   migration, and declines silently if the stored checksum has since been corrected by
+--   someone else.
+--
+-- ROLLBACK
+--   UPDATE schema_migrations
+--      SET checksum_sha256 = '4b6b01841eb186f06d080fc823654a467fc695b212703762303b57f6db7deda3'
+--    WHERE filename = '138_ats_complete_journey.sql';
+--
+-- NOTE FOR NEXT TIME
+--   Apply migrations from the server, not from a Windows checkout. A manual repair run
+--   against a CRLF working copy poisons the checksum permanently for every Linux
+--   environment, and the only symptom is a warning everyone learns to ignore.
+
+UPDATE schema_migrations
+   SET checksum_sha256 = '0157b52b99b129a1af8a62a746034382667abfe9916b322c97242feafdd4ce81'
+ WHERE filename = '138_ats_complete_journey.sql'
+   AND checksum_sha256 = '4b6b01841eb186f06d080fc823654a467fc695b212703762303b57f6db7deda3';
+
+-- Verification — expects the LF hash, and the boot warning to stop:
+--   SELECT filename, checksum_sha256, executor FROM schema_migrations
+--    WHERE filename = '138_ats_complete_journey.sql';

@@ -51,17 +51,31 @@ export function recordCircuitBreakerSuccess(
   return state;
 }
 
+/**
+ * `jitterMs` is added to the reopen delay, and is an INPUT rather than a Math.random()
+ * call inside this function on purpose: every function in this module is pure and takes
+ * `now` explicitly, which is what makes the breaker testable. The caller supplies the
+ * randomness (see recordFailure in db/mysql.ts); tests pass nothing and keep the exact
+ * `now + recoveryTimeMs` they already assert against.
+ *
+ * Why it exists: a fixed recovery delay can resonate with a fixed caller cadence. In
+ * production on 2026-08-08 the workers polled every 30s and recoveryTimeMs was also
+ * 30000, so the half-open probe landed on the very next burst every time and the breaker
+ * reopened indefinitely — scheduled jobs stayed down until the pool was resized. Jitter
+ * makes the probe drift off the burst so the breaker can find a quiet moment on its own.
+ */
 export function recordCircuitBreakerFailure(
   state: CircuitBreakerState,
   config: CircuitBreakerConfig = DEFAULT_CIRCUIT_BREAKER_CONFIG,
   now = Date.now(),
+  jitterMs = 0,
 ): CircuitBreakerState {
   if (state.status === "half-open") {
     return {
       ...state,
       status: "open",
       lastFailure: now,
-      nextProbeTime: now + config.recoveryTimeMs,
+      nextProbeTime: now + config.recoveryTimeMs + jitterMs,
     };
   }
 
@@ -71,6 +85,7 @@ export function recordCircuitBreakerFailure(
     failures,
     lastFailure: now,
     status: failures >= config.failureThreshold ? "open" : state.status,
-    nextProbeTime: failures >= config.failureThreshold ? now + config.recoveryTimeMs : state.nextProbeTime,
+    nextProbeTime:
+      failures >= config.failureThreshold ? now + config.recoveryTimeMs + jitterMs : state.nextProbeTime,
   };
 }

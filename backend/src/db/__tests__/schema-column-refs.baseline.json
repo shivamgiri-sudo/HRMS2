@@ -2,12 +2,6 @@
   "modules/business-actions/business-actions.signal-sync.ts": [
     "employees.reporting_manager_user_id"
   ],
-  "modules/employees/employeeJoiningDocuments.service.ts": [
-    "auth_user.full_name"
-  ],
-  "modules/payroll/payroll.routes.ts": [
-    "employees.ctc_annual"
-  ],
   "modules/reporting/report-suite.routes.ts": [
     "action_plan.action_plan_number",
     "action_plan.action_type",

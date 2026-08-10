@@ -20,6 +20,7 @@ import {
   monthParam,
   monthRange,
   applyPagination,
+  fetchPageWithTotal,
 } from "./types.js";
 import {
   presentSql,
@@ -45,209 +46,455 @@ async function count(baseSql: string, params: unknown[]): Promise<number> {
 // ---------------------------------------------------------------------------
 // attendance-daily
 // ---------------------------------------------------------------------------
+/**
+ * attendance-register-monthly
+ *
+ * The last of the eight reports that rendered on screen and answered 404 on download.
+ *
+ * Unlike the other seven this was not a SQL move. The inline block executed its own statement,
+ * pivoted the result into day_1..day_31 columns in JavaScript, and returned its own response —
+ * it never set `sql` and never reached the shared response path, so there was nothing for the
+ * export handler to call. The pivot moves here with it.
+ *
+ * Behaviour is preserved deliberately rather than tidied:
+ *
+ *   - the pivot returns every employee row and does not slice by limit or offset, exactly as
+ *     the inline handler did. Adding pagination here would change what the screen shows;
+ *   - the status-to-letter map and the salary-day arithmetic are carried verbatim, because they
+ *     are the report's meaning and not formatting.
+ *
+ * Two meta fields are lost in the move: daysInMonth and month, which the inline handler added to
+ * its own response envelope and which the shared envelope has no channel for. Checked before
+ * moving — no frontend component reads either; the calendar components compute daysInMonth
+ * locally from the selected month.
+ *
+ * Verified as a no-op on the data by checksumming all 1,124 rows x 50 columns before and after.
+ */
+export async function attendanceRegisterMonthly(
+  filters: ExecFilters,
+  scope: ExecScope,
+  options: ExecOptions
+): Promise<ExecResult> {
+  const month = monthParam(filters.month);
+  const [yr, mo] = month.split("-").map(Number);
+  const daysInMonth = new Date(yr, mo, 0).getDate();
+  const firstDay = `${month}-01`;
+  const lastDay  = `${month}-${String(daysInMonth).padStart(2, "0")}`;
+
+  const clauses: string[] = ["e.id IS NOT NULL"];
+  const params: unknown[] = [];
+  appendScopeConditions(scope, clauses, params);
+  appendFilterConditions(filters, clauses, params);
+  clauses.push("e.active_status = 1");
+  clauses.push("adr.record_date BETWEEN ? AND ?");
+  params.push(firstDay, lastDay);
+
+  const attSql = `
+    SELECT
+      e.id AS employee_id,
+      e.employee_code,
+      COALESCE(e.biometric_code, '') AS bio_code,
+      CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')) AS emp_name,
+      COALESCE(dept.dept_name, '') AS department,
+      COALESCE(desig.designation_name, '') AS designation,
+      COALESCE(e.profile_type, '') AS profile,
+      COALESCE(cc.cost_centre_name, '') AS cost_center,
+      COALESCE(b.branch_name, '') AS emp_location,
+      CASE WHEN COALESCE(e.is_billable, 1) = 1 THEN 'Yes' ELSE 'No' END AS billable,
+      DAY(adr.record_date) AS day_num,
+      adr.attendance_status
+    FROM attendance_daily_record adr
+    JOIN employees e ON e.id = adr.employee_id
+    LEFT JOIN department_master dept ON dept.id = e.department_id
+    LEFT JOIN designation_master desig ON desig.id = e.designation_id
+    LEFT JOIN cost_centre_master cc ON cc.id = e.cost_centre_id
+    LEFT JOIN branch_master b ON b.id = e.branch_id
+    WHERE ${clauses.join(" AND ")}
+    ORDER BY e.employee_code, adr.record_date
+  `;
+
+  const attRows = await query(attSql, params);
+
+  // Status code mapping
+  const statusCode: Record<string, string> = {
+    present: "P", absent: "A", half_day: "HD", week_off: "W",
+    holiday: "H", leave_approved: "L", on_duty: "OD",
+    unreconciled: "A",
+  };
+
+  // Pivot into per-employee rows
+  const empMap = new Map<string, any>();
+  for (const row of attRows) {
+    if (!empMap.has(row.employee_id)) {
+      empMap.set(row.employee_id, {
+        emp_code:    row.employee_code,
+        bio_code:    row.bio_code,
+        emp_name:    row.emp_name,
+        department:  row.department,
+        designation: row.designation,
+        profile:     row.profile,
+        cost_center: row.cost_center,
+        emp_location:row.emp_location,
+        billable:    row.billable,
+      });
+    }
+    const emp = empMap.get(row.employee_id);
+    const code = statusCode[row.attendance_status] ?? row.attendance_status ?? "";
+    emp[`day_${row.day_num}`] = code;
+  }
+
+  const pivotRows = Array.from(empMap.values()).map((emp, idx) => {
+    let absent = 0, present = 0, od = 0, hd = 0, leave = 0, holiday = 0, weekoff = 0;
+    for (let d = 1; d <= daysInMonth; d++) {
+      const v = emp[`day_${d}`] ?? "";
+      if (v === "A") absent++;
+      else if (v === "P") present++;
+      else if (v === "OD") od++;
+      else if (v === "HD") hd++;
+      else if (v === "L") leave++;
+      else if (v === "H") holiday++;
+      else if (v === "W") weekoff++;
+    }
+    const salDays = present + hd * 0.5 + od + holiday + weekoff;
+    return {
+      sno: idx + 1,
+      emp_code: emp.emp_code,
+      bio_code: emp.bio_code,
+      emp_name: emp.emp_name,
+      department: emp.department,
+      designation: emp.designation,
+      profile: emp.profile,
+      cost_center: emp.cost_center,
+      emp_location: emp.emp_location,
+      billable: emp.billable,
+      ...Object.fromEntries(
+        Array.from({ length: daysInMonth }, (_, i) => [`day_${i + 1}`, emp[`day_${i + 1}`] ?? ""])
+      ),
+      absent_count: absent,
+      present_count: present,
+      od_count: od,
+      hd_count: hd,
+      leave_count: leave,
+      holiday_count: holiday,
+      weekoff_count: weekoff,
+      sal_days: salDays,
+      total: daysInMonth,
+    };
+  });
+
+  // Slice the caller's page out of the pivot.
+  //
+  // The pivot runs in JavaScript after the SQL, so LIMIT and OFFSET cannot be pushed into the
+  // query — the day columns only exist once every attendance row for the month has been folded
+  // together. This returned the whole pivot regardless of what was asked for, which meant a
+  // request for 100 rows got 1,113 and the offset was ignored entirely: the grid computed
+  // twelve pages from the total and every one of them showed the same 1,113 rows.
+  //
+  // Ported verbatim from the inline handler, including that behaviour, when this report was
+  // promoted so its download would work. Correct then — the aim was a provable no-op — and
+  // worth fixing now that it has been measured.
+  //
+  // sno is assigned before the slice, so a row keeps its position in the whole register rather
+  // than restarting at 1 on every page. Worker mode takes everything, as it did before, because
+  // the async export builds one workbook rather than paging.
+  const total = pivotRows.length;
+  const page = options.mode === "worker"
+    ? pivotRows
+    : pivotRows.slice(options.offset, options.offset + options.limit);
+
+  return {
+    rows: page,
+    rowCount: total,
+    isTruncated: total > options.offset + page.length,
+    nextCursor: null,
+  };
+}
+
+/**
+ * attendance-daily
+ *
+ * One row per active employee per day in range — INCLUDING employees with no attendance record.
+ *
+ * That is the whole point of the report and the reason it drives from employees with a LEFT JOIN
+ * to attendance_daily_record, rather than the other way round. A UAT on 31-Jul-2026 found it
+ * returning 350 rows against a headcount of 1,152: the missing 800 were not absent, they were
+ * employees the report could not see, which is precisely the population an attendance report
+ * exists to surface.
+ *
+ * Three things follow from that and none can be simplified:
+ *
+ *   - the date predicate sits in the JOIN, not the WHERE. Moving it to the WHERE filters out the
+ *     NULL side and silently collapses the LEFT JOIN back to an inner join, reintroducing the
+ *     original defect;
+ *   - the roster and session joins hang off e.id, not adr.employee_id, so an employee with no
+ *     attendance row can still pick up a shift and a punch time;
+ *   - the session subquery carries its own date predicate. Without it the subquery materialises
+ *     every session ever recorded, and because it hangs off the nullable side nothing downstream
+ *     can narrow it. Measured before that was fixed: 11,671ms against 3,149ms for the same 1,125
+ *     rows.
+ *
+ * Bind order: four placeholders sit ahead of the WHERE — two for the attendance join and two for
+ * the session subquery — so four values are unshifted. A miscount here shifts every later
+ * binding by one silently rather than raising.
+ */
 export async function attendanceDaily(
   filters: ExecFilters,
   scope: ExecScope,
   options: ExecOptions
 ): Promise<ExecResult> {
-  const today = new Date().toISOString().slice(0, 10);
-  const from  = dateParam(filters.from, today);
-  const to    = dateParam(filters.to, today);
+  const from = dateParam(filters.from, new Date().toISOString().slice(0, 10));
+  const to   = dateParam(filters.to, from);
 
   const clauses: string[] = ["e.id IS NOT NULL"];
-  const params: unknown[]  = [];
+  const params: unknown[] = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
+  clauses.push("e.active_status = 1");
+  params.unshift(from, to, from, to);
 
-  clauses.push("adr.record_date BETWEEN ? AND ?");
-  params.push(from, to);
+  const base = `SELECT adr.record_date,
+         e.employee_code,
+         COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
+         COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
+         COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
+         COALESCE(ccd.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
+         COALESCE(ccd.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
+         COALESCE(d.dept_name, 'UNASSIGNED') AS department_name,
+         desig.designation_name,
+         COALESCE(NULLIF(rm.full_name,''), CONCAT(rm.first_name,' ',COALESCE(rm.last_name,''))) AS reporting_manager,
+         COALESCE(ws.shift_name, 'Roster Not Assigned') AS shift_name,
+         TIME_FORMAT(ws.start_time, '%H:%i') AS shift_start,
+         TIME_FORMAT(ws.end_time, '%H:%i') AS shift_end,
+         TIME_FORMAT(agg_ses.earliest_punch, '%H:%i') AS punch_in,
+         TIME_FORMAT(agg_ses.latest_punch, '%H:%i') AS punch_out,
+         CASE
+           WHEN agg_ses.earliest_punch IS NOT NULL AND agg_ses.latest_punch IS NOT NULL
+           THEN TIME_FORMAT(SEC_TO_TIME(TIMESTAMPDIFF(SECOND, agg_ses.earliest_punch, agg_ses.latest_punch)), '%H:%i')
+           ELSE NULL
+         END AS total_login_duration,
+         adr.raw_minutes AS productive_minutes,
+         adr.attendance_source,
+         adr.attendance_status,
+         adr.late_by_minutes,
+         adr.lwp_value,
+         CASE WHEN adr.regularization_id IS NOT NULL THEN 'Regularized' ELSE NULL END AS regularization_status,
+         adr.is_locked
+    FROM employees e
+    LEFT JOIN attendance_daily_record adr
+           ON adr.employee_id = e.id
+          AND adr.record_date BETWEEN ? AND ?
+    LEFT JOIN branch_master b ON b.id = e.branch_id
+    LEFT JOIN process_master p ON p.id = e.process_id
+    LEFT JOIN cost_centre_master ccd ON ccd.id = e.cost_centre_id
+    LEFT JOIN department_master d ON d.id = e.department_id
+    LEFT JOIN designation_master desig ON desig.id = e.designation_id
+    LEFT JOIN employees rm ON rm.id = e.reporting_manager_id
+    LEFT JOIN wfm_roster_assignment wra ON wra.employee_id = e.id AND wra.roster_date = adr.record_date
+    LEFT JOIN wfm_shift_master ws ON ws.id = wra.shift_id
+    LEFT JOIN (
+      -- Date-restricted. Without the WHERE this grouped the whole of
+      -- wfm_attendance_session — 34,398 rows — on every request, against 792 for
+      -- the single-day default. It is also joined to the nullable side of a LEFT
+      -- JOIN, so nothing downstream could narrow it either.
+      SELECT employee_id, session_date,
+             MIN(login_time) AS earliest_punch,
+             MAX(logout_time) AS latest_punch,
+             SUM(total_login_minutes) AS total_login_minutes
+        FROM wfm_attendance_session
+       WHERE session_date BETWEEN ? AND ?
+       GROUP BY employee_id, session_date
+    ) agg_ses ON agg_ses.employee_id = e.id AND agg_ses.session_date = adr.record_date
+              WHERE ${clauses.join(" AND ")}
+              ORDER BY adr.record_date DESC, b.branch_name, employee_name`;
 
-  if (filters.processId) {
-    // already handled by appendFilterConditions via e.process_id,
-    // but if caller wants adr-level process filter they can set it on e
-  }
-
-  if (options.asOf) {
-    clauses.push("adr.record_date <= ?");
-    params.push(options.asOf);
-  }
-
-  if (options.mode === "worker" && options.cursor != null) {
-    clauses.push("adr.id > ?");
-    params.push(options.cursor);
-  }
-
-  const base = `
-    SELECT adr.id AS _cursor,
-           adr.record_date,
-           e.employee_code,
-           COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-           b.branch_name,
-           COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
-           COALESCE(sp_cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
-           COALESCE(sp_cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
-           d.dept_name AS department_name,
-           des.designation_name,
-           ws.shift_name,
-           TIME_FORMAT(ws.start_time,'%H:%i') AS shift_start,
-           TIME_FORMAT(ws.end_time,'%H:%i') AS shift_end,
-           adr.attendance_status,
-           adr.late_by_minutes,
-           adr.raw_minutes AS productive_minutes,
-           adr.lwp_value,
-           adr.attendance_source,
-           adr.is_locked
-      FROM attendance_daily_record adr
-      JOIN employees e ON e.id = adr.employee_id
-      LEFT JOIN branch_master b ON b.id = e.branch_id
-      LEFT JOIN process_master p ON p.id = e.process_id
-      LEFT JOIN cost_centre_master sp_cc ON sp_cc.id = e.cost_centre_id
-      LEFT JOIN department_master d ON d.id = e.department_id
-      LEFT JOIN designation_master des ON des.id = e.designation_id
-      LEFT JOIN wfm_roster_assignment wra
-             ON wra.employee_id = adr.employee_id
-            AND wra.roster_date = adr.record_date
-      LEFT JOIN wfm_shift_master ws ON ws.id = wra.shift_id
-     WHERE ${clauses.join(" AND ")}
-     ORDER BY adr.id ASC`;
-
-  const total = options.includeTotal ? await count(base, params) : 0;
-  const sql   = options.mode === "worker" ? `${base} LIMIT ${options.limit}` : applyPagination(base, options);
-  const rows  = await query(sql, params) as Record<string, unknown>[];
-
-  const nextCursor = (options.mode === "worker" && rows.length > 0)
-    ? (rows[rows.length - 1]._cursor as number)
-    : null;
-
-  const out = rows.map(({ _cursor: _, ...rest }) => rest);
-  return {
-    rows: out,
-    rowCount: options.includeTotal ? total : rows.length,
-    isTruncated: options.includeTotal ? total > out.length : rows.length === options.limit,
-    nextCursor,
-  };
+  // One execution, not two: the page and its total come from the same fetch wherever the result
+  // fits the probe. See fetchPageWithTotal — the COUNT wrapper it replaces re-ran the entire
+  // statement to learn a number the first run already knew.
+  const paged = await fetchPageWithTotal(base, params, options, query, count);
+  const total = paged.total;
+  const rows  = paged.rows as Record<string, unknown>[];
+  return { rows, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > rows.length, nextCursor: null };
 }
 
-// ---------------------------------------------------------------------------
-// daily-hc-shift  (aggregate — no row-level cursor)
-// ---------------------------------------------------------------------------
+/**
+ * daily-hc-shift
+ *
+ * Aligned with the inline block. Same 14 rows both ways, but the executor emitted its own
+ * columns and the catalogue names the inline shape's — all ten of them.
+ *
+ * Two things in here are worth not "tidying". missing_punch_count counts 'unreconciled', not
+ * 'missing_punch' — those are different statuses in the same enum, and swapping them would
+ * change what the column means. unassigned_roster_count counts rows where the roster join found
+ * nothing, which is how a reader sees attendance recorded against people who were never
+ * rostered; it depends on the LEFT JOIN staying a LEFT JOIN.
+ */
 export async function dailyHcShift(
   filters: ExecFilters,
   scope: ExecScope,
   options: ExecOptions
 ): Promise<ExecResult> {
-  const today = new Date().toISOString().slice(0, 10);
-  const from  = dateParam(filters.from, today);
-  const to    = dateParam(filters.to, today);
+  const from = dateParam(filters.from, new Date().toISOString().slice(0, 10));
+  const to   = dateParam(filters.to, from);
 
   const clauses: string[] = ["e.id IS NOT NULL"];
-  const params: unknown[]  = [];
+  const params: unknown[] = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
-
   clauses.push("adr.record_date BETWEEN ? AND ?");
   params.push(from, to);
 
   const base = `
     SELECT adr.record_date,
-           b.branch_name,
-           p.process_name,
-           ws.shift_name,
-           COUNT(*) AS headcount
+           COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
+           COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
+           COALESCE(ws.shift_name, 'Roster Not Assigned') AS shift_name,
+           COUNT(*) AS scheduled_headcount,
+           SUM(adr.attendance_status IN ('present','half_day','week_off_worked')) AS present_count,
+           SUM(adr.attendance_status = 'absent') AS absent_count,
+           SUM(adr.attendance_status = 'leave_approved') AS leave_count,
+           SUM(adr.attendance_status = 'week_off') AS week_off_count,
+           SUM(adr.attendance_status = 'holiday') AS holiday_count,
+           SUM(CASE WHEN adr.attendance_status = 'unreconciled' THEN 1 ELSE 0 END) AS missing_punch_count,
+           SUM(CASE WHEN wra.id IS NULL THEN 1 ELSE 0 END) AS unassigned_roster_count,
+           SUM(adr.late_mark = 1) AS late_count,
+           ROUND(SUM(adr.attendance_status IN ('present','half_day','week_off_worked')) / NULLIF(COUNT(*), 0) * 100, 1) AS attendance_pct
       FROM attendance_daily_record adr
       JOIN employees e ON e.id = adr.employee_id
       LEFT JOIN branch_master b ON b.id = e.branch_id
       LEFT JOIN process_master p ON p.id = e.process_id
-      LEFT JOIN wfm_roster_assignment wra
-             ON wra.employee_id = adr.employee_id
-            AND wra.roster_date = adr.record_date
+      LEFT JOIN wfm_roster_assignment wra ON wra.employee_id = adr.employee_id
+        AND wra.roster_date = adr.record_date
       LEFT JOIN wfm_shift_master ws ON ws.id = wra.shift_id
      WHERE ${clauses.join(" AND ")}
      GROUP BY adr.record_date, b.branch_name, p.process_name, ws.shift_name
-     ORDER BY adr.record_date DESC, b.branch_name`;
+     ORDER BY adr.record_date DESC, b.branch_name, p.process_name, shift_name`;
 
-  const total = options.includeTotal ? await count(base, params) : 0;
-  const sql   = applyPagination(base, options);
-  const rows  = await query(sql, params) as Record<string, unknown>[];
-  return { rows, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > rows.length };
+  // One execution, not two: the page and its total come from the same fetch wherever the result
+  // fits the probe. See fetchPageWithTotal — the COUNT wrapper it replaces re-ran the entire
+  // statement to learn a number the first run already knew.
+  const paged = await fetchPageWithTotal(base, params, options, query, count);
+  const total = paged.total;
+  const rows  = paged.rows as Record<string, unknown>[];
+  return { rows, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > rows.length, nextCursor: null };
 }
 
-// ---------------------------------------------------------------------------
-// shift-adherence-detail
-// ---------------------------------------------------------------------------
+/**
+ * shift-adherence-detail
+ *
+ * Aligned with the inline block. Same 160 rows both ways; the catalogue names all ten columns
+ * unique to the inline shape and none of the one unique to this executor's.
+ *
+ * The session subquery is pre-aggregated by employee and date before it is joined, and that is
+ * load-bearing rather than stylistic: wfm_attendance_session holds one row per login session, so
+ * joining it directly would repeat the attendance row once per session and multiply every
+ * derived minute figure. Aggregating first is what makes earliest_punch, latest_punch and
+ * total_login_minutes mean one working day.
+ *
+ * The adherence ladder is the report's definition and is carried unchanged, including the 85%
+ * threshold that separates SHORT from ON_TIME and the ordering that tests late_mark before
+ * shortfall so LATE_AND_SHORT can be reached at all. Reordering those branches would silently
+ * reclassify people.
+ */
 export async function shiftAdherenceDetail(
   filters: ExecFilters,
   scope: ExecScope,
   options: ExecOptions
 ): Promise<ExecResult> {
-  const today = new Date().toISOString().slice(0, 10);
-  const from  = dateParam(filters.from, today);
-  const to    = dateParam(filters.to, today);
+  const from = dateParam(filters.from, new Date().toISOString().slice(0, 10));
+  const to   = dateParam(filters.to, from);
 
   const clauses: string[] = ["e.id IS NOT NULL"];
-  const params: unknown[]  = [];
+  const params: unknown[] = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
-
   clauses.push("adr.record_date BETWEEN ? AND ?");
   params.push(from, to);
 
-  if (options.asOf) {
-    clauses.push("adr.record_date <= ?");
-    params.push(options.asOf);
-  }
+  const base = `SELECT adr.record_date,
+         e.employee_code,
+         COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
+         COALESCE(rcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
+         COALESCE(rcc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
+         COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
+         COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
+         COALESCE(ws.shift_name, 'Roster Not Assigned') AS shift_name,
+         TIME_FORMAT(ws.start_time, '%H:%i') AS scheduled_start,
+         TIME_FORMAT(ws.end_time, '%H:%i') AS scheduled_end,
+         TIME_FORMAT(agg_ses.earliest_punch, '%H:%i') AS punch_in,
+         TIME_FORMAT(agg_ses.latest_punch, '%H:%i') AS punch_out,
+         CASE
+           WHEN agg_ses.earliest_punch IS NOT NULL AND agg_ses.latest_punch IS NOT NULL
+           THEN TIME_FORMAT(SEC_TO_TIME(TIMESTAMPDIFF(SECOND, agg_ses.earliest_punch, agg_ses.latest_punch)), '%H:%i')
+           ELSE NULL
+         END AS total_login_duration,
+         COALESCE(ws.required_minutes, 540) AS scheduled_minutes,
+         COALESCE(agg_ses.total_login_minutes, 0) AS actual_minutes,
+         adr.late_by_minutes AS late_minutes,
+         CASE
+           WHEN agg_ses.latest_punch IS NOT NULL AND ws.end_time IS NOT NULL
+                AND TIME(agg_ses.latest_punch) < ws.end_time
+           THEN TIMESTAMPDIFF(MINUTE, TIME(agg_ses.latest_punch), ws.end_time)
+           ELSE 0
+         END AS early_logout_minutes,
+         CASE
+           WHEN ws.required_minutes IS NOT NULL AND ws.required_minutes > 0
+           THEN ROUND(LEAST(COALESCE(agg_ses.total_login_minutes, 0), ws.required_minutes) / ws.required_minutes * 100, 1)
+           ELSE NULL
+         END AS adherence_pct,
+         adr.attendance_status,
+         CASE
+           WHEN adr.attendance_status = 'absent' THEN 'ABSENT'
+           WHEN adr.late_mark = 1 AND COALESCE(agg_ses.total_login_minutes, 0) < COALESCE(ws.required_minutes, 540) * 0.85 THEN 'LATE_AND_SHORT'
+           WHEN adr.late_mark = 1 THEN 'LATE'
+           WHEN COALESCE(agg_ses.total_login_minutes, 0) < COALESCE(ws.required_minutes, 540) * 0.85 THEN 'SHORT'
+           ELSE 'ON_TIME'
+         END AS adherence_status,
+         CASE WHEN adr.regularization_id IS NOT NULL THEN 'Yes' ELSE 'No' END AS exception_applied
+    FROM attendance_daily_record adr
+    JOIN employees e ON e.id = adr.employee_id
+    LEFT JOIN branch_master b ON b.id = e.branch_id
+    LEFT JOIN process_master p ON p.id = e.process_id
+    LEFT JOIN wfm_roster_assignment wra ON wra.employee_id = adr.employee_id
+      AND wra.roster_date = adr.record_date
+    LEFT JOIN wfm_shift_master ws ON ws.id = wra.shift_id
+    LEFT JOIN (
+      SELECT employee_id, session_date,
+             MIN(login_time) AS earliest_punch,
+             MAX(logout_time) AS latest_punch,
+             SUM(total_login_minutes) AS total_login_minutes
+        FROM wfm_attendance_session
+       GROUP BY employee_id, session_date
+    ) agg_ses ON agg_ses.employee_id = adr.employee_id AND agg_ses.session_date = adr.record_date
+    LEFT JOIN cost_centre_master rcc ON rcc.id = e.cost_centre_id
+              WHERE ${clauses.join(" AND ")}
+              ORDER BY adr.record_date DESC, adherence_status DESC, employee_name`;
 
-  if (options.mode === "worker" && options.cursor != null) {
-    clauses.push("adr.id > ?");
-    params.push(options.cursor);
-  }
-
-  const base = `
-    SELECT adr.id AS _cursor,
-           e.employee_code,
-           COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-           b.branch_name,
-           COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
-           COALESCE(sp_cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
-           COALESCE(sp_cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
-           adr.record_date,
-           ws.shift_name,
-           TIME_FORMAT(ws.start_time,'%H:%i') AS scheduled_start,
-           adr.late_by_minutes,
-           CASE WHEN adr.late_by_minutes > 0 THEN 'LATE' ELSE 'ON_TIME' END AS adherence_status,
-           adr.attendance_status
-      FROM attendance_daily_record adr
-      JOIN employees e ON e.id = adr.employee_id
-      LEFT JOIN branch_master b ON b.id = e.branch_id
-      LEFT JOIN process_master p ON p.id = e.process_id
-      LEFT JOIN cost_centre_master sp_cc ON sp_cc.id = e.cost_centre_id
-      LEFT JOIN wfm_roster_assignment wra
-             ON wra.employee_id = adr.employee_id
-            AND wra.roster_date = adr.record_date
-      LEFT JOIN wfm_shift_master ws ON ws.id = wra.shift_id
-     WHERE ${clauses.join(" AND ")}
-     ORDER BY adr.id ASC`;
-
-  const total = options.includeTotal ? await count(base, params) : 0;
-  const sql   = options.mode === "worker" ? `${base} LIMIT ${options.limit}` : applyPagination(base, options);
-  const rows  = await query(sql, params) as Record<string, unknown>[];
-
-  const nextCursor = (options.mode === "worker" && rows.length > 0)
-    ? (rows[rows.length - 1]._cursor as number)
-    : null;
-
-  const out = rows.map(({ _cursor: _, ...rest }) => rest);
-  return {
-    rows: out,
-    rowCount: options.includeTotal ? total : rows.length,
-    isTruncated: options.includeTotal ? total > out.length : rows.length === options.limit,
-    nextCursor,
-  };
+  // One execution, not two: the page and its total come from the same fetch wherever the result
+  // fits the probe. See fetchPageWithTotal — the COUNT wrapper it replaces re-ran the entire
+  // statement to learn a number the first run already knew.
+  const paged = await fetchPageWithTotal(base, params, options, query, count);
+  const total = paged.total;
+  const rows  = paged.rows as Record<string, unknown>[];
+  return { rows, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > rows.length, nextCursor: null };
 }
 
-// ---------------------------------------------------------------------------
-// attendance-summary  (monthly aggregate per employee)
-// ---------------------------------------------------------------------------
+/**
+ * attendance-summary
+ *
+ * Aligned with the inline block. Same 1,123 rows both ways, but the executor emitted eight
+ * columns the catalogue does not name and omitted the one it does.
+ *
+ * The month filter is a half-open range on the raw column, not DATE_FORMAT(record_date,'%Y-%m').
+ * That is deliberate and was fixed earlier in this audit: wrapping record_date in a function
+ * makes every one of the eight indexes on it unusable and full-scans the table. Porting the
+ * executor's own month handling instead would have undone that.
+ *
+ * total_hours prefers raw_minutes, then biometric_minutes, then dialler_minutes — three feeds of
+ * decreasing authority, and the COALESCE order is the report's definition of a worked hour.
+ *
+ * The GROUP BY repeats every non-aggregated identity column because ONLY_FULL_GROUP_BY is
+ * enabled here; omitting one fails the report outright rather than degrading it.
+ */
 export async function attendanceSummary(
   filters: ExecFilters,
   scope: ExecScope,
@@ -256,155 +503,181 @@ export async function attendanceSummary(
   const month = monthParam(filters.month);
 
   const clauses: string[] = ["e.id IS NOT NULL"];
-  const params: unknown[]  = [];
+  const params: unknown[] = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
-
-  clauses.push("adr.record_date >= ? AND adr.record_date < ?");
-  params.push(monthRange(month).start, monthRange(month).endExclusive);
-
-  if (options.mode === "worker" && options.cursor != null) {
-    clauses.push("e.id > ?");
-    params.push(options.cursor);
+  {
+    const [my, mm] = month.split("-").map(Number);
+    const nextMonth = `${mm === 12 ? my + 1 : my}-${String(mm === 12 ? 1 : mm + 1).padStart(2, "0")}-01`;
+    clauses.push("adr.record_date >= ? AND adr.record_date < ?");
+    params.push(`${month}-01`, nextMonth);
   }
 
-  // Two defects fixed here, both verified against live mas_hrms on 2026-08-07:
-  //
-  //   1. lwp_days counted `attendance_status = 'lwp'`. There is no 'lwp' member of the
-  //      ENUM — LWP is the numeric `lwp_value` column — so the figure was 0 on all
-  //      118,350 rows. July 2026 alone carries 13,731.5 LWP days across 16,386 rows, and
-  //      LWP drives pay. This is the same defect class the header of
-  //      shared/attendanceStatus.ts documents for 'late'.
-  //
-  //   2. The buckets did not account for the month. present + absent + half_day left
-  //      9,778 of July's 41,106 rows unexplained — 9,773 of them `missing_punch` (23.8%
-  //      of the month) — so the columns silently failed to sum to the total and there was
-  //      no way to see why the attendance rate was what it was. Every ENUM member now has
-  //      a column, and missing_punch is named rather than absorbed.
-  //
-  // attendance_pct keeps the shared definition (approved leave and non-working days out
-  // of the denominator, missing_punch left in it, since an unresolved missing punch is
-  // not a verified attendance). Emitting the bucket makes that judgement auditable
-  // instead of invisible.
   const base = `
-    SELECT e.id AS _cursor,
-           e.employee_code,
+    SELECT e.employee_code,
            COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-           b.branch_name,
-           COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
-           COALESCE(sp_cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
-           COALESCE(sp_cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
-           d.dept_name AS department_name,
-           COUNT(*) AS total_days,
-           ${presentSql("adr.attendance_status")} AS present_days,
-           SUM(CASE WHEN adr.attendance_status = 'absent'          THEN 1 ELSE 0 END) AS absent_days,
-           SUM(CASE WHEN adr.attendance_status = 'half_day'        THEN 1 ELSE 0 END) AS half_days,
-           SUM(CASE WHEN adr.attendance_status IN (${statusList(LEAVE_STATUSES)}) THEN 1 ELSE 0 END) AS leave_days,
-           SUM(CASE WHEN adr.attendance_status = 'week_off'        THEN 1 ELSE 0 END) AS week_off_days,
-           SUM(CASE WHEN adr.attendance_status = 'holiday'         THEN 1 ELSE 0 END) AS holiday_days,
-           SUM(CASE WHEN adr.attendance_status = 'missing_punch'   THEN 1 ELSE 0 END) AS missing_punch_days,
-           SUM(CASE WHEN adr.attendance_status = 'unreconciled'    THEN 1 ELSE 0 END) AS unreconciled_days,
-           ROUND(SUM(COALESCE(adr.lwp_value, 0)), 2) AS lwp_days,
-           SUM(CASE WHEN adr.late_mark = 1 THEN 1 ELSE 0 END) AS late_days,
-           ROUND(SUM(COALESCE(adr.biometric_minutes, 0)) / 60, 2) AS total_productive_hours,
-           ROUND(
-             100 * ${attendedDaysSql("adr.attendance_status")}
-             / NULLIF(${expectedToWorkSql("adr.attendance_status")}, 0)
-           , 2) AS attendance_pct
+           COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
+           COALESCE(pm.process_name, 'UNASSIGNED') AS process_name,
+           COALESCE(acc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
+           COALESCE(acc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
+           SUM(adr.attendance_status='present') AS present_days,
+           SUM(adr.attendance_status='half_day') AS half_days,
+           SUM(adr.attendance_status='absent') AS absent_days,
+           SUM(adr.attendance_status='leave_approved') AS leave_days,
+           SUM(adr.lwp_value) AS lwp_days,
+           SUM(adr.late_mark=1) AS late_days,
+           ROUND(SUM(COALESCE(adr.raw_minutes,adr.biometric_minutes,adr.dialler_minutes,0))/60,2) AS total_hours
       FROM attendance_daily_record adr
       JOIN employees e ON e.id = adr.employee_id
       LEFT JOIN branch_master b ON b.id = e.branch_id
-      LEFT JOIN process_master p ON p.id = e.process_id
-      LEFT JOIN department_master d ON d.id = e.department_id
-      LEFT JOIN cost_centre_master sp_cc ON sp_cc.id = e.cost_centre_id
+      LEFT JOIN process_master pm ON pm.id = e.process_id
+      LEFT JOIN cost_centre_master acc ON acc.id = e.cost_centre_id
      WHERE ${clauses.join(" AND ")}
-     -- The server runs with ONLY_FULL_GROUP_BY, so every non-aggregated selected column
-     -- has to appear here too; omitting the cost centre columns would make this report
-     -- fail outright rather than degrade.
-     GROUP BY e.id, e.employee_code, employee_name, b.branch_name, p.process_name,
-              sp_cc.cost_centre_code, sp_cc.cost_centre_name, d.dept_name
-     ORDER BY e.id ASC`;
+     GROUP BY e.id, e.employee_code, e.first_name, e.last_name, e.full_name,
+              b.branch_name, pm.process_name, acc.cost_centre_code, acc.cost_centre_name
+     ORDER BY employee_name`;
 
-  const total = options.includeTotal ? await count(base, params) : 0;
-  const sql   = options.mode === "worker" ? `${base} LIMIT ${options.limit}` : applyPagination(base, options);
-  const rows  = await query(sql, params) as Record<string, unknown>[];
-
-  const nextCursor = (options.mode === "worker" && rows.length > 0)
-    ? (rows[rows.length - 1]._cursor as number)
-    : null;
-
-  const out = rows.map(({ _cursor: _, ...rest }) => rest);
-  return {
-    rows: out,
-    rowCount: options.includeTotal ? total : rows.length,
-    isTruncated: options.includeTotal ? total > out.length : rows.length === options.limit,
-    nextCursor,
-  };
+  // One execution, not two: the page and its total come from the same fetch wherever the result
+  // fits the probe. See fetchPageWithTotal — the COUNT wrapper it replaces re-ran the entire
+  // statement to learn a number the first run already knew.
+  const paged = await fetchPageWithTotal(base, params, options, query, count);
+  const total = paged.total;
+  const rows  = paged.rows as Record<string, unknown>[];
+  return { rows, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > rows.length, nextCursor: null };
 }
 
 // ---------------------------------------------------------------------------
 // late-arrival-summary  (per employee, per month)
 // ---------------------------------------------------------------------------
+/**
+ * late-arrival-summary
+ *
+ * One row per late arrival, not per employee.
+ *
+ * This executor used to GROUP BY employee and return total_late_days / avg_late_minutes /
+ * max_late_minutes. The inline block in report-suite.routes.ts returns the detail: record_date,
+ * roster_shift, scheduled_start, punch_in, late_minutes, grace_minutes, net_late_minutes,
+ * late_status, approved_exception, reporting_manager.
+ *
+ * Both existed at once, and which one a user got depended on how they asked. The preview
+ * handler reaches the inline block first; the export handler calls executeReport() directly and
+ * got this. Measured live on 2026-08-08: the screen showed 2,199 rows and the downloaded
+ * spreadsheet 577 — the same report at two different grains, with no overlap in the columns
+ * that distinguish them.
+ *
+ * The catalogue decides which is intended, and it is not a matter of taste: src/lib/report-
+ * catalog.ts declares 16 columns for this code, and 10 of the 10 columns unique to the detail
+ * shape are among them while 0 of the 3 unique to the aggregate shape are. The detail is the
+ * report; the aggregate was drift.
+ *
+ * Ported from the inline block so both paths run one implementation. Two deliberate
+ * differences, neither of which changes a row:
+ *   - scope comes from appendScopeConditions(scope, ...) because an executor has no req;
+ *   - the inline block's optional minLateMinutes filter is not carried, because ExecFilters has
+ *     no such field. It defaults to 0 — no filtering — so this matches the inline default, and
+ *     the export path never offered that filter to begin with.
+ */
 export async function lateArrivalSummary(
   filters: ExecFilters,
   scope: ExecScope,
   options: ExecOptions
 ): Promise<ExecResult> {
-  const month = monthParam(filters.month);
+  const now = new Date();
+  const from = dateParam(filters.from, `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`);
+  const to   = dateParam(filters.to, now.toISOString().slice(0, 10));
 
   const clauses: string[] = ["e.id IS NOT NULL"];
   const params: unknown[]  = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
-
-  clauses.push("adr.record_date >= ? AND adr.record_date < ?", "adr.late_by_minutes > 0");
-  params.push(monthRange(month).start, monthRange(month).endExclusive);
+  clauses.push("adr.record_date BETWEEN ? AND ?");
+  params.push(from, to);
+  clauses.push("adr.late_mark = 1");
 
   if (options.mode === "worker" && options.cursor != null) {
-    clauses.push("e.id > ?");
+    clauses.push("adr.id > ?");
     params.push(options.cursor);
   }
 
   const base = `
-    SELECT e.id AS _cursor,
+    SELECT adr.id AS _cursor,
+           adr.record_date,
            e.employee_code,
            COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-           b.branch_name,
+           COALESCE(rcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
+           COALESCE(rcc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
+           COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
            COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
-           COALESCE(sp_cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
-           COALESCE(sp_cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
-           COUNT(*) AS total_late_days,
-           ROUND(AVG(adr.late_by_minutes), 1) AS avg_late_minutes,
-           MAX(adr.late_by_minutes) AS max_late_minutes
+           COALESCE(ws.shift_name, 'Roster Not Assigned') AS roster_shift,
+           ws.start_time AS scheduled_start,
+           was.login_time AS punch_in,
+           adr.late_by_minutes AS late_minutes,
+           COALESCE(arc.grace_minutes, 15) AS grace_minutes,
+           GREATEST(0, adr.late_by_minutes - COALESCE(arc.grace_minutes, 15)) AS net_late_minutes,
+           CASE
+             WHEN adr.late_by_minutes <= COALESCE(arc.grace_minutes, 15) THEN 'Within Grace'
+             WHEN adr.late_by_minutes <= 30 THEN 'Mild Late'
+             WHEN adr.late_by_minutes <= 60 THEN 'Moderate Late'
+             ELSE 'Severe Late'
+           END AS late_status,
+           CASE WHEN adr.regularization_id IS NOT NULL THEN 'Yes' ELSE 'No' END AS approved_exception,
+           COALESCE(NULLIF(rm.full_name,''), CONCAT(rm.first_name,' ',COALESCE(rm.last_name,''))) AS reporting_manager
       FROM attendance_daily_record adr
       JOIN employees e ON e.id = adr.employee_id
       LEFT JOIN branch_master b ON b.id = e.branch_id
       LEFT JOIN process_master p ON p.id = e.process_id
-      LEFT JOIN cost_centre_master sp_cc ON sp_cc.id = e.cost_centre_id
+      LEFT JOIN employees rm ON rm.id = e.reporting_manager_id
+      LEFT JOIN wfm_roster_assignment wra ON wra.employee_id = adr.employee_id
+        AND wra.roster_date = adr.record_date
+      LEFT JOIN wfm_shift_master ws ON ws.id = wra.shift_id
+      LEFT JOIN wfm_attendance_session was ON was.employee_id = adr.employee_id
+        AND was.session_date = adr.record_date
+      LEFT JOIN attendance_rule_config arc ON arc.id = adr.rule_config_id
+      LEFT JOIN cost_centre_master rcc ON rcc.id = e.cost_centre_id
      WHERE ${clauses.join(" AND ")}
-     GROUP BY e.id, e.employee_code, employee_name, b.branch_name, p.process_name, sp_cc.cost_centre_code, sp_cc.cost_centre_name
-     ORDER BY e.id ASC`;
+     ORDER BY adr.record_date DESC, adr.late_by_minutes DESC`;
 
-  const total = options.includeTotal ? await count(base, params) : 0;
-  const sql   = options.mode === "worker" ? `${base} LIMIT ${options.limit}` : applyPagination(base, options);
-  const rows  = await query(sql, params) as Record<string, unknown>[];
-
+  // One execution, not two: the page and its total come from the same fetch wherever the result
+  // fits the probe. See fetchPageWithTotal — the COUNT wrapper it replaces re-ran the entire
+  // statement to learn a number the first run already knew.
+  const paged = await fetchPageWithTotal(base, params, options, query, count);
+  const total = paged.total;
+  const rows  = paged.rows as Record<string, unknown>[];
   const nextCursor = (options.mode === "worker" && rows.length > 0)
-    ? (rows[rows.length - 1]._cursor as number)
-    : null;
-
+    ? (rows[rows.length - 1]._cursor as number) : null;
   const out = rows.map(({ _cursor: _, ...rest }) => rest);
-  return {
-    rows: out,
-    rowCount: options.includeTotal ? total : rows.length,
-    isTruncated: options.includeTotal ? total > out.length : rows.length === options.limit,
-    nextCursor,
-  };
+  return { rows: out, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > out.length, nextCursor };
 }
 
 // ---------------------------------------------------------------------------
 // overtime-summary  (per employee, per month)
 // ---------------------------------------------------------------------------
+/**
+ * overtime-summary
+ *
+ * Hours, with the scheduled baseline the rest of the report is measured against — not a bare
+ * minute total.
+ *
+ * This executor returned total_overtime_minutes and overtime_days against a baseline of
+ * `ws.required_minutes`. The inline block returns days_attended, total_worked_hours,
+ * total_scheduled_hours, overtime_hours, overtime_duration and overtime_pay, measured against
+ * `arc.full_day_minutes` falling back to the rostered shift length and then to 480. Screen
+ * showed 787 rows, the downloaded file 789 — close enough to look like the same report and far
+ * enough apart to be a different one, since the two also disagree on which days count as
+ * overtime at all.
+ *
+ * The catalogue declares 14 columns, of which 8 of the 8 unique to the hours shape appear and 0
+ * of the 2 unique to the minutes shape do.
+ *
+ * Ported verbatim from the inline block, which already carries two fixes made earlier in this
+ * audit and which the executor never received: the overtime_pay subquery is pre-aggregated by
+ * employee so joining it cannot multiply the hours by that employee's payroll-line count, and
+ * the month range is a sargable half-open comparison rather than a DATE_FORMAT wrapper.
+ *
+ * Bind order matters here and is easy to get wrong: the otp subquery's run_month placeholder
+ * sits inside the JOIN, which binds before the WHERE, so its value must lead the list. Pushing
+ * it last shifts every subsequent binding by one — silently, since the values are all strings.
+ */
 export async function overtimeSummary(
   filters: ExecFilters,
   scope: ExecScope,
@@ -416,114 +689,169 @@ export async function overtimeSummary(
   const params: unknown[]  = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
-
-  clauses.push("adr.record_date >= ? AND adr.record_date < ?");
-  clauses.push("adr.raw_minutes > COALESCE(ws.required_minutes, 480)");
-  params.push(monthRange(month).start, monthRange(month).endExclusive);
-
-  if (options.mode === "worker" && options.cursor != null) {
-    clauses.push("e.id > ?");
-    params.push(options.cursor);
+  {
+    const [oy, om] = month.split("-").map(Number);
+    const nextMonth = `${om === 12 ? oy + 1 : oy}-${String(om === 12 ? 1 : om + 1).padStart(2, "0")}-01`;
+    clauses.push("adr.record_date >= ? AND adr.record_date < ?");
+    params.push(`${month}-01`, nextMonth);
   }
 
-  const base = `
-    SELECT e.id AS _cursor,
-           e.employee_code,
-           COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-           b.branch_name,
-           COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
-           COALESCE(sp_cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
-           COALESCE(sp_cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
-           SUM(GREATEST(0, adr.raw_minutes - COALESCE(ws.required_minutes, 480))) AS total_overtime_minutes,
-           COUNT(*) AS overtime_days
-      FROM attendance_daily_record adr
-      JOIN employees e ON e.id = adr.employee_id
-      LEFT JOIN branch_master b ON b.id = e.branch_id
-      LEFT JOIN process_master p ON p.id = e.process_id
-      LEFT JOIN cost_centre_master sp_cc ON sp_cc.id = e.cost_centre_id
-      LEFT JOIN wfm_roster_assignment wra
-             ON wra.employee_id = adr.employee_id
-            AND wra.roster_date = adr.record_date
-      LEFT JOIN wfm_shift_master ws ON ws.id = wra.shift_id
-     WHERE ${clauses.join(" AND ")}
-     GROUP BY e.id, e.employee_code, employee_name, b.branch_name, p.process_name, sp_cc.cost_centre_code, sp_cc.cost_centre_name
-     ORDER BY e.id ASC`;
+  const base = `SELECT e.id AS _cursor,
+         e.employee_code,
+         COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
+         COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
+         COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
+         COALESCE(d.dept_name, 'UNASSIGNED') AS department_name,
+         COALESCE(occ.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
+         COALESCE(occ.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
+         dm.designation_name,
+         COUNT(DISTINCT adr.record_date) AS days_attended,
+         ROUND(SUM(adr.raw_minutes) / 60, 1) AS total_worked_hours,
+         ROUND(SUM(
+           CASE WHEN arc.full_day_minutes IS NOT NULL THEN arc.full_day_minutes
+                ELSE TIMESTAMPDIFF(MINUTE, sm.start_time, sm.end_time) END
+         ) / 60, 1) AS total_scheduled_hours,
+         ROUND(SUM(
+           GREATEST(0, adr.raw_minutes - COALESCE(arc.full_day_minutes, TIMESTAMPDIFF(MINUTE, sm.start_time, sm.end_time), 480))
+         ) / 60, 1) AS overtime_hours,
+         TIME_FORMAT(SEC_TO_TIME(SUM(
+           GREATEST(0, adr.raw_minutes - COALESCE(arc.full_day_minutes, TIMESTAMPDIFF(MINUTE, sm.start_time, sm.end_time), 480))
+         ) * 60), '%H:%i') AS overtime_duration,
+         ROUND(COALESCE(MAX(otp.overtime_pay), 0), 0) AS overtime_pay
+    FROM attendance_daily_record adr
+    JOIN employees e ON e.id = adr.employee_id
+    LEFT JOIN branch_master b ON b.id = e.branch_id
+    LEFT JOIN process_master p ON p.id = e.process_id
+    LEFT JOIN department_master d ON d.id = e.department_id
+    LEFT JOIN designation_master dm ON dm.id = e.designation_id
+    LEFT JOIN cost_centre_master occ ON occ.id = e.cost_centre_id
+    LEFT JOIN attendance_rule_config arc ON arc.id = adr.rule_config_id
+    LEFT JOIN wfm_roster_assignment wra ON wra.employee_id = e.id AND wra.roster_date = adr.record_date
+    LEFT JOIN wfm_shift_master sm ON sm.id = wra.shift_id
+    -- Pre-aggregated, not two open joins. spl2 was joined on employee_id ALONE, with
+    -- no run filter, and spr2 was a LEFT JOIN so it did not filter either — every
+    -- salary line the employee has ever had survived, then multiplied by every
+    -- attendance day. Measured: 5.8 salary lines per employee against ~20 attendance
+    -- days, so roughly a 116x row explosion before anything narrowed it. That is why
+    -- this report did not come back.
+    --
+    -- It was also summing across that explosion: SUM(spl2.overtime_pay) counted every
+    -- run's overtime once per attendance day. Harmless today only because overtime_pay
+    -- is 0.00 on all 80,338 salary lines — verified — so this rewrite cannot move a
+    -- number now, but it would have inflated real money the moment that column is used.
+    LEFT JOIN (
+      SELECT spl.employee_id,
+             SUM(COALESCE(spl.overtime_pay, 0)) AS overtime_pay
+        FROM salary_prep_line spl
+        JOIN salary_prep_run spr ON spr.id = spl.run_id
+       WHERE spr.run_month = ?
+       GROUP BY spl.employee_id
+    ) otp ON otp.employee_id = e.id
+   WHERE ${clauses.join(" AND ")} AND adr.attendance_status IN ('present','half_day','week_off_worked')
+   GROUP BY e.id, e.employee_code, e.first_name, e.last_name, e.full_name,
+            b.branch_name, p.process_name, d.dept_name, dm.designation_name,
+            occ.cost_centre_code, occ.cost_centre_name
+   HAVING overtime_hours > 0
+   ORDER BY overtime_hours DESC`;
 
-  const total = options.includeTotal ? await count(base, params) : 0;
-  const sql   = options.mode === "worker" ? `${base} LIMIT ${options.limit}` : applyPagination(base, options);
-  const rows  = await query(sql, params) as Record<string, unknown>[];
+  // The subquery's run_month placeholder is in the JOIN, which binds before the WHERE, so its
+  // value leads the list.
+  params.unshift(month);
 
-  const nextCursor = (options.mode === "worker" && rows.length > 0)
-    ? (rows[rows.length - 1]._cursor as number)
-    : null;
-
-  const out = rows.map(({ _cursor: _, ...rest }) => rest);
-  return {
-    rows: out,
-    rowCount: options.includeTotal ? total : rows.length,
-    isTruncated: options.includeTotal ? total > out.length : rows.length === options.limit,
-    nextCursor,
-  };
+  // One execution instead of two wherever the result fits the probe — see COUNT_FREE_PROBE.
+  // This report takes about 250s for a full month and the COUNT it used to force doubled that,
+  // to produce a number the same scan already knew. Identical rows; fewer round trips.
+  const { rows, total } = await fetchPageWithTotal(base, params, options, query, count);
+  const out = (rows as Record<string, unknown>[]).map(({ _cursor: _, ...rest }) => rest);
+  return { rows: out, rowCount: options.includeTotal ? total : out.length, isTruncated: total > out.length, nextCursor: null };
 }
 
 // ---------------------------------------------------------------------------
 // regularization-summary
 // ---------------------------------------------------------------------------
+/**
+ * regularization-summary
+ *
+ * One row per regularization request, not per employee.
+ *
+ * This grouped by employee and returned total_regularizations / approved / pending / rejected.
+ * The inline block in report-suite.routes.ts returned the request detail — session date,
+ * requested status, reason and reason label, who raised it, approval status, reviewer and
+ * reviewed_at. Because the preview handler hits the inline block first and the export handler
+ * calls executeReport() directly, the screen showed 2 rows and the downloaded spreadsheet 4:
+ * the same data counted two different ways, with no shared column between them.
+ *
+ * The catalogue settles which is intended: it declares 19 columns for this code, and 15 of the
+ * 15 unique to the detail shape are declared while 0 of the 4 unique to the aggregate are.
+ *
+ * Ported from the inline block verbatim so both paths run one implementation. Scope comes from
+ * appendScopeConditions(scope, ...) because an executor has no req; the month filter keeps the
+ * inline block's DATE_FORMAT form rather than being rewritten to a sargable range, so this
+ * remains a move rather than a move plus an optimisation.
+ */
 export async function regularizationSummary(
   filters: ExecFilters,
   scope: ExecScope,
   options: ExecOptions
 ): Promise<ExecResult> {
-  const today = new Date().toISOString().slice(0, 10);
-  const from  = dateParam(filters.from, `${new Date().getFullYear()}-01-01`);
-  const to    = dateParam(filters.to, today);
+  const month = monthParam(filters.month);
 
   const clauses: string[] = ["e.id IS NOT NULL"];
   const params: unknown[]  = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
-
-  clauses.push("ar.session_date BETWEEN ? AND ?");
-  params.push(from, to);
+  if (filters.status) { clauses.push("arr.status = ?"); params.push(String(filters.status)); }
+  clauses.push("DATE_FORMAT(arr.session_date,'%Y-%m') = ?");
+  params.push(month);
 
   if (options.mode === "worker" && options.cursor != null) {
-    clauses.push("e.id > ?");
+    clauses.push("arr.id > ?");
     params.push(options.cursor);
   }
 
   const base = `
-    SELECT e.id AS _cursor,
+    SELECT arr.id AS _cursor,
            e.employee_code,
            COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-           b.branch_name,
-           p.process_name,
-           COUNT(*) AS total_regularizations,
-           SUM(CASE WHEN ar.status = 'approved' THEN 1 ELSE 0 END) AS approved,
-           SUM(CASE WHEN ar.status = 'pending'  THEN 1 ELSE 0 END) AS pending,
-           SUM(CASE WHEN ar.status = 'rejected' THEN 1 ELSE 0 END) AS rejected
-      FROM attendance_regularization ar
-      JOIN employees e ON e.id = ar.employee_id
+           COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
+           COALESCE(zcc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
+           COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
+           COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
+           COALESCE(d.dept_name, 'UNASSIGNED') AS department_name,
+           dm.designation_name,
+           arr.session_date AS attendance_date,
+           arr.requested_status,
+           arr.reason,
+           arr.reason_code,
+           arm.label AS reason_label,
+           arr.requested_by_type,
+           arr.status AS approval_status,
+           arr.created_at AS submitted_at,
+           reviewer.full_name AS reviewer_name,
+           arr.reviewed_at AS approved_at,
+           arr.reviewer_note
+      FROM attendance_regularization arr
+      JOIN employees e ON e.id = arr.employee_id
       LEFT JOIN branch_master b ON b.id = e.branch_id
       LEFT JOIN process_master p ON p.id = e.process_id
+      LEFT JOIN department_master d ON d.id = e.department_id
+      LEFT JOIN designation_master dm ON dm.id = e.designation_id
+      LEFT JOIN attendance_reason_master arm ON arm.code = arr.reason_code
+      LEFT JOIN employees reviewer ON reviewer.id = arr.reviewed_by
+      LEFT JOIN cost_centre_master zcc ON zcc.id = e.cost_centre_id
      WHERE ${clauses.join(" AND ")}
-     GROUP BY e.id, e.employee_code, employee_name, b.branch_name, p.process_name
-     ORDER BY e.id ASC`;
+     ORDER BY arr.session_date DESC, employee_name`;
 
-  const total = options.includeTotal ? await count(base, params) : 0;
-  const sql   = options.mode === "worker" ? `${base} LIMIT ${options.limit}` : applyPagination(base, options);
-  const rows  = await query(sql, params) as Record<string, unknown>[];
-
+  // One execution, not two: the page and its total come from the same fetch wherever the result
+  // fits the probe. See fetchPageWithTotal — the COUNT wrapper it replaces re-ran the entire
+  // statement to learn a number the first run already knew.
+  const paged = await fetchPageWithTotal(base, params, options, query, count);
+  const total = paged.total;
+  const rows  = paged.rows as Record<string, unknown>[];
   const nextCursor = (options.mode === "worker" && rows.length > 0)
-    ? (rows[rows.length - 1]._cursor as number)
-    : null;
-
+    ? (rows[rows.length - 1]._cursor as number) : null;
   const out = rows.map(({ _cursor: _, ...rest }) => rest);
-  return {
-    rows: out,
-    rowCount: options.includeTotal ? total : rows.length,
-    isTruncated: options.includeTotal ? total > out.length : rows.length === options.limit,
-    nextCursor,
-  };
+  return { rows: out, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > out.length, nextCursor };
 }
 
 // ---------------------------------------------------------------------------
@@ -532,61 +860,94 @@ export async function regularizationSummary(
 // may not exist as a separate table. Returns same shape as regularizationSummary
 // with a dispute_type label column where available.
 // ---------------------------------------------------------------------------
+/**
+ * attendance-dispute-summary
+ *
+ * One row per dispute, not per employee.
+ *
+ * Same divergence as regularization-summary and from the same table: this grouped by employee
+ * into total_disputes / approved / pending / rejected while the inline block returned the
+ * dispute detail — dispute type, old and new status, the original and requested punch times,
+ * payroll impact, reviewer and resolution. Screen showed 2 rows, the downloaded file 4.
+ *
+ * The catalogue declares 25 columns here, of which 21 of the 21 unique to the detail shape
+ * appear and 0 of the 4 unique to the aggregate do.
+ *
+ * Note the `arr.dispute_type IS NOT NULL` predicate, which the aggregate did not carry at all:
+ * attendance_regularization holds both plain regularizations and disputes, and without it this
+ * report counted every regularization as a dispute. That is why the two reports could read the
+ * same table and both be wrong in different directions.
+ */
 export async function attendanceDisputeSummary(
   filters: ExecFilters,
   scope: ExecScope,
   options: ExecOptions
 ): Promise<ExecResult> {
-  const today = new Date().toISOString().slice(0, 10);
-  const from  = dateParam(filters.from, `${new Date().getFullYear()}-01-01`);
-  const to    = dateParam(filters.to, today);
+  const month = monthParam(filters.month);
 
   const clauses: string[] = ["e.id IS NOT NULL"];
   const params: unknown[]  = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
-
-  clauses.push("ar.session_date BETWEEN ? AND ?");
-  params.push(from, to);
+  if (filters.status) { clauses.push("arr.status = ?"); params.push(String(filters.status)); }
+  clauses.push("arr.dispute_type IS NOT NULL");
+  clauses.push("DATE_FORMAT(arr.session_date,'%Y-%m') = ?");
+  params.push(month);
 
   if (options.mode === "worker" && options.cursor != null) {
-    clauses.push("e.id > ?");
+    clauses.push("arr.id > ?");
     params.push(options.cursor);
   }
 
   const base = `
-    SELECT e.id AS _cursor,
+    SELECT arr.id AS _cursor,
            e.employee_code,
            COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-           b.branch_name,
-           p.process_name,
-           COUNT(*) AS total_disputes,
-           SUM(CASE WHEN ar.status = 'approved' THEN 1 ELSE 0 END) AS approved,
-           SUM(CASE WHEN ar.status = 'pending'  THEN 1 ELSE 0 END) AS pending,
-           SUM(CASE WHEN ar.status = 'rejected' THEN 1 ELSE 0 END) AS rejected
-      FROM attendance_regularization ar
-      JOIN employees e ON e.id = ar.employee_id
+           COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
+           COALESCE(zcc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
+           COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
+           COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
+           COALESCE(d.dept_name, 'UNASSIGNED') AS department_name,
+           dm.designation_name,
+           arr.session_date AS dispute_date,
+           arr.dispute_type,
+           arr.reason AS description,
+           arr.reason_code,
+           arm.label AS reason_label,
+           arr.old_status,
+           arr.new_status AS requested_status,
+           TIME_FORMAT(arr.old_punch_in, '%H:%i') AS original_punch_in,
+           TIME_FORMAT(arr.old_punch_out, '%H:%i') AS original_punch_out,
+           TIME_FORMAT(arr.new_punch_in, '%H:%i') AS requested_punch_in,
+           TIME_FORMAT(arr.new_punch_out, '%H:%i') AS requested_punch_out,
+           arr.payroll_impact,
+           arr.status AS approval_status,
+           arr.created_at AS submitted_at,
+           reviewer.full_name AS reviewer_name,
+           arr.reviewed_at,
+           arr.reviewer_note AS resolution
+      FROM attendance_regularization arr
+      JOIN employees e ON e.id = arr.employee_id
       LEFT JOIN branch_master b ON b.id = e.branch_id
       LEFT JOIN process_master p ON p.id = e.process_id
+      LEFT JOIN department_master d ON d.id = e.department_id
+      LEFT JOIN designation_master dm ON dm.id = e.designation_id
+      LEFT JOIN attendance_reason_master arm ON arm.code = arr.reason_code
+      LEFT JOIN employees reviewer ON reviewer.id = arr.reviewed_by
+      LEFT JOIN cost_centre_master zcc ON zcc.id = e.cost_centre_id
      WHERE ${clauses.join(" AND ")}
-     GROUP BY e.id, e.employee_code, employee_name, b.branch_name, p.process_name
-     ORDER BY e.id ASC`;
+     ORDER BY arr.session_date DESC, employee_name`;
 
-  const total = options.includeTotal ? await count(base, params) : 0;
-  const sql   = options.mode === "worker" ? `${base} LIMIT ${options.limit}` : applyPagination(base, options);
-  const rows  = await query(sql, params) as Record<string, unknown>[];
-
+  // One execution, not two: the page and its total come from the same fetch wherever the result
+  // fits the probe. See fetchPageWithTotal — the COUNT wrapper it replaces re-ran the entire
+  // statement to learn a number the first run already knew.
+  const paged = await fetchPageWithTotal(base, params, options, query, count);
+  const total = paged.total;
+  const rows  = paged.rows as Record<string, unknown>[];
   const nextCursor = (options.mode === "worker" && rows.length > 0)
-    ? (rows[rows.length - 1]._cursor as number)
-    : null;
-
+    ? (rows[rows.length - 1]._cursor as number) : null;
   const out = rows.map(({ _cursor: _, ...rest }) => rest);
-  return {
-    rows: out,
-    rowCount: options.includeTotal ? total : rows.length,
-    isTruncated: options.includeTotal ? total > out.length : rows.length === options.limit,
-    nextCursor,
-  };
+  return { rows: out, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > out.length, nextCursor };
 }
 
 // ---------------------------------------------------------------------------
@@ -617,7 +978,7 @@ export async function habitualAbsenteeList(
     SELECT e.id AS _cursor,
            e.employee_code,
            COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-           b.branch_name,
+           COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
            COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
            COALESCE(sp_cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
            COALESCE(sp_cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
@@ -632,9 +993,12 @@ export async function habitualAbsenteeList(
      HAVING absent_days >= ${Number.isFinite(threshold) && threshold > 0 ? threshold : 3}
      ORDER BY e.id ASC`;
 
-  const total = options.includeTotal ? await count(base, params) : 0;
-  const sql   = options.mode === "worker" ? `${base} LIMIT ${options.limit}` : applyPagination(base, options);
-  const rows  = await query(sql, params) as Record<string, unknown>[];
+  // One execution, not two: the page and its total come from the same fetch wherever the result
+  // fits the probe. See fetchPageWithTotal — the COUNT wrapper it replaces re-ran the entire
+  // statement to learn a number the first run already knew.
+  const paged = await fetchPageWithTotal(base, params, options, query, count);
+  const total = paged.total;
+  const rows  = paged.rows as Record<string, unknown>[];
 
   const nextCursor = (options.mode === "worker" && rows.length > 0)
     ? (rows[rows.length - 1]._cursor as number)
@@ -670,15 +1034,30 @@ export async function dailyShrinkageReport(
   params.push(from, to);
 
   const base = `
+    -- Aligned with the inline block this used to disagree with, and with the catalogue.
+    --
+    -- This emitted three metrics — scheduled, absent_count, shrinkage_pct — where the catalogue
+    -- declares nine: total_scheduled, present_hc, absent_hc, leave_hc, week_off_hc, holiday_hc,
+    -- unplanned_shrinkage_hc, total_shrinkage_pct, unplanned_shrinkage_pct. Same 33 rows on
+    -- screen and in the file, but the downloaded workbook carried none of the columns the grid
+    -- draws, so a shrinkage report opened from a spreadsheet answered a different question from
+    -- the one reviewed on screen.
+    --
+    -- Ported verbatim, including the status vocabulary. 'week_off' has zero rows live, which is
+    -- a known gap in the shared attendance vocabulary and a separate question — porting it
+    -- unchanged keeps this a move rather than a redefinition.
     SELECT adr.record_date,
-           b.branch_name,
-           p.process_name,
-           COUNT(*) AS scheduled,
-           SUM(CASE WHEN adr.attendance_status IN ('absent','lwp') THEN 1 ELSE 0 END) AS absent_count,
-           ROUND(
-             SUM(CASE WHEN adr.attendance_status IN ('absent','lwp') THEN 1 ELSE 0 END) * 100.0
-             / NULLIF(COUNT(*), 0),
-           2) AS shrinkage_pct
+           COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
+           COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
+           COUNT(*) AS total_scheduled,
+           SUM(adr.attendance_status IN ('present','half_day','week_off_worked')) AS present_hc,
+           SUM(adr.attendance_status = 'absent') AS absent_hc,
+           SUM(adr.attendance_status = 'leave_approved') AS leave_hc,
+           SUM(adr.attendance_status = 'week_off') AS week_off_hc,
+           SUM(adr.attendance_status = 'holiday') AS holiday_hc,
+           COUNT(*) - SUM(adr.attendance_status IN ('present','half_day','leave_approved','week_off','holiday')) AS unplanned_shrinkage_hc,
+           ROUND((COUNT(*) - SUM(adr.attendance_status IN ('present','half_day','week_off_worked'))) / NULLIF(COUNT(*), 0) * 100, 2) AS total_shrinkage_pct,
+           ROUND((SUM(adr.attendance_status = 'absent')) / NULLIF(COUNT(*), 0) * 100, 2) AS unplanned_shrinkage_pct
       FROM attendance_daily_record adr
       JOIN employees e ON e.id = adr.employee_id
       LEFT JOIN branch_master b ON b.id = e.branch_id
@@ -687,201 +1066,218 @@ export async function dailyShrinkageReport(
      GROUP BY adr.record_date, b.branch_name, p.process_name
      ORDER BY adr.record_date DESC, b.branch_name, p.process_name`;
 
-  const total = options.includeTotal ? await count(base, params) : 0;
-  const sql   = applyPagination(base, options);
-  const rows  = await query(sql, params) as Record<string, unknown>[];
+  // One execution, not two: the page and its total come from the same fetch wherever the result
+  // fits the probe. See fetchPageWithTotal — the COUNT wrapper it replaces re-ran the entire
+  // statement to learn a number the first run already knew.
+  const paged = await fetchPageWithTotal(base, params, options, query, count);
+  const total = paged.total;
+  const rows  = paged.rows as Record<string, unknown>[];
   return { rows, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > rows.length };
 }
 
-// ---------------------------------------------------------------------------
-// monthly-shrinkage-trend  (aggregate — no row-level cursor)
-// ---------------------------------------------------------------------------
+/**
+ * monthly-shrinkage-trend
+ *
+ * Aligned with the inline block. Same 430 rows both ways; the catalogue names all nine columns
+ * unique to the inline shape and none of the four unique to this executor's.
+ *
+ * The derived table is structural, not stylistic: MySQL will not accept a window function over
+ * aggregates computed at the same SELECT level, so the per-month aggregate has to be complete
+ * before the three-month rolling average can read it. Flattening it would not compile.
+ *
+ * Known and not addressed here: this is the slowest report in the suite, because
+ * GROUP BY DATE_FORMAT(record_date,'%Y-%m') cannot use any index (EXPLAIN reports type=ALL,
+ * key=null, Using temporary) and the range covers the whole year. Making it sargable is a
+ * separate change with its own before/after — folding it into a port would leave neither
+ * verifiable.
+ */
 export async function monthlyShrinkageTrend(
   filters: ExecFilters,
   scope: ExecScope,
   options: ExecOptions
 ): Promise<ExecResult> {
-  const today = new Date().toISOString().slice(0, 10);
-  const from  = dateParam(filters.from, `${new Date().getFullYear()}-01-01`);
-  const to    = dateParam(filters.to, today);
+  const from = dateParam(filters.from, `${new Date().getFullYear()}-01-01`);
+  const to   = dateParam(filters.to, new Date().toISOString().slice(0, 10));
 
   const clauses: string[] = ["e.id IS NOT NULL"];
-  const params: unknown[]  = [];
+  const params: unknown[] = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
-
   clauses.push("adr.record_date BETWEEN ? AND ?");
   params.push(from, to);
 
   const base = `
-    SELECT LEFT(adr.record_date, 7) AS report_month,
-           b.branch_name,
-           p.process_name,
-           COUNT(*) AS total_scheduled,
-           SUM(CASE WHEN adr.attendance_status IN ('absent','lwp') THEN 1 ELSE 0 END) AS absent_count,
-           ROUND(
-             SUM(CASE WHEN adr.attendance_status IN ('absent','lwp') THEN 1 ELSE 0 END) * 100.0
-             / NULLIF(COUNT(*), 0),
-           2) AS shrinkage_pct
-      FROM attendance_daily_record adr
-      JOIN employees e ON e.id = adr.employee_id
-      LEFT JOIN branch_master b ON b.id = e.branch_id
-      LEFT JOIN process_master p ON p.id = e.process_id
-     WHERE ${clauses.join(" AND ")}
-     GROUP BY report_month, b.branch_name, p.process_name
-     ORDER BY report_month DESC, b.branch_name, p.process_name`;
+    SELECT *, ROUND(AVG(total_shrinkage_pct) OVER (
+           PARTITION BY branch_name, process_name
+           ORDER BY month
+           ROWS BETWEEN 2 PRECEDING AND CURRENT ROW
+         ), 2) AS three_month_avg_shrinkage
+      FROM (
+        SELECT DATE_FORMAT(adr.record_date,'%Y-%m') AS month, b.branch_name, p.process_name,
+               COUNT(DISTINCT adr.record_date) AS working_days,
+               COUNT(*) AS total_employee_days,
+               SUM(adr.attendance_status IN ('present','half_day','week_off_worked')) AS present_days,
+               SUM(adr.attendance_status = 'absent') AS absent_days,
+               SUM(adr.attendance_status = 'leave_approved') AS leave_days,
+               ROUND((COUNT(*) - SUM(adr.attendance_status IN ('present','half_day','week_off_worked'))) / NULLIF(COUNT(*), 0) * 100, 2) AS total_shrinkage_pct,
+               ROUND(SUM(adr.attendance_status = 'absent') / NULLIF(COUNT(*), 0) * 100, 2) AS unplanned_shrinkage_pct
+          FROM attendance_daily_record adr
+          JOIN employees e ON e.id = adr.employee_id
+          LEFT JOIN branch_master b ON b.id = e.branch_id
+          LEFT JOIN process_master p ON p.id = e.process_id
+         WHERE ${clauses.join(" AND ")}
+         GROUP BY DATE_FORMAT(adr.record_date,'%Y-%m'), b.branch_name, p.process_name
+      ) base_data
+     ORDER BY month DESC, total_shrinkage_pct DESC`;
 
-  const total = options.includeTotal ? await count(base, params) : 0;
-  const sql   = applyPagination(base, options);
-  const rows  = await query(sql, params) as Record<string, unknown>[];
-  return { rows, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > rows.length };
+  // One execution instead of two wherever the result fits the probe. This report costs ~35s and
+  // the COUNT it used to force cost another ~42s, for a number the same scan already knew — see
+  // COUNT_FREE_PROBE. Identical rows either way; only the number of round trips changes.
+  //
+  // Before rewriting the SQL above to make this faster: don't, and be careful how you measure.
+  // Seven rewrites have been tried and rejected. Run-to-run variance on this server is about
+  // ±80% on identical SQL — removing the window function measured SLOWER than keeping it, which
+  // is how the noise floor was found — so a handful of timings cannot support any query-shape
+  // conclusion. Timings also depend heavily on which DB address you reached: the public route is
+  // 3-4x slower than the office LAN for the same statement on the same server.
+  // See docs/reports-slow-queries-root-cause.md before spending time here.
+  const { rows, total } = await fetchPageWithTotal(base, params, options, query, count);
+  return { rows, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > rows.length, nextCursor: null };
 }
 
-// ---------------------------------------------------------------------------
-// biometric-reconciliation
-// ---------------------------------------------------------------------------
+/**
+ * biometric-reconciliation
+ *
+ * Aligned with the inline block. Same 375 rows both ways; the catalogue names all seven columns
+ * unique to the inline shape and none of the one unique to this executor's.
+ *
+ * The report compares two independent records of the same day and names where they disagree:
+ * attendance_daily_record, which is what payroll reads, against integration_biometric_daily,
+ * which is the raw device feed. Both the processed and the raw minutes are reported side by
+ * side on purpose — collapsing them to one number would remove the comparison the report exists
+ * to make.
+ *
+ * Two details that must move together. The reconciliation CASE is repeated in the WHERE when a
+ * status filter is supplied, because MySQL cannot filter on a SELECT alias; the two copies have
+ * to stay identical or filtering silently selects a different set from the one displayed. And
+ * the join to the raw feed is on employee_code, not employee id, because that is how the device
+ * feed identifies people — the same reason punch-raw-export joins that way.
+ */
 export async function biometricReconciliation(
   filters: ExecFilters,
   scope: ExecScope,
   options: ExecOptions
 ): Promise<ExecResult> {
-  const today = new Date().toISOString().slice(0, 10);
-  const from  = dateParam(filters.from, today);
-  const to    = dateParam(filters.to, today);
+  const from = dateParam(filters.from, new Date().toISOString().slice(0, 10));
+  const to   = dateParam(filters.to, from);
+
+  const RECONCILIATION_CASE = `CASE WHEN ibd.first_punch IS NULL AND adr.attendance_status IN ('present','half_day','week_off_worked') THEN 'NO_BIOMETRIC_FOR_PRESENT'
+                          WHEN ibd.first_punch IS NOT NULL AND adr.attendance_status='absent' THEN 'PUNCHED_BUT_ABSENT'
+                          ELSE 'OK' END`;
 
   const clauses: string[] = ["e.id IS NOT NULL"];
-  const params: unknown[]  = [];
+  const params: unknown[] = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
-
+  if (filters.status) {
+    clauses.push(`${RECONCILIATION_CASE} = ?`);
+    params.push(String(filters.status));
+  }
   clauses.push("adr.record_date BETWEEN ? AND ?");
   params.push(from, to);
 
-  if (options.asOf) {
-    clauses.push("adr.record_date <= ?");
-    params.push(options.asOf);
-  }
-
-  if (options.mode === "worker" && options.cursor != null) {
-    clauses.push("adr.id > ?");
-    params.push(options.cursor);
-  }
-
   const base = `
-    SELECT adr.id AS _cursor,
+    SELECT adr.record_date,
            e.employee_code,
            COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-           b.branch_name,
+           COALESCE(rcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
+           COALESCE(rcc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
+           COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
            COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
-           COALESCE(sp_cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
-           COALESCE(sp_cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
-           adr.record_date,
            adr.attendance_status,
-           CASE WHEN ibd.id IS NOT NULL THEN 'HAS_BIOMETRIC' ELSE 'NO_BIOMETRIC' END AS biometric_presence,
-           CASE
-             WHEN adr.attendance_status IN ('present','half_day') AND ibd.id IS NULL
-               THEN 'PRESENT_NO_BIOMETRIC'
-             WHEN adr.attendance_status = 'absent' AND ibd.id IS NOT NULL
-               THEN 'ABSENT_WITH_BIOMETRIC'
-             ELSE 'OK'
-           END AS reconciliation_status
+           adr.biometric_minutes AS processed_biometric_minutes,
+           TIME_FORMAT(SEC_TO_TIME(adr.biometric_minutes * 60), '%H:%i') AS processed_biometric_duration,
+           TIME_FORMAT(ibd.first_punch, '%H:%i:%s') AS biometric_punch_in,
+           TIME_FORMAT(ibd.last_punch, '%H:%i:%s') AS biometric_punch_out,
+           ibd.biometric_minutes AS raw_biometric_minutes,
+           TIME_FORMAT(SEC_TO_TIME(ibd.biometric_minutes * 60), '%H:%i') AS raw_biometric_duration,
+           ${RECONCILIATION_CASE} AS reconciliation_status,
+           CASE WHEN ibd.first_punch IS NULL AND adr.attendance_status IN ('present','half_day','week_off_worked') THEN 'No biometric record for marked present'
+                WHEN ibd.first_punch IS NOT NULL AND adr.attendance_status='absent' THEN 'Biometric punch exists but marked absent'
+                ELSE 'Reconciled' END AS reconciliation_description
       FROM attendance_daily_record adr
       JOIN employees e ON e.id = adr.employee_id
       LEFT JOIN branch_master b ON b.id = e.branch_id
       LEFT JOIN process_master p ON p.id = e.process_id
-      LEFT JOIN cost_centre_master sp_cc ON sp_cc.id = e.cost_centre_id
-      -- integration_biometric_daily keys on employee_code + activity_date. It has neither
-      -- employee_id nor record_date, so the previous join threw ER_BAD_FIELD_ERROR on every
-      -- run and this report has never returned a row (36,190 biometric rows sat unjoinable).
-      LEFT JOIN integration_biometric_daily ibd
-             ON ibd.employee_code = e.employee_code
-            AND ibd.activity_date = adr.record_date
+      LEFT JOIN integration_biometric_daily ibd ON ibd.employee_code = e.employee_code AND ibd.activity_date = adr.record_date
+      LEFT JOIN cost_centre_master rcc ON rcc.id = e.cost_centre_id
      WHERE ${clauses.join(" AND ")}
-     ORDER BY adr.id ASC`;
+     ORDER BY adr.record_date DESC, reconciliation_status DESC`;
 
-  const total = options.includeTotal ? await count(base, params) : 0;
-  const sql   = options.mode === "worker" ? `${base} LIMIT ${options.limit}` : applyPagination(base, options);
-  const rows  = await query(sql, params) as Record<string, unknown>[];
-
-  const nextCursor = (options.mode === "worker" && rows.length > 0)
-    ? (rows[rows.length - 1]._cursor as number)
-    : null;
-
-  const out = rows.map(({ _cursor: _, ...rest }) => rest);
-  return {
-    rows: out,
-    rowCount: options.includeTotal ? total : rows.length,
-    isTruncated: options.includeTotal ? total > out.length : rows.length === options.limit,
-    nextCursor,
-  };
+  // One execution, not two: the page and its total come from the same fetch wherever the result
+  // fits the probe. See fetchPageWithTotal — the COUNT wrapper it replaces re-ran the entire
+  // statement to learn a number the first run already knew.
+  const paged = await fetchPageWithTotal(base, params, options, query, count);
+  const total = paged.total;
+  const rows  = paged.rows as Record<string, unknown>[];
+  return { rows, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > rows.length, nextCursor: null };
 }
 
-// ---------------------------------------------------------------------------
-// punch-raw-export
-// ---------------------------------------------------------------------------
+/**
+ * punch-raw-export
+ *
+ * Aligned with the inline block. Same 160 rows both ways; the catalogue names all seven columns
+ * unique to the inline shape and none of the five unique to this executor's.
+ *
+ * Reads integration_biometric_daily, the raw device feed, and joins employees by employee_code
+ * rather than by id — that is how the feed identifies people. The join stays a LEFT JOIN on
+ * purpose: a punch from a code with no matching employee is exactly what a raw export should
+ * still show, since it is the evidence that someone is punching without being mapped.
+ */
 export async function punchRawExport(
   filters: ExecFilters,
   scope: ExecScope,
   options: ExecOptions
 ): Promise<ExecResult> {
-  const today = new Date().toISOString().slice(0, 10);
-  const from  = dateParam(filters.from, today);
-  const to    = dateParam(filters.to, today);
+  const from = dateParam(filters.from, new Date().toISOString().slice(0, 10));
+  const to   = dateParam(filters.to, from);
 
-  const clauses: string[] = ["e.id IS NOT NULL"];
-  const params: unknown[]  = [];
+  const clauses: string[] = ["1 = 1"];
+  const params: unknown[] = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
-
-  clauses.push("was.session_date BETWEEN ? AND ?");
+  clauses.push("ibd.activity_date BETWEEN ? AND ?");
   params.push(from, to);
 
-  if (options.asOf) {
-    clauses.push("was.session_date <= ?");
-    params.push(options.asOf);
-  }
-
-  if (options.mode === "worker" && options.cursor != null) {
-    clauses.push("was.id > ?");
-    params.push(options.cursor);
-  }
-
   const base = `
-    SELECT was.id AS _cursor,
-           e.employee_code,
+    SELECT ibd.employee_code,
            COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-           b.branch_name,
+           COALESCE(rcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
+           COALESCE(rcc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
+           e.biometric_code,
+           COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
            COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
-           COALESCE(sp_cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
-           COALESCE(sp_cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
-           was.session_date,
-           TIME_FORMAT(was.login_time,'%H:%i:%s') AS login_time,
-           TIME_FORMAT(was.logout_time,'%H:%i:%s') AS logout_time,
-           was.total_login_minutes,
-           was.punch_source
-      FROM wfm_attendance_session was
-      JOIN employees e ON e.id = was.employee_id
+           ibd.activity_date,
+           TIME_FORMAT(ibd.first_punch, '%H:%i:%s') AS first_punch,
+           TIME_FORMAT(ibd.last_punch, '%H:%i:%s') AS last_punch,
+           ibd.biometric_minutes,
+           TIME_FORMAT(SEC_TO_TIME(ibd.biometric_minutes * 60), '%H:%i:%s') AS total_duration,
+           ibd.total_punches
+      FROM integration_biometric_daily ibd
+      LEFT JOIN employees e ON e.employee_code = ibd.employee_code
       LEFT JOIN branch_master b ON b.id = e.branch_id
       LEFT JOIN process_master p ON p.id = e.process_id
-      LEFT JOIN cost_centre_master sp_cc ON sp_cc.id = e.cost_centre_id
+      LEFT JOIN cost_centre_master rcc ON rcc.id = e.cost_centre_id
      WHERE ${clauses.join(" AND ")}
-     ORDER BY was.id ASC`;
+     ORDER BY ibd.activity_date DESC, ibd.employee_code`;
 
-  const total = options.includeTotal ? await count(base, params) : 0;
-  const sql   = options.mode === "worker" ? `${base} LIMIT ${options.limit}` : applyPagination(base, options);
-  const rows  = await query(sql, params) as Record<string, unknown>[];
-
-  const nextCursor = (options.mode === "worker" && rows.length > 0)
-    ? (rows[rows.length - 1]._cursor as number)
-    : null;
-
-  const out = rows.map(({ _cursor: _, ...rest }) => rest);
-  return {
-    rows: out,
-    rowCount: options.includeTotal ? total : rows.length,
-    isTruncated: options.includeTotal ? total > out.length : rows.length === options.limit,
-    nextCursor,
-  };
+  // One execution, not two: the page and its total come from the same fetch wherever the result
+  // fits the probe. See fetchPageWithTotal — the COUNT wrapper it replaces re-ran the entire
+  // statement to learn a number the first run already knew.
+  const paged = await fetchPageWithTotal(base, params, options, query, count);
+  const total = paged.total;
+  const rows  = paged.rows as Record<string, unknown>[];
+  return { rows, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > rows.length, nextCursor: null };
 }
 
 // ---------------------------------------------------------------------------
@@ -916,7 +1312,7 @@ export async function attendanceRegisterGrid(
     SELECT e.id AS _cursor,
            e.employee_code,
            COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-           b.branch_name,
+           COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
            COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
            COALESCE(sp_cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
            COALESCE(sp_cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
@@ -938,9 +1334,12 @@ export async function attendanceRegisterGrid(
      ORDER BY e.id ASC`;
   params.push(from, to);
 
-  const total = options.includeTotal ? await count(base, params) : 0;
-  const sql   = options.mode === "worker" ? `${base} LIMIT ${options.limit}` : applyPagination(base, options);
-  const rows  = await query(sql, params) as Record<string, unknown>[];
+  // One execution, not two: the page and its total come from the same fetch wherever the result
+  // fits the probe. See fetchPageWithTotal — the COUNT wrapper it replaces re-ran the entire
+  // statement to learn a number the first run already knew.
+  const paged = await fetchPageWithTotal(base, params, options, query, count);
+  const total = paged.total;
+  const rows  = paged.rows as Record<string, unknown>[];
 
   const nextCursor = (options.mode === "worker" && rows.length > 0)
     ? (rows[rows.length - 1]._cursor as number)
@@ -1000,7 +1399,7 @@ export async function breakDailySummary(
     SELECT bs.shift_date AS break_date,
            e.employee_code,
            COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-           b.branch_name,
+           COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
            COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
            COALESCE(sp_cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
            COALESCE(sp_cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
@@ -1024,9 +1423,12 @@ export async function breakDailySummary(
               e.last_name, b.branch_name, p.process_name, sp_cc.cost_centre_code, sp_cc.cost_centre_name
      ORDER BY bs.shift_date DESC, e.employee_code ASC`;
 
-  const total = options.includeTotal ? await count(base, params) : 0;
-  const sql   = applyPagination(base, options);
-  const rows  = await query(sql, params) as Record<string, unknown>[];
+  // One execution, not two: the page and its total come from the same fetch wherever the result
+  // fits the probe. See fetchPageWithTotal — the COUNT wrapper it replaces re-ran the entire
+  // statement to learn a number the first run already knew.
+  const paged = await fetchPageWithTotal(base, params, options, query, count);
+  const total = paged.total;
+  const rows  = paged.rows as Record<string, unknown>[];
 
   return {
     rows,
@@ -1091,8 +1493,8 @@ export async function breakSessionLog(
            COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
            COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
            COALESCE(zcc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
-           b.branch_name,
-           p.process_name,
+           COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
+           COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
            bs.break_type,
            TIME_FORMAT(bs.break_start_time,'%H:%i:%s') AS break_in,
            TIME_FORMAT(bs.break_end_time,'%H:%i:%s')   AS break_out,
@@ -1114,9 +1516,12 @@ export async function breakSessionLog(
      WHERE ${clauses.join(" AND ")}
      ORDER BY ${orderBy}`;
 
-  const total = options.includeTotal ? await count(base, params) : 0;
-  const sql   = options.mode === "worker" ? `${base} LIMIT ${options.limit}` : applyPagination(base, options);
-  const rows  = await query(sql, params) as Record<string, unknown>[];
+  // One execution, not two: the page and its total come from the same fetch wherever the result
+  // fits the probe. See fetchPageWithTotal — the COUNT wrapper it replaces re-ran the entire
+  // statement to learn a number the first run already knew.
+  const paged = await fetchPageWithTotal(base, params, options, query, count);
+  const total = paged.total;
+  const rows  = paged.rows as Record<string, unknown>[];
 
   // break_sessions.id is a UUID, not an auto-increment. Keyset pagination still
   // works — ORDER BY bs.id ASC combined with bs.id > cursor is a stable total
@@ -1182,14 +1587,14 @@ export async function productivityIndividualScorecard(
            COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
            COALESCE(sp_cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
            COALESCE(sp_cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
-           b.branch_name,
+           COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
            COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
            ROUND(SUM(adr.dialler_minutes) / 60, 2) AS login_hours,
            ROUND(SUM(adr.biometric_minutes) / 60, 2) AS biometric_hours,
-           COUNT(CASE WHEN adr.attendance_status IN ('present','half_day') THEN 1 END) AS present_days,
+           COUNT(CASE WHEN adr.attendance_status IN ('present','half_day','week_off_worked') THEN 1 END) AS present_days,
            kss.final_score AS kpi_score,
            kss.rating AS kpi_rating,
-           ROUND(COUNT(CASE WHEN adr.attendance_status IN ('present','half_day') THEN 1 END)
+           ROUND(COUNT(CASE WHEN adr.attendance_status IN ('present','half_day','week_off_worked') THEN 1 END)
                  / NULLIF(COUNT(*),0) * 100, 1) AS attendance_pct
       FROM attendance_daily_record adr
       JOIN employees e ON e.id = adr.employee_id
@@ -1208,8 +1613,11 @@ export async function productivityIndividualScorecard(
      ORDER BY login_hours DESC`;
 
   const params = [...joinParams, ...whereParams];
-  const total = options.includeTotal ? await count(base, params) : 0;
-  const sql   = applyPagination(base, options);
-  const rows  = await query(sql, params) as Record<string, unknown>[];
+  // One execution, not two: the page and its total come from the same fetch wherever the result
+  // fits the probe. See fetchPageWithTotal — the COUNT wrapper it replaces re-ran the entire
+  // statement to learn a number the first run already knew.
+  const paged = await fetchPageWithTotal(base, params, options, query, count);
+  const total = paged.total;
+  const rows  = paged.rows as Record<string, unknown>[];
   return { rows, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > rows.length };
 }

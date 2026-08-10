@@ -16,6 +16,7 @@ import {
   dateParam,
   monthParam,
   applyPagination,
+  fetchPageWithTotal,
 } from "./types.js";
 
 async function query(sql: string, params: unknown[]): Promise<RowDataPacket[]> {
@@ -34,6 +35,72 @@ async function count(baseSql: string, params: unknown[]): Promise<number> {
 // ---------------------------------------------------------------------------
 // resignation-register
 // ---------------------------------------------------------------------------
+/**
+ * ff-settlement-register
+ *
+ * Promoted from the inline case block, which had no executor and so could not be downloaded —
+ * on a register of final settlement amounts.
+ *
+ * The row scope moved with it and is the reason this must not be simplified: the inline block
+ * originally had none, so notice recovery, gratuity, advances recovery, salary hold and net
+ * payable were returned for every branch to anyone who could open the report. Scope is enforced
+ * in the query and nowhere else.
+ *
+ * appendScopeConditions is called before the date range so its clauses and parameters lead the
+ * list, matching the order the placeholders appear in.
+ */
+export async function ffSettlementRegister(
+  filters: ExecFilters,
+  scope: ExecScope,
+  options: ExecOptions
+): Promise<ExecResult> {
+  const from = dateParam(filters.from, `${new Date().getFullYear()}-01-01`);
+  const to   = dateParam(filters.to, new Date().toISOString().slice(0, 10));
+
+  const clauses: string[] = ["e.id IS NOT NULL"];
+  const params: unknown[] = [];
+  appendScopeConditions(scope, clauses, params);
+  appendFilterConditions(filters, clauses, params);
+  clauses.push("COALESCE(er.last_working_day_confirmed, er.last_working_day_proposed) BETWEEN ? AND ?");
+  params.push(from, to);
+
+  if (options.mode === "worker" && options.cursor != null) {
+    clauses.push("ffc.id > ?"); params.push(options.cursor);
+  }
+
+  const base = `    SELECT
+           ffc.id AS _cursor,
+           e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
+           COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
+           COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
+           COALESCE(cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
+           COALESCE(cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
+           COALESCE(er.last_working_day_confirmed, er.last_working_day_proposed) AS last_working_day,
+           ffc.notice_recovery, ffc.earned_leave_encashment AS leave_encashment,
+           ffc.gratuity_amount, ffc.advances_recovery, ffc.salary_hold,
+           ffc.net_payable AS net_ff_payable,
+           ffc.status, ffc.is_ff_provisional
+      FROM full_final_calculation ffc
+      JOIN exit_request er ON er.id = ffc.exit_request_id
+      JOIN employees e ON e.id = er.employee_id
+      LEFT JOIN branch_master b ON b.id = e.branch_id
+      LEFT JOIN process_master p ON p.id = e.process_id
+      LEFT JOIN cost_centre_master cc ON cc.id = e.cost_centre_id
+     WHERE ${clauses.join(" AND ")}
+     ORDER BY COALESCE(er.last_working_day_confirmed, er.last_working_day_proposed) DESC`;
+
+  // One execution, not two: the page and its total come from the same fetch wherever the result
+  // fits the probe. See fetchPageWithTotal — the COUNT wrapper it replaces re-ran the entire
+  // statement to learn a number the first run already knew.
+  const paged = await fetchPageWithTotal(base, params, options, query, count);
+  const total = paged.total;
+  const rows  = paged.rows as Record<string, unknown>[];
+  const nextCursor = (options.mode === "worker" && rows.length > 0)
+    ? (rows[rows.length - 1]._cursor as number) : null;
+  const out = rows.map(({ _cursor: _, ...rest }) => rest);
+  return { rows: out, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > out.length, nextCursor };
+}
+
 export async function resignationRegister(
   filters: ExecFilters,
   scope: ExecScope,
@@ -90,7 +157,7 @@ export async function resignationRegister(
            -- NULL: an employee with no mapping is a fact worth showing, not a blank cell.
            COALESCE(cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
            COALESCE(cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
-           b.branch_name,
+           COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
            COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
            -- Both catalogues already declared these two, so the grid drew a Designation and a
            -- DOJ column for a query that emitted neither. They come straight off employees.
@@ -169,7 +236,7 @@ export async function fnfPendingRegister(
                                         er.last_working_day_proposed)) AS days_since_exit,
            COALESCE(sp_cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
            COALESCE(sp_cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
-           b.branch_name,
+           COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
            COALESCE(p.process_name, 'UNASSIGNED') AS process_name
       FROM employees e
       LEFT JOIN exit_request er            ON er.employee_id = e.id
@@ -236,7 +303,8 @@ export async function fnfSettlementRegister(
            COALESCE(ffc.status, 'pending')    AS payment_status,
            ffc.is_ff_provisional,
            LEFT(COALESCE(ffc.approved_at, e.date_of_exit), 7) AS settlement_month,
-           b.branch_name, p.process_name
+           COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
+           COALESCE(p.process_name, 'UNASSIGNED') AS process_name
       FROM employees e
       LEFT JOIN exit_request er            ON er.employee_id = e.id
       LEFT JOIN full_final_calculation ffc ON ffc.exit_request_id = er.id
@@ -246,9 +314,12 @@ export async function fnfSettlementRegister(
      WHERE ${clauses.join(" AND ")}
      ORDER BY e.id ASC`;
 
-  const total = options.includeTotal ? await count(base, params) : 0;
-  const sql   = options.mode === "worker" ? `${base} LIMIT ${options.limit}` : applyPagination(base, options);
-  const rows  = await query(sql, params) as Record<string, unknown>[];
+  // One execution, not two: the page and its total come from the same fetch wherever the result
+  // fits the probe. See fetchPageWithTotal — the COUNT wrapper it replaces re-ran the entire
+  // statement to learn a number the first run already knew.
+  const paged = await fetchPageWithTotal(base, params, options, query, count);
+  const total = paged.total;
+  const rows  = paged.rows as Record<string, unknown>[];
   const nextCursor = (options.mode === "worker" && rows.length > 0)
     ? (rows[rows.length - 1]._cursor as number) : null;
   const out = rows.map(({ _cursor: _, ...rest }) => rest);
@@ -287,7 +358,7 @@ export async function clearanceStatusRegister(
            MAX(CASE WHEN ec.status NOT IN ('cleared','waived') THEN ec.department ELSE NULL END) AS pending_dept,
            COALESCE(sp_cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
            COALESCE(sp_cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
-           b.branch_name,
+           COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
            COALESCE(p.process_name, 'UNASSIGNED') AS process_name
       FROM employees e
       LEFT JOIN exit_request er              ON er.employee_id = e.id
@@ -302,9 +373,12 @@ export async function clearanceStatusRegister(
               sp_cc.cost_centre_code, sp_cc.cost_centre_name
      ORDER BY e.id ASC`;
 
-  const total = options.includeTotal ? await count(base, params) : 0;
-  const sql   = options.mode === "worker" ? `${base} LIMIT ${options.limit}` : applyPagination(base, options);
-  const rows  = await query(sql, params) as Record<string, unknown>[];
+  // One execution, not two: the page and its total come from the same fetch wherever the result
+  // fits the probe. See fetchPageWithTotal — the COUNT wrapper it replaces re-ran the entire
+  // statement to learn a number the first run already knew.
+  const paged = await fetchPageWithTotal(base, params, options, query, count);
+  const total = paged.total;
+  const rows  = paged.rows as Record<string, unknown>[];
   const nextCursor = (options.mode === "worker" && rows.length > 0)
     ? (rows[rows.length - 1]._cursor as number) : null;
   const out = rows.map(({ _cursor: _, ...rest }) => rest);
@@ -421,8 +495,8 @@ export async function exitReasonAnalysis(
     -- will read 'Not Specified' — that is the truth about the data, not a defect here.
     SELECT COALESCE(er.resignation_reason, er.exit_reason_category, 'Not Specified') AS exit_reason,
            COUNT(*) AS count,
-           b.branch_name,
-           p.process_name
+           COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
+           COALESCE(p.process_name, 'UNASSIGNED') AS process_name
       FROM employees e
       LEFT JOIN exit_request er  ON er.employee_id = e.id
       LEFT JOIN branch_master b  ON b.id = e.branch_id
@@ -469,8 +543,8 @@ export async function tenureDistribution(
              ELSE '5+ years'
            END AS tenure_bucket,
            COUNT(*) AS headcount,
-           b.branch_name,
-           p.process_name
+           COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
+           COALESCE(p.process_name, 'UNASSIGNED') AS process_name
       FROM employees e
       LEFT JOIN branch_master b  ON b.id = e.branch_id
       LEFT JOIN process_master p ON p.id = e.process_id
@@ -478,9 +552,12 @@ export async function tenureDistribution(
      GROUP BY tenure_bucket, b.branch_name, p.process_name
      ORDER BY b.branch_name, p.process_name, tenure_bucket`;
 
-  const total = options.includeTotal ? await count(base, params) : 0;
-  const sql   = applyPagination(base, options);
-  const rows  = await query(sql, params) as Record<string, unknown>[];
+  // One execution, not two: the page and its total come from the same fetch wherever the result
+  // fits the probe. See fetchPageWithTotal — the COUNT wrapper it replaces re-ran the entire
+  // statement to learn a number the first run already knew.
+  const paged = await fetchPageWithTotal(base, params, options, query, count);
+  const total = paged.total;
+  const rows  = paged.rows as Record<string, unknown>[];
   return { rows, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > rows.length };
 }
 
@@ -521,7 +598,8 @@ export async function earlyAttritionReport(
            DATEDIFF(e.date_of_exit, e.date_of_joining) AS days_employed,
            -- see the note in exit-reason-analysis: the reason lives on exit_request
            COALESCE(er.resignation_reason, er.exit_reason_category) AS resignation_reason,
-           b.branch_name, p.process_name
+           COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
+           COALESCE(p.process_name, 'UNASSIGNED') AS process_name
       FROM employees e
       LEFT JOIN exit_request er  ON er.employee_id = e.id
       LEFT JOIN branch_master b  ON b.id = e.branch_id
@@ -530,9 +608,12 @@ export async function earlyAttritionReport(
      WHERE ${clauses.join(" AND ")}
      ORDER BY e.id ASC`;
 
-  const total = options.includeTotal ? await count(base, params) : 0;
-  const sql   = options.mode === "worker" ? `${base} LIMIT ${options.limit}` : applyPagination(base, options);
-  const rows  = await query(sql, params) as Record<string, unknown>[];
+  // One execution, not two: the page and its total come from the same fetch wherever the result
+  // fits the probe. See fetchPageWithTotal — the COUNT wrapper it replaces re-ran the entire
+  // statement to learn a number the first run already knew.
+  const paged = await fetchPageWithTotal(base, params, options, query, count);
+  const total = paged.total;
+  const rows  = paged.rows as Record<string, unknown>[];
   const nextCursor = (options.mode === "worker" && rows.length > 0)
     ? (rows[rows.length - 1]._cursor as number) : null;
   const out = rows.map(({ _cursor: _, ...rest }) => rest);

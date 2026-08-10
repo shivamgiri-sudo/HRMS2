@@ -21,6 +21,7 @@ import {
   appendFilterConditions,
   monthParam,
   applyPagination,
+  fetchPageWithTotal,
 } from "./types.js";
 import {
   statusList,
@@ -41,6 +42,167 @@ async function count(baseSql: string, params: unknown[]): Promise<number> {
   );
   return Number((rows as Array<{ total?: number }>)[0]?.total ?? 0);
 }
+
+/**
+ * Payroll run statuses a report may read.
+ *
+ * 'draft' is excluded because a draft run has no calculated lines yet. Defined here and imported
+ * by the high-risk router rather than declared in both, for the same reason the SELECTs are
+ * shared: a status list that exists twice is a status list that will eventually differ, and the
+ * two copies decide which payroll runs a report can see.
+ */
+export const PAYROLL_RUN_STATUSES = [
+  "processing", "reviewed", "calculated", "approved",
+  "locked", "disbursed", "finalized", "released", "paid",
+] as const;
+
+/**
+ * payroll-variance and payslip-status SELECTs, shared with the high-risk router that serves the
+ * screen — same reasoning as PAYROLL_REGISTER_BODY. Two separately maintained copies is what
+ * made these two disagree; one copy cannot.
+ *
+ * payroll-variance: the screen's shape is authoritative here because the catalogue declares
+ * exactly its eleven columns. The executor's own version returned a different set and, without
+ * the run-month filter the screen applies, more than 5,000 rows — enough for the download to
+ * refuse outright with TOO_LARGE while the screen showed 1,464.
+ *
+ * payslip-status: the catalogue declares NO columns for this code, so it cannot arbitrate, and
+ * neither side was complete. The screen carried run_status and employee_code but no cost centre,
+ * branch or process; the executor carried those three but not run_status or employee_code. The
+ * union is used, which is also the only shape that satisfies the standing requirement that every
+ * employee-grain report carry employee code, cost centre and process.
+ *
+ * The previous-month join in payroll-variance is the report: it self-joins salary_prep_run one
+ * calendar month back, restricted to the same payroll statuses, so "previous_net" means the
+ * prior run rather than whatever row happened to sort first. Its placeholders sit inside that
+ * JOIN, ahead of the WHERE, which is why the caller prepends the status list to the parameters.
+ */
+export const PAYROLL_VARIANCE_BODY = `
+    SELECT e.employee_code,
+           COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
+           COALESCE(hcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
+           COALESCE(hcc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
+           COALESCE(hpm.process_name, 'UNASSIGNED') AS process_name,
+           spr.run_month,
+           spl.net_salary AS current_net,
+           prev.net_salary AS previous_net,
+           ROUND(((spl.net_salary - COALESCE(prev.net_salary,0)) / NULLIF(prev.net_salary,0))*100,2) AS net_variance_pct,
+           spl.lwp_days,
+           CASE WHEN prev.id IS NULL THEN 'NO_PREVIOUS_MONTH'
+                WHEN ABS(ROUND(((spl.net_salary - COALESCE(prev.net_salary,0)) / NULLIF(prev.net_salary,0))*100,2)) >= 20 THEN 'HIGH_VARIANCE'
+                WHEN spl.net_salary < 0 THEN 'NEGATIVE_NET'
+                ELSE 'OK' END AS variance_status
+      FROM salary_prep_line spl
+      JOIN salary_prep_run spr ON spr.id = spl.run_id
+      JOIN employees e ON e.id = spl.employee_id
+      LEFT JOIN salary_prep_run pspr ON pspr.run_month = DATE_FORMAT(DATE_SUB(STR_TO_DATE(CONCAT(spr.run_month,'-01'),'%Y-%m-%d'), INTERVAL 1 MONTH),'%Y-%m')
+        AND LOWER(pspr.status) IN (__STATUS_PLACEHOLDERS__)
+      LEFT JOIN salary_prep_line prev ON prev.run_id = pspr.id AND prev.employee_id = spl.employee_id
+      LEFT JOIN cost_centre_master hcc ON hcc.id = e.cost_centre_id
+      LEFT JOIN process_master hpm ON hpm.id = e.process_id`;
+
+export const PAYSLIP_STATUS_BODY = `
+    SELECT spr.run_month,
+           spr.status AS run_status,
+           e.employee_code,
+           COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
+           COALESCE(sp_cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
+           COALESCE(sp_cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
+           COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
+           COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
+           sp.payslip_ref,
+           sp.file_url,
+           sp.acknowledged_at,
+           CASE WHEN sp.id IS NULL THEN 'NOT_GENERATED'
+                WHEN sp.acknowledged_at IS NULL THEN 'RELEASED_NOT_ACKNOWLEDGED'
+                ELSE 'ACKNOWLEDGED' END AS payslip_status
+      FROM salary_prep_line spl
+      JOIN salary_prep_run spr ON spr.id = spl.run_id
+      JOIN employees e ON e.id = spl.employee_id
+      LEFT JOIN salary_payslip sp ON sp.prep_line_id = spl.id
+      LEFT JOIN branch_master b ON b.id = e.branch_id
+      LEFT JOIN process_master p ON p.id = e.process_id
+      LEFT JOIN cost_centre_master sp_cc ON sp_cc.id = e.cost_centre_id`;
+
+/**
+ * The payroll register's SELECT and joins, shared by the executor below and by the high-risk
+ * router that serves the screen.
+ *
+ * It is a shared constant rather than two copies because two copies is exactly what went wrong:
+ * the screen showed run_status, net_mismatch_amount and payroll_risk while the download showed a
+ * component breakdown plus employee_state, deduction_applied and line_flag, and neither side
+ * carried the other's columns. Both were deliberately maintained — this is the one divergence in
+ * the suite where the executor had NOT rotted — so the shapes are merged rather than one being
+ * chosen over the other, and now they cannot drift apart again.
+ *
+ * The three diagnostics are the reason the merge goes this way rather than trimming the download
+ * to match the screen. Measured on the 2026-07 run:
+ *
+ *   employee_state      1,464 lines, 350 of them for employees with active_status = 0. Without
+ *                       it an exited employee is indistinguishable from a current one.
+ *   deduction_applied   454 lines carry a 200 deduction against zero gross while net_salary
+ *                       floors at 0, so SUM(total_deductions) overstates money actually
+ *                       deducted by 38,800.
+ *   line_flag           146 of those lines pay net_salary = 200 against zero gross and zero
+ *                       attendance — 29,200 in total, every one an inactive employee.
+ *
+ * Column names follow the catalogue where the two sides disagreed: run_month (not
+ * payroll_month) and net_salary (not net_pay).
+ *
+ * Payroll arithmetic is untouched. Verified against live mas_hrms: gross - total_deductions =
+ * net_salary holds on every line where gross_salary > 0. Nothing here recomputes a figure; it
+ * makes facts visible that a total taken from the register would otherwise flatten.
+ */
+export const PAYROLL_REGISTER_BODY = `
+    SELECT spl.id AS _cursor,
+           spr.run_month,
+           spr.status AS run_status,
+           e.employee_code,
+           COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
+           COALESCE(cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
+           COALESCE(cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
+           COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
+           COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
+           COALESCE(d.dept_name, 'UNASSIGNED') AS department_name,
+           des.designation_name,
+           e.employment_status,
+           CASE WHEN e.active_status = 1 THEN 'ACTIVE' ELSE 'INACTIVE' END AS employee_state,
+           COALESCE(spl.basic,0) AS basic_pay,
+           COALESCE(spl.hra,0) AS hra,
+           COALESCE(spl.gross_salary,0) AS gross_salary,
+           COALESCE(spl.pf_employee,0) AS pf_employee,
+           COALESCE(spl.esic_employee,0) AS esic_employee,
+           COALESCE(spl.professional_tax,0) AS professional_tax,
+           COALESCE(spl.tds,0) AS tds,
+           COALESCE(spl.lwp_deduction,0) AS lwp_deduction,
+           COALESCE(spl.total_deductions,0) AS total_deductions,
+           CASE WHEN COALESCE(spl.gross_salary,0) > 0
+                THEN COALESCE(spl.total_deductions,0) ELSE 0 END AS deduction_applied,
+           spl.net_salary,
+           (COALESCE(spl.gross_salary,0) - COALESCE(spl.total_deductions,0) - COALESCE(spl.net_salary,0)) AS net_mismatch_amount,
+           CASE WHEN COALESCE(spl.net_salary,0) < 0 THEN 'NEGATIVE_NET'
+                WHEN ABS(COALESCE(spl.gross_salary,0) - COALESCE(spl.total_deductions,0) - COALESCE(spl.net_salary,0)) > 1 THEN 'NET_MISMATCH'
+                ELSE 'OK' END AS payroll_risk,
+           CASE
+             WHEN COALESCE(spl.gross_salary,0) = 0 AND COALESCE(spl.net_salary,0) > 0
+               THEN 'PAID_WITHOUT_GROSS'
+             WHEN COALESCE(spl.gross_salary,0) = 0 THEN 'ZERO_GROSS'
+             ELSE 'OK'
+           END AS line_flag,
+           spl.status AS line_status,
+           COALESCE(spl.working_days,0) AS working_days,
+           COALESCE(spl.present_days,0) AS present_days,
+           COALESCE(spl.leave_days,0) AS leave_days,
+           COALESCE(spl.final_payable_days, spl.working_days, 0) AS payable_days,
+           COALESCE(spl.lwp_days,0) AS lwp_days
+      FROM salary_prep_line spl
+      JOIN salary_prep_run spr ON spr.id = spl.run_id
+      JOIN employees e ON e.id = spl.employee_id
+      LEFT JOIN branch_master b ON b.id = e.branch_id
+      LEFT JOIN process_master p ON p.id = e.process_id
+      LEFT JOIN department_master d ON d.id = e.department_id
+      LEFT JOIN designation_master des ON des.id = e.designation_id
+      LEFT JOIN cost_centre_master cc ON cc.id = e.cost_centre_id`;
 
 // ---------------------------------------------------------------------------
 // payroll-register
@@ -82,133 +244,63 @@ export async function payrollRegister(
   //
   // cost_centre_code / cost_centre_name are added because a payroll register without a
   // cost centre cannot be reconciled to finance.
-  const base = `
-    SELECT spl.id AS _cursor,
-           spr.run_month AS payroll_month,
-           e.employee_code,
-           COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-           COALESCE(cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
-           COALESCE(cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
-           b.branch_name,
-           COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
-           d.dept_name AS department_name,
-           des.designation_name,
-           e.employment_status,
-           CASE WHEN e.active_status = 1 THEN 'ACTIVE' ELSE 'INACTIVE' END AS employee_state,
-           COALESCE(spl.basic,0) AS basic_pay,
-           COALESCE(spl.hra,0) AS hra,
-           COALESCE(spl.gross_salary,0) AS gross_salary,
-           COALESCE(spl.pf_employee,0) AS pf_employee,
-           COALESCE(spl.esic_employee,0) AS esic_employee,
-           COALESCE(spl.professional_tax,0) AS professional_tax,
-           COALESCE(spl.tds,0) AS tds,
-           COALESCE(spl.lwp_deduction,0) AS lwp_deduction,
-           COALESCE(spl.total_deductions,0) AS total_deductions,
-           CASE WHEN COALESCE(spl.gross_salary,0) > 0
-                THEN COALESCE(spl.total_deductions,0) ELSE 0 END AS deduction_applied,
-           spl.net_salary AS net_pay,
-           CASE
-             WHEN COALESCE(spl.gross_salary,0) = 0 AND COALESCE(spl.net_salary,0) > 0
-               THEN 'PAID_WITHOUT_GROSS'
-             WHEN COALESCE(spl.gross_salary,0) = 0 THEN 'ZERO_GROSS'
-             ELSE 'OK'
-           END AS line_flag,
-           COALESCE(spl.final_payable_days, spl.working_days, 0) AS payable_days,
-           COALESCE(spl.lwp_days,0) AS lwp_days
-      FROM salary_prep_line spl
-      JOIN salary_prep_run spr ON spr.id = spl.run_id
-      JOIN employees e ON e.id = spl.employee_id
-      LEFT JOIN branch_master b ON b.id = e.branch_id
-      LEFT JOIN process_master p ON p.id = e.process_id
-      LEFT JOIN department_master d ON d.id = e.department_id
-      LEFT JOIN designation_master des ON des.id = e.designation_id
-      LEFT JOIN cost_centre_master cc ON cc.id = e.cost_centre_id
+  const base = `${PAYROLL_REGISTER_BODY}
      WHERE ${clauses.join(" AND ")}
      ORDER BY spl.id ASC`;
 
-  const total = options.includeTotal ? await count(base, params) : 0;
-  const sql   = options.mode === "worker" ? `${base} LIMIT ${options.limit}` : applyPagination(base, options);
-  const rows  = await query(sql, params) as Record<string, unknown>[];
+  // One execution, not two: the page and its total come from the same fetch wherever the result
+  // fits the probe. See fetchPageWithTotal — the COUNT wrapper it replaces re-ran the entire
+  // statement to learn a number the first run already knew.
+  const paged = await fetchPageWithTotal(base, params, options, query, count);
+  const total = paged.total;
+  const rows  = paged.rows as Record<string, unknown>[];
   const nextCursor = (options.mode === "worker" && rows.length > 0)
     ? (rows[rows.length - 1]._cursor as number) : null;
   const out = rows.map(({ _cursor: _, ...rest }) => rest);
   return { rows: out, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > out.length, nextCursor };
 }
 
-// ---------------------------------------------------------------------------
-// payroll-variance
-// ---------------------------------------------------------------------------
+/**
+ * payroll-variance
+ *
+ * Uses PAYROLL_VARIANCE_BODY, shared with the high-risk router that serves the screen, so the
+ * two cannot drift again.
+ *
+ * This executor previously ran its own query with no run-month restriction, so the download
+ * gathered over 5,000 rows and refused with TOO_LARGE while the screen showed 1,464 for the
+ * month. The catalogue declares exactly the screen's eleven columns, which is why the screen's
+ * shape is the shared one.
+ *
+ * Bind order: the previous-month JOIN carries the payroll-status placeholders and sits ahead of
+ * the WHERE, so the status list is prepended to the parameters.
+ */
 export async function payrollVariance(
   filters: ExecFilters,
   scope: ExecScope,
   options: ExecOptions
 ): Promise<ExecResult> {
-  const currentMonth = await resolvePayrollMonth(filters.month);
+  const runMonth = await resolvePayrollMonth(filters.month);
 
-  // Resolve previous month: use explicit filter or subtract one calendar month
-  let previousMonth: string;
-  if (typeof filters.previousMonth === "string" && /^\d{4}-\d{2}$/.test(filters.previousMonth)) {
-    previousMonth = filters.previousMonth;
-  } else {
-    const [y, m] = currentMonth.split("-").map(Number);
-    const prevDate = new Date(y, m - 2, 1); // JS months 0-indexed; m-2 yields prior month
-    previousMonth = `${prevDate.getFullYear()}-${String(prevDate.getMonth() + 1).padStart(2, "0")}`;
-  }
-
-  // JOIN ON params must precede WHERE params in positional binding
-  const joinParams: unknown[] = [currentMonth, previousMonth];
   const clauses: string[] = ["e.id IS NOT NULL"];
-  const whereParams: unknown[] = [];
-  appendScopeConditions(scope, clauses, whereParams);
-  appendFilterConditions(filters, clauses, whereParams);
+  const params: unknown[] = [];
+  appendScopeConditions(scope, clauses, params);
+  appendFilterConditions(filters, clauses, params);
+  clauses.push("spr.run_month = ?");
+  params.push(runMonth);
+  clauses.push(`LOWER(spr.status) IN (${PAYROLL_RUN_STATUSES.map(() => "?").join(",")})`);
+  params.push(...PAYROLL_RUN_STATUSES);
 
-  if (options.mode === "worker" && options.cursor != null) {
-    clauses.push("curr.id > ?");
-    whereParams.push(options.cursor);
-  }
-
-  const params = [...joinParams, ...whereParams];
-
-  const base = `
-    SELECT curr.id AS _cursor,
-           e.employee_code,
-           COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-           b.branch_name,
-           COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
-           COALESCE(sp_cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
-           COALESCE(sp_cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
-           d.dept_name AS department_name,
-           curr_run.run_month,
-           COALESCE(curr.gross_salary,0) AS current_gross,
-           COALESCE(prev.gross_salary,0) AS previous_gross,
-           COALESCE(curr.gross_salary,0) - COALESCE(prev.gross_salary,0) AS variance_gross,
-           COALESCE(curr.net_salary,0) AS current_net,
-           COALESCE(prev.net_salary,0) AS previous_net,
-           COALESCE(curr.net_salary,0) - COALESCE(prev.net_salary,0) AS variance_net,
-           CASE
-             WHEN ABS(COALESCE(curr.net_salary,0) - COALESCE(prev.net_salary,0)) > 5000 THEN 'HIGH_VARIANCE'
-             WHEN ABS(COALESCE(curr.net_salary,0) - COALESCE(prev.net_salary,0)) > 1000 THEN 'MEDIUM_VARIANCE'
-             ELSE 'NORMAL'
-           END AS variance_flag
-      FROM salary_prep_line curr
-      JOIN salary_prep_run curr_run ON curr_run.id = curr.run_id AND curr_run.run_month = ?
-      LEFT JOIN salary_prep_line prev ON prev.employee_id = curr.employee_id
-      LEFT JOIN salary_prep_run prev_run ON prev_run.id = prev.run_id AND prev_run.run_month = ?
-      JOIN employees e ON e.id = curr.employee_id
-      LEFT JOIN branch_master b ON b.id = e.branch_id
-      LEFT JOIN process_master p ON p.id = e.process_id
-      LEFT JOIN cost_centre_master sp_cc ON sp_cc.id = e.cost_centre_id
-      LEFT JOIN department_master d ON d.id = e.department_id
+  const body = PAYROLL_VARIANCE_BODY.replace(
+    "__STATUS_PLACEHOLDERS__", PAYROLL_RUN_STATUSES.map(() => "?").join(","));
+  const base = `${body}
      WHERE ${clauses.join(" AND ")}
-     ORDER BY curr.id ASC`;
+     ORDER BY ABS(COALESCE(net_variance_pct,0)) DESC`;
 
-  const total = options.includeTotal ? await count(base, params) : 0;
-  const sql   = options.mode === "worker" ? `${base} LIMIT ${options.limit}` : applyPagination(base, options);
-  const rows  = await query(sql, params) as Record<string, unknown>[];
-  const nextCursor = (options.mode === "worker" && rows.length > 0)
-    ? (rows[rows.length - 1]._cursor as number) : null;
-  const out = rows.map(({ _cursor: _, ...rest }) => rest);
-  return { rows: out, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > out.length, nextCursor };
+  const all = [...PAYROLL_RUN_STATUSES, ...params];
+  const total = options.includeTotal ? await count(base, all) : 0;
+  const sql   = applyPagination(base, options);
+  const rows  = await query(sql, all) as Record<string, unknown>[];
+  return { rows, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > rows.length, nextCursor: null };
 }
 
 // ---------------------------------------------------------------------------
@@ -243,11 +335,11 @@ export async function salarySheetOnfido(
            spr.run_month AS payroll_month,
            e.employee_code,
            COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-           b.branch_name,
+           COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
            COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
            COALESCE(sp_cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
            COALESCE(sp_cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
-           d.dept_name AS department_name,
+           COALESCE(d.dept_name, 'UNASSIGNED') AS department_name,
            des.designation_name,
            ${panField},
            ${uanField},
@@ -291,14 +383,63 @@ export async function salarySheetOnfido(
      WHERE ${clauses.join(" AND ")}
      ORDER BY spl.id ASC`;
 
-  const total = options.includeTotal ? await count(base, params) : 0;
-  const sql   = options.mode === "worker" ? `${base} LIMIT ${options.limit}` : applyPagination(base, options);
-  const rows  = await query(sql, params) as Record<string, unknown>[];
+  // One execution, not two: the page and its total come from the same fetch wherever the result
+  // fits the probe. See fetchPageWithTotal — the COUNT wrapper it replaces re-ran the entire
+  // statement to learn a number the first run already knew.
+  const paged = await fetchPageWithTotal(base, params, options, query, count);
+  const total = paged.total;
+  const rows  = paged.rows as Record<string, unknown>[];
   const nextCursor = (options.mode === "worker" && rows.length > 0)
     ? (rows[rows.length - 1]._cursor as number) : null;
   const out = rows.map(({ _cursor: _, ...rest }) => rest);
   return { rows: out, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > out.length, nextCursor };
 }
+
+/**
+ * The two payment files disagree about where an employee's salary should go, and until now
+ * neither said so.
+ *
+ * bank-advice pays to employees.bank_account_number. neft-transfer-file pays to
+ * employee_bank_detail (primary, active). Those are different tables maintained separately, and
+ * on the 2026-07 run, across the 1,156 employees with a payable line:
+ *
+ *   employees.bank_account_number present          1,121
+ *   employee_bank_detail present                     966   (190 fewer)
+ *   both present and DIFFERENT                         6
+ *   absent from both                                  35
+ *
+ * So six people would be paid to a different account depending on which file the bank is handed,
+ * and around 190 would have a blank account in one file but a usable one in the other. Neither
+ * report showed any of this — each simply rendered its own source and looked complete.
+ *
+ * Deciding which table is authoritative moves real money and is a business call, not a code one.
+ * What IS a reporting defect, and is fixed here, is that the disagreement was invisible. Both
+ * files now carry account_source_status on every row:
+ *
+ *   OK          the two sources agree, or only one holds an account
+ *   CONFLICT    both hold an account and they differ  -> do not pay until reconciled
+ *   MISSING     neither source holds an account       -> cannot be paid at all
+ *
+ * No account number is compared outside SQL and none is added to the output; the flag is derived
+ * in the database and only its verdict is selected, so this exposes no data a viewer could not
+ * already see. The join is deliberately the same one neft-transfer-file uses — is_primary and
+ * active_status — so the two reports are comparing like with like.
+ */
+const ACCOUNT_SOURCE_JOIN = `
+      LEFT JOIN employee_bank_detail acct_chk
+             ON acct_chk.employee_id = e.id AND acct_chk.is_primary = 1 AND acct_chk.active_status = 1`;
+
+const ACCOUNT_SOURCE_STATUS = `
+           CASE
+             WHEN (e.bank_account_number IS NULL OR e.bank_account_number = '')
+              AND (acct_chk.account_number IS NULL OR acct_chk.account_number = '')
+                  THEN 'MISSING'
+             WHEN e.bank_account_number IS NOT NULL AND e.bank_account_number <> ''
+              AND acct_chk.account_number IS NOT NULL AND acct_chk.account_number <> ''
+              AND TRIM(e.bank_account_number) <> TRIM(acct_chk.account_number)
+                  THEN 'CONFLICT'
+             ELSE 'OK'
+           END AS account_source_status`;
 
 // ---------------------------------------------------------------------------
 // bank-advice
@@ -322,6 +463,27 @@ export async function bankAdvice(
   clauses.push("spr.run_month = ?");
   params.push(runMonth);
 
+  // A bank advice is an instruction to pay. It had no run-status guard at all, so a run still in
+  // draft — or one that had been cancelled — would produce a fully formed payable file complete
+  // with account number, IFSC and amount. neft-transfer-file does the same job from the same run
+  // and has always excluded those states; this brings the two into line rather than inventing a
+  // rule. Verified on 2026-07, where the only run is 'processing': 1,464 rows and the same
+  // 13,951,142.07 total before and after, so no current output moves. The guard is not
+  // hypothetical though — 1,148 payroll lines sit in draft runs across other months, and opening
+  // this report for one of those would have produced a fully payable file from an uncommitted
+  // run.
+  //
+  // Two related defects are deliberately NOT changed here, because each needs a decision rather
+  // than a guess, and both are recorded so they are not lost:
+  //   - the two payment files read DIFFERENT account sources — this one
+  //     employees.bank_account_number, neft-transfer-file employee_bank_detail. Seven employees
+  //     in the 2026-07 run hold conflicting numbers between the two, so the same salary would
+  //     reach a different account depending on which file the bank is given.
+  //   - this report emits 308 rows with net_salary <= 0 that neft-transfer-file excludes. A zero
+  //     value transfer instruction is meaningless, but quietly dropping 308 rows from a payment
+  //     report is not a change to make unasked.
+  clauses.push("LOWER(COALESCE(spr.status,'')) NOT IN ('draft','cancelled')");
+
   if (options.mode === "worker" && options.cursor != null) {
     clauses.push("spl.id > ?");
     params.push(options.cursor);
@@ -331,13 +493,14 @@ export async function bankAdvice(
     SELECT spl.id AS _cursor,
            e.employee_code,
            COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-           b.branch_name,
+           COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
            COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
            COALESCE(sp_cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
            COALESCE(sp_cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
            ${bankField},
            ${ifscField},
            ${bankName},
+           ${ACCOUNT_SOURCE_STATUS},
            COALESCE(spl.net_salary,0) AS amount,
            spr.run_month
       FROM salary_prep_line spl
@@ -347,12 +510,16 @@ export async function bankAdvice(
       LEFT JOIN process_master p ON p.id = e.process_id
       LEFT JOIN cost_centre_master sp_cc ON sp_cc.id = e.cost_centre_id
       LEFT JOIN department_master d ON d.id = e.department_id
+      ${ACCOUNT_SOURCE_JOIN}
      WHERE ${clauses.join(" AND ")}
      ORDER BY spl.id ASC`;
 
-  const total = options.includeTotal ? await count(base, params) : 0;
-  const sql   = options.mode === "worker" ? `${base} LIMIT ${options.limit}` : applyPagination(base, options);
-  const rows  = await query(sql, params) as Record<string, unknown>[];
+  // One execution, not two: the page and its total come from the same fetch wherever the result
+  // fits the probe. See fetchPageWithTotal — the COUNT wrapper it replaces re-ran the entire
+  // statement to learn a number the first run already knew.
+  const paged = await fetchPageWithTotal(base, params, options, query, count);
+  const total = paged.total;
+  const rows  = paged.rows as Record<string, unknown>[];
   const nextCursor = (options.mode === "worker" && rows.length > 0)
     ? (rows[rows.length - 1]._cursor as number) : null;
   const out = rows.map(({ _cursor: _, ...rest }) => rest);
@@ -449,7 +616,7 @@ export async function payrollReconciliation(
            COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
            COALESCE(sp_cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
            COALESCE(sp_cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
-           b.branch_name,
+           COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
            COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
            spr.run_month AS payroll_month,
            ROUND(COALESCE(att.present_days, 0), 2) AS attendance_present_days,
@@ -497,9 +664,12 @@ export async function payrollReconciliation(
   // the scope filter contributed and silently shift every later value by one.
   params.unshift(...attParams);
 
-  const total = options.includeTotal ? await count(base, params) : 0;
-  const sql   = applyPagination(base, options);
-  const rows  = await query(sql, params) as Record<string, unknown>[];
+  // One execution, not two: the page and its total come from the same fetch wherever the result
+  // fits the probe. See fetchPageWithTotal — the COUNT wrapper it replaces re-ran the entire
+  // statement to learn a number the first run already knew.
+  const paged = await fetchPageWithTotal(base, params, options, query, count);
+  const total = paged.total;
+  const rows  = paged.rows as Record<string, unknown>[];
   const out   = rows.map(({ _cursor: _, ...rest }) => rest);
   return { rows: out, rowCount: options.includeTotal ? total : out.length, isTruncated: total > out.length };
 }
@@ -549,11 +719,11 @@ export async function arrearPaymentRegister(
            COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,'')),
                     NULLIF(lps.employee_name,''), 'UNRESOLVED') AS employee_name,
            CASE WHEN e.id IS NULL THEN 'NOT_IN_EMPLOYEE_MASTER' ELSE 'RESOLVED' END AS employee_link_status,
-           b.branch_name,
+           COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
            COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
            COALESCE(sp_cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
            COALESCE(sp_cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
-           d.dept_name AS department_name,
+           COALESCE(d.dept_name, 'UNASSIGNED') AS department_name,
            lps.pay_month AS arrear_month,
            COALESCE(lps.arrear, 0) AS arrear_amount,
            lps.pay_month AS payment_month,
@@ -568,9 +738,12 @@ export async function arrearPaymentRegister(
      WHERE ${clauses.join(" AND ")}
      ORDER BY lps.id ASC`;
 
-  const total = options.includeTotal ? await count(base, params) : 0;
-  const sql   = options.mode === "worker" ? `${base} LIMIT ${options.limit}` : applyPagination(base, options);
-  const rows  = await query(sql, params) as Record<string, unknown>[];
+  // One execution, not two: the page and its total come from the same fetch wherever the result
+  // fits the probe. See fetchPageWithTotal — the COUNT wrapper it replaces re-ran the entire
+  // statement to learn a number the first run already knew.
+  const paged = await fetchPageWithTotal(base, params, options, query, count);
+  const total = paged.total;
+  const rows  = paged.rows as Record<string, unknown>[];
   const nextCursor = (options.mode === "worker" && rows.length > 0)
     ? (rows[rows.length - 1]._cursor as number) : null;
   const out = rows.map(({ _cursor: _, ...rest }) => rest);
@@ -596,8 +769,8 @@ export async function payrollCostSummary(
 
   const base = `
     SELECT b.branch_name,
-           p.process_name,
-           d.dept_name AS department_name,
+           COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
+           COALESCE(d.dept_name, 'UNASSIGNED') AS department_name,
            spr.run_month,
            COUNT(*) AS employee_count,
            SUM(COALESCE(spl.gross_salary,0)) AS total_gross,
@@ -617,9 +790,12 @@ export async function payrollCostSummary(
      GROUP BY b.branch_name, p.process_name, d.dept_name, spr.run_month
      ORDER BY b.branch_name, p.process_name, d.dept_name`;
 
-  const total = options.includeTotal ? await count(base, params) : 0;
-  const sql   = applyPagination(base, options);
-  const rows  = await query(sql, params) as Record<string, unknown>[];
+  // One execution, not two: the page and its total come from the same fetch wherever the result
+  // fits the probe. See fetchPageWithTotal — the COUNT wrapper it replaces re-ran the entire
+  // statement to learn a number the first run already knew.
+  const paged = await fetchPageWithTotal(base, params, options, query, count);
+  const total = paged.total;
+  const rows  = paged.rows as Record<string, unknown>[];
   return { rows, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > rows.length };
 }
 
@@ -671,9 +847,9 @@ export async function ytdSalarySummary(
            COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
            COALESCE(sp_cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
            COALESCE(sp_cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
-           b.branch_name,
+           COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
            COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
-           d.dept_name AS department_name,
+           COALESCE(d.dept_name, 'UNASSIGNED') AS department_name,
            COUNT(DISTINCT spr.run_month) AS months_paid,
            ROUND(SUM(spl.gross_salary), 2) AS ytd_gross,
            ROUND(SUM(spl.basic), 2) AS ytd_basic,
@@ -694,9 +870,12 @@ export async function ytdSalarySummary(
               sp_cc.cost_centre_code, sp_cc.cost_centre_name
      ORDER BY employee_name`;
 
-  const total = options.includeTotal ? await count(base, params) : 0;
-  const sql   = applyPagination(base, options);
-  const rows  = await query(sql, params) as Record<string, unknown>[];
+  // One execution, not two: the page and its total come from the same fetch wherever the result
+  // fits the probe. See fetchPageWithTotal — the COUNT wrapper it replaces re-ran the entire
+  // statement to learn a number the first run already knew.
+  const paged = await fetchPageWithTotal(base, params, options, query, count);
+  const total = paged.total;
+  const rows  = paged.rows as Record<string, unknown>[];
   return { rows, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > rows.length };
 }
 
@@ -728,7 +907,7 @@ export async function lwpDeductionRegister(
            COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
            COALESCE(sp_cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
            COALESCE(sp_cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
-           b.branch_name,
+           COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
            COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
            spr.run_month,
            MAX(spl.lwp_days) AS lwp_days,
@@ -747,9 +926,12 @@ export async function lwpDeductionRegister(
               b.branch_name, p.process_name, sp_cc.cost_centre_code, sp_cc.cost_centre_name
      ORDER BY lwp_days DESC`;
 
-  const total = options.includeTotal ? await count(base, params) : 0;
-  const sql   = applyPagination(base, options);
-  const rows  = await query(sql, params) as Record<string, unknown>[];
+  // One execution, not two: the page and its total come from the same fetch wherever the result
+  // fits the probe. See fetchPageWithTotal — the COUNT wrapper it replaces re-ran the entire
+  // statement to learn a number the first run already knew.
+  const paged = await fetchPageWithTotal(base, params, options, query, count);
+  const total = paged.total;
+  const rows  = paged.rows as Record<string, unknown>[];
   return { rows, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > rows.length };
 }
 
@@ -786,13 +968,14 @@ export async function neftTransferFile(
            COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
            COALESCE(sp_cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
            COALESCE(sp_cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
-           b.branch_name,
+           COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
            COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
            ebd.bank_name,
            ebd.account_number_enc, ebd.account_number AS account_number_legacy,
            ebd.ifsc_code,
            ebd.account_holder_name,
            ebd.account_type,
+           ${ACCOUNT_SOURCE_STATUS},
            MAX(spl.net_salary) AS transfer_amount,
            spr.run_month
       FROM salary_prep_line spl
@@ -803,11 +986,13 @@ export async function neftTransferFile(
       LEFT JOIN cost_centre_master sp_cc ON sp_cc.id = e.cost_centre_id
       LEFT JOIN employee_bank_detail ebd
              ON ebd.employee_id = e.id AND ebd.is_primary = 1 AND ebd.active_status = 1
+      ${ACCOUNT_SOURCE_JOIN}
      WHERE ${clauses.join(" AND ")}
      GROUP BY e.id, e.employee_code, e.full_name, e.first_name, e.last_name,
               b.branch_name, p.process_name, ebd.bank_name, ebd.account_number_enc,
               ebd.account_number, ebd.ifsc_code, ebd.account_holder_name, ebd.account_type,
-              spr.run_month, sp_cc.cost_centre_code, sp_cc.cost_centre_name
+              spr.run_month, sp_cc.cost_centre_code, sp_cc.cost_centre_name,
+              e.bank_account_number, acct_chk.account_number
      ORDER BY ebd.bank_name, employee_name`;
 
   const total = options.includeTotal ? await count(base, params) : 0;
@@ -820,14 +1005,17 @@ export async function neftTransferFile(
   return { rows, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > rows.length };
 }
 
-// ---------------------------------------------------------------------------
-// payslip-status
-//
-// Folded in from an inline `case` block, behaviour preserved. One row per payroll line
-// with the payslip's generation and acknowledgement state; a NULL salary_payslip row means
-// NOT_GENERATED, which is the state this report exists to surface. Gains cost centre,
-// process and branch — a payslip chase-list is worked branch by branch.
-// ---------------------------------------------------------------------------
+/**
+ * payslip-status
+ *
+ * Uses PAYSLIP_STATUS_BODY, shared with the high-risk router that serves the screen.
+ *
+ * The catalogue declares no columns for this code, so it could not arbitrate between the two
+ * shapes, and neither was complete: the screen had run_status and employee_code but no cost
+ * centre, branch or process; this executor had those three but neither run_status nor
+ * employee_code. The shared body is the union, which is also the only shape that satisfies the
+ * standing requirement for employee code, cost centre and process on an employee-grain report.
+ */
 export async function payslipStatus(
   filters: ExecFilters,
   scope: ExecScope,
@@ -842,36 +1030,17 @@ export async function payslipStatus(
   clauses.push("spr.run_month = ?");
   params.push(runMonth);
 
-  const base = `
-    SELECT spr.run_month,
-           e.employee_code,
-           COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-           COALESCE(sp_cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
-           COALESCE(sp_cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
-           b.branch_name,
-           COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
-           sp.payslip_ref,
-           sp.file_url,
-           sp.acknowledged_at,
-           CASE
-             WHEN sp.id IS NULL THEN 'NOT_GENERATED'
-             WHEN sp.acknowledged_at IS NULL THEN 'RELEASED_NOT_ACKNOWLEDGED'
-             ELSE 'ACKNOWLEDGED'
-           END AS payslip_status
-      FROM salary_prep_line spl
-      JOIN salary_prep_run spr ON spr.id = spl.run_id
-      JOIN employees e ON e.id = spl.employee_id
-      LEFT JOIN salary_payslip sp ON sp.prep_line_id = spl.id
-      LEFT JOIN branch_master b ON b.id = e.branch_id
-      LEFT JOIN process_master p ON p.id = e.process_id
-      LEFT JOIN cost_centre_master sp_cc ON sp_cc.id = e.cost_centre_id
+  const base = `${PAYSLIP_STATUS_BODY}
      WHERE ${clauses.join(" AND ")}
      ORDER BY payslip_status DESC, employee_name`;
 
-  const total = options.includeTotal ? await count(base, params) : 0;
-  const sql   = applyPagination(base, options);
-  const rows  = await query(sql, params) as Record<string, unknown>[];
-  return { rows, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > rows.length };
+  // One execution, not two: the page and its total come from the same fetch wherever the result
+  // fits the probe. See fetchPageWithTotal — the COUNT wrapper it replaces re-ran the entire
+  // statement to learn a number the first run already knew.
+  const paged = await fetchPageWithTotal(base, params, options, query, count);
+  const total = paged.total;
+  const rows  = paged.rows as Record<string, unknown>[];
+  return { rows, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > rows.length, nextCursor: null };
 }
 
 // ---------------------------------------------------------------------------

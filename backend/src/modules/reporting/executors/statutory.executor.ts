@@ -20,6 +20,7 @@ import {
   monthParam,
   yearParam, // reserved for year-based filters on future reports
   applyPagination,
+  fetchPageWithTotal,
 } from "./types.js";
 
 // Suppress unused-var lint; yearParam is imported per executor contract and
@@ -56,6 +57,68 @@ function currentFinancialYear(): string {
 // ---------------------------------------------------------------------------
 // pf-contribution-register
 // ---------------------------------------------------------------------------
+/**
+ * uan-master-register
+ *
+ * Promoted from the inline case block. It had no executor, so its download answered 404 while
+ * the screen rendered — on a statutory register, which is exactly the kind of report someone
+ * needs as a file rather than on screen.
+ *
+ * The uan_source column is not decoration and is carried deliberately. UAN lives in two places:
+ * employee_uan, and a uan_number column on employees. The register prefers the former and falls
+ * back to the latter, and states per row which one it used, so a reader can see when a number
+ * came from the legacy column rather than the mapping table.
+ */
+export async function uanMasterRegister(
+  filters: ExecFilters,
+  scope: ExecScope,
+  options: ExecOptions
+): Promise<ExecResult> {
+  const clauses: string[] = ["e.id IS NOT NULL"];
+  const params: unknown[] = [];
+  appendScopeConditions(scope, clauses, params);
+  appendFilterConditions(filters, clauses, params);
+  clauses.push(
+    "e.active_status = 1",
+    "COALESCE(NULLIF(TRIM(eu.uan), ''), NULLIF(TRIM(e.uan_number), '')) IS NOT NULL",
+  );
+
+  if (options.mode === "worker" && options.cursor != null) {
+    clauses.push("e.id > ?"); params.push(options.cursor);
+  }
+
+  const base = `    SELECT
+           e.id AS _cursor,
+           e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
+           COALESCE(NULLIF(TRIM(eu.uan), ''), NULLIF(TRIM(e.uan_number), '')) AS uan,
+           CASE WHEN NULLIF(TRIM(eu.uan), '') IS NOT NULL THEN 'employee_uan'
+           ELSE 'employees.uan_number' END AS uan_source,
+           e.epf_number, eu.member_id AS pf_member_id,
+           e.date_of_joining AS pf_joining_date, e.date_of_birth, e.gender,
+           COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
+           COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
+           COALESCE(cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
+           COALESCE(cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name
+      FROM employees e
+      LEFT JOIN employee_uan eu ON eu.employee_id = e.id AND eu.is_active = 1
+      LEFT JOIN branch_master b ON b.id = e.branch_id
+      LEFT JOIN process_master p ON p.id = e.process_id
+      LEFT JOIN cost_centre_master cc ON cc.id = e.cost_centre_id
+     WHERE ${clauses.join(" AND ")}
+     ORDER BY employee_name`;
+
+  // One execution, not two: the page and its total come from the same fetch wherever the result
+  // fits the probe. See fetchPageWithTotal — the COUNT wrapper it replaces re-ran the entire
+  // statement to learn a number the first run already knew.
+  const paged = await fetchPageWithTotal(base, params, options, query, count);
+  const total = paged.total;
+  const rows  = paged.rows as Record<string, unknown>[];
+  const nextCursor = (options.mode === "worker" && rows.length > 0)
+    ? (rows[rows.length - 1]._cursor as number) : null;
+  const out = rows.map(({ _cursor: _, ...rest }) => rest);
+  return { rows: out, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > out.length, nextCursor };
+}
+
 export async function pfContributionRegister(
   filters: ExecFilters,
   scope: ExecScope,
@@ -87,7 +150,7 @@ export async function pfContributionRegister(
            e.employee_code,
            COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
            ${uanCol},
-           b.branch_name,
+           COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
            COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
            COALESCE(sp_cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
            COALESCE(sp_cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
@@ -221,7 +284,7 @@ export async function esicContributionRegister(
            e.employee_code,
            COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
            ${esicCol},
-           b.branch_name,
+           COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
            COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
            COALESCE(sp_cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
            COALESCE(sp_cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
@@ -281,7 +344,7 @@ export async function ptRegister(
     SELECT spl.id AS _cursor,
            e.employee_code,
            COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-           b.branch_name,
+           COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
            COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
            COALESCE(sp_cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
            COALESCE(sp_cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
@@ -347,7 +410,7 @@ export async function tdsComputationRegister(
     SELECT spl.id AS _cursor,
            e.employee_code,
            COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-           b.branch_name,
+           COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
            COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
            COALESCE(sp_cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
            COALESCE(sp_cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
@@ -422,7 +485,7 @@ export async function form16Status(
            e.employee_code,
            COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
            ${panCol},
-           b.branch_name,
+           COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
            COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
            COALESCE(sp_cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
            COALESCE(sp_cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
@@ -471,7 +534,7 @@ export async function form16Status(
            e.employee_code,
            COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
            ${panCol},
-           b.branch_name,
+           COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
            COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
            COALESCE(sp_cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
            COALESCE(sp_cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
@@ -549,7 +612,7 @@ export async function investmentDeclarationStatus(
     SELECT id_decl.id AS _cursor,
            e.employee_code,
            COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-           b.branch_name,
+           COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
            COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
            COALESCE(sp_cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
            COALESCE(sp_cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
@@ -585,11 +648,17 @@ export async function investmentDeclarationStatus(
   };
 }
 
-// ---------------------------------------------------------------------------
-// gratuity-liability-register
-// Includes employees with >= 4 years service (approaching or eligible for
-// the statutory 5-year threshold). Formula: basic * years * 15 / 26.
-// ---------------------------------------------------------------------------
+/**
+ * gratuity-liability-register
+ *
+ * Aligned with the inline block. Screen showed 175 rows and the download 131.
+ *
+ * The five-year qualifying filter is part of the report, not an optimisation: gratuity is only
+ * payable after five years of continuous service, so a register without it states a liability
+ * that does not exist. last_drawn_basic falls back to 40% of monthly CTC when no salary
+ * component is assigned, and the 15/26 factor is the statutory formula — both carried unchanged,
+ * because this report quantifies an existing obligation and must not invent a different one.
+ */
 export async function gratuityLiabilityRegister(
   filters: ExecFilters,
   scope: ExecScope,
@@ -599,72 +668,67 @@ export async function gratuityLiabilityRegister(
   const params: unknown[] = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
-  clauses.push(
-    "e.active_status = 1",
-    "TIMESTAMPDIFF(YEAR, e.date_of_joining, CURDATE()) >= 4"
-  );
-
-  if (options.mode === "worker" && options.cursor != null) {
-    clauses.push("e.id > ?");
-    params.push(options.cursor);
-  }
+  clauses.push("e.active_status = 1", "e.date_of_joining IS NOT NULL");
 
   const base = `
-    SELECT e.id AS _cursor,
-           e.employee_code,
+    SELECT e.employee_code,
            COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-           b.branch_name,
-           COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
-           COALESCE(sp_cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
-           COALESCE(sp_cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
            e.date_of_joining,
-           TIMESTAMPDIFF(YEAR, e.date_of_joining, CURDATE()) AS years_of_service,
-           -- employees has no last_drawn_basic. The gratuity base is taken as the basic
-           -- from the employee's most recent FINALIZED payroll run — the literal "last
-           -- drawn" basic. Only FINALIZED runs count, so a draft or abandoned run cannot
-           -- move a liability figure. salary_prep_line carries no DA column, so the base
-           -- is basic alone, which is what the existing formula already assumed.
-           -- 772 of 1,123 active employees have one; the rest report NULL rather than 0,
-           -- because a 0 liability is a claim and an absent base is not.
-           ldb.basic AS last_drawn_basic,
-           CASE WHEN ldb.basic IS NULL THEN NULL ELSE ROUND(
-             ldb.basic
-             * TIMESTAMPDIFF(YEAR, e.date_of_joining, CURDATE())
-             * 15 / 26,
-           2) END AS gratuity_liability
+           TIMESTAMPDIFF(YEAR, e.date_of_joining, CURDATE()) AS tenure_years,
+           ROUND(TIMESTAMPDIFF(MONTH, e.date_of_joining, CURDATE()) / 12, 2) AS tenure_years_exact,
+           COALESCE(sca.basic, esa.ctc_annual / 12 * 0.4, 0) AS last_drawn_basic,
+           ROUND(COALESCE(sca.basic, esa.ctc_annual / 12 * 0.4, 0)
+                 * (TIMESTAMPDIFF(MONTH, e.date_of_joining, CURDATE()) / 12)
+                 * (15.0 / 26.0), 0) AS gratuity_liability,
+           COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
+           COALESCE(gpm.process_name, 'UNASSIGNED') AS process_name,
+           COALESCE(gcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
+           COALESCE(gcc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name
       FROM employees e
-      -- LATERAL, not a ranked derived table: ranking every one of the 80,338
-      -- salary_prep_line rows took 20.5s, while the correlated form hits
-      -- idx_spl_employee_run and returns in under a second.
-      LEFT JOIN LATERAL (
-        SELECT spl.basic
-          FROM salary_prep_line spl
-          JOIN salary_prep_run spr ON spr.id = spl.run_id
-         WHERE spl.employee_id = e.id
-           AND UPPER(spr.status) = 'FINALIZED'
-           AND spl.basic > 0
-         ORDER BY spr.run_month DESC
-         LIMIT 1
-      ) ldb ON TRUE
+      LEFT JOIN employee_salary_assignment esa ON esa.employee_id = e.id AND esa.active_status = 1
+      -- One row per employee, not one per assignment record.
+      --
+      -- Joining salary_component_assignments directly fanned this register out: 1,049 active
+      -- employees hold more than one active row, so employees repeated and every total taken
+      -- from the report was inflated. Measured on live 2026-08-09 over the qualifying
+      -- population: 175 rows for 99 employees, and a gratuity liability of 2,73,00,717 against
+      -- a true 1,04,14,721 — an overstatement of 1,68,85,996, or 162%.
+      --
+      -- The duplicates are duplicates, not revisions: of those 1,049 employees, ZERO have a
+      -- differing basic between their active rows. So deduplicating cannot change any
+      -- individual's gratuity figure; it only stops people being counted more than once.
+      -- Nothing here recomputes the gratuity formula, which is untouched.
+      --
+      -- The row is picked by latest effective_date, then created_at, then id, rather than by
+      -- MAX(basic). Both give the same answer today precisely because the values agree — but a
+      -- rule that is only correct while the data happens to agree is not a rule, and if a real
+      -- revision ever lands this takes the current one rather than the largest.
+      LEFT JOIN (
+        SELECT employee_id, basic
+          FROM (
+            SELECT employee_id, basic,
+                   ROW_NUMBER() OVER (
+                     PARTITION BY employee_id
+                     ORDER BY effective_date DESC, created_at DESC, id DESC
+                   ) AS rn
+              FROM salary_component_assignments
+             WHERE status = 'active'
+          ) ranked
+         WHERE rn = 1
+      ) sca ON sca.employee_id = e.id
       LEFT JOIN branch_master b ON b.id = e.branch_id
-      LEFT JOIN process_master p ON p.id = e.process_id
-      LEFT JOIN cost_centre_master sp_cc ON sp_cc.id = e.cost_centre_id
-     WHERE ${clauses.join(" AND ")}
-     ORDER BY e.id ASC`;
+      LEFT JOIN process_master gpm ON gpm.id = e.process_id
+      LEFT JOIN cost_centre_master gcc ON gcc.id = e.cost_centre_id
+     WHERE ${clauses.join(" AND ")} AND TIMESTAMPDIFF(YEAR, e.date_of_joining, CURDATE()) >= 5
+     ORDER BY gratuity_liability DESC`;
 
-  const total = options.includeTotal ? await count(base, params) : 0;
-  const sql = options.mode === "worker" ? `${base} LIMIT ${options.limit}` : applyPagination(base, options);
-  const rows = await query(sql, params) as Record<string, unknown>[];
-  const nextCursor = (options.mode === "worker" && rows.length > 0)
-    ? (rows[rows.length - 1]._cursor as number)
-    : null;
-  const out = rows.map(({ _cursor: _, ...rest }) => rest);
-  return {
-    rows: out,
-    rowCount: options.includeTotal ? total : rows.length,
-    isTruncated: options.includeTotal ? total > out.length : rows.length === options.limit,
-    nextCursor,
-  };
+  // One execution, not two: the page and its total come from the same fetch wherever the result
+  // fits the probe. See fetchPageWithTotal — the COUNT wrapper it replaces re-ran the entire
+  // statement to learn a number the first run already knew.
+  const paged = await fetchPageWithTotal(base, params, options, query, count);
+  const total = paged.total;
+  const rows  = paged.rows as Record<string, unknown>[];
+  return { rows, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > rows.length, nextCursor: null };
 }
 
 // ---------------------------------------------------------------------------
@@ -695,7 +759,7 @@ export async function ptMonthlyRegister(
            COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
            COALESCE(sp_cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
            COALESCE(sp_cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
-           b.branch_name,
+           COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
            COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
            COALESCE(e.state, 'Unknown') AS state,
            spl.gross_salary,
@@ -710,9 +774,12 @@ export async function ptMonthlyRegister(
      WHERE ${clauses.join(" AND ")}
      ORDER BY e.state, employee_name`;
 
-  const total = options.includeTotal ? await count(base, params) : 0;
-  const sql   = applyPagination(base, options);
-  const rows  = await query(sql, params) as Record<string, unknown>[];
+  // One execution, not two: the page and its total come from the same fetch wherever the result
+  // fits the probe. See fetchPageWithTotal — the COUNT wrapper it replaces re-ran the entire
+  // statement to learn a number the first run already knew.
+  const paged = await fetchPageWithTotal(base, params, options, query, count);
+  const total = paged.total;
+  const rows  = paged.rows as Record<string, unknown>[];
   return { rows, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > rows.length };
 }
 
@@ -745,7 +812,7 @@ export async function pfEsicSalaryRegister(
            COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
            COALESCE(sp_cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
            COALESCE(sp_cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
-           b.branch_name,
+           COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
            COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
            spr.run_month AS payroll_month,
            COALESCE(eu.uan, e.epf_number) AS uan,
@@ -768,9 +835,12 @@ export async function pfEsicSalaryRegister(
      WHERE ${clauses.join(" AND ")}
      ORDER BY b.branch_name, employee_name`;
 
-  const total = options.includeTotal ? await count(base, params) : 0;
-  const sql   = applyPagination(base, options);
-  const rows  = await query(sql, params) as Record<string, unknown>[];
+  // One execution, not two: the page and its total come from the same fetch wherever the result
+  // fits the probe. See fetchPageWithTotal — the COUNT wrapper it replaces re-ran the entire
+  // statement to learn a number the first run already knew.
+  const paged = await fetchPageWithTotal(base, params, options, query, count);
+  const total = paged.total;
+  const rows  = paged.rows as Record<string, unknown>[];
   return { rows, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > rows.length };
 }
 
@@ -796,7 +866,7 @@ export async function pfEsiOptOutRegister(
            COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
            COALESCE(sp_cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
            COALESCE(sp_cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
-           b.branch_name,
+           COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
            COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
            eso.override_type AS opt_out_type,
            eso.effective_from_month AS effective_month,
@@ -811,8 +881,11 @@ export async function pfEsiOptOutRegister(
      WHERE ${clauses.join(" AND ")}
      ORDER BY eso.approved_at DESC, employee_name`;
 
-  const total = options.includeTotal ? await count(base, params) : 0;
-  const sql   = applyPagination(base, options);
-  const rows  = await query(sql, params) as Record<string, unknown>[];
+  // One execution, not two: the page and its total come from the same fetch wherever the result
+  // fits the probe. See fetchPageWithTotal — the COUNT wrapper it replaces re-ran the entire
+  // statement to learn a number the first run already knew.
+  const paged = await fetchPageWithTotal(base, params, options, query, count);
+  const total = paged.total;
+  const rows  = paged.rows as Record<string, unknown>[];
   return { rows, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > rows.length };
 }

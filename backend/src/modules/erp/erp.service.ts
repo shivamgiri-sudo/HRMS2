@@ -453,9 +453,19 @@ export const billingUnitService = {
     if (filters.process_id) { conds.push("bu.process_id = ?"); params.push(filters.process_id); }
     const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
     const [rows] = await db.execute<RowDataPacket[]>(
+      /*
+       * The COLLATE is required, not defensive. billing_unit was created with the MySQL 8 server
+       * default utf8mb4_0900_ai_ci while process_master.id is utf8mb4_unicode_ci, and comparing
+       * two char(36) columns across that boundary raises ER_CANT_AGGREGATE_2COLLATIONS, so this
+       * endpoint returned 500 rather than a list. The table is empty today, which is the only
+       * reason no data was being hidden.
+       *
+       * 44 of the 915 base tables in mas_hrms carry the 0900 collation against 871 on
+       * utf8mb4_unicode_ci, so the same join breaks anywhere else the two meet.
+       */
       `SELECT bu.*, pm.process_code, pm.process_name
        FROM billing_unit bu
-       LEFT JOIN process_master pm ON pm.id = bu.process_id
+       LEFT JOIN process_master pm ON pm.id = bu.process_id COLLATE utf8mb4_unicode_ci
        ${where}
        ORDER BY bu.effective_from DESC`,
       params
@@ -500,9 +510,11 @@ export const billingInvoiceService = {
     if (filters.status)     { conds.push("i.status = ?");     params.push(filters.status); }
     const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
     const [rows] = await db.execute<RowDataPacket[]>(
+      // Same collation boundary as billing_unit above: billing_invoice is utf8mb4_0900_ai_ci,
+      // process_master.id is utf8mb4_unicode_ci.
       `SELECT i.*, pm.process_code, pm.process_name
        FROM billing_invoice i
-       LEFT JOIN process_master pm ON pm.id = i.process_id
+       LEFT JOIN process_master pm ON pm.id = i.process_id COLLATE utf8mb4_unicode_ci
        ${where}
        ORDER BY i.created_at DESC`,
       params

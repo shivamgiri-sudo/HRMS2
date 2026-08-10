@@ -1,6 +1,9 @@
 import { Router } from "express";
+import type { RowDataPacket } from "mysql2";
 import { requireAuth } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
+import { db } from "../../db/mysql.js";
+import { hasAnyRole, hasScopedAccess } from "../../shared/scopeAccess.js";
 import { performanceFeedbackController as c } from "./performance-feedback.controller.js";
 import {
   getEmployeeQualityMetrics,
@@ -53,8 +56,72 @@ router.patch("/development-plans/:planId/goals/:goalId", h(c.updateGoal));
 router.delete("/development-plans/:id", requireRole("admin", "hr"), h(c.deleteDevelopmentPlan));
 
 // ================== Quality Data Integration (3 routes) ==================
+// These three read call-audit quality scores for arbitrary employee codes — the two
+// :employeeCode routes take whatever code is in the path, and /quality/team takes an
+// unbounded array in the body. They carried only requireAuth, and the service applies no
+// scope of its own (getTeamQualityMetrics queries straight on the codes it is handed), so
+// any employee with a login could read any colleague's audit scores. The write beside them,
+// /quality/upload, has been requireRole("admin","hr","qa") all along — these reads were the
+// odd ones out.
+//
+// Roles are the union of the audience the nav already assigns to "Team Quality"
+// (super_admin/admin/manager/process_manager/branch_head/team_leader) and the quality owners
+// on /quality/upload (hr, qa). super_admin passes implicitly inside requireRole.
+//
+// Residual, deliberately not fixed here: a permitted role can still request codes outside
+// their own team, because these endpoints have no row scope at all. Adding one is a scoping
+// decision (which relationship defines "my team") rather than a mechanical change, and no
+// caller exists yet to model it on — no frontend calls any of the three; the /quality/team
+// path in the router is a UI route that redirects to /quality-dashboard, not this API.
+const QUALITY_READ_ROLES = ["admin", "hr", "qa", "manager", "process_manager", "branch_head", "team_leader"] as const;
+
+// Row scope, closing the residual the role guard above deliberately left open.
+//
+// Org-wide roles read anyone; a scoped role may read only the people they actually own.
+// Ownership is EITHER relationship, because neither covers the live data on its own:
+// 8 of 67 scoped-role users hold no user_assignment_scope row (4 of 9 branch_heads), while
+// 965 of 1,127 active employees carry a reporting_manager_id. Requiring an assignment row
+// alone would 403 real managers; relying on the manager link alone would lock out
+// branch/process owners who do not directly manage the people in their scope.
+const QUALITY_GLOBAL_ROLES = ["admin", "hr", "qa"];
+const QUALITY_SCOPED_ROLES = ["manager", "process_manager", "branch_head", "team_leader"];
+
+/**
+ * Returns the subset of employee codes the caller may NOT read. Fail-closed: a code that
+ * resolves to no employee row is denied rather than passed through, because the quality
+ * database is keyed on its own `User` column and would otherwise answer for a code that
+ * exists there but not in mas_hrms.
+ */
+async function deniedQualityCodes(userId: string, codes: string[]): Promise<string[]> {
+  const wanted = [...new Set(codes.map((x) => String(x).trim()).filter(Boolean))];
+  if (wanted.length === 0) return [];
+  if (await hasAnyRole(userId, "super_admin", ...QUALITY_GLOBAL_ROLES)) return [];
+
+  const ph = wanted.map(() => "?").join(",");
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT e.employee_code, e.branch_id, e.process_id, e.reporting_manager_id,
+            (SELECT id FROM employees WHERE user_id = ? LIMIT 1) AS caller_emp_id
+       FROM employees e
+      WHERE e.employee_code IN (${ph})`,
+    [userId, ...wanted],
+  );
+
+  const allowed = new Set<string>();
+  for (const r of rows as any[]) {
+    const code = String(r.employee_code);
+    if (r.caller_emp_id && r.reporting_manager_id && r.reporting_manager_id === r.caller_emp_id) {
+      allowed.add(code);
+      continue;
+    }
+    if (await hasScopedAccess(userId, QUALITY_SCOPED_ROLES, { branchId: r.branch_id, processId: r.process_id })) {
+      allowed.add(code);
+    }
+  }
+  return wanted.filter((code) => !allowed.has(code));
+}
+
 // GET /api/performance-feedback/quality/:employeeCode - Get quality metrics for employee
-router.get("/quality/:employeeCode", h(async (req: any, res: any) => {
+router.get("/quality/:employeeCode", requireRole(...QUALITY_READ_ROLES), h(async (req: any, res: any) => {
   const { employeeCode } = req.params;
   const { startDate, endDate } = req.query;
 
@@ -63,6 +130,10 @@ router.get("/quality/:employeeCode", h(async (req: any, res: any) => {
       success: false,
       error: "startDate and endDate query parameters are required"
     });
+  }
+
+  if ((await deniedQualityCodes(req.authUser!.id, [employeeCode])).length > 0) {
+    return res.status(403).json({ success: false, error: "Forbidden: employee is outside your scope" });
   }
 
   const metrics = await getEmployeeQualityMetrics(employeeCode, startDate, endDate);
@@ -78,7 +149,7 @@ router.get("/quality/:employeeCode", h(async (req: any, res: any) => {
 }));
 
 // GET /api/performance-feedback/quality/:employeeCode/trend - Get quality trend
-router.get("/quality/:employeeCode/trend", h(async (req: any, res: any) => {
+router.get("/quality/:employeeCode/trend", requireRole(...QUALITY_READ_ROLES), h(async (req: any, res: any) => {
   const { employeeCode } = req.params;
   const { startDate, endDate } = req.query;
 
@@ -89,19 +160,35 @@ router.get("/quality/:employeeCode/trend", h(async (req: any, res: any) => {
     });
   }
 
+  if ((await deniedQualityCodes(req.authUser!.id, [employeeCode])).length > 0) {
+    return res.status(403).json({ success: false, error: "Forbidden: employee is outside your scope" });
+  }
+
   const trend = await getEmployeeQualityTrend(employeeCode, startDate, endDate);
 
   return res.json({ success: true, data: trend });
 }));
 
 // POST /api/performance-feedback/quality/team - Get quality metrics for multiple employees
-router.post("/quality/team", h(async (req: any, res: any) => {
+router.post("/quality/team", requireRole(...QUALITY_READ_ROLES), h(async (req: any, res: any) => {
   const { employeeCodes, startDate, endDate } = req.body;
 
   if (!employeeCodes || !Array.isArray(employeeCodes) || !startDate || !endDate) {
     return res.status(400).json({
       success: false,
       error: "employeeCodes (array), startDate, and endDate are required"
+    });
+  }
+
+  // Refuse the whole request rather than silently returning a subset: a team scorecard
+  // quietly missing three people reads as "those three have no audits", which is exactly
+  // the kind of silent wrongness this codebase keeps producing. Name the count so the
+  // caller can correct the list.
+  const denied = await deniedQualityCodes(req.authUser!.id, employeeCodes);
+  if (denied.length > 0) {
+    return res.status(403).json({
+      success: false,
+      error: `Forbidden: ${denied.length} of ${employeeCodes.length} requested employees are outside your scope`,
     });
   }
 

@@ -20,8 +20,58 @@ export const portalAuthService = {
     return String(Math.floor(100000 + Math.random() * 900000));
   },
 
-  issueToken(payload: Omit<PortalTokenPayload, "role">): string {
-    return jwt.sign({ ...payload, role: "client" }, env.PORTAL_JWT_SECRET, { expiresIn: "7d" });
+  /*
+   * Every token now carries a jti and gets a row in portal_user_sessions, so an individual
+   * session can be revoked without deactivating the account.
+   *
+   * requireClientAuth already refuses a token whose client_user is inactive, which is how a
+   * client is cut off today. That is all-or-nothing: it ends every session that user has, and
+   * there is no way to end one. portal_user_sessions was declared for this in migration 509 and
+   * only created in 1118, so nothing has ever written to it.
+   *
+   * Recording is fire-and-forget. A failure to write the session row must not fail a login that
+   * is otherwise valid - the consequence is that one token cannot be individually revoked, which
+   * is exactly where things stood before, and the account-level check still applies to it.
+   */
+  issueToken(payload: Omit<PortalTokenPayload, "role" | "jti">): string {
+    const jti = randomUUID();
+    const token = jwt.sign(
+      { ...payload, role: "client", jti },
+      env.PORTAL_JWT_SECRET,
+      { expiresIn: "7d" }
+    );
+
+    const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+    db.execute(
+      `INSERT INTO portal_user_sessions (id, client_user_id, jti, expires_at)
+       VALUES (?, ?, ?, ?)`,
+      [randomUUID(), payload.clientUserId, jti, expiresAt]
+    ).catch((error) => {
+      console.error("[portal] session not recorded; token stays valid but is not individually revocable", error);
+    });
+
+    return token;
+  },
+
+  /**
+   * Ends one session. Returns false when the jti is unknown, so a caller can tell "revoked" from
+   * "no such session" rather than reporting success for a token that was never tracked.
+   */
+  async revokeSession(jti: string): Promise<boolean> {
+    const [result] = await db.execute(
+      "UPDATE portal_user_sessions SET revoked_at = NOW() WHERE jti = ? AND revoked_at IS NULL",
+      [jti]
+    );
+    return (result as { affectedRows?: number }).affectedRows ? true : false;
+  },
+
+  /** Ends every live session for a client user - the per-user equivalent of a password reset. */
+  async revokeAllSessionsForUser(clientUserId: string): Promise<number> {
+    const [result] = await db.execute(
+      "UPDATE portal_user_sessions SET revoked_at = NOW() WHERE client_user_id = ? AND revoked_at IS NULL",
+      [clientUserId]
+    );
+    return (result as { affectedRows?: number }).affectedRows ?? 0;
   },
 
   verifyToken(token: string): PortalTokenPayload {

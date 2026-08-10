@@ -545,9 +545,37 @@ export async function getCosecMonitoring(_actor: Actor) {
        ORDER BY started_at DESC
        LIMIT 50`,
     ),
-    tableExists("biometric_punch")
+    // biometric_punch has never existed in this database.
+    //
+    // The table is biometric_attendance_log (176,694 rows, current to today). Because
+    // the read was wrapped in tableExists(), nothing ever threw and nothing was logged —
+    // the guard returned [] forever, so GET /api/integrations/cosec/latest-punches has
+    // answered with an empty list since it was written. On a COSEC monitoring screen
+    // "no punches" reads as "the feed is dead", which is the opposite of true: the feed
+    // is healthy and this panel was blind to it.
+    //
+    // Joined to employees because the log carries cosec_user_id and often a NULL
+    // employee_code, so the raw rows cannot say who punched. All 2,166 rows in the last
+    // three days resolve to an employee, so the join costs nothing and answers the only
+    // question this screen is asked.
+    //
+    // These are per-day rollups (first in, last out, count), not individual punches —
+    // which is what the table stores. Named accordingly rather than pretending otherwise.
+    tableExists("biometric_attendance_log")
       .then((exists) => exists
-        ? queryRows("SELECT * FROM biometric_punch ORDER BY punch_time DESC LIMIT 100").catch(() => [])
+        ? queryRows(
+            `SELECT COALESCE(NULLIF(TRIM(bal.employee_code), ''), e.employee_code) AS employee_code,
+                    COALESCE(NULLIF(TRIM(e.full_name), ''), CONCAT_WS(' ', e.first_name, e.last_name)) AS employee_name,
+                    bal.cosec_user_id,
+                    DATE_FORMAT(bal.punch_date, '%Y-%m-%d') AS punch_date,
+                    DATE_FORMAT(bal.first_punch_in, '%Y-%m-%d %H:%i:%s') AS first_punch_in,
+                    DATE_FORMAT(bal.last_punch_out, '%Y-%m-%d %H:%i:%s') AS last_punch_out,
+                    bal.total_punches, bal.raw_minutes, bal.device_id, bal.source_system
+               FROM biometric_attendance_log bal
+               LEFT JOIN employees e ON e.id = bal.employee_id
+              ORDER BY bal.punch_date DESC, bal.migrated_at DESC
+              LIMIT 100`,
+          )
         : [])
   ]);
   return {

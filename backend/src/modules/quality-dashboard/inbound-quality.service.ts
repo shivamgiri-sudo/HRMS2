@@ -376,10 +376,31 @@ export async function getScoreComponentDetail(filters: InboundQualityFilters) {
   const cf = clientFilter("q", clientId);
   const params: (string | number)[] = [startDate, endDate, ...cf.params];
 
+  /*
+   * Three of the components this returns are NULL because the scorecard does not score them.
+   *
+   * call_avoidance and first_call_resolution were named as columns and do not exist, so the
+   * statement raised ER_BAD_FIELD_ERROR and the endpoint returned nothing at all - the other
+   * eleven components were lost to two that were never there. (ER_BAD_FIELD_ERROR names only the
+   * first offender, which is why the log showed call_avoidance alone.)
+   *
+   * call_identified_by_name did return a figure, but it was professionalism_maintained under a
+   * second name - the same column is also returned as itself lower down, so the caller got one
+   * number presented as two unrelated parameters. That is a mock metric, which this project
+   * forbids in production flows, and a wrong number is worse than a blank one.
+   *
+   * Nulls render as "not scored". If these three are wanted for real, they need parameters in
+   * db_audit.call_quality_assessment; none of the existing tinyint columns measures them.
+   * Ten real scorecard parameters are recorded and not requested here - pronunciation_and_clarity,
+   * enthusiasm_and_no_fumbling, proper_grammar, accurate_issue_probing, proper_transfer_and_language,
+   * dead_air_under_10_seconds, case_escalated_correctly, upselling_or_offers_suggested,
+   * further_assistance_offered and fraud_and_data_security_compliance - left alone here because
+   * adding them changes the response shape, which is a decision for the dashboard owner.
+   */
   const [row] = await querySource<Record<string, number>>(
     `SELECT COUNT(*) AS total,
       ROUND(100.0*SUM(COALESCE(call_answered_within_5_seconds,0))/NULLIF(COUNT(*),0),1) AS call_answered_within_5_seconds,
-      ROUND(100.0*SUM(COALESCE(professionalism_maintained,0))/NULLIF(COUNT(*),0),1) AS call_identified_by_name,
+      NULL AS call_identified_by_name,
       ROUND(100.0*SUM(COALESCE(customer_concern_acknowledged,0))/NULLIF(COUNT(*),0),1) AS customer_concern_acknowledged,
       ROUND(100.0*SUM(COALESCE(express_empathy,0))/NULLIF(COUNT(*),0),1) AS express_empathy,
       ROUND(100.0*SUM(COALESCE(active_listening,0))/NULLIF(COUNT(*),0),1) AS active_listening,
@@ -387,11 +408,11 @@ export async function getScoreComponentDetail(filters: InboundQualityFilters) {
       ROUND(100.0*SUM(COALESCE(politeness_and_no_sarcasm,0))/NULLIF(COUNT(*),0),1) AS politeness_and_no_sarcasm,
       ROUND(100.0*SUM(COALESCE(correct_and_complete_information,0))/NULLIF(COUNT(*),0),1) AS correct_and_complete_information,
       ROUND(100.0*SUM(COALESCE(proper_hold_procedure,0))/NULLIF(COUNT(*),0),1) AS proper_hold_procedure,
-      ROUND(100.0*SUM(COALESCE(call_avoidance,0))/NULLIF(COUNT(*),0),1) AS call_avoidance,
+      NULL AS call_avoidance,
       ROUND(100.0*SUM(COALESCE(address_recorded_completely,0))/NULLIF(COUNT(*),0),1) AS address_recorded_completely,
       ROUND(100.0*SUM(COALESCE(professionalism_maintained,0))/NULLIF(COUNT(*),0),1) AS professionalism_maintained,
       ROUND(100.0*SUM(COALESCE(proper_call_closure,0))/NULLIF(COUNT(*),0),1) AS proper_call_closure,
-      ROUND(100.0*SUM(COALESCE(first_call_resolution,0))/NULLIF(COUNT(*),0),1) AS first_call_resolution
+      NULL AS first_call_resolution
      FROM db_audit.call_quality_assessment q
      WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL${cf.clause}`,
     params
@@ -698,8 +719,26 @@ export async function insertAgentMaster(masId: string, agentName: string) {
 
 // ── CLAP VOC Quotes (verbatim customer voice, populated from 2026-07-17) ─────
 
-const CLAP_BRANCHES = ["customer", "logistic", "agent", "product"] as const;
+/*
+ * The VOC dimensions the source system actually records. db_audit.call_quality_assessment has
+ * customer_voc_{logistic,agent,product}_{positive,negative} and nothing else - the column naming
+ * reads "the customer's voice about X", so a "customer" dimension would mean the customer's voice
+ * about the customer, which is why it was never a column.
+ *
+ * "customer" was listed here anyway, and it broke the entire CLAP VOC tab rather than one quarter
+ * of it: getClapVocQuotes loops these in order and threw on the first iteration, the summary made
+ * it the first arm of a UNION, and getClapIntelligence named it in both SUM(CASE ...). Each of
+ * those is one statement, so ER_BAD_FIELD_ERROR took the whole result down. 6,544 audits carrying
+ * 4,399 real quotes since the 2026-07-17 cutoff were unreachable.
+ *
+ * Also the allowlist for getClapProductVocQuotes, which interpolates the branch into a column name.
+ */
+const CLAP_BRANCHES = ["logistic", "agent", "product"] as const;
 type ClapBranch = (typeof CLAP_BRANCHES)[number];
+
+export function isClapBranch(value: unknown): value is ClapBranch {
+  return typeof value === "string" && (CLAP_BRANCHES as readonly string[]).includes(value);
+}
 
 function buildClientFilter2(id?: string | number): { clause: string; params: (string | number)[] } {
   if (!id) return { clause: "", params: [] };
@@ -748,18 +787,10 @@ export async function getClapProductVocSummary(filters: InboundQualityFilters) {
     branch: string; positive_count: number; negative_count: number; total_calls: number;
   }>(
     `SELECT
-      'customer' AS branch,
-      SUM(CASE WHEN customer_voc_customer_positive IS NOT NULL AND customer_voc_customer_positive != '' THEN 1 ELSE 0 END) AS positive_count,
-      SUM(CASE WHEN customer_voc_customer_negative IS NOT NULL AND customer_voc_customer_negative != '' THEN 1 ELSE 0 END) AS negative_count,
+      'logistic' AS branch,
+      SUM(CASE WHEN customer_voc_logistic_positive IS NOT NULL AND customer_voc_logistic_positive != '' THEN 1 ELSE 0 END) AS positive_count,
+      SUM(CASE WHEN customer_voc_logistic_negative IS NOT NULL AND customer_voc_logistic_negative != '' THEN 1 ELSE 0 END) AS negative_count,
       COUNT(*) AS total_calls
-     FROM db_audit.call_quality_assessment q
-     WHERE q.CallDate BETWEEN ? AND ? AND q.CallDate >= ?${cf.clause}
-     UNION ALL
-     SELECT
-      'logistic',
-      SUM(CASE WHEN customer_voc_logistic_positive IS NOT NULL AND customer_voc_logistic_positive != '' THEN 1 ELSE 0 END),
-      SUM(CASE WHEN customer_voc_logistic_negative IS NOT NULL AND customer_voc_logistic_negative != '' THEN 1 ELSE 0 END),
-      COUNT(*)
      FROM db_audit.call_quality_assessment q
      WHERE q.CallDate BETWEEN ? AND ? AND q.CallDate >= ?${cf.clause}
      UNION ALL
@@ -778,20 +809,25 @@ export async function getClapProductVocSummary(filters: InboundQualityFilters) {
       COUNT(*)
      FROM db_audit.call_quality_assessment q
      WHERE q.CallDate BETWEEN ? AND ? AND q.CallDate >= ?${cf.clause}`,
-    [
-      effectiveStart, endDate, VOC_DATE_CUTOFF, ...cf.params,
-      effectiveStart, endDate, VOC_DATE_CUTOFF, ...cf.params,
-      effectiveStart, endDate, VOC_DATE_CUTOFF, ...cf.params,
-      effectiveStart, endDate, VOC_DATE_CUTOFF, ...cf.params,
-    ]
+    // One parameter set per UNION arm, so this list tracks CLAP_BRANCHES.
+    CLAP_BRANCHES.flatMap(() => [effectiveStart, endDate, VOC_DATE_CUTOFF, ...cf.params])
   );
 }
 
-export async function getClapProductVocQuotes(filters: InboundQualityFilters & { branch?: ClapBranch }) {
-  const { startDate, endDate, clientId, branch = "product" } = filters;
+export async function getClapProductVocQuotes(filters: InboundQualityFilters & { branch?: unknown }) {
+  const { startDate, endDate, clientId } = filters;
   const cf = buildClientFilter2(clientId);
   const VOC_DATE_CUTOFF = "2026-07-17";
   const effectiveStart = startDate < VOC_DATE_CUTOFF ? VOC_DATE_CUTOFF : startDate;
+
+  /*
+   * branch is interpolated into a column name below, so it must be checked at runtime and not
+   * merely typed. The route reached this by casting req.query.branch to the union - a cast the
+   * compiler erases, leaving an arbitrary caller-supplied string going into a backtick-quoted
+   * identifier, which a backtick in the value escapes. Validating here rather than only at the
+   * route keeps the guarantee attached to the code that builds the identifier.
+   */
+  const branch: ClapBranch = isClapBranch(filters.branch) ? filters.branch : "product";
   const posCol = `customer_voc_${branch}_positive`;
   const negCol = `customer_voc_${branch}_negative`;
 
@@ -829,13 +865,11 @@ export async function getClapIntelligence(filters: InboundQualityFilters) {
       COUNT(*) AS total_audits,
       ROUND(AVG(quality_percentage), 1) AS avg_cq_score,
       SUM(CASE WHEN
-        (customer_voc_customer_positive IS NOT NULL AND customer_voc_customer_positive != '') OR
         (customer_voc_logistic_positive IS NOT NULL AND customer_voc_logistic_positive != '') OR
         (customer_voc_agent_positive    IS NOT NULL AND customer_voc_agent_positive    != '') OR
         (customer_voc_product_positive  IS NOT NULL AND customer_voc_product_positive  != '')
       THEN 1 ELSE 0 END) AS positive_voc_count,
       SUM(CASE WHEN
-        (customer_voc_customer_negative IS NOT NULL AND customer_voc_customer_negative != '') OR
         (customer_voc_logistic_negative IS NOT NULL AND customer_voc_logistic_negative != '') OR
         (customer_voc_agent_negative    IS NOT NULL AND customer_voc_agent_negative    != '') OR
         (customer_voc_product_negative  IS NOT NULL AND customer_voc_product_negative  != '')
@@ -857,7 +891,9 @@ export async function getClapIntelligence(filters: InboundQualityFilters) {
       : 0;
     if (posRate >= 50) insights.push(`Strong positive VOC coverage at ${posRate}% of audits`);
     if (negRate >= 20) insights.push(`Elevated negative VOC at ${negRate}% — review product/logistic branches`);
-    const topNeg = branchSummary.sort((a, b) => b.negative_count - a.negative_count)[0];
+    // Copy before sorting: branchSummary is also returned as branch_summary, and Array.sort is
+    // in place, so ranking the insight here silently reordered the caller's bar chart categories.
+    const topNeg = [...branchSummary].sort((a, b) => b.negative_count - a.negative_count)[0];
     if (topNeg) insights.push(`Highest negative volume in '${topNeg.branch}' branch (${topNeg.negative_count} quotes)`);
   }
 

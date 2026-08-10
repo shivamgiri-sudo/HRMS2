@@ -189,55 +189,103 @@ export async function calculateENPS(
   return { score, promoters, passives, detractors };
 }
 
+/*
+ * The answers live in pulse_response, one row per question answered. pulse_check is the question
+ * bank - id, pulse_question, pulse_type, response_type, active_status - and this function was
+ * inserting an employee's answers straight into it, naming eight columns of which only pulse_id
+ * resembles anything real. So every submission raised ER_BAD_FIELD_ERROR and pulse_response is
+ * empty: not one pulse check has ever been recorded.
+ *
+ * Each supplied metric becomes its own pulse_response row against the question of that type. The
+ * live question bank has four types - mood (emoji_5), satisfaction (emoji_5), stress (yes_no) and
+ * workload (rating_5) - and each is seeded twice, so the question is picked deterministically by
+ * id rather than left to whichever row the optimiser returns first; otherwise the same employee's
+ * answers could attach to different duplicate questions on different days and never aggregate.
+ *
+ * energy_level and feedback_text are accepted by the DTO but have nowhere to go: there is no
+ * energy pulse type, and no question takes free text - the three response types are emoji_5,
+ * yes_no and rating_5. They are deliberately not forced into a rating column, which is the same
+ * reason getPulseSummary reports average_energy as NULL. Storing them means adding a question to
+ * pulse_check, not bending an existing one.
+ *
+ * Re-submitting on the same day overwrites rather than stacking, which is what the previous
+ * ON DUPLICATE KEY UPDATE intended.
+ */
+const PULSE_TYPE_BY_FIELD: ReadonlyArray<{ field: keyof SubmitPulseCheckDTO; pulseType: string }> = [
+  { field: "mood_rating", pulseType: "mood" },
+  { field: "stress_level", pulseType: "stress" },
+  { field: "workload_perception", pulseType: "workload" },
+];
+
 export async function submitPulseCheck(data: SubmitPulseCheckDTO): Promise<void> {
-  await db.execute(
-    `INSERT INTO pulse_check
-       (pulse_id, employee_id, mood_rating, energy_level, stress_level,
-        workload_perception, feedback_text, week_start_date)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-     ON DUPLICATE KEY UPDATE
-       mood_rating = VALUES(mood_rating),
-       energy_level = VALUES(energy_level),
-       stress_level = VALUES(stress_level),
-       workload_perception = VALUES(workload_perception),
-       feedback_text = VALUES(feedback_text),
-       submitted_at = NOW()`,
-    [
-      randomUUID(),
-      data.employee_id,
-      data.mood_rating,
-      data.energy_level ?? null,
-      data.stress_level ?? null,
-      data.workload_perception ?? null,
-      data.feedback_text ?? null,
-      data.week_start_date,
-    ]
-  );
+  const responseDate = data.week_start_date;
+
+  for (const { field, pulseType } of PULSE_TYPE_BY_FIELD) {
+    const value = data[field];
+    if (value === undefined || value === null) continue;
+
+    const [questionRows] = await db.execute<RowDataPacket[]>(
+      `SELECT id FROM pulse_check
+        WHERE pulse_type = ? AND active_status = 1
+        ORDER BY id LIMIT 1`,
+      [pulseType]
+    );
+    const pulseId = questionRows[0]?.id;
+    if (!pulseId) continue; // no active question of this type; nothing to answer
+
+    await db.execute(
+      `DELETE FROM pulse_response
+        WHERE pulse_id = ? AND employee_id = ? AND response_date = ?`,
+      [pulseId, data.employee_id, responseDate]
+    );
+    await db.execute(
+      `INSERT INTO pulse_response (id, pulse_id, employee_id, response_value, response_date)
+       VALUES (?, ?, ?, ?, ?)`,
+      [randomUUID(), pulseId, data.employee_id, String(value), responseDate]
+    );
+  }
+
   queueAutoAwards(data.employee_id, "survey_completed");
 }
 
 export async function listPulseChecks(filters: PulseCheckFilters = {}): Promise<PulseCheck[]> {
   const conditions: string[] = [];
   const params: unknown[] = [];
+  /*
+   * Same confusion as submitPulseCheck: these filters name employee_id, week_start_date and
+   * submitted_at, none of which are columns of pulse_check. Unfiltered the query "worked" and
+   * returned the eight question definitions as though they were somebody's answers; filtered it
+   * raised ER_BAD_FIELD_ERROR.
+   *
+   * Reads pulse_response now, joined to its question so the caller still gets the pulse_type it
+   * needs to tell one answer from another. week_start_date maps to response_date, which is the
+   * date the answer was given.
+   */
   if (filters.employee_id) {
-    conditions.push("employee_id = ?");
+    conditions.push("pr.employee_id = ?");
     params.push(filters.employee_id);
   }
   if (filters.week_start_date) {
-    conditions.push("week_start_date = ?");
+    conditions.push("pr.response_date = ?");
     params.push(filters.week_start_date);
   }
   if (filters.date_from) {
-    conditions.push("submitted_at >= ?");
+    conditions.push("pr.response_date >= ?");
     params.push(filters.date_from);
   }
   if (filters.date_to) {
-    conditions.push("submitted_at <= ?");
+    conditions.push("pr.response_date <= ?");
     params.push(filters.date_to);
   }
   const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT * FROM pulse_check ${where} ORDER BY week_start_date DESC`,
+    `SELECT pr.id, pr.pulse_id, pr.employee_id, pr.response_value,
+            pr.response_date AS week_start_date, pr.created_at AS submitted_at,
+            pc.pulse_type, pc.pulse_question, pc.response_type
+       FROM pulse_response pr
+       JOIN pulse_check pc ON pc.id = pr.pulse_id
+       ${where}
+      ORDER BY pr.response_date DESC`,
     params
   );
   return rows as PulseCheck[];

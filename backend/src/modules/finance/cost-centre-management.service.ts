@@ -533,6 +533,32 @@ export const costCentreManagementService = {
       );
     }
 
+    // Maker-checker. CC_CREATE_ROLES and CC_L1_APPROVAL_ROLES are the *identical* set
+    // (super_admin, admin, finance_head, accounts_head), and until now approveL1 checked
+    // only the status transition — so one person could raise a cost centre, submit it and
+    // approve it at L1, which is precisely what having an L1 stage is meant to prevent.
+    // L2 is narrower and would still catch it before 'active', except for an admin or
+    // super_admin, who could walk all three stages alone.
+    //
+    // Safe to enforce: 13 distinct users hold an L1 role (admin 9, super_admin 3,
+    // finance_head 1, accounts_head 1), so this cannot deadlock the queue, and it changes
+    // no existing behaviour — no cost centre has ever reached pending_l1 (761 draft, 166
+    // active, 0 in either approval state) and zero L1 approvals have ever been recorded.
+    //
+    // Legacy rows carry created_by NULL on all 927, so the comparison is inert for them
+    // rather than wrongly blocking: it governs cost centres raised through the app from
+    // here on. Both creator and submitter are checked, since submitting is the act that
+    // puts it in front of an approver.
+    const actorId = actor?.id ?? null;
+    if (actorId && (actorId === existing.created_by || actorId === existing.submitted_by)) {
+      throw Object.assign(
+        new Error(
+          "L1 approval must come from someone other than the person who raised or submitted this cost centre",
+        ),
+        { statusCode: 403 },
+      );
+    }
+
     await db.execute(
       `UPDATE cost_centre_master SET
         status = 'pending_l2',

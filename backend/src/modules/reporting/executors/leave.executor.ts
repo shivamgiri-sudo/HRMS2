@@ -27,6 +27,7 @@ import {
   monthRange,
   yearParam,
   applyPagination,
+  fetchPageWithTotal,
   ReportScopeAccessDeniedError,
   ReportSourceUnavailableError,
 } from "./types.js";
@@ -176,9 +177,12 @@ export async function leaveBalance(
               b.branch_name, cc.cost_centre_name, cc.cost_centre_code, p.process_name
      ORDER BY ${orderBy}`;
 
-  const total = options.includeTotal ? await count(base, params) : 0;
-  const sql   = options.mode === "worker" ? `${base} LIMIT ${options.limit}` : applyPagination(base, options);
-  const rows  = await query(sql, params) as Record<string, unknown>[];
+  // One execution, not two: the page and its total come from the same fetch wherever the result
+  // fits the probe. See fetchPageWithTotal — the COUNT wrapper it replaces re-ran the entire
+  // statement to learn a number the first run already knew.
+  const paged = await fetchPageWithTotal(base, params, options, query, count);
+  const total = paged.total;
+  const rows  = paged.rows as Record<string, unknown>[];
   const nextCursor = (options.mode === "worker" && rows.length > 0)
     ? (rows[rows.length - 1]._cursor as number) : null;
   const out = rows.map(({ _cursor: _, ...rest }) => rest);
@@ -229,7 +233,7 @@ export async function leaveAllocationRegister(
            la.balance_year, la.allocated_days, la.adjusted_days, la.used_days,
            COALESCE(sp_cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
            COALESCE(sp_cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
-           b.branch_name,
+           COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
            COALESCE(p.process_name, 'UNASSIGNED') AS process_name
       FROM leave_balance_ledger la
       JOIN employees e           ON e.id  = la.employee_id
@@ -327,9 +331,12 @@ export async function leaveUtilization(
      WHERE ${clauses.join(" AND ")}
      ORDER BY lr.from_date DESC, e.employee_code ASC`;
 
-  const total = options.includeTotal ? await count(base, params) : 0;
-  const sql   = options.mode === "worker" ? `${base} LIMIT ${options.limit}` : applyPagination(base, options);
-  const rows  = await query(sql, params) as Record<string, unknown>[];
+  // One execution, not two: the page and its total come from the same fetch wherever the result
+  // fits the probe. See fetchPageWithTotal — the COUNT wrapper it replaces re-ran the entire
+  // statement to learn a number the first run already knew.
+  const paged = await fetchPageWithTotal(base, params, options, query, count);
+  const total = paged.total;
+  const rows  = paged.rows as Record<string, unknown>[];
   const nextCursor = (options.mode === "worker" && rows.length > 0)
     ? (rows[rows.length - 1]._cursor as number) : null;
   const out = rows.map(({ _cursor: _, ...rest }) => rest);
@@ -369,7 +376,8 @@ export async function leaveTrendMonthly(
            lt.leave_name, lt.leave_code,
            SUM(lr.total_days) AS total_days,
            COUNT(DISTINCT lr.employee_id) AS employee_count,
-           b.branch_name, p.process_name
+           COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
+           COALESCE(p.process_name, 'UNASSIGNED') AS process_name
       FROM leave_request lr
       JOIN employees e           ON e.id  = lr.employee_id
       JOIN leave_type_master lt  ON lt.id = lr.leave_type_id
@@ -394,78 +402,70 @@ export async function leaveTrendMonthly(
 // ---------------------------------------------------------------------------
 // leave-lwp-reconciliation
 // ---------------------------------------------------------------------------
+/**
+ * leave-lwp-reconciliation
+ *
+ * Attendance LWP against payroll LWP, per employee, for one month.
+ *
+ * This executor and the inline block returned different reports: 650 rows on screen against
+ * 1,569 in the downloaded file. The catalogue declares eight columns — employee_code,
+ * employee_name, process_name, cost_centre_code, cost_centre_name, lwp_days_attendance,
+ * lwp_days_payroll, variance — which is exactly the inline shape. The executor emitted its own
+ * set including branch_name and omitting the payroll side's framing.
+ *
+ * Ported verbatim from the inline block, which carries a correction made earlier in this audit
+ * that this executor never had: the salary_prep_run placeholder sits inside a LEFT JOIN, which
+ * binds before the WHERE, so the month must be unshifted to the front of the parameter list.
+ * With it pushed last, a branch-scoped user's branch id was bound as the run month and the
+ * report returned nothing at all — 0 rows against 200, measured when that was fixed.
+ *
+ * The month filter keeps the inline block's DATE_FORMAT form rather than being rewritten to a
+ * sargable range, so this stays a move rather than a move plus an optimisation.
+ */
 export async function leaveLwpReconciliation(
   filters: ExecFilters,
   scope: ExecScope,
   options: ExecOptions
 ): Promise<ExecResult> {
-  const clauses: string[] = ["e.id IS NOT NULL", "adr.lwp_value > 0"];
+  const month = monthParam(filters.month);
+
+  const clauses: string[] = ["e.id IS NOT NULL"];
   const params: unknown[] = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
+  clauses.push("DATE_FORMAT(adr.record_date,'%Y-%m') = ?");
+  params.push(month);
 
-  if (filters.from || filters.to) {
-    const today = new Date().toISOString().slice(0, 10);
-    const from  = dateParam(filters.from, `${new Date().getFullYear()}-01-01`);
-    const to    = dateParam(filters.to, today);
-    clauses.push("adr.record_date BETWEEN ? AND ?");
-    params.push(from, to);
-  }
-
-  if (filters.month) {
-    clauses.push("adr.record_date >= ? AND adr.record_date < ?");
-    {
-      const r = monthRange(monthParam(filters.month));
-      params.push(r.start, r.endExclusive);
-    }
-  }
-
-  if (options.mode === "worker" && options.cursor != null) {
-    clauses.push("e.id > ?");
-    params.push(options.cursor);
-  }
-
-  const base = `
-    SELECT e.id AS _cursor,
-           e.employee_code,
-           COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-           COALESCE(sp_cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
-           COALESCE(sp_cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
-           b.branch_name,
-           COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
-           SUM(adr.lwp_value) AS total_lwp_days,
-           COUNT(lr.id) AS leave_applications,
-           SUM(lr.total_days) AS leave_days_applied
+  const base = `    SELECT e.id AS _cursor,
+           e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
+           COALESCE(zpm.process_name, 'UNASSIGNED') AS process_name,
+           COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
+           COALESCE(zcc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
+           SUM(adr.lwp_value) AS lwp_days_attendance,
+           COALESCE(spl.lwp_days, 0) AS lwp_days_payroll,
+           SUM(adr.lwp_value) - COALESCE(spl.lwp_days, 0) AS variance
       FROM attendance_daily_record adr
       JOIN employees e ON e.id = adr.employee_id
-      LEFT JOIN leave_request lr
-             ON lr.employee_id = e.id
-            AND lr.status = 'approved'
-            AND DATE(lr.from_date) = adr.record_date
-      LEFT JOIN branch_master b  ON b.id = e.branch_id
-      LEFT JOIN process_master p ON p.id = e.process_id
-      LEFT JOIN cost_centre_master sp_cc ON sp_cc.id = e.cost_centre_id
-     WHERE ${clauses.join(" AND ")}
-     -- ONLY_FULL_GROUP_BY: the cost centre columns must appear here as well as in the
-     -- SELECT, or this aggregate fails outright rather than degrading.
-     GROUP BY e.id, e.employee_code,
-              COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))),
-              b.branch_name, p.process_name,
-              sp_cc.cost_centre_code, sp_cc.cost_centre_name
-     ORDER BY e.id ASC`;
+      LEFT JOIN salary_prep_run spr ON spr.run_month = ?
+      LEFT JOIN salary_prep_line spl ON spl.employee_id = e.id AND spl.run_id = spr.id
+      LEFT JOIN cost_centre_master zcc ON zcc.id = e.cost_centre_id
+      LEFT JOIN process_master zpm ON zpm.id = e.process_id
+     WHERE ${clauses.join(" AND ")} AND adr.lwp_value > 0
+     GROUP BY e.id, e.employee_code, e.first_name, e.last_name, spl.lwp_days
+     HAVING lwp_days_attendance > 0
+     ORDER BY ABS(variance) DESC`;
 
-  const total = options.includeTotal ? await count(base, params) : 0;
-  const sql   = options.mode === "worker" ? `${base} LIMIT ${options.limit}` : applyPagination(base, options);
-  const rows  = await query(sql, params) as Record<string, unknown>[];
-  const nextCursor = (options.mode === "worker" && rows.length > 0)
-    ? (rows[rows.length - 1]._cursor as number) : null;
+  // The salary_prep_run placeholder is in the JOIN, which binds before the WHERE.
+  params.unshift(month);
+
+  // One execution, not two: the page and its total come from the same fetch wherever the result
+  // fits the probe. See fetchPageWithTotal — the COUNT wrapper it replaces re-ran the entire
+  // statement to learn a number the first run already knew.
+  const paged = await fetchPageWithTotal(base, params, options, query, count);
+  const total = paged.total;
+  const rows  = paged.rows as Record<string, unknown>[];
   const out = rows.map(({ _cursor: _, ...rest }) => rest);
-  return {
-    rows: out,
-    rowCount: options.includeTotal ? total : rows.length,
-    isTruncated: options.includeTotal ? total > out.length : rows.length === options.limit,
-    nextCursor,
-  };
+  return { rows: out, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > out.length, nextCursor: null };
 }
 
 // ---------------------------------------------------------------------------
@@ -504,7 +504,8 @@ export async function maternityPaternityRegister(
            lt.leave_name,
            lr.from_date, lr.to_date, lr.total_days,
            lr.status AS approval_status,
-           b.branch_name, p.process_name
+           COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
+           COALESCE(p.process_name, 'UNASSIGNED') AS process_name
       FROM leave_request lr
       JOIN employees e           ON e.id  = lr.employee_id
       JOIN leave_type_master lt  ON lt.id = lr.leave_type_id
@@ -513,9 +514,12 @@ export async function maternityPaternityRegister(
      WHERE ${clauses.join(" AND ")}
      ORDER BY lr.id ASC`;
 
-  const total = options.includeTotal ? await count(base, params) : 0;
-  const sql   = options.mode === "worker" ? `${base} LIMIT ${options.limit}` : applyPagination(base, options);
-  const rows  = await query(sql, params) as Record<string, unknown>[];
+  // One execution, not two: the page and its total come from the same fetch wherever the result
+  // fits the probe. See fetchPageWithTotal — the COUNT wrapper it replaces re-ran the entire
+  // statement to learn a number the first run already knew.
+  const paged = await fetchPageWithTotal(base, params, options, query, count);
+  const total = paged.total;
+  const rows  = paged.rows as Record<string, unknown>[];
   const nextCursor = (options.mode === "worker" && rows.length > 0)
     ? (rows[rows.length - 1]._cursor as number) : null;
   const out = rows.map(({ _cursor: _, ...rest }) => rest);
@@ -570,7 +574,8 @@ export async function leaveEncashmentRegister(
            lt.leave_name, lt.leave_code,
            ler.encashment_days, ler.amount,
            ler.approval_status, ler.requested_date,
-           b.branch_name, p.process_name
+           COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
+           COALESCE(p.process_name, 'UNASSIGNED') AS process_name
       FROM leave_encashment_request ler
       JOIN employees e           ON e.id  = ler.employee_id
       JOIN leave_type_master lt  ON lt.id = ler.leave_type_id
@@ -611,135 +616,93 @@ export async function leaveEncashmentRegister(
 // ---------------------------------------------------------------------------
 // leave-lapse-summary
 // ---------------------------------------------------------------------------
+/**
+ * leave-lapse-summary
+ *
+ * One row per employee per leave type per expired balance year.
+ *
+ * The executor and the inline block disagreed — 3,000 rows on screen against 2,916 in the
+ * downloaded file. The catalogue declares nine columns (employee_code, employee_name,
+ * process_name, cost_centre_code, cost_centre_name, leave_code, leave_name, balance_year,
+ * lapsed_days), which is exactly the inline shape.
+ *
+ * Ported verbatim. Note the two filters that define what "lapsed" means here and must stay
+ * together: only balance years BEFORE the current one, and only positive remaining balance.
+ * Either one alone gives a different report — the first without the second counts fully-used
+ * allocations as lapses, and the second without the first counts this year's untaken leave as
+ * already gone.
+ */
 export async function leaveLapseSummary(
   filters: ExecFilters,
   scope: ExecScope,
   options: ExecOptions
 ): Promise<ExecResult> {
+  const currentYear = new Date().getFullYear();
+
   const clauses: string[] = ["e.id IS NOT NULL"];
   const params: unknown[] = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
-  clauses.push("e.active_status = 1");
+  clauses.push("lbl.balance_year < ?");
+  params.push(currentYear);
 
-  if (filters.year) {
-    clauses.push("lbl.balance_year = ?");
-    params.push(yearParam(filters.year));
-  } else {
-    clauses.push("lbl.balance_year < YEAR(CURDATE())");
-  }
-
-  // Only rows where leave actually lapsed (allocated minus used still positive)
-  clauses.push("(COALESCE(lbl.allocated_days,0) - COALESCE(lbl.used_days,0)) > 0");
-
-  if (options.mode === "worker" && options.cursor != null) {
-    clauses.push("e.id > ?");
-    params.push(options.cursor);
-  }
-
-  const base = `
-    SELECT e.id AS _cursor,
-           e.employee_code,
-           COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-           COALESCE(sp_cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
-           COALESCE(sp_cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
-           b.branch_name,
-           COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
-           lt.leave_name, lt.leave_code,
-           lbl.balance_year,
-           COALESCE(lbl.allocated_days,0) AS allocated,
-           COALESCE(lbl.used_days,0) AS used,
-           COALESCE(lbl.allocated_days,0) - COALESCE(lbl.used_days,0) AS lapsed_days
-      FROM employees e
-      JOIN leave_type_master lt ON lt.active_status = 1
-      LEFT JOIN leave_balance_ledger lbl
-             ON lbl.employee_id = e.id
-            AND lbl.leave_type_id = lt.id
-      LEFT JOIN branch_master b  ON b.id = e.branch_id
-      LEFT JOIN process_master p ON p.id = e.process_id
-      LEFT JOIN cost_centre_master sp_cc ON sp_cc.id = e.cost_centre_id
+  const base = `    SELECT lbl.id AS _cursor,
+           e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
+           COALESCE(zpm.process_name, 'UNASSIGNED') AS process_name,
+           COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
+           COALESCE(zcc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
+           lt.leave_code, lt.leave_name, lbl.balance_year,
+           GREATEST(lbl.allocated_days + lbl.adjusted_days - lbl.used_days, 0) AS lapsed_days
+      FROM leave_balance_ledger lbl
+      JOIN employees e ON e.id = lbl.employee_id
+      JOIN leave_type_master lt ON lt.id = lbl.leave_type_id
+      LEFT JOIN cost_centre_master zcc ON zcc.id = e.cost_centre_id
+      LEFT JOIN process_master zpm ON zpm.id = e.process_id
      WHERE ${clauses.join(" AND ")}
-     ORDER BY e.id ASC, lt.leave_name`;
+     AND (lbl.allocated_days + lbl.adjusted_days - lbl.used_days) > 0
+     ORDER BY employee_name, lbl.balance_year`;
 
-  const total = options.includeTotal ? await count(base, params) : 0;
-  const sql   = options.mode === "worker" ? `${base} LIMIT ${options.limit}` : applyPagination(base, options);
-  const rows  = await query(sql, params) as Record<string, unknown>[];
-  const nextCursor = (options.mode === "worker" && rows.length > 0)
-    ? (rows[rows.length - 1]._cursor as number) : null;
+  // One execution, not two: the page and its total come from the same fetch wherever the result
+  // fits the probe. See fetchPageWithTotal — the COUNT wrapper it replaces re-ran the entire
+  // statement to learn a number the first run already knew.
+  const paged = await fetchPageWithTotal(base, params, options, query, count);
+  const total = paged.total;
+  const rows  = paged.rows as Record<string, unknown>[];
   const out = rows.map(({ _cursor: _, ...rest }) => rest);
-  return {
-    rows: out,
-    rowCount: options.includeTotal ? total : rows.length,
-    isTruncated: options.includeTotal ? total > out.length : rows.length === options.limit,
-    nextCursor,
-  };
+  return { rows: out, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > out.length, nextCursor: null };
 }
 
-// ---------------------------------------------------------------------------
-// holiday-master-list
-// ---------------------------------------------------------------------------
 /**
- * Reads leave_holiday_master (NOT "holiday_master" — that table does not exist).
+ * holiday-master-list
  *
- * The table is not employee-scoped, so branch scope is applied directly on
- * hm.branch_id; process / department / cost-centre dimensions do not apply.
+ * Aligned with the inline block. The screen ran that block and the download ran this executor,
+ * which returned a different column set — the catalogue names the inline shape.
  *
- * An empty result means the table has no rows for the selected branch/year, not
- * a failure — holiday masters are often sparsely populated.
+ * No row scope, deliberately and unchanged: a holiday calendar is organisation-wide reference
+ * data, not employee data, so there is nothing to scope by. The branch join is descriptive — a
+ * holiday may be branch-specific or apply everywhere, in which case branch_name is NULL.
  */
 export async function holidayMasterList(
   filters: ExecFilters,
   scope: ExecScope,
   options: ExecOptions
 ): Promise<ExecResult> {
-  const clauses: string[] = ["hm.holiday_date IS NOT NULL"];
-  const params: unknown[] = [];
-
-  // Branch scope applied directly on hm.branch_id (no employees table in this query)
-  if (scope.branchScope.mode === "none") {
-    throw new ReportScopeAccessDeniedError("branchScope");
-  }
-  if (scope.branchScope.mode === "restricted" && scope.branchScope.ids.length > 0) {
-    clauses.push(`hm.branch_id IN (${scope.branchScope.ids.map(() => "?").join(",")})`);
-    params.push(...scope.branchScope.ids);
-  }
-
-  // User-selected branch narrowing
-  if (filters.branchId) {
-    clauses.push("hm.branch_id = ?");
-    params.push(String(filters.branchId));
-  }
-
-  // Year filter
-  if (filters.year) {
-    clauses.push("YEAR(hm.holiday_date) = ?");
-    params.push(yearParam(filters.year));
-  }
-
-  if (options.mode === "worker" && options.cursor != null) {
-    clauses.push("hm.id > ?");
-    params.push(options.cursor);
-  }
+  const year = Number(filters.year ?? new Date().getFullYear());
+  const params: unknown[] = [year];
 
   const base = `
-    SELECT hm.id AS _cursor,
-           hm.holiday_date, hm.holiday_name, hm.holiday_type,
-           b.branch_name, YEAR(hm.holiday_date) AS applicable_year
-      FROM leave_holiday_master hm
-      LEFT JOIN branch_master b ON b.id = hm.branch_id
-     WHERE ${clauses.join(" AND ")}
-     ORDER BY hm.holiday_date ASC`;
+    SELECT lhm.holiday_date, lhm.holiday_name, lhm.holiday_type,
+           lhm.active_status, b.branch_name
+      FROM leave_holiday_master lhm
+      LEFT JOIN branch_master b ON b.id = lhm.branch_id
+     WHERE YEAR(lhm.holiday_date) = ?
+     ORDER BY lhm.holiday_date ASC`;
 
-  const total = options.includeTotal ? await count(base, params) : 0;
-  const sql   = options.mode === "worker" ? `${base} LIMIT ${options.limit}` : applyPagination(base, options);
-  const rows  = await query(sql, params) as Record<string, unknown>[];
-  const nextCursor = (options.mode === "worker" && rows.length > 0)
-    ? (rows[rows.length - 1]._cursor as number) : null;
-  const out = rows.map(({ _cursor: _, ...rest }) => rest);
-  return {
-    rows: out,
-    rowCount: options.includeTotal ? total : rows.length,
-    isTruncated: options.includeTotal ? total > out.length : rows.length === options.limit,
-    nextCursor,
-  };
+  // One execution, not two: the page and its total come from the same fetch wherever the result
+  // fits the probe. See fetchPageWithTotal — the COUNT wrapper it replaces re-ran the entire
+  // statement to learn a number the first run already knew.
+  const paged = await fetchPageWithTotal(base, params, options, query, count);
+  const total = paged.total;
+  const rows  = paged.rows as Record<string, unknown>[];
+  return { rows, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > rows.length, nextCursor: null };
 }

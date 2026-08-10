@@ -4,6 +4,7 @@ import { requireRole } from "../../middleware/requireRole.js";
 import { requireClientAuth } from "../../middleware/requireClientAuth.js";
 import { portalController as c } from "./portal.controller.js";
 import { portalSnapshotService } from "./portal.snapshot.service.js";
+import { portalPermissionsService } from "./portal-permissions.service.js";
 
 const router = Router();
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -18,13 +19,29 @@ router.post("/auth/verify-otp",  h(c.verifyOtp));
 
 // ── Internal ops (internal staff JWT) ── MUST be before requireClientAuth middleware ──
 router.use("/internal", requireAuth);
-router.post("/internal/glide-paths",          h(c.setGlideCommitment));
-router.post("/internal/action-plans",         h(c.createActionPlan));
-router.put ("/internal/action-plans/:id",     h(c.updateActionPlan));
-router.post("/internal/governance",           h(c.updateGovernance));
-router.post("/internal/commentary",           h(c.createCommentary));
-router.get ("/internal/client-users",         h(c.listClientUsers));
-router.post("/internal/client-users",         h(c.createClientUser));
+// These seven carried `requireAuth` (from the router.use above) but no role guard, while
+// every other /internal route below them is role-gated. That gap meant ANY authenticated
+// internal user — any employee with a login — could call them; the controllers do not
+// authorize either (createClientUser validates the body and INSERTs straight into
+// client_user with a caller-supplied client_id and process_ids). Creating a client portal
+// account, or listing the existing ones, is not something a general employee may do.
+//
+// Roles follow this file's own two tiers rather than a new invention: content writes match
+// the KPI-assignment endpoints (admin/hr/finance_head/operations_manager/ceo), while
+// account provisioning matches the administrative ones (admin/hr), as used by
+// /internal/snapshots/* and DELETE /internal/kpi-assignments/:id.
+//
+// No frontend calls any of the seven — the portal UI only uses the already-guarded
+// kpi-* and snapshots/* endpoints — so this closes the hole without changing a live flow.
+const PORTAL_CONTENT_ROLES = ["admin", "hr", "finance_head", "operations_manager", "ceo"] as const;
+
+router.post("/internal/glide-paths",          requireRole(...PORTAL_CONTENT_ROLES), h(c.setGlideCommitment));
+router.post("/internal/action-plans",         requireRole(...PORTAL_CONTENT_ROLES), h(c.createActionPlan));
+router.put ("/internal/action-plans/:id",     requireRole(...PORTAL_CONTENT_ROLES), h(c.updateActionPlan));
+router.post("/internal/governance",           requireRole(...PORTAL_CONTENT_ROLES), h(c.updateGovernance));
+router.post("/internal/commentary",           requireRole(...PORTAL_CONTENT_ROLES), h(c.createCommentary));
+router.get ("/internal/client-users",         requireRole("admin", "hr"), h(c.listClientUsers));
+router.post("/internal/client-users",         requireRole("admin", "hr"), h(c.createClientUser));
 
 // ── Internal: Snapshot approval workflow ─────────────────────────────────────
 router.post(
@@ -102,6 +119,63 @@ router.get(
       `SELECT id, template_name FROM kpi_template WHERE active_status = 1 ORDER BY template_name`
     );
     return res.json({ data: rows });
+  })
+);
+
+/*
+ * ── Granular client-portal permissions ──────────────────────────────────────
+ * GET    /api/portal/internal/client-permissions?client_user_id=X
+ * POST   /api/portal/internal/client-permissions
+ * DELETE /api/portal/internal/client-permissions/:id
+ *
+ * These manage portal_user_permissions, which nothing has ever written to. Grants are additive:
+ * a client user with no rows behaves exactly as they do today, since portal access is still
+ * governed by the processIds carried in the token. Enforcement is opt-in per endpoint via
+ * portalPermissionsService.hasPermission, so recording a grant here does not by itself change
+ * what anyone can see. Admin-only, and every write records who granted it.
+ */
+router.get(
+  "/internal/client-permissions",
+  requireRole("admin", "hr", "super_admin"),
+  h(async (req, res) => {
+    const clientUserId = req.query.client_user_id ? String(req.query.client_user_id) : undefined;
+    return res.json({ success: true, data: await portalPermissionsService.list(clientUserId) });
+  })
+);
+
+router.post(
+  "/internal/client-permissions",
+  requireRole("admin", "super_admin"),
+  h(async (req, res) => {
+    const { client_user_id, permission_type, resource_scope, resource_ids, expires_at } =
+      req.body as Record<string, unknown>;
+    if (!client_user_id || !permission_type) {
+      throw Object.assign(new Error("client_user_id and permission_type are required"), { statusCode: 400 });
+    }
+    if (resource_ids !== undefined && resource_ids !== null && !Array.isArray(resource_ids)) {
+      throw Object.assign(new Error("resource_ids must be an array of ids"), { statusCode: 400 });
+    }
+    await portalPermissionsService.grant({
+      clientUserId: String(client_user_id),
+      permissionType: String(permission_type),
+      resourceScope: resource_scope == null ? null : String(resource_scope),
+      resourceIds: (resource_ids as string[] | undefined) ?? null,
+      grantedBy: (req as { authUser?: { id?: string } }).authUser?.id ?? "system",
+      expiresAt: expires_at == null ? null : String(expires_at),
+    });
+    return res.status(201).json({ success: true });
+  })
+);
+
+router.delete(
+  "/internal/client-permissions/:id",
+  requireRole("admin", "super_admin"),
+  h(async (req, res) => {
+    const revoked = await portalPermissionsService.revoke(String(req.params.id));
+    if (!revoked) {
+      throw Object.assign(new Error("No active permission with that id"), { statusCode: 404 });
+    }
+    return res.json({ success: true });
   })
 );
 

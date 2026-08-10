@@ -135,7 +135,15 @@ describe("the bank advice file", () => {
   it("casts the account number out of varbinary", () => {
     // account_number is varbinary(500). Selected raw it reaches JSON as
     // {"type":"Buffer","data":[...]} — unusable even when the value is good.
-    expect(SOURCE).toMatch(/CAST\(ebd\.account_number AS CHAR\)\s+AS account_number/);
+    //
+    // 851d78ca moved the unwrapping from SQL into TypeScript: the query now selects
+    // account_number_enc beside the legacy column and resolveAccountNumber() returns the
+    // decrypted value, or .toString("utf8") of the Buffer when a row is not yet backfilled.
+    // The Buffer still never reaches JSON — only the mechanism changed — so this accepts
+    // either form rather than failing on correct code.
+    expect(SOURCE).toMatch(
+      /CAST\(ebd\.account_number AS CHAR\)\s+AS account_number|resolveAccountNumber\s*\(\s*\{/,
+    );
   });
 
   it("classifies unusable account numbers instead of exporting them silently", () => {
@@ -144,7 +152,12 @@ describe("the bank advice file", () => {
     // be repaired — only flagged.
     expect(SOURCE).toContain("account_number_status");
     expect(SOURCE).toMatch(/corrupt_scientific_notation/);
-    expect(SOURCE).toMatch(/REGEXP '\[Ee\]\[\+-\]'/);
+    // Classification moved out of SQL for the same reason as the CAST above: the value now
+    // arrives already decrypted-or-decoded, so a REGEXP inside the query can no longer see it.
+    // The rule is byte-identical, just expressed in TypeScript —
+    //   const SCIENTIFIC_RE = /[Ee][+-]/;
+    //   else if (SCIENTIFIC_RE.test(acct)) r.account_number_status = "corrupt_scientific_notation";
+    expect(SOURCE).toMatch(/REGEXP '\[Ee\]\[\+-\]'|SCIENTIFIC_RE\s*=\s*\/\[Ee\]\[\+-\]\//);
   });
 
   it("reports the unpayable rows to the caller", () => {

@@ -20,6 +20,7 @@ import {
   appendScopeConditions,
   appendFilterConditions,
   applyPagination,
+  fetchPageWithTotal,
   ReportScopeAccessDeniedError,
 } from "./types.js";
 
@@ -92,10 +93,10 @@ export async function costCentreMasterReport(
 
   const base = `
     SELECT cc.cost_centre_code,
-           cc.cost_centre_name,
+           COALESCE(cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
            cc.client_name,
-           b.branch_name,
-           d.dept_name AS department_name,
+           COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
+           COALESCE(d.dept_name, 'UNASSIGNED') AS department_name,
            cc.cc_category,
            cc.cc_type,
            cc.tower,
@@ -118,9 +119,12 @@ export async function costCentreMasterReport(
               cc.process_name_bill, p.process_name, cc.go_live_date, cc.close_date
      ORDER BY active_headcount DESC, cc.cost_centre_code ASC`;
 
-  const total = options.includeTotal ? await count(base, params) : 0;
-  const sql   = applyPagination(base, options);
-  const rows  = await query(sql, params) as Record<string, unknown>[];
+  // One execution, not two: the page and its total come from the same fetch wherever the result
+  // fits the probe. See fetchPageWithTotal — the COUNT wrapper it replaces re-ran the entire
+  // statement to learn a number the first run already knew.
+  const paged = await fetchPageWithTotal(base, params, options, query, count);
+  const total = paged.total;
+  const rows  = paged.rows as Record<string, unknown>[];
   return { rows, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > rows.length };
 }
 
@@ -153,9 +157,9 @@ export async function processMasterReport(
 
   const base = `
     SELECT p.process_code,
-           p.process_name,
+           COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
            p.client_name,
-           b.branch_name,
+           COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
            p.process_type,
            p.workload_type,
            p.business_lob,
@@ -175,9 +179,12 @@ export async function processMasterReport(
               p.process_owner_name, p.sla_response_hours, p.sla_resolution_hours, p.close_date
      ORDER BY active_headcount DESC, p.process_code ASC`;
 
-  const total = options.includeTotal ? await count(base, params) : 0;
-  const sql   = applyPagination(base, options);
-  const rows  = await query(sql, params) as Record<string, unknown>[];
+  // One execution, not two: the page and its total come from the same fetch wherever the result
+  // fits the probe. See fetchPageWithTotal — the COUNT wrapper it replaces re-ran the entire
+  // statement to learn a number the first run already knew.
+  const paged = await fetchPageWithTotal(base, params, options, query, count);
+  const total = paged.total;
+  const rows  = paged.rows as Record<string, unknown>[];
   return { rows, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > rows.length };
 }
 
@@ -210,8 +217,8 @@ export async function headcountByCostCentreAndProcess(
            COALESCE(cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
            COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
            COALESCE(cc.client_name, p.client_name, 'UNKNOWN') AS client_name,
-           b.branch_name,
-           d.dept_name AS department_name,
+           COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
+           COALESCE(d.dept_name, 'UNASSIGNED') AS department_name,
            COUNT(*) AS headcount,
            SUM(CASE WHEN e.cost_centre_id IS NULL OR e.process_id IS NULL THEN 1 ELSE 0 END)
              AS unmapped_in_group
@@ -225,8 +232,11 @@ export async function headcountByCostCentreAndProcess(
               COALESCE(cc.client_name, p.client_name, 'UNKNOWN'), b.branch_name, d.dept_name
      ORDER BY headcount DESC`;
 
-  const total = options.includeTotal ? await count(base, params) : 0;
-  const sql   = applyPagination(base, options);
-  const rows  = await query(sql, params) as Record<string, unknown>[];
+  // One execution, not two: the page and its total come from the same fetch wherever the result
+  // fits the probe. See fetchPageWithTotal — the COUNT wrapper it replaces re-ran the entire
+  // statement to learn a number the first run already knew.
+  const paged = await fetchPageWithTotal(base, params, options, query, count);
+  const total = paged.total;
+  const rows  = paged.rows as Record<string, unknown>[];
   return { rows, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > rows.length };
 }

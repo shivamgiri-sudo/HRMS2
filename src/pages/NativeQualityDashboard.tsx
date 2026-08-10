@@ -1214,14 +1214,20 @@ export default function NativeQualityDashboard() {
 
   // ─── Tab: CLAP VOC ───────────────────────────────────────────────────────────
 
+  /*
+   * VOC is recorded against three dimensions - what the customer said about logistics, about the
+   * agent and about the product. A "Customer" tab was offered as a fourth and selected by default,
+   * so the first thing this tab showed was always "No VOC quotes for this branch", for a dimension
+   * the source system has no columns for. The backend listed it too, which took down the quotes,
+   * the summary chart and the intelligence cards together.
+   */
   const CLAP_BRANCH_META: Record<string, { label: string; pos_color: string; neg_color: string }> = {
-    customer: { label: "Customer",  pos_color: "bg-emerald-100 text-emerald-800", neg_color: "bg-red-100 text-red-800" },
     logistic: { label: "Logistics", pos_color: "bg-blue-100 text-blue-800",     neg_color: "bg-orange-100 text-orange-800" },
     agent:    { label: "Agent",     pos_color: "bg-violet-100 text-violet-800",  neg_color: "bg-rose-100 text-rose-800" },
     product:  { label: "Product",   pos_color: "bg-amber-100 text-amber-800",    neg_color: "bg-red-100 text-red-800" },
   };
 
-  const [clapBranch, setClapBranch] = useState<string>("customer");
+  const [clapBranch, setClapBranch] = useState<string>("logistic");
 
   const ClapVocTab = (
     <div className="space-y-5">
@@ -1293,7 +1299,7 @@ export default function NativeQualityDashboard() {
         </div>
         {clapVocQ.isLoading ? <Spinner size="sm" /> : (() => {
           const quotes = (clapVocQ.data ?? []).filter((q: any) => q.branch === clapBranch);
-          const meta = CLAP_BRANCH_META[clapBranch] ?? CLAP_BRANCH_META.customer;
+          const meta = CLAP_BRANCH_META[clapBranch] ?? CLAP_BRANCH_META.logistic;
           if (quotes.length === 0) return <p className="py-8 text-center text-sm text-slate-400">No VOC quotes for this branch in the selected period (data available from Jul 17, 2026)</p>;
           return (
             <div className="grid gap-3 sm:grid-cols-2">

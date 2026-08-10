@@ -20,6 +20,10 @@ import {
   costCentreHeadcount,
   employeeMovement,
   confirmationDueList,
+  newJoinExport,
+  leftEmployeeExport,
+  incrementRequests,
+  bankMissing,
   contractExpiryList,
   lifecycleEvents,
   incrementPromotionHistory,
@@ -61,6 +65,7 @@ import {
   breakDailySummary,
   breakSessionLog,
   productivityIndividualScorecard,
+  attendanceRegisterMonthly,
 } from "./attendance.executor.js";
 
 // ─── Leave ───────────────────────────────────────────────────────────────────
@@ -105,6 +110,7 @@ import {
   ptMonthlyRegister,
   pfEsicSalaryRegister,
   pfEsiOptOutRegister,
+  uanMasterRegister,
 } from "./statutory.executor.js";
 
 // ─── Exit & Attrition ────────────────────────────────────────────────────────
@@ -117,6 +123,7 @@ import {
   exitReasonAnalysis,
   tenureDistribution,
   earlyAttritionReport,
+  ffSettlementRegister,
 } from "./exit.executor.js";
 
 // ─── Recruitment ─────────────────────────────────────────────────────────────
@@ -168,6 +175,8 @@ import {
   panVerificationStatus,
   bankAccountVerification,
   identitySourceSnapshot,
+  employeeDocumentCompliance,
+  missingDocumentsReport,
 } from "./identity.executor.js";
 
 // ─── Governance (placeholders) ───────────────────────────────────────────────
@@ -189,6 +198,15 @@ export const EXECUTOR_MAP: Record<string, ExecutorFn> = {
   "org-structure-snapshot":    orgStructureSnapshot,
   "cost-centre-headcount":     costCentreHeadcount,
   "employee-movement":         employeeMovement,
+  "new-join-export":            newJoinExport,
+  "left-employee-export":       leftEmployeeExport,
+  "increment-requests":        incrementRequests,
+  "uan-master-register":       uanMasterRegister,
+  "ff-settlement-register":    ffSettlementRegister,
+  "employee-document-compliance": employeeDocumentCompliance,
+  "missing-documents-report":     missingDocumentsReport,
+  "attendance-register-monthly": attendanceRegisterMonthly,
+  "bank-missing":              bankMissing,
   "confirmation-due-list":     confirmationDueList,
   "contract-expiry-list":      contractExpiryList,
   "lifecycle-events":          lifecycleEvents,

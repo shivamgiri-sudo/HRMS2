@@ -148,12 +148,26 @@ function recordSuccess(): void {
 function recordFailure(error?: unknown): void {
   const now = Date.now();
   const previous = circuitBreaker.status;
-  circuitBreaker = recordCircuitBreakerFailure(circuitBreaker, CIRCUIT_BREAKER_CONFIG, now);
+
+  // Jitter the reopen delay so the probe cannot lock to a fixed caller cadence.
+  //
+  // The 2026-08-08 outage described above was exactly that resonance, and the pool size
+  // was only half of it: the workers poll on a shared 30s tick and recoveryTimeMs is
+  // 30000, so every half-open probe landed on the very next burst, failed, and reopened —
+  // indefinitely, across restarts. Up to +40% drifts the probe off the burst within a
+  // cycle or two, letting the breaker find a quiet moment on its own.
+  //
+  // Math.random() lives here rather than in circuitBreaker.ts so that module stays pure
+  // and its tests keep asserting an exact `now + recoveryTimeMs`.
+  const jitterMs = Math.floor(Math.random() * CIRCUIT_BREAKER_CONFIG.recoveryTimeMs * 0.4);
+  circuitBreaker = recordCircuitBreakerFailure(circuitBreaker, CIRCUIT_BREAKER_CONFIG, now, jitterMs);
 
   if (circuitBreaker.status === "open" && previous !== "open") {
     console.error(
       `[mysql] circuit breaker OPEN after ${circuitBreaker.failures} consecutive failure(s); ` +
-        `probing again in ${Math.ceil(CIRCUIT_BREAKER_CONFIG.recoveryTimeMs / 1000)}s. ` +
+        // Derived from nextProbeTime, not the nominal config value, so the line stays
+        // truthful now that the delay carries jitter.
+        `probing again in ${Math.max(0, Math.ceil((circuitBreaker.nextProbeTime - now) / 1000))}s. ` +
         `Tripped by: ${describeDbError(error)}`,
     );
   }

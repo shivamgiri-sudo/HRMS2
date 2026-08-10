@@ -102,7 +102,7 @@ budgetCoverageRouter.post(
         userRoles: user.roles,
         requestedBranchId: req.body?.branchId,
       });
-      if (!branchId) throw new Error("Branch is required");
+      if (!branchId) throw Object.assign(new Error("Branch is required"), { statusCode: 400 });
       const budget = await branchBudgetService.saveDraft(
         { ...req.body, branchId },
         user.id,

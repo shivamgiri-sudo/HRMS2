@@ -282,13 +282,31 @@ export const lmsEmployeeMapper = {
    * Get existing mapping or create new one
    */
   async getOrMapLmsTrainee(lmsId: string): Promise<string | null> {
+    // Column names, not aliases: lms_employee_mapping stores employee_id and
+    // lms_learner_id. This read asked for hrms_employee_id / lms_employee_id,
+    // which do not exist, so it threw ER_BAD_FIELD_ERROR on EVERY call —
+    // confirmed by running the compiled function against production.
+    //
+    // It has not been failing in production because the live process is running
+    // an older in-memory build; the on-disk dist compiled from this source is
+    // broken, so the next restart would have taken learner_progress from 911
+    // synced to 0. Verified against live data: all 1,177 rows carry a usable
+    // employee_id, and this query resolves real learner ids.
+    //
+    // The other three names in this file (the upsert below and the audit writes)
+    // are wrong too — hrms_mobile, hrms_personal_email and
+    // lms_employee_mapping_audit do not exist either. They are NOT touched here:
+    // they sit on the cache-miss path, they need columns the table does not have
+    // at all rather than a rename, and reconciling this mapper with the one in
+    // modules/lms that actually populates the table is a design decision. This
+    // change restores exactly the behaviour production has today.
     const [existing] = await db.execute<RowDataPacket[]>(
-      `SELECT hrms_employee_id FROM lms_employee_mapping WHERE lms_employee_id = ? LIMIT 1`,
+      `SELECT employee_id FROM lms_employee_mapping WHERE lms_learner_id = ? LIMIT 1`,
       [lmsId]
     );
 
     if (existing.length > 0) {
-      return (existing[0] as any).hrms_employee_id ?? null;
+      return (existing[0] as any).employee_id ?? null;
     }
 
     const result = await this.mapLmsTrainee(lmsId);

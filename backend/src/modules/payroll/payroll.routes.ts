@@ -2361,16 +2361,37 @@ router.get("/runs/:id/esic-challan", requireRole("admin", "super_admin", "financ
 
 // GET /api/payroll/summary — payroll dashboard summary metrics
 router.get("/summary", requireRole("admin", "super_admin", "finance", "payroll"), h(async (req: AuthenticatedRequest, res: Response) => {
+  /*
+   * Two faults here, and the second is the dangerous one.
+   *
+   * employees has no ctc_annual column - it is ctc - so this raised ER_BAD_FIELD_ERROR and the
+   * payroll summary returned nothing.
+   *
+   * Correcting only the name would have been worse than leaving it broken. The employee-grain
+   * figures were being aggregated across a LEFT JOIN to salary_prep_line, which holds one row
+   * per employee per payroll run: 1,125 active employees fan out to 14,277 joined rows, so
+   * SUM(ctc) counted each employee's CTC once per payroll line they appear in. That reports a
+   * total CTC of 379 crore against a true figure of 1.97 crore, and an average inflated the same
+   * way - a number nobody would query, on a payroll dashboard.
+   *
+   * Each aggregate is now computed at its own grain. The payroll-line totals keep their original
+   * meaning, summed over every run belonging to an active employee; only the employee-grain ones
+   * stop being multiplied. No arithmetic changed - SUM(ctc) now means the sum of ctc.
+   */
+  const ACTIVE = "active_status = 1 AND employment_status = 'active'";
   const [summary] = await db.execute<RowDataPacket[]>(`
     SELECT
-      COUNT(DISTINCT e.id) as payroll_processed,
-      COALESCE(SUM(e.ctc_annual), 0) as total_ctc,
-      COALESCE(SUM(spl.gross_salary), 0) as total_gross,
-      COALESCE(SUM(spl.net_salary), 0) as total_net,
-      COALESCE(AVG(e.ctc_annual), 0) as avg_ctc
-    FROM employees e
-    LEFT JOIN salary_prep_line spl ON spl.employee_id = e.id
-    WHERE e.active_status = 1 AND e.employment_status = 'active'
+      (SELECT COUNT(*)                    FROM employees WHERE ${ACTIVE}) as payroll_processed,
+      (SELECT COALESCE(SUM(ctc), 0)       FROM employees WHERE ${ACTIVE}) as total_ctc,
+      (SELECT COALESCE(SUM(spl.gross_salary), 0)
+         FROM salary_prep_line spl
+         JOIN employees e ON e.id = spl.employee_id
+        WHERE e.active_status = 1 AND e.employment_status = 'active') as total_gross,
+      (SELECT COALESCE(SUM(spl.net_salary), 0)
+         FROM salary_prep_line spl
+         JOIN employees e ON e.id = spl.employee_id
+        WHERE e.active_status = 1 AND e.employment_status = 'active') as total_net,
+      (SELECT COALESCE(AVG(ctc), 0)       FROM employees WHERE ${ACTIVE}) as avg_ctc
   `);
   return res.json({ success: true, data: (summary as RowDataPacket[])[0] || {} });
 }));

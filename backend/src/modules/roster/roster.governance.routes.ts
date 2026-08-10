@@ -362,8 +362,28 @@ router.get("/manager-review-queue", h(async (req: AuthenticatedRequest, res: Res
 
   if (!isAdmin) {
     // Load processes where this user has manager/wfm scope
+    /*
+     * There is no user_process_scope table - this raised ER_NO_SUCH_TABLE, so the manager review
+     * queue returned 500 for every non-admin. The scope table is user_assignment_scope, which
+     * roleResolver already treats as the scope authority, and its column is role_key, not role.
+     *
+     * process_manager is added to the list deliberately. Of the four roles named here, not one
+     * holds a row with a process_id: manager 7 rows, wfm 7, branch_head 4, assistant_manager 0,
+     * all with process_id NULL. process_manager holds 16 of its 22 with a process, and the
+     * charter gives Process Manager publication authority for their mapped process, so it is the
+     * role this queue was for. Renaming the table alone would have turned a 500 into a 403 for
+     * everybody, which is harder to notice and no more usable.
+     *
+     * active_status is now checked, so a revoked assignment stops granting scope. Rows still
+     * scope down to the user's own processes below, so nobody sees a process they are not mapped
+     * to.
+     */
     const [scopeRows] = await db.execute<RowDataPacket[]>(
-      `SELECT DISTINCT process_id FROM user_process_scope WHERE user_id = ? AND role IN ('manager','wfm','assistant_manager','branch_head')`,
+      `SELECT DISTINCT process_id FROM user_assignment_scope
+        WHERE user_id = ?
+          AND role_key IN ('process_manager','manager','wfm','assistant_manager','branch_head')
+          AND active_status = 1
+          AND process_id IS NOT NULL`,
       [userId]
     );
     if (!scopeRows.length) return res.status(403).json({ success: false, message: "Forbidden: no manager scope found" });

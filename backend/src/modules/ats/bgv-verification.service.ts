@@ -1243,8 +1243,21 @@ export async function syncBgvChecksToReport(candidateId: string): Promise<{ sync
  * Get BGV API costs per check type from org_settings
  */
 export async function getBgvApiCosts(): Promise<Record<string, number>> {
+  /*
+   * org_settings is a flat key/value store - id, setting_key, setting_value, label, updated_by,
+   * updated_at. It has no category column, so this raised ER_BAD_FIELD_ERROR and every BGV cost
+   * read returned nothing, defaulting every check type to 0.
+   *
+   * The grouping was always carried by the key prefix, which the loop below already relies on
+   * when it strips "bgv_api_cost_" to get the check type. The ten rows are present and
+   * populated: aadhaar 5, address 8, bank 4, court 12, criminal 15, digilocker 2, education 10,
+   * employment 10, pan 3, uan 6.
+   *
+   * The underscores are escaped because _ is a single-character wildcard in LIKE.
+   */
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT setting_key, setting_value FROM org_settings WHERE category = 'bgv_api_costs'`
+    `SELECT setting_key, setting_value FROM org_settings
+      WHERE setting_key LIKE 'bgv\\_api\\_cost\\_%'`
   );
   const costs: Record<string, number> = {};
   for (const row of rows as RowDataPacket[]) {

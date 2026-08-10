@@ -476,7 +476,8 @@ reportSuiteRouter.get("/:code", reportScopeMiddleware, reportCatalogAccessMiddle
       clauses.push("e.active_status = 1");
       sql = `SELECT e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
                     e.official_email, e.mobile, e.employment_status, e.date_of_joining, e.date_of_exit,
-                    b.branch_name, d.dept_name AS department_name,
+                    COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
+                    COALESCE(d.dept_name, 'UNASSIGNED') AS department_name,
                     COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
                     COALESCE(cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
                     COALESCE(cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
@@ -503,7 +504,8 @@ reportSuiteRouter.get("/:code", reportScopeMiddleware, reportCatalogAccessMiddle
       sql = `SELECT e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
                     e.date_of_joining, COALESCE(e.date_of_exit,e.date_of_leaving,e.resignation_date) AS exit_date,
                     CASE WHEN e.date_of_joining BETWEEN ? AND ? THEN 'joining' ELSE 'exit' END AS movement_type,
-                    b.branch_name, d.dept_name AS department_name,
+                    COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
+                    COALESCE(d.dept_name, 'UNASSIGNED') AS department_name,
                     COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
                     COALESCE(cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
                     COALESCE(cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name
@@ -523,170 +525,20 @@ reportSuiteRouter.get("/:code", reportScopeMiddleware, reportCatalogAccessMiddle
       params.unshift(from, to);
       break;
     }
-    case "attendance-daily": {
-      const from = dateParam(req.query.from, new Date().toISOString().slice(0, 10));
-      const to = dateParam(req.query.to, from);
-      addScopedEmployeeFilters(req, clauses, params);
-      if (req.query.processId) { clauses.push("e.process_id = ?"); params.push(String(req.query.processId)); }
-      // Only active staff — the report is about who was expected to attend.
-      clauses.push("e.active_status = 1");
-      // Pre-aggregate wfm_attendance_session to avoid multi-session row duplication.
-      // One logical attendance day = earliest punch in, latest punch out, sum of minutes.
-      //
-      // DRIVEN FROM employees, NOT attendance_daily_record.
-      //
-      // This report declares its grain as "One row per employee per attendance date"
-      // (rowGrain, above) but drove from attendance_daily_record with an inner join to
-      // employees, so anyone with no ADR row for the date simply vanished. The CEO UAT
-      // of 31-Jul-2026 reported 350 rows against a headcount of 1,152 — the missing 800
-      // were not absent employees, they were employees the report could not see, which
-      // is precisely the population an attendance report exists to surface (no COSEC
-      // sync, no roster, not yet processed by the attendance engine).
-      //
-      // The date predicate moves into the LEFT JOIN condition. Leaving it in WHERE
-      // would filter out the NULL side and silently degrade this back to an inner join.
-      //
-      // Four placeholders now sit ahead of the WHERE — two in the adr JOIN and two in the
-      // date-restricted session subquery — and mysql2 binds positionally, so they must be
-      // prepended. unshift preserves argument order, so this yields
-      // [adrFrom, adrTo, sesFrom, sesTo, ...whereParams] which is the order they appear in
-      // the statement.
-      params.unshift(from, to, from, to);
-      sql = `SELECT adr.record_date,
-                    e.employee_code,
-                    COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-                    b.branch_name,
-                    COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
-                    COALESCE(ccd.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
-                    COALESCE(ccd.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
-                    d.dept_name AS department_name,
-                    desig.designation_name,
-                    COALESCE(NULLIF(rm.full_name,''), CONCAT(rm.first_name,' ',COALESCE(rm.last_name,''))) AS reporting_manager,
-                    COALESCE(ws.shift_name, 'Roster Not Assigned') AS shift_name,
-                    TIME_FORMAT(ws.start_time, '%H:%i') AS shift_start,
-                    TIME_FORMAT(ws.end_time, '%H:%i') AS shift_end,
-                    TIME_FORMAT(agg_ses.earliest_punch, '%H:%i') AS punch_in,
-                    TIME_FORMAT(agg_ses.latest_punch, '%H:%i') AS punch_out,
-                    CASE
-                      WHEN agg_ses.earliest_punch IS NOT NULL AND agg_ses.latest_punch IS NOT NULL
-                      THEN TIME_FORMAT(SEC_TO_TIME(TIMESTAMPDIFF(SECOND, agg_ses.earliest_punch, agg_ses.latest_punch)), '%H:%i')
-                      ELSE NULL
-                    END AS total_login_duration,
-                    adr.raw_minutes AS productive_minutes,
-                    adr.attendance_source,
-                    adr.attendance_status,
-                    adr.late_by_minutes,
-                    adr.lwp_value,
-                    CASE WHEN adr.regularization_id IS NOT NULL THEN 'Regularized' ELSE NULL END AS regularization_status,
-                    adr.is_locked
-               FROM employees e
-               LEFT JOIN attendance_daily_record adr
-                      ON adr.employee_id = e.id
-                     AND adr.record_date BETWEEN ? AND ?
-               LEFT JOIN branch_master b ON b.id = e.branch_id
-               LEFT JOIN process_master p ON p.id = e.process_id
-               LEFT JOIN cost_centre_master ccd ON ccd.id = e.cost_centre_id
-               LEFT JOIN department_master d ON d.id = e.department_id
-               LEFT JOIN designation_master desig ON desig.id = e.designation_id
-               LEFT JOIN employees rm ON rm.id = e.reporting_manager_id
-               LEFT JOIN wfm_roster_assignment wra ON wra.employee_id = e.id AND wra.roster_date = adr.record_date
-               LEFT JOIN wfm_shift_master ws ON ws.id = wra.shift_id
-               LEFT JOIN (
-                 -- Date-restricted. Without the WHERE this grouped the whole of
-                 -- wfm_attendance_session — 34,398 rows — on every request, against 792 for
-                 -- the single-day default. It is also joined to the nullable side of a LEFT
-                 -- JOIN, so nothing downstream could narrow it either.
-                 SELECT employee_id, session_date,
-                        MIN(login_time) AS earliest_punch,
-                        MAX(logout_time) AS latest_punch,
-                        SUM(total_login_minutes) AS total_login_minutes
-                   FROM wfm_attendance_session
-                  WHERE session_date BETWEEN ? AND ?
-                  GROUP BY employee_id, session_date
-               ) agg_ses ON agg_ses.employee_id = e.id AND agg_ses.session_date = adr.record_date
-              WHERE ${clauses.join(" AND ")}
-              ORDER BY adr.record_date DESC, b.branch_name, employee_name`;
-      break;
-    }
-    case "attendance-summary": {
-      const month = monthParam(req.query.month);
-      addScopedEmployeeFilters(req, clauses, params);
-      // Same non-sargable month filter fixed elsewhere in this audit, in its DATE_FORMAT
-      // spelling: wrapping record_date in a function means none of the eight indexes on it
-      // can be used, so this full-scans attendance_daily_record. Half-open range instead.
-      {
-        const [my, mm] = month.split("-").map(Number);
-        const nextMonth = `${mm === 12 ? my + 1 : my}-${String(mm === 12 ? 1 : mm + 1).padStart(2, "0")}-01`;
-        clauses.push("adr.record_date >= ? AND adr.record_date < ?");
-        params.push(`${month}-01`, nextMonth);
-      }
-      sql = `SELECT e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-                    b.branch_name,
-                    COALESCE(pm.process_name, 'UNASSIGNED') AS process_name,
-                    COALESCE(acc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
-                    COALESCE(acc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
-                    SUM(adr.attendance_status='present') AS present_days,
-                    SUM(adr.attendance_status='half_day') AS half_days,
-                    SUM(adr.attendance_status='absent') AS absent_days,
-                    SUM(adr.attendance_status='leave_approved') AS leave_days,
-                    SUM(adr.lwp_value) AS lwp_days,
-                    SUM(adr.late_mark=1) AS late_days,
-                    ROUND(SUM(COALESCE(adr.raw_minutes,adr.biometric_minutes,adr.dialler_minutes,0))/60,2) AS total_hours
-               FROM attendance_daily_record adr
-               JOIN employees e ON e.id = adr.employee_id
-               LEFT JOIN branch_master b ON b.id = e.branch_id
-               LEFT JOIN process_master pm ON pm.id = e.process_id
-               LEFT JOIN cost_centre_master acc ON acc.id = e.cost_centre_id
-              WHERE ${clauses.join(" AND ")}
-              -- ONLY_FULL_GROUP_BY: the four identity columns added above are not aggregates,
-              -- so they must appear here too or the report fails outright rather than degrading.
-              GROUP BY e.id, e.employee_code, e.first_name, e.last_name, e.full_name,
-                       b.branch_name, pm.process_name, acc.cost_centre_code, acc.cost_centre_name
-              ORDER BY employee_name`;
-      break;
-    }
-    case "biometric-reconciliation": {
-      const from = dateParam(req.query.from, new Date().toISOString().slice(0, 10));
-      const to = dateParam(req.query.to, from);
-      addScopedEmployeeFilters(req, clauses, params);
-      if (req.query.processId) { clauses.push("e.process_id = ?"); params.push(String(req.query.processId)); }
-      if (req.query.reconciliationStatus) {
-        clauses.push(`CASE WHEN ibd.first_punch IS NULL AND adr.attendance_status IN ('present','half_day') THEN 'NO_BIOMETRIC_FOR_PRESENT'
-                          WHEN ibd.first_punch IS NOT NULL AND adr.attendance_status='absent' THEN 'PUNCHED_BUT_ABSENT'
-                          ELSE 'OK' END = ?`);
-        params.push(String(req.query.reconciliationStatus));
-      }
-      clauses.push("adr.record_date BETWEEN ? AND ?"); params.push(from, to);
-      sql = `SELECT adr.record_date,
-                    e.employee_code,
-                    COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-                    COALESCE(rcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
-                    COALESCE(rcc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
-                    b.branch_name,
-                    p.process_name,
-                    adr.attendance_status,
-                    adr.biometric_minutes AS processed_biometric_minutes,
-                    TIME_FORMAT(SEC_TO_TIME(adr.biometric_minutes * 60), '%H:%i') AS processed_biometric_duration,
-                    TIME_FORMAT(ibd.first_punch, '%H:%i:%s') AS biometric_punch_in,
-                    TIME_FORMAT(ibd.last_punch, '%H:%i:%s') AS biometric_punch_out,
-                    ibd.biometric_minutes AS raw_biometric_minutes,
-                    TIME_FORMAT(SEC_TO_TIME(ibd.biometric_minutes * 60), '%H:%i') AS raw_biometric_duration,
-                    CASE WHEN ibd.first_punch IS NULL AND adr.attendance_status IN ('present','half_day') THEN 'NO_BIOMETRIC_FOR_PRESENT'
-                         WHEN ibd.first_punch IS NOT NULL AND adr.attendance_status='absent' THEN 'PUNCHED_BUT_ABSENT'
-                         ELSE 'OK' END AS reconciliation_status,
-                    CASE WHEN ibd.first_punch IS NULL AND adr.attendance_status IN ('present','half_day') THEN 'No biometric record for marked present'
-                         WHEN ibd.first_punch IS NOT NULL AND adr.attendance_status='absent' THEN 'Biometric punch exists but marked absent'
-                         ELSE 'Reconciled' END AS reconciliation_description
-               FROM attendance_daily_record adr
-               JOIN employees e ON e.id = adr.employee_id
-               LEFT JOIN branch_master b ON b.id = e.branch_id
-               LEFT JOIN process_master p ON p.id = e.process_id
-               LEFT JOIN integration_biometric_daily ibd ON ibd.employee_code = e.employee_code AND ibd.activity_date = adr.record_date
-               LEFT JOIN cost_centre_master rcc ON rcc.id = e.cost_centre_id
-              WHERE ${clauses.join(" AND ")}
-              ORDER BY adr.record_date DESC, reconciliation_status DESC`;
-      break;
-    }
+    // "attendance-daily" falls through to executeReport(), which now carries this SQL.
+    //
+    // Everything that made this report correct moved with it: it drives from employees with a
+    // LEFT JOIN to attendance_daily_record so people with no attendance row still appear (a
+    // UAT found 350 rows against a headcount of 1,152 before that was fixed), the date
+    // predicate stays in the JOIN rather than the WHERE, and four leading placeholders are
+    // unshifted for the attendance join and the session subquery.
+    // "attendance-summary" falls through to executeReport(), which now carries this SQL
+    // including the sargable half-open month range fixed earlier in this audit. Screen and
+    // download returned the same 1,123 rows with almost no shared columns.
+    // "biometric-reconciliation" falls through to executeReport(), which now carries this SQL.
+    // The reconciliation CASE appears twice — once in the SELECT and once in the WHERE when a
+    // status filter is supplied — because MySQL cannot filter on a SELECT alias. The two
+    // copies must stay identical or filtering selects a different set from the one shown.
     // "leave-balance" has no case here on purpose. A case in this switch takes
     // precedence over the executor fallback below, and this one returned the old
     // one-row-per-employee-per-leave-type shape, silently overriding the canonical
@@ -704,9 +556,9 @@ reportSuiteRouter.get("/:code", reportScopeMiddleware, reportCatalogAccessMiddle
       sql = `SELECT spr.run_month AS payroll_month,
                     e.employee_code,
                     COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-                    b.branch_name,
-                    p.process_name,
-                    d.dept_name AS department_name,
+                    COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
+                    COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
+                    COALESCE(d.dept_name, 'UNASSIGNED') AS department_name,
                     desig.designation_name,
                     e.date_of_joining,
                     e.employment_status,
@@ -752,8 +604,8 @@ reportSuiteRouter.get("/:code", reportScopeMiddleware, reportCatalogAccessMiddle
       clauses.push("LOWER(COALESCE(spr.status,'')) NOT IN ('draft','cancelled')");
       sql = `SELECT e.employee_code,
                     COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-                    b.branch_name,
-                    p.process_name,
+                    COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
+                    COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
                     COALESCE(prev.gross_salary, 0) AS previous_month_gross,
                     spl.gross_salary AS current_month_gross,
                     (spl.gross_salary - COALESCE(prev.gross_salary, 0)) AS gross_variance,
@@ -816,40 +668,11 @@ reportSuiteRouter.get("/:code", reportScopeMiddleware, reportCatalogAccessMiddle
                 AND (COALESCE(e.pan_number,'')='' OR eu.uan IS NULL OR COALESCE(e.esic_number,'')='')
               ORDER BY employee_name`;
       break;
-    case "bank-missing":
-      addScopedEmployeeFilters(req, clauses, params); clauses.push("e.active_status = 1");
-      sql = `SELECT e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-                    b.branch_name,
-                    COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
-                    COALESCE(cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
-                    COALESCE(cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
-                    CASE WHEN ebd.id IS NULL THEN 'MISSING_BANK' WHEN COALESCE(ebd.verified,0)=0 THEN 'UNVERIFIED_BANK' ELSE 'OK' END AS bank_status
-               FROM employees e
-               LEFT JOIN employee_bank_detail ebd ON ebd.employee_id = e.id AND ebd.active_status = 1 AND ebd.is_primary = 1
-               LEFT JOIN branch_master b ON b.id = e.branch_id
-               LEFT JOIN process_master p ON p.id = e.process_id
-               LEFT JOIN cost_centre_master cc ON cc.id = e.cost_centre_id
-              WHERE ${clauses.join(" AND ")}
-                AND (ebd.id IS NULL OR COALESCE(ebd.verified,0)=0)
-              ORDER BY bank_status DESC, employee_name`;
-      break;
-    case "increment-requests":
-      addScopedEmployeeFilters(req, clauses, params);
-      sql = `SELECT sir.id, e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-                    b.branch_name,
-                    COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
-                    COALESCE(cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
-                    COALESCE(cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
-                    sir.current_ctc, sir.proposed_ctc, sir.increment_percentage, sir.effective_from, sir.status,
-                    sir.communication_status, sir.letter_status, sir.created_at
-               FROM salary_increment_request sir
-               JOIN employees e ON e.id = sir.employee_id
-               LEFT JOIN branch_master b ON b.id = e.branch_id
-               LEFT JOIN process_master p ON p.id = e.process_id
-               LEFT JOIN cost_centre_master cc ON cc.id = e.cost_centre_id
-              WHERE ${clauses.length ? clauses.join(" AND ") : "1=1"}
-              ORDER BY sir.created_at DESC`;
-      break;
+    // "bank-missing" is intentionally not handled here — it falls through to executeReport(),
+    // which now carries this exact SQL. Without a registered executor its download answered
+    // 404 while the screen rendered normally.
+    // "increment-requests" is intentionally not handled here — it falls through to
+    // executeReport(), which now carries this exact SQL. Its download previously 404'd.
     case "cosec-unmapped":
       sql = `SELECT ibd.employee_code, ibd.activity_date, ibd.first_punch, ibd.last_punch, ibd.biometric_minutes
                FROM integration_biometric_daily ibd
@@ -859,30 +682,14 @@ reportSuiteRouter.get("/:code", reportScopeMiddleware, reportCatalogAccessMiddle
       break;
 
     // ─── A1: HR & Workforce ───────────────────────────────────────────────────
-    case "org-structure-snapshot":
-      // Same two defects cost-centre-headcount had, in the same shape.
-      //
-      // No row scope: the WHERE was hardcoded, so a branch-scoped user saw the org structure
-      // of every branch. Scope is enforced in the query and nowhere else. An all-scope user
-      // gains no predicate, so super_admin output is unchanged.
-      //
-      // And the superseded two-flag active test, which counts 1,123 where the agreed
-      // definition — active_status alone — counts 1,125, leaving this report unable to
-      // reconcile against headcount.
-      addScopedEmployeeFilters(req, clauses, params);
-      clauses.push("e.active_status = 1");
-      sql = `SELECT b.branch_name, d.dept_name AS department_name, p.process_name,
-                    COUNT(e.id) AS headcount,
-                    SUM(CASE WHEN e.reporting_manager_id IS NOT NULL OR e.manager_id IS NOT NULL THEN 1 ELSE 0 END) AS with_manager,
-                    SUM(CASE WHEN e.reporting_manager_id IS NULL AND e.manager_id IS NULL THEN 1 ELSE 0 END) AS without_manager
-               FROM employees e
-               LEFT JOIN branch_master b ON b.id = e.branch_id
-               LEFT JOIN department_master d ON d.id = e.department_id
-               LEFT JOIN process_master p ON p.id = e.process_id
-              WHERE ${clauses.join(" AND ")}
-              GROUP BY b.branch_name, d.dept_name, p.process_name
-              ORDER BY b.branch_name, d.dept_name, p.process_name`;
-      break;
+    // "org-structure-snapshot" is intentionally not handled here.
+    //
+    // It falls through to executeReport(), which now carries this exact SQL — including the
+    // row scope and the active_status = 1 test this block added, and the UNASSIGNED
+    // rendering. Screen and download were previously two implementations: same 95 rows, but
+    // the file named the manager counts has_manager / missing_manager while the catalogue and
+    // the grid expect with_manager / without_manager, so those two columns were unreachable
+    // in the workbook.
 
     case "cost-centre-headcount":
       // Two corrections, both to the predicate rather than the shape.
@@ -904,7 +711,16 @@ reportSuiteRouter.get("/:code", reportScopeMiddleware, reportCatalogAccessMiddle
       // names — "Snapdeal" alone is six of them).
       addScopedEmployeeFilters(req, clauses, params);
       clauses.push("e.active_status = 1");
-      sql = `SELECT cc.cost_centre_code, cc.cost_centre_name, b.branch_name,
+      // COALESCE on the SELECT only, never on the GROUP BY. Grouping is left exactly as it was
+      // so no row can merge or split and the headcount cannot move — this changes what an
+      // unmapped row is labelled, not what is counted. Verified after: still sums to 1,125.
+      //
+      // 4 of 41 rows here rendered a NULL cost centre. NULL reads as "nothing loaded" or as a
+      // rendering fault; UNASSIGNED reads as a fact about those employees, which is what it is —
+      // 64 active employees have no cost centre at all.
+      sql = `SELECT COALESCE(cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
+                    COALESCE(cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
+                    COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
                     COUNT(e.id) AS active_headcount
                FROM employees e
                LEFT JOIN cost_centre_master cc ON cc.id = e.cost_centre_id
@@ -930,7 +746,8 @@ reportSuiteRouter.get("/:code", reportScopeMiddleware, reportCatalogAccessMiddle
                     COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
                     e.date_of_joining, ep.probation_end_date,
                     DATEDIFF(ep.probation_end_date, CURDATE()) AS days_remaining,
-                    b.branch_name, d.dept_name AS department_name
+                    COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
+                    COALESCE(d.dept_name, 'UNASSIGNED') AS department_name
                FROM employees e
                JOIN employee_probation ep ON ep.employee_id = e.id
                LEFT JOIN branch_master b ON b.id = e.branch_id
@@ -979,7 +796,7 @@ reportSuiteRouter.get("/:code", reportScopeMiddleware, reportCatalogAccessMiddle
                     COALESCE(cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
                     COALESCE(cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
                     COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
-                    b.branch_name,
+                    COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
                     ele.event_type, ele.effective_date AS event_date,
                     ele.old_value_json AS old_value, ele.new_value_json AS new_value, ele.remarks,
                     COALESCE(NULLIF(actor.full_name,''), CONCAT(actor.first_name,' ',COALESCE(actor.last_name,''))) AS actor_name
@@ -994,356 +811,53 @@ reportSuiteRouter.get("/:code", reportScopeMiddleware, reportCatalogAccessMiddle
       break;
     }
 
-    case "increment-promotion-history": {
-      const from = dateParam(req.query.from, `${new Date().getFullYear()}-01-01`);
-      const to = dateParam(req.query.to, new Date().toISOString().slice(0, 10));
-      addScopedEmployeeFilters(req, clauses, params);
-      clauses.push("ejh.effective_date BETWEEN ? AND ?"); params.push(from, to);
-      sql = `SELECT e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-                                        COALESCE(zpm.process_name, 'UNASSIGNED') AS process_name,
-COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
-                    COALESCE(zcc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
-                    ejh.change_type, ejh.effective_date,
-                    fd.designation_name AS old_designation, td.designation_name AS new_designation,
-                    ejh.from_ctc_annual AS old_ctc, ejh.to_ctc_annual AS new_ctc,
-                    ejh.reason AS remarks
-               FROM employee_job_history ejh
-               JOIN employees e ON e.id = ejh.employee_id
-               LEFT JOIN designation_master fd ON fd.id = ejh.from_designation_id
-               LEFT JOIN designation_master td ON td.id = ejh.to_designation_id
-               LEFT JOIN cost_centre_master zcc ON zcc.id = e.cost_centre_id
-               LEFT JOIN process_master zpm ON zpm.id = e.process_id
-              WHERE ${clauses.join(" AND ")}
-              ORDER BY ejh.effective_date DESC`;
-      break;
-    }
+    // "increment-promotion-history" falls through to executeReport(), which now carries this
+    // SQL. Screen and download previously returned 1,408 and 1,368 rows.
 
-    case "birthday-list":
-      addScopedEmployeeFilters(req, clauses, params);
-      clauses.push("e.active_status = 1", "e.date_of_birth IS NOT NULL");
-      sql = `SELECT e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-                    e.date_of_birth,
-                    DATE_FORMAT(e.date_of_birth, '%d %b') AS birthday_display,
-                    DATEDIFF(
-                      DATE(CONCAT(YEAR(CURDATE()), '-', MONTH(e.date_of_birth), '-', DAY(e.date_of_birth))),
-                      CURDATE()
-                    ) + IF(
-                      DATE(CONCAT(YEAR(CURDATE()), '-', MONTH(e.date_of_birth), '-', DAY(e.date_of_birth))) < CURDATE(), 365, 0
-                    ) AS days_until_birthday,
-                    b.branch_name, d.dept_name AS department_name,
-                    COALESCE(pr.process_name, 'UNASSIGNED') AS process_name,
-                    COALESCE(ccm.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
-                    COALESCE(ccm.cost_centre_name, 'UNASSIGNED') AS cost_centre_name
-               FROM employees e
-               LEFT JOIN branch_master b ON b.id = e.branch_id
-               LEFT JOIN department_master d ON d.id = e.department_id
-               LEFT JOIN process_master pr ON pr.id = e.process_id
-               LEFT JOIN cost_centre_master ccm ON ccm.id = e.cost_centre_id
-              WHERE ${clauses.join(" AND ")}
-              ORDER BY days_until_birthday ASC`;
-      break;
+    // "birthday-list" is intentionally not handled here — it falls through to executeReport(),
+    // which now carries this exact SQL. The executor used to filter to the current month,
+    // so the screen listed every employee by upcoming date and the download listed only
+    // this month — a tenth of the rows. The catalogue declares a days-until column, which
+    // only means anything across the whole year.
 
-    case "anniversary-list":
-      addScopedEmployeeFilters(req, clauses, params);
-      clauses.push("e.active_status = 1", "e.date_of_joining IS NOT NULL");
-      sql = `SELECT e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-                    e.date_of_joining,
-                    TIMESTAMPDIFF(YEAR, e.date_of_joining, CURDATE()) AS years_of_service,
-                    DATEDIFF(
-                      DATE(CONCAT(YEAR(CURDATE()), '-', MONTH(e.date_of_joining), '-', DAY(e.date_of_joining))),
-                      CURDATE()
-                    ) + IF(
-                      DATE(CONCAT(YEAR(CURDATE()), '-', MONTH(e.date_of_joining), '-', DAY(e.date_of_joining))) < CURDATE(), 365, 0
-                    ) AS days_until_anniversary,
-                    b.branch_name, d.dept_name AS department_name,
-                    COALESCE(pr.process_name, 'UNASSIGNED') AS process_name,
-                    COALESCE(ccm.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
-                    COALESCE(ccm.cost_centre_name, 'UNASSIGNED') AS cost_centre_name
-               FROM employees e
-               LEFT JOIN branch_master b ON b.id = e.branch_id
-               LEFT JOIN department_master d ON d.id = e.department_id
-               LEFT JOIN process_master pr ON pr.id = e.process_id
-               LEFT JOIN cost_centre_master ccm ON ccm.id = e.cost_centre_id
-              WHERE ${clauses.join(" AND ")}
-              ORDER BY days_until_anniversary ASC`;
-      break;
+    // "anniversary-list" is intentionally not handled here — it falls through to executeReport(),
+    // which now carries this exact SQL. The executor used to filter to the current month,
+    // so the screen listed every employee by upcoming date and the download listed only
+    // this month — a tenth of the rows. The catalogue declares a days-until column, which
+    // only means anything across the whole year.
 
     // ─── A2: Attendance ───────────────────────────────────────────────────────
-    case "daily-hc-shift": {
-      const from = dateParam(req.query.from, new Date().toISOString().slice(0, 10));
-      const to = dateParam(req.query.to, from);
-      addScopedEmployeeFilters(req, clauses, params);
-      clauses.push("adr.record_date BETWEEN ? AND ?"); params.push(from, to);
-      sql = `SELECT adr.record_date,
-                    b.branch_name,
-                    p.process_name,
-                    COALESCE(ws.shift_name, 'Roster Not Assigned') AS shift_name,
-                    COUNT(*) AS scheduled_headcount,
-                    SUM(adr.attendance_status IN ('present','half_day')) AS present_count,
-                    SUM(adr.attendance_status = 'absent') AS absent_count,
-                    SUM(adr.attendance_status = 'leave_approved') AS leave_count,
-                    SUM(adr.attendance_status = 'week_off') AS week_off_count,
-                    SUM(adr.attendance_status = 'holiday') AS holiday_count,
-                    SUM(CASE WHEN adr.attendance_status = 'unreconciled' THEN 1 ELSE 0 END) AS missing_punch_count,
-                    SUM(CASE WHEN wra.id IS NULL THEN 1 ELSE 0 END) AS unassigned_roster_count,
-                    SUM(adr.late_mark = 1) AS late_count,
-                    ROUND(SUM(adr.attendance_status IN ('present','half_day')) / NULLIF(COUNT(*), 0) * 100, 1) AS attendance_pct
-               FROM attendance_daily_record adr
-               JOIN employees e ON e.id = adr.employee_id
-               LEFT JOIN branch_master b ON b.id = e.branch_id
-               LEFT JOIN process_master p ON p.id = e.process_id
-               LEFT JOIN wfm_roster_assignment wra ON wra.employee_id = adr.employee_id
-                 AND wra.roster_date = adr.record_date
-               LEFT JOIN wfm_shift_master ws ON ws.id = wra.shift_id
-              WHERE ${clauses.join(" AND ")}
-              GROUP BY adr.record_date, b.branch_name, p.process_name, ws.shift_name
-              ORDER BY adr.record_date DESC, b.branch_name, p.process_name, shift_name`;
-      break;
-    }
+    // "daily-hc-shift" falls through to executeReport(), which now carries this SQL.
+    // Screen and download returned the same 14 rows with disjoint columns.
 
-    case "shift-adherence-detail": {
-      const from = dateParam(req.query.from, new Date().toISOString().slice(0, 10));
-      const to = dateParam(req.query.to, from);
-      addScopedEmployeeFilters(req, clauses, params);
-      if (req.query.processId) { clauses.push("e.process_id = ?"); params.push(String(req.query.processId)); }
-      clauses.push("adr.record_date BETWEEN ? AND ?"); params.push(from, to);
-      // Aggregate sessions to prevent multi-session duplication before joining.
-      sql = `SELECT adr.record_date,
-                    e.employee_code,
-                    COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-                    COALESCE(rcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
-                    COALESCE(rcc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
-                    b.branch_name,
-                    p.process_name,
-                    COALESCE(ws.shift_name, 'Roster Not Assigned') AS shift_name,
-                    TIME_FORMAT(ws.start_time, '%H:%i') AS scheduled_start,
-                    TIME_FORMAT(ws.end_time, '%H:%i') AS scheduled_end,
-                    TIME_FORMAT(agg_ses.earliest_punch, '%H:%i') AS punch_in,
-                    TIME_FORMAT(agg_ses.latest_punch, '%H:%i') AS punch_out,
-                    CASE
-                      WHEN agg_ses.earliest_punch IS NOT NULL AND agg_ses.latest_punch IS NOT NULL
-                      THEN TIME_FORMAT(SEC_TO_TIME(TIMESTAMPDIFF(SECOND, agg_ses.earliest_punch, agg_ses.latest_punch)), '%H:%i')
-                      ELSE NULL
-                    END AS total_login_duration,
-                    COALESCE(ws.required_minutes, 540) AS scheduled_minutes,
-                    COALESCE(agg_ses.total_login_minutes, 0) AS actual_minutes,
-                    adr.late_by_minutes AS late_minutes,
-                    CASE
-                      WHEN agg_ses.latest_punch IS NOT NULL AND ws.end_time IS NOT NULL
-                           AND TIME(agg_ses.latest_punch) < ws.end_time
-                      THEN TIMESTAMPDIFF(MINUTE, TIME(agg_ses.latest_punch), ws.end_time)
-                      ELSE 0
-                    END AS early_logout_minutes,
-                    CASE
-                      WHEN ws.required_minutes IS NOT NULL AND ws.required_minutes > 0
-                      THEN ROUND(LEAST(COALESCE(agg_ses.total_login_minutes, 0), ws.required_minutes) / ws.required_minutes * 100, 1)
-                      ELSE NULL
-                    END AS adherence_pct,
-                    adr.attendance_status,
-                    CASE
-                      WHEN adr.attendance_status = 'absent' THEN 'ABSENT'
-                      WHEN adr.late_mark = 1 AND COALESCE(agg_ses.total_login_minutes, 0) < COALESCE(ws.required_minutes, 540) * 0.85 THEN 'LATE_AND_SHORT'
-                      WHEN adr.late_mark = 1 THEN 'LATE'
-                      WHEN COALESCE(agg_ses.total_login_minutes, 0) < COALESCE(ws.required_minutes, 540) * 0.85 THEN 'SHORT'
-                      ELSE 'ON_TIME'
-                    END AS adherence_status,
-                    CASE WHEN adr.regularization_id IS NOT NULL THEN 'Yes' ELSE 'No' END AS exception_applied
-               FROM attendance_daily_record adr
-               JOIN employees e ON e.id = adr.employee_id
-               LEFT JOIN branch_master b ON b.id = e.branch_id
-               LEFT JOIN process_master p ON p.id = e.process_id
-               LEFT JOIN wfm_roster_assignment wra ON wra.employee_id = adr.employee_id
-                 AND wra.roster_date = adr.record_date
-               LEFT JOIN wfm_shift_master ws ON ws.id = wra.shift_id
-               LEFT JOIN (
-                 SELECT employee_id, session_date,
-                        MIN(login_time) AS earliest_punch,
-                        MAX(logout_time) AS latest_punch,
-                        SUM(total_login_minutes) AS total_login_minutes
-                   FROM wfm_attendance_session
-                  GROUP BY employee_id, session_date
-               ) agg_ses ON agg_ses.employee_id = adr.employee_id AND agg_ses.session_date = adr.record_date
-               LEFT JOIN cost_centre_master rcc ON rcc.id = e.cost_centre_id
-              WHERE ${clauses.join(" AND ")}
-              ORDER BY adr.record_date DESC, adherence_status DESC, employee_name`;
-      break;
-    }
+    // "shift-adherence-detail" falls through to executeReport(), which now carries this SQL
+    // including the pre-aggregated session subquery that stops multi-session days from
+    // multiplying every minute figure.
 
     // attendance-register-grid is REMOVED — superseded by attendance-summary.
     // Any API call to this code returns a redirect hint, not data.
 
-    case "overtime-summary": {
-      const month = monthParam(req.query.month);
-      addScopedEmployeeFilters(req, clauses, params);
-      if (req.query.processId) { clauses.push("e.process_id = ?"); params.push(String(req.query.processId)); }
-      // Half-open range, not DATE_FORMAT. Wrapping record_date in a function makes the
-      // predicate non-sargable, so none of the eight indexes on that column can be used.
-      // Measured directly against the database, identical rows both ways:
-      //   2026-08  3,012ms -> 1,997ms  (787 rows)
-      //   2026-07  7,265ms -> 6,197ms  (1,036 rows)
-      // Half-open rather than BETWEEN so it stays correct if the column ever becomes a
-      // DATETIME — BETWEEN '..-01' AND '..-31' silently drops everything after midnight
-      // on the 31st.
-      {
-        const [oy, om] = month.split("-").map(Number);
-        const nextMonth = `${om === 12 ? oy + 1 : oy}-${String(om === 12 ? 1 : om + 1).padStart(2, "0")}-01`;
-        clauses.push("adr.record_date >= ? AND adr.record_date < ?");
-        params.push(`${month}-01`, nextMonth);
-      }
-      sql = `SELECT e.employee_code,
-                    COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-                    b.branch_name,
-                    p.process_name,
-                    d.dept_name AS department_name,
-                    COALESCE(occ.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
-                    COALESCE(occ.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
-                    dm.designation_name,
-                    COUNT(DISTINCT adr.record_date) AS days_attended,
-                    ROUND(SUM(adr.raw_minutes) / 60, 1) AS total_worked_hours,
-                    ROUND(SUM(
-                      CASE WHEN arc.full_day_minutes IS NOT NULL THEN arc.full_day_minutes
-                           ELSE TIMESTAMPDIFF(MINUTE, sm.start_time, sm.end_time) END
-                    ) / 60, 1) AS total_scheduled_hours,
-                    ROUND(SUM(
-                      GREATEST(0, adr.raw_minutes - COALESCE(arc.full_day_minutes, TIMESTAMPDIFF(MINUTE, sm.start_time, sm.end_time), 480))
-                    ) / 60, 1) AS overtime_hours,
-                    TIME_FORMAT(SEC_TO_TIME(SUM(
-                      GREATEST(0, adr.raw_minutes - COALESCE(arc.full_day_minutes, TIMESTAMPDIFF(MINUTE, sm.start_time, sm.end_time), 480))
-                    ) * 60), '%H:%i') AS overtime_duration,
-                    ROUND(COALESCE(MAX(otp.overtime_pay), 0), 0) AS overtime_pay
-               FROM attendance_daily_record adr
-               JOIN employees e ON e.id = adr.employee_id
-               LEFT JOIN branch_master b ON b.id = e.branch_id
-               LEFT JOIN process_master p ON p.id = e.process_id
-               LEFT JOIN department_master d ON d.id = e.department_id
-               LEFT JOIN designation_master dm ON dm.id = e.designation_id
-               LEFT JOIN cost_centre_master occ ON occ.id = e.cost_centre_id
-               LEFT JOIN attendance_rule_config arc ON arc.id = adr.rule_config_id
-               LEFT JOIN wfm_roster_assignment wra ON wra.employee_id = e.id AND wra.roster_date = adr.record_date
-               LEFT JOIN wfm_shift_master sm ON sm.id = wra.shift_id
-               -- Pre-aggregated, not two open joins. spl2 was joined on employee_id ALONE, with
-               -- no run filter, and spr2 was a LEFT JOIN so it did not filter either — every
-               -- salary line the employee has ever had survived, then multiplied by every
-               -- attendance day. Measured: 5.8 salary lines per employee against ~20 attendance
-               -- days, so roughly a 116x row explosion before anything narrowed it. That is why
-               -- this report did not come back.
-               --
-               -- It was also summing across that explosion: SUM(spl2.overtime_pay) counted every
-               -- run's overtime once per attendance day. Harmless today only because overtime_pay
-               -- is 0.00 on all 80,338 salary lines — verified — so this rewrite cannot move a
-               -- number now, but it would have inflated real money the moment that column is used.
-               LEFT JOIN (
-                 SELECT spl.employee_id,
-                        SUM(COALESCE(spl.overtime_pay, 0)) AS overtime_pay
-                   FROM salary_prep_line spl
-                   JOIN salary_prep_run spr ON spr.id = spl.run_id
-                  WHERE spr.run_month = ?
-                  GROUP BY spl.employee_id
-               ) otp ON otp.employee_id = e.id
-              WHERE ${clauses.join(" AND ")} AND adr.attendance_status IN ('present','half_day')
-              GROUP BY e.id, e.employee_code, e.first_name, e.last_name, e.full_name,
-                       b.branch_name, p.process_name, d.dept_name, dm.designation_name,
-                       occ.cost_centre_code, occ.cost_centre_name
-              HAVING overtime_hours > 0
-              ORDER BY overtime_hours DESC`;
-      // The subquery's run_month placeholder is in the JOIN, which binds before the WHERE,
-      // so its value leads the list. Pushing it last left every binding shifted by one.
-      params.unshift(month);
-      break;
-    }
+    // "overtime-summary" is intentionally not handled here.
+    //
+    // It falls through to executeReport(), which now carries this exact SQL including the
+    // pre-aggregated overtime_pay subquery and the sargable month range fixed earlier in this
+    // audit. Screen and download previously disagreed on both the columns (hours vs minutes)
+    // and on which days count as overtime, giving 787 rows against 789.
 
 
-    case "daily-shrinkage-report": {
-      const from = dateParam(req.query.from, new Date().toISOString().slice(0, 10));
-      const to = dateParam(req.query.to, from);
-      addScopedEmployeeFilters(req, clauses, params);
-      if (req.query.processId) { clauses.push("e.process_id = ?"); params.push(String(req.query.processId)); }
-      clauses.push("adr.record_date BETWEEN ? AND ?"); params.push(from, to);
-      sql = `SELECT adr.record_date, b.branch_name, p.process_name,
-                    COUNT(*) AS total_scheduled,
-                    SUM(adr.attendance_status IN ('present','half_day')) AS present_hc,
-                    SUM(adr.attendance_status = 'absent') AS absent_hc,
-                    SUM(adr.attendance_status = 'leave_approved') AS leave_hc,
-                    SUM(adr.attendance_status = 'week_off') AS week_off_hc,
-                    SUM(adr.attendance_status = 'holiday') AS holiday_hc,
-                    COUNT(*) - SUM(adr.attendance_status IN ('present','half_day','leave_approved','week_off','holiday')) AS unplanned_shrinkage_hc,
-                    ROUND((COUNT(*) - SUM(adr.attendance_status IN ('present','half_day'))) / NULLIF(COUNT(*), 0) * 100, 2) AS total_shrinkage_pct,
-                    ROUND((SUM(adr.attendance_status = 'absent')) / NULLIF(COUNT(*), 0) * 100, 2) AS unplanned_shrinkage_pct
-               FROM attendance_daily_record adr
-               JOIN employees e ON e.id = adr.employee_id
-               LEFT JOIN branch_master b ON b.id = e.branch_id
-               LEFT JOIN process_master p ON p.id = e.process_id
-              WHERE ${clauses.join(" AND ")}
-              GROUP BY adr.record_date, b.branch_name, p.process_name
-              ORDER BY adr.record_date DESC, total_shrinkage_pct DESC`;
-      break;
-    }
+    // "daily-shrinkage-report" is intentionally not handled here.
+    //
+    // It falls through to executeReport(), which now carries this exact SQL. Screen and
+    // download previously returned the same 33 rows with disjoint columns: this block emitted
+    // the nine metrics the catalogue declares, the executor emitted three of its own, and the
+    // workbook therefore contained none of the columns the grid draws.
 
-    case "monthly-shrinkage-trend": {
-      const from = dateParam(req.query.from, `${new Date().getFullYear()}-01-01`);
-      const to = dateParam(req.query.to, new Date().toISOString().slice(0, 10));
-      addScopedEmployeeFilters(req, clauses, params);
-      if (req.query.processId) { clauses.push("e.process_id = ?"); params.push(String(req.query.processId)); }
-      clauses.push("adr.record_date BETWEEN ? AND ?"); params.push(from, to);
-      // Derived table required — MySQL forbids window functions over aggregates in the same SELECT level.
-      sql = `SELECT *, ROUND(AVG(total_shrinkage_pct) OVER (
-                    PARTITION BY branch_name, process_name
-                    ORDER BY month
-                    ROWS BETWEEN 2 PRECEDING AND CURRENT ROW
-                  ), 2) AS three_month_avg_shrinkage
-               FROM (
-                 SELECT DATE_FORMAT(adr.record_date,'%Y-%m') AS month, b.branch_name, p.process_name,
-                        COUNT(DISTINCT adr.record_date) AS working_days,
-                        COUNT(*) AS total_employee_days,
-                        SUM(adr.attendance_status IN ('present','half_day')) AS present_days,
-                        SUM(adr.attendance_status = 'absent') AS absent_days,
-                        SUM(adr.attendance_status = 'leave_approved') AS leave_days,
-                        ROUND((COUNT(*) - SUM(adr.attendance_status IN ('present','half_day'))) / NULLIF(COUNT(*), 0) * 100, 2) AS total_shrinkage_pct,
-                        ROUND(SUM(adr.attendance_status = 'absent') / NULLIF(COUNT(*), 0) * 100, 2) AS unplanned_shrinkage_pct
-                   FROM attendance_daily_record adr
-                   JOIN employees e ON e.id = adr.employee_id
-                   LEFT JOIN branch_master b ON b.id = e.branch_id
-                   LEFT JOIN process_master p ON p.id = e.process_id
-                  WHERE ${clauses.join(" AND ")}
-                  GROUP BY DATE_FORMAT(adr.record_date,'%Y-%m'), b.branch_name, p.process_name
-               ) base_data
-               ORDER BY month DESC, total_shrinkage_pct DESC`;
-      break;
-    }
+    // "monthly-shrinkage-trend" falls through to executeReport(), which now carries this SQL
+    // including the derived table the window function requires. Same 430 rows both ways
+    // before, with disjoint columns.
 
-    case "punch-raw-export": {
-      // Row scope was absent: this block read employee data with no branch/process
-      // restriction, so a scoped user received every branch's rows. Scope is enforced in
-      // the query and nowhere else. For an all-scope user this adds no predicate, which is
-      // why super_admin output is unchanged.
-      addScopedEmployeeFilters(req, clauses, params);
-      const from = dateParam(req.query.from, new Date().toISOString().slice(0, 10));
-      const to = dateParam(req.query.to, from);
-      clauses.push("ibd.activity_date BETWEEN ? AND ?"); params.push(from, to);
-      if (req.query.branchId) { clauses.push("e.branch_id = ?"); params.push(String(req.query.branchId)); }
-      if (req.query.processId) { clauses.push("e.process_id = ?"); params.push(String(req.query.processId)); }
-      sql = `SELECT ibd.employee_code,
-                    COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-                    COALESCE(rcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
-                    COALESCE(rcc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
-                    e.biometric_code,
-                    b.branch_name,
-                    p.process_name,
-                    ibd.activity_date,
-                    TIME_FORMAT(ibd.first_punch, '%H:%i:%s') AS first_punch,
-                    TIME_FORMAT(ibd.last_punch, '%H:%i:%s') AS last_punch,
-                    ibd.biometric_minutes,
-                    TIME_FORMAT(SEC_TO_TIME(ibd.biometric_minutes * 60), '%H:%i:%s') AS total_duration,
-                    ibd.total_punches
-               FROM integration_biometric_daily ibd
-               LEFT JOIN employees e ON e.employee_code = ibd.employee_code
-               LEFT JOIN branch_master b ON b.id = e.branch_id
-               LEFT JOIN process_master p ON p.id = e.process_id
-               LEFT JOIN cost_centre_master rcc ON rcc.id = e.cost_centre_id
-              WHERE ${clauses.join(" AND ")}
-              ORDER BY ibd.activity_date DESC, ibd.employee_code`;
-      break;
-    }
+    // "punch-raw-export" falls through to executeReport(), which now carries this SQL.
+    // Screen and download returned the same 160 rows with disjoint columns.
 
     // ─── A3: Leave ────────────────────────────────────────────────────────────
     case "leave-allocation-register": {
@@ -1356,7 +870,7 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
                     COALESCE(zcc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
                     lt.leave_code, lt.leave_name, lbl.allocated_days, lbl.adjusted_days,
                     lbl.used_days, (lbl.allocated_days + lbl.adjusted_days - lbl.used_days) AS remaining_days,
-                    b.branch_name
+                    COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name
                FROM leave_balance_ledger lbl
                JOIN employees e ON e.id = lbl.employee_id
                JOIN leave_type_master lt ON lt.id = lbl.leave_type_id
@@ -1384,36 +898,12 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
       break;
     }
 
-    case "leave-lwp-reconciliation": {
-      const month = monthParam(req.query.month);
-      addScopedEmployeeFilters(req, clauses, params);
-      clauses.push("DATE_FORMAT(adr.record_date,'%Y-%m') = ?"); params.push(month);
-      sql = `SELECT e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-                                        COALESCE(zpm.process_name, 'UNASSIGNED') AS process_name,
-COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
-                    COALESCE(zcc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
-                    SUM(adr.lwp_value) AS lwp_days_attendance,
-                    COALESCE(spl.lwp_days, 0) AS lwp_days_payroll,
-                    SUM(adr.lwp_value) - COALESCE(spl.lwp_days, 0) AS variance
-               FROM attendance_daily_record adr
-               JOIN employees e ON e.id = adr.employee_id
-               LEFT JOIN salary_prep_run spr ON spr.run_month = ?
-               LEFT JOIN salary_prep_line spl ON spl.employee_id = e.id AND spl.run_id = spr.id
-               LEFT JOIN cost_centre_master zcc ON zcc.id = e.cost_centre_id
-               LEFT JOIN process_master zpm ON zpm.id = e.process_id
-              WHERE ${clauses.join(" AND ")} AND adr.lwp_value > 0
-              GROUP BY e.id, e.employee_code, e.first_name, e.last_name, spl.lwp_days
-              HAVING lwp_days_attendance > 0
-              ORDER BY ABS(variance) DESC`;
-      // These values belong to placeholders that sit BEFORE the WHERE, so they must LEAD the
-      // bind array — unshift, not push. Appending them shifted every parameter by one.
-      // It looked fine for super_admin, whose array happened to hold the same value twice;
-      // a branch-scoped user's extra predicate exposed it, and the branch id landed on the
-      // month placeholder. Measured on leave-lwp-reconciliation: a scoped user got 0 rows,
-      // against 200 once corrected.
-      params.unshift(month);
-      break;
-    }
+    // "leave-lwp-reconciliation" is intentionally not handled here.
+    //
+    // It falls through to executeReport(), which now carries this exact SQL including the
+    // params.unshift(month) the LEFT JOIN placeholder requires. Screen and download returned
+    // 650 and 1,569 rows respectively; the eight columns the catalogue declares are the
+    // inline shape.
 
     case "maternity-paternity-register": {
       addScopedEmployeeFilters(req, clauses, params);
@@ -1447,38 +937,13 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
       break;
     }
 
-    case "leave-lapse-summary": {
-      const currentYear = new Date().getFullYear();
-      addScopedEmployeeFilters(req, clauses, params);
-      clauses.push("lbl.balance_year < ?"); params.push(currentYear);
-      sql = `SELECT e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-                                        COALESCE(zpm.process_name, 'UNASSIGNED') AS process_name,
-COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
-                    COALESCE(zcc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
-                    lt.leave_code, lt.leave_name, lbl.balance_year,
-                    GREATEST(lbl.allocated_days + lbl.adjusted_days - lbl.used_days, 0) AS lapsed_days
-               FROM leave_balance_ledger lbl
-               JOIN employees e ON e.id = lbl.employee_id
-               JOIN leave_type_master lt ON lt.id = lbl.leave_type_id
-               LEFT JOIN cost_centre_master zcc ON zcc.id = e.cost_centre_id
-               LEFT JOIN process_master zpm ON zpm.id = e.process_id
-              WHERE ${clauses.join(" AND ")}
-                AND (lbl.allocated_days + lbl.adjusted_days - lbl.used_days) > 0
-              ORDER BY employee_name, lbl.balance_year`;
-      break;
-    }
+    // "leave-lapse-summary" is intentionally not handled here.
+    //
+    // It falls through to executeReport(), which now carries this exact SQL. Screen and
+    // download returned 3,000 and 2,916 rows; the nine columns the catalogue declares are the
+    // inline shape.
 
-    case "holiday-master-list": {
-      const year = Number(req.query.year ?? new Date().getFullYear());
-      sql = `SELECT lhm.holiday_date, lhm.holiday_name, lhm.holiday_type,
-                    lhm.active_status, b.branch_name
-               FROM leave_holiday_master lhm
-               LEFT JOIN branch_master b ON b.id = lhm.branch_id
-              WHERE YEAR(lhm.holiday_date) = ?
-              ORDER BY lhm.holiday_date ASC`;
-      params.push(year);
-      break;
-    }
+    // "holiday-master-list" falls through to executeReport(), which now carries this SQL.
 
     // ─── A4: Payroll ─────────────────────────────────────────────────────────
     // "ytd-salary-summary" was implemented inline here. It now falls through to the
@@ -1494,7 +959,7 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
       clauses.push("LOWER(COALESCE(spr.status,'')) NOT IN ('draft','cancelled')");
       sql = `SELECT COALESCE(cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
                     COALESCE(cc.cost_centre_name, 'Unassigned') AS cost_centre_name,
-                    b.branch_name,
+                    COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
                     COUNT(DISTINCT spl.employee_id) AS headcount,
                     SUM(spl.gross_salary) AS total_gross,
                     SUM(spl.net_salary) AS total_net
@@ -1516,7 +981,7 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
       clauses.push("LOWER(COALESCE(spr.status,'')) NOT IN ('draft','cancelled')");
       sql = `SELECT COALESCE(p.process_name, 'Unassigned') AS process_name,
                     COALESCE(l.lob_name, 'N/A') AS lob_name,
-                    b.branch_name,
+                    COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
                     COUNT(DISTINCT spl.employee_id) AS headcount,
                     SUM(spl.gross_salary) AS total_gross,
                     SUM(spl.net_salary) AS total_net,
@@ -1671,38 +1136,9 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
       break;
     }
 
-    case "uan-master-register":
-      // Two rival sources for one fact, and this read the dead one. employee_uan exists but
-      // holds 0 rows, so the INNER JOIN eliminated every employee and the register returned
-      // nothing — indistinguishable from "no one has a UAN". The live data is on
-      // employees.uan_number: 467 of the 1,125 active employees have one.
-      //
-      // Driven off employees with a LEFT JOIN to employee_uan, so the register works today
-      // and automatically picks up member_id / epf_join_date if that table is ever populated.
-      // uan_source names which one answered, so this cannot silently regress the same way.
-      addScopedEmployeeFilters(req, clauses, params);
-      clauses.push(
-        "e.active_status = 1",
-        "COALESCE(NULLIF(TRIM(eu.uan), ''), NULLIF(TRIM(e.uan_number), '')) IS NOT NULL",
-      );
-      sql = `SELECT e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-                    COALESCE(NULLIF(TRIM(eu.uan), ''), NULLIF(TRIM(e.uan_number), '')) AS uan,
-                    CASE WHEN NULLIF(TRIM(eu.uan), '') IS NOT NULL THEN 'employee_uan'
-                         ELSE 'employees.uan_number' END AS uan_source,
-                    e.epf_number, eu.member_id AS pf_member_id,
-                    e.date_of_joining AS pf_joining_date, e.date_of_birth, e.gender,
-                    b.branch_name,
-                    COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
-                    COALESCE(cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
-                    COALESCE(cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name
-               FROM employees e
-               LEFT JOIN employee_uan eu ON eu.employee_id = e.id AND eu.is_active = 1
-               LEFT JOIN branch_master b ON b.id = e.branch_id
-               LEFT JOIN process_master p ON p.id = e.process_id
-               LEFT JOIN cost_centre_master cc ON cc.id = e.cost_centre_id
-              WHERE ${clauses.join(" AND ")}
-              ORDER BY employee_name`;
-      break;
+    // "uan-master-register" is intentionally not handled here — it falls through to
+    // executeReport(), which now carries this exact SQL. Its download previously 404'd, on a
+    // statutory register that exists to be filed.
 
     case "esic-monthly-summary": {
       const from = dateParam(req.query.from, `${new Date().getFullYear()}-01-01`);
@@ -1752,31 +1188,8 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
       break;
     }
 
-    case "gratuity-liability-register":
-      addScopedEmployeeFilters(req, clauses, params);
-      clauses.push("e.active_status = 1", "e.date_of_joining IS NOT NULL");
-      sql = `SELECT e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-                    e.date_of_joining,
-                    TIMESTAMPDIFF(YEAR, e.date_of_joining, CURDATE()) AS tenure_years,
-                    ROUND(TIMESTAMPDIFF(MONTH, e.date_of_joining, CURDATE()) / 12, 2) AS tenure_years_exact,
-                    COALESCE(sca.basic, esa.ctc_annual / 12 * 0.4, 0) AS last_drawn_basic,
-                    ROUND(COALESCE(sca.basic, esa.ctc_annual / 12 * 0.4, 0)
-                          * (TIMESTAMPDIFF(MONTH, e.date_of_joining, CURDATE()) / 12)
-                          * (15.0 / 26.0), 0) AS gratuity_liability,
-                    b.branch_name,
-                    COALESCE(gpm.process_name, 'UNASSIGNED') AS process_name,
-                    COALESCE(gcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
-                    COALESCE(gcc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name
-               FROM employees e
-               LEFT JOIN employee_salary_assignment esa ON esa.employee_id = e.id AND esa.active_status = 1
-               LEFT JOIN salary_component_assignments sca ON sca.employee_id = e.id
-                 AND sca.status = 'active'
-               LEFT JOIN branch_master b ON b.id = e.branch_id
-               LEFT JOIN process_master gpm ON gpm.id = e.process_id
-               LEFT JOIN cost_centre_master gcc ON gcc.id = e.cost_centre_id
-              WHERE ${clauses.join(" AND ")} AND TIMESTAMPDIFF(YEAR, e.date_of_joining, CURDATE()) >= 5
-              ORDER BY gratuity_liability DESC`;
-      break;
+    // "gratuity-liability-register" falls through to executeReport(), which now carries this
+    // SQL including the five-year qualifying filter. Screen 175 rows, download 131.
 
     case "statutory-compliance-calendar": {
       const year = Number(req.query.year ?? new Date().getFullYear());
@@ -1889,7 +1302,8 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
       const from = dateParam(req.query.from, `${new Date().getFullYear()}-01-01`);
       const to = dateParam(req.query.to, new Date().toISOString().slice(0, 10));
       sql = `SELECT ais.slot_date, ais.slot_time,
-                    b.branch_name, p.process_name,
+                    COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
+                    COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
                     ais.max_capacity AS total_slots,
                     ais.registered AS booked_slots,
                     ais.max_capacity - ais.registered AS available_slots,
@@ -1949,7 +1363,8 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
                     er.submitted_at AS resignation_date,
                     COALESCE(er.last_working_day_confirmed, er.last_working_day_proposed) AS last_working_day,
                     er.exit_type, er.exit_reason_category AS exit_reason,
-                    er.status AS exit_status, b.branch_name, d.dept_name AS department_name, p.process_name,
+                    er.status AS exit_status, COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
+                    COALESCE(d.dept_name, 'UNASSIGNED') AS department_name, p.process_name,
                     TIMESTAMPDIFF(MONTH, e.date_of_joining,
                       COALESCE(er.last_working_day_confirmed, er.last_working_day_proposed)) AS tenure_months
                FROM exit_request er
@@ -1987,7 +1402,8 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
       const from = dateParam(req.query.from, `${new Date().getFullYear()}-01-01`);
       const to = dateParam(req.query.to, new Date().toISOString().slice(0, 10));
       sql = `SELECT COALESCE(er.exit_reason_category, 'Not Specified') AS exit_reason,
-                    b.branch_name, p.process_name,
+                    COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
+                    COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
                     COUNT(*) AS exit_count,
                     ROUND(COUNT(*) * 100.0 / SUM(COUNT(*)) OVER(), 1) AS pct_of_total,
                     ROUND(AVG(TIMESTAMPDIFF(MONTH, e.date_of_joining,
@@ -2020,41 +1436,9 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
     // It also applies row scope, which this inline block did not: attrition by branch was
     // readable by anyone who could reach the report, regardless of their branch.
 
-    case "ff-settlement-register": {
-      const from = dateParam(req.query.from, `${new Date().getFullYear()}-01-01`);
-      const to = dateParam(req.query.to, new Date().toISOString().slice(0, 10));
-      // Row scope was absent. This block reads full_final_calculation — notice recovery,
-      // gratuity, salary hold and net payable — and built its WHERE inline, so it applied no
-      // branch restriction at all: every branch's settlement amounts were returned to anyone
-      // who could reach the report. Scope is enforced in the query and nowhere else; the
-      // middleware resolves the user's branches but does not filter rows.
-      //
-      // Called FIRST so its clauses and their parameters lead the bind list, with the report's
-      // own date range pushed after. For an all-scope user this adds no predicate, which is
-      // why super_admin output is byte-identical and why the gap was invisible.
-      addScopedEmployeeFilters(req, clauses, params);
-      clauses.push("COALESCE(er.last_working_day_confirmed, er.last_working_day_proposed) BETWEEN ? AND ?");
-      params.push(from, to);
-      sql = `SELECT e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-                    b.branch_name,
-                    COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
-                    COALESCE(cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
-                    COALESCE(cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
-                    COALESCE(er.last_working_day_confirmed, er.last_working_day_proposed) AS last_working_day,
-                    ffc.notice_recovery, ffc.earned_leave_encashment AS leave_encashment,
-                    ffc.gratuity_amount, ffc.advances_recovery, ffc.salary_hold,
-                    ffc.net_payable AS net_ff_payable,
-                    ffc.status, ffc.is_ff_provisional
-               FROM full_final_calculation ffc
-               JOIN exit_request er ON er.id = ffc.exit_request_id
-               JOIN employees e ON e.id = er.employee_id
-               LEFT JOIN branch_master b ON b.id = e.branch_id
-               LEFT JOIN process_master p ON p.id = e.process_id
-               LEFT JOIN cost_centre_master cc ON cc.id = e.cost_centre_id
-              WHERE ${clauses.join(" AND ")}
-              ORDER BY COALESCE(er.last_working_day_confirmed, er.last_working_day_proposed) DESC`;
-      break;
-    }
+    // "ff-settlement-register" is intentionally not handled here — it falls through to
+    // executeReport(), which now carries this exact SQL including the row scope added earlier
+    // in this audit. Without that scope, settlement amounts were visible across every branch.
 
     case "clearance-status-register": {
       const from = dateParam(req.query.from, `${new Date().getFullYear()}-01-01`);
@@ -2091,11 +1475,11 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
       // cannot be resolved to a name through employees, and a raw uuid in a column labelled
       // "Cleared By" is worse than no column. cleared_at still shows whether it was cleared.
       sql = `SELECT e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-                    b.branch_name,
+                    COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
                     COALESCE(cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
                     COALESCE(cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
                     COALESCE(pr.process_name, 'UNASSIGNED') AS process_name,
-                    d.dept_name AS department_name,
+                    COALESCE(d.dept_name, 'UNASSIGNED') AS department_name,
                     COALESCE(er.last_working_day_confirmed, er.last_working_day_proposed) AS last_working_day,
                     ect.clearance_area AS clearance_department,
                     ect.task_title, ect.due_date,
@@ -2119,7 +1503,7 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
       addScopedEmployeeFilters(req, clauses, params);
       if (period) { clauses.push("ksp.id = ?"); params.push(period); }
       sql = `SELECT e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-                    p.process_name,
+                    COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
                     CONCAT(ksp.period_type,' ',ksp.period_start,' to ',ksp.period_end) AS period_label,
                     kss.final_score, kss.rating,
                     kss.rank_in_team, kss.rank_in_process, kss.rank_in_branch
@@ -2138,7 +1522,7 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
       if (period) { clauses.push("ksp.id = ?"); params.push(period); }
       sql = `SELECT kss.rank_in_process AS rank_no, e.employee_code,
                     COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-                    p.process_name,
+                    COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
                     CONCAT(ksp.period_type,' ',ksp.period_start,' to ',ksp.period_end) AS period_label,
                     kss.final_score, kss.rating
                FROM kpi_score_summary kss
@@ -2156,7 +1540,7 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
       clauses.push("LOWER(kss.rating) IN ('below target','needs improvement','poor','unsatisfactory')");
       if (period) { clauses.push("ksp.id = ?"); params.push(period); }
       sql = `SELECT e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-                    p.process_name,
+                    COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
                     CONCAT(ksp.period_type,' ',ksp.period_start,' to ',ksp.period_end) AS period_label,
                     kss.final_score, kss.rating,
                     100 - kss.final_score AS gap_from_target
@@ -2219,9 +1603,9 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
       clauses.push("adr.record_date BETWEEN ? AND ?"); params.push(from, to);
       sql = `SELECT adr.record_date, p.process_name, b.branch_name,
                     COALESCE(wm.mandated_hc, 0) AS mandated_hc,
-                    SUM(adr.attendance_status IN ('present','half_day')) AS actual_hc,
-                    COALESCE(wm.mandated_hc, 0) - SUM(adr.attendance_status IN ('present','half_day')) AS gap,
-                    ROUND((COALESCE(wm.mandated_hc,0) - SUM(adr.attendance_status IN ('present','half_day')))
+                    SUM(adr.attendance_status IN ('present','half_day','week_off_worked')) AS actual_hc,
+                    COALESCE(wm.mandated_hc, 0) - SUM(adr.attendance_status IN ('present','half_day','week_off_worked')) AS gap,
+                    ROUND((COALESCE(wm.mandated_hc,0) - SUM(adr.attendance_status IN ('present','half_day','week_off_worked')))
                           / NULLIF(wm.mandated_hc,0) * 100, 1) AS gap_pct
                FROM attendance_daily_record adr
                JOIN employees e ON e.id = adr.employee_id
@@ -2243,7 +1627,7 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
       clauses.push("adr.record_date BETWEEN ? AND ?"); params.push(from, to);
       sql = `SELECT adr.record_date, e.employee_code,
                     COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-                    p.process_name,
+                    COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
                     adr.dialler_minutes AS net_login_minutes,
                     ROUND(adr.dialler_minutes / 60, 2) AS net_login_hours,
                     adr.attendance_status
@@ -2326,54 +1710,9 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
       break;
     }
 
-    case "employee-document-compliance":
-      addScopedEmployeeFilters(req, clauses, params);
-      clauses.push("e.active_status = 1");
-      // Use checklist counts when available (employees onboarded via ATS),
-      // fall back to employee_documents for legacy/direct uploads.
-      sql = `SELECT e.employee_code,
-                    COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-                    b.branch_name, d.dept_name AS department_name,
-                    COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
-                    COALESCE(cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
-                    COALESCE(cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
-                    -- Checklist counts (primary for ATS-onboarded employees)
-                    COALESCE(cl_agg.total_cl, 0)    AS checklist_total,
-                    COALESCE(cl_agg.verified_cl, 0) AS checklist_verified,
-                    COALESCE(cl_agg.missing_cl, 0)  AS checklist_missing,
-                    -- General employee_documents counts (fallback)
-                    COUNT(ed.id)                                                                                         AS ed_total,
-                    SUM(CASE WHEN ed.verified = 1 THEN 1 ELSE 0 END)                                                   AS ed_verified,
-                    SUM(CASE WHEN ed.file_url IS NULL OR ed.file_url = '' THEN 1 ELSE 0 END)                           AS ed_missing,
-                    -- Resolved counts: prefer checklist when it has rows
-                    CASE WHEN COALESCE(cl_agg.total_cl,0) > 0 THEN COALESCE(cl_agg.total_cl,0)    ELSE COUNT(ed.id) END AS total_docs,
-                    CASE WHEN COALESCE(cl_agg.total_cl,0) > 0 THEN COALESCE(cl_agg.verified_cl,0) ELSE SUM(CASE WHEN ed.verified=1 THEN 1 ELSE 0 END) END AS verified_docs,
-                    CASE WHEN COALESCE(cl_agg.total_cl,0) > 0 THEN COALESCE(cl_agg.missing_cl,0)  ELSE SUM(CASE WHEN ed.file_url IS NULL OR ed.file_url='' THEN 1 ELSE 0 END) END AS missing_docs,
-                    COALESCE(e.joining_document_completion_pct, 0) AS completion_pct,
-                    e.joining_document_status
-               FROM employees e
-               LEFT JOIN employee_documents ed ON ed.employee_id = e.id
-               LEFT JOIN branch_master b ON b.id = e.branch_id
-               LEFT JOIN department_master d ON d.id = e.department_id
-               LEFT JOIN process_master p ON p.id = e.process_id
-               LEFT JOIN cost_centre_master cc ON cc.id = e.cost_centre_id
-               LEFT JOIN (
-                 SELECT employee_id,
-                        COUNT(*) AS total_cl,
-                        SUM(CASE WHEN status IN ('verified','signed_verified','completed') THEN 1 ELSE 0 END) AS verified_cl,
-                        SUM(CASE WHEN status IN ('pending_hr_upload','pending_candidate_esign','pending_generation','rejected') AND mandatory=1 THEN 1 ELSE 0 END) AS missing_cl
-                   FROM employee_joining_document_checklist
-                  GROUP BY employee_id
-               ) cl_agg ON cl_agg.employee_id = e.id
-              WHERE ${clauses.join(" AND ")}
-              -- ONLY_FULL_GROUP_BY is enabled on this server, so the three columns added to the
-              -- SELECT must be repeated here or the whole report fails rather than degrading.
-              GROUP BY e.id, e.employee_code, e.full_name, e.first_name, e.last_name, b.branch_name, d.dept_name,
-                       p.process_name, cc.cost_centre_code, cc.cost_centre_name,
-                       cl_agg.total_cl, cl_agg.verified_cl, cl_agg.missing_cl,
-                       e.joining_document_completion_pct, e.joining_document_status
-              ORDER BY missing_docs DESC, employee_name`;
-      break;
+    // "employee-document-compliance" is intentionally not handled here — it falls through to
+    // executeReport(), which now carries this exact SQL including the two-source resolution
+    // between the ATS joining checklist and employee_documents. Its download previously 404'd.
 
     case "asset-service-log":
       sql = `SELECT am.asset_code, am.asset_name, am.asset_category,
@@ -2425,9 +1764,9 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
       addScopedEmployeeFilters(req, clauses, params);
       clauses.push("DATE_FORMAT(adr.record_date,'%Y-%m') = ?"); params.push(month);
       sql = `SELECT e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-                    p.process_name,
+                    COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
                     ROUND(SUM(adr.dialler_minutes) / 60, 2) AS login_hours,
-                    ROUND(COUNT(CASE WHEN adr.attendance_status IN ('present','half_day') THEN 1 END)
+                    ROUND(COUNT(CASE WHEN adr.attendance_status IN ('present','half_day','week_off_worked') THEN 1 END)
                           / NULLIF(COUNT(*),0) * 100, 1) AS attendance_pct,
                     kss.final_score AS kpi_score,
                     ROUND(
@@ -2461,7 +1800,7 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
       sql = `SELECT DATE_FORMAT(adr.record_date,'%Y-%m') AS month, p.process_name,
                     ROUND(SUM(adr.dialler_minutes) / 60, 2) AS total_login_hours,
                     ROUND(SUM(adr.dialler_minutes) / NULLIF(COUNT(CASE WHEN adr.dialler_minutes > 0 THEN 1 END), 0), 1) AS avg_daily_login_minutes,
-                    COUNT(CASE WHEN adr.attendance_status IN ('present','half_day') THEN 1 END) AS present_days
+                    COUNT(CASE WHEN adr.attendance_status IN ('present','half_day','week_off_worked') THEN 1 END) AS present_days
                FROM attendance_daily_record adr
                JOIN employees e ON e.id = adr.employee_id
                LEFT JOIN process_master p ON p.id = e.process_id
@@ -2476,11 +1815,11 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
       addScopedEmployeeFilters(req, clauses, params);
       clauses.push("DATE_FORMAT(adr.record_date,'%Y-%m') = ?"); params.push(month);
       sql = `SELECT e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-                    p.process_name,
-                    ROUND(COUNT(CASE WHEN adr.attendance_status IN ('present','half_day') THEN 1 END)
+                    COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
+                    ROUND(COUNT(CASE WHEN adr.attendance_status IN ('present','half_day','week_off_worked') THEN 1 END)
                           / NULLIF(COUNT(*),0) * 100, 1) AS attendance_pct,
                     kss.final_score AS kpi_score, kss.rating,
-                    CASE WHEN COUNT(CASE WHEN adr.attendance_status IN ('present','half_day') THEN 1 END)
+                    CASE WHEN COUNT(CASE WHEN adr.attendance_status IN ('present','half_day','week_off_worked') THEN 1 END)
                               / NULLIF(COUNT(*),0) < 0.85 AND kss.final_score < 70
                          THEN 'HIGH_RISK' ELSE 'OK' END AS correlation_flag
                FROM attendance_daily_record adr
@@ -2504,139 +1843,26 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
     }
 
     // ─── Missing Attendance ───────────────────────────────────────────────────
-    case "late-arrival-summary": {
-      const from = dateParam(req.query.from, `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}-01`);
-      const to = dateParam(req.query.to, new Date().toISOString().slice(0, 10));
-      const minLateMinutes = Number(req.query.minLateMinutes ?? 0);
-      addScopedEmployeeFilters(req, clauses, params);
-      clauses.push("adr.record_date BETWEEN ? AND ?"); params.push(from, to);
-      clauses.push("adr.late_mark = 1");
-      if (minLateMinutes > 0) {
-        clauses.push("adr.late_by_minutes >= ?"); params.push(minLateMinutes);
-      }
-      sql = `SELECT adr.record_date,
-                    e.employee_code,
-                    COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-                    COALESCE(rcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
-                    COALESCE(rcc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
-                    b.branch_name,
-                    p.process_name,
-                    COALESCE(ws.shift_name, 'Roster Not Assigned') AS roster_shift,
-                    ws.start_time AS scheduled_start,
-                    was.login_time AS punch_in,
-                    adr.late_by_minutes AS late_minutes,
-                    COALESCE(arc.grace_minutes, 15) AS grace_minutes,
-                    GREATEST(0, adr.late_by_minutes - COALESCE(arc.grace_minutes, 15)) AS net_late_minutes,
-                    CASE
-                      WHEN adr.late_by_minutes <= COALESCE(arc.grace_minutes, 15) THEN 'Within Grace'
-                      WHEN adr.late_by_minutes <= 30 THEN 'Mild Late'
-                      WHEN adr.late_by_minutes <= 60 THEN 'Moderate Late'
-                      ELSE 'Severe Late'
-                    END AS late_status,
-                    CASE WHEN adr.regularization_id IS NOT NULL THEN 'Yes' ELSE 'No' END AS approved_exception,
-                    COALESCE(NULLIF(rm.full_name,''), CONCAT(rm.first_name,' ',COALESCE(rm.last_name,''))) AS reporting_manager
-               FROM attendance_daily_record adr
-               JOIN employees e ON e.id = adr.employee_id
-               LEFT JOIN branch_master b ON b.id = e.branch_id
-               LEFT JOIN process_master p ON p.id = e.process_id
-               LEFT JOIN employees rm ON rm.id = e.reporting_manager_id
-               LEFT JOIN wfm_roster_assignment wra ON wra.employee_id = adr.employee_id
-                 AND wra.roster_date = adr.record_date
-               LEFT JOIN wfm_shift_master ws ON ws.id = wra.shift_id
-               LEFT JOIN wfm_attendance_session was ON was.employee_id = adr.employee_id
-                 AND was.session_date = adr.record_date
-               LEFT JOIN attendance_rule_config arc ON arc.id = adr.rule_config_id
-               LEFT JOIN cost_centre_master rcc ON rcc.id = e.cost_centre_id
-              WHERE ${clauses.join(" AND ")}
-              ORDER BY adr.record_date DESC, adr.late_by_minutes DESC`;
-      break;
-    }
+    // "late-arrival-summary" is intentionally not handled here.
+    //
+    // It falls through to executeReport(), which now carries this exact SQL, so the screen
+    // and the downloaded XLSX are one implementation. They were two: this block returned one
+    // row per late arrival (2,199 live) while the executor grouped by employee and returned
+    // totals (577), and which one a user got depended on whether they looked or downloaded.
+    // The catalogue's 16 declared columns match the detail shape, so the detail is the report.
 
-    case "regularization-summary": {
-      const month = monthParam(req.query.month);
-      addScopedEmployeeFilters(req, clauses, params);
-      if (req.query.status) { clauses.push("arr.status = ?"); params.push(String(req.query.status)); }
-      if (req.query.processId) { clauses.push("e.process_id = ?"); params.push(String(req.query.processId)); }
-      clauses.push("DATE_FORMAT(arr.session_date,'%Y-%m') = ?"); params.push(month);
-      sql = `SELECT e.employee_code,
-                    COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-                    COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
-                    COALESCE(zcc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
-                    b.branch_name,
-                    p.process_name,
-                    d.dept_name AS department_name,
-                    dm.designation_name,
-                    arr.session_date AS attendance_date,
-                    arr.requested_status,
-                    arr.reason,
-                    arr.reason_code,
-                    arm.label AS reason_label,
-                    arr.requested_by_type,
-                    arr.status AS approval_status,
-                    arr.created_at AS submitted_at,
-                    reviewer.full_name AS reviewer_name,
-                    arr.reviewed_at AS approved_at,
-                    arr.reviewer_note
-               FROM attendance_regularization arr
-               JOIN employees e ON e.id = arr.employee_id
-               LEFT JOIN branch_master b ON b.id = e.branch_id
-               LEFT JOIN process_master p ON p.id = e.process_id
-               LEFT JOIN department_master d ON d.id = e.department_id
-               LEFT JOIN designation_master dm ON dm.id = e.designation_id
-               LEFT JOIN attendance_reason_master arm ON arm.code = arr.reason_code
-               LEFT JOIN employees reviewer ON reviewer.id = arr.reviewed_by
-               LEFT JOIN cost_centre_master zcc ON zcc.id = e.cost_centre_id
-              WHERE ${clauses.join(" AND ")}
-              ORDER BY arr.session_date DESC, employee_name`;
-      break;
-    }
+    // "regularization-summary" is intentionally not handled here.
+    //
+    // It falls through to executeReport(), which now carries this exact SQL. Screen and
+    // download were two implementations of two different reports: this block returned one row
+    // per request (2 live) and the executor grouped by employee into counts (4), sharing no
+    // column. The catalogue's 19 declared columns match the detail.
 
-    case "attendance-dispute-summary": {
-      const month = monthParam(req.query.month);
-      addScopedEmployeeFilters(req, clauses, params);
-      if (req.query.status) { clauses.push("arr.status = ?"); params.push(String(req.query.status)); }
-      if (req.query.processId) { clauses.push("e.process_id = ?"); params.push(String(req.query.processId)); }
-      if (req.query.disputeType) { clauses.push("arr.dispute_type = ?"); params.push(String(req.query.disputeType)); }
-      clauses.push("arr.dispute_type IS NOT NULL");
-      clauses.push("DATE_FORMAT(arr.session_date,'%Y-%m') = ?"); params.push(month);
-      sql = `SELECT e.employee_code,
-                    COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-                    COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
-                    COALESCE(zcc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
-                    b.branch_name,
-                    p.process_name,
-                    d.dept_name AS department_name,
-                    dm.designation_name,
-                    arr.session_date AS dispute_date,
-                    arr.dispute_type,
-                    arr.reason AS description,
-                    arr.reason_code,
-                    arm.label AS reason_label,
-                    arr.old_status,
-                    arr.new_status AS requested_status,
-                    TIME_FORMAT(arr.old_punch_in, '%H:%i') AS original_punch_in,
-                    TIME_FORMAT(arr.old_punch_out, '%H:%i') AS original_punch_out,
-                    TIME_FORMAT(arr.new_punch_in, '%H:%i') AS requested_punch_in,
-                    TIME_FORMAT(arr.new_punch_out, '%H:%i') AS requested_punch_out,
-                    arr.payroll_impact,
-                    arr.status AS approval_status,
-                    arr.created_at AS submitted_at,
-                    reviewer.full_name AS reviewer_name,
-                    arr.reviewed_at,
-                    arr.reviewer_note AS resolution
-               FROM attendance_regularization arr
-               JOIN employees e ON e.id = arr.employee_id
-               LEFT JOIN branch_master b ON b.id = e.branch_id
-               LEFT JOIN process_master p ON p.id = e.process_id
-               LEFT JOIN department_master d ON d.id = e.department_id
-               LEFT JOIN designation_master dm ON dm.id = e.designation_id
-               LEFT JOIN attendance_reason_master arm ON arm.code = arr.reason_code
-               LEFT JOIN employees reviewer ON reviewer.id = arr.reviewed_by
-               LEFT JOIN cost_centre_master zcc ON zcc.id = e.cost_centre_id
-              WHERE ${clauses.join(" AND ")}
-              ORDER BY arr.session_date DESC, employee_name`;
-      break;
-    }
+    // "attendance-dispute-summary" is intentionally not handled here.
+    //
+    // It falls through to executeReport(), which now carries this exact SQL — including the
+    // `dispute_type IS NOT NULL` predicate the executor lacked entirely, without which every
+    // regularization in the shared table counted as a dispute.
 
     // ─── Missing Leave ────────────────────────────────────────────────────────
     // "leave-encashment-register" is deliberately NOT handled here.
@@ -2659,27 +1885,62 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
 
     // ─── Missing Payroll ──────────────────────────────────────────────────────
     case "payroll-readiness-status": {
-      const month = monthParam(req.query.month);
+      // Defaults to the latest month that actually HAS a payroll run, not to today. Payroll is
+      // closed in arrears, so for most of any month there is no run yet and monthParam's
+      // calendar default drew an empty grid — indistinguishable from "payroll ran and produced
+      // nothing". This block evaded the guard that catches exactly this until now: the old
+      // process filter contained a `FROM process_master` subquery, which appeared before the
+      // real FROM, so the check read the driving table as process_master and exempted it.
+      const month = await resolvePayrollMonth(req.query.month);
       const prsClauses = ["spr.run_month = ?"];
       const prsParams: unknown[] = [month];
-      if (req.query.branchId) { prsClauses.push("spr.branch_id = ?"); prsParams.push(String(req.query.branchId)); }
-      if (req.query.processId) { prsClauses.push("spr.branch_id IN (SELECT branch_id FROM process_master WHERE id = ?)"); prsParams.push(String(req.query.processId)); }
+
+      // The branch dimension used to be sourced from spr.branch_id, which is NULL on ALL 66
+      // runs — verified live 2026-08-10. That is not missing data: a payroll run is org-wide and
+      // covers 4 to 13 branches at once, so the column has nothing to hold. Three defects
+      // followed from reading it anyway, none of which announced itself:
+      //   - the Branch column rendered blank on every row;
+      //   - the branch filter (spr.branch_id = ?) could never match, so choosing a branch
+      //     silently returned an empty grid rather than an error;
+      //   - the process filter had the same defect, and additionally looked branch up from
+      //     process_master, conflating two different dimensions.
+      // A row-scope predicate on spr.branch_id would have been worse still — it would have
+      // dropped all 66 runs for every scoped user while looking like a security fix.
+      //
+      // The branch a run touches is carried by its LINES, via the employee on each line. Joining
+      // that way makes the grain the catalogue already declared — one row per run per branch —
+      // true for the first time, and lets the declared branch filter and branch scoping work.
+      // addScopedEmployeeFilters handles both: an explicit ?branchId, and the caller's own
+      // entitlement when they do not pass one. No catalogue change was needed; the entry has
+      // described this shape all along and only the SQL failed to implement it.
+      //
+      // Verified on 2026-07: 11 branch rows summing to 1,464 lines, which reconciles exactly
+      // with an independent count of that run's lines. The run touches 13 distinct branch_ids
+      // but yields 11 rows because three ids share one branch_name — grouping by name is
+      // deliberate and consistent with the rest of the suite, and loses no lines.
+      addScopedEmployeeFilters(req, prsClauses, prsParams);
+
       // spr.finalized_at doesn't exist — verified live. salary_prep_run has no
       // "finalized" timestamp column at all; disbursed_at is the closest real
       // analog (the run reaching its final, paid state). Never caught because
       // this report was unreachable (missing from REPORT_CATALOG) until now.
-      sql = `SELECT spr.run_month AS payroll_month, b.branch_name,
+      //
+      // LEFT JOIN to the lines, not JOIN: a run that has produced no lines yet is precisely the
+      // "not ready" state this report exists to show, and an inner join would hide it.
+      sql = `SELECT spr.run_month AS payroll_month,
+                    COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
                     spr.status AS run_status,
                     COUNT(spl.id) AS total_lines,
                     spr.disbursed_at AS finalized_at,
                     COALESCE(NULLIF(fin.full_name,''), CONCAT(fin.first_name,' ',COALESCE(fin.last_name,''))) AS finalized_by
                FROM salary_prep_run spr
-               LEFT JOIN branch_master b ON b.id = spr.branch_id
                LEFT JOIN salary_prep_line spl ON spl.run_id = spr.id
+               LEFT JOIN employees e ON e.id = spl.employee_id
+               LEFT JOIN branch_master b ON b.id = e.branch_id
                LEFT JOIN employees fin ON fin.id = spr.approved_by
               WHERE ${prsClauses.join(" AND ")}
               GROUP BY spr.id, spr.run_month, b.branch_name, spr.status, spr.disbursed_at, fin.full_name, fin.first_name, fin.last_name
-              ORDER BY spr.run_month DESC, b.branch_name`;
+              ORDER BY spr.run_month DESC, branch_name`;
       params.length = 0; params.push(...prsParams);
       break;
     }
@@ -2763,7 +2024,8 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
       clauses.push("DATE_FORMAT(gal.accrual_month,'%Y-%m') = ?"); params.push(month);
       sql = `SELECT e.employee_code,
                     COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-                    b.branch_name, p.process_name,
+                    COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
+                    COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
                     gal.accrual_month, gal.eligible_wage, gal.accrual_amount,
                     gal.cumulative_accrual, gal.years_of_service,
                     gal.calculation_basis
@@ -2781,7 +2043,8 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
       addScopedEmployeeFilters(req, clauses, params);
       clauses.push("YEAR(pc.complaint_date) = ?"); params.push(year);
       sql = `SELECT pc.complaint_id, pc.complaint_date,
-                    b.branch_name, p.process_name,
+                    COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
+                    COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
                     pc.complainant_designation, pc.respondent_designation,
                     pc.complaint_type, pc.status, pc.ic_formed,
                     pc.inquiry_completed_at, pc.resolution_date,
@@ -2833,7 +2096,8 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
       if (req.query.status) { clauses.push("aor.status = ?"); params.push(String(req.query.status)); }
       clauses.push("aor.created_at BETWEEN ? AND ?"); params.push(from, to);
       sql = `SELECT ac.candidate_code, ac.full_name, ac.mobile,
-                    b.branch_name, p.process_name,
+                    COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
+                    COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
                     aor.status, aor.joining_date, aor.created_at AS request_date,
                     DATEDIFF(COALESCE(aor.completed_at, CURDATE()), aor.created_at) AS days_in_progress
                FROM ats_onboarding_request aor
@@ -2851,7 +2115,8 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
       if (req.query.branchId) { clauses.push("aol.branch_id = ?"); params.push(String(req.query.branchId)); }
       clauses.push("aol.created_at BETWEEN ? AND ?"); params.push(from, to);
       sql = `SELECT ac.candidate_code, ac.full_name,
-                    b.branch_name, p.process_name,
+                    COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
+                    COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
                     aol.created_at AS offer_generated_at,
                     aol.sent_at AS offer_sent_at,
                     aol.signed_at AS offer_accepted_at,
@@ -2872,7 +2137,7 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
       if (req.query.status) { clauses.push("ebd.verification_status = ?"); params.push(String(req.query.status)); }
       sql = `SELECT e.employee_code,
                     COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-                    b.branch_name,
+                    COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
                     ebd.account_holder_name AS bank_name,
                     ebd.penny_drop_name AS verified_name,
                     ebd.bank_name AS bank,
@@ -2926,7 +2191,7 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
       clauses.push("ejdc.created_at BETWEEN ? AND ?"); params.push(from, to);
       sql = `SELECT e.employee_code,
                     COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-                    b.branch_name,
+                    COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
                     ejdc.doc_type, ejdc.status,
                     ejdc.esign_requested_at, ejdc.esign_completed_at,
                     ejdc.digilocker_linked,
@@ -2945,7 +2210,8 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
       if (req.query.branchId) { clauses.push("e.branch_id = ?"); params.push(String(req.query.branchId)); }
       sql = `SELECT e.employee_code,
                     COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-                    b.branch_name, d.dept_name AS department_name, p.process_name,
+                    COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
+                    COALESCE(d.dept_name, 'UNASSIGNED') AS department_name, p.process_name,
                     er.exit_type, er.exit_reason_category,
                     COALESCE(er.last_working_day_confirmed, er.last_working_day_proposed) AS last_working_day,
                     TIMESTAMPDIFF(MONTH, e.date_of_joining,
@@ -3053,7 +2319,8 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
       if (req.query.priority) { clauses.push("tna.priority = ?"); params.push(String(req.query.priority)); }
       sql = `SELECT e.employee_code,
                     COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-                    b.branch_name, p.process_name,
+                    COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
+                    COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
                     tna.skill_gap, tna.training_topic, tna.priority,
                     tna.identified_by, tna.identified_at,
                     tna.status, tna.target_completion_date
@@ -3211,7 +2478,7 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
       clauses.push("ht.created_at BETWEEN ? AND ?"); params.push(from, to);
       sql = `SELECT ht.ticket_number, ht.category, ht.subject,
                     e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-                    b.branch_name,
+                    COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
                     ht.priority, ht.status,
                     ht.created_at, ht.resolved_at,
                     DATEDIFF(COALESCE(ht.resolved_at, NOW()), ht.created_at) AS tat_days,
@@ -3236,7 +2503,8 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
       clauses.push("gc.filed_at BETWEEN ? AND ?"); params.push(from, to);
       sql = `SELECT gc.grievance_number, gc.category, gc.sub_category,
                     e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-                    b.branch_name, p.process_name,
+                    COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
+                    COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
                     gc.filed_at, gc.status,
                     gc.assigned_to, gc.resolved_at,
                     DATEDIFF(COALESCE(gc.resolved_at, CURDATE()), gc.filed_at) AS days_open,
@@ -3295,7 +2563,7 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
       clauses.push("e.active_status = 1");
       sql = `SELECT e.employee_code,
                     COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-                    b.branch_name,
+                    COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
                     ecr.consent_type, ecr.status AS consent_status,
                     ecr.consented_at, ecr.expires_at,
                     ecr.revoked_at,
@@ -3428,8 +2696,8 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
                     ROUND(SUM(adr.dialler_minutes) / 60, 2) AS total_login_hours,
                     ROUND(SUM(adr.dialler_minutes) / 60 / NULLIF(COUNT(DISTINCT e.id),0), 2) AS avg_login_hours_per_agent,
                     ROUND(AVG(kda.actual_value), 2) AS avg_kpi_score,
-                    SUM(CASE WHEN adr.attendance_status IN ('present','half_day') THEN 1 ELSE 0 END) AS present_days,
-                    ROUND(SUM(CASE WHEN adr.attendance_status IN ('present','half_day') THEN 1 ELSE 0 END)
+                    SUM(CASE WHEN adr.attendance_status IN ('present','half_day','week_off_worked') THEN 1 ELSE 0 END) AS present_days,
+                    ROUND(SUM(CASE WHEN adr.attendance_status IN ('present','half_day','week_off_worked') THEN 1 ELSE 0 END)
                           / NULLIF(COUNT(*),0) * 100, 1) AS attendance_pct
                FROM attendance_daily_record adr
                JOIN employees e ON e.id = adr.employee_id
@@ -3451,7 +2719,7 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
       sql = `SELECT DATE_FORMAT(adr.record_date,'%Y-%m') AS month, p.process_name,
                     ROUND(SUM(adr.dialler_minutes) / 60, 2) AS total_login_hours,
                     ROUND(SUM(adr.dialler_minutes) / NULLIF(COUNT(CASE WHEN adr.dialler_minutes > 0 THEN 1 END), 0), 1) AS avg_daily_login_minutes,
-                    COUNT(CASE WHEN adr.attendance_status IN ('present','half_day') THEN 1 END) AS present_days
+                    COUNT(CASE WHEN adr.attendance_status IN ('present','half_day','week_off_worked') THEN 1 END) AS present_days
                FROM attendance_daily_record adr
                JOIN employees e ON e.id = adr.employee_id
                LEFT JOIN process_master p ON p.id = e.process_id
@@ -3471,7 +2739,7 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
                     ROUND(SUM(adr.dialler_minutes) / 60, 2) AS total_login_hours,
                     ROUND(SUM(adr.dialler_minutes) / 60 / NULLIF(COUNT(DISTINCT e.id),0), 2) AS avg_login_hours_per_agent,
                     ROUND(AVG(kda.actual_value), 2) AS avg_kpi_score,
-                    ROUND(SUM(CASE WHEN adr.attendance_status IN ('present','half_day') THEN 1 ELSE 0 END)
+                    ROUND(SUM(CASE WHEN adr.attendance_status IN ('present','half_day','week_off_worked') THEN 1 ELSE 0 END)
                           / NULLIF(COUNT(*),0) * 100, 1) AS attendance_pct
                FROM attendance_daily_record adr
                JOIN employees e ON e.id = adr.employee_id
@@ -3518,11 +2786,11 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
       clauses.push("adr.record_date BETWEEN ? AND ?"); params.push(from, to);
       sql = `SELECT DATE_FORMAT(adr.record_date,'%Y-%m-%d') AS report_date,
                     COUNT(DISTINCT e.id) AS active_agents,
-                    SUM(CASE WHEN adr.attendance_status IN ('present','half_day') THEN 1 ELSE 0 END) AS present_count,
+                    SUM(CASE WHEN adr.attendance_status IN ('present','half_day','week_off_worked') THEN 1 ELSE 0 END) AS present_count,
                     ROUND(SUM(adr.dialler_minutes) / 60, 2) AS total_login_hours,
                     ROUND(SUM(adr.dialler_minutes) / 60 / NULLIF(COUNT(DISTINCT CASE WHEN adr.dialler_minutes > 0 THEN e.id END),0), 2) AS avg_login_hours_per_agent,
                     ROUND(AVG(kda.actual_value), 2) AS avg_kpi_score,
-                    ROUND(SUM(CASE WHEN adr.attendance_status IN ('present','half_day') THEN 1 ELSE 0 END)
+                    ROUND(SUM(CASE WHEN adr.attendance_status IN ('present','half_day','week_off_worked') THEN 1 ELSE 0 END)
                           / NULLIF(COUNT(*),0) * 100, 1) AS attendance_pct
                FROM attendance_daily_record adr
                JOIN employees e ON e.id = adr.employee_id
@@ -3542,10 +2810,10 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
       sql = `SELECT p.process_name, b.branch_name,
                     adr.record_date,
                     COUNT(DISTINCT e.id) AS scheduled_hc,
-                    SUM(CASE WHEN adr.attendance_status IN ('present','half_day') THEN 1 ELSE 0 END) AS present_hc,
+                    SUM(CASE WHEN adr.attendance_status IN ('present','half_day','week_off_worked') THEN 1 ELSE 0 END) AS present_hc,
                     ROUND(SUM(adr.dialler_minutes) / NULLIF(
-                      SUM(CASE WHEN adr.attendance_status IN ('present','half_day') THEN 480 ELSE 0 END), 0) * 100, 1) AS occupancy_pct,
-                    ROUND(SUM(CASE WHEN adr.attendance_status IN ('present','half_day') THEN 1 ELSE 0 END)
+                      SUM(CASE WHEN adr.attendance_status IN ('present','half_day','week_off_worked') THEN 480 ELSE 0 END), 0) * 100, 1) AS occupancy_pct,
+                    ROUND(SUM(CASE WHEN adr.attendance_status IN ('present','half_day','week_off_worked') THEN 1 ELSE 0 END)
                           / NULLIF(COUNT(*),0) * 100, 1) AS utilization_pct
                FROM attendance_daily_record adr
                JOIN employees e ON e.id = adr.employee_id
@@ -3562,11 +2830,11 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
       addScopedEmployeeFilters(req, clauses, params);
       clauses.push("DATE_FORMAT(adr.record_date,'%Y-%m') = ?"); params.push(month);
       sql = `SELECT e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-                    p.process_name,
-                    ROUND(COUNT(CASE WHEN adr.attendance_status IN ('present','half_day') THEN 1 END)
+                    COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
+                    ROUND(COUNT(CASE WHEN adr.attendance_status IN ('present','half_day','week_off_worked') THEN 1 END)
                           / NULLIF(COUNT(*),0) * 100, 1) AS attendance_pct,
                     kss.final_score AS kpi_score, kss.rating,
-                    CASE WHEN COUNT(CASE WHEN adr.attendance_status IN ('present','half_day') THEN 1 END)
+                    CASE WHEN COUNT(CASE WHEN adr.attendance_status IN ('present','half_day','week_off_worked') THEN 1 END)
                               / NULLIF(COUNT(*),0) < 0.85 AND kss.final_score < 70
                          THEN 'HIGH_RISK' ELSE 'OK' END AS correlation_flag
                FROM attendance_daily_record adr
@@ -3596,12 +2864,12 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
       clauses.push("adr.record_date BETWEEN ? AND ?"); params.push(from, to);
       sql = `SELECT adr.record_date, p.process_name, b.branch_name,
                     COUNT(DISTINCT e.id) AS total_scheduled,
-                    SUM(CASE WHEN adr.attendance_status IN ('present','half_day') THEN 1 ELSE 0 END) AS present_count,
-                    COUNT(DISTINCT e.id) - SUM(CASE WHEN adr.attendance_status IN ('present','half_day') THEN 1 ELSE 0 END) AS shrinkage_count,
-                    ROUND((COUNT(DISTINCT e.id) - SUM(CASE WHEN adr.attendance_status IN ('present','half_day') THEN 1 ELSE 0 END))
+                    SUM(CASE WHEN adr.attendance_status IN ('present','half_day','week_off_worked') THEN 1 ELSE 0 END) AS present_count,
+                    COUNT(DISTINCT e.id) - SUM(CASE WHEN adr.attendance_status IN ('present','half_day','week_off_worked') THEN 1 ELSE 0 END) AS shrinkage_count,
+                    ROUND((COUNT(DISTINCT e.id) - SUM(CASE WHEN adr.attendance_status IN ('present','half_day','week_off_worked') THEN 1 ELSE 0 END))
                           / NULLIF(COUNT(DISTINCT e.id),0) * 100, 1) AS shrinkage_pct,
                     ROUND(SUM(adr.dialler_minutes) / 60, 2) AS actual_login_hours,
-                    ROUND(SUM(CASE WHEN adr.attendance_status IN ('present','half_day') THEN 480 ELSE 0 END) / 60, 2) AS expected_login_hours
+                    ROUND(SUM(CASE WHEN adr.attendance_status IN ('present','half_day','week_off_worked') THEN 480 ELSE 0 END) / 60, 2) AS expected_login_hours
                FROM attendance_daily_record adr
                JOIN employees e ON e.id = adr.employee_id
                LEFT JOIN process_master p ON p.id = e.process_id
@@ -3641,8 +2909,8 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
           CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')) AS employee_name,
           DATE_FORMAT(e.date_of_joining,  '%Y-%m-%d') AS date_of_joining,
           DATE_FORMAT(e.date_of_leaving,  '%Y-%m-%d') AS date_of_leaving,
-          b.branch_name,
-          p.process_name,
+          COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
+          COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
           ipr.request_type,
           ipr.status,
           ipr.locked,
@@ -3692,125 +2960,15 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
     }
 
     // ─── Attendance Register Monthly (Day-wise Pivot Grid) ────────────────────
-    case "attendance-register-monthly": {
-      const month = monthParam(req.query.month);
-      const [yr, mo] = month.split("-").map(Number);
-      const daysInMonth = new Date(yr, mo, 0).getDate();
-      const firstDay = `${month}-01`;
-      const lastDay  = `${month}-${String(daysInMonth).padStart(2, "0")}`;
-
-      addScopedEmployeeFilters(req, clauses, params);
-      clauses.push("e.active_status = 1");
-      clauses.push("adr.record_date BETWEEN ? AND ?");
-      params.push(firstDay, lastDay);
-
-      // department/designation/cost_center fallback columns don't exist on
-      // employees — verified live (same bug as salary-sheet-export /
-      // left-employee-export / new-join-export, fixed the same way).
-      const attSql = `
-        SELECT
-          e.id AS employee_id,
-          e.employee_code,
-          COALESCE(e.biometric_code, '') AS bio_code,
-          CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')) AS emp_name,
-          COALESCE(dept.dept_name, '') AS department,
-          COALESCE(desig.designation_name, '') AS designation,
-          COALESCE(e.profile_type, '') AS profile,
-          COALESCE(cc.cost_centre_name, '') AS cost_center,
-          COALESCE(b.branch_name, '') AS emp_location,
-          CASE WHEN COALESCE(e.is_billable, 1) = 1 THEN 'Yes' ELSE 'No' END AS billable,
-          DAY(adr.record_date) AS day_num,
-          adr.attendance_status
-        FROM attendance_daily_record adr
-        JOIN employees e ON e.id = adr.employee_id
-        LEFT JOIN department_master dept ON dept.id = e.department_id
-        LEFT JOIN designation_master desig ON desig.id = e.designation_id
-        LEFT JOIN cost_centre_master cc ON cc.id = e.cost_centre_id
-        LEFT JOIN branch_master b ON b.id = e.branch_id
-        WHERE ${clauses.join(" AND ")}
-        ORDER BY e.employee_code, adr.record_date
-      `;
-
-      const [attRows] = await db.execute<RowDataPacket[]>(attSql, params);
-
-      // Status code mapping
-      const statusCode: Record<string, string> = {
-        present: "P", absent: "A", half_day: "HD", week_off: "W",
-        holiday: "H", leave_approved: "L", on_duty: "OD",
-        unreconciled: "A",
-      };
-
-      // Pivot into per-employee rows
-      const empMap = new Map<string, any>();
-      for (const row of attRows) {
-        if (!empMap.has(row.employee_id)) {
-          empMap.set(row.employee_id, {
-            emp_code:    row.employee_code,
-            bio_code:    row.bio_code,
-            emp_name:    row.emp_name,
-            department:  row.department,
-            designation: row.designation,
-            profile:     row.profile,
-            cost_center: row.cost_center,
-            emp_location:row.emp_location,
-            billable:    row.billable,
-          });
-        }
-        const emp = empMap.get(row.employee_id);
-        const code = statusCode[row.attendance_status] ?? row.attendance_status ?? "";
-        emp[`day_${row.day_num}`] = code;
-      }
-
-      const pivotRows = Array.from(empMap.values()).map((emp, idx) => {
-        let absent = 0, present = 0, od = 0, hd = 0, leave = 0, holiday = 0, weekoff = 0;
-        for (let d = 1; d <= daysInMonth; d++) {
-          const v = emp[`day_${d}`] ?? "";
-          if (v === "A") absent++;
-          else if (v === "P") present++;
-          else if (v === "OD") od++;
-          else if (v === "HD") hd++;
-          else if (v === "L") leave++;
-          else if (v === "H") holiday++;
-          else if (v === "W") weekoff++;
-        }
-        const salDays = present + hd * 0.5 + od + holiday + weekoff;
-        return {
-          sno: idx + 1,
-          emp_code: emp.emp_code,
-          bio_code: emp.bio_code,
-          emp_name: emp.emp_name,
-          department: emp.department,
-          designation: emp.designation,
-          profile: emp.profile,
-          cost_center: emp.cost_center,
-          emp_location: emp.emp_location,
-          billable: emp.billable,
-          ...Object.fromEntries(
-            Array.from({ length: daysInMonth }, (_, i) => [`day_${i + 1}`, emp[`day_${i + 1}`] ?? ""])
-          ),
-          absent_count: absent,
-          present_count: present,
-          od_count: od,
-          hd_count: hd,
-          leave_count: leave,
-          holiday_count: holiday,
-          weekoff_count: weekoff,
-          sal_days: salDays,
-          total: daysInMonth,
-        };
-      });
-
-      return res.json({
-        success: true, code,
-        data: pivotRows,
-        totalCount: pivotRows.length,
-        meta: {
-          count: pivotRows.length, totalCount: pivotRows.length,
-          limit: "unlimited", offset: 0, page: 1, totalPages: 1,
-          isFullExport: true, daysInMonth, month,
-        },
-      });
-    }
+    // "attendance-register-monthly" is intentionally not handled here.
+    //
+    // It falls through to executeReport(), which now carries both the SQL and the JavaScript
+    // pivot into day_1..day_31. This block never set sql and returned its own response, so
+    // there was nothing for the export handler to call and the download answered 404.
+    //
+    // The move drops two report-specific meta fields, daysInMonth and month, which the shared
+    // envelope has no channel for. No frontend component reads either — the calendars compute
+    // daysInMonth locally from the selected month.
 
     // ─── Leave Balance Export (Wide Pivot Format) ─────────────────────────────
     case "leave-balance-export": {
@@ -3853,104 +3011,27 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
     }
 
     // ─── Left Employee Export ──────────────────────────────────────────────────
-    case "left-employee-export": {
-      const from = dateParam(req.query.from, `${new Date().getFullYear()}-01-01`);
-      const to   = dateParam(req.query.to,   new Date().toISOString().slice(0, 10));
-      addScopedEmployeeFilters(req, clauses, params);
-      clauses.push("e.active_status = 0 OR e.employment_status IN ('resigned','inactive','Resigned','Exit')");
-      clauses.push("COALESCE(e.date_of_leaving, e.date_of_exit) BETWEEN ? AND ?");
-      params.push(from, to);
-
-      // department/designation/cost_center/uan fallback columns below
-      // (e.department, e.designation, e.cost_center_code, e.uan) and
-      // employee_salary_snapshot.snapshot_month don't exist — verified live.
-      // Master-table joins are the only real source for the first three; the
-      // snapshot table's real column is snapshot_date. Never caught because
-      // this report was unreachable (missing from REPORT_CATALOG) until now.
-      sql = `
-        SELECT
-          e.employee_code AS emp_code,
-          CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')) AS emp_name,
-          COALESCE(dept.dept_name, '') AS department,
-          COALESCE(desig.designation_name, '') AS designation,
-          COALESCE(b.branch_name, '') AS branch_name,
-          COALESCE(cc.cost_centre_name, '') AS cost_center,
-          COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
-          COALESCE(e.mobile, '') AS mobile_no,
-          DATE_FORMAT(e.date_of_joining, '%Y-%m-%d') AS doj,
-          DATE_FORMAT(COALESCE(e.date_of_leaving, e.date_of_exit), '%Y-%m-%d') AS left_date,
-          COALESCE(er.exit_reason_category, '') AS left_remarks,
-          COALESCE(e.source, '') AS source,
-          COALESCE(e.sub_source, '') AS sub_source,
-          COALESCE(ess.net_in_hand, esa.ctc_annual / 12, 0) AS net_in_hand,
-          COALESCE(esa.ctc_annual, 0) AS offered_ctc
-        FROM employees e
-        LEFT JOIN department_master dept ON dept.id = e.department_id
-        LEFT JOIN designation_master desig ON desig.id = e.designation_id
-        LEFT JOIN branch_master b ON b.id = e.branch_id
-        LEFT JOIN cost_centre_master cc ON cc.id = e.cost_centre_id
-        LEFT JOIN process_master p ON p.id = e.process_id
-        LEFT JOIN exit_request er ON er.employee_id = e.id
-              AND er.status IN ('confirmed','cleared','completed')
-              AND er.id = (SELECT id FROM exit_request WHERE employee_id = e.id ORDER BY created_at DESC LIMIT 1)
-        LEFT JOIN (
-          SELECT employee_id, net_in_hand
-          FROM employee_salary_snapshot
-          WHERE (employee_id, snapshot_date) IN (
-            SELECT employee_id, MAX(snapshot_date) FROM employee_salary_snapshot GROUP BY employee_id
-          )
-        ) ess ON ess.employee_id = e.id
-        LEFT JOIN employee_salary_assignment esa ON esa.employee_id = e.id AND esa.active_status = 1
-        WHERE ${clauses.join(" AND ")}
-        ORDER BY left_date DESC, e.employee_code
-      `;
-      break;
-    }
+    // "left-employee-export" is intentionally not handled here.
+    //
+    // It falls through to executeReport(), which now carries this exact SQL. With no executor
+    // registered the download answered 404 on a report named export, because the export
+    // handler calls executeReport() directly and never reaches this switch.
+    //
+    // The parenthesised OR moved with it and must stay parenthesised: unwrapped, that clause
+    // re-associated the whole WHERE and produced 57,501 rows for super_admin against 1,574
+    // correct, and a full row-scope bypass for anyone scoped to a branch.
 
     // ─── New Join Employee Export ──────────────────────────────────────────────
-    case "new-join-export": {
-      const from = dateParam(req.query.from, `${new Date().getFullYear()}-01-01`);
-      const to   = dateParam(req.query.to,   new Date().toISOString().slice(0, 10));
-      addScopedEmployeeFilters(req, clauses, params);
-      clauses.push("e.date_of_joining BETWEEN ? AND ?");
-      params.push(from, to);
-
-      // Same fallback-column bug as left-employee-export above (department/
-      // designation/cost_center don't exist on employees) — fixed the same way.
-      sql = `
-        SELECT
-          e.employee_code AS emp_code,
-          CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')) AS emp_name,
-          COALESCE(b.branch_name, '') AS branch_name,
-          COALESCE(cc.cost_centre_name, '') AS cost_center,
-          COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
-          COALESCE(dept.dept_name, '') AS department,
-          COALESCE(desig.designation_name, '') AS designation,
-          DATE_FORMAT(e.date_of_joining, '%Y-%m-%d') AS doj,
-          COALESCE(e.source, '') AS source,
-          COALESCE(e.sub_source, '') AS sub_source,
-          COALESCE(e.mobile, '') AS mobile_no,
-          COALESCE(ess.net_in_hand, esa.ctc_annual / 12, 0) AS net_in_hand,
-          COALESCE(esa.ctc_annual, 0) AS offered_ctc
-        FROM employees e
-        LEFT JOIN branch_master b ON b.id = e.branch_id
-        LEFT JOIN cost_centre_master cc ON cc.id = e.cost_centre_id
-        LEFT JOIN process_master p ON p.id = e.process_id
-        LEFT JOIN department_master dept ON dept.id = e.department_id
-        LEFT JOIN designation_master desig ON desig.id = e.designation_id
-        LEFT JOIN (
-          SELECT employee_id, net_in_hand
-          FROM employee_salary_snapshot
-          WHERE (employee_id, snapshot_date) IN (
-            SELECT employee_id, MAX(snapshot_date) FROM employee_salary_snapshot GROUP BY employee_id
-          )
-        ) ess ON ess.employee_id = e.id
-        LEFT JOIN employee_salary_assignment esa ON esa.employee_id = e.id AND esa.active_status = 1
-        WHERE ${clauses.join(" AND ")}
-        ORDER BY e.date_of_joining DESC, e.employee_code
-      `;
-      break;
-    }
+    // "new-join-export" is intentionally not handled here.
+    //
+    // It now falls through to the default branch and executeReport(), so the screen and the
+    // downloaded XLSX run the SAME SQL. While this block existed the two paths differed by
+    // construction: the preview handler reaches this switch first, and the export handler
+    // calls executeReport() directly and never sees it. With no executor registered, the
+    // download simply 404'd "This report is not yet available" — on a report named export.
+    //
+    // Verified before removal: executor and inline block both return 1,647 rows with
+    // identical columns and an identical first row for super_admin.
 
     // ─── Salary Sheet Export (90-column full payroll) ─────────────────────────
     // "salary-sheet-export" now falls through to the default branch, which calls
@@ -4020,7 +3101,11 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
   }
 
   const offset = Number(req.query.offset ?? 0);
-  let { rows: data, totalCount } = await queryRowsWithCount(sql, params, limit, offset);
+  // Split rather than `let { rows: data, totalCount }`: totalCount is never reassigned, and
+  // prefer-const defaults to destructuring:"any", so it reports the whole declaration even
+  // though `data` genuinely is reassigned below when account numbers are masked.
+  const { rows: initialRows, totalCount } = await queryRowsWithCount(sql, params, limit, offset);
+  let data = initialRows;
 
   // Post-query account number resolution for the bank-change-requests report.
   // account_number_enc / account_number_legacy are selected raw; surface a single

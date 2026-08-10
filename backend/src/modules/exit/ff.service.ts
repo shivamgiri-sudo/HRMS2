@@ -68,6 +68,90 @@ export interface PayrollAlreadyPaid {
   paid_working_days: number | null;
 }
 
+/**
+ * Records how a gratuity figure was arrived at, into gratuity_calculation_audit.
+ *
+ * The table was declared by migration 246 and never created until 1119 - 246 stopped on it,
+ * because it declares foreign keys to employees(id) and exit_request(id) without a COLLATE and the
+ * server default disagrees with those tables. So nothing has ever written to it.
+ *
+ * Two rules govern what goes in, and they matter more than the feature:
+ *
+ * It records established facts, never reconstructed ones. basic_monthly comes from the same active
+ * salary assignment the calculation itself reads, and years_of_service from date_of_joining to the
+ * confirmed last working day. If either is unavailable the audit is skipped entirely rather than
+ * written with a zero. This table exists to be read back in a dispute, possibly years later; a row
+ * saying somebody served 0.00 years on a basic of 0.00 is worse than no row, because it looks like
+ * evidence.
+ *
+ * It never affects the settlement. The insert is fire-and-forget inside its own try/catch: a
+ * failure to record the workings must not fail, roll back or delay an F&F that is otherwise valid.
+ *
+ * gross and net are both the F&F's own gratuity_amount and tax_deducted is left at its default of
+ * 0, because no gratuity tax is computed anywhere in this path. Deriving one here would be
+ * inventing a number, which is the thing this function is meant to prevent.
+ */
+async function recordGratuityAudit(
+  exitRequestId: string,
+  employeeId: string,
+  gratuityAmount: number
+): Promise<void> {
+  try {
+    if (!(gratuityAmount > 0)) return; // nothing was granted; nothing to explain
+
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT
+         esa.ctc_annual,
+         ss.basic_pct,
+         e.date_of_joining,
+         COALESCE(x.last_working_day_confirmed, x.last_working_day_proposed) AS last_working_day
+       FROM employees e
+       JOIN exit_request x ON x.id = ?
+       LEFT JOIN employee_salary_assignment esa
+              ON esa.employee_id = e.id AND esa.active_status = 1
+       LEFT JOIN salary_structure_master ss ON ss.id = esa.structure_id
+       WHERE e.id = ?
+       ORDER BY esa.effective_from DESC
+       LIMIT 1`,
+      [exitRequestId, employeeId]
+    );
+    const row = (rows as any[])[0];
+    if (!row?.ctc_annual || !row?.date_of_joining || !row?.last_working_day) return;
+
+    const basicMonthly = (Number(row.ctc_annual) / 12) * (Number(row.basic_pct ?? 40) / 100);
+    const years =
+      (new Date(row.last_working_day).getTime() - new Date(row.date_of_joining).getTime()) /
+      (365.25 * 24 * 60 * 60 * 1000);
+    if (!Number.isFinite(basicMonthly) || !Number.isFinite(years) || years <= 0) return;
+
+    await db.execute(
+      `INSERT INTO gratuity_calculation_audit
+         (id, exit_request_id, employee_id, years_of_service, basic_monthly,
+          gratuity_formula, gross_gratuity, net_gratuity)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE
+         years_of_service = VALUES(years_of_service),
+         basic_monthly    = VALUES(basic_monthly),
+         gross_gratuity   = VALUES(gross_gratuity),
+         net_gratuity     = VALUES(net_gratuity),
+         calculation_date = NOW()`,
+      [
+        randomUUID(),
+        exitRequestId,
+        employeeId,
+        Number(years.toFixed(2)),
+        Number(basicMonthly.toFixed(2)),
+        "(basic/daysInMonth)*daysPerYear*years, per statutory_config",
+        gratuityAmount,
+        gratuityAmount,
+      ]
+    );
+  } catch (error) {
+    // Never let recording the workings break the settlement itself.
+    console.error("[ff] gratuity audit not recorded", error);
+  }
+}
+
 export const ffService = {
   async createFF(
     exitRequestId: string,
@@ -106,6 +190,10 @@ export const ffService = {
         preparedBy,
       ]
     );
+
+    // Records the workings behind the gratuity figure. Cannot fail the settlement - see the
+    // function's own try/catch - and skips itself rather than record workings it cannot establish.
+    await recordGratuityAudit(exitRequestId, exitReq.employee_id, Number(data.gratuityAmount ?? 0));
 
     void logSensitiveAction({
       actor_user_id: preparedBy,

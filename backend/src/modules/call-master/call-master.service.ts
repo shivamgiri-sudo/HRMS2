@@ -7,26 +7,43 @@ export interface CallMasterFilters {
   lob?: "Inbound" | "Outbound" | "All";
 }
 
+/*
+ * Eight of these nineteen keys were not columns of db_audit.call_quality_assessment, and both
+ * queries below built their SELECT straight from this list, so /api/call-master/export and the
+ * parameter summary raised ER_BAD_FIELD_ERROR and returned nothing. Eleven working parameters
+ * were lost to eight that were never there.
+ *
+ * `column` is the actual source column; null means the scorecard does not measure that parameter
+ * and the queries select NULL for it. Two of the eight did exist under a different name -
+ * probing_done is accurate_issue_probing and escalation_handled is case_escalated_correctly -
+ * and those are mapped rather than nulled.
+ *
+ * The remaining six stay in the list with their labels so no export column silently disappears
+ * from a file someone reconciles against. They read as blank, which is what they are: there is
+ * no call_identified_by_name, call_avoidance, repeat_call_case_registered, resolution_provided,
+ * first_call_resolution or social_media_threat parameter in the scorecard. Adding them means
+ * adding them upstream, not aliasing a different parameter into their place.
+ */
 const INBOUND_PARAMS = [
-  { key: "call_answered_within_5_seconds",          label: "Answered <5s" },
-  { key: "call_identified_by_name",                 label: "Identified by Name" },
-  { key: "customer_concern_acknowledged",           label: "Concern Acknowledged" },
-  { key: "express_empathy",                         label: "Empathy Expressed" },
-  { key: "active_listening",                        label: "Active Listening" },
-  { key: "assurance_or_appreciation_provided",      label: "Assurance Provided" },
-  { key: "politeness_and_no_sarcasm",               label: "Politeness" },
-  { key: "correct_and_complete_information",        label: "Correct Info" },
-  { key: "proper_hold_procedure",                   label: "Hold Procedure" },
-  { key: "call_avoidance",                          label: "Call Avoidance" },
-  { key: "address_recorded_completely",             label: "Address Recorded" },
-  { key: "professionalism_maintained",              label: "Professionalism" },
-  { key: "proper_call_closure",                     label: "Proper Closure" },
-  { key: "repeat_call_case_registered",             label: "Repeat Case Registered" },
-  { key: "probing_done",                            label: "Probing Done" },
-  { key: "resolution_provided",                     label: "Resolution Provided" },
-  { key: "first_call_resolution",                   label: "FCR" },
-  { key: "escalation_handled",                      label: "Escalation Handled" },
-  { key: "social_media_threat",                     label: "Social Media Threat" },
+  { key: "call_answered_within_5_seconds",          label: "Answered <5s",           column: "call_answered_within_5_seconds" },
+  { key: "call_identified_by_name",                 label: "Identified by Name",     column: null },
+  { key: "customer_concern_acknowledged",           label: "Concern Acknowledged",   column: "customer_concern_acknowledged" },
+  { key: "express_empathy",                         label: "Empathy Expressed",      column: "express_empathy" },
+  { key: "active_listening",                        label: "Active Listening",       column: "active_listening" },
+  { key: "assurance_or_appreciation_provided",      label: "Assurance Provided",     column: "assurance_or_appreciation_provided" },
+  { key: "politeness_and_no_sarcasm",               label: "Politeness",             column: "politeness_and_no_sarcasm" },
+  { key: "correct_and_complete_information",        label: "Correct Info",           column: "correct_and_complete_information" },
+  { key: "proper_hold_procedure",                   label: "Hold Procedure",         column: "proper_hold_procedure" },
+  { key: "call_avoidance",                          label: "Call Avoidance",         column: null },
+  { key: "address_recorded_completely",             label: "Address Recorded",       column: "address_recorded_completely" },
+  { key: "professionalism_maintained",              label: "Professionalism",        column: "professionalism_maintained" },
+  { key: "proper_call_closure",                     label: "Proper Closure",         column: "proper_call_closure" },
+  { key: "repeat_call_case_registered",             label: "Repeat Case Registered", column: null },
+  { key: "probing_done",                            label: "Probing Done",           column: "accurate_issue_probing" },
+  { key: "resolution_provided",                     label: "Resolution Provided",    column: null },
+  { key: "first_call_resolution",                   label: "FCR",                    column: null },
+  { key: "escalation_handled",                      label: "Escalation Handled",     column: "case_escalated_correctly" },
+  { key: "social_media_threat",                     label: "Social Media Threat",    column: null },
 ] as const;
 
 const OUTBOUND_PARAMS = [
@@ -260,8 +277,10 @@ export async function getCXParameters(filters: CallMasterFilters) {
 
   if (lob === "Inbound") {
     const ibF = buildInboundClientFilter(clientIds);
-    const cols = INBOUND_PARAMS.map(
-      (p) => `ROUND(AVG(COALESCE(\`${p.key}\`,0))*100,1) AS \`${p.key}\``
+    const cols = INBOUND_PARAMS.map((p) =>
+      p.column
+        ? `ROUND(AVG(COALESCE(\`${p.column}\`,0))*100,1) AS \`${p.key}\``
+        : `NULL AS \`${p.key}\``
     ).join(",\n      ");
     const [row] = await querySource<Record<string, number>>(
       `SELECT ${cols} FROM db_audit.call_quality_assessment q
@@ -431,7 +450,9 @@ export async function getExportData(
 
   if (lob !== "Outbound") {
     const ibF = buildInboundClientFilter(clientIds);
-    const paramCols = INBOUND_PARAMS.map((p) => `q.\`${p.key}\``).join(", ");
+    const paramCols = INBOUND_PARAMS.map((p) =>
+      p.column ? `q.\`${p.column}\` AS \`${p.key}\`` : `NULL AS \`${p.key}\``
+    ).join(", ");
     return querySource<Record<string, unknown>>(
       `SELECT q.CallDate, q.User AS agent_code,
         COALESCE(c.name, CONCAT('Client ', q.ClientId)) AS client,

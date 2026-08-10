@@ -76,7 +76,7 @@ export async function agentPerformanceSummary(
 
   const empSql = `SELECT e.employee_code,
     COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-    b.branch_name,
+    COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
     COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
     COALESCE(cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
     COALESCE(cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name
@@ -165,7 +165,7 @@ export async function teamPerformanceSummary(
 
   const empSql = `SELECT e.employee_code,
     COALESCE(NULLIF(tm.full_name,''), CONCAT(tm.first_name,' ',COALESCE(tm.last_name,''))) AS team_lead_name,
-    b.branch_name,
+    COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
     COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
     COALESCE(cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
     COALESCE(cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name
@@ -220,6 +220,56 @@ export async function teamPerformanceSummary(
   return { rows: paged, rowCount: aggregated.length, isTruncated: aggregated.length > paged.length };
 }
 
+/**
+ * What makes an audit a fatal error. Shared so the page query and the count that describes it
+ * cannot drift — which is exactly what had happened: countAudits reproduced only the IN-list and
+ * date range, so fatal-error-register counted EVERY audit in the window while displaying only
+ * the fatal ones. Measured live 2026-08-10 on the default range: 28,982 fatal rows reported as a
+ * total of 77,433, a 2.7x overstatement, and it fires today because 28,982 exceeds the 2,000-row
+ * probe that triggers the count.
+ */
+/**
+ * A keyset cursor value has to survive a round trip through the worker queue as text and come
+ * back comparable to a MySQL DATETIME. mysql2 returns DATETIME as a JS Date; its default
+ * toString ("Mon Aug 10 2026 ...") does not compare correctly, so format to 'YYYY-MM-DD HH:MM:SS'
+ * in local time — the same wall-clock the server stored, with no timezone reinterpretation.
+ */
+function formatAuditDate(v: unknown): string {
+  if (v instanceof Date) {
+    const p = (n: number) => String(n).padStart(2, "0");
+    return `${v.getFullYear()}-${p(v.getMonth() + 1)}-${p(v.getDate())} ` +
+           `${p(v.getHours())}:${p(v.getMinutes())}:${p(v.getSeconds())}`;
+  }
+  return String(v ?? "");
+}
+
+const FATAL_ERROR_PREDICATE =
+  ` AND cqa.quality_percentage < 50
+       AND (cqa.professionalism_maintained = 0 OR cqa.active_listening = 0)`;
+
+/**
+ * Total matching audit rows, for the case where a page probe came back full.
+ *
+ * `filterClause` must carry EVERY predicate the page query applied beyond the IN-list and date
+ * range — the cursor clause, and any report-specific filter. A count that describes a wider set
+ * than the rows it accompanies is worse than no count: the grid offers pages that do not exist.
+ */
+async function countAudits(
+  placeholders: string,
+  qParams: (string | number | null)[],
+  filterClause: string
+): Promise<number> {
+  const sql = `
+    SELECT COUNT(*) AS total
+      FROM db_audit.call_quality_assessment cqa
+     WHERE cqa.User IN (${placeholders})
+       AND cqa.CallDate BETWEEN ? AND ?
+       ${filterClause}`;
+  const rows = await querySource<{ total: number }>(sql, qParams);
+  return Number(rows[0]?.total ?? 0);
+}
+
+
 // ---------------------------------------------------------------------------
 // quality-audit-log
 // Source: db_audit.call_quality_assessment (cross-DB via sourceDb / qualified refs)
@@ -266,9 +316,30 @@ export async function qualityAuditLog(
   const cursor = options.cursor;
   let cursorClause = "";
   if (options.mode === "worker" && cursor != null) {
-    cursorClause = ` AND cqa.id > ?`;
-    qParams.push(cursor as string);
+    // The keyset must walk the same sequence the ORDER BY produces. That order is now
+    // (CallDate DESC, id DESC); a bare `id >` cursor would page a different sequence from the
+    // one the rows arrive in, skipping some export chunks and repeating others — silently, in
+    // a file nobody re-counts. Hence a composite cursor "<CallDate>|<id>"; ExecOptions.cursor
+    // already accepts a string. lastIndexOf, not split, because the datetime contains no pipe
+    // but this stays correct if it ever does.
+    const raw = String(cursor);
+    const sep = raw.lastIndexOf("|");
+    cursorClause = ` AND (cqa.CallDate < ? OR (cqa.CallDate = ? AND cqa.id < ?))`;
+    qParams.push(raw.slice(0, sep), raw.slice(0, sep), raw.slice(sep + 1));
   }
+
+  // Fetch beyond the page so the true total comes from the same round trip.
+  //
+  // These two reported rowCount: rows.length — the size of the page, not the size of the
+  // result. The grid reads that as the total, so a register with thousands of audits showed
+  // "100 total", offered one page, and put the rest out of reach. Confirmed live: page 1 and
+  // page 2 each returned 100 different rows while both declared a total of 100.
+  //
+  // Same shape as the payroll-register pagination defect fixed earlier in this audit, and the
+  // same remedy: over-fetch a bounded amount, slice the caller's page from it, and only pay for
+  // a COUNT when the result genuinely exceeds the probe.
+  const PROBE_ROWS = 2000;
+  const probeLimit = Math.max(options.limit, PROBE_ROWS);
 
   const sql = `
     SELECT cqa.id AS call_id,
@@ -283,7 +354,11 @@ export async function qualityAuditLog(
      WHERE cqa.User IN (${placeholders})
        AND cqa.CallDate BETWEEN ? AND ?
        ${cursorClause}
-     ORDER BY cqa.id ASC${options.mode === "worker" ? ` LIMIT ${options.limit}` : ` LIMIT ${options.limit} OFFSET ${options.offset}`}`;
+     ORDER BY cqa.CallDate DESC, cqa.id DESC${options.mode === "worker" ? ` LIMIT ${options.limit}` : ` LIMIT ${probeLimit} OFFSET ${options.offset}`}`;
+
+  // This report filters on nothing beyond the IN-list and date range, so its count needs only
+  // the cursor clause. Named the same as its sibling's so the two stay visibly parallel.
+  const countClause = cursorClause;
 
   const ccByCode = new Map(empRows.map(r => [r.employee_code, r]));
   const rawRows = await querySource<Record<string,unknown>>(sql, qParams);
@@ -292,9 +367,41 @@ export async function qualityAuditLog(
     cost_centre_code: ccByCode.get(r.employee_code as string)?.cost_centre_code ?? 'UNASSIGNED',
     cost_centre_name: ccByCode.get(r.employee_code as string)?.cost_centre_name ?? 'UNASSIGNED',
   }));
+  // Composite, to match the (CallDate DESC, id DESC) keyset above. mysql2 hands datetimes back
+  // as Date objects, so format explicitly rather than relying on toString().
   const nextCursor = (options.mode === "worker" && rows.length > 0)
-    ? (rows[rows.length - 1].call_id as string) : null;
-  return { rows, rowCount: rows.length, isTruncated: rows.length === options.limit, nextCursor };
+    ? `${formatAuditDate(rows[rows.length - 1].audit_date)}|${rows[rows.length - 1].call_id}`
+    : null;
+
+  // Worker mode keysets and takes what it asked for; preview slices its page out of the probe.
+  if (options.mode === "worker") {
+    return { rows, rowCount: rows.length, isTruncated: rows.length === options.limit, nextCursor };
+  }
+
+  const page = rows.slice(0, options.limit);
+
+  // Short of the probe AND non-empty means the result ends here, so the total is exact. An
+  // offset past the end returns nothing, where offset + 0 would report the offset itself as the
+  // total — the same trap found when paging monthly-shrinkage-trend.
+  //
+  // When the probe fills, the result is genuinely larger and only a COUNT can say by how much.
+  // Reporting the probe size instead would understate the total, which is the very defect this
+  // change exists to remove — just with a bigger wrong number.
+  let total: number;
+  if (rows.length > 0 && rows.length < probeLimit) {
+    total = options.offset + rows.length;
+  } else if (rows.length === 0) {
+    total = options.offset === 0 ? 0 : await countAudits(placeholders, qParams, countClause);
+  } else {
+    total = await countAudits(placeholders, qParams, countClause);
+  }
+
+  return {
+    rows: page,
+    rowCount: total,
+    isTruncated: total > options.offset + page.length,
+    nextCursor,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -341,9 +448,30 @@ export async function fatalErrorRegister(
   const cursor = options.cursor;
   let cursorClause = "";
   if (options.mode === "worker" && cursor != null) {
-    cursorClause = ` AND cqa.id > ?`;
-    qParams.push(cursor as string);
+    // The keyset must walk the same sequence the ORDER BY produces. That order is now
+    // (CallDate DESC, id DESC); a bare `id >` cursor would page a different sequence from the
+    // one the rows arrive in, skipping some export chunks and repeating others — silently, in
+    // a file nobody re-counts. Hence a composite cursor "<CallDate>|<id>"; ExecOptions.cursor
+    // already accepts a string. lastIndexOf, not split, because the datetime contains no pipe
+    // but this stays correct if it ever does.
+    const raw = String(cursor);
+    const sep = raw.lastIndexOf("|");
+    cursorClause = ` AND (cqa.CallDate < ? OR (cqa.CallDate = ? AND cqa.id < ?))`;
+    qParams.push(raw.slice(0, sep), raw.slice(0, sep), raw.slice(sep + 1));
   }
+
+  // Fetch beyond the page so the true total comes from the same round trip.
+  //
+  // These two reported rowCount: rows.length — the size of the page, not the size of the
+  // result. The grid reads that as the total, so a register with thousands of audits showed
+  // "100 total", offered one page, and put the rest out of reach. Confirmed live: page 1 and
+  // page 2 each returned 100 different rows while both declared a total of 100.
+  //
+  // Same shape as the payroll-register pagination defect fixed earlier in this audit, and the
+  // same remedy: over-fetch a bounded amount, slice the caller's page from it, and only pay for
+  // a COUNT when the result genuinely exceeds the probe.
+  const PROBE_ROWS = 2000;
+  const probeLimit = Math.max(options.limit, PROBE_ROWS);
 
   const sql = `
     SELECT cqa.id AS call_id,
@@ -354,10 +482,13 @@ export async function fatalErrorRegister(
       FROM db_audit.call_quality_assessment cqa
      WHERE cqa.User IN (${placeholders})
        AND cqa.CallDate BETWEEN ? AND ?
-       AND cqa.quality_percentage < 50
-       AND (cqa.professionalism_maintained = 0 OR cqa.active_listening = 0)
+       ${FATAL_ERROR_PREDICATE}
        ${cursorClause}
-     ORDER BY cqa.id ASC${options.mode === "worker" ? ` LIMIT ${options.limit}` : ` LIMIT ${options.limit} OFFSET ${options.offset}`}`;
+     ORDER BY cqa.CallDate DESC, cqa.id DESC${options.mode === "worker" ? ` LIMIT ${options.limit}` : ` LIMIT ${probeLimit} OFFSET ${options.offset}`}`;
+
+  // The count must describe the SAME set the page came from — fatal rows only, not every audit
+  // in the window. Omitting the fatal predicate here is what reported 28,982 rows as 77,433.
+  const countClause = `${FATAL_ERROR_PREDICATE} ${cursorClause}`;
 
   const ccByCode = new Map(empRows.map(r => [r.employee_code, r]));
   const rawRows = await querySource<Record<string,unknown>>(sql, qParams);
@@ -366,7 +497,39 @@ export async function fatalErrorRegister(
     cost_centre_code: ccByCode.get(r.employee_code as string)?.cost_centre_code ?? 'UNASSIGNED',
     cost_centre_name: ccByCode.get(r.employee_code as string)?.cost_centre_name ?? 'UNASSIGNED',
   }));
+  // Composite, to match the (CallDate DESC, id DESC) keyset above. mysql2 hands datetimes back
+  // as Date objects, so format explicitly rather than relying on toString().
   const nextCursor = (options.mode === "worker" && rows.length > 0)
-    ? (rows[rows.length - 1].call_id as string) : null;
-  return { rows, rowCount: rows.length, isTruncated: rows.length === options.limit, nextCursor };
+    ? `${formatAuditDate(rows[rows.length - 1].audit_date)}|${rows[rows.length - 1].call_id}`
+    : null;
+
+  // Worker mode keysets and takes what it asked for; preview slices its page out of the probe.
+  if (options.mode === "worker") {
+    return { rows, rowCount: rows.length, isTruncated: rows.length === options.limit, nextCursor };
+  }
+
+  const page = rows.slice(0, options.limit);
+
+  // Short of the probe AND non-empty means the result ends here, so the total is exact. An
+  // offset past the end returns nothing, where offset + 0 would report the offset itself as the
+  // total — the same trap found when paging monthly-shrinkage-trend.
+  //
+  // When the probe fills, the result is genuinely larger and only a COUNT can say by how much.
+  // Reporting the probe size instead would understate the total, which is the very defect this
+  // change exists to remove — just with a bigger wrong number.
+  let total: number;
+  if (rows.length > 0 && rows.length < probeLimit) {
+    total = options.offset + rows.length;
+  } else if (rows.length === 0) {
+    total = options.offset === 0 ? 0 : await countAudits(placeholders, qParams, countClause);
+  } else {
+    total = await countAudits(placeholders, qParams, countClause);
+  }
+
+  return {
+    rows: page,
+    rowCount: total,
+    isTruncated: total > options.offset + page.length,
+    nextCursor,
+  };
 }

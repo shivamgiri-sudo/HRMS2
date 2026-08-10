@@ -14,6 +14,15 @@ export interface PortalTokenPayload {
   clientId: string;
   processIds: string[];
   role: "client";
+  /**
+   * Session id, matched against portal_user_sessions.jti so a single token can be revoked
+   * without deactivating the whole account.
+   *
+   * Optional because tokens issued before session tracking existed do not carry one, and they
+   * stay valid until they expire. Their absence means "no session row to check", not "revoked" -
+   * treating them as revoked would sign out every client currently holding a 7-day token.
+   */
+  jti?: string;
 }
 
 export interface ProcessCard {

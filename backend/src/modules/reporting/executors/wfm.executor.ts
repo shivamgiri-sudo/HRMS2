@@ -17,6 +17,7 @@ import {
   dateParam,
   monthParam,
   applyPagination,
+  fetchPageWithTotal,
   ReportScopeAccessDeniedError,
 } from "./types.js";
 
@@ -68,8 +69,8 @@ export async function rosterPublished(
            TIME_FORMAT(ws.end_time,   '%H:%i') AS shift_end,
            ws.required_minutes AS shift_duration_minutes,
            wra.publish_status AS roster_status,
-           b.branch_name,
-           p.process_name
+           COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
+           COALESCE(p.process_name, 'UNASSIGNED') AS process_name
       FROM wfm_roster_assignment wra
       JOIN employees e              ON e.id  = wra.employee_id
       LEFT JOIN wfm_shift_master ws ON ws.id = wra.shift_id
@@ -79,9 +80,12 @@ export async function rosterPublished(
      WHERE ${clauses.join(" AND ")}
      ORDER BY wra.id ASC`;
 
-  const total = options.includeTotal ? await count(base, params) : 0;
-  const sql   = options.mode === "worker" ? `${base} LIMIT ${options.limit}` : applyPagination(base, options);
-  const rows  = await query(sql, params) as Record<string, unknown>[];
+  // One execution, not two: the page and its total come from the same fetch wherever the result
+  // fits the probe. See fetchPageWithTotal — the COUNT wrapper it replaces re-ran the entire
+  // statement to learn a number the first run already knew.
+  const paged = await fetchPageWithTotal(base, params, options, query, count);
+  const total = paged.total;
+  const rows  = paged.rows as Record<string, unknown>[];
   const nextCursor = (options.mode === "worker" && rows.length > 0)
     ? (rows[rows.length - 1]._cursor as number) : null;
   const out = rows.map(({ _cursor: _, ...rest }) => rest);
@@ -126,8 +130,8 @@ export async function rosterVariance(
              WHEN adr.attendance_status = 'absent'  THEN 'ABSENT_ON_ROSTER'
              ELSE 'OK'
            END AS variance_flag,
-           b.branch_name,
-           p.process_name
+           COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
+           COALESCE(p.process_name, 'UNASSIGNED') AS process_name
       FROM wfm_roster_assignment wra
       JOIN employees e                ON e.id  = wra.employee_id
       LEFT JOIN wfm_shift_master ws   ON ws.id = wra.shift_id
@@ -140,9 +144,12 @@ export async function rosterVariance(
      WHERE ${clauses.join(" AND ")}
      ORDER BY wra.id ASC`;
 
-  const total = options.includeTotal ? await count(base, params) : 0;
-  const sql   = options.mode === "worker" ? `${base} LIMIT ${options.limit}` : applyPagination(base, options);
-  const rows  = await query(sql, params) as Record<string, unknown>[];
+  // One execution, not two: the page and its total come from the same fetch wherever the result
+  // fits the probe. See fetchPageWithTotal — the COUNT wrapper it replaces re-ran the entire
+  // statement to learn a number the first run already knew.
+  const paged = await fetchPageWithTotal(base, params, options, query, count);
+  const total = paged.total;
+  const rows  = paged.rows as Record<string, unknown>[];
   const nextCursor = (options.mode === "worker" && rows.length > 0)
     ? (rows[rows.length - 1]._cursor as number) : null;
   const out = rows.map(({ _cursor: _, ...rest }) => rest);
@@ -209,8 +216,8 @@ export async function shiftSwapRegister(
            ssr.status,
            CONCAT(e_rev.first_name,' ',COALESCE(e_rev.last_name,'')) AS approved_by,
            ssr.reviewed_at,
-           b.branch_name,
-           p.process_name
+           COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
+           COALESCE(p.process_name, 'UNASSIGNED') AS process_name
       FROM wfm_roster_swap_request ssr
       JOIN employees e_req           ON e_req.id = ssr.requester_emp_id
       LEFT JOIN employees e_swp      ON e_swp.id = ssr.swap_with_emp_id
@@ -221,9 +228,12 @@ export async function shiftSwapRegister(
      WHERE ${clauses.join(" AND ")}
      ORDER BY ssr.id ASC`;
 
-  const total = options.includeTotal ? await count(base, params) : 0;
-  const sql   = options.mode === "worker" ? `${base} LIMIT ${options.limit}` : applyPagination(base, options);
-  const rows  = await query(sql, params) as Record<string, unknown>[];
+  // One execution, not two: the page and its total come from the same fetch wherever the result
+  // fits the probe. See fetchPageWithTotal — the COUNT wrapper it replaces re-ran the entire
+  // statement to learn a number the first run already knew.
+  const paged = await fetchPageWithTotal(base, params, options, query, count);
+  const total = paged.total;
+  const rows  = paged.rows as Record<string, unknown>[];
   const nextCursor = (options.mode === "worker" && rows.length > 0)
     ? (rows[rows.length - 1]._cursor as number) : null;
   const out = rows.map(({ _cursor: _, ...rest }) => rest);
@@ -284,8 +294,8 @@ export async function weekOffCalendar(
            COALESCE(sp_cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
            wra.roster_date AS week_off_date,
            DAYNAME(wra.roster_date)  AS week_off_day,
-           b.branch_name,
-           p.process_name
+           COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
+           COALESCE(p.process_name, 'UNASSIGNED') AS process_name
       FROM wfm_roster_assignment wra
       JOIN employees e              ON e.id  = wra.employee_id
       LEFT JOIN wfm_shift_master ws ON ws.id = wra.shift_id
@@ -295,9 +305,12 @@ export async function weekOffCalendar(
      WHERE ${clauses.join(" AND ")}
      ORDER BY wra.id ASC`;
 
-  const total = options.includeTotal ? await count(base, params) : 0;
-  const sql   = options.mode === "worker" ? `${base} LIMIT ${options.limit}` : applyPagination(base, options);
-  const rows  = await query(sql, params) as Record<string, unknown>[];
+  // One execution, not two: the page and its total come from the same fetch wherever the result
+  // fits the probe. See fetchPageWithTotal — the COUNT wrapper it replaces re-ran the entire
+  // statement to learn a number the first run already knew.
+  const paged = await fetchPageWithTotal(base, params, options, query, count);
+  const total = paged.total;
+  const rows  = paged.rows as Record<string, unknown>[];
   const nextCursor = (options.mode === "worker" && rows.length > 0)
     ? (rows[rows.length - 1]._cursor as number) : null;
   const out = rows.map(({ _cursor: _, ...rest }) => rest);
@@ -339,7 +352,7 @@ export async function rosterAdherence(
            COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
            COALESCE(sp_cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
            COALESCE(sp_cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
-           b.branch_name,
+           COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
            COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
            COALESCE(ws.shift_name, 'Unassigned') AS roster_shift,
            adr.attendance_status,
@@ -360,8 +373,11 @@ export async function rosterAdherence(
      WHERE ${clauses.join(" AND ")}
      ORDER BY adr.record_date DESC, employee_name`;
 
-  const total = options.includeTotal ? await count(base, params) : 0;
-  const sql   = applyPagination(base, options);
-  const rows  = await query(sql, params) as Record<string, unknown>[];
+  // One execution, not two: the page and its total come from the same fetch wherever the result
+  // fits the probe. See fetchPageWithTotal — the COUNT wrapper it replaces re-ran the entire
+  // statement to learn a number the first run already knew.
+  const paged = await fetchPageWithTotal(base, params, options, query, count);
+  const total = paged.total;
+  const rows  = paged.rows as Record<string, unknown>[];
   return { rows, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > rows.length };
 }

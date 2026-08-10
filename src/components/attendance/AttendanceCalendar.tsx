@@ -67,6 +67,13 @@ interface RawPunch {
   io_type: number;
   io_label: string;
   device_id: number | null;
+  /**
+   * True when the backend synthesised this entry from the day's first/last punch rather
+   * than reading a real per-punch row. cosec_punch_sync — the per-punch mirror — stopped
+   * being written on 2026-06-18, so for later dates only the day's bounds are available.
+   * Two derived bounds must not be presented as a complete punch trail.
+   */
+  derived?: boolean;
 }
 
 interface DayDetail {
@@ -301,6 +308,9 @@ function DayDetailSheet({
   const agg = data?.cosec_daily_agg;
   const apr = data?.apr_record ?? null;
   const punches = data?.raw_punches ?? [];
+  // Every entry synthesised from the day's bounds means there is no per-punch detail for
+  // this date, so the list must not be labelled as the full set of punch events.
+  const punchesAreDerived = punches.length > 0 && punches.every((p) => p.derived === true);
   const isDialler = adr?.attendance_source === 'dialler' || !!apr;
   const isNight = detectNightShift(agg?.first_punch_in, agg?.last_punch_out);
 
@@ -672,8 +682,16 @@ function DayDetailSheet({
                 <Separator />
                 <div>
                   <p className="text-xs font-bold uppercase tracking-widest text-slate-500 mb-2">
-                    All Punch Events ({punches.length})
+                    {punchesAreDerived
+                      ? "First / Last Punch"
+                      : `All Punch Events (${punches.length})`}
                   </p>
+                  {punchesAreDerived && (
+                    <p className="text-[10px] text-slate-400 mb-2">
+                      Derived from the day's first and last punch — per-punch detail is not
+                      available for this date.
+                    </p>
+                  )}
                   <div className="space-y-1.5 max-h-52 overflow-y-auto pr-1">
                     {punches.map((p, i) => (
                       <div

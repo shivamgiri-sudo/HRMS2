@@ -10,6 +10,7 @@
  *   - Executors must fail closed when mode === "none".
  *   - companyId must appear in every executor query (WHERE employee.company_id = :companyId).
  */
+import type { RowDataPacket } from "mysql2";
 
 export interface ExecFilters {
   branchId?: string;
@@ -336,6 +337,76 @@ export function yearParam(value: unknown): number {
  * Appends LIMIT/OFFSET to a base SQL string.
  * In worker mode, uses cursor-based WHERE clause instead — callers handle that.
  */
+/**
+ * How many rows to fetch when probing for the total in a single execution.
+ *
+ * The executors' usual shape runs the statement TWICE whenever a total is wanted: once wrapped
+ * in COUNT(*), once for the page. For an aggregate report that is close to double the cost, and
+ * the second execution buys a number the first could have produced for free.
+ *
+ * Measured on monthly-shrinkage-trend against live on 2026-08-09, which returns 430 rows:
+ *
+ *   LIMIT 100  (one page)        33.2s / 38.0s
+ *   LIMIT 1000 (whole result)    36.1s / 34.1s
+ *   the COUNT that LIMIT 100 forces          42.2s
+ *
+ * The LIMIT costs nothing, because the GROUP BY has already computed every row before the LIMIT
+ * truncates the output. So asking for more rows than the page and counting what comes back is
+ * strictly cheaper than asking for a page and then counting separately — as long as the result
+ * fits inside the probe.
+ *
+ * 2,000 is chosen to cover the aggregate reports and the mid-sized registers (payroll-register
+ * returns 1,464) while bounding what is transferred when it does not fit. A report larger than
+ * the probe falls back to the COUNT, having transferred 2,000 rows instead of a page — a small
+ * waste on a query that was already expensive, and only on reports big enough to be paged deeply
+ * in the first place.
+ */
+const COUNT_FREE_PROBE = 2000;
+
+/**
+ * Fetch one page and its true total, taking a second execution only when unavoidable.
+ *
+ * Returns exactly the rows `applyPagination` would have returned; the probe is invisible to the
+ * caller. Worker mode is passed through untouched, since it keysets rather than offsets.
+ */
+export async function fetchPageWithTotal(
+  base: string,
+  params: unknown[],
+  options: ExecOptions,
+  run: (sql: string, params: unknown[]) => Promise<RowDataPacket[]>,
+  countRows: (sql: string, params: unknown[]) => Promise<number>
+): Promise<{ rows: RowDataPacket[]; total: number }> {
+  if (options.mode === "worker") {
+    const rows = await run(`${base} LIMIT ${options.limit}`, params);
+    return { rows, total: rows.length };
+  }
+
+  const probe = Math.max(options.limit, COUNT_FREE_PROBE);
+  const probed = await run(`${base} LIMIT ${probe} OFFSET ${options.offset}`, params);
+  const page = probed.slice(0, options.limit);
+
+  // Short of the probe means this is the end of the result: the total is known exactly —
+  // BUT only when this page actually reached rows. An offset past the end returns nothing, and
+  // `offset + 0` would then report the offset itself as the total. Walking every page of
+  // monthly-shrinkage-trend surfaced exactly that: 430 real rows, and a request at offset 500
+  // answering totalCount 500.
+  //
+  // The empty-page case is rare — a client would have to page beyond a total it was already
+  // told — so paying for the COUNT there costs nothing in practice and keeps the number honest.
+  if (probed.length > 0 && probed.length < probe) {
+    return { rows: page, total: options.offset + probed.length };
+  }
+  if (probed.length === 0) {
+    return {
+      rows: page,
+      total: options.offset === 0 ? 0 : (options.includeTotal ? await countRows(base, params) : 0),
+    };
+  }
+
+  // Genuinely more rows than the probe — only now is a second execution warranted.
+  return { rows: page, total: options.includeTotal ? await countRows(base, params) : page.length };
+}
+
 export function applyPagination(sql: string, options: ExecOptions): string {
   if (options.mode === "worker") return sql; // worker applies cursor via WHERE
   return `${sql} LIMIT ${options.limit} OFFSET ${options.offset}`;

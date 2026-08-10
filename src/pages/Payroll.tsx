@@ -1992,7 +1992,10 @@ function BranchBreakdownDialog({
     queryFn: async () => {
       if (!runId) return [];
       const response = await hrmsApi.get(`/api/payroll/runs/${runId}/branch-breakdown`);
-      return response.data.data ?? [];
+      // The route replies { success, data: rows }, and hrmsApi returns that body directly, so
+      // one unwrap. response.data.data was always undefined and the branch breakdown rendered
+      // as an empty list rather than failing visibly.
+      return response.data ?? [];
     },
     enabled: open && !!runId,
   });

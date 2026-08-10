@@ -1,3 +1,4 @@
+import { PAN_REGEX } from '../ats/bgv-config.js';
 import { getBillPool } from '../../db/billDb.js';
 import { db } from '../../db/mysql.js';
 import type { RowDataPacket } from 'mysql2';
@@ -25,6 +26,7 @@ interface SyncResult {
 interface MasHrmsEmployee extends RowDataPacket {
   id: string;
   employee_code: string;
+  full_name: string | null;
   uan_number: string | null;
   epf_number: string | null;
   pan_number: string | null;
@@ -37,6 +39,7 @@ interface MasHrmsEmployee extends RowDataPacket {
 
 interface MasjclrEntry extends RowDataPacket {
   EmpCode: string;
+  EmpName: string | null;
   UAN: string | null;
   NewEpfNo: string | null;
   EPFNo: string | null;
@@ -50,6 +53,84 @@ interface MasjclrEntry extends RowDataPacket {
 
 function isEmpty(value: string | null | undefined): boolean {
   return value === null || value === undefined || String(value).trim() === '' || value === '0';
+}
+
+/**
+ * Placeholders that db_bill stores where an identifier is unknown.
+ *
+ * `isEmpty` above catches the exact string '0' and nothing else, so every other
+ * placeholder was copied into `employees` as though it were a real statutory number.
+ * Measured against the table this sync actually reads — db_bill.masjclrentry, 33,144
+ * rows, matched on EmpCode. Of 19,248 non-blank PanNo values only **15,323** are a
+ * valid PAN; the guard blocks **3,925**, almost all of them 'NA' (2,477) and 'N/A'
+ * (907), with 'AN' 32, 'NO' 24, 'N' 8, '-' 8. UAN and EPFNo are clean in this table;
+ * ESICNo loses 4, AcNo 5, IFSCCode 8.
+ *
+ * (An earlier version of this comment quoted db_bill.employee_master. That table has
+ * far worse data — 651 valid PANs in 35,902 rows — but nothing reads it, so its
+ * numbers say nothing about this sync.)
+ *
+ * A placeholder in `pan_number` is worse than a NULL: NULL reads as "we must collect
+ * this", while 'NA' reads as collected, passes any presence check, and reaches Form 16
+ * and the TDS return, where an unusable PAN means deduction at the higher §206AA rate.
+ * mas_hrms already carries four active employees whose PAN is the single character '0',
+ * shared between four different people across two branches, with 60-65 payroll lines
+ * each. Note '0' with surrounding whitespace also defeats the `value === '0'` check
+ * above, since that compares the untrimmed value.
+ *
+ * Deliberately applied to the SOURCE only. Widening `isEmpty` itself would also change
+ * the target test, letting the sync overwrite existing values it currently leaves
+ * alone — a much larger behaviour change than declining to import junk.
+ */
+const PLACEHOLDER_VALUES = new Set([
+  '0', '-', '--', '.', ',', 'NA', 'N/A', 'N.A.', 'NAN', 'NIL', 'NONE', 'NOT APPLICABLE',
+  'NOTAPPLICABLE', 'NULL', 'X', 'XX', 'XXX', 'XXXX', 'ABC', 'TEST', 'PENDING', 'NOTAVAILABLE',
+]);
+
+export function isUsable(value: string | null | undefined): boolean {
+  if (isEmpty(value)) return false;
+  const normalised = String(value).trim().toUpperCase();
+
+  // Anything one or two characters long is junk for every field this sync writes.
+  // masjclrentry holds 'AN' (32 rows), 'NO' (24), 'N' (8) and 'NS' (2) in PanNo, and no
+  // real PAN, UAN, ESIC, EPF, IFSC, account number, bank name or account-holder name in
+  // this dataset is that short. Enumerating such fragments as tokens does not scale —
+  // the first version of this list missed exactly these.
+  if (normalised.length <= 2) return false;
+
+  return !PLACEHOLDER_VALUES.has(normalised);
+}
+
+/**
+ * Do these two names plausibly describe the same person?
+ *
+ * Deliberately generous, because the two systems spell people differently — initials,
+ * dropped middle names, "MOHAMMED" vs "MOHD", trailing spaces, honorifics. Requiring an
+ * exact match would refuse legitimate rows: of 691 EmpCode matches, 669 agree exactly
+ * but 12 only partially, and those 12 are the same people written two ways.
+ *
+ * One shared word of 3+ characters is enough. That is a low bar on purpose — this is a
+ * corroboration check on an identifier that is already supposed to be unique, not an
+ * identity resolver. It separates "SOFIYA SULTAN vs NAYANDEEP KAUR" from
+ * "NAGORI MOHAMMED SAMIR MOHAMMED vs NAGORI MOHAMMED SAMIR", which is all it needs to do.
+ *
+ * A blank name on either side fails closed: unverifiable is not the same as verified.
+ */
+export function namesCorroborate(a: string | null | undefined, b: string | null | undefined): boolean {
+  const clean = (value: string | null | undefined) =>
+    String(value ?? '').toUpperCase().replace(/[^A-Z ]/g, ' ').replace(/\s+/g, ' ').trim();
+
+  const left = clean(a);
+  const right = clean(b);
+  if (!left || !right) return false;
+  if (left === right) return true;
+
+  const words = (value: string) => new Set(value.split(' ').filter((w) => w.length > 2));
+  const rightWords = words(right);
+  for (const word of words(left)) {
+    if (rightWords.has(word)) return true;
+  }
+  return false;
 }
 
 export async function syncEmployeeStatutoryData(options: SyncOptions): Promise<SyncResult> {
@@ -68,7 +149,7 @@ export async function syncEmployeeStatutoryData(options: SyncOptions): Promise<S
     const billPool = await getBillPool();
 
     // Fetch all active employees from mas_hrms
-    let employeeQuery = 'SELECT id, employee_code, uan_number, epf_number, pan_number, esic_number, bank_account_number, bank_name, ifsc_code, account_holder_name FROM employees WHERE active_status = 1';
+    let employeeQuery = 'SELECT id, employee_code, full_name, uan_number, epf_number, pan_number, esic_number, bank_account_number, bank_name, ifsc_code, account_holder_name FROM employees WHERE active_status = 1';
     const params: any[] = [];
 
     if (employeeCodeFilter) {
@@ -83,7 +164,7 @@ export async function syncEmployeeStatutoryData(options: SyncOptions): Promise<S
       try {
         // Query masjclrentry for this employee
         const [legacyRows] = await billPool.execute<MasjclrEntry[]>(
-          'SELECT EmpCode, UAN, NewEpfNo, EPFNo, PanNo, ESICNo, AcNo, AcBank, IFSCCode, AccHolder FROM masjclrentry WHERE EmpCode = ? LIMIT 1',
+          'SELECT EmpCode, EmpName, UAN, NewEpfNo, EPFNo, PanNo, ESICNo, AcNo, AcBank, IFSCCode, AccHolder FROM masjclrentry WHERE EmpCode = ? LIMIT 1',
           [employee.employee_code]
         );
 
@@ -91,52 +172,85 @@ export async function syncEmployeeStatutoryData(options: SyncOptions): Promise<S
           continue; // No match in legacy DB
         }
 
-        result.matched++;
         const legacy = legacyRows[0];
+
+        // EmpCode alone does not identify a person. Corroborate with the name.
+        //
+        // Employee codes have been reused. Measured across the 756 active employees this
+        // sync would consider: 691 match an EmpCode in masjclrentry, 669 of those names
+        // agree exactly and 12 partially — but **10 name a completely different human**.
+        // MAS62921 is SHEELU GARG here and KRISHNA there; MAS63086 is SOFIYA SULTAN here
+        // and NAYANDEEP KAUR there. Both are real employees, not fixtures.
+        //
+        // Without this check the sync writes that stranger's UAN, EPF, ESIC, PAN — and
+        // `bank_account_number`, which is where salary is paid. A wrong PAN misfiles a
+        // tax return; a wrong account number pays the wrong person. Neither announces
+        // itself, because every value written is individually well-formed.
+        //
+        // Counted as skipped rather than matched, and surfaced in errors, because an
+        // identity mismatch is a finding someone should look at, not a silent no-op.
+        if (!namesCorroborate(employee.full_name, legacy.EmpName)) {
+          result.skipped++;
+          result.errors.push(
+            `${employee.employee_code}: name mismatch — mas_hrms "${employee.full_name ?? ''}" vs db_bill "${legacy.EmpName ?? ''}"; skipped, EmpCode appears to be reused`,
+          );
+          continue;
+        }
+
+        result.matched++;
         const fieldsToUpdate: string[] = [];
         const updateData: Record<string, string> = {};
 
         // Check UAN
-        if (isEmpty(employee.uan_number) && !isEmpty(legacy.UAN)) {
+        if (isEmpty(employee.uan_number) && isUsable(legacy.UAN)) {
           fieldsToUpdate.push('uan_number');
           updateData.uan_number = String(legacy.UAN).trim();
         }
 
         // Check EPF (prefer NewEpfNo, fallback to EPFNo)
         if (isEmpty(employee.epf_number)) {
-          const epfValue = !isEmpty(legacy.NewEpfNo) ? legacy.NewEpfNo : legacy.EPFNo;
-          if (!isEmpty(epfValue)) {
+          const epfValue = isUsable(legacy.NewEpfNo) ? legacy.NewEpfNo : legacy.EPFNo;
+          if (isUsable(epfValue)) {
             fieldsToUpdate.push('epf_number');
             updateData.epf_number = String(epfValue).trim();
           }
         }
 
         // Check PAN
-        if (isEmpty(employee.pan_number) && !isEmpty(legacy.PanNo)) {
-          fieldsToUpdate.push('pan_number');
-          updateData.pan_number = String(legacy.PanNo).trim().toUpperCase();
+        //
+        // Format-checked, not just placeholder-checked. PAN is the one field here with a
+        // government-defined shape (ABCDE1234F), the codebase already has PAN_REGEX, and
+        // db_bill holds 3,898 values that fail it against 651 that pass — so a token list
+        // alone would still let malformed 8- and 9-character entries through. An unusable
+        // PAN is not a cosmetic defect: it drives Form 16 and the TDS return.
+        if (isEmpty(employee.pan_number) && isUsable(legacy.PanNo)) {
+          const pan = String(legacy.PanNo).trim().toUpperCase();
+          if (PAN_REGEX.test(pan)) {
+            fieldsToUpdate.push('pan_number');
+            updateData.pan_number = pan;
+          }
         }
 
         // Check ESIC
-        if (isEmpty(employee.esic_number) && !isEmpty(legacy.ESICNo)) {
+        if (isEmpty(employee.esic_number) && isUsable(legacy.ESICNo)) {
           fieldsToUpdate.push('esic_number');
           updateData.esic_number = String(legacy.ESICNo).trim();
         }
 
         // Check Bank Account
-        if (isEmpty(employee.bank_account_number) && !isEmpty(legacy.AcNo)) {
+        if (isEmpty(employee.bank_account_number) && isUsable(legacy.AcNo)) {
           fieldsToUpdate.push('bank_account_number');
           updateData.bank_account_number = String(legacy.AcNo).trim();
 
-          if (!isEmpty(legacy.AcBank)) {
+          if (isUsable(legacy.AcBank)) {
             fieldsToUpdate.push('bank_name');
             updateData.bank_name = String(legacy.AcBank).trim();
           }
-          if (!isEmpty(legacy.IFSCCode)) {
+          if (isUsable(legacy.IFSCCode)) {
             fieldsToUpdate.push('ifsc_code');
             updateData.ifsc_code = String(legacy.IFSCCode).trim().toUpperCase();
           }
-          if (!isEmpty(legacy.AccHolder)) {
+          if (isUsable(legacy.AccHolder)) {
             fieldsToUpdate.push('account_holder_name');
             updateData.account_holder_name = String(legacy.AccHolder).trim();
           }

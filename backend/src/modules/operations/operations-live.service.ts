@@ -156,7 +156,17 @@ class OperationsLiveService {
           s.call_id,
           ra.process_name,
           ra.branch_name,
-          s.last_activity
+          /*
+           * wfm_attendance_session has no last_activity column, so this raised
+           * ER_BAD_FIELD_ERROR and the live agent board returned nothing at all.
+           *
+           * updated_at is the honest stand-in: the row is touched whenever anything is recorded
+           * against the session, and 26,136 of 39,332 sessions have updated_at later than
+           * created_at, so it does move rather than just repeating the login time. For a session
+           * with no events after login the two are equal, which is still the last thing that
+           * happened on it.
+           */
+          s.updated_at AS last_activity
         FROM employees e
         LEFT JOIN wfm_roster_assignment ra ON ra.employee_id = e.id AND ra.roster_date = CURDATE()
         LEFT JOIN wfm_attendance_session s ON s.employee_id = e.id AND s.session_date = CURDATE()
@@ -292,10 +302,26 @@ class OperationsLiveService {
           e.employee_code,
           CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')) AS employee_name,
           e.employment_status,
-          res.resignation_submitted_on,
-          res.resignation_accepted_on
+          /*
+           * There is no resignation table - this raised ER_NO_SUCH_TABLE and the attrition-risk
+           * endpoint returned nothing. The resignation-notice record is exit_request, whose
+           * equivalent column is submitted_at.
+           *
+           * resignation_accepted_on is NULL because no acceptance timestamp exists: exit_request
+           * carries status and updated_at but has no accepted state, and inventing one from
+           * updated_at would put a date under a label that does not describe it. Nothing reads
+           * this field - it is selected and never used - so nothing is lost by saying so.
+           *
+           * Worth knowing before trusting this signal: exit_request holds 2 rows and
+           * employee_exit_record 0, while 57,502 employees are not active. Exits are being
+           * recorded on employees.employment_status, not through these tables, so the
+           * resignation-notice signal will almost never fire. That is a data-capture gap, not
+           * something this query can fix.
+           */
+          res.submitted_at AS resignation_submitted_on,
+          NULL AS resignation_accepted_on
         FROM employees e
-        LEFT JOIN resignation res ON res.employee_id = e.id
+        LEFT JOIN exit_request res ON res.employee_id = e.id
         WHERE ${conditions.join(" AND ")}
         `,
         params

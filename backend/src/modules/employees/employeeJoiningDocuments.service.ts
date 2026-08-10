@@ -2014,7 +2014,16 @@ async function finalizeChecklistEsign(params: {
       const emp = empRows[0] as { employee_code: string; full_name: string; branch_id: string | null } | undefined;
       if (emp) {
         const [hrRows] = await db.execute<RowDataPacket[]>(
-          `SELECT DISTINCT u.id as user_id, u.email, u.full_name
+          /*
+           * u.full_name was selected here and auth_user has no such column - it holds id, email,
+           * password_hash and login state, and the name lives on employees. So this raised
+           * ER_BAD_FIELD_ERROR, the outer catch logged it, and payroll HR was never told an
+           * eSign had completed. The notification looked implemented and delivered nothing.
+           *
+           * Dropped rather than repointed at e.full_name: the loop below reads only hr.user_id,
+           * so the column was never used. Selecting a name nobody reads is what hid the fault.
+           */
+          `SELECT DISTINCT u.id as user_id, u.email
            FROM auth_user u
            JOIN user_roles ur ON ur.user_id = u.id
            JOIN employees e ON e.user_id = u.id AND e.active_status = 1

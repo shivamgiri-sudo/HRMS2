@@ -1700,7 +1700,18 @@ export const REPORT_CATALOG: ReportDefinition[] = [
     viewRoles: ROLES_ALL_MANAGEMENT,
     exportRoles: ROLES_HR_ADMIN,
     sourceTables: ["leave_holiday_master"],
-    branchScoped: true,
+    // Was branchScoped: true while holidayMasterList deliberately applies no row scope — the
+    // last report in the suite whose declared scoping and actual SQL disagreed. The executor is
+    // right and the flag was wrong: a holiday calendar is organisation-wide reference data, not
+    // employee data. Its branch join is descriptive, and a NULL branch_id means "applies
+    // everywhere" — which is every row live (leave_holiday_master holds 1 row, branch_id NULL,
+    // measured 2026-08-10). Scoping with a plain `branch_id IN (...)` would therefore have
+    // deleted every org-wide holiday from a branch user's calendar; the attendance engine reads
+    // the same column as `branch_id IS NULL OR branch_id = ?` for exactly that reason.
+    //
+    // Corrected to false rather than adding a predicate, because holidays are not sensitive and
+    // hiding another branch's holiday buys nothing. The flag now matches the implementation.
+    branchScoped: false,
   },
 
   // ═══════════════════════════════════════════════════════════════════════════════
@@ -1716,48 +1727,43 @@ export const REPORT_CATALOG: ReportDefinition[] = [
     rowGrain: "One row per employee per payroll month",
     primaryKey: ["employee_code", "payroll_month"],
     columns: [
-      { key: "payroll_month", label: "Payroll Month", format: "text", width: 100 },
+      { key: "run_month", label: "Payroll Month", format: "text", width: 100 },
+      { key: "run_status", label: "Run Status", format: "status", width: 100 },
       { key: "employee_code", label: "Emp Code", format: "text", width: 100 },
       { key: "employee_name", label: "Employee Name", format: "text", width: 180 },
       { key: "cost_centre_code", label: "Cost Centre Code", format: "text", width: 140 },
       { key: "cost_centre_name", label: "Cost Centre", format: "text", width: 180 },
       { key: "branch_name", label: "Branch", format: "text", width: 120 },
       { key: "process_name", label: "Process", format: "text", width: 140 },
-      { key: "department_name", label: "Department", format: "text", width: 120 },
+      { key: "department_name", label: "Department", format: "text", width: 140 },
       { key: "designation_name", label: "Designation", format: "text", width: 140 },
-      // 350 of the 1,464 lines in the 2026-07 run belong to employees who have left.
-      // Without these two the register cannot be reconciled to a headcount.
-      { key: "employment_status", label: "Employment Status", format: "status", width: 130 },
-      { key: "employee_state", label: "Active / Inactive", format: "status", width: 120 },
-      { key: "date_of_joining", label: "DOJ", format: "date", width: 100 },
-      { key: "basic_pay", label: "Basic", format: "currency", width: 100, align: "right" },
-      { key: "hra", label: "HRA", format: "currency", width: 100, align: "right" },
-      { key: "conveyance", label: "Conveyance", format: "currency", width: 100, align: "right" },
-      { key: "special_allowance", label: "Special Allowance", format: "currency", width: 120, align: "right" },
-      { key: "other_allowance", label: "Other Allowance", format: "currency", width: 120, align: "right" },
-      { key: "gross_salary", label: "Gross Salary", format: "currency", width: 120, align: "right" },
-      { key: "pf_employee", label: "PF (Employee)", format: "currency", width: 100, align: "right" },
-      { key: "pf_employer", label: "PF (Employer)", format: "currency", width: 100, align: "right" },
-      { key: "esic_employee", label: "ESIC (Employee)", format: "currency", width: 100, align: "right" },
-      { key: "esic_employer", label: "ESIC (Employer)", format: "currency", width: 100, align: "right" },
-      { key: "professional_tax", label: "PT", format: "currency", width: 80, align: "right" },
-      { key: "tds", label: "TDS", format: "currency", width: 100, align: "right" },
+      { key: "employment_status", label: "Employment Status", format: "text", width: 120 },
+      // employee_state, deduction_applied and line_flag are diagnostics, not decoration. On the
+      // 2026-07 run: 350 of 1,464 lines belong to employees with active_status = 0; 454 lines
+      // carry a 200 deduction against zero gross so SUM(total_deductions) overstates money
+      // actually deducted by 38,800; and 146 of those pay 200 against zero gross and zero
+      // attendance. They were previously emitted by the executor and invisible on screen.
+      { key: "employee_state", label: "Active?", format: "status", width: 90 },
+      { key: "basic_pay", label: "Basic", format: "currency", width: 110, align: "right" },
+      { key: "hra", label: "HRA", format: "currency", width: 110, align: "right" },
+      { key: "gross_salary", label: "Gross", format: "currency", width: 120, align: "right" },
+      { key: "pf_employee", label: "PF (Employee)", format: "currency", width: 110, align: "right" },
+      { key: "esic_employee", label: "ESIC (Employee)", format: "currency", width: 110, align: "right" },
+      { key: "professional_tax", label: "PT", format: "currency", width: 100, align: "right" },
+      { key: "tds", label: "TDS", format: "currency", width: 110, align: "right" },
       { key: "lwp_deduction", label: "LWP Deduction", format: "currency", width: 120, align: "right" },
-      { key: "other_deduction", label: "Other Deduction", format: "currency", width: 120, align: "right" },
-      { key: "total_deductions", label: "Total Deductions", format: "currency", width: 120, align: "right" },
-      // On a zero-gross line net_salary floors at 0 while total_deductions still carries a
-      // value, so summing total_deductions overstates money actually withheld — by 38,800
-      // on the 2026-07 run. deduction_applied is the reconcilable figure.
+      { key: "total_deductions", label: "Total Deductions", format: "currency", width: 130, align: "right" },
       { key: "deduction_applied", label: "Deduction Applied", format: "currency", width: 130, align: "right" },
-      { key: "net_pay", label: "Net Pay", format: "currency", width: 120, align: "right" },
-      { key: "line_flag", label: "Line Flag", format: "status", width: 150 },
-      { key: "payable_days", label: "Payable Days", format: "number", width: 80, align: "right" },
-      { key: "lwp_days", label: "LWP Days", format: "number", width: 80, align: "right" },
-      { key: "bank_name", label: "Bank Name", format: "text", width: 140 },
-      { key: "bank_account", label: "Bank A/C", format: "masked", width: 140, sensitive: true },
-      { key: "ifsc_code", label: "IFSC", format: "text", width: 100 },
-      { key: "pan_number", label: "PAN", format: "masked", width: 100, sensitive: true },
-      { key: "uan", label: "UAN", format: "text", width: 120 },
+      { key: "net_salary", label: "Net Salary", format: "currency", width: 120, align: "right" },
+      { key: "net_mismatch_amount", label: "Net Mismatch", format: "currency", width: 120, align: "right" },
+      { key: "payroll_risk", label: "Payroll Risk", format: "status", width: 120 },
+      { key: "line_flag", label: "Line Flag", format: "status", width: 130 },
+      { key: "line_status", label: "Line Status", format: "status", width: 100 },
+      { key: "working_days", label: "Working Days", format: "number", width: 100, align: "right" },
+      { key: "present_days", label: "Present Days", format: "number", width: 100, align: "right" },
+      { key: "leave_days", label: "Leave Days", format: "number", width: 100, align: "right" },
+      { key: "payable_days", label: "Payable Days", format: "number", width: 100, align: "right" },
+      { key: "lwp_days", label: "LWP Days", format: "number", width: 100, align: "right" },
     ],
     filters: [F_MONTH, F_BRANCH, F_PROCESS],
     viewRoles: ROLES_PAYROLL,
@@ -1872,6 +1878,11 @@ export const REPORT_CATALOG: ReportDefinition[] = [
       { key: "process_name", label: "Process", format: "text", width: 140 },
       { key: "account_number", label: "Account Number", format: "masked", width: 160, sensitive: true },
       { key: "ifsc_code", label: "IFSC Code", format: "text", width: 100 },
+      // CONFLICT means employees.bank_account_number and employee_bank_detail both hold an
+      // account for this person and they differ, so this file and neft-transfer-file would pay
+      // two different accounts — six such employees in the 2026-07 run. MISSING means neither
+      // source holds one (35). A CONFLICT row must not be paid until the records are reconciled.
+      { key: "account_source_status", label: "Account Check", format: "status", width: 120 },
       { key: "net_pay", label: "Net Amount", format: "currency", width: 120, align: "right" },
       { key: "payment_mode", label: "Payment Mode", format: "text", width: 100 },
     ],
@@ -2091,6 +2102,11 @@ export const REPORT_CATALOG: ReportDefinition[] = [
       { key: "ifsc_code", label: "IFSC", format: "text", width: 100 },
       { key: "account_holder_name", label: "Account Holder", format: "text", width: 160 },
       { key: "account_type", label: "Account Type", format: "text", width: 100 },
+      // Same check as bank-advice, from the opposite side: CONFLICT means the two account
+      // sources disagree for this employee, MISSING that neither holds an account. Around 190
+      // payable employees in the 2026-07 run have no employee_bank_detail row at all while
+      // employees.bank_account_number does hold one, so this file alone cannot pay them.
+      { key: "account_source_status", label: "Account Check", format: "status", width: 120 },
       { key: "transfer_amount", label: "Transfer Amount", format: "currency", width: 120, align: "right", sensitive: true },
       { key: "run_month", label: "Payroll Month", format: "text", width: 100 },
     ],
@@ -3158,6 +3174,19 @@ export const REPORT_CATALOG: ReportDefinition[] = [
     // here would offer filters that silently do nothing. Fix the query to
     // scope on e.branch_id/e.process_id (nullable — many rows have no
     // employee yet) before adding those filters back.
+    // branchScoped: false below is correct, and this records the evidence so nobody "fixes" it
+    // to true on the assumption that an unscoped employee-joining report must be an oversight.
+    // The grain is the ATS onboarding bridge — a candidate between offer and joining — and
+    // nothing on that row carries a branch. Verified live 2026-08-10:
+    //   - ats_onboarding_bridge has no branch column at all, and only 2 of its 351 rows link to
+    //     an employee, so scoping through employees.branch_id would drop 349 of 351 rows for
+    //     every scoped user;
+    //   - ats_candidate.applied_for_branch is populated on 4,987 of 37,637 rows (13%), so
+    //     scoping on it would hide the 87% that are unmapped — the opposite of this audit's
+    //     rule that unmapped rows render UNASSIGNED and are never dropped.
+    // The employees table appears in this report's SQL only as a LEFT JOIN supplying the actual
+    // date of joining, which is why a scope-gap scan flags it. It is not a leak: the report
+    // cannot be branch-scoped at all until the bridge carries a branch of its own.
     code: "offer-to-joining-tracker",
     name: "Offer to Joining Tracker",
     category: "Recruitment",
@@ -3760,6 +3789,8 @@ export const REPORT_CATALOG: ReportDefinition[] = [
     columns: [
       { key: "employee_code", label: "Emp Code", format: "text", width: 100 },
       { key: "employee_name", label: "Employee Name", format: "text", width: 180 },
+      { key: "cost_centre_code", label: "Cost Centre Code", format: "text", width: 120 },
+      { key: "cost_centre_name", label: "Cost Centre", format: "text", width: 160 },
       { key: "branch_name", label: "Branch", format: "text", width: 120 },
       { key: "process_name", label: "Process", format: "text", width: 140 },
       { key: "date_of_joining", label: "DOJ", format: "date", width: 100 },
@@ -3770,21 +3801,19 @@ export const REPORT_CATALOG: ReportDefinition[] = [
     filters: [F_BRANCH, F_PROCESS],
     viewRoles: ROLES_HR_ADMIN,
     exportRoles: ROLES_HR_ADMIN,
-    sourceTables: ["employee_documents", "employees"],
+    sourceTables: ["onboarding_document_master", "employee_documents", "employees"],
     branchScoped: true,
     processScoped: true,
-    // Blocked, with a reason. Reporting a MISSING document needs a list of documents that
-    // are required, and no org-wide one exists: document_type_master is absent from
-    // mas_hrms, and employee_joining_document_checklist — which does carry a `mandatory`
-    // flag — holds 92 rows covering 11 employees out of 22,672 (measured 2026-08-07). A
-    // report built on that would tell 11 people what they are missing and silently imply
-    // the other 22,661 are complete, which is worse than showing nothing.
+    // Was marked `blocked` on the grounds that no org-wide list of required documents existed.
+    // That was wrong, and the correction is worth recording: document_type_master is genuinely
+    // absent from mas_hrms, but onboarding_document_master is present, active and populated —
+    // 11 rows, 6 of them unconditionally mandatory. The earlier note reached the right verdict
+    // about employee_joining_document_checklist (92 rows, 11 employees, useless as a
+    // requirement source) and then stopped looking.
     //
-    // Until a mandatory-document master exists, use document-verification-status, which
-    // shows what HAS been submitted and its verification state across all 207,616
-    // documents. This entry stays listed so the gap is visible rather than forgotten;
-    // it previously returned the PENDING_DATA_BUILDER stub with no explanation.
-    availabilityStatus: "blocked",
+    // Now served by missingDocumentsReport. The master supplies the requirement list; the
+    // executor supplies only the storage mapping, which the master cannot express. Conditional
+    // documents are excluded because their condition_rule predicates are not evaluable here.
   },
 
   // ═══════════════════════════════════════════════════════════════════════════════
