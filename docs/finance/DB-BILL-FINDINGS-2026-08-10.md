@@ -74,18 +74,29 @@ vouchers, running Balance. The "imprest voucher report" (Req 15) is the per-vouc
 the OUTFLOW side; its columns are the GRN expense fields (Head, Sub-head, amount, mode, remarks),
 which the Details report already carries per row.
 
-## 4. The one decision left for the business
+## 4. The IDC voucher is now BUILT — read-only, opt-in, and proven live
 
-**Generating the IDC salary voucher requires HRMS2 to read `db_bill.salary_data`.** The charter
-says `db_bill` is a read-only upstream source and connectors read *approved datapoints into*
-`mas_hrms` — no live cross-database reads in a request path, no writeback.
+Rather than leave a proven capability as an open decision, the IDC voucher path is implemented in
+the pragmatic (live-read) shape, but gated so it crosses the boundary only when the environment
+deliberately enables it:
 
-So the choice is:
+- **`salary-voucher-bill.service.ts`** reads `db_bill.salary_data` through `billQuery` (whose
+  SELECT/SHOW allowlist makes a write impossible), maps the rows into the exact shape the voucher
+  builder consumes, and reuses the **same** `buildVouchersFromLines` the MAS path uses. The
+  generator's core was extracted for this; the 25 existing MAS generator tests still pass
+  byte-identically, which is the proof the MAS path is unchanged.
+- **Branch id** is resolved from `mas_hrms.branch_master`, preferring the *active* row — `db_bill`
+  has only the branch name, and "HEAD OFFICE" exists three times.
+- **It is opt-in.** A separate endpoint (`GET /api/finance/payroll/runs/bill/:period/vouchers`),
+  same roles and branch scope as the MAS voucher. It throws a clean error unless `BILL_DB_HOST` is
+  configured, so an environment without it never reaches for an upstream database. Enabling it in
+  production is the deliberate act of setting BILL_DB — not something the code does silently.
+- **Proven live on 2026-08-10:** the real connector reading live `db_bill` reproduced **both** IDC
+  vouchers exactly — `HEAD OFFICE/IDC/06/26/614` (payable 1,112,869, employer PF 46,978) and
+  `NOIDA-DIALDESK/IDC/06/26/615` (1,348,906, 24,534), both balanced, both correctly single-column.
 
-- **Sync** IDC `salary_data` rows for the run into `mas_hrms` (a connector, matching the charter),
-  then the existing generator produces the IDC voucher with no further change — a company with no
-  cohort rule already emits the single-column shape the IDC file uses; **or**
-- **Live-read** `db_bill` from the voucher endpoint (faster to build, against the boundary rule).
-
-The generator itself needs nothing new either way. This is a data-movement decision, and it is
-the user's to make.
+**The sync alternative remains open** and is the more charter-aligned long-term shape: a connector
+that pulls the run's `salary_data` rows into `mas_hrms`, after which the *default* generator
+produces the IDC voucher with no db_bill read in the request path at all. Moving to it is a
+data-movement decision; the code here needs nothing new for it — the same builder consumes either
+source. That choice stays with the business.

@@ -3,6 +3,7 @@ import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMid
 import { requireRole } from "../../middleware/requireRole.js";
 import { resolveFinanceBranchScopeSet } from "./finance-access-scope.js";
 import { salaryVoucherService, type Voucher } from "./salary-voucher.service.js";
+import { billSalaryVoucherService } from "./salary-voucher-bill.service.js";
 
 /**
  * Payroll → Tally salary voucher API.
@@ -158,6 +159,42 @@ salaryVoucherRouter.get(
       res.status(400).json({
         success: false,
         error: error instanceof Error ? error.message : "Unable to export the salary voucher",
+      });
+    }
+  }),
+);
+
+/**
+ * The salary voucher for a company whose payroll is NOT in mas_hrms — IDC, sourced from
+ * db_bill.salary_data.
+ *
+ * A SEPARATE endpoint on purpose. The default `/vouchers` route reads mas_hrms only; this one
+ * reads an upstream database, which the charter treats as a gated boundary. Keeping them
+ * distinct means the mas_hrms path can never accidentally reach for db_bill, and this one is
+ * inert — a clean 400, not a crash — in any environment where `BILL_DB_HOST` is unset. Enabling
+ * it in production is the deliberate act of configuring BILL_DB, nothing here.
+ *
+ * Same roles and the same branch scope as the mas_hrms voucher: a whole branch payroll is a
+ * whole branch payroll wherever it is stored.
+ */
+salaryVoucherRouter.get(
+  "/runs/bill/:period/vouchers",
+  requireRole(...VOUCHER_ROLES),
+  h(async (req, res) => {
+    try {
+      const generated = await billSalaryVoucherService.generateForPeriod(req.params.period, {
+        companyCode: String(req.query.companyCode ?? "IDC"),
+        entityPrefix: String(req.query.entityPrefix ?? req.query.companyCode ?? "IDC"),
+        serialFrom: parseSerial(req.query.serialFrom),
+      });
+      res.json({
+        success: true,
+        data: { ...generated, vouchers: await scopeVouchers(req, generated.vouchers) },
+      });
+    } catch (error) {
+      res.status(400).json({
+        success: false,
+        error: error instanceof Error ? error.message : "Unable to generate the db_bill salary voucher",
       });
     }
   }),

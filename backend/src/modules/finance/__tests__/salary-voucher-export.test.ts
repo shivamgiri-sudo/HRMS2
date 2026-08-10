@@ -50,6 +50,8 @@ describe("the endpoints exist", () => {
   it.each([
     ["GET", "/api/finance/payroll/runs/:x/vouchers"],
     ["GET", "/api/finance/payroll/runs/:x/vouchers/export"],
+    // IDC is sourced from db_bill, on its own explicitly-gated endpoint.
+    ["GET", "/api/finance/payroll/runs/bill/:x/vouchers"],
   ])("%s %s", (method, path) => {
     expect(registered.some((r) => r.method === method && r.path === path),
       `${method} ${path} is not registered`).toBe(true);
@@ -120,7 +122,8 @@ describe("authorisation", () => {
 
   it("applies branch scope on top of the role, on both endpoints", () => {
     const calls = SRC.match(/await scopeVouchers\(req, /g) ?? [];
-    expect(calls.length, "the list and the export must both scope").toBe(2);
+    // list, export, and the db_bill IDC endpoint — all three scope.
+    expect(calls.length, "every voucher endpoint must scope").toBe(3);
   });
 
   it("scopes by the voucher's branch id rather than its name", () => {
@@ -162,7 +165,8 @@ describe("the voucher serial is Tally's, not ours", () => {
 
   it("uses the validated parser on both the list and the export", () => {
     const uses = SRC.match(/serialFrom: parseSerial\(req\.query\.serialFrom\)/g) ?? [];
-    expect(uses, "list and export must parse it the same way").toHaveLength(2);
+    // list, export, and the db_bill IDC endpoint all validate the serial the same way.
+    expect(uses, "every voucher endpoint must validate the serial").toHaveLength(3);
   });
 
   it("treats a bad serial as absent rather than failing the request", () => {

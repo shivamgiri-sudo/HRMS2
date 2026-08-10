@@ -239,96 +239,109 @@ export const salaryVoucherService = {
       [runId],
     );
 
-    const entityOf = (code: string): string | null => {
-      for (const rule of entityRules as RowDataPacket[]) {
-        const prefix = String(rule.employee_code_prefix ?? "");
-        if (!prefix) continue;
-        if (String(code ?? "").toUpperCase().startsWith(prefix.toUpperCase())) {
-          return String(rule.company_code);
-        }
-      }
-      return null;
-    };
-
-    const cohortCache = new Map<string, CohortRule[]>();
-    const buckets = new Map<string, { company: string; branchId: string; branchName: string; rows: PrepLine[] }>();
-    const unassigned: string[] = [];
-    const unpaid: string[] = [];
-
-    for (const raw of lines as PrepLine[]) {
-      const company = entityOf(raw.employee_code);
-      if (!company || (options.companyCode && company !== options.companyCode)) {
-        if (!company) unassigned.push(raw.employee_code);
-        continue;
-      }
-      const branchName = String(raw.branch_name ?? "").trim();
-      const branchId = String(raw.branch_id ?? "").trim();
-      // A payroll line with no branch cannot be posted to a cost centre, and inventing one
-      // would put real money against the wrong branch. Reported, not guessed.
-      if (!branchName || !branchId) { unassigned.push(raw.employee_code); continue; }
-
-      // An employee who was not paid contributes nothing to the voucher.
-      //
-      // This is not a tidy-up: HEAD OFFICE carries three inactive employees whose gross and net
-      // are both zero but who still hold a 200 professional-tax figure. Including them adds 600
-      // to the Professional Tax credit, which pushes the derived Gross Salary to 1,190,013
-      // against the reference's 1,189,413. The reference voucher shows Professional Tax as 0
-      // for this branch, so it excludes them, and so does this.
-      const paid = toPaise(raw.gross_salary) !== 0 || toPaise(raw.net_salary) !== 0;
-      if (!paid) { unpaid.push(raw.employee_code); continue; }
-      // Bucketed by branch ID, never by branch NAME.
-      //
-      // branch_master contains "HEAD OFFICE" THREE times under three different ids (plus a
-      // "Head Office"), and two of those ids carry MAS payroll in the June-2026 run. Keying by
-      // name merges them into one voucher whose branch_id is then whichever row the database
-      // happened to return first — and that id is exactly what the API scopes on. The result is
-      // non-deterministic: a finance user entitled to one of the ids could be denied their own
-      // branch's voucher while being shown one full of the other's money.
-      //
-      // Keying by id makes each branch_master row its own voucher, which is also the honest
-      // answer: as far as every other table is concerned they ARE separate branches. Merging
-      // duplicate spellings is a master-data decision, not one to take inside a voucher
-      // generator. The duplicates are listed in docs/finance/OPEN-QUESTIONS.md.
-      const key = `${company}|${branchId}`;
-      if (!buckets.has(key)) {
-        buckets.set(key, { company, branchId, branchName, rows: [] });
-      }
-      buckets.get(key)!.rows.push(raw);
-    }
-
-    const vouchers: Voucher[] = [];
-    let serial = options.serialFrom ?? 1;
-    for (const bucket of [...buckets.values()].sort(
-      (a, b) => a.company.localeCompare(b.company)
-        || a.branchName.localeCompare(b.branchName)
-        // Two branch rows can share a name, so the id is the tie-break that keeps serial
-        // allocation stable between runs.
-        || a.branchId.localeCompare(b.branchId),
-    )) {
-      if (!cohortCache.has(bucket.company)) {
-        cohortCache.set(bucket.company, await loadCohortRules(bucket.company));
-      }
-      vouchers.push(
-        buildVoucher(bucket, cohortCache.get(bucket.company)!, period, serial++),
-      );
-    }
-
-    return {
-      period,
-      vouchers,
-      // Deduplicated: one line per employee, however many payroll rows they had.
-      unassigned: [...new Set(unassigned)],
-      // Reported rather than silently dropped, so "16 employees, 13 on the voucher" is a
-      // visible fact instead of a discrepancy someone has to chase.
-      unpaid: [...new Set(unpaid)],
-    };
+    return buildVouchersFromLines(period, lines as PrepLine[], entityRules as RowDataPacket[], options);
   },
 
+  /** The entity rules, exposed so an alternate line source (e.g. db_bill) reuses the same config. */
+  async loadEntityRules(): Promise<RowDataPacket[]> {
+    const [rules] = await db.execute<RowDataPacket[]>(
+      `SELECT company_code, employee_code_prefix, employment_type, branch_id, priority
+         FROM finance_payroll_entity_rule
+        WHERE active_status = 1
+        ORDER BY priority DESC`,
+    );
+    return rules as RowDataPacket[];
+  },
+
+  buildVouchersFromLines,
   branchShortCode,
   costCentreLabel,
   voucherNumber,
   epfAdminCharge,
 };
+
+/**
+ * Turns a flat list of salary lines into per-(entity × branch) vouchers.
+ *
+ * Extracted so the mas_hrms path and an alternate source (db_bill, for IDC — whose payroll is
+ * not in mas_hrms at all) share ONE builder. The mas_hrms path's behaviour is byte-identical to
+ * before this was pulled out; the 25 existing generator tests are the proof of that.
+ *
+ * Every rule that was inline stays inline here, comments and all: unidentifiable entity →
+ * excluded, no branch → excluded, unpaid → excluded, bucket by branch ID not name.
+ */
+async function buildVouchersFromLines(
+  period: string,
+  lines: PrepLine[],
+  entityRules: RowDataPacket[],
+  options: { companyCode?: string; serialFrom?: number },
+): Promise<{ period: string; vouchers: Voucher[]; unassigned: string[]; unpaid: string[] }> {
+  const entityOf = (code: string): string | null => {
+    for (const rule of entityRules) {
+      const prefix = String(rule.employee_code_prefix ?? "");
+      if (!prefix) continue;
+      if (String(code ?? "").toUpperCase().startsWith(prefix.toUpperCase())) {
+        return String(rule.company_code);
+      }
+    }
+    return null;
+  };
+
+  const cohortCache = new Map<string, CohortRule[]>();
+  const buckets = new Map<string, { company: string; branchId: string; branchName: string; rows: PrepLine[] }>();
+  const unassigned: string[] = [];
+  const unpaid: string[] = [];
+
+  for (const raw of lines) {
+    const company = entityOf(raw.employee_code);
+    if (!company || (options.companyCode && company !== options.companyCode)) {
+      if (!company) unassigned.push(raw.employee_code);
+      continue;
+    }
+    const branchName = String(raw.branch_name ?? "").trim();
+    const branchId = String(raw.branch_id ?? "").trim();
+    // A payroll line with no branch cannot be posted to a cost centre, and inventing one
+    // would put real money against the wrong branch. Reported, not guessed.
+    if (!branchName || !branchId) { unassigned.push(raw.employee_code); continue; }
+
+    // An employee who was not paid contributes nothing to the voucher. HEAD OFFICE carries three
+    // inactive employees whose gross and net are both zero but who still hold a 200
+    // professional-tax figure; including them adds 600 to the Professional Tax credit and pushes
+    // the derived Gross Salary off the reference by exactly that.
+    const paid = toPaise(raw.gross_salary) !== 0 || toPaise(raw.net_salary) !== 0;
+    if (!paid) { unpaid.push(raw.employee_code); continue; }
+
+    // Bucketed by branch ID, never by branch NAME. branch_master contains "HEAD OFFICE" three
+    // times under three different ids; keying by name would merge them into one voucher whose
+    // branch_id — the thing the API scopes on — is then whichever row sorted first. See
+    // docs/finance/OPEN-QUESTIONS.md.
+    const key = `${company}|${branchId}`;
+    if (!buckets.has(key)) {
+      buckets.set(key, { company, branchId, branchName, rows: [] });
+    }
+    buckets.get(key)!.rows.push(raw);
+  }
+
+  const vouchers: Voucher[] = [];
+  let serial = options.serialFrom ?? 1;
+  for (const bucket of [...buckets.values()].sort(
+    (a, b) => a.company.localeCompare(b.company)
+      || a.branchName.localeCompare(b.branchName)
+      || a.branchId.localeCompare(b.branchId),
+  )) {
+    if (!cohortCache.has(bucket.company)) {
+      cohortCache.set(bucket.company, await loadCohortRules(bucket.company));
+    }
+    vouchers.push(buildVoucher(bucket, cohortCache.get(bucket.company)!, period, serial++));
+  }
+
+  return {
+    period,
+    vouchers,
+    unassigned: [...new Set(unassigned)],
+    unpaid: [...new Set(unpaid)],
+  };
+}
 
 /** Sums one bucket into the reference voucher's ledger lines, in the reference order. */
 function buildVoucher(

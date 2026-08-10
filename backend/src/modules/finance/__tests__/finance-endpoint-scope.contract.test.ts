@@ -64,6 +64,7 @@ describe("finance list and export reads resolve scope", () => {
     ["imprest details export", () => routeBlock(IMPREST, "/reports/details/export")],
     ["salary vouchers", () => routeBlock(VOUCHER, "/runs/:runId/vouchers")],
     ["salary voucher export", () => routeBlock(VOUCHER, "/runs/:runId/vouchers/export")],
+    ["IDC db_bill voucher", () => routeBlock(VOUCHER, "/runs/bill/:period/vouchers")],
   ])("%s", (_name, get) => {
     expect(isScoped(get())).toBe(true);
   });

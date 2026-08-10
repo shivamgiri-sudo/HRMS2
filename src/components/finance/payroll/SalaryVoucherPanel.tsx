@@ -90,20 +90,41 @@ export function SalaryVoucherPanel() {
   // Hiding path segments inside a variable defeats the route-contract check, which reads the
   // client's literals to prove every call has a registered route — and a wrong /api path 401s
   // exactly like a real one, so that check is the only thing that catches a typo here.
+  const runs = runsQuery.data ?? [];
+  const period = runs.find((r) => r.id === runId)?.run_month ?? "";
+
+  /*
+   * IDC's payroll is not in mas_hrms — it lives in db_bill (see DB-BILL-FINDINGS). So IDC is
+   * served by a SEPARATE, explicitly-gated endpoint that reads db_bill for the run's month.
+   * That endpoint is inert (a clean error) unless the server has BILL_DB configured, so
+   * selecting IDC in an environment without it simply reports it is unavailable — it never
+   * silently reaches for an upstream database.
+   *
+   * Both full paths are written as literals below so the route-contract check can see them; a
+   * path hidden behind a variable would defeat it.
+   */
+  const isBillSourced = companyCode === "IDC";
+
   const search = [
     companyCode ? `companyCode=${encodeURIComponent(companyCode)}` : "",
+    isBillSourced ? `entityPrefix=${encodeURIComponent(companyCode)}` : "",
     serialFrom.trim() ? `serialFrom=${encodeURIComponent(serialFrom.trim())}` : "",
   ].filter(Boolean).join("&");
   const query = search ? `?${search}` : "";
 
+  const previewUrl = isBillSourced
+    ? `/api/finance/payroll/runs/bill/${period}/vouchers${query}`
+    : `/api/finance/payroll/runs/${runId}/vouchers${query}`;
+  const exportUrl = isBillSourced
+    ? `/api/finance/payroll/runs/bill/${period}/vouchers${query}`
+    : `/api/finance/payroll/runs/${runId}/vouchers/export${query}`;
+
   const voucherQuery = useQuery({
     queryKey: ["salary-vouchers", runId, companyCode, serialFrom],
-    enabled: Boolean(runId),
-    queryFn: async () =>
-      unwrap<Payload>(await hrmsApi.get<any>(`/api/finance/payroll/runs/${runId}/vouchers${query}`)),
+    // The bill path needs a period, which comes from the selected run's month.
+    enabled: Boolean(runId) && (!isBillSourced || Boolean(period)),
+    queryFn: async () => unwrap<Payload>(await hrmsApi.get<any>(previewUrl)),
   });
-
-  const runs = runsQuery.data ?? [];
   const data = voucherQuery.data;
   const vouchers = data?.vouchers ?? [];
   const excluded = (data?.unassigned.length ?? 0) + (data?.unpaid.length ?? 0);
@@ -122,10 +143,7 @@ export function SalaryVoucherPanel() {
                   if (!runId) return;
                   // Straight to the API so the file is produced by the same scope resolution as
                   // the table, and in the column order Tally imports by position.
-                  window.open(
-                    `/api/finance/payroll/runs/${runId}/vouchers/export${query}`,
-                    "_blank", "noopener",
-                  );
+                  window.open(exportUrl, "_blank", "noopener");
                 }}
               >
                 <Download className="mr-1 h-3.5 w-3.5" />
