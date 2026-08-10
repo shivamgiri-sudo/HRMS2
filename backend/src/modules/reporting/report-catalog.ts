@@ -1700,7 +1700,18 @@ export const REPORT_CATALOG: ReportDefinition[] = [
     viewRoles: ROLES_ALL_MANAGEMENT,
     exportRoles: ROLES_HR_ADMIN,
     sourceTables: ["leave_holiday_master"],
-    branchScoped: true,
+    // Was branchScoped: true while holidayMasterList deliberately applies no row scope — the
+    // last report in the suite whose declared scoping and actual SQL disagreed. The executor is
+    // right and the flag was wrong: a holiday calendar is organisation-wide reference data, not
+    // employee data. Its branch join is descriptive, and a NULL branch_id means "applies
+    // everywhere" — which is every row live (leave_holiday_master holds 1 row, branch_id NULL,
+    // measured 2026-08-10). Scoping with a plain `branch_id IN (...)` would therefore have
+    // deleted every org-wide holiday from a branch user's calendar; the attendance engine reads
+    // the same column as `branch_id IS NULL OR branch_id = ?` for exactly that reason.
+    //
+    // Corrected to false rather than adding a predicate, because holidays are not sensitive and
+    // hiding another branch's holiday buys nothing. The flag now matches the implementation.
+    branchScoped: false,
   },
 
   // ═══════════════════════════════════════════════════════════════════════════════
