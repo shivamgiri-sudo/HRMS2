@@ -395,6 +395,52 @@ export async function salarySheetOnfido(
   return { rows: out, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > out.length, nextCursor };
 }
 
+/**
+ * The two payment files disagree about where an employee's salary should go, and until now
+ * neither said so.
+ *
+ * bank-advice pays to employees.bank_account_number. neft-transfer-file pays to
+ * employee_bank_detail (primary, active). Those are different tables maintained separately, and
+ * on the 2026-07 run, across the 1,156 employees with a payable line:
+ *
+ *   employees.bank_account_number present          1,121
+ *   employee_bank_detail present                     966   (190 fewer)
+ *   both present and DIFFERENT                         6
+ *   absent from both                                  35
+ *
+ * So six people would be paid to a different account depending on which file the bank is handed,
+ * and around 190 would have a blank account in one file but a usable one in the other. Neither
+ * report showed any of this — each simply rendered its own source and looked complete.
+ *
+ * Deciding which table is authoritative moves real money and is a business call, not a code one.
+ * What IS a reporting defect, and is fixed here, is that the disagreement was invisible. Both
+ * files now carry account_source_status on every row:
+ *
+ *   OK          the two sources agree, or only one holds an account
+ *   CONFLICT    both hold an account and they differ  -> do not pay until reconciled
+ *   MISSING     neither source holds an account       -> cannot be paid at all
+ *
+ * No account number is compared outside SQL and none is added to the output; the flag is derived
+ * in the database and only its verdict is selected, so this exposes no data a viewer could not
+ * already see. The join is deliberately the same one neft-transfer-file uses — is_primary and
+ * active_status — so the two reports are comparing like with like.
+ */
+const ACCOUNT_SOURCE_JOIN = `
+      LEFT JOIN employee_bank_detail acct_chk
+             ON acct_chk.employee_id = e.id AND acct_chk.is_primary = 1 AND acct_chk.active_status = 1`;
+
+const ACCOUNT_SOURCE_STATUS = `
+           CASE
+             WHEN (e.bank_account_number IS NULL OR e.bank_account_number = '')
+              AND (acct_chk.account_number IS NULL OR acct_chk.account_number = '')
+                  THEN 'MISSING'
+             WHEN e.bank_account_number IS NOT NULL AND e.bank_account_number <> ''
+              AND acct_chk.account_number IS NOT NULL AND acct_chk.account_number <> ''
+              AND TRIM(e.bank_account_number) <> TRIM(acct_chk.account_number)
+                  THEN 'CONFLICT'
+             ELSE 'OK'
+           END AS account_source_status`;
+
 // ---------------------------------------------------------------------------
 // bank-advice
 // ---------------------------------------------------------------------------
@@ -454,6 +500,7 @@ export async function bankAdvice(
            ${bankField},
            ${ifscField},
            ${bankName},
+           ${ACCOUNT_SOURCE_STATUS},
            COALESCE(spl.net_salary,0) AS amount,
            spr.run_month
       FROM salary_prep_line spl
@@ -463,6 +510,7 @@ export async function bankAdvice(
       LEFT JOIN process_master p ON p.id = e.process_id
       LEFT JOIN cost_centre_master sp_cc ON sp_cc.id = e.cost_centre_id
       LEFT JOIN department_master d ON d.id = e.department_id
+      ${ACCOUNT_SOURCE_JOIN}
      WHERE ${clauses.join(" AND ")}
      ORDER BY spl.id ASC`;
 
@@ -927,6 +975,7 @@ export async function neftTransferFile(
            ebd.ifsc_code,
            ebd.account_holder_name,
            ebd.account_type,
+           ${ACCOUNT_SOURCE_STATUS},
            MAX(spl.net_salary) AS transfer_amount,
            spr.run_month
       FROM salary_prep_line spl
@@ -937,11 +986,13 @@ export async function neftTransferFile(
       LEFT JOIN cost_centre_master sp_cc ON sp_cc.id = e.cost_centre_id
       LEFT JOIN employee_bank_detail ebd
              ON ebd.employee_id = e.id AND ebd.is_primary = 1 AND ebd.active_status = 1
+      ${ACCOUNT_SOURCE_JOIN}
      WHERE ${clauses.join(" AND ")}
      GROUP BY e.id, e.employee_code, e.full_name, e.first_name, e.last_name,
               b.branch_name, p.process_name, ebd.bank_name, ebd.account_number_enc,
               ebd.account_number, ebd.ifsc_code, ebd.account_holder_name, ebd.account_type,
-              spr.run_month, sp_cc.cost_centre_code, sp_cc.cost_centre_name
+              spr.run_month, sp_cc.cost_centre_code, sp_cc.cost_centre_name,
+              e.bank_account_number, acct_chk.account_number
      ORDER BY ebd.bank_name, employee_name`;
 
   const total = options.includeTotal ? await count(base, params) : 0;

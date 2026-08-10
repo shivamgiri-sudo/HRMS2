@@ -1878,6 +1878,11 @@ export const REPORT_CATALOG: ReportDefinition[] = [
       { key: "process_name", label: "Process", format: "text", width: 140 },
       { key: "account_number", label: "Account Number", format: "masked", width: 160, sensitive: true },
       { key: "ifsc_code", label: "IFSC Code", format: "text", width: 100 },
+      // CONFLICT means employees.bank_account_number and employee_bank_detail both hold an
+      // account for this person and they differ, so this file and neft-transfer-file would pay
+      // two different accounts — six such employees in the 2026-07 run. MISSING means neither
+      // source holds one (35). A CONFLICT row must not be paid until the records are reconciled.
+      { key: "account_source_status", label: "Account Check", format: "status", width: 120 },
       { key: "net_pay", label: "Net Amount", format: "currency", width: 120, align: "right" },
       { key: "payment_mode", label: "Payment Mode", format: "text", width: 100 },
     ],
@@ -2097,6 +2102,11 @@ export const REPORT_CATALOG: ReportDefinition[] = [
       { key: "ifsc_code", label: "IFSC", format: "text", width: 100 },
       { key: "account_holder_name", label: "Account Holder", format: "text", width: 160 },
       { key: "account_type", label: "Account Type", format: "text", width: 100 },
+      // Same check as bank-advice, from the opposite side: CONFLICT means the two account
+      // sources disagree for this employee, MISSING that neither holds an account. Around 190
+      // payable employees in the 2026-07 run have no employee_bank_detail row at all while
+      // employees.bank_account_number does hold one, so this file alone cannot pay them.
+      { key: "account_source_status", label: "Account Check", format: "status", width: 120 },
       { key: "transfer_amount", label: "Transfer Amount", format: "currency", width: 120, align: "right", sensitive: true },
       { key: "run_month", label: "Payroll Month", format: "text", width: 100 },
     ],

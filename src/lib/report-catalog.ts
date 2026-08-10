@@ -1409,6 +1409,7 @@ export const REPORT_CATALOG: ReportMeta[] = [
       { key: "ifsc_code", label: "IFSC Code", format: "text", width: 100 },
       { key: "account_holder_name", label: "Account Holder Name", format: "number", width: 100, align: "right" },
       { key: "account_type", label: "Account Type", format: "status", width: 130 },
+      { key: "account_source_status", label: "Account Check", format: "status", width: 120 },
       { key: "transfer_amount", label: "Transfer Amount", format: "currency", width: 120, align: "right" },
       { key: "run_month", label: "Run Month", format: "text", width: 150 },
     ],
