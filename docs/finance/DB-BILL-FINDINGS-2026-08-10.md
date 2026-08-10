@@ -95,8 +95,20 @@ deliberately enables it:
   vouchers exactly — `HEAD OFFICE/IDC/06/26/614` (payable 1,112,869, employer PF 46,978) and
   `NOIDA-DIALDESK/IDC/06/26/615` (1,348,906, 24,534), both balanced, both correctly single-column.
 
-**The sync alternative remains open** and is the more charter-aligned long-term shape: a connector
-that pulls the run's `salary_data` rows into `mas_hrms`, after which the *default* generator
-produces the IDC voucher with no db_bill read in the request path at all. Moving to it is a
-data-movement decision; the code here needs nothing new for it — the same builder consumes either
-source. That choice stays with the business.
+**The sync alternative is REJECTED — business ruling, 2026-08-10: no IDC (iSpark Data Connect)
+data is to be stored in `mas_hrms`.** So the live-read path above is not just the pragmatic
+choice, it is the required one. What this means concretely, and what was checked to honour it:
+
+- The IDC voucher connector reads `db_bill.salary_data` through `billQuery` (SELECT-only) and its
+  ONLY `mas_hrms` touch is a **read** of `branch_master` to resolve a branch id. It writes
+  nothing to `mas_hrms` — verified by grep: no `INSERT`/`UPDATE`/`DELETE` anywhere in the path.
+- IDC salaries, IDC employees and IDC voucher rows never land in `mas_hrms`. They are read from
+  db_bill at request time and returned; nothing persists.
+- The one IDC-related row that DOES live in `mas_hrms` is the entity **rule**
+  (`finance_payroll_entity_rule`: prefix `IDC` → company `IDC`), seeded by migration 1103. That
+  is configuration — a mapping that says "codes starting IDC belong to company IDC" so the voucher
+  can be labelled and routed — not iSpark payroll or employee data. It carries no salaries and no
+  PII. If even that is unwanted it can be removed, but the voucher then cannot name IDC as the
+  entity; flag it if so.
+
+There is no path, and there will be no path, that syncs iSpark payroll into `mas_hrms`.
