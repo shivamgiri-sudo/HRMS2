@@ -1,3 +1,4 @@
+import { PAN_REGEX } from '../ats/bgv-config.js';
 import { getBillPool } from '../../db/billDb.js';
 import { db } from '../../db/mysql.js';
 import type { RowDataPacket } from 'mysql2';
@@ -52,6 +53,46 @@ function isEmpty(value: string | null | undefined): boolean {
   return value === null || value === undefined || String(value).trim() === '' || value === '0';
 }
 
+/**
+ * Placeholders that db_bill stores where an identifier is unknown.
+ *
+ * `isEmpty` above catches the exact string '0' and nothing else, so every other
+ * placeholder was copied into `employees` as though it were a real statutory number.
+ * Measured against live db_bill.employee_master (35,902 rows): PanNo holds **3,875**
+ * such tokens — 'NA' 2,863, 'N/A' 897, 'A' 62, 'AN' 32, 'N' 11, '0' 5 — against only
+ * 651 correctly formatted PANs. EPFNo has 113 and ESICNo 115.
+ *
+ * A placeholder in `pan_number` is worse than a NULL: NULL reads as "we must collect
+ * this", while 'NA' reads as collected, passes any presence check, and reaches Form 16
+ * and the TDS return, where an unusable PAN means deduction at the higher §206AA rate.
+ * mas_hrms already carries four active employees whose PAN is the single character '0',
+ * shared between four different people across two branches, with 60-65 payroll lines
+ * each. Note '0' with surrounding whitespace also defeats the `value === '0'` check
+ * above, since that compares the untrimmed value.
+ *
+ * Deliberately applied to the SOURCE only. Widening `isEmpty` itself would also change
+ * the target test, letting the sync overwrite existing values it currently leaves
+ * alone — a much larger behaviour change than declining to import junk.
+ */
+const PLACEHOLDER_VALUES = new Set([
+  '0', '-', '--', '.', ',', 'NA', 'N/A', 'N.A.', 'NAN', 'NIL', 'NONE', 'NOT APPLICABLE',
+  'NOTAPPLICABLE', 'NULL', 'X', 'XX', 'XXX', 'XXXX', 'ABC', 'TEST', 'PENDING', 'NOTAVAILABLE',
+]);
+
+export function isUsable(value: string | null | undefined): boolean {
+  if (isEmpty(value)) return false;
+  const normalised = String(value).trim().toUpperCase();
+
+  // Anything one or two characters long is junk for every field this sync writes.
+  // db_bill holds 'A' (62 rows), 'N' (11) and 'AN' (32) in PanNo, and no real PAN, UAN,
+  // ESIC, EPF, IFSC, account number, bank name or account-holder name in this dataset is
+  // that short. Enumerating such fragments as tokens does not scale — the first version
+  // of this list missed exactly these three.
+  if (normalised.length <= 2) return false;
+
+  return !PLACEHOLDER_VALUES.has(normalised);
+}
+
 export async function syncEmployeeStatutoryData(options: SyncOptions): Promise<SyncResult> {
   const { dryRun = false, employeeCodeFilter, actorUserId } = options;
 
@@ -97,46 +138,55 @@ export async function syncEmployeeStatutoryData(options: SyncOptions): Promise<S
         const updateData: Record<string, string> = {};
 
         // Check UAN
-        if (isEmpty(employee.uan_number) && !isEmpty(legacy.UAN)) {
+        if (isEmpty(employee.uan_number) && isUsable(legacy.UAN)) {
           fieldsToUpdate.push('uan_number');
           updateData.uan_number = String(legacy.UAN).trim();
         }
 
         // Check EPF (prefer NewEpfNo, fallback to EPFNo)
         if (isEmpty(employee.epf_number)) {
-          const epfValue = !isEmpty(legacy.NewEpfNo) ? legacy.NewEpfNo : legacy.EPFNo;
-          if (!isEmpty(epfValue)) {
+          const epfValue = isUsable(legacy.NewEpfNo) ? legacy.NewEpfNo : legacy.EPFNo;
+          if (isUsable(epfValue)) {
             fieldsToUpdate.push('epf_number');
             updateData.epf_number = String(epfValue).trim();
           }
         }
 
         // Check PAN
-        if (isEmpty(employee.pan_number) && !isEmpty(legacy.PanNo)) {
-          fieldsToUpdate.push('pan_number');
-          updateData.pan_number = String(legacy.PanNo).trim().toUpperCase();
+        //
+        // Format-checked, not just placeholder-checked. PAN is the one field here with a
+        // government-defined shape (ABCDE1234F), the codebase already has PAN_REGEX, and
+        // db_bill holds 3,898 values that fail it against 651 that pass — so a token list
+        // alone would still let malformed 8- and 9-character entries through. An unusable
+        // PAN is not a cosmetic defect: it drives Form 16 and the TDS return.
+        if (isEmpty(employee.pan_number) && isUsable(legacy.PanNo)) {
+          const pan = String(legacy.PanNo).trim().toUpperCase();
+          if (PAN_REGEX.test(pan)) {
+            fieldsToUpdate.push('pan_number');
+            updateData.pan_number = pan;
+          }
         }
 
         // Check ESIC
-        if (isEmpty(employee.esic_number) && !isEmpty(legacy.ESICNo)) {
+        if (isEmpty(employee.esic_number) && isUsable(legacy.ESICNo)) {
           fieldsToUpdate.push('esic_number');
           updateData.esic_number = String(legacy.ESICNo).trim();
         }
 
         // Check Bank Account
-        if (isEmpty(employee.bank_account_number) && !isEmpty(legacy.AcNo)) {
+        if (isEmpty(employee.bank_account_number) && isUsable(legacy.AcNo)) {
           fieldsToUpdate.push('bank_account_number');
           updateData.bank_account_number = String(legacy.AcNo).trim();
 
-          if (!isEmpty(legacy.AcBank)) {
+          if (isUsable(legacy.AcBank)) {
             fieldsToUpdate.push('bank_name');
             updateData.bank_name = String(legacy.AcBank).trim();
           }
-          if (!isEmpty(legacy.IFSCCode)) {
+          if (isUsable(legacy.IFSCCode)) {
             fieldsToUpdate.push('ifsc_code');
             updateData.ifsc_code = String(legacy.IFSCCode).trim().toUpperCase();
           }
-          if (!isEmpty(legacy.AccHolder)) {
+          if (isUsable(legacy.AccHolder)) {
             fieldsToUpdate.push('account_holder_name');
             updateData.account_holder_name = String(legacy.AccHolder).trim();
           }
