@@ -52,10 +52,51 @@ export async function reportStaleQueuedDispatches(): Promise<number> {
   return stuck;
 }
 
+/**
+ * The same gap on the other mail path.
+ *
+ * notificationGateway writes its claim to notification_log BEFORE the deliverer runs —
+ * deliberately, so a crash cannot double-send. The cost is identical to dispatch_log's:
+ * a process that dies in between leaves the row at 'pending' permanently, and nothing
+ * scans for it. Two tables, two independent implementations, the same silent hole.
+ *
+ * 9 such rows exist, all SLA_BREACH candidate-waiting alerts between 2026-07-21 and
+ * 2026-07-28. That path has written nothing since, so this is currently dormant rather
+ * than bleeding — which is exactly why it is worth watching now: if the gateway is
+ * switched on for a `fin` event, the same crash silently drops a payroll notification
+ * and nobody learns of it.
+ *
+ * Reports only, for the same reason as above: the claim precedes delivery, so 'pending'
+ * cannot prove a message went unsent.
+ */
+export async function reportStalePendingNotifications(): Promise<number> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT COUNT(*) AS stuck,
+            MIN(created_at) AS oldest,
+            COUNT(DISTINCT template_code) AS templates
+       FROM notification_log
+      WHERE status = 'pending'
+        AND created_at < NOW() - INTERVAL ? HOUR`,
+    [STALE_QUEUED_HOURS],
+  );
+
+  const stuck = Number(rows[0]?.stuck ?? 0);
+  if (stuck > 0) {
+    console.warn(
+      `[CommunicationCleanup] ${stuck} notification(s) abandoned in 'pending' for over `
+      + `${STALE_QUEUED_HOURS}h (oldest ${String(rows[0]?.oldest)}, ${rows[0]?.templates ?? 0} template(s)). `
+      + `Same shape as the dispatch_log case: the gateway claims before it delivers, so a `
+      + `process death in between strands the row. Not auto-resent.`,
+    );
+  }
+  return stuck;
+}
+
 export async function runCommunicationCleanup(): Promise<{
   routineDeleted: number;
   standardDeleted: number;
   staleQueued: number;
+  stalePending: number;
 }> {
   const [routineResult] = await db.execute<ResultSetHeader>(
     `DELETE FROM dispatch_log
@@ -80,13 +121,15 @@ export async function runCommunicationCleanup(): Promise<{
   // After the deletes, so the count reflects what is actually left. Never allowed to
   // fail the cleanup: pruning old rows is the job here, reporting is the addition.
   let staleQueued = 0;
+  let stalePending = 0;
   try {
     staleQueued = await reportStaleQueuedDispatches();
+    stalePending = await reportStalePendingNotifications();
   } catch (error) {
-    console.error("[CommunicationCleanup] stale-queued check failed", error);
+    console.error("[CommunicationCleanup] stale-dispatch checks failed", error);
   }
 
-  return { routineDeleted, standardDeleted, staleQueued };
+  return { routineDeleted, standardDeleted, staleQueued, stalePending };
 }
 
 export function millisecondsUntilNextCleanup(now = new Date()): number {
