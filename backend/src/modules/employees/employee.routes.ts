@@ -540,17 +540,34 @@ router.put("/me/statutory-details", h(async (req: any, res: any) => {
   if (STAT_FIELDS.length > 1) {
     const placeholders = STAT_FIELDS.map(() => "?").join(", ");
     const dupClause = statOnDup.length ? `ON DUPLICATE KEY UPDATE ${statOnDup.join(", ")}` : "";
+    // Log the failure rather than swallowing it.
+    //
+    // The original comment here read "If ON DUPLICATE KEY not applicable (no unique
+    // key), fall through silently". That justification is obsolete: employee_statutory_info
+    // HAS a unique index on employee_id, verified against live, and the table holds
+    // exactly 33,436 rows across 33,436 distinct employees — one each, no duplicates.
+    // ON DUPLICATE KEY UPDATE fires correctly.
+    //
+    // What the empty catch still did was hide every OTHER failure. This is the
+    // self-service statutory write — EPF, ESI, UAN, PAN, Aadhaar, the fields that feed
+    // PF filings and TDS — and on any error the employee was told their details were
+    // saved when nothing had been written. Behaviour is unchanged (still non-fatal, so
+    // an existing flow cannot start failing); the error is now diagnosable instead of
+    // invisible.
     await db.execute(
       `INSERT INTO employee_statutory_info (${STAT_FIELDS.join(", ")}) VALUES (${placeholders}) ${dupClause}`,
       statVals
-    ).catch(() => {
-      // If ON DUPLICATE KEY not applicable (no unique key), fall through silently
+    ).catch((error) => {
+      console.error(`[statutory] employee_statutory_info write failed for ${empId}:`, error);
     });
   }
 
   // Also sync uan_number to employees table if provided
   if (uan_number !== undefined) {
-    await db.execute("UPDATE employees SET uan_number = ? WHERE id = ?", [uan_number, empId]).catch(() => {});
+    await db.execute("UPDATE employees SET uan_number = ? WHERE id = ?", [uan_number, empId])
+      .catch((error) => {
+        console.error(`[statutory] employees.uan_number sync failed for ${empId}:`, error);
+      });
   }
 
   // Audit every self-service statutory change — these fields feed payroll, PF filings, and TDS.
@@ -736,14 +753,21 @@ router.put("/:employeeId/statutory-details", ...hrProfileGate, h(async (req: any
   if (STAT_FIELDS.length > 1) {
     const placeholders = STAT_FIELDS.map(() => "?").join(", ");
     const dupClause = statOnDup.length ? `ON DUPLICATE KEY UPDATE ${statOnDup.join(", ")}` : "";
+    // Same silence as the self-service route above, on the HR-entry path. See the note
+    // there: the unique key exists, so the only thing this catch hid was real failure.
     await db.execute(
       `INSERT INTO employee_statutory_info (${STAT_FIELDS.join(", ")}) VALUES (${placeholders}) ${dupClause}`,
       statVals
-    ).catch(() => {});
+    ).catch((error) => {
+      console.error(`[statutory] employee_statutory_info write failed for ${empId} (HR entry):`, error);
+    });
   }
 
   if (uan_number !== undefined) {
-    await db.execute("UPDATE employees SET uan_number = ? WHERE id = ?", [uan_number, empId]).catch(() => {});
+    await db.execute("UPDATE employees SET uan_number = ? WHERE id = ?", [uan_number, empId])
+      .catch((error) => {
+        console.error(`[statutory] employees.uan_number sync failed for ${empId} (HR entry):`, error);
+      });
   }
 
   void logSensitiveAction({
