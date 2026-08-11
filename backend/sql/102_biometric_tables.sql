@@ -19,7 +19,7 @@ CREATE TABLE IF NOT EXISTS biometric_device_master (
   created_at    DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (branch_id) REFERENCES branch_master(id) ON DELETE SET NULL,
   INDEX idx_bio_device_uid (device_uid)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB;
 
 -- Maps HRMS employee to Cosec UserID (enrollment reference, NOT biometric template)
 CREATE TABLE IF NOT EXISTS employee_biometric_enrollment (
@@ -36,7 +36,7 @@ CREATE TABLE IF NOT EXISTS employee_biometric_enrollment (
   FOREIGN KEY (device_id)   REFERENCES biometric_device_master(id) ON DELETE SET NULL,
   UNIQUE KEY uq_emp_cosec   (employee_id, cosec_user_id),
   INDEX idx_bio_cosec_uid   (cosec_user_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB;
 
 -- Raw punch events from Cosec (first-in and last-out per day)
 CREATE TABLE IF NOT EXISTS biometric_attendance_log (
@@ -55,4 +55,4 @@ CREATE TABLE IF NOT EXISTS biometric_attendance_log (
   UNIQUE KEY uq_bio_emp_date (employee_id, punch_date),
   INDEX idx_bio_log_date    (punch_date),
   INDEX idx_bio_log_emp     (employee_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB;
