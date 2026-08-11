@@ -353,12 +353,25 @@ router.get("/payroll-projection", requireRole(...(PAYROLL_ROLES as string[]), "c
   // Build 30-day projection window
   const days: { date: string; projected_cost: number; actual_cost?: number }[] = [];
   const [salaryRows] = await db.execute<any[]>(
-    `SELECT DATE_FORMAT(sp.run_month, '%Y-%m') as run_month,
+    // salary_prep_run.run_month is VARCHAR(7) holding 'YYYY-MM', not a DATE.
+    //
+    // This compared it against DATE_SUB(CURDATE(), INTERVAL 2 MONTH), a real DATE. MySQL then
+    // coerced every 'YYYY-MM' string to a date, failed ("Truncated incorrect date value:
+    // '2026-07'" — one warning per row, for all 66 runs) and the predicate matched NOTHING.
+    // salaryRows came back empty, avgDaily fell to 0, and the endpoint returned 30 days of
+    // projected_cost: 0 and total_projected: 0 to every caller, for as long as it has existed.
+    // Nothing errored, so it read as "payroll projection is zero" rather than a broken query.
+    //
+    // Compared as the string it is: DATE_FORMAT renders the *cutoff* in the same 'YYYY-MM'
+    // shape, so >= is a lexicographic compare, which is correct for zero-padded year-month.
+    // The SELECT had the mirror-image fault — DATE_FORMAT on the varchar returned NULL for
+    // every row — harmless only because the caller reads total_gross and never run_month.
+    `SELECT sp.run_month as run_month,
             SUM(sl.gross_salary) as total_gross,
             COUNT(DISTINCT sl.employee_id) as emp_count
      FROM salary_prep_run sp
      JOIN salary_prep_line sl ON sl.run_id = sp.id
-     WHERE sp.run_month >= DATE_SUB(CURDATE(), INTERVAL 2 MONTH) ${empClause}
+     WHERE sp.run_month >= DATE_FORMAT(DATE_SUB(CURDATE(), INTERVAL 2 MONTH), '%Y-%m') ${empClause}
      GROUP BY sp.run_month ORDER BY sp.run_month ASC LIMIT 3`,
     empParams
   );

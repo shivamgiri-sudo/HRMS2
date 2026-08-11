@@ -1,0 +1,5 @@
+{
+  "extends": "./tsconfig.json",
+  "include": ["src/modules/management/management.routes.ts"],
+  "compilerOptions": { "noEmit": true }
+}
