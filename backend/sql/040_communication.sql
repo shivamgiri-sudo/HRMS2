@@ -11,7 +11,7 @@ USE mas_hrms;
 -- 1. COMMUNICATION TEMPLATE
 -- =====================================================
 CREATE TABLE IF NOT EXISTS communication_template (
-  id VARCHAR(36) PRIMARY KEY,
+  id CHAR(36) PRIMARY KEY,
   name VARCHAR(100) NOT NULL,
   subject VARCHAR(200),
   body_html TEXT NOT NULL,
@@ -21,20 +21,20 @@ CREATE TABLE IF NOT EXISTS communication_template (
   variables_schema JSON,
   is_active TINYINT(1) DEFAULT 1,
   is_critical TINYINT(1) DEFAULT 0,
-  created_by VARCHAR(36),
+  created_by CHAR(36),
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   INDEX idx_category_active (category, is_active),
   INDEX idx_created_by (created_by),
   FOREIGN KEY (created_by) REFERENCES employees(id) ON DELETE SET NULL
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB;
 
 -- =====================================================
 -- 2. NOTIFICATION PREFERENCES
 -- =====================================================
 CREATE TABLE IF NOT EXISTS notification_preferences (
-  id VARCHAR(36) PRIMARY KEY,
-  employee_id VARCHAR(36) NOT NULL,
+  id CHAR(36) PRIMARY KEY,
+  employee_id CHAR(36) NOT NULL,
   category ENUM('onboarding', 'payroll', 'attendance', 'leave', 'performance', 'alerts', 'announcements') NOT NULL,
   preferred_channel ENUM('email', 'sms', 'whatsapp') DEFAULT 'email',
   enabled TINYINT(1) DEFAULT 1,
@@ -42,16 +42,16 @@ CREATE TABLE IF NOT EXISTS notification_preferences (
   FOREIGN KEY (employee_id) REFERENCES employees(id) ON DELETE CASCADE,
   UNIQUE KEY uk_employee_category (employee_id, category),
   INDEX idx_employee_enabled (employee_id, enabled)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB;
 
 -- =====================================================
 -- 3. DISPATCH LOG
 -- =====================================================
 CREATE TABLE IF NOT EXISTS dispatch_log (
-  id VARCHAR(36) PRIMARY KEY,
-  template_id VARCHAR(36),
+  id CHAR(36) PRIMARY KEY,
+  template_id CHAR(36),
   template_name VARCHAR(100) NOT NULL,
-  recipient_employee_id VARCHAR(36),
+  recipient_employee_id CHAR(36),
   recipient_contact VARCHAR(100) NOT NULL,
   channel ENUM('email', 'sms', 'whatsapp') NOT NULL,
   status ENUM('queued', 'sent', 'delivered', 'opened', 'clicked', 'bounced', 'failed') NOT NULL DEFAULT 'queued',
@@ -71,7 +71,7 @@ CREATE TABLE IF NOT EXISTS dispatch_log (
   INDEX idx_recipient_channel (recipient_employee_id, channel, sent_at DESC),
   INDEX idx_status_retry (status, retry_count),
   INDEX idx_retention_cleanup (is_critical, retention_category, sent_at)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB;
 
 -- =====================================================
 -- END OF SCHEMA
