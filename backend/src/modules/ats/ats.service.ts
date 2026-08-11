@@ -84,6 +84,7 @@ export const atsService = {
     }
 
     const where = `WHERE ${conds.join(" AND ")}`;
+
     const offset = (filters.page - 1) * filters.limit;
 
     const [rows] = await db.execute<RowDataPacket[]>(
@@ -413,6 +414,21 @@ export const atsService = {
     if (filters.process)  { conds.push("applied_for_process = ?"); params.push(filters.process); }
     const where = `WHERE ${conds.join(" AND ")}`;
 
+    /**
+     * Branch/process only, without the date window.
+     *
+     * The four sub-queries below each hardcoded their own WHERE and passed [], so they ignored
+     * the caller's branch and process entirely: a branch-filtered dashboard rendered a GLOBAL
+     * time-to-hire and a GLOBAL open-positions count beside branch-filtered stage counts, on
+     * one screen. Their own date windows are deliberate (30/60-day trends), so only the scope
+     * filters carry across.
+     */
+    const scopeConds: string[] = [];
+    const scopeParams: unknown[] = [];
+    if (filters.branch)  { scopeConds.push("applied_for_branch = ?");  scopeParams.push(filters.branch); }
+    if (filters.process) { scopeConds.push("applied_for_process = ?"); scopeParams.push(filters.process); }
+    const scopeSql = scopeConds.length ? ` AND ${scopeConds.join(" AND ")}` : "";
+
     const [stageRows] = await db.execute<RowDataPacket[]>(
       `SELECT current_stage, COUNT(*) AS count FROM ats_candidate ${where} GROUP BY current_stage`, params
     );
@@ -429,7 +445,7 @@ export const atsService = {
     const [timeRows] = await db.execute<RowDataPacket[]>(
       `SELECT AVG(DATEDIFF(updated_at, created_at)) AS avg_days
          FROM ats_candidate
-        WHERE active_status = 1 AND current_stage = 'converted' AND ${excludeEmployeeShapedCandidatesSql("ats_candidate")}`, []
+        WHERE active_status = 1 AND current_stage = 'converted' AND ${excludeEmployeeShapedCandidatesSql("ats_candidate")}${scopeSql}`, scopeParams
     );
 
     const totalCount = Number(total[0]?.total ?? 0);
@@ -454,7 +470,7 @@ export const atsService = {
        FROM ats_candidate
        WHERE active_status = 1
          AND current_stage NOT IN ('converted', 'rejected', 'Onboarded', 'Selected', 'declined')
-         AND ${excludeEmployeeShapedCandidatesSql("ats_candidate")}`, []
+         AND ${excludeEmployeeShapedCandidatesSql("ats_candidate")}${scopeSql}`, scopeParams
     );
     const openPositions = Number(openPosRows[0]?.count ?? 0);
 
@@ -468,8 +484,8 @@ export const atsService = {
          AND current_stage IN ('selected','Selected','Onboarded','converted')
          AND updated_at >= DATE_SUB(CURDATE(), INTERVAL 60 DAY)
          AND updated_at < DATE_SUB(CURDATE(), INTERVAL 30 DAY)
-         AND ${excludeEmployeeShapedCandidatesSql("ats_candidate")}`,
-      []
+         AND ${excludeEmployeeShapedCandidatesSql("ats_candidate")}${scopeSql}`,
+      scopeParams
     ).catch((err: unknown) => {
       // Same treatment as the onboarding trend below: a swallowed failure here reads as a
       // real zero on a selection trend tile, and "zero selections in the prior 30 days"
@@ -497,8 +513,11 @@ export const atsService = {
     ).catch((err: unknown) => {
       // Keep the dashboard up, but never silently again: a swallowed query here reads as a
       // real zero on an HR trend tile, which is how the above survived unnoticed.
+      // null, not 0. Its two siblings above already return null on failure precisely so a
+      // broken lookup cannot read as a measured zero; this one still asserted "0 submitted in
+      // the prior 30 days", which is indistinguishable from a genuine standstill.
       console.warn("[ats-stats] onboarding submitted trend failed:", (err as Error).message);
-      return [[{ cnt: 0 }]] as any;
+      return [[{ cnt: null }]] as any;
     });
 
     // The Super Admin approval queue renders `pending_requisitions`, and nothing has
