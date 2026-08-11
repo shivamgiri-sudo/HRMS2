@@ -180,6 +180,24 @@ describe("Reactivation cannot be done by editing a profile", () => {
     expect(employeeUpdate(calls)).toBeUndefined();
   });
 
+  it("does not brick edits on a record already labelled Active but carrying active_status = 0", async () => {
+    // Ten such employees exist on production: joined 7-8 June, activation job
+    // never ran. The edit dialog resends the stored "Active" on every save, so
+    // keying the refusal off active_status alone locked HR out of them entirely.
+    const calls = stubEmployee({ id: "emp-12", employment_status: "Active", active_status: 0 });
+
+    await employeeService.updateEmployee(
+      "emp-12",
+      { employmentStatus: "Active", city: "Noida" } as never,
+      "hr-user"
+    );
+
+    const update = employeeUpdate(calls);
+    expect(update?.sql).toContain("city = ?");
+    // and it must not have quietly restored their access
+    expect(update?.sql).not.toContain("active_status = 1");
+  });
+
   it("still allows an ordinary save on an active employee — the edit dialog sends the field every time", async () => {
     const calls = stubEmployee({ id: "emp-6", employment_status: "Active", active_status: 1 });
 

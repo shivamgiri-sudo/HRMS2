@@ -335,7 +335,17 @@ export const employeeService = {
     // Active direction is refused here rather than silently synced. Setting "Active"
     // on someone who is already active stays a no-op: the edit dialog sends the
     // field on every save, and rejecting that would break ordinary profile edits.
-    if (nextStatus === "active" && !wasActive) {
+    //
+    // Refused only when the request actually CHANGES the label to Active. Ten
+    // employees on production are already labelled Active while carrying
+    // active_status = 0 — they joined 7-8 June and the activation job never ran
+    // for them. Keying this off active_status alone locked HR out of editing
+    // those records at all, because the dialog resends the unchanged "Active" on
+    // every save. Re-sending a value that is already stored grants nothing:
+    // active_status is untouched here, so those employees stay signed out until
+    // the reactivation flow or the activation job puts them right.
+    const wasStatusActive = String(snap.employment_status ?? "").trim().toLowerCase() === "active";
+    if (nextStatus === "active" && !wasActive && !wasStatusActive) {
       throw Object.assign(
         new Error(
           "This employee is deactivated. Reactivation must go through Employees → Reactivation (/employees/reactivation), which records a reason and takes branch head approval and HR confirmation. It cannot be done from a profile edit."
