@@ -78,7 +78,7 @@ describe("live call sites are wired to the exclusion helper", () => {
 
   it("ats.service.ts getDashboardStats excludes at all 4 edit points", () => {
     const source = read("src/modules/ats/ats.service.ts");
-    const fn = source.match(/async getDashboardStats\([\s\S]*?\n  \},/);
+    const fn = source.match(/async getDashboardStats\([\s\S]*?\n {2}\},/);
     expect(fn, "getDashboardStats not found").toBeTruthy();
     const usages = (fn![0].match(/excludeEmployeeShapedCandidatesSql/g) ?? []).length;
     // 1 in the shared `conds` array (covers 4 SELECTs) + 3 separate hardcoded queries.
@@ -94,7 +94,7 @@ describe("live call sites are wired to the exclusion helper", () => {
 
   it("report-suite.routes.ts's ats-pipeline-summary case excludes", () => {
     const source = read("src/modules/reporting/report-suite.routes.ts");
-    const caseBlock = source.match(/case "ats-pipeline-summary": \{[\s\S]*?\n    \}/);
+    const caseBlock = source.match(/case "ats-pipeline-summary": \{[\s\S]*?\n {4}\}/);
     expect(caseBlock, "ats-pipeline-summary case not found").toBeTruthy();
     expect(caseBlock![0]).toContain("excludeEmployeeShapedCandidatesSql");
   });
@@ -145,7 +145,7 @@ describe("live call sites are wired to the exclusion helper", () => {
 
   it("ats-ext's sourcing funnel excludes and filters inactive rows", () => {
     const source = read("src/modules/ats-extensions/ats-ext.service.ts");
-    const fn = source.match(/async getFunnel\([\s\S]*?\n  \}/);
+    const fn = source.match(/async getFunnel\([\s\S]*?\n {2}\}/);
     expect(fn, "getFunnel not found").toBeTruthy();
     expect(fn![0]).toContain("excludeEmployeeShapedCandidatesSql");
     expect(fn![0], "it started from 1=1 and counted inactive rows too").toContain("active_status = 1");
