@@ -156,6 +156,46 @@ async function getGrnOrThrow(grnId: string) {
   return rows[0] as any;
 }
 
+// ---------------------------------------------------------------------------
+// Legacy GRN helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Branch scope condition for grn_entry_snapshot.
+ *
+ * Primary path: grn_entry_line_snapshot → cost_centre_master.branch_id (UUID).
+ * Fallback: branch_master.branch_name COLLATE = grn_entry_snapshot.branch_name.
+ * ids appear twice: once for the cost_centre join, once for the name fallback.
+ */
+function legacyBranchCondition(
+  scope: FinanceBranchScope,
+  alias: string = "g"
+): { sql: string; params: unknown[] } {
+  if (scope.mode === "all") return { sql: "1=1", params: [] };
+
+  const ids = scope.branchIds;
+  const ph = ids.map(() => "?").join(", ");
+
+  const sql = `(
+    EXISTS (
+      SELECT 1
+        FROM grn_entry_line_snapshot l
+        JOIN cost_centre_master ccm
+          ON ccm.cost_centre_code COLLATE utf8mb4_unicode_ci
+           = l.cost_centre_code  COLLATE utf8mb4_unicode_ci
+       WHERE l.grn_source_id = ${alias}.bill_source_id
+         AND ccm.branch_id IN (${ph})
+    )
+    OR EXISTS (
+      SELECT 1
+        FROM branch_master bm
+       WHERE bm.id IN (${ph})
+         AND bm.branch_name COLLATE utf8mb4_unicode_ci
+           = ${alias}.branch_name COLLATE utf8mb4_unicode_ci
+    )
+  )`;
+  return { sql, params: [...ids, ...ids] };
+}
 export const grnService = {
   async createDraft(payload: CreateGrnPayload, actorUserId: string, actorRole: string) {
     if (!payload.branchId) throw new Error("Branch is required");
@@ -868,6 +908,199 @@ export const grnService = {
 
     return {
       data: (rows as RowDataPacket[]).map(decorateGrnPendency),
+      total: Number(countRows[0]?.total ?? 0),
+      page,
+      limit,
+    };
+  },
+
+  async listLegacyGrns(filters: {
+    branchScope?: FinanceBranchScope;
+    processId?: string;
+    costCentreId?: string;
+    status?: string;
+    grnNumber?: string;
+    head?: string;
+    subHead?: string;
+    accountingPeriod?: string;
+    billDateFrom?: string;
+    billDateTo?: string;
+    amountFrom?: number;
+    amountTo?: number;
+    search?: string;
+    page?: number;
+    limit?: number;
+  }) {
+    const conditions: string[] = [];
+    const params: unknown[] = [];
+
+    if (filters.branchScope) {
+      const { sql, params: bParams } = legacyBranchCondition(filters.branchScope);
+      if (sql !== "1=1") {
+        conditions.push(sql);
+        params.push(...bParams);
+      }
+    }
+
+    if (filters.costCentreId) {
+      conditions.push(`EXISTS (
+        SELECT 1
+          FROM grn_entry_line_snapshot l
+          JOIN cost_centre_master ccm
+            ON ccm.cost_centre_code COLLATE utf8mb4_unicode_ci
+             = l.cost_centre_code  COLLATE utf8mb4_unicode_ci
+         WHERE l.grn_source_id = g.bill_source_id
+           AND ccm.id = ?
+      )`);
+      params.push(filters.costCentreId);
+    }
+
+    if (filters.processId) {
+      conditions.push(`EXISTS (
+        SELECT 1
+          FROM grn_entry_line_snapshot l
+          JOIN cost_centre_master ccm
+            ON ccm.cost_centre_code COLLATE utf8mb4_unicode_ci
+             = l.cost_centre_code  COLLATE utf8mb4_unicode_ci
+          JOIN employees e
+            ON e.cost_centre_id = ccm.id
+           AND e.active_status   = 1
+           AND e.process_id IS NOT NULL
+         WHERE l.grn_source_id = g.bill_source_id
+           AND e.process_id = ?
+      )`);
+      params.push(filters.processId);
+    }
+
+    if (filters.status) {
+      if (filters.status === "rejected") {
+        conditions.push("g.is_rejected = 1");
+      } else if (filters.status === "approved" || filters.status === "paid") {
+        conditions.push("g.is_rejected = 0 AND g.entry_status = 'Close'");
+      } else if (
+        filters.status === "pending_accounts_payment" ||
+        filters.status === "payment_scheduled"
+      ) {
+        conditions.push("g.is_rejected = 0 AND g.entry_status = 'Booked'");
+      } else if (filters.status === "submitted" || filters.status === "branch_head_approved") {
+        conditions.push("g.is_rejected = 0 AND g.entry_status = 'Open'");
+      } else {
+        conditions.push("1 = 0");
+      }
+    } else {
+      conditions.push("g.is_rejected = 0");
+    }
+
+    if (filters.accountingPeriod) {
+      conditions.push("g.period_code = ?");
+      params.push(filters.accountingPeriod);
+    }
+    if (filters.billDateFrom) {
+      conditions.push("g.period_code >= ?");
+      params.push(filters.billDateFrom.slice(0, 7));
+    }
+    if (filters.billDateTo) {
+      conditions.push("g.period_code <= ?");
+      params.push(filters.billDateTo.slice(0, 7));
+    }
+
+    if (filters.amountFrom !== undefined && Number.isFinite(filters.amountFrom)) {
+      conditions.push("(g.amount + g.cgst + g.sgst + g.igst) >= ?");
+      params.push(filters.amountFrom);
+    }
+    if (filters.amountTo !== undefined && Number.isFinite(filters.amountTo)) {
+      conditions.push("(g.amount + g.cgst + g.sgst + g.igst) <= ?");
+      params.push(filters.amountTo);
+    }
+
+    if (filters.grnNumber) {
+      conditions.push("g.grn_no LIKE ?");
+      params.push(`%${filters.grnNumber}%`);
+    }
+
+    if (filters.head) {
+      conditions.push("(hd.head_name = ? OR g.head_id = ?)");
+      params.push(filters.head, filters.head);
+    }
+    if (filters.subHead) {
+      conditions.push("(shd.head_name = ? OR g.sub_head_id = ?)");
+      params.push(filters.subHead, filters.subHead);
+    }
+
+    if (filters.search) {
+      conditions.push(
+        "(g.grn_no LIKE ? OR g.vendor LIKE ? OR hd.head_name LIKE ? OR g.description LIKE ?)"
+      );
+      const like = `%${filters.search}%`;
+      params.push(like, like, like, like);
+    }
+
+    const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+    const page  = Math.max(1, filters.page  ?? 1);
+    const limit = Math.min(100, Math.max(1, filters.limit ?? 30));
+    const offset = (page - 1) * limit;
+
+    const [rows] = await db.query<RowDataPacket[]>(
+      `SELECT
+          CONCAT('leg_', g.bill_source_id)           AS id,
+          g.grn_no                                   AS grn_number,
+          'legacy'                                   AS source_type,
+          'vendor'                                   AS grn_type,
+          g.vendor                                   AS vendor_name,
+          g.branch_name,
+          COALESCE(hd.head_name,  g.head_id)         AS head,
+          COALESCE(shd.head_name, g.sub_head_id)     AS sub_head,
+          NULL                                       AS invoice_number,
+          g.bill_date,
+          g.amount                                   AS amount,
+          g.amount + g.cgst + g.sgst + g.igst        AS amount_with_tax,
+          g.period_code                              AS accounting_period,
+          CASE
+            WHEN g.is_rejected = 1           THEN 'rejected'
+            WHEN g.entry_status = 'Close'    THEN 'approved'
+            WHEN g.entry_status = 'Booked'   THEN 'pending_accounts_payment'
+            ELSE                                  'submitted'
+          END                                        AS status,
+          g.entry_status                             AS legacy_entry_status,
+          NULL                                       AS billing_cycle_status,
+          0                                          AS is_multi_month,
+          NULL                                       AS created_by_name,
+          g.source_created_at                        AS created_at,
+          NULL                                       AS submitted_at,
+          NULL                                       AS branch_head_reviewed_at,
+          NULL                                       AS branch_head_reviewed_by_name,
+          g.approved_by_fh_at                        AS finance_head_reviewed_at,
+          NULL                                       AS finance_head_reviewed_by_name,
+          NULL                                       AS rejection_reason,
+          NULL                                       AS process_name,
+          NULL                                       AS cost_centre_name,
+          NULL                                       AS budget_number,
+          NULL                                       AS budget_item_name,
+          NULL                                       AS reviewed_by_name
+        FROM grn_entry_snapshot g
+        LEFT JOIN finance_expense_head_snapshot hd
+               ON hd.bill_source_id = g.head_id  AND hd.head_type = 'head'
+        LEFT JOIN finance_expense_head_snapshot shd
+               ON shd.bill_source_id = g.sub_head_id AND shd.head_type = 'subhead'
+        ${where}
+        ORDER BY g.source_created_at DESC, g.bill_source_id DESC
+        LIMIT ? OFFSET ?`,
+      [...params, limit, offset]
+    );
+
+    const [countRows] = await db.execute<RowDataPacket[]>(
+      `SELECT COUNT(*) AS total
+         FROM grn_entry_snapshot g
+         LEFT JOIN finance_expense_head_snapshot hd
+                ON hd.bill_source_id = g.head_id  AND hd.head_type = 'head'
+         LEFT JOIN finance_expense_head_snapshot shd
+                ON shd.bill_source_id = g.sub_head_id AND shd.head_type = 'subhead'
+         ${where}`,
+      params
+    );
+
+    return {
+      data: rows as RowDataPacket[],
       total: Number(countRows[0]?.total ?? 0),
       page,
       limit,
