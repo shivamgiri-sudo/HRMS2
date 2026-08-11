@@ -93,14 +93,22 @@ wfmRouter.get("/attendance/daily", h(async (req: any, res: any) => {
   // mismatch banner and "last processed" line rendered blank or zero on every day —
   // including fully processed ones. Returning both spellings keeps existing callers
   // working while the ADR surface gets the fields it was written against.
-  let sql = `SELECT record_date AS date,
+  // record_date is formatted rather than returned raw, matching its two sibling queries
+  // (attendance-daily-scoped.routes.ts and attendance-engine.service.ts, which both
+  // DATE_FORMAT it). Raw, it is a bare "2026-08-01" only because the pool sets
+  // dateStrings: true (backend/src/db/mysql.ts). Every calendar that reads this endpoint
+  // keys its day cells on a strict YYYY-MM-DD, so if that flag ever changes - or any
+  // serializer lands in between - record_date becomes "2026-07-31T18:30:00.000Z", every
+  // lookup misses, and the whole month renders blank while the table view, which slices
+  // to 10 chars, keeps working. Formatting here removes the dependency on a pool flag.
+  let sql = `SELECT DATE_FORMAT(record_date, '%Y-%m-%d') AS date,
                    attendance_status AS status,
                    clock_in_time AS clock_in,
                    clock_out_time AS clock_out,
                    raw_minutes,
                    COALESCE(clock_in_location, clock_out_location) AS location,
                    attendance_source AS source,
-                   record_date,
+                   DATE_FORMAT(record_date, '%Y-%m-%d') AS record_date,
                    attendance_status,
                    attendance_source,
                    dialler_minutes,
