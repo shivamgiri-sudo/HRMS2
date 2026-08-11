@@ -3,12 +3,34 @@
 -- RTA sync log, and extends existing tables with new governance columns.
 -- All statements are idempotent (IF NOT EXISTS / IF EXISTS / INSERT IGNORE).
 
+DROP PROCEDURE IF EXISTS _223_add_col;
+DELIMITER $$
+CREATE PROCEDURE _223_add_col(
+  IN p_table VARCHAR(64),
+  IN p_column VARCHAR(64),
+  IN p_definition TEXT
+)
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+      FROM information_schema.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = p_table
+       AND COLUMN_NAME = p_column
+  ) THEN
+    SET @sql = CONCAT('ALTER TABLE `', p_table, '` ADD COLUMN `', p_column, '` ', p_definition);
+    PREPARE stmt FROM @sql;
+    EXECUTE stmt;
+    DEALLOCATE PREPARE stmt;
+  END IF;
+END$$
+DELIMITER ;
+
 -- ─────────────────────────────────────────────────────────────────────────────
 -- 1. ALTER wfm_roster_assignment — add decision traceability columns
 -- ─────────────────────────────────────────────────────────────────────────────
-ALTER TABLE wfm_roster_assignment
-  ADD COLUMN IF NOT EXISTS generation_run_id VARCHAR(36) NULL COMMENT 'FK roster_generation_run.id — NULL for manually created rows',
-  ADD COLUMN IF NOT EXISTS decision_source ENUM('manual','template','bulk_upload','swap','rule_engine') NOT NULL DEFAULT 'manual' COMMENT 'How this assignment was created';
+CALL _223_add_col('wfm_roster_assignment', 'generation_run_id', 'VARCHAR(36) NULL COMMENT ''FK roster_generation_run.id - NULL for manually created rows''');
+CALL _223_add_col('wfm_roster_assignment', 'decision_source', 'ENUM(''manual'',''template'',''bulk_upload'',''swap'',''rule_engine'') NOT NULL DEFAULT ''manual'' COMMENT ''How this assignment was created''');
 
 -- Index only if it does not already exist
 SET @dbname = DATABASE();
@@ -30,19 +52,17 @@ PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 -- ─────────────────────────────────────────────────────────────────────────────
 -- 2. ALTER weekly_roster_cycle — add acknowledgement governance columns
 -- ─────────────────────────────────────────────────────────────────────────────
-ALTER TABLE weekly_roster_cycle
-  ADD COLUMN IF NOT EXISTS required_ack_pct  DECIMAL(5,2) NOT NULL DEFAULT 80.00 COMMENT 'Min % of employees who must acknowledge before cycle can move to acknowledged status',
-  ADD COLUMN IF NOT EXISTS ack_deadline      DATETIME NULL COMMENT 'Deadline for employee acknowledgements; engine auto-acks on expiry',
-  ADD COLUMN IF NOT EXISTS manager_review_notes TEXT NULL COMMENT 'Freetext notes added by manager/WFM before publishing';
+CALL _223_add_col('weekly_roster_cycle', 'required_ack_pct', 'DECIMAL(5,2) NOT NULL DEFAULT 80.00 COMMENT ''Min pct of employees who must acknowledge before cycle can move to acknowledged status''');
+CALL _223_add_col('weekly_roster_cycle', 'ack_deadline', 'DATETIME NULL COMMENT ''Deadline for employee acknowledgements; engine auto-acks on expiry''');
+CALL _223_add_col('weekly_roster_cycle', 'manager_review_notes', 'TEXT NULL COMMENT ''Freetext notes added by manager/WFM before publishing''');
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- 3. ALTER roster_daily_assignment — add dispute resolution columns
 -- ─────────────────────────────────────────────────────────────────────────────
-ALTER TABLE roster_daily_assignment
-  ADD COLUMN IF NOT EXISTS dispute_reason       VARCHAR(500) NULL,
-  ADD COLUMN IF NOT EXISTS dispute_resolved_by  VARCHAR(36) NULL,
-  ADD COLUMN IF NOT EXISTS dispute_resolved_at  DATETIME NULL,
-  ADD COLUMN IF NOT EXISTS dispute_resolution   VARCHAR(500) NULL;
+CALL _223_add_col('roster_daily_assignment', 'dispute_reason', 'VARCHAR(500) NULL');
+CALL _223_add_col('roster_daily_assignment', 'dispute_resolved_by', 'VARCHAR(36) NULL');
+CALL _223_add_col('roster_daily_assignment', 'dispute_resolved_at', 'DATETIME NULL');
+CALL _223_add_col('roster_daily_assignment', 'dispute_resolution', 'VARCHAR(500) NULL');
 
 -- FK for dispute_resolved_by — only add if employees table exists and FK doesn't exist
 SET @fkname = 'fk_rda_dispute_resolver';
@@ -165,5 +185,7 @@ CREATE TABLE IF NOT EXISTS rta_roster_sync_log (
   CONSTRAINT fk_rrsl_cycle FOREIGN KEY (cycle_id)
     REFERENCES weekly_roster_cycle(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+DROP PROCEDURE IF EXISTS _223_add_col;
 
 SELECT '223_wfm_roster_decision_engine.sql applied successfully' AS migration_status;
