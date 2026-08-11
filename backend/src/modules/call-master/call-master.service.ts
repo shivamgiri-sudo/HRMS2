@@ -318,14 +318,14 @@ export async function getFatalAgentSummary(filters: CallMasterFilters, limit = 5
   }>(
     `SELECT q.CallDate AS date,
       ANY_VALUE(COALESCE(am.AgentName, q.User)) AS agent,
-      ANY_VALUE(COALESCE(c.name, CONCAT('Client ', q.ClientId))) AS client,
+      ANY_VALUE(COALESCE(c.display_name, CONCAT('Client ', q.ClientId))) AS client,
       COUNT(*) AS total_calls,
       SUM(CASE WHEN q.quality_percentage=0 THEN 1 ELSE 0 END) AS fatal_calls,
       ROUND(SUM(CASE WHEN q.quality_percentage=0 THEN 1 ELSE 0 END)*100.0/NULLIF(COUNT(*),0),2) AS fatal_rate,
       ROUND(AVG(q.quality_percentage),2) AS avg_quality
      FROM db_audit.call_quality_assessment q
      LEFT JOIN Shivamgiri.AgentMaster am ON am.MasId = q.User COLLATE utf8mb4_unicode_ci
-     LEFT JOIN shivamgiri.md_clients c ON c.dialdesk_client_id = CAST(q.ClientId AS UNSIGNED)
+     LEFT JOIN Shivamgiri.portal_client_config c ON c.client_id = CAST(q.ClientId AS UNSIGNED)
      WHERE q.CallDate BETWEEN ? AND ?${ibF.clause}
      GROUP BY q.CallDate, q.User, q.ClientId
      ORDER BY q.CallDate DESC, q.User ASC LIMIT ?`,
@@ -340,24 +340,24 @@ export async function getCallsByClient(filters: CallMasterFilters) {
   const obF = buildOutboundClientFilter(clientIds);
 
   const ibQuery = () => querySource<{ client: string; calls: number; avg_quality?: number; conversion?: number }>(
-    `SELECT COALESCE(c.name, CONCAT('Client ', q.ClientId)) AS client,
+    `SELECT COALESCE(c.display_name, CONCAT('Client ', q.ClientId)) AS client,
       COUNT(*) AS calls,
       ROUND(AVG(q.quality_percentage),2) AS avg_quality
      FROM db_audit.call_quality_assessment q
-     LEFT JOIN shivamgiri.md_clients c ON c.dialdesk_client_id = CAST(q.ClientId AS UNSIGNED)
+     LEFT JOIN Shivamgiri.portal_client_config c ON c.client_id = CAST(q.ClientId AS UNSIGNED)
      WHERE q.CallDate BETWEEN ? AND ?${ibF.clause}
-     GROUP BY q.ClientId, c.name ORDER BY calls DESC`,
+     GROUP BY q.ClientId, c.display_name ORDER BY calls DESC`,
     [startDate, endDate, ...ibF.params]
   );
 
   const obQuery = () => querySource<{ client: string; calls: number; avg_quality?: number; conversion?: number }>(
-    `SELECT COALESCE(c.name, CONCAT('Client ', d.client_id)) AS client,
+    `SELECT COALESCE(c.display_name, CONCAT('Client ', d.client_id)) AS client,
       COUNT(*) AS calls,
       ROUND(SUM(CASE WHEN SaleDone='1' THEN 1 ELSE 0 END)*100.0/NULLIF(COUNT(*),0),2) AS conversion
      FROM db_external.CallDetails d
-     LEFT JOIN shivamgiri.md_clients c ON c.dialdesk_client_id = CAST(d.client_id AS UNSIGNED)
+     LEFT JOIN Shivamgiri.portal_client_config c ON c.client_id = CAST(d.client_id AS UNSIGNED)
      WHERE d.CallDate BETWEEN ? AND ?${obF.clause}
-     GROUP BY d.client_id, c.name ORDER BY calls DESC`,
+     GROUP BY d.client_id, c.display_name ORDER BY calls DESC`,
     [startDate, endDate, ...obF.params]
   );
 
@@ -433,12 +433,25 @@ export async function getActiveAgentsList(filters: CallMasterFilters) {
 }
 
 export async function getClientList() {
-  // Query the client master directly — never scan call_quality_assessment without a date range
+  // Query the client master directly — never scan call_quality_assessment without a date range.
+  //
+  // This read `shivamgiri.md_clients` until 2026-08-11, which was wrong twice over. The MIS host
+  // runs lower_case_table_names=0, so `shivamgiri` and `Shivamgiri` are different schemas and the
+  // grant (`ON \`Shivamgiri\`.*`) covered neither the lowercase name nor a table that has never
+  // existed on this server — there is no md_clients in any schema shivam_user can see. MySQL
+  // reports a missing table you lack rights to as ER_TABLEACCESS_DENIED_ERROR rather than
+  // "unknown table", so this surfaced as a permissions error and read as a grant problem.
+  // The dashboard swallowed the throw and rendered empty, so it looked like "no clients yet".
+  //
+  // portal_client_config is the real client master on this host: client_id is INT UNSIGNED with a
+  // UNIQUE index (18 rows, 18 distinct ids), so it joins 1:1 against the CAST below and cannot
+  // fan out. process_mapping_master also carries dialdesk_client_id but is 1:many (22 rows over
+  // 17 clients) and would multiply every COUNT/SUM that joins it.
   return querySource<{ id: number; name: string }>(
-    `SELECT dialdesk_client_id AS id, name
-     FROM shivamgiri.md_clients
-     WHERE dialdesk_client_id IS NOT NULL AND name IS NOT NULL AND name != ''
-     ORDER BY name`
+    `SELECT client_id AS id, display_name AS name
+     FROM Shivamgiri.portal_client_config
+     WHERE is_active = 1 AND display_name IS NOT NULL AND display_name != ''
+     ORDER BY display_name`
   );
 }
 
@@ -455,10 +468,10 @@ export async function getExportData(
     ).join(", ");
     return querySource<Record<string, unknown>>(
       `SELECT q.CallDate, q.User AS agent_code,
-        COALESCE(c.name, CONCAT('Client ', q.ClientId)) AS client,
+        COALESCE(c.display_name, CONCAT('Client ', q.ClientId)) AS client,
         q.quality_percentage, q.scenario, q.scenario1, ${paramCols}
        FROM db_audit.call_quality_assessment q
-       LEFT JOIN shivamgiri.md_clients c ON c.dialdesk_client_id = CAST(q.ClientId AS UNSIGNED)
+       LEFT JOIN Shivamgiri.portal_client_config c ON c.client_id = CAST(q.ClientId AS UNSIGNED)
        WHERE q.CallDate BETWEEN ? AND ?${ibF.clause}
        ORDER BY q.CallDate DESC LIMIT ?`,
       [startDate, endDate, ...ibF.params, String(limit)]
@@ -468,14 +481,14 @@ export async function getExportData(
   const obF = buildOutboundClientFilter(clientIds);
   return querySource<Record<string, unknown>>(
     `SELECT d.CallDate, d.AgentName,
-      COALESCE(c.name, CONCAT('Client ', d.client_id)) AS client,
+      COALESCE(c.display_name, CONCAT('Client ', d.client_id)) AS client,
       d.LengthSec, d.CallDisposition, d.StartTime, d.EndTime,
       d.Opening, d.Offered, d.ObjectionHandling, d.PrepaidPitch, d.UpsellingEfforts, d.OfferUrgency,
       ROUND((d.Opening+d.Offered+d.ObjectionHandling+d.PrepaidPitch+d.UpsellingEfforts+d.OfferUrgency)/6.0*100,1) AS OBQuality,
       d.SaleDone, d.ProductOffering, d.DiscountType, d.Category, d.SubCategory,
       d.Feedback, d.Feedback_Category, d.AreaForImprovement, d.SensitiveWordContext, d.NotInterestedBucketReason
      FROM db_external.CallDetails d
-     LEFT JOIN shivamgiri.md_clients c ON c.dialdesk_client_id = CAST(d.client_id AS UNSIGNED)
+     LEFT JOIN Shivamgiri.portal_client_config c ON c.client_id = CAST(d.client_id AS UNSIGNED)
      WHERE d.CallDate BETWEEN ? AND ?${obF.clause}
        AND d.AgentName IS NOT NULL AND d.AgentName != ''
      ORDER BY d.CallDate DESC LIMIT ?`,

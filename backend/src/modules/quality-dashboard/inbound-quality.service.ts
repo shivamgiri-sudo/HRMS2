@@ -157,7 +157,7 @@ export async function getInboundClients(filters: InboundQualityFilters) {
     excellent: number; good: number; average_count: number; below_average: number; fatal_count: number;
   }>(
     `SELECT q.ClientId AS client_id,
-      COALESCE(c.name, CONCAT('Client ', q.ClientId)) AS client_name,
+      COALESCE(c.display_name, CONCAT('Client ', q.ClientId)) AS client_name,
       COUNT(*) AS audit_count,
       ROUND(AVG(q.quality_percentage),1) AS cq_score,
       ROUND(AVG(CASE WHEN q.quality_percentage>0 THEN q.quality_percentage END),1) AS cq_score_no_fatal,
@@ -167,9 +167,9 @@ export async function getInboundClients(filters: InboundQualityFilters) {
       SUM(CASE WHEN q.quality_percentage>0 AND q.quality_percentage<85 THEN 1 ELSE 0 END) AS below_average,
       SUM(CASE WHEN q.quality_percentage=0 THEN 1 ELSE 0 END) AS fatal_count
      FROM db_audit.call_quality_assessment q
-     LEFT JOIN shivamgiri.md_clients c ON c.dialdesk_client_id = CAST(q.ClientId AS UNSIGNED)
+     LEFT JOIN Shivamgiri.portal_client_config c ON c.client_id = CAST(q.ClientId AS UNSIGNED)
      WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL${cf.clause}
-     GROUP BY q.ClientId, c.name ORDER BY client_name ASC`,
+     GROUP BY q.ClientId, c.display_name ORDER BY client_name ASC`,
     [startDate, endDate, ...cf.params]
   );
 }
@@ -576,10 +576,10 @@ export async function getFatalCallsList(filters: InboundQualityFilters) {
       COALESCE(am.AgentName, q.User) AS agent_name,
       DATE_FORMAT(q.CallDate,'%Y-%m-%d') AS call_date,
       CASE WHEN TRIM(q.scenario)='' OR q.scenario IS NULL THEN 'Unknown' ELSE TRIM(q.scenario) END AS scenario,
-      COALESCE(c.name, CONCAT('Client ', q.ClientId)) AS client
+      COALESCE(c.display_name, CONCAT('Client ', q.ClientId)) AS client
      FROM db_audit.call_quality_assessment q
      LEFT JOIN Shivamgiri.AgentMaster am ON am.MasId = q.User COLLATE utf8mb4_unicode_ci
-     LEFT JOIN shivamgiri.md_clients c ON c.dialdesk_client_id = CAST(q.ClientId AS UNSIGNED)
+     LEFT JOIN Shivamgiri.portal_client_config c ON c.client_id = CAST(q.ClientId AS UNSIGNED)
      WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage = 0${cf.clause}
      ORDER BY q.CallDate DESC LIMIT 500`,
     [startDate, endDate, ...cf.params]
@@ -675,13 +675,13 @@ export async function getRawData(filters: InboundQualityFilters, limit = 500) {
       q.quality_percentage AS cq_score,
       CASE WHEN TRIM(q.scenario)='' OR q.scenario IS NULL THEN 'Unknown' ELSE TRIM(q.scenario) END AS scenario,
       CASE WHEN TRIM(q.scenario1)='' OR q.scenario1 IS NULL THEN 'Unknown' ELSE TRIM(q.scenario1) END AS scenario1,
-      COALESCE(c.name, CONCAT('Client ', q.ClientId)) AS client,
+      COALESCE(c.display_name, CONCAT('Client ', q.ClientId)) AS client,
       q.top_negative_words, q.top_positive_words, q.sensetive_word, q.financial_fraud,
       (${ALERT_FIELD}) AS alert_flag,
       (${NEG_CAT_EXPR}) AS neg_category
      FROM db_audit.call_quality_assessment q
      LEFT JOIN Shivamgiri.AgentMaster am ON am.MasId = q.User COLLATE utf8mb4_unicode_ci
-     LEFT JOIN shivamgiri.md_clients c ON c.dialdesk_client_id = CAST(q.ClientId AS UNSIGNED)
+     LEFT JOIN Shivamgiri.portal_client_config c ON c.client_id = CAST(q.ClientId AS UNSIGNED)
      WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL${cf.clause}
      ORDER BY q.CallDate DESC LIMIT ?`,
     [startDate, endDate, ...cf.params, String(limit)]
@@ -759,12 +759,12 @@ export async function getClapVocQuotes(filters: InboundQualityFilters) {
       `SELECT
         q.CallDate AS call_date,
         COALESCE(am.AgentName, q.User) AS agent_name,
-        COALESCE(c.name, CONCAT('Client ', q.ClientId)) AS client,
+        COALESCE(c.display_name, CONCAT('Client ', q.ClientId)) AS client,
         q.\`${pos}\` AS positive_quote,
         q.\`${neg}\` AS negative_quote
        FROM db_audit.call_quality_assessment q
        LEFT JOIN Shivamgiri.AgentMaster am ON am.MasId = q.User COLLATE utf8mb4_unicode_ci
-       LEFT JOIN shivamgiri.md_clients c ON c.dialdesk_client_id = CAST(q.ClientId AS UNSIGNED)
+       LEFT JOIN Shivamgiri.portal_client_config c ON c.client_id = CAST(q.ClientId AS UNSIGNED)
        WHERE q.CallDate BETWEEN ? AND ?
          AND q.CallDate >= ?
          AND (q.\`${pos}\` IS NOT NULL OR q.\`${neg}\` IS NOT NULL)
@@ -837,12 +837,12 @@ export async function getClapProductVocQuotes(filters: InboundQualityFilters & {
     `SELECT
       q.CallDate AS call_date,
       COALESCE(am.AgentName, q.User) AS agent_name,
-      COALESCE(c.name, CONCAT('Client ', q.ClientId)) AS client,
+      COALESCE(c.display_name, CONCAT('Client ', q.ClientId)) AS client,
       CASE WHEN q.\`${posCol}\` IS NOT NULL AND q.\`${posCol}\` != '' THEN 'positive' ELSE 'negative' END AS sentiment,
       COALESCE(q.\`${posCol}\`, q.\`${negCol}\`) AS quote
      FROM db_audit.call_quality_assessment q
      LEFT JOIN Shivamgiri.AgentMaster am ON am.MasId = q.User COLLATE utf8mb4_unicode_ci
-     LEFT JOIN shivamgiri.md_clients c ON c.dialdesk_client_id = CAST(q.ClientId AS UNSIGNED)
+     LEFT JOIN Shivamgiri.portal_client_config c ON c.client_id = CAST(q.ClientId AS UNSIGNED)
      WHERE q.CallDate BETWEEN ? AND ?
        AND q.CallDate >= ?
        AND (q.\`${posCol}\` IS NOT NULL OR q.\`${negCol}\` IS NOT NULL)
