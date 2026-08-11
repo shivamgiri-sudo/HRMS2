@@ -58,6 +58,18 @@ describe("Migration Isolation Tests", () => {
         expect(fs.existsSync(path.join(TEST_SQL_DIR, critical))).toBe(true);
       }
     });
+
+    it("should normalize the database default collation before creating fresh tables", () => {
+      const runnerPath = path.resolve(__dirname, "../runPendingMigrations.ts");
+      const runnerSource = fs.readFileSync(runnerPath, "utf-8");
+
+      expect(runnerSource).toContain(
+        "CREATE DATABASE IF NOT EXISTS \\`${dbName}\\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci",
+      );
+      expect(runnerSource).toContain(
+        "ALTER DATABASE \\`${dbName}\\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci",
+      );
+    });
   });
 
   describe("Idempotency (Second Run)", () => {

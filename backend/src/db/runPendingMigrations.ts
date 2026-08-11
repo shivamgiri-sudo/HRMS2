@@ -887,6 +887,9 @@ async function ensureDatabaseExists(
     await conn.query(
       `CREATE DATABASE IF NOT EXISTS \`${dbName}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`
     );
+    await conn.query(
+      `ALTER DATABASE \`${dbName}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`
+    );
     console.log(`[migration] database '${dbName}' ensured`);
   } finally {
     await conn.end();
