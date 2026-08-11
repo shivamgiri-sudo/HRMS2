@@ -572,6 +572,44 @@ export const grnService = {
         throw new Error(`Role ${actorRole} is not permitted to review GRNs`);
       }
 
+      /*
+       * The approval and the rejection, recorded — the two decisions this history existed to
+       * hold and the only two it did not.
+       *
+       * finance_approval_event was written by the billing-cycle, return and resubmit paths and
+       * by imprest, but never here. GET /grns/:id/approval-history reads nothing else, so a GRN
+       * that went submitted -> branch_head_approved -> approved showed an empty timeline, while
+       * the queue told reviewers "the reason is kept on the voucher's history". Only a RETURNED
+       * voucher produced any rows at all, which is why the endpoint looked half-alive rather
+       * than dead. Confirmed against production: the table holds zero rows.
+       *
+       * One event covers both stages: newStatus and grn.status are set on every path that
+       * reaches here, so there is no branch left to forget. Written on the same connection as
+       * the status UPDATE, so the event and the transition commit or roll back together —
+       * a history row surviving a rolled-back approval would assert something that never
+       * happened. recordFinanceApprovalEvent throws rather than swallowing, and that is
+       * deliberate: a history that can silently drop a row is not a history.
+       *
+       * actorRole is the stage that was cleared, not the actor's primary role, so a super_admin
+       * acting at the Branch Head stage reads as branch_head — the question later is "which
+       * stage was passed", not "who was logged in".
+       */
+      await recordFinanceApprovalEvent(
+        {
+          entityType: "grn",
+          entityId: grnId,
+          action: payload.decision === "approved" ? "approve" : "reject",
+          fromStatus: String(grn.status),
+          toStatus: newStatus,
+          decision: payload.decision,
+          actorUserId,
+          actorRole: effectiveStage,
+          remarks: payload.reviewNote?.trim() || null,
+          details: paymentId ? { vendorPaymentId: paymentId } : undefined,
+        },
+        connection
+      );
+
       await connection.commit();
     } catch (error) {
       await connection.rollback();

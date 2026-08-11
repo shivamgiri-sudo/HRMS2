@@ -5,6 +5,7 @@ import type { PoolConnection } from "mysql2/promise";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { db } from "../../db/mysql.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
+import { recordFinanceApprovalEvent } from "../../shared/financeApprovalEvent.js";
 import {
   calculateBudgetLine,
   type BudgetGstType,
@@ -1450,6 +1451,28 @@ export const grnSmartService = {
       } else {
         throw new Error(`Role ${actorRole} is not permitted to review smart GRNs`);
       }
+
+      // The same omission as the legacy path in grn.service.ts, and the same fix. An
+      // allocation-aware GRN is reviewed here instead of there, so without this an approval or
+      // rejection of a smart GRN also left GET /grns/:id/approval-history empty. Recorded on
+      // the review connection so the event and the transition share one commit. `role` is the
+      // stage that was cleared, which is what a reader of the history is asking about.
+      await recordFinanceApprovalEvent(
+        {
+          entityType: "grn",
+          entityId: grnId,
+          action: decision === "approved" ? "approve" : "reject",
+          fromStatus: String(grn.status),
+          toStatus: newStatus,
+          decision,
+          actorUserId,
+          actorRole: role,
+          remarks: reviewNote?.trim() || null,
+          details: { allocationCount: allocations.length },
+        },
+        connection
+      );
+
       await connection.commit();
     } catch (error) {
       await connection.rollback();
