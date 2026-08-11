@@ -69,6 +69,8 @@ export interface CandidateListFilters {
   search?: string;
   fromDate?: string;
   toDate?: string;
+  /** Include the legacy employee records that share ats_candidate. Defaults to false. */
+  includeFormerEmployees?: boolean;
 }
 
 export interface CreateCandidateInput {

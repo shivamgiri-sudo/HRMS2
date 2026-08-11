@@ -44,6 +44,13 @@ export const atsService = {
   async listCandidates(filters: CandidateListFilters): Promise<PaginatedResult<AtsCandidate>> {
     const conds: string[] = ["active_status = 1"];
     const params: unknown[] = [];
+    // The grid and the dashboard tile above it are built from the same table and used to
+    // disagree by ~5x: getDashboardStats excluded the 29,926 legacy employee records and this
+    // did not. Excluded by default, with an explicit opt-in, because those rows are still the
+    // only way to find an ex-employee when checking a rehire.
+    if (!filters.includeFormerEmployees) {
+      conds.push(excludeEmployeeShapedCandidatesSql("ats_candidate"));
+    }
     if (filters.stage)    { conds.push("current_stage = ?");         params.push(filters.stage); }
     if (filters.branch)   { conds.push("applied_for_branch = ?");   params.push(filters.branch); }
     if (filters.process)  { conds.push("applied_for_process = ?");  params.push(filters.process); }

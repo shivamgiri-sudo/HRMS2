@@ -50,6 +50,21 @@ export const candidateFiltersSchema = z.object({
   fromDate:        z.string().regex(DATE_RE).optional(),
   toDate:          z.string().regex(DATE_RE).optional(),
   sourcingChannel: z.string().optional(),
+  /**
+   * Opt in to the ~29,926 legacy employee records that share this table.
+   *
+   * The grid excludes them by default: they are ex-employees bulk-imported under a
+   * candidate_code, not applicants, and including them made the list disagree with the
+   * dashboard tile above it by roughly 5x. Recruiters still need to find them when checking a
+   * rehire, so this is a filter rather than a removal.
+   *
+   * Coerced from a query string, where "false" is truthy — hence the explicit comparison
+   * rather than Boolean(value).
+   */
+  includeFormerEmployees: z
+    .union([z.boolean(), z.string()])
+    .optional()
+    .transform((v) => v === true || v === "true" || v === "1"),
 });
 
 export const createOnboardingBridgeSchema = z.object({
