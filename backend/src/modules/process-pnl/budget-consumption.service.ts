@@ -141,13 +141,17 @@ export const budgetConsumptionService = {
     connection: PoolConnection,
     lineId: string,
     amountInput: number,
-    quantityInput: number
+    quantityInput: number,
+    /** MUST be supplied wherever reserve() was given one. release() credits back what reserve()
+     *  charged, so if reserve() used the net figure on a non-taxable line and release() used the
+     *  gross, the release would exceed the reservation and throw "Cannot release more budget
+     *  amount than is reserved" — turning a return or a rejection into a hard failure. */
+    netAmountInput?: number
   ) {
-    const amount = roundMoney(amountInput);
     const quantity = roundQuantity(quantityInput);
-    validatePositive(amount, quantity);
-
     const line = await lockActiveBudgetLine(connection, lineId);
+    const amount = consumptionBasis(line, roundMoney(amountInput), netAmountInput);
+    validatePositive(amount, quantity);
     if (Number(line.reserved_amount ?? 0) + 0.01 < amount) {
       throw new Error("Cannot release more budget amount than is reserved");
     }
@@ -171,13 +175,14 @@ export const budgetConsumptionService = {
     connection: PoolConnection,
     lineId: string,
     amountInput: number,
-    quantityInput: number
+    quantityInput: number,
+    /** Symmetric with consume(), for the same reason release() needs one. */
+    netAmountInput?: number
   ) {
-    const amount = roundMoney(amountInput);
     const quantity = roundQuantity(quantityInput);
-    validatePositive(amount, quantity);
-
     const line = await lockActiveBudgetLine(connection, lineId);
+    const amount = consumptionBasis(line, roundMoney(amountInput), netAmountInput);
+    validatePositive(amount, quantity);
     if (Number(line.consumed_amount ?? 0) + 0.01 < amount) {
       throw new Error("Cannot reverse more budget amount than is consumed");
     }

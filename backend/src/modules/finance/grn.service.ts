@@ -460,7 +460,8 @@ export const grnService = {
             connection,
             grn.budget_line_id,
             Number(grn.amount_with_tax || grn.amount),
-            Number(grn.quantity)
+            Number(grn.quantity),
+            Number(grn.amount_without_tax) || undefined,
           );
           newStatus = "branch_head_approved";
         } else {
@@ -500,7 +501,8 @@ export const grnService = {
             connection,
             grn.budget_line_id,
             Number(grn.amount_with_tax || grn.amount),
-            Number(grn.quantity)
+            Number(grn.quantity),
+            Number(grn.amount_without_tax) || undefined,
           );
           newStatus = grn.grn_type === "vendor"
             ? "pending_accounts_payment"
@@ -544,7 +546,8 @@ export const grnService = {
             connection,
             grn.budget_line_id,
             Number(grn.amount_with_tax || grn.amount),
-            Number(grn.quantity)
+            Number(grn.quantity),
+            Number(grn.amount_without_tax) || undefined,
           );
           newStatus = "rejected";
           await connection.execute(
@@ -664,7 +667,8 @@ export const grnService = {
           connection,
           grn.budget_line_id,
           Number(grn.amount_with_tax || grn.amount),
-          Number(grn.quantity)
+          Number(grn.quantity),
+          Number(grn.amount_without_tax) || undefined,
         );
       }
 
@@ -727,7 +731,8 @@ export const grnService = {
           connection,
           grn.budget_line_id,
           Number(grn.amount_with_tax || grn.amount),
-          Number(grn.quantity)
+          Number(grn.quantity),
+          Number(grn.amount_without_tax) || undefined,
         );
       }
 
@@ -1271,6 +1276,7 @@ export const grnService = {
           String(grn.budget_line_id),
           Number(grn.amount_with_tax || grn.amount),
           Number(grn.quantity),
+          Number(grn.amount_without_tax) || undefined,
         );
       }
 

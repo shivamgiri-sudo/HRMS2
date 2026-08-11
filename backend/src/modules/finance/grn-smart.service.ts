@@ -483,7 +483,8 @@ async function reserveAllocations(connection: PoolConnection, allocations: any[]
       connection,
       String(allocation.budget_line_id),
       Number(allocation.amount_with_tax),
-      Number(allocation.quantity)
+      Number(allocation.quantity),
+      Number(allocation.amount_without_tax) || undefined
     );
   }
   await connection.execute(
@@ -500,7 +501,8 @@ async function consumeAllocations(connection: PoolConnection, allocations: any[]
       connection,
       String(allocation.budget_line_id),
       Number(allocation.amount_with_tax),
-      Number(allocation.quantity)
+      Number(allocation.quantity),
+      Number(allocation.amount_without_tax) || undefined
     );
   }
   await connection.execute(
@@ -518,7 +520,8 @@ async function releaseAllocations(connection: PoolConnection, allocations: any[]
       connection,
       String(allocation.budget_line_id),
       Number(allocation.amount_with_tax),
-      Number(allocation.quantity)
+      Number(allocation.quantity),
+      Number(allocation.amount_without_tax) || undefined
     );
   }
   if (allocations.length) {
@@ -541,7 +544,8 @@ async function reverseConsumedAllocations(connection: PoolConnection, allocation
       connection,
       String(allocation.budget_line_id),
       Number(allocation.amount_with_tax),
-      Number(allocation.quantity)
+      Number(allocation.quantity),
+      Number(allocation.amount_without_tax) || undefined
     );
   }
   if (allocations.length) {
