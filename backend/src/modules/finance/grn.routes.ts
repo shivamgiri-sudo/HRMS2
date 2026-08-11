@@ -492,41 +492,75 @@ grnRouter.get(
         userRoles: user.roles,
         requestedBranchId: req.query.branchId ? String(req.query.branchId) : undefined,
       });
+
+      const source = req.query.source ? String(req.query.source) : "new";
+      if (!["new", "legacy", "all"].includes(source)) {
+        return res.status(400).json({ error: "source must be new, legacy, or all" });
+      }
+
       const num = (v: unknown) =>
         v === undefined || v === "" ? undefined : Number(v);
-      const result = await grnService.listGrns({
+
+      const sharedFilters = {
         branchScope,
-        grnNumber: req.query.grnNumber ? String(req.query.grnNumber) : undefined,
-        invoiceNumber: req.query.invoiceNumber ? String(req.query.invoiceNumber) : undefined,
-        vendorId: req.query.vendorId ? String(req.query.vendorId) : undefined,
-        head: req.query.head ? String(req.query.head) : undefined,
-        subHead: req.query.subHead ? String(req.query.subHead) : undefined,
-        billingCycleStatus: req.query.billingCycleStatus
-          ? String(req.query.billingCycleStatus)
-          : undefined,
-        accountingPeriod: req.query.accountingPeriod
-          ? String(req.query.accountingPeriod)
-          : undefined,
-        billDateFrom: req.query.billDateFrom ? String(req.query.billDateFrom) : undefined,
-        billDateTo: req.query.billDateTo ? String(req.query.billDateTo) : undefined,
-        amountFrom: num(req.query.amountFrom),
-        amountTo: num(req.query.amountTo),
-        createdBy: req.query.createdBy ? String(req.query.createdBy) : undefined,
+        processId:        req.query.processId        ? String(req.query.processId)        : undefined,
+        costCentreId:     req.query.costCentreId      ? String(req.query.costCentreId)     : undefined,
+        status:           req.query.status            ? String(req.query.status)            : undefined,
+        grnNumber:        req.query.grnNumber         ? String(req.query.grnNumber)         : undefined,
+        head:             req.query.head              ? String(req.query.head)              : undefined,
+        subHead:          req.query.subHead           ? String(req.query.subHead)           : undefined,
+        accountingPeriod: req.query.accountingPeriod  ? String(req.query.accountingPeriod)  : undefined,
+        billDateFrom:     req.query.billDateFrom      ? String(req.query.billDateFrom)      : undefined,
+        billDateTo:       req.query.billDateTo        ? String(req.query.billDateTo)        : undefined,
+        amountFrom:       num(req.query.amountFrom),
+        amountTo:         num(req.query.amountTo),
+        search:           req.query.search            ? String(req.query.search)            : undefined,
+        page:             req.query.page              ? Number(req.query.page)              : undefined,
+        limit:            req.query.limit             ? Number(req.query.limit)             : undefined,
+      };
+
+      const newOnlyFilters = {
+        invoiceNumber:      req.query.invoiceNumber      ? String(req.query.invoiceNumber)      : undefined,
+        vendorId:           req.query.vendorId           ? String(req.query.vendorId)           : undefined,
+        billingCycleStatus: req.query.billingCycleStatus ? String(req.query.billingCycleStatus) : undefined,
+        createdBy:          req.query.createdBy          ? String(req.query.createdBy)          : undefined,
         multiMonth:
-          req.query.multiMonth === undefined ? undefined : String(req.query.multiMonth) === "true",
-        processId: req.query.processId ? String(req.query.processId) : undefined,
-        costCentreId: req.query.costCentreId ? String(req.query.costCentreId) : undefined,
-        costClass: req.query.costClass ? String(req.query.costClass) : undefined,
-        status: req.query.status ? String(req.query.status) : undefined,
-        financialYear: req.query.financialYear
-          ? String(req.query.financialYear)
-          : undefined,
-        grnType: req.query.grnType ? String(req.query.grnType) : undefined,
-        search: req.query.search ? String(req.query.search) : undefined,
-        page: req.query.page ? Number(req.query.page) : undefined,
-        limit: req.query.limit ? Number(req.query.limit) : undefined,
+          req.query.multiMonth === undefined
+            ? undefined
+            : String(req.query.multiMonth) === "true",
+        costClass:     req.query.costClass     ? String(req.query.costClass)     : undefined,
+        financialYear: req.query.financialYear ? String(req.query.financialYear) : undefined,
+        grnType:       req.query.grnType       ? String(req.query.grnType)       : undefined,
+      };
+
+      if (source === "new") {
+        const result = await grnService.listGrns({ ...sharedFilters, ...newOnlyFilters });
+        return res.json(result);
+      }
+
+      if (source === "legacy") {
+        const result = await grnService.listLegacyGrns(sharedFilters);
+        return res.json(result);
+      }
+
+      // source === "all": fetch both, merge by created_at DESC, return top 100
+      const [newResult, legResult] = await Promise.all([
+        grnService.listGrns({ ...sharedFilters, ...newOnlyFilters, limit: 100 }),
+        grnService.listLegacyGrns({ ...sharedFilters, limit: 100 }),
+      ]);
+
+      const merged = [...newResult.data, ...legResult.data].sort((a, b) => {
+        const ta = a.created_at ? new Date(String(a.created_at)).getTime() : 0;
+        const tb = b.created_at ? new Date(String(b.created_at)).getTime() : 0;
+        return tb - ta;
       });
-      res.json(result);
+
+      return res.json({
+        data:  merged.slice(0, 100),
+        total: newResult.total + legResult.total,
+        page:  1,
+        limit: 100,
+      });
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : "Failed to list GRNs";
       res.status(errorStatus(error, 400)).json({ error: message });
