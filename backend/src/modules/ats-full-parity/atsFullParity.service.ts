@@ -4,6 +4,7 @@ import type { ResultSetHeader, RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { env } from "../../config/env.js";
 import { buildScopeWhereClause } from "../../shared/scopeAccess.js";
+import { excludeEmployeeShapedCandidatesSql } from "../ats/ats-reporting-scope.js";
 
 type CandidateRow = Record<string, unknown>;
 
@@ -451,6 +452,17 @@ async function sendTemplateEmail(code: string, candidateId: string | null, to: s
   }
 }
 
+/**
+ * Row cap for the command-center aggregate load.
+ *
+ * Raised from the implicit 5,000 because the genuine-candidate population is 7,760 and every
+ * figure on that dashboard is computed in JS over whatever this returns — so at 5,000 the
+ * dashboard was silently reporting a subset as the total. The cap still exists (this loads
+ * rows into memory), which is why webData now returns `truncated` rather than pretending
+ * the number does not apply.
+ */
+const WEB_DATA_ROW_LIMIT = 25000;
+
 async function candidateSelect(where = "1=1", params: unknown[] = [], limit = 5000): Promise<CandidateRow[]> {
   const safeLimit = Math.max(1, Math.floor(limit));
   const [rows] = await db.execute<RowDataPacket[]>(
@@ -510,7 +522,20 @@ export const atsFullParityService = {
       conds.push(scope.sql);
       params.push(...scope.params);
     }
-    const allRows = await candidateSelect(conds.join(" AND "), params);
+    // ats_candidate holds 29,926 legacy EMPLOYEE records (candidate_code matching a real
+    // employees.employee_code) alongside 7,760 genuine candidates — measured 2026-08-11.
+    // Without this every tile on the ATS Command Center counted them: "Applied" reads 34,923
+    // against a true 5,056. The exclusion belongs here rather than inside candidateSelect(),
+    // which is also used to fetch a single candidate by id and to run candidateJourney's
+    // search — both of which must still find an ex-employee's record.
+    conds.push(excludeEmployeeShapedCandidatesSql("c"));
+
+    const allRows = await candidateSelect(conds.join(" AND "), params, WEB_DATA_ROW_LIMIT);
+    // candidateSelect caps rows and every figure below is computed in JS over what came back,
+    // so a cap that is hit silently understates every total. Report it instead: genuine
+    // candidates are already 7,760 and rising, so this is reached in normal operation, not
+    // only in some pathological case.
+    const truncated = allRows.length >= WEB_DATA_ROW_LIMIT;
     const period = filters.period || "ALL";
     const candidateRows = allRows.filter((r) => inPeriod(r, period));
     const queueRows = allRows.filter((r) => {
@@ -541,6 +566,11 @@ export const atsFullParityService = {
     const cfg = await getConfigMap();
     return {
       ok: true,
+      // Consumed by the command-center tabs so a capped dataset can say so rather than
+      // presenting a short count as the whole picture.
+      truncated,
+      rowLimit: WEB_DATA_ROW_LIMIT,
+      rowsLoaded: allRows.length,
       orgName: cfg.Org_Name || cfg.orgName || "ATS Command Center",
       refreshTime: new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata" }),
       todayISO: formatDateKey(new Date()),
