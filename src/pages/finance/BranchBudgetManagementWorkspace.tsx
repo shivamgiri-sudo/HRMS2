@@ -1322,9 +1322,16 @@ Reason:`
               )}
 
               {plannerMode === "table" && branchId && !(detailQuery.isLoading && detailId) && (
+                /* masters={activeMasters}, not masters. useFinanceExpenseMasters's parameter is
+                   includeInactive, and it is passed canManageExpenseMaster — so for exactly the
+                   two roles that administer the expense master (Super Admin, Finance Head) this
+                   list also contains retired heads and sub-heads, and the table planner offered
+                   them as pickable, letting those two roles budget against spend Finance had
+                   deliberately closed. The Expense Master tab below still receives the full
+                   list, because managing a retired head is its whole purpose. */
                 <BranchBudgetPlannerGrid
                   lines={lines}
-                  masters={masters}
+                  masters={activeMasters}
                   costCentres={activeCostCentres}
                   drivers={driverDraft}
                   canEdit={canEdit}

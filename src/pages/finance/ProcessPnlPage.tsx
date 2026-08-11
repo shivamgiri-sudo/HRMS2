@@ -194,18 +194,26 @@ export default function ProcessPnlPage() {
         { label: "DSC / revenue", value: useStatementFallback ? pct(dscV, revenueV) : summary.kpis.dscPctRevenue ?? 0, kind: "percent" as const },
         { label: "Branch Management Cost", value: bmcV, kind: "currency" as const, tone: "warning" as const },
         { label: "BMC / revenue", value: useStatementFallback ? pct(bmcV, revenueV) : summary.kpis.bmcPctRevenue ?? 0, kind: "percent" as const },
-        {
-          label: "EBITDA",
-          value: summary.kpis.ebitda,
-          kind: "currency" as const,
-          tone: summary.kpis.ebitda >= 0 ? ("good" as const) : ("danger" as const),
-        },
-        {
-          label: "EBITDA margin",
-          value: summary.kpis.ebitdaMarginPct ?? 0,
-          kind: "percent" as const,
-          tone: (summary.kpis.ebitdaMarginPct ?? 0) >= 0 ? ("good" as const) : ("danger" as const),
-        },
+        // EBITDA and its margin come from the engine the fallback exists BECAUSE it returns
+        // nothing, so under the fallback they are ~0 while Revenue and Operating Profit beside
+        // them are real. That is the same contradiction the PBT/PAT note below was written to
+        // avoid, one tile to the left: a strip reading "Revenue Rs 3.44 Cr, Operating profit
+        // positive, EBITDA Rs 0, EBITDA margin 0.0%". Omitted under the fallback for the same
+        // reason, rather than printed as a confident zero.
+        ...(useStatementFallback ? [] : [
+          {
+            label: "EBITDA",
+            value: summary.kpis.ebitda,
+            kind: "currency" as const,
+            tone: summary.kpis.ebitda >= 0 ? ("good" as const) : ("danger" as const),
+          },
+          {
+            label: "EBITDA margin",
+            value: summary.kpis.ebitdaMarginPct ?? 0,
+            kind: "percent" as const,
+            tone: (summary.kpis.ebitdaMarginPct ?? 0) >= 0 ? ("good" as const) : ("danger" as const),
+          },
+        ]),
         {
           label: "Operating profit",
           value: opV,

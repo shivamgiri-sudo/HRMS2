@@ -56,7 +56,12 @@ export default function BudgetConsolidationPage() {
   const branchColumns = useMemo(
     () =>
       branchSummaries
-        .map((b) => ({ id: b.branch_id, name: b.branch_name }))
+        // branch_name comes from a LEFT JOIN on branch_master, so it is null for a budget whose
+        // branch row has been removed or renamed away. This route has no error boundary, so one
+        // such header threw "Cannot read properties of null (reading 'localeCompare')" during
+        // render and white-screened the whole consolidation page. The same hook already types
+        // the field nullable elsewhere and the readiness table already renders `?? "-"`.
+        .map((b) => ({ id: b.branch_id, name: b.branch_name ?? "Unmapped branch" }))
         .sort((a, b) => a.name.localeCompare(b.name)),
     [branchSummaries]
   );

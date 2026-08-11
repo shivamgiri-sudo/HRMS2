@@ -124,7 +124,23 @@ export function BudgetTopupPanel({
       const amount = Number(requestedAmount);
       if (!Number.isFinite(amount) || amount <= 0) throw new Error("Enter a valid amount");
       const line = lines.find((l) => l.id === selectedLineId);
-      const requestedQuantity = line && line.unit_rate > 0 ? amount / line.unit_rate : 0;
+      // A quantity of 0 is not a safe fallback. The applied top-up raises the line's rupee
+      // ceiling but not its unit ceiling, and a GRN is blocked by whichever runs out first
+      // (available_quantity as well as available_gross_amount) — so the request would be
+      // approved and the GRN that prompted it would still be blocked, with nothing on screen
+      // explaining why. This happens when the deep-linked preset line is not in `lines`, which
+      // is exactly the case a blocked GRN produces: availableLines() filters on
+      // available_quantity > 0, so the line that just ran out is excluded from the picker.
+      if (!line) {
+        throw new Error(
+          "Select a budget line from the list. The line this request came from is no longer "
+            + "offered because it has no headroom left at all — pick the line you need increased."
+        );
+      }
+      if (!(line.unit_rate > 0)) {
+        throw new Error("This budget line has no unit rate, so an increase cannot be sized in units.");
+      }
+      const requestedQuantity = amount / line.unit_rate;
       return hrmsApi.post("/api/finance/pnl/budget-topups", {
         budgetLineId: selectedLineId,
         requestedAmount: amount,
@@ -252,11 +268,18 @@ export function BudgetTopupPanel({
                   ))}
                 </SelectContent>
               </Select>
+              {/* The old copy asserted one cause ("hasn't reached that stage yet") for what are
+                  two quite different situations, and was simply wrong in the second: a fully
+                  approved budget whose lines are all consumed to zero also returns nothing here,
+                  because availableLines() filters on available_quantity > 0 AND
+                  available_gross_amount > 0. Telling someone their budget is unapproved when it
+                  is approved and exhausted sends them to the wrong person. */}
               {!linesQuery.isLoading && !lines.length && (
                 <p className="mt-1.5 text-xs text-amber-700">
-                  No active budget line found for {period}. A top-up can only be requested against a budget that has
-                  completed Branch Head, Finance Head and Accounts Head approval — this branch's budget for this
-                  period hasn't reached that stage yet.
+                  No budget line with remaining headroom for {period}. Either this branch's budget for
+                  this period has not completed Branch Head, Finance Head and Accounts Head approval,
+                  or it is approved and every line is already fully committed. The Approval &amp;
+                  Utilization tab shows which of the two it is.
                 </p>
               )}
             </div>

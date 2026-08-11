@@ -79,6 +79,13 @@ export interface ProcessLobDeliveryRow {
   accepted_units: number;
   rejected_units: number;
   billable_units: number;
+  /** The API already returns these (the delivery SELECT is `d.*`); they were simply not declared
+   *  here, so editDelivery could not carry them and every edit re-sent them as undefined —
+   *  which the upsert writes as `?? 0`. process-lob.service.ts sums productive_hours into the
+   *  LOB P&L, so a per-productive-hour LOB then recognised zero revenue for the month. */
+  productive_hours: number;
+  login_hours: number;
+  talk_minutes: number;
   quality_score: number | null;
   sla_score: number | null;
   data_source: string;
