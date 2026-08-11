@@ -20,17 +20,15 @@ import {
   monthParam,
   applyPagination,
   ReportScopeAccessDeniedError,
+  rethrowReportSchemaError,
 } from "./types.js";
-
-const OPS_SCHEMA_ERRORS = new Set(['ER_NO_SUCH_TABLE', 'ER_BAD_FIELD_ERROR']);
 
 async function query(sql: string, params: unknown[]): Promise<RowDataPacket[]> {
   try {
     const [rows] = await db.execute<RowDataPacket[]>(sql, params);
     return rows;
   } catch (err: unknown) {
-    if (OPS_SCHEMA_ERRORS.has(String((err as Record<string, unknown>)?.["code"] ?? ""))) return [];
-    throw err;
+    rethrowReportSchemaError("operations", err, sql);
   }
 }
 
@@ -42,8 +40,11 @@ async function count(baseSql: string, params: unknown[]): Promise<number> {
     );
     return Number((rows as Array<{ total?: number }>)[0]?.total ?? 0);
   } catch (err: unknown) {
-    if (OPS_SCHEMA_ERRORS.has(String((err as Record<string, unknown>)?.["code"] ?? ""))) return 0;
-    throw err;
+    // This one returned a literal 0 — the exact shape the readiness audit calls out. A
+    // fatal-error-register or quality-audit-log that answers "0" because a column was
+    // renamed is worse than one that errors: zero fatal errors is the result everybody
+    // hopes for, so nobody checks it.
+    rethrowReportSchemaError("operations", err, baseSql);
   }
 }
 

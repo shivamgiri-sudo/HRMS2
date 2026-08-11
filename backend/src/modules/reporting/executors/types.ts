@@ -190,6 +190,41 @@ export class ReportSourceUnavailableError extends Error {
   }
 }
 
+/**
+ * Turn a schema error into a report that says it is broken, instead of one that says zero.
+ *
+ * Several executors used to catch ER_NO_SUCH_TABLE / ER_BAD_FIELD_ERROR and return an empty
+ * result set with rowCount 0. For a report that is indistinguishable from a true answer:
+ * "no exits this month", "no fatal errors", "no quality audits" — and it is the more
+ * reassuring of the two readings, so nobody investigates. A report that cannot run must say
+ * so; the readiness audit states the rule as "never a confident 0".
+ *
+ * The two faults are reported differently on purpose. A missing TABLE is what
+ * ReportSourceUnavailableError describes, so its message ("required table X does not exist")
+ * is then true. A missing COLUMN means the table is present and the query asks it for
+ * something it does not have — borrowing the table wording there would send whoever reads
+ * the error looking for the wrong thing.
+ */
+export function rethrowReportSchemaError(reportCode: string, err: unknown, sql: string): never {
+  const e = err as { code?: string; sqlMessage?: string };
+  const code = String(e?.code ?? "");
+
+  if (code === "ER_NO_SUCH_TABLE" || code === "ER_BAD_TABLE_ERROR") {
+    const table = /\bFROM\s+`?([a-z_][a-z0-9_.]*)`?/i.exec(sql)?.[1] ?? "unknown";
+    throw new ReportSourceUnavailableError(reportCode, table, e.sqlMessage ?? "");
+  }
+
+  if (code === "ER_BAD_FIELD_ERROR" || code === "ER_PARSE_ERROR") {
+    throw new Error(
+      `Report "${reportCode}" cannot run against this database's schema — ${code}: ` +
+        `${e.sqlMessage ?? ""}. The table exists; the report asks for a column it does not ` +
+        `have. This previously returned an empty result, which read as "no rows found".`
+    );
+  }
+
+  throw err;
+}
+
 // ---------------------------------------------------------------------------
 // Scope helpers — shared by all executors
 // ---------------------------------------------------------------------------

@@ -17,6 +17,7 @@ import {
   monthParam,
   applyPagination,
   fetchPageWithTotal,
+  rethrowReportSchemaError,
 } from "./types.js";
 
 async function query(sql: string, params: unknown[]): Promise<RowDataPacket[]> {
@@ -181,11 +182,12 @@ export async function resignationRegister(
     const out = rows.map(({ _cursor: _, ...rest }) => rest);
     return { rows: out, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > out.length, nextCursor };
   } catch (err: unknown) {
-    const mysqlCode = (err as Record<string, unknown>)?.["code"];
-    if (mysqlCode === "ER_BAD_FIELD_ERROR" || mysqlCode === "ER_NO_SUCH_TABLE") {
-      return { rows: [], rowCount: 0, isTruncated: false };
-    }
-    throw err;
+    // Was: return an empty result on a missing table or column. For an exit report that
+    // reads as "nobody left and nothing is owed", which is the reassuring answer and so the
+    // one nobody questions. All three source tables and all 22 referenced columns exist in
+    // production (verified 2026-08-11), so this path is unreachable today — which is exactly
+    // why it must fail loudly if that ever stops being true.
+    rethrowReportSchemaError("exit", err, base);
   }
 }
 
@@ -256,11 +258,12 @@ export async function fnfPendingRegister(
     const out = rows.map(({ _cursor: _, ...rest }) => rest);
     return { rows: out, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > out.length, nextCursor };
   } catch (err: unknown) {
-    const mysqlCode = (err as Record<string, unknown>)?.["code"];
-    if (mysqlCode === "ER_BAD_FIELD_ERROR" || mysqlCode === "ER_NO_SUCH_TABLE") {
-      return { rows: [], rowCount: 0, isTruncated: false };
-    }
-    throw err;
+    // Was: return an empty result on a missing table or column. For an exit report that
+    // reads as "nobody left and nothing is owed", which is the reassuring answer and so the
+    // one nobody questions. All three source tables and all 22 referenced columns exist in
+    // production (verified 2026-08-11), so this path is unreachable today — which is exactly
+    // why it must fail loudly if that ever stops being true.
+    rethrowReportSchemaError("exit", err, base);
   }
 }
 
@@ -467,11 +470,12 @@ export async function monthlyAttritionSummary(
     const rows  = await query(sql, params) as Record<string, unknown>[];
     return { rows, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > rows.length };
   } catch (err: unknown) {
-    const mysqlCode = (err as Record<string, unknown>)?.["code"];
-    if (mysqlCode === "ER_BAD_FIELD_ERROR" || mysqlCode === "ER_NO_SUCH_TABLE") {
-      return { rows: [], rowCount: 0, isTruncated: false };
-    }
-    throw err;
+    // Was: return an empty result on a missing table or column. For an exit report that
+    // reads as "nobody left and nothing is owed", which is the reassuring answer and so the
+    // one nobody questions. All three source tables and all 22 referenced columns exist in
+    // production (verified 2026-08-11), so this path is unreachable today — which is exactly
+    // why it must fail loudly if that ever stops being true.
+    rethrowReportSchemaError("exit", err, base);
   }
 }
 
@@ -511,11 +515,12 @@ export async function exitReasonAnalysis(
     const rows  = await query(sql, params) as Record<string, unknown>[];
     return { rows, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > rows.length };
   } catch (err: unknown) {
-    const mysqlCode = (err as Record<string, unknown>)?.["code"];
-    if (mysqlCode === "ER_BAD_FIELD_ERROR" || mysqlCode === "ER_NO_SUCH_TABLE") {
-      return { rows: [], rowCount: 0, isTruncated: false };
-    }
-    throw err;
+    // Was: return an empty result on a missing table or column. For an exit report that
+    // reads as "nobody left and nothing is owed", which is the reassuring answer and so the
+    // one nobody questions. All three source tables and all 22 referenced columns exist in
+    // production (verified 2026-08-11), so this path is unreachable today — which is exactly
+    // why it must fail loudly if that ever stops being true.
+    rethrowReportSchemaError("exit", err, base);
   }
 }
 
