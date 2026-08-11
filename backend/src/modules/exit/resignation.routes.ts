@@ -377,11 +377,22 @@ resignationRouter.post(
   "/:exitId/close",
   requireRole("admin", "hr"),
   h(async (req: AuthenticatedRequest, res: Response) => {
+    // exit_request has no closed_at and no closed_by - the table records
+    // closure through status alone, and tracks its other terminal transitions
+    // with revoked_at/revoked_by/revoke_reason and exit_confirmed_at. Naming
+    // two columns that do not exist raised ER_BAD_FIELD_ERROR, so closing an
+    // exit request has never worked: the endpoint returned 500 and the request
+    // stayed in whatever state it was in.
+    //
+    // Nothing is lost by dropping them. Who closed it and when is recorded by
+    // logExitStatusChange on the very next line, which writes the actor and
+    // NOW() into exit_approval_log - the same audit every other transition on
+    // this router uses. status is varchar(50), so 'closed' needs no enum change.
     await db.execute(
       `UPDATE exit_request
-       SET status = 'closed', closed_at = NOW(), closed_by = ?, updated_at = NOW()
+       SET status = 'closed', updated_at = NOW()
        WHERE id = ?`,
-      [req.authUser!.id, req.params.exitId]
+      [req.params.exitId]
     );
     await logExitStatusChange(req, "closed", "Exit request closed");
     return res.json({ success: true, message: "Exit request closed" });
