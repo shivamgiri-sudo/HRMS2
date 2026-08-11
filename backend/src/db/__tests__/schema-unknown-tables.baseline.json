@@ -5,9 +5,6 @@
   "modules/ats/mock-digilocker.routes.ts": [
     "ats_bgv_check"
   ],
-  "modules/exit/ff.service.ts": [
-    "gratuity_calculation_audit"
-  ],
   "modules/lms/lms-provisioning.service.ts": [
     "trainee_master"
   ],
@@ -37,15 +34,6 @@
   ],
   "modules/portal/client.service.ts": [
     "bulk_operation_jobs"
-  ],
-  "modules/portal/portal-permissions.service.ts": [
-    "portal_user_permissions"
-  ],
-  "modules/portal/portal.auth.service.ts": [
-    "portal_user_sessions"
-  ],
-  "modules/portal/portal.routes.ts": [
-    "kpi_process_assignment"
   ],
   "modules/sales-upload/sales-upload.service.ts": [
     "db_masmis"
