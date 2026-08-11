@@ -87,6 +87,16 @@ export default function AuthClean() {
     }
   }, [user, mustChangePassword, twoFactorRequired, twoFactorVerified, navigate]);
 
+  // hrmsApi sends a deactivated account here after the API rejects its session.
+  // Without a reason on screen the redirect looks like a random logout.
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get("reason") !== "account_inactive") return;
+    toast({
+      title: "Account inactive",
+      description: "Your account has been deactivated. Please contact HR for assistance.",
+    });
+  }, [toast]);
+
   const handleLogin = async (event: FormEvent) => {
     event.preventDefault();
     if (!identifier.trim() || !password) {

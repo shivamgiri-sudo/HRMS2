@@ -3,6 +3,7 @@ import bcrypt from "bcryptjs";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
+import { revokeSessionsForEmployee } from "../../shared/sessionRevocation.js";
 import type { Employee, PaginatedResult } from "./employee.types.js";
 import type { CreateEmployeeInput, EmployeeFilters, UpdateEmployeeInput } from "./employee.validation.js";
 import { provisionLmsIdentityForEmployee } from "../lms/lms-provisioning.service.js";
@@ -299,11 +300,49 @@ export const employeeService = {
     // Snapshot current sensitive field values before update for audit trail
     const [snapRows] = await db.execute<RowDataPacket[]>(
       `SELECT branch_id, department_id, process_id, designation_id,
-              reporting_manager_id, employment_status, employment_type
+              reporting_manager_id, employment_status, employment_type, active_status
        FROM employees WHERE id = ? LIMIT 1`,
       [id]
     );
     const snap = snapRows[0] ?? {};
+
+    // employment_status and active_status are two different columns describing one
+    // fact, and this endpoint only ever wrote the first. HR marking a leaver
+    // "Inactive" in the employee directory therefore dropped them from payroll
+    // (which reads employment_status) while leaving every access gate — login,
+    // token refresh, requireAuth — reading active_status = 1 and letting them in.
+    // Measured 2026-08-10: 1 employee sat in exactly that split state, and 10 sat
+    // in the mirror image, labelled active with their login already dead.
+    const nextStatus = input.employmentStatus?.trim().toLowerCase();
+    const isDeactivating = nextStatus === "inactive";
+    const wasActive = Number(snap.active_status ?? 1) === 1;
+    const deactivationReason = (input as { deactivationReason?: string }).deactivationReason?.trim();
+
+    // Cutting someone's access is not an ordinary field edit, and until now it
+    // left no trace of why. Of the five employment-status audit rows ever
+    // written, all five are 'active' → 'Active' case flips from the edit dialog
+    // re-saving an unchanged value — not one records an actual deactivation.
+    if (isDeactivating && wasActive && (!deactivationReason || deactivationReason.length < 10)) {
+      throw Object.assign(
+        new Error("A reason of at least 10 characters is required to deactivate an employee."),
+        { statusCode: 400, code: "DEACTIVATION_REASON_REQUIRED" }
+      );
+    }
+
+    // Reactivation is a governed flow — a reason, branch-head approval, then HR
+    // confirmation (employee-reactivation.routes.ts). Letting a plain profile save
+    // restore a leaver by flipping a dropdown would route around all of it, so the
+    // Active direction is refused here rather than silently synced. Setting "Active"
+    // on someone who is already active stays a no-op: the edit dialog sends the
+    // field on every save, and rejecting that would break ordinary profile edits.
+    if (nextStatus === "active" && !wasActive) {
+      throw Object.assign(
+        new Error(
+          "This employee is deactivated. Reactivation must go through Employees → Reactivation (/employees/reactivation), which records a reason and takes branch head approval and HR confirmation. It cannot be done from a profile edit."
+        ),
+        { statusCode: 409, code: "REACTIVATION_REQUIRES_APPROVAL" }
+      );
+    }
 
     const sets: string[] = [];
     const params: unknown[] = [];
@@ -338,6 +377,10 @@ export const employeeService = {
     if (input.annualIncome      !== undefined) { sets.push("annual_income = ?");        params.push(input.annualIncome ?? null); }
     if (input.countOfDependents !== undefined) { sets.push("count_of_dependents = ?");  params.push(input.countOfDependents ?? null); }
 
+    // Carry the deactivation across to the column the access gates actually read,
+    // in the same statement, so the two can never disagree again.
+    if (isDeactivating && wasActive) { sets.push("active_status = 0"); }
+
     if (sets.length > 0) {
       params.push(id);
       await db.execute(`UPDATE employees SET ${sets.join(", ")} WHERE id = ?`, params);
@@ -363,7 +406,14 @@ export const employeeService = {
           change_summary: { fields: changedSensitive.map((f) => f.label) },
           old_value_json: oldVals,
           new_value_json: newVals,
+          reason: deactivationReason,
         });
+      }
+
+      // Same reasoning as the deactivate endpoint: clearing active_status stops
+      // the next login and the next refresh, not the token already issued.
+      if (isDeactivating && wasActive) {
+        await revokeSessionsForEmployee(id, "employment_status_set_inactive");
       }
     }
 
@@ -387,12 +437,44 @@ export const employeeService = {
     return this.getEmployee(id);
   },
 
-  async deactivateEmployee(id: string, _userId: string): Promise<void> {
-    await this.getEmployee(id);
+  async deactivateEmployee(id: string, actorUserId: string, reason?: string): Promise<void> {
+    const existing = await this.getEmployee(id);
+
+    // This endpoint recorded nothing at all — the actor argument was received as
+    // `_userId` and discarded, so the single UI path that genuinely revoked
+    // access was also the only one with no audit trail and no stated reason.
+    const trimmedReason = reason?.trim();
+    if (!trimmedReason || trimmedReason.length < 10) {
+      throw Object.assign(
+        new Error("A reason of at least 10 characters is required to deactivate an employee."),
+        { statusCode: 400, code: "DEACTIVATION_REASON_REQUIRED" }
+      );
+    }
+
     await db.execute(
       "UPDATE employees SET active_status = 0, employment_status = 'Inactive' WHERE id = ?",
       [id]
     );
+
+    await logSensitiveAction({
+      actor_user_id: actorUserId,
+      action_type: "EMPLOYEE_DEACTIVATED",
+      module_key: "employees",
+      entity_type: "employee",
+      entity_id: id,
+      employee_id: id,
+      change_summary: { fields: ["Employment Status", "Active Status"] },
+      old_value_json: {
+        "Employment Status": (existing as { employment_status?: unknown }).employment_status ?? null,
+        "Active Status": (existing as { active_status?: unknown }).active_status ?? null,
+      },
+      new_value_json: { "Employment Status": "Inactive", "Active Status": 0 },
+      reason: trimmedReason,
+    });
+    // Clearing active_status stops the next login and the next token refresh, but
+    // not the access token already issued — that stayed good for up to 24h. Cut
+    // the live sessions too, so "deactivated" means access ends now.
+    await revokeSessionsForEmployee(id, "employee_deactivated");
   },
 
   // ── Org Chart tree endpoint ──────────────────────────────────────────────

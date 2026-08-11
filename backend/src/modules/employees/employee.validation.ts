@@ -47,6 +47,9 @@ export const updateEmployeeSchema = z.object({
   dateOfExit: z.string().regex(DATE_REGEX, "Date must be YYYY-MM-DD").nullable().optional(),
   employmentType: z.string().trim().optional(),
   employmentStatus: z.enum(["Active", "Inactive", "On Notice", "Onboarding"]).optional(),
+  // Required by the service whenever this request actually deactivates someone.
+  // Optional here because it is meaningless on every other kind of profile edit.
+  deactivationReason: z.string().trim().max(500).optional(),
   branchId: z.string().uuid().nullable().optional(),
   departmentId: z.string().uuid().nullable().optional(),
   processId: z.string().uuid().nullable().optional(),

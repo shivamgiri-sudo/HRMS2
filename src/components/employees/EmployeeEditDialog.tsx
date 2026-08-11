@@ -12,6 +12,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -120,6 +121,12 @@ export function EmployeeEditDialog({ employee, open, onOpenChange }: EmployeeEdi
   // was hidden from everyone, including super admins.
   const canSetSalaryStartDate = useHasRole("super_admin", "admin", "hr");
   const queryClient = useQueryClient();
+  // Deactivating from this form now needs a stated reason, and the API refuses
+  // the save without one. Kept out of EditFormData because it is not a field on
+  // the employee — it is a justification for one particular transition.
+  const [deactivationReason, setDeactivationReason] = useState("");
+  const [initialStatus, setInitialStatus] = useState("active");
+
   const [formData, setFormData] = useState<EditFormData>({
     employee_code: "",
     first_name: "",
@@ -148,6 +155,9 @@ export function EmployeeEditDialog({ employee, open, onOpenChange }: EmployeeEdi
     working_days: [1, 2, 3, 4, 5],
     status: "active",
   });
+
+  const isDeactivating = formData.status === "inactive" && initialStatus !== "inactive";
+  const deactivationReasonTooShort = deactivationReason.trim().length < 10;
 
   const [salaryData, setSalaryData] = useState<SalaryFormData>({
     basic_salary: "",
@@ -379,6 +389,8 @@ export function EmployeeEditDialog({ employee, open, onOpenChange }: EmployeeEdi
         working_days: employeeDetails.working_days || [1, 2, 3, 4, 5],
         status: String(employeeDetails.employment_status || employeeDetails.status || "active").toLowerCase(),
       });
+      setInitialStatus(String(employeeDetails.employment_status || employeeDetails.status || "active").toLowerCase());
+      setDeactivationReason("");
     }
   }, [employeeDetails]);
 
@@ -411,6 +423,7 @@ export function EmployeeEditDialog({ employee, open, onOpenChange }: EmployeeEdi
         employmentStatus: data.status
           ? data.status.split(" ").map((w: string) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(" ")
           : undefined,
+        ...(isDeactivating ? { deactivationReason: deactivationReason.trim() } : {}),
       });
       return result;
 
@@ -1012,11 +1025,31 @@ export function EmployeeEditDialog({ employee, open, onOpenChange }: EmployeeEdi
                     <SelectContent>
                       <SelectItem value="active">Active</SelectItem>
                       <SelectItem value="inactive">Inactive</SelectItem>
+                      <SelectItem value="on notice">On Notice</SelectItem>
                       <SelectItem value="onboarding">Onboarding</SelectItem>
-                      <SelectItem value="offboarded">Offboarded</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
+
+                {isDeactivating && (
+                  <div className="space-y-2">
+                    <Label htmlFor="deactivation_reason">
+                      Reason for deactivation <span className="text-destructive">*</span>
+                    </Label>
+                    <Textarea
+                      id="deactivation_reason"
+                      value={deactivationReason}
+                      onChange={(e) => setDeactivationReason(e.target.value)}
+                      placeholder="e.g. Resigned, last working day 15 Aug — exit formalities pending"
+                      rows={2}
+                      maxLength={500}
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      They will be signed out immediately and drop out of payroll runs. This is
+                      recorded in the audit log. Minimum 10 characters.
+                    </p>
+                  </div>
+                )}
               </TabsContent>
 
               <TabsContent value="schedule" className="space-y-4 mt-4">
@@ -1344,7 +1377,14 @@ export function EmployeeEditDialog({ employee, open, onOpenChange }: EmployeeEdi
               <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
                 Cancel
               </Button>
-              <Button type="submit" disabled={updateMutation.isPending || salaryMutation.isPending}>
+              <Button
+                type="submit"
+                disabled={
+                  updateMutation.isPending
+                  || salaryMutation.isPending
+                  || (isDeactivating && deactivationReasonTooShort)
+                }
+              >
                 {(updateMutation.isPending || salaryMutation.isPending) && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                 Save Changes
               </Button>

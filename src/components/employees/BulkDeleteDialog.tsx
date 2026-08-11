@@ -10,17 +10,22 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
+import { Label } from "@/components/ui/label";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Textarea } from "@/components/ui/textarea";
 import { AlertTriangle, Trash2 } from "lucide-react";
+import { useEffect, useState } from "react";
 import { Employee } from "./EmployeeTable";
 
 interface BulkDeleteDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   employees: Employee[];
-  onConfirm: () => void;
+  onConfirm: (reason: string) => void;
   isDeleting?: boolean;
 }
+
+const MIN_REASON_LENGTH = 10;
 
 const statusStyles: Record<string, string> = {
   active: "bg-emerald-500/10 text-emerald-600 border-emerald-500/20",
@@ -36,16 +41,27 @@ export function BulkDeleteDialog({
   onConfirm,
   isDeleting = false,
 }: BulkDeleteDialogProps) {
+  const [reason, setReason] = useState("");
+  const reasonTooShort = reason.trim().length < MIN_REASON_LENGTH;
+
+  // Clear between openings so a reason cannot be carried onto a different set of
+  // people than the one it was written for.
+  useEffect(() => {
+    if (!open) setReason("");
+  }, [open]);
+
   return (
     <AlertDialog open={open} onOpenChange={onOpenChange}>
       <AlertDialogContent className="max-w-lg">
         <AlertDialogHeader>
           <AlertDialogTitle className="flex items-center gap-2 text-destructive">
             <AlertTriangle className="h-5 w-5" />
-            Delete {employees.length} Employee{employees.length > 1 ? 's' : ''}?
+            Remove {employees.length} Employee{employees.length > 1 ? 's' : ''} from active use?
           </AlertDialogTitle>
           <AlertDialogDescription>
-            This action cannot be undone. The following employees will be permanently removed from the system:
+            The following employees will be deactivated and signed out. Their records are
+            retained — nothing is erased — but they lose access immediately and drop out of
+            payroll runs:
           </AlertDialogDescription>
         </AlertDialogHeader>
 
@@ -90,9 +106,29 @@ export function BulkDeleteDialog({
           <p className="text-sm text-destructive flex items-start gap-2">
             <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
             <span>
-              All associated data including documents, attendance records, leave requests, 
-              and payroll history will also be deleted.
+              This does not run the exit process: no clearance tasks, no full &amp; final
+              settlement and no exit date are recorded. For a resignation or termination,
+              use the exit flow instead. Reversing this needs an approved reactivation
+              request, not a profile edit.
             </span>
+          </p>
+        </div>
+
+        <div className="space-y-2">
+          <Label htmlFor="bulk-deactivation-reason">
+            Reason <span className="text-destructive">*</span>
+          </Label>
+          <Textarea
+            id="bulk-deactivation-reason"
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            placeholder="e.g. Absconded since 1 Aug, no response to notices"
+            disabled={isDeleting}
+            rows={2}
+            maxLength={500}
+          />
+          <p className="text-xs text-muted-foreground">
+            Recorded against each employee in the audit log. Minimum {MIN_REASON_LENGTH} characters.
           </p>
         </div>
 
@@ -101,13 +137,13 @@ export function BulkDeleteDialog({
           <AlertDialogAction
             onClick={(e) => {
               e.preventDefault();
-              onConfirm();
+              onConfirm(reason.trim());
             }}
-            disabled={isDeleting}
+            disabled={isDeleting || reasonTooShort}
             className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
           >
             <Trash2 className="mr-2 h-4 w-4" />
-            {isDeleting ? "Deleting..." : `Delete ${employees.length} Employee${employees.length > 1 ? 's' : ''}`}
+            {isDeleting ? "Deactivating..." : `Deactivate ${employees.length} Employee${employees.length > 1 ? 's' : ''}`}
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>

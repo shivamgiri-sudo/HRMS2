@@ -34,6 +34,7 @@ import { EmployeeViewDialog } from "@/components/employees/EmployeeViewDialog";
 import { EmployeeEditDialog } from "@/components/employees/EmployeeEditDialog";
 import { AdminPasswordResetDialog } from "@/components/admin/AdminPasswordResetDialog";
 import { BulkDeleteDialog } from "@/components/employees/BulkDeleteDialog";
+import { BulkDeactivateDialog } from "@/components/employees/BulkDeactivateDialog";
 import { BulkAssignManagerDialog } from "@/components/employees/BulkAssignManagerDialog";
 import { DateRangeExportDialog } from "@/components/export/DateRangeExportDialog";
 import { ProcessWiseChart } from "@/components/employees/ProcessWiseChart";
@@ -161,6 +162,8 @@ const Employees = () => {
   const [selectedEmployeeIds, setSelectedEmployeeIds] = useState<string[]>([]);
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
   const [employeesToDelete, setEmployeesToDelete] = useState<Employee[]>([]);
+  const [bulkDeactivateOpen, setBulkDeactivateOpen] = useState(false);
+  const [employeesToDeactivate, setEmployeesToDeactivate] = useState<Employee[]>([]);
   const [bulkAssignManagerOpen, setBulkAssignManagerOpen] = useState(false);
   const [employeesToAssignManager, setEmployeesToAssignManager] = useState<Employee[]>([]);
 
@@ -494,10 +497,20 @@ const Employees = () => {
         bulkStatusMutation.mutate(
           { employeeIds: ids, status: "active" },
           {
-            onSuccess: ({ updatedCount }) => {
-              toast.success(
-                `${updatedCount} employee${updatedCount > 1 ? "s" : ""} set to active`
-              );
+            onSuccess: ({ updatedCount, failedCount, firstError }) => {
+              if (updatedCount > 0) {
+                toast.success(
+                  `${updatedCount} employee${updatedCount > 1 ? "s" : ""} set to active`
+                );
+              }
+              // Reactivating a deactivated employee is refused by the API, by
+              // design — it needs an approved reactivation request. Say so
+              // rather than reporting a success that did not happen.
+              if (failedCount > 0) {
+                toast.error(
+                  `${failedCount} could not be activated. ${firstError ?? ""}`.trim()
+                );
+              }
               setSelectedEmployeeIds([]);
             },
             onError: (error) => {
@@ -508,22 +521,8 @@ const Employees = () => {
         break;
 
       case "deactivate":
-        bulkStatusMutation.mutate(
-          { employeeIds: ids, status: "inactive" },
-          {
-            onSuccess: ({ updatedCount }) => {
-              toast.success(
-                `${updatedCount} employee${
-                  updatedCount > 1 ? "s" : ""
-                } set to inactive`
-              );
-              setSelectedEmployeeIds([]);
-            },
-            onError: (error) => {
-              toast.error(error.message);
-            },
-          }
-        );
+        setEmployeesToDeactivate(selectedEmployees);
+        setBulkDeactivateOpen(true);
         break;
 
       case "delete":
@@ -1138,15 +1137,15 @@ const Employees = () => {
           }}
           employees={employeesToDelete}
           isDeleting={bulkDeleteMutation.isPending}
-          onConfirm={() => {
+          onConfirm={(reason) => {
             const idsToDelete = employeesToDelete.map((employee) => employee.id);
 
-            bulkDeleteMutation.mutate(idsToDelete, {
+            bulkDeleteMutation.mutate({ employeeIds: idsToDelete, reason }, {
               onSuccess: ({ deletedCount }) => {
                 toast.success(
                   `${deletedCount} employee${
                     deletedCount > 1 ? "s" : ""
-                  } deleted successfully`
+                  } deactivated`
                 );
                 setSelectedEmployeeIds([]);
                 setEmployeesToDelete([]);
@@ -1156,6 +1155,42 @@ const Employees = () => {
                 toast.error(`Failed to delete employees: ${error.message}`);
               },
             });
+          }}
+        />
+
+        <BulkDeactivateDialog
+          open={bulkDeactivateOpen}
+          onOpenChange={(open) => {
+            if (!bulkStatusMutation.isPending) {
+              setBulkDeactivateOpen(open);
+            }
+          }}
+          employees={employeesToDeactivate}
+          isSubmitting={bulkStatusMutation.isPending}
+          onConfirm={(reason) => {
+            bulkStatusMutation.mutate(
+              { employeeIds: employeesToDeactivate.map((employee) => employee.id), status: "inactive", reason },
+              {
+                onSuccess: ({ updatedCount, failedCount, firstError }) => {
+                  if (updatedCount > 0) {
+                    toast.success(
+                      `${updatedCount} employee${updatedCount > 1 ? "s" : ""} set to inactive`
+                    );
+                  }
+                  if (failedCount > 0) {
+                    toast.error(
+                      `${failedCount} could not be deactivated. ${firstError ?? ""}`.trim()
+                    );
+                  }
+                  setSelectedEmployeeIds([]);
+                  setEmployeesToDeactivate([]);
+                  setBulkDeactivateOpen(false);
+                },
+                onError: (error) => {
+                  toast.error(error.message);
+                },
+              }
+            );
           }}
         />
 

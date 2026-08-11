@@ -3,12 +3,14 @@ import type { RowDataPacket } from "mysql2";
 import { authService } from '../modules/auth/auth.service.js';
 import { getUserRoleContext } from '../shared/roleResolver.js';
 import { DEMO_TOKEN_MAP } from '../shared/demoAuth.js';
+import { isAccountRevoked } from '../shared/accountStatus.js';
 
-/** 30-second in-process cache: userId → { primaryRole, isReadOnly, exp }
- *  Cuts the two per-request DB queries to zero for repeat requests within the TTL window.
- *  Cache is invalidated when a user's role or read-only status changes (max 30s stale).
+/** 30-second in-process cache: userId → { primaryRole, isReadOnly, isRevoked, exp }
+ *  Cuts the three per-request DB queries to zero for repeat requests within the TTL window.
+ *  Cache is invalidated when a user's role, read-only status or account status changes
+ *  (max 30s stale — revokeSessionsForEmployee drops the entry so deactivation lands at once).
  */
-const AUTH_CONTEXT_CACHE = new Map<string, { primaryRole: string | undefined; roleKeys: string[] | undefined; isReadOnly: boolean; exp: number }>();
+const AUTH_CONTEXT_CACHE = new Map<string, { primaryRole: string | undefined; roleKeys: string[] | undefined; isReadOnly: boolean; isRevoked: boolean; exp: number }>();
 const AUTH_CACHE_TTL_MS = 30_000;
 
 function getCachedAuthContext(userId: string) {
@@ -17,8 +19,8 @@ function getCachedAuthContext(userId: string) {
   return null;
 }
 
-function setCachedAuthContext(userId: string, primaryRole: string | undefined, isReadOnly: boolean, roleKeys?: string[]) {
-  AUTH_CONTEXT_CACHE.set(userId, { primaryRole, roleKeys, isReadOnly, exp: Date.now() + AUTH_CACHE_TTL_MS });
+function setCachedAuthContext(userId: string, primaryRole: string | undefined, isReadOnly: boolean, isRevoked: boolean, roleKeys?: string[]) {
+  AUTH_CONTEXT_CACHE.set(userId, { primaryRole, roleKeys, isReadOnly, isRevoked, exp: Date.now() + AUTH_CACHE_TTL_MS });
 }
 
 export function invalidateAuthContextCache(userId: string) {
@@ -97,11 +99,13 @@ export async function requireAuth(
       let resolvedRole: string | undefined;
       let resolvedRoleKeys: string[] | undefined;
       let isReadOnly = false;
+      let isRevoked = false;
       const cached = getCachedAuthContext(mysqlUser.id);
       if (cached) {
         resolvedRole = cached.primaryRole;
         resolvedRoleKeys = cached.roleKeys;
         isReadOnly = cached.isReadOnly;
+        isRevoked = cached.isRevoked;
       } else {
         try {
           const ctx = await getUserRoleContext(mysqlUser.id);
@@ -118,8 +122,28 @@ export async function requireAuth(
           );
           isReadOnly = Array.isArray(rows) && rows.length > 0 ? !!(rows[0] as ReadOnlyRow).is_read_only : false;
         } catch { /* keep false */ }
-        setCachedAuthContext(mysqlUser.id, resolvedRole, isReadOnly, resolvedRoleKeys);
+        isRevoked = await isAccountRevoked(mysqlUser.id);
+        setCachedAuthContext(mysqlUser.id, resolvedRole, isReadOnly, isRevoked, resolvedRoleKeys);
       }
+
+      // A blocked account, or an employee whose active_status has been set to 0,
+      // stops being able to sign in the moment it happens — but until this check
+      // existed, the token already in their browser kept working for its full 24h
+      // life. Deactivation now ends access on the next request (immediately if it
+      // went through revokeSessionsForEmployee, which drops the cache entry;
+      // otherwise within the 30s cache TTL).
+      //
+      // 401 rather than 403 so the frontend's existing expiry handling signs them
+      // out, instead of parking a leaver on a permission-denied screen with a live
+      // session behind it.
+      if (isRevoked) {
+        return res.status(401).json({
+          success: false,
+          message: "Account is inactive. Please contact HR for assistance.",
+          code: "ACCOUNT_DEACTIVATED",
+        });
+      }
+
       req.authUser = {
         id: mysqlUser.id,
         email: mysqlUser.email,
