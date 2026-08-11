@@ -337,7 +337,7 @@ CREATE TABLE IF NOT EXISTS portal_notification (
 );
 
 -- ── 17. Add indexes for performance ───────────────────────────────────────────
-ALTER TABLE ats_candidate ADD INDEX idx_ats_candidate_branch (branch_name);
+ALTER TABLE ats_candidate ADD INDEX idx_ats_candidate_branch (applied_for_branch);
 ALTER TABLE ats_candidate ADD INDEX idx_ats_candidate_status (candidate_status);
 ALTER TABLE ats_candidate ADD INDEX idx_ats_candidate_created (created_at);
 ALTER TABLE ats_queue_token ADD INDEX idx_ats_queue_status (queue_status);

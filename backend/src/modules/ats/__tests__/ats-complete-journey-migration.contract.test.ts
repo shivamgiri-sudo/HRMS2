@@ -9,7 +9,8 @@ describe("ATS complete journey migration", () => {
     expect(migration).not.toMatch(/ADD\s+COLUMN\s+IF\s+NOT\s+EXISTS/i);
     expect(migration).not.toMatch(/CREATE\s+INDEX\s+IF\s+NOT\s+EXISTS/i);
     expect(migration).toMatch(/ALTER TABLE ats_notification_log ADD COLUMN notification_type/i);
-    expect(migration).toMatch(/ALTER TABLE ats_candidate ADD INDEX idx_ats_candidate_branch/i);
+    expect(migration).toMatch(/ALTER TABLE ats_candidate ADD INDEX idx_ats_candidate_branch \(applied_for_branch\)/i);
+    expect(migration).not.toMatch(/ALTER TABLE ats_candidate ADD INDEX idx_ats_candidate_branch \(branch_name\)/i);
   });
 
   it("creates ats_notification_log before enhancing it", () => {

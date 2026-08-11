@@ -13,7 +13,7 @@ export /**
  */
 const EXCLUDE_AC = excludeEmployeeShapedCandidatesSql('ats_candidate');
 
-const bmiBenchmarkRouter = Router();
+export const bmiBenchmarkRouter = Router();
 
 bmiBenchmarkRouter.use(requireAuth);
 bmiBenchmarkRouter.use(requireRole(
