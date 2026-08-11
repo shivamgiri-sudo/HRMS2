@@ -23,7 +23,7 @@
 ### 1. SSH to Server
 ```bash
 ssh masadmin@192.168.11.225
-# Password: Support#123
+# Password: $MAS_SERVER_PASSWORD
 ```
 
 ### 2. Navigate to Repository

@@ -1178,7 +1178,7 @@ git push origin main
 - [ ] **Step 4: Deploy to production**
 
 ```bash
-plink -ssh -pw "Support#123" masadmin@<mcn_lms host — see backend/.env> \
+plink -ssh -pw "$MAS_SERVER_PASSWORD" masadmin@<mcn_lms host — see backend/.env> \
   "cd /var/www/HRMS2 && git pull origin main && \
    cd backend && npm run build && cd .. && npm run build && \
    fuser -k 5055/tcp 2>/dev/null; sleep 2; \

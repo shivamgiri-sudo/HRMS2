@@ -154,7 +154,7 @@ Both pages are **production-grade** implementations. The initial TODO counts wer
 ### Server Details:
 - **IP:** <mcn_lms host — see backend/.env>
 - **User:** masadmin
-- **Password:** Support#123
+- **Password:** $MAS_SERVER_PASSWORD
 - **Project Path:** `/var/www/HRMS2/`
 
 ### Step 1: Upload Package
@@ -165,7 +165,7 @@ scp dist-final-deploy.tar.gz masadmin@<mcn_lms host — see backend/.env>:/tmp/
 ### Step 2: SSH to Server
 ```bash
 ssh masadmin@<mcn_lms host — see backend/.env>
-# Password: Support#123
+# Password: $MAS_SERVER_PASSWORD
 ```
 
 ### Step 3: Deploy Backend

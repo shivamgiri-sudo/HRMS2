@@ -2,7 +2,7 @@
 
 **Server:** 192.168.11.225  
 **Username:** masadmin  
-**Password:** Support#123  
+**Password:** $MAS_SERVER_PASSWORD  
 **Date:** 2026-07-10
 
 ---
@@ -23,7 +23,7 @@ chmod +x DEPLOY_PHASE1_AI.sh
 
 ```bash
 ssh masadmin@192.168.11.225
-# Password: Support#123
+# Password: $MAS_SERVER_PASSWORD
 ```
 
 #### Step 2: Backup Current Code

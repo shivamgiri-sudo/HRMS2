@@ -300,7 +300,7 @@ git push origin main
 **Implementation:** Claude Sonnet 4.5 (Fable 5 thinking mode)  
 **Project Lead:** Shivam Giri (shivamgiri-sudo)  
 **Repository:** github.com/shivamgiri-sudo/HRMS2  
-**Server:** 192.168.11.225 (masadmin / Support#123)
+**Server:** 192.168.11.225 (masadmin / $MAS_SERVER_PASSWORD)
 
 **Documentation Files:**
 - `PHASE2_SMART_WORK_INBOX_BACKEND_COMPLETE.md` - Implementation details

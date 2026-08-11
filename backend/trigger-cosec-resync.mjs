@@ -37,7 +37,7 @@ console.log('Admin users found:');
 users.forEach((u, i) => console.log(`  ${i+1}. ${u.email}`));
 
 // Try each user with common passwords to get a token
-const passwords = ['Admin@123', 'admin@123', 'Admin123', 'admin123', 'Mas@1234', 'mas@1234', 'Support#123', 'password', '123456'];
+const passwords = ['Admin@123', 'admin@123', 'Admin123', 'admin123', 'Mas@1234', 'mas@1234', 'password', '123456'];
 
 let token = null;
 let usedEmail = null;

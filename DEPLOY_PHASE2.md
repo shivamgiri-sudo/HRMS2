@@ -2,7 +2,7 @@
 
 **Server:** 192.168.11.225  
 **User:** masadmin  
-**Password:** Support#123  
+**Password:** $MAS_SERVER_PASSWORD  
 **Date:** 2026-07-10
 
 ---

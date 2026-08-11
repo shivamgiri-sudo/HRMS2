@@ -2260,7 +2260,7 @@ discrepancy flags with Recalculate / Acknowledge / Reject actions."
 - [ ] **Step 1: Apply migration to production DB**
 
 ```bash
-plink -ssh -pw "Support#123" masadmin@<mcn_lms host — see backend/.env> \
+plink -ssh -pw "$MAS_SERVER_PASSWORD" masadmin@<mcn_lms host — see backend/.env> \
   "mysql -h <mas_hrms DB host — see backend/.env> -u root -p'root@123' mas_hrms < /var/www/HRMS2/backend/sql/1057_salary_verification.sql 2>&1"
 ```
 Expected: no errors (MySQL may warn about IF NOT EXISTS — that's fine).
@@ -2283,7 +2283,7 @@ git push origin main
 - [ ] **Step 4: Deploy to production**
 
 ```bash
-plink -ssh -pw "Support#123" masadmin@<mcn_lms host — see backend/.env> \
+plink -ssh -pw "$MAS_SERVER_PASSWORD" masadmin@<mcn_lms host — see backend/.env> \
   "cd /var/www/HRMS2 && git pull origin main && \
    cd backend && npm run build && cd .. && npm run build && \
    fuser -k 5055/tcp 2>/dev/null; sleep 2; \

@@ -1934,7 +1934,7 @@ function run(conn, cmd, timeout) {
 async function main() {
   const conn = new Client();
   await new Promise((res,rej) => conn.on('ready',res).on('error',rej)
-    .connect({host:'192.168.11.225',port:22,username:'masadmin',password:'Support#123',readyTimeout:15000}));
+    .connect({host:'192.168.11.225',port:22,username:'masadmin',password:'$MAS_SERVER_PASSWORD',readyTimeout:15000}));
   console.log('=== CONNECTED ===');
   await run(conn, 'cd /var/www/HRMS2 && git pull origin main 2>&1');
   await run(conn, 'cd /var/www/HRMS2/backend && npm install --prefer-offline 2>&1 && npm run build 2>&1', 240000);

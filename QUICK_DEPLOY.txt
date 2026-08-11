@@ -1,11 +1,11 @@
 ================================================================================
 QUICK DEPLOYMENT GUIDE - Real-Time NCOSEC Attendance
-Server: 192.168.11.225 | User: masadmin | Password: Support#123
+Server: 192.168.11.225 | User: masadmin | Password: $MAS_SERVER_PASSWORD
 ================================================================================
 
 1. CONNECT TO SERVER
    ssh masadmin@192.168.11.225
-   Password: Support#123
+   Password: $MAS_SERVER_PASSWORD
 
 2. NAVIGATE & PULL CODE
    cd /home/masadmin/HRMS1/backend

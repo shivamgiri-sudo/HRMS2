@@ -22,7 +22,7 @@ Configures the ATS candidate registration page (`/interview-registration`) to:
 ```powershell
 # SSH to server (from your local machine)
 ssh masadmin@192.168.11.225
-# Password: Support#123
+# Password: $MAS_SERVER_PASSWORD
 ```
 
 ### Step 2: Run the Migration

@@ -1,6 +1,6 @@
 # Phase 1 AI Deployment to Production Server
 # PowerShell Script for Windows
-# Target: 192.168.11.225 (masadmin / Support#123)
+# Target: 192.168.11.225 (masadmin / $MAS_SERVER_PASSWORD)
 
 $ErrorActionPreference = "Stop"
 

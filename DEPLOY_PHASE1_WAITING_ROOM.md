@@ -31,7 +31,7 @@
 ### 1. Connect to Production Server
 ```bash
 ssh masadmin@<mcn_lms host — see backend/.env>
-# Password: Support#123
+# Password: $MAS_SERVER_PASSWORD
 ```
 
 ### 2. Navigate to Backend Directory
@@ -271,7 +271,7 @@ pm2 restart hrms2-backend --update-env
 
 **Server IP:** <mcn_lms host — see backend/.env>  
 **Username:** masadmin  
-**Password:** Support#123
+**Password:** $MAS_SERVER_PASSWORD
 
 **Application Paths:**
 - Frontend: `/var/www/HRMS2/dist/` (served by nginx)

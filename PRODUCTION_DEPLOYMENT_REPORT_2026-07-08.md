@@ -64,7 +64,7 @@
 **Manual Steps (you must do this):**
 ```bash
 ssh masadmin@192.168.11.225
-# Enter password: Support#123
+# Enter password: $MAS_SERVER_PASSWORD
 
 # View the old processes
 ps aux | grep -E 'HRMS1.*workers' | grep -v grep

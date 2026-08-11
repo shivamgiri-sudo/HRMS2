@@ -16,7 +16,7 @@ if sys.platform == "win32":
 
 HOST = "192.168.11.225"
 USER = "masadmin"
-PASSWORD = "Support#123"
+PASSWORD = os.environ.get("MAS_SERVER_PASSWORD", "")
 COMMIT = "aa77a2d7"
 REPO_PATH = "/home/masadmin/HRMS2_fix_onboarding_branch"
 
