@@ -37,7 +37,8 @@ import { LeaveRequestHistory } from "@/components/profile/LeaveRequestHistory";
 import { PayslipViewer } from "@/components/profile/PayslipViewer";
 import { TaxDocumentsViewer } from "@/components/profile/TaxDocumentsViewer";
 import { MyAttendanceHistory } from "@/components/profile/MyAttendanceHistory";
-import { AttendanceCalendar } from "@/components/attendance/AttendanceCalendar";
+import { AttendanceCalendar, adrRecordsToAttendanceDays } from "@/components/attendance/AttendanceCalendar";
+import { useAttendanceDailyRecords } from "@/hooks/useAttendanceHub";
 import { MyAssets } from "@/components/profile/MyAssets";
 import { MyPerformanceReviews } from "@/components/profile/MyPerformanceReviews";
 import { EmployeeJourneyTimeline } from "@/components/employees/EmployeeJourneyTimeline";
@@ -134,6 +135,12 @@ const Profile = () => {
   const [rmChangeOpen, setRmChangeOpen] = useState(false);
   const [changePasswordOpen, setChangePasswordOpen] = useState(false);
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
+  // Month shown by the attendance calendar. Held here so the calendar and the
+  // ADR rows fed to it always describe the same month.
+  const [attMonth, setAttMonth] = useState<{ m: number; y: number }>(() => {
+    const now = new Date();
+    return { m: now.getMonth(), y: now.getFullYear() };
+  });
   const [formData, setFormData] = useState<ProfileForm>({
     official_email: "", mobile: "", personal_email: "", personal_phone: "", alternate_mobile: "", address_line1: "", city: "",
     date_of_birth: "", gender: "", marital_status: "", blood_group: "",
@@ -166,6 +173,27 @@ const Profile = () => {
     staleTime: 5 * 60_000,
     gcTime: 10 * 60_000,
   });
+
+  /**
+   * The attendance tab used to render a calendar fed by /attendance-source ->
+   * ncosec-monthly | apr-monthly directly above MyAttendanceHistory, which reads
+   * /attendance/daily. Two databases, one screen, same employee, same month.
+   *
+   * For anyone apr_eligibility_config classifies as a dialler agent who has no APR
+   * rows - 625 active employees in August 2026 - the calendar queried the one source
+   * with nothing in it and painted a blank month directly above a list of their real
+   * Present days. On their own profile, with no toggle to work around it.
+   *
+   * Feeding the calendar the same rows the list uses makes the two agree by
+   * construction, exactly as the HR attendance-lookup drawer now does.
+   */
+  const attFrom = `${attMonth.y}-${String(attMonth.m + 1).padStart(2, "0")}-01`;
+  const attTo = `${attMonth.y}-${String(attMonth.m + 1).padStart(2, "0")}-${String(new Date(attMonth.y, attMonth.m + 1, 0).getDate()).padStart(2, "0")}`;
+  const { data: attRows = [], isLoading: attLoading } = useAttendanceDailyRecords(
+    employee?.id ?? null,
+    attFrom,
+    attTo,
+  );
 
   useEffect(() => {
     if (employee) {
@@ -765,7 +793,15 @@ const Profile = () => {
               </TabsContent>
 
               <TabsContent value="attendance" className="space-y-6">
-                <AttendanceCalendar employeeId={employee.id} />
+                <AttendanceCalendar
+                  employeeId={employee.id}
+                  month={attMonth.m}
+                  year={attMonth.y}
+                  onMonthChange={(m, y) => setAttMonth({ m, y })}
+                  records={adrRecordsToAttendanceDays(attRows)}
+                  recordsLoading={attLoading}
+                  sourceLabel="HRMS Record"
+                />
                 <MyAttendanceHistory employeeId={employee.id} />
               </TabsContent>
 
