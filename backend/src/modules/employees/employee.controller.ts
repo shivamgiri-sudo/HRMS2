@@ -2,6 +2,7 @@ import type { Request, Response } from "express";
 import { createEmployeeSchema, employeeFiltersSchema, updateEmployeeSchema } from "./employee.validation.js";
 import { employeeService } from "./employee.service.js";
 import { db } from "../../db/mysql.js";
+import { redactEmployeeIdentifiers } from "../../shared/employeeIdentifierRedaction.js";
 
 export const employeeController = {
   async createEmployee(req: Request, res: Response) {
@@ -23,7 +24,13 @@ export const employeeController = {
 
   async getEmployee(req: Request, res: Response) {
     const data = await employeeService.getEmployee(req.params.id);
-    res.json({ data });
+    // getEmployee is SELECT *, so the row carries aadhaar/pan/bank/uan and the at-rest
+    // crypto columns. The route admits wfm, manager, branch_head, process_manager and
+    // it_head, none of which have a business need for those. Redact per role — see
+    // shared/employeeIdentifierRedaction.ts for the split and what it deliberately leaves alone.
+    const authUser = (req as any).authUser;
+    const roles: string[] = authUser?.roles?.length ? authUser.roles : (authUser?.role ? [authUser.role] : []);
+    res.json({ data: redactEmployeeIdentifiers(data as unknown as Record<string, unknown>, roles) });
   },
 
   async updateEmployee(req: Request, res: Response) {
