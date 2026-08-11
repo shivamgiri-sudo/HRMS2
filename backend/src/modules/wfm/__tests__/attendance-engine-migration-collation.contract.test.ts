@@ -12,4 +12,12 @@ describe("attendance engine migration", () => {
     expect(migration).not.toMatch(/\bDEFAULT\s+CHARSET\b/i);
     expect(migration).not.toMatch(/\bCOLLATE\b/i);
   });
+
+  it("guards designation-scoped seed data behind an existing designation row", () => {
+    expect(migration).toMatch(/FROM\s+designation_master\s+dm/i);
+    expect(migration).toMatch(/WHERE\s+dm\.id\s*=\s*'775ef029-5caf-11f1-adb1-00155d0ab410'/i);
+    expect(migration).not.toMatch(
+      /VALUES\s*\(\s*'arc-agent-001'[\s\S]*'775ef029-5caf-11f1-adb1-00155d0ab410'/i,
+    );
+  });
 });

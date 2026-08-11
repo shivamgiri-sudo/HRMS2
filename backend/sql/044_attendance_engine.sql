@@ -79,14 +79,17 @@ CREATE TABLE IF NOT EXISTS attendance_daily_record (
 -- 3. SEED DATA
 -- =====================================================
 
--- AGENT designation → dialler (480/240 mins)
+-- AGENT designation -> dialler (480/240 mins). Fresh databases may not carry
+-- this legacy designation id, so only seed the scoped rule when the FK exists.
 INSERT INTO attendance_rule_config
   (id, rule_name, scope_type, designation_id, attendance_source, full_day_minutes, half_day_minutes, grace_minutes, effective_from, active_status)
-VALUES
-  ('arc-agent-001',  'Agent Dialler Rule', 'designation', '775ef029-5caf-11f1-adb1-00155d0ab410', 'dialler', 480, 240, 15, CURDATE(), 1)
+SELECT
+  'arc-agent-001', 'Agent Dialler Rule', 'designation', dm.id, 'dialler', 480, 240, 15, CURDATE(), 1
+FROM designation_master dm
+WHERE dm.id = '775ef029-5caf-11f1-adb1-00155d0ab410'
 ON DUPLICATE KEY UPDATE rule_name = VALUES(rule_name);
 
--- Global biometric default — catches ALL other designations
+-- Global biometric default - catches ALL other designations
 INSERT INTO attendance_rule_config
   (id, rule_name, scope_type, designation_id, process_id, branch_id, attendance_source, full_day_minutes, half_day_minutes, grace_minutes, effective_from, active_status)
 VALUES
