@@ -1,6 +1,7 @@
 import { db } from '../../db/mysql.js';
 import { RowDataPacket } from 'mysql2/promise';
 import { excludeEmployeeShapedCandidatesSql } from './ats-reporting-scope.js';
+import { canonicalChannel, CANONICAL_CHANNEL_LABEL } from "./ats-source-channel-model.js";
 
 const EXCLUDE_EMPLOYEE_SHAPED = excludeEmployeeShapedCandidatesSql('ats_candidate');
 const EXCLUDE_EMPLOYEE_SHAPED_C = excludeEmployeeShapedCandidatesSql('c');
@@ -26,6 +27,12 @@ export interface SourceMetrics {
   total_candidates: number;
   selected_count: number;
   conversion_rate: number;
+  /**
+   * Raw sourcing_channel spellings merged into this row — e.g. ["WALKIN", "Walk-In"].
+   * Declared rather than cast on at the return, so a caller can show why a channel's number
+   * differs from the raw value it used to display.
+   */
+  merged_from?: string[];
 }
 
 export interface BranchMetrics {
@@ -150,19 +157,67 @@ export async function getDashboardMetrics(): Promise<DashboardMetrics> {
  * Get source channel metrics
  */
 export async function getSourceMetrics(): Promise<SourceMetrics[]> {
+  // The raw channel is selected as-is. `COALESCE(sourcing_channel, 'Walk-in')` used to sit
+  // here, which labelled every candidate with no channel as a WALK-IN — 2,741 of the 7,760
+  // genuine candidates carry no channel at all, so the largest channel on this chart was
+  // partly an invention of the default. Unspecified is now its own bucket.
   const [results] = await db.execute<RowDataPacket[]>(
     `SELECT
-      COALESCE(sourcing_channel, 'Walk-in') as source_channel,
+      sourcing_channel as source_channel,
       COUNT(*) as total_candidates,
-      SUM(CASE WHEN current_stage IN ('selected', 'bgv_pending', 'bgv_verified', 'payroll_validated', 'offer_pending', 'offer_accepted', 'joined') THEN 1 ELSE 0 END) as selected_count,
-      ROUND((SUM(CASE WHEN current_stage IN ('selected', 'bgv_pending', 'bgv_verified', 'payroll_validated', 'offer_pending', 'offer_accepted', 'joined') THEN 1 ELSE 0 END) / COUNT(*)) * 100, 2) as conversion_rate
+      SUM(CASE WHEN current_stage IN ('selected', 'bgv_pending', 'bgv_verified', 'payroll_validated', 'offer_pending', 'offer_accepted', 'joined') THEN 1 ELSE 0 END) as selected_count
     FROM ats_candidate
     WHERE active_status = 1 AND ${EXCLUDE_EMPLOYEE_SHAPED}
-    GROUP BY sourcing_channel
-    ORDER BY total_candidates DESC`
+    GROUP BY sourcing_channel`
   );
 
-  return results as SourceMetrics[];
+  /**
+   * Merge the raw spellings into canonical channels.
+   *
+   * sourcing_channel is free text with the same split current_stage had: WALKIN (3,564) and
+   * Walk-In (346) are one channel counted twice, and Reference / Referral / Employee Referral
+   * are a third. Reported raw, walk-in was understated by 346 and referral was split across
+   * three rows.
+   *
+   * conversion_rate is recomputed from the merged totals rather than averaged from the rows —
+   * averaging percentages across groups of different sizes is its own error.
+   */
+  const merged = new Map<string, { label: string; total: number; selected: number; merged_from: string[] }>();
+  const unmapped: Array<{ channel: string; total: number; selected: number }> = [];
+
+  for (const row of results as Array<Record<string, unknown>>) {
+    const raw = row.source_channel == null ? "" : String(row.source_channel);
+    const total = Number(row.total_candidates) || 0;
+    const selected = Number(row.selected_count) || 0;
+    const canonical = canonicalChannel(raw);
+
+    if (!canonical) {
+      unmapped.push({ channel: raw, total, selected });
+      continue;
+    }
+    const key = canonical;
+    const entry = merged.get(key) ?? { label: CANONICAL_CHANNEL_LABEL[canonical], total: 0, selected: 0, merged_from: [] };
+    entry.total += total;
+    entry.selected += selected;
+    if (raw) entry.merged_from.push(raw);
+    merged.set(key, entry);
+  }
+
+  // An unrecognised channel is still shown, under its raw name, rather than being dropped —
+  // otherwise the chart's total silently stops matching the candidate count.
+  for (const u of unmapped) {
+    merged.set(`raw:${u.channel}`, { label: u.channel || "Unspecified", total: u.total, selected: u.selected, merged_from: [u.channel] });
+  }
+
+  return [...merged.entries()]
+    .map(([, e]) => ({
+      source_channel: e.label,
+      total_candidates: e.total,
+      selected_count: e.selected,
+      conversion_rate: e.total > 0 ? Number(((e.selected / e.total) * 100).toFixed(2)) : 0,
+      merged_from: e.merged_from,
+    }))
+    .sort((a, b) => b.total_candidates - a.total_candidates);
 }
 
 /**
