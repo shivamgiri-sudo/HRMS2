@@ -196,12 +196,27 @@ router.get(
     ]);
     const readiness = await Promise.all(
       (branchSummaries as any[]).map(async (summary) => {
-        const coverage = await budgetCoverageService.getCoverage(summary.id).catch(() => null);
+        // A failed coverage query used to be reported as fact: completionPct 0 and
+        // readyToSubmit false, inside a success:true response, so a transient failure on one
+        // branch made that branch look 0% complete on the CEO consolidation screen with no
+        // error anywhere in the payload. The catch stays — one branch's failure must not take
+        // down the whole rollup — but the row now says it could not be measured rather than
+        // asserting a zero, and completionPct is null so no client can chart it as progress.
+        const coverage = await budgetCoverageService.getCoverage(summary.id).catch((error) => {
+          console.error(
+            `[budget-consolidation] coverage unavailable for budget ${summary.id}: `
+              + (error instanceof Error ? error.message : String(error))
+          );
+          return null;
+        });
         return {
           budgetId: summary.id,
           branchName: summary.branch_name,
-          completionPct: coverage?.summary.completionPct ?? 0,
-          readyToSubmit: coverage?.summary.readyToSubmit ?? false,
+          completionPct: coverage ? coverage.summary.completionPct : null,
+          readyToSubmit: coverage ? coverage.summary.readyToSubmit : false,
+          /** false only when the coverage read failed — distinguishes "0% planned" from
+           *  "we could not tell". */
+          coverageAvailable: Boolean(coverage),
         };
       })
     );

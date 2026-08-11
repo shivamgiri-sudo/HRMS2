@@ -337,11 +337,43 @@ async function listColumns(tableName: string): Promise<Set<string>> {
   return columnCache.get(tableName)!;
 }
 
-async function safeRows<T extends RowDataPacket>(sql: string, params: unknown[] = []): Promise<T[]> {
+/**
+ * The one failure this module tolerates: the table is not there.
+ *
+ * Several tables read here are optional on an older database, which is why tableExists() guards
+ * appear throughout. A missing table is therefore a known shape, not a fault.
+ */
+const TOLERATED_QUERY_ERRORS = new Set(["ER_NO_SUCH_TABLE"]);
+
+/**
+ * Runs a query that may legitimately have no table behind it.
+ *
+ * It used to be `catch { return [] }` — every error, silently, with no log of any kind. That
+ * backs the budget query, the vendor-actuals query, the GRN query and getPayrollPeople, so a
+ * column rename or a lock-wait timeout on vendor_payment_tracking returned HTTP 200 with cost 0
+ * and a spectacular EBITDA, indistinguishable from a genuinely cost-free month. The comment
+ * fifty lines above this one describes the same class of incident — every payroll person costing
+ * nothing because a lookup quietly answered "no" — and this function was the other way in.
+ *
+ * A fabricated zero on a finance screen is worse than an error: nobody investigates a number
+ * that looks plausible. So a missing table still yields no rows, loudly; anything else now
+ * propagates and the endpoint fails honestly.
+ */
+export async function safeRows<T extends RowDataPacket>(sql: string, params: unknown[] = []): Promise<T[]> {
   try {
     return await queryRows<T>(sql, params);
-  } catch {
-    return [];
+  } catch (error) {
+    const code = (error as { code?: string } | null)?.code;
+    // First line of the statement is enough to identify which read degraded.
+    const excerpt = sql.replace(/\s+/g, " ").trim().slice(0, 120);
+    if (code && TOLERATED_QUERY_ERRORS.has(code)) {
+      console.warn(`[bpo-pnl] ${code} — treating as no rows: ${excerpt}`);
+      return [];
+    }
+    console.error(
+      `[bpo-pnl] query failed (${code ?? "no code"}), refusing to report it as zero: ${excerpt}`
+    );
+    throw error;
   }
 }
 

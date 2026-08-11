@@ -109,8 +109,14 @@ router.post(
       }
     }
 
+    // success tracks whether anything was actually imported, rather than whether the handler
+    // reached its end. It was hardcoded true, so uploading 500 malformed rate-card rows returned
+    // {"success": true, "imported": 0, "errors": [...500...]} alongside a 422 — and any client
+    // checking the flag, which is the normal thing to check, reported the import as having
+    // worked. A partial import stays success:true with its errors listed, because rows really
+    // were written; only the all-or-nothing failure is reported as a failure.
     const status = errors.length > 0 && imported === 0 ? 422 : 200;
-    res.status(status).json({ success: true, imported, errors });
+    res.status(status).json({ success: status === 200, imported, errors });
   })
 );
 

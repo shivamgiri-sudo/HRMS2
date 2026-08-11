@@ -37,8 +37,11 @@ export interface CompanyConsolidationGroup {
 export interface BranchReadiness {
   budgetId: string;
   branchName: string | null;
-  completionPct: number;
+  /** null when the coverage read failed — the API distinguishes "0% planned" from "we could
+   *  not tell", so the table must not render the second as the first. */
+  completionPct: number | null;
   readyToSubmit: boolean;
+  coverageAvailable?: boolean;
 }
 
 export interface BudgetConsolidationResponse {

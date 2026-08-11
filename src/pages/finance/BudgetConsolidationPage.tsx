@@ -230,7 +230,7 @@ export default function BudgetConsolidationPage() {
                           {readiness.map((r) => (
                             <tr key={r.budgetId} className="border-b border-slate-100 last:border-0 hover:bg-slate-50/70">
                               <td className="px-4 py-2 font-semibold text-slate-900">{r.branchName ?? "-"}</td>
-                              <td className="px-4 py-2 text-slate-600">{r.completionPct}%</td>
+                              <td className="px-4 py-2 text-slate-600">{r.completionPct === null ? <span title="Coverage could not be read for this branch">Not measured</span> : `${r.completionPct}%`}</td>
                               <td className="px-4 py-2">
                                 <Badge variant="outline" className={r.readyToSubmit ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-amber-200 bg-amber-50 text-amber-700"}>
                                   {r.readyToSubmit ? "Ready to submit" : "Incomplete"}
