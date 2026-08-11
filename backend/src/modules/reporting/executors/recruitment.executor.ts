@@ -209,6 +209,25 @@ export async function recruitmentPipeline(
       FROM job_posting jd
       LEFT JOIN branch_master b     ON b.id = jd.branch_id
       LEFT JOIN process_master p    ON p.id = jd.process_id
+      -- ── READ THIS BEFORE TRUSTING total_candidates ──────────────────────────
+      -- Candidates are attached by BRANCH + PROCESS, not by any posting key. So
+      -- total_candidates is "candidates in this posting's branch and process", NOT
+      -- "candidates who applied to this posting". Two postings for one branch+process each
+      -- report the whole pool, and summing the column across rows therefore double counts.
+      --
+      -- Measured against production 2026-08-11, which is why this is documented rather than
+      -- changed:
+      --   job_posting            0 rows  -> this report returns nothing today, so the
+      --                                     duplication above is latent, not live
+      --   job_requisition       15 rows  -> the analogous table has branch+process groups of
+      --                                     5, 4, 2 and 1, so a 5x inflation is the shape to
+      --                                     expect once postings exist
+      --   ats_candidate.requisition_id   populated on 196 of 7,770 genuine candidates (2.5%)
+      --
+      -- requisition_id is the key that would attribute candidates correctly. Switching to it
+      -- today would produce a near-empty report — a different report, not a fix — and with
+      -- zero postings there is no way to verify either version against real data. Repoint it
+      -- when requisition_id is actually being written, and check the totals then.
       LEFT JOIN ats_candidate c     ON c.applied_for_branch = b.branch_name
                                    AND c.applied_for_process = p.process_name
                                    AND ${excludeEmployeeShapedCandidatesSql("c")}
