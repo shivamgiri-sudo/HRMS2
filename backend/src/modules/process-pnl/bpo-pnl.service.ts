@@ -1049,11 +1049,18 @@ async function getBudgets(
         SUM(COALESCE(fbl.pnl_cost_amount, 0)) AS approved_budget,
         SUM(COALESCE(fbl.reserved_amount, 0)) AS reserved_budget,
         SUM(COALESCE(fbl.consumed_amount, 0)) AS consumed_budget
+       -- 'closed' is deliberately NOT in the status filter below. branchBudgetService's
+       -- deleteOrSupersede writes exactly that status when a budget is superseded because GRN
+       -- activity exists against it, and saveDraft then creates a REPLACEMENT budget for the
+       -- same branch and period. Counting both reported the branch's approved budget at roughly
+       -- twice its real figure and halved every variance derived from it. Spend already booked
+       -- against a superseded budget still reaches the P&L through the GRN allocations, which
+       -- are read separately; it is only the budget ceiling that must not be counted twice.
        FROM finance_budget_header fbh
        JOIN finance_budget_line fbl ON fbl.budget_id = fbh.id
        LEFT JOIN cost_centre_master ccm ON ccm.id = fbl.cost_centre_id
       WHERE fbh.period_code = ?
-        AND fbh.status IN ('finance_head_approved','accounts_head_approved','active','closed')
+        AND fbh.status IN ('finance_head_approved','accounts_head_approved','active')
       GROUP BY fbh.branch_id, process_id`,
     [period]
   );
@@ -1063,11 +1070,27 @@ async function getBudgets(
   const branchConsumed = new Map<string, { amount: number }>();
   for (const row of rows) {
     if (row.process_id) {
-      result.set(String(row.process_id), {
-        approvedBudget: toNumber(row.approved_budget),
-        reservedBudget: toNumber(row.reserved_budget),
-        consumedBudget: toNumber(row.consumed_budget),
-      });
+      /*
+       * ACCUMULATE, do not assign.
+       *
+       * The query groups by (branch_id, process_id), so a process budgeted in more than one
+       * branch produces one row per branch. `result.set(...)` kept only whichever arrived last
+       * and silently discarded the rest — a process running in two branches reported one
+       * branch's budget as its whole approved budget, and every budget-vs-actual variance
+       * derived from it was wrong by the amount dropped.
+       *
+       * The vendor-actuals loop further down this file already does `current.amount += ...`
+       * for the same shape, so the two halves of the same report disagreed with each other.
+       * No live data exercises this yet (no process is currently budgeted in two branches),
+       * which is why it has never been visible.
+       */
+      const processId = String(row.process_id);
+      const current = result.get(processId)
+        ?? { approvedBudget: 0, reservedBudget: 0, consumedBudget: 0 };
+      current.approvedBudget += toNumber(row.approved_budget);
+      current.reservedBudget += toNumber(row.reserved_budget);
+      current.consumedBudget += toNumber(row.consumed_budget);
+      result.set(processId, current);
     } else if (row.branch_id) {
       const branchId = String(row.branch_id);
       branchApproved.set(branchId, { amount: toNumber(row.approved_budget) });

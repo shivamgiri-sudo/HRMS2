@@ -83,3 +83,35 @@ describe("salary_prep_run is read for the whole month, by every service", () => 
     expect(source).toMatch(/JOIN salary_prep_run r ON r\.id = l\.run_id/);
   });
 });
+
+/**
+ * Budget aggregation in bpo-pnl.service.ts.
+ *
+ * Neither of these is exercised by live data yet — no process is budgeted in two branches, and
+ * no budget has been superseded — which is exactly why they need pinning now rather than after
+ * the first wrong number reaches a screen.
+ */
+describe("approved budget per process", () => {
+  const source = () => read("bpo-pnl.service.ts");
+
+  it("does not count a superseded budget alongside its replacement", () => {
+    // deleteOrSupersede writes status='closed' and saveDraft then creates a replacement for the
+    // same branch+period, so including 'closed' counts the ceiling twice.
+    const statusFilter = source().match(/fbh\.status IN \([^)]*\)/)?.[0] ?? "";
+    expect(statusFilter).not.toBe("");
+    expect(statusFilter, "a superseded budget must not be summed with the one that replaced it")
+      .not.toContain("'closed'");
+    expect(statusFilter).toContain("'active'");
+  });
+
+  it("accumulates a process budgeted in more than one branch", () => {
+    const src = source();
+    // The query groups by (branch_id, process_id); assigning would keep only the last branch.
+    expect(src).toContain("current.approvedBudget += toNumber(row.approved_budget)");
+    expect(src).toContain("current.reservedBudget += toNumber(row.reserved_budget)");
+    expect(src).toContain("current.consumedBudget += toNumber(row.consumed_budget)");
+    expect(src, "assigning here discards every branch but the last").not.toMatch(
+      /result\.set\(String\(row\.process_id\), \{\s*approvedBudget: toNumber/
+    );
+  });
+});

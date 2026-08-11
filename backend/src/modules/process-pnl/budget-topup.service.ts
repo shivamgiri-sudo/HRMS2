@@ -1,6 +1,12 @@
 import { randomUUID } from "crypto";
 import type { RowDataPacket } from "mysql2";
+import type { PoolConnection } from "mysql2/promise";
 import { db } from "../../db/mysql.js";
+import {
+  calculateBudgetLine,
+  type BudgetGstType,
+  type BudgetTaxTreatment,
+} from "./branch-budget.service.js";
 import { financeBranchFilter, type FinanceBranchScope } from "../finance/finance-access-scope.js";
 import { resolvePendingWith } from "../finance/finance-workflow-role.js";
 import { lockActiveBudgetLine } from "./budget-consumption.service.js";
@@ -18,6 +24,95 @@ function roundMoney(value: number) {
 
 function roundQuantity(value: number) {
   return Math.round((Number(value) + Number.EPSILON) * 10_000) / 10_000;
+}
+
+/**
+ * Applies an approved top-up to its budget line, and to the header totals that summarise it.
+ *
+ * The line is RECOMPUTED from its new quantity through calculateBudgetLine — the same function
+ * that produced every amount on it in the first place — rather than having a figure added to one
+ * column. Two reasons:
+ *
+ *  1. `requested_amount` is a QUOTED amount. BudgetTopupPanel derives requestedQuantity as
+ *     amount / unit_rate, and calculateBudgetLine's quotedAmount is quantity * unit_rate. Under
+ *     exclusive GST the gross rises by quoted * (1 + rate/100), so the previous
+ *     `gross_amount = gross_amount + requested_amount` under-stated the gross by the tax on the
+ *     increase, and left quantity, base, tax and gross disagreeing with each other.
+ *  2. It only ever touched gross_amount and quantity. base_amount, tax_amount,
+ *     recoverable_tax_amount, the CGST/SGST/IGST split and — most importantly —
+ *     pnl_cost_amount were left at their pre-top-up values. pnl_cost_amount is what every P&L
+ *     read uses (bpo-pnl.service.ts, branch-budget.service.ts), so a formally approved increase
+ *     raised the GRN ceiling while the branch went on being reported overspent against the old
+ *     budget. The header's gross_budget_amount / pnl_budget_amount were not updated either.
+ *
+ * Recomputing is safe because lines are internally consistent by construction: verified against
+ * production, all 94 existing lines satisfy quantity * unit_rate = the quoted base.
+ */
+async function applyTopupToLine(
+  connection: PoolConnection,
+  budgetLineId: string,
+  additionalQuantity: number
+) {
+  const [rows] = await connection.execute<RowDataPacket[]>(
+    `SELECT id, budget_id, head, item_name, quantity, unit, unit_rate,
+            tax_treatment, gst_rate, gst_type, recoverable_tax_pct
+       FROM finance_budget_line WHERE id = ?`,
+    [budgetLineId]
+  );
+  const line = rows[0];
+  if (!line) throw new Error("Budget line not found");
+
+  const recomputed = calculateBudgetLine({
+    head: String(line.head),
+    itemName: String(line.item_name),
+    quantity: Number(line.quantity) + additionalQuantity,
+    unit: String(line.unit ?? ""),
+    unitRate: Number(line.unit_rate),
+    taxTreatment: String(line.tax_treatment) as BudgetTaxTreatment,
+    gstRate: Number(line.gst_rate ?? 0),
+    gstType: (line.gst_type ?? undefined) as BudgetGstType | undefined,
+    recoverableTaxPct: line.recoverable_tax_pct == null ? undefined : Number(line.recoverable_tax_pct),
+    justification: "",
+  });
+
+  await connection.execute(
+    `UPDATE finance_budget_line
+        SET quantity = ?,
+            base_amount = ?,
+            tax_amount = ?,
+            gross_amount = ?,
+            recoverable_tax_amount = ?,
+            pnl_cost_amount = ?,
+            cgst_amount = ?,
+            sgst_amount = ?,
+            igst_amount = ?
+      WHERE id = ?`,
+    [
+      Number(line.quantity) + additionalQuantity,
+      recomputed.baseAmount,
+      recomputed.taxAmount,
+      recomputed.grossAmount,
+      recomputed.recoverableTaxAmount,
+      recomputed.pnlCostAmount,
+      recomputed.cgstAmount,
+      recomputed.sgstAmount,
+      recomputed.igstAmount,
+      budgetLineId,
+    ]
+  );
+
+  // Header totals are re-summed from the lines rather than incremented, so they cannot drift
+  // from the rows beneath them however many top-ups a budget takes. Production confirms the
+  // two are currently exact to the rupee, which is the invariant worth preserving.
+  await connection.execute(
+    `UPDATE finance_budget_header h
+        SET h.gross_budget_amount = (
+              SELECT COALESCE(SUM(l.gross_amount), 0) FROM finance_budget_line l WHERE l.budget_id = h.id),
+            h.pnl_budget_amount = (
+              SELECT COALESCE(SUM(l.pnl_cost_amount), 0) FROM finance_budget_line l WHERE l.budget_id = h.id)
+      WHERE h.id = ?`,
+    [String(line.budget_id)]
+  );
 }
 
 export const budgetTopupService = {
@@ -238,13 +333,7 @@ export const budgetTopupService = {
         // Same lock GRN reserve()/consume() already use — a top-up and a GRN cannot race
         // against the same line's headroom.
         await lockActiveBudgetLine(connection, String(request.budget_line_id));
-        await connection.execute(
-          `UPDATE finance_budget_line
-              SET gross_amount = gross_amount + ?,
-                  quantity = quantity + ?
-            WHERE id = ?`,
-          [Number(request.requested_amount), Number(request.requested_quantity), request.budget_line_id]
-        );
+        await applyTopupToLine(connection, String(request.budget_line_id), Number(request.requested_quantity));
         await connection.execute(
           `UPDATE finance_budget_topup_request
               SET status = 'applied', applied_at = NOW(),

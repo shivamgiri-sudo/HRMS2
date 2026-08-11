@@ -42,13 +42,37 @@ describe("budget top-up request workflow", () => {
   it("applies the increase under the same row lock GRN consumption uses, only at finance_head", () => {
     const service = read("src/modules/process-pnl/budget-topup.service.ts");
     expect(service).toContain("lockActiveBudgetLine");
-    expect(service).toContain("gross_amount = gross_amount + ?");
-    expect(service).toContain("quantity = quantity + ?");
     expect(service).toContain("status = 'applied'");
     // The apply block must be reachable only from the finance_head branch.
     const financeHeadIdx = service.indexOf('effectiveRole === "finance_head"');
     const applyIdx = service.indexOf("status = 'applied'");
     expect(applyIdx).toBeGreaterThan(financeHeadIdx);
+  });
+
+  it("recomputes the whole line instead of adding to gross_amount alone", () => {
+    const service = read("src/modules/process-pnl/budget-topup.service.ts");
+    // The old apply wrote only these two columns, leaving base/tax/pnl_cost_amount stale —
+    // and pnl_cost_amount is what every P&L read uses, so an approved increase never reached
+    // the P&L at all. It also added a QUOTED amount to a GROSS column, which is short by the
+    // tax on the increase under exclusive GST.
+    expect(service).not.toContain("gross_amount = gross_amount + ?");
+    expect(service).not.toContain("quantity = quantity + ?");
+    // Reuses the one function that produced every other amount on the line.
+    expect(service).toContain("calculateBudgetLine");
+    for (const column of [
+      "base_amount = ?", "tax_amount = ?", "gross_amount = ?",
+      "recoverable_tax_amount = ?", "pnl_cost_amount = ?",
+      "cgst_amount = ?", "sgst_amount = ?", "igst_amount = ?",
+    ]) {
+      expect(service, `${column} must be rewritten when a top-up is applied`).toContain(column);
+    }
+  });
+
+  it("re-sums the header totals from the lines rather than incrementing them", () => {
+    const service = read("src/modules/process-pnl/budget-topup.service.ts");
+    expect(service).toContain("h.gross_budget_amount = (");
+    expect(service).toContain("h.pnl_budget_amount = (");
+    expect(service).toContain("SUM(l.pnl_cost_amount)");
   });
 
   it("exports lockActiveBudgetLine from budget-consumption.service.ts for reuse", () => {
