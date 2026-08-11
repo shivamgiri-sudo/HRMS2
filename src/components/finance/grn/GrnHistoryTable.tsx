@@ -40,6 +40,7 @@ type GrnHistoryRow = {
   finance_head_reviewed_at?: string | null;
   finance_head_reviewed_by_name?: string | null;
   rejection_reason?: string | null;
+  source_type?: 'new' | 'legacy' | null;
 };
 
 /** Longer than the redesign mock's six chips on purpose: every entry past "Rejected" is a real
@@ -77,13 +78,15 @@ function StageCell({ name, at, reachable }: { name?: string | null; at?: string 
 export function GrnHistoryTable() {
   const [status, setStatus] = useState<(typeof STATUS_TABS)[number][0]>("_all");
   const [search, setSearch] = useState("");
+  const [source, setSource] = useState<"new" | "legacy" | "all">("new");
 
   const listQuery = useQuery({
-    queryKey: ["grn-history", status, search],
+    queryKey: ["grn-history", status, search, source],
     queryFn: async () => {
       const params = new URLSearchParams({ limit: "100" });
       if (status !== "_all") params.set("status", status);
       if (search.trim()) params.set("search", search.trim());
+      params.set("source", source);
       const response = await hrmsApi.get<any>(`/api/finance/grns?${params}`);
       return (response?.data ?? response?.rows ?? []) as GrnHistoryRow[];
     },
@@ -106,6 +109,15 @@ export function GrnHistoryTable() {
         <GrnIconButton onClick={() => void listQuery.refetch()} title="Refresh" aria-label="Refresh">
           <RefreshCw className={`h-3.5 w-3.5 ${listQuery.isFetching ? "animate-spin" : ""}`} />
         </GrnIconButton>
+      </div>
+
+      <div className="flex items-center gap-2 px-[16px] pb-2 pt-1">
+        <span className="text-xs font-medium text-grn-ink-soft">Source:</span>
+        {(["new", "legacy", "all"] as const).map((s) => (
+          <GrnChip key={s} active={source === s} onClick={() => setSource(s)}>
+            {s === "new" ? "New HRMS" : s === "legacy" ? "Legacy (db_bill)" : "All"}
+          </GrnChip>
+        ))}
       </div>
 
       <div className="flex flex-wrap gap-1.5 border-b border-grn-line-soft px-4 pb-3">
@@ -142,7 +154,14 @@ export function GrnHistoryTable() {
               <tr key={row.id} className={GRN_TR}>
                 <GrnTd>
                   <p className="font-grn-mono font-bold text-grn-brand">{row.grn_number}</p>
-                  <GrnCellSub className="uppercase tracking-[0.05em]">{row.grn_type}</GrnCellSub>
+                  <GrnCellSub className="uppercase tracking-[0.05em]">
+                    {row.grn_type}
+                    {row.source_type === "legacy" && (
+                      <span className="ml-1 rounded bg-amber-100 px-1 py-0.5 text-[10px] font-semibold text-amber-700">
+                        Legacy
+                      </span>
+                    )}
+                  </GrnCellSub>
                 </GrnTd>
                 <GrnTd>
                   <p>{row.branch_name ?? "—"}</p>
