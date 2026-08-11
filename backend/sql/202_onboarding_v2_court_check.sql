@@ -2,6 +2,45 @@
 -- Adds step-resume index, court/address/education check columns, recruiter feedback fields
 -- Also adds legacy masjclrentry fields missing from V1 profile table
 
+CREATE TABLE IF NOT EXISTS candidate_onboarding_experience (
+  id CHAR(36) NOT NULL DEFAULT (UUID()) PRIMARY KEY,
+  candidate_id CHAR(36) NOT NULL,
+  working_experience VARCHAR(50) NULL,
+  experience_year DECIMAL(4,1) NULL,
+  experience_doc_type VARCHAR(100) NULL,
+  experience_document_id CHAR(36) NULL,
+  employer_name VARCHAR(255) NULL,
+  from_date DATE NULL,
+  to_date DATE NULL,
+  last_designation VARCHAR(255) NULL,
+  last_ctc DECIMAL(12,2) NULL,
+  reporting_manager_name VARCHAR(200) NULL,
+  reporting_manager_mobile VARCHAR(30) NULL,
+  reason_for_leaving VARCHAR(500) NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY uq_candidate_onboarding_experience_candidate (candidate_id),
+  INDEX idx_candidate_onboarding_experience_candidate (candidate_id)
+);
+
+CREATE TABLE IF NOT EXISTS candidate_onboarding_qualification (
+  id CHAR(36) NOT NULL DEFAULT (UUID()) PRIMARY KEY,
+  candidate_id CHAR(36) NOT NULL,
+  qualification VARCHAR(255) NULL,
+  specialization_course_name VARCHAR(255) NULL,
+  passed_out_year INT NULL,
+  passed_out_state VARCHAR(100) NULL,
+  passed_out_city VARCHAR(100) NULL,
+  passed_out_percentage DECIMAL(5,2) NULL,
+  document_id CHAR(36) NULL,
+  institution_name VARCHAR(200) NULL,
+  roll_number VARCHAR(100) NULL,
+  board_type VARCHAR(30) NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  INDEX idx_candidate_onboarding_qualification_candidate (candidate_id)
+);
+
 DELIMITER $$
 
 -- 1. candidate_onboarding_profile: last visited section for refresh-resume
