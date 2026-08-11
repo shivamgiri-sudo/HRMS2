@@ -1702,8 +1702,13 @@ Reason:`
                 <BudgetTopupPanel
                   branchId={branchId}
                   period={period}
-                  canCreate
-                  canReview={Boolean(capabilities?.canReviewBranchStage || capabilities?.canReviewFinanceStage)}
+                  /* Mirrors TOPUP_CREATE_ROLES in process-pnl.routes.ts exactly:
+                     super_admin/admin/branch_admin via canCreate, branch_head via
+                     canReviewBranchStage. This was hardcoded true, so finance_head and
+                     accounts_head saw a "Request increase" button whose POST always 403'd. */
+                  canCreate={Boolean(capabilities?.canCreate || capabilities?.canReviewBranchStage)}
+                  canReviewBranchStage={Boolean(capabilities?.canReviewBranchStage)}
+                  canReviewFinanceStage={Boolean(capabilities?.canReviewFinanceStage)}
                   presetLineId={topupPresetLineId || null}
                   onConsumedPreset={() => setTopupPresetLineId("")}
                 />

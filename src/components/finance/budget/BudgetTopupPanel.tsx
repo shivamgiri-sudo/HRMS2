@@ -35,6 +35,11 @@ type BudgetTopupRequest = {
   created_at: string;
 };
 
+/** A row from GET /pnl/budget-lines/available. The headroom column is `available_gross_amount`
+ *  — that is the alias branchBudgetService.availableLines() gives it. Reading it as
+ *  `available_amount` (the name vendor-expense-mapping.service.ts uses for its own, unrelated
+ *  aggregate) is not a type error on an untyped JSON row: it just printed "available ₹0.00"
+ *  against every line, so a fully funded budget looked like an empty one. */
 type AvailableLine = {
   id: string;
   head: string;
@@ -42,7 +47,7 @@ type AvailableLine = {
   item_name: string;
   unit_rate: number;
   available_quantity: number;
-  available_amount: number;
+  available_gross_amount: number;
 };
 
 function money(value: unknown) {
@@ -62,14 +67,21 @@ export function BudgetTopupPanel({
   branchId,
   period,
   canCreate,
-  canReview,
+  canReviewBranchStage,
+  canReviewFinanceStage,
   presetLineId,
   onConsumedPreset,
 }: {
   branchId: string;
   period: string;
   canCreate: boolean;
-  canReview: boolean;
+  /** Review authority is per-stage, not one flag. The backend derives the reviewer role from
+   *  the row's own status (resolveFinanceStageRole, workflow "grn"), so a single canReview
+   *  boolean offered a finance_head an Approve button on a 'submitted' row that could only
+   *  ever come back "The current grn stage requires the branch_head role". Same shape as
+   *  canReview() for budgets in BranchBudgetManagementWorkspace. */
+  canReviewBranchStage: boolean;
+  canReviewFinanceStage: boolean;
   presetLineId?: string | null;
   onConsumedPreset?: () => void;
 }) {
@@ -148,7 +160,8 @@ export function BudgetTopupPanel({
   });
 
   const canReviewRow = (request: BudgetTopupRequest) =>
-    canReview && (request.status === "submitted" || request.status === "branch_head_approved");
+    (request.status === "submitted" && canReviewBranchStage) ||
+    (request.status === "branch_head_approved" && canReviewFinanceStage);
 
   return (
     <Card className="rounded-3xl border-slate-200 shadow-sm">
@@ -225,7 +238,7 @@ export function BudgetTopupPanel({
                 <SelectContent>
                   {lines.map((line) => (
                     <SelectItem key={line.id} value={line.id}>
-                      {line.head}{line.sub_head ? ` · ${line.sub_head}` : ""} — {line.item_name} (available {money(line.available_amount)})
+                      {line.head}{line.sub_head ? ` · ${line.sub_head}` : ""} — {line.item_name} (available {money(line.available_gross_amount)})
                     </SelectItem>
                   ))}
                 </SelectContent>
