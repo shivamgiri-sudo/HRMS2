@@ -609,6 +609,7 @@
     "ats_typing_passages_seed.sql",
     "review_only_cleanup_test_demo_hrms2.sql",
     "setup-dialer-kpi-metrics.sql",
-    "verify_ats_fix.sql"
+    "verify_ats_fix.sql",
+    "1127_scope_apr_eligibility_by_process.sql"
   ]
 }
