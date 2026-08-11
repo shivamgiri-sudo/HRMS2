@@ -31,4 +31,12 @@ describe("ATS complete journey migration", () => {
     expect(columnIndex).toBeGreaterThanOrEqual(0);
     expect(indexIndex).toBeGreaterThan(columnIndex);
   });
+
+  it("adds ats_queue_token branch_name before indexing it", () => {
+    const columnIndex = migration.search(/ALTER TABLE ats_queue_token ADD COLUMN branch_name VARCHAR\(255\) NULL/i);
+    const indexIndex = migration.search(/ALTER TABLE ats_queue_token ADD INDEX idx_ats_queue_branch \(branch_name\)/i);
+
+    expect(columnIndex).toBeGreaterThanOrEqual(0);
+    expect(indexIndex).toBeGreaterThan(columnIndex);
+  });
 });

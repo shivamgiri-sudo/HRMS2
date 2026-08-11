@@ -65,6 +65,7 @@ ALTER TABLE ats_queue_token ADD COLUMN estimated_wait_time INT NULL COMMENT 'Est
 ALTER TABLE ats_queue_token ADD COLUMN called_at DATETIME NULL COMMENT 'When candidate was called';
 ALTER TABLE ats_queue_token ADD COLUMN interview_started_at DATETIME NULL COMMENT 'Interview start time';
 ALTER TABLE ats_queue_token ADD COLUMN interview_completed_at DATETIME NULL COMMENT 'Interview completion time';
+ALTER TABLE ats_queue_token ADD COLUMN branch_name VARCHAR(255) NULL COMMENT 'Branch for this queue entry';
 
 -- ── 4. Create interview_result table ──────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS ats_interview_result (
