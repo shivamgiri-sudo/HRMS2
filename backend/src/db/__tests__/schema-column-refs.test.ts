@@ -131,14 +131,14 @@ describe("schema column references", () => {
   });
 
   it("skips writes it cannot attribute with certainty", () => {
-    const known = { t: ["a"] };
+    const known = { upload_batch_row: ["id"] };
     const bad = (sql: string) => brokenRefs(writeColumnRefs(sql), known);
     // dynamic column list
-    expect(bad("const q = `UPDATE t SET ${sets.join(',')} WHERE id = ?`;")).toEqual([]);
+    expect(bad("const q = `UPDATE upload_batch_row SET ${sets.join(',')} WHERE id = ?`;")).toEqual([]);
     // multi-table update: a SET column could belong to either side
-    expect(bad("const q = `UPDATE t JOIN u ON u.id = t.id SET zzz = ?`;")).toEqual([]);
+    expect(bad("const q = `UPDATE upload_batch_row JOIN u ON u.id = upload_batch_row.id SET zzz = ?`;")).toEqual([]);
     // qualified assignment
-    expect(bad("const q = `UPDATE t SET t.zzz = ?`;")).toEqual([]);
+    expect(bad("const q = `UPDATE upload_batch_row SET upload_batch_row.zzz = ?`;")).toEqual([]);
   });
 
   // --- the snapshot ------------------------------------------------------

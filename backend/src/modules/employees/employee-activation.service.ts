@@ -78,15 +78,31 @@ export async function activateEmployee(
     [employeeId]
   );
 
-  // Write lifecycle event
+  // Write lifecycle event.
+  //
+  // Every column this named was wrong, and the whole statement therefore threw
+  // ER_BAD_FIELD_ERROR on every activation: employee_lifecycle_event has no
+  // from_status, no to_status and no actor_user_id. It carries old_value_json,
+  // new_value_json and initiated_by. event_type is an ENUM that has no
+  // 'ACTIVATION' member either - an activation is a 'status_change'.
+  //
+  // The UPDATE above commits first and there is no transaction around the two,
+  // so an employee was left correctly activated while activateEmployee() threw:
+  // the daily job counted them as an error rather than as activated, and the
+  // "HRMS access created" SMS below was never reached. The table has 0 rows,
+  // which is the whole history of this feature.
   await db.execute(
     `INSERT INTO employee_lifecycle_event
-       (id, employee_id, event_type, from_status, to_status, actor_user_id, remarks, created_at)
-     VALUES (?, ?, 'ACTIVATION', ?, 'active', ?, ?, NOW())`,
+       (id, employee_id, event_type, effective_date, old_value_json, new_value_json, initiated_by, remarks)
+     VALUES (?, ?, 'status_change', CURDATE(), ?, ?, ?, ?)`,
     [
       randomUUID(),
       employeeId,
-      emp.employment_status ?? 'preboarding',
+      JSON.stringify({
+        employment_status: emp.employment_status ?? null,
+        active_status: 0,
+      }),
+      JSON.stringify({ employment_status: 'Active', active_status: 1 }),
       actorUserId ?? 'system',
       reason,
     ]

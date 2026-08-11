@@ -67,11 +67,6 @@
     "upload_batch.imported_at",
     "upload_batch.imported_by"
   ],
-  "modules/employees/employee-activation.service.ts": [
-    "employee_lifecycle_event.actor_user_id",
-    "employee_lifecycle_event.from_status",
-    "employee_lifecycle_event.to_status"
-  ],
   "modules/employees/employee.documents.routes.ts": [
     "employee_documents.updated_at"
   ],

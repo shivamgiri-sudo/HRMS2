@@ -34,12 +34,38 @@ const TABLE_RE = /\b(?:FROM|JOIN|UPDATE|INTO)\s+([a-z_][a-z0-9_]*)\s+(?:AS\s+)?(
 const REF_RE = /\b([a-z][a-z0-9_]{0,4})\.([a-z_][a-z0-9_]*)\b(?!\s*\()/g;
 const SQL_VERB_RE = /\b(SELECT|INSERT|UPDATE|DELETE)\b/i;
 
+
+/**
+ * Remove JS comments before looking for SQL.
+ *
+ * A doc comment that quotes SQL in backticks is indistinguishable from a
+ * template literal to a regex, so prose describing a bug gets scanned as if it
+ * were the bug. That produced three false positives in one session - a JSDoc
+ * saying `UPDATE t SET a = ?` registered table `t`, and an explanation of a
+ * fixed defect kept the defect alive in the baseline. Documentation should be
+ * free to name the thing it is documenting.
+ */
+function stripComments(source: string): string {
+  return source
+    .replace(/\/\*[\s\S]*?\*\//g, " ")
+    .split("\n")
+    .map((line) => {
+      const i = line.indexOf("//");
+      if (i === -1) return line;
+      // only strip when the // is not inside a quoted string on that line
+      const before = line.slice(0, i);
+      const quotes = (before.match(/["'`]/g) ?? []).length;
+      return quotes % 2 === 0 ? before : line;
+    })
+    .join("\n");
+}
+
 /** Extract every alias-qualified column reference this scanner can attribute with confidence. */
 export function columnRefsIn(source: string): ColumnRef[] {
   const out: ColumnRef[] = [];
   const seen = new Set<string>();
 
-  for (const literal of source.match(/`[^`]*`/g) ?? []) {
+  for (const literal of stripComments(source).match(/`[^`]*`/g) ?? []) {
     if (!SQL_VERB_RE.test(literal)) continue;
 
     for (const statement of literal.split(/(?=\bSELECT\b)/i)) {
@@ -109,7 +135,7 @@ const WRITE_TARGET_RES = [
 
 export function writeTargetsIn(source: string): string[] {
   const out = new Set<string>();
-  for (const literal of source.match(/`[^`]*`/g) ?? []) {
+  for (const literal of stripComments(source).match(/`[^`]*`/g) ?? []) {
     if (!SQL_VERB_RE.test(literal)) continue;
     const body = literal.replace(/--[^\n]*/g, "");
     for (const re of WRITE_TARGET_RES) {
@@ -167,7 +193,7 @@ export function writeColumnRefs(source: string): ColumnRef[] {
     out.push({ table, column });
   };
 
-  for (const literal of source.match(/`[^`]*`/g) ?? []) {
+  for (const literal of stripComments(source).match(/`[^`]*`/g) ?? []) {
     if (!SQL_VERB_RE.test(literal)) continue;
     const body = literal.replace(/--[^\n]*/g, "");
 
