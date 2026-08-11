@@ -2,6 +2,7 @@ import { db } from '../../db/mysql.js';
 import { getPoolForKey } from '../external-db/external-db.service.js';
 import type { Pool } from 'mysql2/promise';
 import type { RowDataPacket } from 'mysql2';
+import { aprSourceReadBudgetMs, readAprSourceAggregates } from './performance-apr-source-reader.js';
 
 export type PreviewMetric = {
   metricCode: string;
@@ -56,6 +57,11 @@ type SourceRow = {
   total_aht?: number | string | null;
   quality_points?: number | string | null;
   quality_denominator?: number | string | null;
+};
+
+type SourceRowsResult = SourceRow[] | {
+  rows: SourceRow[];
+  errors?: string[];
 };
 
 type ConnectorStatus = {
@@ -180,14 +186,18 @@ function emptyPreview(key: keyof typeof CONNECTORS, status?: ConnectorStatus): S
 async function previewRows(
   key: keyof typeof CONNECTORS,
   statuses: Map<string, ConnectorStatus>,
-  query: (pool: Pool) => Promise<SourceRow[]>,
+  query: (pool: Pool) => Promise<SourceRowsResult>,
   metricsFor: (row: SourceRow) => PreviewMetric[],
+  timeoutMs = 10_000,
 ): Promise<SourcePreview> {
   const status = statuses.get(CONNECTORS[key]);
   const preview = emptyPreview(key, status);
   try {
     const pool = await getPoolForKey(CONNECTORS[key]) as Pool;
-    const rows = await withTimeout(query(pool), 10_000, key);
+    const result = await withTimeout(query(pool), timeoutMs, key);
+    const rows = Array.isArray(result) ? result : result.rows;
+    const queryErrors = Array.isArray(result) ? [] : result.errors ?? [];
+    preview.errors.push(...queryErrors);
     const employees = await employeeMapFor(rows);
     for (const row of rows) {
       const identifier = normalizeIdentifier(row.agent_user);
@@ -199,7 +209,7 @@ async function previewRows(
       preview.mappedRows += 1;
       preview.metrics.push(...metricsFor(row));
     }
-    preview.ok = true;
+    preview.ok = queryErrors.length === 0;
     preview.sourceRows = rows.length;
     preview.unmappedIdentifiers = [...new Set(preview.unmappedIdentifiers)].slice(0, 25);
     return preview;
@@ -215,18 +225,7 @@ export async function previewPerformanceSources(input: { date: string; yearMonth
   const bounds = monthBounds(yearMonth);
 
   const apr = await previewRows('apr', statuses, async (pool) => {
-    const [rows] = await pool.execute(
-      `SELECT UPPER(TRIM(user)) AS agent_user,
-              SUM(COALESCE(talk_sec, 0)) AS total_talk,
-              SUM(COALESCE(dispo_sec, 0)) AS total_dispo,
-              COUNT(*) AS total_calls,
-              COUNT(*) AS source_records
-         FROM vw_agent_log_all
-        WHERE event_time >= ? AND event_time < ?
-        GROUP BY UPPER(TRIM(user))`,
-      [input.date, nextDate(input.date)],
-    );
-    return rows as SourceRow[];
+    return readAprSourceAggregates(pool, input.date);
   }, (row) => {
     const calls = numberValue(row.total_calls);
     const talk = numberValue(row.total_talk);
@@ -238,7 +237,7 @@ export async function previewPerformanceSources(input: { date: string; yearMonth
       { metricCode: 'DIALS', value: calls, numerator: calls },
       { metricCode: 'ACW', value: round1(dispo / calls), numerator: dispo, denominator: calls },
     ];
-  });
+  }, aprSourceReadBudgetMs());
 
   const quality = await previewRows('quality', statuses, async (pool) => {
     const [rows] = await pool.execute(

@@ -8,9 +8,18 @@
  * ── WHY ──────────────────────────────────────────────────────────────────────
  * employees_backup_20260711 is an orphaned one-off snapshot from 11 July 2026. No
  * code in backend/src or src references it. It holds a full SECOND plaintext copy of
- * 30,108 Aadhaar, 23,341 PAN, 28,660 bank accounts and 11,751 UAN — in a database
- * whose 3306 answers from the internet. Encrypting employees while this sits beside
- * it is false assurance: the same values are readable one table over.
+ * 30,108 Aadhaar, 23,341 PAN, 28,660 bank accounts, 11,751 UAN, 28,654 IFSC codes and
+ * 19,166 personal email addresses — 141,680 values in all, in a database whose 3306
+ * answers from the internet. Encrypting employees while this sits beside it is false
+ * assurance: the same values are readable one table over.
+ *
+ * ── WHAT THIS DOES NOT COVER ─────────────────────────────────────────────────
+ * zz_backup_ebd_acct_20260809 also holds 2,080 plaintext account numbers, and is
+ * deliberately NOT in scope. Measured 2026-08-10: only 49 of its 2,080 rows still match
+ * the live employee_bank_detail value, so the other 2,031 are the sole surviving record
+ * of what those accounts held before the 2026-08-09 bank recovery rewrote them. Clearing
+ * it would not remove a duplicate, it would destroy the rollback. That table needs
+ * encryption or a dated retention decision, not a scrub.
  *
  * ── WHY CLEARING COLUMNS RATHER THAN DROPPING THE TABLE ──────────────────────
  * Dropping would also discard the July snapshot of every other column, which may
@@ -43,7 +52,23 @@ const mysql = require("mysql2/promise");
 
 const APPLY = process.argv.includes("--apply");
 const TABLE = "employees_backup_20260711";
-const COLS = ["aadhaar_number", "pan_number", "bank_account_number", "uan_number"];
+/**
+ * ifsc_code and personal_email were missing from this list, leaving 47,820 of the table's
+ * 141,680 populated PII values in place — 28,654 IFSC codes beside the account numbers they
+ * route, and 19,166 personal email addresses, which DPDP treats as personal data in their own
+ * right. Re-measured 2026-08-10: ifsc_code is 28,654/28,654 identical to the live employees row
+ * and personal_email 19,161/19,166, with 0 rows orphaned from employees in either case. The
+ * per-row identity guard below still decides each row individually, so the 5 divergent emails
+ * are left in place rather than destroyed.
+ */
+const COLS = [
+  "aadhaar_number",
+  "pan_number",
+  "bank_account_number",
+  "uan_number",
+  "ifsc_code",
+  "personal_email",
+];
 
 const strip = (v) => String(v ?? "").trim().replace(/^["']|["']$/g, "");
 const conn = await mysql.createConnection({

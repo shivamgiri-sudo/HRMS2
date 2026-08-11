@@ -412,8 +412,12 @@ export async function verifyBankForCandidate(candidateId: string, input: { accou
     // Try to decrypt stored encrypted account number (no re-entry needed)
     if (!accountNo && bank.account_no_encrypted) {
       try {
-        const { decrypt } = await import("../../utils/encryption.js");
-        accountNo = decrypt(bank.account_no_encrypted);
+        // Format-aware: this column holds legacy AES-CBC values from the onboarding flow and
+        // canonical AES-GCM values from the DPDP backfill. utils/encryption.decrypt reads only
+        // the former and rejects the latter, which would land here as "account number missing"
+        // and force needless re-entry.
+        const { decryptPii } = await import("../../shared/piiCiphertext.js");
+        accountNo = decryptPii(bank.account_no_encrypted);
       } catch (e) {
         console.error("[BGV] Failed to decrypt account number:", (e as Error).message);
       }

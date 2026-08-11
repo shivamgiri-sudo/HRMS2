@@ -103,6 +103,13 @@ function insertedFacts(): ExecuteCall[] {
   return dbExecute.mock.calls.filter(([sql]: ExecuteCall) => sql.includes("INSERT INTO kpi_daily_actual"));
 }
 
+function mockAprPhysicalTables(rows: Array<Record<string, unknown>>) {
+  aprExecute.mockImplementation(async (sql: string) => {
+    if (!sql.includes("vicidial_agent_log_10_25")) return [[], []];
+    return [rows, []];
+  });
+}
+
 describe("kpi data source connector", () => {
   beforeEach(() => {
     dbExecute.mockReset();
@@ -115,34 +122,37 @@ describe("kpi data source connector", () => {
   });
 
   it("syncs APR from live dialer columns with weighted AHT and biometric fallback", async () => {
-    aprExecute.mockResolvedValueOnce([[
-      {
-        agent_user: "MAS1001",
-        total_talk: 600,
-        total_dispo: 120,
-        total_calls: 12,
-        source_records: 2,
-      },
-      {
-        agent_user: "BIO1002",
-        total_talk: 300,
-        total_dispo: 60,
-        total_calls: 6,
-        source_records: 1,
-      },
-      {
-        agent_user: "UNKNOWN",
-        total_talk: 90,
-        total_dispo: 10,
-        total_calls: 1,
-        source_records: 1,
-      },
-    ], []]);
+    aprExecute.mockImplementation(async (sql: string) => {
+      if (!sql.includes("vicidial_agent_log_10_25")) return [[], []];
+      return [[
+        {
+          agent_user: "MAS1001",
+          total_talk: 600,
+          total_dispo: 120,
+          total_calls: 12,
+          source_records: 2,
+        },
+        {
+          agent_user: "BIO1002",
+          total_talk: 300,
+          total_dispo: 60,
+          total_calls: 6,
+          source_records: 1,
+        },
+        {
+          agent_user: "UNKNOWN",
+          total_talk: 90,
+          total_dispo: 10,
+          total_calls: 1,
+          source_records: 1,
+        },
+      ], []];
+    });
 
     const result = await syncAprMetrics("2026-07-17");
 
     expect(result).toMatchObject({ synced: 2, skipped: 1, errors: [] });
-    expect(aprExecute.mock.calls[0][0]).toContain("vw_agent_log_all");
+    expect(aprExecute.mock.calls[0][0]).toContain("vicidial_agent_log_10_25");
     expect(aprExecute.mock.calls[0][0]).toContain("event_time >= ?");
     expect(aprExecute.mock.calls[0][0]).toContain("talk_sec");
     expect(aprExecute.mock.calls[0][0]).toContain("dispo_sec");
@@ -151,6 +161,26 @@ describe("kpi data source connector", () => {
     expect(facts[0][0]).toContain("numerator_value");
     expect(facts.map(([, params]) => params?.[3])).toContain(60);
     expect(facts.map(([, params]) => params?.[3])).toContain(12);
+  });
+
+  it("syncs APR facts from healthy dialer tables and reports a failed table", async () => {
+    aprExecute.mockImplementation(async (sql: string) => {
+      if (sql.includes("vicidial_agent_log_11_5")) {
+        throw new Error("Query execution was interrupted, maximum statement execution time exceeded");
+      }
+      if (sql.includes("vicidial_agent_log_10_25")) {
+        return [[
+          { agent_user: "MAS1001", total_talk: 600, total_dispo: 120, total_calls: 12, source_records: 2 },
+        ], []];
+      }
+      return [[], []];
+    });
+
+    const result = await syncAprMetrics("2026-07-17");
+
+    expect(result).toMatchObject({ synced: 1, skipped: 0 });
+    expect(result.errors[0]).toContain("vicidial_agent_log_11_5");
+    expect(insertedFacts()).toHaveLength(4);
   });
 
   it("syncs quality using weighted score and Mydashboards fatal definition", async () => {
@@ -352,9 +382,9 @@ describe("kpi daily actual scope attribution", () => {
     setupWithScope([
       { id: "emp-1001", employee_code: "MAS1001", biometric_code: "BIO1001", process_id: "proc-cs", branch_id: "branch-noida" },
     ]);
-    aprExecute.mockResolvedValueOnce([[
+    mockAprPhysicalTables([
       { agent_user: "MAS1001", total_talk: 600, total_dispo: 120, total_calls: 12, source_records: 2 },
-    ], []]);
+    ]);
 
     await syncAprMetrics("2026-07-31");
 
@@ -371,9 +401,9 @@ describe("kpi daily actual scope attribution", () => {
     setupWithScope([
       { id: "emp-1002", employee_code: "MAS1002", biometric_code: "BIO1002", process_id: null, branch_id: null },
     ]);
-    aprExecute.mockResolvedValueOnce([[
+    mockAprPhysicalTables([
       { agent_user: "MAS1002", total_talk: 300, total_dispo: 60, total_calls: 6, source_records: 1 },
-    ], []]);
+    ]);
 
     const result = await syncAprMetrics("2026-07-31");
 
@@ -396,9 +426,9 @@ describe("kpi daily actual scope attribution", () => {
       if (sql.includes("INSERT INTO kpi_daily_actual")) return [{ affectedRows: 1 }, []];
       return [[], []];
     });
-    aprExecute.mockResolvedValueOnce([[
+    mockAprPhysicalTables([
       { agent_user: "MAS1001", total_talk: 600, total_dispo: 120, total_calls: 12, source_records: 2 },
-    ], []]);
+    ]);
 
     await syncAprMetrics("2026-07-31");
 
