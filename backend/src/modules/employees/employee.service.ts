@@ -4,6 +4,7 @@ import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
 import { revokeSessionsForEmployee } from "../../shared/sessionRevocation.js";
+import { deprovisionEmployeeAccess } from "../../shared/employeeDeprovisioning.js";
 import type { Employee, PaginatedResult } from "./employee.types.js";
 import type { CreateEmployeeInput, EmployeeFilters, UpdateEmployeeInput } from "./employee.validation.js";
 import { provisionLmsIdentityForEmployee } from "../lms/lms-provisioning.service.js";
@@ -444,6 +445,21 @@ export const employeeService = {
         });
 
         await revokeSessionsForEmployee(id, "employment_status_set_inactive");
+
+        // Deactivating from the directory is how ~2,650 of the last 2,652
+        // departures were recorded, so the consequences of leaving cannot live
+        // only in the exit flow. LMS access and future leave are withdrawn here
+        // too. Deliberately NOT full & final: that is keyed to an exit_request
+        // and belongs to payroll, and manufacturing a settlement record from a
+        // profile edit would be worse than not having one.
+        const deprovision = await deprovisionEmployeeAccess(id, "employment_status_set_inactive");
+        if (deprovision.failures.length > 0) {
+          process.stderr.write(JSON.stringify({
+            level: "error", module: "employees", event: "DEPROVISION_INCOMPLETE",
+            employee_id: id, failures: deprovision.failures,
+            timestamp: new Date().toISOString(),
+          }) + "\\n");
+        }
       }
     }
 
@@ -505,6 +521,7 @@ export const employeeService = {
     // not the access token already issued — that stayed good for up to 24h. Cut
     // the live sessions too, so "deactivated" means access ends now.
     await revokeSessionsForEmployee(id, "employee_deactivated");
+    await deprovisionEmployeeAccess(id, "employee_deactivated");
   },
 
   // ── Org Chart tree endpoint ──────────────────────────────────────────────

@@ -1,0 +1,9 @@
+{
+  "extends": "./tsconfig.json",
+  "include": [
+    "src/shared/employeeDeprovisioning.ts",
+    "src/modules/employees/employee.service.ts",
+    "src/modules/exit/exit.service.ts",
+    "src/modules/employees/__tests__/employeeDeprovisioning.contract.test.ts"
+  ]
+}

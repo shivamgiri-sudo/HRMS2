@@ -9,6 +9,7 @@ import type { ExitRequest, ExitStats, PaginatedResult } from "./exit.types.js";
 import { createDefaultClearanceTasks, createExitHealthSnapshot } from "./exit-intelligence.service.js";
 import { notifyResignationSubmitted, notifyResignationDecision } from "./exit.notifications.js";
 import { revokeSessionsForEmployee } from "../../shared/sessionRevocation.js";
+import { deprovisionEmployeeAccess } from "../../shared/employeeDeprovisioning.js";
 
 // Singleton transporter — created once at module load, not per-call
 const mailer = nodemailer.createTransport({
@@ -312,15 +313,6 @@ export const exitService = {
         [id, employeeId, userId]
       ).catch((err: unknown) => logger.warn({ err }, '[exit] F&F record creation failed'));
 
-      // Cancel all pending/approved leave requests for the exiting employee
-      await db.execute(
-        `UPDATE leave_requests
-            SET status = 'cancelled', updated_at = NOW(),
-                cancellation_reason = 'Employee exited'
-          WHERE employee_id = ? AND status IN ('pending', 'approved')`,
-        [employeeId]
-      ).catch((err: unknown) => logger.warn({ err, employeeId }, '[exit] Leave cancellation failed'));
-
       // Nullify reporting_manager_id for direct reports so they are not orphaned
       await db.execute(
         `UPDATE employees
@@ -329,21 +321,25 @@ export const exitService = {
         [employeeId]
       ).catch((err: unknown) => logger.warn({ err, employeeId }, '[exit] Direct-report RM nullification failed'));
 
-      // Flag assigned assets for return — creates a return-pending task per asset
-      await db.execute(
-        `UPDATE employee_asset_assignment
-            SET return_status = 'return_pending', updated_at = NOW()
-          WHERE employee_id = ? AND return_status IS NULL`,
-        [employeeId]
-      ).catch((err: unknown) => logger.warn({ err, employeeId }, '[exit] Asset return flagging failed'));
-
-      // Revoke LMS access by marking the learner mapping as inactive
-      await db.execute(
-        `UPDATE lms_employee_mapping
-            SET active_status = 0, deprovisioned_at = NOW(), deprovisioned_reason = 'employee_exit'
-          WHERE employee_id = ? AND active_status = 1`,
-        [employeeId]
-      ).catch((err: unknown) => logger.warn({ err, employeeId }, '[exit] LMS deprovisioning failed'));
+      // Withdraw LMS access and future leave, and count kit still out on loan.
+      //
+      // Replaces three statements that named schema which does not exist
+      // (employee_asset_assignment, lms_employee_mapping.active_status,
+      // leave_requests), each wrapped in a .catch() that logged a warning and
+      // let the exit report success. Every exit silently skipped its own
+      // cleanup; 60 people who have left are still active LMS learners because
+      // of it. Failures now surface instead of being swallowed.
+      const deprovision = await deprovisionEmployeeAccess(employeeId, 'employee_exit');
+      logger.info(
+        { exitRequestId: id, employeeId, ...deprovision },
+        '[exit] Deprovisioning complete'
+      );
+      if (deprovision.failures.length > 0) {
+        logger.error(
+          { exitRequestId: id, employeeId, failures: deprovision.failures },
+          '[exit] Deprovisioning steps failed — access may persist'
+        );
+      }
 
       // Fire IT exit provisioning tasks — fire-and-forget, must not throw
       import('../it-provisioning/it-provisioning.service.js').then(({ dispatchExitProvisioningTasks }) => {
