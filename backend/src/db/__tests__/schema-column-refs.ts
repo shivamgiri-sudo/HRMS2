@@ -83,3 +83,52 @@ export function brokenRefs(
     return columns !== undefined && !columns.includes(r.column);
   });
 }
+
+/**
+ * Tables named as the target of a write.
+ *
+ * columnRefsIn() only yields alias-qualified columns, so it sees nothing at all
+ * in `UPDATE t SET ...`, `INSERT INTO t (...)` or `DELETE FROM t`. That blind
+ * spot is why the exit flow could write to `employee_asset_assignment` (no such
+ * table) and `leave_requests` (the table is `leave_request`) for months with a
+ * schema guard already running over the tree: all three defects were writes.
+ *
+ * Scope is deliberately narrow. Only these three shapes are matched, each of
+ * which is structurally unambiguous — `UPDATE x SET`, `INSERT INTO x (`,
+ * `DELETE FROM x`. A bare `FROM`/`JOIN` is not included: unaliased reads are
+ * far more common in prose inside template literals, and matching them produced
+ * 531 baseline entries of almost pure noise, which is a ratchet nobody can
+ * maintain. A write to a table that does not exist is also the case that fails
+ * silently and matters most.
+ */
+const WRITE_TARGET_RES = [
+  /\bUPDATE\s+([a-z_][a-z0-9_]*)\s+SET\b/gi,
+  /\bINSERT\s+(?:IGNORE\s+)?INTO\s+([a-z_][a-z0-9_]*)\s*[(]/gi,
+  /\bDELETE\s+FROM\s+([a-z_][a-z0-9_]*)\b/gi,
+];
+
+export function writeTargetsIn(source: string): string[] {
+  const out = new Set<string>();
+  for (const literal of source.match(/`[^`]*`/g) ?? []) {
+    if (!SQL_VERB_RE.test(literal)) continue;
+    const body = literal.replace(/--[^\n]*/g, "");
+    for (const re of WRITE_TARGET_RES) {
+      for (const m of body.matchAll(re)) out.add(m[1].toLowerCase());
+    }
+  }
+  return [...out].sort();
+}
+
+/**
+ * Write targets the database does not have.
+ *
+ * Reported separately from brokenRefs() and ratcheted against its own baseline,
+ * because a handful of these are legitimate (tables in another database, and
+ * scripts that create their own scratch tables).
+ */
+export function unknownWriteTargets(
+  source: string,
+  schema: Record<string, string[]>
+): string[] {
+  return writeTargetsIn(source).filter((t) => schema[t] === undefined);
+}

@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { readFileSync, writeFileSync, readdirSync, statSync } from "node:fs";
 import { resolve, dirname, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import { columnRefsIn, brokenRefs, type ColumnRef } from "./schema-column-refs.js";
+import { columnRefsIn, brokenRefs, unknownWriteTargets, type ColumnRef } from "./schema-column-refs.js";
 
 /**
  * Regenerate the baseline (same scanner as the assertions, so the two cannot drift):
@@ -19,6 +19,7 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const SRC_DIR = resolve(HERE, "..", "..");
 const SNAPSHOT = resolve(HERE, "..", "..", "..", "sql", "schema-snapshot.json");
 const BASELINE = resolve(HERE, "schema-column-refs.baseline.json");
+const TABLE_BASELINE = resolve(HERE, "schema-unknown-tables.baseline.json");
 
 type Snapshot = { tableCount: number; columnCount: number; tables: Record<string, string[]> };
 
@@ -99,6 +100,22 @@ describe("schema column references", () => {
     expect(columnRefsIn("const s = `hello ${dm.department_name} world`;")).toEqual([]);
   });
 
+
+  it("sees write targets the column scanner is blind to", () => {
+    const known = { leave_request: ["id"] };
+    // None of these yield a single column ref, which is how three broken
+    // statements survived in the exit flow.
+    expect(unknownWriteTargets("const q = `UPDATE leave_requests SET status = ?`;", known)).toEqual(["leave_requests"]);
+    expect(unknownWriteTargets("const q = `INSERT INTO leave_requests (id) VALUES (?)`;", known)).toEqual(["leave_requests"]);
+    expect(unknownWriteTargets("const q = `DELETE FROM leave_requests WHERE id = ?`;", known)).toEqual(["leave_requests"]);
+    expect(unknownWriteTargets("const q = `UPDATE leave_request SET status = ?`;", known)).toEqual([]);
+  });
+
+  it("does not treat prose in a template literal as a write", () => {
+    expect(unknownWriteTargets("const s = `update the leave_requests page`;", {})).toEqual([]);
+    expect(unknownWriteTargets("const s = `SELECT 1`;", {})).toEqual([]);
+  });
+
   // --- the snapshot ------------------------------------------------------
   it("ships a schema snapshot covering the whole database", () => {
     const snap = JSON.parse(readFileSync(SNAPSHOT, "utf8")) as Snapshot;
@@ -148,6 +165,63 @@ describe("schema column references", () => {
       `New broken column reference(s). The column does not exist in mas_hrms, so this query ` +
         `throws at runtime and whatever wraps it will report nothing — or a fabricated zero.\n` +
         `Check backend/sql/schema-snapshot.json for the real column name.\n` +
+        regressions.map((r) => `  - ${r}`).join("\n")
+    ).toEqual([]);
+  }, 60_000);
+
+
+  // --- the table ratchet -------------------------------------------------
+  /**
+   * The column ratchet above cannot see a query that names a table which does not
+   * exist at all — brokenRefs() skips unknown tables on purpose, because most of
+   * them are CTEs, derived-table aliases or tables in another database.
+   *
+   * That gap hid a real defect for months. exit.service's `exited` branch wrote to
+   * `employee_asset_assignment` (no such table) and `leave_requests` (the table is
+   * `leave_request`), both inside a .catch() that logged a warning and let the exit
+   * report success, so no exit ever revoked LMS access or cancelled leave.
+   *
+   * This baseline therefore contains genuine noise alongside genuine bugs, and that
+   * is fine: the job is to stop the list growing. A newly invented table name fails
+   * here even though the column guard cannot see it.
+   */
+  it("introduces no write to a table the database does not have", () => {
+    const snap = JSON.parse(readFileSync(SNAPSHOT, "utf8")) as Snapshot;
+
+    const found = new Map<string, string[]>();
+    for (const file of tsFilesUnder(SRC_DIR)) {
+      const tables = unknownWriteTargets(readFileSync(file, "utf8"), snap.tables);
+      if (tables.length) found.set(relative(SRC_DIR, file).split(sep).join("/"), tables);
+    }
+
+    if (WRITE_BASELINE) {
+      const out: Record<string, string[]> = {};
+      for (const [file, tables] of [...found].sort(([a], [b]) => a.localeCompare(b))) {
+        out[file] = tables;
+      }
+      writeFileSync(TABLE_BASELINE, JSON.stringify(out, null, 2) + "\n");
+      return;
+    }
+
+    const baseline: Record<string, string[]> = JSON.parse(readFileSync(TABLE_BASELINE, "utf8"));
+    const allowed = new Set<string>();
+    for (const [file, tables] of Object.entries(baseline)) {
+      for (const t of tables) allowed.add(`${file}::${t}`);
+    }
+
+    const regressions: string[] = [];
+    for (const [file, tables] of found) {
+      for (const t of tables) {
+        if (!allowed.has(`${file}::${t}`)) regressions.push(`${file}::${t}`);
+      }
+    }
+
+    expect(
+      regressions,
+      `Query names a table that is not in mas_hrms. If it is a CTE or a table in ` +
+        `another database, add it to schema-unknown-tables.baseline.json. If it is a ` +
+        `typo or a renamed table, the statement throws at runtime — and if it is ` +
+        `wrapped in a .catch(), it fails silently and the caller reports success.\n` +
         regressions.map((r) => `  - ${r}`).join("\n")
     ).toEqual([]);
   }, 60_000);

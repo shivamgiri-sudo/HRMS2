@@ -1,0 +1,53 @@
+{
+  "db/__tests__/schema-column-refs.test.ts": [
+    "leave_requests"
+  ],
+  "modules/ats/mock-digilocker.routes.ts": [
+    "ats_bgv_check"
+  ],
+  "modules/exit/ff.service.ts": [
+    "gratuity_calculation_audit"
+  ],
+  "modules/lms/lms-provisioning.service.ts": [
+    "trainee_master"
+  ],
+  "modules/lms/lms.routes.ts": [
+    "portal_sessions"
+  ],
+  "modules/mcnmeet/mcnmeet.cron.ts": [
+    "mcnmeet_meeting"
+  ],
+  "modules/mcnmeet/mcnmeet.service.ts": [
+    "mcnmeet_meeting",
+    "mcnmeet_meeting_audience",
+    "mcnmeet_meeting_event",
+    "mcnmeet_meeting_invitee"
+  ],
+  "modules/org-chart/org-chart.audit.ts": [
+    "org_chart_access_log"
+  ],
+  "modules/org-chart/org-chart.validation.ts": [
+    "org_chart_data_issue"
+  ],
+  "modules/payroll/payroll-statutory-filing.routes.ts": [
+    "statutory_filing_record"
+  ],
+  "modules/performance-feedback/quality-upload.service.ts": [
+    "quality_audit"
+  ],
+  "modules/portal/client.service.ts": [
+    "bulk_operation_jobs"
+  ],
+  "modules/portal/portal-permissions.service.ts": [
+    "portal_user_permissions"
+  ],
+  "modules/portal/portal.auth.service.ts": [
+    "portal_user_sessions"
+  ],
+  "modules/portal/portal.routes.ts": [
+    "kpi_process_assignment"
+  ],
+  "modules/sales-upload/sales-upload.service.ts": [
+    "db_masmis"
+  ]
+}

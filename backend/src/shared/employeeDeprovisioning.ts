@@ -13,18 +13,18 @@ export interface DeprovisionResult {
  * Withdraw the entitlements that outlive a departure: LMS access, future leave,
  * and a count of kit still out on loan.
  *
- * This existed inside exit.service's `exited` branch and **none of it worked.**
+ * This existed inside exit.service's exited branch and **none of it worked.**
  * All three statements named schema that does not exist, and each was wrapped in
- * a `.catch()` that logged a warning and let the exit report success:
+ * a .catch() that logged a warning and let the exit report success:
  *
- *   - `UPDATE employee_asset_assignment ... SET return_status` - no such table.
- *     The real one is `asset_assignment`, and it has no `return_status` column.
- *   - `UPDATE lms_employee_mapping SET active_status = 0, deprovisioned_at,
- *     deprovisioned_reason` - the column is `is_active`; the other two do not
+ *   - UPDATE employee_asset_assignment ... SET return_status - no such table.
+ *     The real one is asset_assignment, and it has no return_status column.
+ *   - UPDATE lms_employee_mapping SET active_status = 0, deprovisioned_at,
+ *     deprovisioned_reason - the column is is_active; the other two do not
  *     exist. Measured 2026-08-11: **60 people who have left are still active
  *     learners.**
- *   - `UPDATE leave_requests SET ... updated_at, cancellation_reason` - the
- *     table is `leave_request` (singular) and has neither column. 2,185
+ *   - UPDATE leave_requests SET ... updated_at, cancellation_reason - the
+ *     table is leave_request (singular) and has neither column. 2,185
  *     pending/approved rows are held by people who have already left.
  *
  * So every exit silently skipped its own cleanup. Failures are collected and
@@ -99,7 +99,7 @@ export async function deprovisionEmployeeAccess(
 
   // Assets are counted, not mutated.
   //
-  // `asset_assignment` records a return with `returned_date`/`return_condition`
+  // asset_assignment records a return with returned_date/return_condition
   // and has no "return pending" flag. Writing a returned_date would assert the
   // kit is back when nobody has seen it, so this reports the number still out
   // and leaves the record honest. Flagging properly needs a schema change, which
