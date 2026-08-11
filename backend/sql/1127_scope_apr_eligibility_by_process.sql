@@ -153,7 +153,13 @@ FROM (
   UNION ALL SELECT '7957720b-5e88-11f1-adb1-00155d0ab410',        '7782964a-5e88-11f1-adb1-00155d0ab410',        'exec-field',         'EXECUTIVE - FIELD'
   UNION ALL SELECT '7975e39c-5e88-11f1-adb1-00155d0ab410',        '7782964a-5e88-11f1-adb1-00155d0ab410',        'exec-voice',         'EXECUTIVE - VOICE'
 ) d
-CROSS JOIN (
+-- Comma join, not CROSS JOIN, and this is load-bearing. MySQL's CROSS JOIN accepts an
+-- ON clause (it is a synonym for INNER JOIN), so with a JOIN pending the parser reads
+-- the trailing "ON DUPLICATE KEY UPDATE" as that join's ON condition and fails at KEY:
+--   "check the manual ... near 'KEY UPDATE active_status = 1 ...'"
+-- A comma join takes no ON, so the ON DUPLICATE clause binds to the INSERT as intended.
+-- The result set is identical; only the parse differs.
+, (
             SELECT 'b0afc80e-6969-11f1-adb1-00155d0ab410' AS pid, 'IDAM Natural Wellness'   AS pname
   UNION ALL SELECT '05150ba3-67ba-11f1-adb1-00155d0ab410',        'Neemans Private Limited'
   UNION ALL SELECT 'b0b5eb22-6969-11f1-adb1-00155d0ab410',        'Guardian Healthcare'
