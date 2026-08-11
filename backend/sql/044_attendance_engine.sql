@@ -35,7 +35,7 @@ CREATE TABLE IF NOT EXISTS attendance_rule_config (
   FOREIGN KEY (designation_id) REFERENCES designation_master(id) ON DELETE SET NULL,
   FOREIGN KEY (process_id)     REFERENCES process_master(id)     ON DELETE SET NULL,
   FOREIGN KEY (branch_id)      REFERENCES branch_master(id)      ON DELETE SET NULL
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB;
 
 -- =====================================================
 -- 2. ATTENDANCE DAILY RECORD
@@ -73,7 +73,7 @@ CREATE TABLE IF NOT EXISTS attendance_daily_record (
   FOREIGN KEY (branch_id)         REFERENCES branch_master(id)          ON DELETE SET NULL,
   FOREIGN KEY (rule_config_id)    REFERENCES attendance_rule_config(id) ON DELETE SET NULL,
   FOREIGN KEY (regularization_id) REFERENCES attendance_regularization(id) ON DELETE SET NULL
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB;
 
 -- =====================================================
 -- 3. SEED DATA
