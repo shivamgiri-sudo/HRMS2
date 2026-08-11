@@ -16,6 +16,10 @@ function currentPeriod() {
 }
 
 function currency(value: number | null | undefined, compact = false) {
+  // Most call sites are currency(Number(x)), and Number(undefined) is NaN — which `?? 0` does
+  // not catch, so a missing column formatted as the literal "₹NaN". A value that is absent is
+  // still rendered as ₹0 (unchanged); only a non-numeric one is reported as unknown.
+  if (value != null && !Number.isFinite(value)) return "-";
   return new Intl.NumberFormat("en-IN", {
     style: "currency",
     currency: "INR",
@@ -34,8 +38,10 @@ function percent(value: number | null | undefined) {
 
 function date(value: string | null | undefined) {
   if (!value) return "Not available";
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) return value;
+  // MySQL hands back "YYYY-MM-DD HH:MM:SS", which Safari refuses — new Date() returns Invalid
+  // Date and the raw string was rendered instead. Same normalisation grn-format.ts already does.
+  const parsed = new Date(String(value).replace(" ", "T"));
+  if (Number.isNaN(parsed.getTime())) return String(value);
   return parsed.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
 }
 
@@ -370,14 +376,26 @@ export default function ProcessPnlDetailPage() {
               <section className="rounded-lg border p-3">
                 <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Client invoice register</h3>
                 {revenueQuery.isLoading ? <Skeleton className="h-48 rounded-lg" /> : (
+                  /* Columns are the ones billing_invoice actually returns (see getRevenue in
+                     process-pnl.service.ts). This table used to ask for invoice_number,
+                     invoice_date and due_date — none of which that SELECT emits — so the
+                     Invoice column showed "-" and both date columns read "Not available" on
+                     every row, which looks like missing data rather than a wrong key. There is
+                     no due-date column on billing_invoice at all; Sent and Paid are the real
+                     lifecycle stamps, so they take its place rather than inventing one. */
                   <DataTable
                     columns={[
-                      { key: "invoice_number", label: "Invoice" },
-                      { key: "invoice_date", label: "Date", formatter: (value) => date(value) },
+                      { key: "invoice_ref", label: "Invoice" },
+                      {
+                        key: "period_from",
+                        label: "Billing period",
+                        formatter: (value, row) => `${date(value)} → ${date(row.period_to)}`,
+                      },
                       { key: "status", label: "Status" },
                       { key: "net_amount", label: "Net amount", align: "right", formatter: (value) => currency(Number(value)) },
                       { key: "adjustments", label: "Adjustments", align: "right", formatter: (value) => currency(Number(value)) },
-                      { key: "due_date", label: "Due date", formatter: (value) => date(value) },
+                      { key: "sent_at", label: "Sent", formatter: (value) => date(value) },
+                      { key: "paid_at", label: "Paid", formatter: (value) => date(value) },
                     ]}
                     rows={revenueQuery.data?.invoices ?? []}
                   />
@@ -435,16 +453,31 @@ export default function ProcessPnlDetailPage() {
 
               <section className="rounded-lg border p-3">
                 <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Employee-level loaded payroll</h3>
+                {/* getPeopleCost answers from salary_prep_line when a payroll run exists for the
+                    period, and otherwise falls back to employee_salary_assignment — which returns
+                    only a monthly loaded_cost, with no statutory breakdown at all. The four
+                    statutory columns were rendered unconditionally, so every row of a
+                    not-yet-run month read "₹NaN" four times. They are shown only when the
+                    source can actually supply them, and the fallback says what it is. */}
+                {peopleCostQuery.data?.source === "employee_salary_assignment" && (
+                  <p className="mb-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] text-amber-900">
+                    No payroll run exists for {period} yet. These are contracted figures from each
+                    employee's salary assignment (annual CTC ÷ 12), not processed payroll, so the
+                    statutory split is not available.
+                  </p>
+                )}
                 {peopleCostQuery.isLoading ? <Skeleton className="h-64 rounded-lg" /> : (
                   <DataTable
                     columns={[
                       { key: "employee_code", label: "Employee code" },
                       { key: "full_name", label: "Employee" },
                       { key: "designation_name", label: "Designation" },
-                      { key: "gross_salary", label: "Gross salary", align: "right", formatter: (value) => currency(Number(value)) },
-                      { key: "pf_employer", label: "Employer PF", align: "right", formatter: (value) => currency(Number(value)) },
-                      { key: "esic_employer", label: "Employer ESIC", align: "right", formatter: (value) => currency(Number(value)) },
-                      { key: "gratuity", label: "Gratuity", align: "right", formatter: (value) => currency(Number(value)) },
+                      ...(peopleCostQuery.data?.source === "salary_prep_line" ? [
+                        { key: "gross_salary", label: "Gross salary", align: "right" as const, formatter: (value: unknown) => currency(Number(value)) },
+                        { key: "pf_employer", label: "Employer PF", align: "right" as const, formatter: (value: unknown) => currency(Number(value)) },
+                        { key: "esic_employer", label: "Employer ESIC", align: "right" as const, formatter: (value: unknown) => currency(Number(value)) },
+                        { key: "gratuity", label: "Gratuity", align: "right" as const, formatter: (value: unknown) => currency(Number(value)) },
+                      ] : []),
                       { key: "loaded_cost", label: "Loaded cost", align: "right", formatter: (value) => currency(Number(value)) },
                     ]}
                     rows={peopleCostQuery.data?.employees ?? []}

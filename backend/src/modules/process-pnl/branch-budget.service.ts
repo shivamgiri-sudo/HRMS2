@@ -861,10 +861,15 @@ export const branchBudgetService = {
     // Per head/sub-head correction notes raised by a reviewer sending the budget back. Ordered
     // newest-first so the branch admin reads the current round before earlier history.
     const [corrections] = await db.execute<RowDataPacket[]>(
+      // Joined on employees.user_id, not employees.id. raised_by is written from actor(req).id
+      // (process-pnl.routes.ts), which is the auth_user id — a different value from the employee
+      // row's own id. On e.id the join could never match, so raised_by_name was always NULL and
+      // the UI silently fell back to the role label. Same idiom as grn.service.ts's
+      // "LEFT JOIN employees cb ON cb.user_id = g.created_by".
       `SELECT c.*,
               CONCAT_WS(' ', e.first_name, e.last_name) AS raised_by_name
          FROM finance_budget_line_correction c
-         LEFT JOIN employees e ON e.id = c.raised_by
+         LEFT JOIN employees e ON e.user_id = c.raised_by
         WHERE c.budget_id = ?
         ORDER BY c.raised_at DESC, c.id`,
       [id]

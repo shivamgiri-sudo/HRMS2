@@ -154,7 +154,16 @@ export function BudgetTopupPanel({
     onSuccess: (_data, variables) => {
       toast.success(variables.decision === "approve" ? "Top-up advanced" : "Top-up rejected");
       queryClient.invalidateQueries({ queryKey: ["budget-topups"] });
+      // A finance_head approval does not just move a status: it runs
+      // UPDATE finance_budget_line SET gross_amount = gross_amount + ?, quantity = quantity + ?
+      // (budget-topup.service.ts). Every cached view of that line is now wrong — including the
+      // GRN form's own headroom, which is what the raiser came here to unblock. Invalidating
+      // only the queue and the budget detail left them still reading the pre-top-up ceiling
+      // until a hard refresh, so the GRN stayed blocked by a number that had already changed.
       queryClient.invalidateQueries({ queryKey: ["branch-budget-detail"] });
+      queryClient.invalidateQueries({ queryKey: ["branch-budgets"] });
+      queryClient.invalidateQueries({ queryKey: ["budget-lines-available-for-topup"] });
+      queryClient.invalidateQueries({ queryKey: ["available-budget-lines"] });
     },
     onError: (error: Error) => toast.error(error.message || "Review failed"),
   });

@@ -162,9 +162,13 @@ export function GrnBudgetImportButton({
 
       // The GRN form only offers *approved* lines, so nothing appears here until this draft is
       // approved — but refresh anyway so the branch/period budget views are not stale.
+      // "branch-budget-allocations" was invalidated here and is not a key any query uses — the
+      // real ones are branch-budget-detail (the lines this import just wrote) and
+      // available-budget-lines (what the GRN form offers once they are approved).
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["branch-budgets"] }),
-        queryClient.invalidateQueries({ queryKey: ["branch-budget-allocations"] }),
+        queryClient.invalidateQueries({ queryKey: ["branch-budget-detail"] }),
+        queryClient.invalidateQueries({ queryKey: ["available-budget-lines"] }),
       ]);
       // Close instead of letting the dialog advance to its own result step: that step's copy
       // ends "nothing is saved yet", which is true on the Branch Budget page and false here.

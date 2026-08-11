@@ -7,7 +7,7 @@ import {
   Target, TrendingUp, Upload, User, UserMinus, UserPlus, Users, Users2, Wallet,
   Zap, DollarSign, ShoppingCart, LayoutDashboard, Crown, Receipt, CheckCircle,
   Plus, Send, Lock, Shield, ShieldAlert, PenSquare, Eye, UsersRound, RotateCcw, Mail, Share2,
-  Video, PenLine, Workflow
+  Video, PenLine, Workflow, Layers3
 } from "lucide-react";
 import type { NavGroup } from "./SidebarNav";
 
@@ -336,12 +336,20 @@ export const navGroups: NavGroup[] = [
           { label: "Process P&L",             href: "/finance/process-pnl",              icon: ic(BarChart3),    roles: ["admin","finance","super_admin","ceo","coo","finance_head","accounts_head","payroll_head"], description: "Profitability command centre" },
           { label: "P&L Configuration",       href: "/finance/process-pnl/configuration", icon: ic(Settings2),   roles: ["admin","finance","super_admin","ceo","coo","finance_head","accounts_head","payroll_head"], description: "Contracts, plans and rates" },
           { label: "P&L Period Close",        href: "/finance/process-pnl/period-close",  icon: ic(CheckCircle), roles: ["admin","finance","super_admin","ceo","coo","finance_head","accounts_head","payroll_head"], description: "Signoff and lock" },
+          // Had a route, a page, a FINANCE_PNL_LOBS catalogue row and grants, but no entry here —
+          // reachable only by typing the URL or via one link buried in the configuration centre.
+          { label: "LOB Management",          href: "/finance/process-pnl/lobs",          icon: ic(Layers3),     roles: ["admin","finance","super_admin","ceo","coo","finance_head","accounts_head","payroll_head"], description: "Per-LOB seats, rates and delivery under a process" },
           { label: "Branch Budget",           href: "/finance/branch-budget",            icon: ic(Wallet),       roles: ["admin","finance","super_admin","finance_head","accounts_head","branch_head","branch_admin"], description: "Monthly branch budgets and approval" },
           { label: "Budget Consolidation",    href: "/finance/budget-consolidation",     icon: ic(Building2),    roles: ["admin","super_admin","ceo","coo","finance_head","accounts_head"], description: "Company-wide budget rollup across all branches" },
           { label: "Cost Centres",            href: "/finance/cost-centres",             icon: ic(Building2),    roles: ["admin","super_admin","finance","finance_head","accounts_head","branch_head","branch_admin"], description: "Cost centre creation and approval workflow" },
           { label: "Billability & Seat Cost", href: "/finance/billability",              icon: ic(Receipt),      roles: ["super_admin","finance","payroll_head","payroll_branch"], pageCode: "FINANCE_BILLABILITY_SEAT_COST", description: "Which roles the client pays for, seat rates, and support cost splits" },
           { label: "Salary Voucher", href: "/finance/salary-voucher", icon: ic(Receipt), roles: ["super_admin","finance_head","payroll_hr"], pageCode: "FINANCE_SALARY_VOUCHER", description: "The Tally journal a payroll run will post, per company and branch" },
-          { label: "GRN Management",          href: "/finance/grn",                      icon: ic(ShoppingCart), roles: ["admin","finance","super_admin","finance_head","accounts_head","payroll_head"], description: "Goods receipt notes" },
+          // Roles mirror GRN_READ_ROLES (backend/src/modules/finance/grn.routes.ts). Two-way drift
+          // before: payroll_head was listed and is NOT in that list, so it opened a page whose
+          // list, summary and attribution calls all 403 — an empty shell; while branch_admin and
+          // branch_head, the roles that actually raise GRNs, were missing, leaving them no menu
+          // entry at all and only the "Open Smart GRN" button inside Branch Budget to find it by.
+          { label: "GRN Management",          href: "/finance/grn",                      icon: ic(ShoppingCart), roles: ["admin","finance","super_admin","finance_head","accounts_head","branch_head","branch_admin"], description: "Goods receipt notes" },
           { label: "Vendor Payments",         href: "/finance/vendor-payment-tracking",  icon: ic(DollarSign),   roles: ["admin","finance","super_admin","finance_head","accounts_head","payroll_head"], description: "Vendor payment tracking" },
           { label: "Vendors", href: "/vendors", icon: ic(Users), roles: ["admin","super_admin","finance","manager"], description: "Vendor master" },
           { label: "Procurement", href: "/procurement", icon: ic(ShoppingCart), pageCode: "PROCUREMENT", description: "Procurement requests" },

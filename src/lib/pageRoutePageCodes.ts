@@ -62,6 +62,12 @@ export const PAGE_CODE_BY_ROUTE: Record<string, string> = {
   "/finance/process-pnl": "FINANCE_PROCESS_PNL",
   "/finance/process-pnl/lobs": "FINANCE_PNL_LOBS",
   "/finance/process-pnl/period-close": "FINANCE_PNL_PERIOD_CLOSE",
+  // Both routes carry these exact Gate codes (finance.routes.tsx) but were missing from this map,
+  // so getRoutePageCode() returned undefined for them and nav visibility silently stopped
+  // tracking the page-access grant — a role revoked from the code still saw the menu item and
+  // then met the Gate's denial page. That is the precise drift this map exists to prevent.
+  "/finance/process-pnl/configuration": "FINANCE_PNL_CONFIG",
+  "/finance/cost-centres": "FINANCE_COST_CENTRES",
   "/finance/vendor-payment-tracking": "FINANCE_VENDOR_PAYMENTS",
   "/quality/audit-forms": "QA_EVALUATION",
   "/expenses/new": "EXPENSE_CREATE",

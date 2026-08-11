@@ -89,6 +89,15 @@ export function usePnlReconciliation(period?: string) {
     staleTime: 60_000,
   });
 
+  /**
+   * Recalculate, sign off and lock all move the numbers the whole P&L surface reads, so every
+   * cached view of them has to go — not just this page's own.
+   *
+   * bpo-process-pnl, pnl-statement and budget-consolidation were missing. All three carry
+   * staleTime: 60_000, so after a Recalculate the Process P&L KPI strip and the consolidation
+   * rollup kept serving pre-recalculation figures for a full minute, with nothing on screen to
+   * say they were stale — the worst kind of wrong number, because it looks settled.
+   */
   const invalidate = async () => {
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: ["pnl-period-close"] }),
@@ -96,6 +105,9 @@ export function usePnlReconciliation(period?: string) {
       queryClient.invalidateQueries({ queryKey: ["pnl-periods"] }),
       queryClient.invalidateQueries({ queryKey: ["process-pnl-summary"] }),
       queryClient.invalidateQueries({ queryKey: ["process-pnl-processes"] }),
+      queryClient.invalidateQueries({ queryKey: ["bpo-process-pnl"] }),
+      queryClient.invalidateQueries({ queryKey: ["pnl-statement"] }),
+      queryClient.invalidateQueries({ queryKey: ["budget-consolidation"] }),
     ]);
   };
 
