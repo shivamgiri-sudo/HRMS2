@@ -1,0 +1,11 @@
+{
+  "extends": "./tsconfig.json",
+  "include": [
+    "src/shared/accountStatus.ts",
+    "src/shared/sessionRevocation.ts",
+    "src/middleware/authMiddleware.ts",
+    "src/modules/employees/employee.service.ts",
+    "src/modules/exit/exit.service.ts",
+    "src/__tests__/accountRevocation.contract.test.ts"
+  ]
+}

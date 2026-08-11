@@ -34,7 +34,13 @@ export const employeeController = {
   },
 
   async deactivateEmployee(req: Request, res: Response) {
-    await employeeService.deactivateEmployee(req.params.id, (req as any).authUser?.id ?? "system");
+    const reason = (req.body as { reason?: string } | undefined)?.reason
+      ?? (req.query.reason as string | undefined);
+    await employeeService.deactivateEmployee(
+      req.params.id,
+      (req as any).authUser?.id ?? "system",
+      reason
+    );
     res.status(204).send();
   },
 

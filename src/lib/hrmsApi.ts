@@ -175,6 +175,23 @@ async function request<T>(method: string, path: string, body?: unknown, timeoutM
 
   const payload = await parseResponse(res);
 
+  // The account behind this session has been deactivated or blocked. The refresh
+  // above cannot help — /api/auth/refresh rejects an inactive employee too — so
+  // without this the app just throws on every call and leaves a leaver staring at
+  // a broken screen with a dead session. Clear it and send them to the login page,
+  // where the message explains why.
+  //
+  // Deliberately keyed on the explicit ACCOUNT_DEACTIVATED code and not on 401
+  // alone: an ordinary expired token must keep its silent-refresh behaviour.
+  if (res.status === 401 && (payload as { code?: string } | null)?.code === "ACCOUNT_DEACTIVATED") {
+    localStorage.removeItem("hrms_access_token");
+    localStorage.removeItem("hrms_refresh_token");
+    localStorage.removeItem("hrms_demo_session");
+    if (!window.location.pathname.startsWith("/login")) {
+      window.location.assign("/login?reason=account_inactive");
+    }
+  }
+
   if (!res.ok) {
     throw buildApiError(res.status, payload, `HTTP ${res.status}`);
   }

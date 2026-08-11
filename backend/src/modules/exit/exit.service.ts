@@ -8,6 +8,7 @@ import { sendSMS } from "../communication/sms.helper.js";
 import type { ExitRequest, ExitStats, PaginatedResult } from "./exit.types.js";
 import { createDefaultClearanceTasks, createExitHealthSnapshot } from "./exit-intelligence.service.js";
 import { notifyResignationSubmitted, notifyResignationDecision } from "./exit.notifications.js";
+import { revokeSessionsForEmployee } from "../../shared/sessionRevocation.js";
 
 // Singleton transporter — created once at module load, not per-call
 const mailer = nodemailer.createTransport({
@@ -287,6 +288,18 @@ export const exitService = {
         logger.error({ err, exitRequestId: id }, '[exit] Employee status update failed');
         return null;
       });
+
+      // Sessions outlive the status change: the access token in the leaver's
+      // browser is valid for up to 24h after active_status goes to 0, and
+      // requireAuth had no reason to reject it. Revoke here so the exit takes
+      // effect at the same moment the record says it did.
+      const revoked = await revokeSessionsForEmployee(employeeId, 'employee_exit');
+      if (revoked.refreshTokensRevoked > 0 || revoked.deviceSessionsRevoked > 0) {
+        logger.info(
+          { exitRequestId: id, employeeId, ...revoked },
+          '[exit] Live sessions revoked for exited employee'
+        );
+      }
 
       // Create a pending F&F record so payroll team is alerted to process settlement
       await db.execute(

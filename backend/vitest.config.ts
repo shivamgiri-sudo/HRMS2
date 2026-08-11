@@ -7,6 +7,13 @@ export default defineConfig(({ mode }) => ({
     globals: true,
     include: ["tests/**/*.test.ts", "src/**/__tests__/**/*.test.ts", "scripts/**/*.test.ts"],
     setupFiles: ["./tests/setup.ts"],
+    // This backend suite is intentionally broad: it includes hundreds of DB,
+    // route, static contract, and worker tests. On Windows, the default file
+    // parallelism can fan out into dozens of fork workers; when an outer tool
+    // times out or the run is interrupted, those workers can be orphaned and
+    // make the next verification look like it is hanging. Run files serially so
+    // `npm test` is deterministic and exits cleanly on this project.
+    fileParallelism: false,
     // Vitest defaults to 5s per test. That is tuned for unit tests, and this suite has 13
     // guards that WALK THE WHOLE SOURCE TREE — schema-column-refs parses all 1,434 .ts files
     // under src/, ist-midnight-hour greps every source file, route-contract enumerates the

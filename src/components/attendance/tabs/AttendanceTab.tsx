@@ -1,7 +1,7 @@
 import { useState, useMemo } from "react";
 import { format, startOfMonth, addMonths, subMonths } from "date-fns";
 import { Calendar, Table, ChevronLeft, ChevronRight, Radio, Fingerprint } from "lucide-react";
-import { AttendanceCalendar } from "@/components/attendance/AttendanceCalendar";
+import { AttendanceCalendar, adrRecordsToAttendanceDays } from "@/components/attendance/AttendanceCalendar";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useAttendanceDailyRecords, useAttendanceSummary } from "@/hooks/useAttendanceHub";
 import { formatTime24 } from "@/lib/utils";
@@ -67,6 +67,21 @@ export function AttendanceTab({ employeeId }: Props) {
       ? allDailyRecords
       : allDailyRecords.filter(r => (r.source ?? "biometric") === sourceFilter),
     [allDailyRecords, sourceFilter]
+  );
+
+  /**
+   * The calendar renders this exact array rather than fetching its own month.
+   *
+   * It used to call /attendance-source and then query only that one store — live COSEC
+   * for biometric employees, the `apr` table for dialler ones — while this tab's table
+   * read `attendance_daily_record`. For an employee classified dialler who has no APR
+   * rows, the calendar asked the one source with nothing in it and rendered a blank
+   * month next to a table full of Present days. Feeding both views from one array makes
+   * them agree by construction, and makes the source chips below apply to both.
+   */
+  const calendarRecords = useMemo(
+    () => adrRecordsToAttendanceDays(dailyRecords),
+    [dailyRecords]
   );
 
   const { hasAPR, hasBiometric, hasMixedSources } = useMemo(() => {
@@ -198,11 +213,23 @@ export function AttendanceTab({ employeeId }: Props) {
       {/* Calendar or tabular view */}
       {viewMode === "calendar" ? (
         <div className="rounded-2xl border border-slate-200 bg-white p-4">
+          {/* Controlled: this tab owns the month. Previously the calendar was mounted
+              uncontrolled and rendered a second navigator of its own, so its arrows
+              moved the grid while this tab's month, the summary strip and the table
+              stayed on the old month. */}
           <AttendanceCalendar
-            key={monthStr}
             employeeId={employeeId}
-            initialMonth={currentMonth.getMonth()}
-            initialYear={currentMonth.getFullYear()}
+            month={currentMonth.getMonth()}
+            year={currentMonth.getFullYear()}
+            onMonthChange={(m, y) => setCurrentMonth(new Date(y, m, 1))}
+            hideNavigator
+            records={calendarRecords}
+            recordsLoading={dailyLoading}
+            sourceLabel={
+              sourceFilter === "biometric" ? "Biometric"
+              : sourceFilter === "dialler" ? "APR / Dialler"
+              : "All sources"
+            }
           />
         </div>
       ) : (

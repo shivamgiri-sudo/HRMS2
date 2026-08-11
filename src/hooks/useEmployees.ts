@@ -317,16 +317,19 @@ export function useBulkDeleteEmployees() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: async (employeeIds: string[]) => {
-      // Deactivate in parallel via backend API
+    mutationFn: async ({ employeeIds, reason }: { employeeIds: string[]; reason: string }) => {
+      // Despite the name this deactivates rather than deletes — the endpoint
+      // clears active_status and erases nothing. The reason is mandatory: this
+      // is the one UI path that has always genuinely revoked access, and it used
+      // to record neither who did it nor why.
       const errors: string[] = [];
 
       await Promise.all(
         employeeIds.map(async (id) => {
           try {
-            await hrmsApi.delete(`/api/employees/${id}`);
+            await hrmsApi.delete(`/api/employees/${id}`, { data: { reason } });
           } catch (err: unknown) {
-            errors.push(`Failed to delete employee ${id}: ${err instanceof Error ? err.message : "Unknown error"}`);
+            errors.push(`Failed to deactivate employee ${id}: ${err instanceof Error ? err.message : "Unknown error"}`);
           }
         })
       );
@@ -349,15 +352,53 @@ export function useBulkDeleteEmployees() {
   });
 }
 
+/**
+ * Bulk activate/deactivate from the employee directory.
+ *
+ * This sent `{ employment_status: "inactive" }`. The API takes camelCase
+ * `employmentStatus`, and its enum is capitalised — so Zod stripped the unknown
+ * key, the update touched no column, the request still returned 200, and the
+ * page announced "N employees set to inactive" while nothing had happened.
+ * Both the key and the casing are required for the call to do anything at all.
+ *
+ * Results are counted from what actually settled rather than from how many were
+ * requested, for the same reason: reporting the request count as the success
+ * count is how the original bug stayed invisible. Reactivating a deactivated
+ * employee is refused by the API (409) and shows up here as a failure, which is
+ * intended — reactivation goes through /employees/reactivation.
+ */
 export function useBulkUpdateEmployeeStatus() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: async ({ employeeIds, status }: { employeeIds: string[]; status: "active" | "inactive" }) => {
-      await Promise.all(
-        employeeIds.map((id) => hrmsApi.patch(`/api/employees/${id}`, { employment_status: status }))
+    mutationFn: async ({ employeeIds, status, reason }: {
+      employeeIds: string[];
+      status: "active" | "inactive";
+      reason?: string;
+    }) => {
+      const employmentStatus = status === "active" ? "Active" : "Inactive";
+
+      const settled = await Promise.allSettled(
+        employeeIds.map((id) =>
+          hrmsApi.patch(`/api/employees/${id}`, {
+            employmentStatus,
+            ...(status === "inactive" ? { deactivationReason: reason } : {}),
+          })
+        )
       );
-      return { updatedCount: employeeIds.length, status };
+
+      const failures = settled.flatMap((r) =>
+        r.status === "rejected"
+          ? [r.reason instanceof Error ? r.reason.message : String(r.reason)]
+          : []
+      );
+
+      return {
+        updatedCount: settled.length - failures.length,
+        failedCount: failures.length,
+        firstError: failures[0],
+        status,
+      };
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["employees"] });

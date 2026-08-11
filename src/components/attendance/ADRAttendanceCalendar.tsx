@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import { format } from "date-fns";
 import { hrmsApi } from "@/lib/hrmsApi";
+import { normalizeDate } from "@/components/attendance/AttendanceCalendar";
 import {
   Sheet,
   SheetContent,
@@ -362,7 +363,11 @@ export function ADRAttendanceCalendar({ employeeId, initialMonth, initialYear }:
         `/api/wfm/attendance/daily?${new URLSearchParams({ employeeId, fromDate, toDate, limit: "100" })}`
       );
       return (res.data || []).map((r: any): ADRDay => ({
-        date:             r.record_date ?? r.date ?? "",
+        // Keyed on a strict YYYY-MM-DD below, so normalize here rather than trusting
+        // the endpoint's raw shape — `record_date` is only a bare date string by
+        // virtue of the pool's `dateStrings: true`, and any serializer in between
+        // would turn it into an ISO datetime and miss every lookup for the month.
+        date:             normalizeDate(r.record_date ?? r.date ?? ""),
         status:           normalizeStatus(r.attendance_status ?? r.status),
         attendanceSource: r.attendance_source ?? null,
         diallerMinutes:   r.dialler_minutes != null ? Number(r.dialler_minutes) : null,

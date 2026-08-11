@@ -48,9 +48,19 @@ import { useSubmitRegularization, useSubmitLeaveRequest } from "@/hooks/useAtten
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
-type DayStatus = "present" | "absent" | "leave" | "holiday" | "weekend" | "half_day" | "unreconciled";
+type DayStatus =
+  | "present" | "absent" | "leave" | "holiday" | "weekend" | "half_day"
+  | "unreconciled"
+  /**
+   * A day the engine could not resolve to a punch pair. Distinct from `absent`:
+   * `missing_punch` is the second most common status in `attendance_daily_record`
+   * (2,903 rows in August 2026 alone), and collapsing it into `absent` painted
+   * unresolved days as confirmed absences.
+   */
+  | "missing_punch"
+  | "late";
 
-interface AttendanceDay {
+export interface AttendanceDay {
   date: string;
   status: DayStatus;
   punchIn?: string;
@@ -137,6 +147,21 @@ interface AttendanceCalendarProps {
   hideNavigator?: boolean;
   initialMonth?: number;
   initialYear?: number;
+  /**
+   * Pre-fetched days to render, in place of this component's own month fetch.
+   *
+   * When supplied, neither /attendance-source nor /ncosec-monthly//apr-monthly is
+   * called: the grid renders exactly what the caller passes. This exists so a caller
+   * that already shows the same month from `attendance_daily_record` (the store the
+   * summary strip, the tabular view and payroll all read) can guarantee the two agree
+   * instead of the calendar querying a different database and disagreeing.
+   *
+   * Omit it and the live COSEC/APR fetch behaviour is unchanged.
+   */
+  records?: AttendanceDay[];
+  recordsLoading?: boolean;
+  /** Badge text when `records` is supplied — the server's source verdict is not fetched then. */
+  sourceLabel?: string;
 }
 
 // ─── Utilities ───────────────────────────────────────────────────────────────
@@ -193,7 +218,7 @@ function fmtMinutes(mins?: number | null): string {
   const m = mins % 60;
   return m > 0 ? `${h}h ${m}m` : `${h}h`;
 }
-function normalizeDate(value?: string): string {
+export function normalizeDate(value?: string): string {
   if (!value) return "";
   // Already a date string
   if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return value;
@@ -209,9 +234,34 @@ function normalizeStatus(status?: string): DayStatus {
   if (s === "leave_approved" || s === "leave") return "leave";
   if (s === "week_off" || s === "weekend") return "weekend";
   if (s === "holiday") return "holiday";
+  if (s === "missing_punch" || s === "missing-punch") return "missing_punch";
+  if (s === "late") return "late";
   if (s === "absent" || s === "unreconciled") return "absent";
   if (s === "present") return "present";
   return "absent";
+}
+
+/**
+ * Map `attendance_daily_record` rows (as returned by /api/wfm/attendance/daily)
+ * onto the calendar's day shape.
+ *
+ * Exported so the caller that already holds those rows can feed the grid directly
+ * instead of the calendar re-fetching a different store. The date is pushed through
+ * normalizeDate() because the cell lookup keys on a strict YYYY-MM-DD, while the
+ * endpoint's `record_date` is only a bare date string by virtue of the pool's
+ * `dateStrings: true`.
+ */
+export function adrRecordsToAttendanceDays(rows: any[]): AttendanceDay[] {
+  return (rows || []).map((r: any): AttendanceDay => ({
+    date:         normalizeDate(r.date ?? r.record_date),
+    status:       normalizeStatus(r.status ?? r.attendance_status),
+    punchIn:      r.clock_in ?? r.clock_in_time ?? undefined,
+    punchOut:     r.clock_out ?? r.clock_out_time ?? undefined,
+    rawMinutes:   r.raw_minutes != null ? Number(r.raw_minutes) : undefined,
+    lwpValue:     r.lwp_value   != null ? Number(r.lwp_value)   : undefined,
+    sourceSystem: r.source_system ?? undefined,
+    isNightShift: detectNightShift(r.clock_in ?? r.clock_in_time, r.clock_out ?? r.clock_out_time),
+  }));
 }
 
 // Night shift: last OUT is next calendar day (after midnight, before 6 AM)
@@ -241,6 +291,8 @@ function cellStyle(status: DayStatus, isToday: boolean) {
     holiday:      "bg-purple-50   border-purple-200  hover:bg-purple-100",
     weekend:      "bg-slate-50    border-slate-200   hover:bg-slate-100",
     unreconciled: "bg-orange-50   border-orange-200  hover:bg-orange-100",
+    missing_punch:"bg-orange-50   border-orange-300  hover:bg-orange-100",
+    late:         "bg-yellow-50   border-yellow-200  hover:bg-yellow-100",
   };
   return base + today + (map[status] ?? map.absent);
 }
@@ -253,6 +305,8 @@ function StatusIcon({ status }: { status: DayStatus }) {
   if (status === "leave")        return <CalendarIcon  className={`${props} text-blue-500`} />;
   if (status === "holiday")      return <CalendarIcon  className={`${props} text-purple-500`} />;
   if (status === "unreconciled") return <AlertCircle   className={`${props} text-orange-500`} />;
+  if (status === "missing_punch") return <AlertCircle  className={`${props} text-orange-600`} />;
+  if (status === "late")         return <Clock         className={`${props} text-yellow-600`} />;
   return <MinusCircle className={`${props} text-slate-400`} />;
 }
 
@@ -265,10 +319,13 @@ function StatusBadge({ status }: { status: DayStatus }) {
     holiday:      "bg-purple-100  text-purple-800",
     weekend:      "bg-slate-100   text-slate-700",
     unreconciled: "bg-orange-100  text-orange-800",
+    missing_punch:"bg-orange-100  text-orange-900",
+    late:         "bg-yellow-100  text-yellow-800",
   };
   const labels: Record<DayStatus, string> = {
     present: "Present", absent: "Absent", half_day: "Half Day",
     leave: "Leave", holiday: "Holiday", weekend: "Weekend", unreconciled: "Unreconciled",
+    missing_punch: "Missing Punch", late: "Late",
   };
   return (
     <Badge className={`${map[status] ?? map.absent} hover:${map[status] ?? map.absent} capitalize`}>
@@ -969,7 +1026,12 @@ export function AttendanceCalendar({
   hideNavigator = false,
   initialMonth,
   initialYear,
+  records,
+  recordsLoading = false,
+  sourceLabel,
 }: AttendanceCalendarProps) {
+  // Caller-fed mode: the grid renders `records` and issues no month queries of its own.
+  const usesProvidedRecords = records != null;
   const today = new Date();
   // IST "today" — toISOString() is UTC and lands on the wrong day between
   // 00:00 and 05:30 IST, which used to put the "today" ring on the previous day.
@@ -1007,13 +1069,19 @@ export function AttendanceCalendar({
       );
       return res.data;
     },
-    enabled: !!employeeId,
+    enabled: !!employeeId && !usesProvidedRecords,
     staleTime: 10 * 60_000,
   });
   const source: AttendanceSource = sourceInfo?.attendance_source ?? "biometric";
 
   // Fetch monthly attendance data for calendar colouring
-  const { data: attendanceData = [], isLoading, isError, refetch, dataUpdatedAt } = useQuery<AttendanceDay[]>({
+  const {
+    data: fetchedData = [],
+    isLoading: fetchLoading,
+    isError: fetchError,
+    refetch,
+    dataUpdatedAt,
+  } = useQuery<AttendanceDay[]>({
     queryKey: ["attendance-calendar", employeeId, currentYear, currentMonth, source],
     queryFn: async () => {
       const startDate = fmtDate(currentYear, currentMonth, 1);
@@ -1052,12 +1120,16 @@ export function AttendanceCalendar({
         isNightShift: detectNightShift(r.clock_in_time || r.first_punch_in, r.clock_out_time || r.last_punch_out),
       }));
     },
-    enabled: !!employeeId && !!sourceInfo,
+    enabled: !!employeeId && !!sourceInfo && !usesProvidedRecords,
     // Overrides the app-wide default (false): coming back to this tab should
     // re-check against COSEC/APR rather than show whatever was last fetched,
     // since the underlying sync runs independently on its own schedule.
     refetchOnWindowFocus: true,
   });
+
+  const attendanceData = usesProvidedRecords ? records! : fetchedData;
+  const isLoading = usesProvidedRecords ? recordsLoading : fetchLoading;
+  const isError = usesProvidedRecords ? false : fetchError;
 
   const attendanceMap = new Map<string, AttendanceDay>(
     attendanceData.map(d => [d.date, d])
@@ -1120,17 +1192,22 @@ export function AttendanceCalendar({
             <div className="flex items-center gap-2">
               <CardTitle className="text-base">{MONTHS[currentMonth]} {currentYear}</CardTitle>
               <Badge
-                className={source === "dialler"
+                className={!usesProvidedRecords && source === "dialler"
                   ? "bg-amber-100 text-amber-800 hover:bg-amber-100"
                   : "bg-[#e8f2fc] text-[#1B6AB5] hover:bg-[#e8f2fc]"}
               >
-                {sourceInfo?.source_label ?? (source === "dialler" ? "APR / Dialler" : "Direct COSEC")}
+                {/* In caller-fed mode the server's source verdict is never fetched, so
+                    the badge must not claim "Direct COSEC" over data that did not
+                    come from COSEC. */}
+                {usesProvidedRecords
+                  ? (sourceLabel ?? "HRMS Record")
+                  : (sourceInfo?.source_label ?? (source === "dialler" ? "APR / Dialler" : "Direct COSEC"))}
               </Badge>
               {/* The underlying sync (5 min COSEC / hourly APR) lags real time
                   regardless of how fresh the browser's own fetch is — surface
                   both so "why does this look old" has a visible answer instead
                   of appearing to be a bug. */}
-              {(sourceInfo?.sync_interval_note || dataUpdatedAt) && (
+              {!usesProvidedRecords && (sourceInfo?.sync_interval_note || dataUpdatedAt) && (
                 <span className="text-[11px] text-slate-400" title={sourceInfo?.sync_interval_note}>
                   {sourceInfo?.sync_interval_note}
                   {sourceInfo?.sync_interval_note && dataUpdatedAt ? " · " : ""}
@@ -1159,6 +1236,7 @@ export function AttendanceCalendar({
               { status: "present" as DayStatus,  label: "Present",   dot: "bg-emerald-500" },
               { status: "absent"  as DayStatus,  label: "Absent",    dot: "bg-red-500"     },
               { status: "half_day" as DayStatus, label: "Half Day",  dot: "bg-amber-500"   },
+              { status: "missing_punch" as DayStatus, label: "Missing Punch", dot: "bg-orange-500" },
               { status: "leave"   as DayStatus,  label: "Leave",     dot: "bg-blue-500"    },
               { status: "holiday" as DayStatus,  label: "Holiday",   dot: "bg-purple-500"  },
               { status: "weekend" as DayStatus,  label: "Weekend",   dot: "bg-slate-400"   },
@@ -1185,7 +1263,14 @@ export function AttendanceCalendar({
               const isToday   = dateStr === todayIst;
               const isFuture  = dateStr > todayIst;
               // A future date has no attendance yet — it must not paint as "Absent".
-              const status    = record?.status ?? (isWknd ? "weekend" : isFuture ? "unreconciled" : "absent");
+              //
+              // In caller-fed mode the rows are the engine's own output, where a
+              // missing row means "no record written for this day" — not a confirmed
+              // absence. Painting it red is the same silent-failure that made an empty
+              // month indistinguishable from a month of genuine absences, so an
+              // unbacked day stays the neutral "unreconciled" state.
+              const missingDayStatus: DayStatus = usesProvidedRecords ? "unreconciled" : "absent";
+              const status    = record?.status ?? (isWknd ? "weekend" : isFuture ? "unreconciled" : missingDayStatus);
 
               if (isFuture && !record) {
                 return (
