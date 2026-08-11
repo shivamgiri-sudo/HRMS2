@@ -56,6 +56,8 @@ type GrnRow = {
   is_multi_month?: number | null;
   created_by_name?: string | null;
   created_at?: string | null;
+  source_type?: 'new' | 'legacy' | null;
+  legacy_entry_status?: string | null;
 };
 
 type Filters = {
@@ -72,12 +74,17 @@ type Filters = {
   amountFrom: string;
   amountTo: string;
   multiMonth: string;
+  source: string;
+  branchId: string;
+  processId: string;
+  costCentreId: string;
 };
 
 const EMPTY: Filters = {
   grnNumber: "", invoiceNumber: "", head: "", subHead: "", status: "", grnType: "",
   billingCycleStatus: "", accountingPeriod: "", billDateFrom: "", billDateTo: "",
   amountFrom: "", amountTo: "", multiMonth: "",
+  source: "new", branchId: "", processId: "", costCentreId: "",
 };
 
 const STATUS_OPTIONS = [
@@ -138,6 +145,40 @@ export function GrnSearchWorkspace({
     onSuccess: () => { toast({ title: "Billing status updated" }); refetchResults(); },
     onError: (e: Error) => toast({ title: "Could not update", description: e.message, variant: "destructive" }),
   });
+
+  const branches = useQuery({
+    queryKey: ["org-branches"],
+    queryFn: async () => {
+      const r = await hrmsApi.get<any>("/api/org/branches?limit=200");
+      return ((r as any)?.data?.data ?? (r as any)?.data ?? []) as Array<{
+        id: string; branch_name: string;
+      }>;
+    },
+    staleTime: 5 * 60 * 1000,
+  });
+
+  const processes = useQuery({
+    queryKey: ["org-processes"],
+    queryFn: async () => {
+      const r = await hrmsApi.get<any>("/api/org/processes?limit=200");
+      return ((r as any)?.data?.data ?? (r as any)?.data ?? []) as Array<{
+        id: string; process_name: string;
+      }>;
+    },
+    staleTime: 5 * 60 * 1000,
+  });
+
+  const costCentres = useQuery({
+    queryKey: ["org-cost-centres"],
+    queryFn: async () => {
+      const r = await hrmsApi.get<any>("/api/org/cost-centres?limit=500&active_status=1");
+      return ((r as any)?.data?.data ?? (r as any)?.data ?? []) as Array<{
+        id: string; cost_centre_name: string; cost_centre_code: string;
+      }>;
+    },
+    staleTime: 5 * 60 * 1000,
+  });
+
   const [draft, setDraft] = useState<Filters>(EMPTY);
   const [applied, setApplied] = useState<Filters>(EMPTY);
 
@@ -150,6 +191,7 @@ export function GrnSearchWorkspace({
       for (const [key, value] of Object.entries(applied)) {
         if (value) params.set(key, value);
       }
+      if (!applied.source) params.set("source", "new");
       const r = await hrmsApi.get<any>(`/api/finance/grns?${params.toString()}`);
       const body = (r as any)?.data ?? r;
       return ((body?.rows ?? body?.data ?? body ?? []) as GrnRow[]);
@@ -189,6 +231,33 @@ export function GrnSearchWorkspace({
             onChange={(e) => set("head")(e.target.value)} />
           <GrnInput placeholder="Sub-head" value={draft.subHead}
             onChange={(e) => set("subHead")(e.target.value)} />
+
+          <GrnSelect value={draft.source} onChange={(e) => set("source")(e.target.value)}>
+            <option value="new">New HRMS only</option>
+            <option value="legacy">Legacy (db_bill) only</option>
+            <option value="all">All sources</option>
+          </GrnSelect>
+
+          <GrnSelect value={draft.branchId} onChange={(e) => set("branchId")(e.target.value)}>
+            <option value="">Any branch</option>
+            {(branches.data ?? []).map((b) => (
+              <option key={b.id} value={b.id}>{b.branch_name}</option>
+            ))}
+          </GrnSelect>
+
+          <GrnSelect value={draft.processId} onChange={(e) => set("processId")(e.target.value)}>
+            <option value="">Any process</option>
+            {(processes.data ?? []).map((p) => (
+              <option key={p.id} value={p.id}>{p.process_name}</option>
+            ))}
+          </GrnSelect>
+
+          <GrnSelect value={draft.costCentreId} onChange={(e) => set("costCentreId")(e.target.value)}>
+            <option value="">Any cost centre</option>
+            {(costCentres.data ?? []).map((c) => (
+              <option key={c.id} value={c.id}>{c.cost_centre_name} ({c.cost_centre_code})</option>
+            ))}
+          </GrnSelect>
 
           <GrnSelect value={draft.status} onChange={(e) => set("status")(e.target.value)}>
             {STATUS_OPTIONS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
@@ -264,11 +333,20 @@ export function GrnSearchWorkspace({
                 {rows.map((row) => (
                   <tr
                     key={row.id}
-                    className={`${GRN_TR} ${onOpenGrn ? "cursor-pointer" : ""}`}
-                    onClick={onOpenGrn ? () => onOpenGrn(row.id) : undefined}
+                    className={`${GRN_TR} ${onOpenGrn && !String(row.id ?? "").startsWith("leg_") ? "cursor-pointer" : ""}`}
+                    onClick={
+                      onOpenGrn && !String(row.id ?? "").startsWith("leg_")
+                        ? () => onOpenGrn(row.id)
+                        : undefined
+                    }
                   >
                     <GrnTd>
                       <span className="font-mono">{row.grn_number}</span>
+                      {row.source_type === "legacy" && (
+                        <span className="ml-1.5 rounded bg-amber-100 px-1 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-700">
+                          Legacy
+                        </span>
+                      )}
                       <GrnCellSub>
                         {row.branch_name ?? "—"}
                         {row.is_multi_month ? " · multi-month" : ""}
