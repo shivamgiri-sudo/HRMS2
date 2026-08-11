@@ -59,10 +59,51 @@
 -- a genuine dialler agent to biometric could suppress their pay, so the ambiguous cases
 -- keep the status quo until someone who knows the business says otherwise.
 --
--- KNOWN SIDE EFFECT: 25 of the 828 have no process_id at all, 9 of them with APR
--- history. A rule row cannot target "no process" — process_id IS NULL in a rule matches
--- EVERY employee — so these 25 move to biometric too. The fix for them is to assign a
--- process, not to widen this config. Listed for the sign-off conversation, not solved here.
+-- ###########################################################################
+-- BLOCKER — DO NOT RUN THIS FILE UNTIL THE NINE BELOW HAVE A process_id
+-- ###########################################################################
+--
+-- 25 of the 828 have no process_id at all. A rule row cannot target "no process"
+-- (process_id IS NULL in a *rule* matches EVERY employee), so all 25 lose APR
+-- eligibility when this runs. Checked 2026-08-11 — they are NOT test accounts:
+-- 0 of 25 match test/e2e/demo/dummy naming, 0 lack a branch, 0 have a test email.
+-- All 25 are a real June-2026 cohort at NOIDA / NOIDA-2 / AHMEDABAD-JALDARSHAN,
+-- all have 2 salary_prep_line rows, all are biometrically enrolled, all have
+-- August attendance. Different population from the known 10 E2E accounts, which
+-- have no branch and no payroll line.
+--
+-- 16 of them have no APR history and correctly belong on biometric — no action.
+--
+-- The other NINE are live dialler agents and this file would silently cut them off:
+--
+--   MAS62903 GAUSH ALAM DANISH   CART_2, INACTIVE, SHELTER   62 rows, last 2026-08-05
+--   MAS62905 JAISIKA SAHOO       BELLA_O, CHAT2O             17 rows, last 2026-08-10
+--   MAS62906 UZMA ABDULLAH       BELLA_O, CHAT2O             41 rows, last 2026-08-11
+--   MAS62907 AQSHA NOOR          BELLA_O, CHAT2O             50 rows, last 2026-08-11
+--   MAS62908 SIMRAN DUBEY        BELLA_O, CART_3, CHAT2O     51 rows, last 2026-08-10
+--   MAS62909 ARPIT VERMA         CART_2, CHAT2O, SHELTER     76 rows, last 2026-08-10
+--   MAS62910 AANCHAL VERMA       CART_2, CART_3, SHELTER     75 rows, last 2026-08-11
+--   MAS62913 MANSI               BELLA_O, CHAT2O             55 rows, last 2026-08-11
+--   MAS62901 A KARTHIK           EMAIL                        8 rows, last 2026-07-10 (stale)
+--
+-- Eight of the nine dialled within 24 hours of this measurement.
+--
+-- Their correct process could NOT be determined from data, and the two available
+-- signals disagree:
+--   - Campaign mix points at IDAM Natural Wellness / Bella-Vita Organic. CART_2,
+--     SHELTER and INACTIVE are 100% IDAM among employees who do have a process;
+--     BELLA_O and CHAT2O split ~55/45 IDAM vs Bella-Vita; EMAIL spreads across four
+--     processes. Campaigns are shared between processes, so they cannot pin one.
+--   - Eight of the nine report to SUDEEP NEGI (MAS01963), whose own process is
+--     VIRTUAL ACCOUNT MANAGEMENT — zero APR history (0/3). That contradicts the
+--     campaign evidence, so the manager's process looks stale too.
+--   - campaign_master is empty (0 rows), so no authoritative mapping exists.
+--
+-- Whichever of IDAM / Bella-Vita / Neemans / BTM / Clovia they belong to, all are on
+-- the KEEP list, so any correct assignment preserves their APR eligibility. WFM or
+-- Ops must confirm which. Until then this file must not run.
+--
+-- Wider context: 144 of 1,125 active employees (12.8%) have no process_id.
 
 -- ---------------------------------------------------------------------------
 -- 1. Add process-scoped rules for every process that demonstrably runs on APR.
