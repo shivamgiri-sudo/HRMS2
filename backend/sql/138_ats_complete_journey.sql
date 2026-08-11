@@ -294,6 +294,23 @@ CREATE TABLE IF NOT EXISTS module_access_audit_log (
 );
 
 -- ── 15. Enhance notification systems ──────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS ats_notification_log (
+  id CHAR(36) NOT NULL DEFAULT (UUID()) PRIMARY KEY,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  recruiter_code VARCHAR(50) NULL,
+  candidate_id CHAR(36) NULL,
+  event_type VARCHAR(100) NOT NULL,
+  notification_title VARCHAR(255) NOT NULL,
+  notification_body TEXT NOT NULL,
+  delivery_status ENUM('pending','sent','failed') NOT NULL DEFAULT 'pending',
+  notes TEXT NULL,
+  INDEX idx_ats_notification_candidate (candidate_id),
+  INDEX idx_ats_notification_event (event_type),
+  INDEX idx_ats_notification_status (delivery_status),
+  INDEX idx_ats_notification_created (created_at),
+  FOREIGN KEY (candidate_id) REFERENCES ats_candidate(id) ON DELETE SET NULL
+);
+
 ALTER TABLE ats_notification_log ADD COLUMN notification_type VARCHAR(50) NULL COMMENT 'Type of notification';
 ALTER TABLE ats_notification_log ADD COLUMN recipient_type ENUM('candidate','recruiter','hr','branch_head','admin') NULL;
 ALTER TABLE ats_notification_log ADD COLUMN recipient_id CHAR(36) NULL;

@@ -11,4 +11,15 @@ describe("ATS complete journey migration", () => {
     expect(migration).toMatch(/ALTER TABLE ats_notification_log ADD COLUMN notification_type/i);
     expect(migration).toMatch(/ALTER TABLE ats_candidate ADD INDEX idx_ats_candidate_branch/i);
   });
+
+  it("creates ats_notification_log before enhancing it", () => {
+    const createIndex = migration.search(/CREATE TABLE IF NOT EXISTS ats_notification_log/i);
+    const alterIndex = migration.search(/ALTER TABLE ats_notification_log ADD COLUMN notification_type/i);
+
+    expect(createIndex).toBeGreaterThanOrEqual(0);
+    expect(alterIndex).toBeGreaterThan(createIndex);
+    expect(migration).toMatch(/event_type VARCHAR\(100\) NOT NULL/i);
+    expect(migration).toMatch(/notification_title VARCHAR\(255\) NOT NULL/i);
+    expect(migration).toMatch(/notification_body TEXT NOT NULL/i);
+  });
 });
