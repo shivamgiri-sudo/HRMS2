@@ -160,7 +160,7 @@ SET @idx = (
 );
 -- MySQL unique constraint via UNIQUE KEY inline is named after the column
 SET @sql = IF(@idx > 0,
-  'ALTER TABLE employee_emergency_contact DROP INDEX employee_id',
+  'SELECT ''employee_emergency_contact.employee_id backs a foreign key; keep it''',
   'SELECT 1'
 );
 PREPARE s FROM @sql; EXECUTE s; DEALLOCATE PREPARE s;
@@ -187,7 +187,7 @@ SET @idx = (
   AND CONSTRAINT_TYPE='UNIQUE' AND CONSTRAINT_NAME='employee_id'
 );
 SET @sql = IF(@idx > 0,
-  'ALTER TABLE employee_bank_detail DROP INDEX employee_id',
+  'SELECT ''employee_bank_detail.employee_id backs a foreign key; keep it''',
   'SELECT 1'
 );
 PREPARE s FROM @sql; EXECUTE s; DEALLOCATE PREPARE s;
@@ -274,7 +274,7 @@ CREATE TABLE IF NOT EXISTS employee_job_history (
   FOREIGN KEY (employee_id)       REFERENCES employees(id) ON DELETE CASCADE,
   FOREIGN KEY (from_manager_id)   REFERENCES employees(id) ON DELETE SET NULL,
   FOREIGN KEY (to_manager_id)     REFERENCES employees(id) ON DELETE SET NULL
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB;
 
 -- ═══════════════════════════════════════════════════════════════════════════════
 -- SECTION 7: employee_address — structured home / correspondence address
@@ -297,7 +297,7 @@ CREATE TABLE IF NOT EXISTS employee_address (
   UNIQUE KEY uq_emp_address_type (employee_id, address_type),
   INDEX idx_ea_emp (employee_id),
   FOREIGN KEY (employee_id) REFERENCES employees(id) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB;
 
 -- ═══════════════════════════════════════════════════════════════════════════════
 -- SECTION 8: employee_nominee — gratuity / insurance / PF nominee
@@ -320,7 +320,7 @@ CREATE TABLE IF NOT EXISTS employee_nominee (
   updated_at        DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   INDEX idx_nominee_emp (employee_id),
   FOREIGN KEY (employee_id) REFERENCES employees(id) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB;
 
 -- ═══════════════════════════════════════════════════════════════════════════════
 -- SECTION 9: gratuity_accrual_ledger — monthly provision per employee
@@ -344,7 +344,7 @@ CREATE TABLE IF NOT EXISTS gratuity_accrual_ledger (
   INDEX idx_gratl_emp   (employee_id),
   INDEX idx_gratl_month (accrual_month),
   FOREIGN KEY (employee_id) REFERENCES employees(id) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB;
 
 -- ═══════════════════════════════════════════════════════════════════════════════
 -- SECTION 10: employee_pf_withdrawal — PF / VPF / advance withdrawals
@@ -376,7 +376,7 @@ CREATE TABLE IF NOT EXISTS employee_pf_withdrawal (
   updated_at           DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   INDEX idx_pfwith_emp (employee_id),
   FOREIGN KEY (employee_id) REFERENCES employees(id) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB;
 
 -- ═══════════════════════════════════════════════════════════════════════════════
 -- SECTION 11: employee_probation — structured probation tracking
@@ -398,7 +398,7 @@ CREATE TABLE IF NOT EXISTS employee_probation (
   INDEX idx_prob_emp    (employee_id),
   INDEX idx_prob_status (status),
   FOREIGN KEY (employee_id) REFERENCES employees(id) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB;
 
 -- ═══════════════════════════════════════════════════════════════════════════════
 -- SECTION 12: employee_contract — contract terms for non-permanent workers
@@ -425,7 +425,7 @@ CREATE TABLE IF NOT EXISTS employee_contract (
   INDEX idx_contract_emp    (employee_id),
   INDEX idx_contract_status (status, contract_end_date),
   FOREIGN KEY (employee_id) REFERENCES employees(id) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB;
 
 -- ═══════════════════════════════════════════════════════════════════════════════
 -- SECTION 13: cost_centre_master — add parent hierarchy + manager
