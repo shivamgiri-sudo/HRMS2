@@ -8,6 +8,7 @@ import { loadBgvDbConfig } from "./bgv-config.store.js";
 import { requireAuth } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
+import { stripCryptoPlumbing } from "../../shared/cryptoColumnHygiene.js";
 import { hasScopedAccess, buildScopeWhereClause } from "../../shared/scopeAccess.js";
 import { env } from "../../config/env.js";
 import {
@@ -669,8 +670,14 @@ router.get("/report/full", requireAuth, requireRole("admin", "hr"), h(async (req
     success: true,
     data: {
       report: report ?? null,
-      profile: profileRows[0] ?? null,
-      bank: bankRows[0] ?? null,
+      // These two are SELECT *, unlike the explicitly-columned queries around them, so they
+      // carry the at-rest crypto columns: pan_number_encrypted, pan_number_hash,
+      // aadhaar_number_hash, account_no_encrypted, account_no_hash — and
+      // onboarding_token_hash, which is written and never read anywhere. Neither table has a
+      // raw pan_number or account_no column at all, so the masked values the UI actually
+      // uses are untouched; only the plumbing goes.
+      profile: stripCryptoPlumbing(profileRows[0] ?? null),
+      bank: stripCryptoPlumbing(bankRows[0] ?? null),
       qualifications: qualificationRows,
       experience: experienceRows[0] ?? null,
       family: familyRows[0] ?? null,

@@ -46,9 +46,15 @@
  */
 
 import { maskPii } from "./piiMask.js";
+import { isCryptoPlumbingColumn } from "./cryptoColumnHygiene.js";
 
-/** Storage internals. Never leave the API, for any role. */
-export const CRYPTO_PLUMBING_PATTERN = /(_encrypted|_enc|_blind_index|_key_version|_hash)$/;
+/**
+ * Storage internals. Never leave the API, for any role.
+ *
+ * Re-exported from cryptoColumnHygiene, which owns the rule — the same stripping is needed
+ * on candidate rows in the BGV report, and one shared definition beats two that drift.
+ */
+export { CRYPTO_PLUMBING_PATTERN } from "./cryptoColumnHygiene.js";
 
 /** Raw identifier columns on `employees`, with the mask shape each one needs. */
 export const IDENTIFIER_FIELDS: Record<string, Parameters<typeof maskPii>[1]> = {
@@ -107,7 +113,7 @@ export function redactEmployeeIdentifiers<T extends Record<string, unknown>>(
   const out: Record<string, unknown> = {};
 
   for (const [key, value] of Object.entries(record)) {
-    if (CRYPTO_PLUMBING_PATTERN.test(key)) continue;
+    if (isCryptoPlumbingColumn(key)) continue;
 
     const maskType = IDENTIFIER_FIELDS[key];
     if (maskType && !raw && value != null && String(value).trim() !== "") {
