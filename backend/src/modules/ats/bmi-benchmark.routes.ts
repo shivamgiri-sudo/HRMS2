@@ -1,11 +1,19 @@
 import { Router } from 'express';
+import { excludeEmployeeShapedCandidatesSql } from './ats-reporting-scope.js';
 import type { Request, Response } from 'express';
 import type { RowDataPacket } from 'mysql2';
 import { db } from '../../db/mysql.js';
 import { requireAuth } from '../../middleware/authMiddleware.js';
 import { requireRole } from '../../middleware/requireRole.js';
 
-export const bmiBenchmarkRouter = Router();
+export /**
+ * ats_candidate holds 29,926 legacy EMPLOYEE records beside 7,760 genuine candidates. This
+ * benchmark board counted them in every sourced/stage figure, so its funnel described the
+ * employee roster rather than the hiring pipeline.
+ */
+const EXCLUDE_AC = excludeEmployeeShapedCandidatesSql('ats_candidate');
+
+const bmiBenchmarkRouter = Router();
 
 bmiBenchmarkRouter.use(requireAuth);
 bmiBenchmarkRouter.use(requireRole(
@@ -65,6 +73,28 @@ function buildRow(
 bmiBenchmarkRouter.get('/', async (req: Request, res: Response) => {
   try {
     const branchId = (req.query.branch_id as string) || null;
+
+    /**
+     * applied_for_branch holds branch NAMES, not ids — verified on production: of the 361
+     * onboarding-bridge candidates, 347 of their applied_for_branch values match
+     * branch_master.branch_name and only 8 match an id. Every ats_candidate leg of this board
+     * compared the incoming branch_id against that column, so a branch-filtered benchmark
+     * matched nothing on those rows while the job_requisition and employees legs — which do
+     * use real ids — matched correctly. The result was a board with real numbers on some rows
+     * and zeros on others, which reads as "this branch sources nobody" rather than as a bug.
+     *
+     * Resolved once here, accepting either an id or a name. If it resolves to neither, the
+     * sentinel matches no row: failing closed keeps a filtered view from silently widening to
+     * the whole organisation.
+     */
+    let branchName: string | null = null;
+    if (branchId) {
+      const [bm] = await db.execute<RowDataPacket[]>(
+        `SELECT branch_name FROM branch_master WHERE id = ? OR branch_name = ? LIMIT 1`,
+        [branchId, branchId],
+      );
+      branchName = (bm[0]?.branch_name as string | undefined) ?? "__UNRESOLVED_BRANCH__";
+    }
     const months = getMonthRange(6);
 
     // ── FUNNEL queries ────────────────────────────────────────────────────────
@@ -98,13 +128,16 @@ bmiBenchmarkRouter.get('/', async (req: Request, res: Response) => {
     const [sourcedRows] = await db.execute<RowDataPacket[]>(
       `SELECT DATE_FORMAT(ac.created_at, '%Y-%m') AS mo,
               asc2.channel_type,
-              COUNT(*) AS cnt
+              COUNT(DISTINCT ac.id) AS cnt
        FROM ats_candidate ac
+       -- COUNT(DISTINCT ac.id): ats_sourcing_channel.channel_code is not guaranteed unique,
+       -- and a duplicate channel row would otherwise count the same candidate once per match.
        JOIN ats_sourcing_channel asc2 ON asc2.channel_code = ac.sourcing_channel
        WHERE ac.created_at >= DATE_FORMAT(DATE_SUB(NOW(), INTERVAL 7 MONTH), '%Y-%m-01')
+         AND ${EXCLUDE_AC}
          ${branchId ? 'AND ac.applied_for_branch = ?' : ''}
        GROUP BY mo, asc2.channel_type`,
-      branchId ? [branchId] : []
+      branchName ? [branchName] : []
     );
     for (const r of sourcedRows) {
       const ct = r.channel_type as string;
@@ -120,9 +153,9 @@ bmiBenchmarkRouter.get('/', async (req: Request, res: Response) => {
        FROM ats_candidate_stage_log sl
        WHERE sl.from_stage = 'applied'
          AND sl.stage_date >= DATE_FORMAT(DATE_SUB(NOW(), INTERVAL 7 MONTH), '%Y-%m-01')
-         ${branchId ? 'AND sl.candidate_id IN (SELECT id FROM ats_candidate WHERE applied_for_branch = ?)' : ''}
+         ${branchId ? 'AND sl.candidate_id IN (SELECT id FROM ats_candidate WHERE applied_for_branch = ? AND ${EXCLUDE_AC})' : ''}
        GROUP BY mo`,
-      branchId ? [branchId] : []
+      branchName ? [branchName] : []
     );
     const screenedMap: CellMap = {};
     for (const r of screenedRows) screenedMap[r.mo as string] = Number(r.cnt);
@@ -135,9 +168,9 @@ bmiBenchmarkRouter.get('/', async (req: Request, res: Response) => {
        WHERE sl.to_stage IN (${PASSED_STAGES})
          AND sl.from_stage IN ('applied','screening')
          AND sl.stage_date >= DATE_FORMAT(DATE_SUB(NOW(), INTERVAL 7 MONTH), '%Y-%m-01')
-         ${branchId ? 'AND sl.candidate_id IN (SELECT id FROM ats_candidate WHERE applied_for_branch = ?)' : ''}
+         ${branchId ? 'AND sl.candidate_id IN (SELECT id FROM ats_candidate WHERE applied_for_branch = ? AND ${EXCLUDE_AC})' : ''}
        GROUP BY mo`,
-      branchId ? [branchId] : []
+      branchName ? [branchName] : []
     );
     const passedMap: CellMap = {};
     for (const r of passedRows) passedMap[r.mo as string] = Number(r.cnt);
@@ -147,9 +180,9 @@ bmiBenchmarkRouter.get('/', async (req: Request, res: Response) => {
       `SELECT DATE_FORMAT(ir.interviewed_at, '%Y-%m') AS mo, COUNT(DISTINCT ir.candidate_id) AS cnt
        FROM ats_interview_result ir
        WHERE ir.interviewed_at >= DATE_FORMAT(DATE_SUB(NOW(), INTERVAL 7 MONTH), '%Y-%m-01')
-         ${branchId ? 'AND ir.candidate_id IN (SELECT id FROM ats_candidate WHERE applied_for_branch = ?)' : ''}
+         ${branchId ? 'AND ir.candidate_id IN (SELECT id FROM ats_candidate WHERE applied_for_branch = ? AND ${EXCLUDE_AC})' : ''}
        GROUP BY mo`,
-      branchId ? [branchId] : []
+      branchName ? [branchName] : []
     );
     const interviewMap: CellMap = {};
     for (const r of interviewRows) interviewMap[r.mo as string] = Number(r.cnt);
@@ -160,9 +193,9 @@ bmiBenchmarkRouter.get('/', async (req: Request, res: Response) => {
        FROM ats_interview_result ir
        WHERE ir.interview_status = 'selected'
          AND ir.interviewed_at >= DATE_FORMAT(DATE_SUB(NOW(), INTERVAL 7 MONTH), '%Y-%m-01')
-         ${branchId ? 'AND ir.candidate_id IN (SELECT id FROM ats_candidate WHERE applied_for_branch = ?)' : ''}
+         ${branchId ? 'AND ir.candidate_id IN (SELECT id FROM ats_candidate WHERE applied_for_branch = ? AND ${EXCLUDE_AC})' : ''}
        GROUP BY mo`,
-      branchId ? [branchId] : []
+      branchName ? [branchName] : []
     );
     const selectedMap: CellMap = {};
     for (const r of selectedRows) selectedMap[r.mo as string] = Number(r.cnt);
@@ -173,9 +206,9 @@ bmiBenchmarkRouter.get('/', async (req: Request, res: Response) => {
        FROM ats_candidate_stage_log sl
        WHERE sl.to_stage = 'offer_pending'
          AND sl.stage_date >= DATE_FORMAT(DATE_SUB(NOW(), INTERVAL 7 MONTH), '%Y-%m-01')
-         ${branchId ? 'AND sl.candidate_id IN (SELECT id FROM ats_candidate WHERE applied_for_branch = ?)' : ''}
+         ${branchId ? 'AND sl.candidate_id IN (SELECT id FROM ats_candidate WHERE applied_for_branch = ? AND ${EXCLUDE_AC})' : ''}
        GROUP BY mo`,
-      branchId ? [branchId] : []
+      branchName ? [branchName] : []
     );
     const offersMadeMap: CellMap = {};
     for (const r of offersMadeRows) offersMadeMap[r.mo as string] = Number(r.cnt);
@@ -186,9 +219,9 @@ bmiBenchmarkRouter.get('/', async (req: Request, res: Response) => {
        FROM ats_candidate_stage_log sl
        WHERE sl.to_stage = 'offer_accepted'
          AND sl.stage_date >= DATE_FORMAT(DATE_SUB(NOW(), INTERVAL 7 MONTH), '%Y-%m-01')
-         ${branchId ? 'AND sl.candidate_id IN (SELECT id FROM ats_candidate WHERE applied_for_branch = ?)' : ''}
+         ${branchId ? 'AND sl.candidate_id IN (SELECT id FROM ats_candidate WHERE applied_for_branch = ? AND ${EXCLUDE_AC})' : ''}
        GROUP BY mo`,
-      branchId ? [branchId] : []
+      branchName ? [branchName] : []
     );
     const offersAccMap: CellMap = {};
     for (const r of offersAccRows) offersAccMap[r.mo as string] = Number(r.cnt);
@@ -217,7 +250,7 @@ bmiBenchmarkRouter.get('/', async (req: Request, res: Response) => {
          AND jr.created_at IS NOT NULL
          ${branchId ? 'AND ac.applied_for_branch = ?' : ''}
        GROUP BY mo`,
-      branchId ? [branchId] : []
+      branchName ? [branchName] : []
     );
     const avgDaysMap: CellMap = {};
     for (const r of avgDaysRows) avgDaysMap[r.mo as string] = Number(r.avg_days) || null;
@@ -337,9 +370,9 @@ bmiBenchmarkRouter.get('/', async (req: Request, res: Response) => {
          AND sl.candidate_id NOT IN (
            SELECT candidate_id FROM ats_onboarding_bridge WHERE candidate_id IS NOT NULL
          )
-         ${branchId ? 'AND sl.candidate_id IN (SELECT id FROM ats_candidate WHERE applied_for_branch = ?)' : ''}
+         ${branchId ? 'AND sl.candidate_id IN (SELECT id FROM ats_candidate WHERE applied_for_branch = ? AND ${EXCLUDE_AC})' : ''}
        GROUP BY mo`,
-      branchId ? [branchId] : []
+      branchName ? [branchName] : []
     );
     const ghostMap: CellMap = {};
     for (const r of ghostRows) ghostMap[r.mo as string] = Number(r.cnt);
@@ -360,9 +393,9 @@ bmiBenchmarkRouter.get('/', async (req: Request, res: Response) => {
        WHERE sh.to_stage = 'shortlisted'
          AND sh.stage_date >= DATE_FORMAT(DATE_SUB(NOW(), INTERVAL 7 MONTH), '%Y-%m-01')
          AND iv.candidate_id IS NULL
-         ${branchId ? 'AND sh.candidate_id IN (SELECT id FROM ats_candidate WHERE applied_for_branch = ?)' : ''}
+         ${branchId ? 'AND sh.candidate_id IN (SELECT id FROM ats_candidate WHERE applied_for_branch = ? AND ${EXCLUDE_AC})' : ''}
        GROUP BY mo`,
-      branchId ? [branchId] : []
+      branchName ? [branchName] : []
     );
     const hrRejMap: CellMap = {};
     for (const r of hrRejRows) {
