@@ -761,7 +761,15 @@ router.get(
   })
 );
 
-router.use(requireRole(...PNL_READ_ROLES));
+// Scoped to "/pnl" on purpose. This router is mounted on the SHARED "/api/finance" base
+// (app.ts), so a path-less router.use() runs for every /api/finance/* request that no earlier
+// router handled — and requireRole answers 403, it never calls next(). That silently denied
+// /api/finance/billability/* (mounted after this router) to any role outside PNL_READ_ROLES;
+// payroll_branch is in BILLABILITY_ROLES and not in PNL_READ_ROLES, with no alias bridging
+// them, so the entire Billability & Seat Cost API was 403 for that role. Every route this gate
+// is meant to protect is under /pnl (including the /pnl/bpo, /pnl/lobs and /pnl/bulk-upload
+// sub-routers below), so the prefix costs nothing and confines the blast radius to this module.
+router.use("/pnl", requireRole(...PNL_READ_ROLES));
 router.use("/pnl/bpo", bpoPnlRouter);
 router.use("/pnl/lobs", processLobRouter);
 router.use("/", pnlBulkUploadRouter);

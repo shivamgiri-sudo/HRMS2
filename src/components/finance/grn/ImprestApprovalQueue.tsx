@@ -107,9 +107,15 @@ export function ImprestApprovalQueue() {
 
   const decide = useMutation({
     mutationFn: async (input: { id: string; kind: "approve" | "return" | "reject"; reason?: string }) => {
+      // ReviewGrnPayload is { decision: "approved" | "rejected"; reviewNote?: string } — past
+      // tense, and reviewNote, not note. grn.routes.ts passes req.body to grnService.reviewGrn
+      // unmapped, so the earlier "approve"/"reject"/note spelling failed the guard at
+      // grn.service.ts:421 and every Approve and Reject in this queue returned "Review decision
+      // must be approved or rejected". Same payload SmartGrnApprovalQueue already sends.
       if (input.kind === "approve") {
-        return hrmsApi.post<any>(`/api/finance/grns/${input.id}/review`, { decision: "approve" });
+        return hrmsApi.post<any>(`/api/finance/grns/${input.id}/review`, { decision: "approved" });
       }
+      // /return is a different endpoint with its own contract — { target, reason } is correct there.
       if (input.kind === "return") {
         return hrmsApi.post<any>(`/api/finance/grns/${input.id}/return`, {
           target: "branch_head",
@@ -117,8 +123,8 @@ export function ImprestApprovalQueue() {
         });
       }
       return hrmsApi.post<any>(`/api/finance/grns/${input.id}/review`, {
-        decision: "reject",
-        note: input.reason,
+        decision: "rejected",
+        reviewNote: input.reason,
       });
     },
     onSuccess: (_d, v) => {

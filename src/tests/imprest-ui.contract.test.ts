@@ -238,3 +238,50 @@ describe("the salary voucher's number is asked for, not invented", () => {
     expect(uses.length).toBeGreaterThanOrEqual(2);
   });
 });
+
+/**
+ * The review payload and the role gates in front of it.
+ *
+ * Both defects here were invisible on screen: the buttons rendered, and the failure only
+ * appeared as a toast after the click. A contract test is the only cheap way to keep a
+ * hand-maintained client payload in step with a server-side enum.
+ */
+describe("the imprest queue speaks the API's review contract", () => {
+  const GRN_SERVICE = read("backend/src/modules/finance/grn.service.ts");
+  const GRN_ROUTES = read("backend/src/modules/finance/grn.routes.ts");
+  const GRN_PAGE = read("src/pages/NativeGRNManagement.tsx");
+
+  it("sends the past-tense decision the service actually accepts", () => {
+    // grn.routes.ts hands req.body straight to reviewGrn, so the client's spelling IS the
+    // contract. "approve"/"reject" failed the guard and every action in this queue errored.
+    expect(GRN_SERVICE).toContain('["approved", "rejected"].includes(payload.decision)');
+    expect(QUEUE).toContain('decision: "approved"');
+    expect(QUEUE).toContain('decision: "rejected"');
+    expect(QUEUE).not.toContain('decision: "approve"');
+    expect(QUEUE).not.toContain('decision: "reject"');
+  });
+
+  it("sends the rejection remark under the key the service reads", () => {
+    // reviewGrn requires payload.reviewNote on a rejection; `note` arrived as undefined and
+    // tripped "Review remarks are required when rejecting a GRN".
+    expect(GRN_SERVICE).toContain("payload.reviewNote?.trim()");
+    expect(QUEUE).toContain("reviewNote: input.reason");
+  });
+
+  it("only offers review tabs to roles GRN_REVIEW_ROLES admits", () => {
+    // `admin` is deliberately absent from GRN_REVIEW_ROLES; showing it the queue produced a
+    // tab whose every action 403s.
+    expect(GRN_ROUTES).toContain(
+      'const GRN_REVIEW_ROLES: RoleKey[] = ["branch_head", "finance_head", "accounts_head", "super_admin"]'
+    );
+    const canReview = GRN_PAGE.slice(GRN_PAGE.indexOf("const canReview"), GRN_PAGE.indexOf("const canAttribute"));
+    expect(canReview).not.toContain('"admin"');
+    expect(canReview).toContain('"branch_head"');
+  });
+
+  it("gates the LOB attribution tab on the same roles as its own count", () => {
+    // The count was gated and the tab was not, so `finance`/`payroll_head` got an empty panel.
+    expect(GRN_PAGE).toContain("useCanAttributeGrnLob()");
+    expect(GRN_PAGE).toContain("{canAttribute && (");
+  });
+});

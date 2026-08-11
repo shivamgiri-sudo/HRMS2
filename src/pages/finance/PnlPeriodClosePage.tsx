@@ -11,6 +11,7 @@ import { IndirectAllocationPanel } from "@/components/finance/pnl/IndirectAlloca
 import { ProcessCostLedger } from "@/components/finance/pnl/ProcessCostLedger";
 import { RevenueReconciliationPanel } from "@/components/finance/pnl/RevenueReconciliationPanel";
 import { usePnlReconciliation } from "@/hooks/usePnlReconciliation";
+import { useHasRole } from "@/hooks/useUserRole";
 
 function currentPeriod() {
   const now = new Date();
@@ -36,6 +37,14 @@ export default function PnlPeriodClosePage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const period = searchParams.get("period") ?? currentPeriod();
   const { periodCloseQuery, recalculate, signoff, lockPeriod } = usePnlReconciliation(period);
+
+  // PNL_WRITE_ROLES on POST /pnl/recalculate (process-pnl.routes.ts) — deliberately narrower than
+  // PNL_SIGNOFF_ROLES, which adds ceo and coo. Sign off and Lock are already driven by the
+  // server's own availableActions; Recalculate was the one action rendered unconditionally, so a
+  // CEO — arguably this page's main reader — clicked it and got a 403.
+  const canRecalculate = useHasRole(
+    "super_admin", "admin", "finance", "finance_head", "accounts_head", "payroll_head"
+  );
 
   const closeData = periodCloseQuery.data;
 
@@ -208,15 +217,17 @@ export default function PnlPeriodClosePage() {
             Period: <b className="text-slate-900">{period}</b>
           </span>
           <div className="flex gap-2">
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={recalculate.isPending}
-              onClick={handleRecalculate}
-            >
-              {recalculate.isPending && <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />}
-              Recalculate
-            </Button>
+            {canRecalculate && (
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={recalculate.isPending}
+                onClick={handleRecalculate}
+              >
+                {recalculate.isPending && <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />}
+                Recalculate
+              </Button>
+            )}
             {!!closeData?.availableActions?.signoffRole && (
               <Button
                 size="sm"

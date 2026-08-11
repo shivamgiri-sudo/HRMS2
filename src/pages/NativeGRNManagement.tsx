@@ -14,7 +14,7 @@ import {
 } from "@/components/finance/grn/grn-ui";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { useGrnNeedsLobCount, useGrnSummary } from "@/hooks/useGrnSummary";
+import { useCanAttributeGrnLob, useGrnNeedsLobCount, useGrnSummary } from "@/hooks/useGrnSummary";
 import { useHasRole } from "@/hooks/useUserRole";
 
 function HeaderStat({ value, label }: { value: React.ReactNode; label: string }) {
@@ -32,13 +32,20 @@ export default function NativeGRNManagement() {
   // actions that 403. Hiding it is presentation; the backend remains the gate.
   // Uses useHasRole rather than user.role: HrmsUser carries no role field, so
   // the `user?.role` idiom used elsewhere silently evaluates to undefined.
+  // `admin` was in this list and is NOT in GRN_REVIEW_ROLES, so an admin was shown the Approval
+  // Queue and Imprest tabs and every action in them 403'd — the exact outcome the note above
+  // says this gate exists to prevent.
   const canReview = useHasRole(
     "finance_head",
     "accounts_head",
-    "admin",
     "super_admin",
     "branch_head"
   );
+
+  // The LOB Attribution tab was rendered unconditionally while its header count was already
+  // role-gated, so `finance` and `payroll_head` — both of whom reach this page — opened a tab
+  // whose only query 403s and which therefore renders as a permanently empty queue.
+  const canAttribute = useCanAttributeGrnLob();
 
   const summaryQuery = useGrnSummary();
   const summary = summaryQuery.data;
@@ -89,10 +96,12 @@ export default function NativeGRNManagement() {
               <TabsTrigger value="create" className={GRN_TAB_TRIGGER}>
                 <FileText className="h-3.5 w-3.5" />Create GRN
               </TabsTrigger>
-              <TabsTrigger value="attribution" className={GRN_TAB_TRIGGER}>
-                <GitBranch className="h-3.5 w-3.5" />LOB Attribution
-                {needsLob.count ? <span className={GRN_TAB_COUNT}>{needsLob.count}</span> : null}
-              </TabsTrigger>
+              {canAttribute && (
+                <TabsTrigger value="attribution" className={GRN_TAB_TRIGGER}>
+                  <GitBranch className="h-3.5 w-3.5" />LOB Attribution
+                  {needsLob.count ? <span className={GRN_TAB_COUNT}>{needsLob.count}</span> : null}
+                </TabsTrigger>
+              )}
               {canReview && (
                 <TabsTrigger value="queue" className={GRN_TAB_TRIGGER}>
                   <FileCheck2 className="h-3.5 w-3.5" />Approval Queue
@@ -116,9 +125,11 @@ export default function NativeGRNManagement() {
           <TabsContent value="create" className="mt-4">
             <BudgetLinkedGrnForm />
           </TabsContent>
-          <TabsContent value="attribution" className="mt-4">
-            <GrnLobAttributionQueue />
-          </TabsContent>
+          {canAttribute && (
+            <TabsContent value="attribution" className="mt-4">
+              <GrnLobAttributionQueue />
+            </TabsContent>
+          )}
           {canReview && (
             <TabsContent value="queue" className="mt-4">
               <SmartGrnApprovalQueue />

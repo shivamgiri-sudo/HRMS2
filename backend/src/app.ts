@@ -501,9 +501,13 @@ app.use("/api/finance/imprest", imprestRouter);
 app.use("/api/finance/payroll", salaryVoucherRouter);
 app.use("/api/finance/cost-centres", costCentreManagementRouter);
 app.use("/api/finance", processPnlRouter);
-// Mounted on its own base, BEFORE nothing and after processPnlRouter deliberately: it
-// owns /api/finance/billability/* outright, so it cannot be shadowed by a wildcard on
-// the shared /api/finance base.
+// Mounted on its own base after processPnlRouter. Owning /api/finance/billability/* outright
+// protects it from a wildcard ROUTE on the shared /api/finance base — but not from a path-less
+// router.use() MIDDLEWARE on a router mounted earlier, which runs for every unmatched
+// /api/finance/* request regardless of prefix. processPnlRouter had exactly that, and because
+// requireRole answers 403 rather than calling next(), it denied this whole router to any role
+// outside PNL_READ_ROLES. That gate is now scoped to "/pnl" (process-pnl.routes.ts). Any new
+// path-less middleware added to a router on the shared base would reintroduce the same problem.
 app.use("/api/finance/billability", billabilityRouter);
 app.use("/api/inbox", inboxRouter);
 app.use("/api/it-provisioning", itProvisioningRouter);

@@ -382,12 +382,24 @@ smartGrnRouter.post(
   }
 );
 
+// requireRole runs AFTER onlyWhenSmart here, unlike the sibling routes above.
+//
+// onlyWhenSmart calls next("router") for a GRN with no allocations, handing it to the legacy
+// grnRouter mounted after this one. With the role gate in front of that decision, this router's
+// narrower SMART_REVIEW_ROLES was applied to legacy GRNs too, and a role that only the legacy
+// list grants was 403'd before it could ever fall through. Today that set is exactly
+// {accounts_head} — see GRN_REVIEW_ROLES in grn.routes.ts — and accounts_head is separately
+// unable to complete a review anyway (resolveFinanceStageRole for workflow "grn" yields only
+// branch_head or finance_head), so nothing user-visible changes right now. It is still the wrong
+// order: a router that intends to intercept must decide whether it is intercepting before it
+// applies its own authorization. requireWriteAccess and authorizeGrn stay in front, so an
+// unauthenticated or out-of-branch caller is still refused before any lookup of substance.
 smartGrnRouter.post(
   "/:id/review",
   requireWriteAccess,
-  requireRole(...SMART_REVIEW_ROLES),
   authorizeGrn,
   onlyWhenSmart,
+  requireRole(...SMART_REVIEW_ROLES),
   async (req: SmartRequest, res) => {
     try {
       const user = actor(req);

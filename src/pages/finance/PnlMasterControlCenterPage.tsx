@@ -32,6 +32,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
+import { useHasRole } from "@/hooks/useUserRole";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -227,6 +228,19 @@ function HealthLine({ label, value, detail }: { label: string; value: number; de
   );
 }
 
+/**
+ * WRITE_ROLES / PNL_WRITE_ROLES on the endpoints every editor in this page posts to
+ * (bpo-pnl.routes.ts, process-pnl.routes.ts). The page is reachable by the wider pnlRoles list,
+ * which also admits ceo and coo — neither of whom may write. All nine editors go through this one
+ * component, so gating here covers contracts, rate cards, delivery actuals, revenue and cost
+ * components, allocation policies, classification rules and the monthly plan in one place rather
+ * than nine that can drift apart. The backend is still the gate; this only stops the page
+ * offering an Add and a Save that can only come back 403.
+ */
+const PNL_CONFIG_WRITE_ROLES = [
+  "super_admin", "admin", "finance", "finance_head", "accounts_head", "payroll_head",
+] as const;
+
 // Split-pane layout helper
 function SplitPane({
   formOpen,
@@ -249,13 +263,16 @@ function SplitPane({
   onSave: () => void;
   saving: boolean;
 }) {
+  const canWrite = useHasRole(...PNL_CONFIG_WRITE_ROLES);
   return (
     <div className="flex h-full gap-0 overflow-hidden">
       {/* Table side */}
       <div className={`flex flex-col overflow-hidden transition-all duration-150 ${formOpen ? "w-[55%]" : "w-full"}`}>
         <div className="flex items-center justify-between border-b px-3 py-2 shrink-0">
           <span className="text-xs font-medium text-slate-500">{tableLabel}</span>
-          <Button size="sm" onClick={onAdd}>+ Add</Button>
+          {canWrite
+            ? <Button size="sm" onClick={onAdd}>+ Add</Button>
+            : <span className="text-[11px] text-slate-400">Read-only for your role</span>}
         </div>
         <div className="flex-1 overflow-auto px-3 py-2">
           {tableSlot}
@@ -278,8 +295,9 @@ function SplitPane({
           </div>
           <div className="border-t px-3 py-2 flex justify-end gap-2 shrink-0">
             <Button variant="outline" size="sm" onClick={onClose}>Cancel</Button>
-            <Button size="sm" onClick={onSave} disabled={saving}>
-              {saving ? "Saving…" : "Save"}
+            {/* A row can still be opened to read it; only the write is withheld. */}
+            <Button size="sm" onClick={onSave} disabled={saving || !canWrite}>
+              {saving ? "Saving…" : canWrite ? "Save" : "Read-only"}
             </Button>
           </div>
         </div>

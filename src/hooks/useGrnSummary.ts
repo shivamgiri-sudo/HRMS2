@@ -42,15 +42,24 @@ export function useGrnSummary() {
  * two roles a 403 on every page load. Kept in step with that list by hand; the backend, not this,
  * is the actual gate.
  */
+export const GRN_ATTRIBUTION_ROLES = [
+  "super_admin",
+  "admin",
+  "finance_head",
+  "accounts_head",
+  "branch_head",
+  "branch_admin",
+] as const;
+
+/** True when the caller may read the LOB attribution queue at all. Exported so the tab that
+ *  renders the queue and the header count that summarises it cannot drift apart — hiding the
+ *  count while still showing the tab left `finance` and `payroll_head` on a 403'd panel. */
+export function useCanAttributeGrnLob() {
+  return useHasRole(...GRN_ATTRIBUTION_ROLES);
+}
+
 export function useGrnNeedsLobCount() {
-  const canAttribute = useHasRole(
-    "super_admin",
-    "admin",
-    "finance_head",
-    "accounts_head",
-    "branch_head",
-    "branch_admin"
-  );
+  const canAttribute = useCanAttributeGrnLob();
 
   const query = useQuery({
     queryKey: ["pending-grn-lob-attribution"],
