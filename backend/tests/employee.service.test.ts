@@ -144,7 +144,7 @@ describe("employeeService.deactivateEmployee", () => {
   it("soft-deletes by setting active_status = 0", async () => {
     exec.mockResolvedValueOnce([[fakeEmployee], []]);       // getEmployee
     exec.mockResolvedValueOnce([{ affectedRows: 1 }, []]); // UPDATE
-    await employeeService.deactivateEmployee("emp-1", "user-1");
+    await employeeService.deactivateEmployee("emp-1", "user-1", "Role ended by HR");
     const updateCall = exec.mock.calls[1][0] as string;
     expect(updateCall).toContain("active_status");
   });
