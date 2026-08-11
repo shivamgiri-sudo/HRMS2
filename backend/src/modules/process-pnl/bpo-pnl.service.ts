@@ -534,15 +534,33 @@ function matchClassification(person: PayrollPersonRow, rules: ClassificationRule
 
 async function getPayrollPeople(period: string): Promise<PayrollPersonRow[]> {
   if (!(await tableExists("salary_prep_run")) || !(await tableExists("salary_prep_line"))) return [];
+  /*
+   * EVERY run in the month. Two separate faults were compounding here.
+   *
+   * First the ordering. FIELD() returns 0 for any value not in its list, and the statuses this
+   * table actually holds are FINALIZED, approved, draft and processing — of which the list named
+   * only 'approved' and 'draft'. So FINALIZED scored 0 and sorted LAST under DESC, while 'draft'
+   * scored 5 and sorted FIRST: the ranking preferred a draft run over a finalized one and was
+   * inverted from its evident intent.
+   *
+   * Then the LIMIT 1 itself. salary_prep_run is keyed (run_month, branch_filter, process_filter),
+   * so a month legitimately holds several runs covering different cohorts. 2026-03 holds two
+   * with ZERO employees in common — 1,140 and 226, measured against production. Combining both
+   * faults, this function reported March people cost as the 226-employee run's Rs 20,44,862.56
+   * against a true Rs 2,37,71,979.56: a 91.4% under-report, and the same table read by
+   * ceo-overview.service.ts gave the right answer on the same screen refresh.
+   *
+   * The SELECT below already groups by e.id, so an employee appearing in more than one run is
+   * summed once per employee rather than emitted twice.
+   */
   const runs = await safeRows<RowDataPacket>(
     `SELECT id
        FROM salary_prep_run
-      WHERE run_month = ?
-      ORDER BY FIELD(status, 'locked', 'approved', 'completed', 'processed', 'draft') DESC, created_at DESC
-      LIMIT 1`,
+      WHERE run_month = ?`,
     [period]
   );
-  if (!runs[0]?.id) return [];
+  if (!runs.length) return [];
+  const runIds = runs.map((row) => String(row.id));
 
   const salaryColumns = await listColumns("salary_prep_line");
   const employeeColumns = await listColumns("employees");
@@ -592,9 +610,9 @@ async function getPayrollPeople(period: string): Promise<PayrollPersonRow[]> {
        JOIN employees e ON e.id = spl.employee_id
        ${designationJoin}
        ${departmentJoin}
-      WHERE spl.run_id = ?
+      WHERE spl.run_id IN (${runIds.map(() => "?").join(", ")})
       GROUP BY e.id, e.employee_code, process_id, branch_id, designation_id, designation_name, department_id, department_name`,
-    [String(runs[0].id)]
+    runIds
   );
 }
 

@@ -501,14 +501,19 @@ async function loadPayrollCosts(processId: string, period: string, direct: Map<s
   if (!(await tableExists("salary_prep_run")) || !(await tableExists("salary_prep_line"))) {
     return { available: false, assignedCost: 0, source: "salary tables unavailable" };
   }
+  // Every run in the month — a fourth rival strategy for the same question, and a fourth answer.
+  // Note this one ordered FIELD(...) ASCENDING while bpo-pnl.service.ts ordered the identical
+  // expression DESCENDING, so the two picked opposite runs from the same two rows. Neither
+  // ranking meant anything: FIELD() scores 0 for a status not in its list, and the statuses in
+  // use are FINALIZED, approved, draft and processing. See the note in bpo-pnl.service.ts's
+  // getPayrollPeople for the measured impact; 2026-03's two runs share no employees, so
+  // whichever run lost the sort was simply dropped.
   const runs = await queryRows<RowDataPacket>(
-    `SELECT id FROM salary_prep_run
-      WHERE run_month = ?
-      ORDER BY FIELD(status,'locked','approved','completed','processed','draft'), created_at DESC
-      LIMIT 1`,
+    `SELECT id FROM salary_prep_run WHERE run_month = ?`,
     [period]
   );
-  if (!runs[0]?.id) return { available: false, assignedCost: 0, source: "salary run unavailable" };
+  if (!runs.length) return { available: false, assignedCost: 0, source: "salary run unavailable" };
+  const runIds = runs.map((row) => String(row.id));
 
   const salaryColumns = await listColumns("salary_prep_line");
   const gross = salaryColumns.has("gross_salary") ? "COALESCE(spl.gross_salary,0)" : "0";
@@ -528,13 +533,13 @@ async function loadPayrollCosts(processId: string, period: string, direct: Map<s
        FROM salary_prep_line spl
        JOIN employee_lob_assignment a ON a.employee_id = spl.employee_id
        JOIN process_lob_master l ON l.id = a.process_lob_id
-      WHERE spl.run_id = ?
+      WHERE spl.run_id IN (${runIds.map(() => "?").join(", ")})
         AND l.process_id = ?
         AND a.status = 'approved'
         AND a.effective_from <= ?
         AND (a.effective_to IS NULL OR a.effective_to >= ?)
       GROUP BY a.process_lob_id, a.cost_bucket`,
-    [String(runs[0].id), processId, end, start]
+    [...runIds, processId, end, start]
   );
   let assignedCost = 0;
   for (const row of rows) {

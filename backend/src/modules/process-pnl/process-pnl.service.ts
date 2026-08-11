@@ -686,17 +686,36 @@ async function getPayrollMap(processIds: string[], period: string, end: string):
     ? "COALESCE(spl.gratuity, 0)"
     : (salaryColumns.has("basic") ? "COALESCE(spl.basic, 0) * 0.0481" : "0");
 
+  /*
+   * EVERY run in the month, not the most recent one.
+   *
+   * salary_prep_run's unique key is (run_month, branch_filter, process_filter), so several runs
+   * per month are legal and are used: 2026-03 holds two, and they share ZERO employees —
+   * 1,140 in one and 226 in the other, measured against production. They are disjoint cohorts,
+   * not a correction and its original, so taking one and discarding the other simply loses
+   * whichever cohort lost the sort.
+   *
+   * That was doing real damage. Three services picked three different strategies and produced
+   * three different March people-costs from the same table:
+   *   ceo-overview.service.ts   sums all runs   Rs 2,37,71,979.56  (1,366 employees) — correct
+   *   this file                 created_at DESC Rs 2,17,27,117.00  (1,140) — omitted 226
+   *   bpo-pnl.service.ts        FIELD(status)   Rs    20,44,862.56 (  226) — omitted 1,140
+   * The last of those under-reported the month by 91.4%.
+   *
+   * Employee-level de-duplication is still enforced by COUNT(DISTINCT spl.employee_id), so if a
+   * genuine correction run ever DOES repeat an employee, headcount stays honest; the money
+   * columns would then need a run-precedence rule, which no data has ever required.
+   */
   const runRows = await queryRows<RowDataPacket>(
     `SELECT id, run_month, status, created_at
        FROM salary_prep_run
       WHERE run_month = ?
-      ORDER BY created_at DESC
-      LIMIT 1`,
+      ORDER BY created_at DESC`,
     [period]
   );
 
   if (runRows.length > 0) {
-    const runId = String(runRows[0].id);
+    const runIds = runRows.map((row) => String(row.id));
     const rows = await queryRows<RowDataPacket>(
       `SELECT
           e.process_id,
@@ -708,10 +727,10 @@ async function getPayrollMap(processIds: string[], period: string, end: string):
           SUM(${grossExpr} + ${pfExpr} + ${esicExpr} + ${gratuityExpr}) AS loaded_total
         FROM salary_prep_line spl
         JOIN employees e ON e.id = spl.employee_id
-        WHERE spl.run_id = ?
+        WHERE spl.run_id IN (${placeholders(runIds)})
           AND e.process_id IN (${placeholders(processIds)})
         GROUP BY e.process_id`,
-      [runId, ...processIds]
+      [...runIds, ...processIds]
     );
 
     for (const row of rows) {
@@ -723,7 +742,9 @@ async function getPayrollMap(processIds: string[], period: string, end: string):
         gratuity: toNumber(row.gratuity_total),
         headcount: toNumber(row.headcount),
         status: "actual",
-        runId,
+        // The newest run of the month still identifies the figure's provenance; runRows is
+        // ordered created_at DESC so [0] is that one, as it was when only one was read.
+        runId: runIds[0],
         freshness: (runRows[0].created_at as string | null) ?? null,
       });
     }
@@ -1875,18 +1896,20 @@ export const processPnlService = {
     let rows: RowDataPacket[] = [];
 
     if (hasRuns) {
+      // Every run in the month, matching getPeopleCostByProcess above. This list is the
+      // employee-level backing for the same figure, so reading one run here while the summary
+      // reads all of them would put a total on screen that its own rows cannot add up to.
       rows = await queryRows<RowDataPacket>(
         `SELECT id
            FROM salary_prep_run
           WHERE run_month = ?
-          ORDER BY created_at DESC
-          LIMIT 1`,
+          ORDER BY created_at DESC`,
         [context.filters.period]
       );
     }
 
     if (rows.length > 0) {
-      const runId = String(rows[0].id);
+      const runIds = rows.map((row) => String(row.id));
       const peopleRows = await queryRows<RowDataPacket>(
         `SELECT
             e.id AS employee_id,
@@ -1904,11 +1927,11 @@ export const processPnlService = {
           FROM salary_prep_line spl
           JOIN employees e ON e.id = spl.employee_id
           LEFT JOIN designation_master d ON d.id = e.designation_id
-          WHERE spl.run_id = ?
+          WHERE spl.run_id IN (${placeholders(runIds)})
             AND e.process_id = ?
           ORDER BY loaded_cost DESC
           LIMIT 250`,
-        [runId, processId]
+        [...runIds, processId]
       ).catch(() => []);
 
       return {
