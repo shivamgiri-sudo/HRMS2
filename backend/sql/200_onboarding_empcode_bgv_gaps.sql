@@ -165,6 +165,38 @@ DELIMITER ;
 CALL _add_offer_hr_fields();
 DROP PROCEDURE IF EXISTS _add_offer_hr_fields;
 
+-- Ensure the bank-detail table exists before the guarded column backfills below.
+CREATE TABLE IF NOT EXISTS candidate_onboarding_bank_detail (
+  id CHAR(36) NOT NULL DEFAULT (UUID()) PRIMARY KEY,
+  candidate_id CHAR(36) NOT NULL,
+  bank_name VARCHAR(255) NULL,
+  branch_name VARCHAR(255) NULL,
+  account_holder_name VARCHAR(255) NULL,
+  account_no_masked VARCHAR(32) NULL,
+  account_no_hash CHAR(64) NULL,
+  account_no_encrypted TEXT NULL,
+  ifsc_code VARCHAR(20) NULL,
+  account_type VARCHAR(50) NULL,
+  cancelled_cheque_document_id CHAR(36) NULL,
+  name_on_cheque VARCHAR(255) NULL,
+  verification_status VARCHAR(50) NOT NULL DEFAULT 'not_started',
+  provider_name VARCHAR(100) NULL,
+  verification_ref VARCHAR(255) NULL,
+  verified_account_holder_name VARCHAR(255) NULL,
+  verified_at DATETIME NULL,
+  cheque_validation_id CHAR(36) NULL,
+  name_validation_status VARCHAR(50) NOT NULL DEFAULT 'not_required',
+  validated_by CHAR(36) NULL,
+  validated_at DATETIME NULL,
+  validation_status ENUM('pending','verified','rejected') NOT NULL DEFAULT 'pending',
+  rejection_remarks TEXT NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY uq_candidate_bank_detail (candidate_id),
+  INDEX idx_candidate_bank_detail_hash (account_no_hash),
+  INDEX idx_candidate_bank_detail_verification (verification_status)
+);
+
 -- ── 4. Add missing candidate onboarding profile fields ────────────────────────
 DROP PROCEDURE IF EXISTS _add_candidate_profile_fields;
 DELIMITER //
