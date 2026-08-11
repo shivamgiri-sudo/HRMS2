@@ -9,6 +9,26 @@ import { writeAuditLog } from "../../shared/auditLog.js";
 import { assessAggregatePunches } from "../wfm/cosec-punch-interpretation.service.js";
 import { getRealTimePunchesToday } from "../wfm/attendance-realtime-ncosec.service.js";
 
+/**
+ * Business-rule rejection carrying an HTTP status.
+ *
+ * Every rejection in this file was a bare `throw new Error(...)`, which errorHandler cannot
+ * distinguish from an unexpected fault: with no statusCode it takes the "unexpected 500" branch
+ * and, in production, REPLACES the message with "An unexpected server error occurred. Please
+ * quote reference ...". So a kiosk operator who simply had no biometric punch was told the
+ * server had broken, and the wording the product had written for exactly that case
+ * ("No biometric punch found. Exception start is disabled for this kiosk.") never reached them.
+ *
+ * Attaching a 4xx sends it down the operational branch, which passes error.message through
+ * untouched. That also stops routine kiosk rejections from being logged as 500s — 42 of them in
+ * one morning — which is what buried genuine server faults in the error log.
+ */
+function reject(statusCode: number, message: string): Error {
+  const err = new Error(message) as Error & { statusCode?: number };
+  err.statusCode = statusCode;
+  return err;
+}
+
 type KioskDevice = {
   id: string;
   kiosk_code: string;
@@ -371,11 +391,11 @@ function normalizeBreakSettings(settings: BreakSettingsRow) {
 
 function assertEmployeeWithinKioskScope(kiosk: KioskDevice, employee: EmployeeContext) {
   if (kiosk.branch_id && employee.branch_id && kiosk.branch_id !== employee.branch_id) {
-    throw new Error("This kiosk cannot act on employees from another branch");
+    throw reject(403, "This kiosk cannot act on employees from another branch");
   }
   const allowedProcesses = kioskProcessIds(kiosk);
   if (allowedProcesses.length > 0 && (!employee.process_id || !allowedProcesses.includes(employee.process_id))) {
-    throw new Error("This kiosk cannot act on employees from another process");
+    throw reject(403, "This kiosk cannot act on employees from another process");
   }
 }
 
@@ -1026,7 +1046,7 @@ async function recordManualDeskPunch(employee: EmployeeContext, shiftDate: strin
 
   if (mode === "IN") {
     if (existing?.first_punch_in) {
-      throw new Error("Punch in is already available for this employee");
+      throw reject(409, "Punch in is already available for this employee");
     }
 
     if (existing?.id) {
@@ -1055,8 +1075,8 @@ async function recordManualDeskPunch(employee: EmployeeContext, shiftDate: strin
   }
 
   const currentPunchIn = String(existing?.first_punch_in ?? "").trim();
-  if (!currentPunchIn) throw new Error("Punch in is not available for this employee");
-  if (existing?.last_punch_out) throw new Error("Punch out is already available for this employee");
+  if (!currentPunchIn) throw reject(409, "Punch in is not available for this employee");
+  if (existing?.last_punch_out) throw reject(409, "Punch out is already available for this employee");
 
   const duration = minutesBetween(currentPunchIn, now);
   await db.execute(
@@ -1087,22 +1107,22 @@ async function validateKiosk(kioskCode: string, token: string, req: Request) {
   );
   const device = ((rows as unknown[]) as KioskDevice[])[0];
   if (!device || !device.is_active) {
-    throw new Error("Kiosk device is not active");
+    throw reject(403, "Kiosk device is not active");
   }
   if (device.token_hash !== hashToken(token)) {
-    throw new Error("Invalid kiosk token");
+    throw reject(403, "Invalid kiosk token");
   }
 
   const allowedIps = normalizeJsonArray(device.allowed_ip_list);
   const ip = requestIp(req);
   if (allowedIps.length > 0 && !allowedIps.includes(ip)) {
-    throw new Error("This IP is not allowed for the selected kiosk");
+    throw reject(403, "This IP is not allowed for the selected kiosk");
   }
 
   const allowedFingerprints = normalizeJsonArray(device.allowed_device_fingerprints);
   const fingerprint = requestFingerprint(req);
   if (allowedFingerprints.length > 0 && !allowedFingerprints.includes(fingerprint)) {
-    throw new Error("This device fingerprint is not allowed for the selected kiosk");
+    throw reject(403, "This device fingerprint is not allowed for the selected kiosk");
   }
 
   await db.execute(
@@ -1654,7 +1674,7 @@ export const breakManagementService = {
   }) {
     const kiosk = await validateKiosk(kioskCode, token, req);
     const employee = await getEmployeeContext(payload.employee_id);
-    if (!employee) throw new Error("Employee not found or inactive");
+    if (!employee) throw reject(404, "Employee not found or inactive");
     assertEmployeeWithinKioskScope(kiosk, employee);
 
     const shiftDate = await resolveShiftDateSmart(employee.id, payload.date ?? null);
@@ -1663,18 +1683,18 @@ export const breakManagementService = {
       `SELECT id FROM break_sessions WHERE employee_id = ? AND shift_date = ? AND status = 'ACTIVE' LIMIT 1`,
       [employee.id, shiftDate],
     );
-    if ((existingRows as any[]).length > 0) throw new Error("This employee already has an active break");
+    if ((existingRows as any[]).length > 0) throw reject(409, "This employee already has an active break");
 
     const biometric = await getBiometricSnapshot(employee.id, employee.employee_code, shiftDate);
     const usage = await getBreakUsageSummary(employee.id, shiftDate);
     if (!biometric.punchIn && !Number(settings.allow_break_without_biometric ?? 0)) {
-      throw new Error("No biometric punch found. Exception start is disabled for this kiosk.");
+      throw reject(409, "No biometric punch found. Exception start is disabled for this kiosk.");
     }
     if (!biometric.punchIn && Number(settings.require_exception_reason ?? 1) && !String(payload.exception_reason ?? "").trim()) {
-      throw new Error("Exception reason is required when biometric punch is missing");
+      throw reject(400, "Exception reason is required when biometric punch is missing");
     }
     if (usage.totalBreakMinutes >= Number(settings.daily_total_allowed_minutes ?? HARD_MAX_DAILY_BREAK_MINUTES)) {
-      throw new Error(`Daily break limit of ${settings.daily_total_allowed_minutes} minutes has already been used`);
+      throw reject(409, `Daily break limit of ${settings.daily_total_allowed_minutes} minutes has already been used`);
     }
 
     const now = currentIstDateTime().dateTime;
@@ -1759,10 +1779,10 @@ export const breakManagementService = {
         : [payload.employee_id, shiftDate],
     );
     const session = (rows as any[])[0];
-    if (!session) throw new Error("No active break found for this employee");
+    if (!session) throw reject(404, "No active break found for this employee");
 
     const employee = await getEmployeeContext(payload.employee_id);
-    if (!employee) throw new Error("Employee not found");
+    if (!employee) throw reject(404, "Employee not found");
     assertEmployeeWithinKioskScope(kiosk, employee);
     const settings = await getSettings(employee.branch_id ?? kiosk.branch_id, employee.process_id ?? kiosk.process_id);
     const endedAt = currentIstDateTime().dateTime;
@@ -1841,7 +1861,7 @@ export const breakManagementService = {
   }) {
     const kiosk = await validateKiosk(kioskCode, token, req);
     const employee = await getEmployeeContext(payload.employee_id);
-    if (!employee) throw new Error("Employee not found or inactive");
+    if (!employee) throw reject(404, "Employee not found or inactive");
     assertEmployeeWithinKioskScope(kiosk, employee);
     const shiftDate = await resolveShiftDateSmart(employee.id, payload.date ?? null);
     const result = await recordManualDeskPunch(employee, shiftDate, "IN");
@@ -1877,7 +1897,7 @@ export const breakManagementService = {
   }) {
     const kiosk = await validateKiosk(kioskCode, token, req);
     const employee = await getEmployeeContext(payload.employee_id);
-    if (!employee) throw new Error("Employee not found or inactive");
+    if (!employee) throw reject(404, "Employee not found or inactive");
     assertEmployeeWithinKioskScope(kiosk, employee);
     const shiftDate = await resolveShiftDateSmart(employee.id, payload.date ?? null);
     const result = await recordManualDeskPunch(employee, shiftDate, "OUT");
@@ -2379,7 +2399,7 @@ export const breakManagementService = {
       [id],
     );
     const existing = (existingRows as any[])[0];
-    if (!existing) throw new Error("Break desk ID not found");
+    if (!existing) throw reject(404, "Break desk ID not found");
 
     const branchId = String(input.branch_id ?? "") || null;
     const allowedProcessIds = normalizeStringArrayInput(input.allowed_process_ids);
@@ -2450,7 +2470,7 @@ export const breakManagementService = {
       [id],
     );
     const existing = (existingRows as any[])[0];
-    if (!existing) throw new Error("Break desk ID not found");
+    if (!existing) throw reject(404, "Break desk ID not found");
 
     const token = String(tokenInput ?? generateDeskToken()).trim();
     await db.execute(
@@ -2485,7 +2505,7 @@ export const breakManagementService = {
       [id],
     );
     const existing = (existingRows as any[])[0];
-    if (!existing) throw new Error("Break desk ID not found");
+    if (!existing) throw reject(404, "Break desk ID not found");
 
     const [activeRows] = await db.execute<RowDataPacket[]>(
       `SELECT COUNT(*) AS active_count
@@ -2496,7 +2516,7 @@ export const breakManagementService = {
     );
     const activeCount = Number((activeRows as any[])[0]?.active_count ?? 0);
     if (activeCount > 0) {
-      throw new Error("This desk ID cannot be deleted while active break sessions are running");
+      throw reject(409, "This desk ID cannot be deleted while active break sessions are running");
     }
 
     await db.execute(`DELETE FROM break_kiosk_devices WHERE id = ?`, [id]);
