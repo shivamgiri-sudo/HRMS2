@@ -54,6 +54,6 @@ CREATE TABLE IF NOT EXISTS creche_facility (
   updated_at       DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   INDEX idx_creche_branch (branch_id),
   FOREIGN KEY (branch_id) REFERENCES branch_master(id) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB;
 
 SELECT 'Maternity schema patch 042 applied.' AS status;
