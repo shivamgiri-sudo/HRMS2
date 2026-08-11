@@ -174,6 +174,7 @@ function legacyBranchCondition(
   if (scope.mode === "all") return { sql: "1=1", params: [] };
 
   const ids = scope.branchIds;
+  if (ids.length === 0) return { sql: "1 = 0", params: [] };
   const ph = ids.map(() => "?").join(", ");
 
   const sql = `(
@@ -935,8 +936,8 @@ export const grnService = {
     const params: unknown[] = [];
 
     if (filters.branchScope) {
-      const { sql, params: bParams } = legacyBranchCondition(filters.branchScope);
-      if (sql !== "1=1") {
+      if (filters.branchScope.mode !== "all") {
+        const { sql, params: bParams } = legacyBranchCondition(filters.branchScope);
         conditions.push(sql);
         params.push(...bParams);
       }
