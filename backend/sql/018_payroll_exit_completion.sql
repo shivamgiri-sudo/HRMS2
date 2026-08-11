@@ -34,7 +34,7 @@ CREATE TABLE IF NOT EXISTS tax_declaration (
   PRIMARY KEY (id),
   UNIQUE KEY uq_taxdecl_emp_year (employee_id, financial_year),
   INDEX idx_taxdecl_employee (employee_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB;
 
 -- ─── 3. full_final_calculation ───────────────────────────────────────────────
 -- Full & Final settlement linked to an exit_request.
@@ -63,7 +63,7 @@ CREATE TABLE IF NOT EXISTS full_final_calculation (
   INDEX idx_ff_employee (employee_id),
   CONSTRAINT fk_ff_exit_request
     FOREIGN KEY (exit_request_id) REFERENCES exit_request (id) ON DELETE RESTRICT
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB;
 
 -- ─── 4. payroll_disbursement ─────────────────────────────────────────────────
 -- Bank disbursement record for a finalized payroll run.
@@ -81,7 +81,7 @@ CREATE TABLE IF NOT EXISTS payroll_disbursement (
   INDEX idx_disbursement_run (run_id),
   CONSTRAINT fk_disbursement_run
     FOREIGN KEY (run_id) REFERENCES salary_prep_run (id) ON DELETE RESTRICT
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB;
 
 -- ─── 5. Additive ALTERs — full_final_calculation ─────────────────────────────
 -- Add is_ff_provisional: marks F&F as draft until statutory fields are verified.
