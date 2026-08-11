@@ -91,12 +91,30 @@ interface FunnelStage {
   count: number;
 }
 
+/**
+ * One step of the canonical pipeline funnel.
+ *
+ * Replaces the old {from_stage,to_stage,conversion_rate} pair shape. The backend used to
+ * divide each GROUP BY bucket by the next one in a list ordered by VOLUME — so the "from → to"
+ * pairs were arbitrary and the ratio compared disjoint sets. Steps are now in pipeline order
+ * and conversion is the survival rate between consecutive stages.
+ */
 interface StageConversion {
+  stage: string;
   from_stage: string;
   to_stage: string;
-  conversion_rate: number;
-  count_in: number;
-  count_out: number;
+  /** Candidates whose current stage IS this stage. */
+  count_at_stage: number;
+  /** Candidates who reached this stage or any later one — the funnel width here. */
+  count_reached: number;
+  /** null for the first step, and when nobody reached the previous stage. */
+  conversion_from_previous: number | null;
+}
+
+interface StageConversionResponse {
+  steps: StageConversion[];
+  /** Raw stage values the backend could not map — shown rather than silently dropped. */
+  unmapped: Array<{ stage: string; count: number }>;
 }
 
 // ─── Badge helpers ───────────────────────────────────────────────────────────
@@ -1436,6 +1454,7 @@ function AnalyticsTab() {
   const [processId, setProcessId] = useState("");
   const [funnel, setFunnel] = useState<FunnelStage[]>([]);
   const [stages, setStages] = useState<StageConversion[]>([]);
+  const [unmappedStages, setUnmappedStages] = useState<Array<{ stage: string; count: number }>>([]);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
 
@@ -1453,12 +1472,13 @@ function AnalyticsTab() {
         hrmsApi.get<{ success: boolean; data: FunnelStage[] }>(
           `/api/ats-ext/analytics/funnel${qs}`
         ),
-        hrmsApi.get<{ success: boolean; data: StageConversion[] }>(
+        hrmsApi.get<{ success: boolean; data: StageConversionResponse }>(
           `/api/ats-ext/analytics/stages${qs}`
         ),
       ]);
       setFunnel(funnelRes.data ?? []);
-      setStages(stagesRes.data ?? []);
+      setStages(stagesRes.data?.steps ?? []);
+      setUnmappedStages(stagesRes.data?.unmapped ?? []);
     } catch (err: unknown) {
       setMessage(err instanceof Error ? err.message : "Failed to load analytics");
     } finally {
@@ -1572,16 +1592,18 @@ function AnalyticsTab() {
                 <table className="w-full text-sm">
                   <thead className="bg-slate-50 text-left text-xs uppercase text-slate-500">
                     <tr>
-                      <th className="p-4 font-semibold">From</th>
-                      <th className="p-4 font-semibold">To</th>
-                      <th className="p-4 font-semibold">In</th>
-                      <th className="p-4 font-semibold">Out</th>
-                      <th className="p-4 font-semibold">Rate</th>
+                      <th className="p-4 font-semibold">Stage</th>
+                      <th className="p-4 font-semibold">At stage</th>
+                      <th className="p-4 font-semibold">Reached</th>
+                      <th className="p-4 font-semibold">Conversion</th>
                     </tr>
                   </thead>
                   <tbody>
                     {stages.map((s, idx) => {
-                      const pct = Math.round(s.conversion_rate * 100);
+                      // null means "no predecessor" or "nobody reached the previous stage" —
+                      // rendering that as 0% would report an absence of data as total drop-off.
+                      const hasRate = s.conversion_from_previous != null;
+                      const pct = hasRate ? Math.round(s.conversion_from_previous! * 100) : 0;
                       const rateColor =
                         pct >= 70
                           ? "text-emerald-700"
@@ -1596,12 +1618,12 @@ function AnalyticsTab() {
                           <td className="p-4 capitalize text-slate-700">
                             {s.from_stage.replace(/_/g, " ")}
                           </td>
-                          <td className="p-4 capitalize text-slate-700">
-                            {s.to_stage.replace(/_/g, " ")}
-                          </td>
-                          <td className="p-4 font-mono text-slate-600">{s.count_in}</td>
-                          <td className="p-4 font-mono text-slate-600">{s.count_out}</td>
+                          <td className="p-4 font-mono text-slate-600">{s.count_at_stage}</td>
+                          <td className="p-4 font-mono text-slate-600">{s.count_reached}</td>
                           <td className="p-4">
+                            {!hasRate ? (
+                              <span className="text-xs text-slate-400">—</span>
+                            ) : (
                             <div className="flex items-center gap-2">
                               <div className="h-1.5 w-16 rounded-full bg-slate-100 overflow-hidden">
                                 <div
@@ -1617,12 +1639,23 @@ function AnalyticsTab() {
                               </div>
                               <span className={`text-xs font-black ${rateColor}`}>{pct}%</span>
                             </div>
+                            )}
                           </td>
                         </tr>
                       );
                     })}
                   </tbody>
                 </table>
+                {unmappedStages.length > 0 && (
+                  // Stage values the backend could not place in the pipeline. Shown rather
+                  // than dropped: an unrecognised stage silently excluded from the funnel is
+                  // how counts stop reconciling with the candidate list.
+                  <p className="mt-3 text-xs text-amber-700">
+                    Not counted in the funnel — unrecognised stage
+                    {unmappedStages.length > 1 ? "s" : ""}:{" "}
+                    {unmappedStages.map((u) => `${u.stage} (${u.count})`).join(", ")}
+                  </p>
+                )}
               </div>
             )}
           </div>

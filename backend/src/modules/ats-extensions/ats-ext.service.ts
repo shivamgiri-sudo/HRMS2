@@ -4,6 +4,8 @@ import { db } from "../../db/mysql.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
 import type { Request } from "express";
 import { getIstDateString } from '../../utils/dateUtils.js';
+import { excludeEmployeeShapedCandidatesSql } from "../ats/ats-reporting-scope.js";
+import { buildCanonicalFunnel } from "../ats/ats-stage-model.js";
 
 const OFFER_TOKEN_SALT = "offer-salt";
 
@@ -314,14 +316,33 @@ export const duplicateService = {
 // ── Sourcing Funnel Analytics ─────────────────────────────────────────────────
 export const sourcingAnalyticsService = {
   async getFunnel(filters: { from_date?: string; to_date?: string; start_date?: string; end_date?: string; process?: string; process_id?: string; branch?: string; branch_id?: string }) {
-    const conds = ["1=1"];
+    // Was ["1=1"]: no legacy exclusion AND no active_status, so this funnel counted every row
+    // in ats_candidate — 37,686, of which 29,926 are legacy employee records. The default
+    // bucket below (`COALESCE(NULLIF(current_stage,''),'Applied')`) is where most of them
+    // landed, so this endpoint reported roughly 30,000 phantom "Applied" candidates.
+    const conds = ["active_status = 1", excludeEmployeeShapedCandidatesSql("ats_candidate")];
     const params: unknown[] = [];
     const from = filters.from_date ?? filters.start_date;
     const to = filters.to_date ?? filters.end_date;
-    if (from) { conds.push("DATE(created_at) >= ?"); params.push(from); }
-    if (to) { conds.push("DATE(created_at) <= ?"); params.push(to); }
-    if (filters.process ?? filters.process_id) { conds.push("applied_for_process = ?"); params.push(filters.process ?? filters.process_id); }
-    if (filters.branch ?? filters.branch_id) { conds.push("applied_for_branch = ?"); params.push(filters.branch ?? filters.branch_id); }
+    // created_at >= DATE(...) rather than DATE(created_at) >= ...: the latter is non-sargable
+    // and cannot use the index. The upper bound is exclusive-next-day so that rows recorded
+    // later on the end date are included — `DATE(x) <= 'today'` silently dropped today's rows.
+    if (from) { conds.push("created_at >= ?"); params.push(`${from} 00:00:00`); }
+    if (to) { conds.push("created_at < DATE_ADD(?, INTERVAL 1 DAY)"); params.push(to); }
+    // applied_for_branch / applied_for_process hold NAMES, not ids — verified on production:
+    // of the 361 onboarding-bridge candidates, 347 of their applied_for_branch values match
+    // branch_master.branch_name and only 8 match an id. Callers pass either (the parameter is
+    // literally named branch_id), so accept both rather than silently matching nothing.
+    const process = filters.process ?? filters.process_id;
+    if (process) {
+      conds.push("(applied_for_process = ? OR applied_for_process = (SELECT process_name FROM process_master WHERE id = ? LIMIT 1))");
+      params.push(process, process);
+    }
+    const branch = filters.branch ?? filters.branch_id;
+    if (branch) {
+      conds.push("(applied_for_branch = ? OR applied_for_branch = (SELECT branch_name FROM branch_master WHERE id = ? LIMIT 1))");
+      params.push(branch, branch);
+    }
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT COALESCE(NULLIF(current_stage, ''), 'Applied') AS stage, COUNT(*) AS count
          FROM ats_candidate
@@ -335,13 +356,35 @@ export const sourcingAnalyticsService = {
 
   async getStageWise(filters: { from_date?: string; to_date?: string; start_date?: string; end_date?: string; process_id?: string }) {
     const funnel = await this.getFunnel(filters as Record<string, string | undefined>);
-    const ordered = funnel.map((row) => ({ stage: row.stage, count: row.count }));
-    const result: Array<{ from_stage: string; to_stage: string; conversion_rate: number; count_in: number; count_out: number }> = [];
-    for (let i = 0; i < ordered.length - 1; i++) {
-      const from = ordered[i];
-      const to = ordered[i + 1];
-      result.push({ from_stage: from.stage, to_stage: to.stage, count_in: from.count, count_out: to.count, conversion_rate: from.count > 0 ? to.count / from.count : 0 });
-    }
-    return result;
+
+    /**
+     * This previously walked getFunnel()'s rows — which are ordered by COUNT(*) DESC, i.e. by
+     * VOLUME, not by pipeline position — and divided each row by the next. Two things were
+     * wrong at once:
+     *
+     *   1. the "from stage → to stage" pairs were whatever two stages happened to be adjacent
+     *      in the volume ranking, so the pairs changed as the data moved;
+     *   2. a GROUP BY produces DISJOINT buckets. Dividing one bucket by another is not a
+     *      conversion rate — those candidates never flowed between them.
+     *
+     * buildCanonicalFunnel orders by the declared pipeline and converts on cumulative
+     * survivors (reached this stage or later), which is monotonic by construction. It also
+     * merges Arrival/Arrived and keeps unrecognised stages visible instead of absorbing them.
+     */
+    const { steps, unmapped } = buildCanonicalFunnel(funnel);
+
+    return {
+      steps: steps.map((s) => ({
+        from_stage: s.label,
+        to_stage: s.label,
+        stage: s.stage,
+        count_at_stage: s.at_stage,
+        count_reached: s.reached,
+        // null, not 0, when there is no predecessor or nobody reached the previous stage —
+        // "no information" and "0% converted" are different answers.
+        conversion_from_previous: s.conversion_from_previous,
+      })),
+      unmapped,
+    };
   },
 };
