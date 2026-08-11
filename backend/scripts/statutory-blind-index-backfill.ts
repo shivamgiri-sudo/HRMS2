@@ -134,25 +134,54 @@ async function backfill(target: Target): Promise<{ written: number; pending: num
   return { written, pending };
 }
 
-/** Distinct index values must equal distinct plaintext values, or the index collides. */
+/**
+ * Distinct index values must equal distinct plaintext values, or the index collides.
+ *
+ * The comparison MUST be BINARY. blindIndex() is an HMAC over raw bytes, so it is
+ * case-sensitive; COUNT(DISTINCT TRIM(col)) is evaluated under the column's case-INSENSITIVE
+ * collation. Comparing the two counts a case variant as agreement on one side and difference
+ * on the other, so they cannot agree by construction whenever any value differs only in case.
+ * That is not hypothetical: the first production run reported MISMATCH with
+ * distinct_plain=13653 against distinct_index=13744 on a run that was complete and
+ * collision-free — 91 PAN values differ only in case, and BINARY distinct is exactly 13,744.
+ * A false MISMATCH is worse than no check, because it trains the next reader to ignore a real
+ * one, and the old message misdiagnosed it as a collision when more index values than
+ * plaintext values is precisely the opposite.
+ */
 async function verify(target: Target): Promise<void> {
   const [rows] = await db.query<RowDataPacket[]>(
-    `SELECT COUNT(DISTINCT TRIM(${target.column})) AS distinct_plain,
-            COUNT(DISTINCT ${target.indexColumn}) AS distinct_index,
-            SUM(${target.indexColumn} IS NULL) AS still_null
+    `SELECT COUNT(DISTINCT BINARY TRIM(${target.column})) AS distinct_plain,
+            COUNT(DISTINCT TRIM(${target.column}))        AS distinct_plain_ci,
+            COUNT(DISTINCT ${target.indexColumn})         AS distinct_index,
+            SUM(${target.indexColumn} IS NULL)            AS still_null
        FROM employees
       WHERE ${target.column} IS NOT NULL AND TRIM(${target.column}) <> ''`,
   );
   const r = rows[0] as Record<string, unknown>;
-  const ok = Number(r.distinct_plain) === Number(r.distinct_index);
+  const ok = Number(r.distinct_plain) === Number(r.distinct_index) && Number(r.still_null) === 0;
+  const caseVariants = Number(r.distinct_plain) - Number(r.distinct_plain_ci);
+
   console.log(
     `[blind-index] verify ${target.indexColumn}: distinct_plain=${r.distinct_plain} ` +
-    `distinct_index=${r.distinct_index} still_null=${r.still_null} ${ok ? "OK" : "MISMATCH"}`,
+    `distinct_index=${r.distinct_index} still_null=${r.still_null} ` +
+    `case_variants=${caseVariants} ${ok ? "OK" : "MISMATCH"}`,
   );
+
   if (!ok) {
     console.log(
-      "  A mismatch means two different values hashed to one index, or some rows were missed. " +
+      "  Index count differs from BINARY-distinct plaintext, or rows were left unindexed. " +
+      "That is a genuine collision or a missed batch. " +
       "Do NOT migrate the duplicate guard onto this index until it reconciles.",
+    );
+  }
+
+  // Reported even on an OK run: this is a migration hazard, not a backfill failure.
+  if (caseVariants > 0) {
+    console.log(
+      `  NOTE: ${caseVariants} value(s) differ only by case. The duplicate guard matches ` +
+      `plaintext by equality under a case-insensitive collation, so it currently catches ` +
+      `those; this index is case-sensitive and would NOT. Normalise case on both the index ` +
+      `and the lookup before migrating the guard, or duplicate detection regresses for them.`,
     );
   }
 }

@@ -11,6 +11,8 @@
     "src/modules/migration/syncStatutoryDataFromDbBill.ts",
     "src/modules/migration/__tests__/statutorySyncPanEncryption.contract.test.ts",
     "src/shared/__tests__/backfillUpdatedAtPreservation.test.ts",
+    "src/shared/__tests__/blindIndexVerifyContract.test.ts",
+    "src/shared/deadlockRetry.ts",
     "scripts/statutory-blind-index-backfill.ts",
     "src/workers/domains/bank-detail-sync-handler.ts"
   ],
