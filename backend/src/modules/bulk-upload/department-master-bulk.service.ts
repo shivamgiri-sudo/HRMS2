@@ -58,8 +58,15 @@ export async function importDepartmentMasterBatch(
       const msg = err instanceof Error ? err.message : String(err);
       errors.push(msg);
       await db.execute(
-        `UPDATE upload_batch_row SET row_status = 'error', error_message = ? WHERE id = ?`,
-        [msg.slice(0, 500), row.id]
+        `UPDATE upload_batch_row SET row_status = 'error', error_messages = ? WHERE id = ?`,
+        // error_messages, plural, and it is a JSON column holding an array of
+        // strings - the same shape reporting-manager-bulk and roster-assignment-bulk
+        // already write. The column named here was error_message, which does not
+        // exist, so this UPDATE raised ER_BAD_FIELD_ERROR. It sits inside the per-row
+        // catch, so the failure of one row made the handler itself throw and took the
+        // whole import down with an error about a column instead of recording why the
+        // row failed.
+        [JSON.stringify([msg.slice(0, 500)]), row.id]
       );
       errorRows++;
     }
