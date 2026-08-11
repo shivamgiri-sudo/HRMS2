@@ -28,4 +28,12 @@ describe("ATS enhanced journey migration", () => {
     expect(insert).toBeGreaterThan(hasAccessColumn);
     expect(migration).toMatch(/SELECT id FROM employees WHERE employee_code = 'MAS47814' LIMIT 1/i);
   });
+
+  it("adds interviewed_at before indexing interview results by date", () => {
+    const column = migration.search(/ALTER TABLE ats_interview_result ADD COLUMN interviewed_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP/i);
+    const index = migration.search(/CREATE INDEX idx_interview_date ON ats_interview_result\(interviewed_at\)/i);
+
+    expect(column).toBeGreaterThanOrEqual(0);
+    expect(index).toBeGreaterThan(column);
+  });
 });

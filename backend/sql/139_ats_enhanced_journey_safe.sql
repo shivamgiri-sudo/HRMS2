@@ -81,6 +81,13 @@ CREATE TABLE IF NOT EXISTS ats_interview_result (
   FOREIGN KEY (candidate_id) REFERENCES ats_candidate(id) ON DELETE CASCADE
 );
 
+SET @sql = IF(
+  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA='mas_hrms' AND TABLE_NAME='ats_interview_result' AND COLUMN_NAME='interviewed_at') = 0,
+  'ALTER TABLE ats_interview_result ADD COLUMN interviewed_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP',
+  'SELECT ''interviewed_at already exists'' AS note'
+);
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
 -- ── 3. Create payroll_hr_validation table ─────────────────────────────────────
 CREATE TABLE IF NOT EXISTS ats_payroll_hr_validation (
   id CHAR(36) NOT NULL DEFAULT (UUID()) PRIMARY KEY,
