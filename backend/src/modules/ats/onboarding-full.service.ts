@@ -16,6 +16,7 @@ import { encrypt, decrypt } from "../../utils/encryption.js";
 // receive BOTH the legacy AES-CBC shape written below and the canonical AES-GCM shape written by
 // the DPDP backfill; decrypt() rejects the latter as "Invalid encrypted format".
 import { decryptPii } from "../../shared/piiCiphertext.js";
+import { stripCryptoPlumbing } from "../../shared/cryptoColumnHygiene.js";
 import { resolveOnboardingDocumentFile } from "./onboardingDocumentPath.js";
 import { extractFromDocument, crossValidateDocument, checkDuplicates } from "./ocr.service.js";
 import { assertEmployableAge, persistMinorFlag, resolveVerifiedDob } from "./ageVerification.service.js";
@@ -1150,7 +1151,11 @@ export async function validateOnboardingToken(token: string) {
     // Drives the DPDP s.9 guardian-consent banner. Absent from this payload
     // until now, so the banner in OnboardingSteps1to5.tsx could never render.
     is_minor: Boolean((row as { is_minor?: number }).is_minor),
-    saved_profile: profileRows[0] ?? null,
+    // SELECT *, and this one is reached through the PUBLIC token-driven onboarding routes
+    // that mount before global requireAuth. It was returning onboarding_token_hash — the
+    // stored hash of the very token being used to make the call — alongside
+    // pan_number_encrypted and the lookup hashes.
+    saved_profile: stripCryptoPlumbing(profileRows[0] ?? null),
   };
 }
 
@@ -2008,9 +2013,10 @@ export async function getFullOnboardingByCandidate(
     .filter(Boolean);
 
   return {
-    profile: profileRows[0] ?? null,
+    // Both SELECT *. The documents beside them are already sanitized; these were not.
+    profile: stripCryptoPlumbing(profileRows[0] ?? null),
     documents: sanitizedDocuments,
-    bank: bankRows[0] ?? null,
+    bank: stripCryptoPlumbing(bankRows[0] ?? null),
     qualifications: qualificationRows,
     family: familyRows[0] ?? null,
     familyMembers: familyMemberRows,

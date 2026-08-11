@@ -1,6 +1,7 @@
 import type { RowDataPacket, ResultSetHeader } from "mysql2/promise";
 import { randomUUID } from "crypto";
 import { db } from "../../db/mysql.js";
+import { stripCryptoPlumbing } from "../../shared/cryptoColumnHygiene.js";
 import { convertCandidateToEmployee } from "./ats.convert.service.js";
 
 type JsonRecord = Record<string, unknown>;
@@ -246,7 +247,16 @@ export async function getJoiningControlRoomCandidate(candidateId: string) {
       blockers,
       next_action: nextAction(blockers),
     },
-    onboarding: { profile: profile[0] ?? null, bank: bank[0] ?? null, qualifications, experience },
+    // profile and bank are SELECT *, so they carry the at-rest crypto columns
+    // (pan_number_encrypted, *_hash, account_no_encrypted, onboarding_token_hash). This
+    // router admits it, operations_manager and branch_head among others, and none of them
+    // — nor anyone else — has a use for ciphertext or a lookup hash.
+    onboarding: {
+      profile: stripCryptoPlumbing(profile[0] ?? null),
+      bank: stripCryptoPlumbing(bank[0] ?? null),
+      qualifications,
+      experience,
+    },
     offer: offerRows[0] ?? null,
     payroll: payroll[0] ?? null,
     salaryProposal: salaryProposal[0] ?? null,
