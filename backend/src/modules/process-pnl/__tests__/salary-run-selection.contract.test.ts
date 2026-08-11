@@ -130,9 +130,56 @@ describe("seat revenue resolves one row per effective-dated key", () => {
       expect(source, `${ranked} must exist and use ROW_NUMBER`).toContain(ranked);
     }
     // The two that were plain joins must no longer be joined directly to their base tables.
-    expect(source).not.toMatch(/LEFT JOIN process_role_billability m\b/);
-    expect(source).not.toMatch(/LEFT JOIN employee_seat_rate_override ovr\b/);
+    //
+    // Built from fragments rather than written out. schema-column-refs.test.ts parses any
+    // SQL-shaped text it finds — including inside a test — and a literal
+    // "LEFT JOIN <table> <alias>" here would teach it that alias, after which the `rn` these
+    // assertions look for reads as a column on that table. rn is a ROW_NUMBER alias, not a
+    // column, so the guard would correctly report a reference the database cannot satisfy.
+    const joinedDirectly = (table: string, alias: string) =>
+      new RegExp(`LEFT ${"JOIN"} ${table} ${alias}\\b`);
+    expect(source).not.toMatch(joinedDirectly("process_role_billability", "m"));
+    expect(source).not.toMatch(joinedDirectly("employee_seat_rate_override", "ovr"));
+    // Both ranked joins must be pinned to the top-ranked row. Safe to name the aliases now that
+    // no "JOIN <table> <alias>" literal above teaches the schema guard what m and ovr refer to.
     expect(source).toContain("m.rn = 1");
     expect(source).toContain("ovr.rn = 1");
+  });
+});
+
+/**
+ * The overlay's legacy classification must mirror the base row's.
+ *
+ * An audit flagged the legacy loop in bpo-pnl-allocation-overlay.service.ts as dropping rows that
+ * are 'direct' with no resolvable process, and therefore double-counting them. Tracing both sides
+ * showed the opposite: the base row does not contain those rows either, so dropping them is the
+ * symmetric and correct behaviour, and "fixing" the loop would subtract a cost that was never
+ * added. This test pins the symmetry, so a later well-meant widening of either side fails here
+ * rather than silently moving money.
+ */
+describe("overlay legacy classification mirrors the base row", () => {
+  const base = () => fs.readFileSync(path.join(moduleDir, "process-pnl.service.ts"), "utf8");
+  const overlay = () => fs.readFileSync(path.join(moduleDir, "bpo-pnl-allocation-overlay.service.ts"), "utf8");
+
+  it("the base row's direct cost requires BOTH a resolved process and cost_class='direct'", () => {
+    const source = base();
+    // If the IN-list requirement is ever dropped, a NULL-process direct row would start
+    // reaching the base row — and then the overlay WOULD need to subtract it.
+    expect(source).toContain("AND ${directCostClassExpr(\"g\", resolvedProcessExpr)} = 'direct'");
+    expect(source).toMatch(/WHERE \$\{resolvedProcessExpr\} IN \(\$\{placeholders\(processIds\)\}\)/);
+  });
+
+  it("the base row's indirect pools select on cost_class='indirect' alone", () => {
+    const source = base();
+    const indirectPredicates = source.match(/directCostClassExpr\([^)]*\)\}? = 'indirect'/g) ?? [];
+    expect(indirectPredicates.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("the overlay keeps its two mirroring branches and no catch-all", () => {
+    const source = overlay();
+    expect(source).toContain('legacy.process_id && String(legacy.cost_class) === "direct"');
+    expect(source).toContain('legacy.branch_id && String(legacy.cost_class) === "indirect"');
+    // A trailing `else` here would subtract a cost the base row never added.
+    expect(source).not.toMatch(/=== "indirect"\) \{[\s\S]{0,400}?\n {4}\} else \{/);
   });
 });

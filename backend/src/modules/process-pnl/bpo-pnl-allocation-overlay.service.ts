@@ -292,27 +292,31 @@ async function buildAllocationMaps(rows: BpoPnlRow[], period: string) {
   }
 
   /*
-   * KNOWN GAP, deliberately not changed — see the audit note below before "fixing" it.
+   * These two branches deliberately MIRROR how the base row classifies the same rows. Do not
+   * "widen" them to catch the rows they appear to miss — that would introduce a real double
+   * subtraction. This was investigated in full, and the apparent gap is not one.
    *
-   * These two branches classify on (attribution, cost_class) together, so a row that is 'direct'
-   * with no resolvable process_id matches NEITHER and is silently dropped. adjustedRow() then
-   * subtracts nothing for it while the new allocation view adds it, so that amount is counted
-   * twice. The allocations loop above has the correct shape for comparison: it discriminates on
-   * process_id vs branch_id and lets the bucket follow, rather than letting cost_class decide
-   * whether the row is seen at all.
+   * A legacy row that is 'direct' with no resolvable process_id matches neither branch here and
+   * is dropped. That looks like an omission that leaves the amount counted twice — base row plus
+   * new allocation view. It is not, because the base row does not contain it either:
    *
-   * It is reachable in principle: grn.service.ts sets cost_class='direct' whenever a cost centre
-   * is present, and only 24 of 927 cost_centre_master rows carry a process_id.
+   *   process-pnl.service.ts's DIRECT query  requires  <process> IN (...) AND cost_class='direct'
+   *   its INDIRECT queries                   require   cost_class='indirect'
    *
-   * Not repaired here because the repair is a modelling decision, not a mechanical one: an
-   * unattributed direct cost would have to be subtracted from whichever bucket the BASE row put
-   * it in, and if that is dscNonPeople then pooling it at branch level like an indirect cost
-   * (subtracting via legacy.bmc) would move the error rather than remove it. Getting that wrong
-   * introduces a double-subtract, which is worse than the double-count it replaces.
+   * (directCostClassExpr defaults a NULL cost_class to direct-if-a-process-resolves, else
+   * indirect — but an explicit 'direct' survives COALESCE.) A row that is explicitly 'direct'
+   * with a NULL process therefore fails the direct query's IN-list and fails the indirect
+   * query's cost_class test, so it reaches neither row.dscNonPeople nor row.bmcNonPeople.
    *
-   * Measured against production 2026-08: zero rows are in this state today (0 GRNs with
-   * cost_class='direct' and a NULL-process cost centre — there is only one GRN in the system at
-   * all), so nothing is wrong on any screen right now. Raised for a decision rather than guessed.
+   * adjustedRow() computes  row.dscNonPeople - legacy.direct + buckets.dscNonPeople. With the
+   * base row at 0 and legacy.direct at 0, the amount arrives exactly once, through
+   * buckets.*, allocated from the branch pool — which is precisely what the overlay is for.
+   * Subtracting it via legacy.direct or legacy.bmc would remove a cost the base row never
+   * added.
+   *
+   * Verified against production 2026-08 while confirming the reasoning: zero rows are in this
+   * state (no GRN has cost_class='direct' with a NULL-process cost centre; there is one GRN in
+   * the system at all), so no screen is affected either way today.
    */
   for (const legacy of legacyRows) {
     const amount = n(legacy.amount);
