@@ -1,0 +1,18 @@
+{
+  "extends": "./tsconfig.json",
+  "include": [
+    "src/shared/syncPiiEncryption.ts",
+    "src/shared/fieldEncryption.ts",
+    "src/shared/__tests__/syncPiiEncryption.test.ts",
+    "src/modules/leave/leave.service.ts",
+    "src/modules/employees/employee.routes.ts",
+    "src/modules/employees/employee-creation-orchestrator.service.ts",
+    "src/workers/domains/statutory-sync-handler.ts",
+    "src/modules/migration/syncStatutoryDataFromDbBill.ts",
+    "src/modules/migration/__tests__/statutorySyncPanEncryption.contract.test.ts"
+  ],
+  // "multer" on top of the project's ["node"] for the same reason tsconfig.dpdp-check.json needs
+  // it: Express.Multer.File is a global augmentation contributed by a file outside this scoped
+  // include, so without it the check reports a TS2694 the full build does not have.
+  "compilerOptions": { "noEmit": true, "types": ["node", "multer"] }
+}

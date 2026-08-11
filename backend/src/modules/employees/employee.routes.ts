@@ -16,6 +16,7 @@ import { logSensitiveAction } from "../../shared/auditLog.js";
 import { isOfficialEmail } from "../../shared/officialEmail.js";
 import { bootstrapCandidateForEmployee } from "./employee-bgv-bootstrap.service.js";
 import { encryptField, decryptField } from "../../shared/fieldEncryption.js";
+import { encryptPanForSync, blindIndexPan } from "../../shared/syncPiiEncryption.js";
 
 const router = Router();
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -635,6 +636,22 @@ router.put("/:employeeId/statutory-details", ...hrProfileGate, h(async (req: any
   addStat("esi_number", esi_number);
   addStat("uan_number", uan_number);
   addStat("pan_number", pan_number);
+  // employee_statutory_info.pan_number held 3,341 plaintext PANs against 0 ciphertext
+  // (measured live 2026-08-11): migration 1123 added pan_number_encrypted and
+  // pan_blind_index, and no writer ever filled either. This route is one of the two live
+  // writers, so without this the table rots again from the next HR entry.
+  //
+  // The plaintext write deliberately STAYS. The duplicate-employee guard still reads
+  // s.pan_number by equality, so dropping it now would break that guard. The order is
+  // backfill -> migrate readers -> retire plaintext; this is only the stop-the-rot step.
+  //
+  // Both helpers return null under a dev key, which writes NULL here. That is the correct
+  // outcome: keeping a stale ciphertext next to a newly changed plaintext would be worse
+  // than having none, and in production the real key is always loaded.
+  if (pan_number !== undefined) {
+    addStat("pan_number_encrypted", encryptPanForSync(pan_number, "statutory-hr-entry"));
+    addStat("pan_blind_index", blindIndexPan(pan_number, "statutory-hr-entry"));
+  }
   addStat("aadhaar_id", aadhaar_id);
   addStat("pf_eligible", pf_eligible);
   addStat("esi_eligible", esi_eligible);

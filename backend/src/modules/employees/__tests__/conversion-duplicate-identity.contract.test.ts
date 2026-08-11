@@ -74,11 +74,27 @@ describe("candidate to employee conversion — duplicate identity guard", () => 
   });
 
   it("never keys on pan_blind_index, which is empty on every active employee", () => {
-    // Present in the schema, populated on 0 of 1,125 — joining on it would match
-    // nothing and silently reinstate the hole. Comments are stripped first: the
-    // column is named in prose above precisely to explain why it is unused, and
+    // Present in the schema, populated on 0 of 1,125 — keying the LOOKUP on it would
+    // match nothing and silently reinstate the hole. Comments are stripped first: the
+    // column is named in prose precisely to explain why it is not a lookup key, and
     // that mention must not read as usage.
-    expect(codeOnly).not.toContain("pan_blind_index");
+    //
+    // Scoped to findActiveEmployeeByStatutoryId rather than the whole file, because the
+    // orchestrator now WRITES pan_blind_index when it inserts employee_statutory_info —
+    // which is how the column stops being empty in the first place. Writing it is
+    // required; reading it as a lookup key while it is empty is the defect. A file-wide
+    // assertion cannot tell those two apart, and as written it blocked the very fix that
+    // will eventually make keying on it viable. The write itself is pinned separately, by
+    // "employee_statutory_info writers keep the PAN dual-write" in
+    // src/shared/__tests__/syncPiiEncryption.test.ts.
+    const start = codeOnly.indexOf("async function findActiveEmployeeByStatutoryId");
+    expect(start, "duplicate lookup function missing").toBeGreaterThan(-1);
+    const rest = codeOnly.slice(start + 1);
+    const nextFn = rest.search(/^(?:async )?function /m);
+    const lookup = nextFn === -1 ? rest : rest.slice(0, nextFn);
+
+    expect(lookup).not.toContain("pan_blind_index");
+    expect(lookup).not.toContain("blindIndex");
   });
 
   it("uses employee_statutory_info's real Aadhaar column name", () => {

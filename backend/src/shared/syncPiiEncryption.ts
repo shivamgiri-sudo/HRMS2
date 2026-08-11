@@ -1,5 +1,10 @@
 /**
- * PAN ciphertext helper for the legacy sync writers.
+ * PAN ciphertext + blind-index helpers for every writer that can create new plaintext PAN.
+ *
+ * Originally the two legacy sync handlers only. The `employee_statutory_info` writers now use
+ * these too — the HR-entry route and the employee-creation orchestrator — which is why the
+ * `context` argument exists: it labels the caller in the dev-key warning. The name still says
+ * "ForSync" because renaming it would churn two handlers and their tests for no behavioural gain.
  *
  * employees.pan_number_encrypted was backfilled for all 23,341 existing rows, but the two
  * legacy sync handlers are the only writers that can create NEW plaintext PAN. If they
@@ -18,9 +23,10 @@
  * follow whichever rule its own file uses for the plaintext. Keeping the encryption itself
  * identical is what stops that difference becoming two different encryption behaviours.
  */
-import { encryptField, isUsingDevEncryptionKey } from "./fieldEncryption.js";
+import { blindIndex, encryptField, isUsingDevBlindIndexKey, isUsingDevEncryptionKey } from "./fieldEncryption.js";
 
 let devKeyWarned = false;
+let devBlindKeyWarned = false;
 
 /**
  * Ciphertext for a PAN arriving from legacy, or null when there is nothing to encrypt.
@@ -47,7 +53,40 @@ export function encryptPanForSync(value: string | null | undefined, context = "s
   return encryptField(plain, 1);
 }
 
+/**
+ * Blind index for a PAN, or null when there is nothing to index.
+ *
+ * Sibling of encryptPanForSync and here for the same anti-drift reason: the writers of
+ * employee_statutory_info.pan_number must produce the SAME index for the same value as
+ * scripts/statutory-identifier-encrypt-backfill.ts does, or a row written by a route and a
+ * row written by the backfill would never match each other in a lookup. That script
+ * normalises with String(value).trim() and nothing else — no upper-casing — so this does
+ * exactly that and must keep doing exactly that.
+ *
+ * Refuses under the dev blind-index key. An index built with the wrong key is not
+ * detectably wrong: every lookup simply returns no rows, so the duplicate-employee guard
+ * would read that as "no duplicate exists" and pass everything.
+ */
+export function blindIndexPan(value: string | null | undefined, context = "sync"): string | null {
+  const plain = value ? String(value).trim() : "";
+  if (!plain) return null;
+
+  if (isUsingDevBlindIndexKey()) {
+    if (!devBlindKeyWarned) {
+      devBlindKeyWarned = true;
+      console.warn(
+        `[${context}] FIELD_BLIND_INDEX_KEY is the dev key — writing no blind index. ` +
+        `An index written under this key matches nothing at lookup time and reports no error.`
+      );
+    }
+    return null;
+  }
+
+  return blindIndex(plain);
+}
+
 /** Test seam: the warn-once latch is module state, which would leak between test cases. */
 export function __resetDevKeyWarningForTests(): void {
   devKeyWarned = false;
+  devBlindKeyWarned = false;
 }

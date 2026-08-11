@@ -3,6 +3,7 @@ import { getBillPool } from '../../db/billDb.js';
 import { db } from '../../db/mysql.js';
 import type { RowDataPacket } from 'mysql2';
 import { logSensitiveAction } from '../../shared/auditLog.js';
+import { encryptPanForSync, blindIndexPan } from '../../shared/syncPiiEncryption.js';
 
 interface SyncOptions {
   dryRun?: boolean;
@@ -199,7 +200,11 @@ export async function syncEmployeeStatutoryData(options: SyncOptions): Promise<S
 
         result.matched++;
         const fieldsToUpdate: string[] = [];
-        const updateData: Record<string, string> = {};
+        // Widened from Record<string, string> when the PAN ciphertext columns were added:
+        // encryptPanForSync/blindIndexPan return null under a dev key (a deliberate refusal,
+        // not an error) and pan_enc_key_version is numeric. The only consumer is the params
+        // array built below, and mysql2 binds string, number and null alike.
+        const updateData: Record<string, string | number | null> = {};
 
         // Check UAN
         if (isEmpty(employee.uan_number) && isUsable(legacy.UAN)) {
@@ -228,6 +233,32 @@ export async function syncEmployeeStatutoryData(options: SyncOptions): Promise<S
           if (PAN_REGEX.test(pan)) {
             fieldsToUpdate.push('pan_number');
             updateData.pan_number = pan;
+
+            // employees is the ONE table whose PAN ciphertext is fully backfilled —
+            // 23,341 rows, every one key version 1 (measured live 2026-08-11). A writer
+            // that fills only the plaintext column therefore degrades that coverage on
+            // every run. Same dual-write the two legacy sync handlers do; this route was
+            // missed because it lives in the migration module rather than in workers/.
+            //
+            // All three columns are derived from `pan`, the same normalised value that is
+            // stored as plaintext, so a row written here lands in the same blind-index
+            // space as the same row written by
+            // scripts/statutory-identifier-encrypt-backfill.ts.
+            //
+            // The helpers return null under a dev key rather than writing ciphertext
+            // production could never decrypt; the plaintext write still lands, so the
+            // degradation is safe. The plaintext write stays regardless — the
+            // duplicate-employee guard still reads e.pan_number by equality.
+            fieldsToUpdate.push('pan_number_encrypted');
+            updateData.pan_number_encrypted = encryptPanForSync(pan, 'statutory-migration');
+
+            fieldsToUpdate.push('pan_blind_index');
+            updateData.pan_blind_index = blindIndexPan(pan, 'statutory-migration');
+
+            // Pinned to the version encryptPanForSync writes, so the row stays
+            // self-consistent rather than relying on the column default.
+            fieldsToUpdate.push('pan_enc_key_version');
+            updateData.pan_enc_key_version = 1;
           }
         }
 

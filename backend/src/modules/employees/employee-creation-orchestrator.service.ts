@@ -46,6 +46,7 @@ import { sendPayrollHrJoiningDocNotification } from '../ats/ats.email.service.js
 import { issueCandidatePortalAccess } from '../ats/interview.service.js';
 import { env } from '../../config/env.js';
 import { resolveVerifiedDob } from "../ats/ageVerification.service.js";
+import { encryptPanForSync, blindIndexPan } from "../../shared/syncPiiEncryption.js";
 
 export interface EmployeeCreationInput {
   candidateId: string;
@@ -1050,11 +1051,23 @@ async function createRelatedEmployeeRecords(
   // Statutory info. The column is `aadhaar_id`, not `aadhaar_number`.
   if (panNumber || aadhaarNumber || uanNumber) {
     await conn.execute(
+      // pan_number_encrypted / pan_blind_index are written alongside the plaintext. This is
+      // the writer for EVERY new employee, so it is the one that decides whether the table's
+      // encryption coverage holds or decays from here. Plaintext stays until the readers are
+      // migrated — the duplicate-employee guard below still matches on s.pan_number.
+      // panNumber is already String(...).trim() (line above), which is exactly the
+      // normalisation scripts/statutory-identifier-encrypt-backfill.ts applies, so a row
+      // written here and a row written by that backfill land in the same index space.
       `INSERT INTO employee_statutory_info
-         (id, employee_id, pan_number, aadhaar_id, uan_number,
+         (id, employee_id, pan_number, pan_number_encrypted, pan_blind_index, aadhaar_id, uan_number,
           pf_eligible, esi_eligible)
-       VALUES (?, ?, ?, ?, ?, 1, 1)`,
-      [randomUUID(), employeeId, panNumber, aadhaarNumber, uanNumber]
+       VALUES (?, ?, ?, ?, ?, ?, ?, 1, 1)`,
+      [
+        randomUUID(), employeeId, panNumber,
+        encryptPanForSync(panNumber, "employee-creation"),
+        blindIndexPan(panNumber, "employee-creation"),
+        aadhaarNumber, uanNumber,
+      ]
     );
   }
 
