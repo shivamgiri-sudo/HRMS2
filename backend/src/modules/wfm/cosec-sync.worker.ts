@@ -30,6 +30,11 @@ function dateOnly(value: Date): string {
  * A stale feed is therefore logged at error level every cycle, so the failure is loud
  * from the first hour instead of being discovered a payroll run later.
  */
+/** Warn below this share of the trailing median. 0.8 catches 2026-08-07 (68%) without firing on normal variance. */
+const INCOMPLETE_DAY_RATIO = Number(process.env.NCOSEC_INCOMPLETE_DAY_RATIO ?? 0.8);
+/** Unmapped users are punches thrown away. 171 active employees were unenrolled on 2026-08-11. */
+const UNMAPPED_ALERT = Number(process.env.NCOSEC_UNMAPPED_ALERT ?? 25);
+
 async function warnIfFeedStale(staleHours: number): Promise<void> {
   try {
     const [rows] = await db.execute<RowDataPacket[]>(
@@ -53,6 +58,57 @@ async function warnIfFeedStale(staleHours: number): Promise<void> {
   } catch (error) {
     // Never let the freshness probe take the sync down with it.
     console.warn("[cosec-sync] freshness check failed", error instanceof Error ? error.message : String(error));
+  }
+}
+
+
+/**
+ * Completeness, as opposed to freshness.
+ *
+ * warnIfFeedStale above only asks whether the newest record is recent. That cannot see a
+ * day which synced, wrote some rows, and stopped — the feed still looks current because
+ * later days landed fine. On 2026-08-07 exactly that happened: 905 distinct users punched
+ * at the device and only 472 reached biometric_attendance_log, 52% against a steady
+ * 76-81%. Nothing noticed. It was found four days later by hand, by which point 139 days
+ * carrying a complete biometric in-and-out were sitting in payroll as missing_punch,
+ * which pays zero.
+ *
+ * Compares the last completed day against the median of the trailing window rather than a
+ * fixed floor, because volume varies with headcount and weekday. Sundays are skipped —
+ * they run roughly half a weekday and would warn every week.
+ */
+async function warnIfDayIncomplete(): Promise<void> {
+  try {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT punch_date AS d, COUNT(*) AS n
+         FROM biometric_attendance_log
+        WHERE punch_date >= DATE_SUB(CURDATE(), INTERVAL 21 DAY)
+          AND punch_date <  CURDATE()
+        GROUP BY punch_date
+        ORDER BY punch_date`,
+    );
+    if (rows.length < 7) return; // not enough history to judge
+
+    const latest = rows[rows.length - 1] as any;
+    const day = new Date(String(latest.d) + "T00:00:00+05:30");
+    if (day.getUTCDay() === 0) return; // Sunday
+
+    const counts = rows.map((r: any) => Number(r.n)).sort((a, b) => a - b);
+    const median = counts[Math.floor(counts.length / 2)];
+    if (!median) return;
+
+    const ratio = Number(latest.n) / median;
+    if (ratio < INCOMPLETE_DAY_RATIO) {
+      console.error(
+        `[cosec-sync] INCOMPLETE: ${latest.d} ingested ${latest.n} punch-days against a `
+        + `trailing median of ${median} (${Math.round(ratio * 100)}%). Punches exist upstream `
+        + `that never reached HRMS; unresolved days pay zero. Re-run `
+        + `scripts/cosec-sync-backfill.ts ${latest.d} ${latest.d} and check the cause.`,
+      );
+    }
+  } catch (error) {
+    // Never let a probe take the sync down.
+    console.warn("[cosec-sync] completeness check failed", error instanceof Error ? error.message : String(error));
   }
 }
 
@@ -91,10 +147,21 @@ export function startCosecSyncWorker() {
         to: dateOnly(to),
       });
       console.log(`[cosec-sync] migrated=${result.migratedDays} pulled=${result.pulledEvents} unmapped=${result.unmappedUsers.length} failed=${result.failed.length}`);
+      // An unmapped user is a person whose punches were discarded outright. Logged at
+      // info level this reads as routine; it is how 171 active employees came to have no
+      // attendance at all while the sync reported success every five minutes.
+      if (result.unmappedUsers.length > UNMAPPED_ALERT) {
+        console.error(
+          `[cosec-sync] UNMAPPED: ${result.unmappedUsers.length} COSEC users have no employee mapping; `
+          + `their punches are being discarded. Any that are active employees have no attendance `
+          + `and therefore nothing to be paid on — see scripts/enrol-unenrolled-punchers.ts.`,
+        );
+      }
     } catch (error) {
       console.error("[cosec-sync] error", error instanceof Error ? error.message : String(error));
     }
     await warnIfFeedStale(staleHours);
+    await warnIfDayIncomplete();
   };
 
   // Self-healing backfill.
