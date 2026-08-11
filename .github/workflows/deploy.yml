@@ -267,14 +267,33 @@ jobs:
             )
           }
 
+          # 90 attempts, not 30. The budget has to cover a boot that APPLIES MIGRATIONS, because
+          # runPendingMigrations runs at startup and /api/health does not answer until it has
+          # finished — the endpoint gates on schemaStatus.valid.
+          #
+          # This is not hypothetical. On 2026-08-11 a deploy carrying migration 1130 applied nine
+          # pending migrations at boot. Health came back at 11:59:04; the wait gave up at
+          # 11:59:03, one second short, after 30 attempts of curl(3s)+sleep(2s) ~= 100s. The
+          # deploy then did exactly what it was built to do — rolled the dist back and reported
+          # failure — so a healthy release was reverted because its boot was slow, and production
+          # ran the previous commit with the new schema already applied.
+          #
+          # A deploy that waits too long costs minutes. A deploy that gives up too early rolls
+          # back a good release and leaves code and schema at different versions, which is the
+          # more expensive mistake, so the budget is generous rather than tight.
           wait_for_backend_health() {
-            for attempt in $(seq 1 30); do
+            for attempt in $(seq 1 90); do
               if curl -fsS --max-time 3 http://127.0.0.1:5055/api/health >/dev/null; then
+                if [ "$attempt" -gt 30 ]; then
+                  echo "Backend became healthy on attempt ${attempt} — slower than the old 30-attempt budget."
+                  echo "That is normal when this release applies migrations at boot."
+                fi
                 return 0
               fi
-              echo "Waiting for backend health (${attempt}/30)"
+              echo "Waiting for backend health (${attempt}/90)"
               sleep 2
             done
+            echo "Backend did not become healthy within 90 attempts (~5 minutes)."
             return 1
           }
 
