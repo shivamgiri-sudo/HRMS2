@@ -71,6 +71,77 @@ describe("encryptPanForSync", () => {
   });
 });
 
+describe("encryptAccountForSync", () => {
+  beforeEach(() => { vi.restoreAllMocks(); });
+
+  it("produces ciphertext that decrypts back to the original account number", async () => {
+    const { mod, fe } = await loadWith(REAL_KEY);
+    const ct = mod.encryptAccountForSync("123456789012");
+    expect(ct).not.toContain("123456789012");
+    expect(fe.decryptField(ct as string)).toBe("123456789012");
+  });
+
+  it("trims, so padding does not change the stored value", async () => {
+    const { mod, fe } = await loadWith(REAL_KEY);
+    expect(fe.decryptField(mod.encryptAccountForSync("  123456789012  ") as string)).toBe("123456789012");
+  });
+
+  it("returns null when there is nothing to encrypt", async () => {
+    const { mod } = await loadWith(REAL_KEY);
+    expect(mod.encryptAccountForSync(null)).toBeNull();
+    expect(mod.encryptAccountForSync("")).toBeNull();
+    expect(mod.encryptAccountForSync("   ")).toBeNull();
+  });
+
+  it("REFUSES under the all-zeros dev key, and warns once", async () => {
+    const { mod } = await loadWith(DEV_KEY);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    expect(mod.encryptAccountForSync("123456789012")).toBeNull();
+    expect(mod.encryptAccountForSync("999999999999")).toBeNull();
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0][0]).toContain("dev key");
+  });
+
+  it("randomises the IV, so a shared account number is not detectable from the ciphertext", async () => {
+    const { mod } = await loadWith(REAL_KEY);
+    expect(mod.encryptAccountForSync("123456789012")).not.toBe(mod.encryptAccountForSync("123456789012"));
+  });
+});
+
+/**
+ * employee_bank_detail is the other half of the PII estate, and its legacy sync writer had
+ * the same defect the PAN writers had — encryptField() called directly, with no dev-key
+ * refusal, so a run from a developer machine writes ciphertext production can never decrypt.
+ */
+describe("bank detail sync writer", () => {
+  const file = "bank-detail-sync-handler.ts";
+
+  it("routes the account number through encryptAccountForSync, never encryptField", () => {
+    const src = fs.readFileSync(path.join(WORKERS, file), "utf8");
+    expect(src).toContain("encryptAccountForSync");
+    expect(src).not.toMatch(/\bencryptField\s*\(/);
+  });
+
+  it("still writes the plaintext account when encryption is refused", () => {
+    // The old code did `catch { skipped++; continue; }`, so a refusal dropped the bank
+    // detail entirely. account_number is written regardless and resolveAccountNumber falls
+    // back to it, so writing plaintext-only degrades safely; losing the account does not.
+    const src = fs.readFileSync(path.join(WORKERS, file), "utf8");
+    const insert = src.slice(src.indexOf("INSERT INTO employee_bank_detail"), src.indexOf("ON DUPLICATE"));
+    expect(insert).toContain("account_number");
+    expect(insert).toContain("account_number_enc");
+  });
+
+  it("never lets a refused encryption NULL out ciphertext that is already stored", () => {
+    // ON DUPLICATE previously did `account_number_enc = VALUES(account_number_enc)`
+    // unconditionally. Under a dev key VALUES(...) is NULL, which would destroy a good
+    // production ciphertext on every re-sync.
+    const src = fs.readFileSync(path.join(WORKERS, file), "utf8");
+    const dup = src.slice(src.indexOf("ON DUPLICATE"));
+    expect(dup).toMatch(/account_number_enc\s*=\s*IF\(\s*VALUES\(account_number_enc\)\s+IS NOT NULL/i);
+  });
+});
+
 async function loadWithBlindKey(blindKey: string | undefined) {
   vi.resetModules();
   process.env.FIELD_ENCRYPTION_KEY = REAL_KEY;

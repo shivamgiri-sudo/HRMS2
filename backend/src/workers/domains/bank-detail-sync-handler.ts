@@ -1,6 +1,6 @@
 import { db } from '../../db/mysql.js';
 import { DomainSyncBase } from './domain-sync-base.js';
-import { encryptField } from '../../shared/fieldEncryption.js';
+import { encryptAccountForSync } from '../../shared/syncPiiEncryption.js';
 
 const SYNC_MAP_ID = 'a1000000-0000-0000-0000-000000000002';
 
@@ -58,8 +58,14 @@ export class BankDetailSyncHandler extends DomainSyncBase {
       const acNo = row.AcNo?.trim() ?? null;
       if (!acNo) { skipped++; continue; }
 
-      let acNoEnc: string;
-      try { acNoEnc = encryptField(acNo); } catch { skipped++; continue; }
+      // Refuses under the all-zeros dev key and returns null, rather than writing ciphertext
+      // production could never decrypt. A refusal deliberately no longer skips the row: the
+      // previous `catch { skipped++; continue; }` dropped the entire bank detail, and a row
+      // carrying plaintext with no ciphertext is recoverable — resolveAccountNumber() falls
+      // back to account_number — where a missing bank account is not.
+      let acNoEnc: string | null;
+      try { acNoEnc = encryptAccountForSync(acNo, 'bank-detail-sync'); }
+      catch { skipped++; continue; }
 
       try {
         const [res] = await db.execute<any>(
@@ -78,7 +84,11 @@ export class BankDetailSyncHandler extends DomainSyncBase {
               ifsc_code, account_holder_name, is_primary, verified, created_at)
            VALUES (UUID(), ?, ?, ?, ?, ?, ?, ?, 1, 0, NOW())
            ON DUPLICATE KEY UPDATE
-             account_number_enc  = VALUES(account_number_enc),
+             -- Guarded, not unconditional. Under a dev key VALUES(account_number_enc) is
+             -- NULL, and the previous unconditional assignment would have destroyed a good
+             -- production ciphertext on every re-sync. A refusal must never be able to
+             -- delete protection that already exists.
+             account_number_enc  = IF(VALUES(account_number_enc) IS NOT NULL, VALUES(account_number_enc), account_number_enc),
              bank_name           = VALUES(bank_name),
              bank_branch         = VALUES(bank_branch),
              ifsc_code           = VALUES(ifsc_code),

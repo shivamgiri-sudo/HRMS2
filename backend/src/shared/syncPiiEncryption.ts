@@ -54,6 +54,40 @@ export function encryptPanForSync(value: string | null | undefined, context = "s
 }
 
 /**
+ * Ciphertext for a bank account number arriving from legacy, or null when there is nothing
+ * to encrypt.
+ *
+ * Same dev-key refusal as encryptPanForSync and for the same reason, but the caller's
+ * fallback differs and that difference is the point. bank-detail-sync-handler previously
+ * called encryptField() directly and did `catch { skipped++; continue; }`, so anything that
+ * went wrong with encryption dropped the whole bank detail. Returning null instead lets the
+ * row land with its plaintext account_number, which resolveAccountNumber() already falls
+ * back to — a row with plaintext and no ciphertext is recoverable, a missing bank account is
+ * not.
+ *
+ * Contrast employee.routes.ts, which encrypts bank details with encryptField() directly and
+ * should keep doing so: that path writes account_number_enc with NO plaintext sibling, so
+ * refusing there would silently discard the account rather than degrade.
+ */
+export function encryptAccountForSync(value: string | null | undefined, context = "sync"): string | null {
+  const plain = value ? String(value).trim() : "";
+  if (!plain) return null;
+
+  if (isUsingDevEncryptionKey()) {
+    if (!devKeyWarned) {
+      devKeyWarned = true;
+      console.warn(
+        `[${context}] FIELD_ENCRYPTION_KEY is the all-zeros dev key — writing plaintext account only, ` +
+        `no ciphertext. Ciphertext written under this key would be undecryptable in production.`
+      );
+    }
+    return null;
+  }
+
+  return encryptField(plain, 1);
+}
+
+/**
  * Blind index for a PAN, or null when there is nothing to index.
  *
  * Sibling of encryptPanForSync and here for the same anti-drift reason: the writers of
