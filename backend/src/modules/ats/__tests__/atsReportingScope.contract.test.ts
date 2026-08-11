@@ -61,11 +61,16 @@ describe("live call sites are wired to the exclusion helper", () => {
     ).toEqual([]);
   });
 
-  it("command-centre.service.ts uses it at all 11 verified live sites", () => {
+  it("command-centre.service.ts uses it at all 13 verified live sites", () => {
     const source = read("src/modules/ats/command-centre.service.ts");
     expect(source).toContain("excludeEmployeeShapedCandidatesSql");
     const usages = (source.match(/\$\{EXCLUDE_EMPLOYEE_SHAPED(_C)?\}/g) ?? []).length;
-    expect(usages).toBe(11);
+    // Was 11. Two sites were added deliberately, and the exact count is what forced them to
+    // be noticed rather than absorbed:
+    //   - employees_joined_this_month, which read ats_candidate_stage_log alone, so a stage
+    //     row belonging to a legacy employee record counted as a joiner;
+    //   - the pending_approvals subquery, which selected ids from ats_candidate unfiltered.
+    expect(usages).toBe(13);
   });
 
   it("getStageDistribution excludes on both the numerator and the denominator subquery", () => {

@@ -73,6 +73,23 @@ function dateParam(value: unknown, fallback: string) {
   return /^\d{4}-\d{2}-\d{2}$/.test(text) ? text : fallback;
 }
 
+/**
+ * Upper bound for a `created_at BETWEEN ? AND ?` range over a DATETIME column.
+ *
+ * dateParam returns a bare 'YYYY-MM-DD', which MySQL coerces to midnight when compared
+ * against a DATETIME — so `BETWEEN '2026-01-01' AND '2026-08-11'` excludes everything
+ * recorded during 11 August. With the `to` bound defaulting to today, that means every one of
+ * these reports silently drops the current day: 15 candidate rows as of 2026-08-11, and a
+ * full day's worth by any evening.
+ *
+ * Returned as an explicit end-of-day timestamp rather than switching the SQL to
+ * `< DATE_ADD(?, INTERVAL 1 DAY)`, because these are BETWEEN clauses written inline at a
+ * dozen call sites and a value change is far less invasive than rewriting each predicate.
+ */
+function endOfDayParam(date: string): string {
+  return `${date} 23:59:59`;
+}
+
 function monthParam(value: unknown) {
   const text = String(value ?? "").trim();
   return /^\d{4}-\d{2}$/.test(text) ? text : new Date().toISOString().slice(0, 7);
@@ -1227,13 +1244,17 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
               WHERE created_at BETWEEN ? AND ? AND ${excludeEmployeeShapedCandidatesSql("ats_candidate")}
               GROUP BY current_stage
               ORDER BY FIELD(current_stage,'applied','screening','shortlisted','interview_1','interview_2','interview_3','offer','offered','onboarded','joined') , current_stage`;
-      params.push(from, to);
+      params.push(from, endOfDayParam(to));
       break;
     }
 
     case "candidate-source-analysis": {
       const from = dateParam(req.query.from, `${new Date().getFullYear()}-01-01`);
       const to = dateParam(req.query.to, new Date().toISOString().slice(0, 10));
+      // This is a second, rival source-effectiveness report — recruitment.executor.ts's
+      // sourceEffectiveness computes the same idea with a different formula. It had no legacy
+      // exclusion, so all 29,926 employee-shaped rows counted as applications that never
+      // converted, deflating every channel's joining rate.
       sql = `SELECT COALESCE(ac.sourcing_channel, 'Unknown') AS source_name,
                     COUNT(*) AS total_candidates,
                     SUM(CASE WHEN LOWER(ac.current_stage) IN ('offered','offer','onboarded','joined') THEN 1 ELSE 0 END) AS reached_offer,
@@ -1241,9 +1262,10 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
                     ROUND(SUM(CASE WHEN LOWER(ac.current_stage) IN ('onboarded','joined') THEN 1 ELSE 0 END) / COUNT(*) * 100, 1) AS joining_rate_pct
                FROM ats_candidate ac
               WHERE ac.created_at BETWEEN ? AND ?
+                AND ${excludeEmployeeShapedCandidatesSql("ac")}
               GROUP BY ac.sourcing_channel
               ORDER BY total_candidates DESC`;
-      params.push(from, to);
+      params.push(from, endOfDayParam(to));
       break;
     }
 

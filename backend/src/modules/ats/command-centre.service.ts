@@ -87,13 +87,20 @@ export async function getDashboardMetrics(): Promise<DashboardMetrics> {
        AND ${EXCLUDE_EMPLOYEE_SHAPED}`
     ),
     db.execute<RowDataPacket[]>(
+      // active_status = 1 is load-bearing, not decoration. conversion_rate below divides this
+      // by `total`, which DOES require it — so without it the numerator could include rows the
+      // denominator excluded and the reported conversion rate could exceed 100%.
       `SELECT COUNT(*) as selected FROM ats_candidate
-       WHERE current_stage IN ('selected', 'bgv_pending', 'bgv_verified', 'payroll_validated', 'offer_pending', 'offer_accepted')
+       WHERE active_status = 1
+       AND current_stage IN ('selected', 'bgv_pending', 'bgv_verified', 'payroll_validated', 'offer_pending', 'offer_accepted')
        AND ${EXCLUDE_EMPLOYEE_SHAPED}`
     ),
     db.execute<RowDataPacket[]>(
+      // Same reason: rejected is rendered beside total and selected, so it has to be counted
+      // over the same population or the three numbers do not describe one set of candidates.
       `SELECT COUNT(*) as rejected FROM ats_candidate
-       WHERE current_stage IN ('rejected', 'rejected_by_branch_head')
+       WHERE active_status = 1
+       AND current_stage IN ('rejected', 'rejected_by_branch_head')
        AND ${EXCLUDE_EMPLOYEE_SHAPED}`
     ),
     db.execute<RowDataPacket[]>(
@@ -104,15 +111,20 @@ export async function getDashboardMetrics(): Promise<DashboardMetrics> {
       `SELECT COUNT(*) as pending FROM ats_payroll_hr_validation
        WHERE validation_status NOT IN ('approved', 'rejected')
        AND candidate_id IN (
-         SELECT id FROM ats_candidate WHERE current_stage = 'payroll_validated'
+         SELECT id FROM ats_candidate
+          WHERE current_stage = 'payroll_validated' AND ${EXCLUDE_EMPLOYEE_SHAPED}
        )`
     ),
     db.execute<RowDataPacket[]>(
+      // Joined to ats_candidate so the exclusion can apply: this read stage_log alone, so a
+      // stage row belonging to one of the 29,926 legacy employee records counted as a joiner.
       `SELECT COUNT(DISTINCT sl.candidate_id) as joined
        FROM ats_candidate_stage_log sl
+       JOIN ats_candidate c ON c.id = sl.candidate_id
        WHERE sl.to_stage = 'joined'
          AND MONTH(sl.stage_date) = MONTH(CURRENT_DATE())
-         AND YEAR(sl.stage_date) = YEAR(CURRENT_DATE())`
+         AND YEAR(sl.stage_date) = YEAR(CURRENT_DATE())
+         AND ${EXCLUDE_EMPLOYEE_SHAPED_C}`
     ),
   ]);
 
@@ -162,8 +174,13 @@ export async function getBranchMetrics(): Promise<BranchMetrics[]> {
       c.applied_for_branch as branch_name,
       c.branch_display_name,
       COUNT(DISTINCT c.id) as total_candidates,
-      SUM(CASE WHEN c.current_stage IN ('selected', 'bgv_pending', 'bgv_verified', 'payroll_validated', 'offer_pending', 'offer_accepted', 'joined') THEN 1 ELSE 0 END) as selected_count,
-      SUM(CASE WHEN c.current_stage IN ('selected', 'bgv_pending') THEN 1 ELSE 0 END) as pending_interviews,
+      -- COUNT(DISTINCT ... c.id), not SUM(CASE ... THEN 1). The LEFT JOIN to ats_queue_token
+      -- below emits one row per token issued today, so a candidate with three tokens was
+      -- counted three times by these two SUMs while total_candidates — already
+      -- COUNT(DISTINCT) — counted them once. selected_count could therefore exceed
+      -- total_candidates for the same branch, which is how the fan-out was visible.
+      COUNT(DISTINCT CASE WHEN c.current_stage IN ('selected', 'bgv_pending', 'bgv_verified', 'payroll_validated', 'offer_pending', 'offer_accepted', 'joined') THEN c.id END) as selected_count,
+      COUNT(DISTINCT CASE WHEN c.current_stage IN ('selected', 'bgv_pending') THEN c.id END) as pending_interviews,
       COUNT(DISTINCT qt.recruiter_id) as active_recruiters
     FROM ats_candidate c
     LEFT JOIN ats_queue_token qt ON qt.candidate_id = c.id AND DATE(qt.created_at) = CURDATE()
