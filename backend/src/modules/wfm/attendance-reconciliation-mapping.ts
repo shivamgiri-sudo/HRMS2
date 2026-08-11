@@ -20,6 +20,33 @@ export type ClassifiedUser =
   | { kind: "active"; employee: EmployeeRow }
   | { kind: "unmapped" };
 
+/**
+ * employees.employment_status is stored in MIXED CASE. Measured on mas_hrms 2026-08-11:
+ * 'Resigned' 28,200 vs 'resigned' 2,118, and 'Active' 273 vs 'active' 1,039.
+ *
+ * MySQL's collation is case-insensitive, so SQL filters on this column behave. A
+ * JavaScript === does not, and this function is the JS side. Comparing
+ * `employment_status === "resigned"` therefore misses 28,200 rows outright.
+ *
+ * Today that is harmless only by accident: every capitalised 'Resigned' row also carries
+ * active_status = 0, which the preceding condition catches, so the measured blast radius
+ * is 0 rows. It stops being harmless the moment one resigned employee is written with a
+ * non-zero active_status — they would then be classified "active" and have attendance,
+ * and therefore pay, generated from their badge still opening the door. 122 ex-employees
+ * were still registering punches on 2026-08-11.
+ *
+ * Normalise rather than enumerate casings, so a third spelling cannot reopen this.
+ */
+// Deliberately only the two statuses the original compared. 'inactive' (26,680 rows)
+// is NOT included: adding it would be a semantic change to who counts as inactive, not a
+// casing fix, and it belongs in its own reviewed change even though its measured blast
+// radius today is also 0.
+const INACTIVE_EMPLOYMENT_STATUSES = new Set(["resigned", "terminated"]);
+
+function isInactiveEmploymentStatus(status?: string): boolean {
+  return INACTIVE_EMPLOYMENT_STATUSES.has(String(status ?? "").trim().toLowerCase());
+}
+
 export function buildSourceUserMaps(employeeRows: EmployeeRow[], excludedCosecIds: string[]): SourceMaps {
   const byCosecId = new Map<string, EmployeeRow>();
   const byEmployeeCode = new Map<string, EmployeeRow>();
@@ -32,8 +59,7 @@ export function buildSourceUserMaps(employeeRows: EmployeeRow[], excludedCosecId
       const isInactive =
         row.active_status === 0 ||
         row.active_status === "0" ||
-        row.employment_status === "resigned" ||
-        row.employment_status === "terminated";
+        isInactiveEmploymentStatus(row.employment_status);
       if (isInactive) inactiveSet.add(key);
     }
     if (row.employee_code) {
