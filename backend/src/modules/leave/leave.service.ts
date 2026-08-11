@@ -416,10 +416,45 @@ export const leaveService = {
         );
       }
 
-      await conn.execute(
-        "UPDATE leave_request SET status = ? WHERE id = ?",
-        [input.status, id]
-      );
+      // A terminal approval must stamp WHO approved and WHEN onto the request itself.
+      // This UPDATE previously wrote `status` alone: the actor and timestamp reached
+      // leave_approval_log but never leave_request, so approved_by and approved_at were
+      // NULL on all 2,642 approved rows (measured live 2026-08-11) and the MIS leave
+      // report rendered both columns blank on every line.
+      //
+      // Only approvals are stamped. `approved_by` means approver — writing a rejecter
+      // into it would make that report name the wrong person.
+      if (input.status === 'approved' || input.status === 'branch_head_approved') {
+        // reviewerId is an auth user id, but leave.executor.ts joins
+        // `employees appr ON appr.id = lr.approved_by`, so the column has to hold an
+        // EMPLOYEE id or the report shows a raw UUID instead of an employee code.
+        // 995 of 1,117 active employees carry user_id, so an approver without one is
+        // real; fall back to the user id rather than leaving the audit column blank —
+        // that report already COALESCEs to the raw value, and the legacy sync handler
+        // writes non-employee strings here too.
+        const [approverRows] = await conn.execute(
+          `SELECT id FROM employees WHERE user_id = ? AND active_status = 1 LIMIT 1`,
+          [reviewerId]
+        );
+        const approvedBy =
+          String((approverRows as RowDataPacket[])?.[0]?.id ?? '').trim() || reviewerId;
+
+        // approval_level is NOT NULL DEFAULT 'normal', so it is only written on the
+        // branch-head path. Writing 'normal' explicitly would clobber any level set
+        // elsewhere for no gain.
+        const sets = ['status = ?', 'approved_by = ?', 'approved_at = NOW()'];
+        if (input.status === 'branch_head_approved') sets.push(`approval_level = 'branch_head'`);
+
+        await conn.execute(
+          `UPDATE leave_request SET ${sets.join(', ')} WHERE id = ?`,
+          [input.status, approvedBy, id]
+        );
+      } else {
+        await conn.execute(
+          "UPDATE leave_request SET status = ? WHERE id = ?",
+          [input.status, id]
+        );
+      }
       await conn.execute(
         `INSERT INTO leave_approval_log (id, leave_request_id, action, action_by, remarks)
          VALUES (UUID(), ?, ?, ?, ?)`,

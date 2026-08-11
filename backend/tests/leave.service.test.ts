@@ -183,6 +183,83 @@ describe("leaveService.reviewRequest", () => {
     expect(sql).toMatch(/INSERT INTO leave_balance_ledger/i);
   });
 
+  /**
+   * Approval attribution. Before this lock the terminal UPDATE wrote `status` and
+   * nothing else: the actor and timestamp reached leave_approval_log but never
+   * leave_request, so approved_by and approved_at were NULL on all 2,642 approved
+   * rows (measured live 2026-08-11) and the MIS leave report rendered both blank.
+   */
+  function approvalUpdate() {
+    return connExecute.mock.calls.find(([s]) =>
+      /UPDATE leave_request\b/i.test(String(s)) && /\bapproved_by\b/i.test(String(s)));
+  }
+
+  it("stamps the approver and approval time on the leave request itself", async () => {
+    exec.mockResolvedValueOnce([[fakeRequest], []]);
+    exec.mockResolvedValue([[{ ...fakeRequest, status: "approved" }], []]);
+    routeConn([
+      [/FROM leave_type_master/i, [[{ max_days_per_year: 12 }], []]],
+      [/FROM leave_balance_ledger/i, [[fakeBalance], []]],
+      [/FROM attendance_daily_record/i, [[], []]],
+      // The reviewer arrives as an auth user id; the report joins approved_by to
+      // employees.id, so the service must resolve it.
+      [/FROM employees WHERE user_id/i, [[{ id: "emp-mgr-9" }], []]],
+    ]);
+
+    await leaveService.reviewRequest("lr-1", { status: "approved" }, "user-mgr-1");
+
+    const call = approvalUpdate();
+    expect(call, "terminal approval must UPDATE leave_request with approved_by").toBeDefined();
+    expect(String(call![0])).toMatch(/approved_at\s*=\s*NOW\(\)/i);
+    expect(call![1] as unknown[]).toContain("emp-mgr-9");
+  });
+
+  it("falls back to the auth user id when the approver has no employee record", async () => {
+    // 995 of 1,117 active employees carry user_id, so an approver without one is
+    // real. A traceable id beats a blank audit column.
+    exec.mockResolvedValueOnce([[fakeRequest], []]);
+    exec.mockResolvedValue([[{ ...fakeRequest, status: "approved" }], []]);
+    routeConn([
+      [/FROM leave_type_master/i, [[{ max_days_per_year: 12 }], []]],
+      [/FROM leave_balance_ledger/i, [[fakeBalance], []]],
+      [/FROM attendance_daily_record/i, [[], []]],
+      [/FROM employees WHERE user_id/i, [[], []]],
+    ]);
+
+    await leaveService.reviewRequest("lr-1", { status: "approved" }, "user-mgr-1");
+
+    expect(approvalUpdate()![1] as unknown[]).toContain("user-mgr-1");
+  });
+
+  it("records branch_head as the approval level on the branch-head exception path", async () => {
+    exec.mockResolvedValueOnce([[fakeRequest], []]);
+    exec.mockResolvedValue([[{ ...fakeRequest, status: "branch_head_approved" }], []]);
+    routeConn([
+      [/FROM leave_type_master/i, [[{ max_days_per_year: 12 }], []]],
+      [/FROM leave_balance_ledger/i, [[fakeBalance], []]],
+      [/FROM attendance_daily_record/i, [[], []]],
+      [/FROM employees WHERE user_id/i, [[{ id: "emp-bh-2" }], []]],
+    ]);
+
+    await leaveService.reviewRequest("lr-1", { status: "branch_head_approved" }, "user-bh-1");
+
+    expect(String(approvalUpdate()![0])).toMatch(/approval_level\s*=\s*'branch_head'/i);
+  });
+
+  it("does not stamp approved_by when the decision is a rejection", async () => {
+    // approved_by means approver. Overloading it with rejections would make the
+    // MIS report name a rejecter as the approver.
+    exec.mockResolvedValueOnce([[fakeRequest], []]);
+    exec.mockResolvedValue([[{ ...fakeRequest, status: "rejected" }], []]);
+    routeConn([[/FROM attendance_daily_record/i, [[], []]]]);
+
+    await leaveService.reviewRequest("lr-1", { status: "rejected" }, "user-mgr-1");
+
+    expect(approvalUpdate()).toBeUndefined();
+    const joined = connExecute.mock.calls.map(([s]) => String(s)).join("\n");
+    expect(joined).toMatch(/UPDATE leave_request SET status = \?/i);
+  });
+
   it("throws when insufficient balance and rolls back", async () => {
     exec.mockResolvedValueOnce([[fakeRequest], []]);
     routeConn([
