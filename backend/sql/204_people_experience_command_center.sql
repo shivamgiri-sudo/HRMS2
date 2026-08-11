@@ -46,28 +46,55 @@ CREATE TABLE IF NOT EXISTS people_experience_action (
 ALTER TABLE helpdesk_ticket
   MODIFY COLUMN category VARCHAR(100) NOT NULL,
   MODIFY COLUMN priority VARCHAR(20) NOT NULL DEFAULT 'medium',
-  MODIFY COLUMN status VARCHAR(50) NOT NULL DEFAULT 'open',
-  ADD COLUMN IF NOT EXISTS sla_due_at DATETIME NULL,
-  ADD COLUMN IF NOT EXISTS breached_flag TINYINT(1) NOT NULL DEFAULT 0,
-  ADD COLUMN IF NOT EXISTS escalation_level INT NOT NULL DEFAULT 0,
-  ADD COLUMN IF NOT EXISTS assigned_department VARCHAR(100) NULL,
-  ADD COLUMN IF NOT EXISTS root_cause VARCHAR(255) NULL,
-  ADD COLUMN IF NOT EXISTS closure_rating INT NULL,
-  ADD COLUMN IF NOT EXISTS reopened_count INT NOT NULL DEFAULT 0,
-  ADD COLUMN IF NOT EXISTS impact_type VARCHAR(100) NULL,
-  ADD COLUMN IF NOT EXISTS employee_blocked TINYINT(1) NOT NULL DEFAULT 0,
-  ADD COLUMN IF NOT EXISTS productivity_impact TINYINT(1) NOT NULL DEFAULT 0,
-  ADD COLUMN IF NOT EXISTS payroll_impact TINYINT(1) NOT NULL DEFAULT 0,
-  ADD COLUMN IF NOT EXISTS system_access_impact TINYINT(1) NOT NULL DEFAULT 0;
+  MODIFY COLUMN status VARCHAR(50) NOT NULL DEFAULT 'open';
 
 ALTER TABLE grievance
-  MODIFY COLUMN status VARCHAR(50) NOT NULL DEFAULT 'submitted',
-  ADD COLUMN IF NOT EXISTS severity VARCHAR(20) NOT NULL DEFAULT 'medium',
-  ADD COLUMN IF NOT EXISTS due_date DATE NULL,
-  ADD COLUMN IF NOT EXISTS escalation_level INT NOT NULL DEFAULT 0,
-  ADD COLUMN IF NOT EXISTS confidentiality_level VARCHAR(30) NOT NULL DEFAULT 'restricted',
-  ADD COLUMN IF NOT EXISTS anti_retaliation_flag TINYINT(1) NOT NULL DEFAULT 1,
-  ADD COLUMN IF NOT EXISTS assigned_committee VARCHAR(255) NULL,
-  ADD COLUMN IF NOT EXISTS evidence_count INT NOT NULL DEFAULT 0;
+  MODIFY COLUMN status VARCHAR(50) NOT NULL DEFAULT 'submitted';
+
+DROP PROCEDURE IF EXISTS _204_add_col;
+DELIMITER $$
+CREATE PROCEDURE _204_add_col(
+  IN p_table VARCHAR(64),
+  IN p_column VARCHAR(64),
+  IN p_definition TEXT
+)
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+      FROM information_schema.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = p_table
+       AND COLUMN_NAME = p_column
+  ) THEN
+    SET @sql = CONCAT('ALTER TABLE `', p_table, '` ADD COLUMN `', p_column, '` ', p_definition);
+    PREPARE stmt FROM @sql;
+    EXECUTE stmt;
+    DEALLOCATE PREPARE stmt;
+  END IF;
+END$$
+DELIMITER ;
+
+CALL _204_add_col('helpdesk_ticket', 'sla_due_at', 'DATETIME NULL');
+CALL _204_add_col('helpdesk_ticket', 'breached_flag', 'TINYINT(1) NOT NULL DEFAULT 0');
+CALL _204_add_col('helpdesk_ticket', 'escalation_level', 'INT NOT NULL DEFAULT 0');
+CALL _204_add_col('helpdesk_ticket', 'assigned_department', 'VARCHAR(100) NULL');
+CALL _204_add_col('helpdesk_ticket', 'root_cause', 'VARCHAR(255) NULL');
+CALL _204_add_col('helpdesk_ticket', 'closure_rating', 'INT NULL');
+CALL _204_add_col('helpdesk_ticket', 'reopened_count', 'INT NOT NULL DEFAULT 0');
+CALL _204_add_col('helpdesk_ticket', 'impact_type', 'VARCHAR(100) NULL');
+CALL _204_add_col('helpdesk_ticket', 'employee_blocked', 'TINYINT(1) NOT NULL DEFAULT 0');
+CALL _204_add_col('helpdesk_ticket', 'productivity_impact', 'TINYINT(1) NOT NULL DEFAULT 0');
+CALL _204_add_col('helpdesk_ticket', 'payroll_impact', 'TINYINT(1) NOT NULL DEFAULT 0');
+CALL _204_add_col('helpdesk_ticket', 'system_access_impact', 'TINYINT(1) NOT NULL DEFAULT 0');
+
+CALL _204_add_col('grievance', 'severity', 'VARCHAR(20) NOT NULL DEFAULT ''medium''');
+CALL _204_add_col('grievance', 'due_date', 'DATE NULL');
+CALL _204_add_col('grievance', 'escalation_level', 'INT NOT NULL DEFAULT 0');
+CALL _204_add_col('grievance', 'confidentiality_level', 'VARCHAR(30) NOT NULL DEFAULT ''restricted''');
+CALL _204_add_col('grievance', 'anti_retaliation_flag', 'TINYINT(1) NOT NULL DEFAULT 1');
+CALL _204_add_col('grievance', 'assigned_committee', 'VARCHAR(255) NULL');
+CALL _204_add_col('grievance', 'evidence_count', 'INT NOT NULL DEFAULT 0');
+
+DROP PROCEDURE IF EXISTS _204_add_col;
 
 SELECT 'Migration 204 applied: People Experience command center tables and support metadata ready' AS status;
