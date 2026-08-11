@@ -7,7 +7,11 @@ import { hasScopedAccess } from "../../shared/scopeAccess.js";
 import { getUserRoleContext } from "../../shared/roleResolver.js";
 import { atsFullParityService as svc } from "./atsFullParity.service.js";
 import { submitInterviewUpdate, resolveRecruiterForActor } from "./recruiterInterview.service.js";
-import { simpleAnalyticsService as analyticsService } from "./analytics-simple.service.js";
+// analytics-simple.service.ts is no longer imported: the six /analytics/* routes that used it
+// were removed (see below). The file is left in place rather than deleted because
+// atsFullParity.service.ts's webData() — which DOES have a consumer — shares its shape, and
+// removing a service is a wider change than removing unreachable routes. It now has no
+// importer, so nothing runs it.
 import type { RowDataPacket } from "mysql2";
 
 export const atsFullParityRouter = Router();
@@ -249,33 +253,22 @@ atsFullParityRouter.get("/health", requireRole("admin", "hr", "ceo"), h(async (_
   res.json({ success: true, data });
 }));
 
-// Analytics endpoints for enhanced command center
-atsFullParityRouter.get("/analytics/funnel", requireRole("admin", "hr", "recruiter", "manager", "branch_head", "process_manager", "ceo"), h(async (req: AuthenticatedRequest, res) => {
-  const data = await analyticsService.getHiringFunnel(req.query as Record<string, string>);
-  res.json({ success: true, data });
-}));
+/**
+ * The six /analytics/* endpoints that stood here were removed.
+ *
+ * They served hiring funnel, trends, recruiter performance, sources, rejections and queue
+ * metrics from analytics-simple.service.ts, and carried three defects at once: no legacy
+ * exclusion, the LIMIT-5000 truncation, and — unlike /web-data on the same service — no
+ * actor row scope. Each handler passed only req.query, so filters.actorId was undefined and
+ * buildScopeWhereClause never fired. They admitted branch_head and process_manager, so a
+ * branch-scoped user would have received org-wide recruitment analytics.
+ *
+ * The only reason that was not already a live cross-branch leak is that nothing called them:
+ * no frontend file references /ats-full-parity/analytics anywhere. The command center reads
+ * /web-data, which scopes correctly and is now also legacy-excluded.
+ *
+ * Deleted rather than repaired because keeping them means maintaining a second analytics path
+ * that has to stay correct forever, in a module that already has four rival funnel
+ * implementations. /web-data is the one with a consumer.
+ */
 
-atsFullParityRouter.get("/analytics/trends", requireRole("admin", "hr", "recruiter", "manager", "branch_head", "process_manager", "ceo"), h(async (req: AuthenticatedRequest, res) => {
-  const data = await analyticsService.getTrendsData(req.query as Record<string, string>);
-  res.json({ success: true, data });
-}));
-
-atsFullParityRouter.get("/analytics/recruiters", requireRole("admin", "hr", "manager", "branch_head", "ceo"), h(async (req: AuthenticatedRequest, res) => {
-  const data = await analyticsService.getRecruiterPerformance(req.query as Record<string, string>);
-  res.json({ success: true, data });
-}));
-
-atsFullParityRouter.get("/analytics/sources", requireRole("admin", "hr", "recruiter", "manager", "branch_head", "process_manager", "ceo"), h(async (req: AuthenticatedRequest, res) => {
-  const data = await analyticsService.getSourceAnalytics(req.query as Record<string, string>);
-  res.json({ success: true, data });
-}));
-
-atsFullParityRouter.get("/analytics/rejections", requireRole("admin", "hr", "recruiter", "manager", "branch_head", "process_manager", "ceo"), h(async (req: AuthenticatedRequest, res) => {
-  const data = await analyticsService.getRejectionAnalytics(req.query as Record<string, string>);
-  res.json({ success: true, data });
-}));
-
-atsFullParityRouter.get("/analytics/queue-realtime", requireRole("admin", "hr", "recruiter", "manager", "branch_head", "process_manager", "ceo"), h(async (req: AuthenticatedRequest, res) => {
-  const data = await analyticsService.getQueueMetrics(req.query as Record<string, string>);
-  res.json({ success: true, data });
-}));
