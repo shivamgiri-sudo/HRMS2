@@ -88,20 +88,44 @@
 --
 -- Eight of the nine dialled within 24 hours of this measurement.
 --
--- Their correct process could NOT be determined from data, and the two available
--- signals disagree:
---   - Campaign mix points at IDAM Natural Wellness / Bella-Vita Organic. CART_2,
---     SHELTER and INACTIVE are 100% IDAM among employees who do have a process;
---     BELLA_O and CHAT2O split ~55/45 IDAM vs Bella-Vita; EMAIL spreads across four
---     processes. Campaigns are shared between processes, so they cannot pin one.
---   - Eight of the nine report to SUDEEP NEGI (MAS01963), whose own process is
---     VIRTUAL ACCOUNT MANAGEMENT — zero APR history (0/3). That contradicts the
---     campaign evidence, so the manager's process looks stale too.
---   - campaign_master is empty (0 rows), so no authoritative mapping exists.
+-- Their process is recoverable from campaign evidence. The reporting-manager signal
+-- that appeared to contradict it is invalid and should be ignored:
 --
--- Whichever of IDAM / Bella-Vita / Neemans / BTM / Clovia they belong to, all are on
--- the KEEP list, so any correct assignment preserves their APR eligibility. WFM or
--- Ops must confirm which. Until then this file must not run.
+--   SUDEEP NEGI (MAS01963), whom eight of the nine report to, is SR. MANAGER at NOIDA
+--   — a BRANCH manager, not a process owner. He has 147 active direct reports spread
+--   across 15 processes, and exactly ONE of them sits on his own tagged process
+--   (VIRTUAL ACCOUNT MANAGEMENT). Everyone at the branch reports to him regardless of
+--   process, so a branch manager's process_id says nothing about his reports'. Do not
+--   use reporting_manager_id to infer process anywhere.
+--
+-- Matching each of the nine against employees who share their exact campaign signature
+-- since 2026-07-01, counting only peers whose process IS known:
+--
+--   MAS62903  CART_2+INACTIVE+SHELTER   100% IDAM Natural Wellness  (1 peer)
+--   MAS62908  BELLA_O+CART_3+CHAT2O     100% IDAM Natural Wellness  (1 peer)
+--   MAS62909  CART_2+CHAT2O+SHELTER     100% IDAM Natural Wellness  (1 peer)
+--   MAS62910  CART_2+CART_3+SHELTER     100% IDAM Natural Wellness  (2 peers)
+--   MAS62901  EMAIL                      71% IDAM Natural Wellness  (5 of 7 peers)
+--   MAS62905  BELLA_O+CHAT2O             59% IDAM / 41% Bella-Vita Organic (13 vs 9)
+--   MAS62906  BELLA_O+CHAT2O             59% IDAM / 41% Bella-Vita Organic (13 vs 9)
+--   MAS62907  BELLA_O+CHAT2O             59% IDAM / 41% Bella-Vita Organic (13 vs 9)
+--   MAS62913  BELLA_O+CHAT2O             59% IDAM / 41% Bella-Vita Organic (13 vs 9)
+--
+-- Five resolve to IDAM Natural Wellness. The remaining four share BELLA_O+CHAT2O, a
+-- signature genuinely worked by both processes (22 peers split 13/9), so campaigns
+-- cannot separate IDAM from Bella-Vita for them. campaign_master is empty (0 rows),
+-- so there is no authoritative mapping to appeal to.
+--
+-- For THIS file the residual ambiguity does not matter: IDAM Natural Wellness and
+-- Bella-Vita Organic are both on the KEEP list, so any correct assignment of either
+-- leaves all nine APR-eligible. What matters is that they have a process at all.
+--
+-- Recommended sequencing: HR sets process_id on these nine (and ideally on the other
+-- 16, and on the wider 144) through the employee screen, so the change is audited as
+-- master-data maintenance. Deliberately NOT done by a migration — this file changes
+-- attendance configuration, and silently rewriting employee master data alongside it
+-- would hide a billing- and reporting-relevant edit inside an attendance change.
+-- Once the nine have a process, this file is safe to run.
 --
 -- Wider context: 144 of 1,125 active employees (12.8%) have no process_id.
 
