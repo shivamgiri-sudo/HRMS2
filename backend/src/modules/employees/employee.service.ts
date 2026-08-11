@@ -423,6 +423,26 @@ export const employeeService = {
       // Same reasoning as the deactivate endpoint: clearing active_status stops
       // the next login and the next refresh, not the token already issued.
       if (isDeactivating && wasActive) {
+        // EMPLOYEE_DEACTIVATED is the canonical "this person's access was taken
+        // away" marker, and both deactivation paths must emit it — the daily
+        // activation job keys its re-activation guard off exactly this
+        // action_type. The EMPLOYEE_PROFILE_UPDATED row above records the field
+        // change but does not distinguish a deactivation from any other edit,
+        // so keying the guard off that would either miss deactivations or catch
+        // every ordinary profile save.
+        void logSensitiveAction({
+          actor_user_id: actorUserId,
+          action_type: "EMPLOYEE_DEACTIVATED",
+          module_key: "employees",
+          entity_type: "employee",
+          entity_id: id,
+          employee_id: id,
+          change_summary: { fields: ["Employment Status", "Active Status"], via: "profile_update" },
+          old_value_json: { "Employment Status": snap.employment_status ?? null, "Active Status": 1 },
+          new_value_json: { "Employment Status": "Inactive", "Active Status": 0 },
+          reason: deactivationReason,
+        });
+
         await revokeSessionsForEmployee(id, "employment_status_set_inactive");
       }
     }

@@ -146,7 +146,31 @@ export async function runDailyActivationJob(): Promise<ActivationReport> {
      WHERE e.active_status = 0
        AND LOWER(COALESCE(e.employment_status, '')) NOT IN
            ('resigned', 'terminated', 'inactive', 'exited', 'absconding')
-       AND e.date_of_joining <= CURDATE()`,
+       AND e.date_of_joining <= CURDATE()
+       -- This job grants login access and had no notion of approval: it could
+       -- not tell a first activation from a re-activation. Deactivation is
+       -- governed (a stated reason, and coming back needs branch-head approval
+       -- plus HR confirmation via /employees/reactivation), but that guard only
+       -- refuses setting the label to 'Active'. Setting a deactivated employee
+       -- to 'Onboarding' or 'On Notice' — neither excluded above — handed their
+       -- access back that night with nobody approving it.
+       --
+       -- EMPLOYEE_DEACTIVATED is written by both deactivation paths
+       -- (employee.service deactivateEmployee, and updateEmployee when it
+       -- clears active_status). Anyone carrying one had access taken away
+       -- deliberately and must return through the reactivation flow, not by
+       -- being relabelled.
+       --
+       -- Known limit, accepted 2026-08-11: the marker only exists for
+       -- deactivations recorded from that date onward, so historical leavers
+       -- remain reachable this way. Measured before shipping — 0 employees
+       -- carried the marker, and the ten pre-joiners due for activation that
+       -- night were confirmed unaffected.
+       AND NOT EXISTS (
+         SELECT 1 FROM sensitive_action_log sal
+          WHERE sal.employee_id = e.id
+            AND sal.action_type = 'EMPLOYEE_DEACTIVATED'
+       )`,
     []
   );
 
