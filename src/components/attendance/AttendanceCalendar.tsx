@@ -1075,7 +1075,7 @@ export function AttendanceCalendar({
   // Which system drives this employee's attendance — APR (dialler) or COSEC
   // (biometric). Previously the calendar always read biometric, so dialler
   // employees saw COSEC data that did not belong to them.
-  const { data: sourceInfo, isError: sourceError } = useQuery<{
+  const { data: sourceInfo, isError: sourceError, refetch: refetchSource } = useQuery<{
     attendance_source: AttendanceSource;
     source_label: string;
     sync_interval_note?: string;
@@ -1206,7 +1206,17 @@ export function AttendanceCalendar({
               ? "Could not determine which attendance source drives this employee."
               : `The ${source === "dialler" ? "APR / dialler" : "biometric"} source did not respond.`}
           </p>
-          <Button variant="outline" size="sm" onClick={() => refetch()}>Retry</Button>
+          {/* The grid query is gated on `sourceInfo`, so when the source lookup is
+              what failed the grid query is disabled and refetching it does nothing.
+              Retry has to re-run whichever request actually failed; once the source
+              resolves the grid query enables itself and runs. */}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => { void (sourceError ? refetchSource() : refetch()); }}
+          >
+            Retry
+          </Button>
         </CardContent>
       </Card>
     );
