@@ -21,7 +21,7 @@ CREATE TABLE IF NOT EXISTS performance_feedback_cycle (
     INDEX idx_dates (start_date, end_date),
     FOREIGN KEY (created_by) REFERENCES employees(id) ON DELETE RESTRICT,
     FOREIGN KEY (appraisal_cycle_id) REFERENCES appraisal_cycle(id) ON DELETE SET NULL
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB;
 
 -- ============================================================================
 -- Table 2: competency_master
@@ -37,7 +37,7 @@ CREATE TABLE IF NOT EXISTS competency_master (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     INDEX idx_category (category),
     INDEX idx_active (is_active)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB;
 
 -- ============================================================================
 -- Table 3: performance_feedback_request
@@ -59,7 +59,7 @@ CREATE TABLE IF NOT EXISTS performance_feedback_request (
     INDEX idx_cycle_employee (cycle_id, employee_id),
     INDEX idx_reviewer_status (reviewer_id, status),
     UNIQUE KEY unique_review (cycle_id, employee_id, reviewer_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB;
 
 -- ============================================================================
 -- Table 4: performance_feedback_response
@@ -77,7 +77,7 @@ CREATE TABLE IF NOT EXISTS performance_feedback_response (
     INDEX idx_request (request_id),
     INDEX idx_competency (competency_id),
     UNIQUE KEY unique_response (request_id, competency_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB;
 
 -- ============================================================================
 -- Table 5: performance_feedback_report
@@ -99,7 +99,7 @@ CREATE TABLE IF NOT EXISTS performance_feedback_report (
     INDEX idx_cycle_employee (cycle_id, employee_id),
     INDEX idx_overall_score (overall_score),
     UNIQUE KEY unique_report (cycle_id, employee_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB;
 
 -- ============================================================================
 -- Table 6: development_plan
@@ -121,7 +121,7 @@ CREATE TABLE IF NOT EXISTS development_plan (
     FOREIGN KEY (manager_id) REFERENCES employees(id) ON DELETE RESTRICT,
     INDEX idx_employee_status (employee_id, status),
     INDEX idx_dates (plan_start_date, plan_end_date)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB;
 
 -- ============================================================================
 -- Table 7: development_plan_goal
@@ -146,7 +146,7 @@ CREATE TABLE IF NOT EXISTS development_plan_goal (
     FOREIGN KEY (training_need_id) REFERENCES training_need(id) ON DELETE SET NULL,
     INDEX idx_plan_status (plan_id, status),
     INDEX idx_target_date (target_date)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB;
 
 -- ============================================================================
 -- Seed Data: 10 Default Competencies
