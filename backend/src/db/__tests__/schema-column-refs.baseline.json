@@ -1,7 +1,4 @@
 {
-  "modules/business-actions/business-actions.signal-sync.ts": [
-    "employees.reporting_manager_user_id"
-  ],
   "modules/reporting/report-suite.routes.ts": [
     "action_plan.action_plan_number",
     "action_plan.action_type",

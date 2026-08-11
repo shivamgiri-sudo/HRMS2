@@ -163,7 +163,16 @@ export const businessActionSignalSync = {
               px.top_risk_drivers_json,
               e.employee_code,
               e.full_name,
-              e.reporting_manager_id AS reporting_manager_user_id,
+              -- mgr.user_id, not e.reporting_manager_id. This feeds owner_user_id,
+              -- which business-actions.service joins to auth_user in three places
+              -- (LEFT JOIN auth_user u ON u.id = a.owner_user_id). Measured on
+              -- production: 500 of 500 reporting_manager_id values match
+              -- employees.id and 0 match auth_user.id, so the old alias put an
+              -- employee id in a column resolved against users and the owner
+              -- never resolved. NULL when the manager has no login account -
+              -- 121 of 1,115 active employees have none - and the caller already
+              -- falls back to owner_role 'hr' in that case.
+              mgr.user_id AS reporting_manager_user_id,
               mgr.full_name AS manager_name
          FROM people_experience_health_snapshot px
          JOIN (
@@ -353,19 +362,31 @@ export const businessActionSignalSync = {
 
     // Query unreconciled attendance > 3 days old
     const [gaps] = await db.execute<AttendanceGapRow[]>(
+      // Two defects, both proven against production 8.0.42:
+      //
+      //   GROUP BY named e.reporting_manager_user_id - the SELECT alias, but
+      //   qualified with the table alias, so MySQL looked for a real column on
+      //   employees and raised ER_BAD_FIELD_ERROR. Column resolution happens
+      //   before any row is matched, so this threw on every run whatever the
+      //   data. This sync has therefore never created a single action.
+      //
+      //   the value was e.reporting_manager_id, an EMPLOYEE id, feeding
+      //   owner_user_id, which is joined to auth_user. Same identifier-space
+      //   bug as the people-risk query above.
       `SELECT adr.employee_id,
               e.employee_code,
               e.full_name,
-              e.reporting_manager_id AS reporting_manager_user_id,
+              mgr.user_id AS reporting_manager_user_id,
               COUNT(*) as unreconciled_count,
               MAX(DATEDIFF(CURDATE(), adr.record_date)) as max_age
        FROM attendance_daily_record adr
        JOIN employees e ON e.id = adr.employee_id
+       LEFT JOIN employees mgr ON mgr.id = e.reporting_manager_id
        WHERE adr.attendance_status = 'unreconciled'
          AND adr.record_date < DATE_SUB(CURDATE(), INTERVAL 3 DAY)
          AND adr.is_locked = 0
          AND e.active_status = 1
-       GROUP BY adr.employee_id, e.employee_code, e.full_name, e.reporting_manager_user_id
+       GROUP BY adr.employee_id, e.employee_code, e.full_name, mgr.user_id
        ORDER BY max_age DESC
        LIMIT 200`
     );
