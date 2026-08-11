@@ -244,6 +244,7 @@ const MIGRATION_MANIFEST: string[] = [
   "307_fix_blocked_migrations.sql",
   "308_email_templates_bulk_import.sql",
   "309_super_admin_full_page_access.sql",
+  "310_vendor_payment_tracking.sql",
   "342_bgv_provider_config_labels.sql",
   "1000_fix_engagement_schema_columns.sql",
   "343_global_page_availability.sql",
@@ -367,6 +368,7 @@ const MIGRATION_MANIFEST: string[] = [
   "424_employee_reimbursement_claim.sql",
   "425_branch_budget_cost_centre_allocation.sql",
   "425_mira_openrouter_company_knowledge.sql",
+  "migrations/426_employee_geofence_alerts.sql",
   "426_pnl_component_master.sql",
   "426_mira_audit_resilience.sql",
   "427_finance_meter_subsystem.sql",
@@ -422,7 +424,9 @@ const MIGRATION_MANIFEST: string[] = [
   "1008_migrate_photo_urls_to_api.sql",         // Migrate employee photo URLs from /uploads/ to /api/files/
   "1009_ats_hiring_followup_call_feedback.sql", // ATS hiring: follow-up call outcome, date, notes, reschedule columns
   "1021_payroll_signoff_columns_and_ceo_sod.sql", // salary_prep_run sign-off columns (route 500'd without them) + narrow ceo create/delete grants
+  "1022_notification_event_registry.sql",          // notification_event_config is required at startup and by notificationGateway.notify()
   "1022_page_catalog_path_reconciliation.sql",    // WORKFORCE_COMMAND_CENTER path regression (404 for 8 roles) + retire ADVANCED_REPORTS stub
+  "1023_notification_dispatch_claim.sql",          // notification_dispatch_claim is required by the dispatch worker claim path
   "1023_discard_approved_records.sql",            // Discard approved leave/regularization/dispute: pre-approval snapshots + discard audit log
   "1024_candidate_onboarding_document_rejected_status.sql", // document_status lacked 'rejected'; every secure-viewer reject hit ERROR 1265
   "1028_salary_certificate_request_collation.sql", // utf8mb4_0900_ai_ci vs employees' utf8mb4_unicode_ci — the join 500'd with ERROR 1267
