@@ -1,0 +1,156 @@
+name: Ops Scripts (manual)
+
+# Manually-triggered maintenance scripts that must run ON the production host.
+#
+# ── WHY THIS EXISTS ──────────────────────────────────────────────────────────
+# Several one-off scripts cannot run from a developer machine, because the key or the data
+# they need only exists on the server:
+#
+#   FIELD_ENCRYPTION_KEY is set only in /var/www/HRMS2/backend/.env. A backfill run anywhere
+#   else silently encrypts production rows with the built-in all-zeros DEV key — the write
+#   path never attempts a decrypt, so it reports success and the damage stays invisible until
+#   the plaintext is retired. The scripts guard against this themselves (they refuse unless
+#   they can decrypt existing ciphertext first), but the guard only helps if the run happens
+#   somewhere the real key is present.
+#
+# The self-hosted runner already sits on that host and already deploys there, so it can run
+# them with the production environment and leave an audit trail, without any credential
+# changing hands.
+#
+# ── SAFETY ───────────────────────────────────────────────────────────────────
+#   - workflow_dispatch only. Nothing here runs on push, on schedule, or on merge.
+#   - Defaults to a dry run. Applying requires typing the script name into `confirm`.
+#   - `environment: production` so any GitHub environment protection rules apply.
+#   - Serialised: two of these must never overlap on the same tables.
+#
+# ── THE FLAG TRAP THIS ENCODES ───────────────────────────────────────────────
+# The scripts do NOT agree on their default, which is exactly the kind of thing to get wrong
+# at 2am on a terminal:
+#
+#   statutory-identifier-encrypt-backfill.ts   APPLIES unless given --dry-run
+#   backup-table-pii-scrub.mjs                 dry-runs unless given --apply
+#   legacy-payslip-account-encrypt-backfill    dry-runs unless given --apply
+#
+# The case statement below maps mode -> the right flag per script, so the operator picks
+# "dry-run" or "apply" and never has to remember which way round a given script reads.
+
+on:
+  workflow_dispatch:
+    inputs:
+      script:
+        description: "Which script to run"
+        required: true
+        type: choice
+        options:
+          - statutory-identifier-encrypt-backfill
+          - backup-table-pii-scrub
+          - legacy-payslip-account-encrypt-backfill
+      mode:
+        description: "dry-run reports what it would do and writes nothing"
+        required: true
+        default: dry-run
+        type: choice
+        options:
+          - dry-run
+          - apply
+      confirm:
+        description: "To APPLY, type the script name exactly. Ignored for a dry run."
+        required: false
+        type: string
+
+concurrency:
+  group: ops-scripts-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  run:
+    name: "${{ inputs.script }} (${{ inputs.mode }})"
+    runs-on: self-hosted
+    environment: production
+    timeout-minutes: 60
+
+    steps:
+      - name: Refuse an unconfirmed apply
+        if: inputs.mode == 'apply'
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${{ inputs.confirm }}" != "${{ inputs.script }}" ]; then
+            echo "::error::To apply, 'confirm' must be exactly '${{ inputs.script }}'."
+            echo "Got: '${{ inputs.confirm }}'"
+            exit 1
+          fi
+          echo "Apply confirmed for ${{ inputs.script }}."
+
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install backend deps
+        working-directory: backend
+        run: npm ci
+
+      - name: Verify the production environment file is present
+        shell: bash
+        run: |
+          set -euo pipefail
+          ENV_FILE=/var/www/HRMS2/backend/.env
+          test -f "$ENV_FILE" || { echo "::error::$ENV_FILE not found — is this the prod host?"; exit 1; }
+          # Report only whether the key is set, never its value.
+          if grep -q '^FIELD_ENCRYPTION_KEY=' "$ENV_FILE"; then
+            echo "FIELD_ENCRYPTION_KEY: present"
+          else
+            echo "FIELD_ENCRYPTION_KEY: ABSENT — encryption backfills will refuse to run, by design"
+          fi
+
+      - name: Run
+        working-directory: backend
+        shell: bash
+        env:
+          # dotenv's preloader honours this, and every script here uses `import "dotenv/config"`.
+          # Pointing at the deployed .env means the real key is used without copying secrets
+          # into the runner workspace.
+          DOTENV_CONFIG_PATH: /var/www/HRMS2/backend/.env
+          NODE_ENV: production
+        run: |
+          set -euo pipefail
+          MODE="${{ inputs.mode }}"
+
+          case "${{ inputs.script }}" in
+            statutory-identifier-encrypt-backfill)
+              # Inverted default: this one writes unless told not to.
+              FLAG=""; [ "$MODE" = "dry-run" ] && FLAG="--dry-run"
+              npx tsx scripts/statutory-identifier-encrypt-backfill.ts $FLAG
+              ;;
+            backup-table-pii-scrub)
+              FLAG=""; [ "$MODE" = "apply" ] && FLAG="--apply"
+              node scripts/backup-table-pii-scrub.mjs $FLAG
+              ;;
+            legacy-payslip-account-encrypt-backfill)
+              FLAG=""; [ "$MODE" = "apply" ] && FLAG="--apply"
+              node scripts/legacy-payslip-account-encrypt-backfill.mjs $FLAG
+              ;;
+            *)
+              echo "::error::Unknown script '${{ inputs.script }}'"
+              exit 1
+              ;;
+          esac
+
+      - name: Summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "### ${{ inputs.script }}"
+            echo ""
+            echo "- mode: **${{ inputs.mode }}**"
+            echo "- commit: \`${{ github.sha }}\`"
+            echo "- actor: @${{ github.actor }}"
+          } >> "$GITHUB_STEP_SUMMARY"
