@@ -119,12 +119,20 @@ CREATE TABLE IF NOT EXISTS employee_code_sequence (
   UNIQUE KEY unique_sequence (company_prefix, is_offrole)
 );
 
+ALTER TABLE employee_code_sequence ADD COLUMN is_offrole BOOLEAN DEFAULT FALSE;
+ALTER TABLE employee_code_sequence ADD COLUMN current_sequence INT NOT NULL DEFAULT 0;
+ALTER TABLE employee_code_sequence ADD COLUMN last_generated_code VARCHAR(50) NULL;
+ALTER TABLE employee_code_sequence ADD COLUMN last_generated_at DATETIME NULL;
+
 -- Initialize sequences
-INSERT IGNORE INTO employee_code_sequence (company_prefix, is_offrole, current_sequence) VALUES
+INSERT INTO employee_code_sequence (company_prefix, is_offrole, current_sequence) VALUES
 ('MAS', FALSE, 47814),
 ('MAS', TRUE, 0),
 ('IDC', FALSE, 0),
-('IDC', TRUE, 0);
+('IDC', TRUE, 0)
+ON DUPLICATE KEY UPDATE
+  current_sequence = GREATEST(current_sequence, VALUES(current_sequence)),
+  is_offrole = is_offrole;
 
 -- ── 5. Create module_access_control table ─────────────────────────────────────
 CREATE TABLE IF NOT EXISTS module_access_control (
