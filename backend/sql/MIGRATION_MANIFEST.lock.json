@@ -218,6 +218,7 @@
     "309_super_admin_full_page_access.sql",
     "310_vendor_payment_tracking.sql",
     "342_bgv_provider_config_labels.sql",
+    "600_cost_centre_extended_schema.sql",
     "1000_fix_engagement_schema_columns.sql",
     "343_global_page_availability.sql",
     "344_ats_recruiter_hiring_tracker.sql",
@@ -396,6 +397,7 @@
     "1024_candidate_onboarding_document_rejected_status.sql",
     "1028_salary_certificate_request_collation.sql",
     "1027_ceo_my_kpi_revoke.sql",
+    "1029_ungated_routes_page_catalog.sql",
     "1030_statutory_config_versioning.sql",
     "1031_statutory_filing_act_2025_forms.sql",
     "1032_tds_certificate_part_a.sql",
@@ -487,7 +489,10 @@
     "1122_employees_aadhaar_blind_index.sql",
     "1123_statutory_identifier_encryption_columns.sql",
     "1124_salary_prep_line_covering_index.sql",
-    "1125_legacy_payslip_snapshot_account_encryption.sql"
+    "1125_legacy_payslip_snapshot_account_encryption.sql",
+    "1128_statutory_filing_record.sql",
+    "1129_cost_centre_page_access.sql",
+    "1129_org_chart_access_log.sql"
   ],
   "approvedDeletions": [],
   "knownDangling": [
@@ -542,7 +547,6 @@
     "1027_roster_email_templates.sql",
     "1028_exit_notification_events.sql",
     "1029_undeliverable_recipients_subscription.sql",
-    "1029_ungated_routes_page_catalog.sql",
     "102_role_page_access_seed.sql",
     "1030_configuration_center_page_catalog.sql",
     "1030_lms_progress_snapshot_dedupe.sql",
@@ -638,7 +642,6 @@
     "562_epf_form_autofill.sql",
     "570_ijp_module.sql",
     "590_cost_centre_relationships.sql",
-    "600_cost_centre_extended_schema.sql",
     "600_role_dashboard_page_grants.sql",
     "601_retire_unimplemented_dashboard_pages.sql",
     "602_dashboard_metric_catalog_seed.sql",
