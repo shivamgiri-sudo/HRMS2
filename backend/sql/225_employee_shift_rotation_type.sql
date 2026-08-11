@@ -4,12 +4,28 @@
 -- daily    = shift may change day-to-day per roster_template pattern
 -- rotating = follows a rolling rotation cycle (e.g. 14-day or 28-day pattern)
 
-ALTER TABLE employees
-  ADD COLUMN IF NOT EXISTS shift_rotation_type
-    ENUM('frozen', 'weekly', 'daily', 'rotating')
-    NOT NULL DEFAULT 'frozen'
-    COMMENT 'Controls how the auto-roster engine assigns shifts for this employee'
-  AFTER designation;
+DROP PROCEDURE IF EXISTS _225_add_shift_rotation_type;
+DELIMITER $$
+CREATE PROCEDURE _225_add_shift_rotation_type()
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+      FROM information_schema.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = 'employees'
+       AND COLUMN_NAME = 'shift_rotation_type'
+  ) THEN
+    ALTER TABLE employees
+      ADD COLUMN shift_rotation_type
+        ENUM('frozen', 'weekly', 'daily', 'rotating')
+        NOT NULL DEFAULT 'frozen'
+        COMMENT 'Controls how the auto-roster engine assigns shifts for this employee'
+      AFTER designation;
+  END IF;
+END$$
+DELIMITER ;
+CALL _225_add_shift_rotation_type();
+DROP PROCEDURE IF EXISTS _225_add_shift_rotation_type;
 
 -- Index for roster engine queries (frequently filtered by process + rotation type)
 SET @dbname = DATABASE();
