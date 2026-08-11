@@ -45,6 +45,7 @@ on:
           - statutory-identifier-encrypt-backfill
           - backup-table-pii-scrub
           - legacy-payslip-account-encrypt-backfill
+          - ats-candidate-record-type-backfill
       mode:
         description: "dry-run reports what it would do and writes nothing"
         required: true
@@ -136,6 +137,11 @@ jobs:
             legacy-payslip-account-encrypt-backfill)
               FLAG=""; [ "$MODE" = "apply" ] && FLAG="--apply"
               node scripts/legacy-payslip-account-encrypt-backfill.mjs $FLAG
+              ;;
+            ats-candidate-record-type-backfill)
+              # dry-runs unless given --apply, like the two above.
+              FLAG=""; [ "$MODE" = "apply" ] && FLAG="--apply"
+              node scripts/ats-candidate-record-type-backfill.mjs $FLAG
               ;;
             *)
               echo "::error::Unknown script '${{ inputs.script }}'"
