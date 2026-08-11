@@ -33,8 +33,9 @@
  *   the stored data is a separate, deliberate exercise.
  *
  * ROLLBACK
- *   UPDATE employees SET aadhaar_blind_index = NULL, pan_blind_index = NULL;
+ *   UPDATE employees SET aadhaar_blind_index = NULL, pan_blind_index = NULL, updated_at = updated_at;
  *   Nothing reads these columns until the guard is migrated, so rollback is free.
+ *   `updated_at = updated_at` matters here as much as in the forward direction — see below.
  */
 import "dotenv/config";
 import { db } from "../src/db/mysql.js";
@@ -96,8 +97,18 @@ async function backfill(target: Target): Promise<{ written: number; pending: num
       lastId = row.id;
       const value = String(row.value).trim();
       if (!value) continue;
+      // `updated_at = updated_at` is deliberate, and copied from
+      // employee-pii-encrypt-backfill.mjs which got this right. employees.updated_at is
+      // declared `on update CURRENT_TIMESTAMP`, so without this assignment all 53,449 rows
+      // touched here would be stamped as modified now. Deriving a blind index from a value
+      // that already exists is not a business modification of the employee record, and
+      // falsified "last modified" stamps are indistinguishable from real edits afterwards —
+      // they would surface in reports, exports and audit views. Assigning the column its own
+      // value suppresses the auto-update. Pinned by
+      // src/shared/__tests__/backfillUpdatedAtPreservation.test.ts.
       const [res] = await db.execute<ResultSetHeader>(
-        `UPDATE employees SET ${indexColumn} = ? WHERE id = ? AND ${indexColumn} IS NULL`,
+        `UPDATE employees SET ${indexColumn} = ?, updated_at = updated_at
+          WHERE id = ? AND ${indexColumn} IS NULL`,
         [blindIndex(value), row.id],
       );
       written += res.affectedRows;
