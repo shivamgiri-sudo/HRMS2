@@ -291,6 +291,29 @@ async function buildAllocationMaps(rows: BpoPnlRow[], period: string) {
     }
   }
 
+  /*
+   * KNOWN GAP, deliberately not changed — see the audit note below before "fixing" it.
+   *
+   * These two branches classify on (attribution, cost_class) together, so a row that is 'direct'
+   * with no resolvable process_id matches NEITHER and is silently dropped. adjustedRow() then
+   * subtracts nothing for it while the new allocation view adds it, so that amount is counted
+   * twice. The allocations loop above has the correct shape for comparison: it discriminates on
+   * process_id vs branch_id and lets the bucket follow, rather than letting cost_class decide
+   * whether the row is seen at all.
+   *
+   * It is reachable in principle: grn.service.ts sets cost_class='direct' whenever a cost centre
+   * is present, and only 24 of 927 cost_centre_master rows carry a process_id.
+   *
+   * Not repaired here because the repair is a modelling decision, not a mechanical one: an
+   * unattributed direct cost would have to be subtracted from whichever bucket the BASE row put
+   * it in, and if that is dscNonPeople then pooling it at branch level like an indirect cost
+   * (subtracting via legacy.bmc) would move the error rather than remove it. Getting that wrong
+   * introduces a double-subtract, which is worse than the double-count it replaces.
+   *
+   * Measured against production 2026-08: zero rows are in this state today (0 GRNs with
+   * cost_class='direct' and a NULL-process cost centre — there is only one GRN in the system at
+   * all), so nothing is wrong on any screen right now. Raised for a decision rather than guessed.
+   */
   for (const legacy of legacyRows) {
     const amount = n(legacy.amount);
     if (legacy.process_id && String(legacy.cost_class) === "direct") {

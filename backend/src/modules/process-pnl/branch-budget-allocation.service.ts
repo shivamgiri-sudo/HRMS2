@@ -564,10 +564,25 @@ export async function computeLineAllocations(
   // like 1428.57 which each display as 1,429, so a column of seven reads 10,003 against a 10,000
   // total. Rupee granularity is ignored automatically when a pool is not a whole number of rupees,
   // so the shares still sum to the line exactly in every case.
-  const base = allocatePoolAmount(amounts.baseAmount, shares, mode, "rupee");
-  const tax = allocatePoolAmount(amounts.taxAmount, shares, mode, "rupee");
-  const gross = allocatePoolAmount(amounts.grossAmount, shares, mode, "rupee");
-  const pnl = allocatePoolAmount(amounts.pnlCostAmount, shares, mode, "rupee");
+  //
+  // The decision is taken ONCE for the whole line rather than per component. allocatePoolAmount
+  // falls back to paise for a non-integer pool on its own, so passing "rupee" four times could
+  // give one component whole-rupee shares and its neighbour paise shares — a line with base
+  // 10,001.00 (integer, so rupees) and tax 1,800.18 (not, so paise) would write allocation rows
+  // whose base_amount + tax_amount did not equal their own gross_amount. Splitting four figures
+  // that are arithmetically related to each other means they must be split the same way.
+  //
+  // Where all four are whole rupees this is identical to the previous behaviour, which is every
+  // allocation row in production today: 0 of 410 currently mismatch.
+  const wholeRupeeLine = [
+    amounts.baseAmount, amounts.taxAmount, amounts.grossAmount, amounts.pnlCostAmount,
+  ].every((value) => Number.isInteger(Number(value)));
+  const granularity = wholeRupeeLine ? "rupee" : "paise";
+
+  const base = allocatePoolAmount(amounts.baseAmount, shares, mode, granularity);
+  const tax = allocatePoolAmount(amounts.taxAmount, shares, mode, granularity);
+  const gross = allocatePoolAmount(amounts.grossAmount, shares, mode, granularity);
+  const pnl = allocatePoolAmount(amounts.pnlCostAmount, shares, mode, granularity);
 
   // Backend-authoritative block for manual splits (the frontend already validates this
   // pre-save, but the API must not silently persist an unbalanced split reached by any other
