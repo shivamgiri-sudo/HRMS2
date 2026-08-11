@@ -128,7 +128,12 @@ function mapInterviewStatus(raw: string | undefined): "selected" | "rejected" | 
 // ── Date Parsing ──────────────────────────────────────────────────────────────
 
 // Attempts M/D/YYYY first; if day > 12 tries D/M/YYYY
-function parseHistoricalDate(dateStr: string | undefined, timeStr?: string): string | null {
+/**
+ * Exported for tests. The ambiguous-date branch below decides what a historical import
+ * believes about 453 production rows, so it is worth asserting directly rather than only
+ * through the import path that calls it.
+ */
+export function parseHistoricalDate(dateStr: string | undefined, timeStr?: string): string | null {
   if (!dateStr) return null;
   const s = String(dateStr).trim();
 
@@ -157,9 +162,44 @@ function parseHistoricalDate(dateStr: string | undefined, timeStr?: string): str
       // p1 is definitely day, p2 is month (D/M/YYYY)
       day = p1; month = p2;
     } else {
-      // Ambiguous — default to M/D/YYYY (US format matches sample data 3/21/2026 = March 21)
-      month = p1; day = p2;
+      /**
+       * Both parts are <= 12, so the string alone cannot say which is the month.
+       *
+       * This used to default to M/D/YYYY, justified as "US format matches sample data
+       * 3/21/2026 = March 21". That sample proves nothing about this branch: 21 > 12, so it
+       * takes the unambiguous `p2 > 12` path above and never reaches here.
+       *
+       * The data settles it. Measured on production 2026-08-11: 453 ats_candidate rows carry
+       * a created_at in the FUTURE, from 2026-09-03 to 2026-12-05, against a clock of
+       * 2026-08-11 — and on every one of them DATE(created_at) equals walk_in_date, so both
+       * came from this parser. If the source were genuinely M/D, no row could land in the
+       * future at all. The range fits a day/month swap exactly: 9/3 read as 3 September
+       * rather than 9 March, 12/5 read as 5 December rather than 12 May.
+       *
+       * So: prefer the reading that is not in the future. An import of historical records
+       * cannot have been created after today, which makes "is it in the future" a fact this
+       * function can check rather than a convention it has to assume. Where both readings are
+       * in the past the string really is ambiguous and nothing here can improve on a default,
+       * so M/D is kept and behaviour is unchanged for those rows.
+       */
+      const asUs  = { month: p1, day: p2 };
+      const asIso = { month: p2, day: p1 };
+      const valid = (v: { month: number; day: number }) =>
+        v.month >= 1 && v.month <= 12 && v.day >= 1 && v.day <= 31;
+      const isFuture = (v: { month: number; day: number }) =>
+        new Date(`${year}-${String(v.month).padStart(2, "0")}-${String(v.day).padStart(2, "0")}T00:00:00Z`).getTime()
+          > Date.now();
+
+      if (valid(asUs) && isFuture(asUs) && valid(asIso) && !isFuture(asIso)) {
+        month = asIso.month; day = asIso.day;
+      } else {
+        month = asUs.month; day = asUs.day;
+      }
     }
+    // Number.isFinite, not just a range check: "not-a-date".split(/[\/\-]/) yields three
+    // parts, parseInt gives NaN, and every NaN comparison is false — so the range test passed
+    // and this returned the string "NaN-NaN-NaN 00:00:00" for any three-token input.
+    if (!Number.isFinite(month) || !Number.isFinite(day) || !Number.isFinite(year)) return null;
     if (month < 1 || month > 12 || day < 1 || day > 31) return null;
     const time = timeStr ? ` ${String(timeStr).trim()}` : " 00:00:00";
     return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}${time}`;
@@ -346,7 +386,21 @@ async function importOneCandidate(
   const email = row.Email?.trim().toLowerCase() || undefined;
 
   const existing = await findExistingCandidate(mobile, email);
-  const createdAt = parseHistoricalDate(row.CreatedDate, row.CreatedTime) ?? getIstDateString();
+  /**
+   * created_at is an audit timestamp: a record cannot have been created after now. walk_in_date
+   * is a business date and MAY legitimately be in the future — a walk-in is scheduled — so the
+   * clamp belongs here rather than inside the parser they share.
+   *
+   * Where both readings of an ambiguous d/m are in the future (8/12 is either 12 August or
+   * 8 December, both ahead of an August import) the parser cannot choose, so this is the
+   * backstop that keeps such a row out of the audit column.
+   */
+  const parsedCreatedAt = parseHistoricalDate(row.CreatedDate, row.CreatedTime);
+  const createdAtIsFuture = parsedCreatedAt != null && new Date(parsedCreatedAt.replace(" ", "T") + "Z").getTime() > Date.now();
+  if (createdAtIsFuture) {
+    warnings.push({ row: rowIdx, candidateId: cid, message: `CreatedDate '${row.CreatedDate}' resolves to ${parsedCreatedAt}, which is in the future — recorded as import time instead` });
+  }
+  const createdAt = (createdAtIsFuture ? null : parsedCreatedAt) ?? getIstDateString();
 
   const branchId = await lookupBranch(row.Branch);
   const processId = await lookupProcess(row.Process || row.RoleApplied);
