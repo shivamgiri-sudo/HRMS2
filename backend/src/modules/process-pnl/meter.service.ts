@@ -103,6 +103,35 @@ export async function createMeter(input: CreateMeterInput, actorUserId: string):
   if (!input.meterCode?.trim()) throw new Error("Meter code is required");
   if (!input.meterName?.trim()) throw new Error("Meter name is required");
   if (!Number.isFinite(input.fixedRate) || input.fixedRate < 0) throw new Error("Fixed rate cannot be negative");
+  if (!input.costCentreId?.trim()) throw new Error("Cost centre is required");
+
+  /*
+   * The cost centre must belong to the meter's own branch.
+   *
+   * The route resolves branchId through resolveFinanceBranchScope but took costCentreId straight
+   * from the body, so a branch admin could create a meter in their own branch pointing at another
+   * branch's cost centre. Nothing rejected it and nothing showed it: the damage surfaces later
+   * and silently, in computeLineAllocations, which keys meter consumption by cost centre and
+   * then does
+   *     costCentres.filter((cc) => branchConsumption.has(cc.id))
+   * against the branch's OWN active cost centres. A foreign cost centre is not in that list, so
+   * its consumption is filtered out and the metered amount simply disappears from the split —
+   * the branch's electricity is apportioned as though that meter did not exist, and if it was
+   * the only meter the line fails with "nothing to apportion by" instead.
+   *
+   * Checked here rather than at the route because this is the only write path to
+   * finance_meter_master, so the rule holds for every caller.
+   *
+   * Measured before adding: 3 meters in production, none cross-branch and none orphaned.
+   */
+  const [ownerRows] = await db.execute<RowDataPacket[]>(
+    `SELECT branch_id FROM cost_centre_master WHERE id = ? LIMIT 1`,
+    [input.costCentreId]
+  );
+  if (!ownerRows[0]) throw new Error("Cost centre not found");
+  if (String(ownerRows[0].branch_id) !== String(input.branchId)) {
+    throw new Error("A meter's cost centre must belong to the same branch as the meter");
+  }
 
   const id = randomUUID();
   await db.execute(

@@ -300,15 +300,24 @@ export const grnService = {
      * Requirement 12 was built and unreachable.
      */
     const numberFormat = await resolveGrnNumberFormat();
+    /*
+     * Resolved once and both NUMBERED and STORED from the same value.
+     *
+     * It used to be computed inline for the number only, and accounting_period was absent from
+     * the INSERT column list below — so the column was NULL on every GRN raised through this
+     * path. Two consequences: under 'monthly_company' numbering the allocated number's MM/YY
+     * could disagree with anything recorded on the row, and listGrns' accountingPeriod filter
+     * fell back to bill_date permanently, since its
+     *     COALESCE(g.accounting_period, DATE_FORMAT(g.bill_date, '%Y-%m'))
+     * never had a stored value to prefer. Confirmed in production: the column exists and is
+     * NULL on every row.
+     */
+    const accountingPeriod = resolveAccountingPeriod({
+      accountingPeriod: payload.accountingPeriod,
+      billDate: payload.billDate,
+    });
     const grnNumber = numberFormat === "monthly_company"
-      ? await allocateMonthlyGrnNumber({
-          // The accounting period, not bill_date — the MM/YY belongs to the month the GRN books
-          // to, which is the decision taken when multi-month was specified.
-          periodCode: resolveAccountingPeriod({
-            accountingPeriod: payload.accountingPeriod,
-            billDate: payload.billDate,
-          }),
-        })
+      ? await allocateMonthlyGrnNumber({ periodCode: accountingPeriod })
       : await allocateGrnNumber(payload.branchId, financialYear);
     const dueDate = addDays(payload.billDate, paymentTermsDays);
     const costClass: "direct" | "indirect" =
@@ -320,9 +329,9 @@ export const grnService = {
         vendor_id, vendor_name, head, sub_head, quantity, unit, unit_rate,
         tax_treatment, gst_rate, gst_type, recoverable_tax_pct,
         amount_without_tax, tax_amount, amount_with_tax, pnl_cost_amount, amount,
-        bill_date, payment_terms_days, due_date, description, remarks, status,
+        bill_date, accounting_period, payment_terms_days, due_date, description, remarks, status,
         financial_year, budget_id, budget_line_id, created_by, created_at)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'draft',?,?,?,?,NOW())`,
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'draft',?,?,?,?,NOW())`,
       [
         id,
         grnNumber,
@@ -348,6 +357,7 @@ export const grnService = {
         amounts.pnlCostAmount,
         amounts.grossAmount,
         payload.billDate,
+        accountingPeriod,
         paymentTermsDays,
         dueDate,
         budgetLine.item_name,

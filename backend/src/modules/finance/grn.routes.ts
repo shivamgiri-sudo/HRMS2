@@ -461,11 +461,21 @@ function grNExpenseMasterRoutes(router: Router) {
         const branchId =
           scope.mode === "branches" && scope.branchIds.length === 1 ? scope.branchIds[0] : undefined;
         if (!branchId) throw new Error("Select a branch to see which expense heads are available");
+        // Headroom is per branch AND per period, so the same argument that rejects a
+        // multi-branch scope above rejects an absent period. Without it the SUM ran over every
+        // active budget of the branch and HAVING available_amount > 0 passed on the multi-month
+        // total, so this endpoint — which its own header calls "the single server-side authority
+        // for what a GRN raiser may classify against" — offered a head with three months' worth
+        // of headroom, and createDraft then refused the GRN against the one month that mattered.
+        const periodCode = req.query.periodCode ? String(req.query.periodCode) : "";
+        if (!/^\d{4}-\d{2}$/.test(periodCode)) {
+          throw new Error("Select a budget period (YYYY-MM) to see which expense heads are available");
+        }
 
         const data = await vendorExpenseMappingService.selectableClassifications({
           vendorId: req.query.vendorId ? String(req.query.vendorId) : undefined,
           branchId,
-          periodCode: req.query.periodCode ? String(req.query.periodCode) : undefined,
+          periodCode,
           processId: req.query.processId ? String(req.query.processId) : undefined,
           costCentreId: req.query.costCentreId ? String(req.query.costCentreId) : undefined,
         });
