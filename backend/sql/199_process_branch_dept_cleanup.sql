@@ -1,6 +1,6 @@
 -- ============================================================
 -- Migration 199: Process Master Sync, Branch/Dept Cleanup,
---                Employee process_id Backfill from cost_center_code
+--                Employee process_id Backfill from cost_center
 -- Source of truth: db_bill.cost_master (via cost_center codes)
 -- ============================================================
 
@@ -325,7 +325,7 @@ ON DUPLICATE KEY UPDATE
 
 -- -------------------------------------------------------
 -- STEP 4: Seed integration_process_alias
---         cost_center_code → process_id for employee backfill
+--         cost_center → process_id for employee backfill
 -- -------------------------------------------------------
 INSERT IGNORE INTO integration_process_alias (id, source_value, process_id, active_status)
 SELECT UUID(), cc, pm.id, 1
@@ -370,15 +370,15 @@ WHERE NOT EXISTS (
 );
 
 -- -------------------------------------------------------
--- STEP 5: Backfill employees.process_id from cost_center_code
+-- STEP 5: Backfill employees.process_id from cost_center
 -- -------------------------------------------------------
 UPDATE employees e
-JOIN integration_process_alias ipa ON ipa.source_value = e.cost_center_code
+JOIN integration_process_alias ipa ON ipa.source_value = e.cost_center
 SET e.process_id = ipa.process_id, e.updated_at = NOW()
 WHERE e.employment_status = 'active'
   AND e.process_id IS NULL
-  AND e.cost_center_code IS NOT NULL
-  AND e.cost_center_code != ''
+  AND e.cost_center IS NOT NULL
+  AND e.cost_center != ''
   AND ipa.active_status = 1;
 
 -- -------------------------------------------------------
