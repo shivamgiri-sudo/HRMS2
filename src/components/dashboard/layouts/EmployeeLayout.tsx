@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Umbrella, FileText, Clock, BookOpen, Sparkles } from "lucide-react";
 import { Link } from "react-router-dom";
 import { hrmsApi } from "@/lib/hrmsApi";
+import { useAttendanceSummary } from "@/hooks/useAttendanceHub";
 import { useEmployeeProfile } from "@/hooks/useEmployeeProfile";
 import { useUserRole } from "@/hooks/useUserRole";
 import { LeaveBalanceTable } from "../widgets/LeaveBalanceTable";
@@ -30,12 +31,27 @@ export function EmployeeLayout() {
   const dataTimestamp = now.toLocaleDateString("en-IN", { day: "numeric", month: "long", year: "numeric" }) +
     ", " + now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", timeZone: "Asia/Kolkata" }) + " AM";
 
-  const { data: attData } = useQuery<any>({
-    queryKey: ["attendance-monthly", employeeId, currentMonth],
-    queryFn: () => hrmsApi.get(`/api/wfm/attendance/ncosec-monthly?employeeId=${employeeId}&fromDate=${monthStart}&toDate=${monthEnd}&limit=500`),
-    enabled: !!employeeId,
-    staleTime: 1000 * 60 * 5,
-  });
+  /**
+   * The employee's own attendance tiles come from the canonical monthly summary -
+   * the same endpoint HR sees in the attendance-lookup drawer, computed server-side
+   * from attendance_daily_record, which is what payroll is calculated from.
+   *
+   * Two things were wrong with computing them here from ncosec-monthly:
+   *
+   * 1. Wrong source. ncosec-monthly reads live COSEC unconditionally, with no
+   *    /attendance-source check, so an employee the engine judges on APR saw
+   *    biometric-derived figures that are not their attendance basis at all.
+   *
+   * 2. Wrong arithmetic. totalDays was present+absent+late, dropping missing_punch
+   *    and half_day from BOTH numerator and denominator. Measured for MAS61502 in
+   *    August 2026 - 5 present, 4 missing_punch - this reported 100.0% attendance
+   *    for someone paid for 5 of 9 recorded days, since unresolved missing_punch
+   *    pays zero. 1,103 employees have at least one such day this month.
+   *
+   * attendancePct from the endpoint is attended / expectedToWork and already handles
+   * non-working statuses. Do not recompute it here - that duplication is what drifted.
+   */
+  const { data: attSummary } = useAttendanceSummary(employeeId ?? null, currentMonth);
 
   const { data: leaveReqs } = useQuery<any>({
     queryKey: ["my-leave-requests"],
@@ -64,14 +80,11 @@ export function EmployeeLayout() {
   // TODO: Verify /api/dashboards/employee/summary endpoint exists and returns expected fields
   // If different endpoint pattern exists, adjust queryFn accordingly
 
-  // Attendance computed from WFM daily records — filter to current month
-  const allRecords: any[] = Array.isArray(attData?.data) ? attData.data : [];
-  const monthRecords = allRecords.filter((r: any) => (r.date ?? "").startsWith(currentMonth));
-  const presentDays = monthRecords.filter((r: any) => r.status === "present").length;
-  const absentDays  = monthRecords.filter((r: any) => r.status === "absent").length;
-  const lateDays    = monthRecords.filter((r: any) => r.status === "late").length;
-  const totalDays   = presentDays + absentDays + lateDays;
-  const attPct      = totalDays > 0 ? ((presentDays / totalDays) * 100).toFixed(1) : "0.0";
+  // Straight from the canonical summary; no arithmetic re-derived here.
+  const presentDays = Number(attSummary?.presentDays ?? 0);
+  const absentDays  = Number(attSummary?.absentDays ?? 0);
+  const lateDays    = Number(attSummary?.lateMarks ?? attSummary?.lateDays ?? 0);
+  const attPct      = Number(attSummary?.attendancePct ?? 0).toFixed(1);
 
   // Leave requests
   const requests: any[] = Array.isArray(leaveReqs?.data) ? leaveReqs.data : [];
