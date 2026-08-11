@@ -49,7 +49,7 @@ PREPARE stmt FROM @sql_add_order;
 EXECUTE stmt;
 DEALLOCATE PREPARE stmt;
 
--- Fix survey_question: Remove 'id' column if it exists (should be question_id only)
+-- Fix survey_question: keep id as the canonical primary key used by the service.
 SET @has_id_col = (
   SELECT COUNT(*)
   FROM INFORMATION_SCHEMA.COLUMNS
@@ -60,7 +60,7 @@ SET @has_id_col = (
 
 SET @sql_drop_id = IF(
   @has_id_col > 0,
-  'ALTER TABLE survey_question DROP COLUMN id',
+  'SELECT "survey_question.id is canonical" AS status',
   'SELECT "survey_question.id does not exist" AS status'
 );
 PREPARE stmt FROM @sql_drop_id;
