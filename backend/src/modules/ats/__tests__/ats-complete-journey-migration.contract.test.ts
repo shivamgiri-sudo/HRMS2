@@ -23,4 +23,12 @@ describe("ATS complete journey migration", () => {
     expect(migration).toMatch(/notification_title VARCHAR\(255\) NOT NULL/i);
     expect(migration).toMatch(/notification_body TEXT NOT NULL/i);
   });
+
+  it("adds candidate_status before indexing it", () => {
+    const columnIndex = migration.search(/ALTER TABLE ats_candidate ADD COLUMN candidate_status VARCHAR\(50\) NULL/i);
+    const indexIndex = migration.search(/ALTER TABLE ats_candidate ADD INDEX idx_ats_candidate_status \(candidate_status\)/i);
+
+    expect(columnIndex).toBeGreaterThanOrEqual(0);
+    expect(indexIndex).toBeGreaterThan(columnIndex);
+  });
 });
