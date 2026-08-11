@@ -132,3 +132,64 @@ export function unknownWriteTargets(
 ): string[] {
   return writeTargetsIn(source).filter((t) => schema[t] === undefined);
 }
+
+/**
+ * Columns a write NAMES, from INSERT column lists and UPDATE SET clauses.
+ *
+ * columnRefsIn() only yields alias-qualified columns out of SELECT/FROM/JOIN,
+ * so the names inside `INSERT INTO t (a, b, c)` and `UPDATE t SET a = ?` are
+ * checked by nothing at all. That is not a theoretical gap: seven bulk-upload
+ * services wrote `UPDATE upload_batch_row SET ... error_message = ?` when the
+ * column is error_messages, and because the statement sat inside the per-row
+ * catch, one bad row made the error handler throw and took the whole import
+ * down. Both existing guards were blind to it.
+ *
+ * Conservative on purpose - it skips anything it cannot attribute with
+ * certainty:
+ *   - a dynamic column list (contains a template placeholder);
+ *   - a multi-table UPDATE (anything between the table name and SET), because
+ *     a SET column could belong to either side;
+ *   - a qualified assignment such as `SET a.col = ?`, for the same reason;
+ *   - ON DUPLICATE KEY UPDATE, which is a separate clause shape.
+ */
+const INSERT_COLS_RE = /INSERT\s+(?:IGNORE\s+)?INTO\s+([a-z_][a-z0-9_]*)\s*\(([^)]*)\)/gi;
+const UPDATE_SET_RE = /UPDATE\s+([a-z_][a-z0-9_]*)\s+SET\s+([\s\S]*?)(?:\bWHERE\b|\bON\s+DUPLICATE\b|$)/gi;
+const ASSIGNED_COL_RE = /(?:^|,)\s*`?([a-z_][a-z0-9_]*)`?\s*=/gi;
+
+export function writeColumnRefs(source: string): ColumnRef[] {
+  const out: ColumnRef[] = [];
+  const seen = new Set<string>();
+
+  const push = (table: string, column: string) => {
+    const key = `${table}.${column}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push({ table, column });
+  };
+
+  for (const literal of source.match(/`[^`]*`/g) ?? []) {
+    if (!SQL_VERB_RE.test(literal)) continue;
+    const body = literal.replace(/--[^\n]*/g, "");
+
+    INSERT_COLS_RE.lastIndex = 0;
+    for (const m of body.matchAll(INSERT_COLS_RE)) {
+      if (m[2].includes("${")) continue;
+      const table = m[1].toLowerCase();
+      for (const raw of m[2].split(",")) {
+        const col = raw.trim().replace(/`/g, "").toLowerCase();
+        if (/^[a-z_][a-z0-9_]*$/.test(col)) push(table, col);
+      }
+    }
+
+    UPDATE_SET_RE.lastIndex = 0;
+    for (const m of body.matchAll(UPDATE_SET_RE)) {
+      if (m[2].includes("${")) continue;
+      const table = m[1].toLowerCase();
+      ASSIGNED_COL_RE.lastIndex = 0;
+      for (const a of m[2].matchAll(ASSIGNED_COL_RE)) {
+        push(table, a[1].toLowerCase());
+      }
+    }
+  }
+  return out;
+}

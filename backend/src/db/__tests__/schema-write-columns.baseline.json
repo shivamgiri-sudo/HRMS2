@@ -1,0 +1,232 @@
+{
+  "db/__tests__/schema-column-refs.test.ts": [
+    "upload_batch_row.error_message"
+  ],
+  "modules/ats/__tests__/offer-letter.test.ts": [
+    "ats_candidate.applied_for_role",
+    "ats_candidate.candidate_id",
+    "ats_payroll_hr_validation.esic_employee",
+    "ats_payroll_hr_validation.other_allowances",
+    "ats_payroll_hr_validation.pf_employee"
+  ],
+  "modules/ats/ats.enhanced.service.ts": [
+    "employee_code_generation_log.company_prefix",
+    "employee_code_generation_log.employee_id",
+    "employee_code_generation_log.is_offrole",
+    "employee_code_generation_log.sequence_number",
+    "employee_code_sequence.last_sequence_number"
+  ],
+  "modules/ats/ats.onboarding.routes.ts": [
+    "ats_candidate.onboarding_token",
+    "ats_candidate.onboarding_token_expires"
+  ],
+  "modules/ats/bgv.enhanced.service.ts": [
+    "ats_bgv_verification_details.verified_at"
+  ],
+  "modules/ats/joining-control-room.service.ts": [
+    "dpdp_consent_withdrawal.candidate_id",
+    "dpdp_consent_withdrawal.purpose_code",
+    "dpdp_consent_withdrawal.reason",
+    "dpdp_consent_withdrawal.requested_by"
+  ],
+  "modules/ats/onboarding-full.service.ts": [
+    "appointment_letter_request.created_by"
+  ],
+  "modules/bulk-upload/asset-master-bulk.service.ts": [
+    "asset_master.asset_condition",
+    "asset_master.asset_status"
+  ],
+  "modules/bulk-upload/department-master-bulk.service.ts": [
+    "department_master.cost_centre"
+  ],
+  "modules/bulk-upload/designation-master-bulk.service.ts": [
+    "designation_master.level"
+  ],
+  "modules/bulk-upload/employee-master-bulk.service.ts": [
+    "employees.created_by"
+  ],
+  "modules/bulk-upload/process-master-bulk.service.ts": [
+    "process_master.lob_id"
+  ],
+  "modules/bulk-upload/roster-assignment-bulk.service.ts": [
+    "upload_batch.imported_at",
+    "upload_batch.imported_by",
+    "wfm_roster_assignment.created_by",
+    "wfm_roster_assignment.notes",
+    "wfm_roster_assignment.updated_by"
+  ],
+  "modules/bulk-upload/shift-roster-bulk.service.ts": [
+    "upload_batch.imported_at",
+    "upload_batch.imported_by"
+  ],
+  "modules/bulk-upload/shift-rotation-type-bulk.service.ts": [
+    "upload_batch.imported_at",
+    "upload_batch.imported_by"
+  ],
+  "modules/bulk-upload/weekoff-preference-bulk.service.ts": [
+    "upload_batch.imported_at",
+    "upload_batch.imported_by"
+  ],
+  "modules/employees/employee-activation.service.ts": [
+    "employee_lifecycle_event.actor_user_id",
+    "employee_lifecycle_event.from_status",
+    "employee_lifecycle_event.to_status"
+  ],
+  "modules/employees/employee.documents.routes.ts": [
+    "employee_documents.updated_at"
+  ],
+  "modules/exit/resignation.routes.ts": [
+    "exit_request.closed_at",
+    "exit_request.closed_by"
+  ],
+  "modules/incentives/incentives.routes.ts": [
+    "audit_log.action",
+    "audit_log.meta",
+    "audit_log.user_id",
+    "work_item_audit_log.created_at",
+    "work_item_audit_log.entity_id",
+    "work_item_audit_log.entity_type",
+    "work_item_audit_log.meta",
+    "work_item_audit_log.user_id"
+  ],
+  "modules/incentives/incentives.service.ts": [
+    "incentive_upload_batch.remarks",
+    "salary_prep_run.incentives_applied_at"
+  ],
+  "modules/letters/appointment-esign.service.ts": [
+    "appointment_letter_request.created_by",
+    "appointment_letter_request.generated_at",
+    "appointment_letter_request.generated_by",
+    "appointment_letter_request.template_data"
+  ],
+  "modules/lms-integration/lms-employee-mapper.ts": [
+    "lms_employee_mapping.hrms_employee_id",
+    "lms_employee_mapping.hrms_mobile",
+    "lms_employee_mapping.hrms_official_email",
+    "lms_employee_mapping.hrms_personal_email",
+    "lms_employee_mapping.lms_employee_id"
+  ],
+  "modules/migration/createLegacyJoiningChecklists.ts": [
+    "employee_joining_document_checklist.is_required",
+    "employee_joining_document_checklist.notes",
+    "employee_joining_document_checklist.verification_type",
+    "employee_joining_document_template.description",
+    "employee_joining_document_template.template_name"
+  ],
+  "modules/mobility/mobility.service.ts": [
+    "transfer_record.applied_at"
+  ],
+  "modules/org/org.service.ts": [
+    "process_master.department_id"
+  ],
+  "modules/payroll-masters/payrollMasters.service.ts": [
+    "salary_package_master.basic_amt",
+    "salary_package_master.bonus_amt",
+    "salary_package_master.bonus_type",
+    "salary_package_master.conveyance_amt",
+    "salary_package_master.conveyance_type",
+    "salary_package_master.cost_centre_id",
+    "salary_package_master.ctc_monthly",
+    "salary_package_master.effective_from",
+    "salary_package_master.grade_id",
+    "salary_package_master.gross_monthly",
+    "salary_package_master.location_id",
+    "salary_package_master.medical_amt",
+    "salary_package_master.medical_type",
+    "salary_package_master.other_allowance_amt",
+    "salary_package_master.other_allowance_type",
+    "salary_package_master.pli_amt",
+    "salary_package_master.portfolio_amt",
+    "salary_package_master.slab_id",
+    "salary_package_master.special_allowance_amt"
+  ],
+  "modules/payroll/payroll-more.routes.ts": [
+    "salary_prep_line.payslip_emailed",
+    "salary_prep_line.payslip_emailed_at"
+  ],
+  "modules/payroll/payrollCalculate.service.ts": [
+    "salary_prep_line.reimbursement_total"
+  ],
+  "modules/performance-feedback/performance-feedback.service.ts": [
+    "competency_master.display_order",
+    "development_plan.created_by",
+    "development_plan.target_date",
+    "development_plan_goal.description",
+    "performance_feedback_request.manager_id",
+    "performance_feedback_response.development_areas",
+    "performance_feedback_response.overall_strengths",
+    "performance_feedback_response.ratings_json",
+    "training_need.identified_date",
+    "training_need.title"
+  ],
+  "modules/privacy/dpdpErasure.service.ts": [
+    "auth_user.first_name",
+    "auth_user.last_name",
+    "auth_user.phone"
+  ],
+  "modules/process-pnl/__tests__/process-lob-mysql.integration.test.ts": [
+    "cost_centre_master.cc_code",
+    "cost_centre_master.cc_name"
+  ],
+  "modules/process/process.repository.mysql.ts": [
+    "process_master.branch_name",
+    "process_master.created_by",
+    "process_master.department_id",
+    "process_master.description",
+    "process_master.location_name",
+    "process_master.metadata",
+    "process_master.process_manager_employee_id",
+    "process_master.process_owner_employee_id",
+    "process_master.updated_by"
+  ],
+  "workers/auto-roster-scheduler.worker.ts": [
+    "wfm_client_slot_requirement.notes",
+    "wfm_client_slot_requirement.slot_end_time",
+    "wfm_client_slot_requirement.slot_start_time"
+  ],
+  "workers/domains/dialer-kpi-sync.ts": [
+    "kpi_score.updated_at"
+  ],
+  "workers/domains/employee-master-sync-handler.ts": [
+    "employees.branch",
+    "employees.client_name",
+    "employees.cost_center",
+    "employees.department",
+    "employees.designation",
+    "employees.legacy_last_updated",
+    "employees.passport_number",
+    "employees.process",
+    "employees.qualification",
+    "employees.title",
+    "employees.uan"
+  ],
+  "workers/domains/employee-sync-handler.ts": [
+    "employees.branch",
+    "employees.client_name",
+    "employees.cost_center",
+    "employees.department",
+    "employees.designation",
+    "employees.legacy_last_updated",
+    "employees.passport_number",
+    "employees.process",
+    "employees.qualification",
+    "employees.title",
+    "employees.uan",
+    "legacy_sync_checkpoint.domain",
+    "legacy_sync_checkpoint.last_sync_time",
+    "legacy_sync_run_log.completed_at",
+    "legacy_sync_run_log.domain",
+    "legacy_sync_run_log.records_failed",
+    "legacy_sync_run_log.records_processed"
+  ],
+  "workers/domains/leave-sync-handler.ts": [
+    "leave_request.updated_at"
+  ],
+  "workers/report-generation.worker.ts": [
+    "report_email_delivery.delivery_method",
+    "report_email_delivery.secure_download_url",
+    "report_request.failure_message_internal",
+    "report_request.failure_message_user",
+    "report_request.notes"
+  ]
+}
