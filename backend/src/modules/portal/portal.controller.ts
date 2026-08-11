@@ -87,7 +87,14 @@ export const portalController = {
   async getKpis(req: ClientAuthRequest, res: Response) {
     assertProcessAccess(req);
     const period = (req.query.period as string) || currentPeriod();
-    const scorecards = await portalKpiService.getScorecards(req.params.id, period);
+    // Pass the token's processIds through. portalKpiService re-checks them, but only when
+    // it is given them — the parameter is optional and its guard is skipped when it is
+    // absent, so omitting it here left the service-level check inert. assertProcessAccess
+    // above is still the primary boundary; this makes the second one real rather than
+    // decorative, which matters the day a new handler forgets the first.
+    const scorecards = await portalKpiService.getScorecards(
+      req.params.id, period, req.portalUser!.processIds,
+    );
     await logAccess(req, `/portal/processes/${req.params.id}/kpis`);
     res.json({ data: scorecards });
   },
@@ -124,7 +131,9 @@ export const portalController = {
   async getAttrition(req: ClientAuthRequest, res: Response) {
     assertProcessAccess(req);
     const period = (req.query.period as string) || currentPeriod();
-    const data = await portalAttritionService.getAttrition(req.params.id, period);
+    const data = await portalAttritionService.getAttrition(
+      req.params.id, period, req.portalUser!.processIds,
+    );
     await logAccess(req, `/portal/processes/${req.params.id}/attrition`);
     res.json({ data });
   },
