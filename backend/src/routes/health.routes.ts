@@ -1,10 +1,46 @@
 import { Router } from "express";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { pingDb, getCircuitBreakerStatus, resetCircuitBreaker } from "../db/mysql.js";
 import { getMigrationHealth, verifySchemaVersion, getSchemaVerificationState } from "../db/runPendingMigrations.js";
 import { requireAuth } from "../middleware/authMiddleware.js";
 import { requireRole } from "../middleware/requireRole.js";
 
 export const healthRouter = Router();
+
+export interface BuildInfo {
+  commit: string;
+  branch: string;
+  builtAt: string;
+}
+
+const UNKNOWN_BUILD: BuildInfo = { commit: "unknown", branch: "unknown", builtAt: "unknown" };
+
+/**
+ * Read the stamp scripts/write-build-info.mjs leaves in dist/ at build time.
+ *
+ * Cached after the first read: the file cannot change without a redeploy, and a redeploy
+ * replaces this process. Any failure resolves to "unknown" rather than throwing — a
+ * diagnostic endpoint must not be the thing that breaks, and "unknown" is a truthful
+ * answer that still says something is wrong with how the artifact was built.
+ */
+let cachedBuildInfo: BuildInfo | null = null;
+export function readBuildInfo(): BuildInfo {
+  if (cachedBuildInfo) return cachedBuildInfo;
+  try {
+    // dist/src/routes/health.routes.js -> dist/build-info.json
+    const path = fileURLToPath(new URL("../../build-info.json", import.meta.url));
+    const parsed = JSON.parse(readFileSync(path, "utf8")) as Partial<BuildInfo>;
+    cachedBuildInfo = {
+      commit: parsed.commit || "unknown",
+      branch: parsed.branch || "unknown",
+      builtAt: parsed.builtAt || "unknown",
+    };
+  } catch {
+    cachedBuildInfo = UNKNOWN_BUILD;
+  }
+  return cachedBuildInfo;
+}
 
 type CheckStatus = "ok" | "warning" | "error";
 
@@ -118,6 +154,53 @@ healthRouter.get("/", async (_req, res) => {
     success: healthy,
     service: "MCN HRMS Backend API",
     status: healthy ? "healthy" : "degraded",
+    timestamp: new Date().toISOString(),
+  });
+});
+
+/**
+ * GET /health/version - What is actually running here.
+ *
+ * The readiness audit lists this as Required, and the gap is not theoretical: with no
+ * runtime SHA anywhere, confirming a deploy landed meant reading CI logs and assuming the
+ * runner's workspace matched the server. That is the assumption a release gate exists to
+ * test. Compare `commit` against the SHA you intended to ship.
+ *
+ * Public and unauthenticated, deliberately — a release check is useless if it needs a
+ * login, and the payload carries no secret: a commit SHA of a repository, a build
+ * timestamp, and counts. It reports no migration NAMES, matching the existing decision on
+ * GET /health not to expose migration failure detail to anonymous callers.
+ *
+ * `schema.pending` is the number of migrations the runner still has to apply. Non-zero
+ * means the code and the database are from different releases, which is the failure this
+ * endpoint is really for — a matching SHA with pending migrations is still a broken deploy.
+ */
+healthRouter.get("/version", async (_req, res) => {
+  const build = readBuildInfo();
+  const schemaStatus = await verifySchemaVersion();
+
+  return res.status(200).json({
+    success: true,
+    service: "MCN HRMS Backend API",
+    // "unknown" is honest. A build that could not stamp itself must not be reported as
+    // matching whatever the caller hoped for.
+    commit: build.commit,
+    branch: build.branch,
+    builtAt: build.builtAt,
+    startedAt: new Date(Date.now() - Math.round(process.uptime() * 1000)).toISOString(),
+    runtime: {
+      node: process.version,
+      // Backend and workers run from the same dist but as separate pm2 processes. Asking
+      // each one which role it is makes a version divergence between them observable
+      // rather than assumed.
+      role: process.env.WORKERS_PROCESS === "external" ? "api" : "api+workers",
+      env: process.env.NODE_ENV ?? "unknown",
+    },
+    schema: {
+      valid: schemaStatus.valid,
+      applied: schemaStatus.appliedCount,
+      pending: schemaStatus.pendingCount,
+    },
     timestamp: new Date().toISOString(),
   });
 });

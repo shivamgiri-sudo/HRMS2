@@ -7,7 +7,7 @@
   "scripts": {
     "dev": "tsx watch src/server.ts",
     "dev:safe": "node scripts/dev-safe.mjs",
-    "build": "tsc",
+    "build": "tsc && node scripts/write-build-info.mjs",
     "build:transpile-only": "tsc --noEmitOnError false",
     "start": "node dist/src/server.js",
     "inbox:reconcile": "tsx scripts/inbox-reconcile.ts",
