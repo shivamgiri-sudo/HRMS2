@@ -303,11 +303,23 @@ export async function sourceEffectiveness(
     params.push(...scope.branchScope.ids);
   }
   if (scope.processScope.mode === "none") throw new ReportScopeAccessDeniedError("processScope");
+  // A "restricted" process scope threw only on "none" and was otherwise never turned into a
+  // predicate, so a process-restricted viewer read every process in their branches. This is
+  // the same clause recruiterProductivity already had; source-effectiveness simply lacked it.
+  if (scope.processScope.mode === "restricted" && scope.processScope.ids.length > 0) {
+    clauses.push(`c.applied_for_process IN (SELECT process_name FROM process_master WHERE id IN (${scope.processScope.ids.map(() => "?").join(",")}))`);
+    params.push(...scope.processScope.ids);
+  }
   if (scope.departmentScope.mode === "none") throw new ReportScopeAccessDeniedError("departmentScope");
   if (scope.costCentreScope.mode === "none") throw new ReportScopeAccessDeniedError("costCentreScope");
 
   if (filters.branchId)  { clauses.push("c.applied_for_branch  = (SELECT branch_name  FROM branch_master  WHERE id = ? LIMIT 1)"); params.push(String(filters.branchId)); }
   if (filters.processId) { clauses.push("c.applied_for_process = (SELECT process_name FROM process_master WHERE id = ? LIMIT 1)"); params.push(String(filters.processId)); }
+
+  // 29,926 of ats_candidate's 37,686 rows are legacy EMPLOYEE records. Counting them here
+  // inflated every channel's application count roughly 4x and dragged every selection rate
+  // toward zero, because those rows carry no recruitment status.
+  clauses.push(excludeEmployeeShapedCandidatesSql("c"));
 
   const base = `
     SELECT COALESCE(c.sourcing_channel, 'Unknown') AS source_channel,
@@ -359,6 +371,10 @@ export async function recruiterProductivity(
   if (filters.branchId)  { clauses.push("c.applied_for_branch  = (SELECT branch_name  FROM branch_master  WHERE id = ? LIMIT 1)"); params.push(String(filters.branchId)); }
   if (filters.processId) { clauses.push("c.applied_for_process = (SELECT process_name FROM process_master WHERE id = ? LIMIT 1)"); params.push(String(filters.processId)); }
 
+  // Same 29,926 legacy employee records as source-effectiveness. Left in, they were attributed
+  // to whichever recruiter happened to sit on the imported row.
+  clauses.push(excludeEmployeeShapedCandidatesSql("c"));
+
   const base = `
     SELECT c.assigned_recruiter_id,
            COALESCE(
@@ -373,9 +389,15 @@ export async function recruiterProductivity(
              -- the intended one and this is a leftover from moving the column into COALESCE.
              c.recruiter_assigned_name
            ) AS recruiter_name,
-           COUNT(*) AS total_candidates,
-           SUM(CASE WHEN LOWER(c.status) IN ('selected','offered','onboarded','joined') THEN 1 ELSE 0 END) AS offers_made,
-           SUM(CASE WHEN c.offer_doj IS NOT NULL THEN 1 ELSE 0 END) AS joinings
+           -- COUNT(DISTINCT c.id), not COUNT(*), and the same for the two measures below.
+           -- The employees join is on user_id, which is NOT unique among active rows: one
+           -- user_id currently carries 50 active employees rows (measured 2026-08-11), so
+           -- every candidate assigned to that recruiter was counted 50 times. The candidate
+           -- id is the grain this report is actually about, so counting it distinctly makes
+           -- the numbers independent of how many rows the join produces.
+           COUNT(DISTINCT c.id) AS total_candidates,
+           COUNT(DISTINCT CASE WHEN LOWER(c.status) IN ('selected','offered','onboarded','joined') THEN c.id END) AS offers_made,
+           COUNT(DISTINCT CASE WHEN c.offer_doj IS NOT NULL THEN c.id END) AS joinings
       FROM ats_candidate c
       LEFT JOIN auth_user recruiter_user ON recruiter_user.id = c.assigned_recruiter_id
       LEFT JOIN employees recruiter_emp ON recruiter_emp.user_id = recruiter_user.id AND recruiter_emp.active_status = 1

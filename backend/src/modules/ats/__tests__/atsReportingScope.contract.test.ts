@@ -34,11 +34,31 @@ describe("excludeEmployeeShapedCandidatesSql", () => {
 });
 
 describe("live call sites are wired to the exclusion helper", () => {
-  it("analytics.unified.service.ts uses it at all 13 verified live sites", () => {
-    const source = read("src/modules/ats/analytics.unified.service.ts");
-    expect(source).toContain("excludeEmployeeShapedCandidatesSql");
-    const usages = (source.match(/\$\{EXCLUDE_EMPLOYEE_SHAPED\}/g) ?? []).length;
-    expect(usages).toBe(13);
+  /**
+   * analytics.unified.service.ts USED to be asserted here, at all 13 of its sites. It is the
+   * cleanest implementation in the module — and it has zero importers. Nothing routes to it,
+   * nothing imports it dynamically; the only references anywhere in backend/src are the file
+   * itself and this test. So that assertion guarded code no user can reach, while the
+   * surfaces that ARE reachable were asserted nowhere.
+   *
+   * A test that protects an unimportable file is worse than no test: it reports the module as
+   * covered. The assertions below deliberately name only surfaces that are reachable from a
+   * mounted route.
+   */
+  it("analytics.unified.service.ts is still dead — if it gains an importer, assert it too", () => {
+    const importers = [
+      "src/modules/ats/ats.routes.ts",
+      "src/modules/ats/ats.controller.ts",
+      "src/modules/ats-extensions/ats-ext.routes.ts",
+      "src/modules/ats-full-parity/atsFullParity.routes.ts",
+    ].filter((f) => {
+      try { return read(f).includes("analytics.unified"); } catch { return false; }
+    });
+    expect(
+      importers,
+      "analytics.unified.service.ts has become reachable. Add a usage assertion for it here, " +
+        "because its exclusions now matter.",
+    ).toEqual([]);
   });
 
   it("command-centre.service.ts uses it at all 11 verified live sites", () => {
@@ -77,5 +97,57 @@ describe("live call sites are wired to the exclusion helper", () => {
     const caseBlock = source.match(/case "ats-pipeline-summary": \{[\s\S]*?\n    \}/);
     expect(caseBlock, "ats-pipeline-summary case not found").toBeTruthy();
     expect(caseBlock![0]).toContain("excludeEmployeeShapedCandidatesSql");
+  });
+
+  /**
+   * The named metrics leadership actually reads. Both aggregate ats_candidate directly and
+   * neither excluded, so both were roughly 4x inflated.
+   */
+  it("recruitment.executor.ts's sourceEffectiveness excludes", () => {
+    const source = read("src/modules/reporting/executors/recruitment.executor.ts");
+    const fn = source.match(/export async function sourceEffectiveness[\s\S]*?\n\}/);
+    expect(fn, "sourceEffectiveness not found").toBeTruthy();
+    expect(fn![0]).toContain("excludeEmployeeShapedCandidatesSql");
+  });
+
+  it("recruitment.executor.ts's recruiterProductivity excludes", () => {
+    const source = read("src/modules/reporting/executors/recruitment.executor.ts");
+    const fn = source.match(/export async function recruiterProductivity[\s\S]*?\n\}/);
+    expect(fn, "recruiterProductivity not found").toBeTruthy();
+    expect(fn![0]).toContain("excludeEmployeeShapedCandidatesSql");
+  });
+
+  it("sourceEffectiveness applies a restricted PROCESS scope, not only a branch one", () => {
+    // It threw on processScope "none" but never emitted a predicate for "restricted", so a
+    // process-restricted viewer read every process inside their branches.
+    const source = read("src/modules/reporting/executors/recruitment.executor.ts");
+    const fn = source.match(/export async function sourceEffectiveness[\s\S]*?\n\}/)![0];
+    expect(fn).toMatch(/processScope\.mode === "restricted"/);
+    expect(fn).toMatch(/applied_for_process IN \(SELECT process_name/);
+  });
+
+  it("recruiterProductivity counts candidates distinctly, so the employees join cannot inflate it", () => {
+    // The join is on user_id, which is not unique among active rows: one user_id currently
+    // carries 50 active employees rows, which multiplied that recruiter's totals by 50.
+    const source = read("src/modules/reporting/executors/recruitment.executor.ts");
+    const fn = source.match(/export async function recruiterProductivity[\s\S]*?\n\}/)![0];
+    expect(fn).toContain("COUNT(DISTINCT c.id) AS total_candidates");
+    expect(fn).not.toMatch(/COUNT\(\*\) AS total_candidates/);
+    // The two measures beside it must be distinct-counted for the same reason.
+    expect(fn).toMatch(/COUNT\(DISTINCT CASE[\s\S]*?END\) AS offers_made/);
+    expect(fn).toMatch(/COUNT\(DISTINCT CASE[\s\S]*?END\) AS joinings/);
+  });
+
+  it("the ATS Command Center's web-data feed excludes", () => {
+    const source = read("src/modules/ats-full-parity/atsFullParity.service.ts");
+    expect(source).toContain("excludeEmployeeShapedCandidatesSql");
+  });
+
+  it("ats-ext's sourcing funnel excludes and filters inactive rows", () => {
+    const source = read("src/modules/ats-extensions/ats-ext.service.ts");
+    const fn = source.match(/async getFunnel\([\s\S]*?\n  \}/);
+    expect(fn, "getFunnel not found").toBeTruthy();
+    expect(fn![0]).toContain("excludeEmployeeShapedCandidatesSql");
+    expect(fn![0], "it started from 1=1 and counted inactive rows too").toContain("active_status = 1");
   });
 });
