@@ -2,6 +2,7 @@ import type { Request, Response, NextFunction } from "express";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../db/mysql.js";
 import type { AuthenticatedRequest } from "./authMiddleware.js";
+import { hasScopedAccess } from "../shared/scopeAccess.js";
 
 type PayrollLineRow = RowDataPacket & { branch_id?: string | number | null; employee_code?: string | null };
 
@@ -47,19 +48,30 @@ export async function requireWFMAccess(req: Request, res: Response, next: NextFu
       return next(); // Admin has full access
     }
 
-    // Check if user has WFM role for this branch
-    const [wfmRows] = await db.execute<RowDataPacket[]>(
-      `SELECT ur.role_key, sa.branch_id
-       FROM user_roles ur
-       LEFT JOIN scope_assignments sa ON ur.user_id = sa.user_id
-       WHERE ur.user_id = ?
-         AND ur.role_key = 'wfm'
-         AND (sa.branch_id = ? OR sa.branch_id IS NULL)
-       LIMIT 1`,
-      [userId, line.branch_id]
+    // Check if user has WFM scope for this branch.
+    //
+    // This joined `scope_assignments`, which does not exist and never has - no
+    // migration creates it and nothing else in the tree names it. The query
+    // therefore threw ER_NO_SUCH_TABLE on every call, the catch below turned
+    // that into a 500, and no non-admin WFM user has ever been able to update
+    // overtime. Admins were unaffected because they return above.
+    //
+    // Resolved through hasScopedAccess rather than by guessing a table name:
+    // it is what every other scoped route uses, it reads the real source of
+    // truth (user_assignment_scope), and its default
+    // requireScopeForNonAdmin=true denies a wfm user who has no scope row.
+    // That default matters here - the original predicate was
+    // `(sa.branch_id = ? OR sa.branch_id IS NULL)` against a LEFT JOIN, so had
+    // the table existed, a wfm user with no scope row would have been granted
+    // access to EVERY branch. Restoring the feature must not restore that.
+    const hasWfmScope = await hasScopedAccess(
+      userId,
+      ["wfm"],
+      { branchId: line.branch_id != null ? String(line.branch_id) : undefined },
+      { allowAdminBypass: true }
     );
 
-    if (wfmRows.length === 0) {
+    if (!hasWfmScope) {
       return res.status(403).json({
         success: false,
         message: "Access denied: Only WFM team members can update overtime for this branch",
