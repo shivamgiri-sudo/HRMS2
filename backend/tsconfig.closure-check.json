@@ -11,7 +11,8 @@
     "src/modules/migration/syncStatutoryDataFromDbBill.ts",
     "src/modules/migration/__tests__/statutorySyncPanEncryption.contract.test.ts",
     "src/shared/__tests__/backfillUpdatedAtPreservation.test.ts",
-    "scripts/statutory-blind-index-backfill.ts"
+    "scripts/statutory-blind-index-backfill.ts",
+    "src/workers/domains/bank-detail-sync-handler.ts"
   ],
   // "multer" on top of the project's ["node"] for the same reason tsconfig.dpdp-check.json needs
   // it: Express.Multer.File is a global augmentation contributed by a file outside this scoped

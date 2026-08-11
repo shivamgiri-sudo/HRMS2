@@ -40,6 +40,7 @@
 import "dotenv/config";
 import { db } from "../src/db/mysql.js";
 import { blindIndex, isUsingDevBlindIndexKey } from "../src/shared/fieldEncryption.js";
+import { withDeadlockRetry } from "../src/shared/deadlockRetry.js";
 import type { RowDataPacket, ResultSetHeader } from "mysql2";
 
 const DRY_RUN = process.argv.includes("--dry-run");
@@ -106,10 +107,23 @@ async function backfill(target: Target): Promise<{ written: number; pending: num
       // they would surface in reports, exports and audit views. Assigning the column its own
       // value suppresses the auto-update. Pinned by
       // src/shared/__tests__/backfillUpdatedAtPreservation.test.ts.
-      const [res] = await db.execute<ResultSetHeader>(
-        `UPDATE employees SET ${indexColumn} = ?, updated_at = updated_at
-          WHERE id = ? AND ${indexColumn} IS NULL`,
-        [blindIndex(value), row.id],
+      // Retried on deadlock. `employees` is a live OLTP table and this run issues 53,449
+      // single-row writes against it, so losing a deadlock to ordinary application traffic
+      // is expected, not exceptional — without this the first lost deadlock killed the whole
+      // run (observed twice against production, at 13,857 and 14,191 rows). The UPDATE is one
+      // autocommit statement carrying `AND ${indexColumn} IS NULL`, so it is idempotent and a
+      // retry cannot double-write; see the scope warning in shared/deadlockRetry.ts for why
+      // this must not be applied to statements inside a transaction.
+      const [res] = await withDeadlockRetry(
+        () => db.execute<ResultSetHeader>(
+          `UPDATE employees SET ${indexColumn} = ?, updated_at = updated_at
+            WHERE id = ? AND ${indexColumn} IS NULL`,
+          [blindIndex(value), row.id],
+        ),
+        {
+          onRetry: (attempt) =>
+            console.warn(`\n[blind-index] deadlock on ${indexColumn} row ${row.id}, retry ${attempt}`),
+        },
       );
       written += res.affectedRows;
     }
