@@ -149,6 +149,11 @@ CREATE TABLE IF NOT EXISTS module_access_control (
   UNIQUE KEY unique_access (module_name, employee_code)
 );
 
+ALTER TABLE module_access_control ADD COLUMN employee_code VARCHAR(50) NULL;
+ALTER TABLE module_access_control ADD COLUMN has_access BOOLEAN DEFAULT TRUE;
+ALTER TABLE module_access_control ADD COLUMN remarks TEXT NULL;
+ALTER TABLE module_access_control ADD UNIQUE KEY unique_access (module_name, employee_code);
+
 -- Grant super admin access to MAS47814
 INSERT INTO module_access_control (module_name, employee_code, has_access, granted_by, remarks) VALUES
 ('ATS_DASHBOARD', 'MAS47814', TRUE, 'SYSTEM', 'Super admin full access'),

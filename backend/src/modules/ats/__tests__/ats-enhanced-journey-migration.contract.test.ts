@@ -16,4 +16,15 @@ describe("ATS enhanced journey migration", () => {
     expect(insert).toBeGreaterThan(currentSequenceColumn);
     expect(migration).toMatch(/ON DUPLICATE KEY UPDATE/i);
   });
+
+  it("adds module_access_control columns before granting access", () => {
+    const employeeCodeColumn = migration.search(/ALTER TABLE module_access_control ADD COLUMN employee_code VARCHAR\(50\) NULL/i);
+    const hasAccessColumn = migration.search(/ALTER TABLE module_access_control ADD COLUMN has_access BOOLEAN DEFAULT TRUE/i);
+    const insert = migration.search(/INSERT INTO module_access_control \(module_name, employee_code, has_access, granted_by, remarks\)/i);
+
+    expect(employeeCodeColumn).toBeGreaterThanOrEqual(0);
+    expect(hasAccessColumn).toBeGreaterThanOrEqual(0);
+    expect(insert).toBeGreaterThan(employeeCodeColumn);
+    expect(insert).toBeGreaterThan(hasAccessColumn);
+  });
 });
