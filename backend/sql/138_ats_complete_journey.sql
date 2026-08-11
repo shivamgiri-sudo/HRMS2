@@ -294,12 +294,11 @@ CREATE TABLE IF NOT EXISTS module_access_audit_log (
 );
 
 -- ── 15. Enhance notification systems ──────────────────────────────────────────
-ALTER TABLE ats_notification_log
-ADD COLUMN IF NOT EXISTS notification_type VARCHAR(50) NULL COMMENT 'Type of notification',
-ADD COLUMN IF NOT EXISTS recipient_type ENUM('candidate','recruiter','hr','branch_head','admin') NULL,
-ADD COLUMN IF NOT EXISTS recipient_id CHAR(36) NULL,
-ADD COLUMN IF NOT EXISTS read_status TINYINT(1) DEFAULT 0,
-ADD COLUMN IF NOT EXISTS read_at DATETIME NULL;
+ALTER TABLE ats_notification_log ADD COLUMN notification_type VARCHAR(50) NULL COMMENT 'Type of notification';
+ALTER TABLE ats_notification_log ADD COLUMN recipient_type ENUM('candidate','recruiter','hr','branch_head','admin') NULL;
+ALTER TABLE ats_notification_log ADD COLUMN recipient_id CHAR(36) NULL;
+ALTER TABLE ats_notification_log ADD COLUMN read_status TINYINT(1) DEFAULT 0;
+ALTER TABLE ats_notification_log ADD COLUMN read_at DATETIME NULL;
 
 -- ── 16. Create in-portal notification table ───────────────────────────────────
 CREATE TABLE IF NOT EXISTS portal_notification (
@@ -321,11 +320,11 @@ CREATE TABLE IF NOT EXISTS portal_notification (
 );
 
 -- ── 17. Add indexes for performance ───────────────────────────────────────────
-CREATE INDEX IF NOT EXISTS idx_ats_candidate_branch ON ats_candidate(branch_name);
-CREATE INDEX IF NOT EXISTS idx_ats_candidate_status ON ats_candidate(candidate_status);
-CREATE INDEX IF NOT EXISTS idx_ats_candidate_created ON ats_candidate(created_at);
-CREATE INDEX IF NOT EXISTS idx_ats_queue_status ON ats_queue_token(queue_status);
-CREATE INDEX IF NOT EXISTS idx_ats_queue_branch ON ats_queue_token(branch_name);
+ALTER TABLE ats_candidate ADD INDEX idx_ats_candidate_branch (branch_name);
+ALTER TABLE ats_candidate ADD INDEX idx_ats_candidate_status (candidate_status);
+ALTER TABLE ats_candidate ADD INDEX idx_ats_candidate_created (created_at);
+ALTER TABLE ats_queue_token ADD INDEX idx_ats_queue_status (queue_status);
+ALTER TABLE ats_queue_token ADD INDEX idx_ats_queue_branch (branch_name);
 
 -- ── 18. Super admin employee access ───────────────────────────────────────────
 -- Grant super admin access to MAS47814
