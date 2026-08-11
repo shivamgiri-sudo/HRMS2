@@ -114,7 +114,6 @@ const MIGRATION_MANIFEST: string[] = [
   "134_external_db_credentials.sql",
   "135_payroll_masters.sql",
   "137_schema_gaps.sql",
-  "373_create_candidate_onboarding_profile.sql",
   "138_ats_complete_journey.sql",
   "139_ats_enhanced_journey_safe.sql",
   "140_candidate_portal_tables.sql",
@@ -245,7 +244,6 @@ const MIGRATION_MANIFEST: string[] = [
   "307_fix_blocked_migrations.sql",
   "308_email_templates_bulk_import.sql",
   "309_super_admin_full_page_access.sql",
-  "310_vendor_payment_tracking.sql",
   "342_bgv_provider_config_labels.sql",
   "1000_fix_engagement_schema_columns.sql",
   "343_global_page_availability.sql",
@@ -280,6 +278,7 @@ const MIGRATION_MANIFEST: string[] = [
   "370_pf_creation_automation.sql",
   "371_user_device_sessions.sql",
   "372_add_name_on_cheque.sql",
+  "373_create_candidate_onboarding_profile.sql",
   "374_employees_missing_indexes.sql",
   "375_salary_prep_line_attendance_source.sql",
   "376_break_management_module.sql",
@@ -368,7 +367,6 @@ const MIGRATION_MANIFEST: string[] = [
   "424_employee_reimbursement_claim.sql",
   "425_branch_budget_cost_centre_allocation.sql",
   "425_mira_openrouter_company_knowledge.sql",
-  "migrations/426_employee_geofence_alerts.sql",
   "426_pnl_component_master.sql",
   "426_mira_audit_resilience.sql",
   "427_finance_meter_subsystem.sql",
@@ -424,9 +422,7 @@ const MIGRATION_MANIFEST: string[] = [
   "1008_migrate_photo_urls_to_api.sql",         // Migrate employee photo URLs from /uploads/ to /api/files/
   "1009_ats_hiring_followup_call_feedback.sql", // ATS hiring: follow-up call outcome, date, notes, reschedule columns
   "1021_payroll_signoff_columns_and_ceo_sod.sql", // salary_prep_run sign-off columns (route 500'd without them) + narrow ceo create/delete grants
-  "1022_notification_event_registry.sql",          // notification_event_config is required at startup and by notificationGateway.notify()
   "1022_page_catalog_path_reconciliation.sql",    // WORKFORCE_COMMAND_CENTER path regression (404 for 8 roles) + retire ADVANCED_REPORTS stub
-  "1023_notification_dispatch_claim.sql",          // notification_dispatch_claim is required by the dispatch worker claim path
   "1023_discard_approved_records.sql",            // Discard approved leave/regularization/dispute: pre-approval snapshots + discard audit log
   "1024_candidate_onboarding_document_rejected_status.sql", // document_status lacked 'rejected'; every secure-viewer reject hit ERROR 1265
   "1028_salary_certificate_request_collation.sql", // utf8mb4_0900_ai_ci vs employees' utf8mb4_unicode_ci — the join 500'd with ERROR 1267
@@ -589,6 +585,7 @@ const MIGRATION_MANIFEST: string[] = [
   "1123_statutory_identifier_encryption_columns.sql", // adds the encrypted-at-rest columns for the statutory identifiers that still had none: ats_candidate.aadhar_number_encrypted and .pan_number_encrypted, employee_statutory_info.pan_number_encrypted plus pan_blind_index and its index, and vendor_master.pan_number_encrypted. Purely additive — every column is nullable and nothing reads or writes any of them, so applying this changes nothing observable. employees was encrypted on 2026-08-10 (aadhaar 30,108 / pan 23,341, ciphertext matching plaintext exactly) but these three tables were not, and between them they hold roughly 54,000 identifiers in cleartext with nowhere to put ciphertext: ats_candidate.aadhar_number 28,764, ats_candidate.pan_number 24,929, employee_statutory_info.pan_number 3,341, vendor_master.pan_number 1,373. ats_candidate matters more than its name suggests — roughly 30,000 of its 37,634 rows are legacy EMPLOYEE records carried in by candidate_code, so this is staff PII. Two deliberate omissions: employee_statutory_info.aadhaar_id gets nothing, because it does not hold Aadhaar numbers (3,946 populated, exactly 1 matching ^[0-9]{12}$, and 9,186 values of <= 3 characters drawn from 14 distinct strings — blank, 'NA', 'N/A', ',', 'NAN', 'aa'), so encrypting it would dress a data-quality problem as a security fix; and ats_candidate gets no blind index because aadhar_number_hash and pan_number_hash already exist and are already the lookup path, so a second index would create two rival lookups for one value. employee_statutory_info.pan_blind_index IS added, because the duplicate-employee guard reads s.pan_number by equality and would have no lookup path once plaintext is retired. Population is a separate explicit backfill (scripts/statutory-identifier-encrypt-backfill.ts) that proves it holds the production key by decrypting existing employees ciphertext before writing anything — verified refusing on a dev machine: 0/25 decrypt, exit 1, nothing written. Each column is guarded individually through information_schema + PREPARE rather than one multi-column ALTER, deliberately: 509_portal_client_master_fixes lost its tail precisely because eleven columns went in one all-or-nothing statement that failed ER_DUP_FIELDNAME on one of them. MySQL 8.0.42 also rejects MariaDB's ADD COLUMN IF NOT EXISTS with ER_PARSE_ERROR. Idempotent, so re-running is a no-op
   "1124_salary_prep_line_covering_index.sql", // covering index (employee_id, gross_salary, net_salary) for the payroll summary's two payroll-line aggregates. /api/payroll/summary runs 3.5s warm over the public DB link, and profiling statement by statement puts effectively all of it in one subquery shape that appears twice: SELECT 1 530ms, COUNT(*) active employees 475ms, SUM(ctc) 311ms, SUM(gross_salary) over the join 3,659ms, whole query 3,653ms. So it is neither chatty nor middleware. employee_id is already indexed (idx_spl_employee_run, idx_overtime) so another plain index would change nothing — what is missing is the summed columns, so the server resolves the key by index then reads the row for gross_salary/net_salary 14,277 times. Additive: no existing index is dropped, so DROP INDEX reverses it completely. 80,338 rows, quick build. Guarded on INFORMATION_SCHEMA.STATISTICS rather than ADD INDEX IF NOT EXISTS, which is MariaDB syntax MySQL 8.0.42 rejects. NOT applied by hand — the ALTER hit "Lock wait timeout exceeded" against the live backend and workers holding transactions on this table, and it rolled back cleanly (6 indexes / 10 index columns before and after). Boot runs migrations before the app serves, which is when contention is lowest, so it applies there
   "1125_legacy_payslip_snapshot_account_encryption.sql", // adds account_number_enc TEXT NULL and account_enc_key_version TINYINT NOT NULL DEFAULT 1 to legacy_payslip_snapshot. Purely additive: both nullable-or-defaulted, nothing reads or writes either, so applying this changes nothing observable. This is the largest unprotected PII store left — 115,698 populated bank account numbers, 18,521 distinct, varchar(50), with no protected sibling of any kind, roughly 4x the employees encryption done on 2026-08-09. The coverage scan classifies it NO_PROTECTED_COLUMN_EXISTS, its worst category, and by row count it is the biggest entry in that report. The TABLE is alive and must not be dropped — it is salary source #3 for appointment letters and holds the only arrear column anywhere — but the COLUMN is dead: verified across backend/src and src, nothing references it, every account_number in payroll.routes.ts and payroll.executor.ts is qualified to a different table (ebd.account_number or e.bank_account_number) so none can resolve here, and the one SELECT * against the table destructures an explicit allow-list of salary fields that never touches it. That is why this one is unusually cheap to finish: for employees.pan_number the expensive part of retiring plaintext is migrating ~10 readers, whereas here there are none, so backfill can be followed straight by clearing the plaintext. Encrypting rather than scrubbing because only 105,317 of the 115,698 match the account currently on the employee record — about 10,000 are accounts since changed, which is audit history worth keeping. No updated_at hazard: unlike employees this table has no on-update timestamp column and no triggers (both verified live), so the backfill needs none of the timestamp suppression that one required. Population is a separate explicit backfill, scripts/legacy-payslip-account-encrypt-backfill.mjs, which must run on the production host — anywhere else loadKey silently substitutes the all-zeros dev key and writes ciphertext production can never decrypt. Both columns guarded individually through information_schema + PREPARE, since MySQL 8.0.42 rejects MariaDB ADD COLUMN IF NOT EXISTS with ER_PARSE_ERROR, and per-column rather than one ALTER because a multi-column statement is all-or-nothing. Idempotent, so re-running is a no-op
+  "1128_statutory_filing_record.sql", // creates the table behind /api/payroll/statutory-filing, which has never existed, so every endpoint on that router has always returned 500. The router creates it lazily via ensureTable(), and that DDL cannot execute: MySQL 8.0 requires a functional key part in its own parentheses and the shipped UNIQUE KEY wrote COALESCE(state_code, '') bare, which is ER_PARSE_ERROR - proven against production 8.0.42 by running the exact DDL as a TEMPORARY table. Every call site was `await ensureTable().catch(() => {})`, so the parse error was discarded and the query after it failed on a table that had never been created; the initialise endpoint then reported created=0 skipped=6 from its own `catch { skipped++ }`, a success shape for an operation that did nothing. Purely additive and idempotent - CREATE TABLE IF NOT EXISTS for a new empty table, no data to migrate because it has never held a row, nothing else touched. Applying it makes the statutory filing tracker (EPF/ESIC/PT/TDS 24Q/138/LWF due dates, challans and filed status) work for the first time.
   ];
 
 export type MigrationHealth = {
@@ -886,9 +883,6 @@ async function ensureDatabaseExists(
   try {
     await conn.query(
       `CREATE DATABASE IF NOT EXISTS \`${dbName}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`
-    );
-    await conn.query(
-      `ALTER DATABASE \`${dbName}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`
     );
     console.log(`[migration] database '${dbName}' ensured`);
   } finally {

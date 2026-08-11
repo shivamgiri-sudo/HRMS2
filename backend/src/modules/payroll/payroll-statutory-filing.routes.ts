@@ -14,7 +14,39 @@ const h = (fn: (req: any, res: any) => Promise<unknown>) =>
 
 payrollStatutoryFilingRouter.use(requireAuth);
 
-// Ensure the table exists on first use
+/**
+ * ensureTable() is best-effort: a route must still answer when the table is
+ * already present and only the create failed. But it must not fail invisibly,
+ * which is exactly how a parse error in the DDL stayed hidden.
+ */
+let ensureFailureReported = false;
+function reportEnsureFailure(err: unknown): void {
+  if (ensureFailureReported) return;
+  ensureFailureReported = true;
+  process.stderr.write(
+    JSON.stringify({
+      level: "error",
+      module: "payroll-statutory-filing",
+      event: "ENSURE_TABLE_FAILED",
+      error: err instanceof Error ? err.message : String(err),
+      timestamp: new Date().toISOString(),
+    }) + "\n"
+  );
+}
+
+/**
+ * Ensure the table exists on first use.
+ *
+ * This DDL could not execute. MySQL 8.0 requires a functional key part wrapped
+ * in its own parentheses, and the unique key wrote COALESCE(state_code, '')
+ * bare - ER_PARSE_ERROR, confirmed against production 8.0.42. Every call site
+ * did `await ensureTable().catch(() => {})`, so the parse error vanished and the
+ * query after it failed on a table that had never been created: every endpoint
+ * on this router has always returned 500.
+ *
+ * Migration 1128 now creates the table too. This stays as a safety net for an
+ * environment where that has not run, and it no longer discards its own failure.
+ */
 async function ensureTable(): Promise<void> {
   await db.execute(`
     CREATE TABLE IF NOT EXISTS statutory_filing_record (
@@ -33,11 +65,11 @@ async function ensureTable(): Promise<void> {
       created_at      DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at      DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
       PRIMARY KEY (id),
-      UNIQUE KEY uk_sfr_month_type_state (filing_month, filing_type, COALESCE(state_code, '')),
+      UNIQUE KEY uk_sfr_month_type_state (filing_month, filing_type, ((COALESCE(state_code, '')))),
       KEY idx_sfr_month  (filing_month),
       KEY idx_sfr_status (status),
       KEY idx_sfr_due    (due_date)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
   `);
 }
 
@@ -63,7 +95,7 @@ payrollStatutoryFilingRouter.get(
   "/",
   requireRole("admin", "super_admin", "finance", "payroll", "payroll_head"),
   h(async (req: AuthenticatedRequest, res: Response) => {
-    await ensureTable().catch(() => {});
+    await ensureTable().catch(reportEnsureFailure);
     const month = typeof req.query.month === "string" ? req.query.month : new Date().toISOString().slice(0, 7);
     if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) {
       return res.status(400).json({ success: false, message: "month must be YYYY-MM" });
@@ -87,7 +119,7 @@ payrollStatutoryFilingRouter.get(
   "/overdue",
   requireRole("admin", "super_admin", "finance", "payroll", "payroll_head"),
   h(async (_req: AuthenticatedRequest, res: Response) => {
-    await ensureTable().catch(() => {});
+    await ensureTable().catch(reportEnsureFailure);
     const today = new Date().toISOString().slice(0, 10);
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT * FROM statutory_filing_record
@@ -105,7 +137,7 @@ payrollStatutoryFilingRouter.post(
   "/initialize/:month",
   requireRole("admin", "super_admin", "payroll_head"),
   h(async (req: AuthenticatedRequest, res: Response) => {
-    await ensureTable().catch(() => {});
+    await ensureTable().catch(reportEnsureFailure);
     const { month } = req.params;
     if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) {
       return res.status(400).json({ success: false, message: "month must be YYYY-MM" });
@@ -172,7 +204,7 @@ payrollStatutoryFilingRouter.patch(
   "/:id/mark-filed",
   requireRole("admin", "super_admin", "finance", "payroll_head"),
   h(async (req: AuthenticatedRequest, res: Response) => {
-    await ensureTable().catch(() => {});
+    await ensureTable().catch(reportEnsureFailure);
     const { id } = req.params;
     const { challan_number, challan_date, remarks, amount_due } = req.body ?? {};
 
@@ -224,7 +256,7 @@ payrollStatutoryFilingRouter.post(
   "/",
   requireRole("admin", "super_admin", "payroll_head"),
   h(async (req: AuthenticatedRequest, res: Response) => {
-    await ensureTable().catch(() => {});
+    await ensureTable().catch(reportEnsureFailure);
     const { filing_month, filing_type, state_code, due_date, amount_due, remarks } = req.body ?? {};
     if (!filing_month || !filing_type || !due_date) {
       return res.status(400).json({ success: false, message: "filing_month, filing_type, due_date are required" });
@@ -252,7 +284,7 @@ payrollStatutoryFilingRouter.delete(
   "/:id",
   requireRole("super_admin"),
   h(async (req: AuthenticatedRequest, res: Response) => {
-    await ensureTable().catch(() => {});
+    await ensureTable().catch(reportEnsureFailure);
     const [result] = await db.execute(
       "DELETE FROM statutory_filing_record WHERE id = ? AND status = 'pending'",
       [req.params.id]
