@@ -130,6 +130,22 @@ describe("AttendanceCalendar renders the same days as the tabular view", () => {
     expect(statusOf(renderCalendar(MAS61502_AUGUST_2026), "2026-08-03")).toBe("present");
   });
 
+  it("keeps the grid honest when the source lookup itself fails", () => {
+    // The grid query is gated on the source verdict. When /attendance-source fails the
+    // grid query never runs, so the component was neither loading nor errored with zero
+    // rows — a solid month of absences produced by a failed request. There is no fetch
+    // available here, so the source query cannot settle: the grid must be in its
+    // loading state, never a populated-looking empty month.
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
+    const html = renderToStaticMarkup(
+      <QueryClientProvider client={client}>
+        <AttendanceCalendar employeeId="emp-1" month={7} year={2026} hideNavigator />
+      </QueryClientProvider>,
+    );
+
+    expect(statusOf(html, "2026-08-03")).toBeNull();
+  });
+
   it("maps ADR rows onto calendar days without shifting the date", () => {
     const days = adrRecordsToAttendanceDays(MAS61502_AUGUST_2026);
 

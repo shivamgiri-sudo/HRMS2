@@ -552,7 +552,13 @@ function DayDetailSheet({
             </div>
 
             {/* COSEC authoritative summary */}
-            {agg && adr?.attendance_source !== 'dialler' && (
+            {/* Shown whenever COSEC data exists for the day, including when the row is
+                tagged `dialler`. Gating this on the source verdict hid real biometric
+                evidence on 1,502 August 2026 days across 451 employees — people
+                classified as dialler agents by apr_eligibility_config who actually
+                punch biometrically. The verdict decides which source drives payroll;
+                it must not decide whether the user is allowed to see what happened. */}
+            {agg && (
               <div className="rounded-xl border border-[#c4dcf5] bg-[#e8f2fc]/40 p-3 space-y-3">
                 <p className="text-[10px] font-bold uppercase tracking-widest text-[#1B6AB5]">
                   COSEC Biometric Record
@@ -683,6 +689,16 @@ function DayDetailSheet({
                     No APR record found for this date. APR syncs hourly from the dialler.
                   </p>
                 )}
+                {/* "No APR record" on its own reads as "no attendance", which is wrong
+                    and is what made this look like missing data. If COSEC has the day,
+                    say so and point at the panel that shows it. */}
+                {!apr && adr.dialler_minutes == null && (agg || punches.length > 0) && (
+                  <p className="text-xs text-slate-600">
+                    Biometric punches <span className="font-semibold">do</span> exist for this
+                    date — see the COSEC record below. This employee is configured as a
+                    dialler agent, so APR drives the attendance status.
+                  </p>
+                )}
               </div>
             )}
 
@@ -734,7 +750,9 @@ function DayDetailSheet({
 
             {/* Raw punch events timeline */}
             {/* Raw COSEC punch events timeline — biometric employees only. */}
-            {punches.length > 0 && !isDialler && (
+            {/* Same reasoning as the COSEC panel above: a punch trail that exists is
+                shown, whatever source the engine attributed the day to. */}
+            {punches.length > 0 && (
               <>
                 <Separator />
                 <div>
@@ -1057,7 +1075,7 @@ export function AttendanceCalendar({
   // Which system drives this employee's attendance — APR (dialler) or COSEC
   // (biometric). Previously the calendar always read biometric, so dialler
   // employees saw COSEC data that did not belong to them.
-  const { data: sourceInfo } = useQuery<{
+  const { data: sourceInfo, isError: sourceError } = useQuery<{
     attendance_source: AttendanceSource;
     source_label: string;
     sync_interval_note?: string;
@@ -1128,8 +1146,16 @@ export function AttendanceCalendar({
   });
 
   const attendanceData = usesProvidedRecords ? records! : fetchedData;
-  const isLoading = usesProvidedRecords ? recordsLoading : fetchLoading;
-  const isError = usesProvidedRecords ? false : fetchError;
+  // The grid query is gated on `sourceInfo`, so when /attendance-source fails the
+  // query simply never runs: not loading, not errored, zero rows — a whole month
+  // rendered as absences with nothing to indicate a failed request. Treat a failed
+  // source lookup as an error of the grid itself.
+  const isLoading = usesProvidedRecords
+    ? recordsLoading
+    // `!!employeeId` keeps a component mounted without one from spinning forever —
+    // both queries are disabled in that case, so there is nothing to wait for.
+    : (fetchLoading || (!!employeeId && !sourceInfo && !sourceError));
+  const isError = usesProvidedRecords ? false : (fetchError || sourceError);
 
   const attendanceMap = new Map<string, AttendanceDay>(
     attendanceData.map(d => [d.date, d])
@@ -1176,7 +1202,9 @@ export function AttendanceCalendar({
         <CardContent className="py-10 text-center space-y-3">
           <p className="text-sm font-medium text-red-700">Could not load attendance for this month.</p>
           <p className="text-xs text-slate-500">
-            The {source === "dialler" ? "APR / dialler" : "biometric"} source did not respond.
+            {sourceError
+              ? "Could not determine which attendance source drives this employee."
+              : `The ${source === "dialler" ? "APR / dialler" : "biometric"} source did not respond.`}
           </p>
           <Button variant="outline" size="sm" onClick={() => refetch()}>Retry</Button>
         </CardContent>
