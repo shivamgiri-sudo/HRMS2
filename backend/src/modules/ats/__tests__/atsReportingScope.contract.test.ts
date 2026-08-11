@@ -14,22 +14,50 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import { excludeEmployeeShapedCandidatesSql } from "../ats-reporting-scope.js";
+import { excludeEmployeeShapedCandidatesSql, recordTypeDriftSql } from "../ats-reporting-scope.js";
 
 function read(rel: string): string {
   return readFileSync(resolve(process.cwd(), rel), "utf8");
 }
 
 describe("excludeEmployeeShapedCandidatesSql", () => {
-  it("builds a NOT EXISTS fragment keyed off the caller's alias", () => {
-    expect(excludeEmployeeShapedCandidatesSql("c")).toBe(
-      "NOT EXISTS (SELECT 1 FROM employees e2 WHERE e2.employee_code = c.candidate_code)",
+  /**
+   * This used to emit a correlated NOT EXISTS against employees, which ~20 call sites each
+   * re-ran over 30k rows. Migration 1130 added ats_candidate.record_type and the backfill
+   * populated it (29,926 legacy_employee / 7,770 candidate, applied 2026-08-11).
+   *
+   * Equivalence was measured on production before the switch: 7,770 rows included under both
+   * predicates, ZERO row-by-row disagreements, byte-identical funnel output, and count latency
+   * down from 18,783ms to 4,428ms.
+   */
+  it("filters on the indexed provenance column, keyed off the caller's alias", () => {
+    expect(excludeEmployeeShapedCandidatesSql("c")).toBe("c.record_type = 'candidate'");
+    expect(excludeEmployeeShapedCandidatesSql("ats_candidate")).toBe(
+      "ats_candidate.record_type = 'candidate'",
     );
   });
 
-  it("uses a fixed e2 alias so it's safe next to an existing `employees e` join", () => {
-    expect(excludeEmployeeShapedCandidatesSql("ats_candidate")).toContain(" e2 ");
-    expect(excludeEmployeeShapedCandidatesSql("ats_candidate")).not.toMatch(/\be\./);
+  it("introduces no join, so it stays safe to append to any query", () => {
+    // The old fragment carried its own `employees e2` subquery and had to avoid colliding with
+    // an existing `employees e` join. A bare column predicate cannot collide with anything.
+    const frag = excludeEmployeeShapedCandidatesSql("ats_candidate");
+    expect(frag).not.toMatch(/SELECT|JOIN|EXISTS/i);
+  });
+
+  it("selects candidates, not legacy rows — the polarity is easy to invert", () => {
+    // A fragment reading record_type = 'legacy_employee' would compile, run, and return
+    // precisely the 29,926 rows this exists to remove.
+    expect(excludeEmployeeShapedCandidatesSql("c")).toContain("'candidate'");
+    expect(excludeEmployeeShapedCandidatesSql("c")).not.toContain("legacy_employee");
+  });
+
+  it("ships the drift check, because the column is a snapshot of a join", () => {
+    // New rows default to 'candidate'. Another bulk load of employee-shaped rows would arrive
+    // labelled 'candidate' and silently rejoin the counts, so the check has to be runnable.
+    const sql = recordTypeDriftSql();
+    expect(sql).toContain("legacy_mislabelled");
+    expect(sql).toContain("genuine_mislabelled");
+    expect(sql).toContain("e.employee_code = ac.candidate_code");
   });
 });
 
