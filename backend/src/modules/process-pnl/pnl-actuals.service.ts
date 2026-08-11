@@ -330,6 +330,44 @@ const SEAT_RATE_RANKED = `(
      AND effective_from <= ? AND (effective_to IS NULL OR effective_to >= ?)
 )`;
 
+/**
+ * The same rn = 1 treatment for the other two effective-dated joins in getSeatRevenueActuals.
+ *
+ * Both were plain LEFT JOINs on an approved-and-in-window predicate with nothing guaranteeing a
+ * single match. Two approved rows whose effective_from/effective_to windows overlap for the same
+ * key would duplicate the employee row they attach to, doubling that employee's seat revenue and
+ * inflating billableEmployees — while the seat-rate joins immediately below, written from the
+ * same shape, were already de-duplicated. Three of five were guarded and two were not.
+ *
+ * Ordering matches SEAT_RATE_RANKED and resolveSeatRate: the most recently effective row wins.
+ * Each subquery binds exactly the two parameters its predecessor bound, in the same order, so
+ * the caller's parameter list is unchanged.
+ *
+ * No production data exercises this today — measured: zero overlapping rows in either table —
+ * which is why it has never shown up as a wrong number.
+ */
+const ROLE_BILLABILITY_RANKED = `(
+  SELECT process_id, designation_id, is_billable, seat_rate_monthly,
+         ROW_NUMBER() OVER (
+           PARTITION BY process_id, designation_id
+           ORDER BY effective_from DESC
+         ) AS rn
+    FROM process_role_billability
+   WHERE status = 'approved'
+     AND effective_from <= ? AND (effective_to IS NULL OR effective_to >= ?)
+)`;
+
+const SEAT_RATE_OVERRIDE_RANKED = `(
+  SELECT employee_id, seat_rate_monthly,
+         ROW_NUMBER() OVER (
+           PARTITION BY employee_id
+           ORDER BY effective_from DESC
+         ) AS rn
+    FROM employee_seat_rate_override
+   WHERE status = 'approved'
+     AND effective_from <= ? AND (effective_to IS NULL OR effective_to >= ?)
+)`;
+
 export async function getSeatRevenueActuals(periodCode: string): Promise<SeatRevenueActuals> {
   if (!/^\d{4}-\d{2}$/.test(periodCode)) return emptySeatRevenue();
   for (const table of ["cost_centre_seat_rate", "salary_prep_line", "pnl_running_salary_snapshot"]) {
@@ -354,13 +392,11 @@ export async function getSeatRevenueActuals(periodCode: string): Promise<SeatRev
        JOIN employees e ON e.id = l.employee_id
        LEFT JOIN pnl_running_salary_snapshot snap
               ON snap.employee_id = e.id AND snap.period_code = ?
-       LEFT JOIN process_role_billability m
+       LEFT JOIN ${ROLE_BILLABILITY_RANKED} m
               ON m.process_id = e.process_id AND m.designation_id = e.designation_id
-             AND m.status = 'approved'
-             AND m.effective_from <= ? AND (m.effective_to IS NULL OR m.effective_to >= ?)
-       LEFT JOIN employee_seat_rate_override ovr
-              ON ovr.employee_id = e.id AND ovr.status = 'approved'
-             AND ovr.effective_from <= ? AND (ovr.effective_to IS NULL OR ovr.effective_to >= ?)
+             AND m.rn = 1
+       LEFT JOIN ${SEAT_RATE_OVERRIDE_RANKED} ovr
+              ON ovr.employee_id = e.id AND ovr.rn = 1
        LEFT JOIN ${SEAT_RATE_RANKED} ccd
               ON ccd.cost_centre_id = e.cost_centre_id
              AND ccd.designation_id = e.designation_id AND ccd.rn = 1

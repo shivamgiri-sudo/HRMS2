@@ -115,3 +115,24 @@ describe("approved budget per process", () => {
     );
   });
 });
+
+/**
+ * Effective-dated joins in getSeatRevenueActuals.
+ *
+ * Five joins in one query resolve an "approved and in-window" row. Three were de-duplicated with
+ * ROW_NUMBER() ... rn = 1 and two were not, so two overlapping approved rows for the same key
+ * would duplicate the employee row and double that employee's seat revenue.
+ */
+describe("seat revenue resolves one row per effective-dated key", () => {
+  it("ranks every effective-dated join, not just the seat-rate ones", () => {
+    const source = read("pnl-actuals.service.ts");
+    for (const ranked of ["SEAT_RATE_RANKED", "ROLE_BILLABILITY_RANKED", "SEAT_RATE_OVERRIDE_RANKED"]) {
+      expect(source, `${ranked} must exist and use ROW_NUMBER`).toContain(ranked);
+    }
+    // The two that were plain joins must no longer be joined directly to their base tables.
+    expect(source).not.toMatch(/LEFT JOIN process_role_billability m\b/);
+    expect(source).not.toMatch(/LEFT JOIN employee_seat_rate_override ovr\b/);
+    expect(source).toContain("m.rn = 1");
+    expect(source).toContain("ovr.rn = 1");
+  });
+});
