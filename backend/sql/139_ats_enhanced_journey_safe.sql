@@ -155,11 +155,24 @@ ALTER TABLE module_access_control ADD COLUMN remarks TEXT NULL;
 ALTER TABLE module_access_control ADD UNIQUE KEY unique_access (module_name, employee_code);
 
 -- Grant super admin access to MAS47814
-INSERT INTO module_access_control (module_name, employee_code, has_access, granted_by, remarks) VALUES
-('ATS_DASHBOARD', 'MAS47814', TRUE, 'SYSTEM', 'Super admin full access'),
-('PAYROLL_HR_VALIDATION', 'MAS47814', TRUE, 'SYSTEM', 'Super admin full access'),
-('RECRUITER_PORTAL', 'MAS47814', TRUE, 'SYSTEM', 'Super admin full access'),
-('COMMAND_CENTRE', 'MAS47814', TRUE, 'SYSTEM', 'Super admin full access')
+INSERT INTO module_access_control (
+  employee_id, module_code, module_name, employee_code, has_access, access_granted, granted_by, remarks
+)
+SELECT
+  COALESCE((SELECT id FROM employees WHERE employee_code = 'MAS47814' LIMIT 1), '00000000-0000-0000-0000-000000000000'),
+  seed.module_name,
+  seed.module_name,
+  'MAS47814',
+  TRUE,
+  1,
+  'SYSTEM',
+  'Super admin full access'
+FROM (
+  SELECT 'ATS_DASHBOARD' AS module_name
+  UNION ALL SELECT 'PAYROLL_HR_VALIDATION'
+  UNION ALL SELECT 'RECRUITER_PORTAL'
+  UNION ALL SELECT 'COMMAND_CENTRE'
+) seed
 ON DUPLICATE KEY UPDATE has_access=TRUE;
 
 -- ── 6. Create recruiter_assignment_log table ──────────────────────────────────
