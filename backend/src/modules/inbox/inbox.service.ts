@@ -576,6 +576,32 @@ export async function getTimeline(referenceType: string, referenceId: string): P
     });
   }
 
+  // Module-specific: work_item_audit_log for a Mira-logged complaint/feedback item. Shows
+  // both the AI-drafted triage diagnosis (mira-issue-triage.service.ts, action
+  // 'mira_ai_triage') and anything a human later records against the same item — same
+  // source table, same query shape as the incentive-batch case just below, which this was
+  // modelled on directly.
+  if (referenceType === "mira_feedback") {
+    const [miraRows] = await db.execute<RowDataPacket[]>(
+      `SELECT id, performed_at AS created_at, performed_by AS actor, action AS action, remarks AS details
+       FROM work_item_audit_log
+       WHERE work_item_id = ?
+       ORDER BY performed_at DESC LIMIT 50`,
+      [referenceId],
+    ).catch(() => [[] as RowDataPacket[]]);
+
+    (miraRows as RowDataPacket[]).forEach((r) => {
+      events.push({
+        id: `mira-${String(r.id)}`,
+        event_time: String(r.created_at),
+        actor: String(r.actor ?? "system"),
+        action: String(r.action ?? ""),
+        details: r.details ? String(r.details) : undefined,
+        source_table: "work_item_audit_log",
+      });
+    });
+  }
+
   // Module-specific: work_item_audit_log for incentive batches
   if (referenceType === "incentive" || referenceType === "incentive_batch") {
     const [incRows] = await db.execute<RowDataPacket[]>(

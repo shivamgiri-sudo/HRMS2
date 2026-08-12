@@ -80,6 +80,11 @@ describe('logFeedback', () => {
     mocks.execute.mockResolvedValue([{}]);
   });
 
+  // Param order: [id, title, description, entity_id, priority, created_by] — id and
+  // entity_id are the same generated UUID (self-referencing, see ai-feedback.service.ts's
+  // comment on why: it's what lets Work Inbox's timeline panel find this item's
+  // work_item_audit_log rows, the same pattern getTimeline() already uses for
+  // 'incentive'/'incentive_batch').
   it('inserts a work_item row assigned to super_admin with the right category priority', async () => {
     const result = await logFeedback('user-1', 'HRMS has a bug in the leave page', 'bug');
     expect(mocks.execute).toHaveBeenCalledTimes(1);
@@ -87,8 +92,9 @@ describe('logFeedback', () => {
     expect(sql).toContain('INSERT INTO work_item');
     expect(sql).toContain("assigned_to_role");
     expect(sql).toContain("'super_admin'");
-    expect(params[2]).toBe('high'); // bug -> high priority
-    expect(params[3]).toBe('user-1'); // created_by
+    expect(params[0]).toBe(params[3]); // id === entity_id, self-referencing
+    expect(params[4]).toBe('high'); // bug -> high priority
+    expect(params[5]).toBe('user-1'); // created_by
     expect(result.answer).toContain('logged');
     expect(result.actions?.[0]?.url).toBe('/work-inbox');
   });
@@ -96,13 +102,13 @@ describe('logFeedback', () => {
   it('uses medium priority for suggestion/feedback categories', async () => {
     await logFeedback('user-2', 'I have a suggestion for HRMS', 'suggestion');
     const [, params] = mocks.execute.mock.calls[0];
-    expect(params[2]).toBe('medium');
+    expect(params[4]).toBe('medium');
   });
 
   it('uses high priority for complaint category', async () => {
     await logFeedback('user-3', 'complaint about the HRMS portal', 'complaint');
     const [, params] = mocks.execute.mock.calls[0];
-    expect(params[2]).toBe('high');
+    expect(params[4]).toBe('high');
   });
 
   it('returns a graceful failure response, not a throw, when the insert fails', async () => {
@@ -116,6 +122,6 @@ describe('logFeedback', () => {
     const long = 'HRMS bug: ' + 'x'.repeat(5000);
     await logFeedback('user-5', long, 'bug');
     const [, params] = mocks.execute.mock.calls[0];
-    expect(String(params[1]).length).toBeLessThanOrEqual(4000);
+    expect(String(params[2]).length).toBeLessThanOrEqual(4000);
   });
 });

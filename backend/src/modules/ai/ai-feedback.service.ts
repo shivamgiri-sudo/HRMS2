@@ -12,6 +12,7 @@
  * me". No migration, no new admin page needed for this to actually reach
  * someone.
  */
+import { randomUUID } from 'crypto';
 import { db } from '../../db/mysql.js';
 import type { AiAction, AiGenerateResponse } from './ai-provider.types.js';
 
@@ -87,11 +88,21 @@ export async function logFeedback(userId: string, question: string, category: Fe
   const trimmed = question.trim();
   const title = `Mira ${label.toLowerCase()}: ${trimmed.slice(0, 90)}${trimmed.length > 90 ? '…' : ''}`;
 
+  // entity_id self-references this row's own id (same pattern getTimeline() already uses for
+  // 'incentive'/'incentive_batch' — see inbox.service.ts). Generated client-side rather than
+  // via inline UUID() specifically so it can be reused as entity_id: previously entity_id was
+  // never set at all, so the Work Inbox timeline panel — which looks up
+  // /api/inbox/timeline/:entity_type/:entity_id — had no id to query with and a Mira
+  // complaint's AI-drafted diagnosis (mira-issue-triage.service.ts, written to
+  // work_item_audit_log) was unreachable from the UI no matter how it was written. Found
+  // 2026-08-13 from a live report: a real complaint was submitted, triaged, and the diagnosis
+  // existed in the database, but there was no click-path in Work Inbox to ever see it.
+  const workItemId = randomUUID();
   try {
     await db.execute(
-      `INSERT INTO work_item (id, item_type, title, description, module_code, entity_type, assigned_to_role, priority, status, created_by, created_at)
-       VALUES (UUID(), 'MIRA_FEEDBACK', ?, ?, 'mira', 'mira_feedback', 'super_admin', ?, 'pending', ?, NOW())`,
-      [title, trimmed.slice(0, 4000), categoryPriority(category), userId],
+      `INSERT INTO work_item (id, item_type, title, description, module_code, entity_type, entity_id, assigned_to_role, priority, status, created_by, created_at)
+       VALUES (?, 'MIRA_FEEDBACK', ?, ?, 'mira', 'mira_feedback', ?, 'super_admin', ?, 'pending', ?, NOW())`,
+      [workItemId, title, trimmed.slice(0, 4000), workItemId, categoryPriority(category), userId],
     );
   } catch (error) {
     console.error('[Mira Feedback] Failed to log feedback', error instanceof Error ? error.message : error);
