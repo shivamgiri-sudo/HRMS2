@@ -60,7 +60,11 @@ import { hrmsApi } from "@/lib/hrmsApi";
 import { splitRupees, weightFor } from "@/lib/sharingWeights";
 import { cn } from "@/lib/utils";
 import { FieldRow, FormSection, StaticValue } from "./sections/form-primitives";
-import { MonthSplitPanel, type MonthSplitValue } from "./sections/MonthSplitPanel";
+import {
+  MonthSplitPanel,
+  windowCrossesFinancialYear,
+  type MonthSplitValue,
+} from "./sections/MonthSplitPanel";
 
 /** Methods offered for GRN's auto-split, restricted to what's computable from a single batched
  *  driver fetch. "meter_wise" has no client formula (server-only). "grade_weighted_headcount"'s
@@ -816,7 +820,19 @@ export function BudgetLinkedGrnForm() {
     (item) => Number(item.is_blocking) === 1 && item.validation_status === "failed"
   );
   const hasErrors = Object.keys(errors).length > 0;
-  const canSubmit = !hasErrors && proofPresent && serverBlocking.length === 0;
+
+  /**
+   * Recognising cost outside the GRN's own financial year is refused by the server for
+   * anyone but Finance Head / Accounts Head / Super Admin. Blocking here too means the
+   * refusal is visible while the window is being chosen, not after a full form is
+   * submitted; the server remains the authority either way.
+   */
+  const crossFyBlocked =
+    !canOverridePeriod &&
+    windowCrossesFinancialYear(period, monthSplit.startPeriod, monthSplit.endPeriod);
+
+  const canSubmit =
+    !hasErrors && proofPresent && serverBlocking.length === 0 && !crossFyBlocked;
 
   const checklist = [
     { label: "Proof attached", done: proofPresent },
@@ -1514,6 +1530,7 @@ export function BudgetLinkedGrnForm() {
               accountingPeriod={period}
               disabled={locked}
               canCustomSplit={canOverridePeriod}
+              canCrossFy={canOverridePeriod}
             />
 
             {isVendor && (

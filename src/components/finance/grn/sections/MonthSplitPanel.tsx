@@ -85,6 +85,25 @@ export type MonthSplitValue = {
   customPercentages?: Record<string, number>;
 };
 
+/**
+ * Whether a recognition window spills outside the financial year the GRN books to.
+ *
+ * Exported so BudgetLinkedGrnForm can block submission on the same rule the panel
+ * displays and the server enforces, rather than a second copy of it drifting.
+ */
+export function windowCrossesFinancialYear(
+  accountingPeriod: string,
+  startPeriod: string | null | undefined,
+  endPeriod: string | null | undefined,
+): boolean {
+  if (!startPeriod || !endPeriod) return false;
+  const financialYear = financialYearOf(accountingPeriod);
+  if (!financialYear) return false;
+  const periods = monthsBetween(startPeriod, endPeriod);
+  if (!periods.length) return false;
+  return periods.some((p) => financialYearOf(p) !== financialYear);
+}
+
 export function MonthSplitPanel({
   value,
   onChange,
@@ -92,6 +111,7 @@ export function MonthSplitPanel({
   accountingPeriod,
   disabled,
   canCustomSplit,
+  canCrossFy,
 }: {
   value: MonthSplitValue;
   onChange: (next: MonthSplitValue) => void;
@@ -102,6 +122,11 @@ export function MonthSplitPanel({
   disabled?: boolean;
   /** Whether the user may switch to custom % mode. Finance Head / Accounts Head / Super Admin. */
   canCustomSplit?: boolean;
+  /**
+   * Whether the user may commit a window that crosses a financial year. Same three
+   * roles, checked separately because the server checks them separately.
+   */
+  canCrossFy?: boolean;
 }) {
   const enabled = Boolean(value.startPeriod || value.endPeriod);
   const isCustomMode = Boolean(value.customPercentages && Object.keys(value.customPercentages).length > 0);
@@ -217,12 +242,23 @@ export function MonthSplitPanel({
 
       {schedule && !("error" in schedule) && (
         <div className="px-4 pb-3">
-          {schedule.crossFy && (
+          {schedule.crossFy && canCrossFy && (
             <GrnAlert tone="warn">
               This recognition window crosses a financial year boundary. The cost will be spread
               across both FY {financialYearOf(schedule.periods[0])} and FY{" "}
               {financialYearOf(schedule.periods[schedule.periods.length - 1])}. Confirm this is
               intentional.
+            </GrnAlert>
+          )}
+          {schedule.crossFy && !canCrossFy && (
+            /* The server refuses this for anyone outside the three roles, so say so here
+               rather than letting the save fail after everything else is filled in. */
+            <GrnAlert tone="crit">
+              This recognition window crosses a financial year boundary — FY{" "}
+              {financialYearOf(schedule.periods[0])} into FY{" "}
+              {financialYearOf(schedule.periods[schedule.periods.length - 1])}. Only a Finance
+              Head, Accounts Head or Super Admin may recognise cost outside the GRN's own
+              financial year. Shorten the window, or ask one of them to save this GRN.
             </GrnAlert>
           )}
           <div className="mt-2 overflow-x-auto">
