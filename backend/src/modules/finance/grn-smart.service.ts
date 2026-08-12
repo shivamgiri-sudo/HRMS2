@@ -1566,6 +1566,11 @@ export const grnSmartService = {
       if (String(grn.status) !== "rejected") {
         throw new Error(`Only rejected GRNs can be reopened. Current status: ${grn.status}`);
       }
+      // Ownership check: only the original creator OR finance leadership can reopen.
+      const isFinanceLeader = ["finance_head", "accounts_head", "super_admin"].includes(actorRole);
+      if (!isFinanceLeader && String(grn.created_by) !== actorUserId) {
+        throw new Error("Only the GRN creator or Finance Head can reopen this GRN.");
+      }
       // Finance-head rejections call releaseAllocations(), setting lifecycle_status = 'released'.
       // Restore them to 'draft' so the next save can proceed normally.
       await connection.execute(

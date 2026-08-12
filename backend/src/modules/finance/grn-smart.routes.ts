@@ -174,9 +174,15 @@ smartGrnRouter.put(
           return;
         }
       }
+      // Strip accountingPeriod for callers without finance-level authorization.
+      // UI gate alone is not security — enforce at the API layer.
+      const canOverridePeriod = user.roles.some((r: string) =>
+        ["finance_head", "accounts_head", "super_admin"].includes(r)
+      );
+      const body = canOverridePeriod ? req.body : { ...req.body, accountingPeriod: undefined };
       const data = await grnSmartService.saveComponentAllocations(
         req.params.id,
-        req.body,
+        body,
         user.id,
         user.role
       );
