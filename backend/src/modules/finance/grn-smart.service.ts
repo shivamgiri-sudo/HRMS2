@@ -1135,7 +1135,7 @@ export const grnSmartService = {
           String(input.placeOfSupply ?? "").trim() || null,
           String(input.irn ?? "").trim() || null,
           String(input.irnAckNo ?? "").trim() || null,
-          /^\d{4}-\d{2}$/.test(String(input.accountingPeriod ?? "").trim())
+          /^\d{4}-(0[1-9]|1[0-2])$/.test(String(input.accountingPeriod ?? "").trim())
             ? String(input.accountingPeriod).trim()
             : null,
           grnId,
