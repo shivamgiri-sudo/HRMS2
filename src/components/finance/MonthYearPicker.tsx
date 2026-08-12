@@ -27,6 +27,7 @@ export function MonthYearPicker({
   yearsForward = 2,
   className,
   selectClassName,
+  disabled = false,
 }: {
   value: string;
   onChange: (value: string) => void;
@@ -37,6 +38,11 @@ export function MonthYearPicker({
    *  language (grn-scope, IBM Plex, its own border and focus tokens), so it passes styling here
    *  rather than importing a control that would visibly not belong. */
   selectClassName?: string;
+  /** The native input this replaces accepted `disabled`, and callers on locked forms rely on it.
+   *  Without it a caller swapping the element would silently make a read-only period editable,
+   *  which is a worse defect than the Safari gap this component exists to close. Defaults to
+   *  false, so existing callers are unaffected. */
+  disabled?: boolean;
 }) {
   const [yearPart, monthPart] = value.split("-");
   const year = Number(yearPart) || new Date().getFullYear();
@@ -51,6 +57,7 @@ export function MonthYearPicker({
       <select
         aria-label="Month"
         className={selectClassName ?? "h-9 flex-1 rounded-md border border-input bg-background px-2 text-sm"}
+        disabled={disabled}
         value={month}
         onChange={(event) => onChange(`${year}-${String(Number(event.target.value)).padStart(2, "0")}`)}
       >
@@ -61,6 +68,7 @@ export function MonthYearPicker({
       <select
         aria-label="Year"
         className={selectClassName ? `${selectClassName} w-24` : "h-9 w-24 rounded-md border border-input bg-background px-2 text-sm"}
+        disabled={disabled}
         value={year}
         onChange={(event) => onChange(`${event.target.value}-${String(month).padStart(2, "0")}`)}
       >

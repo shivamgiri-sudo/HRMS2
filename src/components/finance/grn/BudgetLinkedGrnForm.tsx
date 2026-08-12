@@ -26,6 +26,7 @@ import { Label } from "@/components/ui/label";
 // <select> has no search callback, so swapping it would mean dumping the whole vendor list into
 // the DOM. It is restyled through the className it already forwards instead.
 import { SearchableSelect, type SearchableOption } from "@/components/ui/searchable-select";
+import { MonthYearPicker } from "@/components/finance/MonthYearPicker";
 import { StatusStamp } from "@/components/finance/grn/StatusStamp";
 import { GrnBudgetImportButton } from "@/components/finance/grn/GrnBudgetImportButton";
 import { checkTone } from "@/components/finance/grn/grn-format";
@@ -1450,18 +1451,20 @@ export function BudgetLinkedGrnForm() {
                       : "Leave as-is to use the invoice date's month."
                   }
                 >
-                  <Input
-                    id="grn-accounting-period"
-                    type="month"
-                    className={inputClass}
+                  {/* Not a native <input type="month">: Safari has never implemented it and
+                      degrades to a bare text box, so the period would be unpickable there.
+                      Styled with this module's own tokens rather than the default theme. */}
+                  <MonthYearPicker
+                    className="w-[210px]"
                     disabled={locked}
                     value={effectivePeriod}
-                    onChange={(event) =>
+                    onChange={(value) =>
                       setForm((current) => ({
                         ...current,
-                        accountingPeriod: event.target.value === period ? "" : event.target.value,
+                        accountingPeriod: value === period ? "" : value,
                       }))
                     }
+                    selectClassName="h-[34px] rounded-[8px] border border-grn-line bg-white px-[8px] text-[12.5px] text-grn-ink focus:outline-none focus:ring-2 focus:ring-grn-brand/15"
                   />
                 </FieldRow>
                 {form.accountingPeriod && form.accountingPeriod !== period && (
