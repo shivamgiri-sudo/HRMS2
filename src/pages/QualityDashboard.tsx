@@ -17,6 +17,7 @@ import { hrmsApi } from "@/lib/hrmsApi";
 import { useUserRole } from "@/hooks/useUserRole";
 import { DashboardLevelSummary, type HeroTile } from "@/components/dashboards/DashboardLevelSummary";
 import { DashboardInsights, computeQualityInsights } from "@/components/dashboards/DashboardInsights";
+import { QualityTargetGapCard } from "@/components/quality/QualityTargetGapCard";
 
 interface QualityApiNode {
   id: string;
@@ -259,6 +260,10 @@ export default function QualityDashboard() {
               chartValueSuffix="%"
             />
             {rawNodes.length > 0 && <DashboardInsights data={computeQualityInsights(rawNodes, levelNoun)} />}
+            {/* Renders itself away for roles the governance API does not admit. Sits above the
+                drill-down because it qualifies everything below it: a score means less when no
+                approved target defines what a good one is. */}
+            <QualityTargetGapCard />
             <DrillDownDashboardShell
               queryKeyPrefix="quality-dashboard-v2"
               accentClassName="from-emerald-500/10 via-primary/5 to-transparent"
