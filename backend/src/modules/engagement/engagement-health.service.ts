@@ -76,13 +76,18 @@ async function computePerformanceScore(
     if (cnt > 0) { pipActive = true; signals.add("pip_active"); }
   }
 
-  // Performance feedback recency
+  // Performance feedback recency.
+  // performance_feedback_response has neither overall_rating nor reviewee_id. It
+  // holds one row per (request_id, competency_id) with a 1-5 rating, and the
+  // employee being reviewed lives on performance_feedback_request, so the rating
+  // has to be averaged across competencies and reached through that join.
   if (await tableExists("performance_feedback_response")) {
     const v = await scalar(
-      `SELECT COALESCE(AVG(overall_rating), -1) AS s
-         FROM performance_feedback_response
-        WHERE reviewee_id = ?
-          AND submitted_at >= DATE_SUB(NOW(), INTERVAL 6 MONTH)`,
+      `SELECT COALESCE(AVG(resp.rating), -1) AS s
+         FROM performance_feedback_response resp
+         JOIN performance_feedback_request req ON req.request_id = resp.request_id
+        WHERE req.employee_id = ?
+          AND resp.submitted_at >= DATE_SUB(NOW(), INTERVAL 6 MONTH)`,
       [employeeId], -1
     );
     if (v >= 0) { score += (v / 5) * 100; sources++; signals.add("feedback_rating"); }
@@ -309,15 +314,24 @@ export async function calculateEmployeeEngagementHealth(employeeId: string) {
       [employeeId]
     ),
     scalar(
-      `SELECT COUNT(DISTINCT survey_id) AS cnt FROM survey_response WHERE employee_id = ? AND submitted_at >= DATE_SUB(NOW(), INTERVAL 90 DAY)`,
+      // survey_response records the date as response_date; it has no submitted_at
+      `SELECT COUNT(DISTINCT survey_id) AS cnt FROM survey_response WHERE employee_id = ? AND response_date >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)`,
+      [employeeId]
+    ),
+    // pulse_check is the question master - 8 rows, one per pulse question, with no
+    // employee_id, no mood_score and no submitted_at. Employee answers live in
+    // pulse_response, keyed by pulse_id, which is the table these two want.
+    scalar(
+      `SELECT COUNT(*) AS cnt FROM pulse_response WHERE employee_id = ? AND response_date >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)`,
       [employeeId]
     ),
     scalar(
-      `SELECT COUNT(*) AS cnt FROM pulse_check WHERE employee_id = ? AND submitted_at >= DATE_SUB(NOW(), INTERVAL 90 DAY)`,
-      [employeeId]
-    ),
-    scalar(
-      `SELECT AVG(mood_score) AS avg_score FROM pulse_check WHERE employee_id = ? AND submitted_at >= DATE_SUB(NOW(), INTERVAL 90 DAY)`,
+      // response_value is VARCHAR(50): a free-text answer would average as 0 and
+      // drag the mood score down, so only numeric scale answers are counted.
+      `SELECT AVG(CASE WHEN response_value REGEXP '^[0-9]+(\\.[0-9]+)?$'
+                       THEN CAST(response_value AS DECIMAL(10,2)) END) AS avg_score
+         FROM pulse_response
+        WHERE employee_id = ? AND response_date >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)`,
       [employeeId],
       3
     ),
@@ -331,13 +345,24 @@ export async function calculateEmployeeEngagementHealth(employeeId: string) {
 
   const attendanceScorePromise = tableExists("attendance_daily_record").then(async (exists) => {
     if (!exists) return 65;
+    // The date column is record_date and the status column is attendance_status;
+    // neither attendance_date nor status has ever existed here. Both scalars threw
+    // and were swallowed, so workedDays came back 0 and every employee scored the
+    // flat 65 below - across 125,125 rows of real attendance.
+    //
+    // attendance_status is an enum: present, half_day, absent, leave_approved,
+    // holiday, week_off, unreconciled, missing_punch, week_off_worked. Only
+    // 'absent' is counted, which is the closest match to the original intent
+    // ('absent','Absent','A','LWP'). missing_punch is deliberately not treated as
+    // an absence here: it means an unreconciled punch, and folding it in would
+    // change what this score means rather than fix a column name.
     const [workedDays, absentDays] = await Promise.all([
       scalar(
-        `SELECT COUNT(*) AS cnt FROM attendance_daily_record WHERE employee_id = ? AND attendance_date >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)`,
+        `SELECT COUNT(*) AS cnt FROM attendance_daily_record WHERE employee_id = ? AND record_date >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)`,
         [employeeId]
       ),
       scalar(
-        `SELECT COUNT(*) AS cnt FROM attendance_daily_record WHERE employee_id = ? AND attendance_date >= DATE_SUB(CURDATE(), INTERVAL 90 DAY) AND status IN ('absent','Absent','A','LWP')`,
+        `SELECT COUNT(*) AS cnt FROM attendance_daily_record WHERE employee_id = ? AND record_date >= DATE_SUB(CURDATE(), INTERVAL 90 DAY) AND attendance_status = 'absent'`,
         [employeeId]
       ),
     ]);
@@ -613,7 +638,7 @@ export async function getFilterOptions(userId: string, userRoles: string[]) {
            FROM branch_master bm
            JOIN employees e ON e.branch_id = bm.id
           WHERE e.reporting_manager_id IN (
-            SELECT id FROM employees WHERE user_id = ? LIMIT 1
+            SELECT id FROM employees WHERE user_id = ?
           ) AND bm.active_status = 1`,
     isGlobal ? [] : [userId]
   );
@@ -623,7 +648,9 @@ export async function getFilterOptions(userId: string, userRoles: string[]) {
   );
 
   const [departments] = await db.execute<RowDataPacket[]>(
-    `SELECT id, department_name AS name FROM department_master WHERE active_status = 1 ORDER BY department_name`
+    // the column is dept_name; department_name has never existed. This one is not
+    // wrapped in scalar(), so it took the whole endpoint down with a 500.
+    `SELECT id, dept_name AS name FROM department_master WHERE active_status = 1 ORDER BY dept_name`
   );
 
   const [managers] = await db.execute<RowDataPacket[]>(
