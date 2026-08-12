@@ -38,6 +38,8 @@ interface PendingTask {
   risk: Risk;
   employee_name?: string;
   branch_name?: string;
+  requested_by_name?: string;
+  requested_by_code?: string;
 }
 
 interface PendingSummary {
@@ -263,6 +265,17 @@ function ActionSheet({
         <div className="space-y-5 px-6 py-5">
           {/* Meta */}
           <div className="grid grid-cols-2 gap-3 text-sm">
+            {task.requested_by_name && (
+              <div className="rounded-xl bg-slate-50 p-3">
+                <p className="text-[10px] font-bold uppercase text-slate-400">Raised by</p>
+                <p className="mt-0.5 font-semibold text-slate-900">
+                  {task.requested_by_name}
+                  {task.requested_by_code && (
+                    <span className="ml-1 font-normal text-slate-400">({task.requested_by_code})</span>
+                  )}
+                </p>
+              </div>
+            )}
             {task.employee_name && (
               <div className="rounded-xl bg-slate-50 p-3">
                 <p className="text-[10px] font-bold uppercase text-slate-400">Employee</p>
@@ -275,6 +288,10 @@ function ActionSheet({
                 <p className="mt-0.5 font-semibold text-slate-900">{task.branch_name}</p>
               </div>
             )}
+            <div className="rounded-xl bg-slate-50 p-3">
+              <p className="text-[10px] font-bold uppercase text-slate-400">Raised at</p>
+              <p className="mt-0.5 font-semibold text-slate-900">{formatIST(task.created_at) || "—"}</p>
+            </div>
             <div className="rounded-xl bg-slate-50 p-3">
               <p className="text-[10px] font-bold uppercase text-slate-400">Aging</p>
               <p className="mt-0.5 font-semibold text-slate-900">{task.aging_hours}h</p>
@@ -364,8 +381,11 @@ function TaskCard({ task, onOpen }: { task: PendingTask; onOpen: () => void }) {
 
       <p className="font-bold text-slate-950 leading-snug line-clamp-2">{task.title}</p>
 
-      {task.employee_name && (
-        <p className="mt-1 text-xs text-slate-500 truncate">{task.employee_name}{task.branch_name ? ` · ${task.branch_name}` : ""}</p>
+      {(task.employee_name || task.requested_by_name) && (
+        <p className="mt-1 text-xs text-slate-500 truncate">
+          {task.employee_name ?? `Raised by ${task.requested_by_name}`}
+          {task.branch_name ? ` · ${task.branch_name}` : ""}
+        </p>
       )}
 
       <div className="mt-2 flex items-center gap-3 text-[10px] text-slate-400">

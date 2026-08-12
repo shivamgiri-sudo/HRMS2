@@ -227,6 +227,15 @@ export interface PendingTask {
   employee_name?: string;
   branch_name?: string;
   branch_id?: string;
+  /**
+   * Who raised this item — distinct from employee_name, which (on tat/work_item
+   * rows) means "who it is assigned to" or "which employee it is about". Only
+   * populated for the work_item source today (resolved from created_by), since
+   * that is the reported gap: a Mira complaint's detail panel showed the AI
+   * diagnosis but not who filed it. Reported live 2026-08-13.
+   */
+  requested_by_name?: string;
+  requested_by_code?: string;
 }
 
 export interface PendingSummary {
@@ -407,9 +416,12 @@ export async function getMyPending(userId: string): Promise<{ items: PendingTask
             wi.priority,
             wi.due_at,
             wi.created_at,
-            e.full_name AS employee_name
+            e.full_name AS employee_name,
+            req.full_name AS requested_by_name,
+            req.employee_code AS requested_by_code
        FROM work_item wi
        LEFT JOIN employees e ON e.user_id = wi.assigned_to_user_id
+       LEFT JOIN employees req ON req.user_id = wi.created_by
       WHERE wi.status NOT IN ('completed', 'cancelled')
         AND (wi.assigned_to_user_id = ? OR wi.assigned_to_role IN (${rolePlaceholders}))
       ORDER BY FIELD(wi.priority,'urgent','high','normal','low'), wi.created_at DESC
@@ -478,6 +490,8 @@ export async function getMyPending(userId: string): Promise<{ items: PendingTask
         aging_hours: Math.round(agingH * 10) / 10,
         risk: calcRisk(dueAt, createdAt),
         employee_name: row.employee_name ? String(row.employee_name) : undefined,
+        requested_by_name: row.requested_by_name ? String(row.requested_by_name) : undefined,
+        requested_by_code: row.requested_by_code ? String(row.requested_by_code) : undefined,
       };
     }),
   ];
