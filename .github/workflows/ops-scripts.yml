@@ -48,6 +48,7 @@ on:
           - ats-candidate-record-type-backfill
           - ats-candidate-future-date-repair
           - privacy-encryption-verify
+          - bank-account-encrypt-backfill
       mode:
         description: "dry-run reports what it would do and writes nothing"
         required: true
@@ -148,6 +149,12 @@ jobs:
             ats-candidate-future-date-repair)
               FLAG=""; [ "$MODE" = "apply" ] && FLAG="--apply"
               node scripts/ats-candidate-future-date-repair.mjs $FLAG
+              ;;
+            bank-account-encrypt-backfill)
+              # INVERTED default, like statutory-identifier: this one WRITES unless given
+              # --dry-run. Getting this backwards would encrypt 2,238 rows unasked.
+              FLAG=""; [ "$MODE" = "dry-run" ] && FLAG="--dry-run"
+              npx tsx scripts/bank-account-encrypt-backfill.ts $FLAG
               ;;
             privacy-encryption-verify)
               # Read-only in both modes — it decrypts and compares, it never writes. Listed here
