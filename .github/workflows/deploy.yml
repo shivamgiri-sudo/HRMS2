@@ -33,6 +33,14 @@ jobs:
       - name: Install frontend deps
         run: npm ci
 
+      # backend/package.json pulls in canvas@^3 (used by ats/face-match.service.ts).
+      # It falls back to a node-gyp source build on this runner, which fails with
+      # "gyp ERR! configure error" because cairo/pango/jpeg/gif headers are absent.
+      # That aborts npm ci before any test runs, so it blocked EVERY deploy, not just
+      # the change that introduced it.
+      - name: Install native build deps for canvas
+        run: sudo apt-get update && sudo apt-get install -y libcairo2-dev libpango1.0-dev libjpeg-dev libgif-dev librsvg2-dev
+
       - name: Install backend deps
         working-directory: backend
         run: npm ci
@@ -123,6 +131,14 @@ jobs:
 
       - name: Install frontend deps
         run: npm ci
+
+      # backend/package.json pulls in canvas@^3 (used by ats/face-match.service.ts).
+      # It falls back to a node-gyp source build on this runner, which fails with
+      # "gyp ERR! configure error" because cairo/pango/jpeg/gif headers are absent.
+      # That aborts npm ci before any test runs, so it blocked EVERY deploy, not just
+      # the change that introduced it.
+      - name: Install native build deps for canvas
+        run: sudo apt-get update && sudo apt-get install -y libcairo2-dev libpango1.0-dev libjpeg-dev libgif-dev librsvg2-dev
 
       - name: Install backend deps
         working-directory: backend
