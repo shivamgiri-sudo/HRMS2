@@ -5,6 +5,17 @@
 All pages (Login, Payroll, Attendance, Employees, etc.) are broken on production.
 Run the deploy commands below immediately to restore service.
 
+> **Run every step from the repository root on the server.** This file used to open with
+> `cd C:\Users\shivamg\HRMS1` - the PREVIOUS repository - and it is the file someone
+> opens during an outage. Following it would `git pull` into a checkout nothing serves, while
+> the operator believed they had deployed.
+>
+> The paths are relative now, so nothing here goes stale when a checkout is renamed or moved.
+> `deploy-local.bat` and `start-dev.bat` use `%~dp0` for the same reason: they build the
+> checkout they live in, whatever it is called. `ecosystem.config.cjs` was already
+> path-independent (`cwd: "./backend"`), so PM2 itself was never affected - only these
+> instructions were.
+
 ## Server Setup
 
 - Backend: PM2 running `node dist/server.js` from `backend/`
@@ -19,7 +30,7 @@ Run the deploy commands below immediately to restore service.
 Run the following on the server (Command Prompt or PowerShell):
 
 ```bat
-cd C:\Users\shivamg\HRMS1
+:: run from the repository root on the server - wherever the checkout lives
 
 :: 1. Pull latest from GitHub
 git pull origin main
@@ -40,7 +51,7 @@ pm2 restart ecosystem.config.cjs
 
 Single-line version:
 ```bat
-cd C:\Users\shivamg\HRMS1 && git pull origin main && cd backend && npm install && npm run build && cd .. && npm install && npm run build && pm2 restart ecosystem.config.cjs
+git pull origin main && cd backend && npm install && npm run build && cd .. && npm install && npm run build && pm2 restart ecosystem.config.cjs
 ```
 
 ---
@@ -54,7 +65,7 @@ They are **additive** — safe to run, will not affect existing data.
 **Required to activate:** read-only grace period for inactive employees, OTP password reset via SMS.
 
 ```bat
-mysql -u root -p mas_hrms < C:\Users\shivamg\HRMS1\backend\sql\215_inactive_access_and_otp_auth.sql
+mysql -u root -p mas_hrms < backend\sql\215_inactive_access_and_otp_auth.sql
 ```
 
 > Until this migration runs, all pages work normally for active users.
@@ -62,7 +73,7 @@ mysql -u root -p mas_hrms < C:\Users\shivamg\HRMS1\backend\sql\215_inactive_acce
 
 ### Migration 070 — Legacy Sync Maps
 ```bat
-mysql -u root -p mas_hrms < C:\Users\shivamg\HRMS1\backend\sql\070_legacy_sync_maps.sql
+mysql -u root -p mas_hrms < backend\sql\070_legacy_sync_maps.sql
 ```
 
 ---
@@ -72,7 +83,7 @@ mysql -u root -p mas_hrms < C:\Users\shivamg\HRMS1\backend\sql\070_legacy_sync_m
 To start all background workers (biometric sync, leave credit, KPI sync, SLA breach, etc.):
 
 ```bat
-cd C:\Users\shivamg\HRMS1\backend
+cd backend
 npx tsx src/workers/all-workers.ts
 ```
 

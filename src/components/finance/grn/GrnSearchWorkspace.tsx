@@ -24,6 +24,7 @@ import {
   GrnTd,
   GrnTh,
 } from "@/components/finance/grn/grn-ui";
+import { MonthYearPicker } from "@/components/finance/MonthYearPicker";
 
 /**
  * GRN Search (Requirement 14).
@@ -277,8 +278,14 @@ export function GrnSearchWorkspace({
             <option value="false">Single month only</option>
           </GrnSelect>
 
-          <GrnInput type="month" aria-label="Accounting period" value={draft.accountingPeriod}
-            onChange={(e) => set("accountingPeriod")(e.target.value)} />
+          {/* Safari never implemented input[type=month] — it degrades to a bare text box with
+              no picker. Styled to this module's own tokens rather than the default theme, so it
+              still reads as part of the GRN surface. */}
+          <MonthYearPicker
+            value={draft.accountingPeriod}
+            onChange={set("accountingPeriod")}
+            selectClassName={"h-[34px] rounded-[8px] border border-grn-line bg-white px-[8px] text-[12.5px] text-grn-ink focus:outline-none focus:ring-2 focus:ring-grn-brand/15"}
+          />
           <GrnInput type="date" aria-label="Bill date from" value={draft.billDateFrom}
             onChange={(e) => set("billDateFrom")(e.target.value)} />
           <GrnInput type="date" aria-label="Bill date to" value={draft.billDateTo}

@@ -3,7 +3,10 @@ echo ============================================
 echo  HRMS Local Deploy
 echo ============================================
 
-cd /d C:\Users\shivamg\HRMS1
+:: %~dp0 is the folder this script lives in, so it always builds ITS OWN checkout.
+:: The hardcoded path said HRMS1 - the previous repository - so running this from the
+:: HRMS2 working copy silently built and deployed the old one instead.
+cd /d "%~dp0"
 
 echo [1/5] Installing frontend dependencies...
 call npm install --no-audit --no-fund

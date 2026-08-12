@@ -2845,7 +2845,17 @@ export const breakManagementService = {
           ELSE NULL
         END AS worked_hours,
         CASE
-          WHEN bds.roster_status IN ('W/O', 'Leave') THEN bds.roster_status
+          -- Day type comes from attendance_daily_record, the derived payroll-facing status.
+          -- This used to read bds.roster_status, which only ever holds 'published' or NULL --
+          -- a roster PUBLICATION state, not a day type -- so the branch never fired and a
+          -- week-off with no punch was reported as 'Absent'. bds.attendance_status is not the
+          -- answer either; it carries live-board states ('On Duty', 'Shift Completed').
+          --
+          -- week_off_worked is deliberately absent here: the employee worked their week off,
+          -- so they punched and took breaks, and collapsing that to 'W/O' would hide the very
+          -- activity this report exists to show. It falls through to the punch logic below.
+          WHEN adr.attendance_status = 'week_off' THEN 'W/O'
+          WHEN adr.attendance_status = 'leave_approved' THEN 'Leave'
           WHEN bds.biometric_punch_in_time IS NULL THEN 'Absent'
           WHEN bds.biometric_punch_in_time IS NOT NULL AND bds.biometric_punch_out_time IS NOT NULL
             AND TIMESTAMPDIFF(MINUTE, bds.biometric_punch_in_time, bds.biometric_punch_out_time) >= 540
@@ -2868,6 +2878,7 @@ export const breakManagementService = {
       LEFT JOIN process_master p ON p.id = bds.process_id
       LEFT JOIN branch_master br ON br.id = bds.branch_id
       LEFT JOIN department_master d ON d.id = e.department_id
+      LEFT JOIN attendance_daily_record adr ON adr.employee_id = bds.employee_id AND adr.record_date = bds.shift_date
       LEFT JOIN wfm_roster_assignment ra ON ra.employee_id = bds.employee_id AND ra.roster_date = bds.shift_date
       LEFT JOIN wfm_shift_master sm ON sm.id = ra.shift_id
       ${where}

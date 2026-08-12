@@ -11,9 +11,9 @@ import { describe, expect, it } from "vitest";
  * exactly this — and was the only one of five finance pages that used it, so it was the only one
  * a Safari user could pick a period on. The component is now shared.
  *
- * The GRN module is deliberately out of scope: it has its own design system (GrnInput,
- * grn-scope, IBM Plex) and dropping a component styled for the default theme into it would
- * clash. Its inputs still accept a typed YYYY-MM, so nothing is unusable there.
+ * The GRN module is included too. It has its own design system (GrnInput, grn-scope, IBM Plex),
+ * so rather than importing a control styled for the default theme it passes its own tokens
+ * through selectClassName — the picker works everywhere without the surface looking borrowed.
  */
 
 const root = resolve(process.cwd(), "src");
@@ -40,7 +40,8 @@ function tsxFiles(dir: string): string[] {
 
 describe("finance period pickers work in every browser", () => {
   it("no finance page uses the native month input", () => {
-    const offenders = tsxFiles(resolve(root, "pages/finance"))
+    const offenders = [...tsxFiles(resolve(root, "pages/finance")), ...tsxFiles(resolve(root, "components/finance"))]
+      .filter((f) => !f.endsWith("MonthYearPicker.tsx"))
       .filter((f) => /<\w+[^>]*\stype="month"/.test(read(f)))
       .map((f) => f.replace(root, "src"));
     expect(offenders, "use MonthYearPicker — Safari renders type=month as a bare text box").toEqual([]);
@@ -93,5 +94,24 @@ describe("Process P&L surfaces explain themselves", () => {
       expect(page(f), `${f} must default to the previous month`)
         .toContain("now.getMonth() - 1");
     }
+  });
+});
+
+describe("the P&L ledger Note column carries something", () => {
+  const service = readFileSync(
+    resolve(process.cwd(), "backend/src/modules/process-pnl/process-pnl.service.ts"), "utf8");
+
+  it("populates notes for the cost rows that dominate the ledger", () => {
+    // Only `adjustment` supplied a note, so the column rendered "-" on nearly every row. A GRN
+    // carries the raiser's own description of what was bought, which is what a reader scanning
+    // a cost ledger actually wants.
+    expect(service).toContain("NULLIF(TRIM(COALESCE(g.description, '')), '') AS note");
+    expect(service).toContain("NULLIF(TRIM(COALESCE(grn.description, '')), '') AS note");
+    const notes = service.match(/note: row\.note \?\? null/g) ?? [];
+    expect(notes.length, "grn_cost and vendor_cost both").toBe(2);
+  });
+
+  it("the synthesised allocation row explains itself", () => {
+    expect(service).toContain('note: "Branch indirect cost apportioned to this process"');
   });
 });

@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { resolvePii } from "../../shared/piiCiphertext.js";
 import type { RowDataPacket } from "mysql2";
 import { requireAuth } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
@@ -93,7 +94,10 @@ router.get("/me", h(async (req: any, res: any) => {
        ) AS is_manager,
        e.pan_verified_on, e.aadhaar_verified_on,
        e.pan_number, e.uan_number, e.epf_number, e.esic_number,
-       e.aadhaar_number, e.aadhaar_last4,
+       -- Ciphertext selected alongside the plaintext so the resolver below can prefer it.
+       -- Both columns are read; which one actually supplies the value is what decides whether
+       -- the plaintext can eventually be dropped.
+       e.aadhaar_number, e.aadhaar_last4, e.aadhaar_number_encrypted, e.pan_number_encrypted,
        d.designation_name  AS designation,
        dept.dept_name      AS department_name,
        p.process_name,
@@ -150,12 +154,28 @@ router.get("/me", h(async (req: any, res: any) => {
   const maskEpf    = (v: string | null | undefined) => v && v.trim() ? v.slice(0, 2) + "/****/****" : null;
 
   // Resolve each field: employees table takes priority, fall back to employee_statutory_info
-  const pan_number    = (emp.pan_number    && String(emp.pan_number).trim())    || (si?.pan_number    && String(si.pan_number).trim())    || null;
+  /**
+   * Ciphertext first, plaintext second — the first step of the reader migration.
+   *
+   * Nothing observable changes here: every value below is emitted masked (masked_pan_number,
+   * masked_aadhaar_number), so the only difference is WHICH column supplied the digits. That
+   * is what makes this a safe place to start.
+   *
+   * `source` is deliberately logged when it falls back. Once no reader reports "plaintext",
+   * dropping employees.pan_number and aadhaar_number becomes a measured decision rather than
+   * a hopeful one — and a ciphertext that cannot be read gets noticed now instead of at the
+   * moment the plaintext disappears.
+   */
+  const panResolved = resolvePii(emp.pan_number_encrypted, emp.pan_number);
+  if (panResolved.warning) console.warn(`[employee-profile] pan: ${panResolved.warning}`);
+  const pan_number    = (panResolved.value && panResolved.value.trim())          || (si?.pan_number    && String(si.pan_number).trim())    || null;
   const uan_number    = (emp.uan_number    && String(emp.uan_number).trim())    || (si?.uan_number    && String(si.uan_number).trim())    || null;
   const epf_number    = (emp.epf_number    && String(emp.epf_number).trim())    || (si?.epf_number    && String(si.epf_number).trim())    || null;
   const esic_number   = (emp.esic_number   && String(emp.esic_number).trim())   || (si?.esi_number    && String(si.esi_number).trim())    || null;
   // aadhaar: employees stores full number or last4 separately
-  const aadhaar_full  = (emp.aadhaar_number && String(emp.aadhaar_number).trim()) || (si?.aadhaar_id  && String(si.aadhaar_id).trim())    || null;
+  const aadhaarResolved = resolvePii(emp.aadhaar_number_encrypted, emp.aadhaar_number);
+  if (aadhaarResolved.warning) console.warn(`[employee-profile] aadhaar: ${aadhaarResolved.warning}`);
+  const aadhaar_full  = (aadhaarResolved.value && aadhaarResolved.value.trim())    || (si?.aadhaar_id  && String(si.aadhaar_id).trim())    || null;
   const aadhaar_last4 = (emp.aadhaar_last4  && String(emp.aadhaar_last4).trim()) || null;
   // For masking: prefer full number (mask last4), fall back to last4 digits already stored
   const aadhaar_for_mask = aadhaar_full || (aadhaar_last4 ? "XXXXXXXXXXXX".slice(0, -4) + aadhaar_last4 : null);

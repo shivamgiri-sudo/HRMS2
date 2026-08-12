@@ -2307,7 +2307,8 @@ export const processPnlService = {
             COALESCE(vpt.grn_number, CONCAT('GRN-', vpt.id)) AS reference,
             COALESCE(vpt.due_date, grn.bill_date, vpt.created_at) AS entry_date,
             vpt.due_amount AS amount,
-            vpt.payment_status AS status
+            vpt.payment_status AS status,
+            NULLIF(TRIM(COALESCE(grn.description, '')), '') AS note
            FROM vendor_payment_tracking vpt
           LEFT JOIN grn_request grn ON grn.id = vpt.grn_request_id
           LEFT JOIN cost_centre_master ccm ON ccm.id = vpt.cost_centre_id
@@ -2325,6 +2326,7 @@ export const processPnlService = {
           entryDate: row.entry_date,
           amount: toNumber(row.amount),
           status: row.status,
+          note: row.note ?? null,
         });
       }
     }
@@ -2336,7 +2338,11 @@ export const processPnlService = {
             COALESCE(g.grn_number, CONCAT('GRN-', g.id)) AS reference,
             COALESCE(g.due_date, g.bill_date, g.reviewed_at, g.created_at) AS entry_date,
             g.amount,
-            g.status
+            g.status,
+            -- The Note column was empty on five of the ledger's six entry types because only
+            -- adjustments supplied one. A GRN carries the raiser's own description of what was
+            -- bought, which is precisely what a reader scanning a cost ledger wants.
+            NULLIF(TRIM(COALESCE(g.description, '')), '') AS note
            FROM grn_request g
            LEFT JOIN cost_centre_master ccm ON ccm.id = g.cost_centre_id
            LEFT JOIN vendor_payment_tracking vpt ON vpt.grn_request_id = g.id
@@ -2355,6 +2361,7 @@ export const processPnlService = {
           entryDate: row.entry_date,
           amount: toNumber(row.amount),
           status: row.status,
+          note: row.note ?? null,
         });
       }
     }
@@ -2388,6 +2395,9 @@ export const processPnlService = {
       entryDate: end,
       amount: record.indirectCost,
       status: "allocated",
+      // Synthesised rather than read from a row, so it has no note of its own — but it is the
+      // one line whose origin a reader is most likely to question, so it explains itself.
+      note: "Branch indirect cost apportioned to this process",
     });
 
     entries.sort((left, right) => String(right.entryDate).localeCompare(String(left.entryDate)));
