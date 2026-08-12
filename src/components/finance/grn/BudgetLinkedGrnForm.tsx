@@ -161,6 +161,8 @@ type GrnFormState = {
   /** YYYY-MM override: empty means derive from billDate. Only finance_head/accounts_head/super_admin
    *  may set a value different from the bill date month — period-end cut-off bookings. */
   accountingPeriod: string;
+  irn: string;
+  irnAckNo: string;
 };
 
 type CreatedGrn = { id: string; grnNumber: string; submitted: boolean };
@@ -208,6 +210,8 @@ const EMPTY_FORM: GrnFormState = {
   paymentTermsDays: 30,
   dueDate: "",
   accountingPeriod: "",
+  irn: "",
+  irnAckNo: "",
 };
 
 function newAllocation(): AllocationDraft {
@@ -974,6 +978,8 @@ export function BudgetLinkedGrnForm() {
       purchaseReference: String(fields.purchaseReference ?? current.purchaseReference ?? ""),
       vendorGstin: String(fields.vendorGstin ?? current.vendorGstin ?? ""),
       placeOfSupply: String(fields.placeOfSupply ?? current.placeOfSupply ?? ""),
+      irn: String(fields.irn ?? current.irn ?? ""),
+      irnAckNo: String(fields.irnAckNo ?? current.irnAckNo ?? ""),
     }));
     setExtractedFields(fields);
   }
@@ -1048,6 +1054,8 @@ export function BudgetLinkedGrnForm() {
           purchaseReference: form.purchaseReference || undefined,
           vendorGstin: form.vendorGstin || undefined,
           placeOfSupply: form.placeOfSupply || undefined,
+          irn: form.irn.trim() || undefined,
+          irnAckNo: form.irnAckNo.trim() || undefined,
           declaredInvoiceTotal: Number(form.amount),
           recognitionStartPeriod: monthSplit.startPeriod || undefined,
           recognitionEndPeriod: monthSplit.endPeriod || undefined,
@@ -1438,6 +1446,23 @@ export function BudgetLinkedGrnForm() {
               />
             </FieldRow>
 
+            {/* 3-D: Back-date warning — non-finance raisers see a warning for invoices >30 days old. */}
+            {isVendor && !canOverridePeriod && form.billDate && (() => {
+              const today = new Date(); today.setHours(0, 0, 0, 0);
+              const billD = new Date(form.billDate); billD.setHours(0, 0, 0, 0);
+              const daysOld = Math.floor((today.getTime() - billD.getTime()) / 86400000);
+              if (daysOld <= 30) return null;
+              return (
+                <div className="mx-4 mb-1 flex items-start gap-2 rounded-[8px] border border-rose-200 bg-rose-50 px-3 py-2.5 text-[11.5px] text-rose-800">
+                  <AlertCircle className="mt-px h-3.5 w-3.5 shrink-0 text-rose-600" />
+                  <span>
+                    This invoice is <strong>{daysOld} days old</strong> (older than the 30-day cut-off).
+                    You will not be able to save this GRN. Ask Finance Head to raise this entry.
+                  </span>
+                </div>
+              );
+            })()}
+
             {/* Accounting period override: Finance Head / Accounts Head can book a late invoice
                 into a different month (period-end cut-off). Hidden for branch-level raisers. */}
             {isVendor && canOverridePeriod && period && (
@@ -1561,6 +1586,37 @@ export function BudgetLinkedGrnForm() {
                     }
                   />
                 </FieldRow>
+
+                {canOverridePeriod && (
+                  <>
+                    <FieldRow
+                      label="IRN (e-invoice)"
+                      htmlFor="grn-irn"
+                      hint="Invoice Reference Number from the GSTN e-invoice portal. Leave blank if not applicable."
+                    >
+                      <Input
+                        id="grn-irn"
+                        className={cn(inputClass, "font-mono")}
+                        value={form.irn}
+                        placeholder="64-character IRN (optional)"
+                        onChange={(event) =>
+                          setForm((current) => ({ ...current, irn: event.target.value.trim() }))
+                        }
+                      />
+                    </FieldRow>
+                    <FieldRow label="IRN Ack. No." htmlFor="grn-irn-ack">
+                      <Input
+                        id="grn-irn-ack"
+                        className={cn(inputClass, "font-mono")}
+                        value={form.irnAckNo}
+                        placeholder="Acknowledgement number (optional)"
+                        onChange={(event) =>
+                          setForm((current) => ({ ...current, irnAckNo: event.target.value.trim() }))
+                        }
+                      />
+                    </FieldRow>
+                  </>
+                )}
 
                 <FieldRow
                   label="Contract reference"

@@ -50,6 +50,7 @@ export interface BudgetLineInput {
   preferredVendorId?: string | null;
   allocationDriver?: string | null;
   justification: string;
+  expenditureType?: "opex" | "capex";
   /** Defaults to "cost_centre" — today's single-attribution behaviour, unchanged. Set to
    *  "branch" to split this line's amount across the branch's active cost centres by
    *  allocationDriver (now acted on as the sharing method) instead of attributing to one. */
@@ -651,8 +652,9 @@ async function replaceBudgetLines(
         tax_treatment, gst_rate, gst_type, recoverable_tax_pct,
         cgst_amount, sgst_amount, igst_amount, base_amount, tax_amount,
         gross_amount, recoverable_tax_amount, pnl_cost_amount,
-        preferred_vendor_id, allocation_driver, justification)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        preferred_vendor_id, allocation_driver, justification,
+        expenditure_type, alert_threshold_pct)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       [
         lineId,
         budgetId,
@@ -681,6 +683,8 @@ async function replaceBudgetLines(
         line.preferredVendorId ?? null,
         line.allocationDriver ?? null,
         line.justification.trim(),
+        line.expenditureType ?? "opex",
+        80,
       ]
     );
 
@@ -1649,5 +1653,109 @@ export const branchBudgetService = {
       );
     }
     return rows[0];
+  },
+
+  /**
+   * Moves budget (gross_amount) from one active line to another within the same budget.
+   * Validates: same budget, active status, from_line has sufficient available amount.
+   */
+  async transferBetweenLines(input: {
+    budgetId: string;
+    fromLineId: string;
+    toLineId: string;
+    transferAmount: number;
+    reason: string;
+    actorId: string;
+  }) {
+    const amount = roundMoney(Number(input.transferAmount));
+    if (!Number.isFinite(amount) || amount <= 0) {
+      throw new Error("Transfer amount must be a positive number");
+    }
+    if (!input.reason?.trim()) throw new Error("Reason is required for a budget transfer");
+    if (input.fromLineId === input.toLineId) throw new Error("From and To lines must be different");
+
+    const connection = await db.getConnection();
+    try {
+      await connection.beginTransaction();
+
+      const [headerRows] = await connection.execute<RowDataPacket[]>(
+        `SELECT id, status FROM finance_budget_header WHERE id = ? FOR UPDATE`,
+        [input.budgetId]
+      );
+      if (!headerRows[0]) throw new Error("Budget not found");
+      if (headerRows[0].status !== "active") {
+        throw new Error("Budget transfers are only allowed on active budgets");
+      }
+
+      const [lineRows] = await connection.execute<RowDataPacket[]>(
+        `SELECT id, budget_id,
+                gross_amount, reserved_amount, consumed_amount,
+                (gross_amount - reserved_amount - consumed_amount) AS available_gross_amount
+           FROM finance_budget_line
+          WHERE id IN (?, ?)
+          FOR UPDATE`,
+        [input.fromLineId, input.toLineId]
+      );
+      const fromLine = (lineRows as RowDataPacket[]).find((row) => row.id === input.fromLineId);
+      const toLine   = (lineRows as RowDataPacket[]).find((row) => row.id === input.toLineId);
+      if (!fromLine) throw new Error("Source budget line not found");
+      if (!toLine)   throw new Error("Target budget line not found");
+      if (String(fromLine.budget_id) !== input.budgetId) throw new Error("Source line belongs to a different budget");
+      if (String(toLine.budget_id)   !== input.budgetId) throw new Error("Target line belongs to a different budget");
+
+      const available = roundMoney(Number(fromLine.available_gross_amount));
+      if (amount > available) {
+        throw new Error(
+          `Transfer amount ₹${amount.toLocaleString("en-IN")} exceeds available balance ₹${available.toLocaleString("en-IN")} on the source line`
+        );
+      }
+
+      await connection.execute(
+        `UPDATE finance_budget_line SET gross_amount = gross_amount - ? WHERE id = ?`,
+        [amount, input.fromLineId]
+      );
+      await connection.execute(
+        `UPDATE finance_budget_line SET gross_amount = gross_amount + ? WHERE id = ?`,
+        [amount, input.toLineId]
+      );
+
+      const transferId = randomUUID();
+      await connection.execute(
+        `INSERT INTO finance_budget_transfer
+           (id, budget_id, from_line_id, to_line_id, transfer_amount, reason,
+            status, approved_by, approved_at, created_by)
+         VALUES (?,?,?,?,?,?,'approved',?,NOW(),?)`,
+        [transferId, input.budgetId, input.fromLineId, input.toLineId, amount, input.reason.trim(), input.actorId, input.actorId]
+      );
+
+      await auditInTransaction(
+        connection, input.budgetId, "TRANSFER", "active", "active", input.actorId, "finance_head",
+        `Transfer ₹${amount} from ${input.fromLineId} to ${input.toLineId}: ${input.reason.trim()}`
+      );
+
+      await connection.commit();
+      return { transferId, fromLineId: input.fromLineId, toLineId: input.toLineId, amount };
+    } catch (error) {
+      await connection.rollback();
+      throw error;
+    } finally {
+      connection.release();
+    }
+  },
+
+  async getGrnsForLine(lineId: string) {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT gr.id, gr.grn_number, gr.bill_date, gr.status,
+              gr.amount_without_tax, gr.amount_with_tax, gr.pnl_cost_amount,
+              gr.vendor_id, vm.vendor_name,
+              ca.reserved_amount, ca.consumed_amount, ca.allocation_amount
+         FROM grn_cost_allocation ca
+         JOIN grn_request gr ON gr.id = ca.grn_request_id
+         LEFT JOIN vendor_master vm ON vm.id = gr.vendor_id
+        WHERE ca.budget_line_id = ?
+        ORDER BY gr.bill_date DESC`,
+      [lineId]
+    );
+    return rows;
   },
 };

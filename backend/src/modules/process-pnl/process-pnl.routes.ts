@@ -341,6 +341,39 @@ router.patch(
   })
 );
 
+// 2-A: Budget transfer / virement — Finance Head moves approved budget between lines on the same
+// active budget without requiring a full re-approval cycle.
+router.post(
+  "/pnl/budgets/:budgetId/transfer",
+  requireWriteAccess,
+  requireRole("finance_head", "accounts_head", "super_admin"),
+  h(async (req, res) => {
+    const user = actor(req);
+    await assertBranchOf(req, await branchBudgetService.get(req.params.budgetId).then((b: any) => b?.branch_id));
+    const { fromLineId, toLineId, transferAmount, reason } = req.body ?? {};
+    if (!fromLineId || !toLineId) throw Object.assign(new Error("fromLineId and toLineId are required"), { statusCode: 400 });
+    const data = await branchBudgetService.transferBetweenLines({
+      budgetId: req.params.budgetId,
+      fromLineId: String(fromLineId),
+      toLineId: String(toLineId),
+      transferAmount: Number(transferAmount ?? 0),
+      reason: String(reason ?? ""),
+      actorId: user.id,
+    });
+    res.json({ success: true, data });
+  })
+);
+
+// 4-D: GRN drill-through per budget line — shows all GRN cost allocations that consumed a line.
+router.get(
+  "/pnl/budget-lines/:lineId/grns",
+  requireRole(...BUDGET_READ_ROLES),
+  h(async (req, res) => {
+    const data = await branchBudgetService.getGrnsForLine(req.params.lineId);
+    res.json({ success: true, data });
+  })
+);
+
 // A reviewer correcting the lines in place at their own stage, rather than sending the whole budget
 // back for a small fix. Status is unchanged by this call — the reviewer must still Approve — so it
 // cannot be used to bypass a stage. Same review roles and row scope as the review endpoint.

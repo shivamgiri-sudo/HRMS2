@@ -4,10 +4,14 @@ import { Link, useSearchParams } from "react-router-dom";
 import {
   AlertCircle,
   AlertTriangle,
+  ArrowLeftRight,
+  BarChart2,
   Building2,
+  Calendar,
   CheckCircle2,
   ChevronDown,
   ChevronRight,
+  ChevronUp,
   ClipboardCheck,
   FileSpreadsheet,
   Gauge,
@@ -116,7 +120,7 @@ const ALLOCATION_DRIVERS = [
   ["direct_tagging", "Direct tagging"],
 ] as const;
 
-type WorkspaceTab = "plan" | "coverage" | "rollup" | "matrix" | "meters" | "readiness" | "approval" | "topups" | "master";
+type WorkspaceTab = "plan" | "coverage" | "rollup" | "matrix" | "meters" | "readiness" | "approval" | "topups" | "master" | "variance" | "year";
 type CoverageDraft = Record<string, { status: BudgetPlanningStatus | ""; reason: string }>;
 type BudgetCapabilities = {
   roles: string[];
@@ -483,6 +487,29 @@ export default function BranchBudgetManagementWorkspace() {
 
   /** Finance Head and Super Admin can amend the tax treatment on an active budget line. */
   const canAmendTax = Boolean(capabilities?.canReviewFinanceStage) || isSuperAdmin;
+
+  type TransferTarget = {
+    budgetId: string;
+    fromLineId: string;
+    toLineId: string;
+    transferAmount: string;
+    reason: string;
+  };
+  const [transferTarget, setTransferTarget] = useState<TransferTarget | null>(null);
+  const transferMutation = useMutation({
+    mutationFn: (t: TransferTarget) =>
+      hrmsApi.post(`/api/finance/pnl/budgets/${t.budgetId}/transfer`, {
+        fromLineId: t.fromLineId,
+        toLineId: t.toLineId,
+        transferAmount: Number(t.transferAmount),
+        reason: t.reason,
+      }),
+    onSuccess: () => {
+      toast.success("Budget transfer applied");
+      setTransferTarget(null);
+    },
+    onError: (error: Error) => toast.error(error.message ?? "Transfer failed"),
+  });
 
   type AmendTarget = {
     budgetId: string;
@@ -1206,6 +1233,8 @@ Reason:`
               <TabsTrigger value="readiness"><AlertTriangle className="mr-2 h-4 w-4" />Exceptions & Readiness</TabsTrigger>
               <TabsTrigger value="approval"><ShieldCheck className="mr-2 h-4 w-4" />Approval & Utilization</TabsTrigger>
               <TabsTrigger value="topups"><TrendingUp className="mr-2 h-4 w-4" />Top-up Requests</TabsTrigger>
+              <TabsTrigger value="variance"><BarChart2 className="mr-2 h-4 w-4" />Variance</TabsTrigger>
+              <TabsTrigger value="year"><Calendar className="mr-2 h-4 w-4" />Year</TabsTrigger>
               <TabsTrigger value="master"><Settings2 className="mr-2 h-4 w-4" />Expense Master</TabsTrigger>
             </TabsList>
 
@@ -1522,6 +1551,13 @@ Reason:`
                       <Field label="GST rate *"><select className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm" value={line.gstRate} disabled={!canEdit || ["exempt", "non_gst"].includes(line.taxTreatment)} onChange={(event) => updateLine(index, { gstRate: Number(event.target.value) })}>{GST_RATES.map((rate) => <option key={rate} value={rate}>{rate}%</option>)}</select></Field>
                       <Field label="GST type *"><select className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm" value={line.gstType} disabled={!canEdit || ["exempt", "non_gst"].includes(line.taxTreatment)} onChange={(event) => updateLine(index, { gstType: event.target.value as BranchBudgetLineInput["gstType"] })}><option value="cgst_sgst">CGST + SGST</option><option value="igst">IGST</option><option value="none">None</option></select></Field>
                       <Field label="Recoverable GST % *"><Input type="number" min="0" max="100" value={line.recoverableTaxPct} disabled={!canEdit || ["exempt", "non_gst"].includes(line.taxTreatment)} onChange={(event) => updateLine(index, { recoverableTaxPct: Number(event.target.value) })} /></Field>
+                      <Field label="Expenditure type">
+                        <select className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm" value={line.expenditureType ?? "opex"} disabled={!canEdit} onChange={(event) => updateLine(index, { expenditureType: event.target.value as "opex" | "capex" })}>
+                          <option value="opex">OPEX — Operating expense (P&amp;L)</option>
+                          <option value="capex">CAPEX — Capital expenditure (asset register)</option>
+                        </select>
+                        {(line.expenditureType ?? "opex") === "capex" && <p className="mt-1 text-xs text-amber-700">CAPEX lines feed the asset register, not the P&amp;L. Confirm this is a capital item.</p>}
+                      </Field>
                       <Field label="Business justification and quantity/rate basis *" span={4}><Textarea value={line.justification} disabled={!canEdit} onChange={(event) => updateLine(index, { justification: event.target.value })} /></Field>
                       <div className="grid gap-3 md:col-span-2 sm:grid-cols-4 xl:col-span-4"><Metric label="Without tax" value={money(amount.base)} /><Metric label="Tax" value={money(amount.tax)} tone="blue" /><Metric label="With tax" value={money(amount.gross)} tone="emerald" /><Metric label="P&L cost" value={money(amount.pnlCost)} tone="amber" /></div>
                       {scope === "branch_common" && line.allocationDriver === "manual" && Boolean(activeCostCentres.length) && (
@@ -1717,7 +1753,7 @@ Reason:`
             <TabsContent value="approval"><Card className="rounded-3xl border-slate-200 shadow-sm"><CardHeader><CardTitle>Approval and utilization</CardTitle></CardHeader><CardContent className="space-y-4"><Input value={reviewRemarks} onChange={(event) => setReviewRemarks(event.target.value)} placeholder="Mandatory for rejection or revision" />
               {canReviewCurrent && <p className="text-xs text-slate-500">Revision also needs a correction note against at least one head/sub-head — add those on the <span className="font-medium">Plan Builder</span> tab, where you can also correct the lines yourself and then approve.</p>}
               {Boolean(openCorrectionCount) && <div className="rounded-2xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900"><span className="font-semibold">{openCorrectionCount} open correction note(s)</span> against this budget. Each one is shown on its own budget line in the Plan Builder tab.</div>}
-              {budgets.map((budget) => { const available = Number(budget.gross_budget_amount) - Number(budget.reserved_amount) - Number(budget.consumed_amount); return <div key={budget.id} className="grid gap-4 rounded-2xl border border-slate-200 p-4 xl:grid-cols-[1.2fr_1fr_1fr_auto]"><div><div className="flex gap-2"><p className="font-semibold">{budget.budget_number}</p><Badge variant="outline">{statusLabel(budget.status)}</Badge></div><p className="mt-1 text-xs text-slate-500">{budget.branch_name} · {budget.period_code} · Revision {budget.revision_no}</p></div><Metric label="Gross / P&L" value={`${money(Number(budget.gross_budget_amount))} / ${money(Number(budget.pnl_budget_amount))}`} /><Metric label="Reserved / Consumed / Available" value={`${money(Number(budget.reserved_amount))} / ${money(Number(budget.consumed_amount))} / ${money(available)}`} />{canReview(budget) && <div className="flex flex-wrap justify-end gap-2"><Button size="sm" onClick={() => void review(budget, "approve")}><CheckCircle2 className="mr-1 h-3.5 w-3.5" />Approve</Button><Button size="sm" variant="outline" onClick={() => void review(budget, "revision")}><Settings2 className="mr-1 h-3.5 w-3.5" />Revision</Button><Button size="sm" variant="destructive" onClick={() => void review(budget, "reject")}><XCircle className="mr-1 h-3.5 w-3.5" />Reject</Button></div>}
+              {budgets.map((budget) => { const available = Number(budget.gross_budget_amount) - Number(budget.reserved_amount) - Number(budget.consumed_amount); return <div key={budget.id} className="grid gap-4 rounded-2xl border border-slate-200 p-4 xl:grid-cols-[1.2fr_1fr_1fr_auto]"><div><div className="flex gap-2"><p className="font-semibold">{budget.budget_number}</p><Badge variant="outline">{statusLabel(budget.status)}</Badge></div><p className="mt-1 text-xs text-slate-500">{budget.branch_name} · {budget.period_code} · Revision {budget.revision_no}</p></div><Metric label="Gross / P&L" value={`${money(Number(budget.gross_budget_amount))} / ${money(Number(budget.pnl_budget_amount))}`} /><Metric label="Reserved / Consumed / Available" value={`${money(Number(budget.reserved_amount))} / ${money(Number(budget.consumed_amount))} / ${money(available)}`} /><div className="flex flex-wrap justify-end gap-2">{canReview(budget) && <><Button size="sm" onClick={() => void review(budget, "approve")}><CheckCircle2 className="mr-1 h-3.5 w-3.5" />Approve</Button><Button size="sm" variant="outline" onClick={() => void review(budget, "revision")}><Settings2 className="mr-1 h-3.5 w-3.5" />Revision</Button><Button size="sm" variant="destructive" onClick={() => void review(budget, "reject")}><XCircle className="mr-1 h-3.5 w-3.5" />Reject</Button></>}{canAmendTax && budget.status === "active" && detailQuery.data?.lines && detailQuery.data.lines.length > 1 && <Button size="sm" variant="outline" className="border-blue-300 text-blue-700 hover:bg-blue-50" onClick={() => { const lines = detailQuery.data!.lines; setTransferTarget({ budgetId: budget.id, fromLineId: lines[0].id, toLineId: lines[1].id, transferAmount: "", reason: "" }); }}><ArrowLeftRight className="mr-1 h-3.5 w-3.5" />Transfer</Button>}</div>
                 {canDeleteBudget(budget) && <div className="flex justify-end xl:col-span-4"><Button size="sm" variant="outline" className="border-rose-300 text-rose-700 hover:bg-rose-50" disabled={deleteBudget.isPending} onClick={() => void removeBudget(budget)}><Trash2 className="mr-1 h-3.5 w-3.5" />{isSuperAdmin ? "Delete / supersede (super admin)" : "Delete draft"}</Button></div>}</div>; })}{!budgets.length && <div className="py-12 text-center text-slate-500"><Building2 className="mx-auto mb-3 h-10 w-10" />No budget found.</div>}
               <UtilizationBreakdown rows={utilizationByHead} loading={detailQuery.isLoading} />
               </CardContent></Card></TabsContent>
@@ -1742,6 +1778,70 @@ Reason:`
                   <Building2 className="mx-auto mb-3 h-10 w-10" />Select a branch first.
                 </div>
               )}
+            </TabsContent>
+
+            {/* 4-A: Budget vs Actual Variance */}
+            <TabsContent value="variance">
+              <Card className="rounded-3xl border-slate-200 shadow-sm">
+                <CardHeader><CardTitle>Budget vs. Actual Variance</CardTitle></CardHeader>
+                <CardContent>
+                  {!detailQuery.data?.lines?.length ? (
+                    <p className="py-8 text-center text-slate-500">Select a branch and period to view variance data.</p>
+                  ) : (
+                    <div className="overflow-x-auto rounded-xl border border-slate-200">
+                      <table className="w-full min-w-[900px] text-xs">
+                        <thead>
+                          <tr className="border-b bg-slate-50">
+                            <th className="h-8 px-3 text-left font-medium text-slate-500">Head</th>
+                            <th className="h-8 px-3 text-left font-medium text-slate-500">Sub-head</th>
+                            <th className="h-8 px-3 text-left font-medium text-slate-500">Item</th>
+                            <th className="h-8 px-3 text-right font-medium text-slate-500">Budgeted</th>
+                            <th className="h-8 px-3 text-right font-medium text-slate-500">Reserved</th>
+                            <th className="h-8 px-3 text-right font-medium text-slate-500">Consumed</th>
+                            <th className="h-8 px-3 text-right font-medium text-slate-500">Available</th>
+                            <th className="h-8 px-3 text-right font-medium text-slate-500">Consumed %</th>
+                            <th className="h-8 px-3 text-right font-medium text-slate-500">Variance</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y">
+                          {detailQuery.data.lines.map((line) => {
+                            const consumed = Number(line.consumed_amount ?? 0);
+                            const budgeted = Number(line.gross_amount ?? 0);
+                            const reserved = Number(line.reserved_amount ?? 0);
+                            const available = Number(line.available_gross_amount ?? 0);
+                            const consumedPct = budgeted > 0 ? Math.round((consumed / budgeted) * 100) : 0;
+                            const variance = consumed - budgeted;
+                            return (
+                              <tr key={line.id} className="hover:bg-slate-50/70">
+                                <td className="px-3 py-2 font-medium text-slate-800">{line.head}</td>
+                                <td className="px-3 py-2 text-slate-600">{line.sub_head ?? "—"}</td>
+                                <td className="px-3 py-2 text-slate-700">{line.item_name}</td>
+                                <td className="px-3 py-2 text-right tabular-nums">{money(budgeted)}</td>
+                                <td className="px-3 py-2 text-right tabular-nums text-amber-700">{money(reserved)}</td>
+                                <td className="px-3 py-2 text-right tabular-nums text-emerald-700">{money(consumed)}</td>
+                                <td className="px-3 py-2 text-right tabular-nums">{money(available)}</td>
+                                <td className="px-3 py-2 text-right">
+                                  <Badge variant="outline" className={consumedPct >= 100 ? "border-rose-200 bg-rose-50 text-rose-700" : consumedPct >= 80 ? "border-amber-200 bg-amber-50 text-amber-700" : "border-slate-200 bg-slate-50 text-slate-600"}>
+                                    {consumedPct}%
+                                  </Badge>
+                                </td>
+                                <td className={`px-3 py-2 text-right tabular-nums font-medium ${variance > 0 ? "text-rose-600" : "text-emerald-600"}`}>
+                                  {variance > 0 ? "+" : ""}{money(variance)}
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            </TabsContent>
+
+            {/* 4-F: Annual Budget Summary — 12-month side-by-side view */}
+            <TabsContent value="year">
+              <AnnualBudgetTab branchId={branchId} period={period} />
             </TabsContent>
 
             <TabsContent value="master">
@@ -1789,6 +1889,48 @@ Reason:`
           setTab("plan");
         }}
       />
+
+      {/* 2-A: Budget transfer / virement dialog */}
+      {transferTarget && detailQuery.data?.lines && (
+        <Dialog open onOpenChange={(open) => { if (!open) setTransferTarget(null); }}>
+          <DialogContent className="max-w-md">
+            <DialogHeader><DialogTitle>Transfer Budget Between Lines</DialogTitle></DialogHeader>
+            <div className="space-y-4 py-2 text-sm">
+              <p className="text-muted-foreground">Move approved budget from a surplus line to a deficit line. The transfer is immediate and audited.</p>
+              <div className="space-y-1">
+                <Label>From (source line) *</Label>
+                <select className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm" value={transferTarget.fromLineId} onChange={(e) => setTransferTarget((t) => t && ({ ...t, fromLineId: e.target.value }))}>
+                  {detailQuery.data.lines.map((l) => <option key={l.id} value={l.id}>{l.head} › {l.sub_head ?? "General"} › {l.item_name} (avail: {money(Number(l.available_gross_amount ?? 0))})</option>)}
+                </select>
+              </div>
+              <div className="space-y-1">
+                <Label>To (destination line) *</Label>
+                <select className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm" value={transferTarget.toLineId} onChange={(e) => setTransferTarget((t) => t && ({ ...t, toLineId: e.target.value }))}>
+                  {detailQuery.data.lines.filter((l) => l.id !== transferTarget.fromLineId).map((l) => <option key={l.id} value={l.id}>{l.head} › {l.sub_head ?? "General"} › {l.item_name}</option>)}
+                </select>
+              </div>
+              <div className="space-y-1">
+                <Label>Amount to transfer (₹) *</Label>
+                <Input type="number" min="0.01" step="0.01" value={transferTarget.transferAmount} onChange={(e) => setTransferTarget((t) => t && ({ ...t, transferAmount: e.target.value }))} />
+              </div>
+              <div className="space-y-1">
+                <Label>Reason *</Label>
+                <Textarea value={transferTarget.reason} onChange={(e) => setTransferTarget((t) => t && ({ ...t, reason: e.target.value }))} placeholder="Explain why this transfer is needed" />
+              </div>
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setTransferTarget(null)}>Cancel</Button>
+              <Button
+                disabled={transferMutation.isPending || !transferTarget.transferAmount || !transferTarget.reason.trim() || transferTarget.fromLineId === transferTarget.toLineId}
+                onClick={() => void transferMutation.mutateAsync(transferTarget)}
+              >
+                {transferMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <ArrowLeftRight className="mr-2 h-4 w-4" />}
+                Apply Transfer
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      )}
 
       {/* Tax-treatment amendment dialog — Finance Head / Super Admin only, for active budgets
           where a line was planned as non_gst/exempt but the vendor invoice carries GST. */}
@@ -1882,6 +2024,68 @@ Reason:`
         </Dialog>
       )}
     </DashboardLayout>
+  );
+}
+
+function AnnualBudgetTab({ branchId, period }: { branchId: string; period: string }) {
+  const fy = financialYear(period);
+  const fyStartYear = Number(fy.split("-")[0]);
+  const months = Array.from({ length: 12 }, (_, i) => {
+    const m = ((i + 3) % 12) + 1;
+    const y = m >= 4 ? fyStartYear : fyStartYear + 1;
+    return `${y}-${String(m).padStart(2, "0")}`;
+  });
+  const budgetsQuery = useQuery({
+    queryKey: ["annual-budgets", branchId, fy],
+    enabled: Boolean(branchId),
+    queryFn: () => hrmsApi.get<any>(`/api/finance/pnl/budgets?branchId=${branchId}&financialYear=${fy}&limit=24`),
+  });
+  if (!branchId) return <p className="py-8 text-center text-slate-500">Select a branch to view the annual summary.</p>;
+  if (budgetsQuery.isLoading) return <p className="py-8 text-center text-slate-500">Loading…</p>;
+  const summaries: any[] = (budgetsQuery.data as any)?.data ?? [];
+  const byMonth = Object.fromEntries(summaries.map((b) => [b.period_code, b]));
+  const MONTH_SHORT = ["Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec","Jan","Feb","Mar"];
+  return (
+    <Card className="rounded-3xl border-slate-200 shadow-sm">
+      <CardHeader><CardTitle>Annual Budget Summary — FY {fy}</CardTitle></CardHeader>
+      <CardContent>
+        <div className="overflow-x-auto rounded-xl border border-slate-200">
+          <table className="w-full min-w-[1100px] text-xs">
+            <thead>
+              <tr className="border-b bg-slate-50">
+                <th className="h-8 px-3 text-left font-medium text-slate-500">Metric</th>
+                {months.map((m, i) => <th key={m} className="h-8 px-2 text-right font-medium text-slate-500">{MONTH_SHORT[i]}</th>)}
+                <th className="h-8 px-3 text-right font-medium text-slate-500 bg-slate-100">FY Total</th>
+              </tr>
+            </thead>
+            <tbody>
+              {(["Budgeted", "Consumed", "Available"] as const).map((metric) => {
+                const values = months.map((m) => {
+                  const b = byMonth[m];
+                  if (!b) return null as number | null;
+                  if (metric === "Budgeted") return Number(b.gross_budget_amount ?? 0);
+                  if (metric === "Consumed") return Number(b.consumed_amount ?? 0);
+                  return Number(b.gross_budget_amount ?? 0) - Number(b.reserved_amount ?? 0) - Number(b.consumed_amount ?? 0);
+                });
+                const total = values.reduce<number>((s, v) => s + (v ?? 0), 0);
+                return (
+                  <tr key={metric} className="border-b last:border-0">
+                    <td className="px-3 py-2 font-medium text-slate-700">{metric}</td>
+                    {values.map((v, i) => (
+                      <td key={months[i]} className={`px-2 py-2 text-right tabular-nums ${metric === "Consumed" ? "text-emerald-700" : metric === "Available" ? "text-slate-700" : ""}`}>
+                        {v === null ? <span className="text-slate-400">—</span> : money(v)}
+                      </td>
+                    ))}
+                    <td className="px-3 py-2 text-right tabular-nums font-semibold bg-slate-50">{money(total)}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+        {!summaries.length && <p className="mt-4 text-center text-xs text-slate-400">No budgets found for FY {fy}.</p>}
+      </CardContent>
+    </Card>
   );
 }
 

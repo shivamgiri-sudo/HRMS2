@@ -157,6 +157,21 @@ smartGrnRouter.put(
   async (req: SmartRequest, res) => {
     try {
       const user = actor(req);
+      // 3-D: Period-end cut-off — non-finance roles cannot book invoices older than 30 days.
+      const grn = req.financeGrn;
+      if (grn?.bill_date) {
+        const billDateMs = new Date(String(grn.bill_date)).getTime();
+        const cutoffMs = Date.now() - 30 * 24 * 60 * 60 * 1000;
+        const isRestrictedRole = ["branch_admin", "branch_head"].includes(user.role)
+          && !user.roles.some((r: string) => ["finance_head", "accounts_head", "super_admin"].includes(r));
+        if (isRestrictedRole && billDateMs < cutoffMs) {
+          res.status(400).json({
+            success: false,
+            error: "Invoice is older than the 30-day cut-off period. Ask Finance Head to raise this entry.",
+          });
+          return;
+        }
+      }
       const data = await grnSmartService.saveComponentAllocations(
         req.params.id,
         req.body,

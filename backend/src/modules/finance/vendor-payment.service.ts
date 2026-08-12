@@ -663,6 +663,79 @@ export const vendorPaymentService = {
     return id;
   },
 
+  async getAgingReport(options: { branchScope?: FinanceBranchScope }) {
+    const scope: FinanceBranchScope = options.branchScope ?? { mode: "all" };
+    const { sql: branchClause, params: branchParams } = financeBranchFilter(
+      scope,
+      "vpt.branch_id"
+    );
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT vpt.id, gr.grn_number, gr.invoice_number,
+              vm.vendor_name, vpt.branch_id,
+              b.branch_name,
+              vpt.due_amount, vpt.paid_amount, vpt.balance_amount,
+              vpt.due_date, vpt.payment_status,
+              DATEDIFF(CURDATE(), vpt.due_date) AS days_overdue
+         FROM vendor_payment_tracking vpt
+         LEFT JOIN grn_request gr ON gr.id = vpt.grn_request_id
+         LEFT JOIN vendor_master vm ON vm.id = vpt.vendor_id
+         LEFT JOIN branch_master b ON b.id = vpt.branch_id
+        WHERE ${branchClause}
+          AND vpt.payment_status NOT IN ('Paid','Closed')
+          AND vpt.due_date IS NOT NULL
+        ORDER BY days_overdue DESC, vpt.due_date`,
+      branchParams
+    );
+    const buckets: Record<string, RowDataPacket[]> = { current: [], "1-30": [], "31-60": [], "61-90": [], ">90": [] };
+    for (const row of rows as RowDataPacket[]) {
+      const d = Number(row.days_overdue ?? 0);
+      if (d <= 0)       buckets.current.push(row);
+      else if (d <= 30) buckets["1-30"].push(row);
+      else if (d <= 60) buckets["31-60"].push(row);
+      else if (d <= 90) buckets["61-90"].push(row);
+      else              buckets[">90"].push(row);
+    }
+    return { rows: buckets };
+  },
+
+  async getVendorLedger(options: {
+    vendorId: string;
+    branchScope?: FinanceBranchScope;
+    fromPeriod?: string;
+    toPeriod?: string;
+  }) {
+    const scopeL: FinanceBranchScope = options.branchScope ?? { mode: "all" };
+    const { sql: branchClause, params: branchParams } = financeBranchFilter(
+      scopeL,
+      "vpt.branch_id"
+    );
+    const extraParams: unknown[] = [options.vendorId, ...branchParams];
+    let periodClause = "";
+    if (options.fromPeriod) {
+      periodClause += ` AND gr.accounting_period >= ?`;
+      extraParams.push(options.fromPeriod);
+    }
+    if (options.toPeriod) {
+      periodClause += ` AND gr.accounting_period <= ?`;
+      extraParams.push(options.toPeriod);
+    }
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT gr.grn_number, gr.bill_date, gr.invoice_number, gr.accounting_period,
+              vpt.due_amount, vpt.tds_deducted_amount,
+              (vpt.due_amount - COALESCE(vpt.tds_deducted_amount,0)) AS net_payable,
+              vpt.paid_amount, vpt.balance_amount,
+              vpt.payment_status, vpt.due_date,
+              b.branch_name
+         FROM vendor_payment_tracking vpt
+         LEFT JOIN grn_request gr ON gr.id = vpt.grn_request_id
+         LEFT JOIN branch_master b ON b.id = vpt.branch_id
+        WHERE vpt.vendor_id = ? AND ${branchClause}${periodClause}
+        ORDER BY gr.bill_date DESC, gr.grn_number`,
+      extraParams
+    );
+    return rows;
+  },
+
   async auditCreatedPayment(id: string, actorUserId: string) {
     const payment = await this.getPayment(id);
     if (!payment) throw new Error("Vendor payment record not found for audit");

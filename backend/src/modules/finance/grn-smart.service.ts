@@ -26,6 +26,9 @@ export interface SmartAllocationInput {
 
 export interface SmartGrnInvoiceInput {
   invoiceNumber?: string;
+  /** E-invoice reference number (IRN) — optional, Finance Head visible. */
+  irn?: string | null;
+  irnAckNo?: string | null;
   servicePeriodStart?: string | null;
   servicePeriodEnd?: string | null;
   purchaseReference?: string | null;
@@ -68,6 +71,9 @@ export interface SmartGrnComponentSplitInput {
   purchaseReference?: string | null;
   vendorGstin?: string | null;
   placeOfSupply?: string | null;
+  /** E-invoice reference number (IRN) — optional, Finance Head visible. */
+  irn?: string | null;
+  irnAckNo?: string | null;
   declaredInvoiceTotal: number;
   /** Multi-month recognition (Req 5). Both NULL keeps the GRN single-month, which is what
    *  every existing caller sends and what every historical row already is. */
@@ -739,7 +745,8 @@ export const grnSmartService = {
                 unit_rate = ?, tax_treatment = ?, gst_rate = ?, gst_type = ?,
                 recoverable_tax_pct = ?, amount_without_tax = ?, tax_amount = ?,
                 amount_with_tax = ?, pnl_cost_amount = ?, amount = ?,
-                invoice_number = ?, service_period_start = ?, service_period_end = ?,
+                invoice_number = ?, irn = ?, irn_ack_no = ?,
+                service_period_start = ?, service_period_end = ?,
                 purchase_reference = ?, vendor_gstin = ?, place_of_supply = ?,
                 other_charges = ?, round_off_amount = ?
           WHERE id = ?`,
@@ -757,6 +764,8 @@ export const grnSmartService = {
           weightedGstRate, gstTypes.size === 1 ? [...gstTypes][0] : "none",
           weightedRecoverablePct, totalBase, totalTax, totalGross, totalPnl, totalGross,
           normalizeInvoiceNumber(input.invoiceNumber) || null,
+          String(input.irn ?? "").trim() || null,
+          String(input.irnAckNo ?? "").trim() || null,
           dateOrNull(input.servicePeriodStart), dateOrNull(input.servicePeriodEnd),
           String(input.purchaseReference ?? "").trim() || null,
           String(input.vendorGstin ?? "").trim().toUpperCase() || null,

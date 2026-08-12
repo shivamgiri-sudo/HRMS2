@@ -217,6 +217,9 @@ export default function VendorPaymentDispatchPage() {
   const [selectedPaymentId, setSelectedPaymentId] = useState<string | null>(null);
   const [selected, setSelected] = useState<VendorPayment | null>(null);
   const [sheetOpen, setSheetOpen] = useState(false);
+  const [showAging, setShowAging] = useState(false);
+  const [showLedger, setShowLedger] = useState(false);
+  const [ledgerVendorId, setLedgerVendorId] = useState("");
 
   const { data: capabilityResponse, isLoading: capabilityLoading } = useQuery({
     queryKey: ["vendor-payment-capabilities"],
@@ -274,6 +277,26 @@ export default function VendorPaymentDispatchPage() {
     ),
   });
   const transactions: PaymentTransaction[] = (transactionResponse as any)?.data ?? [];
+
+  const agingQuery = useQuery({
+    queryKey: ["vendor-payments-aging", filters.branchId],
+    enabled: showAging,
+    queryFn: () => hrmsApi.get<any>(
+      `/api/finance/vendor-payments/aging${filters.branchId ? `?branchId=${filters.branchId}` : ""}`
+    ),
+    staleTime: 5 * 60_000,
+  });
+  const agingBuckets: Record<string, any[]> = (agingQuery.data as any)?.data ?? {};
+
+  const ledgerQuery = useQuery({
+    queryKey: ["vendor-ledger", ledgerVendorId, filters.branchId],
+    enabled: showLedger && Boolean(ledgerVendorId),
+    queryFn: () => hrmsApi.get<any>(
+      `/api/finance/vendors/${ledgerVendorId}/ledger${filters.branchId ? `?branchId=${filters.branchId}` : ""}`
+    ),
+    staleTime: 5 * 60_000,
+  });
+  const ledgerRows: any[] = (ledgerQuery.data as any)?.data ?? [];
 
   useEffect(() => {
     setDrafts((current) => {
@@ -481,6 +504,12 @@ export default function VendorPaymentDispatchPage() {
             {capabilities?.readScope && (
               <Badge variant="outline">{capabilities.readScope} scope</Badge>
             )}
+            <Button size="sm" variant="outline" onClick={() => setShowAging((v) => !v)}>
+              <AlertTriangle className="mr-1.5 h-3.5 w-3.5" />Aging
+            </Button>
+            <Button size="sm" variant="outline" onClick={() => setShowLedger((v) => !v)}>
+              <FileText className="mr-1.5 h-3.5 w-3.5" />Ledger
+            </Button>
             <Button size="sm" variant="outline" onClick={() => setShowFilters((v) => !v)}>
               <Filter className="mr-1.5 h-3.5 w-3.5" />Filters
               {activeFilterCount > 0 && (
@@ -702,6 +731,85 @@ export default function VendorPaymentDispatchPage() {
           </div>
         </div>
       </div>
+
+      {/* 4-B: AP Aging Panel */}
+      {showAging && (
+        <div className="border-t px-4 py-3">
+          <div className="flex items-center justify-between mb-2">
+            <p className="text-sm font-semibold text-slate-800">AP Aging — Outstanding Balances</p>
+            {agingQuery.isFetching && <Loader2 className="h-4 w-4 animate-spin text-slate-400" />}
+          </div>
+          {agingQuery.isError ? (
+            <p className="text-xs text-rose-600">Could not load aging data. {agingQuery.error instanceof Error ? agingQuery.error.message : ""}</p>
+          ) : (
+            <div className="grid gap-3 sm:grid-cols-5">
+              {(["current","1-30","31-60","61-90",">90"] as const).map((bucket) => {
+                const items: any[] = agingBuckets[bucket] ?? [];
+                const total = items.reduce((s: number, r: any) => s + Number(r.balance_amount ?? 0), 0);
+                const isOverdue = bucket !== "current";
+                return (
+                  <div key={bucket} className={`rounded-xl border p-3 ${isOverdue && items.length ? "border-rose-200 bg-rose-50" : "border-slate-200 bg-slate-50"}`}>
+                    <p className="text-[11px] font-medium text-slate-500 uppercase">{bucket === "current" ? "Current (not due)" : `${bucket} days overdue`}</p>
+                    <p className={`mt-1 text-base font-semibold tabular-nums ${isOverdue && items.length ? "text-rose-700" : "text-slate-800"}`}>{money(total)}</p>
+                    <p className="text-[11px] text-slate-400">{items.length} invoice{items.length !== 1 ? "s" : ""}</p>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* 4-C: Vendor Ledger Panel */}
+      {showLedger && (
+        <div className="border-t px-4 py-3">
+          <div className="flex items-center gap-2 mb-3">
+            <p className="text-sm font-semibold text-slate-800">Vendor Account Statement</p>
+            <Input
+              className="h-8 w-64 text-xs"
+              placeholder="Vendor ID (paste from vendor master)"
+              value={ledgerVendorId}
+              onChange={(e) => setLedgerVendorId(e.target.value.trim())}
+            />
+            {ledgerQuery.isFetching && <Loader2 className="h-4 w-4 animate-spin text-slate-400" />}
+          </div>
+          {!ledgerVendorId && <p className="text-xs text-slate-400">Enter a vendor ID above to load their statement.</p>}
+          {ledgerVendorId && ledgerRows.length > 0 && (
+            <div className="overflow-x-auto rounded-xl border border-slate-200">
+              <table className="w-full min-w-[900px] text-xs">
+                <thead>
+                  <tr className="border-b bg-slate-50">
+                    {["GRN No.", "Date", "Invoice No.", "Period", "Due Amt", "TDS", "Net Payable", "Paid", "Balance", "Status", "Due Date", "Branch"].map((h) => (
+                      <th key={h} className="h-8 px-3 text-left font-medium text-slate-500">{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody className="divide-y">
+                  {ledgerRows.map((row: any, i: number) => (
+                    <tr key={i} className="hover:bg-slate-50/70">
+                      <td className="px-3 py-2 font-mono text-[11px]">{row.grn_number ?? "—"}</td>
+                      <td className="px-3 py-2">{row.bill_date ? String(row.bill_date).slice(0,10) : "—"}</td>
+                      <td className="px-3 py-2">{row.invoice_number ?? "—"}</td>
+                      <td className="px-3 py-2">{row.accounting_period ?? "—"}</td>
+                      <td className="px-3 py-2 tabular-nums text-right">{money(row.due_amount)}</td>
+                      <td className="px-3 py-2 tabular-nums text-right text-amber-700">{money(row.tds_deducted_amount)}</td>
+                      <td className="px-3 py-2 tabular-nums text-right">{money(row.net_payable)}</td>
+                      <td className="px-3 py-2 tabular-nums text-right text-emerald-700">{money(row.paid_amount)}</td>
+                      <td className="px-3 py-2 tabular-nums text-right">{money(row.balance_amount)}</td>
+                      <td className="px-3 py-2"><Badge variant="outline" className={STATUS_CLASS[row.payment_status] ?? ""}>{row.payment_status}</Badge></td>
+                      <td className="px-3 py-2">{row.due_date ? String(row.due_date).slice(0,10) : "—"}</td>
+                      <td className="px-3 py-2">{row.branch_name ?? "—"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+          {ledgerVendorId && !ledgerQuery.isFetching && ledgerRows.length === 0 && (
+            <p className="text-xs text-slate-400">No transactions found for this vendor.</p>
+          )}
+        </div>
+      )}
 
       {/* ── Edit Sheet ── */}
       <PaymentDispatchSheet

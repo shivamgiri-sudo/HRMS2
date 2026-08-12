@@ -57,6 +57,7 @@ export interface BranchBudgetLineInput {
   preferredVendorId?: string | null;
   allocationDriver?: string | null;
   justification: string;
+  expenditureType?: "opex" | "capex";
   /** Defaults to "cost_centre" (today's behaviour). Set to "branch" to split this line across
    *  the branch's active cost centres by allocationDriver instead of attributing to one. */
   planningLevel?: BudgetPlanningLevel;

@@ -480,4 +480,42 @@ router.get(
   }
 );
 
+// 4-B: AP Aging — unpaid balances grouped into standard overdue buckets.
+router.get(
+  "/vendor-payments/aging",
+  requireRole(...PAYMENT_READ_ROLES),
+  h(async (req, res) => {
+    const user = actor(req);
+    const branchScope = await resolveFinanceBranchScopeSet({
+      userId: user.id,
+      primaryRole: user.role,
+      userRoles: user.roles,
+      requestedBranchId: req.query.branchId ? String(req.query.branchId) : undefined,
+    });
+    const { rows: data } = await vendorPaymentService.getAgingReport({ branchScope });
+    res.json({ success: true, data });
+  })
+);
+
+// 4-C: Vendor ledger — running statement for a single vendor.
+router.get(
+  "/vendors/:vendorId/ledger",
+  requireRole(...PAYMENT_READ_ROLES),
+  h(async (req, res) => {
+    const user = actor(req);
+    const branchScope = await resolveFinanceBranchScopeSet({
+      userId: user.id,
+      primaryRole: user.role,
+      userRoles: user.roles,
+    });
+    const data = await vendorPaymentService.getVendorLedger({
+      vendorId: req.params.vendorId,
+      branchScope,
+      fromPeriod: req.query.fromPeriod ? String(req.query.fromPeriod) : undefined,
+      toPeriod: req.query.toPeriod ? String(req.query.toPeriod) : undefined,
+    });
+    res.json({ success: true, data });
+  })
+);
+
 export { router as vendorPaymentRouter };
