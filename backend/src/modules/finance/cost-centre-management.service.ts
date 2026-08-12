@@ -768,7 +768,7 @@ export const costCentreManagementService = {
   /**
    * Get status counts for dashboard
    */
-  async getStatusCounts() {
+  async getStatusCounts(branchId?: string) {
     // Counted the same way the list filters, so the tab badges and the tab contents agree.
     // Previously every deactivated cost centre was counted under whatever approval stage it had
     // reached, so Draft read 761 while 464 of those were closed, and Closed read nothing at all.
@@ -776,7 +776,9 @@ export const costCentreManagementService = {
       `SELECT CASE WHEN active_status = 0 THEN 'closed' ELSE status END AS status,
               COUNT(*) AS count
          FROM cost_centre_master
-        GROUP BY CASE WHEN active_status = 0 THEN 'closed' ELSE status END`
+        ${branchId ? "WHERE branch_id = ?" : ""}
+        GROUP BY CASE WHEN active_status = 0 THEN 'closed' ELSE status END`,
+      branchId ? [branchId] : []
     );
     const counts: Record<string, number> = {};
     for (const row of rows) {

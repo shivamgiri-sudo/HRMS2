@@ -4,6 +4,10 @@ import {
   type AuthenticatedRequest,
 } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
+import {
+  assertFinanceRecordBranch,
+  resolveFinanceBranchScope,
+} from "./finance-access-scope.js";
 import { costCentreManagementService } from "./cost-centre-management.service.js";
 import type { RoleKey } from "../../platform/policy/index.js";
 
@@ -34,6 +38,40 @@ const CC_L2_APPROVAL_ROLES: RoleKey[] = ["super_admin", "admin"];
 const h = (fn: (req: AuthenticatedRequest, res: Response) => Promise<unknown>) =>
   (req: AuthenticatedRequest, res: Response, next: (err?: unknown) => void) =>
     fn(req, res).catch(next);
+
+/**
+ * The branch this caller may read, from the one they asked for.
+ *
+ * CC_READ_ROLES admits branch_head and branch_admin, and neither holds global finance scope —
+ * but no endpoint in this file resolved a branch, so both saw all 927 cost centres across all
+ * 26 branches, and list() applied its branch_id filter only when the CLIENT chose to send one.
+ *
+ * It was latent until yesterday: migration 1129 seeded the FINANCE_COST_CENTRES page grants that
+ * had never existed, so before that only super_admin could reach the page at all. Granting the
+ * page is what made the missing scope reachable.
+ *
+ * resolveFinanceBranchScope returns the requested branch unchanged for a global finance role,
+ * pins a branch-scoped caller to their own, and refuses a request for someone else's rather than
+ * quietly substituting — the same treatment every other finance read already gets.
+ */
+function scopedBranchId(req: AuthenticatedRequest, requested?: unknown) {
+  return resolveFinanceBranchScope({
+    userId: req.authUser!.id,
+    primaryRole: req.authUser!.role,
+    userRoles: req.userRoles,
+    requestedBranchId: requested ? String(requested) : undefined,
+  });
+}
+
+/** Refuses a record that belongs to a branch this caller may not see. */
+async function assertRecordBranch(req: AuthenticatedRequest, branchId: unknown) {
+  await assertFinanceRecordBranch({
+    userId: req.authUser!.id,
+    primaryRole: req.authUser!.role,
+    userRoles: req.userRoles,
+    recordBranchId: String(branchId ?? ""),
+  });
+}
 
 function actor(req: AuthenticatedRequest) {
   const id = req.authUser?.id;
@@ -69,7 +107,7 @@ router.get(
       q: q as string,
       status: status as any,
       client_id: client_id as string,
-      branch_id: branch_id as string,
+      branch_id: await scopedBranchId(req, branch_id),
       page: page ? parseInt(page as string, 10) : 1,
       limit: limit ? parseInt(limit as string, 10) : 50,
     });
@@ -84,8 +122,11 @@ router.get(
 router.get(
   "/status-counts",
   requireRole(...CC_READ_ROLES),
-  h(async (_req, res) => {
-    const counts = await costCentreManagementService.getStatusCounts();
+  h(async (req, res) => {
+    // Scoped like the list, so the tab badges cannot advertise rows the tab will not show.
+    const counts = await costCentreManagementService.getStatusCounts(
+      await scopedBranchId(req, req.query.branch_id)
+    );
     res.json({ data: counts });
   })
 );
@@ -114,6 +155,10 @@ router.get(
   h(async (req, res) => {
     const item = await costCentreManagementService.getById(req.params.id);
     if (!item) return res.status(404).json({ error: "Cost centre not found" });
+    // Fetched first, asserted second: the branch cannot be known until the row is read. A uuid
+    // is not an access control, and this record carries the client, the billing rates and the
+    // whole approval trail.
+    await assertRecordBranch(req, (item as { branch_id?: unknown }).branch_id);
     res.json({ data: item });
   })
 );
@@ -126,6 +171,11 @@ router.get(
   "/:id/history",
   requireRole(...CC_READ_ROLES),
   h(async (req, res) => {
+    // Same guard as the record itself — the history carries reviewer commentary and rejection
+    // reasons, which is the most candid text this module holds.
+    const item = await costCentreManagementService.getById(req.params.id);
+    if (!item) return res.status(404).json({ error: "Cost centre not found" });
+    await assertRecordBranch(req, (item as { branch_id?: unknown }).branch_id);
     const history = await costCentreManagementService.getApprovalHistory(req.params.id);
     res.json({ data: history });
   })
