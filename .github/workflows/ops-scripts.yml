@@ -46,6 +46,7 @@ on:
           - backup-table-pii-scrub
           - legacy-payslip-account-encrypt-backfill
           - ats-candidate-record-type-backfill
+          - ats-candidate-future-date-repair
       mode:
         description: "dry-run reports what it would do and writes nothing"
         required: true
@@ -142,6 +143,10 @@ jobs:
               # dry-runs unless given --apply, like the two above.
               FLAG=""; [ "$MODE" = "apply" ] && FLAG="--apply"
               node scripts/ats-candidate-record-type-backfill.mjs $FLAG
+              ;;
+            ats-candidate-future-date-repair)
+              FLAG=""; [ "$MODE" = "apply" ] && FLAG="--apply"
+              node scripts/ats-candidate-future-date-repair.mjs $FLAG
               ;;
             *)
               echo "::error::Unknown script '${{ inputs.script }}'"
