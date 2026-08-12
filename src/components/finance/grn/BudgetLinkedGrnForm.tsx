@@ -53,6 +53,7 @@ import {
   useBranchBudgetAllocations,
 } from "@/hooks/useBranchBudget";
 import { useToast } from "@/hooks/use-toast";
+import { useHasRole } from "@/hooks/useUserRole";
 import { GST_RATES } from "@/lib/gst";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { splitRupees, weightFor } from "@/lib/sharingWeights";
@@ -154,6 +155,9 @@ type GrnFormState = {
   purchaseReference: string;
   paymentTermsDays: number;
   dueDate: string;
+  /** YYYY-MM override: empty means derive from billDate. Only finance_head/accounts_head/super_admin
+   *  may set a value different from the bill date month — period-end cut-off bookings. */
+  accountingPeriod: string;
 };
 
 type CreatedGrn = { id: string; grnNumber: string; submitted: boolean };
@@ -200,6 +204,7 @@ const EMPTY_FORM: GrnFormState = {
   purchaseReference: "",
   paymentTermsDays: 30,
   dueDate: "",
+  accountingPeriod: "",
 };
 
 function newAllocation(): AllocationDraft {
@@ -348,6 +353,11 @@ export function BudgetLinkedGrnForm() {
 
   const isVendor = form.grnType === "vendor";
   const period = form.billDate ? form.billDate.slice(0, 7) : "";
+  // Finance Head / Accounts Head / Super Admin may override the accounting month — e.g. to book
+  // a late March invoice into February's period after month-end close. The override only changes
+  // which budget lines are queried and which period is consumed; the invoice date stays as typed.
+  const canOverridePeriod = useHasRole("finance_head", "accounts_head", "super_admin");
+  const effectivePeriod = form.accountingPeriod || period;
 
   const { data: branchResponse } = useQuery({
     queryKey: ["grn-budget-branches"],
@@ -377,13 +387,13 @@ export function BudgetLinkedGrnForm() {
   const vendors = unwrapList(vendorResponse);
 
   const { data: lineResponse, isLoading: linesLoading } = useQuery({
-    queryKey: ["available-budget-lines", form.branchId, period],
-    enabled: Boolean(form.branchId && period && !created?.submitted),
+    queryKey: ["available-budget-lines", form.branchId, effectivePeriod],
+    enabled: Boolean(form.branchId && effectivePeriod && !created?.submitted),
     queryFn: () =>
       hrmsApi.get<any>(
         `/api/finance/pnl/budget-lines/available?branchId=${encodeURIComponent(
           form.branchId
-        )}&period=${encodeURIComponent(period)}`
+        )}&period=${encodeURIComponent(effectivePeriod)}`
       ),
   });
   const budgetLines = unwrapList(lineResponse) as BudgetLine[];
@@ -724,6 +734,20 @@ export function BudgetLinkedGrnForm() {
           next.costCentreSplit = "No approved budget line matches this Head/Sub-head yet.";
         } else if (Math.abs(costCentreSplitTotal - 100) > 0.5) {
           next.costCentreSplit = `Cost-centre split percentages must total 100% (currently ${decimal(costCentreSplitTotal, 2)}%).`;
+        } else if (invoiceComponents.some((c) => Number(c.gstRate) > 0)) {
+          // Catch the non-taxable / GST mismatch client-side so the user sees an inline
+          // error immediately, not a server 400 after the GRN row has already been created.
+          const badSplit = costCentreSplits.find((row) => {
+            const group = vendorCostCentreGroups.find((g) => g.costCentreKey === row.costCentreKey);
+            const line = group?.lines.find((l) => l.id === row.budgetLineId);
+            return line && ["exempt", "non_gst"].includes(line.tax_treatment);
+          });
+          if (badSplit) {
+            const badGroup = vendorCostCentreGroups.find((g) => g.costCentreKey === badSplit.costCentreKey);
+            const badLine = badGroup?.lines.find((l) => l.id === badSplit.budgetLineId);
+            const label = badLine?.tax_treatment === "exempt" ? "exempt" : "non-taxable";
+            next.costCentreSplit = `"${badGroup?.costCentreName || "Unassigned"}": budget line is marked ${label} — it cannot carry a GST invoice component. Ask Finance to correct the budget line's tax treatment in Branch Budget Management.`;
+          }
         }
         if (!invoiceComponents.some((item) => Number(item.amountWithoutTax) > 0)) {
           next.components = "Add at least one invoice component.";
@@ -777,6 +801,7 @@ export function BudgetLinkedGrnForm() {
     costCentreSplitTotal,
     invoiceComponents,
     componentsPreview,
+    vendorCostCentreGroups,
   ]);
 
   const proofPresent = files.length > 0 || Boolean(workspace?.documents?.length);
@@ -1002,6 +1027,9 @@ export function BudgetLinkedGrnForm() {
             quantity: isVendor ? 0.0001 : Number(rows[0].quantity),
             unitRate: isVendor ? 0 : Number(rows[0].unitRate),
             billDate: form.billDate,
+            // Send only when the user has explicitly picked a different accounting month.
+            // Omitting it lets the backend derive it from billDate as always.
+            accountingPeriod: form.accountingPeriod || undefined,
             paymentTermsDays: isVendor ? Number(resolvedPaymentTerms) : 0,
             remarks: form.remarks || undefined,
             financialYear: financialYearFromPeriod(firstLine.period_code),
@@ -1103,6 +1131,7 @@ export function BudgetLinkedGrnForm() {
     },
     onError: (error: Error) => {
       const overBudget = /exceeds (the )?available budget/i.test(error.message);
+      const taxMismatch = /budget line is marked (non-taxable|exempt)/i.test(error.message);
       const lineId = attemptedLineIdRef.current;
       toast({
         title: "GRN could not be saved",
@@ -1117,7 +1146,15 @@ export function BudgetLinkedGrnForm() {
                   + `&branchId=${form.branchId}&period=${form.billDate ? form.billDate.slice(0, 7) : ""}`
                 ),
             }
-          : undefined,
+          : taxMismatch
+            ? {
+                label: "Fix in Budget Management",
+                onClick: () =>
+                  navigate(
+                    `/finance/branch-budget?branchId=${form.branchId}&period=${form.billDate ? form.billDate.slice(0, 7) : ""}`
+                  ),
+              }
+            : undefined,
       });
     },
   });
@@ -1358,7 +1395,7 @@ export function BudgetLinkedGrnForm() {
               htmlFor="grn-bill-date"
               required
               error={err("billDate")}
-              hint={period ? `Financial year ${financialYearFromPeriod(period)}` : undefined}
+              hint={effectivePeriod ? `Financial year ${financialYearFromPeriod(effectivePeriod)}` : undefined}
             >
               <Input
                 id="grn-bill-date"
@@ -1371,6 +1408,9 @@ export function BudgetLinkedGrnForm() {
                   setForm((current) => ({
                     ...current,
                     billDate,
+                    // Reset accounting period override whenever bill date changes — the user can
+                    // re-pick a different accounting month if needed after the date is set.
+                    accountingPeriod: "",
                     costCentreKey: "",
                     head: "",
                     subHead: "",
@@ -1385,6 +1425,46 @@ export function BudgetLinkedGrnForm() {
                 }}
               />
             </FieldRow>
+
+            {/* Accounting period override: Finance Head / Accounts Head can book a late invoice
+                into a different month (period-end cut-off). Hidden for branch-level raisers. */}
+            {isVendor && canOverridePeriod && period && (
+              <>
+                <FieldRow
+                  label="Accounting period"
+                  htmlFor="grn-accounting-period"
+                  hint={
+                    form.accountingPeriod && form.accountingPeriod !== period
+                      ? `Invoice date month is ${period} — you are booking this into ${form.accountingPeriod}.`
+                      : "Leave as-is to use the invoice date's month."
+                  }
+                >
+                  <Input
+                    id="grn-accounting-period"
+                    type="month"
+                    className={inputClass}
+                    disabled={locked}
+                    value={effectivePeriod}
+                    onChange={(event) =>
+                      setForm((current) => ({
+                        ...current,
+                        accountingPeriod: event.target.value === period ? "" : event.target.value,
+                      }))
+                    }
+                  />
+                </FieldRow>
+                {form.accountingPeriod && form.accountingPeriod !== period && (
+                  <div className="mx-4 mb-1 flex items-start gap-2 rounded-[8px] border border-amber-200 bg-amber-50 px-3 py-2.5 text-[11.5px] text-amber-800">
+                    <AlertCircle className="mt-px h-3.5 w-3.5 shrink-0 text-amber-600" />
+                    <span>
+                      This is a period-end cut-off entry. The invoice will be booked into{" "}
+                      <strong>{form.accountingPeriod}</strong> instead of the invoice date month{" "}
+                      <strong>{period}</strong>. Budget lines shown below are for {form.accountingPeriod}.
+                    </span>
+                  </div>
+                )}
+              </>
+            )}
 
             {/* Directly under the bill date, because the financial year the schedule is clamped
                 to is derived from it — the two decisions are one decision. */}
@@ -1616,7 +1696,7 @@ export function BudgetLinkedGrnForm() {
                 {/* Placed here rather than in a tab of its own: this is the card that tells you
                     there is no approved budget line to charge to, so it is where someone
                     discovers they need one. */}
-                <GrnBudgetImportButton branchId={form.branchId} period={period} disabled={locked} />
+                <GrnBudgetImportButton branchId={form.branchId} period={effectivePeriod} disabled={locked} />
                 {/* Vendor GRNs always split by cost centre now — see CostCentreSplitEditor below.
                     Imprest keeps the single-line / split-mode toggle exactly as before. */}
                 {!isVendor && (
@@ -1628,7 +1708,7 @@ export function BudgetLinkedGrnForm() {
               </div>
             }
           >
-            {!form.branchId || !period ? (
+            {!form.branchId || !effectivePeriod ? (
               <div className="px-4 py-4 text-[12px] text-grn-warn">
                 Select the branch and date first to load approved budgets.
               </div>
@@ -1638,7 +1718,7 @@ export function BudgetLinkedGrnForm() {
               </div>
             ) : !budgetLines.length ? (
               <div className="px-4 py-4 text-[12px] text-grn-warn">
-                No approved budget line is available for {period}. Branch Head, Finance Head and
+                No approved budget line is available for {effectivePeriod}. Branch Head, Finance Head and
                 Accounts Head approval must be completed first.
               </div>
             ) : isVendor ? (
@@ -1775,7 +1855,7 @@ export function BudgetLinkedGrnForm() {
           {/* Vendor GRNs: cost-centre split, then invoice GST components, in that order — the
               unified flow. Each is its own card for the same reason SplitAllocationEditor already
               is: its own toolbar and its own reconciliation footer. */}
-          {isVendor && Boolean(form.branchId) && Boolean(period) && !linesLoading && vendorCostCentreGroups.length > 0 && (
+          {isVendor && Boolean(form.branchId) && Boolean(effectivePeriod) && !linesLoading && vendorCostCentreGroups.length > 0 && (
             <CostCentreSplitEditor
               groups={vendorCostCentreGroups}
               rows={costCentreSplits}
@@ -1786,7 +1866,7 @@ export function BudgetLinkedGrnForm() {
             />
           )}
 
-          {isVendor && Boolean(form.branchId) && Boolean(period) && costCentreSplits.length > 0 && (
+          {isVendor && Boolean(form.branchId) && Boolean(effectivePeriod) && costCentreSplits.length > 0 && (
             <InvoiceComponentsEditor
               components={invoiceComponents}
               preview={componentsPreview}
@@ -1804,7 +1884,7 @@ export function BudgetLinkedGrnForm() {
 
           {/* Its own card, not a block nested inside the one above: it has its own toolbar and
               its own reconciliation footer, which a section body has nowhere to put. */}
-          {!isVendor && splitMode && Boolean(form.branchId) && Boolean(period) && !linesLoading && budgetLines.length > 0 && (
+          {!isVendor && splitMode && Boolean(form.branchId) && Boolean(effectivePeriod) && !linesLoading && budgetLines.length > 0 && (
             <SplitAllocationEditor
               budgetLines={budgetLines}
               rows={calculatedAllocations}
@@ -2411,16 +2491,29 @@ function CostCentreSplitEditor({
         {rows.map((row, index) => {
           const group = groups.find((item) => item.costCentreKey === row.costCentreKey);
           const line = group?.lines.find((item) => item.id === row.budgetLineId);
+          const nonTaxable = line && ["exempt", "non_gst"].includes(line.tax_treatment);
           return (
             <div key={row.key} className="rounded-[10px] border border-grn-line p-3">
-              <div className="mb-2">
-                <span className="font-grn-mono text-[12px] font-bold text-grn-ink-soft">
-                  {group?.costCentreName ?? "Cost centre"}
-                </span>
+              <div className="mb-2 flex items-start justify-between gap-2">
+                <div>
+                  <span className="font-grn-mono text-[12px] font-bold text-grn-ink-soft">
+                    {group?.costCentreName ?? "Cost centre"}
+                  </span>
+                  {line && (
+                    <GrnCellSub>
+                      {money(Number(line.available_gross_amount))} available
+                    </GrnCellSub>
+                  )}
+                </div>
                 {line && (
-                  <GrnCellSub>
-                    {money(Number(line.available_gross_amount))} available
-                  </GrnCellSub>
+                  <span
+                    className={cn(
+                      "shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
+                      nonTaxable ? "bg-amber-100 text-amber-800" : "bg-emerald-100 text-emerald-800"
+                    )}
+                  >
+                    {nonTaxable ? (line.tax_treatment === "exempt" ? "Exempt" : "Non-GST") : `GST ${line.gst_rate}%`}
+                  </span>
                 )}
               </div>
               <div className="space-y-2">
@@ -2458,12 +2551,13 @@ function CostCentreSplitEditor({
 
       {/* Table from md up. */}
       <div className="hidden md:block">
-        <GrnTable minWidth={560}>
+        <GrnTable minWidth={600}>
           <thead>
             <tr>
               <GrnTh sticky={false} className="w-8">#</GrnTh>
               <GrnTh sticky={false}>Cost centre</GrnTh>
               <GrnTh sticky={false}>Item</GrnTh>
+              <GrnTh sticky={false} className="w-28">Tax</GrnTh>
               <GrnTh sticky={false} align="right" className="w-28">Split %</GrnTh>
               <GrnTh sticky={false} align="right" className="w-32">Available</GrnTh>
             </tr>
@@ -2472,6 +2566,7 @@ function CostCentreSplitEditor({
             {rows.map((row, index) => {
               const group = groups.find((item) => item.costCentreKey === row.costCentreKey);
               const line = group?.lines.find((item) => item.id === row.budgetLineId);
+              const nonTaxable = line && ["exempt", "non_gst"].includes(line.tax_treatment);
               return (
                 <tr key={row.key} className={GRN_TR}>
                   <GrnTd className="font-grn-mono text-grn-ink-soft">{index + 1}</GrnTd>
@@ -2493,6 +2588,21 @@ function CostCentreSplitEditor({
                     ) : (
                       <span className="text-grn-ink-soft">{line?.item_name ?? "—"}</span>
                     )}
+                  </GrnTd>
+                  <GrnTd>
+                    {line ? (
+                      <span
+                        className={cn(
+                          "inline-block rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
+                          nonTaxable
+                            ? "bg-amber-100 text-amber-800"
+                            : "bg-emerald-100 text-emerald-800"
+                        )}
+                        title={line.tax_treatment.replace("_", " ")}
+                      >
+                        {nonTaxable ? (line.tax_treatment === "exempt" ? "Exempt" : "Non-GST") : `GST ${line.gst_rate}%`}
+                      </span>
+                    ) : "—"}
                   </GrnTd>
                   <GrnTd>
                     <Input

@@ -1321,6 +1321,129 @@ export const branchBudgetService = {
     }
   },
 
+  /** Corrects the tax treatment on a single line of an already-active budget.
+   *  Only finance_head and super_admin may call this — it is a targeted override for the
+   *  common case where a branch planned a line as non_gst/exempt but the vendor invoice
+   *  carries GST. Existing consumed/reserved amounts are not touched; only the planned
+   *  line amounts and the header totals are recomputed. A mandatory audit reason is logged. */
+  async amendLineTaxTreatment(
+    budgetId: string,
+    lineId: string,
+    patch: {
+      taxTreatment: BudgetTaxTreatment;
+      gstRate: number;
+      gstType: BudgetGstType;
+      recoverableTaxPct: number;
+    },
+    actorId: string,
+    actorRole: string,
+    reason: string
+  ) {
+    const role = actorRole.toLowerCase();
+    if (!["finance_head", "super_admin"].includes(role)) {
+      throw new Error("Only finance_head or super_admin can amend a budget line's tax treatment");
+    }
+    if (!reason?.trim()) {
+      throw new Error("A reason is required for a tax-treatment amendment");
+    }
+
+    const connection = await db.getConnection();
+    try {
+      await connection.beginTransaction();
+
+      const [[header]] = await connection.execute<RowDataPacket[]>(
+        `SELECT id, status FROM finance_budget_header WHERE id = ? FOR UPDATE`,
+        [budgetId]
+      ) as unknown as [RowDataPacket[], unknown];
+      if (!header) throw new Error("Budget not found");
+      if (String(header.status) !== "active") {
+        throw new Error(
+          `Tax-treatment amendment is only allowed on active budgets (current status: ${header.status})`
+        );
+      }
+
+      const [[line]] = await connection.execute<RowDataPacket[]>(
+        `SELECT id, head, sub_head, item_name, quantity, unit, unit_rate, justification, tax_treatment
+           FROM finance_budget_line
+          WHERE id = ? AND budget_id = ?
+          FOR UPDATE`,
+        [lineId, budgetId]
+      ) as unknown as [RowDataPacket[], unknown];
+      if (!line) throw new Error("Budget line not found in this budget");
+
+      const oldTreatment = String(line.tax_treatment);
+      const recomputed = calculateBudgetLine({
+        head: String(line.head),
+        subHead: line.sub_head ? String(line.sub_head) : undefined,
+        itemName: String(line.item_name),
+        quantity: Number(line.quantity),
+        unit: String(line.unit),
+        unitRate: Number(line.unit_rate),
+        taxTreatment: patch.taxTreatment,
+        gstRate: patch.gstRate,
+        gstType: patch.gstType,
+        recoverableTaxPct: patch.recoverableTaxPct,
+        justification: String(line.justification),
+      });
+
+      await connection.execute(
+        `UPDATE finance_budget_line
+            SET tax_treatment = ?, gst_rate = ?, gst_type = ?, recoverable_tax_pct = ?,
+                base_amount = ?, tax_amount = ?, gross_amount = ?,
+                cgst_amount = ?, sgst_amount = ?, igst_amount = ?,
+                recoverable_tax_amount = ?, pnl_cost_amount = ?
+          WHERE id = ?`,
+        [
+          patch.taxTreatment, patch.gstRate, patch.gstType, patch.recoverableTaxPct,
+          recomputed.baseAmount, recomputed.taxAmount, recomputed.grossAmount,
+          recomputed.cgstAmount, recomputed.sgstAmount, recomputed.igstAmount,
+          recomputed.recoverableTaxAmount, recomputed.pnlCostAmount,
+          lineId,
+        ]
+      );
+
+      const [[totals]] = await connection.execute<RowDataPacket[]>(
+        `SELECT COALESCE(SUM(base_amount),0)    AS base,
+                COALESCE(SUM(tax_amount),0)     AS tax,
+                COALESCE(SUM(gross_amount),0)   AS gross,
+                COALESCE(SUM(pnl_cost_amount),0) AS pnl
+           FROM finance_budget_line WHERE budget_id = ?`,
+        [budgetId]
+      ) as unknown as [RowDataPacket[], unknown];
+
+      await connection.execute(
+        `UPDATE finance_budget_header
+            SET base_budget_amount = ?, tax_budget_amount = ?,
+                gross_budget_amount = ?, pnl_budget_amount = ?
+          WHERE id = ?`,
+        [
+          Number(totals?.base ?? 0), Number(totals?.tax ?? 0),
+          Number(totals?.gross ?? 0), Number(totals?.pnl ?? 0),
+          budgetId,
+        ]
+      );
+
+      await auditInTransaction(
+        connection,
+        budgetId,
+        "TAX_TREATMENT_AMENDMENT",
+        "active",
+        "active",
+        actorId,
+        actorRole,
+        `Line "${line.item_name}": ${oldTreatment} → ${patch.taxTreatment} @ ${patch.gstRate}% GST. ${reason.trim()}`
+      );
+
+      await connection.commit();
+    } catch (error) {
+      await connection.rollback();
+      throw error;
+    } finally {
+      connection.release();
+    }
+    return this.get(budgetId);
+  },
+
   async review(
     id: string,
     decision: "approve" | "reject" | "revision",

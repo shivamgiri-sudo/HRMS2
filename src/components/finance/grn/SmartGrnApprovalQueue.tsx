@@ -64,6 +64,7 @@ type GrnRow = {
   amount_with_tax?: number | null;
   bill_date?: string | null;
   due_date?: string | null;
+  accounting_period?: string | null;
   status: string;
   allocation_mode?: "single" | "split" | null;
   validation_score?: number | null;
@@ -107,6 +108,7 @@ export function SmartGrnApprovalQueue() {
   const [status, setStatus] = useState("submitted");
   const [grnType, setGrnType] = useState("_all");
   const [search, setSearch] = useState("");
+  const [backDated, setBackDated] = useState(false);
   const [target, setTarget] = useState<GrnRow | null>(null);
   const [decision, setDecision] = useState<"approved" | "rejected">("approved");
   const [reviewNote, setReviewNote] = useState("");
@@ -267,6 +269,15 @@ export function SmartGrnApprovalQueue() {
   }
 
   const rows = listQuery.data ?? [];
+  // Client-side back-dated filter: show only GRNs where accounting_period differs from
+  // the invoice date month (period-end cut-off entries booked into a prior accounting month).
+  const displayRows = backDated
+    ? rows.filter((row) => {
+        const ap = row.accounting_period?.slice(0, 7);
+        const bp = row.bill_date?.slice(0, 7);
+        return ap && bp && ap !== bp;
+      })
+    : rows;
 
   return (
     <>
@@ -289,6 +300,9 @@ export function SmartGrnApprovalQueue() {
             <option value="vendor">Vendor</option>
             <option value="imprest">Imprest</option>
           </GrnSelect>
+          <GrnChip active={backDated} onClick={() => setBackDated((v) => !v)}>
+            Back-dated
+          </GrnChip>
           <GrnIconButton onClick={() => void listQuery.refetch()} title="Refresh" aria-label="Refresh">
             <RefreshCw className={`h-3.5 w-3.5 ${listQuery.isFetching ? "animate-spin" : ""}`} />
           </GrnIconButton>
@@ -313,7 +327,7 @@ export function SmartGrnApprovalQueue() {
           <div className="flex justify-center py-20">
             <Loader2 className="h-7 w-7 animate-spin text-grn-ink-soft" />
           </div>
-        ) : !rows.length ? (
+        ) : !displayRows.length ? (
           <GrnEmptyState icon={<FileText className="h-9 w-9" />} title="No GRNs match the filters" />
         ) : (
           <GrnTable minWidth={980}>
@@ -325,12 +339,13 @@ export function SmartGrnApprovalQueue() {
                 <GrnTh sticky={false}>Vendor</GrnTh>
                 <GrnTh sticky={false} align="right">Amount</GrnTh>
                 <GrnTh sticky={false}>Due</GrnTh>
+                {backDated && <GrnTh sticky={false}>Acctg Period</GrnTh>}
                 <GrnTh sticky={false}>Status</GrnTh>
                 <GrnTh sticky={false} />
               </tr>
             </thead>
             <tbody>
-              {rows.map((row) => (
+              {displayRows.map((row) => (
                 <tr
                   key={row.id}
                   className={`${GRN_TR} cursor-pointer`}
@@ -351,6 +366,11 @@ export function SmartGrnApprovalQueue() {
                   </GrnTd>
                   <GrnTd align="right" className="font-semibold">{money(row.amount_with_tax ?? row.amount)}</GrnTd>
                   <GrnTd>{row.due_date ? dateLabel(row.due_date) : "—"}</GrnTd>
+                  {backDated && (
+                    <GrnTd>
+                      <span className="font-grn-mono text-amber-700">{row.accounting_period ?? "—"}</span>
+                    </GrnTd>
+                  )}
                   <GrnTd>
                     <StatusStamp tone={grnStatusTone(row.status)}>{labelStatus(row.status)}</StatusStamp>
                   </GrnTd>

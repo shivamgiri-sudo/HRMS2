@@ -885,6 +885,11 @@ export const grnSmartService = {
       // Tax breakdown is entirely component-driven (each component supplies its own explicit
       // base + rate), computed via the same calculateBudgetLine() every other GRN/budget path
       // uses, with quantity=1 and unitRate=<this component's base> so base comes out exact.
+      // gstType: use the first resolved split's budget-line gst_type — all splits share the same
+      // head/sub-head and therefore the same gst_type (intra-state vs inter-state). "cgst_sgst"
+      // was hardcoded previously; that produced the correct total tax amount (taxAmount is
+      // gstRate × base regardless of gstType) but wrong cgst/sgst/igst column breakdown.
+      const componentGstType = (resolvedSplits[0]?.line?.gst_type as BudgetGstType | undefined) ?? "cgst_sgst";
       const componentAmounts = components.map((component) =>
         calculateBudgetLine({
           head: "invoice-component",
@@ -894,7 +899,7 @@ export const grnSmartService = {
           unitRate: Number(component.amountWithoutTax),
           taxTreatment: "exclusive",
           gstRate: Number(component.gstRate),
-          gstType: "cgst_sgst",
+          gstType: componentGstType,
           recoverableTaxPct: 100,
           justification: "Invoice component",
         })

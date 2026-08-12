@@ -307,6 +307,40 @@ router.post(
   })
 );
 
+// Surgical fix for an active budget line whose tax treatment was planned as non_gst/exempt but
+// the vendor invoice carries GST. Gated on finance_head/super_admin; requires a mandatory reason.
+// Only updates tax fields and recomputes planned amounts — consumed/reserved history is untouched.
+router.patch(
+  "/pnl/budgets/:budgetId/lines/:lineId/tax-treatment",
+  requireWriteAccess,
+  requireRole("finance_head", "super_admin"),
+  h(async (req, res) => {
+    const user = actor(req);
+    const { taxTreatment, gstRate, gstType, recoverableTaxPct, reason } = req.body ?? {};
+    const VALID_TREATMENTS = ["inclusive", "exclusive", "exempt", "reverse_charge", "non_gst"];
+    if (!VALID_TREATMENTS.includes(String(taxTreatment ?? ""))) {
+      throw Object.assign(new Error("taxTreatment must be one of: " + VALID_TREATMENTS.join(", ")), { statusCode: 400 });
+    }
+    if (!String(reason ?? "").trim()) {
+      throw Object.assign(new Error("reason is required for a tax-treatment amendment"), { statusCode: 400 });
+    }
+    const data = await branchBudgetService.amendLineTaxTreatment(
+      req.params.budgetId,
+      req.params.lineId,
+      {
+        taxTreatment: String(taxTreatment) as any,
+        gstRate: Number(gstRate ?? 0),
+        gstType: String(gstType ?? "none") as any,
+        recoverableTaxPct: Number(recoverableTaxPct ?? 0),
+      },
+      user.id,
+      user.role,
+      String(reason)
+    );
+    res.json({ success: true, data });
+  })
+);
+
 // A reviewer correcting the lines in place at their own stage, rather than sending the whole budget
 // back for a small fix. Status is unchanged by this call — the reviewer must still Approve — so it
 // cannot be used to bypass a stage. Same review roles and row scope as the review endpoint.

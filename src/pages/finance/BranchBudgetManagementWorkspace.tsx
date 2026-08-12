@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { Link, useSearchParams } from "react-router-dom";
 import {
   AlertCircle,
@@ -29,6 +29,13 @@ import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -473,6 +480,44 @@ export default function BranchBudgetManagementWorkspace() {
   const isSuperAdmin = Boolean(capabilities?.roles?.includes("super_admin"));
   const canDeleteBudget = (budget: BranchBudgetSummary) =>
     isSuperAdmin || (budget.status === "draft" && Boolean(user?.id) && budget.created_by === user?.id);
+
+  /** Finance Head and Super Admin can amend the tax treatment on an active budget line. */
+  const canAmendTax = Boolean(capabilities?.canReviewFinanceStage) || isSuperAdmin;
+
+  type AmendTarget = {
+    budgetId: string;
+    lineId: string;
+    itemName: string;
+    taxTreatment: BranchBudgetLineInput["taxTreatment"];
+    gstRate: number;
+    gstType: NonNullable<BranchBudgetLineInput["gstType"]>;
+    recoverableTaxPct: number;
+    reason: string;
+  };
+  const [amendTarget, setAmendTarget] = useState<AmendTarget | null>(null);
+
+  const amendMutation = useMutation({
+    mutationFn: async (target: AmendTarget) => {
+      if (!target.reason.trim()) throw new Error("A reason is required.");
+      const response = await hrmsApi.patch(
+        `/api/finance/pnl/budgets/${target.budgetId}/lines/${target.lineId}/tax-treatment`,
+        {
+          taxTreatment: target.taxTreatment,
+          gstRate: target.gstRate,
+          gstType: target.gstType,
+          recoverableTaxPct: target.recoverableTaxPct,
+          reason: target.reason,
+        }
+      );
+      return response.data;
+    },
+    onSuccess: () => {
+      toast.success("Budget line tax treatment corrected and audit log written.");
+      setAmendTarget(null);
+      void detailQuery.refetch();
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
 
   const currentBudget = budgets[0];
   const editableBudget = EDITABLE_BUDGET_STATUSES.includes(currentBudget?.status ?? "")
@@ -1294,9 +1339,7 @@ Reason:`
                     blankLine({
                       head, subHead, unit,
                       itemName: subHead,
-                      // The plan is non-taxable, so a new line starts that way instead of
-                      // inheriting an 18% default the branch would have to clear on every row.
-                      taxTreatment: "non_gst", gstRate: 0, gstType: "none", recoverableTaxPct: 0,
+                      taxTreatment: "exclusive", gstRate: 18, gstType: "cgst_sgst", recoverableTaxPct: 100,
                       justification: `${subHead} for ${period}`,
                       // "direct_tagging" is not a branch-level sharing method (same guard as
                       // applySubHead / addFromCoverage) — a sub-head seeded with this default
@@ -1330,7 +1373,7 @@ Reason:`
                     setLines((current) => applyCopyForward(current, priorRows, (preset) => blankLine({
                       planningLevel: "branch",
                       unit: "Unit",
-                      taxTreatment: "non_gst", gstRate: 0, gstType: "none", recoverableTaxPct: 0,
+                      taxTreatment: "exclusive", gstRate: 18, gstType: "cgst_sgst", recoverableTaxPct: 100,
                       justification: `${preset.subHead || preset.head} for ${period}`,
                       ...preset,
                     })));
@@ -1451,7 +1494,31 @@ Reason:`
                       <Field label="Quantity *"><Input type="number" min="0.0001" step="0.0001" value={line.quantity} disabled={!canEdit} onChange={(event) => updateLine(index, { quantity: Number(event.target.value) })} /></Field>
                       <Field label="Unit *"><select className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm" value={line.unit} disabled={!canEdit} onChange={(event) => updateLine(index, { unit: event.target.value })}>{UNITS.map((unit) => <option key={unit}>{unit}</option>)}</select></Field>
                       <Field label="Unit rate *"><Input type="number" min="0" step="0.01" value={line.unitRate} disabled={!canEdit} onChange={(event) => updateLine(index, { unitRate: Number(event.target.value) })} /></Field>
-                      <Field label="Tax treatment *"><select className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm" value={line.taxTreatment} disabled={!canEdit} onChange={(event) => { const treatment = event.target.value as BranchBudgetLineInput["taxTreatment"]; updateLine(index, { taxTreatment: treatment, gstRate: ["exempt", "non_gst"].includes(treatment) ? 0 : line.gstRate, gstType: ["exempt", "non_gst"].includes(treatment) ? "none" : line.gstType, recoverableTaxPct: ["exempt", "non_gst"].includes(treatment) ? 0 : line.recoverableTaxPct }); }}><option value="exclusive">Tax exclusive</option><option value="inclusive">Tax inclusive</option><option value="exempt">Exempt</option><option value="reverse_charge">Reverse charge</option><option value="non_gst">Non-GST</option></select></Field>
+                      <Field label="Tax treatment *">
+                        <div className="flex items-center gap-2">
+                          <select className="h-10 flex-1 rounded-md border border-input bg-background px-3 text-sm" value={line.taxTreatment} disabled={!canEdit} onChange={(event) => { const treatment = event.target.value as BranchBudgetLineInput["taxTreatment"]; updateLine(index, { taxTreatment: treatment, gstRate: ["exempt", "non_gst"].includes(treatment) ? 0 : line.gstRate, gstType: ["exempt", "non_gst"].includes(treatment) ? "none" : line.gstType, recoverableTaxPct: ["exempt", "non_gst"].includes(treatment) ? 0 : line.recoverableTaxPct }); }}><option value="exclusive">Tax exclusive</option><option value="inclusive">Tax inclusive</option><option value="exempt">Exempt</option><option value="reverse_charge">Reverse charge</option><option value="non_gst">Non-GST</option></select>
+                          {!canEdit && canAmendTax && ["non_gst", "exempt"].includes(line.taxTreatment) && line.id && savedBudgetId && (
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              className="shrink-0 border-amber-400 text-amber-700 hover:bg-amber-50"
+                              onClick={() => setAmendTarget({
+                                budgetId: savedBudgetId,
+                                lineId: line.id!,
+                                itemName: line.itemName,
+                                taxTreatment: "exclusive",
+                                gstRate: 18,
+                                gstType: "cgst_sgst",
+                                recoverableTaxPct: 100,
+                                reason: "",
+                              })}
+                            >
+                              Fix GST
+                            </Button>
+                          )}
+                        </div>
+                      </Field>
                       <Field label="GST rate *"><select className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm" value={line.gstRate} disabled={!canEdit || ["exempt", "non_gst"].includes(line.taxTreatment)} onChange={(event) => updateLine(index, { gstRate: Number(event.target.value) })}>{GST_RATES.map((rate) => <option key={rate} value={rate}>{rate}%</option>)}</select></Field>
                       <Field label="GST type *"><select className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm" value={line.gstType} disabled={!canEdit || ["exempt", "non_gst"].includes(line.taxTreatment)} onChange={(event) => updateLine(index, { gstType: event.target.value as BranchBudgetLineInput["gstType"] })}><option value="cgst_sgst">CGST + SGST</option><option value="igst">IGST</option><option value="none">None</option></select></Field>
                       <Field label="Recoverable GST % *"><Input type="number" min="0" max="100" value={line.recoverableTaxPct} disabled={!canEdit || ["exempt", "non_gst"].includes(line.taxTreatment)} onChange={(event) => updateLine(index, { recoverableTaxPct: Number(event.target.value) })} /></Field>
@@ -1722,6 +1789,98 @@ Reason:`
           setTab("plan");
         }}
       />
+
+      {/* Tax-treatment amendment dialog — Finance Head / Super Admin only, for active budgets
+          where a line was planned as non_gst/exempt but the vendor invoice carries GST. */}
+      {amendTarget && (
+        <Dialog open onOpenChange={(open) => { if (!open) setAmendTarget(null); }}>
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle>Correct Tax Treatment</DialogTitle>
+            </DialogHeader>
+            <div className="space-y-4 py-2 text-sm">
+              <p className="text-muted-foreground">
+                Budget line <strong>{amendTarget.itemName}</strong> is currently marked{" "}
+                <strong className="text-amber-700">{amendTarget.taxTreatment.replace("_", "-")}</strong>.
+                Update it to allow GST-bearing vendor invoices. This amendment is audited.
+              </p>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <Label>Tax treatment</Label>
+                  <select
+                    className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
+                    value={amendTarget.taxTreatment}
+                    onChange={(e) => setAmendTarget((t) => t && ({ ...t, taxTreatment: e.target.value as any, gstRate: ["exempt", "non_gst"].includes(e.target.value) ? 0 : t.gstRate, gstType: ["exempt", "non_gst"].includes(e.target.value) ? "none" : t.gstType, recoverableTaxPct: ["exempt", "non_gst"].includes(e.target.value) ? 0 : t.recoverableTaxPct }))}
+                  >
+                    <option value="exclusive">Tax exclusive</option>
+                    <option value="inclusive">Tax inclusive</option>
+                    <option value="reverse_charge">Reverse charge</option>
+                    <option value="exempt">Exempt</option>
+                    <option value="non_gst">Non-GST</option>
+                  </select>
+                </div>
+                <div className="space-y-1">
+                  <Label>GST rate</Label>
+                  <select
+                    className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
+                    value={amendTarget.gstRate}
+                    disabled={["exempt", "non_gst"].includes(amendTarget.taxTreatment)}
+                    onChange={(e) => setAmendTarget((t) => t && ({ ...t, gstRate: Number(e.target.value) }))}
+                  >
+                    {GST_RATES.map((rate) => (
+                      <option key={rate} value={rate}>{rate}%</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="space-y-1">
+                  <Label>GST type</Label>
+                  <select
+                    className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
+                    value={amendTarget.gstType}
+                    disabled={["exempt", "non_gst"].includes(amendTarget.taxTreatment)}
+                    onChange={(e) => setAmendTarget((t) => t && ({ ...t, gstType: e.target.value as any }))}
+                  >
+                    <option value="cgst_sgst">CGST + SGST</option>
+                    <option value="igst">IGST</option>
+                    <option value="none">None</option>
+                  </select>
+                </div>
+                <div className="space-y-1">
+                  <Label>Recoverable GST %</Label>
+                  <Input
+                    type="number"
+                    min="0"
+                    max="100"
+                    className="h-9"
+                    value={amendTarget.recoverableTaxPct}
+                    disabled={["exempt", "non_gst"].includes(amendTarget.taxTreatment)}
+                    onChange={(e) => setAmendTarget((t) => t && ({ ...t, recoverableTaxPct: Number(e.target.value) }))}
+                  />
+                </div>
+              </div>
+              <div className="space-y-1">
+                <Label>Reason for amendment <span className="text-destructive">*</span></Label>
+                <Textarea
+                  placeholder="e.g. Vendor charges 18% GST on this service; budget was planned without tax in error."
+                  value={amendTarget.reason}
+                  onChange={(e) => setAmendTarget((t) => t && ({ ...t, reason: e.target.value }))}
+                  rows={3}
+                />
+              </div>
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setAmendTarget(null)}>Cancel</Button>
+              <Button
+                disabled={!amendTarget.reason.trim() || amendMutation.isPending}
+                onClick={() => amendMutation.mutate(amendTarget)}
+              >
+                {amendMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                Save amendment
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      )}
     </DashboardLayout>
   );
 }

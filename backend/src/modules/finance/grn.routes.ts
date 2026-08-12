@@ -642,6 +642,21 @@ grnRouter.post(
             : "Branch is required",
         );
       }
+      // Gate period-end cut-off bookings (accounting month ≠ bill date month) to elevated roles.
+      const requestedPeriod = String(req.body?.accountingPeriod ?? "").trim();
+      const billPeriod = String(req.body?.billDate ?? "").slice(0, 7);
+      if (requestedPeriod && requestedPeriod !== billPeriod) {
+        const periodOverrideRoles = ["finance_head", "accounts_head", "super_admin"];
+        if (!user.roles.some((r: string) => periodOverrideRoles.includes(r))) {
+          throw Object.assign(
+            new Error(
+              "Only Finance Head, Accounts Head or Super Admin may book an invoice into a different accounting month"
+            ),
+            { statusCode: 403 }
+          );
+        }
+      }
+
       const result = await grnService.createDraft(
         { ...req.body, branchId },
         user.id,
