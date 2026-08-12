@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
+import { nonReactivatableSqlList, TERMINAL_EXIT_STATUSES } from "../../exit/exitEmploymentStatus.js";
 import fs from "fs";
 import path from "path";
 
@@ -92,12 +93,22 @@ describe("the activation job refuses to re-activate a deliberate deactivation", 
     expect(query).toContain("EMPLOYEE_DEACTIVATED");
   });
 
-  it("still admits genuine pre-joiners — the exclusion list is unchanged", () => {
+  it("still admits genuine pre-joiners — the exclusion list still excludes leavers", () => {
     const query = activationQuery();
     // The inverted test that made activation independent of the creation path
     // must survive; narrowing it back to a whitelist selected nobody at all.
     expect(query).toContain("NOT IN");
-    expect(query).toContain("'resigned'");
     expect(query).toContain("e.date_of_joining <= CURDATE()");
+
+    // 'resigned' used to be asserted as a literal in this SQL. The list now comes from
+    // exit/exitEmploymentStatus.ts, because completing an exit writes 'terminated' or
+    // 'absconded' and a hand-maintained copy here would silently stop covering them — the
+    // failure mode being that this job hands a terminated employee their login back at 00:01.
+    // Asserting the rendered list is strictly stronger than asserting the source text: it
+    // checks what the query actually runs with.
+    expect(nonReactivatableSqlList()).toContain("'resigned'");
+    for (const s of TERMINAL_EXIT_STATUSES) {
+      expect(nonReactivatableSqlList()).toContain(`'${s}'`);
+    }
   });
 });

@@ -1,4 +1,5 @@
 import { randomUUID } from "crypto";
+import { employmentStatusForExit } from "./exitEmploymentStatus.js";
 import nodemailer from "nodemailer";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
@@ -282,9 +283,18 @@ export const exitService = {
       // still counted as active everywhere else. Confirmed live 2026-08-06: 93 employees with
       // an exit date recorded still carried active_status=1.
       const lastWorkingDay = (existing as any).last_working_day_proposed ?? new Date().toISOString().slice(0, 10);
+
+      // employment_status used to be hardcoded 'inactive' here, so an involuntary
+      // termination and an ordinary resignation were indistinguishable on the employee
+      // record — the reason survived only inside exit_request. Six files already filtered on
+      // 'terminated' / 'absconded' / 'offboarded', all dead branches guarding a state nothing
+      // could produce. Derived from the exit itself now; see exitEmploymentStatus.ts for why
+      // the mapper and the activation guard's exclusion list must stay in one place.
+      const nextEmploymentStatus = employmentStatusForExit(exitRec.exit_type, exitRec.exit_sub_type);
+
       await db.execute(
-        `UPDATE employees SET active_status = 0, employment_status = 'inactive', date_of_exit = ?, updated_at = NOW() WHERE id = ?`,
-        [lastWorkingDay, employeeId]
+        `UPDATE employees SET active_status = 0, employment_status = ?, date_of_exit = ?, updated_at = NOW() WHERE id = ?`,
+        [nextEmploymentStatus, lastWorkingDay, employeeId]
       ).catch((err: unknown) => {
         logger.error({ err, exitRequestId: id }, '[exit] Employee status update failed');
         return null;

@@ -14,6 +14,7 @@
  */
 
 import { RowDataPacket } from 'mysql2';
+import { nonReactivatableSqlList } from "../exit/exitEmploymentStatus.js";
 import { randomUUID } from 'crypto';
 import { db } from '../../db/mysql.js';
 import { sendSMS } from '../communication/sms.helper.js';
@@ -161,7 +162,7 @@ export async function runDailyActivationJob(): Promise<ActivationReport> {
      -- only genuine pre-joiners once they exist.
      WHERE e.active_status = 0
        AND LOWER(COALESCE(e.employment_status, '')) NOT IN
-           ('resigned', 'terminated', 'inactive', 'exited', 'absconding')
+           (${nonReactivatableSqlList()})
        AND e.date_of_joining <= CURDATE()
        -- This job grants login access and had no notion of approval: it could
        -- not tell a first activation from a re-activation. Deactivation is
