@@ -101,7 +101,10 @@ function splitName(full: string): { first: string; last: string } {
       console.log(`already in HRMS (skipping): ${existing.map((e: any) => e.employee_code).join(", ")}`);
     }
     const todo = rows.filter((r) => !existing.some((e: any) => e.employee_code === r.EmpCode));
-    if (!todo.length) { console.log("nothing to do"); conn.release(); await db.end(); return; }
+    // Return only — the finally block below releases the connection and ends the pool.
+    // Doing it here as well threw "Can't add new command when connection is in closed state"
+    // after the work had already finished, which reads as a failure when nothing failed.
+    if (!todo.length) { console.log("nothing to do"); return; }
 
     await conn.beginTransaction();
 
