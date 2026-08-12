@@ -222,9 +222,20 @@ export const employeeService = {
   },
 
   async listEmployees(filters: EmployeeFilters & { scopeFilter?: { sql: string; params: unknown[] } }): Promise<PaginatedResult<Employee>> {
-    const { page, limit, status, processId, branchId, departmentId, designationId, search, scopeFilter } = filters;
+    const { page, limit, status, recordStatus, processId, branchId, departmentId, designationId, search, scopeFilter } = filters;
     const offset = (page - 1) * limit;
-    const conds: string[] = ["e.active_status = 1"];
+
+    // `active_status = 1` used to be hardcoded here, while `recordStatus` was declared in
+    // employeeFiltersSchema, sent by the directory page and threaded through the controller —
+    // and then never read. So /employees with the status filter on Inactive issued
+    // `active_status = 1 AND employment_status = 'Inactive'` and returned 0 rows, for all
+    // 57,517 inactive employees. Offboarded was the same. An accepted-and-ignored parameter
+    // reads as supported from every layer above it, which is why this survived.
+    const conds: string[] = [];
+    if (recordStatus === "inactive")    conds.push("e.active_status = 0");
+    else if (recordStatus === "all")    { /* both */ }
+    else                                conds.push("e.active_status = 1");
+
     const params: unknown[] = [];
 
     if (status)       { conds.push("e.employment_status = ?"); params.push(status); }

@@ -71,7 +71,10 @@ export const updateEmployeeSchema = z.object({
 
 export const employeeFiltersSchema = z.object({
   status: z.string().optional(),
-  recordStatus: z.enum(["active", "inactive", "all"]).default("all"),
+  // Defaults to "active", not "all": before recordStatus was honoured every caller got
+  // active-only regardless, so "active" is what preserves existing behaviour. Defaulting to
+  // "all" would silently start returning 57,517 inactive people to every employee picker.
+  recordStatus: z.enum(["active", "inactive", "all"]).default("active"),
   processId: z.string().uuid().optional(),
   branchId: z.string().uuid().optional(),
   departmentId: z.string().uuid().optional(),

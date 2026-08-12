@@ -173,13 +173,16 @@ const Employees = () => {
     : statusFilter === "all"
       ? "all"
       : "inactive";
+  // "Inactive" deliberately sends NO employment_status: recordStatus=inactive already selects
+  // every deactivated record, and pinning the literal 'Inactive' hid most of them. Inactive
+  // employees carry four different values — 'Resigned' (30,317), 'inactive' (26,689),
+  // 'terminated' (501) and 'Active' (10, a data anomaly) — so the pin matched at most 26,689
+  // of 57,517. "Offboarded" keeps its pin because it is meant to be the narrower view.
   const employmentStatus = statusFilter === "onboarding"
     ? "Onboarding"
-    : statusFilter === "inactive"
-      ? "Inactive"
-      : statusFilter === "offboarded"
-        ? "Terminated"
-        : undefined;
+    : statusFilter === "offboarded"
+      ? "Terminated"
+      : undefined;
   const { data: directoryData, isLoading: isLoadingEmployees } = useEmployeeDirectory({
     page: currentPage,
     limit: pageSize,
