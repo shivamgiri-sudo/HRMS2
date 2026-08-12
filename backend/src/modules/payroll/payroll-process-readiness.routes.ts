@@ -146,13 +146,25 @@ payrollProcessReadinessRouter.get(
 // ---------------------------------------------------------------------------
 // GET /my-pending-count?month=YYYY-MM
 // Returns the calling user's assigned processes that are not yet ready.
-// Roles: wfm, process_manager, branch_head, payroll_branch
+// Roles: wfm, process_manager, branch_head, payroll_branch, plus super_admin/admin.
 // Must be registered before /:branchId/:processId to avoid param collision.
+//
+// super_admin/admin added 2026-08-13: this widget is rendered unconditionally on the
+// dashboard/Work Inbox for every logged-in user (PayrollPrepWidget.tsx), and every
+// super_admin request 403'd here on every single page load. The frontend swallows it
+// silently (throwOnError: false) and shows "all processes ready" instead, so the widget's
+// own displayed count does not change from this fix — a super_admin has no rows in
+// user_assignment_scope (nobody is personally "assigned" processes at that level), so
+// !scopes.length already returned the same "all ready" outcome even while 403'd. What this
+// actually fixes: a needless 403 hitting the browser's network log on every load for every
+// admin/super_admin in the system, which is exactly the kind of thing that reads as "an
+// error" even when nothing visibly breaks — a read-only informational endpoint should not
+// reject the one role that is supposed to be able to see everything.
 // ---------------------------------------------------------------------------
 payrollProcessReadinessRouter.get(
   "/my-pending-count",
   requireAuth,
-  requireRole("wfm", "process_manager", "branch_head", "payroll_branch"),
+  requireRole("wfm", "process_manager", "branch_head", "payroll_branch", "super_admin", "admin"),
   async (req: AuthenticatedRequest, res: Response) => {
     try {
       const month = resolveMonth(req.query.month);
