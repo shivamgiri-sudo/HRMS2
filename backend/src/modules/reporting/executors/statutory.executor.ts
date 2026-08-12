@@ -492,12 +492,87 @@ export async function ptRegister(
 // ---------------------------------------------------------------------------
 // tds-computation-register
 // ---------------------------------------------------------------------------
+/**
+ * Income-tax parameters, read from statutory_config rather than hardcoded.
+ *
+ * The charter is explicit that TDS must not project against literal slabs: "No hardcoded
+ * fallback slabs." Everything here is configured and effective-dated — verified present on
+ * production 2026-08-12: seven slabs from 2025-03-31 (new regime), standard deduction 75,000,
+ * 87A rebate limit 12,00,000 and cess 4%. If a key is missing this returns null and the caller
+ * reports the column as unavailable rather than inventing a number.
+ */
+interface TaxParams {
+  slabs: Array<{ upTo: number; pct: number }>;
+  standardDeduction: number;
+  rebateLimit: number;
+  cessPct: number;
+}
+
+async function taxParams(): Promise<TaxParams | null> {
+  const rows = await query(
+    "SELECT config_key, CAST(config_value AS DECIMAL(14,4)) AS v FROM statutory_config WHERE config_key REGEXP 'tds_'",
+    [],
+  ) as Array<{ config_key: string; v: string }>;
+  const map = new Map(rows.map((r) => [r.config_key, Number(r.v)]));
+
+  // Slab keys encode their own bounds: tds_slab_<from>_<to|above>.
+  const slabs: Array<{ upTo: number; pct: number }> = [];
+  for (const [k, v] of map) {
+    const m = /^tds_slab_(\d+)_(\d+|above)$/.exec(k);
+    if (!m) continue;
+    slabs.push({ upTo: m[2] === "above" ? Number.MAX_SAFE_INTEGER : Number(m[2]), pct: v });
+  }
+  slabs.sort((a, b) => a.upTo - b.upTo);
+
+  const standardDeduction = map.get("tds_standard_deduction");
+  const rebateLimit = map.get("tds_rebate_87a_limit");
+  const cessPct = map.get("tds_cess_pct");
+  if (!slabs.length || standardDeduction == null || rebateLimit == null || cessPct == null) return null;
+  return { slabs, standardDeduction, rebateLimit, cessPct };
+}
+
+/**
+ * Progressive tax as a SQL expression over `taxableExpr`.
+ *
+ * Each slab taxes only the income falling INSIDE its band — GREATEST(0, LEAST(income, upper) -
+ * lower) — which is what makes it progressive rather than a flat rate on the whole amount at the
+ * top band. Section 87A is applied as a cliff on taxable income, then cess on the tax itself.
+ */
+function annualTaxSql(taxableExpr: string, p: TaxParams): string {
+  let lower = 0;
+  const parts: string[] = [];
+  for (const slab of p.slabs) {
+    const upper = slab.upTo === Number.MAX_SAFE_INTEGER ? null : slab.upTo;
+    if (slab.pct > 0) {
+      const capped = upper == null ? taxableExpr : `LEAST(${taxableExpr}, ${upper})`;
+      parts.push(`GREATEST(0, ${capped} - ${lower}) * ${slab.pct / 100}`);
+    }
+    if (upper == null) break;
+    lower = upper;
+  }
+  const gross = parts.length ? parts.join(" + ") : "0";
+  // 87A: no tax at all when taxable income is within the rebate limit.
+  return `ROUND(CASE WHEN ${taxableExpr} <= ${p.rebateLimit} THEN 0
+                     ELSE (${gross}) * ${1 + p.cessPct / 100} END, 0)`;
+}
+
 export async function tdsComputationRegister(
   filters: ExecFilters,
   scope: ExecScope,
   options: ExecOptions
 ): Promise<ExecResult> {
   const runMonth = await resolvePayrollMonth(filters.month);
+
+  /**
+   * Computed here, not echoed from payroll. The register previously returned NULL for projected
+   * income, exemptions, taxable income and annual liability, and monthly_tds simply repeated
+   * spl.tds — which is 0 on all 1,595 lines of the 2026-07 run, so the report said nothing at
+   * all. 8 of those lines annualise above 7,00,000.
+   *
+   * Null params mean a configuration key is missing; the columns then report NULL rather than a
+   * fabricated figure, which is the charter's requirement for TDS.
+   */
+  const tax = await taxParams();
   const panCol = scope.canViewSensitiveFields
     ? "e.pan_number"
     : "'***MASKED***' AS pan_number";
@@ -514,6 +589,10 @@ export async function tdsComputationRegister(
     params.push(options.cursor);
   }
 
+  const PROJECTED = "COALESCE(spl.gross_salary,0) * 12";
+  const TAXABLE = tax ? `GREATEST(0, (${PROJECTED}) - ${tax.standardDeduction})` : "0";
+  const ANNUAL = tax ? annualTaxSql(TAXABLE, tax) : "0";
+
   const base = `
     SELECT spl.id AS _cursor,
            e.employee_code,
@@ -527,11 +606,11 @@ export async function tdsComputationRegister(
            -- salary_prep_line stores only the deducted TDS. Projected income,
            -- exemptions, taxable income and annual liability are not computed or
            -- stored anywhere; reporting 0 would assert a real figure of zero.
-           NULL AS projected_annual_income,
-           NULL AS exemptions,
-           NULL AS taxable_income,
-           COALESCE(spl.tds, 0) AS monthly_tds,
-           NULL AS annual_tax_liability
+           ${tax ? `${PROJECTED} AS projected_annual_income` : "NULL AS projected_annual_income"},
+           ${tax ? `${tax.standardDeduction} AS exemptions` : "NULL AS exemptions"},
+           ${tax ? `${TAXABLE} AS taxable_income` : "NULL AS taxable_income"},
+           ${tax ? `ROUND(${ANNUAL} / 12, 0) AS monthly_tds` : "COALESCE(spl.tds, 0) AS monthly_tds"},
+           ${tax ? `${ANNUAL} AS annual_tax_liability` : "NULL AS annual_tax_liability"}
       FROM salary_prep_line spl
       JOIN salary_prep_run spr ON spr.id = spl.run_id
       JOIN employees e ON e.id = spl.employee_id
