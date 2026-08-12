@@ -5,6 +5,9 @@
   "modules/ats/mock-digilocker.routes.ts": [
     "ats_bgv_check"
   ],
+  "modules/finance/grn.routes.ts": [
+    "vendor_debit_note"
+  ],
   "modules/lms/lms-provisioning.service.ts": [
     "trainee_master"
   ],

@@ -27,6 +27,7 @@ const read = (file: string) => fs.readFileSync(path.join(sqlDir, file), "utf8");
 const NEWLY_SCHEDULED = [
   "600_cost_centre_extended_schema.sql",
   "1029_ungated_routes_page_catalog.sql",
+  "440_finance_phase1.sql",
 ];
 
 describe("migrations promoted from knownUnlisted into the manifest", () => {
@@ -64,6 +65,39 @@ describe("migrations promoted from knownUnlisted into the manifest", () => {
       }
     });
   }
+
+
+  it("440 runs after every table it alters is created", () => {
+    // Its filename number would place it early, but each of its four guards fires an
+    // ALTER when it finds the column absent - and "absent" is also what a table that
+    // does not exist yet reports. At position 440 a rebuilt database would hit
+    // ER_NO_SUCH_TABLE on grn_invoice_component (1074) and grn_period_allocation
+    // (1099), and the split_method guard would no-op because @sm_type is NULL.
+    const order = [...manifestSource.matchAll(/"([0-9][^"]*\.sql)"/g)].map((m) => m[1]);
+    const at = (name: string) => order.indexOf(name);
+    const phase1 = at("440_finance_phase1.sql");
+    expect(phase1).toBeGreaterThan(-1);
+    for (const dependency of [
+      "310_vendor_payment_tracking.sql",
+      "413_vendor_payment_transaction_ledger.sql",
+      "1074_grn_invoice_gst_components.sql",
+      "1099_grn_period_allocation.sql",
+    ]) {
+      expect(at(dependency), `${dependency} must be scheduled`).toBeGreaterThan(-1);
+      expect(at(dependency), `440 must run after ${dependency}`).toBeLessThan(phase1);
+    }
+  });
+
+  it("440 creates its tables with an explicit collation and no foreign keys", () => {
+    const sql = read("440_finance_phase1.sql");
+    const creates = sql.match(/CREATE TABLE IF NOT EXISTS[\s\S]*?;/g) ?? [];
+    expect(creates.length).toBe(3);
+    for (const create of creates) {
+      // an FK to a utf8mb4_0900_ai_ci table is the collation-drift trap
+      expect(create).not.toMatch(/FOREIGN KEY/i);
+      expect(create).toMatch(/COLLATE=utf8mb4_unicode_ci/i);
+    }
+  });
 
   it("600 keeps its helper procedure self-contained", () => {
     const sql = read("600_cost_centre_extended_schema.sql");

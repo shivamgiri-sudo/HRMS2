@@ -67,6 +67,15 @@
   "modules/employees/employee.documents.routes.ts": [
     "employee_documents.updated_at"
   ],
+  "modules/finance/grn-smart.service.ts": [
+    "grn_invoice_component.hsn_sac_code"
+  ],
+  "modules/finance/vendor-payment-ledger.service.ts": [
+    "vendor_payment_tracking.tds_deducted_amount",
+    "vendor_payment_transaction.net_amount",
+    "vendor_payment_transaction.tds_amount",
+    "vendor_payment_transaction.tds_section"
+  ],
   "modules/incentives/incentives.service.ts": [
     "incentive_upload_batch.remarks",
     "salary_prep_run.incentives_applied_at"
