@@ -98,6 +98,14 @@ export async function deleteBand(id: string) {
 
 // ── PACKAGES ──────────────────────────────────────────────────────────────────
 
+/**
+ * DEAD as of 2026-08-12. Every field it reads (basic_amt, conveyance_type,
+ * medical_amt, ...) is absent from both the request payload and
+ * salary_package_master, so it returns NaN. Kept for reference while the
+ * intended component/percentage model is decided; it must not be applied to
+ * salary data until its inputs exist.
+ */
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function calcGrossAndCtc(data: {
   basic_amt: number; conveyance_amt: number; conveyance_type: string;
   medical_amt: number; medical_type: string;
@@ -155,44 +163,116 @@ export async function getPackageById(id: string) {
   return rows[0] ?? null;
 }
 
+/**
+ * Money fields are optional on the wire; the column default is 0.00. Anything
+ * unparseable becomes 0 rather than NaN, which MySQL would reject outright.
+ */
+function amt(v: unknown): number {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : 0;
+}
+
+/**
+ * The columns salary_package_master actually has, in the order the statements
+ * below use them. branch_name, band_code and package_amount are NOT NULL with
+ * no default, so they are required; every other money column defaults to 0.00.
+ */
+const PACKAGE_MONEY_COLUMNS = [
+  "basic", "hra", "conveyance", "portfolio", "medical", "special_allowance",
+  "other_allowance", "bonus", "pli", "gross", "epf_employee", "esic_employee",
+  "professional_tax", "net_in_hand", "epf_employer", "esic_employer",
+  "admin_charges", "ctc",
+] as const;
+
+function requirePackageKeys(data: Record<string, unknown>): void {
+  const missing = ["branch_name", "band_code", "package_amount"].filter(
+    (k) => data[k] === undefined || data[k] === null || data[k] === ""
+  );
+  if (missing.length) {
+    throw Object.assign(
+      new Error(`Missing required field(s): ${missing.join(", ")}`),
+      { statusCode: 400, code: "PACKAGE_FIELDS_REQUIRED" }
+    );
+  }
+}
+
+/**
+ * Create a salary package.
+ *
+ * This wrote grade_id, slab_id, location_id, cost_centre_id, basic_amt,
+ * conveyance_type, gross_monthly, ctc_monthly and effective_from. Not one of
+ * those columns exists. salary_package_master is keyed by branch_name +
+ * cost_centre_code + band_code and stores the breakdown as basic/hra/conveyance
+ * /... plus the statutory columns, so every create and update has always failed
+ * with ER_BAD_FIELD_ERROR. The 295 rows in the table all carry
+ * source_db = 'db_bill' and created_by NULL - nothing has ever been created
+ * through this API.
+ *
+ * The UI was never the problem: NativeSalaryPackageAdmin posts branch_name,
+ * cost_centre_code, band_code, package_amount and the real money columns, and
+ * refuses to submit without the first three. The page and the database agreed
+ * with each other; only this layer disagreed with both.
+ *
+ * Values are stored as supplied rather than recomputed. calcGrossAndCtc() below
+ * derives gross and CTC from basic_amt/conveyance_type/... - fields no caller
+ * sends and no column holds - so it yields NaN and is left unused rather than
+ * applied to real salary data.
+ */
 export async function createPackage(data: any, createdBy: string) {
+  requirePackageKeys(data);
   const id = randomUUID();
-  const { gross_monthly, ctc_monthly } = calcGrossAndCtc(data);
+  const money = PACKAGE_MONEY_COLUMNS.map((c) => amt(data[c]));
+
   await db.execute(
     `INSERT INTO salary_package_master
-       (id, grade_id, slab_id, location_id, cost_centre_id,
-        basic_amt, conveyance_amt, conveyance_type,
-        medical_amt, medical_type, other_allowance_amt, other_allowance_type,
-        bonus_amt, bonus_type, portfolio_amt, special_allowance_amt, pli_amt,
-        gross_monthly, ctc_monthly, effective_from, created_by)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [id, data.grade_id, data.slab_id, data.location_id ?? null, data.cost_centre_id ?? null,
-     data.basic_amt ?? 0, data.conveyance_amt ?? 0, data.conveyance_type ?? 'fixed',
-     data.medical_amt ?? 0, data.medical_type ?? 'fixed',
-     data.other_allowance_amt ?? 0, data.other_allowance_type ?? 'fixed',
-     data.bonus_amt ?? 0, data.bonus_type ?? 'fixed',
-     data.portfolio_amt ?? 0, data.special_allowance_amt ?? 0, data.pli_amt ?? 0,
-     gross_monthly, ctc_monthly, data.effective_from, createdBy]
+       (id, branch_name, cost_centre_code, band_code, package_amount,
+        ${PACKAGE_MONEY_COLUMNS.join(", ")}, active_status, source_db, created_by)
+     VALUES (?, ?, ?, ?, ?, ${PACKAGE_MONEY_COLUMNS.map(() => "?").join(", ")}, ?, ?, ?)`,
+    [
+      id,
+      data.branch_name,
+      data.cost_centre_code ?? null,
+      data.band_code,
+      amt(data.package_amount),
+      ...money,
+      data.active_status ?? 1,
+      // source_db defaults to 'db_bill'. Every one of the 295 existing rows came
+      // from that import, and a package typed into the admin screen must not
+      // claim the same provenance - the column exists to tell them apart.
+      'hrms',
+      createdBy || null,
+    ]
   );
   return getPackageById(id);
 }
 
+/**
+ * Update a salary package. Same column correction as createPackage above.
+ *
+ * Merged over the existing row so a partial payload cannot blank a money column
+ * that the caller simply did not send.
+ */
 export async function updatePackage(id: string, data: any) {
   const existing = await getPackageById(id);
   if (!existing) return null;
   const merged = { ...existing, ...data };
-  const { gross_monthly, ctc_monthly } = calcGrossAndCtc(merged);
+  requirePackageKeys(merged);
+
   await db.execute(
     `UPDATE salary_package_master SET
-       basic_amt=?, conveyance_amt=?, conveyance_type=?,
-       medical_amt=?, medical_type=?, other_allowance_amt=?, other_allowance_type=?,
-       bonus_amt=?, bonus_type=?, portfolio_amt=?, special_allowance_amt=?, pli_amt=?,
-       gross_monthly=?, ctc_monthly=?, effective_from=?, active_status=?
-     WHERE id=?`,
-    [merged.basic_amt, merged.conveyance_amt, merged.conveyance_type,
-     merged.medical_amt, merged.medical_type, merged.other_allowance_amt, merged.other_allowance_type,
-     merged.bonus_amt, merged.bonus_type, merged.portfolio_amt, merged.special_allowance_amt, merged.pli_amt,
-     gross_monthly, ctc_monthly, merged.effective_from, merged.active_status ?? 1, id]
+       branch_name = ?, cost_centre_code = ?, band_code = ?, package_amount = ?,
+       ${PACKAGE_MONEY_COLUMNS.map((c) => `${c} = ?`).join(", ")},
+       active_status = ?, updated_at = NOW()
+     WHERE id = ?`,
+    [
+      merged.branch_name,
+      merged.cost_centre_code ?? null,
+      merged.band_code,
+      amt(merged.package_amount),
+      ...PACKAGE_MONEY_COLUMNS.map((c) => amt(merged[c])),
+      merged.active_status ?? 1,
+      id,
+    ]
   );
   return getPackageById(id);
 }

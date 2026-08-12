@@ -110,27 +110,6 @@
   "modules/org/org.service.ts": [
     "process_master.department_id"
   ],
-  "modules/payroll-masters/payrollMasters.service.ts": [
-    "salary_package_master.basic_amt",
-    "salary_package_master.bonus_amt",
-    "salary_package_master.bonus_type",
-    "salary_package_master.conveyance_amt",
-    "salary_package_master.conveyance_type",
-    "salary_package_master.cost_centre_id",
-    "salary_package_master.ctc_monthly",
-    "salary_package_master.effective_from",
-    "salary_package_master.grade_id",
-    "salary_package_master.gross_monthly",
-    "salary_package_master.location_id",
-    "salary_package_master.medical_amt",
-    "salary_package_master.medical_type",
-    "salary_package_master.other_allowance_amt",
-    "salary_package_master.other_allowance_type",
-    "salary_package_master.pli_amt",
-    "salary_package_master.portfolio_amt",
-    "salary_package_master.slab_id",
-    "salary_package_master.special_allowance_amt"
-  ],
   "modules/payroll/payroll-more.routes.ts": [
     "salary_prep_line.payslip_emailed",
     "salary_prep_line.payslip_emailed_at"
