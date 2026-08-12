@@ -1063,6 +1063,26 @@ export async function salarySheetExport(
       COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
       spl.id AS line_id,
       spl.employee_id,
+      /**
+       * Component columns, pivoted from salary_prep_line_component (128,353 rows, joined on
+       * line_id). These are EARNED amounts — the table is per prep line, i.e. per month's run —
+       * which is the "1" half of the format's master/earned pairing.
+       *
+       * Measured on production for 2026-07: BONUS 106 rows (avg 879), PORTFOLIO 101 (avg 5,492),
+       * CONV 842 (avg 1,217), HRA 842, SPECIAL 265, BASIC 1,116.
+       *
+       * MEDICAL, LTA, OTHER_ALLOW and PLI are DEFINED in salary_component_master but have zero
+       * rows in the run — no employee has ever been assigned one. They resolve to 0 through the
+       * SUM, and that 0 is a fact about the data rather than a missing value, which is why they
+       * are emitted rather than omitted.
+       */
+      COALESCE(comp.bonus, 0) AS bonus,
+      COALESCE(comp.conv, 0) AS conv,
+      COALESCE(comp.portfolio, 0) AS portfolio,
+      COALESCE(comp.medical_allowance, 0) AS medical_allowance,
+      COALESCE(comp.lta, 0) AS lta,
+      COALESCE(comp.other_allowance, 0) AS other_allowance,
+      COALESCE(comp.pli, 0) AS pli,
       COALESCE(spl.basic, 0) AS basic,
       COALESCE(spl.hra, 0) AS hra,
       COALESCE(spl.special_allowance, 0) AS special_allowance,
@@ -1112,6 +1132,18 @@ export async function salarySheetExport(
     LEFT JOIN branch_master b ON b.id = e.branch_id
     LEFT JOIN process_master p ON p.id = e.process_id
     LEFT JOIN cost_centre_master cc ON cc.id = e.cost_centre_id
+      LEFT JOIN (
+        SELECT c.line_id,
+               SUM(CASE WHEN c.component_code = 'BONUS'       THEN c.amount ELSE 0 END) AS bonus,
+               SUM(CASE WHEN c.component_code = 'CONV'        THEN c.amount ELSE 0 END) AS conv,
+               SUM(CASE WHEN c.component_code = 'PORTFOLIO'   THEN c.amount ELSE 0 END) AS portfolio,
+               SUM(CASE WHEN c.component_code = 'MEDICAL'     THEN c.amount ELSE 0 END) AS medical_allowance,
+               SUM(CASE WHEN c.component_code = 'LTA'         THEN c.amount ELSE 0 END) AS lta,
+               SUM(CASE WHEN c.component_code = 'OTHER_ALLOW' THEN c.amount ELSE 0 END) AS other_allowance,
+               SUM(CASE WHEN c.component_code = 'PLI'         THEN c.amount ELSE 0 END) AS pli
+          FROM salary_prep_line_component c
+         GROUP BY c.line_id
+      ) comp ON comp.line_id = spl.id
     LEFT JOIN employee_salary_assignment esa ON esa.employee_id = e.id AND esa.active_status = 1
     LEFT JOIN employee_bank_detail ebd ON ebd.employee_id = e.id AND ebd.is_primary = 1 AND ebd.active_status = 1
     LEFT JOIN employee_uan eu ON eu.employee_id = e.id AND eu.is_active = 1

@@ -1727,6 +1727,15 @@ export const REPORT_CATALOG: ReportDefinition[] = [
     rowGrain: "One row per employee per payroll month",
     primaryKey: ["employee_code", "payroll_month"],
     columns: [
+      // Salary-register component columns, pivoted from salary_prep_line_component. Declared in
+      // BOTH catalogues or the grid and the export discard them.
+      { key: "bonus", label: "Bonus", format: "currency", width: 110, align: "right" },
+      { key: "conv", label: "Conv", format: "currency", width: 110, align: "right" },
+      { key: "portfolio", label: "Portfolio", format: "currency", width: 110, align: "right" },
+      { key: "medical_allowance", label: "MedicalAllowance", format: "currency", width: 130, align: "right" },
+      { key: "lta", label: "LTA", format: "currency", width: 100, align: "right" },
+      { key: "other_allowance", label: "OtherAllowance", format: "currency", width: 130, align: "right" },
+      { key: "pli", label: "PLI", format: "currency", width: 100, align: "right" },
       { key: "run_month", label: "Payroll Month", format: "text", width: 100 },
       { key: "run_status", label: "Run Status", format: "status", width: 100 },
       { key: "employee_code", label: "Emp Code", format: "text", width: 100 },
