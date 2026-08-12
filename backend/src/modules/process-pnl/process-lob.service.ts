@@ -240,7 +240,17 @@ async function listColumns(tableName: string): Promise<Set<string>> {
           WHERE table_schema = DATABASE()
             AND table_name = ?`,
         [tableName]
-      ).then((rows) => new Set(rows.map((row) => String(row.column_name ?? (row as any).COLUMN_NAME))))
+      )
+        .then((rows) => new Set(rows.map((row) => String(row.column_name ?? (row as any).COLUMN_NAME))))
+        // Evict on failure, as the otherwise-identical copies in bpo-pnl.service.ts and
+        // process-pnl.service.ts already do. Without it a rejected promise stays in the cache
+        // for the lifetime of the process, so one transient information_schema failure makes
+        // every subsequent Process-LOB request in that worker fail until it is restarted — and
+        // it is an unhandled rejection at the moment it is stored, too.
+        .catch((error) => {
+          columnCache.delete(tableName);
+          throw error;
+        })
     );
   }
   return columnCache.get(tableName)!;

@@ -1198,28 +1198,52 @@ export const grnService = {
       throw new Error("Billing status must be OPEN, BOOKED or CLOSED");
     }
 
-    const [existing] = await db.execute<RowDataPacket[]>(
-      `SELECT id, billing_cycle_status FROM grn_request WHERE id = ? LIMIT 1`,
-      [grnId],
-    );
-    if (!existing[0]) throw new Error("GRN not found");
-    const previous = existing[0].billing_cycle_status ?? null;
+    /*
+     * The UPDATE and its history row share one transaction.
+     *
+     * They used to be two independent statements on the pool, with the event recorded after the
+     * status had already been written. recordFinanceApprovalEvent throws by design, so a failure
+     * there returned "Unable to set billing status" to the user while the billing cycle status
+     * had in fact already changed — the operation reported as failed and the row said otherwise.
+     * Now either both land or neither does, which is the same rule the review paths follow.
+     */
+    const connection = await db.getConnection();
+    try {
+      await connection.beginTransaction();
 
-    await db.execute(
-      `UPDATE grn_request SET billing_cycle_status = ? WHERE id = ?`,
-      [billingCycleStatus, grnId],
-    );
+      const [existing] = await connection.execute<RowDataPacket[]>(
+        `SELECT id, billing_cycle_status FROM grn_request WHERE id = ? FOR UPDATE`,
+        [grnId],
+      );
+      if (!existing[0]) throw new Error("GRN not found");
+      const previous = existing[0].billing_cycle_status ?? null;
 
-    await recordFinanceApprovalEvent({
-      entityType: "grn",
-      entityId: grnId,
-      action: "billing_cycle_set",
-      fromStatus: previous ? String(previous) : null,
-      toStatus: billingCycleStatus ?? "UNCLASSIFIED",
-      actorUserId,
-      actorRole: "finance",
-      remarks: null,
-    });
+      await connection.execute(
+        `UPDATE grn_request SET billing_cycle_status = ? WHERE id = ?`,
+        [billingCycleStatus, grnId],
+      );
+
+      await recordFinanceApprovalEvent(
+        {
+          entityType: "grn",
+          entityId: grnId,
+          action: "billing_cycle_set",
+          fromStatus: previous ? String(previous) : null,
+          toStatus: billingCycleStatus ?? "UNCLASSIFIED",
+          actorUserId,
+          actorRole: "finance",
+          remarks: null,
+        },
+        connection,
+      );
+
+      await connection.commit();
+    } catch (error) {
+      await connection.rollback();
+      throw error;
+    } finally {
+      connection.release();
+    }
 
     return { id: grnId, billing_cycle_status: billingCycleStatus };
   },

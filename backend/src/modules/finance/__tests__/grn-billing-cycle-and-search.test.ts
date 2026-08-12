@@ -11,23 +11,43 @@ import { readFileSync } from "node:fs";
  * starts dragging GRNs through the payment workflow, and that would be very hard to spot.
  */
 
-const { execute, query } = vi.hoisted(() => ({ execute: vi.fn(), query: vi.fn() }));
-vi.mock("../../../db/mysql.js", () => ({ db: { execute, query } }));
+const { execute, query, getConnection } = vi.hoisted(() => ({
+  execute: vi.fn(), query: vi.fn(), getConnection: vi.fn(),
+}));
+vi.mock("../../../db/mysql.js", () => ({ db: { execute, query, getConnection } }));
 
 let grnService: typeof import("../grn.service.js")["grnService"];
 beforeAll(async () => {
   ({ grnService } = await import("../grn.service.js"));
 }, 120_000);
 
+/**
+ * setBillingCycleStatus now runs its UPDATE and its history row in one transaction, so its
+ * statements arrive on a connection rather than on the pool. Recording both keeps the assertions
+ * below indifferent to which one a given call used.
+ */
+const connectionExecute = vi.fn();
+const connection = {
+  execute: connectionExecute,
+  beginTransaction: vi.fn(async () => {}),
+  commit: vi.fn(async () => {}),
+  rollback: vi.fn(async () => {}),
+  release: vi.fn(() => {}),
+};
+
 beforeEach(() => {
   execute.mockReset();
   query.mockReset();
+  connectionExecute.mockReset();
   execute.mockResolvedValue([[{ id: "g1", billing_cycle_status: null }], []]);
+  connectionExecute.mockResolvedValue([[{ id: "g1", billing_cycle_status: null }], []]);
   query.mockResolvedValue([[], []]);
+  getConnection.mockReset();
+  getConnection.mockResolvedValue(connection);
 });
 
 function statementMatching(pattern: RegExp) {
-  const calls = [...execute.mock.calls, ...query.mock.calls];
+  const calls = [...execute.mock.calls, ...query.mock.calls, ...connectionExecute.mock.calls];
   const hit = calls.find(([sql]) => pattern.test(String(sql)));
   if (!hit) throw new Error(`no statement matching ${pattern}`);
   return { sql: String(hit[0]).replace(/\s+/g, " "), params: (hit[1] ?? []) as unknown[] };
@@ -62,12 +82,13 @@ describe("setBillingCycleStatus", () => {
   });
 
   it("refuses a GRN that does not exist", async () => {
-    execute.mockResolvedValue([[], []]);
+    // The lookup runs on the transaction's connection now, so that is the mock to script.
+    connectionExecute.mockResolvedValue([[], []]);
     await expect(grnService.setBillingCycleStatus("nope", "OPEN", "u1")).rejects.toThrow(/not found/i);
   });
 
   it("records an approval event carrying the previous value", async () => {
-    execute.mockImplementation(async (sql: string) => {
+    connectionExecute.mockImplementation(async (sql: string) => {
       if (/SELECT id, billing_cycle_status/.test(sql)) {
         return [[{ id: "g1", billing_cycle_status: "OPEN" }], []];
       }

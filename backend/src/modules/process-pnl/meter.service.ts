@@ -202,12 +202,48 @@ export async function listReadings(meterId: string, periodCode: string): Promise
  * unique key is meter_id+period_code+reading_type, not just meter_id+period_code) and a
  * finance_meter_reconciliation row is written capturing the delta, per spec 10.2.
  */
+/**
+ * Saves a meter reading, and reconciles an earlier estimate against it.
+ *
+ * Runs in a transaction when it owns the work, which it does from its only caller. It performs
+ * up to three writes — the reading upsert, the reconciliation row, and the UPDATE that marks the
+ * estimate reconciled — and previously ran them as independent statements on the pool. If the
+ * status UPDATE failed after the reconciliation row was inserted, the estimate stayed 'pending',
+ * so the next actual reading inserted a SECOND reconciliation row for the same meter and period
+ * and the adjustment was recorded twice.
+ *
+ * A caller that supplies its own executor keeps ownership of the transaction, exactly as before;
+ * this only adds one where there was none.
+ */
 export async function saveReading(
   meterId: string,
   periodCode: string,
   input: SaveReadingInput,
   actorUserId: string,
-  executor: Executor = db
+  executor?: Executor
+): Promise<{ reading: MeterReadingRecord; reconciliation: boolean }> {
+  if (executor) return saveReadingWith(meterId, periodCode, input, actorUserId, executor);
+
+  const connection = await db.getConnection();
+  try {
+    await connection.beginTransaction();
+    const result = await saveReadingWith(meterId, periodCode, input, actorUserId, connection);
+    await connection.commit();
+    return result;
+  } catch (error) {
+    await connection.rollback();
+    throw error;
+  } finally {
+    connection.release();
+  }
+}
+
+async function saveReadingWith(
+  meterId: string,
+  periodCode: string,
+  input: SaveReadingInput,
+  actorUserId: string,
+  executor: Executor
 ): Promise<{ reading: MeterReadingRecord; reconciliation: boolean }> {
   if (!/^\d{4}-\d{2}$/.test(periodCode)) throw new Error("A valid budget period (YYYY-MM) is required");
   if (input.closingReading < input.openingReading) {
