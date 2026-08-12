@@ -74,6 +74,9 @@ export interface SmartGrnComponentSplitInput {
   purchaseReference?: string | null;
   vendorGstin?: string | null;
   placeOfSupply?: string | null;
+  /** Override accounting month (YYYY-MM). Finance Head / Accounts Head / Super Admin only.
+   *  Omit to keep the existing value (COALESCE at DB layer). */
+  accountingPeriod?: string | null;
   /** E-invoice reference number (IRN) — optional, Finance Head visible. */
   irn?: string | null;
   irnAckNo?: string | null;
@@ -1108,7 +1111,9 @@ export const grnSmartService = {
                 amount_with_tax = ?, pnl_cost_amount = ?, amount = ?,
                 other_charges = 0.00, round_off_amount = ?,
                 invoice_number = ?, service_period_start = ?, service_period_end = ?,
-                purchase_reference = ?, vendor_gstin = ?, place_of_supply = ?
+                purchase_reference = ?, vendor_gstin = ?, place_of_supply = ?,
+                irn = ?, irn_ack_no = ?,
+                accounting_period = COALESCE(?, accounting_period)
           WHERE id = ?`,
         [
           grid.length > 1 ? "split" : "single", first.budget_id, first.id,
@@ -1128,6 +1133,11 @@ export const grnSmartService = {
           String(input.purchaseReference ?? "").trim() || null,
           String(input.vendorGstin ?? "").trim().toUpperCase() || null,
           String(input.placeOfSupply ?? "").trim() || null,
+          String(input.irn ?? "").trim() || null,
+          String(input.irnAckNo ?? "").trim() || null,
+          /^\d{4}-\d{2}$/.test(String(input.accountingPeriod ?? "").trim())
+            ? String(input.accountingPeriod).trim()
+            : null,
           grnId,
         ]
       );
