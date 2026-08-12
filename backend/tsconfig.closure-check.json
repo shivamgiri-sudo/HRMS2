@@ -19,6 +19,8 @@
     "src/shared/__tests__/buildInfo.test.ts",
     "src/routes/health.routes.ts",
     "src/workers/all-workers.ts",
+    "src/workers/esign-compliance.worker.ts",
+    "src/workers/__tests__/esignCooldownRelease.test.ts",
     "src/shared/identityVerificationPropagation.ts",
     "src/shared/__tests__/identityVerificationPropagation.test.ts",
     "src/modules/ats/bgv-verification.service.ts",

@@ -68,8 +68,24 @@ async function markSent(
   employeeId: string,
   checklistId: string,
   kind: CooldownKind,
-): Promise<boolean> {
+): Promise<{ ok: boolean; previousLastSentAt: string | null; existed: boolean }> {
+  // The prior state is captured so a dispatch that reaches nobody can put it back. Without
+  // it the only way to "release" is to blank the row, which would let the NEXT cycle send
+  // immediately even when an older, still-valid send exists — turning a failed retry into a
+  // duplicate.
+  let previousLastSentAt: string | null = null;
+  let existed = false;
   try {
+    const [prior]: any = await db.execute(
+      `SELECT last_sent_at FROM esign_notification_cooldown
+        WHERE employee_id = ? AND checklist_id = ? AND notification_kind = ? LIMIT 1`,
+      [employeeId, checklistId, kind],
+    );
+    if (prior[0]) {
+      existed = true;
+      previousLastSentAt = prior[0].last_sent_at ? String(prior[0].last_sent_at) : null;
+    }
+
     await db.execute(
       `INSERT INTO esign_notification_cooldown
          (id, employee_id, checklist_id, notification_kind, last_sent_at, send_count)
@@ -77,11 +93,59 @@ async function markSent(
        ON DUPLICATE KEY UPDATE last_sent_at = NOW(), send_count = send_count + 1`,
       [employeeId, checklistId, kind],
     );
-    return true;
+    return { ok: true, previousLastSentAt, existed };
   } catch (error: any) {
     console.error(`[EsignComplianceWorker] Cooldown write failed for ${kind}:`, error.message);
-    return false;
+    return { ok: false, previousLastSentAt, existed };
   }
+}
+
+/**
+ * Undo a claim whose dispatch reached nobody.
+ *
+ * Claiming before dispatch is what stops a crash double-sending, but it also meant a total
+ * failure looked exactly like a delivery for 24 hours. Measured 2026-08-12: all 12 attempts
+ * failed (Gmail 535-5.7.8, and SmartPing rejecting SMS for a missing DLT template), the SMTP
+ * credential was fixed at 17:51 and the worker restarted at 18:03 carrying the fix — and three
+ * pending documents still had nothing sent, because the 11:09 failures had burned the window.
+ *
+ * Restores the previous timestamp when there was one, and removes the row when this was the
+ * first claim, so the next cycle is free to try again. Failing to release is logged and
+ * otherwise ignored: the cost is one delayed reminder, never a duplicate.
+ */
+async function releaseClaim(
+  employeeId: string,
+  checklistId: string,
+  kind: CooldownKind,
+  prior: { previousLastSentAt: string | null; existed: boolean },
+): Promise<void> {
+  try {
+    if (prior.existed) {
+      await db.execute(
+        `UPDATE esign_notification_cooldown
+            SET last_sent_at = ?, send_count = GREATEST(send_count - 1, 0)
+          WHERE employee_id = ? AND checklist_id = ? AND notification_kind = ?`,
+        [prior.previousLastSentAt, employeeId, checklistId, kind],
+      );
+    } else {
+      await db.execute(
+        `DELETE FROM esign_notification_cooldown
+          WHERE employee_id = ? AND checklist_id = ? AND notification_kind = ?`,
+        [employeeId, checklistId, kind],
+      );
+    }
+    console.warn(
+      `[EsignComplianceWorker] ${kind} reached nobody — cooldown released so the next cycle retries`,
+    );
+  } catch (error: any) {
+    console.error(`[EsignComplianceWorker] Cooldown release failed for ${kind}:`, error.message);
+  }
+}
+
+/** True when a dispatch queued nothing at all. A PARTIAL success keeps its claim: re-sending
+ *  to recipients who did receive it is the storm this whole design exists to prevent. */
+function reachedNobody(result: { queued?: number } | null | undefined): boolean {
+  return !result || Number(result.queued ?? 0) <= 0;
 }
 
 // The killswitch this worker never had. shared/worker-config.ts is the existing
@@ -173,12 +237,13 @@ async function processEsignCompliance(): Promise<void> {
 
     // Daily reminder to employee (after day 1)
     if (daysPending >= 1 && await canSend(item.employee_id, item.checklist_id, "reminder", REMINDER_COOLDOWN_MS)) {
+      const claim_reminder = await markSent(item.employee_id, item.checklist_id, "reminder");
       try {
         // Claim the cooldown BEFORE dispatching. Claiming afterwards leaves a
         // window where a send that succeeded is never recorded, and the next
         // cycle sends it again.
-        if (await markSent(item.employee_id, item.checklist_id, "reminder")) {
-          await notificationEventService.dispatch({
+                if (claim_reminder.ok) {
+          const result_reminder = await notificationEventService.dispatch({
             eventCode: "esign_reminder",
             recipientEmployeeIds: [item.employee_id],
             // No outbound action button: the signing token is stored only as a
@@ -194,10 +259,17 @@ async function processEsignCompliance(): Promise<void> {
               deadline,
             },
           });
-          reminders++;
+          // A dispatch that queued nothing must not hold the window shut.
+          if (reachedNobody(result_reminder)) {
+            await releaseClaim(item.employee_id, item.checklist_id, "reminder", claim_reminder);
+          } else {
+            reminders++;
+          }
         }
       } catch (err: any) {
         console.error("[EsignComplianceWorker] Reminder dispatch failed:", err.message);
+        // A throw burns the window exactly like a silent failure, so it releases too.
+        if (claim_reminder.ok) await releaseClaim(item.employee_id, item.checklist_id, "reminder", claim_reminder);
       }
     }
 
@@ -206,9 +278,10 @@ async function processEsignCompliance(): Promise<void> {
       if (await canSend(item.employee_id, item.checklist_id, "manager_escalation", ESCALATION_COOLDOWN_MS)) {
         const managerId = await getEmployeeIdForUser(item.reporting_manager_id);
         if (managerId) {
+          const claim_manager_escalation = await markSent(item.employee_id, item.checklist_id, "manager_escalation");
           try {
-            if (await markSent(item.employee_id, item.checklist_id, "manager_escalation")) {
-              await notificationEventService.dispatch({
+                        if (claim_manager_escalation.ok) {
+              const result_manager_escalation = await notificationEventService.dispatch({
                 eventCode: "esign_escalation_manager",
                 recipientEmployeeIds: [managerId],
                 data: {
@@ -218,10 +291,16 @@ async function processEsignCompliance(): Promise<void> {
                   days_pending: String(daysPending),
                 },
               });
-              managerEscalations++;
+              // A dispatch that queued nothing must not hold the window shut.
+              if (reachedNobody(result_manager_escalation)) {
+                await releaseClaim(item.employee_id, item.checklist_id, "manager_escalation", claim_manager_escalation);
+              } else {
+                managerEscalations++;
+              }
             }
           } catch (err: any) {
             console.error("[EsignComplianceWorker] Manager escalation failed:", err.message);
+            if (claim_manager_escalation.ok) await releaseClaim(item.employee_id, item.checklist_id, "manager_escalation", claim_manager_escalation);
           }
         }
       }
@@ -232,9 +311,10 @@ async function processEsignCompliance(): Promise<void> {
       if (await canSend(item.employee_id, item.checklist_id, "hr_escalation", ESCALATION_COOLDOWN_MS)) {
         const hrIds = await getHrUsersForBranch(item.branch_id);
         if (hrIds.length > 0) {
+          const claim_hr_escalation = await markSent(item.employee_id, item.checklist_id, "hr_escalation");
           try {
-            if (await markSent(item.employee_id, item.checklist_id, "hr_escalation")) {
-              await notificationEventService.dispatch({
+                        if (claim_hr_escalation.ok) {
+              const result_hr_escalation = await notificationEventService.dispatch({
                 eventCode: "esign_escalation_hr",
                 recipientEmployeeIds: hrIds,
                 data: {
@@ -245,10 +325,16 @@ async function processEsignCompliance(): Promise<void> {
                   deadline,
                 },
               });
-              hrEscalations++;
+              // A dispatch that queued nothing must not hold the window shut.
+              if (reachedNobody(result_hr_escalation)) {
+                await releaseClaim(item.employee_id, item.checklist_id, "hr_escalation", claim_hr_escalation);
+              } else {
+                hrEscalations++;
+              }
             }
           } catch (err: any) {
             console.error("[EsignComplianceWorker] HR escalation failed:", err.message);
+            if (claim_hr_escalation.ok) await releaseClaim(item.employee_id, item.checklist_id, "hr_escalation", claim_hr_escalation);
           }
         }
       }
