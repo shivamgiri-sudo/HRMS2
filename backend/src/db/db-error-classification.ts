@@ -45,9 +45,34 @@ export function isSchemaOrLogicDbError(error: unknown): boolean {
   return typeof code === "string" && SCHEMA_OR_LOGIC_DB_CODES.has(code);
 }
 
-/** One-line summary for the log: code, server message, and the SQL that produced it. */
+/**
+ * One-line summary for the log: code, server message, and the SQL that produced it.
+ *
+ * Falls back through name/errno/message rather than rendering a bare "UNKNOWN: ". The earlier
+ * version read only code, sqlMessage and sql, so anything that is not a mysql2 protocol error
+ * — a pool exhaustion ("Queue limit reached"), an abort, a plain Error, an AggregateError
+ * whose message is the empty string — was logged with every detail discarded.
+ *
+ * That string is what the circuit-breaker trip line carries. On 2026-08-12 the workers logged
+ * 5,045 breaker events that blocked report generation, report email delivery and performance
+ * ingestion, and every one attributed the cause to "Tripped by: UNKNOWN: ". The one line
+ * written to explain an outage explained nothing, which is worse than no line at all because
+ * it looks like an answer.
+ */
 export function describeDbError(error: unknown): string {
-  const e = (error ?? {}) as { code?: string; sqlMessage?: string; sql?: string };
+  if (error === null || error === undefined) return "UNKNOWN: (no error object)";
+  if (typeof error !== "object") return `UNKNOWN: ${String(error).slice(0, 200)}`;
+
+  const e = error as { code?: string; errno?: number; name?: string; message?: string; sqlMessage?: string; sql?: string };
   const sql = (e.sql ?? "").replace(/\s+/g, " ").slice(0, 300);
-  return `${e.code ?? "UNKNOWN"}: ${(e.sqlMessage ?? "").slice(0, 200)}${sql ? ` | sql: ${sql}` : ""}`;
+
+  // Most specific identifier available, then the most specific description available.
+  const label = e.code ?? e.name ?? "UNKNOWN";
+  const detail = (e.sqlMessage || e.message || "").slice(0, 200);
+  const errno = typeof e.errno === "number" ? ` errno=${e.errno}` : "";
+
+  const described = `${label}:${errno}${detail ? ` ${detail}` : ""}`;
+  // Never hand back a label with nothing behind it — that is the shape that hid the outage.
+  const meaningful = detail || errno || (e.code ? " (no detail)" : "");
+  return `${meaningful ? described : `${label}: (no detail available)`}${sql ? ` | sql: ${sql}` : ""}`;
 }

@@ -163,8 +163,16 @@ function recordFailure(error?: unknown): void {
   circuitBreaker = recordCircuitBreakerFailure(circuitBreaker, CIRCUIT_BREAKER_CONFIG, now, jitterMs);
 
   if (circuitBreaker.status === "open" && previous !== "open") {
+    // Distinguish the two ways the breaker opens. Reopening from half-open does NOT touch the
+    // failure counter (see recordCircuitBreakerFailure), so reporting it there printed
+    // "OPEN after 0 consecutive failure(s)" — which reads as a counter bug and sends whoever
+    // is debugging an outage looking in the wrong place. It is a single failed probe, and
+    // saying so is the whole point of the line.
+    const cause = previous === "half-open"
+      ? "a failed recovery probe"
+      : `${circuitBreaker.failures} consecutive failure(s)`;
     console.error(
-      `[mysql] circuit breaker OPEN after ${circuitBreaker.failures} consecutive failure(s); ` +
+      `[mysql] circuit breaker OPEN after ${cause}; ` +
         // Derived from nextProbeTime, not the nominal config value, so the line stays
         // truthful now that the delay carries jitter.
         `probing again in ${Math.max(0, Math.ceil((circuitBreaker.nextProbeTime - now) / 1000))}s. ` +
