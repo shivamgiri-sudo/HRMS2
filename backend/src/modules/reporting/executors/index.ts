@@ -85,8 +85,7 @@ import {
 import {
   payrollRegister,
   payrollVariance,
-  salarySheetOnfido,
-  bankAdvice,
+    bankAdvice,
   payrollReconciliation,
   arrearPaymentRegister,
   payrollCostSummary,
@@ -268,7 +267,6 @@ export const EXECUTOR_MAP: Record<string, ExecutorFn> = {
   // Payroll
   "payroll-register":          payrollRegister,
   "payroll-variance":          payrollVariance,
-  "salary-sheet-onfido":       salarySheetOnfido,
   "bank-advice":               bankAdvice,
   "payroll-reconciliation":    payrollReconciliation,
   "arrear-payment-register":   arrearPaymentRegister,

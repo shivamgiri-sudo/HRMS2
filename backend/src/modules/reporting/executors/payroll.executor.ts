@@ -2,7 +2,7 @@
  * Payroll executor
  * Security classification: highly_restricted
  *
- * Covers codes: payroll-register, payroll-variance, salary-sheet-onfido,
+ * Covers codes: payroll-register, payroll-variance,
  * bank-advice, payroll-reconciliation, arrear-payment-register, payroll-cost-summary
  *
  * Sensitive fields (pan_number, uan_number, bank_account_number) are masked to
@@ -77,6 +77,34 @@ export const PAYROLL_RUN_STATUSES = [
  * prior run rather than whatever row happened to sort first. Its placeholders sit inside that
  * JOIN, ahead of the WHERE, which is why the caller prepends the status list to the parameters.
  */
+
+/**
+ * Shared by bank-advice and neft-transfer-file. These two payment files disagree about where an
+ * employee's salary should go: bank-advice pays to employees.bank_account_number, neft-transfer
+ * -file to employee_bank_detail (primary, active). Measured on the 2026-07 run across the 1,156
+ * employees with a payable line — employees column present 1,121, bank_detail present 966, both
+ * present and DIFFERENT 6, absent from both 35 — so the status column is how a payment run is
+ * told which rows cannot safely be paid.
+ *
+ * Kept at module scope: they were briefly lost when the salary-sheet-onfido executor was removed
+ * around them, and both remaining reports break without them.
+ */
+const ACCOUNT_SOURCE_JOIN = `
+      LEFT JOIN employee_bank_detail acct_chk
+             ON acct_chk.employee_id = e.id AND acct_chk.is_primary = 1 AND acct_chk.active_status = 1`;
+
+const ACCOUNT_SOURCE_STATUS = `
+           CASE
+             WHEN (e.bank_account_number IS NULL OR e.bank_account_number = '')
+              AND (acct_chk.account_number IS NULL OR acct_chk.account_number = '')
+                  THEN 'MISSING'
+             WHEN e.bank_account_number IS NOT NULL AND e.bank_account_number <> ''
+              AND acct_chk.account_number IS NOT NULL AND acct_chk.account_number <> ''
+              AND TRIM(e.bank_account_number) <> TRIM(acct_chk.account_number)
+                  THEN 'CONFLICT'
+             ELSE 'OK'
+           END AS account_source_status`;
+
 export const PAYROLL_VARIANCE_BODY = `
     SELECT e.employee_code,
            COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
@@ -303,143 +331,6 @@ export async function payrollVariance(
   return { rows, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > rows.length, nextCursor: null };
 }
 
-// ---------------------------------------------------------------------------
-// salary-sheet-onfido
-// ---------------------------------------------------------------------------
-export async function salarySheetOnfido(
-  filters: ExecFilters,
-  scope: ExecScope,
-  options: ExecOptions
-): Promise<ExecResult> {
-  const runMonth = await resolvePayrollMonth(filters.month);
-
-  // Sensitive field projections — masked when caller lacks canViewSensitiveFields
-  const panField  = scope.canViewSensitiveFields ? "e.pan_number"          : "'***MASKED***' AS pan_number";
-  const uanField  = scope.canViewSensitiveFields ? "e.uan_number"          : "'***MASKED***' AS uan_number";
-  const bankField = scope.canViewSensitiveFields ? "e.bank_account_number" : "'***MASKED***' AS bank_account_number";
-
-  const clauses: string[] = ["e.id IS NOT NULL"];
-  const params: unknown[] = [];
-  appendScopeConditions(scope, clauses, params);
-  appendFilterConditions(filters, clauses, params);
-  clauses.push("spr.run_month = ?");
-  params.push(runMonth);
-
-  if (options.mode === "worker" && options.cursor != null) {
-    clauses.push("spl.id > ?");
-    params.push(options.cursor);
-  }
-
-  const base = `
-    SELECT spl.id AS _cursor,
-           spr.run_month AS payroll_month,
-           e.employee_code,
-           COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-           COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
-           COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
-           COALESCE(sp_cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
-           COALESCE(sp_cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
-           COALESCE(d.dept_name, 'UNASSIGNED') AS department_name,
-           des.designation_name,
-           ${panField},
-           ${uanField},
-           ${bankField},
-           COALESCE(spl.basic,0) AS basic_pay,
-           COALESCE(spl.hra,0) AS hra,
-           COALESCE(spl.special_allowance,0) AS special_allowance,
-           -- salary_prep_line has no other_allowances column, so this threw "Unknown column
-           -- 'spl.other_allowances'" and the whole sheet 500'd. Verified on the live July 2026
-           -- run that gross decomposes exactly into the three named components — 1,464 of 1,464
-           -- lines, total residual 0.00 — so there is no missing earnings bucket to recover and
-           -- the honest value is a structural zero. Kept as a column rather than dropped so the
-           -- sheet's earnings block still balances visibly against gross.
-           0 AS other_allowances,
-           COALESCE(spl.gross_salary,0) AS gross_salary,
-           COALESCE(spl.pf_employee,0) AS pf_employee,
-           COALESCE(spl.esic_employee,0) AS esic_employee,
-           COALESCE(spl.professional_tax,0) AS professional_tax,
-           COALESCE(spl.tds,0) AS tds,
-           COALESCE(spl.lwp_deduction,0) AS lwp_deduction,
-           COALESCE(spl.advance_recovery,0) AS advance_recovery,
-           COALESCE(spl.other_deductions,0) AS other_deductions,
-           COALESCE(spl.total_deductions,0) AS total_deductions,
-           spl.net_salary AS net_pay,
-           COALESCE(spl.final_payable_days, spl.working_days, 0) AS payable_days,
-           COALESCE(spl.lwp_days,0) AS lwp_days,
-           -- Second missing arrear column on this table (see arrearPaymentRegister below):
-           -- salary_prep_line records no arrears at all. Arrears live only in
-           -- legacy_payslip_snapshot.arrear, which is a different grain and a different run,
-           -- so joining it into a current-month sheet would attribute a legacy payment to this
-           -- month. Structural zero, same treatment as other_allowances above.
-           0 AS arrear_amount
-      FROM salary_prep_line spl
-      JOIN salary_prep_run spr ON spr.id = spl.run_id
-      JOIN employees e ON e.id = spl.employee_id
-      LEFT JOIN branch_master b ON b.id = e.branch_id
-      LEFT JOIN process_master p ON p.id = e.process_id
-      LEFT JOIN cost_centre_master sp_cc ON sp_cc.id = e.cost_centre_id
-      LEFT JOIN department_master d ON d.id = e.department_id
-      LEFT JOIN designation_master des ON des.id = e.designation_id
-     WHERE ${clauses.join(" AND ")}
-     ORDER BY spl.id ASC`;
-
-  // One execution, not two: the page and its total come from the same fetch wherever the result
-  // fits the probe. See fetchPageWithTotal — the COUNT wrapper it replaces re-ran the entire
-  // statement to learn a number the first run already knew.
-  const paged = await fetchPageWithTotal(base, params, options, query, count);
-  const total = paged.total;
-  const rows  = paged.rows as Record<string, unknown>[];
-  const nextCursor = (options.mode === "worker" && rows.length > 0)
-    ? (rows[rows.length - 1]._cursor as number) : null;
-  const out = rows.map(({ _cursor: _, ...rest }) => rest);
-  return { rows: out, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > out.length, nextCursor };
-}
-
-/**
- * The two payment files disagree about where an employee's salary should go, and until now
- * neither said so.
- *
- * bank-advice pays to employees.bank_account_number. neft-transfer-file pays to
- * employee_bank_detail (primary, active). Those are different tables maintained separately, and
- * on the 2026-07 run, across the 1,156 employees with a payable line:
- *
- *   employees.bank_account_number present          1,121
- *   employee_bank_detail present                     966   (190 fewer)
- *   both present and DIFFERENT                         6
- *   absent from both                                  35
- *
- * So six people would be paid to a different account depending on which file the bank is handed,
- * and around 190 would have a blank account in one file but a usable one in the other. Neither
- * report showed any of this — each simply rendered its own source and looked complete.
- *
- * Deciding which table is authoritative moves real money and is a business call, not a code one.
- * What IS a reporting defect, and is fixed here, is that the disagreement was invisible. Both
- * files now carry account_source_status on every row:
- *
- *   OK          the two sources agree, or only one holds an account
- *   CONFLICT    both hold an account and they differ  -> do not pay until reconciled
- *   MISSING     neither source holds an account       -> cannot be paid at all
- *
- * No account number is compared outside SQL and none is added to the output; the flag is derived
- * in the database and only its verdict is selected, so this exposes no data a viewer could not
- * already see. The join is deliberately the same one neft-transfer-file uses — is_primary and
- * active_status — so the two reports are comparing like with like.
- */
-const ACCOUNT_SOURCE_JOIN = `
-      LEFT JOIN employee_bank_detail acct_chk
-             ON acct_chk.employee_id = e.id AND acct_chk.is_primary = 1 AND acct_chk.active_status = 1`;
-
-const ACCOUNT_SOURCE_STATUS = `
-           CASE
-             WHEN (e.bank_account_number IS NULL OR e.bank_account_number = '')
-              AND (acct_chk.account_number IS NULL OR acct_chk.account_number = '')
-                  THEN 'MISSING'
-             WHEN e.bank_account_number IS NOT NULL AND e.bank_account_number <> ''
-              AND acct_chk.account_number IS NOT NULL AND acct_chk.account_number <> ''
-              AND TRIM(e.bank_account_number) <> TRIM(acct_chk.account_number)
-                  THEN 'CONFLICT'
-             ELSE 'OK'
-           END AS account_source_status`;
 
 // ---------------------------------------------------------------------------
 // bank-advice

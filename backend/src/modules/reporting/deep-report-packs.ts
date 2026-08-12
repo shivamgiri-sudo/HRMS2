@@ -278,7 +278,7 @@ export const DEEP_REPORT_PACKS: DeepReportPack[] = [
     perspectives: [
       p("overview", "Payroll control summary", "Run, readiness, gross, deductions and net pay.", ["payroll-register", "payroll-readiness-status"]),
       p("trend", "Payroll cost and variance", "Month-on-month cost and variance.", ["payroll-variance", "ytd-salary-summary", "cost-centre-salary-summary"]),
-      p("register", "Salary and disbursal registers", "Employee-level salary, bank and transfer outputs.", ["salary-sheet-export", "salary-sheet-onfido", "bank-advice", "neft-transfer-file"]),
+      p("register", "Salary and disbursal registers", "Employee-level salary, bank and transfer outputs.", ["salary-sheet-export", "bank-advice", "neft-transfer-file"]),
       p("exceptions", "Payroll exceptions", "Missing bank, high variance, LWP and recalculation issues.", ["bank-missing", "payroll-variance", "lwp-deduction-register", "payslip-status"]),
       p("reconciliation", "Payroll reconciliation", "Attendance, run, disbursal and payslip consistency.", ["payroll-reconciliation", "payslip-status"]),
       p("compliance", "Compensation audit", "Arrears, increments, advances and approvals.", ["arrear-payment-register", "increment-requests", "salary-advance-register"]),
