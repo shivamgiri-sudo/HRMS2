@@ -439,6 +439,15 @@ export function BudgetLinkedGrnForm({
     ? unwrapData<WorkspacePayload>(workspaceQuery.data)
     : null;
 
+  // Reset to fresh edit mode whenever editGrnId changes (makes pre-fill
+  // correct regardless of whether the parent unmounts this component or not).
+  useEffect(() => {
+    if (!editGrnId) return;
+    setCreated({ id: editGrnId, grnNumber: "…", submitted: false });
+    setPrefilledForEdit(false);
+    setForm(EMPTY_FORM);
+  }, [editGrnId]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // Pre-fill form state when editing a rejected GRN. Runs once when workspace loads.
   useEffect(() => {
     if (prefilledForEdit || !workspace?.grn) return;
@@ -462,7 +471,7 @@ export function BudgetLinkedGrnForm({
       paymentTermsDays: Number(g.payment_terms_days ?? 30),
       remarks: String(g.remarks ?? ""),
     });
-    setCreated({ id: String(g.id), grnNumber: String(g.grn_number ?? editGrnId ?? ""), submitted: false });
+    setCreated({ id: String(g.id), grnNumber: String(g.grn_number ?? editGrnId ?? "") || "…", submitted: false });
     if (workspace.invoiceComponents?.length) {
       setInvoiceComponents(
         workspace.invoiceComponents.map((ic) => ({
