@@ -65,6 +65,30 @@ async function scopeOf(req: AuthenticatedRequest) {
   });
 }
 
+/**
+ * The allocation's own branch decides who may touch it, not the caller's role alone.
+ *
+ * Extracted from the approval-history read, which already did this and explained why. The review
+ * endpoint next to it addresses the same :id, admits branch_head — a branch-scoped role — and had
+ * no branch check at all, so a Branch Head could APPROVE or REJECT another branch's imprest
+ * allocation while being correctly refused permission to READ its history. The write was less
+ * guarded than the read, and money moves on the write.
+ *
+ * Returns the allocation's branch so a caller can 404 a missing row before deciding anything.
+ */
+async function assertAllocationBranch(req: AuthenticatedRequest, allocationId: string) {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT branch_id FROM imprest_allocation WHERE id = ? LIMIT 1`,
+    [allocationId],
+  );
+  if (!rows[0]) return { found: false as const };
+  const scope = await scopeOf(req);
+  if (scope.mode === "branches" && !scope.branchIds.includes(String(rows[0].branch_id))) {
+    return { found: true as const, allowed: false as const };
+  }
+  return { found: true as const, allowed: true as const };
+}
+
 const fail = (res: any, error: unknown, fallback: string) =>
   res.status(400).json({
     success: false,
@@ -222,6 +246,13 @@ imprestRouter.post(
   requireRole("branch_head", "finance_head", "super_admin"),
   h(async (req, res) => {
     try {
+      const access = await assertAllocationBranch(req, req.params.id);
+      if (!access.found) {
+        return res.status(404).json({ success: false, error: "Imprest allocation not found" });
+      }
+      if (!access.allowed) {
+        return res.status(403).json({ success: false, error: "You do not have access to this branch" });
+      }
       const user = actor(req);
       const data = await imprestService.reviewAllocation(
         req.params.id,
@@ -242,17 +273,11 @@ imprestRouter.get(
   "/allocations/:id/approval-history",
   requireRole(...IMPREST_READ_ROLES),
   h(async (req, res) => {
-    // The allocation's own branch decides who may read its history, not the caller's role alone.
-    // Without this a reviewer at one branch could read another branch's rejection reasons by id.
-    const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT branch_id FROM imprest_allocation WHERE id = ? LIMIT 1`,
-      [req.params.id],
-    );
-    if (!rows[0]) {
+    const access = await assertAllocationBranch(req, req.params.id);
+    if (!access.found) {
       return res.status(404).json({ success: false, error: "Imprest allocation not found" });
     }
-    const scope = await scopeOf(req);
-    if (scope.mode === "branches" && !scope.branchIds.includes(String(rows[0].branch_id))) {
+    if (!access.allowed) {
       return res.status(403).json({ success: false, error: "You do not have access to this branch" });
     }
     const data = await listFinanceApprovalEvents("imprest_allocation", req.params.id);
