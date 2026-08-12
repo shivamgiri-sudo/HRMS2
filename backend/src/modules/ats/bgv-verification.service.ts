@@ -8,6 +8,7 @@ import { syncBridgePennyDropStatus } from "./onboarding-bridge-status.js";
 import { loadAsyncBgvTriggerContext, validateOnboardingToken } from "./onboarding-full.service.js";
 import { resolveBankNameVariance } from "./bank-name-corroboration.js";
 import { digilockerVerifiedCheckTypes, type DigilockerEvidence } from "./digilocker-evidence.js";
+import { propagateIdentityVerification } from "../../shared/identityVerificationPropagation.js";
 
 const hashValue = (value: unknown) => {
   const normalized = String(value ?? "").trim().toUpperCase();
@@ -120,6 +121,38 @@ function resolveAadhaarLast4(supplied: string | undefined, candidate: RowDataPac
 }
 
 async function createOrUpdateCheck(candidateId: string, checkType: string, status: string, input: Record<string, unknown>) {
+  // Computed once and reused by both the update and insert paths below, so the timestamp
+  // stored on the check and the one propagated to the employee record cannot diverge.
+  const verifiedAt = status === "verified" ? new Date() : null;
+
+  /**
+   * Carry a passed identity check onto employees.pan_verified_on / aadhaar_verified_on.
+   *
+   * Those columns are read in four places to decide "verified" vs "pending", and until now
+   * NOTHING wrote them — NULL on all 58,814 employees, so every profile read "pending" for
+   * ever and identity.executor.ts's KYC report was a permanent 0% verified returning zero
+   * rows. The verifications were real all along (20 PAN checks at status='verified' with
+   * provider timestamps); the result simply had nowhere to go.
+   *
+   * Deliberately non-fatal, and deliberately NOT a silent catch: a failure to mirror the
+   * result must not roll back the BGV check that genuinely passed, but it is logged loudly
+   * because swallow-and-continue is exactly how the original gap stayed invisible.
+   */
+  const propagate = async () => {
+    if (!verifiedAt) return;
+    try {
+      const r = await propagateIdentityVerification(candidateId, checkType, verifiedAt);
+      if (r.updated) {
+        console.log(`[bgv] ${checkType} verified — stamped employees.${r.column} for ${r.employeeId}`);
+      }
+    } catch (err) {
+      console.error(
+        `[bgv] could not propagate ${checkType} verification for candidate ${candidateId} ` +
+        `to the employee record:`, err instanceof Error ? err.message : err,
+      );
+    }
+  };
+
   const [existing] = await db.execute<RowDataPacket[]>(
     `SELECT id FROM candidate_bgv_check WHERE candidate_id = ? AND check_type = ? LIMIT 1`,
     [candidateId, checkType]
@@ -146,10 +179,11 @@ async function createOrUpdateCheck(candidateId: string, checkType: string, statu
         input.resultSummary ?? null,
         input.resultJson ? JSON.stringify(input.resultJson) : null,
         input.riskFlags ? JSON.stringify(input.riskFlags) : null,
-        status === "verified" ? new Date() : null,
+        verifiedAt,
         existingId,
       ]
     );
+    await propagate();
     return existingId;
   }
   const checkId = randomUUID();
@@ -174,7 +208,7 @@ async function createOrUpdateCheck(candidateId: string, checkType: string, statu
       input.resultSummary ?? null,
       input.resultJson ? JSON.stringify(input.resultJson) : null,
       input.riskFlags ? JSON.stringify(input.riskFlags) : null,
-      status === "verified" ? new Date() : null,
+      verifiedAt,
     ]
   );
 
@@ -186,6 +220,7 @@ async function createOrUpdateCheck(candidateId: string, checkType: string, statu
     }
   });
 
+  await propagate();
   return checkId;
 
   // Internal helper to avoid hoisting issues
