@@ -700,6 +700,26 @@ export async function gratuityLiabilityRegister(
   appendFilterConditions(filters, clauses, params);
   clauses.push("e.active_status = 1", "e.date_of_joining IS NOT NULL");
 
+  /**
+   * Minimum qualifying service, from statutory_config rather than a literal.
+   *
+   * The register carried NO service filter, so every employee with a joining date accrued a
+   * liability from day one. Under the Payment of Gratuity Act nothing is payable before five
+   * years of continuous service, and the threshold was already configured and simply unused:
+   * gratuity_min_service_months = 60 (alongside gratuity_multiplier 15 and gratuity_divisor 26).
+   *
+   * Measured on production 2026-08-12: of 1,327 active employees with a joining date, 99 qualify
+   * and 1,228 do not. So this removes roughly 93% of the rows and the liability attached to
+   * them — a large drop that is the correction, not a regression. The 99 matches the "qualifying
+   * population" the fan-out fix above already measured independently.
+   *
+   * Read through a subquery so a change to the configured threshold takes effect without a code
+   * change, and so this cannot silently diverge from what payroll uses.
+   */
+  clauses.push(`TIMESTAMPDIFF(MONTH, e.date_of_joining, CURDATE()) >= (
+      SELECT CAST(config_value AS UNSIGNED) FROM statutory_config
+       WHERE config_key = 'gratuity_min_service_months' LIMIT 1)`);
+
   const base = `
     SELECT e.employee_code,
            COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
