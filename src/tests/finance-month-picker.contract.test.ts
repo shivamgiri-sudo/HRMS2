@@ -60,3 +60,38 @@ describe("finance period pickers work in every browser", () => {
     expect(workspace).not.toContain("function MonthYearPicker");
   });
 });
+
+/**
+ * Three P&L surfaces that told the reader nothing, or the wrong thing.
+ */
+describe("Process P&L surfaces explain themselves", () => {
+  const page = (f: string) => read(resolve(root, "pages/finance", f));
+
+  it("Period Close says why Lock is unavailable", () => {
+    // canonicalCloseView returns qualityGates alongside canLock; the hook never declared them,
+    // so the button just vanished and the page gave no reason.
+    expect(read(resolve(root, "hooks/usePnlReconciliation.ts"))).toContain("qualityGates?: {");
+    const close = page("PnlPeriodClosePage.tsx");
+    expect(close).toContain("closeData?.qualityGates?.blockerCount");
+    expect(close).toContain("Cannot lock —");
+  });
+
+  it("the P&L filters do not narrow themselves out of reach", () => {
+    // rows are the response for the CURRENT filters, so deriving options from them left
+    // ["All branches", "Mumbai"] after picking Mumbai — and escaping cost two 16-23s queries.
+    const list = page("ProcessPnlPage.tsx");
+    expect(list).toContain("seenBranches");
+    expect(list).toContain("seenClients");
+    expect(list).not.toMatch(/const branches = Array\.from\(\s*new Map\(rows/);
+  });
+
+  it("both P&L pages open on the same month", () => {
+    // The list page opens on the previous month and documents why: the current month has
+    // invoicing but no payroll run, which reads as broken arithmetic. The detail page defaulted
+    // to the current month, so a bookmarked link disagreed with the page it came from.
+    for (const f of ["ProcessPnlPage.tsx", "ProcessPnlDetailPage.tsx"]) {
+      expect(page(f), `${f} must default to the previous month`)
+        .toContain("now.getMonth() - 1");
+    }
+  });
+});

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { Download } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -115,12 +115,27 @@ export default function ProcessPnlPage() {
   const statementQuery = usePnlStatement(filters, statementViewBy);
   const summary = bpoQuery.data;
   const rows = summary?.rows ?? [];
-  const branches = Array.from(
-    new Map(rows.filter((row) => row.branchId).map((row) => [row.branchId as string, row.branchName ?? "Unassigned"])).entries()
-  );
-  const clients = Array.from(
-    new Map(rows.filter((row) => row.clientId).map((row) => [row.clientId as string, row.clientName ?? "Unmapped"])).entries()
-  );
+  /*
+   * Filter options accumulate; they are never rebuilt from the filtered rows alone.
+   *
+   * `rows` is the API response for the CURRENT filters, so deriving the dropdowns from it made
+   * them self-narrowing: choosing Mumbai collapsed the branch list to ["All branches", "Mumbai"],
+   * and reaching Pune meant going back through "All branches" and waiting out the query twice —
+   * on a page whose own comment records it taking 16-23s.
+   *
+   * Everything seen since the page mounted stays selectable. An option that no longer matches
+   * any row simply returns nothing when chosen, which is the same outcome as any other empty
+   * filter, and far better than being unable to select it at all.
+   */
+  const seenBranches = useRef(new Map<string, string>());
+  const seenClients = useRef(new Map<string, string>());
+  for (const row of rows) {
+    if (row.branchId) seenBranches.current.set(row.branchId as string, row.branchName ?? "Unassigned");
+    if (row.clientId) seenClients.current.set(row.clientId as string, row.clientName ?? "Unmapped");
+  }
+  const byLabel = (a: [string, string], b: [string, string]) => a[1].localeCompare(b[1]);
+  const branches = Array.from(seenBranches.current.entries()).sort(byLabel);
+  const clients = Array.from(seenClients.current.entries()).sort(byLabel);
 
   function updateFilters(next: { period?: string; branchId?: string; clientId?: string; search?: string }) {
     const params = new URLSearchParams(searchParams);

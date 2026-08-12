@@ -59,6 +59,23 @@ export interface PnlPeriodCloseData {
     canSignoff: boolean;
     canLock: boolean;
   };
+  /**
+   * Why the period cannot be locked yet.
+   *
+   * canonicalCloseView computes canLock as `base.canLock && qualityBlockers.length === 0` and
+   * returns the blockers alongside it — but this type never declared them, so the page could
+   * only hide the Lock button and say nothing. A control that disappears with no reason is
+   * indistinguishable from a broken page, and lockPeriod's own error message (which does list
+   * them) was unreachable because the button that would trigger it was gone.
+   */
+  qualityGates?: {
+    strictClose: boolean;
+    lobEnabledProcesses: number;
+    revenueModelCoveragePct: number;
+    blockerCount: number;
+    blockers: Array<{ code: string; message: string; processId?: string }>;
+    passed: boolean;
+  };
   allocationDrivers: Array<{
     branchName: string;
     revenue: number;

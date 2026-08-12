@@ -256,6 +256,37 @@ export default function PnlPeriodClosePage() {
                 Lock period
               </Button>
             )}
+            {/* Why Lock is not offered. canonicalCloseView already computes canLock as
+                `canLock && qualityBlockers.length === 0` and returns the blockers with it, but
+                nothing rendered them — so the button simply vanished and the page gave no
+                reason, which is indistinguishable from a broken screen. lockPeriod's own error
+                lists the same blockers, but that path was unreachable with the button gone.
+                Shown only when the signoff chain is otherwise complete, so it does not nag
+                during a period that was never ready to lock anyway. */}
+            {!closeData?.availableActions?.canLock
+              && !!closeData?.qualityGates?.blockerCount
+              && !closeData?.availableActions?.canSignoff
+              && closeData.period?.status !== "locked" && (
+              <div
+                className="max-w-md rounded-md border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-[11px] leading-snug text-amber-900"
+                role="status"
+              >
+                <span className="font-semibold">
+                  Cannot lock — {closeData.qualityGates.blockerCount} quality{" "}
+                  {closeData.qualityGates.blockerCount === 1 ? "gate" : "gates"} open:
+                </span>
+                <ul className="mt-0.5 list-disc pl-4">
+                  {closeData.qualityGates.blockers.slice(0, 4).map((blocker) => (
+                    <li key={`${blocker.code}-${blocker.processId ?? ""}`}>{blocker.message}</li>
+                  ))}
+                </ul>
+                {closeData.qualityGates.blockers.length > 4 && (
+                  <p className="mt-0.5">
+                    and {closeData.qualityGates.blockers.length - 4} more.
+                  </p>
+                )}
+              </div>
+            )}
           </div>
         </div>
       </div>

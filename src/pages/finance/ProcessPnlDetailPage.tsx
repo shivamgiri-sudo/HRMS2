@@ -10,9 +10,22 @@ import { PnlExecutiveKpiStrip } from "@/components/finance/pnl/PnlExecutiveKpiSt
 import { useBpoProcessPnlDetail } from "@/hooks/useBpoProcessPnlDetail";
 import { useProcessPnlSection } from "@/hooks/useProcessPnlDetail";
 
+/**
+ * The month this page opens on when the URL carries none.
+ *
+ * Matches defaultPeriod() in ProcessPnlPage, deliberately. That page opens on the PREVIOUS month
+ * and explains why: the current month has invoicing but no payroll run yet, so a reader sees
+ * revenue against no cost and concludes the arithmetic is broken. The same is true here, and
+ * this page defaulted to the current month instead.
+ *
+ * Every in-app link passes ?period=, so the two only diverged on a bookmarked or shared
+ * /finance/process-pnl/<id> — which is exactly when nobody is around to explain the half-elapsed
+ * month. Same rule in both places now.
+ */
 function currentPeriod() {
   const now = new Date();
-  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+  const previous = new Date(Date.UTC(now.getFullYear(), now.getMonth() - 1, 1));
+  return `${previous.getUTCFullYear()}-${String(previous.getUTCMonth() + 1).padStart(2, "0")}`;
 }
 
 function currency(value: number | null | undefined, compact = false) {
