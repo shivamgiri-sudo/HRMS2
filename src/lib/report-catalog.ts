@@ -1360,6 +1360,15 @@ export const REPORT_CATALOG: ReportMeta[] = [
     rowGrain: "One row per employee per payroll month",
     primaryKey: ["employee_code", "payroll_month"],
     columns: [
+      // ICICI Bank Transfer File columns — declared in BOTH catalogues or the grid and export
+      // silently discard them.
+      { key: "debit_ac_no", label: "Debit Ac No", format: "text", width: 140 },
+      { key: "beneficiary_name", label: "Beneficiary Name", format: "text", width: 180 },
+      { key: "amt", label: "Amt", format: "currency", width: 120, align: "right", sensitive: true },
+      { key: "pay_mod", label: "Pay Mod", format: "text", width: 80 },
+      { key: "transfer_date", label: "Date", format: "text", width: 120 },
+      { key: "bene_mobile_no", label: "Bene Mobile no", format: "text", width: 130, sensitive: true },
+      { key: "bene_email_id", label: "Bene email id", format: "text", width: 200, sensitive: true },
       { key: "employee_code", label: "Emp Code", format: "text", width: 100 },
       { key: "employee_name", label: "Employee Name", format: "text", width: 180 },
       { key: "cost_centre_code", label: "Cost Centre Code", format: "text", width: 140 },
