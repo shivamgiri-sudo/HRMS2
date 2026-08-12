@@ -70,16 +70,6 @@
   "modules/employees/employee.documents.routes.ts": [
     "employee_documents.updated_at"
   ],
-  "modules/incentives/incentives.routes.ts": [
-    "audit_log.action",
-    "audit_log.meta",
-    "audit_log.user_id",
-    "work_item_audit_log.created_at",
-    "work_item_audit_log.entity_id",
-    "work_item_audit_log.entity_type",
-    "work_item_audit_log.meta",
-    "work_item_audit_log.user_id"
-  ],
   "modules/incentives/incentives.service.ts": [
     "incentive_upload_batch.remarks",
     "salary_prep_run.incentives_applied_at"

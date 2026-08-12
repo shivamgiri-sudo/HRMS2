@@ -4,6 +4,7 @@ import { requireRole } from '../../middleware/requireRole.js';
 import type { AuthenticatedRequest } from '../../middleware/authMiddleware.js';
 import { randomUUID } from 'crypto';
 import { db } from '../../db/mysql.js';
+import { writeAuditLog as writeEnterpriseAuditLog } from '../../shared/auditLog.js';
 import type { RowDataPacket } from 'mysql2';
 import multer from 'multer';
 
@@ -319,31 +320,46 @@ async function createApprovalWorkItem(
   );
 }
 
-// Helper: write an audit log entry (prefers audit_log, falls back to work_item_audit_log)
+/**
+ * Record an incentive approval-chain event.
+ *
+ * Neither of the two statements this replaced could ever succeed, and both
+ * failures were swallowed, so not one incentive approval, rejection or register
+ * creation has ever been audited.
+ *
+ *   audit_log named user_id, action and meta. The table has actor_user_id,
+ *   action_type and metadata_json - and module_key, which is NOT NULL with no
+ *   default and was never supplied, so it would have failed even with the right
+ *   names. That table holds 0 rows and this file was its only writer.
+ *
+ *   the fallback wrote the same shape into work_item_audit_log, which has none
+ *   of those columns. It tracks work-item transitions and requires work_item_id
+ *   (NOT NULL), so an incentive_batch row could not go there under any spelling.
+ *
+ * Delegating to the shared writer rather than correcting the SQL: it is the
+ * mechanism already in use (audit_action_log holds 84 rows against audit_log's
+ * 0), it supplies module_key, and it is non-throwing by contract, which is the
+ * property the swallowed try/catch was reaching for. Call sites keep this
+ * signature and are unchanged.
+ *
+ * The separate work_item_audit_log insert further down is left alone - that one
+ * names the real columns (work_item_id, from_status, to_status, performed_by)
+ * and is genuinely about a work-item transition.
+ */
 async function writeAuditLog(
   userId: string,
   action: string,
   entityId: string,
   meta: Record<string, unknown>
 ): Promise<void> {
-  try {
-    await db.execute(
-      `INSERT INTO audit_log (id, user_id, action, entity_type, entity_id, meta, created_at)
-       VALUES (UUID(), ?, ?, 'incentive_batch', ?, ?, NOW())`,
-      [userId, action, entityId, JSON.stringify(meta)]
-    );
-  } catch {
-    // audit_log table may not exist; fall back to work_item_audit_log
-    try {
-      await db.execute(
-        `INSERT INTO work_item_audit_log (id, user_id, action, entity_type, entity_id, meta, created_at)
-         VALUES (UUID(), ?, ?, 'incentive_batch', ?, ?, NOW())`,
-        [userId, action, entityId, JSON.stringify(meta)]
-      );
-    } catch {
-      // Audit logging is best-effort; swallow if neither table exists
-    }
-  }
+  await writeEnterpriseAuditLog({
+    actor_user_id: userId,
+    action_type: action,
+    module_key: 'incentives',
+    entity_type: 'incentive_batch',
+    entity_id: entityId,
+    metadata: meta,
+  });
 }
 
 // POST /batches/:batchId/approval-chain/init — initialize 3-step approval chain
