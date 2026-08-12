@@ -14,6 +14,8 @@
     "src/shared/__tests__/blindIndexVerifyContract.test.ts",
     "src/shared/deadlockRetry.ts",
     "scripts/statutory-blind-index-backfill.ts",
+    "scripts/bank-exception-report.ts",
+    "src/shared/__tests__/bankExceptionReportContract.test.ts",
     "src/workers/domains/bank-detail-sync-handler.ts"
   ],
   // "multer" on top of the project's ["node"] for the same reason tsconfig.dpdp-check.json needs
