@@ -118,6 +118,14 @@ router.post("/batches/:id/import", requireRole("admin", "hr", "super_admin", "wf
     return res.json({ success: true, data });
   }
 
+  if (rpc_name === "import_pf_uan_batch") {
+    const { importPfUanBatch } = await import(
+      "../bulk-upload/pf-uan-bulk.service.js"
+    );
+    const data = await importPfUanBatch(id, req.authUser!.id);
+    return res.json({ success: true, data });
+  }
+
   if (rpc_name === "import_reporting_manager_update_batch") {
     const { importReportingManagerBatch } = await import(
       "../bulk-upload/reporting-manager-bulk.service.js"
