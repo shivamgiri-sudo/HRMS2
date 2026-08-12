@@ -492,7 +492,10 @@
     "1125_legacy_payslip_snapshot_account_encryption.sql",
     "1128_statutory_filing_record.sql",
     "1129_cost_centre_page_access.sql",
-    "1129_org_chart_access_log.sql"
+    "1129_org_chart_access_log.sql",
+    "1130_ats_candidate_record_type.sql",
+    "1131_bulk_operation_jobs.sql",
+    "1132_salary_prep_line_reimbursement_total.sql"
   ],
   "approvedDeletions": [],
   "knownDangling": [

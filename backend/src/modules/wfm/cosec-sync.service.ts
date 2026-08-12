@@ -349,11 +349,15 @@ function tagIST(val: string): string {
   return val; // pass bare string through unchanged
 }
 
-function assessmentModeForPunchDate(punchDate: string, syncToDate: string): PunchAssessmentMode {
+export function assessmentModeForPunchDate(punchDate: string, syncToDate: string): PunchAssessmentMode {
   return punchDate < defaultToDate() || punchDate < syncToDate ? "historical" : "live";
 }
 
-async function migratePunchGroup(group: PunchGroup, mode: PunchAssessmentMode): Promise<"migrated" | "unmapped"> {
+// Exported so a targeted, scoped backfill script (e.g. for re-materialising a specific
+// employee cohort's historical attendance) can drive the exact production write path one
+// punch group at a time, instead of the full-population sync() sweep. Behaviour is
+// unchanged — this is the same function sync() has always called internally.
+export async function migratePunchGroup(group: PunchGroup, mode: PunchAssessmentMode): Promise<"migrated" | "unmapped"> {
   const employee = await resolveEmployee(group.cosecUserId);
   if (!employee) return "unmapped";
 
