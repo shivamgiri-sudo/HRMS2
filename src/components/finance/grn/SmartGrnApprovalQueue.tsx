@@ -8,6 +8,7 @@ import {
   FileText,
   Loader2,
   RefreshCw,
+  RotateCcw,
   Send,
   Split,
   XCircle,
@@ -102,7 +103,7 @@ function unwrap<T>(value: any): T {
   return (value?.data ?? value) as T;
 }
 
-export function SmartGrnApprovalQueue() {
+export function SmartGrnApprovalQueue({ onReopenForEdit }: { onReopenForEdit?: (grnId: string) => void } = {}) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [status, setStatus] = useState("submitted");
@@ -206,6 +207,19 @@ export function SmartGrnApprovalQueue() {
     },
     onError: (error: Error) =>
       toast({ title: "Cancellation failed", description: error.message, variant: "destructive" }),
+  });
+
+  const reopenMutation = useMutation({
+    mutationFn: (id: string) => hrmsApi.post(`/api/finance/grns/${id}/reopen`, {}),
+    onSuccess: (_, id) => {
+      toast({ title: "GRN reopened — redirecting to edit form" });
+      setTarget(null);
+      void queryClient.invalidateQueries({ queryKey: ["grn-list"] });
+      void queryClient.invalidateQueries({ queryKey: ["grn-summary"] });
+      onReopenForEdit?.(id);
+    },
+    onError: (error: Error) =>
+      toast({ title: "Reopen failed", description: error.message, variant: "destructive" }),
   });
 
   const overrideMutation = useMutation({
@@ -351,7 +365,15 @@ export function SmartGrnApprovalQueue() {
                   className={`${GRN_TR} cursor-pointer`}
                   onClick={() => { setTarget(row); setDecision("approved"); setReviewNote(""); setOverrideCode(null); setOverrideReason(""); }}
                 >
-                  <GrnTd className="font-grn-mono font-bold text-grn-brand">{row.grn_number}</GrnTd>
+                  <GrnTd className="font-grn-mono font-bold text-grn-brand">
+                    <span className="block">{row.grn_number}</span>
+                    {row.accounting_period && row.bill_date &&
+                      row.accounting_period.slice(0, 7) !== row.bill_date.slice(0, 7) && (
+                        <span className="mt-0.5 block font-grn-mono text-[10px] font-normal text-amber-600">
+                          ≠ {row.accounting_period.slice(0, 7)}
+                        </span>
+                      )}
+                  </GrnTd>
                   <GrnTd>
                     <StatusStamp tone="neutral">{row.grn_type}</StatusStamp>
                   </GrnTd>
@@ -474,6 +496,8 @@ export function SmartGrnApprovalQueue() {
                         ["Bill date", dateLabel(target.bill_date)],
                         ["Due date", dateLabel(target.due_date)],
                         ["Allocation", target.allocation_mode ?? "single"],
+                        ["Acctg period", parent?.accounting_period ?? "—"],
+                        ["Rejection reason", parent?.rejection_reason ?? null],
                         ["Validation score", target.validation_score != null ? `${target.validation_score}%` : "—"],
                         ["Invoice", parent?.invoice_number ?? "—"],
                         ["Financial year", parent?.financial_year ?? "—"],
@@ -712,8 +736,24 @@ export function SmartGrnApprovalQueue() {
                   </div>
                 </div>
               ) : (
-                <div className="p-4">
-                  <GrnAlert tone="info">Read-only access at the current workflow stage.</GrnAlert>
+                <div className="space-y-3 p-4">
+                  <GrnAlert tone="info">
+                    {target?.status === "rejected"
+                      ? "This GRN was rejected. Reopen it to correct and resubmit."
+                      : "Read-only access at the current workflow stage."}
+                  </GrnAlert>
+                  {target?.status === "rejected" && capabilities?.canCreate && (
+                    <GrnButton
+                      variant="primary"
+                      disabled={reopenMutation.isPending}
+                      onClick={() => target && reopenMutation.mutate(target.id)}
+                    >
+                      {reopenMutation.isPending
+                        ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        : <RotateCcw className="h-3.5 w-3.5" />}
+                      Reopen for Correction
+                    </GrnButton>
+                  )}
                 </div>
               )}
             </TabsContent>
