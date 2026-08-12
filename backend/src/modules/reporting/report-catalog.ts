@@ -3191,8 +3191,22 @@ export const REPORT_CATALOG: ReportDefinition[] = [
     name: "Offer to Joining Tracker",
     category: "Recruitment",
     subcategory: "Offers & Joining",
-    description: "Offer-to-joining timeline per candidate, with actual vs. expected date of joining variance",
-    rowGrain: "One row per candidate onboarding bridge record",
+    /**
+     * The coverage caveat is in the description because it changes what the number MEANS, and
+     * the reader has no other way to learn it.
+     *
+     * Measured on production 2026-08-12: 1,250 candidates sit at stage 'Offered' and ALL 1,250
+     * have zero rows in ats_employment_offer AND zero in ats_onboarding_bridge. The table has
+     * 375 bridge rows and ats_employment_offer holds 15 in total. So this report and the
+     * offer-stage population are disjoint — it is not a sample of offers, it is a different
+     * set. Read as "offer to joining", the 375 invites an inference about the 1,250 that the
+     * data cannot support.
+     */
+    description:
+      "Offer-to-joining timeline per onboarding-bridge record, with actual vs. expected date of joining variance. " +
+      "COVERAGE: bridge records only (375 on 2026-08-12). The 1,250 candidates at stage 'Offered' have no bridge " +
+      "or employment-offer row, so they are absent here — this is not an offer-conversion rate.",
+    rowGrain: "One row per candidate onboarding bridge record — NOT one per offer",
     primaryKey: ["candidate_code"],
     columns: [
       { key: "candidate_code", label: "Candidate Code", format: "text", width: 120 },

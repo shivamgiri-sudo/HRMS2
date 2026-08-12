@@ -1282,7 +1282,7 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
                LEFT JOIN employees e ON e.id = aob.employee_id
               WHERE aob.created_at BETWEEN ? AND ?
               ORDER BY aob.bridge_date DESC`;
-      params.push(from, to);
+      params.push(from, endOfDayParam(to));
       break;
     }
 
@@ -1298,7 +1298,7 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
                JOIN ats_candidate ac ON ac.id = br.candidate_id
               WHERE br.created_at BETWEEN ? AND ?
               ORDER BY br.created_at DESC`;
-      params.push(from, to);
+      params.push(from, endOfDayParam(to));
       break;
     }
 
@@ -1316,7 +1316,7 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
               WHERE ac.created_at BETWEEN ? AND ?
               GROUP BY ac.recruiter_name, ac.recruiter_email
               ORDER BY joined DESC, total_sourced DESC`;
-      params.push(from, to);
+      params.push(from, endOfDayParam(to));
       break;
     }
 
@@ -1352,7 +1352,7 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
                LEFT JOIN employee_documents ed ON ed.employee_id = e.id
               WHERE aob.created_at BETWEEN ? AND ?
               ORDER BY ac.full_name, ed.doc_type`;
-      params.push(from, to);
+      params.push(from, endOfDayParam(to));
       break;
     }
 
@@ -1371,7 +1371,7 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
               GROUP BY ac.id, ac.candidate_code, ac.full_name, ac.mobile
               HAVING offered_date IS NOT NULL
               ORDER BY tat_days DESC`;
-      params.push(from, to);
+      params.push(from, endOfDayParam(to));
       break;
     }
 
@@ -1380,7 +1380,7 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
       const from = dateParam(req.query.from, `${new Date().getFullYear()}-01-01`);
       const to = dateParam(req.query.to, new Date().toISOString().slice(0, 10));
       addScopedEmployeeFilters(req, clauses, params);
-      clauses.push("er.submitted_at BETWEEN ? AND ?"); params.push(from, to);
+      clauses.push("er.submitted_at BETWEEN ? AND ?"); params.push(from, endOfDayParam(to));
       sql = `SELECT e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
                     er.submitted_at AS resignation_date,
                     COALESCE(er.last_working_day_confirmed, er.last_working_day_proposed) AS last_working_day,
@@ -1416,7 +1416,7 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
                LEFT JOIN full_final_calculation ffc ON ffc.exit_request_id = er.id
               WHERE er.submitted_at BETWEEN ? AND ?
               ORDER BY shortfall_days DESC`;
-      params.push(from, to);
+      params.push(from, endOfDayParam(to));
       break;
     }
 
@@ -1437,7 +1437,7 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
               WHERE er.submitted_at BETWEEN ? AND ?
               GROUP BY er.exit_reason_category, b.branch_name, p.process_name
               ORDER BY exit_count DESC`;
-      params.push(from, to);
+      params.push(from, endOfDayParam(to));
       break;
     }
 
@@ -1476,7 +1476,7 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
       // so created_at is the date this report can actually filter on. Keeping submitted_at
       // first means the filter starts using it the moment it is populated.
       clauses.push("COALESCE(er.submitted_at, er.created_at) BETWEEN ? AND ?");
-      params.push(from, to);
+      params.push(from, endOfDayParam(to));
       // Reads exit_clearance_task, not exit_clearance_checklist.
       //
       // Both tables exist. exit_clearance_checklist holds 0 rows and is the older, simpler
@@ -1694,7 +1694,7 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
                LEFT JOIN employees creator ON creator.id = wrp.created_by
               WHERE wrp.updated_at BETWEEN ? AND ?
               ORDER BY wrp.updated_at DESC`;
-      params.push(from, to);
+      params.push(from, endOfDayParam(to));
       break;
     }
 
@@ -2107,7 +2107,7 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
                JOIN ats_candidate ac ON ac.id = abc.candidate_id
               WHERE abc.dispatched_at BETWEEN ? AND ?
               ORDER BY abc.dispatched_at DESC`;
-      params.push(from, to);
+      params.push(from, endOfDayParam(to));
       break;
     }
 
@@ -2116,7 +2116,7 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
       const to = dateParam(req.query.to, new Date().toISOString().slice(0, 10));
       if (req.query.branchId) { clauses.push("aor.branch_id = ?"); params.push(String(req.query.branchId)); }
       if (req.query.status) { clauses.push("aor.status = ?"); params.push(String(req.query.status)); }
-      clauses.push("aor.created_at BETWEEN ? AND ?"); params.push(from, to);
+      clauses.push("aor.created_at BETWEEN ? AND ?"); params.push(from, endOfDayParam(to));
       sql = `SELECT ac.candidate_code, ac.full_name, ac.mobile,
                     COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
                     COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
@@ -2135,7 +2135,7 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
       const from = dateParam(req.query.from, `${new Date().getFullYear()}-01-01`);
       const to = dateParam(req.query.to, new Date().toISOString().slice(0, 10));
       if (req.query.branchId) { clauses.push("aol.branch_id = ?"); params.push(String(req.query.branchId)); }
-      clauses.push("aol.created_at BETWEEN ? AND ?"); params.push(from, to);
+      clauses.push("aol.created_at BETWEEN ? AND ?"); params.push(from, endOfDayParam(to));
       sql = `SELECT ac.candidate_code, ac.full_name,
                     COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
                     COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
@@ -2181,7 +2181,7 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
       const to = dateParam(req.query.to, new Date().toISOString().slice(0, 10));
       if (req.query.branchId) { clauses.push("aob.branch_id = ?"); params.push(String(req.query.branchId)); }
       if (req.query.processId) { clauses.push("aob.process_id = ?"); params.push(String(req.query.processId)); }
-      clauses.push("ac.created_at BETWEEN ? AND ?"); params.push(from, to);
+      clauses.push("ac.created_at BETWEEN ? AND ?"); params.push(from, endOfDayParam(to));
       sql = `SELECT b.branch_name, p.process_name,
                     COUNT(DISTINCT ac.id) AS total_candidates,
                     SUM(CASE WHEN abc.status = 'clear' THEN 1 ELSE 0 END) AS bgv_cleared,
@@ -2210,7 +2210,7 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
       const to = dateParam(req.query.to, new Date().toISOString().slice(0, 10));
       if (req.query.branchId) { clauses.push("e.branch_id = ?"); params.push(String(req.query.branchId)); }
       if (req.query.status) { clauses.push("ejdc.status = ?"); params.push(String(req.query.status)); }
-      clauses.push("ejdc.created_at BETWEEN ? AND ?"); params.push(from, to);
+      clauses.push("ejdc.created_at BETWEEN ? AND ?"); params.push(from, endOfDayParam(to));
       sql = `SELECT e.employee_code,
                     COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
                     COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
@@ -2403,7 +2403,7 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
       const status = String(req.query.status ?? "");
       if (integrationKey) { clauses.push("icr.connector_key = ?"); params.push(integrationKey); }
       if (status) { clauses.push("icr.run_status = ?"); params.push(status); }
-      clauses.push("icr.started_at BETWEEN ? AND ?"); params.push(from, to);
+      clauses.push("icr.started_at BETWEEN ? AND ?"); params.push(from, endOfDayParam(to));
       sql = `SELECT icr.connector_key, icr.run_type, icr.run_status,
                     icr.started_at, icr.completed_at,
                     TIMESTAMPDIFF(SECOND, icr.started_at, icr.completed_at) AS duration_sec,
@@ -2426,7 +2426,7 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
       const taskType = String(req.query.taskType ?? "");
       if (taskType) { clauses.push("wi.workflow_type = ?"); params.push(taskType); }
       if (req.query.branchId) { clauses.push("wi.branch_id = ?"); params.push(String(req.query.branchId)); }
-      clauses.push("wi.created_at BETWEEN ? AND ?"); params.push(from, to);
+      clauses.push("wi.created_at BETWEEN ? AND ?"); params.push(from, endOfDayParam(to));
       clauses.push("wi.escalated = 1");
       sql = `SELECT wi.workflow_type, wi.reference_id, wi.reference_type,
                     e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
@@ -2452,7 +2452,7 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
       const actionType = String(req.query.actionType ?? "");
       if (module) { clauses.push("sal.module_key = ?"); params.push(module); }
       if (actionType) { clauses.push("sal.action_type = ?"); params.push(actionType); }
-      clauses.push("sal.created_at BETWEEN ? AND ?"); params.push(from, to);
+      clauses.push("sal.created_at BETWEEN ? AND ?"); params.push(from, endOfDayParam(to));
       sql = `SELECT sal.module_key, sal.action_type, sal.reference_id, sal.reference_type,
                     COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS actor_name,
                     e.employee_code AS actor_code,
@@ -2473,7 +2473,7 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
       const status = String(req.query.status ?? "");
       if (channel) { clauses.push("ndl.channel = ?"); params.push(channel); }
       if (status) { clauses.push("ndl.status = ?"); params.push(status); }
-      clauses.push("ndl.created_at BETWEEN ? AND ?"); params.push(from, to);
+      clauses.push("ndl.created_at BETWEEN ? AND ?"); params.push(from, endOfDayParam(to));
       sql = `SELECT ndl.channel, ndl.template_code, ndl.recipient_type,
                     ndl.recipient_identifier, ndl.status,
                     ndl.sent_at, ndl.delivered_at, ndl.failed_reason,
@@ -2497,7 +2497,7 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
       if (req.query.ticketCategory) { clauses.push("ht.category = ?"); params.push(String(req.query.ticketCategory)); }
       if (req.query.status) { clauses.push("ht.status = ?"); params.push(String(req.query.status)); }
       if (req.query.branchId) { clauses.push("e.branch_id = ?"); params.push(String(req.query.branchId)); }
-      clauses.push("ht.created_at BETWEEN ? AND ?"); params.push(from, to);
+      clauses.push("ht.created_at BETWEEN ? AND ?"); params.push(from, endOfDayParam(to));
       sql = `SELECT ht.ticket_number, ht.category, ht.subject,
                     e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
                     COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
@@ -2522,7 +2522,7 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
       const from = dateParam(req.query.from, `${new Date().getFullYear()}-01-01`);
       const to = dateParam(req.query.to, new Date().toISOString().slice(0, 10));
       if (req.query.status) { clauses.push("gc.status = ?"); params.push(String(req.query.status)); }
-      clauses.push("gc.filed_at BETWEEN ? AND ?"); params.push(from, to);
+      clauses.push("gc.filed_at BETWEEN ? AND ?"); params.push(from, endOfDayParam(to));
       sql = `SELECT gc.grievance_number, gc.category, gc.sub_category,
                     e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
                     COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
@@ -2544,7 +2544,7 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
       const from = dateParam(req.query.from, `${new Date().getFullYear()}-01-01`);
       const to = dateParam(req.query.to, new Date().toISOString().slice(0, 10));
       if (req.query.status) { clauses.push("gc.status = ?"); params.push(String(req.query.status)); }
-      clauses.push("gc.filed_at BETWEEN ? AND ?"); params.push(from, to);
+      clauses.push("gc.filed_at BETWEEN ? AND ?"); params.push(from, endOfDayParam(to));
       sql = `SELECT gc.category,
                     COUNT(*) AS total_cases,
                     SUM(CASE WHEN gc.resolved_at IS NOT NULL THEN 1 ELSE 0 END) AS resolved,
@@ -2562,7 +2562,7 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
     case "grievance-category-analysis": {
       const from = dateParam(req.query.from, `${new Date().getFullYear()}-01-01`);
       const to = dateParam(req.query.to, new Date().toISOString().slice(0, 10));
-      clauses.push("gc.filed_at BETWEEN ? AND ?"); params.push(from, to);
+      clauses.push("gc.filed_at BETWEEN ? AND ?"); params.push(from, endOfDayParam(to));
       sql = `SELECT gc.category, gc.sub_category,
                     COUNT(*) AS total_cases,
                     ROUND(COUNT(*) * 100.0 / SUM(COUNT(*)) OVER(), 1) AS pct_of_total,
@@ -2664,7 +2664,7 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
       const to = dateParam(req.query.to, new Date().toISOString().slice(0, 10));
       const clientId = String(req.query.clientId ?? "");
       if (clientId) { clauses.push("pal.client_id = ?"); params.push(clientId); }
-      clauses.push("pal.accessed_at BETWEEN ? AND ?"); params.push(from, to);
+      clauses.push("pal.accessed_at BETWEEN ? AND ?"); params.push(from, endOfDayParam(to));
       sql = `SELECT pal.client_id, cm.client_name,
                     pal.user_identifier, pal.action,
                     pal.page_accessed, pal.ip_address,
