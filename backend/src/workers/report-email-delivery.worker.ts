@@ -141,11 +141,21 @@ async function processOneDelivery(): Promise<void> {
     );
     await conn.commit();
   } catch (err) {
-    await conn.rollback();
-    conn.release();
+    // Never let a failing rollback replace the real error, or skip the release below. A broken
+    // connection is exactly when rollback throws, and exactly when the release matters most.
+    await conn.rollback().catch(() => undefined);
     throw err;
+  } finally {
+    // Released HERE and nowhere else, so every path returns the connection exactly once.
+    // The "no queued deliveries" branch above used to `return` without releasing -- and that is
+    // the branch that runs on almost every poll, so the worker leaked one connection a minute
+    // until the pool of 25 was entirely checked out and idle. From then on every query in the
+    // whole workers process failed with "Queue limit reached", because all 45 workers share
+    // this pool. Measured on production 2026-08-12: 26 connections held by the workers process,
+    // 31 of 33 server-side connections asleep, the oldest idle for 7,967s -- almost exactly the
+    // process uptime -- while MySQL itself was using 33 of 300 available connections.
+    conn.release();
   }
-  conn.release();
 
   // Load all required data
   const [reqRows] = await db.execute<RowDataPacket[]>(

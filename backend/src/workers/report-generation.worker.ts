@@ -211,7 +211,7 @@ async function processOneRequest(): Promise<void> {
        ORDER BY priority DESC, requested_at ASC
        LIMIT 1 FOR UPDATE SKIP LOCKED`
     );
-    if (!claimRows.length) { await conn.rollback(); conn.release(); return; }
+    if (!claimRows.length) { await conn.rollback(); return; }
 
     requestId = (claimRows[0] as { id: string }).id;
     await conn.execute(
@@ -222,11 +222,16 @@ async function processOneRequest(): Promise<void> {
     );
     await conn.commit();
   } catch (err) {
-    await conn.rollback();
-    conn.release();
+    // A failing rollback must not replace the real error nor skip the release. This worker did
+    // release on all three of its normal paths, unlike report-email-delivery -- but a connection
+    // broken mid-transaction makes rollback throw, and that path leaked. Under a pool already
+    // starved by the sibling worker's leak, that is precisely the condition that occurs.
+    await conn.rollback().catch(() => undefined);
     throw err;
+  } finally {
+    // Released here and nowhere else, so every path returns the connection exactly once.
+    conn.release();
   }
-  conn.release();
 
   // Load request details
   const [reqRows] = await db.execute<RowDataPacket[]>(
