@@ -1,3 +1,32 @@
+/**
+ * NOT MOUNTED. Editing this file changes nothing that runs.
+ * ============================================================
+ *
+ * This router exports five endpoints — GET /expense-masters, POST /expense-heads, POST
+ * /expense-sub-heads, DELETE /expense-heads/:id and DELETE /expense-sub-heads/:id — and NOTHING
+ * IMPORTS IT. A repo-wide search for `financeExpenseMasterRouter` and for this filename returns
+ * only its own export line.
+ *
+ * The live implementations of those same five paths are inline in
+ * backend/src/modules/finance/grn.routes.ts (grNExpenseMasterRoutes), which IS mounted, at
+ * /api/finance. Requests reach those; they never reach these.
+ *
+ * The guards here are currently equivalent to the live ones — same READ/WRITE/EDIT role lists,
+ * same requireWriteAccess, same Super-Admin-only rule for editing an existing head. That makes
+ * this a maintenance trap rather than a security one: someone hardening expense-master access
+ * would naturally find THIS file, because it is the one that looks purpose-built for the job,
+ * change it, verify nothing, and ship a fix that cannot take effect. The two copies are also
+ * free to drift apart silently, since no test compares them.
+ *
+ * It is left in place rather than deleted because deleting a route module is not this session's
+ * call to make — but it must not read as live code. If you need to change expense-master
+ * behaviour, change grn.routes.ts. If you intend to mount this instead and retire the inline
+ * copies, that is a deliberate migration: delete the inline ones in the same change, or the two
+ * will both answer and Express will silently pick whichever registered first.
+ *
+ * finance-expense-master.service.ts, which this imports, IS live — grn.routes.ts uses it too.
+ */
+
 import { Router } from "express";
 import {
   requireAuth,
