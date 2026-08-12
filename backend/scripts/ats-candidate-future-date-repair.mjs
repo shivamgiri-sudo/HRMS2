@@ -94,14 +94,23 @@ if (target > 2000) {
 }
 
 if (!APPLY) {
+  // Formatted in SQL, never through a JS Date. mysql2 hands back a DATE as a Date at local
+  // midnight and toISOString() then converts to UTC — on a +05:30 host that prints the
+  // PREVIOUS day. The first dry run showed "created 2026-09-03 ... walk_in 2026-09-02" for
+  // rows where the scope query had just confirmed walk_in_date = DATE(created_at) on all 453,
+  // which reads as a contradiction in the repair. The repair SQL never went through JS and was
+  // correct throughout; only this log was wrong. An operator checking a data change against a
+  // log that disagrees with itself cannot tell a display bug from a real one.
   const [sample] = await conn.query(`
-    SELECT id, created_at, ${SWAP("created_at")} AS created_at_after, walk_in_date,
-           DATE(${SWAP("created_at")}) AS walk_in_date_after
+    SELECT id,
+           DATE_FORMAT(created_at, '%Y-%m-%d')                  AS created_before,
+           DATE_FORMAT(${SWAP("created_at")}, '%Y-%m-%d')       AS created_after,
+           DATE_FORMAT(walk_in_date, '%Y-%m-%d')                AS walkin_before,
+           DATE_FORMAT(DATE(${SWAP("created_at")}), '%Y-%m-%d') AS walkin_after
       FROM ats_candidate WHERE created_at > NOW() ORDER BY created_at LIMIT 5`);
   console.log("\n[DRY RUN] sample of the change:");
   for (const s of sample) {
-    console.log(`  ${s.id}  created ${new Date(s.created_at).toISOString().slice(0,10)} -> ${new Date(s.created_at_after).toISOString().slice(0,10)}` +
-                `   walk_in ${s.walk_in_date ? new Date(s.walk_in_date).toISOString().slice(0,10) : 'null'} -> ${new Date(s.walk_in_date_after).toISOString().slice(0,10)}`);
+    console.log(`  ${s.id}  created ${s.created_before} -> ${s.created_after}   walk_in ${s.walkin_before ?? "null"} -> ${s.walkin_after}`);
   }
   console.log(`\n[DRY RUN] would repair ${target} row(s). Nothing was written.`);
   await conn.end();
