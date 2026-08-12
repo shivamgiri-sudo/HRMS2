@@ -215,6 +215,25 @@ export const vendorPaymentLedgerService = {
         }
       }
 
+      // TDS: read vendor settings via the GRN's vendor_id link.
+      const [vendorTdsRows] = await connection.execute<RowDataPacket[]>(
+        `SELECT vm.tds_enabled, vm.tds_rate, vm.tds_section
+           FROM grn_request gr
+           JOIN vendor_master vm ON vm.id = gr.vendor_id
+          WHERE gr.id = ?
+          LIMIT 1`,
+        [payment.grn_request_id]
+      );
+      const tdsEnabled = Number(vendorTdsRows[0]?.tds_enabled ?? 0) === 1;
+      const tdsRatePct = tdsEnabled ? roundMoney(Number(vendorTdsRows[0]?.tds_rate ?? 0)) : 0;
+      const tdsSection: string | null = tdsEnabled
+        ? (String(vendorTdsRows[0]?.tds_section ?? "").trim() || null)
+        : null;
+      const tdsAmount = tdsEnabled && tdsRatePct > 0
+        ? roundMoney(amount * tdsRatePct / 100)
+        : 0;
+      const netAmount = roundMoney(amount - tdsAmount);
+
       const [sequenceRows] = await connection.execute<RowDataPacket[]>(
         `SELECT COALESCE(MAX(sequence_no), 0) AS last_sequence
            FROM vendor_payment_transaction
@@ -227,9 +246,9 @@ export const vendorPaymentLedgerService = {
       await connection.execute(
         `INSERT INTO vendor_payment_transaction
           (id, vendor_payment_id, grn_request_id, sequence_no, payment_mode,
-           payment_date, bank_id, bank_name, transaction_id, amount, remarks,
-           created_by)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+           payment_date, bank_id, bank_name, transaction_id, amount,
+           tds_amount, tds_section, net_amount, remarks, created_by)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
         [
           transactionRowId,
           paymentId,
@@ -241,6 +260,9 @@ export const vendorPaymentLedgerService = {
           bankName,
           externalTransactionId,
           amount,
+          tdsAmount,
+          tdsSection,
+          netAmount,
           payload.remarks?.trim() || null,
           actorUserId,
         ]
@@ -251,6 +273,7 @@ export const vendorPaymentLedgerService = {
       const paymentStatus = balanceAfter <= 0.01 ? "Paid" : "Partially Paid";
       const grnStatus = paymentStatus === "Paid" ? "paid" : "partially_paid";
       const accountsStatus = paymentStatus === "Paid" ? "paid" : "partially_paid";
+      const tdsDeductedBefore = roundMoney(Number(payment.tds_deducted_amount ?? 0));
 
       const [updateResult] = await connection.execute<ResultSetHeader>(
         `UPDATE vendor_payment_tracking
@@ -260,6 +283,7 @@ export const vendorPaymentLedgerService = {
                 bank_name = ?,
                 transaction_id = ?,
                 paid_amount = ?,
+                tds_deducted_amount = ?,
                 balance_amount = ?,
                 payment_status = ?,
                 remarks = COALESCE(?, remarks),
@@ -273,6 +297,7 @@ export const vendorPaymentLedgerService = {
           bankName,
           externalTransactionId,
           paidAfter,
+          roundMoney(tdsDeductedBefore + tdsAmount),
           balanceAfter,
           paymentStatus,
           payload.remarks?.trim() || null,
@@ -299,6 +324,9 @@ export const vendorPaymentLedgerService = {
         payment_mode: payload.paymentMode,
         payment_date: payload.paymentDate,
         amount,
+        tds_amount: tdsAmount,
+        tds_section: tdsSection,
+        net_amount: netAmount,
         paid_before: currentPaid,
         paid_after: paidAfter,
         balance_before: balanceBefore,

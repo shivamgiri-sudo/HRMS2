@@ -125,6 +125,8 @@ type InvoiceComponentDraft = {
   amountWithoutTax: number;
   gstRate: number;
   remarks: string;
+  /** HSN (goods) or SAC (services) code from the physical invoice — optional. */
+  hsnSacCode: string;
 };
 
 type GrnFormState = {
@@ -212,7 +214,7 @@ function newAllocation(): AllocationDraft {
 }
 
 function newInvoiceComponent(): InvoiceComponentDraft {
-  return { key: crypto.randomUUID(), amountWithoutTax: 0, gstRate: 18, remarks: "" };
+  return { key: crypto.randomUUID(), amountWithoutTax: 0, gstRate: 18, remarks: "", hsnSacCode: "" };
 }
 
 function roundMoney(value: number) {
@@ -1048,12 +1050,17 @@ export function BudgetLinkedGrnForm() {
           declaredInvoiceTotal: Number(form.amount),
           recognitionStartPeriod: monthSplit.startPeriod || undefined,
           recognitionEndPeriod: monthSplit.endPeriod || undefined,
+          recognitionCustomPercentages:
+            monthSplit.customPercentages && Object.keys(monthSplit.customPercentages).length > 0
+              ? monthSplit.customPercentages
+              : undefined,
           components: invoiceComponents
             .filter((item) => Number(item.amountWithoutTax) > 0)
             .map((item) => ({
               amountWithoutTax: Number(item.amountWithoutTax),
               gstRate: Number(item.gstRate),
               remarks: item.remarks || undefined,
+              hsnSacCode: item.hsnSacCode?.trim() || undefined,
             })),
           costCentreSplits: costCentreSplits.map((row) => ({
             budgetLineId: row.budgetLineId,
@@ -1068,6 +1075,10 @@ export function BudgetLinkedGrnForm() {
           declaredInvoiceTotal: splitMode ? Number(form.amount) : undefined,
           recognitionStartPeriod: monthSplit.startPeriod || undefined,
           recognitionEndPeriod: monthSplit.endPeriod || undefined,
+          recognitionCustomPercentages:
+            monthSplit.customPercentages && Object.keys(monthSplit.customPercentages).length > 0
+              ? monthSplit.customPercentages
+              : undefined,
           allocations: rows.map((item) => ({
             budgetLineId: item.budgetLineId,
             quantity: Number(item.quantity),
@@ -1474,6 +1485,7 @@ export function BudgetLinkedGrnForm() {
               amount={Number(form.amount) || 0}
               accountingPeriod={period}
               disabled={locked}
+              canCustomSplit={canOverridePeriod}
             />
 
             {isVendor && (
@@ -2747,6 +2759,13 @@ function InvoiceComponentsEditor({
               </div>
               <Input
                 className="mt-2"
+                value={component.hsnSacCode}
+                placeholder="HSN / SAC code (optional)"
+                maxLength={10}
+                onChange={(event) => onUpdate(component.key, { hsnSacCode: event.target.value })}
+              />
+              <Input
+                className="mt-2"
                 value={component.remarks}
                 placeholder="Optional note for this component"
                 onChange={(event) => onUpdate(component.key, { remarks: event.target.value })}
@@ -2762,13 +2781,14 @@ function InvoiceComponentsEditor({
 
       {/* Table from md up. */}
       <div className="hidden md:block">
-        <GrnTable minWidth={640}>
+        <GrnTable minWidth={720}>
           <thead>
             <tr>
               <GrnTh sticky={false} className="w-8">#</GrnTh>
               <GrnTh sticky={false} align="right" className="w-36">Amount without tax</GrnTh>
               <GrnTh sticky={false} align="right" className="w-24">GST slab</GrnTh>
               <GrnTh sticky={false} align="right" className="w-32">Incl. GST</GrnTh>
+              <GrnTh sticky={false} className="w-28">HSN / SAC</GrnTh>
               <GrnTh sticky={false}>Note</GrnTh>
               <GrnTh sticky={false} className="w-12" />
             </tr>
@@ -2803,6 +2823,15 @@ function InvoiceComponentsEditor({
                     </GrnSelect>
                   </GrnTd>
                   <GrnTd align="right" className="font-semibold">{money(gross)}</GrnTd>
+                  <GrnTd>
+                    <Input
+                      value={component.hsnSacCode}
+                      placeholder="998313…"
+                      maxLength={10}
+                      className="w-full"
+                      onChange={(event) => onUpdate(component.key, { hsnSacCode: event.target.value })}
+                    />
+                  </GrnTd>
                   <GrnTd className="min-w-[160px]">
                     <Input
                       value={component.remarks}

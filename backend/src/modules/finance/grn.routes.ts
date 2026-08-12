@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync } from "fs";
 import path from "path";
+import { randomUUID } from "crypto";
 import { Router, type NextFunction, type Response } from "express";
 import type { RowDataPacket } from "mysql2";
 import multer from "multer";
@@ -892,5 +893,79 @@ grnRouter.get(
       return;
     }
     res.download(filePath, fileName);
+  }
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Vendor Debit Note — raised against an approved / paid GRN
+// ─────────────────────────────────────────────────────────────────────────────
+const DN_WRITE_ROLES: RoleKey[] = ["finance_head", "accounts_head", "super_admin"];
+const DN_READ_ROLES: RoleKey[] = [...DN_WRITE_ROLES, "finance", "branch_admin", "branch_head", "admin"];
+
+grnRouter.post(
+  "/grns/:id/debit-note",
+  requireWriteAccess,
+  requireRole(...DN_WRITE_ROLES),
+  authorizeGrnBranch,
+  async (req: ScopedGrnRequest, res) => {
+    try {
+      const grn = req.financeGrn!;
+      const { dnDate, reason, amount, gstAmount, remarks } = req.body ?? {};
+      if (!dnDate || !/^\d{4}-\d{2}-\d{2}$/.test(String(dnDate))) {
+        res.status(400).json({ error: "dnDate is required (YYYY-MM-DD)" });
+        return;
+      }
+      const parsedAmount = Number(amount);
+      if (!Number.isFinite(parsedAmount) || parsedAmount <= 0) {
+        res.status(400).json({ error: "amount must be greater than zero" });
+        return;
+      }
+      const VALID_REASONS = ["quality_deficiency","short_supply","price_difference","returns","other"];
+      const resolvedReason = VALID_REASONS.includes(String(reason)) ? String(reason) : "other";
+
+      const user = actor(req);
+      const dnId = randomUUID();
+      // Sequential DN number: branch prefix + YYYYMM + sequence
+      const [seqRows] = await db.execute<RowDataPacket[]>(
+        `SELECT COUNT(*) AS cnt FROM vendor_debit_note WHERE branch_id = ? AND LEFT(dn_date,7) = ?`,
+        [grn.branch_id, String(dnDate).slice(0, 7)]
+      );
+      const seq = Number((seqRows[0] as RowDataPacket).cnt ?? 0) + 1;
+      const dnNumber = `DN-${String(grn.branch_id).slice(-4).toUpperCase()}-${String(dnDate).slice(0,7).replace("-","")}-${String(seq).padStart(4,"0")}`;
+
+      await db.execute(
+        `INSERT INTO vendor_debit_note
+           (id, dn_number, grn_id, vendor_id, branch_id, dn_date, reason, amount,
+            gst_amount, remarks, raised_by, created_by)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+        [
+          dnId, dnNumber, grn.id, grn.vendor_id, grn.branch_id,
+          dnDate, resolvedReason, parsedAmount,
+          Number(gstAmount ?? 0), remarks?.trim() || null,
+          user.id, user.id,
+        ]
+      );
+      res.status(201).json({ success: true, data: { id: dnId, dn_number: dnNumber } });
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : "Failed to create debit note";
+      res.status(400).json({ error: message });
+    }
+  }
+);
+
+grnRouter.get(
+  "/grns/:id/debit-notes",
+  requireRole(...DN_READ_ROLES),
+  authorizeGrnBranch,
+  async (req: ScopedGrnRequest, res) => {
+    try {
+      const [rows] = await db.execute<RowDataPacket[]>(
+        `SELECT * FROM vendor_debit_note WHERE grn_id = ? ORDER BY created_at DESC`,
+        [req.params.id]
+      );
+      res.json({ success: true, data: rows });
+    } catch (error: unknown) {
+      res.status(500).json({ error: "Failed to fetch debit notes" });
+    }
   }
 );

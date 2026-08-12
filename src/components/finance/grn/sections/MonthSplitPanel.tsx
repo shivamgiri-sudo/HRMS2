@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { CalendarRange } from "lucide-react";
 import {
   GrnAlert, GrnCellSub, GrnChip, GrnFieldRow, GrnInput, GrnTable, GrnTd, GrnTh, GRN_TR,
@@ -18,13 +18,16 @@ import { MonthYearPicker } from "@/components/finance/MonthYearPicker";
  * paise truncation, same residue on the final row — so what is shown is what is stored. The
  * server recomputes and re-asserts it regardless; this is not the authority, only the mirror.
  *
- * The clamp is stated, never silent. A July-to-June policy is nine months here, not twelve, and
- * the panel says so — a shorter list appearing without explanation reads as a bug.
+ * FY CROSSING (2026-08-12): cross-year windows are now allowed. The panel warns when a window
+ * spans two financial years so Finance Head can decide whether that is intentional.
+ *
+ * CUSTOM SPLIT: Finance Head may override the equal-split with explicit per-month percentages.
+ * Percentages must sum to 100. The resulting amounts are sent to the backend as
+ * recognitionCustomPercentages.
  */
 
 const PERIOD = /^\d{4}-(0[1-9]|1[0-2])$/;
 
-/** April through March, matching every other financial-year derivation in the codebase. */
 function financialYearOf(period: string): string | null {
   if (!PERIOD.test(period)) return null;
   const [year, month] = period.split("-").map(Number);
@@ -52,11 +55,6 @@ function monthLabel(period: string) {
   return `${MONTH_LABEL[month - 1]} ${year}`;
 }
 
-/**
- * The same split the server performs: truncate to paise, last row absorbs the residue by
- * subtraction. Rounding each row independently would drift, and a final row SMALLER than the
- * others reads as an error to whoever checks it.
- */
 function equalSplit(amount: number, periods: string[]): number[] {
   if (!periods.length) return [];
   const totalPaise = Math.round(Number(amount) * 100);
@@ -66,9 +64,25 @@ function equalSplit(amount: number, periods: string[]): number[] {
   return rows;
 }
 
+function customSplitAmounts(amount: number, periods: string[], pcts: Record<string, number>): number[] {
+  const totalPaise = Math.round(Number(amount) * 100);
+  let allocated = 0;
+  const result = periods.map((p) => {
+    const pct = Number(pcts[p] ?? 0);
+    const paise = Math.trunc((totalPaise * pct) / 100);
+    allocated += paise;
+    return paise / 100;
+  });
+  // residue on last row
+  result[result.length - 1] += (totalPaise - allocated) / 100;
+  return result;
+}
+
 export type MonthSplitValue = {
   startPeriod: string;
   endPeriod: string;
+  /** Per-month percentages for custom (non-equal) splits. Finance Head only. */
+  customPercentages?: Record<string, number>;
 };
 
 export function MonthSplitPanel({
@@ -77,6 +91,7 @@ export function MonthSplitPanel({
   amount,
   accountingPeriod,
   disabled,
+  canCustomSplit,
 }: {
   value: MonthSplitValue;
   onChange: (next: MonthSplitValue) => void;
@@ -85,8 +100,11 @@ export function MonthSplitPanel({
   /** The month the GRN books to; the financial year is derived from it. */
   accountingPeriod: string;
   disabled?: boolean;
+  /** Whether the user may switch to custom % mode. Finance Head / Accounts Head / Super Admin. */
+  canCustomSplit?: boolean;
 }) {
   const enabled = Boolean(value.startPeriod || value.endPeriod);
+  const isCustomMode = Boolean(value.customPercentages && Object.keys(value.customPercentages).length > 0);
 
   const schedule = useMemo(() => {
     if (!value.startPeriod || !value.endPeriod) return null;
@@ -94,26 +112,44 @@ export function MonthSplitPanel({
     if (!financialYear) {
       return { error: "Set the bill date first — the financial year is derived from it." };
     }
-    const requested = monthsBetween(value.startPeriod, value.endPeriod);
-    if (!requested.length) {
+    const periods = monthsBetween(value.startPeriod, value.endPeriod);
+    if (!periods.length) {
       return { error: "The last month cannot fall before the first." };
     }
-    const periods = requested.filter((p) => financialYearOf(p) === financialYear);
-    if (!periods.length) {
-      return {
-        error: `None of ${monthLabel(value.startPeriod)} – ${monthLabel(value.endPeriod)} falls in FY ${financialYear}. Raise this against a bill date inside the same year.`,
-      };
-    }
-    const amounts = equalSplit(amount, periods);
+    const crossFy = periods.some((p) => financialYearOf(p) !== financialYear);
+    const amounts = isCustomMode && value.customPercentages
+      ? customSplitAmounts(amount, periods, value.customPercentages)
+      : equalSplit(amount, periods);
+    const pctSum = isCustomMode && value.customPercentages
+      ? periods.reduce((s, p) => s + Number(value.customPercentages![p] ?? 0), 0)
+      : 100;
     return {
       financialYear,
       periods,
       amounts,
-      clamped: periods.length !== requested.length,
-      requestedCount: requested.length,
-      total: amounts.reduce((sum, n) => sum + n, 0),
+      crossFy,
+      requestedCount: periods.length,
+      total: amounts.reduce((s, n) => s + n, 0),
+      pctSum,
     };
-  }, [value.startPeriod, value.endPeriod, amount, accountingPeriod]);
+  }, [value.startPeriod, value.endPeriod, value.customPercentages, amount, accountingPeriod, isCustomMode]);
+
+  function switchToCustom() {
+    if (!schedule || "error" in schedule) return;
+    const eqPct = 100 / schedule.periods.length;
+    const pcts: Record<string, number> = {};
+    schedule.periods.forEach((p) => { pcts[p] = eqPct; });
+    onChange({ ...value, customPercentages: pcts });
+  }
+
+  function switchToEqual() {
+    onChange({ ...value, customPercentages: undefined });
+  }
+
+  function updatePct(period: string, pct: number) {
+    if (!value.customPercentages) return;
+    onChange({ ...value, customPercentages: { ...value.customPercentages, [period]: pct } });
+  }
 
   return (
     <div>
@@ -121,7 +157,9 @@ export function MonthSplitPanel({
         label="Recognise across months"
         hint={
           enabled
-            ? "The cost is spread equally across these months. The invoice, the payable and the budget consumption all stay in the accounting month — only the P&L is spread."
+            ? isCustomMode
+              ? "Custom split: enter a percentage for each month. They must total 100%."
+              : "The cost is spread equally across these months. The invoice, the payable and the budget consumption all stay in the accounting month — only the P&L is spread."
             : "Leave blank for a single-month invoice. Set a range for an annual policy, AMC or any pre-paid service."
         }
       >
@@ -130,8 +168,6 @@ export function MonthSplitPanel({
             active={false}
             onClick={() => {
               if (disabled) return;
-              // Seed with the accounting month itself, so the first thing shown is a valid
-              // one-month schedule the raiser then widens.
               onChange({ startPeriod: accountingPeriod, endPeriod: accountingPeriod });
             }}
           >
@@ -159,6 +195,16 @@ export function MonthSplitPanel({
             >
               Single month
             </GrnChip>
+            {canCustomSplit && schedule && !("error" in schedule) && !isCustomMode && (
+              <GrnChip active={false} onClick={() => !disabled && switchToCustom()}>
+                Custom %
+              </GrnChip>
+            )}
+            {isCustomMode && canCustomSplit && (
+              <GrnChip active={true} onClick={() => !disabled && switchToEqual()}>
+                Equal split
+              </GrnChip>
+            )}
           </div>
         )}
       </GrnFieldRow>
@@ -171,11 +217,12 @@ export function MonthSplitPanel({
 
       {schedule && !("error" in schedule) && (
         <div className="px-4 pb-3">
-          {schedule.clamped && (
+          {schedule.crossFy && (
             <GrnAlert tone="warn">
-              {schedule.periods.length} of the {schedule.requestedCount} months you selected fall
-              in FY {schedule.financialYear}. The whole amount is recognised across those{" "}
-              {schedule.periods.length} — nothing carries into the next financial year.
+              This recognition window crosses a financial year boundary. The cost will be spread
+              across both FY {financialYearOf(schedule.periods[0])} and FY{" "}
+              {financialYearOf(schedule.periods[schedule.periods.length - 1])}. Confirm this is
+              intentional.
             </GrnAlert>
           )}
           <div className="mt-2 overflow-x-auto">
@@ -183,6 +230,7 @@ export function MonthSplitPanel({
               <thead>
                 <tr>
                   <GrnTh>Month</GrnTh>
+                  {isCustomMode && <GrnTh align="right" className="w-28">%</GrnTh>}
                   <GrnTh className="text-right">Recognised</GrnTh>
                 </tr>
               </thead>
@@ -190,6 +238,21 @@ export function MonthSplitPanel({
                 {schedule.periods.map((period, index) => (
                   <tr key={period} className={GRN_TR}>
                     <GrnTd>{monthLabel(period)}</GrnTd>
+                    {isCustomMode && (
+                      <GrnTd>
+                        <GrnInput
+                          type="number"
+                          inputMode="decimal"
+                          min="0"
+                          max="100"
+                          step="0.01"
+                          className="w-24 text-right"
+                          value={value.customPercentages?.[period] ?? 0}
+                          disabled={disabled}
+                          onChange={(e) => updatePct(period, Number(e.target.value))}
+                        />
+                      </GrnTd>
+                    )}
                     <GrnTd className="text-right tabular-nums">
                       {money(schedule.amounts[index])}
                     </GrnTd>
@@ -198,16 +261,36 @@ export function MonthSplitPanel({
                 <tr className={GRN_TR}>
                   <GrnTd>
                     <span className="font-semibold">Total</span>
-                    {/* The reconciliation is the point of the panel: it must equal the amount
-                        being spread, to the paise, or the P&L will not tie at month end. */}
-                    <GrnCellSub>{schedule.periods.length} months, split equally</GrnCellSub>
+                    <GrnCellSub>
+                      {isCustomMode
+                        ? `${schedule.periods.length} months, custom split`
+                        : `${schedule.periods.length} months, split equally`}
+                    </GrnCellSub>
                   </GrnTd>
+                  {isCustomMode && (
+                    <GrnTd className="text-right tabular-nums">
+                      <span className={
+                        Math.abs(schedule.pctSum - 100) > 0.01
+                          ? "font-semibold text-red-600"
+                          : "font-semibold text-green-700"
+                      }>
+                        {schedule.pctSum.toFixed(2)}%
+                      </span>
+                    </GrnTd>
+                  )}
                   <GrnTd className="text-right font-semibold tabular-nums">
                     {money(schedule.total)}
                   </GrnTd>
                 </tr>
               </tbody>
             </GrnTable>
+            {isCustomMode && Math.abs(schedule.pctSum - 100) > 0.01 && (
+              <div className="mt-1">
+                <GrnAlert tone="crit">
+                  Percentages must total 100% — currently {schedule.pctSum.toFixed(2)}%.
+                </GrnAlert>
+              </div>
+            )}
           </div>
         </div>
       )}

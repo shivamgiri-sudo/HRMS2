@@ -8,12 +8,16 @@ import { db } from "../../db/mysql.js";
  * Spreads an invoice's expense across the months it covers, without spreading the liability.
  * One invoice remains one GRN and one vendor payable; only recognition is divided.
  *
- * THE FINANCIAL-YEAR RULE (user ruling, 2026-08-07)
- * The whole amount is spread across the months of the GRN's own financial year only. A policy
- * running Jul-26 to Jun-27 has nine eligible months, and the full amount is divided by nine —
- * nothing carries into the next FY, nothing is left unallocated. Cost is therefore recognised
- * faster than the service is consumed for any policy not starting in April, which is
- * conservative and never later.
+ * FY CROSSING (user ruling, 2026-08-12, supersedes 2026-08-07 clamp)
+ * A recognition window may now span financial-year boundaries. An AMC July-26 to June-27 is
+ * twelve months here, not nine. The UI warns when a window crosses FY boundaries so the
+ * Finance Head can decide whether that is intentional; we never silently shorten the window.
+ * The crossFy flag is exposed in every return value so callers can surface that warning.
+ *
+ * CUSTOM SPLIT
+ * Finance Head may override the equal-split with explicit per-month percentages (must sum to
+ * 100). The split_method column records 'custom' so reconciliation reports can distinguish it
+ * from equal splits that happen to produce the same amounts.
  */
 
 /** All arithmetic happens in paise. Rupee floats make 0.1 + 0.2 a reconciliation ticket. */
@@ -94,30 +98,70 @@ export function computeEqualSplit(amount: number, periods: string[]): PeriodSpli
 }
 
 /**
- * The months an invoice may be recognised against: its requested window, clamped to the GRN's
- * own financial year.
+ * Divides an amount across the given months using caller-supplied percentages.
  *
- * Returns the clamp explicitly so the UI can say "9 months — clamped to FY 2026-27" rather
- * than silently showing a shorter list than the user asked for.
+ * customPercentages maps each period_code to a percentage (0–100, not decimal).
+ * Must cover exactly the periods array and sum to 100 (within 0.5 paise tolerance).
+ */
+export function computeCustomSplit(
+  amount: number,
+  periods: string[],
+  customPercentages: Record<string, number>,
+): PeriodSplit[] {
+  if (!periods.length) throw new Error("No periods for custom split");
+  const totalPaise = toPaise(amount);
+  if (!Number.isFinite(totalPaise)) throw new Error("Recognition amount is not a number");
+
+  let allocatedPaise = 0;
+  const rows: PeriodSplit[] = periods.map((period_code, index) => {
+    const pct = Number(customPercentages[period_code] ?? 0);
+    if (!Number.isFinite(pct) || pct < 0) {
+      throw new Error(`Period ${period_code}: percentage must be ≥ 0`);
+    }
+    const periodPaise = Math.trunc((totalPaise * pct) / 100);
+    allocatedPaise += periodPaise;
+    return { period_code, sequence_no: index + 1, recognition_amount: toRupees(periodPaise) };
+  });
+
+  // Absorb floating-point residue into the last row (same convention as equalSplit).
+  rows[rows.length - 1].recognition_amount = toRupees(
+    toPaise(rows[rows.length - 1].recognition_amount) + (totalPaise - allocatedPaise),
+  );
+
+  const pctSum = periods.reduce((s, p) => s + Number(customPercentages[p] ?? 0), 0);
+  if (Math.abs(pctSum - 100) > 0.1) {
+    throw new Error(
+      `Custom split percentages must sum to 100% (currently ${pctSum.toFixed(4)}%)`,
+    );
+  }
+  return rows;
+}
+
+/**
+ * The months an invoice may be recognised against.
+ *
+ * Cross-FY windows are allowed (supersedes the 2026-08-07 clamp). The crossFy flag lets
+ * callers surface a warning when the range spans two financial years.
  */
 export function resolveEligiblePeriods(input: {
   accountingPeriod: string;
   startPeriod: string;
   endPeriod: string;
-}): { periods: string[]; financialYear: string; clamped: boolean; requestedCount: number } {
+}): { periods: string[]; financialYear: string; clamped: boolean; requestedCount: number; crossFy: boolean } {
   const financialYear = financialYearOf(input.accountingPeriod);
-  const requested = monthsBetween(input.startPeriod, input.endPeriod);
-  const periods = requested.filter((p) => financialYearOf(p) === financialYear);
+  const periods = monthsBetween(input.startPeriod, input.endPeriod);
   if (!periods.length) {
     throw new Error(
-      `None of ${input.startPeriod}..${input.endPeriod} falls in financial year ${financialYear}`,
+      `No months between ${input.startPeriod} and ${input.endPeriod}`,
     );
   }
+  const crossFy = periods.some((p) => financialYearOf(p) !== financialYear);
   return {
     periods,
     financialYear,
-    clamped: periods.length !== requested.length,
-    requestedCount: requested.length,
+    clamped: false,
+    requestedCount: periods.length,
+    crossFy,
   };
 }
 
@@ -128,6 +172,9 @@ export const grnPeriodAllocationService = {
    * Written inside the caller's transaction, and the sum is re-asserted against the parent
    * before it can commit. Proving the invariant at WRITE time matters because the P&L view is
    * a read model — drift there is invisible until a month-end does not tie.
+   *
+   * When customPercentages is supplied (Finance Head custom split), amounts are derived from
+   * those percentages instead of the equal-split formula. split_method is set accordingly.
    */
   async saveSplit(
     input: {
@@ -137,6 +184,8 @@ export const grnPeriodAllocationService = {
       accountingPeriod: string;
       startPeriod: string;
       endPeriod: string;
+      /** Optional per-month percentages for a custom (non-equal) split. */
+      customPercentages?: Record<string, number> | null;
       pnlBucket?: string | null;
       actorUserId: string;
     },
@@ -145,8 +194,12 @@ export const grnPeriodAllocationService = {
     if (!connection) {
       throw new Error("A period split must be written inside the caller's transaction");
     }
-    const { periods, financialYear, clamped, requestedCount } = resolveEligiblePeriods(input);
-    const rows = computeEqualSplit(input.recognitionAmount, periods);
+    const { periods, financialYear, clamped, requestedCount, crossFy } = resolveEligiblePeriods(input);
+    const isCustom = input.customPercentages && Object.keys(input.customPercentages).length > 0;
+    const rows = isCustom
+      ? computeCustomSplit(input.recognitionAmount, periods, input.customPercentages!)
+      : computeEqualSplit(input.recognitionAmount, periods);
+    const splitMethod = isCustom ? "custom" : "equal";
 
     // The invariant, asserted rather than assumed. 0.005 is half a paisa: anything larger is a
     // real discrepancy, not representation.
@@ -166,10 +219,10 @@ export const grnPeriodAllocationService = {
         `INSERT INTO grn_period_allocation
            (id, cost_allocation_id, grn_request_id, sequence_no, period_code,
             recognition_amount, pnl_bucket, split_method, created_by, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, 'equal', ?, NOW())`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
         [
           randomUUID(), input.costAllocationId, input.grnRequestId, row.sequence_no,
-          row.period_code, row.recognition_amount, input.pnlBucket ?? null, input.actorUserId,
+          row.period_code, row.recognition_amount, input.pnlBucket ?? null, splitMethod, input.actorUserId,
         ],
       );
     }
@@ -188,7 +241,7 @@ export const grnPeriodAllocationService = {
       ],
     );
 
-    return { periods: rows, financialYear, clamped, requestedCount, eligibleCount: periods.length };
+    return { periods: rows, financialYear, clamped, crossFy, requestedCount, eligibleCount: periods.length };
   },
 
   async listSplit(grnRequestId: string) {

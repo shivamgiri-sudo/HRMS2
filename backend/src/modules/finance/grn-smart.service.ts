@@ -38,6 +38,9 @@ export interface SmartGrnInvoiceInput {
    *  every existing caller sends and what every historical row already is. */
   recognitionStartPeriod?: string | null;
   recognitionEndPeriod?: string | null;
+  /** Custom percentage per month (YYYY-MM → pct). Finance Head override for non-equal splits.
+   *  Must cover every month in the start→end range and sum to 100. */
+  recognitionCustomPercentages?: Record<string, number> | null;
   allocations: SmartAllocationInput[];
 }
 
@@ -48,6 +51,8 @@ export interface InvoiceComponentInput {
   amountWithoutTax: number;
   gstRate: number;
   remarks?: string;
+  /** Optional HSN (goods) or SAC (services) code from the physical invoice. */
+  hsnSacCode?: string | null;
 }
 
 export interface CostCentreSplitRowInput {
@@ -68,6 +73,9 @@ export interface SmartGrnComponentSplitInput {
    *  every existing caller sends and what every historical row already is. */
   recognitionStartPeriod?: string | null;
   recognitionEndPeriod?: string | null;
+  /** Custom percentage per month (YYYY-MM → pct). Finance Head override for non-equal splits.
+   *  Must cover every month in the start→end range and sum to 100. */
+  recognitionCustomPercentages?: Record<string, number> | null;
   components: InvoiceComponentInput[];
   costCentreSplits: CostCentreSplitRowInput[];
 }
@@ -1010,10 +1018,11 @@ export const grnSmartService = {
         await connection.execute(
           `INSERT INTO grn_invoice_component
            (id, grn_request_id, sequence_no, amount_without_tax, gst_rate,
-            tax_amount, amount_with_tax, remarks, created_by)
-           VALUES (?,?,?,?,?,?,?,?,?)`,
+            hsn_sac_code, tax_amount, amount_with_tax, remarks, created_by)
+           VALUES (?,?,?,?,?,?,?,?,?,?)`,
           [
             id, grnId, index + 1, amounts.baseAmount, Number(component.gstRate),
+            component.hsnSacCode?.trim() || null,
             amounts.taxAmount, amounts.grossAmount, component.remarks?.trim() || null, actorUserId,
           ]
         );
@@ -1632,7 +1641,11 @@ async function writePeriodSplits(
   connection: PoolConnection,
   grnId: string,
   grn: { accounting_period?: unknown; recognition_start_period?: unknown; bill_date?: unknown },
-  input: { recognitionStartPeriod?: string | null; recognitionEndPeriod?: string | null },
+  input: {
+    recognitionStartPeriod?: string | null;
+    recognitionEndPeriod?: string | null;
+    recognitionCustomPercentages?: Record<string, number> | null;
+  },
   actorUserId: string,
 ) {
   const start = String(input.recognitionStartPeriod ?? "").trim();
@@ -1659,6 +1672,7 @@ async function writePeriodSplits(
     [grnId],
   );
   const accountingPeriod = consumptionPeriodOf(grn);
+  const customPercentages = input.recognitionCustomPercentages ?? null;
   let summary: Awaited<ReturnType<typeof grnPeriodAllocationService.saveSplit>> | null = null;
   for (const row of rows as RowDataPacket[]) {
     summary = await grnPeriodAllocationService.saveSplit(
@@ -1669,6 +1683,7 @@ async function writePeriodSplits(
         accountingPeriod,
         startPeriod: start,
         endPeriod: end,
+        customPercentages,
         actorUserId,
       },
       connection,
