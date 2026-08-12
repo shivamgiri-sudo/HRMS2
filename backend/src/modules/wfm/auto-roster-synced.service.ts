@@ -803,7 +803,9 @@ export const autoRosterSyncedService = {
 
   async getConflicts(planId: string) {
     const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT * FROM wfm_roster_conflict_log WHERE plan_id = ? ORDER BY FIELD(severity,'critical','high','medium','info'), created_at DESC`,
+      // the timestamp column on this table is detected_at; created_at does not
+      // exist, and this query is not wrapped, so it 500'd the conflicts panel
+      `SELECT * FROM wfm_roster_conflict_log WHERE plan_id = ? ORDER BY FIELD(severity,'critical','high','medium','info'), detected_at DESC`,
       [planId]
     );
     return rows as AnyRow[];

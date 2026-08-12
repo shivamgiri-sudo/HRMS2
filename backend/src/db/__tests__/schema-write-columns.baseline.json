@@ -130,11 +130,6 @@
     "process_master.process_owner_employee_id",
     "process_master.updated_by"
   ],
-  "workers/auto-roster-scheduler.worker.ts": [
-    "wfm_client_slot_requirement.notes",
-    "wfm_client_slot_requirement.slot_end_time",
-    "wfm_client_slot_requirement.slot_start_time"
-  ],
   "workers/domains/dialer-kpi-sync.ts": [
     "kpi_score.updated_at"
   ],

@@ -84,14 +84,21 @@ async function runForProcess(processId: string): Promise<void> {
   const prevSunday = sundayAfter(prevMonday);
 
   try {
+    // The columns are slot_start and slot_end, and there is no notes column on
+     // this table at all, so this statement has never copied a single row - it
+     // raised ER_BAD_FIELD_ERROR straight into the warn below.
+     //
+     // active_status is carried forward deliberately. It is NOT NULL DEFAULT 1, so
+     // omitting it would resurrect a deactivated slot requirement as active every
+     // week.
     await db.execute(
       `INSERT IGNORE INTO wfm_client_slot_requirement
          (id, process_id, branch_id, requirement_date, day_of_week,
-          slot_start_time, slot_end_time, required_hc, shrinkage_pct, notes, created_at)
+          slot_start, slot_end, required_hc, shrinkage_pct, active_status, created_at)
        SELECT UUID(), process_id, branch_id,
               DATE_ADD(requirement_date, INTERVAL 7 DAY),
-              day_of_week, slot_start_time, slot_end_time,
-              required_hc, shrinkage_pct, notes, NOW()
+              day_of_week, slot_start, slot_end,
+              required_hc, shrinkage_pct, active_status, NOW()
        FROM wfm_client_slot_requirement
        WHERE process_id = ?
          AND requirement_date IS NOT NULL
@@ -106,11 +113,14 @@ async function runForProcess(processId: string): Promise<void> {
   // Fetch process name for the plan label
   let processName = processId.substring(0, 8);
   try {
+    // process_master has no `name` column - it is process_name. This threw into
+     // the empty catch below, so every generated plan was labelled with the first
+     // 8 characters of a UUID instead of the process it belongs to.
     const [pRows]: any = await db.execute(
-      `SELECT name FROM process_master WHERE id = ? LIMIT 1`,
+      `SELECT process_name FROM process_master WHERE id = ? LIMIT 1`,
       [processId]
     );
-    if (pRows?.[0]?.name) processName = pRows[0].name as string;
+    if (pRows?.[0]?.process_name) processName = pRows[0].process_name as string;
   } catch { /* non-fatal */ }
 
   const plan_name = `Auto W${weekNum} ${processName}`;
