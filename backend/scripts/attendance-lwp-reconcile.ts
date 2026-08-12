@@ -90,6 +90,7 @@ async function main(): Promise<void> {
 
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT adr.employee_id, adr.record_date, adr.attendance_status, adr.lwp_value,
+            adr.attendance_source, adr.clock_in_time, adr.clock_out_time, adr.biometric_minutes,
             e.employee_code
        FROM attendance_daily_record adr
        JOIN employees e ON e.id = adr.employee_id
@@ -103,14 +104,34 @@ async function main(): Promise<void> {
   const candidates = rows as Array<{
     employee_id: string; record_date: string; attendance_status: string;
     lwp_value: string | number; employee_code: string;
+    attendance_source: string | null; clock_in_time: string | null;
+    clock_out_time: string | null; biometric_minutes: number | null;
   }>;
+
+  /**
+   * True when the row plainly records a worked day the engine can no longer see.
+   *
+   * The engine derives from biometric_minutes. Across 2026-03..2026-06 that column was left
+   * at 0 on rows that DO carry clock_in_time, clock_out_time and raw_minutes -- 57,806 of
+   * 95,656 biometric rows with both punches (60.4%), and 99.8% of April and May. Fed such a
+   * row the engine returns missing_punch with rawMinutes 0, so re-deriving would strip
+   * `present` from someone who demonstrably clocked in and out, and unresolved missing_punch
+   * pays zero.
+   *
+   * "The engine disagrees with the stored row" is therefore not sufficient grounds to
+   * overwrite it; the engine's inputs have to be intact first.
+   */
+  const sourceIsUnreadable = (r: (typeof candidates)[number]): boolean =>
+    String(r.attendance_source ?? "") === "biometric" &&
+    r.clock_in_time != null && r.clock_out_time != null &&
+    Number(r.biometric_minutes ?? 0) === 0;
   console.log(`[reconcile] ${candidates.length} unlocked row(s) in range\n`);
 
   // Month gate, resolved once per month rather than per row.
   const monthCache = new Map<string, { open: boolean; status: string }>();
   const { attendanceEngineService } = await import("../src/modules/wfm/attendance-engine.service.js");
 
-  let changed = 0, applied = 0, skippedClosed = 0, failed = 0;
+  let changed = 0, applied = 0, skippedClosed = 0, failed = 0, skippedUnreadable = 0;
   let lwpBeforeTotal = 0, lwpAfterTotal = 0;
 
   for (const row of candidates) {
@@ -118,6 +139,15 @@ async function main(): Promise<void> {
     const month = date.slice(0, 7);
     if (!monthCache.has(month)) monthCache.set(month, await monthIsOpen(month));
     const gate = monthCache.get(month)!;
+
+    if (sourceIsUnreadable(row)) {
+      skippedUnreadable++;
+      console.log(
+        `  ${row.employee_code.padEnd(12)} ${date}  SKIPPED — punches present but biometric_minutes=0; ` +
+        `the engine cannot read this day and would call it missing_punch`,
+      );
+      continue;
+    }
 
     let engine;
     try {
@@ -156,6 +186,7 @@ async function main(): Promise<void> {
   console.log(`\n[reconcile] rows differing from the engine : ${changed}`);
   console.log(`[reconcile] LWP total before / after       : ${lwpBeforeTotal.toFixed(2)} / ${lwpAfterTotal.toFixed(2)}`);
   console.log(`[reconcile] blocked by a closed payroll run: ${skippedClosed}`);
+  console.log(`[reconcile] skipped, source unreadable       : ${skippedUnreadable}`);
   console.log(`[reconcile] engine failures                : ${failed}`);
   console.log(`[reconcile] rows written                   : ${applied}${APPLY ? "" : "  (dry run — pass --apply to write)"}`);
   for (const [m, g] of monthCache) console.log(`[reconcile] run status ${m}: ${g.status}${g.open ? "" : "  (CLOSED — writes refused)"}`);
