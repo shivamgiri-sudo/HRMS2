@@ -47,6 +47,7 @@ on:
           - legacy-payslip-account-encrypt-backfill
           - ats-candidate-record-type-backfill
           - ats-candidate-future-date-repair
+          - privacy-encryption-verify
       mode:
         description: "dry-run reports what it would do and writes nothing"
         required: true
@@ -147,6 +148,13 @@ jobs:
             ats-candidate-future-date-repair)
               FLAG=""; [ "$MODE" = "apply" ] && FLAG="--apply"
               node scripts/ats-candidate-future-date-repair.mjs $FLAG
+              ;;
+            privacy-encryption-verify)
+              # Read-only in both modes — it decrypts and compares, it never writes. Listed here
+              # because it needs the production key, and it is the gate on the reader migration:
+              # a column whose ciphertext does not match its plaintext must not have its
+              # plaintext retired.
+              npx tsx scripts/privacy-encryption-verify.ts
               ;;
             *)
               echo "::error::Unknown script '${{ inputs.script }}'"

@@ -129,6 +129,57 @@ export function decryptPii(ciphertext: string): string {
  * Callers must still surface `reason` — an unreadable ciphertext is an incident, and
  * reporting it as an absent value is how the two get confused.
  */
+export type PiiSource = "ciphertext" | "plaintext" | "none";
+
+export interface ResolvedPii {
+  value: string | null;
+  source: PiiSource;
+  /**
+   * Set when ciphertext existed but could not be read, and the plaintext was used instead.
+   *
+   * This is the field that makes the fallback safe to ship. resolveAccountNumber() in
+   * fieldEncryption.ts swallows the same failure silently, and its own comment explains what
+   * that cost: a backfill run with the dev key produced unreadable ciphertext, reads kept
+   * working off the plaintext, and the damage stayed invisible until the plaintext was dropped.
+   * A caller that ignores this field is no worse off than today; a caller that logs it finds
+   * out before retirement rather than after.
+   */
+  warning?: string;
+}
+
+/**
+ * Read a PII value that exists in both an encrypted and a plaintext column.
+ *
+ * Prefers ciphertext, falls back to plaintext, and says which it used. That ordering is the
+ * whole point of the reader migration: once every reader prefers ciphertext and reports its
+ * source, "does anything still need the plaintext column?" becomes a measurable question
+ * instead of a judgement call — and the answer is what makes retiring the column safe.
+ *
+ * Deliberately does NOT throw. These sit on read paths that must keep working while both
+ * columns exist; the diagnostic goes in `warning`, not in an exception.
+ */
+export function resolvePii(
+  ciphertext: string | null | undefined,
+  plaintext: string | null | undefined,
+): ResolvedPii {
+  const plain = typeof plaintext === "string" && plaintext.trim() !== "" ? plaintext : null;
+
+  const hasCipher = typeof ciphertext === "string" && ciphertext.trim() !== "";
+  if (hasCipher) {
+    const attempt = tryDecryptPii(ciphertext);
+    if (attempt.ok) return { value: attempt.value, source: "ciphertext" };
+    return {
+      value: plain,
+      source: plain ? "plaintext" : "none",
+      warning:
+        `ciphertext present but unreadable (${attempt.reason}); ` +
+        (plain ? "fell back to plaintext" : "no plaintext to fall back to"),
+    };
+  }
+
+  return plain ? { value: plain, source: "plaintext" } : { value: null, source: "none" };
+}
+
 export function tryDecryptPii(ciphertext: string | null | undefined): PiiDecryptResult {
   const value = typeof ciphertext === "string" ? ciphertext.trim() : "";
   if (!value) {
