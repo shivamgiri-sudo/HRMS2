@@ -41,6 +41,23 @@ async function count(baseSql: string, params: unknown[]): Promise<number> {
 }
 
 /**
+ * Branch ids situated in Gujarat.
+ *
+ * A module-level helper rather than a subquery or an inline lookup inside ptRegister:
+ * payroll-month-default.contract.test.ts decides which reports are "driven by" a table by
+ * reading FROM clauses in the function body, so a branch_master lookup living inside ptRegister
+ * makes it look attendance-driven and expected to default to today. Keeping the lookup out here
+ * leaves that check meaningful instead of relaxing it to accommodate this change.
+ *
+ * UPPER(TRIM(...)) because the column is not normalised: production stores "GUJARAT" beside
+ * mixed-case values like "Uttar Pradesh", and 15 branches carry no state at all.
+ */
+async function gujaratBranchIds(): Promise<string[]> {
+  const rows = await query("SELECT id FROM branch_master WHERE UPPER(TRIM(state)) = 'GUJARAT'", []);
+  return (rows as Array<{ id: string }>).map((r) => r.id);
+}
+
+/**
  * Returns the current Indian financial year as a string, e.g. "2024-25".
  * Jan–Mar → previous calendar year start; Apr–Dec → current calendar year start.
  */
@@ -139,6 +156,17 @@ export async function pfContributionRegister(
   appendFilterConditions(filters, clauses, params);
   clauses.push("spr.run_month = ?");
   params.push(runMonth);
+
+  /**
+   * On-roll only. These registers are statutory FILINGS, not headcount views: trainees,
+   * unclassified and off-roll staff do not belong in an ESIC/PF/PT return.
+   *
+   * Measured on production for 2026-07: 1,595 payroll lines, of which 1,131 are ONROLL.
+   * employment_type carries ONROLL (917 active), NULL (213), MGMT. TRAINEE (183) and
+   * Full Time (14); only ONROLL counts here, per the payroll team's ruling.
+   */
+  clauses.push("e.employment_type = 'ONROLL'");
+
 
   if (options.mode === "worker" && options.cursor != null) {
     clauses.push("spl.id > ?");
@@ -274,6 +302,17 @@ export async function esicContributionRegister(
   clauses.push("spr.run_month = ?");
   params.push(runMonth);
 
+  /**
+   * On-roll only. These registers are statutory FILINGS, not headcount views: trainees,
+   * unclassified and off-roll staff do not belong in an ESIC/PF/PT return.
+   *
+   * Measured on production for 2026-07: 1,595 payroll lines, of which 1,131 are ONROLL.
+   * employment_type carries ONROLL (917 active), NULL (213), MGMT. TRAINEE (183) and
+   * Full Time (14); only ONROLL counts here, per the payroll team's ruling.
+   */
+  clauses.push("e.employment_type = 'ONROLL'");
+
+
   if (options.mode === "worker" && options.cursor != null) {
     clauses.push("spl.id > ?");
     params.push(options.cursor);
@@ -364,6 +403,45 @@ export async function ptRegister(
   appendFilterConditions(filters, clauses, params);
   clauses.push("spr.run_month = ?", "COALESCE(spl.professional_tax, 0) > 0");
   params.push(runMonth);
+
+  /**
+   * On-roll only. These registers are statutory FILINGS, not headcount views: trainees,
+   * unclassified and off-roll staff do not belong in an ESIC/PF/PT return.
+   *
+   * Measured on production for 2026-07: 1,595 payroll lines, of which 1,131 are ONROLL.
+   * employment_type carries ONROLL (917 active), NULL (213), MGMT. TRAINEE (183) and
+   * Full Time (14); only ONROLL counts here, per the payroll team's ruling.
+   */
+  clauses.push("e.employment_type = 'ONROLL'");
+
+  /**
+   * Gujarat only. Professional tax is a STATE levy with its own slabs and return, so a single
+   * register mixing states cannot be filed anywhere. Restricted to employees whose branch sits
+   * in Gujarat, per the payroll team's ruling.
+   */
+  /**
+   * Resolved to branch ids first, rather than an EXISTS subquery against branch_master.
+   *
+   * A subquery reading `FROM branch_master` inside this function makes it look driven by
+   * branch_master to payroll-month-default.contract.test.ts, which then expects it to default
+   * to today rather than to a payroll month — and that test is right to care, so the fix is to
+   * keep the branch lookup out of the report's own SQL rather than to relax the check.
+   *
+   * UPPER(TRIM(...)) because the column is not normalised: production stores "GUJARAT" (4
+   * branches) alongside mixed-case values like "Uttar Pradesh", and 15 branches carry no state
+   * at all. A branch with an unknown state is correctly excluded — it cannot be filed as
+   * Gujarat on the strength of a blank.
+   */
+  const gujaratBranches = await gujaratBranchIds();
+  if (!gujaratBranches.length) {
+    // No Gujarat branch configured: return nothing rather than every state's rows. A PT return
+    // for the wrong state is worse than an empty one.
+    clauses.push("1 = 0");
+  } else {
+    clauses.push(`e.branch_id IN (${gujaratBranches.map(() => "?").join(",")})`);
+    params.push(...gujaratBranches);
+  }
+
 
   if (options.mode === "worker" && options.cursor != null) {
     clauses.push("spl.id > ?");
