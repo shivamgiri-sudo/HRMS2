@@ -194,6 +194,7 @@ type WorkspacePayload = {
   extractions: Array<Record<string, any>>;
   validations: WorkspaceValidation[];
   duplicates: Array<Record<string, any>>;
+  invoiceComponents: Array<Record<string, any>>;
 };
 
 const EMPTY_FORM: GrnFormState = {
@@ -338,7 +339,13 @@ function ReadyRow({ label, done, className }: { label: string; done: boolean; cl
 
 // ─── Component ──────────────────────────────────────────────────────────────
 
-export function BudgetLinkedGrnForm() {
+export function BudgetLinkedGrnForm({
+  editGrnId,
+  onEditComplete,
+}: {
+  editGrnId?: string | null;
+  onEditComplete?: () => void;
+} = {}) {
   const { toast } = useToast();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -353,7 +360,10 @@ export function BudgetLinkedGrnForm() {
   const [costCentreSplits, setCostCentreSplits] = useState<CostCentreSplitDraft[]>([]);
   const [invoiceComponents, setInvoiceComponents] = useState<InvoiceComponentDraft[]>([newInvoiceComponent()]);
   const [files, setFiles] = useState<File[]>([]);
-  const [created, setCreated] = useState<CreatedGrn | null>(null);
+  const [created, setCreated] = useState<CreatedGrn | null>(
+    editGrnId ? { id: editGrnId, grnNumber: "…", submitted: false } : null
+  );
+  const [prefilledForEdit, setPrefilledForEdit] = useState(!editGrnId);
   const [autoAnalyze, setAutoAnalyze] = useState(true);
   const [extractedFields, setExtractedFields] = useState<Record<string, any> | null>(null);
   const [showErrors, setShowErrors] = useState(false);
@@ -418,13 +428,71 @@ export function BudgetLinkedGrnForm() {
   );
 
   const workspaceQuery = useQuery({
-    queryKey: ["smart-grn-workspace", created?.id],
-    enabled: Boolean(created?.id),
-    queryFn: () => hrmsApi.get<any>(`/api/finance/grns/${created!.id}/workspace`),
+    queryKey: ["smart-grn-workspace", created?.id ?? editGrnId],
+    enabled: Boolean(created?.id ?? editGrnId),
+    queryFn: () => {
+      const id = created?.id ?? editGrnId!;
+      return hrmsApi.get<any>(`/api/finance/grns/${id}/workspace`);
+    },
   });
   const workspace = workspaceQuery.data
     ? unwrapData<WorkspacePayload>(workspaceQuery.data)
     : null;
+
+  // Pre-fill form state when editing a rejected GRN. Runs once when workspace loads.
+  useEffect(() => {
+    if (prefilledForEdit || !workspace?.grn) return;
+    const g = workspace.grn;
+    setForm({
+      ...EMPTY_FORM,
+      grnType: (String(g.grn_type ?? "vendor")) as GrnType,
+      branchId: String(g.branch_id ?? ""),
+      billDate: String(g.bill_date ?? "").slice(0, 10),
+      accountingPeriod: String(g.accounting_period ?? ""),
+      vendorId: String(g.vendor_id ?? ""),
+      invoiceNumber: String(g.invoice_number ?? ""),
+      vendorGstin: String(g.vendor_gstin ?? ""),
+      placeOfSupply: String(g.place_of_supply ?? ""),
+      purchaseReference: String(g.purchase_reference ?? ""),
+      irn: String(g.irn ?? ""),
+      irnAckNo: String(g.irn_ack_no ?? ""),
+      amount: Number(g.amount_with_tax ?? g.amount ?? 0),
+      head: String(g.head ?? ""),
+      subHead: String(g.sub_head ?? ""),
+      paymentTermsDays: Number(g.payment_terms_days ?? 30),
+      remarks: String(g.remarks ?? ""),
+    });
+    setCreated({ id: String(g.id), grnNumber: String(g.grn_number ?? editGrnId ?? ""), submitted: false });
+    if (workspace.invoiceComponents?.length) {
+      setInvoiceComponents(
+        workspace.invoiceComponents.map((ic) => ({
+          key: crypto.randomUUID(),
+          amountWithoutTax: Number(ic.amount_without_tax),
+          gstRate: Number(ic.gst_rate),
+          remarks: String(ic.remarks ?? ""),
+          hsnSacCode: String(ic.hsn_sac_code ?? ""),
+        }))
+      );
+    }
+    if (workspace.allocations?.length) {
+      const ccMap = new Map<string, { budgetLineId: string; pct: number }>();
+      for (const alloc of workspace.allocations) {
+        const ccKey = String(alloc.cost_centre_id ?? "__none__");
+        const existing = ccMap.get(ccKey) ?? { budgetLineId: String(alloc.budget_line_id), pct: 0 };
+        existing.pct = Math.round((existing.pct + Number(alloc.allocation_percentage)) * 1_000_000) / 1_000_000;
+        ccMap.set(ccKey, existing);
+      }
+      setCostCentreSplits(
+        [...ccMap.entries()].map(([ccKey, data]) => ({
+          key: crypto.randomUUID(),
+          costCentreKey: ccKey,
+          budgetLineId: data.budgetLineId,
+          percentage: Math.round(data.pct * 1000) / 1000,
+        }))
+      );
+    }
+    setPrefilledForEdit(true);
+  }, [workspace, prefilledForEdit, editGrnId]);
 
   const latestExtraction = workspace?.extractions?.[0];
   const effectiveExtractedFields =
@@ -984,6 +1052,8 @@ export function BudgetLinkedGrnForm() {
     setExtractedFields(null);
     setSplitMode(false);
     setShowErrors(false);
+    setPrefilledForEdit(true);
+    onEditComplete?.();
   }
 
   function applyExtractedFields(fields: Record<string, any>) {
@@ -1068,6 +1138,7 @@ export function BudgetLinkedGrnForm() {
         await hrmsApi.put(`/api/finance/grns/${current.id}/invoice-components`, {
           invoiceNumber: form.invoiceNumber,
           purchaseReference: form.purchaseReference || undefined,
+          accountingPeriod: canOverridePeriod && form.accountingPeriod ? form.accountingPeriod : undefined,
           vendorGstin: form.vendorGstin || undefined,
           placeOfSupply: form.placeOfSupply || undefined,
           irn: form.irn.trim() || undefined,
@@ -1324,6 +1395,16 @@ export function BudgetLinkedGrnForm() {
         </div>
       </div>
 
+      {editGrnId && workspace?.grn?.rejection_reason && !workspace.grn.submitted_at && (
+        <div className="mb-4 flex items-start gap-3 rounded-[10px] border border-rose-200 bg-rose-50 px-3.5 py-3 text-[12px]">
+          <AlertCircle className="mt-px h-4 w-4 shrink-0 text-rose-500" />
+          <div>
+            <p className="font-semibold text-rose-700">Rejection reason:</p>
+            <p className="mt-0.5 text-rose-600">{String(workspace.grn.rejection_reason)}</p>
+          </div>
+        </div>
+      )}
+
       {submitted && (
         <div className="mb-4 flex items-center gap-3 rounded-[10px] border border-grn-ok-line bg-grn-ok-bg px-3.5 py-3 text-[12px]">
           <CheckCircle2 className="h-4 w-4 shrink-0 text-grn-ok" />
@@ -1497,7 +1578,7 @@ export function BudgetLinkedGrnForm() {
                       Styled with this module's own tokens rather than the default theme. */}
                   <MonthYearPicker
                     className="w-[210px]"
-                    disabled={locked}
+                    disabled={locked && !canOverridePeriod}
                     value={effectivePeriod}
                     onChange={(value) =>
                       setForm((current) => ({

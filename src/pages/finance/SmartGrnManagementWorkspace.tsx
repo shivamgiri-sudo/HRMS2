@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { ChevronRight, ClipboardList, FilePlus } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { BudgetLinkedGrnForm } from "@/components/finance/grn/BudgetLinkedGrnForm";
@@ -6,6 +7,19 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 export default function SmartGrnManagementWorkspace() {
+  const [activeTab, setActiveTab] = useState<"create" | "queue">("create");
+  const [editGrnId, setEditGrnId] = useState<string | null>(null);
+
+  function handleReopenForEdit(grnId: string) {
+    setEditGrnId(grnId);
+    setActiveTab("create");
+  }
+
+  function handleEditComplete() {
+    setEditGrnId(null);
+    setActiveTab("queue");
+  }
+
   return (
     <DashboardLayout>
       <div className="min-h-screen bg-[linear-gradient(180deg,_#f8fafc_0%,_#ffffff_45%,_#f4f7fb_100%)]">
@@ -39,7 +53,7 @@ export default function SmartGrnManagementWorkspace() {
         </div>
 
         <div className="px-4 py-6 sm:px-6 lg:px-8">
-          <Tabs defaultValue="create">
+          <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as "create" | "queue")}>
             <TabsList className="mb-6 h-auto w-fit rounded-xl border border-slate-200 bg-white p-1 shadow-sm">
               <TabsTrigger
                 value="create"
@@ -54,10 +68,17 @@ export default function SmartGrnManagementWorkspace() {
                 <ClipboardList className="mr-2 h-3.5 w-3.5" />Approval & Control Queue
               </TabsTrigger>
             </TabsList>
-            <TabsContent value="create"><BudgetLinkedGrnForm /></TabsContent>
+            <TabsContent value="create">
+              <BudgetLinkedGrnForm
+                editGrnId={editGrnId}
+                onEditComplete={handleEditComplete}
+              />
+            </TabsContent>
             <TabsContent value="queue">
               <Card className="rounded-3xl border-slate-200 shadow-sm">
-                <CardContent className="p-5"><SmartGrnApprovalQueue /></CardContent>
+                <CardContent className="p-5">
+                  <SmartGrnApprovalQueue onReopenForEdit={handleReopenForEdit} />
+                </CardContent>
               </Card>
             </TabsContent>
           </Tabs>
