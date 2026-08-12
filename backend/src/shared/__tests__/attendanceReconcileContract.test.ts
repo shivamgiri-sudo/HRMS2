@@ -44,9 +44,12 @@ describe("dry run is the default", () => {
 
 describe("finalized-run protection", () => {
   it("refuses to rewrite attendance under a closed payroll run", () => {
-    for (const s of ["FINALIZED", "DISBURSED", "LOCKED", "APPROVED"]) {
-      expect(code).toContain(s);
-    }
+    // Asserts the ALLOW-list, not that the closed status names appear somewhere. The earlier
+    // version of this test was satisfiable by a constant listing them that nothing read —
+    // which is exactly what it was, until this was tightened. An allow-list is also the safer
+    // shape: a status added later is treated as closed rather than silently permitted.
+    expect(code).toMatch(/OPEN_RUN_STATUSES\s*=\s*new Set\(\[\s*"PROCESSING",\s*"DRAFT"\s*\]\)/);
+    expect(code).toMatch(/OPEN_RUN_STATUSES\.has\(/);
     expect(code).toMatch(/salary_prep_run/);
   });
 

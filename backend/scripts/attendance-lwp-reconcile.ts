@@ -47,9 +47,13 @@ const TO = arg("to");
 const EMPLOYEES = (arg("employees") ?? "").split(",").map((s) => s.trim().toUpperCase()).filter(Boolean);
 const LIMIT = Number(arg("limit") ?? 2000);
 
-/** Runs past these are closed: rewriting attendance under them changes what was already paid. */
+/**
+ * An ALLOW-list, not a deny-list, and deliberately so: anything not named here counts as
+ * closed. Enumerating the closed statuses instead (FINALIZED, DISBURSED, LOCKED, APPROVED,
+ * COMPLETED) would silently permit writes under any status added later — and this decides
+ * whether attendance behind an already-paid payroll run can be rewritten.
+ */
 const OPEN_RUN_STATUSES = new Set(["PROCESSING", "DRAFT"]);
-const CLOSED_RUN_STATUSES = ["FINALIZED", "DISBURSED", "LOCKED", "APPROVED", "COMPLETED"];
 
 async function monthIsOpen(month: string): Promise<{ open: boolean; status: string }> {
   // Most authoritative run for the month, mirroring run-status.ts's ranking. UPPER() because
