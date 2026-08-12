@@ -1,4 +1,5 @@
 import { randomUUID } from "crypto";
+import { assertNoHistoricalRosterOverlap } from "./rosterHistoricalOverlapGuard.js";
 import { sqlLimitOffset } from "../../db/pagination.js";
 import { db } from "../../db/mysql.js";
 import type { RowDataPacket } from "mysql2";
@@ -90,6 +91,14 @@ export const rosterGenerationService = {
     if (!["draft", "submitted"].includes(cycle.status)) {
       throw Object.assign(new Error("Auto-generation only allowed on draft or submitted cycles"), { statusCode: 409 });
     }
+
+    // Roster-gov is adopted going forward only. Generation ends up in wfm_roster_assignment
+    // via syncGeneratedToLiveAssignments, whose ON DUPLICATE KEY UPDATE replaces shift_id —
+    // so a cycle dated over existing live assignments rewrites roster history from a template,
+    // and attendance is derived against rosters. Checked BEFORE the run record is written, so
+    // a refused generation leaves nothing behind.
+    await assertNoHistoricalRosterOverlap(String(cycle.week_start_date).slice(0, 10),
+                                          String(cycle.week_end_date).slice(0, 10));
 
     const runId = randomUUID();
     const params_json = JSON.stringify({ cycle_id: cycleId, process_id: cycle.process_id, week_start: cycle.week_start_date, week_end: cycle.week_end_date });
