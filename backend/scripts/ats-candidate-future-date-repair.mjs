@@ -72,8 +72,14 @@ const target = Number(scope.target);
 console.log(`target=${target} swappable=${scope.swappable} lands_in_past=${scope.lands_in_past} ` +
             `walkin_matches=${scope.walkin_matches} updated_repairable=${scope.updated_repairable}`);
 
-if (target === 0) {
-  console.log("Nothing to repair — no row has a future created_at.");
+const [[extra]] = await conn.query(`
+  SELECT COUNT(*) AS n FROM ats_candidate
+   WHERE updated_at > NOW() AND DAY(updated_at) <= 12
+     AND ${SWAP("updated_at")} <= NOW() AND ${SWAP("updated_at")} >= created_at`);
+console.log(`updated_at-only rows repairable in the second pass: ${extra.n}`);
+
+if (target === 0 && Number(extra.n) === 0) {
+  console.log("Nothing to repair — no row has a future created_at or a repairable future updated_at.");
   await conn.end();
   process.exit(0);
 }
@@ -128,14 +134,37 @@ const [res] = await conn.execute(`
    WHERE created_at > NOW()`);
 console.log(`\nrepaired ${res.affectedRows} row(s)`);
 
+/**
+ * Second pass: rows whose created_at was already sane but whose updated_at is future.
+ *
+ * The first pass targets `created_at > NOW()`, so it never sees a row that was created in the
+ * past and only had its updated_at mangled. Four such rows survived the first apply — same
+ * day/month swap, found through the other column. Verified on production 2026-08-12: all four
+ * swap into the past AND land after their own created_at.
+ *
+ * The `swapped >= created_at` condition is the one that makes this safe: an update cannot
+ * precede creation, so a swap that produced one would be repairing a date into a different
+ * impossibility. Such a row is left alone and reported.
+ */
+const [res2] = await conn.execute(`
+  UPDATE ats_candidate
+     SET updated_at = ${SWAP("updated_at")}
+   WHERE updated_at > NOW()
+     AND DAY(updated_at) <= 12
+     AND ${SWAP("updated_at")} <= NOW()
+     AND ${SWAP("updated_at")} >= created_at`);
+console.log(`repaired ${res2.affectedRows} row(s) whose updated_at alone was in the future`);
+
 const [[after]] = await conn.query(`
   SELECT SUM(created_at > NOW()) AS created_future,
          SUM(updated_at > NOW()) AS updated_future,
+         SUM(updated_at < created_at) AS updated_before_created,
          COUNT(*)                AS total
     FROM ats_candidate`);
 console.log(`\n=== verification ===`);
 console.log(`created_at in the future: ${after.created_future}  (must be 0)`);
 console.log(`updated_at in the future: ${after.updated_future}  (must be 0)`);
+console.log(`updated_at before created_at: ${after.updated_before_created}  (pre-existing, not touched here)`);
 console.log(`total rows: ${after.total}  (must be unchanged)`);
 
 await conn.end();
