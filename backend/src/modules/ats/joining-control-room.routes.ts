@@ -18,7 +18,29 @@ import {
 export const joiningControlRoomRouter = Router();
 
 import type { RoleKey } from "../../platform/policy/index.js";
-const roles: RoleKey[] = ["super_admin", "admin", "hr", "payroll_hr", "branch_head", "finance", "operations_manager", "it"];
+/*
+ * These four roles, and not the eight this list used to carry.
+ *
+ * The only consumer of these endpoints is SecureDocumentList / SecureDocumentViewer, rendered
+ * solely by NativeJoiningControlRoom. That page admits exactly ['admin','hr','payroll_hr',
+ * 'super_admin'] — in its ProtectedRoute (recruitment.routes.tsx) and again in its navConfig
+ * entry. The list here additionally carried branch_head, finance, operations_manager and it,
+ * none of which can reach the page at all.
+ *
+ * That is capability drift in the dangerous direction: the UI was the narrower gate and the API
+ * the wider one, so the extra four could not see the screen but could call the endpoints
+ * directly — streaming or downloading ANY candidate's identity documents by id, and reading the
+ * access log of who else had viewed them.
+ *
+ * There is no row scope behind this list to soften it. actorId reaches only
+ * auditDocumentAccess; nothing in the service checks ownership, assignment or branch. The role
+ * list IS the whole access control, which is why it has to match the surface that uses it.
+ *
+ * A candidate-level ownership check would be better still, but it is a separate decision: this
+ * is the only candidate-document API in the codebase, so there is no established rule to copy,
+ * and the obvious scope is unusable because job_requisition.branch_id is NULL on every row.
+ */
+const roles: RoleKey[] = ["super_admin", "admin", "hr", "payroll_hr"];
 joiningControlRoomRouter.use(requireRole(...roles));
 
 const h = (fn: (req: AuthenticatedRequest, res: any) => Promise<unknown>) => (
