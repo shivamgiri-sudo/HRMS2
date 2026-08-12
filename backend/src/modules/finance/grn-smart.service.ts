@@ -1571,7 +1571,7 @@ export const grnSmartService = {
                 branch_head_review_note = NULL,
                 finance_head_reviewed_by = NULL, finance_head_reviewed_at = NULL,
                 finance_head_review_note = NULL,
-                reviewed_by = NULL, reviewed_at = NOW(),
+                reviewed_by = NULL, reviewed_at = NULL,
                 review_note = NULL,
                 submitted_at = NULL, submitted_by = NULL
           WHERE id = ? AND status = 'rejected'`,
