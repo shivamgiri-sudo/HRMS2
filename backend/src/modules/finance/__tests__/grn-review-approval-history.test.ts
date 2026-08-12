@@ -1,3 +1,5 @@
+import { readFileSync } from "fs";
+import { resolve } from "path";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
@@ -140,5 +142,55 @@ describe("reviewGrn writes the approval history", () => {
 
     expect(eventIndex(conn.statements)).toBe(-1);
     expect(conn.rollback).toHaveBeenCalled();
+  });
+});
+
+/**
+ * A review role list may only contain roles the stage resolver can actually return.
+ *
+ * accounts_head sat in GRN_REVIEW_ROLES and could never complete a review:
+ * resolveFinanceStageRole(workflow: "grn") maps submitted -> branch_head and
+ * branch_head_approved -> finance_head and returns nothing else. The role passed the gate and
+ * then met "The current grn stage requires the finance_head role" — a 400 where a 403 was the
+ * truth, and a grant that advertised an authority the workflow does not have.
+ *
+ * It is not a shut-out: accounts_head owns the PAYMENT step that follows approval.
+ */
+describe("GRN review roles match the stages that exist", () => {
+  // This file lives beside the sources it reads, so resolve from __dirname rather than cwd.
+  const srcFile = (name: string) => readFileSync(resolve(__dirname, "..", name), "utf8");
+  const routes = srcFile("grn.routes.ts");
+  const smart = srcFile("grn-smart.routes.ts");
+  const resolver = srcFile("finance-workflow-role.ts");
+  const payments = srcFile("vendor-payment.routes.ts");
+
+  it("the GRN chain really is two stages", () => {
+    // If a third stage is ever added, this test should fail and be reconsidered — not the
+    // role list quietly widened to match a stage that does not exist.
+    const grnBranch = resolver.slice(resolver.indexOf(': input.currentStatus === "submitted"'));
+    expect(grnBranch.slice(0, 260)).toContain('"branch_head"');
+    expect(grnBranch.slice(0, 260)).toContain('"finance_head"');
+    expect(grnBranch.slice(0, 260)).not.toContain('"accounts_head"');
+  });
+
+  it("neither review role list grants a stage the resolver cannot return", () => {
+    for (const [name, source, decl] of [
+      ["legacy", routes, "const GRN_REVIEW_ROLES: RoleKey[] = ["],
+      ["smart", smart, "const SMART_REVIEW_ROLES = ["],
+    ] as const) {
+      // Sliced from the opening bracket of the ARRAY, not from the declaration: the legacy
+      // list is typed `RoleKey[]`, whose own "]" would otherwise end the slice before the
+      // contents and make every assertion below vacuous.
+      const open = source.indexOf("[", source.indexOf(decl) + decl.length - 1);
+      const list = source.slice(open, source.indexOf("]", open));
+      expect(list, `${name} review roles must not include accounts_head`).not.toContain("accounts_head");
+      expect(list).toContain("branch_head");
+      expect(list).toContain("finance_head");
+    }
+  });
+
+  it("accounts_head keeps the payment authority that is actually theirs", () => {
+    // Removing them from review must not be mistaken for removing them from GRN entirely.
+    expect(payments).toContain('const PAYMENT_WRITE_ROLES = ["accounts_head", "super_admin"]');
   });
 });

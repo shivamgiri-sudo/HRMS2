@@ -271,8 +271,10 @@ describe("the imprest queue speaks the API's review contract", () => {
   it("only offers review tabs to roles GRN_REVIEW_ROLES admits", () => {
     // `admin` is deliberately absent from GRN_REVIEW_ROLES; showing it the queue produced a
     // tab whose every action 403s.
+    // accounts_head was removed: resolveFinanceStageRole has no accounts stage for GRN, so the
+    // grant could never be exercised. Their GRN authority is the payment step instead.
     expect(GRN_ROUTES).toContain(
-      'const GRN_REVIEW_ROLES: RoleKey[] = ["branch_head", "finance_head", "accounts_head", "super_admin"]'
+      'const GRN_REVIEW_ROLES: RoleKey[] = ["branch_head", "finance_head", "super_admin"]'
     );
     const canReview = GRN_PAGE.slice(GRN_PAGE.indexOf("const canReview"), GRN_PAGE.indexOf("const canAttribute"));
     expect(canReview).not.toContain('"admin"');

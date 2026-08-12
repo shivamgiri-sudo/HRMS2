@@ -35,7 +35,27 @@ const GRN_WRITE_ROLES: RoleKey[] = [
   "branch_admin",
 ];
 const GRN_READ_ROLES: RoleKey[] = [...GRN_WRITE_ROLES, "finance", "hr", "hr_admin"];
-const GRN_REVIEW_ROLES: RoleKey[] = ["branch_head", "finance_head", "accounts_head", "super_admin"];
+/*
+ * The GRN approval chain is two stages, not three.
+ *
+ * resolveFinanceStageRole(workflow: "grn") maps submitted -> branch_head and
+ * branch_head_approved -> finance_head, and returns nothing else. The BUDGET workflow has a
+ * third stage (finance_head_approved -> accounts_head); GRN does not. So accounts_head passed
+ * this gate and then met "The current grn stage requires the finance_head role" from the
+ * resolver — a grant the workflow could never honour, and a 400 where a 403 was the truth.
+ *
+ * accounts_head is not shut out of GRN; their authority is the PAYMENT step. A finance_head
+ * approval moves a vendor GRN to pending_accounts_payment, and PAYMENT_WRITE_ROLES in
+ * vendor-payment.routes.ts is exactly ["accounts_head", "super_admin"]. That is where the role
+ * acts, and it is untouched.
+ *
+ * SMART_REVIEW_ROLES in grn-smart.routes.ts already reads ["branch_head", "finance_head",
+ * "super_admin"] — the newer router encodes the correct rule, and this one had not caught up.
+ *
+ * Nobody loses an ability they had: a user holding accounts_head ALONE could never complete a
+ * review, and one who also holds finance_head still passes on that role.
+ */
+const GRN_REVIEW_ROLES: RoleKey[] = ["branch_head", "finance_head", "super_admin"];
 const GRN_REVERSAL_ROLES: RoleKey[] = ["finance_head", "super_admin"];
 const EXPENSE_MASTER_READ_ROLES: RoleKey[] = [
   "super_admin",
