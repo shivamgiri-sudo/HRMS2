@@ -474,3 +474,23 @@ smartGrnRouter.post(
     }
   }
 );
+
+smartGrnRouter.post(
+  "/:id/reopen",
+  requireWriteAccess,
+  requireRole(...SMART_WRITE_ROLES),
+  authorizeGrn,
+  onlyWhenSmart,
+  async (req: SmartRequest, res) => {
+    try {
+      const user = actor(req);
+      const data = await grnSmartService.reopen(req.params.id, user.id, user.role);
+      res.json(data);
+    } catch (error) {
+      res.status(400).json({
+        success: false,
+        error: error instanceof Error ? error.message : "Unable to reopen GRN",
+      });
+    }
+  }
+);

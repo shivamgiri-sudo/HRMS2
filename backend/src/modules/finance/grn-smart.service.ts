@@ -1548,6 +1548,49 @@ export const grnSmartService = {
     return { success: true };
   },
 
+  async reopen(grnId: string, actorUserId: string, actorRole: string) {
+    const connection = await db.getConnection();
+    try {
+      await connection.beginTransaction();
+      const grn = await lockGrn(connection, grnId);
+      if (String(grn.status) !== "rejected") {
+        throw new Error(`Only rejected GRNs can be reopened. Current status: ${grn.status}`);
+      }
+      // Finance-head rejections call releaseAllocations(), setting lifecycle_status = 'released'.
+      // Restore them to 'draft' so the next save can proceed normally.
+      await connection.execute(
+        `UPDATE grn_cost_allocation SET lifecycle_status = 'draft', updated_at = NOW()
+           WHERE grn_request_id = ? AND lifecycle_status = 'released'`,
+        [grnId]
+      );
+      const [result] = await connection.execute<ResultSetHeader>(
+        `UPDATE grn_request
+            SET status = 'draft',
+                rejection_reason = NULL,
+                branch_head_reviewed_by = NULL, branch_head_reviewed_at = NULL,
+                branch_head_review_note = NULL,
+                finance_head_reviewed_by = NULL, finance_head_reviewed_at = NULL,
+                finance_head_review_note = NULL,
+                reviewed_by = NULL, reviewed_at = NOW(),
+                review_note = NULL,
+                submitted_at = NULL, submitted_by = NULL
+          WHERE id = ? AND status = 'rejected'`,
+        [grnId]
+      );
+      if (result.affectedRows !== 1) {
+        throw new Error("GRN status changed before reopen; refresh and try again");
+      }
+      await connection.commit();
+    } catch (error) {
+      await connection.rollback();
+      throw error;
+    } finally {
+      connection.release();
+    }
+    await writeAudit("REOPEN", grnId, actorUserId, actorRole, { previous_status: "rejected" });
+    return { success: true, newStatus: "draft" as const };
+  },
+
   async getWorkspace(grnId: string) {
     const [grnRows] = await db.execute<RowDataPacket[]>(
       `SELECT g.*, bm.branch_name, pm.process_name, ccm.cost_centre_name, h.budget_number
