@@ -1,6 +1,7 @@
 import { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { randomUUID } from "crypto";
+import { tableExists } from "../../shared/dbHelpers.js";
 
 export interface QualityUploadRow {
   employee_code: string;
@@ -24,6 +25,43 @@ export async function importQualityRows(
   rows: QualityUploadRow[],
   importedByUserId: string
 ): Promise<QualityUploadResult> {
+  // mas_hrms.quality_audit does not exist, so every INSERT below throws. Because
+  // each one sits in a per-row try/catch, an upload of 300 rows returned 300
+  // copies of "Table 'mas_hrms.quality_audit' doesn't exist" and imported = 0 -
+  // technically honest, unreadable in practice, and it says nothing about why.
+  //
+  // The table is absent by circumstance rather than accident, which is why this
+  // fails fast instead of creating it:
+  //
+  //   nothing reads quality_audit. There is no SELECT or JOIN against it
+  //   anywhere in backend or frontend, so importing into it would write rows no
+  //   feature consumes.
+  //
+  //   the data already arrives another way. db_audit.call_quality_assessment
+  //   holds 282,642 audited calls, and kpi-data-connector reads it through the
+  //   'quality_audit' INTEGRATION POOL - a connection key, not this table - to
+  //   build the quality KPI facts. Importing here would duplicate a working feed
+  //   in a second shape.
+  //
+  //   no UI calls this endpoint. It is reachable by API only.
+  //
+  // Provisioning the table is therefore a product decision - is manual upload a
+  // supported path alongside the dialler feed, and if so what is the dedupe key
+  // for its ON DUPLICATE KEY UPDATE? - not a rename. The route is left in place
+  // and answers clearly until that is decided.
+  if (!(await tableExists("quality_audit"))) {
+    throw Object.assign(
+      new Error(
+        "Manual quality upload is not provisioned: mas_hrms.quality_audit does not exist, " +
+        "and nothing in the application reads it. Call-audit quality already reaches HRMS " +
+        "from db_audit.call_quality_assessment via the 'quality_audit' integration pool. " +
+        "If manual upload should be supported, the table must be created deliberately, " +
+        "including the unique key its ON DUPLICATE KEY UPDATE relies on."
+      ),
+      { statusCode: 501, code: "QUALITY_AUDIT_STORAGE_ABSENT" }
+    );
+  }
+
   let imported = 0;
   let skipped = 0;
   const errors: { row: number; reason: string }[] = [];
