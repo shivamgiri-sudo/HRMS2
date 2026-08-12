@@ -1,4 +1,5 @@
 import "dotenv/config";
+import { readBuildInfo } from "../shared/buildInfo.js";
 
 import { startAccessExpiryScheduler, stopAccessExpiryScheduler } from "./access-expiry.worker.js";
 import { startIntegrationScheduler, stopIntegrationScheduler } from "./integration-scheduler.worker.js";
@@ -269,6 +270,13 @@ async function startAllWorkers(): Promise<void> {
   console.log("\n================================================");
   console.log("  HRMS Unified Worker Runner");
   console.log(`  Workers: ${WORKERS.map(w => w.name).join(", ")}`);
+  // Which code this process is actually running. The release certificate has to prove the
+  // worker's SHA, not infer it from having restarted alongside the API — a worker left on a
+  // stale artifact satisfies that inference silently. Same loader the API /health/version
+  // uses, so the two cannot disagree about what "the build" is. "unknown" here is a
+  // certificate FAILURE, not a cosmetic gap.
+  const build = readBuildInfo();
+  console.log(`  Build: commit=${build.commit} branch=${build.branch} builtAt=${build.builtAt}`);
   console.log("================================================\n");
   console.log("[workers] biometric attendance sync uses cosec-sync worker; legacy migrate-ncosec script is manual-only");
 

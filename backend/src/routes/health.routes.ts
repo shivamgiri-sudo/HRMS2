@@ -1,6 +1,4 @@
 import { Router } from "express";
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
 import { pingDb, getCircuitBreakerStatus, resetCircuitBreaker } from "../db/mysql.js";
 import { getMigrationHealth, verifySchemaVersion, getSchemaVerificationState } from "../db/runPendingMigrations.js";
 import { requireAuth } from "../middleware/authMiddleware.js";
@@ -8,39 +6,12 @@ import { requireRole } from "../middleware/requireRole.js";
 
 export const healthRouter = Router();
 
-export interface BuildInfo {
-  commit: string;
-  branch: string;
-  builtAt: string;
-}
-
-const UNKNOWN_BUILD: BuildInfo = { commit: "unknown", branch: "unknown", builtAt: "unknown" };
-
-/**
- * Read the stamp scripts/write-build-info.mjs leaves in dist/ at build time.
- *
- * Cached after the first read: the file cannot change without a redeploy, and a redeploy
- * replaces this process. Any failure resolves to "unknown" rather than throwing — a
- * diagnostic endpoint must not be the thing that breaks, and "unknown" is a truthful
- * answer that still says something is wrong with how the artifact was built.
- */
-let cachedBuildInfo: BuildInfo | null = null;
-export function readBuildInfo(): BuildInfo {
-  if (cachedBuildInfo) return cachedBuildInfo;
-  try {
-    // dist/src/routes/health.routes.js -> dist/build-info.json
-    const path = fileURLToPath(new URL("../../build-info.json", import.meta.url));
-    const parsed = JSON.parse(readFileSync(path, "utf8")) as Partial<BuildInfo>;
-    cachedBuildInfo = {
-      commit: parsed.commit || "unknown",
-      branch: parsed.branch || "unknown",
-      builtAt: parsed.builtAt || "unknown",
-    };
-  } catch {
-    cachedBuildInfo = UNKNOWN_BUILD;
-  }
-  return cachedBuildInfo;
-}
+// BuildInfo/readBuildInfo moved to shared/buildInfo.ts so the worker entrypoint reports the
+// SAME stamp rather than carrying a second copy that could drift. Re-exported because other
+// modules already import them from here.
+export { readBuildInfo, type BuildInfo } from "../shared/buildInfo.js";
+// `export ... from` re-exports without binding locally, and this file calls it below.
+import { readBuildInfo } from "../shared/buildInfo.js";
 
 type CheckStatus = "ok" | "warning" | "error";
 
