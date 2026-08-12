@@ -34,9 +34,12 @@ export async function createLegacyJoiningChecklists(): Promise<CreateChecklistsR
   };
 
   // Get or create "Legacy Employee" template
+  // template_name is not a column either, so this lookup threw before the insert
+  // below was ever reached. document_code is the stable key and is what the
+  // insert now supplies.
   const [existingTemplates] = await db.execute<TemplateRow[]>(
-    'SELECT id FROM employee_joining_document_template WHERE template_name = ? LIMIT 1',
-    ['Legacy Employee']
+    'SELECT id FROM employee_joining_document_template WHERE document_code = ? LIMIT 1',
+    ['LEGACY_EMPLOYEE']
   );
 
   let templateId: string;
@@ -45,13 +48,18 @@ export async function createLegacyJoiningChecklists(): Promise<CreateChecklistsR
   } else {
     templateId = randomUUID();
     await db.execute<ResultSetHeader>(
+      // The columns are document_name and document_code, not template_name, and
+      // there is no description column. document_code and document_category are
+      // both NOT NULL with no default and were never supplied, so this INSERT
+      // could not have succeeded even with the right names.
       `INSERT INTO employee_joining_document_template
-       (id, template_name, description, active_status, created_at, updated_at)
-       VALUES (?, ?, ?, 1, NOW(), NOW())`,
+       (id, document_code, document_name, document_category, active_status, created_at, updated_at)
+       VALUES (?, ?, ?, ?, 1, NOW(), NOW())`,
       [
         templateId,
+        'LEGACY_EMPLOYEE',
         'Legacy Employee',
-        'Pre-HRMS employee — documents verified offline before system migration'
+        'legacy'
       ]
     );
   }
@@ -83,19 +91,26 @@ export async function createLegacyJoiningChecklists(): Promise<CreateChecklistsR
     try {
       const checklistId = randomUUID();
       await db.execute<ResultSetHeader>(
+        // verification_type, is_required and notes do not exist here. The real
+        // columns are verification_status, mandatory and hr_remarks. document_code,
+        // owner_type and action_type are NOT NULL with no default and were all
+        // missing, so this INSERT failed on both counts - which the per-employee
+        // catch below recorded only as a skip.
         `INSERT INTO employee_joining_document_checklist
-         (id, employee_id, template_id, document_name, status,
-          verification_type, is_required, verified_by, verified_at, notes, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?, NOW(), NOW())`,
+         (id, employee_id, template_id, document_code, document_name, status,
+          owner_type, action_type, mandatory, verified_by, verified_at,
+          verification_status, hr_remarks, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, 'system', 'verify', ?, ?, NOW(), ?, ?, NOW(), NOW())`,
         [
           checklistId,
           employee.id,
           templateId,
+          'LEGACY_EMPLOYEE',
           'Legacy Employee Record',
           'verified',
-          'manual',
-          0, // not required
+          0, // mandatory: a legacy record is not a live requirement
           systemUserId,
+          'verified',
           'Pre-HRMS employee — documents verified offline before system migration'
         ]
       );

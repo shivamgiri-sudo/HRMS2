@@ -208,24 +208,36 @@ export const lmsEmployeeMapper = {
     // Normalize source name
     const normalizedSource = source === 'email' ? 'official_email' : source;
 
-    // Save mapping
+    // Save mapping.
+    //
+    // lms_employee_mapping stores employee_id and lms_learner_id, not
+    // hrms_employee_id and lms_employee_id, and it has a single `email` column
+    // rather than separate personal and official ones. It has no hrms_mobile at
+    // all. Five of the ten columns this named did not exist, so the upsert threw
+    // ER_BAD_FIELD_ERROR on every cache miss.
+    //
+    // The mobile number is dropped rather than stored somewhere it does not
+    // belong; it is still recorded on the audit row below as tried_mobile, which
+    // is where the matching attempt actually belongs.
+    //
+    // The unique key is uq_lms_emp (employee_id), so the upsert resolves on the
+    // employee, and lms_learner_id is what gets corrected on a re-map.
     await db.execute(
       `INSERT INTO lms_employee_mapping
-       (id, lms_employee_id, hrms_employee_id, hrms_employee_code, hrms_mobile, hrms_personal_email, hrms_official_email, mapping_source, mapping_confidence, mapped_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'system')
+       (id, employee_id, lms_learner_id, hrms_employee_code, email, mapping_source, mapping_confidence, mapped_by, mapped_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 'system', NOW())
        ON DUPLICATE KEY UPDATE
-       hrms_employee_id = VALUES(hrms_employee_id),
+       lms_learner_id = VALUES(lms_learner_id),
+       email = VALUES(email),
        mapping_source = VALUES(mapping_source),
        mapping_confidence = VALUES(mapping_confidence),
        mapped_at = NOW()`,
       [
         mappingId,
-        lmsEmployeeId,
         hrmsEmployee.id,
+        lmsEmployeeId,
         hrmsEmployee.employee_code,
-        hrmsEmployee.mobile || null,
-        hrmsEmployee.personal_email || null,
-        hrmsEmployee.email || null,
+        hrmsEmployee.email || hrmsEmployee.personal_email || null,
         normalizedSource,
         confidence,
       ]

@@ -73,18 +73,25 @@ export async function importRosterAssignmentBatch(
 
     const assignmentId = randomUUID();
     await db.execute(
+      // wfm_roster_assignment has no notes, created_by or updated_by column - it
+      // carries created_at/updated_at and no actor. Those three names made every
+      // bulk roster upload fail outright.
+      //
+      // The uploader's note is kept rather than dropped: system_decision_reason is
+      // the row's only free-text field and is already the column the RTA and WFM
+      // views surface next to decision_source, which this sets to 'bulk_upload'.
       `INSERT INTO wfm_roster_assignment
          (id, cycle_id, employee_id, roster_date, shift_template_id, is_week_off,
-          roster_status, publish_status, decision_source, notes, created_by, updated_by)
-       VALUES (?, ?, ?, ?, ?, ?, 'published', 'published', 'bulk_upload', ?, ?, ?)
+          roster_status, publish_status, decision_source, system_decision_reason)
+       VALUES (?, ?, ?, ?, ?, ?, 'published', 'published', 'bulk_upload', ?)
        ON DUPLICATE KEY UPDATE
          shift_template_id = VALUES(shift_template_id),
          is_week_off = VALUES(is_week_off),
          decision_source = 'bulk_upload',
-         notes = VALUES(notes),
-         updated_by = VALUES(updated_by)`,
+         system_decision_reason = VALUES(system_decision_reason),
+         updated_at = NOW()`,
       [assignmentId, cycle_id, employeeId, roster_date, shiftTemplateId,
-       isWeekOff ? 1 : 0, notes ?? null, userId, userId]
+       isWeekOff ? 1 : 0, notes ?? null]
     );
 
     await db.execute(
@@ -94,10 +101,19 @@ export async function importRosterAssignmentBatch(
     imported++;
   }
 
+  // upload_batch has imported_rows but no imported_by and no imported_at: its
+  // actor columns are uploaded_by and validated_by, and its timestamps are
+  // created_at/updated_at. Naming the two that do not exist meant a batch was
+  // never marked imported, so a completed upload stayed stuck at its previous
+  // status with imported_rows unset.
+  //
+  // Who ran the import is therefore not recorded anywhere on this table. That is
+  // a gap in the schema rather than something to invent a column for - flagged,
+  // not papered over.
   await db.execute(
-    `UPDATE upload_batch SET batch_status=?, imported_rows=?, imported_by=?, imported_at=NOW()
+    `UPDATE upload_batch SET batch_status=?, imported_rows=?, updated_at=NOW()
      WHERE id=?`,
-    [errors.length > 0 ? "imported_with_errors" : "imported", imported, userId, batchId]
+    [errors.length > 0 ? "imported_with_errors" : "imported", imported, batchId]
   );
 
   return { imported, skipped, errors };

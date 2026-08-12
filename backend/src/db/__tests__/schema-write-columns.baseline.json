@@ -48,17 +48,6 @@
   "modules/bulk-upload/process-master-bulk.service.ts": [
     "process_master.lob_id"
   ],
-  "modules/bulk-upload/roster-assignment-bulk.service.ts": [
-    "upload_batch.imported_at",
-    "upload_batch.imported_by",
-    "wfm_roster_assignment.created_by",
-    "wfm_roster_assignment.notes",
-    "wfm_roster_assignment.updated_by"
-  ],
-  "modules/bulk-upload/shift-roster-bulk.service.ts": [
-    "upload_batch.imported_at",
-    "upload_batch.imported_by"
-  ],
   "modules/bulk-upload/shift-rotation-type-bulk.service.ts": [
     "upload_batch.imported_at",
     "upload_batch.imported_by"
@@ -79,20 +68,6 @@
     "appointment_letter_request.generated_at",
     "appointment_letter_request.generated_by",
     "appointment_letter_request.template_data"
-  ],
-  "modules/lms-integration/lms-employee-mapper.ts": [
-    "lms_employee_mapping.hrms_employee_id",
-    "lms_employee_mapping.hrms_mobile",
-    "lms_employee_mapping.hrms_official_email",
-    "lms_employee_mapping.hrms_personal_email",
-    "lms_employee_mapping.lms_employee_id"
-  ],
-  "modules/migration/createLegacyJoiningChecklists.ts": [
-    "employee_joining_document_checklist.is_required",
-    "employee_joining_document_checklist.notes",
-    "employee_joining_document_checklist.verification_type",
-    "employee_joining_document_template.description",
-    "employee_joining_document_template.template_name"
   ],
   "modules/mobility/mobility.service.ts": [
     "transfer_record.applied_at"
