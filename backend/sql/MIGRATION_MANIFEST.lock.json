@@ -651,6 +651,7 @@
     "603_dashboard_metric_snapshot_unique.sql",
     "604_missing_page_catalog_entries.sql",
     "605_deactivate_closed_branch_ghost_employees.sql",
+    "606_employees_bank_account_encrypted.sql",
     "999_ats_backfill_status_column.sql",
     "999_ats_hiring_entry_manager_access.sql",
     "999_branch_alias_setup.sql",
