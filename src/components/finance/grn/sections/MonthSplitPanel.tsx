@@ -4,6 +4,7 @@ import {
   GrnAlert, GrnCellSub, GrnChip, GrnFieldRow, GrnInput, GrnTable, GrnTd, GrnTh, GRN_TR,
 } from "@/components/finance/grn/grn-ui";
 import { money } from "@/components/finance/grn/grn-format";
+import { MonthYearPicker } from "@/components/finance/MonthYearPicker";
 
 /**
  * Multi-month recognition (Requirement 5).
@@ -139,22 +140,18 @@ export function MonthSplitPanel({
           </GrnChip>
         ) : (
           <div className="flex flex-wrap items-center gap-2">
-            <GrnInput
-              type="month"
-              aria-label="First month of recognition"
-              className="w-[150px]"
-              disabled={disabled}
+            <MonthYearPicker
+              className="w-[210px]"
               value={value.startPeriod}
-              onChange={(e) => onChange({ ...value, startPeriod: e.target.value })}
+              onChange={(v) => onChange({ ...value, startPeriod: v })}
+              selectClassName={"h-[34px] rounded-[8px] border border-grn-line bg-white px-[8px] text-[12.5px] text-grn-ink focus:outline-none focus:ring-2 focus:ring-grn-brand/15"}
             />
             <span className="text-[11px] text-grn-ink-soft">to</span>
-            <GrnInput
-              type="month"
-              aria-label="Last month of recognition"
-              className="w-[150px]"
-              disabled={disabled}
+            <MonthYearPicker
+              className="w-[210px]"
               value={value.endPeriod}
-              onChange={(e) => onChange({ ...value, endPeriod: e.target.value })}
+              onChange={(v) => onChange({ ...value, endPeriod: v })}
+              selectClassName={"h-[34px] rounded-[8px] border border-grn-line bg-white px-[8px] text-[12.5px] text-grn-ink focus:outline-none focus:ring-2 focus:ring-grn-brand/15"}
             />
             <GrnChip
               active={false}

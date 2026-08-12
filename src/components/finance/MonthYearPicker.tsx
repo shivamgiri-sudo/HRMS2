@@ -26,12 +26,17 @@ export function MonthYearPicker({
   yearsBack = 3,
   yearsForward = 2,
   className,
+  selectClassName,
 }: {
   value: string;
   onChange: (value: string) => void;
   yearsBack?: number;
   yearsForward?: number;
   className?: string;
+  /** Overrides the default theme classes on both selects. The GRN module has its own design
+   *  language (grn-scope, IBM Plex, its own border and focus tokens), so it passes styling here
+   *  rather than importing a control that would visibly not belong. */
+  selectClassName?: string;
 }) {
   const [yearPart, monthPart] = value.split("-");
   const year = Number(yearPart) || new Date().getFullYear();
@@ -45,7 +50,7 @@ export function MonthYearPicker({
     <div className={`flex gap-1.5 ${className ?? ""}`}>
       <select
         aria-label="Month"
-        className="h-9 flex-1 rounded-md border border-input bg-background px-2 text-sm"
+        className={selectClassName ?? "h-9 flex-1 rounded-md border border-input bg-background px-2 text-sm"}
         value={month}
         onChange={(event) => onChange(`${year}-${String(Number(event.target.value)).padStart(2, "0")}`)}
       >
@@ -55,7 +60,7 @@ export function MonthYearPicker({
       </select>
       <select
         aria-label="Year"
-        className="h-9 w-24 rounded-md border border-input bg-background px-2 text-sm"
+        className={selectClassName ? `${selectClassName} w-24` : "h-9 w-24 rounded-md border border-input bg-background px-2 text-sm"}
         value={year}
         onChange={(event) => onChange(`${event.target.value}-${String(month).padStart(2, "0")}`)}
       >
