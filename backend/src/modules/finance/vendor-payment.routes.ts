@@ -11,6 +11,7 @@ import {
 import { requireRole } from "../../middleware/requireRole.js";
 import {
   assertFinanceRecordBranch,
+  hasGlobalFinanceScope,
   resolveFinanceBranchScopeSet,
 } from "./finance-access-scope.js";
 import { vendorPaymentLedgerService } from "./vendor-payment-ledger.service.js";
@@ -93,13 +94,23 @@ router.get(
   (req: AuthenticatedRequest, res) => {
     const roles = allRoles(req);
     const canWrite = roles.has("accounts_head") || roles.has("super_admin");
-    const hasGlobalRead = [
-      "accounts_head",
-      "super_admin",
-      "finance_head",
-      "admin",
-      "finance",
-    ].some((role) => roles.has(role));
+    /*
+     * readScope must come from the SAME rule the data endpoints obey, not a second list.
+     *
+     * This was a hand-rolled set that included `admin` and ignored `branch_admin`.
+     * hasGlobalFinanceScope — which resolveFinanceBranchScopeSet actually consults — does the
+     * opposite: branch_admin PINS a user to their own branch even when they also hold a global
+     * role, and `admin` is deliberately absent from the overriding set because it is a generic
+     * grant rather than a statement that the holder reviews other branches.
+     *
+     * The live pattern this breaks on is a branch admin who also carries `admin`, which is how
+     * these accounts are actually provisioned. They were told readScope "organisation" while
+     * GET /vendor-payments returned only their own branch — so the page labelled one branch's
+     * vendor payments as the whole company's, and a reader would conclude the company owes far
+     * less than it does.
+     */
+    const user = actor(req);
+    const hasGlobalRead = hasGlobalFinanceScope(user.role, user.roles);
     res.json({
       success: true,
       data: {
