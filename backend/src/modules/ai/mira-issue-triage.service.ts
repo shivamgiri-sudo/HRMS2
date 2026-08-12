@@ -32,14 +32,34 @@
  * __tests__/mira-issue-triage-guard.test.ts for the validated case table, including cases that
  * defeat one layer and are caught by the other.
  *
- * GRACEFUL DEGRADATION WHEN NO AI PROVIDER IS CONFIGURED
+ * PROVIDER RESOLUTION AND WHY THIS USES generateText, NOT generateJson
  *
- * Verified live 2026-08-13: no ANTHROPIC_API_KEY, GEMINI_API_KEY or OPENROUTER_API_KEY is set
- * in production, so aiProviderRegistry.getDefault() resolves to ruleBasedProvider, which does
- * not implement generateJson. Rather than throw, that case is detected up front
- * (provider.supportsJson) and produces an explicit "AI diagnosis unavailable — configure a
- * provider" audit entry, so a human triaging the item sees why there is no AI analysis instead
- * of the worker silently failing or crash-looping.
+ * Three real, pre-existing issues found while wiring this up (2026-08-13), none introduced
+ * here, all worth knowing if this file is touched again:
+ *
+ * 1. getDefault() is DB-config-driven (ai_provider_config.is_default). It currently resolves
+ *    to 'gemini' regardless of whether a working key exists for it — its "prefer an
+ *    env-configured provider" fallback only activates when the DB default is specifically
+ *    'rule-based'. So adding an env-var key alone does NOT make getDefault() use it while the
+ *    DB row points elsewhere. Fixing that DB-level default is a shared change affecting all
+ *    of Mira, out of scope here — resolveWorkingProvider() below resolves its own preference
+ *    instead, without touching that shared config.
+ * 2. ollama.provider.ts, gemini.provider.ts AND openrouter.provider.ts all declare
+ *    `supportsJson = true` with NO generateJson implementation at all — calling it throws
+ *    "generateJson is not a function" regardless of whether a key is configured. Only
+ *    claude.provider.ts genuinely implements it. Verified by grepping every provider file for
+ *    an actual `generateJson` method, not trusting the declared flag.
+ * 3. Because of #2, this uses generateText — which every provider genuinely implements,
+ *    confirmed for both Claude and OpenRouter — with an explicit "respond with only JSON"
+ *    instruction, and parses/validates the JSON out of the answer text itself
+ *    (extractDiagnosisJson below). Less elegant than a real structured-output API, but it
+ *    doesn't depend on an abstraction that's broken for 3 of 4 registered providers.
+ *
+ * resolveWorkingProvider() tries, in order: the provider matching whichever of
+ * ANTHROPIC_API_KEY / OPENROUTER_API_KEY / GEMINI_API_KEY is actually set, then falls back to
+ * getDefault(). Returns null — not a throw — when nothing usable is found, which the caller
+ * turns into the same graceful "AI diagnosis unavailable" audit entry as any other
+ * unavailability case.
  */
 import { randomUUID } from 'crypto';
 import type { RowDataPacket } from 'mysql2';
@@ -47,12 +67,7 @@ import { db } from '../../db/mysql.js';
 import { validateQuestion } from './ai-input-guard.js';
 import { checkDomainSafety } from './mira-issue-triage-guard.js';
 import { aiProviderRegistry } from './ai-provider.registry.js';
-import type { AiGenerateRequest } from './ai-provider.types.js';
-
-// jsonSchema is not a declared field on AiGenerateRequest — providers that implement
-// generateJson (claude.provider.ts, gemini.provider.ts) read it via an inline cast on their
-// end, same pattern used here rather than widening the shared type for one optional field.
-type JsonGenerateRequest = AiGenerateRequest & { jsonSchema: Record<string, unknown> };
+import type { AiGenerateRequest, AiProvider } from './ai-provider.types.js';
 
 export const TRIAGE_AUDIT_ACTION = 'mira_ai_triage';
 
@@ -71,20 +86,8 @@ export interface TriageDiagnosis {
   confidence: 'low' | 'medium' | 'high';
 }
 
-const DIAGNOSIS_SCHEMA = {
-  type: 'object',
-  properties: {
-    actionable: { type: 'boolean' },
-    category: {
-      type: 'string',
-      enum: ['genuine_bug', 'feature_request', 'not_actionable', 'needs_human_judgment'],
-    },
-    rootCauseHypothesis: { type: 'string' },
-    suggestedNextStep: { type: 'string' },
-    confidence: { type: 'string', enum: ['low', 'medium', 'high'] },
-  },
-  required: ['actionable', 'category', 'rootCauseHypothesis', 'suggestedNextStep', 'confidence'],
-};
+const VALID_CATEGORIES = ['genuine_bug', 'feature_request', 'not_actionable', 'needs_human_judgment'] as const;
+const VALID_CONFIDENCE = ['low', 'medium', 'high'] as const;
 
 const SYSTEM_INSTRUCTION = `You are a triage assistant for MAS Callnet HRMS bug reports. You read one user
 complaint and produce a plain-English diagnosis for a human engineer. You are NOT permitted to:
@@ -97,7 +100,53 @@ complaint and produce a plain-English diagnosis for a human engineer. You are NO
 If the complaint is not a genuine, actionable software bug (e.g. it's a policy question, a data
 dispute, an unclear request, or something requiring business judgment), say so honestly in
 "category" and keep "actionable" false. When uncertain, prefer "needs_human_judgment" and low
-confidence over guessing.`;
+confidence over guessing.
+
+Respond with ONLY a single JSON object, no markdown fences, no commentary before or after, in
+exactly this shape:
+{"actionable": true or false, "category": "genuine_bug" | "feature_request" | "not_actionable" | "needs_human_judgment", "rootCauseHypothesis": "plain English, one or two sentences", "suggestedNextStep": "plain English, one or two sentences", "confidence": "low" | "medium" | "high"}`;
+
+/**
+ * Extracts and validates the diagnosis JSON out of a free-text model answer. Deliberately
+ * strict about shape (every field checked, enums validated against the exact allowed values)
+ * since this is the only thing standing between "arbitrary model output" and "what a human
+ * reads as a diagnosis" — a malformed or partial object is a parse failure, not a best-effort
+ * partial diagnosis.
+ */
+function extractDiagnosisJson(answer: string): TriageDiagnosis {
+  // Models sometimes wrap JSON in ```json fences despite being told not to; strip if present.
+  const fenced = answer.match(/```(?:json)?\s*([\s\S]*?)```/);
+  const candidate = fenced ? fenced[1] : answer;
+  // Grab the first {...} block in case there's leading/trailing prose.
+  const braceMatch = candidate.match(/\{[\s\S]*\}/);
+  if (!braceMatch) throw new Error('model response did not contain a JSON object');
+
+  const parsed: unknown = JSON.parse(braceMatch[0]);
+  if (typeof parsed !== 'object' || parsed === null) throw new Error('parsed JSON is not an object');
+  const p = parsed as Record<string, unknown>;
+
+  if (typeof p.actionable !== 'boolean') throw new Error('"actionable" must be a boolean');
+  if (!VALID_CATEGORIES.includes(p.category as (typeof VALID_CATEGORIES)[number])) {
+    throw new Error(`"category" must be one of ${VALID_CATEGORIES.join(', ')}`);
+  }
+  if (typeof p.rootCauseHypothesis !== 'string' || !p.rootCauseHypothesis.trim()) {
+    throw new Error('"rootCauseHypothesis" must be a non-empty string');
+  }
+  if (typeof p.suggestedNextStep !== 'string' || !p.suggestedNextStep.trim()) {
+    throw new Error('"suggestedNextStep" must be a non-empty string');
+  }
+  if (!VALID_CONFIDENCE.includes(p.confidence as (typeof VALID_CONFIDENCE)[number])) {
+    throw new Error(`"confidence" must be one of ${VALID_CONFIDENCE.join(', ')}`);
+  }
+
+  return {
+    actionable: p.actionable,
+    category: p.category as TriageDiagnosis['category'],
+    rootCauseHypothesis: p.rootCauseHypothesis.trim().slice(0, 1000),
+    suggestedNextStep: p.suggestedNextStep.trim().slice(0, 1000),
+    confidence: p.confidence as TriageDiagnosis['confidence'],
+  };
+}
 
 async function writeTriageAudit(workItemId: string, remarks: string): Promise<void> {
   await db.execute(
@@ -105,6 +154,33 @@ async function writeTriageAudit(workItemId: string, remarks: string): Promise<vo
      VALUES (?, ?, ?, 'pending', 'pending', ?, 'system-mira-triage', NOW())`,
     [randomUUID(), workItemId, TRIAGE_AUDIT_ACTION, remarks.slice(0, 4000)],
   );
+}
+
+/**
+ * generateText is implemented by every registered provider (unlike generateJson — see file
+ * header note #2), so the only real "is this usable" question is whether a key exists.
+ * key !== 'rule-based' excludes the deterministic fallback, which has no model behind it and
+ * would just echo a canned string rather than analyse the complaint.
+ */
+function isUsable(provider: AiProvider): boolean {
+  return provider.key !== 'rule-based';
+}
+
+/** See the file header "PROVIDER RESOLUTION" note for why this exists instead of a bare
+ * aiProviderRegistry.getDefault() call. */
+async function resolveWorkingProvider(): Promise<AiProvider | null> {
+  const envKeyed: Array<[string, string | undefined]> = [
+    ['claude', process.env.ANTHROPIC_API_KEY],
+    ['openrouter', process.env.OPENROUTER_API_KEY],
+    ['gemini', process.env.GEMINI_API_KEY],
+  ];
+  for (const [key, envKey] of envKeyed) {
+    if (!envKey) continue;
+    const candidate = aiProviderRegistry.get(key);
+    if (candidate && isUsable(candidate)) return candidate;
+  }
+  const fallback = await aiProviderRegistry.getDefault();
+  return isUsable(fallback) ? fallback : null;
 }
 
 export async function triageWorkItem(workItemId: string, complaintText: string): Promise<TriageOutcome> {
@@ -128,23 +204,17 @@ export async function triageWorkItem(workItemId: string, complaintText: string):
     return outcome;
   }
 
-  const provider = await aiProviderRegistry.getDefault();
-  // Checking supportsJson alone is not enough — verified live 2026-08-13 that
-  // ollama.provider.ts declares supportsJson = true with no generateJson implementation at
-  // all, so a DB config defaulting to 'ollama' resolves a provider whose own capability flag
-  // says yes and then throws "generateJson is not a function" when actually called. Checking
-  // the method exists is the only way this degrades gracefully instead of surfacing as an
-  // ai_error on every single run.
-  if (!provider.supportsJson || typeof provider.generateJson !== 'function') {
+  const provider = await resolveWorkingProvider();
+  if (!provider) {
     await writeTriageAudit(
       workItemId,
-      `AI diagnosis unavailable — the configured provider ('${provider.key}') does not actually support structured generation. Needs manual triage. Configure ANTHROPIC_API_KEY, GEMINI_API_KEY or OPENROUTER_API_KEY (or fix the default-provider config) to enable automatic diagnosis.`,
+      `AI diagnosis unavailable — no usable AI provider found (checked ANTHROPIC_API_KEY, OPENROUTER_API_KEY, GEMINI_API_KEY and the DB-configured default; none has a key configured). Needs manual triage.`,
     );
     return { status: 'ai_unavailable' };
   }
 
   try {
-    const request: JsonGenerateRequest = {
+    const request: AiGenerateRequest = {
       userId: 'system-mira-triage',
       roleKeys: ['system'],
       providerKey: provider.key,
@@ -152,9 +222,17 @@ export async function triageWorkItem(workItemId: string, complaintText: string):
       systemInstruction: SYSTEM_INSTRUCTION,
       userQuestion: complaintText,
       sanitizedContext: {},
-      jsonSchema: DIAGNOSIS_SCHEMA,
+      // Verified live 2026-08-13: an auto-routed OpenRouter model can be a reasoning model
+      // that spends its token budget on internal "reasoning" content before ever writing the
+      // actual answer, returning content:null / finish_reason:"length" on a default 800-token
+      // budget. 2000 leaves enough room for reasoning overhead plus a JSON diagnosis.
+      maxOutputTokens: 2000,
     };
-    const diagnosis = await provider.generateJson!<TriageDiagnosis>(request);
+    const response = await provider.generateText(request);
+    if (response.safetyBlocked) {
+      throw new Error(`provider declined the request: ${response.answer}`);
+    }
+    const diagnosis = extractDiagnosisJson(response.answer);
 
     await writeTriageAudit(
       workItemId,

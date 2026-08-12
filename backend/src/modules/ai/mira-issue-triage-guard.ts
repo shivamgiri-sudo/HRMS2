@@ -56,9 +56,17 @@ const UNSAFE_PATTERNS: Array<[RegExp, string]> = [
   [/\bmy\s+salary\s+(is|should be|needs to be)\s+(wrong|higher|more|increased)/i,
     "is a salary-amount dispute, not a software bug — needs HR/Payroll, not a code fix"],
 
-  // Credential/secret exposure.
+  // Credential/secret exposure. Both word orders: "what is the API key" AND "the API key ...
+  // what is it supposed to be" — a request phrased as "X seems wrong, what should it be"
+  // referring back to a credential mentioned earlier in the same message. Caught in
+  // validation (2026-08-13): the forward-only pattern missed the second phrasing entirely;
+  // an AI-drafted diagnosis correctly refused it on its own that time, but the deterministic
+  // guard must not depend on the model getting it right — that is the whole point of having
+  // a guard in front of the model at all.
   [/\b(what\s+is|show\s+me|give\s+me)\s+.{0,20}(api\s*key|secret|credential|token)\b/i,
     "asks for a credential or secret value"],
+  [/\b(api\s*key|secret|credential|token)\b.{0,60}\b(what\s+is\s+it|what\s+should\s+it\s+be|supposed\s+to\s+be)\b/i,
+    "references a credential or secret value and asks what it should be"],
 ];
 
 export function checkDomainSafety(text: string): DomainGuardResult {
