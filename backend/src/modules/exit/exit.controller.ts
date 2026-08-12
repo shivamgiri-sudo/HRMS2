@@ -1,4 +1,5 @@
 import type { Response } from "express";
+import { resolveEmployeeRef } from "./resolveEmployeeRef.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { exitService } from "./exit.service.js";
 import {
@@ -46,9 +47,12 @@ export const exitController = {
       reason: req.body?.reason ?? req.body?.resignationReason,
     };
     const input = createExitRequestSchema.parse(body);
+    // Accepts an employee CODE as well as a uuid — see resolveEmployeeRef for why there is no
+    // name fallback. Throws a 404 naming the code when it matches nobody.
+    const employeeId = await resolveEmployeeRef(input.employeeId, input.employeeCode);
     const data = await exitService.createExitRequest(
       {
-        employeeId: input.employeeId!,
+        employeeId,
         exitDate: input.exitDate!,
         exitType: input.exitType,
         exitSubType: input.exitSubType,

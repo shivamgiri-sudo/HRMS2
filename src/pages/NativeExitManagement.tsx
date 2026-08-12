@@ -145,8 +145,15 @@ export default function NativeExitManagement() {
   const [showModal, setShowModal] = useState(false);
   const [updating, setUpdating] = useState<string | null>(null);
 
+  // Employee search state. The form used to demand a raw UUID, which is not something HR
+  // has to hand — see the picker below.
+  const [empQuery, setEmpQuery] = useState("");
+  const [empResults, setEmpResults] = useState<Array<{ id: string; employee_code: string; name: string }>>([]);
+  const [empSearching, setEmpSearching] = useState(false);
+
   const [form, setForm] = useState({
     employeeId: "",
+    employeeLabel: "",
     exitType: "voluntary",
     exitSubType: "resignation",
     exitReasonCategory: "career_growth",
@@ -176,8 +183,32 @@ export default function NativeExitManagement() {
 
   useEffect(() => { void load(); }, [statusFilter]);
 
+  // Search employees by name or code. Uses the same directory endpoint the Employees page
+  // uses, so scope and permissions are whatever that route already enforces.
+  useEffect(() => {
+    const q = empQuery.trim();
+    if (q.length < 2) { setEmpResults([]); return; }
+    let cancelled = false;
+    const t = setTimeout(async () => {
+      setEmpSearching(true);
+      try {
+        const res = await hrmsApi.get<{ data: Array<Record<string, unknown>> }>(
+          `/api/employees?recordStatus=active&limit=10&search=${encodeURIComponent(q)}`,
+        );
+        if (cancelled) return;
+        setEmpResults((res?.data ?? []).map((e) => ({
+          id: String(e.id ?? ""),
+          employee_code: String(e.employee_code ?? ""),
+          name: [e.first_name, e.last_name].filter(Boolean).join(" ") || String(e.full_name ?? ""),
+        })).filter((e) => e.id));
+      } catch { if (!cancelled) setEmpResults([]); }
+      finally { if (!cancelled) setEmpSearching(false); }
+    }, 300);
+    return () => { cancelled = true; clearTimeout(t); };
+  }, [empQuery]);
+
   const submitRequest = async () => {
-    if (!form.employeeId.trim()) return setMessage("Employee ID is required.");
+    if (!form.employeeId.trim()) return setMessage("Select an employee first.");
     if (!form.lastWorkingDayProposed) return setMessage("Proposed last working day is required.");
     try {
       await hrmsApi.post("/api/exit", {
@@ -189,7 +220,8 @@ export default function NativeExitManagement() {
         lastWorkingDayProposed: form.lastWorkingDayProposed,
       });
       setShowModal(false);
-      setForm({ employeeId: "", exitType: "voluntary", exitSubType: "resignation", exitReasonCategory: "career_growth", resignationReason: "", lastWorkingDayProposed: "" });
+      setEmpQuery(""); setEmpResults([]);
+      setForm({ employeeId: "", employeeLabel: "", exitType: "voluntary", exitSubType: "resignation", exitReasonCategory: "career_growth", resignationReason: "", lastWorkingDayProposed: "" });
       setMessage("Exit request submitted.");
       await load();
     } catch (err: any) { setMessage(err?.message || "Submission failed."); }
@@ -319,7 +351,51 @@ export default function NativeExitManagement() {
           <div className="w-full max-w-lg rounded-3xl bg-white shadow-2xl">
             <div className="flex items-center justify-between border-b p-6"><h2 className="text-lg font-black text-slate-950">New Exit Request</h2><button onClick={() => setShowModal(false)} className="text-slate-400 hover:text-slate-700"><X className="h-5 w-5" /></button></div>
             <div className="space-y-4 p-6">
-              <div><label className="block text-sm font-semibold text-slate-700 mb-1.5">Employee ID / UUID</label><input value={form.employeeId} onChange={(e) => setForm({ ...form, employeeId: e.target.value })} placeholder="Enter employee UUID" className="w-full rounded-2xl border px-4 py-3 text-sm outline-none focus:border-blue-400" /></div>
+              <div className="relative">
+                <label className="block text-sm font-semibold text-slate-700 mb-1.5">Employee</label>
+                {form.employeeId ? (
+                  <div className="flex items-center justify-between rounded-2xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm">
+                    <span className="font-medium text-slate-900">{form.employeeLabel}</span>
+                    <button
+                      type="button"
+                      onClick={() => { setForm({ ...form, employeeId: "", employeeLabel: "" }); setEmpQuery(""); }}
+                      className="text-xs font-semibold text-blue-700 hover:underline"
+                    >Change</button>
+                  </div>
+                ) : (
+                  <>
+                    <input
+                      value={empQuery}
+                      onChange={(e) => setEmpQuery(e.target.value)}
+                      placeholder="Search by name or employee code (e.g. MAS63193)"
+                      className="w-full rounded-2xl border px-4 py-3 text-sm outline-none focus:border-blue-400"
+                      autoComplete="off"
+                    />
+                    {empQuery.trim().length >= 2 && (
+                      <div className="absolute z-20 mt-1 max-h-56 w-full overflow-auto rounded-2xl border bg-white shadow-lg">
+                        {empSearching && <div className="px-4 py-3 text-sm text-slate-500">Searching…</div>}
+                        {!empSearching && empResults.length === 0 && (
+                          <div className="px-4 py-3 text-sm text-slate-500">No active employee matches “{empQuery.trim()}”.</div>
+                        )}
+                        {empResults.map((emp) => (
+                          <button
+                            key={emp.id}
+                            type="button"
+                            onClick={() => {
+                              setForm({ ...form, employeeId: emp.id, employeeLabel: `${emp.employee_code} — ${emp.name}` });
+                              setEmpResults([]);
+                            }}
+                            className="flex w-full items-center justify-between px-4 py-2.5 text-left text-sm hover:bg-slate-50"
+                          >
+                            <span className="text-slate-900">{emp.name}</span>
+                            <span className="font-mono text-xs text-slate-500">{emp.employee_code}</span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </>
+                )}
+              </div>
               <div className="grid grid-cols-2 gap-3">
                 <div><label className="block text-sm font-semibold text-slate-700 mb-1.5">Exit Type</label><select value={form.exitType} onChange={(e) => setForm({ ...form, exitType: e.target.value })} className="w-full rounded-2xl border bg-white px-4 py-3 text-sm text-slate-900 outline-none focus:border-blue-400"><option value="voluntary">Voluntary</option><option value="involuntary">Involuntary</option></select></div>
                 <div><label className="block text-sm font-semibold text-slate-700 mb-1.5">Sub-type</label><select value={form.exitSubType} onChange={(e) => setForm({ ...form, exitSubType: e.target.value })} className="w-full rounded-2xl border bg-white px-4 py-3 text-sm text-slate-900 outline-none focus:border-blue-400">{form.exitType === "voluntary" ? <><option value="resignation">Resignation</option><option value="retirement">Retirement</option><option value="mutual_separation">Mutual Separation</option></> : <><option value="termination">Termination</option><option value="absconding">Absconding</option><option value="contract_end">Contract End</option><option value="abandonment">Abandonment</option></>}</select></div>

@@ -5,6 +5,10 @@ const DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
 export const createExitRequestSchema = z.object({
   employeeId: z.string().uuid().optional(),
   employee_id: z.string().uuid().optional(),
+  // HR knows people as MAS63193, not as a UUID. Accepted alongside the id and resolved
+  // server-side by resolveEmployeeRef; employee_code is unique, so it identifies one person.
+  employeeCode: z.string().trim().max(50).optional(),
+  employee_code: z.string().trim().max(50).optional(),
   exitDate: z.string().regex(DATE_REGEX, "Date must be YYYY-MM-DD").optional(),
   lastWorkingDayProposed: z.string().regex(DATE_REGEX, "Date must be YYYY-MM-DD").optional(),
   exitType: z.enum(["voluntary", "involuntary"]),
@@ -18,13 +22,17 @@ export const createExitRequestSchema = z.object({
   noticePeriodDays: z.coerce.number().int().min(0).default(0),
 }).transform((v) => ({
   employeeId: v.employeeId ?? v.employee_id,
+  employeeCode: v.employeeCode ?? v.employee_code,
   exitDate: v.exitDate ?? v.lastWorkingDayProposed,
   exitType: v.exitType,
   exitSubType: v.exitSubType,
   exitReasonCategory: v.exitReasonCategory ?? null,
   reason: v.reason ?? v.resignationReason ?? null,
   noticePeriodDays: v.noticePeriodDays,
-})).refine((v) => !!v.employeeId, { message: "employeeId is required", path: ["employeeId"] })
+})).refine((v) => !!v.employeeId || !!v.employeeCode, {
+    message: "employeeId or employeeCode is required",
+    path: ["employeeId"],
+  })
   .refine((v) => !!v.exitDate, { message: "exitDate is required", path: ["exitDate"] });
 
 export const updateExitStatusSchema = z.object({

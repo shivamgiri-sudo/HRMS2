@@ -52,7 +52,10 @@ exitRouter.post("/", h(async (req: AuthenticatedRequest, res: Response) => {
     if (!emp) {
       return res.status(403).json({ success: false, message: "Forbidden: no employee record linked to your account" });
     }
-    req.body = { ...req.body, employeeId: emp.id };
+    // employeeCode is stripped, not just overridden. The resolver prefers employeeId, so
+    // overriding it alone would already be safe — but that safety would rest on the order of
+    // two checks in another file. A self-service caller must not be able to name anyone else.
+    req.body = { ...req.body, employeeId: emp.id, employeeCode: undefined, employee_code: undefined };
   }
 
   return exitController.createExitRequest(req, res);
