@@ -43,6 +43,51 @@ function mapRow(row: RowDataPacket): ProcessMaster {
   };
 }
 
+/**
+ * Input fields that process_master has no column for.
+ *
+ * The repository was written against a schema that does not exist. Its INSERT
+ * named fourteen columns and nine of them - department_id, branch_name,
+ * location_name, process_owner_employee_id, process_manager_employee_id,
+ * description, metadata, created_by, updated_by - are absent from the table, so
+ * POST /api/processes has always returned ER_BAD_FIELD_ERROR. update() appended
+ * `updated_by = ?` unconditionally, so PUT /api/processes/:id failed too, and
+ * PATCH /:id/status failed on the same column.
+ *
+ * These are rejected rather than quietly dropped. Silently accepting a
+ * description and storing nothing is the failure mode this whole class of bug is
+ * made of; a caller that sends one deserves to be told there is nowhere to put
+ * it.
+ *
+ * branchName and processOwnerEmployeeId are the two that could plausibly be
+ * mapped - to branch_id via branch_master, and to process_owner_name via
+ * employees - but that is a behaviour decision rather than a column fix, so it
+ * is left out deliberately.
+ */
+const UNSTORABLE_FIELDS = [
+  "departmentId",
+  "branchName",
+  "locationName",
+  "processOwnerEmployeeId",
+  "processManagerEmployeeId",
+  "description",
+] as const;
+
+function rejectUnstorableFields(input: CreateProcessInput | UpdateProcessInput): void {
+  const bag = input as Record<string, unknown>;
+  const supplied = UNSTORABLE_FIELDS.filter((f) => bag[f] !== undefined && bag[f] !== null);
+  if (supplied.length > 0) {
+    throw Object.assign(
+      new Error(
+        `process_master cannot store: ${supplied.join(", ")}. The table holds ` +
+          `process_code, process_name, process_type, business_lob, branch_id, ` +
+          `client_id, client_name and the SLA/escalation fields.`
+      ),
+      { statusCode: 400, code: "PROCESS_FIELDS_UNSUPPORTED" }
+    );
+  }
+}
+
 export const processRepositoryMySQL: ProcessRepository = {
   async list(filters: ProcessFilters): Promise<ProcessMaster[]> {
     const conditions: string[] = [];
@@ -135,30 +180,22 @@ export const processRepositoryMySQL: ProcessRepository = {
     input: CreateProcessInput,
     userId: string
   ): Promise<ProcessMaster> {
-    const id = randomUUID();
-    const metadataJson = JSON.stringify({});
+    rejectUnstorableFields(input);
 
+    const id = randomUUID();
+
+    // Nine of the fourteen columns this used to name do not exist on
+    // process_master - see UNSTORABLE_FIELDS. userId has nowhere to go either:
+    // the table has created_at/updated_at but no created_by/updated_by.
     await db.execute(
       `INSERT INTO process_master
-        (id, process_code, process_name, department_id, process_type,
-         branch_name, location_name, process_owner_employee_id,
-         process_manager_employee_id, description, active_status,
-         metadata, created_by, updated_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)`,
+        (id, process_code, process_name, process_type, active_status)
+       VALUES (?, ?, ?, ?, 1)`,
       [
         id,
         input.processCode.trim(),
         input.processName.trim(),
-        input.departmentId ?? null,
         input.processType ?? null,
-        input.branchName ?? null,
-        input.locationName ?? null,
-        input.processOwnerEmployeeId ?? null,
-        input.processManagerEmployeeId ?? null,
-        input.description ?? null,
-        metadataJson,
-        userId,
-        userId,
       ]
     );
 
@@ -174,6 +211,10 @@ export const processRepositoryMySQL: ProcessRepository = {
     input: UpdateProcessInput,
     userId: string
   ): Promise<ProcessMaster> {
+    // without this, an update naming description or branchName would now be
+    // accepted and quietly store nothing - worse than the error it used to throw
+    rejectUnstorableFields(input);
+
     const setClauses: string[] = [];
     const params: unknown[] = [];
 
@@ -181,44 +222,20 @@ export const processRepositoryMySQL: ProcessRepository = {
       setClauses.push("process_name = ?");
       params.push(input.processName.trim());
     }
-    if (input.departmentId !== undefined) {
-      setClauses.push("department_id = ?");
-      params.push(input.departmentId ?? null);
-    }
     if (input.processType !== undefined) {
       setClauses.push("process_type = ?");
       params.push(input.processType ?? null);
-    }
-    if (input.branchName !== undefined) {
-      setClauses.push("branch_name = ?");
-      params.push(input.branchName ?? null);
-    }
-    if (input.locationName !== undefined) {
-      setClauses.push("location_name = ?");
-      params.push(input.locationName ?? null);
-    }
-    if (input.processOwnerEmployeeId !== undefined) {
-      setClauses.push("process_owner_employee_id = ?");
-      params.push(input.processOwnerEmployeeId ?? null);
-    }
-    if (input.processManagerEmployeeId !== undefined) {
-      setClauses.push("process_manager_employee_id = ?");
-      params.push(input.processManagerEmployeeId ?? null);
     }
     if (input.activeStatus !== undefined) {
       setClauses.push("active_status = ?");
       params.push(input.activeStatus ? 1 : 0);
     }
-    if (input.description !== undefined) {
-      setClauses.push("description = ?");
-      params.push(input.description ?? null);
-    }
 
-    setClauses.push("updated_by = ?");
-    params.push(userId);
+    // updated_by is not a column here, and it used to be appended
+    // unconditionally, so every update failed regardless of what was in it.
 
-    if (setClauses.length === 1) {
-      // Only updated_by was added — nothing meaningful to update, just re-fetch
+    if (setClauses.length === 0) {
+      // Nothing storable to update — just re-fetch
       const existing = await this.getById(id);
       if (!existing) {
         throw new Error(`Process with id '${id}' not found`);
@@ -245,9 +262,11 @@ export const processRepositoryMySQL: ProcessRepository = {
     activeStatus: boolean,
     userId: string
   ): Promise<ProcessMaster> {
+    // updated_by does not exist on process_master, so activating or deactivating
+    // a process failed on the column rather than on anything to do with status.
     await db.execute(
-      "UPDATE process_master SET active_status = ?, updated_by = ? WHERE id = ?",
-      [activeStatus ? 1 : 0, userId, id]
+      "UPDATE process_master SET active_status = ? WHERE id = ?",
+      [activeStatus ? 1 : 0, id]
     );
 
     const updated = await this.getById(id);

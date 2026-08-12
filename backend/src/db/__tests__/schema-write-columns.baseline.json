@@ -119,17 +119,6 @@
     "cost_centre_master.cc_code",
     "cost_centre_master.cc_name"
   ],
-  "modules/process/process.repository.mysql.ts": [
-    "process_master.branch_name",
-    "process_master.created_by",
-    "process_master.department_id",
-    "process_master.description",
-    "process_master.location_name",
-    "process_master.metadata",
-    "process_master.process_manager_employee_id",
-    "process_master.process_owner_employee_id",
-    "process_master.updated_by"
-  ],
   "workers/domains/dialer-kpi-sync.ts": [
     "kpi_score.updated_at"
   ],

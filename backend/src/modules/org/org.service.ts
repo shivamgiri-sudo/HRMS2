@@ -775,15 +775,19 @@ export const processService = {
   }) {
     const id = randomUUID();
     await db.execute(
+      // process_master has no department_id and never has: a process is scoped by
+      // branch and client, and it is employees that carry a department. That one
+      // column made every process create from the Org Masters page a 500. The UI
+      // does not collect a department for a process either, so the field was only
+      // ever passed through as null.
       `INSERT INTO process_master
-         (id, process_code, process_name, branch_id, department_id, business_lob, client_id, client_name, workload_type)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         (id, process_code, process_name, branch_id, business_lob, client_id, client_name, workload_type)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         id,
         data.process_code,
         data.process_name,
         data.branch_id?.trim() || null,
-        data.department_id?.trim() || null,
         data.business_lob?.trim() || null,
         data.client_id?.trim() || null,
         data.client_name?.trim() || null, // Keep for backward compatibility
@@ -803,10 +807,10 @@ export const processService = {
     workload_type?: string;
   }) {
     await db.execute(
+      // department_id dropped here for the same reason as the insert above
       `UPDATE process_master SET
         process_name  = COALESCE(?, process_name),
         branch_id     = COALESCE(NULLIF(?, ''), branch_id),
-        department_id = COALESCE(NULLIF(?, ''), department_id),
         business_lob  = COALESCE(NULLIF(?, ''), business_lob),
         client_id     = COALESCE(NULLIF(?, ''), client_id),
         client_name   = COALESCE(NULLIF(?, ''), client_name),
@@ -816,7 +820,6 @@ export const processService = {
       [
         data.process_name?.trim() || null,
         data.branch_id?.trim() ?? null,
-        data.department_id?.trim() ?? null,
         data.business_lob?.trim() ?? null,
         data.client_id?.trim() ?? null,
         data.client_name?.trim() ?? null,
