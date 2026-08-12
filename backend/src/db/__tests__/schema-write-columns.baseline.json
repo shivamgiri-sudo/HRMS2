@@ -108,16 +108,7 @@
     "salary_prep_line.reimbursement_total"
   ],
   "modules/performance-feedback/performance-feedback.service.ts": [
-    "competency_master.display_order",
-    "development_plan.created_by",
-    "development_plan.target_date",
-    "development_plan_goal.description",
-    "performance_feedback_request.manager_id",
-    "performance_feedback_response.development_areas",
-    "performance_feedback_response.overall_strengths",
-    "performance_feedback_response.ratings_json",
-    "training_need.identified_date",
-    "training_need.title"
+    "performance_feedback_request.overall_comments"
   ],
   "modules/privacy/dpdpErasure.service.ts": [
     "auth_user.first_name",

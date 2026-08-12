@@ -191,6 +191,9 @@ export interface GenerateReportDto {
 
 export interface CreateDevelopmentPlanDto {
   employee_id: string;
+  // development_plan.report_id is NOT NULL, and the report is keyed by
+  // (cycle_id, employee_id), so the cycle is what resolves the plan's parent.
+  cycle_id: string;
   target_date?: string;
   goals?: CreateGoalDto[];
 }

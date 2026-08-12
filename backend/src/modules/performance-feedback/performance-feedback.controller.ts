@@ -312,11 +312,13 @@ export const performanceFeedbackController = {
         return res.status(400).json({ error: parsed.error.flatten() });
       }
 
+      // parsed.data.weight is dropped deliberately: competency_master has neither
+      // a weight nor a display_order column, and it was being written to the
+      // latter, which does not exist.
       const data = {
         competency_name: parsed.data.name,
         description: parsed.data.description,
         category: parsed.data.category,
-        display_order: parsed.data.weight,
       };
 
       const competency = await service.createCompetency(data);
@@ -525,6 +527,8 @@ export const performanceFeedbackController = {
       // Map validation schema to service DTO
       const data = {
         employee_id: parsed.data.employeeId,
+        // the cycle resolves the report the plan hangs off; it was being dropped
+        cycle_id: parsed.data.cycleId,
         target_date: parsed.data.goals[0]?.targetDate, // Use first goal's target as plan target
         goals: parsed.data.goals.map((g) => ({
           description: g.description,
@@ -536,7 +540,13 @@ export const performanceFeedbackController = {
       return res.status(201).json({ data: plan });
     } catch (error) {
       console.error("Error creating development plan:", error);
-      return res.status(500).json({ error: "Failed to create development plan" });
+      // a missing report or an unresolved manager is the caller's to fix, not a 500
+      const statusCode = (error as { statusCode?: number })?.statusCode ?? 500;
+      const message =
+        statusCode === 500
+          ? "Failed to create development plan"
+          : (error as Error).message;
+      return res.status(statusCode).json({ error: message });
     }
   },
 

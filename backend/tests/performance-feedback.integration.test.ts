@@ -341,26 +341,26 @@ describe("Performance Feedback - Full Workflow Integration", () => {
 
   it("5. Manager submits feedback (generates report + training needs)", async () => {
     mockManager();
-    // getRequestById: the service checks request.manager_id === req.authUser.id, and
+    // getRequestById: the service checks request.reviewer_id === req.authUser.id, and
     // mockManager() above authenticates as managerId — so the row must carry that id, not the
-    // 'user-1' a long-retired global auth mock used to return.
+    // 'user-1' a long-retired global auth mock used to return. reviewer_id is the real
+    // column; manager_id has never existed on this table.
     mockExecute.mockResolvedValueOnce([
       [
         {
           request_id: requestId,
           employee_id: employeeId,
-          manager_id: managerId,
+          reviewer_id: managerId,
+          reviewer_type: "manager",
           cycle_id: cycleId,
           status: "pending",
         },
       ],
       [],
     ]);
-    // check existing response
-    mockExecute.mockResolvedValueOnce([[], []]);
-    // INSERT response (new response — no existing)
-    mockExecute.mockResolvedValueOnce([{ insertId: 99, affectedRows: 1 }, []]);
-    // UPDATE request status
+    // one upsert per competency, then the request status update
+    mockExecute.mockResolvedValueOnce([{ affectedRows: 1 }, []]);
+    mockExecute.mockResolvedValueOnce([{ affectedRows: 1 }, []]);
     mockExecute.mockResolvedValueOnce([{ affectedRows: 1 }, []]);
 
     const res = await request(app)
@@ -375,11 +375,12 @@ describe("Performance Feedback - Full Workflow Integration", () => {
           { competencyId: compId1, selfRating: 2, managerRating: 3, managerComment: "Needs improvement" },
           { competencyId: compId2, selfRating: 4, managerRating: 4, managerComment: "Good communicator" },
         ],
-        kpis: [{ kpiId: kpiId1, selfRating: 4, managerRating: 4, managerComment: "Close to target" }],
+        // no kpis: this schema stores competency ratings only, and the endpoint now
+        // says so rather than accepting them and dropping them
       });
 
     expect(res.status).toBe(201);
-    expect(res.body.data?.response_id).toBeDefined();
+    expect(res.body.data?.competencies_recorded).toBe(2);
   });
 
   it("6. Employee views own feedback report", async () => {
@@ -418,12 +419,15 @@ describe("Performance Feedback - Full Workflow Integration", () => {
 
   it("7. Manager creates development plan with goals", async () => {
     mockManager();
-    // Service uses db.getConnection() for transaction — connection mock handles INSERT plan + INSERT goals
-    // connection.execute: INSERT plan → insertId, INSERT goal1, INSERT goal2
+    // Service uses db.getConnection() for the transaction. development_plan.report_id is
+    // NOT NULL, so the plan is resolved from the employee's report for the cycle first, and
+    // manager_id is checked against employees because its FK is ON DELETE RESTRICT.
     mockConnection.execute
-      .mockResolvedValueOnce([{ insertId: "plan-001", affectedRows: 1 }, []])
-      .mockResolvedValueOnce([{ insertId: "goal-1", affectedRows: 1 }, []])
-      .mockResolvedValueOnce([{ insertId: "goal-2", affectedRows: 1 }, []]);
+      .mockResolvedValueOnce([[{ report_id: "report-001" }], []]) // SELECT report for cycle+employee
+      .mockResolvedValueOnce([[{ id: managerId }], []]) // manager_id resolves to a real employee
+      .mockResolvedValueOnce([{ affectedRows: 1 }, []]) // INSERT plan
+      .mockResolvedValueOnce([{ affectedRows: 1 }, []]) // INSERT goal 1
+      .mockResolvedValueOnce([{ affectedRows: 1 }, []]); // INSERT goal 2
     // db.execute: SELECT created plan
     mockExecute.mockResolvedValueOnce([
       [
@@ -464,24 +468,22 @@ describe("Performance Feedback - Full Workflow Integration", () => {
 
   it("8. Verifies training need auto-creation for low scores", async () => {
     mockManager();
-    // getRequestById: manager_id must match authUser.id, which mockManager() sets to managerId
+    // getRequestById: reviewer_id must match authUser.id, which mockManager() sets to managerId
     mockExecute.mockResolvedValueOnce([
       [
         {
           request_id: requestId,
           employee_id: employeeId,
-          manager_id: managerId,
+          reviewer_id: managerId,
+          reviewer_type: "manager",
           cycle_id: cycleId,
           status: "pending",
         },
       ],
       [],
     ]);
-    // check existing response (none)
-    mockExecute.mockResolvedValueOnce([[], []]);
-    // INSERT response
-    mockExecute.mockResolvedValueOnce([{ insertId: 99, affectedRows: 1 }, []]);
-    // UPDATE request status
+    // one upsert for the single competency, then the request status update
+    mockExecute.mockResolvedValueOnce([{ affectedRows: 1 }, []]);
     mockExecute.mockResolvedValueOnce([{ affectedRows: 1 }, []]);
 
     const res = await request(app)
@@ -499,7 +501,7 @@ describe("Performance Feedback - Full Workflow Integration", () => {
       });
 
     expect(res.status).toBe(201);
-    expect(res.body.data?.response_id).toBeDefined();
+    expect(res.body.data?.competencies_recorded).toBe(1);
   });
 });
 

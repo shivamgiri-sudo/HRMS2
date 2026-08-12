@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+
 import { db } from "../../db/mysql.js";
 import { RowDataPacket, ResultSetHeader } from "mysql2";
 import {
@@ -151,7 +153,13 @@ export class PerformanceFeedbackService {
         continue;
       }
 
-      const managerId = empRows[0].reporting_to;
+      const reviewerId = empRows[0].reporting_to;
+      if (!reviewerId) {
+        // reviewer_id is NOT NULL with an FK to employees. An employee with no
+        // reporting manager cannot have a manager review raised for them.
+        skipped++;
+        continue;
+      }
 
       // Check if request already exists
       const [existingRows] = await db.execute<RowDataPacket[]>(
@@ -167,9 +175,9 @@ export class PerformanceFeedbackService {
       // Create request
       await db.execute(
         `INSERT INTO performance_feedback_request
-        (cycle_id, employee_id, manager_id, status)
-        VALUES (?, ?, ?, 'pending')`,
-        [cycleId, empId, managerId]
+        (request_id, cycle_id, employee_id, reviewer_id, reviewer_type, status)
+        VALUES (?, ?, ?, ?, 'manager', 'pending')`,
+        [randomUUID(), cycleId, empId, reviewerId]
       );
 
       created++;
@@ -281,19 +289,18 @@ export class PerformanceFeedbackService {
     competency_name: string;
     description?: string;
     category?: string;
-    display_order?: number;
   }): Promise<CompetencyMaster> {
+    // competency_master has no display_order column and nothing orders by one.
     const query = `
       INSERT INTO competency_master
-      (competency_name, description, category, display_order, is_active)
-      VALUES (?, ?, ?, ?, 1)
+      (competency_name, description, category, is_active)
+      VALUES (?, ?, ?, 1)
     `;
 
     const [result] = await db.execute<ResultSetHeader>(query, [
       data.competency_name,
       data.description || null,
       data.category || null,
-      data.display_order || 999,
     ]);
 
     const [rows] = await db.execute<RowDataPacket[]>(
@@ -406,62 +413,78 @@ export class PerformanceFeedbackService {
   async submitFeedback(
     data: SubmitFeedbackDto,
     managerId: string
-  ): Promise<{ response_id: string }> {
+  ): Promise<{ request_id: string; competencies_recorded: number }> {
     // Verify request exists and manager is authorized
     const request = await this.getRequestById(data.request_id);
     if (!request) {
       throw new Error("Request not found");
     }
-    if (request.manager_id !== managerId) {
+    if (request.reviewer_id !== managerId) {
       throw new Error("Unauthorized: not assigned manager");
     }
 
-    // Check if response already exists
-    const [existing] = await db.execute<RowDataPacket[]>(
-      "SELECT response_id FROM performance_feedback_response WHERE request_id = ?",
-      [data.request_id]
-    );
+    // performance_feedback_response is one row per (request_id, competency_id),
+    // with competency_id and rating both NOT NULL. The single blob row this used
+    // to write - ratings_json, overall_strengths, development_areas - named four
+    // columns the table does not have and omitted two it requires, so no feedback
+    // submission has ever been stored.
+    const competencies = data.ratings_json?.competencies ?? [];
+    const kpis = data.ratings_json?.kpis ?? [];
 
-    let responseId: string;
-
-    if (existing.length > 0) {
-      // Update existing response
-      responseId = existing[0].response_id;
-      await db.execute(
-        `UPDATE performance_feedback_response
-         SET ratings_json = ?, overall_strengths = ?, development_areas = ?, submitted_at = NOW()
-         WHERE response_id = ?`,
-        [
-          JSON.stringify(data.ratings_json),
-          data.overall_strengths || null,
-          data.development_areas || null,
-          responseId,
-        ]
-      );
-    } else {
-      // Create new response
-      const [result] = await db.execute<ResultSetHeader>(
-        `INSERT INTO performance_feedback_response
-         (request_id, ratings_json, overall_strengths, development_areas, submitted_at)
-         VALUES (?, ?, ?, ?, NOW())`,
-        [
-          data.request_id,
-          JSON.stringify(data.ratings_json),
-          data.overall_strengths || null,
-          data.development_areas || null,
-        ]
-      );
-
-      responseId = result.insertId.toString();
+    if (competencies.length === 0) {
+      throw Object.assign(new Error("At least one competency rating is required."), {
+        statusCode: 400,
+        code: "NO_COMPETENCY_RATINGS",
+      });
     }
 
-    // Update request status
+    if (kpis.length > 0) {
+      // Refused rather than dropped: this schema is competency-based and has no
+      // KPI response store, so accepting them would discard them silently.
+      throw Object.assign(
+        new Error(
+          "KPI ratings cannot be recorded here: the performance feedback schema " +
+            "stores competency ratings only. KPI scoring belongs to the KPI module."
+        ),
+        { statusCode: 400, code: "KPI_RATINGS_UNSUPPORTED" }
+      );
+    }
+
+    for (const c of competencies) {
+      const rating = Number(c.rating);
+      if (!c.competency_id || !Number.isFinite(rating) || rating < 1 || rating > 5) {
+        throw Object.assign(
+          new Error(
+            `Competency ${c.competency_id ?? "(missing id)"} needs a rating between 1 and 5.`
+          ),
+          { statusCode: 400, code: "INVALID_COMPETENCY_RATING" }
+        );
+      }
+
+      // unique_response (request_id, competency_id) makes this an upsert, which is
+      // what re-submitting a review means.
+      await db.execute(
+        `INSERT INTO performance_feedback_response
+           (response_id, request_id, competency_id, rating, comments, submitted_at)
+         VALUES (?, ?, ?, ?, ?, NOW())
+         ON DUPLICATE KEY UPDATE
+           rating = VALUES(rating), comments = VALUES(comments), submitted_at = NOW()`,
+        [randomUUID(), data.request_id, c.competency_id, Math.round(rating), c.comment ?? null]
+      );
+    }
+
+    // 'submitted' is not in the status enum ('pending','completed','declined',
+    // 'expired') and there is no submitted_at column - completed_at is the one.
+    // The reviewer's closing narrative lands on the request, which is their
+    // submission; generateReport reads it back as the report's manager_feedback.
     await db.execute(
-      "UPDATE performance_feedback_request SET status = 'submitted', submitted_at = NOW() WHERE request_id = ?",
-      [data.request_id]
+      `UPDATE performance_feedback_request
+          SET status = 'completed', completed_at = NOW(), overall_comments = ?
+        WHERE request_id = ?`,
+      [data.development_areas || data.overall_strengths || null, data.request_id]
     );
 
-    return { response_id: responseId };
+    return { request_id: data.request_id, competencies_recorded: competencies.length };
   }
 
   /**
@@ -475,51 +498,71 @@ export class PerformanceFeedbackService {
       throw new Error("Request not found");
     }
 
-    // Get response
-    const [responseRows] = await db.execute<RowDataPacket[]>(
-      "SELECT * FROM performance_feedback_response WHERE request_id = ?",
-      [requestId]
+    // Every reviewer's ratings for this employee's cycle, not just this one
+    // request: the schema is 360-degree - one request per reviewer, one response
+    // row per competency - which is what total_reviewers counts.
+    const [ratingRows] = await db.execute<RowDataPacket[]>(
+      `SELECT resp.competency_id, resp.rating, resp.comments,
+              cm.competency_name, req.reviewer_id, req.reviewer_type,
+              req.overall_comments
+         FROM performance_feedback_response resp
+         JOIN performance_feedback_request req ON req.request_id = resp.request_id
+         LEFT JOIN competency_master cm ON cm.competency_id = resp.competency_id
+        WHERE req.cycle_id = ? AND req.employee_id = ?`,
+      [request.cycle_id, request.employee_id]
     );
 
-    if (responseRows.length === 0) {
+    if (ratingRows.length === 0) {
       throw new Error("Response not found");
     }
 
-    const response = responseRows[0];
-    const ratingsJson = JSON.parse(response.ratings_json);
+    // Mean per competency across reviewers
+    const perCompetency = new Map<number, { name: string; total: number; count: number }>();
+    for (const row of ratingRows) {
+      const key = Number(row.competency_id);
+      const entry = perCompetency.get(key) ?? {
+        name: row.competency_name || `Competency ${key}`,
+        total: 0,
+        count: 0,
+      };
+      entry.total += Number(row.rating);
+      entry.count += 1;
+      perCompetency.set(key, entry);
+    }
 
-    // Calculate aggregated scores
-    const competencyScores = ratingsJson.competencies.map((c: any) => ({
-      competency_id: c.competency_id,
-      competency_name: c.competency_name,
-      score: c.rating,
+    const competencyScores = [...perCompetency.entries()].map(([competencyId, v]) => ({
+      competency_id: competencyId,
+      competency_name: v.name,
+      score: v.total / v.count,
     }));
 
-    const kpiScores = ratingsJson.kpis.map((k: any) => ({
-      kpi_id: k.kpi_id,
-      kpi_name: k.kpi_name,
-      score: k.rating,
-    }));
+    const allRatings = ratingRows.map((r) => Number(r.rating));
+    const overallScore =
+      allRatings.length > 0
+        ? allRatings.reduce((sum, r) => sum + r, 0) / allRatings.length
+        : 0;
 
-    // Calculate overall score
-    const allRatings = [
-      ...ratingsJson.competencies.map((c: any) => c.rating),
-      ...ratingsJson.kpis.map((k: any) => k.rating),
-    ];
-    const overallScore = allRatings.length > 0
-      ? allRatings.reduce((sum: number, r: number) => sum + r, 0) / allRatings.length
-      : 0;
+    const totalReviewers = new Set(ratingRows.map((r) => r.reviewer_id)).size;
+
+    const managerFeedback =
+      [
+        ...new Set(
+          ratingRows
+            .filter((r) => r.reviewer_type === "manager" && r.overall_comments)
+            .map((r) => String(r.overall_comments))
+        ),
+      ].join("\n\n") || null;
 
     // Identify development areas (scores < 3.0)
     const developmentAreas = competencyScores
-      .filter((c: any) => c.score < 3.0)
-      .map((c: any) => `${c.competency_name} (${c.score}/5)`)
+      .filter((c) => c.score < 3.0)
+      .map((c) => `${c.competency_name} (${c.score.toFixed(1)}/5)`)
       .join(", ");
 
     // Identify strengths (scores >= 4.0)
     const strengths = competencyScores
-      .filter((c: any) => c.score >= 4.0)
-      .map((c: any) => `${c.competency_name} (${c.score}/5)`)
+      .filter((c) => c.score >= 4.0)
+      .map((c) => `${c.competency_name} (${c.score.toFixed(1)}/5)`)
       .join(", ");
 
     // Check if report already exists for this cycle and employee
@@ -542,27 +585,29 @@ export class PerformanceFeedbackService {
           parseFloat(overallScore.toFixed(2)),
           strengths || null,
           developmentAreas || null,
-          response.development_areas || null,
+          managerFeedback,
           reportId,
         ]
       );
     } else {
       // Create new report
-      const [result] = await db.execute<ResultSetHeader>(
+      // report_id is CHAR(36) DEFAULT (UUID()), so insertId would come back 0.
+      reportId = randomUUID();
+      await db.execute(
         `INSERT INTO performance_feedback_report
-         (cycle_id, employee_id, overall_score, strengths, development_areas, manager_feedback, total_reviewers)
-         VALUES (?, ?, ?, ?, ?, ?, 1)`,
+         (report_id, cycle_id, employee_id, overall_score, strengths, development_areas, manager_feedback, total_reviewers)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
         [
+          reportId,
           request.cycle_id,
           request.employee_id,
           parseFloat(overallScore.toFixed(2)),
           strengths || null,
           developmentAreas || null,
-          response.development_areas || null,
+          managerFeedback,
+          totalReviewers,
         ]
       );
-
-      reportId = result.insertId.toString();
     }
 
     // Auto-create training needs for low scores (< 3.0)
@@ -577,17 +622,27 @@ export class PerformanceFeedbackService {
         );
 
         const competencyName = compRows.length > 0 ? compRows[0].competency_name : compScore.competency_name;
-        const description = response.development_areas || `Low score on ${competencyName} (${compScore.score}/5) from performance feedback`;
+        const description = `Low score on ${competencyName} (${compScore.score.toFixed(1)}/5) from performance feedback${
+          managerFeedback ? `. Reviewer notes: ${managerFeedback}` : ""
+        }`;
 
-        // Insert training need
-        const [trainingResult] = await db.execute<ResultSetHeader>(
+        // training_need has no title and no identified_date - created_at records
+        // when it was raised - and its id is CHAR(36) DEFAULT (UUID()).
+        const trainingNeedId = randomUUID();
+        await db.execute(
           `INSERT INTO training_need
-           (employee_id, need_type, title, description, identified_date)
-           VALUES (?, 'performance_feedback', ?, ?, CURDATE())`,
-          [request.employee_id, competencyName, description]
+           (id, employee_id, need_type, description, priority, status, identified_by)
+           VALUES (?, ?, 'performance_feedback', ?, ?, 'identified', ?)`,
+          [
+            trainingNeedId,
+            request.employee_id,
+            description,
+            compScore.score < 2.0 ? "high" : "medium",
+            request.reviewer_id || null,
+          ]
         );
 
-        trainingNeedIds.push(trainingResult.insertId.toString());
+        trainingNeedIds.push(trainingNeedId);
       }
     }
 
@@ -693,24 +748,81 @@ export class PerformanceFeedbackService {
     try {
       await connection.beginTransaction();
 
-      // Insert plan
-      const [planResult] = await connection.execute<ResultSetHeader>(
-        `INSERT INTO development_plan
-         (employee_id, created_by, target_date, status)
-         VALUES (?, ?, ?, 'draft')`,
-        [data.employee_id, createdBy, data.target_date || null]
+      // development_plan hangs off a generated report (report_id NOT NULL) and
+      // has no created_by or target_date: it carries manager_id and a
+      // plan_start_date/plan_end_date range, all NOT NULL.
+      const [reportRows] = await connection.execute<RowDataPacket[]>(
+        "SELECT report_id FROM performance_feedback_report WHERE cycle_id = ? AND employee_id = ?",
+        [data.cycle_id, data.employee_id]
       );
 
-      const planId = planResult.insertId;
+      if (reportRows.length === 0) {
+        throw Object.assign(
+          new Error(
+            "No feedback report exists for this employee and cycle. Generate the " +
+              "report before creating a development plan against it."
+          ),
+          { statusCode: 409, code: "REPORT_NOT_GENERATED" }
+        );
+      }
+
+      const reportId = reportRows[0].report_id as string;
+
+      // manager_id has an FK to employees with ON DELETE RESTRICT, so it has to be
+      // a real employee rather than whatever the caller's auth id happens to be.
+      const [managerRows] = await connection.execute<RowDataPacket[]>(
+        "SELECT id FROM employees WHERE id = ? LIMIT 1",
+        [createdBy]
+      );
+
+      let managerId: string | null = managerRows.length > 0 ? createdBy : null;
+      if (!managerId) {
+        const [reportsTo] = await connection.execute<RowDataPacket[]>(
+          "SELECT reporting_to FROM employees WHERE id = ? LIMIT 1",
+          [data.employee_id]
+        );
+        managerId = reportsTo.length > 0 ? (reportsTo[0].reporting_to as string) : null;
+      }
+
+      if (!managerId) {
+        throw Object.assign(
+          new Error("A development plan needs an owning manager, and none could be resolved."),
+          { statusCode: 400, code: "PLAN_MANAGER_UNRESOLVED" }
+        );
+      }
+
+      const goals = data.goals ?? [];
+      const targetDates = goals
+        .map((g) => g.target_date)
+        .filter((d): d is string => Boolean(d))
+        .sort();
+      const planEndDate = targetDates[targetDates.length - 1] || data.target_date || null;
+
+      if (!planEndDate) {
+        throw Object.assign(
+          new Error("A development plan needs an end date: give at least one goal a target date."),
+          { statusCode: 400, code: "PLAN_END_DATE_REQUIRED" }
+        );
+      }
+
+      // plan_id is CHAR(36) DEFAULT (UUID()); insertId would be 0 and every goal
+      // would then be orphaned against a plan that does not exist.
+      const planId = randomUUID();
+      await connection.execute(
+        `INSERT INTO development_plan
+         (plan_id, report_id, employee_id, manager_id, plan_start_date, plan_end_date, status)
+         VALUES (?, ?, ?, ?, CURDATE(), ?, 'draft')`,
+        [planId, reportId, data.employee_id, managerId, planEndDate]
+      );
 
       // Insert goals if provided
-      if (data.goals && data.goals.length > 0) {
-        for (const goal of data.goals) {
+      if (goals.length > 0) {
+        for (const goal of goals) {
           await connection.execute(
             `INSERT INTO development_plan_goal
-             (plan_id, description, target_date, status)
-             VALUES (?, ?, ?, 'pending')`,
-            [planId, goal.description, goal.target_date || null]
+             (goal_id, plan_id, goal_description, target_date, status)
+             VALUES (?, ?, ?, ?, 'not-started')`,
+            [randomUUID(), planId, goal.description, goal.target_date || null]
           );
         }
       }
