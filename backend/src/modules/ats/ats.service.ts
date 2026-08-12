@@ -49,7 +49,11 @@ export const atsService = {
     // did not. Excluded by default, with an explicit opt-in, because those rows are still the
     // only way to find an ex-employee when checking a rehire.
     if (!filters.includeFormerEmployees) {
-      conds.push(excludeEmployeeShapedCandidatesSql("ats_candidate"));
+      // Both queries this WHERE feeds — listCandidates and its COUNT — are FROM ats_candidate c,
+      // and MySQL rejects the original table name once an alias exists. Passing the literal name
+      // here emitted ats_candidate.record_type against a query aliased c, so every candidate list
+      // 500d with ER_BAD_FIELD_ERROR. The helper documents that this argument must be the alias.
+      conds.push(excludeEmployeeShapedCandidatesSql("c"));
     }
     if (filters.stage)    { conds.push("current_stage = ?");         params.push(filters.stage); }
     if (filters.branch)   { conds.push("applied_for_branch = ?");   params.push(filters.branch); }
