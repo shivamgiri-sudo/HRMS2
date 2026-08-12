@@ -1638,6 +1638,19 @@ export const REPORT_CATALOG: ReportMeta[] = [
       { key: "date_of_joining", label: "DOJ", format: "date", width: 100 },
       { key: "tenure_years", label: "Tenure Years", format: "number", width: 100, align: "right" },
       { key: "tenure_years_exact", label: "Tenure Years Exact", format: "number", width: 100, align: "right" },
+            /**
+       * The tenure that is actually PRICED, not a rounded display of it.
+       *
+       * The executor emits two: tenure_years from TIMESTAMPDIFF(YEAR), which truncates, and
+       * tenure_years_exact from months/12. The liability is computed from months/12, so showing
+       * the truncated one meant a register reading "11 years" against an amount priced at 11.6 —
+       * a reader reconciling by hand would get a different number every time and have no way to
+       * see why.
+       *
+       * Declared as tenure_years_exact for that reason. Neither column was in the catalogue at
+       * all, so the register had been showing a liability with no tenure to check it against.
+       */
+      { key: "tenure_years_exact", label: "Years of Service", format: "number", width: 120, align: "right" },
       { key: "last_drawn_basic", label: "Last Basic", format: "currency", width: 100, align: "right" },
       { key: "gratuity_liability", label: "Gratuity Liability", format: "currency", width: 120, align: "right" },
       { key: "branch_name", label: "Branch", format: "text", width: 120 },
