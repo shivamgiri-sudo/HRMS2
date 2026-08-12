@@ -15,20 +15,34 @@ permissions:
   actions: read
 
 jobs:
-  # ── 1. CI Gate (GitHub-hosted) ───────────────────────────────────────────────
+  # ── 1. CI Gate (self-hosted) ─────────────────────────────────────────────────
   # Runs typecheck + build to catch broken pushes before the deploy runner touches
-  # the server.  Uses ubuntu-latest so it doesn't require the server to be online.
+  # the server.
+  #
+  # Moved off ubuntu-latest on 2026-08-12. Every hosted job had been failing in about
+  # three seconds with zero steps and no runner assigned - GitHub was not providing a
+  # hosted runner at all, so nothing in this gate ever executed and the deploy job,
+  # which needs it, skipped on every push. The last successful run was 14:03 that day
+  # and production sat on 4122d676 while later commits piled up unshipped.
+  #
+  # Nothing was wrong with the code: the whole gate was reproduced locally and passed.
+  # The self-hosted runner was online and idle the entire time, so this removes the
+  # dependency on hosted-runner availability rather than waiting on it.
+  #
+  # The cost is real and deliberate: this now runs tsc, four test batches and two
+  # builds on the same box that serves production, and with a single runner the gate
+  # and the deploy queue behind each other rather than overlapping.
+  #
+  # No setup-node here. The deploy job below has always run on this runner using the
+  # system node (v20) and never needed it; adding it would ask the runner to populate
+  # a tool cache it has never used.
   ci-gate:
     name: Typecheck & Build
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
+    runs-on: self-hosted
+    timeout-minutes: 30
 
     steps:
       - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20
 
       - name: Install frontend deps
         run: npm ci
