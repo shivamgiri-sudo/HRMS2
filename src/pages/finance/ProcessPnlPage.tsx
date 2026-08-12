@@ -4,6 +4,7 @@ import { Download } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { MonthYearPicker } from "@/components/finance/MonthYearPicker";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
@@ -273,11 +274,10 @@ export default function ProcessPnlPage() {
 
         {/* Filter bar */}
         <div className="flex flex-wrap items-center gap-2 border-b px-4 py-2 shrink-0">
-          <Input
-            type="month"
+          <MonthYearPicker
             value={period}
-            onChange={(e) => updateFilters({ period: e.target.value })}
-            className="h-8 w-36 text-xs"
+            onChange={(v) => updateFilters({ period: v })}
+            className="w-52"
           />
           <select
             className="flex h-8 rounded-md border border-input bg-background px-2 py-0 text-xs"

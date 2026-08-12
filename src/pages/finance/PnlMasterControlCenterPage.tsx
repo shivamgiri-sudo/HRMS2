@@ -37,6 +37,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { MonthYearPicker } from "@/components/finance/MonthYearPicker";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -582,7 +583,7 @@ export default function PnlMasterControlCenterPage() {
             <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
               <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-slate-700"><SlidersHorizontal className="h-4 w-4" />Master scope</div>
               <div className="grid gap-4 lg:grid-cols-[220px_1fr_1fr_auto]">
-                <Field label="Financial period"><Input className="rounded-xl" type="month" value={period} onChange={(event) => updatePeriod(event.target.value)} /></Field>
+                <Field label="Financial period"><MonthYearPicker value={period} onChange={updatePeriod} /></Field>
                 <Field label="Process filter"><ProcessSelect value={processFilter} onChange={setProcessFilter} processes={processes} allowBlank /></Field>
                 <Field label="Branch filter"><BranchSelect value={branchFilter} onChange={setBranchFilter} branches={branches} allowBlank /></Field>
                 <div className="flex items-end"><Button variant="outline" className="w-full rounded-xl" onClick={() => { legacy.referenceQuery.refetch(); legacy.contractsQuery.refetch(); bpo.revenueRulesQuery.refetch(); bpo.classificationRulesQuery.refetch(); }}><RefreshCw className="mr-2 h-4 w-4" />Refresh</Button></div>
@@ -895,7 +896,7 @@ export default function PnlMasterControlCenterPage() {
                         <div className="grid gap-4">
                           <Field label="Process"><ProcessSelect value={deliveryForm.processId} onChange={(value) => setDeliveryForm((current) => ({ ...current, processId: value }))} processes={processes} /></Field>
                           <div className="grid gap-4 sm:grid-cols-3">
-                            <Field label="Period"><Input className="rounded-xl" type="month" value={deliveryForm.periodCode} onChange={(event) => setDeliveryForm((current) => ({ ...current, periodCode: event.target.value }))} /></Field>
+                            <Field label="Period"><MonthYearPicker value={deliveryForm.periodCode} onChange={(v) => setDeliveryForm((current) => ({ ...current, periodCode: v }))} /></Field>
                             <Field label="Activity date"><Input className="rounded-xl" type="date" value={deliveryForm.activityDate ?? ""} onChange={(event) => setDeliveryForm((current) => ({ ...current, activityDate: event.target.value }))} /></Field>
                             <Field label="Metric key"><Input className="rounded-xl" value={deliveryForm.metricKey} onChange={(event) => setDeliveryForm((current) => ({ ...current, metricKey: event.target.value }))} /></Field>
                           </div>
@@ -982,7 +983,7 @@ export default function PnlMasterControlCenterPage() {
                       </div>
                       <div className="grid gap-4 sm:grid-cols-2">
                         <Field label="Cost type"><select className={selectClass} value={costForm.costType} onChange={(event) => setCostForm((current) => ({ ...current, costType: event.target.value }))}><option value="depreciation">Depreciation</option><option value="amortization">Amortisation</option><option value="finance_cost">Finance cost</option><option value="tax">Tax</option><option value="other_operating_cost">Other operating cost</option><option value="exceptional_item">Exceptional item</option></select></Field>
-                        <Field label="Period"><Input className="rounded-xl" type="month" value={costForm.periodCode} onChange={(event) => setCostForm((current) => ({ ...current, periodCode: event.target.value }))} /></Field>
+                        <Field label="Period"><MonthYearPicker value={costForm.periodCode} onChange={(v) => setCostForm((current) => ({ ...current, periodCode: v }))} /></Field>
                       </div>
                       <Field label="Description"><Textarea className="rounded-xl" rows={3} value={costForm.description} onChange={(event) => setCostForm((current) => ({ ...current, description: event.target.value }))} /></Field>
                       <div className="grid gap-4 sm:grid-cols-3">
@@ -1119,7 +1120,7 @@ export default function PnlMasterControlCenterPage() {
                   formSlot={
                     <div className="grid gap-4">
                       <Field label="Process"><ProcessSelect value={planForm.process_id} onChange={(value) => setPlanForm((current) => ({ ...current, process_id: value }))} processes={processes} /></Field>
-                      <Field label="Period"><Input className="rounded-xl" type="month" value={planForm.period_code} onChange={(event) => setPlanForm((current) => ({ ...current, period_code: event.target.value }))} /></Field>
+                      <Field label="Period"><MonthYearPicker value={planForm.period_code} onChange={(v) => setPlanForm((current) => ({ ...current, period_code: v }))} /></Field>
                       <div className="grid gap-4 sm:grid-cols-3">
                         <Field label="Contracted seats"><Input className="rounded-xl" type="number" value={planForm.contracted_seats ?? 0} onChange={(event) => setPlanForm((current) => ({ ...current, contracted_seats: numberValue(event.target.value) }))} /></Field>
                         <Field label="Productive HC"><Input className="rounded-xl" type="number" value={planForm.required_productive_hc ?? 0} onChange={(event) => setPlanForm((current) => ({ ...current, required_productive_hc: numberValue(event.target.value) }))} /></Field>

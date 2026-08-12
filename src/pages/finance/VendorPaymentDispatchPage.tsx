@@ -19,6 +19,7 @@ import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { MonthYearPicker } from "@/components/finance/MonthYearPicker";
 import {
   Select,
   SelectContent,
@@ -525,11 +526,10 @@ export default function VendorPaymentDispatchPage() {
                 ))}
               </SelectContent>
             </Select>
-            <Input
-              type="month"
-              className="h-7 w-36 text-xs"
+            <MonthYearPicker
+              className="w-52"
               value={filters.month}
-              onChange={(e) => { setFilters((c) => ({ ...c, month: e.target.value })); setPage(1); }}
+              onChange={(v) => { setFilters((c) => ({ ...c, month: v })); setPage(1); }}
             />
             <Select
               value={filters.paymentStatus || "_all"}

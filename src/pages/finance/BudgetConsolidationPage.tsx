@@ -4,6 +4,7 @@ import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { MonthYearPicker } from "@/components/finance/MonthYearPicker";
 import { Label } from "@/components/ui/label";
 import { useBudgetConsolidation, type CompanyConsolidationGroup } from "@/hooks/useBudgetConsolidation";
 import { usePinnedOffsets, useColumnPinning } from "@/hooks/useColumnPinning";
@@ -122,7 +123,7 @@ export default function BudgetConsolidationPage() {
               </div>
               <div className="space-y-1">
                 <Label className="text-xs text-slate-500">Period</Label>
-                <Input type="month" value={period} onChange={(event) => setPeriod(event.target.value)} className="h-9 w-40" />
+                <MonthYearPicker value={period} onChange={setPeriod} className="w-56" />
               </div>
             </div>
             <div className="mt-4 grid grid-cols-3 gap-2 sm:max-w-md">

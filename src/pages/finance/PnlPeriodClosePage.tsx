@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { MonthYearPicker } from "@/components/finance/MonthYearPicker";
 import { Skeleton } from "@/components/ui/skeleton";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { IndirectAllocationPanel } from "@/components/finance/pnl/IndirectAllocationPanel";
@@ -99,11 +100,17 @@ export default function PnlPeriodClosePage() {
         <div className="flex items-center justify-between border-b px-4 h-12 shrink-0">
           <h1 className="text-sm font-semibold">Period Close</h1>
           <div className="flex items-center gap-2">
-            <Input
-              type="month"
+            {/* setSearchParams replaced the whole query string, dropping any other param on the
+                URL whenever the month changed; merged now, matching updateFilters in
+                ProcessPnlPage. */}
+            <MonthYearPicker
               value={period}
-              onChange={(e) => setSearchParams({ period: e.target.value })}
-              className="h-7 w-36 text-xs"
+              onChange={(v) => {
+                const next = new URLSearchParams(searchParams);
+                next.set("period", v);
+                setSearchParams(next);
+              }}
+              className="w-52"
             />
             {closeData && (
               <>

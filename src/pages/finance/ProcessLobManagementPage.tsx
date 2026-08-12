@@ -20,6 +20,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { MonthYearPicker } from "@/components/finance/MonthYearPicker";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -359,7 +360,7 @@ export default function ProcessLobManagementPage() {
         <Card>
           <CardContent className="grid gap-3 p-4 md:grid-cols-[180px_minmax(260px,1fr)_auto] md:items-end">
             <Field label="Period">
-              <Input type="month" value={period} onChange={(event) => updateSearch({ period: event.target.value })} />
+              <MonthYearPicker value={period} onChange={(v) => updateSearch({ period: v })} />
             </Field>
             <Field label="Process">
               <select className={selectClass} value={processId} onChange={(event) => updateSearch({ processId: event.target.value })}>

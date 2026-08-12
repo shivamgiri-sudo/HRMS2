@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { MonthYearPicker } from "@/components/finance/MonthYearPicker";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import {
@@ -104,11 +105,9 @@ export function PnlAdjustmentDrawer({
 
           <div className="space-y-2">
             <Label htmlFor="adjustment-period">Period</Label>
-            <Input
-              id="adjustment-period"
-              type="month"
+            <MonthYearPicker
               value={form.period_code}
-              onChange={(event) => setForm((current) => ({ ...current, period_code: event.target.value }))}
+              onChange={(v) => setForm((current) => ({ ...current, period_code: v }))}
             />
           </div>
 

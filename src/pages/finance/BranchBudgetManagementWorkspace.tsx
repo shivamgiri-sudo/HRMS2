@@ -69,6 +69,7 @@ import {
   useFinanceExpenseMasters,
 } from "@/hooks/useFinanceExpenseMasters";
 import { hrmsApi } from "@/lib/hrmsApi";
+import { MonthYearPicker } from "@/components/finance/MonthYearPicker";
 import { GST_RATES } from "@/lib/gst";
 import { BranchBudgetMatrixPanel } from "@/components/finance/pnl/BranchBudgetMatrixPanel";
 import { BudgetTopupPanel } from "@/components/finance/budget/BudgetTopupPanel";
@@ -209,57 +210,7 @@ function financialYear(period: string) {
     : `${year - 1}-${String(year).slice(-2)}`;
 }
 
-const MONTH_NAMES = [
-  "January", "February", "March", "April", "May", "June",
-  "July", "August", "September", "October", "November", "December",
-];
 
-/** A native `<input type="month">` renders as a working calendar picker in Chrome/Edge/Firefox,
- *  but Safari has never implemented it — it falls back to a plain text box with no picker UI at
- *  all, which reads as "the month dropdown doesn't work" rather than as a browser gap. Two plain
- *  `<select>`s behave identically everywhere, so there's no browser-dependent path here. */
-function MonthYearPicker({
-  value,
-  onChange,
-  yearsBack = 3,
-  yearsForward = 2,
-}: {
-  value: string;
-  onChange: (value: string) => void;
-  yearsBack?: number;
-  yearsForward?: number;
-}) {
-  const [yearPart, monthPart] = value.split("-");
-  const year = Number(yearPart) || new Date().getFullYear();
-  const month = Number(monthPart) || 1;
-  const currentYear = new Date().getFullYear();
-  const years = Array.from(
-    { length: yearsBack + yearsForward + 1 },
-    (_, index) => currentYear - yearsBack + index
-  );
-  return (
-    <div className="flex gap-1.5">
-      <select
-        aria-label="Month"
-        className="h-9 flex-1 rounded-md border border-input bg-background px-2 text-sm"
-        value={month}
-        onChange={(event) => onChange(`${year}-${String(Number(event.target.value)).padStart(2, "0")}`)}
-      >
-        {MONTH_NAMES.map((name, index) => (
-          <option key={name} value={index + 1}>{name}</option>
-        ))}
-      </select>
-      <select
-        aria-label="Year"
-        className="h-9 w-24 rounded-md border border-input bg-background px-2 text-sm"
-        value={year}
-        onChange={(event) => onChange(`${event.target.value}-${String(month).padStart(2, "0")}`)}
-      >
-        {years.map((y) => <option key={y} value={y}>{y}</option>)}
-      </select>
-    </div>
-  );
-}
 
 function money(value: number) {
   return new Intl.NumberFormat("en-IN", {
