@@ -1637,7 +1637,6 @@ export const REPORT_CATALOG: ReportMeta[] = [
       { key: "employee_name", label: "Employee Name", format: "text", width: 180 },
       { key: "date_of_joining", label: "DOJ", format: "date", width: 100 },
       { key: "tenure_years", label: "Tenure Years", format: "number", width: 100, align: "right" },
-      { key: "tenure_years_exact", label: "Tenure Years Exact", format: "number", width: 100, align: "right" },
             /**
        * The tenure that is actually PRICED, not a rounded display of it.
        *
