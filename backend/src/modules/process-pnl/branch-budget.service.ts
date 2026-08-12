@@ -1748,7 +1748,16 @@ export const branchBudgetService = {
       `SELECT gr.id, gr.grn_number, gr.bill_date, gr.status,
               gr.amount_without_tax, gr.amount_with_tax, gr.pnl_cost_amount,
               gr.vendor_id, vm.vendor_name,
-              ca.reserved_amount, ca.consumed_amount, ca.allocation_amount
+              -- grn_cost_allocation has none of reserved_amount, consumed_amount or
+              -- allocation_amount; those three column names belong to finance_budget_line, which
+              -- does carry them. Selected here they made the whole statement throw
+              -- ER_BAD_FIELD_ERROR, so this endpoint returned nothing for every budget line.
+              -- The allocation table records lifecycle as a status plus timestamps, so the two
+              -- amounts are derived from it — the same idiom this file already uses for
+              -- booked_amount above. Aliased back to the original names so callers are unchanged.
+              ca.pnl_cost_amount AS allocation_amount,
+              CASE WHEN ca.lifecycle_status = 'reserved' THEN ca.pnl_cost_amount ELSE 0 END AS reserved_amount,
+              CASE WHEN ca.lifecycle_status = 'consumed' THEN ca.pnl_cost_amount ELSE 0 END AS consumed_amount
          FROM grn_cost_allocation ca
          JOIN grn_request gr ON gr.id = ca.grn_request_id
          LEFT JOIN vendor_master vm ON vm.id = gr.vendor_id
