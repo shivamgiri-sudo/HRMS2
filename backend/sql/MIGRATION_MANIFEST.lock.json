@@ -495,7 +495,12 @@
     "1129_org_chart_access_log.sql",
     "1130_ats_candidate_record_type.sql",
     "1131_bulk_operation_jobs.sql",
-    "1132_salary_prep_line_reimbursement_total.sql"
+    "1132_salary_prep_line_reimbursement_total.sql",
+    "1133_performance_feedback_request_overall_comments.sql",
+    "1134_upload_batch_import_audit.sql",
+    "1135_mira_fix_draft.sql",
+    "440_finance_phase1.sql",
+    "441_finance_phases_2_3_4.sql"
   ],
   "approvedDeletions": [],
   "knownDangling": [
