@@ -6,13 +6,14 @@ import PDFDocument from "pdfkit";
 import { Router } from "express";
 import multer from "multer";
 import type { NextFunction, Request, Response } from "express";
-import type { RowDataPacket } from "mysql2";
+import type { RowDataPacket, ResultSetHeader } from "mysql2";
 
 import { env } from "../../config/env.js";
 import { db } from "../../db/mysql.js";
 import { requireAuth } from "../../middleware/authMiddleware.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
+import { logSensitiveAction } from "../../shared/auditLog.js";
 import { buildScopeWhereClause, hasAnyRole } from "../../shared/scopeAccess.js";
 import {
   createJoiningDocumentEsignRequest,
@@ -1353,3 +1354,144 @@ payrollEpfComplianceRouter.post("/epf-compliance/:employeeId/review", h(async (r
   });
   return res.json({ success: true, data: await getEpfCompliancePack(req.params.employeeId, req.authUser!.id) });
 }));
+
+/**
+ * POST /api/payroll/statutory-numbers/bulk-upload
+ *
+ * Bulk-set ESIC / PF / UAN numbers from a CSV keyed by employee code.
+ *
+ *   employee_code,esic_number,pf_number,uan_number
+ *
+ * ── WHY ──────────────────────────────────────────────────────────────────────
+ * The ESIC Contribution Register ships with ESIC_NUMBER blank on every row, and the PF register
+ * has the same gap. Measured on production 2026-08-12 across the 917 active ONROLL employees:
+ * esic_number on 394, epf_number on 467, uan_number on 467. So roughly half the statutory
+ * registers cannot be filed as generated, and no screen sets these in bulk.
+ *
+ * This has to land BEFORE the ESIC and PF register corrections, or those reports become
+ * correctly scoped and still blank in the column that matters.
+ *
+ * ── DELIBERATE BEHAVIOURS ────────────────────────────────────────────────────
+ *   - Blank cells SKIP rather than clear. A CSV carrying only ESIC numbers must not wipe the
+ *     PF and UAN already on the row; partial sheets are the normal case here.
+ *   - Rows are validated and REPORTED individually. One malformed UAN fails its own row and
+ *     the rest still apply — the alternative, aborting the batch, is what makes people paste
+ *     numbers straight into the database.
+ *   - Format is enforced rather than trusted: UAN is 12 digits and ESIC is 17. Writing a
+ *     malformed identifier is worse than leaving the cell empty, because a register that is
+ *     blank is visibly incomplete while one carrying a wrong number files cleanly and fails at
+ *     the department.
+ *   - ?dryRun=1 validates and reports without writing, so a sheet can be checked before it
+ *     touches 900 employee records.
+ */
+payrollEpfComplianceRouter.post(
+  "/statutory-numbers/bulk-upload",
+  requireAuth,
+  requireRole("admin", "super_admin", "hr", "hr_head", "payroll", "payroll_head"),
+  upload.single("file"),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    if (!req.file) {
+      return res.status(400).json({ success: false, message: 'No file uploaded. Send CSV as multipart field "file".' });
+    }
+    const dryRun = ["1", "true", "yes"].includes(String(req.query.dryRun ?? "").toLowerCase());
+
+    const lines = req.file.buffer.toString("utf-8").split(/\r?\n/).filter((l) => l.trim());
+    if (lines.length < 2) return res.status(400).json({ success: false, message: "CSV has no data rows" });
+
+    const headers = lines[0].split(",").map((x) => x.trim().toLowerCase().replace(/\s+/g, "_"));
+    const idx = {
+      code: headers.findIndex((x) => ["employee_code", "employeecode", "emp_code", "code"].includes(x)),
+      esic: headers.findIndex((x) => ["esic_number", "esic", "esic_no", "esi_number"].includes(x)),
+      pf:   headers.findIndex((x) => ["pf_number", "pf", "pf_no", "epf_number"].includes(x)),
+      uan:  headers.findIndex((x) => ["uan_number", "uan", "uan_no"].includes(x)),
+    };
+    if (idx.code === -1) {
+      return res.status(400).json({ success: false, message: "CSV must have an employee_code column" });
+    }
+    if (idx.esic === -1 && idx.pf === -1 && idx.uan === -1) {
+      return res.status(400).json({ success: false, message: "CSV must have at least one of esic_number, pf_number, uan_number" });
+    }
+
+    const [empRows] = await db.execute<RowDataPacket[]>(
+      "SELECT id, employee_code FROM employees WHERE active_status = 1"
+    );
+    const empMap = new Map((empRows as RowDataPacket[]).map((e) => [String(e.employee_code ?? "").trim().toLowerCase(), e.id as string]));
+
+    const errors: string[] = [];
+    const updates: Array<{ id: string; code: string; esic?: string; pf?: string; uan?: string }> = [];
+
+    for (let i = 1; i < lines.length; i++) {
+      const cols = lines[i].split(",").map((c) => c.trim());
+      const code = cols[idx.code] ?? "";
+      if (!code) { errors.push(`Row ${i + 1}: employee_code is blank`); continue; }
+
+      const empId = empMap.get(code.toLowerCase());
+      if (!empId) { errors.push(`Row ${i + 1}: employee_code "${code}" not found among active employees`); continue; }
+
+      const pick = (at: number) => (at === -1 ? "" : (cols[at] ?? "").trim());
+      const esic = pick(idx.esic);
+      const pf   = pick(idx.pf);
+      const uan  = pick(idx.uan);
+
+      // Digits only for the two that have a fixed statutory width.
+      if (esic && !/^\d{17}$/.test(esic.replace(/\D/g, "")) ) {
+        errors.push(`Row ${i + 1} (${code}): ESIC number must be 17 digits, got "${esic}"`); continue;
+      }
+      if (uan && !/^\d{12}$/.test(uan.replace(/\D/g, ""))) {
+        errors.push(`Row ${i + 1} (${code}): UAN must be 12 digits, got "${uan}"`); continue;
+      }
+      if (pf && pf.length > 40) {
+        errors.push(`Row ${i + 1} (${code}): PF number looks wrong (over 40 characters)`); continue;
+      }
+      if (!esic && !pf && !uan) { errors.push(`Row ${i + 1} (${code}): no values to set`); continue; }
+
+      updates.push({
+        id: empId,
+        code,
+        ...(esic ? { esic: esic.replace(/\D/g, "") } : {}),
+        ...(pf ? { pf } : {}),
+        ...(uan ? { uan: uan.replace(/\D/g, "") } : {}),
+      });
+    }
+
+    if (dryRun) {
+      return res.json({
+        success: true,
+        dryRun: true,
+        data: { wouldUpdate: updates.length, rowsRejected: errors.length, errors: errors.slice(0, 100) },
+      });
+    }
+
+    let updated = 0;
+    for (const u of updates) {
+      // Only the columns this row actually carries. A blank cell must not clear a stored value.
+      const sets: string[] = [];
+      const params: unknown[] = [];
+      if (u.esic) { sets.push("esic_number = ?"); params.push(u.esic); }
+      if (u.pf)   { sets.push("epf_number = ?");  params.push(u.pf); }
+      if (u.uan)  { sets.push("uan_number = ?");  params.push(u.uan); }
+      if (!sets.length) continue;
+      params.push(u.id);
+      const [r] = await db.execute<ResultSetHeader>(
+        `UPDATE employees SET ${sets.join(", ")}, updated_at = NOW() WHERE id = ?`,
+        params
+      );
+      updated += r.affectedRows;
+    }
+
+    await logSensitiveAction({
+      actor_user_id: req.authUser!.id,
+      action_type: "STATUTORY_NUMBERS_BULK_UPLOAD",
+      module_key: "PAYROLL",
+      entity_type: "employees",
+      entity_id: "bulk",
+      change_summary: { rowsAccepted: updates.length, rowsRejected: errors.length, updated },
+      req,
+    });
+
+    return res.json({
+      success: true,
+      data: { updated, rowsAccepted: updates.length, rowsRejected: errors.length, errors: errors.slice(0, 100) },
+    });
+  })
+);
