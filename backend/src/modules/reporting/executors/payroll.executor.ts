@@ -354,6 +354,30 @@ export async function bankAdvice(
   clauses.push("spr.run_month = ?");
   params.push(runMonth);
 
+  /**
+   * Who belongs in a payment file.
+   *
+   * "Active/Left" does not map to a stored value — employment_status carries active (1,336),
+   * Resigned (30,318), terminated (501) and inactive (26,685), with no "Left". Per the payroll
+   * team's ruling, Left means anything not active THAT STILL HAS A PAYABLE AMOUNT, i.e. a final
+   * settlement. Combined with active, the qualifying condition is simply a net amount to pay:
+   * an active employee with nothing payable does not belong in a transfer file either.
+   */
+  clauses.push("COALESCE(spl.net_salary, 0) > 0");
+
+  /**
+   * Refuse to emit a row this file cannot safely pay.
+   *
+   * bank-advice pays to employees.bank_account_number while neft-transfer-file pays to
+   * employee_bank_detail, and on the 2026-07 run 6 employees hold DIFFERENT numbers between the
+   * two while 35 have neither. A transfer file is an instruction to move money: a row whose
+   * account is missing cannot be paid at all, and one whose two sources disagree must not be paid
+   * on a guess. Both are excluded here and remain visible in the bank exception report.
+   */
+  clauses.push("(e.bank_account_number IS NOT NULL AND TRIM(e.bank_account_number) <> '')");
+  clauses.push("NOT (e.bank_account_number IS NOT NULL AND e.bank_account_number <> '' AND acct_chk.account_number IS NOT NULL AND acct_chk.account_number <> '' AND TRIM(e.bank_account_number) <> TRIM(acct_chk.account_number))");
+
+
   // A bank advice is an instruction to pay. It had no run-status guard at all, so a run still in
   // draft — or one that had been cancelled — would produce a fully formed payable file complete
   // with account number, IFSC and amount. neft-transfer-file does the same job from the same run
@@ -393,7 +417,32 @@ export async function bankAdvice(
            ${bankName},
            ${ACCOUNT_SOURCE_STATUS},
            COALESCE(spl.net_salary,0) AS amount,
-           spr.run_month
+           spr.run_month,
+           /**
+            * ICICI transfer-file columns, in the shared "Bank Transfer File" shape.
+            *
+            * Pay Mod is the rule given: 'Y' for an ICICI-to-ICICI transfer, 'N' for ICICI to any
+            * other bank. Keyed off the beneficiary IFSC prefix, which is how the bank identifies
+            * itself — matched on the first four characters because IFSC is BANK(4) + '0' +
+            * BRANCH(6). Measured on 2026-07: 18 of the payable beneficiaries are ICICI, so 'Y'
+            * is the rare case and a rule inverted by accident would be quiet.
+            *
+            * The debit account is the company's own ICICI account and is constant for every row;
+            * it is not derived from employee data.
+            *
+            * Date is DD-MMM-YYYY to match the sample file (15-JUN-2026). MySQL's %b gives the
+            * three-letter month; upper-cased so it matches the bank's sample exactly rather than
+            * "15-Jun-2026".
+            */
+           '033005005852' AS debit_ac_no,
+           ${bankField.includes("MASKED") ? "'***MASKED***' AS beneficiary_ac_no" : "e.bank_account_number AS beneficiary_ac_no"},
+           COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS beneficiary_name,
+           COALESCE(spl.net_salary,0) AS amt,
+           CASE WHEN UPPER(LEFT(COALESCE(e.ifsc_code,''),4)) = 'ICIC' THEN 'Y' ELSE 'N' END AS pay_mod,
+           UPPER(DATE_FORMAT(LAST_DAY(STR_TO_DATE(CONCAT(spr.run_month,'-01'),'%Y-%m-%d')), '%d-%b-%Y')) AS transfer_date,
+           ${ifscField.includes("MASKED") ? "'***MASKED***' AS ifsc" : "e.ifsc_code AS ifsc"},
+           e.mobile AS bene_mobile_no,
+           COALESCE(NULLIF(TRIM(e.official_email),''), e.email) AS bene_email_id
       FROM salary_prep_line spl
       JOIN salary_prep_run spr ON spr.id = spl.run_id
       JOIN employees e ON e.id = spl.employee_id
