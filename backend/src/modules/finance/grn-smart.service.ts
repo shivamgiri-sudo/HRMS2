@@ -15,7 +15,10 @@ import { budgetConsumptionService } from "../process-pnl/budget-consumption.serv
 import { isPeriodLocked } from "../process-pnl/finance-period-lock.js";
 import { vendorPaymentService } from "./vendor-payment.service.js";
 import { imprestLedgerService } from "./imprest-ledger.service.js";
-import { grnPeriodAllocationService } from "./grn-period-allocation.service.js";
+import {
+  grnPeriodAllocationService,
+  resolveEligiblePeriods,
+} from "./grn-period-allocation.service.js";
 
 export interface SmartAllocationInput {
   budgetLineId: string;
@@ -777,7 +780,7 @@ export const grnSmartService = {
 
       // Recognition schedule last: it reads back the allocation rows just written, and being
       // inside this transaction means a split that does not reconcile rolls the invoice back.
-      const periodSplit = await writePeriodSplits(connection, grnId, grn, input, actorUserId);
+      const periodSplit = await writePeriodSplits(connection, grnId, grn, input, actorUserId, actorRole);
 
       await connection.commit();
       await writeAudit("ALLOCATIONS_SAVED", grnId, actorUserId, actorRole, {
@@ -1131,7 +1134,7 @@ export const grnSmartService = {
 
       // Recognition schedule last: it reads back the allocation rows just written, and being
       // inside this transaction means a split that does not reconcile rolls the invoice back.
-      const periodSplit = await writePeriodSplits(connection, grnId, grn, input, actorUserId);
+      const periodSplit = await writePeriodSplits(connection, grnId, grn, input, actorUserId, actorRole);
 
       await connection.commit();
       await writeAudit("INVOICE_COMPONENTS_SAVED", grnId, actorUserId, actorRole, {
@@ -1646,6 +1649,36 @@ function consumptionPeriodOf(grn: {
  * With no recognition window the function clears any previous schedule and returns null — the
  * GRN is single-month, exactly as before multi-month existed.
  */
+/**
+ * Who may decide which months an invoice is recognised in.
+ *
+ * Both of the overrides below were documented as Finance Head / Accounts Head /
+ * Super Admin and enforced nowhere on the server. canCustomSplit exists only as a
+ * prop on MonthSplitPanel, so the chip was hidden in the UI and the field was
+ * accepted from the payload regardless: PUT /:id/allocations admits
+ * SMART_WRITE_ROLES, which also includes admin, branch_head and branch_admin, and
+ * recognitionCustomPercentages went straight through to saveSplit unchecked.
+ *
+ * Both decide which financial period bears a cost, so both are gated here rather
+ * than in the UI:
+ *
+ *   custom percentages - naming the exact share each month carries.
+ *   a cross-FY window - moving cost into a financial year the GRN does not belong
+ *   to. Allowed since the ruling of 2026-08-12, which replaced a hard clamp with a
+ *   warning; this keeps it allowed, but only for the roles that own the call.
+ */
+const RECOGNITION_OVERRIDE_ROLES = new Set(["finance_head", "accounts_head", "super_admin"]);
+
+export function assertMayOverrideRecognition(actorRole: string, what: string): void {
+  if (RECOGNITION_OVERRIDE_ROLES.has(String(actorRole))) return;
+  throw Object.assign(
+    new Error(
+      `${what} requires Finance Head, Accounts Head or Super Admin.`,
+    ),
+    { statusCode: 403, code: "RECOGNITION_OVERRIDE_FORBIDDEN" },
+  );
+}
+
 async function writePeriodSplits(
   connection: PoolConnection,
   grnId: string,
@@ -1656,6 +1689,7 @@ async function writePeriodSplits(
     recognitionCustomPercentages?: Record<string, number> | null;
   },
   actorUserId: string,
+  actorRole: string,
 ) {
   const start = String(input.recognitionStartPeriod ?? "").trim();
   const end = String(input.recognitionEndPeriod ?? "").trim();
@@ -1682,6 +1716,19 @@ async function writePeriodSplits(
   );
   const accountingPeriod = consumptionPeriodOf(grn);
   const customPercentages = input.recognitionCustomPercentages ?? null;
+
+  if (customPercentages && Object.keys(customPercentages).length > 0) {
+    assertMayOverrideRecognition(actorRole, "A custom recognition split");
+  }
+
+  // resolveEligiblePeriods is pure, so the window can be judged before anything is
+  // written rather than rolling the transaction back afterwards.
+  if (resolveEligiblePeriods({ accountingPeriod, startPeriod: start, endPeriod: end }).crossFy) {
+    assertMayOverrideRecognition(
+      actorRole,
+      "Recognising an invoice across financial years",
+    );
+  }
   let summary: Awaited<ReturnType<typeof grnPeriodAllocationService.saveSplit>> | null = null;
   for (const row of rows as RowDataPacket[]) {
     summary = await grnPeriodAllocationService.saveSplit(

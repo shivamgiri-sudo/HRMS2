@@ -98,7 +98,9 @@ describe("writePeriodSplits", () => {
   it("is called from both invoice write paths, inside the transaction", () => {
     // A split that fails to reconcile has to take the invoice save down with it, so the call
     // must sit before the commit rather than after it.
-    const calls = [...SRC.matchAll(/await writePeriodSplits\(connection, grnId, grn, input, actorUserId\);/g)];
+    // actorRole was added to the signature when the recognition override gate landed;
+    // matched loosely so a later argument does not silently drop this assertion to zero
+    const calls = [...SRC.matchAll(/await writePeriodSplits\(connection, grnId, grn, input, actorUserId[^)]*\);/g)];
     expect(calls, "saveAllocations and saveComponentAllocations both author the schedule")
       .toHaveLength(2);
     for (const call of calls) {

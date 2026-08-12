@@ -141,7 +141,9 @@ smartGrnRouter.put(
       );
       res.json({ success: true, data });
     } catch (error) {
-      res.status(400).json({
+      // a recognition override refused for role is a 403, not a bad request
+      const status = (error as { statusCode?: number })?.statusCode ?? 400;
+      res.status(status).json({
         success: false,
         error: error instanceof Error ? error.message : "Unable to save allocations",
       });
@@ -180,7 +182,8 @@ smartGrnRouter.put(
       );
       res.json({ success: true, data });
     } catch (error) {
-      res.status(400).json({
+      const status = (error as { statusCode?: number })?.statusCode ?? 400;
+      res.status(status).json({
         success: false,
         error: error instanceof Error ? error.message : "Unable to save invoice components",
       });
