@@ -34,23 +34,45 @@ describe('updateEmployeeSchema — userId not patchable', () => {
 
 // ── Task 3: official_email must not be self-serviceable ──────────────────────
 describe('PATCH /me — official_email not self-serviceable', () => {
-  it('updateMyProfile must not contain officialEmailSet/officialEmailValues variables', () => {
-    const src = fs.readFileSync(
-      path.resolve(__dirname, '../employee.profile.service.ts'),
-      'utf8'
-    );
-    expect(src).not.toContain('officialEmailSet');
-    expect(src).not.toContain('officialEmailValues');
+  // These assertions used to read employee.profile.service.ts, which has NO importer:
+  // `updateMyProfile` exists in three places and only the inline router.patch("/me")
+  // handler in employee.routes.ts is routed. The other two (employee.profile.service.ts,
+  // employee.controller.ts) are unreachable, so guarding them proved nothing about the
+  // live endpoint. Read the routed handler instead.
+  const routeSrc = () =>
+    fs.readFileSync(path.resolve(__dirname, '../employee.routes.ts'), 'utf8');
+
+  /** The body of the routed PATCH /me handler, isolated from the rest of the file. */
+  function patchMeHandler(): string {
+    const src = routeSrc();
+    const startIdx = src.indexOf('router.patch("/me"');
+    expect(startIdx, 'routed PATCH /me handler not found in employee.routes.ts').toBeGreaterThan(-1);
+    const endIdx = src.indexOf('\n}));', startIdx) + 5;
+    return src.slice(startIdx, endIdx);
+  }
+
+  it('rejects official_email with a 403 before building any UPDATE', () => {
+    const section = patchMeHandler();
+    expect(section).toMatch(/req\.body\.official_email\s*!==\s*undefined/);
+    expect(section).toMatch(/status\(403\)/);
   });
 
-  it('updateMyProfile must not write official_email column in UPDATE statement', () => {
-    const src = fs.readFileSync(
-      path.resolve(__dirname, '../employee.profile.service.ts'),
-      'utf8'
+  it('never writes the official_email column', () => {
+    expect(patchMeHandler()).not.toMatch(/official_email\s*=\s*\?/);
+  });
+
+  it('builds its UPDATE from an allowlist, not from arbitrary req.body keys', () => {
+    const section = patchMeHandler();
+    expect(section).toContain('ALLOWED_FIELDS');
+    // The SET clause must iterate the allowlist. Iterating req.body directly would
+    // let any column through, which is the defect the 403 above only partially covers.
+    expect(section).toMatch(/for\s*\(\s*const\s+field\s+of\s+ALLOWED_FIELDS\s*\)/);
+    expect(section).not.toMatch(/Object\.keys\(\s*req\.body\s*\)/);
+    const allowlist = section.slice(
+      section.indexOf('ALLOWED_FIELDS'),
+      section.indexOf(']', section.indexOf('ALLOWED_FIELDS')),
     );
-    const updateFnIdx = src.indexOf('async updateMyProfile(');
-    const updateFnSection = src.slice(updateFnIdx, updateFnIdx + 2000);
-    expect(updateFnSection).not.toMatch(/official_email\s*=\s*\?/);
+    expect(allowlist).not.toContain('official_email');
   });
 });
 
