@@ -180,17 +180,39 @@ export function startCosecSyncWorker() {
   const backfillMs = positiveNumber("NCOSEC_BACKFILL_INTERVAL_MS", 3_600_000); // hourly
   const backfillDays = positiveNumber("NCOSEC_BACKFILL_DAYS", 7);
 
+  // The sweep runs one day at a time, not one wide call across the whole window.
+  //
+  // A single sync() spanning the window does not finish here. Measured 2026-08-12: an
+  // 11-day call sat 70+ minutes in ep_poll with 31s of CPU, no active query and zero rows
+  // written, while the same range run as separate single-day calls completed every day
+  // (8-20 min each, failed=0). Worse, this process restarts every 9-14 minutes under the
+  // deploy cadence, so a multi-hour call is killed long before it commits anything and the
+  // sweep never repairs the gap it exists for - which is how 2026-08-07 stayed at 52%
+  // ingested for four days with zero completed cycles.
+  //
+  // Chunked, each day commits on its own. A restart costs at most the day in flight, and
+  // the next sweep redoes it because every write is an idempotent upsert. One day failing
+  // no longer abandons the rest of the window.
   const backfill = async () => {
     if (cosecSyncService.isRunning()) return;
-    const to = new Date();
-    const from = new Date();
-    from.setDate(to.getDate() - backfillDays);
-    try {
-      const result = await cosecSyncService.sync({ from: dateOnly(from), to: dateOnly(to) });
-      console.log(`[cosec-sync] backfill ${backfillDays}d migrated=${result.migratedDays} pulled=${result.pulledEvents} unmapped=${result.unmappedUsers.length} failed=${result.failed.length}`);
-    } catch (error) {
-      console.error("[cosec-sync] backfill error", error instanceof Error ? error.message : String(error));
+    const today = new Date();
+    let migrated = 0, failedDays = 0, doneDays = 0;
+    for (let i = backfillDays; i >= 0; i--) {
+      // Re-check each iteration: the 5-minute fast path may claim the lock mid-sweep.
+      if (cosecSyncService.isRunning()) break;
+      const d = new Date(today);
+      d.setDate(today.getDate() - i);
+      const day = dateOnly(d);
+      try {
+        const result = await cosecSyncService.sync({ from: day, to: day });
+        migrated += result.migratedDays;
+        doneDays += 1;
+      } catch (error) {
+        failedDays += 1;
+        console.error(`[cosec-sync] backfill ${day} failed`, error instanceof Error ? error.message : String(error));
+      }
     }
+    console.log(`[cosec-sync] backfill ${backfillDays}d days=${doneDays}/${backfillDays + 1} migrated=${migrated} failedDays=${failedDays}`);
   };
 
   intervalHandle = setInterval(execute, intervalMs);
