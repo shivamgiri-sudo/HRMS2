@@ -53,7 +53,25 @@ jobs:
       # That aborts npm ci before any test runs, so it blocked EVERY deploy, not just
       # the change that introduced it.
       - name: Install native build deps for canvas
-        run: sudo apt-get update && sudo apt-get install -y libcairo2-dev libpango1.0-dev libjpeg-dev libgif-dev librsvg2-dev
+        shell: bash
+        run: |
+          set -euo pipefail
+          # The self-hosted runner user has no passwordless sudo: this exact command
+          # failed with "sudo: a password is required", which is not something a
+          # non-interactive job can answer. The packages only matter if canvas has to
+          # fall back to a node-gyp source build, and this host has been building it
+          # for every deploy already, so they are present.
+          #
+          # Attempted when sudo is available, skipped when it is not. Nothing is
+          # hidden by skipping: if the headers really are missing, the npm ci below
+          # fails on the gyp configure error, which is the same signal this step was
+          # added to prevent - just one step later.
+          if sudo -n true 2>/dev/null; then
+            sudo apt-get update
+            sudo apt-get install -y libcairo2-dev libpango1.0-dev libjpeg-dev libgif-dev librsvg2-dev
+          else
+            echo "Passwordless sudo unavailable on this runner - relying on the host's existing cairo/pango headers."
+          fi
 
       - name: Install backend deps
         working-directory: backend
@@ -152,7 +170,25 @@ jobs:
       # That aborts npm ci before any test runs, so it blocked EVERY deploy, not just
       # the change that introduced it.
       - name: Install native build deps for canvas
-        run: sudo apt-get update && sudo apt-get install -y libcairo2-dev libpango1.0-dev libjpeg-dev libgif-dev librsvg2-dev
+        shell: bash
+        run: |
+          set -euo pipefail
+          # The self-hosted runner user has no passwordless sudo: this exact command
+          # failed with "sudo: a password is required", which is not something a
+          # non-interactive job can answer. The packages only matter if canvas has to
+          # fall back to a node-gyp source build, and this host has been building it
+          # for every deploy already, so they are present.
+          #
+          # Attempted when sudo is available, skipped when it is not. Nothing is
+          # hidden by skipping: if the headers really are missing, the npm ci below
+          # fails on the gyp configure error, which is the same signal this step was
+          # added to prevent - just one step later.
+          if sudo -n true 2>/dev/null; then
+            sudo apt-get update
+            sudo apt-get install -y libcairo2-dev libpango1.0-dev libjpeg-dev libgif-dev librsvg2-dev
+          else
+            echo "Passwordless sudo unavailable on this runner - relying on the host's existing cairo/pango headers."
+          fi
 
       - name: Install backend deps
         working-directory: backend
