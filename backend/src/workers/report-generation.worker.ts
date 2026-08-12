@@ -161,17 +161,27 @@ async function markFailed(
   userMessage: string,
   internalDetail: string
 ): Promise<void> {
+  // report_request has failure_message. It has no failure_message_user and no
+  // failure_message_internal, so this UPDATE raised ER_BAD_FIELD_ERROR and a
+  // report that failed could not even be marked as failed. The evidence is in
+  // the table: every report_request sits at GENERATION_FAILED with
+  // failure_code 'STALE_PROCESSING' and "stuck in PROCESSING state and has
+  // exceeded max retries" - written later by the stale sweeper, which uses
+  // columns that exist. The real cause of every failure was lost.
+  //
+  // Nothing is lost by dropping the two. failure_message_user carried the same
+  // value as failure_message, and internalDetail is recorded immediately below
+  // by recordReportAuditEvent as errorDetail, which is where the operator-facing
+  // detail belongs anyway.
   await db.execute(
     `UPDATE report_request SET
-       status                  = 'FAILED',
-       failure_code            = ?,
-       failure_message         = ?,
-       failure_message_user    = ?,
-       failure_message_internal = ?,
-       failed_at               = NOW(),
-       updated_at              = NOW()
+       status          = 'FAILED',
+       failure_code    = ?,
+       failure_message = ?,
+       failed_at       = NOW(),
+       updated_at      = NOW()
      WHERE id = ?`,
-    [failureCode, userMessage, userMessage, internalDetail.slice(0, 2000), requestId]
+    [failureCode, userMessage, requestId]
   );
   await deletePartialFile(requestId);
   await recordReportAuditEvent({
@@ -315,11 +325,26 @@ async function processOneRequest(): Promise<void> {
       if (cleanRows.length < CHUNK_SIZE) break;      // last page
       if (lastCursor === null) break;                 // executor signals no more pages
       if (totalWritten >= MAX_ROWS) {
-        // Mark the row-limit condition but still build file with rows fetched so far
-        await db.execute(
-          `UPDATE report_request SET notes = CONCAT(COALESCE(notes,''), ' [ROW_LIMIT_REACHED]') WHERE id = ?`,
-          [requestId]
-        );
+        // Mark the row-limit condition but still build the file from the rows
+        // fetched so far.
+        //
+        // This wrote report_request.notes, which does not exist, so the UPDATE
+        // raised ER_BAD_FIELD_ERROR - and it fires on the one path where the
+        // report is otherwise fine, so a report that merely exceeded the row
+        // limit failed outright instead of being delivered truncated.
+        //
+        // The condition belongs in the audit trail rather than a free-text
+        // column: report_audit_event already records every other step of this
+        // request, and metadataJson keeps the numbers queryable.
+        await recordReportAuditEvent({
+          reportRequestId: requestId,
+          eventType: REPORT_AUDIT_EVENTS.SOURCE_QUERY_COMPLETED,
+          actorType: 'worker',
+          reportCode: req.report_code,
+          correlationId: req.correlation_id,
+          message: `Row limit reached - report truncated at ${MAX_ROWS} rows`,
+          metadataJson: { rowLimitReached: true, totalWritten, maxRows: MAX_ROWS },
+        });
         break;
       }
     }
@@ -394,13 +419,21 @@ async function processOneRequest(): Promise<void> {
       ? ` (large file: ${(buffer.length / 1_048_576).toFixed(1)} MB)`
       : '';
 
+    // report_email_delivery has neither delivery_method nor secure_download_url,
+    // so this INSERT raised ER_BAD_FIELD_ERROR and no delivery has ever been
+    // recorded - the table holds 0 rows.
+    //
+    // Both dropped rather than added. The delivery method stays derivable:
+    // attachment_filename is set for an ATTACHMENT and NULL for a LINK, which is
+    // exactly the distinction the column carried. The download URL is built from
+    // the request id, so it can be regenerated rather than stored - and a signed
+    // URL is better not persisted anyway.
     await db.execute(
       `INSERT INTO report_email_delivery
          (id, report_request_id, delivery_attempt_number, recipient_email,
           recipient_employee_id, recipient_employee_code, email_subject,
-          attachment_filename, attachment_size_bytes, delivery_method,
-          secure_download_url, status, queued_at)
-       VALUES (UUID(),?,1,?, ?,?,?, ?,?, ?,?,'QUEUED',NOW())`,
+          attachment_filename, attachment_size_bytes, status, queued_at)
+       VALUES (UUID(),?,1,?, ?,?,?, ?,?, 'QUEUED',NOW())`,
       [
         requestId,
         req.official_email,
@@ -409,8 +442,6 @@ async function processOneRequest(): Promise<void> {
         emailSubject + sizeWarning,
         useAttachment ? filename : null,
         useAttachment ? buffer.length : null,
-        useAttachment ? 'ATTACHMENT' : 'LINK',
-        downloadUrl,
       ]
     );
 

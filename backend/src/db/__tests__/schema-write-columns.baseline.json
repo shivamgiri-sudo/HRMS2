@@ -70,10 +70,6 @@
   "modules/employees/employee.documents.routes.ts": [
     "employee_documents.updated_at"
   ],
-  "modules/exit/resignation.routes.ts": [
-    "exit_request.closed_at",
-    "exit_request.closed_by"
-  ],
   "modules/incentives/incentives.routes.ts": [
     "audit_log.action",
     "audit_log.meta",
@@ -216,12 +212,5 @@
   ],
   "workers/domains/leave-sync-handler.ts": [
     "leave_request.updated_at"
-  ],
-  "workers/report-generation.worker.ts": [
-    "report_email_delivery.delivery_method",
-    "report_email_delivery.secure_download_url",
-    "report_request.failure_message_internal",
-    "report_request.failure_message_user",
-    "report_request.notes"
   ]
 }
