@@ -771,6 +771,12 @@ export async function payrollCostSummary(
     SELECT b.branch_name,
            COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
            COALESCE(d.dept_name, 'UNASSIGNED') AS department_name,
+           -- Cost centre, requested for the payroll cost summary. UNASSIGNED rather than NULL
+           -- because 271 of 1,327 active employees carry no cost_centre_id (measured
+           -- 2026-08-12), and a blank cell reads as a rendering fault where the label reads as
+           -- a fact about those employees — which is what it is.
+           COALESCE(cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
+           COALESCE(cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
            spr.run_month,
            COUNT(*) AS employee_count,
            SUM(COALESCE(spl.gross_salary,0)) AS total_gross,
@@ -786,9 +792,14 @@ export async function payrollCostSummary(
       LEFT JOIN branch_master b ON b.id = e.branch_id
       LEFT JOIN process_master p ON p.id = e.process_id
       LEFT JOIN department_master d ON d.id = e.department_id
+      LEFT JOIN cost_centre_master cc ON cc.id = e.cost_centre_id
      WHERE ${clauses.join(" AND ")}
-     GROUP BY b.branch_name, p.process_name, d.dept_name, spr.run_month
-     ORDER BY b.branch_name, p.process_name, d.dept_name`;
+     -- Grouped by cost centre as well, so the totals split by it rather than repeating a
+     -- branch/process total against every cost centre in that group. employee_count and every
+     -- SUM below move with this: the grain of the report changes, which is the point of the
+     -- request, but it means these figures no longer match the pre-change output row-for-row.
+     GROUP BY b.branch_name, p.process_name, d.dept_name, cc.cost_centre_code, cc.cost_centre_name, spr.run_month
+     ORDER BY b.branch_name, p.process_name, d.dept_name, cc.cost_centre_code`;
 
   // One execution, not two: the page and its total come from the same fetch wherever the result
   // fits the probe. See fetchPageWithTotal — the COUNT wrapper it replaces re-ran the entire

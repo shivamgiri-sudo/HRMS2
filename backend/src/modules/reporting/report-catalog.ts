@@ -2262,6 +2262,10 @@ export const REPORT_CATALOG: ReportDefinition[] = [
       { key: "branch_name", label: "Branch", format: "text", width: 140 },
       { key: "process_name", label: "Process", format: "text", width: 160 },
       { key: "department_name", label: "Department", format: "text", width: 180 },
+      // Cost centre added on request. The report is now grouped by it, so the money columns
+      // below split by cost centre rather than repeating a branch/process total against each.
+      { key: "cost_centre_code", label: "Cost Centre Code", format: "text", width: 130 },
+      { key: "cost_centre_name", label: "Cost Centre", format: "text", width: 180 },
       { key: "run_month", label: "Month", format: "text", width: 90 },
       { key: "employee_count", label: "Headcount", format: "number", width: 100, align: "right" },
       { key: "total_gross", label: "Total Gross", format: "currency", width: 130, align: "right", sensitive: true },

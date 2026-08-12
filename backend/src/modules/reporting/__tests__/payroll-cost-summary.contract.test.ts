@@ -28,6 +28,10 @@ const EXPECTED_COLUMNS = [
   "branch_name",
   "process_name",
   "department_name",
+  // Cost centre added on request. The executor now GROUPs by it, so this report's grain
+  // changed: money columns split by cost centre instead of repeating a branch/process total.
+  "cost_centre_code",
+  "cost_centre_name",
   "run_month",
   "employee_count",
   "total_gross",
