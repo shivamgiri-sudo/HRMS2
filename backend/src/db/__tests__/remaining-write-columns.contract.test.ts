@@ -112,12 +112,25 @@ describe("bulk upload writes", () => {
     expect(liveCode(ROSTER)).toMatch(/system_decision_reason/);
   });
 
-  it("both services close a batch without imported_by or imported_at", () => {
+  it("both services record who imported a batch and when", () => {
+    // migration 1134 adds imported_by and imported_at. Before it, naming them
+    // meant the batch was never marked imported at all.
     for (const f of [ROSTER, SHIFT]) {
       const code = liveCode(f);
-      expect(code).not.toContain("imported_by");
-      expect(code).not.toContain("imported_at");
-      expect(code).toMatch(/UPDATE upload_batch SET batch_status=\?, imported_rows=\?, updated_at=NOW\(\)/);
+      expect(code).toMatch(
+        /UPDATE upload_batch SET batch_status=\?, imported_rows=\?, imported_by=\?, imported_at=NOW\(\)/
+      );
     }
+  });
+
+  it("migration 1134 adds both columns, guarded and nullable", () => {
+    const sql = fs.readFileSync(
+      path.join(ROOT, "..", "sql", "1134_upload_batch_import_audit.sql"),
+      "utf8"
+    );
+    expect(sql).toMatch(/ADD COLUMN imported_by CHAR\(36\) NULL/);
+    expect(sql).toMatch(/ADD COLUMN imported_at DATETIME NULL/);
+    // each ADD guarded independently, so a partially-applied state resolves
+    expect(sql.match(/information_schema\.columns/g)?.length).toBe(2);
   });
 });

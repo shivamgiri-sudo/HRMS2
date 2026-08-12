@@ -48,6 +48,14 @@
   "modules/bulk-upload/process-master-bulk.service.ts": [
     "process_master.lob_id"
   ],
+  "modules/bulk-upload/roster-assignment-bulk.service.ts": [
+    "upload_batch.imported_at",
+    "upload_batch.imported_by"
+  ],
+  "modules/bulk-upload/shift-roster-bulk.service.ts": [
+    "upload_batch.imported_at",
+    "upload_batch.imported_by"
+  ],
   "modules/bulk-upload/shift-rotation-type-bulk.service.ts": [
     "upload_batch.imported_at",
     "upload_batch.imported_by"

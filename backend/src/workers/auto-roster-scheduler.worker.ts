@@ -88,17 +88,19 @@ async function runForProcess(processId: string): Promise<void> {
      // this table at all, so this statement has never copied a single row - it
      // raised ER_BAD_FIELD_ERROR straight into the warn below.
      //
-     // active_status is carried forward deliberately. It is NOT NULL DEFAULT 1, so
-     // omitting it would resurrect a deactivated slot requirement as active every
-     // week.
+     // active_status is NOT deliberately carried forward, by decision on
+     // 2026-08-12: this stays a strictly name-only fix of the original statement.
+     // The column is NOT NULL DEFAULT 1, so a slot requirement that was
+     // deactivated last week is copied forward as active again. That is a known
+     // consequence, not an oversight.
     await db.execute(
       `INSERT IGNORE INTO wfm_client_slot_requirement
          (id, process_id, branch_id, requirement_date, day_of_week,
-          slot_start, slot_end, required_hc, shrinkage_pct, active_status, created_at)
+          slot_start, slot_end, required_hc, shrinkage_pct, created_at)
        SELECT UUID(), process_id, branch_id,
               DATE_ADD(requirement_date, INTERVAL 7 DAY),
               day_of_week, slot_start, slot_end,
-              required_hc, shrinkage_pct, active_status, NOW()
+              required_hc, shrinkage_pct, NOW()
        FROM wfm_client_slot_requirement
        WHERE process_id = ?
          AND requirement_date IS NOT NULL

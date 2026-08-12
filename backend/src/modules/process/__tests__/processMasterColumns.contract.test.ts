@@ -98,10 +98,55 @@ describe("process_master writes name columns that exist", () => {
     capture();
     await expect(
       processRepositoryMySQL.create(
-        { processCode: "OPS", processName: "Ops", branchName: "Noida" } as never,
+        { processCode: "OPS", processName: "Ops", locationName: "Sector 62" } as never,
         "user-1"
       )
-    ).rejects.toThrow(/branchName/);
+    ).rejects.toThrow(/locationName/);
+  });
+
+  it("resolves branchName to a real branch_id rather than refusing it", async () => {
+    // decision on 2026-08-12: map these two instead of rejecting them
+    const calls: Captured[] = [];
+    mockExecute.mockImplementation((sql: string, params: unknown[] = []) => {
+      calls.push({ sql, params });
+      if (/FROM branch_master WHERE branch_name/i.test(sql)) {
+        return Promise.resolve([[{ id: "branch-9" }], []]);
+      }
+      if (/SELECT full_name FROM employees/i.test(sql)) {
+        return Promise.resolve([[{ full_name: "A Manager" }], []]);
+      }
+      return Promise.resolve([[{ id: "p-1" }], []]);
+    });
+
+    await processRepositoryMySQL.create(
+      {
+        processCode: "OPS",
+        processName: "Ops",
+        branchName: "Noida",
+        processOwnerEmployeeId: "emp-1",
+      } as never,
+      "user-1"
+    );
+
+    const insert = calls.find((c) => /INSERT INTO process_master/i.test(c.sql))!;
+    expect(insert.sql).toContain("branch_id");
+    expect(insert.sql).toContain("process_owner_name");
+    expect(insert.params).toContain("branch-9");
+    expect(insert.params).toContain("A Manager");
+  });
+
+  it("rejects an unknown branch rather than writing NULL over it", async () => {
+    mockExecute.mockImplementation((sql: string) => {
+      if (/FROM branch_master WHERE branch_name/i.test(sql)) return Promise.resolve([[], []]);
+      return Promise.resolve([[{ id: "p-1" }], []]);
+    });
+
+    await expect(
+      processRepositoryMySQL.create(
+        { processCode: "OPS", processName: "Ops", branchName: "Nowhere" } as never,
+        "user-1"
+      )
+    ).rejects.toMatchObject({ statusCode: 400, code: "BRANCH_NOT_FOUND" });
   });
 
   it("update no longer appends updated_by, which failed every update", async () => {
@@ -116,7 +161,7 @@ describe("process_master writes name columns that exist", () => {
   it("update rejects unstorable fields too", async () => {
     capture();
     await expect(
-      processRepositoryMySQL.update("p-1", { locationName: "Sector 62" } as never, "user-1")
+      processRepositoryMySQL.update("p-1", { description: "nowhere to go" } as never, "user-1")
     ).rejects.toMatchObject({ statusCode: 400, code: "PROCESS_FIELDS_UNSUPPORTED" });
   });
 

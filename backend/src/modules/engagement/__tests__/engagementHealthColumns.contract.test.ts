@@ -60,7 +60,10 @@ describe("engagement health signals query columns that exist", () => {
 
   it("filters attendance on attendance_status, the real enum column", () => {
     const code = liveCode();
-    expect(code).toContain("attendance_status = 'absent'");
+    // missing_punch counts as an absence by decision on 2026-08-12: payroll
+    // already treats it as unpaid, so ignoring it here would read more
+    // favourably than the employee's own payslip
+    expect(code).toContain("attendance_status IN ('absent','missing_punch')");
     // the old list named a bare `status` column and values this enum never had.
     // Scoped to the attendance query: line 134 filters a different table whose
     // `status` column is real.

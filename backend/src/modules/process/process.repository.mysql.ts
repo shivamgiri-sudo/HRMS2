@@ -59,19 +59,49 @@ function mapRow(row: RowDataPacket): ProcessMaster {
  * made of; a caller that sends one deserves to be told there is nowhere to put
  * it.
  *
- * branchName and processOwnerEmployeeId are the two that could plausibly be
- * mapped - to branch_id via branch_master, and to process_owner_name via
- * employees - but that is a behaviour decision rather than a column fix, so it
- * is left out deliberately.
+ * branchName and processOwnerEmployeeId are no longer among them. By decision on
+ * 2026-08-12 they are resolved instead of refused: a branch name is looked up in
+ * branch_master and stored as branch_id, and an owner's employee id is looked up
+ * in employees and stored as process_owner_name. Both are rejected with a 400 if
+ * they do not resolve, rather than being written as NULL - a process silently
+ * losing its branch is the failure this whole change is about.
  */
 const UNSTORABLE_FIELDS = [
   "departmentId",
-  "branchName",
   "locationName",
-  "processOwnerEmployeeId",
   "processManagerEmployeeId",
   "description",
 ] as const;
+
+/** branch_master.branch_name -> process_master.branch_id */
+async function resolveBranchId(branchName: string): Promise<string> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    "SELECT id FROM branch_master WHERE branch_name = ? LIMIT 1",
+    [branchName.trim()]
+  );
+  if (rows.length === 0) {
+    throw Object.assign(new Error(`No branch named '${branchName}' exists.`), {
+      statusCode: 400,
+      code: "BRANCH_NOT_FOUND",
+    });
+  }
+  return (rows[0] as { id: string }).id;
+}
+
+/** employees.full_name -> process_master.process_owner_name */
+async function resolveOwnerName(employeeId: string): Promise<string> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    "SELECT full_name FROM employees WHERE id = ? LIMIT 1",
+    [employeeId]
+  );
+  if (rows.length === 0) {
+    throw Object.assign(new Error(`No employee with id '${employeeId}' exists.`), {
+      statusCode: 400,
+      code: "PROCESS_OWNER_NOT_FOUND",
+    });
+  }
+  return (rows[0] as { full_name: string }).full_name;
+}
 
 function rejectUnstorableFields(input: CreateProcessInput | UpdateProcessInput): void {
   const bag = input as Record<string, unknown>;
@@ -187,15 +217,22 @@ export const processRepositoryMySQL: ProcessRepository = {
     // Nine of the fourteen columns this used to name do not exist on
     // process_master - see UNSTORABLE_FIELDS. userId has nowhere to go either:
     // the table has created_at/updated_at but no created_by/updated_by.
+    const branchId = input.branchName ? await resolveBranchId(input.branchName) : null;
+    const ownerName = input.processOwnerEmployeeId
+      ? await resolveOwnerName(input.processOwnerEmployeeId)
+      : null;
+
     await db.execute(
       `INSERT INTO process_master
-        (id, process_code, process_name, process_type, active_status)
-       VALUES (?, ?, ?, ?, 1)`,
+        (id, process_code, process_name, process_type, branch_id, process_owner_name, active_status)
+       VALUES (?, ?, ?, ?, ?, ?, 1)`,
       [
         id,
         input.processCode.trim(),
         input.processName.trim(),
         input.processType ?? null,
+        branchId,
+        ownerName,
       ]
     );
 
@@ -229,6 +266,16 @@ export const processRepositoryMySQL: ProcessRepository = {
     if (input.activeStatus !== undefined) {
       setClauses.push("active_status = ?");
       params.push(input.activeStatus ? 1 : 0);
+    }
+    if (input.branchName !== undefined) {
+      setClauses.push("branch_id = ?");
+      params.push(input.branchName ? await resolveBranchId(input.branchName) : null);
+    }
+    if (input.processOwnerEmployeeId !== undefined) {
+      setClauses.push("process_owner_name = ?");
+      params.push(
+        input.processOwnerEmployeeId ? await resolveOwnerName(input.processOwnerEmployeeId) : null
+      );
     }
 
     // updated_by is not a column here, and it used to be appended

@@ -54,10 +54,13 @@ describe("auto-roster scheduler writes columns that exist", () => {
     expect(liveCode(WORKER)).not.toMatch(/notes/);
   });
 
-  it("carries active_status forward so a disabled requirement stays disabled", () => {
+  it("does not carry active_status forward - a name-only fix, by decision", () => {
+    // Decision on 2026-08-12: keep this a strictly name-only correction of the
+    // original statement. active_status is NOT NULL DEFAULT 1, so a requirement
+    // deactivated last week is copied forward active again. Known consequence,
+    // pinned here so it cannot be reintroduced by accident either way.
     const code = liveCode(WORKER);
-    // present in both the column list and the SELECT list
-    expect(code.match(/active_status/g)?.length).toBeGreaterThanOrEqual(2);
+    expect(code).not.toMatch(/INSERT IGNORE INTO wfm_client_slot_requirement[\s\S]{0,400}active_status/);
   });
 
   it("reads the process label from process_name", () => {

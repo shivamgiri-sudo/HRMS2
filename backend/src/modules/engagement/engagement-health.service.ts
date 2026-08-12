@@ -351,18 +351,22 @@ export async function calculateEmployeeEngagementHealth(employeeId: string) {
     // flat 65 below - across 125,125 rows of real attendance.
     //
     // attendance_status is an enum: present, half_day, absent, leave_approved,
-    // holiday, week_off, unreconciled, missing_punch, week_off_worked. Only
-    // 'absent' is counted, which is the closest match to the original intent
-    // ('absent','Absent','A','LWP'). missing_punch is deliberately not treated as
-    // an absence here: it means an unreconciled punch, and folding it in would
-    // change what this score means rather than fix a column name.
+    // holiday, week_off, unreconciled, missing_punch, week_off_worked.
+    //
+    // 'absent' and 'missing_punch' both count as an absence, by decision on
+    // 2026-08-12. missing_punch is an unresolved punch rather than a confirmed
+    // absence, but payroll already treats it as unpaid, so an engagement score
+    // that ignored it would read more favourably than the employee's own payslip.
+    // It is the larger of the two populations - 12,704 rows against 15,335 in the
+    // last 90 days - so this materially lowers the attendance signal for anyone
+    // carrying unreconciled punches, which is the intent.
     const [workedDays, absentDays] = await Promise.all([
       scalar(
         `SELECT COUNT(*) AS cnt FROM attendance_daily_record WHERE employee_id = ? AND record_date >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)`,
         [employeeId]
       ),
       scalar(
-        `SELECT COUNT(*) AS cnt FROM attendance_daily_record WHERE employee_id = ? AND record_date >= DATE_SUB(CURDATE(), INTERVAL 90 DAY) AND attendance_status = 'absent'`,
+        `SELECT COUNT(*) AS cnt FROM attendance_daily_record WHERE employee_id = ? AND record_date >= DATE_SUB(CURDATE(), INTERVAL 90 DAY) AND attendance_status IN ('absent','missing_punch')`,
         [employeeId]
       ),
     ]);

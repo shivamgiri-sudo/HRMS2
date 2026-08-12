@@ -101,19 +101,14 @@ export async function importRosterAssignmentBatch(
     imported++;
   }
 
-  // upload_batch has imported_rows but no imported_by and no imported_at: its
-  // actor columns are uploaded_by and validated_by, and its timestamps are
-  // created_at/updated_at. Naming the two that do not exist meant a batch was
-  // never marked imported, so a completed upload stayed stuck at its previous
-  // status with imported_rows unset.
-  //
-  // Who ran the import is therefore not recorded anywhere on this table. That is
-  // a gap in the schema rather than something to invent a column for - flagged,
-  // not papered over.
+  // imported_by and imported_at are added by migration 1134. They did not exist
+  // when this statement was first written, which is why naming them meant a batch
+  // was never marked imported at all - imported_rows stayed unset and
+  // batch_status stayed at whatever it was before.
   await db.execute(
-    `UPDATE upload_batch SET batch_status=?, imported_rows=?, updated_at=NOW()
+    `UPDATE upload_batch SET batch_status=?, imported_rows=?, imported_by=?, imported_at=NOW(), updated_at=NOW()
      WHERE id=?`,
-    [errors.length > 0 ? "imported_with_errors" : "imported", imported, batchId]
+    [errors.length > 0 ? "imported_with_errors" : "imported", imported, userId ?? null, batchId]
   );
 
   return { imported, skipped, errors };
