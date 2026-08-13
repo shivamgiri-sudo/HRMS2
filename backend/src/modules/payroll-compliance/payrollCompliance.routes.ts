@@ -104,7 +104,29 @@ router.post("/lines/:lineId/manual-adjustment", requireRole("admin", "finance", 
     reason: body.reason,
     actorUserId: req.authUser?.id ?? null,
   });
-  return res.json({ success: true, data, message: "Manual payroll adjustment saved. Recalculate the payroll run to apply final net pay." });
+  // Root-caused 2026-08-14: the message this route returned claimed
+  // recalculating the run applies this adjustment to final net pay. It does
+  // not — salary_prep_line_adjustment (what addManualAdjustment writes to) is
+  // never read by payroll/payrollCalculate.service.ts, the only calculation
+  // engine actually wired to POST /runs/:id/calculate (the sole other reader
+  // is payroll-compliance/payrollCalculate.service.ts, which is dead code —
+  // it throws immediately if called, pinned by its own
+  // dead-payroll-engine.test.ts). The record above is genuinely saved,
+  // audited and permissioned correctly; it just does not yet change what
+  // anyone is paid. Verified live: 0 rows exist in salary_prep_line_adjustment
+  // in production, so this has not yet cost anyone real money — but the false
+  // claim below would have, the first time it was used and trusted. Wiring
+  // this into the calculation engine is a payroll-arithmetic change and is
+  // deliberately not made here without separate Payroll/Engineering sign-off.
+  return res.json({
+    success: true,
+    data,
+    message:
+      "Manual adjustment saved and audited, but it is NOT applied to net pay by any current calculation path — " +
+      "recalculating this run will NOT reflect it. This is a known gap (payroll-compliance readiness), not the " +
+      "intended behaviour. Do not treat this as a completed correction to the employee's pay until Payroll/Engineering " +
+      "confirms this adjustment has actually reached salary_prep_line.net_salary.",
+  });
 }));
 
 router.get("/runs/:runId/components", requireRole("admin", "hr", "finance", "payroll"), h(async (req: AuthenticatedRequest, res: Response) => {
