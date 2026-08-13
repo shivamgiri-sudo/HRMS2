@@ -614,8 +614,6 @@ const MIGRATION_MANIFEST: string[] = [
   "1137_lms_admin_role_catalog.sql", // seeds workforce_role_catalog with 'lms_admin', a role lms.service.ts's hasLmsAdminRole() has checked for since that function was written but which was never added to the catalog, so assignRole() (which validates against this catalog) could never actually grant it to anyone. Found live 2026-08-13 diagnosing Harneet Kaur's "LMS access is not assigned for the admin portal" error; applied directly to production and verified (role seeded, granted to her user_roles, ROLE_ASSIGNED audit row written) before this file was added here, so this entry is for every other environment, not a pending action on this one. Additive only, INSERT ... ON DUPLICATE KEY UPDATE against static reference data - no PII, no encryption keys, unlike 1136's blind-index migration - so unlike that one this is safe to apply automatically at next boot.
   "1138_leave_balance_deduction_audit.sql", // CREATE TABLE IF NOT EXISTS only, no existing table/column touched — records the (leave_type_id, balance_year, days) breakdown a leave approval actually deducted, so cross-year and CL/ML-pooled deductions can be reversed exactly instead of re-derived. Part of the 2026-08-13 leave-module audit fix (#12/#13/#14/#7).
   "1139_disable_dead_leave_approval_workflow.sql", // UPDATE approval_workflow_master SET active_status=0 for the never-wired 'LEAVE_APPROVAL' TL->HR workflow definition — it was visible in /workflow-admin as an apparently-live 2-step workflow including an HR step, contradicting the confirmed Employee->Manager->Approved-only policy. No leave_request has ever referenced it (never called), so no dependent rows exist. Reversible (row kept, only active_status flipped). Part of the 2026-08-13 leave-module audit fix (#24).
-  "1211_salary_prep_run_incentives_applied_at.sql", // Creates salary_prep_run.incentives_applied_at, which migrations 398 and 404 both FAILED to create - each used `ADD COLUMN IF NOT EXISTS`, rejected by this server MySQL 8.0.42 with ER_PARSE_ERROR (the migration-1006 failure mode). 398 is recorded as applied in schema_migrations (2026-07-20) while the column does not exist; verified live 2026-08-13 over the public host, information_schema returns 0. Two live paths break on it: POST /runs/:id/calculate SELECTs the column unless force=true and so 500s (masked today only because the readiness gate 409s first), and incentives.service.ts applyToRun() UPDATEs it as its final statement, after having already rewritten salary_prep_line. Additive and idempotent: nullable, no default, both statements information_schema-guarded, so every existing run reads NULL - which is true, since incentive_upload_batch is empty. No payroll figure changes.
-  "1212_payslip_email_tracking_and_missing_indexes.sql", // salary_prep_line.payslip_emailed + payslip_emailed_at + idx_spl_payslip_gen, and profile_update_approval.idx_branch_status. Migration 402 declared all four of its columns in ONE `ADD COLUMN IF NOT EXISTS` statement, which this MySQL 8.0.42 rejects at the token (the 1006/398 failure mode) — yet 402 is RECORDED AS APPLIED. Two of its columns exist (added out of band), the other two never did; same story for 262's index. Verified live over the public host 2026-08-13. This is not dormant schema: POST /runs/:id/email-payslips does nothing but UPDATE those two columns, and GET /runs/:id/bulk-payslip-summary SELECTs one of them, so both endpoints — reachable and unshadowed, checked against every router mounted on /api/payroll ahead of payrollMoreRouter — have 500'd on every call since they shipped. Additive and idempotent: payslip_emailed is NOT NULL DEFAULT 0, which is the correct reading of every existing row since nothing could ever have set it; both indexes are read-path only; all four statements are information_schema-guarded and the profile_update_approval one is additionally guarded on its column existing, so a rebuilt database that runs this before 262 does not fail. No payroll figure is read or written.
   "1140_absence_penalty_config.sql", // CREATE TABLE IF NOT EXISTS only — architecture for a future superadmin-configurable additional unplanned-absence deduction (effective-dated, approval-gated, modelled on statutory_config_version). NOT wired into payrollCalculate.service.ts and NOT activated; with no approved row ever inserted, backend/src/shared/absencePenaltyConfig.ts's read helper always returns 0. Part of the 2026-08-13 leave-module audit (policy sign-off, "future configurable unplanned-absence penalty").
   "1202_week_off_policy_default.sql", // CREATE TABLE IF NOT EXISTS only, no existing table/column touched — the process/branch/org-default tier (tier 3-5) of the week-off resolution hierarchy roster-generation.service.ts now consults when neither an approved week_off_preference (tier 1) nor a process roster_template pattern (tier 2) resolves an employee's week-off day. Empty table, no seed row at any scope — the business decision is explicit that this must never default to Sunday, so an unconfigured scope stays unconfigured rather than substituting a guess; roster.governance.service's advanceCycleStatus() now blocks a cycle's publish transition when a generation run recorded any employee for which no tier resolved anything (WEEK_OFF_POLICY_MISSING). Part A.1 of the 2026-08-13 roster enterprise-controls program.
   "1141_payroll_bank_exception.sql", // CREATE TABLE IF NOT EXISTS only — the workflow overlay behind the new Bank Payment Readiness page (/payroll/bank-readiness): who owns each bank exception, its workflow status and notes. Deliberately stores NO readiness class and NO account number: the classification is recomputed live on every request by bank-payment-readiness.service.ts, because a stored snapshot would keep asserting MISSING after HR fixed the record — the same both-directions-wrong failure salary_prep_run.total_employees already has here. COLLATE=utf8mb4_unicode_ci is explicit, not decorative: employees.id is utf8mb4_unicode_ci while the server default is utf8mb4_0900_ai_ci, so an unqualified CREATE TABLE yields a table whose first join to employees dies with errno 3780. UNIQUE KEY on employee_id is load-bearing — the PATCH endpoint is an INSERT ... ON DUPLICATE KEY UPDATE keyed on it and would otherwise append a row per edit. Verified by replaying the exact DDL as a TEMPORARY table against production 8.0.42, including the ON DUPLICATE KEY path and the join to employees and auth_user. Additive and idempotent.
@@ -1364,42 +1362,7 @@ export function buildSchemaMigrationsInsertStatement(
   }
 
   const sql = `INSERT INTO schema_migrations (${columns.join(", ")}) VALUES (${values.join(", ")})`;
-
-  // A SUCCESS must be recordable over a previous FAILURE, for exactly the reason the failure
-  // branch below documents — and this half was missed when that one was fixed, which turned the
-  // bug into its mirror image and made it permanent instead of merely repeatable.
-  //
-  // What happened on production 2026-08-13, to 1006_payroll_process_readiness_extend.sql:
-  //   1. It failed once and left a success = 0 row.
-  //   2. On the next boot its SQL ran again and SUCCEEDED — it is idempotent, and every column
-  //      and index it adds was verifiably already present on the live table.
-  //   3. This function then returned a bare INSERT to record that success, which collided with
-  //      the row from step 1: "Duplicate entry ... for key 'schema_migrations.PRIMARY'".
-  //   4. The runner caught that and reported it as THE MIGRATION failing — so the error attached
-  //      to the migration names a primary key it never touches, which is why it reads as a
-  //      corrupt migration rather than a bookkeeping bug, and why rewriting the migration (the
-  //      obvious response) cannot possibly help.
-  //   5. The failure path, which does upsert, rewrote success = 0. Back to step 2, forever.
-  //
-  // With STOP_ON_FIRST_FAILURE that poisoned row blocked all 7 migrations queued behind it, and
-  // renaming the file was the only escape — which re-runs an applied migration everywhere else.
-  //
-  // On success we therefore also clear the stale failure: flip success back to 1 and null the
-  // error_message, so the row reflects the run that just worked rather than the one that did not.
-  if (options.success) {
-    const successUpdates = [...updates];
-    if (capabilities.hasSuccess) successUpdates.push("success = 1");
-    // Without this the row keeps the old failure's text beside success = 1, which is the kind of
-    // contradiction that costs an hour the next time someone reads this table during an incident.
-    if (capabilities.hasErrorMessage) successUpdates.push("error_message = NULL");
-    if (capabilities.hasStartTime) successUpdates.push("start_time = VALUES(start_time)");
-    if (capabilities.hasDurationMs) successUpdates.push("duration_ms = VALUES(duration_ms)");
-    if (capabilities.hasExecutor) successUpdates.push("executor = VALUES(executor)");
-    // Same guarantee as the failure branch: every entry above is conditional on an optional
-    // column, so on a minimal table the clause could otherwise be empty and the statement invalid.
-    const clause = successUpdates.length > 0 ? successUpdates : ["filename = filename"];
-    return `${sql} ON DUPLICATE KEY UPDATE ${clause.join(", ")}`;
-  }
+  if (options.success) return sql;
 
   // A failure MUST be recordable more than once. Every `updates` entry above is conditional on an
   // optional column, so on a table without them the clause was omitted entirely — the first failure

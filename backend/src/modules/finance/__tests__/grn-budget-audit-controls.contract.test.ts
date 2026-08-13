@@ -255,47 +255,6 @@ describe("P1-5: smart GRN review UPDATEs include expected status in WHERE and ch
     const count = (svc.match(/STATE_CHANGED/g) ?? []).length;
     expect(count).toBeGreaterThanOrEqual(2);
   });
-
-  // P1-5 covered the smart-path branch_head and finance_head-approve UPDATEs. The
-  // finance_head-reject UPDATE in the same review() function was still a bare
-  // `WHERE id = ?` with no affectedRows check — the one arm left unguarded.
-  it("smart review's finance_head-reject UPDATE is also guarded (was the missing arm)", () => {
-    const svc = read("src/modules/finance/grn-smart.service.ts");
-    const fn = svc.slice(svc.indexOf("async review("));
-    const rejectIdx = fn.indexOf("releaseAllocations(connection, allocations)");
-    expect(rejectIdx).toBeGreaterThan(-1);
-    const rejectBlock = fn.slice(rejectIdx, rejectIdx + 1200);
-    expect(rejectBlock).toContain("AND status = 'branch_head_approved'");
-    expect(rejectBlock).toContain("STATE_CHANGED");
-  });
-});
-
-// ─────────────────────────────────────────────────────────────────────────────
-// P1-5b  The legacy (non-allocation) GRN path had the identical gap in all three
-// of its review UPDATEs — P1-5 only ever touched grn-smart.service.ts. A GRN
-// reviewed through the legacy path (no cost allocations saved) got none of the
-// same-file protection its smart-path sibling already had.
-// ─────────────────────────────────────────────────────────────────────────────
-describe("P1-5b: legacy grn.service.ts reviewGrn UPDATEs also guarded", () => {
-  it("branch_head UPDATE uses AND status = 'submitted'", () => {
-    const svc = read("src/modules/finance/grn.service.ts");
-    const fn = svc.slice(svc.indexOf("async reviewGrn("));
-    expect(fn).toContain("AND status = 'submitted'");
-  });
-
-  it("finance_head approve and reject UPDATEs both use AND status = 'branch_head_approved'", () => {
-    const svc = read("src/modules/finance/grn.service.ts");
-    const fn = svc.slice(svc.indexOf("async reviewGrn("));
-    const count = (fn.match(/AND status = 'branch_head_approved'/g) ?? []).length;
-    expect(count).toBe(2);
-  });
-
-  it("all three UPDATEs assert affectedRows === 1 and throw STATE_CHANGED on mismatch", () => {
-    const svc = read("src/modules/finance/grn.service.ts");
-    const fn = svc.slice(svc.indexOf("async reviewGrn("), svc.indexOf("\n  async", svc.indexOf("async reviewGrn(") + 10));
-    const count = (fn.match(/STATE_CHANGED/g) ?? []).length;
-    expect(count).toBe(3);
-  });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -3,7 +3,7 @@ import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import type { WfmRosterPlan, WfmRosterAssignment } from "./wfm.types.js";
 import { computeScheduledMinutes, rosterAssignmentColumns } from "./shift-scheduling.util.js";
-import { isRestPolicyFeatureActive, validateMinimumRest, logRestOverride } from "./rest-policy.service.js";
+import { isRestPolicyFeatureActive, validateMinimumRest, logRestOverride, withEmployeeRosterLock } from "./rest-policy.service.js";
 import { checkEmployeeDateNotLocked } from "../roster/roster-lock-guard.js";
 
 export interface CreatePlanInput {
@@ -156,125 +156,139 @@ export const rosterService = {
   },
 
   async assignEmployee(input: AssignInput, userId: string): Promise<WfmRosterAssignment> {
-    // Round 2 (2026-08-13) audit finding: this is the only roster-mutating
-    // service in the codebase with no attendance/payroll-lock check at all —
-    // an admin (who bypasses the route-level plan-status scope guard
-    // entirely, see scopeMiddleware.ts) could silently overwrite an
-    // assignment on a date wfm.routes.ts's manager-override endpoints
-    // already refuse to touch. Same shared function, same invariant.
-    const lockResult = await checkEmployeeDateNotLocked(db, input.employeeId, input.rosterDate);
-    if (lockResult.blocked) {
-      throw Object.assign(new Error(lockResult.error), { statusCode: 409, code: "ROSTER_DATE_LOCKED" });
-    }
-
-    // Area 2: minimum-rest validation. Manual assignment BLOCKS by default,
-    // same as automated generation — the difference is a manual assignment can
-    // carry an explicit emergency override (reason + approver), which an
-    // automated generation run never supplies on its own. Only runs when both
-    // a candidate shift's times are known (nothing to validate a week-off
-    // against) and the feature has actually been turned on (migration 1210
-    // applied) — otherwise this is a no-op, preserving current behavior.
-    if (input.shiftStartTime && input.shiftEndTime && (await isRestPolicyFeatureActive())) {
-      const [empRows] = await db.execute<RowDataPacket[]>(
-        "SELECT process_id, branch_id FROM employees WHERE id = ? LIMIT 1", [input.employeeId]
-      );
-      const emp = empRows[0] as { process_id?: string | null; branch_id?: string | null } | undefined;
-      const restCheck = await validateMinimumRest(
-        { employeeId: input.employeeId, processId: emp?.process_id ?? null, branchId: emp?.branch_id ?? null, forDate: input.rosterDate },
-        { startTime: input.shiftStartTime, endTime: input.shiftEndTime }
-      );
-
-      if (!restCheck.ok) {
-        if (restCheck.reason === "REST_POLICY_MISSING") {
-          throw new RestPolicyMissingError();
-        }
-        // INSUFFICIENT_REST: only proceeds if the resolved policy explicitly
-        // allows an emergency override AND the caller supplied both a reason
-        // and an approver — matching "override requires reason, approver,
-        // timestamp and audit entry" exactly. Anything less than that is a
-        // block, not a silent pass.
-        const canUseOverride = restCheck.canOverride && input.restOverrideReason && input.restOverrideApprovedBy;
-        if (!canUseOverride) {
-          throw new InsufficientRestError({
-            actualRestMinutes: restCheck.actualRestMinutes, requiredRestMinutes: restCheck.requiredRestMinutes,
-            against: restCheck.against, canOverride: restCheck.canOverride,
-          });
-        }
-
-        const neighbor = restCheck.neighborShift!;
-        const candidateStartAt = `${input.rosterDate} ${input.shiftStartTime.slice(0, 5)}:00`;
-        const candidateEndAt = `${input.rosterDate} ${input.shiftEndTime.slice(0, 5)}:00`;
-        const neighborAt = `${neighbor.date} ${neighbor.time}:00`;
-        await logRestOverride({
-          employeeId: input.employeeId,
-          rosterDate: input.rosterDate,
-          previousShiftEndAt: restCheck.against === "previous" ? neighborAt : candidateEndAt,
-          nextShiftStartAt: restCheck.against === "next" ? neighborAt : candidateStartAt,
-          actualRestMinutes: restCheck.actualRestMinutes!,
-          requiredRestMinutes: restCheck.requiredRestMinutes!,
-          policyId: restCheck.policy?.id ?? null,
-          source: "manual_assignment",
-          reason: input.restOverrideReason!,
-          requestedBy: userId,
-          approvedBy: input.restOverrideApprovedBy!,
-        });
+    // Area 2 concurrency fix (2026-08-13): the lock-check, rest-check, and
+    // write below are a read-then-write critical section — two
+    // near-simultaneous assignEmployee calls for the SAME employee could
+    // each read "no conflict" and both commit, producing an impossible pair
+    // neither request individually violated. withEmployeeRosterLock holds a
+    // MySQL named lock for this employeeId on one dedicated connection for
+    // the whole section (same pattern leave.service.ts's submitLeaveRequest
+    // already established today for the identical class of problem) — every
+    // query below runs through that connection (`conn`), not the pool `db`,
+    // so nothing here can race with itself.
+    return withEmployeeRosterLock(input.employeeId, async (conn) => {
+      // Round 2 (2026-08-13) audit finding: this is the only roster-mutating
+      // service in the codebase with no attendance/payroll-lock check at all —
+      // an admin (who bypasses the route-level plan-status scope guard
+      // entirely, see scopeMiddleware.ts) could silently overwrite an
+      // assignment on a date wfm.routes.ts's manager-override endpoints
+      // already refuse to touch. Same shared function, same invariant.
+      const lockResult = await checkEmployeeDateNotLocked(conn, input.employeeId, input.rosterDate);
+      if (lockResult.blocked) {
+        throw Object.assign(new Error(lockResult.error), { statusCode: 409, code: "ROSTER_DATE_LOCKED" });
       }
-    }
 
-    // shift_version_id/scheduled_minutes only exist once migration
-    // 1200_shift_versioning.sql has been applied — probe rather than assume,
-    // same pattern as every other Area 4 write path. shiftId is already what
-    // gets stored as shift_id, and (per wfm.service.ts's updateShift) a
-    // wfm_shift_master row becomes immutable the moment anything references it —
-    // so shiftId itself is already the stable, exact-version reference this
-    // snapshot needs; no separate lookup required.
-    const raCols = await rosterAssignmentColumns();
-    const hasShiftVersionId = raCols.has("shift_version_id");
-    const hasScheduledMinutes = raCols.has("scheduled_minutes");
-    const scheduledMinutes = input.shiftStartTime && input.shiftEndTime
-      ? computeScheduledMinutes(input.shiftStartTime.slice(0, 5), input.shiftEndTime.slice(0, 5))
-      : null;
+      // Area 2: minimum-rest validation. Manual assignment BLOCKS by default,
+      // same as automated generation — the difference is a manual assignment can
+      // carry an explicit emergency override (reason + approver), which an
+      // automated generation run never supplies on its own. Only runs when both
+      // a candidate shift's times are known (nothing to validate a week-off
+      // against) and the feature has actually been turned on (migration 1210
+      // applied) — otherwise this is a no-op, preserving current behavior.
+      if (input.shiftStartTime && input.shiftEndTime && (await isRestPolicyFeatureActive(conn))) {
+        const [empRows] = await conn.execute<RowDataPacket[]>(
+          "SELECT process_id, branch_id FROM employees WHERE id = ? LIMIT 1", [input.employeeId]
+        );
+        const emp = empRows[0] as { process_id?: string | null; branch_id?: string | null } | undefined;
+        const restCheck = await validateMinimumRest(
+          { employeeId: input.employeeId, processId: emp?.process_id ?? null, branchId: emp?.branch_id ?? null, forDate: input.rosterDate },
+          { startTime: input.shiftStartTime, endTime: input.shiftEndTime },
+          null,
+          conn
+        );
 
-    const insertCols = ["id", "employee_id", "shift_id", "plan_id", "roster_date", "roster_status",
-      "shift_start_time", "shift_end_time", "branch_name", "process_name"];
-    const placeholders = ["UUID()", "?", "?", "?", "?", "?", "?", "?", "?", "?"];
-    const params: unknown[] = [
-      input.employeeId, input.shiftId ?? null, input.planId ?? null, input.rosterDate,
-      input.rosterStatus ?? "Rostered", input.shiftStartTime ?? null, input.shiftEndTime ?? null,
-      input.branchName ?? null, input.processName ?? null,
-    ];
-    const updateClauses = [
-      "shift_id = VALUES(shift_id)",
-      "shift_start_time = VALUES(shift_start_time)",
-      "shift_end_time = VALUES(shift_end_time)",
-      "roster_status = VALUES(roster_status)",
-    ];
-    if (hasShiftVersionId) {
-      insertCols.push("shift_version_id");
-      placeholders.push("?");
-      params.push(input.shiftId ?? null);
-      updateClauses.push("shift_version_id = VALUES(shift_version_id)");
-    }
-    if (hasScheduledMinutes) {
-      insertCols.push("scheduled_minutes");
-      placeholders.push("?");
-      params.push(scheduledMinutes);
-      updateClauses.push("scheduled_minutes = VALUES(scheduled_minutes)");
-    }
+        if (!restCheck.ok) {
+          if (restCheck.reason === "REST_POLICY_MISSING") {
+            throw new RestPolicyMissingError();
+          }
+          // INSUFFICIENT_REST: only proceeds if the resolved policy explicitly
+          // allows an emergency override AND the caller supplied both a reason
+          // and an approver — matching "override requires reason, approver,
+          // timestamp and audit entry" exactly. Anything less than that is a
+          // block, not a silent pass.
+          const canUseOverride = restCheck.canOverride && input.restOverrideReason && input.restOverrideApprovedBy;
+          if (!canUseOverride) {
+            throw new InsufficientRestError({
+              actualRestMinutes: restCheck.actualRestMinutes, requiredRestMinutes: restCheck.requiredRestMinutes,
+              against: restCheck.against, canOverride: restCheck.canOverride,
+            });
+          }
 
-    await db.execute(
-      `INSERT INTO wfm_roster_assignment
-         (${insertCols.join(", ")})
-       VALUES (${placeholders.join(", ")})
-       ON DUPLICATE KEY UPDATE
-         ${updateClauses.join(",\n         ")}`,
-      params
-    );
-    const [rows] = await db.execute<RowDataPacket[]>(
-      "SELECT * FROM wfm_roster_assignment WHERE employee_id = ? AND roster_date = ? LIMIT 1",
-      [input.employeeId, input.rosterDate]
-    );
-    return (rows as WfmRosterAssignment[])[0];
+          const neighbor = restCheck.neighborShift!;
+          const candidateStartAt = `${input.rosterDate} ${input.shiftStartTime.slice(0, 5)}:00`;
+          const candidateEndAt = `${input.rosterDate} ${input.shiftEndTime.slice(0, 5)}:00`;
+          const neighborAt = `${neighbor.date} ${neighbor.time}:00`;
+          await logRestOverride({
+            employeeId: input.employeeId,
+            rosterDate: input.rosterDate,
+            previousShiftEndAt: restCheck.against === "previous" ? neighborAt : candidateEndAt,
+            nextShiftStartAt: restCheck.against === "next" ? neighborAt : candidateStartAt,
+            actualRestMinutes: restCheck.actualRestMinutes!,
+            requiredRestMinutes: restCheck.requiredRestMinutes!,
+            policyId: restCheck.policy?.id ?? null,
+            source: "manual_assignment",
+            reason: input.restOverrideReason!,
+            requestedBy: userId,
+            approvedBy: input.restOverrideApprovedBy!,
+          }, conn);
+        }
+      }
+
+      // shift_version_id/scheduled_minutes only exist once migration
+      // 1200_shift_versioning.sql has been applied — probe rather than assume,
+      // same pattern as every other Area 4 write path. shiftId is already what
+      // gets stored as shift_id, and (per wfm.service.ts's updateShift) a
+      // wfm_shift_master row becomes immutable the moment anything references it —
+      // so shiftId itself is already the stable, exact-version reference this
+      // snapshot needs; no separate lookup required.
+      const raCols = await rosterAssignmentColumns(conn);
+      const hasShiftVersionId = raCols.has("shift_version_id");
+      const hasScheduledMinutes = raCols.has("scheduled_minutes");
+      const scheduledMinutes = input.shiftStartTime && input.shiftEndTime
+        ? computeScheduledMinutes(input.shiftStartTime.slice(0, 5), input.shiftEndTime.slice(0, 5))
+        : null;
+
+      const insertCols = ["id", "employee_id", "shift_id", "plan_id", "roster_date", "roster_status",
+        "shift_start_time", "shift_end_time", "branch_name", "process_name"];
+      const placeholders = ["UUID()", "?", "?", "?", "?", "?", "?", "?", "?", "?"];
+      const params: unknown[] = [
+        input.employeeId, input.shiftId ?? null, input.planId ?? null, input.rosterDate,
+        input.rosterStatus ?? "Rostered", input.shiftStartTime ?? null, input.shiftEndTime ?? null,
+        input.branchName ?? null, input.processName ?? null,
+      ];
+      const updateClauses = [
+        "shift_id = VALUES(shift_id)",
+        "shift_start_time = VALUES(shift_start_time)",
+        "shift_end_time = VALUES(shift_end_time)",
+        "roster_status = VALUES(roster_status)",
+      ];
+      if (hasShiftVersionId) {
+        insertCols.push("shift_version_id");
+        placeholders.push("?");
+        params.push(input.shiftId ?? null);
+        updateClauses.push("shift_version_id = VALUES(shift_version_id)");
+      }
+      if (hasScheduledMinutes) {
+        insertCols.push("scheduled_minutes");
+        placeholders.push("?");
+        params.push(scheduledMinutes);
+        updateClauses.push("scheduled_minutes = VALUES(scheduled_minutes)");
+      }
+
+      await conn.execute(
+        `INSERT INTO wfm_roster_assignment
+           (${insertCols.join(", ")})
+         VALUES (${placeholders.join(", ")})
+         ON DUPLICATE KEY UPDATE
+           ${updateClauses.join(",\n           ")}`,
+        params
+      );
+      const [rows] = await conn.execute<RowDataPacket[]>(
+        "SELECT * FROM wfm_roster_assignment WHERE employee_id = ? AND roster_date = ? LIMIT 1",
+        [input.employeeId, input.rosterDate]
+      );
+      return (rows as WfmRosterAssignment[])[0];
+    });
   },
 
   async bulkAssign(rows: BulkAssignRow[], planId: string, userId: string): Promise<BulkAssignResult> {

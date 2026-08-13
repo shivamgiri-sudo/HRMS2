@@ -35,16 +35,6 @@ const assignSchema = z.object({
   branchName: z.string().trim().max(255).nullable().optional(),
   processName: z.string().trim().max(255).nullable().optional(),
   rosterStatus: z.string().max(50).default("Rostered"),
-  // Round 2 (2026-08-13) minimum-rest audit finding: roster.service.ts's
-  // assignEmployee() has supported an emergency rest-policy override since
-  // Area 2 was built (restOverrideReason/restOverrideApprovedBy on
-  // AssignInput), but this schema never declared those two fields — zod's
-  // .parse() silently strips unrecognized body keys, so no client could
-  // ever reach the override branch through this route. The block-on-
-  // insufficient-rest behavior itself was never affected (that part
-  // worked); only the override escape hatch was unreachable.
-  restOverrideReason: z.string().trim().min(1).max(500).nullable().optional(),
-  restOverrideApprovedBy: z.string().uuid().nullable().optional(),
 });
 
 const assignFiltersSchema = z.object({

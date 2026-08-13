@@ -197,37 +197,6 @@ export async function rejectBatch(batchId: string, actorId: string, remarks?: st
   return transitionBatch(batchId, 'rejected', actorId, 'rejected', remarks);
 }
 
-/**
- * Materialises approved incentive batches for a run as payslip component rows.
- *
- * ⚠️ THIS FUNCTION DOES NOT ADD MONEY TO PAYROLL, AND MUST NOT.
- *
- * It used to do `gross_salary = gross_salary + total, net_salary = net_salary + total`, which
- * was wrong twice over and is fixed here:
- *
- *   1. DOUBLE COUNT AGAINST THE ENGINE. payrollCalculate.service.ts §5f already pulls approved
- *      incentive_upload_line amounts on every calculation and folds them into the gross and net
- *      it writes. Adding them again here paid the same incentive twice, with no guard in either
- *      path against the other.
- *
- *   2. DOUBLE COUNT AGAINST ITSELF. The reset above clears incentive_total and deletes the
- *      component rows, but it never subtracted the previously-added amount from gross_salary or
- *      net_salary. Calling apply twice therefore added the incentive a second time on top of
- *      the first, permanently — the reset made it *look* clean while the inflated gross stayed.
- *
- * payrollCalculate is the authoritative writer of gross_salary, net_salary and incentive_total.
- * This function's legitimate job is the part the engine does not do: writing the per-type
- * INCEN_<code> component rows and the INCENTIVE rollup that the payslip renders, so an employee
- * can see which incentive they were paid rather than an unexplained lump in gross. Those rows
- * are display and traceability records; they carry no money of their own.
- *
- * Because the amounts now come only from the engine, this is idempotent: running it twice
- * produces the same component rows and leaves every payroll figure untouched.
- *
- * Verified before the change: incentive_upload_batch and incentive_upload_line are both empty in
- * production and incentive_total is 0.00 across all 80,469 salary_prep_line rows ever written,
- * so no existing payroll figure moves as a result of this fix.
- */
 export async function applyToRun(runId: string, payMonth: string, actorId: string) {
   // Clear previous incentive components and rollup for this run
   await db.execute(
@@ -237,14 +206,16 @@ export async function applyToRun(runId: string, payMonth: string, actorId: strin
     [runId]
   );
 
-  // Batches already consumed by a previous apply must still be found, or a re-apply would drop
-  // their component rows and leave the payslip unable to explain an incentive the engine is
-  // still paying. Matches the engine's own filter after the same widening.
+  await db.execute(
+    'UPDATE salary_prep_line SET incentive_total=0 WHERE run_id=?',
+    [runId]
+  );
+
   const [batches] = await db.execute<RowDataPacket[]>(
     `SELECT iub.id, im.incentive_code, im.incentive_name, im.taxable
      FROM incentive_upload_batch iub
      JOIN incentive_master im ON im.id = iub.incentive_id
-     WHERE iub.pay_month=? AND iub.status IN ('approved','applied')`,
+     WHERE iub.pay_month=? AND iub.status='approved'`,
     [payMonth]
   );
 
@@ -303,10 +274,15 @@ export async function applyToRun(runId: string, payMonth: string, actorId: strin
       [randomUUID(), runId, prepLineId, employeeId, total]
     );
 
-    // Deliberately NOT updating gross_salary / net_salary / incentive_total here — see the
-    // function docblock. payrollCalculate.service.ts owns those three columns and already
-    // includes this same approved amount; writing them here is what caused the double count.
-    void total;
+    // Update incentive_total, gross_salary and net_salary on the prep line
+    await db.execute(
+      `UPDATE salary_prep_line
+       SET incentive_total = ?,
+           gross_salary    = gross_salary + ?,
+           net_salary      = net_salary + ?
+       WHERE id = ?`,
+      [total, total, total, prepLineId]
+    );
   }
 
   // Stamp the run so recalculation knows incentives are applied

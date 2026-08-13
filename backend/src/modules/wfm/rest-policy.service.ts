@@ -24,6 +24,58 @@ import { hasTable } from "./schema-probe.util.js";
 type Executor = { execute<T extends RowDataPacket[] = RowDataPacket[]>(sql: string, params?: unknown[]): Promise<[T, unknown]> };
 
 /**
+ * Closes a real concurrency hole: rest validation is a read (resolve policy +
+ * find adjacent shifts) followed by a write (insert/update the assignment).
+ * Two near-simultaneous requests for the SAME employee (e.g. a manual
+ * assignment and a manager realignment landing at once) can each read the
+ * same "no conflict" state and both commit — producing an impossible pair
+ * neither request individually violated. The bulk-upload services' own
+ * per-batch transaction does not close this: it only serializes rows WITHIN
+ * one batch, not against a different concurrent request using a different
+ * connection.
+ *
+ * Fixed with a MySQL named advisory lock (GET_LOCK/RELEASE_LOCK) scoped to
+ * the employee, held on one dedicated connection for the whole validate+write
+ * critical section — the exact pattern already established for the same
+ * class of problem in leave.service.ts's submitLeaveRequest() (2026-08-13
+ * audit). `fn` receives that connection so validation and the write both run
+ * through it, keeping the whole critical section on one session the way
+ * leave.service.ts's lockConn does.
+ *
+ * 10-second wait: GET_LOCK blocks until acquired or timeout, so a second
+ * caller queues rather than instantly failing under ordinary contention —
+ * it only throws if a THIRD request piles up behind an already-waiting one,
+ * or a caller genuinely holds the lock unusually long.
+ */
+export async function withEmployeeRosterLock<T>(
+  employeeId: string,
+  fn: (conn: Executor) => Promise<T>
+): Promise<T> {
+  const lockName = `roster_assign_${employeeId}`;
+  const lockConn = await db.getConnection();
+  try {
+    // .query(), not .execute(), for the lock statements specifically —
+    // matching leave.service.ts's lockConn exactly (2026-08-13). The
+    // parameterized reads/writes fn() performs still go through .execute()
+    // as normal; only GET_LOCK/RELEASE_LOCK use the text protocol.
+    const [lockRows] = await lockConn.query("SELECT GET_LOCK(?, 10) AS acquired", [lockName]);
+    if (Number((lockRows as RowDataPacket[])?.[0]?.acquired) !== 1) {
+      throw Object.assign(
+        new Error("Another roster change for this employee is already in progress. Please try again."),
+        { statusCode: 409, code: "ROSTER_LOCK_TIMEOUT" }
+      );
+    }
+    try {
+      return await fn(lockConn);
+    } finally {
+      await lockConn.query("SELECT RELEASE_LOCK(?)", [lockName]).catch(() => {});
+    }
+  } finally {
+    lockConn.release();
+  }
+}
+
+/**
  * Distinguishes "the feature hasn't been turned on yet" (migration
  * 1210_minimum_rest_policy.sql not applied — wfm_rest_policy doesn't exist)
  * from "the feature is on but nothing has been configured" (table exists,

@@ -115,30 +115,11 @@ router.post("/roster/swaps", h(async (req: AuthenticatedRequest, res: Response) 
   res.status(201).json({ success: true, data });
 }));
 
-// Counterpart (swap_with_emp_id) accepts/declines — must precede manager
-// approval; see rosterSwapService.respond()'s docstring for why this step
-// didn't exist before round 2.
-router.post("/roster/swaps/:id/respond", h(async (req: AuthenticatedRequest, res: Response) => {
-  const response = String(req.body.response ?? req.body.status ?? "");
-  if (!["accepted", "declined"].includes(response)) return res.status(400).json({ error: "response must be accepted or declined" });
-  const result = await rosterSwapService.respond(req.params.id, response as "accepted" | "declined", req.authUser!.id, req);
-  res.json({ success: true, data: result });
-}));
-
 router.post("/roster/swaps/:id/review", requireRole("admin", "hr", "wfm", "manager", "assistant_manager", "team_leader"), h(async (req: AuthenticatedRequest, res: Response) => {
   const status = String(req.body.status ?? req.body.action ?? "");
   if (!["approved", "rejected"].includes(status)) return res.status(400).json({ error: "status/action must be approved or rejected" });
-  const userId = req.authUser!.id;
-  // forceWithoutCounterpartAcceptance is restricted to admin/hr even though
-  // the service itself would also refuse a non-privileged caller further
-  // down (defense in depth — reject the intent at the route layer too).
-  const wantsForce = req.body.forceWithoutCounterpartAcceptance === true;
-  const forceWithoutCounterpartAcceptance = wantsForce && (await hasRole(userId, "admin", "hr"));
-  const result = await rosterSwapService.review(req.params.id, status as "approved" | "rejected", userId, req, {
-    forceWithoutCounterpartAcceptance,
-    restOverrideReason: typeof req.body.restOverrideReason === "string" ? req.body.restOverrideReason : undefined,
-  });
-  res.json({ success: true, data: result, ok: true });
+  await rosterSwapService.review(req.params.id, status as "approved" | "rejected", req.authUser!.id, req);
+  res.json({ success: true, ok: true });
 }));
 
 // ── Roster Conflicts ──────────────────────────────────────────────────────────

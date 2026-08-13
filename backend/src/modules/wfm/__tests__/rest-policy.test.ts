@@ -1,11 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { execute } = vi.hoisted(() => ({ execute: vi.fn() }));
-vi.mock("../../../db/mysql.js", () => ({ db: { execute } }));
+const { execute, lockConn, getConnection } = vi.hoisted(() => {
+  const lockConn = { execute: vi.fn(), query: vi.fn(), release: vi.fn() };
+  return { execute: vi.fn(), lockConn, getConnection: vi.fn().mockResolvedValue(lockConn) };
+});
+vi.mock("../../../db/mysql.js", () => ({ db: { execute, getConnection } }));
 
 import {
   resolveRestPolicy, restGapMinutes, findAdjacentShifts, validateMinimumRest, logRestOverride,
-  isRestPolicyFeatureActive, hasAnyRestPolicyConfigured,
+  isRestPolicyFeatureActive, hasAnyRestPolicyConfigured, withEmployeeRosterLock,
 } from "../rest-policy.service.js";
 import { __resetSchemaProbeCachesForTests } from "../schema-probe.util.js";
 
@@ -19,6 +22,10 @@ function policyRow(overrides: Partial<Record<string, unknown>> = {}) {
 
 beforeEach(() => {
   execute.mockReset();
+  lockConn.execute.mockReset();
+  lockConn.query.mockReset();
+  lockConn.release.mockReset();
+  getConnection.mockResolvedValue(lockConn);
   __resetSchemaProbeCachesForTests();
 });
 
@@ -200,6 +207,63 @@ describe("validateMinimumRest", () => {
     });
     const result = await validateMinimumRest({ employeeId: "emp-1", forDate: "2026-08-17" }, { startTime: "04:00", endTime: "13:00" });
     expect(result.canOverride).toBe(false);
+  });
+});
+
+describe("withEmployeeRosterLock", () => {
+  it("acquires the named lock, runs fn with the lock connection, and always releases both", async () => {
+    lockConn.query.mockImplementation(async (sql: string) => {
+      if (sql.includes("GET_LOCK")) return [[{ acquired: 1 }], []];
+      return [[], []];
+    });
+    const fn = vi.fn().mockResolvedValue("result");
+    const result = await withEmployeeRosterLock("emp-1", fn);
+    expect(result).toBe("result");
+    expect(fn).toHaveBeenCalledWith(lockConn);
+    const getLockCall = lockConn.query.mock.calls.find(([sql]: [string]) => sql.includes("GET_LOCK"));
+    expect(getLockCall![1]).toEqual(["roster_assign_emp-1"]);
+    const releaseLockCall = lockConn.query.mock.calls.find(([sql]: [string]) => sql.includes("RELEASE_LOCK"));
+    expect(releaseLockCall, "lock must be released").toBeDefined();
+    expect(lockConn.release).toHaveBeenCalledTimes(1);
+  });
+
+  it("throws a 409 ROSTER_LOCK_TIMEOUT and never calls fn when the lock can't be acquired", async () => {
+    lockConn.query.mockImplementation(async (sql: string) => {
+      if (sql.includes("GET_LOCK")) return [[{ acquired: 0 }], []];
+      return [[], []];
+    });
+    const fn = vi.fn();
+    await expect(withEmployeeRosterLock("emp-1", fn)).rejects.toMatchObject({ statusCode: 409, code: "ROSTER_LOCK_TIMEOUT" });
+    expect(fn).not.toHaveBeenCalled();
+    // Never acquired -> nothing to release, but the connection itself must still be returned to the pool.
+    const releaseLockCall = lockConn.query.mock.calls.find(([sql]: [string]) => sql.includes("RELEASE_LOCK"));
+    expect(releaseLockCall).toBeUndefined();
+    expect(lockConn.release).toHaveBeenCalledTimes(1);
+  });
+
+  it("still releases the lock and the connection when fn itself throws", async () => {
+    lockConn.query.mockImplementation(async (sql: string) => {
+      if (sql.includes("GET_LOCK")) return [[{ acquired: 1 }], []];
+      return [[], []];
+    });
+    const fn = vi.fn().mockRejectedValue(new Error("insert failed"));
+    await expect(withEmployeeRosterLock("emp-1", fn)).rejects.toThrow("insert failed");
+    const releaseLockCall = lockConn.query.mock.calls.find(([sql]: [string]) => sql.includes("RELEASE_LOCK"));
+    expect(releaseLockCall, "lock must be released even when fn throws").toBeDefined();
+    expect(lockConn.release).toHaveBeenCalledTimes(1);
+  });
+
+  it("scopes the lock name to the specific employeeId, so two different employees never contend", async () => {
+    lockConn.query.mockImplementation(async (sql: string) => {
+      if (sql.includes("GET_LOCK")) return [[{ acquired: 1 }], []];
+      return [[], []];
+    });
+    await withEmployeeRosterLock("emp-1", async () => {});
+    await withEmployeeRosterLock("emp-2", async () => {});
+    const lockNames = lockConn.query.mock.calls
+      .filter(([sql]: [string]) => sql.includes("GET_LOCK"))
+      .map(([, params]: [string, unknown[]]) => params[0]);
+    expect(lockNames).toEqual(["roster_assign_emp-1", "roster_assign_emp-2"]);
   });
 });
 

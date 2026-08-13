@@ -537,15 +537,7 @@ export const grnService = {
           newStatus = "rejected";
         }
 
-        // Expected status included in WHERE so a concurrent approval (e.g. a double-submitted
-        // click, or a second reviewer racing this one) yields affectedRows === 0 instead of
-        // silently overwriting a transition that already happened. The FOR UPDATE lock above
-        // already serializes concurrent reviewers of this exact row, but that protection
-        // depends entirely on every future caller reading through this same locked
-        // transaction; this WHERE clause is the same atomic guard used by submit() above and
-        // by cancelGrn/returnGrn/resubmitReturnedGrn elsewhere in this file, so a stray
-        // refactor that drops the FOR UPDATE read doesn't silently reopen double-approval.
-        const [bhUpdateResult] = await connection.execute<ResultSetHeader>(
+        await connection.execute(
           `UPDATE grn_request
               SET status = ?,
                   branch_head_reviewed_by = ?,
@@ -555,7 +547,7 @@ export const grnService = {
                   reviewed_at = NOW(),
                   review_note = ?,
                   rejection_reason = ?
-            WHERE id = ? AND status = 'submitted'`,
+            WHERE id = ?`,
           [
             newStatus,
             actorUserId,
@@ -566,12 +558,6 @@ export const grnService = {
             grnId,
           ]
         );
-        if (bhUpdateResult.affectedRows !== 1) {
-          throw Object.assign(
-            new Error("GRN state changed concurrently; refresh and try again"),
-            { code: "STATE_CHANGED", statusCode: 409 }
-          );
-        }
       } else if (effectiveStage === "finance_head") {
         if (grn.status !== "branch_head_approved") {
           throw new Error(
@@ -591,7 +577,7 @@ export const grnService = {
             ? "pending_accounts_payment"
             : "approved";
 
-          const [fhUpdateResult] = await connection.execute<ResultSetHeader>(
+          await connection.execute(
             `UPDATE grn_request
                 SET status = ?,
                     accounts_payment_status = ?,
@@ -604,7 +590,7 @@ export const grnService = {
                     approved_by = ?,
                     approved_at = NOW(),
                     rejection_reason = NULL
-              WHERE id = ? AND status = 'branch_head_approved'`,
+              WHERE id = ?`,
             [
               newStatus,
               grn.grn_type === "vendor" ? "pending" : "not_required",
@@ -616,12 +602,6 @@ export const grnService = {
               grnId,
             ]
           );
-          if (fhUpdateResult.affectedRows !== 1) {
-            throw Object.assign(
-              new Error("GRN state changed concurrently; refresh and try again"),
-              { code: "STATE_CHANGED", statusCode: 409 }
-            );
-          }
 
           if (grn.grn_type === "vendor") {
             paymentId = await vendorPaymentService.createFromGrn(
@@ -639,7 +619,7 @@ export const grnService = {
             Number(grn.amount_without_tax) || undefined,
           );
           newStatus = "rejected";
-          const [fhRejectResult] = await connection.execute<ResultSetHeader>(
+          await connection.execute(
             `UPDATE grn_request
                 SET status = 'rejected',
                     finance_head_reviewed_by = ?,
@@ -649,7 +629,7 @@ export const grnService = {
                     reviewed_at = NOW(),
                     review_note = ?,
                     rejection_reason = ?
-              WHERE id = ? AND status = 'branch_head_approved'`,
+              WHERE id = ?`,
             [
               actorUserId,
               payload.reviewNote?.trim(),
@@ -659,12 +639,6 @@ export const grnService = {
               grnId,
             ]
           );
-          if (fhRejectResult.affectedRows !== 1) {
-            throw Object.assign(
-              new Error("GRN state changed concurrently; refresh and try again"),
-              { code: "STATE_CHANGED", statusCode: 409 }
-            );
-          }
         }
       } else {
         throw new Error(`Role ${actorRole} is not permitted to review GRNs`);

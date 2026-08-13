@@ -234,14 +234,6 @@ router.patch(
       new_roster_status: z.string().trim().max(80).optional(),
       change_category: z.enum(["shift_change", "weekoff_change", "leave_adjustment", "emergency", "support_staff_update"]).optional(),
       change_reason: z.string().trim().min(8).max(700),
-      // Round 2 (2026-08-13): without this, an emergency rest-policy
-      // override could never reach changePublishedAssignment() — zod's
-      // .parse() silently strips unrecognized body keys, exactly the same
-      // dead-code trap the minimum-rest audit found on roster.service.ts's
-      // own assignSchema (roster.controller.ts's AssignInput override
-      // fields are equally unreachable today; flagged, not fixed here —
-      // out of this round's scope, but the same fix pattern applies there).
-      restOverrideReason: z.string().trim().min(1).max(500).nullable().optional(),
     }).parse(req.body);
     const data = await s.changePublishedAssignment({ assignment_id: req.params.id, ...body }, req.authUser!.id);
     res.json({ success: true, data, message: "Published roster changed with locked notification" });

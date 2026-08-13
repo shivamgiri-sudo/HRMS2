@@ -13,12 +13,18 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const { execute } = vi.hoisted(() => ({ execute: vi.fn() }));
 vi.mock("../../../db/mysql.js", () => ({ db: { execute } }));
 
-const { isRestPolicyFeatureActive, validateMinimumRest, logRestOverride } = vi.hoisted(() => ({
+const { isRestPolicyFeatureActive, validateMinimumRest, logRestOverride, withEmployeeRosterLock } = vi.hoisted(() => ({
   isRestPolicyFeatureActive: vi.fn(),
   validateMinimumRest: vi.fn(),
   logRestOverride: vi.fn().mockResolvedValue(undefined),
+  // Passthrough: the lock's own acquire/release behavior is covered by
+  // rest-policy.test.ts directly. Here, `conn` is just `{ execute }` — the
+  // same mocked execute the rest of this file already configures — so every
+  // existing assertion against `execute.mock.calls` still sees the calls
+  // assignEmployee makes "through the lock connection".
+  withEmployeeRosterLock: vi.fn((_employeeId: string, fn: (conn: { execute: typeof execute }) => unknown) => fn({ execute })),
 }));
-vi.mock("../rest-policy.service.js", () => ({ isRestPolicyFeatureActive, validateMinimumRest, logRestOverride }));
+vi.mock("../rest-policy.service.js", () => ({ isRestPolicyFeatureActive, validateMinimumRest, logRestOverride, withEmployeeRosterLock }));
 
 vi.mock("../shift-scheduling.util.js", () => ({
   computeScheduledMinutes: vi.fn().mockReturnValue(480),
