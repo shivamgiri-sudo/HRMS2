@@ -50,6 +50,7 @@ import { startTatEscalationWorker, stopTatEscalationWorker } from "./tat-escalat
 import { startReportSubscriptionWorker, stopReportSubscriptionWorker } from "./report-subscription.worker.js";
 import { registerNotificationDeliverer } from "../modules/communication/notification.deliverer.js";
 import { startPayrollPrepReminderWorker, stopPayrollPrepReminderWorker } from "./payroll-prep-reminder.worker.js";
+import { startPayrollReadinessRefreshWorker, stopPayrollReadinessRefreshWorker } from "./payroll-readiness-refresh.worker.js";
 import { startAutoRosterSchedulerWorker, stopAutoRosterSchedulerWorker } from "./auto-roster-scheduler.worker.js";
 import { startUatJobRunner, stopUatJobRunner } from "../modules/uat-pipeline/uat-job-runner.js";
 import { registerUatJobHandlers } from "../modules/uat-pipeline/uat-jobs.handlers.js";
@@ -249,6 +250,10 @@ const WORKERS: Array<{ name: string; start: () => Promise<void> }> = [
     start: startPayrollPrepReminderWorker,
   },
   {
+    name: "payroll-readiness-refresh",
+    start: startPayrollReadinessRefreshWorker,
+  },
+  {
     name: "auto-roster-scheduler",
     start: () => { startAutoRosterSchedulerWorker(); return Promise.resolve(); },
   },
@@ -325,6 +330,7 @@ function shutdown(): void {
   stopPayrollNightlyRecalcWorker();
   stopDbBillFinanceSyncWorker();
   stopPayrollPrepReminderWorker();
+  stopPayrollReadinessRefreshWorker();
   stopAprVicidialSyncWorker();
   stopITProvisioningLockScheduler();
   stopPayrollWindowClosureScheduler();
