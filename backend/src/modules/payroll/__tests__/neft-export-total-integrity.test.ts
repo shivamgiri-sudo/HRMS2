@@ -103,10 +103,22 @@ describe("the summary Finance reads first agrees with the file they get", () => 
     expect(SUMMARY_HANDLER).not.toMatch(/ebd\.id IS NOT NULL AND ebd\.ifsc_code IS NOT NULL/);
   });
 
-  it("computes payability once in a derived table rather than repeating it per aggregate", () => {
-    // Repetition is how the summary and the export drifted apart originally.
-    expect(SUMMARY_HANDLER).toContain("AS is_payable");
-    expect(SUMMARY_HANDLER).toContain(") scored");
+  it("computes payability ONCE, then reuses it, rather than repeating the predicate", () => {
+    // Repetition is how the summary and the export drifted apart originally, so the property
+    // worth pinning is "defined once, referenced many times" — not the alias's spelling.
+    //
+    // An earlier version of this test asserted toContain(") scored"), which a rename to
+    // ") scoredRenamed" still satisfies as a substring. It could never fail, and a mutation run
+    // proved exactly that. Asserting counts is what makes it bite.
+    const definitions = SUMMARY_HANDLER.match(/AS is_payable\b/g) ?? [];
+    expect(definitions, "payability must be defined exactly once").toHaveLength(1);
+
+    const references = SUMMARY_HANDLER.match(/\bis_payable\b/g) ?? [];
+    expect(references.length, "the single definition must be reused by the aggregates").toBeGreaterThanOrEqual(4);
+
+    // The routability predicate itself must appear once, in that one definition.
+    const ifscChecks = SUMMARY_HANDLER.match(/\^\[A-Z\]\{4\}0\[A-Z0-9\]\{6\}\$/g) ?? [];
+    expect(ifscChecks, "the IFSC predicate must not be repeated per aggregate").toHaveLength(1);
   });
 });
 
