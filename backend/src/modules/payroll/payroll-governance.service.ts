@@ -854,6 +854,47 @@ export const payrollGovernanceService = {
       if (issue) issues.push(issue);
     }
 
+    // MISSING_UAN's SCOPE is not authoritative, so its COUNT must not be read as the filing
+    // population. Business ruling 2026-08-13, recorded here because a number this small is
+    // otherwise read as reassurance.
+    //
+    // MISSING_UAN above scopes the requirement to employee_statutory_info.pf_eligible = 1 and
+    // reports 1. Reconciled live against the July run, that flag does not describe this
+    // workforce:
+    //
+    //   July-eligible employees ................................. 1,239
+    //   PF ACTUALLY deducted (salary_prep_line.pf_employee > 0) .. 1,111
+    //   employee_statutory_info.pf_eligible = 1 ..................    53
+    //   PF deducted while the flag says NOT eligible ............. 1,100  (99%)
+    //   PF deducted with no UAN in ANY of the three stores .......   655
+    //
+    // So a gate scoped to that flag cannot go red, and "MISSING_UAN: 1" would certify as clean a
+    // workforce where 655 people have PF taken from their pay with no member account to credit
+    // it to. The defensible figure is carried by
+    // payroll-readiness-categories.service.ts's STATUTORY_UAN_MISSING_FOR_PF_DEDUCTED (655) and
+    // STATUTORY_PF_ELIGIBLE_FLAG_UNRELIABLE (1,098).
+    //
+    // This marker is emitted UNCONDITIONALLY and is what forces the statutory category to
+    // LEGACY_SCOPE_UNVERIFIED instead of PASS. It is not a defect claim about any employee — it
+    // is a statement that the population this check measures has not been approved. It is
+    // deliberately NOT resolvable by flipping pf_eligible flags to make the numbers agree;
+    // Payroll must first approve the canonical PF applicability and filing population, at which
+    // point this marker and the scope it guards are revisited together.
+    issues.push({
+      code: "MISSING_UAN_SCOPE_UNVERIFIED",
+      severity: "warning",
+      category: "statutory",
+      count: 1,
+      message:
+        "UAN readiness is UNVERIFIED, not clear. MISSING_UAN is scoped to " +
+        "employee_statutory_info.pf_eligible, which is set on 53 of 1,239 July-eligible employees and " +
+        "disagrees with what payroll actually deducts for 1,100 of the 1,111 employees PF is taken from " +
+        "(99%). Measured against PF actually deducted, 655 employees have no UAN in employees.uan_number, " +
+        "employee_statutory_info.uan_number or employee_uan. Treat MISSING_UAN's count as LEGACY SCOPE / " +
+        "UNVERIFIED and not as the statutory filing population until Payroll approves the canonical PF " +
+        "applicability population. Do not resolve this by editing pf_eligible flags to make the figures agree.",
+    });
+
     const [eligibleCountRows] = await db.execute<RowDataPacket[]>(
       `SELECT COUNT(*) AS count FROM employees e WHERE ${where}`,
       params,
@@ -874,8 +915,18 @@ export const payrollGovernanceService = {
       "source_data", "employee_master", "attendance_payable_days", "bank",
       "statutory", "variable_pay", "reimbursement", "recovery_deduction", "full_and_final", "payment_file",
     ];
+    // LEGACY_SCOPE_UNVERIFIED sits between BLOCKED and WARNING deliberately.
+    //
+    // It is not "a problem was found" — it is "the population this category measures has not
+    // been approved, so a clean result here is not evidence of anything". That makes it closer
+    // in kind to CHECK_ERROR than to WARNING: both mean the answer cannot be trusted, rather
+    // than that the answer is bad. It ranks below BLOCKED only because a real blocker is the
+    // more actionable thing to show first.
+    //
+    // Any issue whose code ends _SCOPE_UNVERIFIED raises it, so a future category can adopt the
+    // same treatment without touching this logic.
     const categories: Record<PayrollReadinessCategory, {
-      status: "PASS" | "WARNING" | "BLOCKED" | "CHECK_ERROR";
+      status: "PASS" | "WARNING" | "BLOCKED" | "CHECK_ERROR" | "LEGACY_SCOPE_UNVERIFIED";
       blockers: number;
       warnings: number;
       issueCodes: string[];
@@ -883,10 +934,19 @@ export const payrollGovernanceService = {
     for (const cat of ALL_CATEGORIES) {
       const catIssues = issues.filter((issue) => issue.category === cat);
       const hasCheckError = catIssues.some((issue) => issue.code.endsWith("_CHECK_ERROR"));
+      const hasUnverifiedScope = catIssues.some((issue) => issue.code.endsWith("_SCOPE_UNVERIFIED"));
       const blockers = catIssues.filter((issue) => issue.severity === "blocker").length;
       const warnings = catIssues.filter((issue) => issue.severity === "warning").length;
       categories[cat] = {
-        status: hasCheckError ? "CHECK_ERROR" : blockers > 0 ? "BLOCKED" : warnings > 0 ? "WARNING" : "PASS",
+        status: hasCheckError
+          ? "CHECK_ERROR"
+          : blockers > 0
+            ? "BLOCKED"
+            : hasUnverifiedScope
+              ? "LEGACY_SCOPE_UNVERIFIED"
+              : warnings > 0
+                ? "WARNING"
+                : "PASS",
         blockers,
         warnings,
         issueCodes: catIssues.map((issue) => issue.code),
