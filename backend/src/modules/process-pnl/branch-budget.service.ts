@@ -1497,6 +1497,382 @@ export const branchBudgetService = {
     return this.get(budgetId);
   },
 
+  /** Lists pending and recent tax amendments for a budget, newest first. */
+  async listTaxAmendments(budgetId: string) {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT * FROM finance_budget_line_tax_amendment
+        WHERE budget_id = ? ORDER BY requested_at DESC LIMIT 50`,
+      [budgetId]
+    );
+    return rows;
+  },
+
+  /** Read-only preflight: checks whether a tax treatment amendment is eligible for this line.
+   *  Returns current line financial values and a blockedReason if ineligible.
+   *  Safe to call without a transaction. */
+  async getTaxAmendmentPreflight(
+    budgetId: string,
+    lineId: string
+  ): Promise<TaxAmendmentPreflight> {
+    const [[header]] = await db.execute<RowDataPacket[]>(
+      `SELECT id, status, period_code FROM finance_budget_header WHERE id = ? LIMIT 1`,
+      [budgetId]
+    ) as unknown as [RowDataPacket[], unknown];
+    if (!header) throw new Error("Budget not found");
+
+    const [[line]] = await db.execute<RowDataPacket[]>(
+      `SELECT id, item_name, tax_treatment, gst_rate, gst_type, recoverable_tax_pct,
+              base_amount, tax_amount, gross_amount, recoverable_tax_amount, pnl_cost_amount,
+              reserved_amount, consumed_amount, reserved_quantity, consumed_quantity
+         FROM finance_budget_line WHERE id = ? AND budget_id = ? LIMIT 1`,
+      [lineId, budgetId]
+    ) as unknown as [RowDataPacket[], unknown];
+    if (!line) throw new Error("Budget line not found");
+
+    const periodLocked = await isPeriodLocked(header.period_code ?? null);
+
+    const [[grnRow]] = await db.execute<RowDataPacket[]>(
+      `SELECT COUNT(*) AS cnt FROM finance_grn_line_split gls
+         JOIN finance_grn_header gh ON gh.id = gls.grn_id
+        WHERE gls.budget_line_id = ?
+          AND gh.status IN ('draft','submitted','under_review')`,
+      [lineId]
+    ) as unknown as [RowDataPacket[], unknown];
+    const openGrnCount = Number(grnRow?.cnt ?? 0);
+
+    const [[pendingRow]] = await db.execute<RowDataPacket[]>(
+      `SELECT COUNT(*) AS cnt FROM finance_budget_line_tax_amendment
+        WHERE line_id = ? AND status = 'pending'`,
+      [lineId]
+    ) as unknown as [RowDataPacket[], unknown];
+    const hasPending = Number(pendingRow?.cnt ?? 0) > 0;
+
+    let blockedReason: TaxAmendmentPreflight["blockedReason"] = null;
+    if (String(header.status) !== "active") blockedReason = "WRONG_STATUS";
+    else if (periodLocked) blockedReason = "PERIOD_LOCKED";
+    else if (hasPending) blockedReason = "PENDING_AMENDMENT_EXISTS";
+    else if (
+      Number(line.reserved_amount) > 0 ||
+      Number(line.consumed_amount) > 0 ||
+      Number(line.reserved_quantity) > 0 ||
+      Number(line.consumed_quantity) > 0 ||
+      openGrnCount > 0
+    ) {
+      blockedReason = "BUDGET_LINE_ALREADY_IN_USE";
+    }
+
+    return {
+      budgetId,
+      budgetStatus: String(header.status),
+      periodCode: header.period_code ?? null,
+      periodLocked,
+      lineId,
+      itemName: String(line.item_name),
+      currentTaxTreatment: String(line.tax_treatment),
+      currentGstRate: Number(line.gst_rate),
+      currentGstType: String(line.gst_type),
+      currentRecoverablePct: Number(line.recoverable_tax_pct),
+      baseAmount: Number(line.base_amount),
+      taxAmount: Number(line.tax_amount),
+      grossAmount: Number(line.gross_amount),
+      recoverableTaxAmount: Number(line.recoverable_tax_amount),
+      pnlCostAmount: Number(line.pnl_cost_amount),
+      reservedAmount: Number(line.reserved_amount),
+      consumedAmount: Number(line.consumed_amount),
+      reservedQuantity: Number(line.reserved_quantity),
+      consumedQuantity: Number(line.consumed_quantity),
+      openGrnCount,
+      canAmend: blockedReason === null,
+      blockedReason,
+    };
+  },
+
+  /** Creates a pending tax treatment amendment record. Does NOT modify the budget line.
+   *  A second actor (finance_head / super_admin) must call reviewTaxAmendment() to apply.
+   *  Blocks if: period locked, line has reservations/consumption, open GRN, or pending amendment. */
+  async requestTaxAmendment(
+    budgetId: string,
+    lineId: string,
+    patch: {
+      taxTreatment: BudgetTaxTreatment;
+      gstRate: number;
+      gstType: BudgetGstType;
+      recoverableTaxPct: number;
+    },
+    actorId: string,
+    actorRole: string,
+    reason: string
+  ): Promise<{ amendmentId: string }> {
+    if (!reason?.trim()) throw new Error("Reason is required for a tax treatment amendment");
+
+    const canonical = canonicalizeTaxPatch(patch);
+    const amendmentId = randomUUID();
+    const connection = await db.getConnection();
+    try {
+      await connection.beginTransaction();
+
+      const [[header]] = await connection.execute<RowDataPacket[]>(
+        `SELECT id, status, period_code FROM finance_budget_header WHERE id = ? FOR UPDATE`,
+        [budgetId]
+      ) as unknown as [RowDataPacket[], unknown];
+      if (!header) throw new Error("Budget not found");
+      if (String(header.status) !== "active") {
+        throw new Error("Budget must be active to request a tax treatment amendment");
+      }
+      if (await isPeriodLocked(header.period_code ?? null, connection)) {
+        throw new Error("Period is locked — tax treatment amendments are blocked until the period is reopened");
+      }
+
+      const [[line]] = await connection.execute<RowDataPacket[]>(
+        `SELECT id, item_name, head, sub_head, unit, quantity, unit_rate, justification,
+                tax_treatment, gst_rate, gst_type, recoverable_tax_pct,
+                base_amount, tax_amount, gross_amount, recoverable_tax_amount, pnl_cost_amount,
+                reserved_amount, consumed_amount, reserved_quantity, consumed_quantity
+           FROM finance_budget_line WHERE id = ? AND budget_id = ? FOR UPDATE`,
+        [lineId, budgetId]
+      ) as unknown as [RowDataPacket[], unknown];
+      if (!line) throw new Error("Budget line not found");
+
+      const inUse =
+        Number(line.reserved_amount) > 0 ||
+        Number(line.consumed_amount) > 0 ||
+        Number(line.reserved_quantity) > 0 ||
+        Number(line.consumed_quantity) > 0;
+
+      const [[grnRow]] = await connection.execute<RowDataPacket[]>(
+        `SELECT COUNT(*) AS cnt FROM finance_grn_line_split gls
+           JOIN finance_grn_header gh ON gh.id = gls.grn_id
+          WHERE gls.budget_line_id = ?
+            AND gh.status IN ('draft','submitted','under_review')`,
+        [lineId]
+      ) as unknown as [RowDataPacket[], unknown];
+
+      if (inUse || Number(grnRow?.cnt ?? 0) > 0) {
+        throw new Error("BUDGET_LINE_ALREADY_IN_USE");
+      }
+
+      const [[pendingRow]] = await connection.execute<RowDataPacket[]>(
+        `SELECT COUNT(*) AS cnt FROM finance_budget_line_tax_amendment
+          WHERE line_id = ? AND status = 'pending'`,
+        [lineId]
+      ) as unknown as [RowDataPacket[], unknown];
+      if (Number(pendingRow?.cnt ?? 0) > 0) {
+        throw new Error("A pending tax amendment already exists for this line");
+      }
+
+      const quotedAmount = Number(line.unit_rate) * (Number(line.quantity) || 1);
+      const before = calculateBudgetLine({
+        head: String(line.head), subHead: line.sub_head ? String(line.sub_head) : undefined,
+        itemName: String(line.item_name), unit: String(line.unit),
+        quantity: Number(line.quantity), unitRate: Number(line.unit_rate),
+        taxTreatment: line.tax_treatment as BudgetTaxTreatment,
+        gstRate: Number(line.gst_rate), gstType: line.gst_type as BudgetGstType,
+        recoverableTaxPct: Number(line.recoverable_tax_pct),
+        justification: String(line.justification),
+      });
+      // quotedAmount for after uses same base — only tax fields change
+      const afterLine = {
+        head: String(line.head), subHead: line.sub_head ? String(line.sub_head) : undefined,
+        itemName: String(line.item_name), unit: String(line.unit),
+        quantity: Number(line.quantity), unitRate: Number(line.unit_rate),
+        taxTreatment: canonical.taxTreatment,
+        gstRate: canonical.gstRate, gstType: canonical.gstType,
+        recoverableTaxPct: canonical.recoverableTaxPct,
+        justification: String(line.justification),
+      };
+      const after = calculateBudgetLine(afterLine);
+
+      await connection.execute(
+        `INSERT INTO finance_budget_line_tax_amendment
+           (id, budget_id, line_id, item_name,
+            old_tax_treatment, new_tax_treatment,
+            old_gst_rate, new_gst_rate,
+            old_gst_type, new_gst_type,
+            old_recoverable_pct, new_recoverable_pct,
+            old_base, new_base,
+            old_tax, new_tax,
+            old_gross, new_gross,
+            old_recoverable_tax, new_recoverable_tax,
+            old_pnl, new_pnl,
+            reason, requested_by, status)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'pending')`,
+        [
+          amendmentId, budgetId, lineId, String(line.item_name),
+          String(line.tax_treatment), canonical.taxTreatment,
+          Number(line.gst_rate), canonical.gstRate,
+          String(line.gst_type), canonical.gstType,
+          Number(line.recoverable_tax_pct), canonical.recoverableTaxPct,
+          before.baseAmount, after.baseAmount,
+          before.taxAmount, after.taxAmount,
+          before.grossAmount, after.grossAmount,
+          before.recoverableTaxAmount, after.recoverableTaxAmount,
+          before.pnlCostAmount, after.pnlCostAmount,
+          reason.trim(), actorId,
+        ]
+      );
+
+      await auditInTransaction(
+        connection, budgetId, "TAX_AMENDMENT_REQUESTED", "active", "active",
+        actorId, actorRole,
+        `Line "${line.item_name}": amendment requested ${line.tax_treatment} → ${canonical.taxTreatment} @ ${canonical.gstRate}% GST. ${reason.trim()}`
+      );
+
+      await connection.commit();
+      return { amendmentId };
+    } catch (error) {
+      await connection.rollback();
+      throw error;
+    } finally {
+      connection.release();
+    }
+  },
+
+  /** Approves or rejects a pending tax treatment amendment (maker-checker).
+   *  The requestor cannot approve their own amendment.
+   *  On approval: applies the amendment inside the same transaction with period-lock + usage re-check. */
+  async reviewTaxAmendment(
+    amendmentId: string,
+    decision: "approved" | "rejected",
+    actorId: string,
+    actorRole: string,
+    decisionReason?: string
+  ) {
+    const role = actorRole.toLowerCase();
+    if (!["finance_head", "super_admin"].includes(role)) {
+      throw new Error("Only finance_head or super_admin can review tax amendments");
+    }
+
+    const connection = await db.getConnection();
+    try {
+      await connection.beginTransaction();
+
+      const [[amend]] = await connection.execute<RowDataPacket[]>(
+        `SELECT * FROM finance_budget_line_tax_amendment WHERE id = ? FOR UPDATE`,
+        [amendmentId]
+      ) as unknown as [RowDataPacket[], unknown];
+      if (!amend) throw new Error("Tax amendment not found");
+      if (String(amend.status) !== "pending") throw new Error("Amendment is no longer pending");
+      if (String(amend.requested_by) === actorId) {
+        throw new Error("The requestor cannot approve their own amendment");
+      }
+
+      if (decision === "rejected") {
+        await connection.execute(
+          `UPDATE finance_budget_line_tax_amendment
+              SET status = 'rejected', rejected_by = ?, rejected_at = NOW(), rejection_reason = ?
+            WHERE id = ?`,
+          [actorId, decisionReason ?? null, amendmentId]
+        );
+        await auditInTransaction(
+          connection, String(amend.budget_id), "TAX_AMENDMENT_REJECTED", "active", "active",
+          actorId, actorRole,
+          `Line "${amend.item_name}" amendment rejected. ${decisionReason ?? ""}`
+        );
+        await connection.commit();
+        return null;
+      }
+
+      // APPROVE: re-validate all conditions inside this transaction
+      const [[header]] = await connection.execute<RowDataPacket[]>(
+        `SELECT id, status, period_code FROM finance_budget_header WHERE id = ? FOR UPDATE`,
+        [String(amend.budget_id)]
+      ) as unknown as [RowDataPacket[], unknown];
+      if (!header || String(header.status) !== "active") {
+        throw new Error("Budget is no longer active");
+      }
+      if (await isPeriodLocked(header.period_code ?? null, connection)) {
+        throw new Error("Period has been locked since the amendment was requested");
+      }
+
+      const [[line]] = await connection.execute<RowDataPacket[]>(
+        `SELECT id, head, sub_head, unit, quantity, unit_rate, justification,
+                reserved_amount, consumed_amount, reserved_quantity, consumed_quantity
+           FROM finance_budget_line WHERE id = ? AND budget_id = ? FOR UPDATE`,
+        [String(amend.line_id), String(amend.budget_id)]
+      ) as unknown as [RowDataPacket[], unknown];
+      if (!line) throw new Error("Budget line no longer exists");
+
+      const inUse =
+        Number(line.reserved_amount) > 0 ||
+        Number(line.consumed_amount) > 0 ||
+        Number(line.reserved_quantity) > 0 ||
+        Number(line.consumed_quantity) > 0;
+      if (inUse) {
+        throw new Error("BUDGET_LINE_ALREADY_IN_USE — line was used since the amendment was requested; cannot apply");
+      }
+
+      const after = calculateBudgetLine({
+        head: String(line.head), subHead: line.sub_head ? String(line.sub_head) : undefined,
+        itemName: String(amend.item_name), unit: String(line.unit),
+        quantity: Number(line.quantity), unitRate: Number(line.unit_rate),
+        taxTreatment: String(amend.new_tax_treatment) as BudgetTaxTreatment,
+        gstRate: Number(amend.new_gst_rate),
+        gstType: String(amend.new_gst_type) as BudgetGstType,
+        recoverableTaxPct: Number(amend.new_recoverable_pct),
+        justification: String(line.justification),
+      });
+
+      await connection.execute(
+        `UPDATE finance_budget_line
+            SET tax_treatment = ?, gst_rate = ?, gst_type = ?, recoverable_tax_pct = ?,
+                base_amount = ?, tax_amount = ?, gross_amount = ?,
+                cgst_amount = ?, sgst_amount = ?, igst_amount = ?,
+                recoverable_tax_amount = ?, pnl_cost_amount = ?
+          WHERE id = ?`,
+        [
+          String(amend.new_tax_treatment), Number(amend.new_gst_rate),
+          String(amend.new_gst_type), Number(amend.new_recoverable_pct),
+          after.baseAmount, after.taxAmount, after.grossAmount,
+          after.cgstAmount, after.sgstAmount, after.igstAmount,
+          after.recoverableTaxAmount, after.pnlCostAmount,
+          String(amend.line_id),
+        ]
+      );
+
+      const [[totals]] = await connection.execute<RowDataPacket[]>(
+        `SELECT COALESCE(SUM(base_amount),0)     AS base,
+                COALESCE(SUM(tax_amount),0)      AS tax,
+                COALESCE(SUM(gross_amount),0)    AS gross,
+                COALESCE(SUM(pnl_cost_amount),0) AS pnl
+           FROM finance_budget_line WHERE budget_id = ?`,
+        [String(amend.budget_id)]
+      ) as unknown as [RowDataPacket[], unknown];
+
+      await connection.execute(
+        `UPDATE finance_budget_header
+            SET base_budget_amount = ?, tax_budget_amount = ?,
+                gross_budget_amount = ?, pnl_budget_amount = ?
+          WHERE id = ?`,
+        [
+          Number(totals?.base ?? 0), Number(totals?.tax ?? 0),
+          Number(totals?.gross ?? 0), Number(totals?.pnl ?? 0),
+          String(amend.budget_id),
+        ]
+      );
+
+      await connection.execute(
+        `UPDATE finance_budget_line_tax_amendment
+            SET status = 'approved', approved_by = ?, approved_at = NOW()
+          WHERE id = ?`,
+        [actorId, amendmentId]
+      );
+
+      await auditInTransaction(
+        connection, String(amend.budget_id), "TAX_AMENDMENT_APPROVED", "active", "active",
+        actorId, actorRole,
+        `Line "${amend.item_name}": ${amend.old_tax_treatment} → ${amend.new_tax_treatment} @ ${amend.new_gst_rate}% GST applied. Gross Δ: ${amend.gross_delta}, P&L Δ: ${amend.pnl_delta}.`
+      );
+
+      await connection.commit();
+      return this.get(String(amend.budget_id));
+    } catch (error) {
+      await connection.rollback();
+      throw error;
+    } finally {
+      connection.release();
+    }
+  },
+
   async review(
     id: string,
     decision: "approve" | "reject" | "revision",

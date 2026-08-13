@@ -307,9 +307,25 @@ router.post(
   })
 );
 
-// Surgical fix for an active budget line whose tax treatment was planned as non_gst/exempt but
-// the vendor invoice carries GST. Gated on finance_head/super_admin; requires a mandatory reason.
-// Only updates tax fields and recomputes planned amounts — consumed/reserved history is untouched.
+// Preflight read: checks whether a tax treatment amendment is eligible for a given budget line.
+// Returns current financial values plus canAmend / blockedReason. Safe to call frequently.
+router.get(
+  "/pnl/budgets/:budgetId/lines/:lineId/tax-amendment-preflight",
+  requireAuth,
+  requireRole(...PNL_READ_ROLES),
+  h(async (req, res) => {
+    const data = await branchBudgetService.getTaxAmendmentPreflight(
+      req.params.budgetId,
+      req.params.lineId
+    );
+    res.json({ success: true, data });
+  })
+);
+
+// Tax Treatment Amendment — Step 1 (request).
+// Creates a pending amendment record; does NOT mutate the budget line.
+// A different finance_head / super_admin must call /review to apply.
+// Blocked if: period locked, line has reservations/consumption, open GRN, or existing pending amendment.
 router.patch(
   "/pnl/budgets/:budgetId/lines/:lineId/tax-treatment",
   requireWriteAccess,
@@ -322,9 +338,9 @@ router.patch(
       throw Object.assign(new Error("taxTreatment must be one of: " + VALID_TREATMENTS.join(", ")), { statusCode: 400 });
     }
     if (!String(reason ?? "").trim()) {
-      throw Object.assign(new Error("reason is required for a tax-treatment amendment"), { statusCode: 400 });
+      throw Object.assign(new Error("reason is required for a tax treatment amendment"), { statusCode: 400 });
     }
-    const data = await branchBudgetService.amendLineTaxTreatment(
+    const data = await branchBudgetService.requestTaxAmendment(
       req.params.budgetId,
       req.params.lineId,
       {
@@ -336,6 +352,45 @@ router.patch(
       user.id,
       user.role,
       String(reason)
+    );
+    res.status(201).json({ success: true, data });
+  })
+);
+
+// List tax amendments for a budget (pending + recent history).
+router.get(
+  "/pnl/budget-tax-amendments",
+  requireAuth,
+  requireRole(...PNL_READ_ROLES),
+  h(async (req, res) => {
+    const budgetId = String(req.query.budgetId ?? "").trim();
+    if (!budgetId) throw Object.assign(new Error("budgetId query param is required"), { statusCode: 400 });
+    const data = await branchBudgetService.listTaxAmendments(budgetId);
+    res.json({ success: true, data });
+  })
+);
+
+// Tax Treatment Amendment — Step 2 (review: approve or reject).
+// Maker-checker: the requestor cannot be the approver.
+router.post(
+  "/pnl/budget-tax-amendments/:id/review",
+  requireWriteAccess,
+  requireRole("finance_head", "super_admin"),
+  h(async (req, res) => {
+    const user = actor(req);
+    const { decision, reason } = req.body ?? {};
+    if (!["approved", "rejected"].includes(String(decision ?? ""))) {
+      throw Object.assign(new Error("decision must be 'approved' or 'rejected'"), { statusCode: 400 });
+    }
+    if (String(decision) === "rejected" && !String(reason ?? "").trim()) {
+      throw Object.assign(new Error("reason is required when rejecting an amendment"), { statusCode: 400 });
+    }
+    const data = await branchBudgetService.reviewTaxAmendment(
+      req.params.id,
+      String(decision) as "approved" | "rejected",
+      user.id,
+      user.role,
+      reason ? String(reason) : undefined
     );
     res.json({ success: true, data });
   })
