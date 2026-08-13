@@ -659,6 +659,21 @@ salaryVerificationRouter.post(
         [randomUUID(), runMonth, runId ?? null, employeeId, processId ?? null, userId]
       );
 
+      // Resolve branch_id from the employee record so the readiness check can run.
+      const [empRows] = await db.execute<RowDataPacket[]>(
+        "SELECT branch_id, process_id FROM employees WHERE id = ? LIMIT 1",
+        [employeeId]
+      );
+      const emp = (empRows as any[])[0];
+      if (emp) {
+        await markReadinessDoneIfComplete(
+          runMonth,
+          String(emp.branch_id),
+          processId ?? String(emp.process_id ?? ""),
+          userId
+        );
+      }
+
       return res.json({ success: true, message: "Employee marked as verified" });
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
