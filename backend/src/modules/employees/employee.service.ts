@@ -10,6 +10,23 @@ import type { CreateEmployeeInput, EmployeeFilters, UpdateEmployeeInput } from "
 import { provisionLmsIdentityForEmployee } from "../lms/lms-provisioning.service.js";
 import { dispatchJoinProvisioningTasks } from "../it-provisioning/it-provisioning.service.js";
 
+// Directory list sort — SortableTableHead on the frontend already exposes these 8 columns,
+// but the query ignored sortBy entirely and always returned employee_code ASC, so "sort by
+// name/department/..." only ever reordered whatever page was already loaded, not the real
+// dataset. Whitelisted expressions only: sortBy is validated against this same key set by
+// employeeFiltersSchema, but the lookup here is the actual guard against SQL injection —
+// never interpolate the raw column name.
+const EMPLOYEE_SORT_COLUMNS: Record<string, string> = {
+  employeeCode: "e.employee_code",
+  name: "COALESCE(NULLIF(e.full_name, ''), CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')))",
+  department: "dept.dept_name",
+  process: "pm.process_name",
+  reportingManager: "reporting_manager_name",
+  designation: "desig.designation_name",
+  joinDate: "e.date_of_joining",
+  status: "e.employment_status",
+};
+
 const SENSITIVE_FIELDS: Array<{ inputKey: keyof UpdateEmployeeInput; dbCol: string; label: string }> = [
   { inputKey: "branchId",           dbCol: "branch_id",           label: "Branch" },
   { inputKey: "departmentId",       dbCol: "department_id",       label: "Department" },
@@ -235,7 +252,7 @@ export const employeeService = {
   },
 
   async listEmployees(filters: EmployeeFilters & { scopeFilter?: { sql: string; params: unknown[] } }): Promise<PaginatedResult<Employee>> {
-    const { page, limit, status, recordStatus, processId, branchId, departmentId, designationId, search, scopeFilter, includeAnalytics } = filters;
+    const { page, limit, status, recordStatus, processId, branchId, departmentId, designationId, search, scopeFilter, includeAnalytics, sortBy, sortOrder } = filters;
     const offset = (page - 1) * limit;
 
     // `active_status = 1` used to be hardcoded here, while `recordStatus` was declared in
@@ -293,6 +310,14 @@ export const employeeService = {
     const filterWhere = filterConds.length ? `WHERE ${filterConds.join(" AND ")}` : "";
 
     // Use string interpolation for LIMIT/OFFSET to avoid parameter binding issues
+    const orderExpr = (sortBy && EMPLOYEE_SORT_COLUMNS[sortBy]) || EMPLOYEE_SORT_COLUMNS.employeeCode;
+    const orderDir = sortOrder === "desc" ? "DESC" : "ASC";
+    // Secondary tiebreak on employee_code keeps pagination stable across pages when the
+    // primary sort column has duplicate/NULL values (e.g. many employees share a department).
+    const orderClause = orderExpr === EMPLOYEE_SORT_COLUMNS.employeeCode
+      ? `ORDER BY ${orderExpr} ${orderDir}`
+      : `ORDER BY ${orderExpr} ${orderDir}, e.employee_code ASC`;
+
     const [[rows], [countRows]] = await Promise.all([
       db.execute<RowDataPacket[]>(
         `SELECT
@@ -320,7 +345,7 @@ export const employeeService = {
          LEFT JOIN process_master      pm    ON pm.id    = e.process_id
          LEFT JOIN branch_master       bm    ON bm.id    = e.branch_id
          LEFT JOIN employees           mgr   ON mgr.id   = COALESCE(e.reporting_manager_id, e.manager_id)
-         ${where} ORDER BY e.employee_code ASC LIMIT ${limit} OFFSET ${offset}`,
+         ${where} ${orderClause} LIMIT ${limit} OFFSET ${offset}`,
         params
       ),
       db.execute<RowDataPacket[]>(

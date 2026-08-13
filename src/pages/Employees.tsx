@@ -49,9 +49,10 @@ import {
   useEmployeeSearchOptions,
   fetchAllFilteredEmployeeRows,
   ExportTooLargeError,
+  type EmployeeSortKey,
 } from "@/hooks/useEmployees";
 import { useIsAdminOrHR } from "@/hooks/useUserRole";
-import { useSorting, sortItems } from "@/hooks/useSorting";
+import type { SortDirection } from "@/hooks/useSorting";
 import { useDebounce } from "@/hooks/useDebounce";
 
 import { Button } from "@/components/ui/button";
@@ -156,6 +157,26 @@ const Employees = () => {
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
 
+  // Sorting is server-side now — the directory query used to hardcode
+  // ORDER BY employee_code, so "sort by name/department/..." only ever reordered whichever
+  // page was already loaded. State lives here (not in useSorting, which sorts an already-
+  // fetched array client-side) because it needs to reach useEmployeeDirectory's query params
+  // before that query runs, not after its result comes back.
+  const [sortKey, setSortKey] = useState<EmployeeSortKey | null>(null);
+  const [sortDirection, setSortDirection] = useState<SortDirection>(null);
+  const requestSort = (key: keyof Employee) => {
+    const nextKey = key as EmployeeSortKey;
+    if (sortKey !== nextKey) {
+      setSortKey(nextKey);
+      setSortDirection("asc");
+      return;
+    }
+    // Same 3-state cycle useSorting used: asc -> desc -> cleared.
+    if (sortDirection === "asc") setSortDirection("desc");
+    else if (sortDirection === "desc") { setSortKey(null); setSortDirection(null); }
+    else setSortDirection("asc");
+  };
+
   const [documentsEmployee, setDocumentsEmployee] = useState<Employee | null>(null);
   const [viewEmployee, setViewEmployee] = useState<Employee | null>(null);
   const [editEmployee, setEditEmployee] = useState<Employee | null>(null);
@@ -194,6 +215,8 @@ const Employees = () => {
     departmentId: departmentFilter === "all" ? undefined : departmentFilter,
     processId: processFilter === "all" ? undefined : processFilter,
     branchId: branchFilter === "all" ? undefined : branchFilter,
+    sortBy: sortKey ?? undefined,
+    sortOrder: sortDirection ?? undefined,
   });
   const { data: directoryAnalytics, isFetching: isFetchingAnalytics } = useEmployeeDirectoryAnalytics({
     page: 1,
@@ -263,11 +286,9 @@ const Employees = () => {
   const processes = directoryMasters?.processes ?? [];
   const branches = directoryMasters?.branches ?? [];
 
-  const {
-    sortedItems: sortedEmployees,
-    sortConfig,
-    requestSort,
-  } = useSorting<Employee>(filteredEmployees);
+  // Already sorted server-side per sortKey/sortOrder above — no client re-sort needed
+  // (and re-sorting only the current page client-side is exactly the bug this replaced).
+  const sortedEmployees = filteredEmployees;
 
   const totalPages = Math.max(1, Math.ceil(directoryTotal / pageSize));
   const totalItems = directoryTotal;
@@ -302,7 +323,7 @@ const Employees = () => {
   useEffect(() => {
     setCurrentPage(1);
     setSelectedEmployeeIds([]);
-  }, [debouncedSearch, departmentFilter, processFilter, branchFilter, statusFilter, pageSize]);
+  }, [debouncedSearch, departmentFilter, processFilter, branchFilter, statusFilter, pageSize, sortKey, sortDirection]);
 
   const filterByDateRange = (
     items: Employee[],
@@ -350,8 +371,12 @@ const Employees = () => {
       departmentId: departmentFilter === "all" ? undefined : departmentFilter,
       processId: processFilter === "all" ? undefined : processFilter,
       branchId: branchFilter === "all" ? undefined : branchFilter,
+      // Same sort the screen is currently showing — pages come back pre-sorted from the
+      // server now, so concatenating them in page order is already the correct full order.
+      sortBy: sortKey ?? undefined,
+      sortOrder: sortDirection ?? undefined,
     });
-    return filterByDateRange(sortItems(rows, sortConfig), startDate, endDate);
+    return filterByDateRange(rows, startDate, endDate);
   };
 
   const exportToCSV = async (startDate?: Date, endDate?: Date) => {
@@ -1050,8 +1075,8 @@ const Employees = () => {
                   onResetPassword={canResetEmployeePassword ? (employee) => setResetPasswordEmployee(employee) : undefined}
                   isAdminOrHR={isAdminOrHR}
                   canResetPassword={canResetEmployeePassword}
-                  sortKey={sortConfig.key}
-                  sortDirection={sortConfig.direction}
+                  sortKey={sortKey}
+                  sortDirection={sortDirection}
                   onSort={requestSort}
                   selectedIds={selectedEmployeeIds}
                   onSelectionChange={setSelectedEmployeeIds}

@@ -83,6 +83,10 @@ export const employeeFiltersSchema = z.object({
   includeAnalytics: z.coerce.boolean().default(false),
   page: z.coerce.number().int().min(1).default(1),
   limit: z.coerce.number().int().min(1).max(200).default(50),
+  // Whitelisted against SORT_COLUMNS in employee.service.ts, not passed to SQL directly —
+  // an enum here is belt-and-suspenders, the real gate is the whitelist lookup at the call site.
+  sortBy: z.enum(["employeeCode", "name", "department", "process", "reportingManager", "designation", "joinDate", "status"]).optional(),
+  sortOrder: z.enum(["asc", "desc"]).default("asc"),
 });
 
 export type CreateEmployeeInput = z.infer<typeof createEmployeeSchema>;

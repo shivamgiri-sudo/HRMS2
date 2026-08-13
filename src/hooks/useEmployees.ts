@@ -76,6 +76,8 @@ export interface RawEmployee {
   profile_incomplete?: boolean | number | null;
 }
 
+export type EmployeeSortKey = "employeeCode" | "name" | "department" | "process" | "reportingManager" | "designation" | "joinDate" | "status";
+
 export interface EmployeeDirectoryFilters {
   page: number;
   limit: number;
@@ -85,6 +87,8 @@ export interface EmployeeDirectoryFilters {
   departmentId?: string;
   processId?: string;
   branchId?: string;
+  sortBy?: EmployeeSortKey;
+  sortOrder?: "asc" | "desc";
 }
 
 interface EmployeeStatsResponse {
@@ -192,6 +196,8 @@ export async function fetchAllFilteredEmployeeRows(
     if (filters.departmentId) params.set("departmentId", filters.departmentId);
     if (filters.processId) params.set("processId", filters.processId);
     if (filters.branchId) params.set("branchId", filters.branchId);
+    if (filters.sortBy) params.set("sortBy", filters.sortBy);
+    if (filters.sortOrder) params.set("sortOrder", filters.sortOrder);
     return `/api/employees?${params.toString()}`;
   };
 
@@ -267,6 +273,8 @@ export function useEmployeeDirectory(filters: EmployeeDirectoryFilters) {
       if (filters.departmentId) params.set("departmentId", filters.departmentId);
       if (filters.processId) params.set("processId", filters.processId);
       if (filters.branchId) params.set("branchId", filters.branchId);
+      if (filters.sortBy) params.set("sortBy", filters.sortBy);
+      if (filters.sortOrder) params.set("sortOrder", filters.sortOrder);
 
       const response = await hrmsApi.get<EmployeePage>(`/api/employees?${params.toString()}`);
       return {
