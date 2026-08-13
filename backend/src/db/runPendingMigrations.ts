@@ -11,6 +11,9 @@ import { env } from "../config/env.js";
 const MIGRATION_LOCK_TIMEOUT_SECONDS = 60;
 const MIGRATION_STRICT_MODE = process.env.MIGRATION_STRICT_MODE === "true";
 const STOP_ON_FIRST_FAILURE = process.env.MIGRATION_STOP_ON_FAILURE !== "false"; // default true
+// Bounds verifySchemaVersion()'s whole operation (connect + every query) — see the call
+// site for why this exists. Matches the app's shared pool's own connectTimeout (db/mysql.ts).
+const VERIFY_SCHEMA_TIMEOUT_MS = 10000;
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -1411,47 +1414,72 @@ export async function verifySchemaVersion(): Promise<SchemaVerificationState> {
       return getSchemaVerificationState();
     }
 
-    const conn = await mysql.createConnection({ host, port, user, password, database: dbName });
-    try {
-      // Check if schema_migrations table exists
-      const [tables] = await conn.execute<RowDataPacket[]>(
-        `SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES
-         WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'schema_migrations'`,
-        [dbName]
-      );
+    // This intentionally does NOT reuse the app's shared pool (db/mysql.ts) — migrations
+    // must not compete with app traffic for pool slots, and this function needs to work
+    // even before the pool exists at boot. But that raw connection had no bound on it at
+    // all. Verified live 2026-08-13: under real DB contention this whole operation
+    // (connect + queries) stalled 79+ seconds on a single /api/health/version hit — every
+    // caller waiting on it, including the Vite dev proxy, hung with it. connectTimeout
+    // bounds the connect/auth phase specifically; VERIFY_SCHEMA_TIMEOUT_MS below bounds
+    // the whole operation (connect + every query), so a stall in either phase can no
+    // longer hang this route indefinitely.
+    let inFlightConn: mysql.Connection | null = null;
+    const work = (async (): Promise<SchemaVerificationState> => {
+      const conn = await mysql.createConnection({ host, port, user, password, database: dbName, connectTimeout: VERIFY_SCHEMA_TIMEOUT_MS });
+      inFlightConn = conn;
+      try {
+        // Check if schema_migrations table exists
+        const [tables] = await conn.execute<RowDataPacket[]>(
+          `SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES
+           WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'schema_migrations'`,
+          [dbName]
+        );
 
-      if (!tables.length) {
-        // Table doesn't exist — all migrations are pending
-        verificationState.appliedCount = 0;
-        verificationState.pendingCount = MIGRATION_MANIFEST.length;
-        verificationState.pendingFiles = MIGRATION_MANIFEST.slice(0, 20);
-        verificationState.state = verificationState.pendingCount > 0 ? "incompatible" : "verified";
-        verificationState.valid = verificationState.pendingCount === 0;
+        if (!tables.length) {
+          // Table doesn't exist — all migrations are pending
+          verificationState.appliedCount = 0;
+          verificationState.pendingCount = MIGRATION_MANIFEST.length;
+          verificationState.pendingFiles = MIGRATION_MANIFEST.slice(0, 20);
+          verificationState.state = verificationState.pendingCount > 0 ? "incompatible" : "verified";
+          verificationState.valid = verificationState.pendingCount === 0;
+          return getSchemaVerificationState();
+        }
+
+        const capabilities = await getSchemaMigrationsCapabilities(conn, dbName);
+
+        // Get applied migrations, tolerating older schema_migrations layouts that
+        // do not yet have a success column.
+        const [applied] = await conn.execute<RowDataPacket[]>(
+          buildSchemaMigrationsAppliedQuery(capabilities.hasSuccess)
+        );
+        const appliedSet = new Set((applied as Array<{ filename: string }>).map((r) => r.filename));
+
+        // Calculate pending
+        const pending = MIGRATION_MANIFEST.filter((f) => !appliedSet.has(f));
+
+        verificationState.appliedCount = appliedSet.size;
+        verificationState.pendingCount = pending.length;
+        verificationState.pendingFiles = pending.slice(0, 20);
+        verificationState.state = pending.length === 0 ? "verified" : "incompatible";
+        verificationState.valid = pending.length === 0;
+
         return getSchemaVerificationState();
+      } finally {
+        await conn.end();
       }
+    })();
 
-      const capabilities = await getSchemaMigrationsCapabilities(conn, dbName);
+    const timeout = new Promise<never>((_, reject) => {
+      setTimeout(() => {
+        // Best-effort: force-close whatever connection is in flight so it does not
+        // linger past this function returning. work() keeps running to completion in
+        // the background either way — this only stops it from blocking the caller.
+        inFlightConn?.destroy();
+        reject(new Error(`verifySchemaVersion exceeded ${VERIFY_SCHEMA_TIMEOUT_MS}ms`));
+      }, VERIFY_SCHEMA_TIMEOUT_MS).unref();
+    });
 
-      // Get applied migrations, tolerating older schema_migrations layouts that
-      // do not yet have a success column.
-      const [applied] = await conn.execute<RowDataPacket[]>(
-        buildSchemaMigrationsAppliedQuery(capabilities.hasSuccess)
-      );
-      const appliedSet = new Set((applied as Array<{ filename: string }>).map((r) => r.filename));
-
-      // Calculate pending
-      const pending = MIGRATION_MANIFEST.filter((f) => !appliedSet.has(f));
-
-      verificationState.appliedCount = appliedSet.size;
-      verificationState.pendingCount = pending.length;
-      verificationState.pendingFiles = pending.slice(0, 20);
-      verificationState.state = pending.length === 0 ? "verified" : "incompatible";
-      verificationState.valid = pending.length === 0;
-
-      return getSchemaVerificationState();
-    } finally {
-      await conn.end();
-    }
+    return await Promise.race([work, timeout]);
   } catch (error) {
     verificationState.state = "error";
     verificationState.valid = false;

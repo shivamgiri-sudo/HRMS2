@@ -1,7 +1,4 @@
 {
-  "modules/ats/ats-reporting-scope.ts": [
-    "ats_candidate.record_type"
-  ],
   "modules/reporting/report-suite.routes.ts": [
     "action_plan.action_plan_number",
     "action_plan.action_type",

@@ -28,8 +28,18 @@ export default defineConfig(({ mode }) => ({
     host: "0.0.0.0",
     port: 8080,
     proxy: {
+      // Explicit 127.0.0.1, not 'localhost' — on Windows + Node 20+, Node's
+      // autoSelectFamily (Happy Eyeballs) races 127.0.0.1 vs ::1 when resolving
+      // 'localhost' inside Vite's own http-proxy request, and on this machine
+      // that race hangs indefinitely even though both addresses answer fine to
+      // every other HTTP client (curl, PowerShell, a browser). Only the proxy's
+      // own outbound connection was affected — the dev server's public host
+      // binding above is unrelated and stays 0.0.0.0. Confirmed live: every
+      // /api/* request through localhost:8080 hung 45s+ before this change,
+      // and connecting to the backend directly on either address family always
+      // worked, isolating the hang to this one DNS-resolution path.
       '/api': {
-        target: 'http://localhost:5055',
+        target: 'http://127.0.0.1:5055',
         changeOrigin: true,
       },
     },
