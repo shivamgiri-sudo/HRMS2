@@ -94,7 +94,16 @@ async function computedCoverageSnapshot(input: any, userId: string) {
 // ── Roster Swap ───────────────────────────────────────────────────────────────
 router.get("/roster/swaps", h(async (req: AuthenticatedRequest, res: Response) => {
   const userId = req.authUser!.id;
-  if (await hasRole(userId, "admin", "hr", "wfm", "manager", "assistant_manager", "tl", "branch_head", "process_manager")) {
+  // team_leader was missing here even though the review action three routes down
+  // (POST /roster/swaps/:id/review) already grants it explicitly — the same
+  // inconsistency found across several other scope arrays in this codebase
+  // (WFM regularization, leave list scope) on 2026-08-13. hasRole (accessGuard.ts) does
+  // a literal string match with no ROLE_ALIASES expansion (unlike requireRole), so this
+  // one, unlike the requireRole-gated routes below, needed team_leader listed explicitly
+  // — a team_leader-only caller fell through to the self-only branch below and could see
+  // their own swap requests but never their team's, despite already being able to
+  // approve/reject one via the review route once they somehow had its id.
+  if (await hasRole(userId, "admin", "hr", "wfm", "manager", "assistant_manager", "tl", "team_leader", "branch_head", "process_manager")) {
     const scope = await employeeScope(userId);
     return res.json({ success: true, data: await rosterSwapService.list({ ...(req.query as any), ...scope }) });
   }
