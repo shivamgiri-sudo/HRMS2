@@ -84,49 +84,24 @@ export async function createWorkItem(input: WorkItemInput): Promise<string> {
  * work_inbox_item uses urgent/high/normal/low — so `urgent` is mapped onto `critical`
  * for a single ordering.
  */
-export async function getMyWorkItems(userId: string, role: string, limit = 50, offset = 0) {
-  const safeLimit = Math.max(1, Math.min(500, Number(limit) || 50));
-  const safeOffset = Math.max(0, Number(offset) || 0);
-  const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT * FROM (
-       SELECT wi.id,
-              wi.item_type,
-              wi.title,
-              wi.description,
-              wi.module_code,
-              wi.entity_type,
-              wi.entity_id,
-              CASE WHEN wi.priority = 'urgent' THEN 'critical' ELSE wi.priority END AS priority,
-              wi.status,
-              wi.due_at,
-              wi.created_at,
-              NULL AS action_url,
-              e.full_name AS assigned_employee_name,
-              'work_item' AS source_table
-         FROM work_item wi
-         LEFT JOIN employees e ON e.user_id = wi.assigned_to_user_id
-        WHERE (wi.assigned_to_user_id = ? OR wi.assigned_to_role = ?)
-          AND wi.status NOT IN ('completed', 'cancelled')
-       UNION ALL
-       SELECT wii.id,
-              wii.type AS item_type,
-              wii.title,
-              wii.description,
-              wii.type AS module_code,
-              wii.entity_type,
-              wii.entity_id,
-              CASE WHEN wii.priority = 'urgent' THEN 'critical'
-                   WHEN wii.priority = 'normal' THEN 'medium'
-                   ELSE wii.priority END AS priority,
-              CASE WHEN wii.is_read = 1 THEN 'read' ELSE 'pending' END AS status,
-              NULL AS due_at,
-              wii.created_at,
-              wii.action_url,
-              NULL AS assigned_employee_name,
-              'work_inbox_item' AS source_table
-         FROM work_inbox_item wii
-        WHERE wii.user_id = ? AND wii.is_actioned = 0
-       UNION ALL
+/**
+ * The three UNION ALL branches for registry types (action-item-registry.ts) that no
+ * producer ever writes into work_item — derived live from their real source table instead.
+ * Extracted to its own constant so it has exactly one copy: embedded inside
+ * getMyWorkItems()'s five-way union below, and reused standalone by
+ * getDerivedRegistryItems() for modules/inbox/inbox.service.ts's getMyPending() — the
+ * endpoint NativeWorkInbox.tsx actually calls, which getMyWorkItems() (GET /api/work-inbox/my)
+ * is not. Before this these three queues were only ever visible through the endpoint the
+ * Work Inbox page has never called: live counts 2026-08-13 were 26 pending leave approvals,
+ * 16 pending exit clearances, 120 BGV checks stuck in manual_review/mismatch — 162 real
+ * items with nowhere a human would see them.
+ *
+ * Five placeholders in order: leave's (mgr.user_id, role-IN-list), exit clearance's
+ * (owner_user_id, owner_role), BGV's (role-IN-list). getMyWorkItems() interpolates this
+ * after its own two placeholders (assigned_to_user_id, assigned_to_role) and one
+ * (work_inbox_item's user_id) — 3 + 5 = 8 total, unchanged from before this was extracted.
+ */
+const DERIVED_REGISTRY_UNION_SQL = `
        /*
         * Pending leave, derived from the source table rather than from a producer row.
         *
@@ -197,7 +172,8 @@ export async function getMyWorkItems(userId: string, role: string, limit = 50, o
        UNION ALL
        /*
         * Background checks stuck needing a human. BGV_PENDING is likewise declared and never
-        * written; 58 checks sit in manual_review or mismatch.
+        * written; 58 checks sit in manual_review or mismatch (120 live 2026-08-13 — grown
+        * since the original count, not stale).
         *
         * Only those two statuses qualify. 'not_started' and 'queued' are waiting on the
         * provider, not on a person, so surfacing them would fill the inbox with items nobody
@@ -225,7 +201,52 @@ export async function getMyWorkItems(userId: string, role: string, limit = 50, o
          FROM candidate_bgv_check b
          LEFT JOIN ats_candidate c ON c.id = b.candidate_id
         WHERE LOWER(COALESCE(b.status, '')) IN ('manual_review', 'mismatch')
-          AND ? IN ('hr', 'hr_head', 'admin', 'super_admin', 'recruiter', 'recruitment_hr')
+          AND ? IN ('hr', 'hr_head', 'admin', 'super_admin', 'recruiter', 'recruitment_hr')`;
+
+export async function getMyWorkItems(userId: string, role: string, limit = 50, offset = 0) {
+  const safeLimit = Math.max(1, Math.min(500, Number(limit) || 50));
+  const safeOffset = Math.max(0, Number(offset) || 0);
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT * FROM (
+       SELECT wi.id,
+              wi.item_type,
+              wi.title,
+              wi.description,
+              wi.module_code,
+              wi.entity_type,
+              wi.entity_id,
+              CASE WHEN wi.priority = 'urgent' THEN 'critical' ELSE wi.priority END AS priority,
+              wi.status,
+              wi.due_at,
+              wi.created_at,
+              NULL AS action_url,
+              e.full_name AS assigned_employee_name,
+              'work_item' AS source_table
+         FROM work_item wi
+         LEFT JOIN employees e ON e.user_id = wi.assigned_to_user_id
+        WHERE (wi.assigned_to_user_id = ? OR wi.assigned_to_role = ?)
+          AND wi.status NOT IN ('completed', 'cancelled')
+       UNION ALL
+       SELECT wii.id,
+              wii.type AS item_type,
+              wii.title,
+              wii.description,
+              wii.type AS module_code,
+              wii.entity_type,
+              wii.entity_id,
+              CASE WHEN wii.priority = 'urgent' THEN 'critical'
+                   WHEN wii.priority = 'normal' THEN 'medium'
+                   ELSE wii.priority END AS priority,
+              CASE WHEN wii.is_read = 1 THEN 'read' ELSE 'pending' END AS status,
+              NULL AS due_at,
+              wii.created_at,
+              wii.action_url,
+              NULL AS assigned_employee_name,
+              'work_inbox_item' AS source_table
+         FROM work_inbox_item wii
+        WHERE wii.user_id = ? AND wii.is_actioned = 0
+       UNION ALL
+       ${DERIVED_REGISTRY_UNION_SQL}
      ) merged
      ORDER BY FIELD(merged.priority,'critical','high','medium','low'),
               merged.due_at IS NULL,
@@ -233,6 +254,26 @@ export async function getMyWorkItems(userId: string, role: string, limit = 50, o
               merged.created_at DESC
      LIMIT ${safeLimit} OFFSET ${safeOffset}`,
     [userId, role, userId, userId, role, userId, role, role]
+  );
+  return rows;
+}
+
+/**
+ * The same three derived queues, standalone — for getMyPending() (modules/inbox/inbox.service.ts),
+ * the endpoint the Work Inbox page actually reads. See DERIVED_REGISTRY_UNION_SQL's comment.
+ */
+export async function getDerivedRegistryItems(userId: string, role: string, limit = 200) {
+  const safeLimit = Math.max(1, Math.min(500, Number(limit) || 200));
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT * FROM (
+       ${DERIVED_REGISTRY_UNION_SQL}
+     ) merged
+     ORDER BY FIELD(merged.priority,'critical','high','medium','low'),
+              merged.due_at IS NULL,
+              merged.due_at ASC,
+              merged.created_at DESC
+     LIMIT ${safeLimit}`,
+    [userId, role, userId, role, role]
   );
   return rows;
 }

@@ -2,6 +2,8 @@ import { randomUUID } from "crypto";
 import type { ResultSetHeader, RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { buildActionDeeplink } from "../work-inbox/action-item-registry.js";
+import { getDerivedRegistryItems } from "../work-inbox/work-inbox.service.js";
+import { resolvePrimaryRole } from "../../shared/roleResolver.js";
 
 interface InboxFilters {
   user_id: string;
@@ -217,7 +219,16 @@ export interface PendingTask {
    * live 2026-08-13: 6 real pending work_item rows, the oldest 15 days stale, none
    * completable through the UI's own "Act & Close" button.
    */
-  source: "tat" | "inbox" | "work_item";
+  /**
+   * "derived" = LEAVE_APPROVAL_PENDING / FF_CLEARANCE_PENDING / BGV_PENDING — registry types
+   * with no producer row anywhere (getDerivedRegistryItems, work-inbox.service.ts); computed
+   * live from leave_request / exit_clearance_task / candidate_bgv_check on every request.
+   * There is no work_item/work_inbox_item row to mark complete, so these carry no generic
+   * completion action — action_url is the only next step, and it points at the real page
+   * (leave approvals / exit clearance / BGV) where the underlying record actually gets
+   * actioned. Faking a "complete" button here would mark nothing anywhere.
+   */
+  source: "tat" | "inbox" | "work_item" | "derived";
   module: string;
   title: string;
   description?: string;
@@ -417,11 +428,16 @@ export async function getMyPending(userId: string): Promise<{ items: PendingTask
   // claims "tasks across all platform modules". The CEO UAT reported exactly that:
   // one item type, no approval, payroll or exit items.
   //
-  // Adding the source does NOT by itself deliver those items. Verified against prod
-  // 31-Jul-2026: work_item holds 2 rows, both EMPLOYEE_CODE_PENDING. Of the 22
-  // registered types, only that one has a producer writing rows. The rest of the
-  // finding is missing producers, not missing wiring — but the wiring has to exist
-  // first, or a producer added later would still be invisible here.
+  // Adding the source does NOT by itself deliver those items. As of 2026-08-13, of the 22
+  // registered types: 4 (INCENTIVE_APPROVAL, DPDP_WITHDRAWAL_REVIEW,
+  // RESIGNATION_MANAGER_DISCUSSION, RESIGNATION_HR_DISCUSSION) and NAME_MISMATCH write raw
+  // INSERTs into work_item directly (incentives.routes.ts, dpdp-withdrawal.service.ts,
+  // resignation.routes.ts, name-consistency.routes.ts — none go through the shared
+  // triggerX() wrappers in work-inbox.triggers.ts, which is why grepping only those wrapper
+  // names undercounts producers); 3 more (LEAVE_APPROVAL_PENDING, FF_CLEARANCE_PENDING,
+  // BGV_PENDING) are never written at all and are derived live instead — see
+  // getDerivedRegistryItems() below. ONBOARDING_STUCK, TAT_BREACH and the remaining 8 types
+  // still have no producer of any kind, live or dead-code.
   //
   // Role-assigned items are included deliberately: approvals are addressed to a role,
   // not a person, so filtering on assigned_to_user_id alone would keep them hidden.
@@ -448,6 +464,14 @@ export async function getMyPending(userId: string): Promise<{ items: PendingTask
       LIMIT 200`,
     [userId, ...rolePool],
   ).catch(() => [[]] as unknown as [RowDataPacket[], unknown]);
+
+  // Fourth source: the three registry types with no producer at all, derived live from
+  // their real source table by getDerivedRegistryItems (work-inbox.service.ts) — see that
+  // function's comment. primaryRole mirrors how work-inbox.routes.ts resolves it
+  // (getUserRoleContext), computed here from the roles already fetched above instead of a
+  // second query.
+  const primaryRole = resolvePrimaryRole(roles);
+  const derivedRows = await getDerivedRegistryItems(userId, primaryRole).catch(() => []);
 
   const now = Date.now();
   const items: PendingTask[] = [
@@ -528,6 +552,32 @@ export async function getMyPending(userId: string): Promise<{ items: PendingTask
         requested_by_code: row.requested_by_code ? String(row.requested_by_code) : undefined,
       };
     }),
+    // Derived rows: LEAVE_APPROVAL_PENDING / FF_CLEARANCE_PENDING / BGV_PENDING, computed
+    // live rather than read from a stored row — see getDerivedRegistryItems's comment. id is
+    // already namespaced ('leave:<uuid>', 'exitclr:<uuid>', 'bgv:<uuid>') so it can't collide
+    // with a work_item/work_inbox_item id; action_url is always set (each branch hardcodes
+    // its own real page) so "Open" is always available even though "Act & Close" is not.
+    ...(derivedRows as RowDataPacket[]).map((row): PendingTask => {
+      const createdAt = String(row.created_at ?? "");
+      const agingH = createdAt ? (now - new Date(createdAt).getTime()) / 3_600_000 : 0;
+      const dueAt = row.due_at ? String(row.due_at) : null;
+      return {
+        id: String(row.id),
+        source: "derived",
+        module: String(row.module_code ?? row.item_type ?? "general"),
+        title: String(row.title ?? ""),
+        description: row.description ? String(row.description) : undefined,
+        entity_type: row.entity_type ? String(row.entity_type) : undefined,
+        entity_id: row.entity_id ? String(row.entity_id) : undefined,
+        action_url: row.action_url ? String(row.action_url) : undefined,
+        priority: String(row.priority ?? "normal"),
+        tat_deadline: dueAt ?? undefined,
+        created_at: createdAt,
+        aging_hours: Math.round(agingH * 10) / 10,
+        risk: calcRisk(dueAt, createdAt),
+        employee_name: row.assigned_employee_name ? String(row.assigned_employee_name) : undefined,
+      };
+    }),
   ];
 
   // Sort by risk then priority
@@ -556,7 +606,8 @@ export async function getMyPending(userId: string): Promise<{ items: PendingTask
     truncated:
       (tatRows as RowDataPacket[]).length === 300 ||
       (inboxRows as RowDataPacket[]).length === 200 ||
-      (workItemRows as RowDataPacket[]).length === 200,
+      (workItemRows as RowDataPacket[]).length === 200 ||
+      (derivedRows as RowDataPacket[]).length === 200,
   };
 
   return { items, summary };

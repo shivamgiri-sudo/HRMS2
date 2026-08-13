@@ -24,7 +24,13 @@ type Risk = "breached" | "aged" | "due_soon" | "on_track";
 
 interface PendingTask {
   id: string;
-  source: "tat" | "inbox" | "work_item";
+  /**
+   * "derived" (LEAVE_APPROVAL_PENDING / FF_CLEARANCE_PENDING / BGV_PENDING) is computed live
+   * from its real source table, not read from a work_item/work_inbox_item row — there is
+   * nothing to mark complete generically. These render without an "Act & Close" button;
+   * action_url is always populated and is the only next step.
+   */
+  source: "tat" | "inbox" | "work_item" | "derived";
   module: string;
   title: string;
   description?: string;
@@ -329,17 +335,22 @@ function ActionSheet({
             </div>
           )}
 
-          {/* Remarks + action */}
-          <div>
-            <p className="mb-2 text-xs font-black uppercase tracking-widest text-slate-400">Remarks (optional)</p>
-            <Textarea
-              value={remarks}
-              onChange={(e) => setRemarks(e.target.value)}
-              rows={3}
-              placeholder="Add a note before completing…"
-              className="resize-none text-sm"
-            />
-          </div>
+          {/* Remarks + action — "derived" tasks (leave/exit-clearance/BGV computed live from
+              their own table, not a work_item row) have nothing here to mark complete; only
+              the linked page can actually action them. Faking a completion control would mark
+              nothing anywhere while looking like it worked. */}
+          {task.source !== "derived" && (
+            <div>
+              <p className="mb-2 text-xs font-black uppercase tracking-widest text-slate-400">Remarks (optional)</p>
+              <Textarea
+                value={remarks}
+                onChange={(e) => setRemarks(e.target.value)}
+                rows={3}
+                placeholder="Add a note before completing…"
+                className="resize-none text-sm"
+              />
+            </div>
+          )}
 
           <div className="flex gap-3">
             {task.action_url && (
@@ -349,15 +360,17 @@ function ActionSheet({
                 </a>
               </Button>
             )}
-            <Button
-              size="sm"
-              onClick={handleAct}
-              disabled={acting}
-              className="flex-1 gap-1.5 bg-slate-950 hover:bg-slate-800 text-white"
-            >
-              {acting ? <Loader className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
-              Act & Close
-            </Button>
+            {task.source !== "derived" && (
+              <Button
+                size="sm"
+                onClick={handleAct}
+                disabled={acting}
+                className="flex-1 gap-1.5 bg-slate-950 hover:bg-slate-800 text-white"
+              >
+                {acting ? <Loader className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+                Act & Close
+              </Button>
+            )}
           </div>
         </div>
       </SheetContent>
@@ -479,6 +492,12 @@ export default function NativeWorkInbox() {
       // every reload with no error anywhere. Found live 2026-08-13: 6 pending work_item
       // rows, the oldest 15 days stale, none completable through this button until now.
       await hrmsApi.post(`/api/work-inbox/${id}/complete`, { remarks: remarks || undefined });
+    } else if (task.source === "derived") {
+      // Defense in depth: the ActionSheet hides "Act & Close" for derived tasks (see
+      // PendingTask.source doc comment), so this shouldn't be reachable — but if it ever is,
+      // fail loudly rather than PATCHing a synthetic id ("leave:<uuid>") against
+      // work_inbox_item, which would silently do nothing while looking like it worked.
+      throw new Error("This item has no generic completion action — use its Open link instead.");
     } else {
       await hrmsApi.patch(`/api/inbox/${id}/actioned`, {});
     }
