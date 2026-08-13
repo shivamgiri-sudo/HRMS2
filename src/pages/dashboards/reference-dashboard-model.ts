@@ -29,8 +29,14 @@ export interface ReferenceDashboardData {
    * the metric has no usable drilldown route. Spread onto a ReferenceMetric:
    *   { label: "Headcount", value: hc, ...data.drilldownFor("hc") }
    * The drawer itself is owned once by ReferenceRoleDashboard.
+   *
+   * `filters` narrows the drawer's own query (sent as query-string params on the
+   * drilldown request) for a metric whose backing table has more than one tile pointed
+   * at it — e.g. "Onboarding Pending" and "Onboarding Stuck" both key on "onb" but
+   * should each open a drawer scoped to their own status bucket, not an identical
+   * everything-included breakdown. Metrics with only one tile can omit it.
    */
-  drilldownFor?: (metricKey: string) => { onDrilldown?: () => void };
+  drilldownFor?: (metricKey: string, filters?: Record<string, string>) => { onDrilldown?: () => void };
   employee: EmployeeDashboardData;
   ats: JsonRecord;
   system: JsonRecord;

@@ -17,6 +17,12 @@ export interface DashboardDrilldownDrawerProps {
   metricCode: string;
   metricName: string;
   dashboardCode: string;
+  /**
+   * Narrows the drawer's own query — e.g. { bucket: "stuck" } — for a metric with more
+   * than one tile pointed at it, so each tile's drawer shows only what that tile
+   * actually claims to be, not an identical everything-included breakdown.
+   */
+  filters?: Record<string, string>;
 }
 
 interface DrilldownData {
@@ -30,10 +36,14 @@ export function DashboardDrilldownDrawer({
   metricCode,
   metricName,
   dashboardCode,
+  filters,
 }: DashboardDrilldownDrawerProps) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [data, setData] = useState<DrilldownData | null>(null);
+  // Stable string key so the effect below doesn't re-fire on every render from a new
+  // filters object literal with the same contents (every layout passes one inline).
+  const filtersKey = filters ? JSON.stringify(filters) : "";
 
   useEffect(() => {
     if (!open || !metricCode || !dashboardCode) return;
@@ -43,11 +53,15 @@ export function DashboardDrilldownDrawer({
     setError(null);
     setData(null);
 
+    const query = filters && Object.keys(filters).length > 0
+      ? `?${new URLSearchParams(filters).toString()}`
+      : "";
+
     // Must go through hrmsApi: a bare fetch() sends no Authorization header, no
     // credentials and no API base URL, so it 401s in dev (app :8080, API :5055).
     hrmsApi
       .get<{ data?: DrilldownData } | DrilldownData>(
-        `/api/dashboards/${dashboardCode}/metric/${metricCode}/drilldown`,
+        `/api/dashboards/${dashboardCode}/metric/${metricCode}/drilldown${query}`,
       )
       .then((json) => {
         if (!cancelled) {
@@ -64,7 +78,8 @@ export function DashboardDrilldownDrawer({
     return () => {
       cancelled = true;
     };
-  }, [open, metricCode, dashboardCode]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- filtersKey stands in for filters
+  }, [open, metricCode, dashboardCode, filtersKey]);
 
   const columns =
     data?.records && data.records.length > 0

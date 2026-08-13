@@ -8,6 +8,8 @@
     "src/pages/dashboards/ReferenceDashboardUI.tsx",
     "src/pages/dashboards/reference-dashboard-model.ts",
     "src/pages/dashboards/ReferenceRoleDashboard.tsx",
+    "src/pages/dashboards/reference/HrReferenceLayout.tsx",
+    "src/components/dashboard/DashboardDrilldownDrawer.tsx",
     "src/vite-env.d.ts"
   ]
 }

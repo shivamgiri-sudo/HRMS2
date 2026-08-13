@@ -4,9 +4,11 @@ import { db } from "../../db/mysql.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
 import { columnExists, ifObjectExists, tableExists } from "../../shared/schema-object-cache.js";
 import {
+  EXPECTED_TO_WORK_EXCLUSIONS,
   HALF_DAY_STATUS,
   LATEST_COMPLETE_ATTENDANCE_DATE_SQL,
   PRESENT_SESSION_STATUSES,
+  PRESENT_STATUSES,
   attendedDaysSql,
   expectedToWorkSql,
   presentSql,
@@ -735,9 +737,11 @@ export const managementService = {
       attendanceRows.map((row) => [String(row.status), numberValue(row.value)]),
     );
     const attendanceTotal = Object.values(attendanceByStatus).reduce((sum, value) => sum + value, 0);
-    // Expected to work = total - leave/week_off/holiday (employees who should have been present)
-    const nonWorkingStatuses = ['leave_approved', 'on_leave', 'leave', 'week_off', 'holiday'];
-    const nonWorkingCount = nonWorkingStatuses.reduce(
+    // Expected to work = total - leave/week_off/holiday (employees who should have been present).
+    // Reuses the shared vocabulary rather than a hand-maintained copy of the same five
+    // statuses — attendance-canon.contract.test.ts pins this file to the shared list
+    // elsewhere in this same module; this local array had drifted out from under that.
+    const nonWorkingCount = EXPECTED_TO_WORK_EXCLUSIONS.reduce(
       (sum, status) => sum + numberValue(attendanceByStatus[status]),
       0,
     );
@@ -746,8 +750,16 @@ export const managementService = {
       numberValue(attendanceByStatus.absent)
       + numberValue(attendanceByStatus.unreconciled)
       + numberValue(attendanceByStatus.half_day) * 0.5;
+    // PRESENT_STATUSES (present + week_off_worked) — not 'present' alone. Omitting
+    // week_off_worked here reintroduced, in this one hand-rolled breakdown, the exact
+    // bug the shared helper exists to prevent: an employee who worked their rostered
+    // week-off showed up as neither present nor absent, understating this figure (and
+    // therefore overstating the shrinkage_pct derived from it below) on any day with
+    // week_off_worked rows, while the org-wide Attendance Rate tile — computed via the
+    // shared presentSql() helper — counted them correctly. Both numbers render on the
+    // same CEO tile row.
     const productiveEquivalent =
-      numberValue(attendanceByStatus.present)
+      PRESENT_STATUSES.reduce((sum, status) => sum + numberValue(attendanceByStatus[status]), 0)
       + numberValue(attendanceByStatus.half_day) * 0.5;
     const attendanceDate = attendanceRows[0]?.record_date
       ? new Date(attendanceRows[0].record_date as string | Date).toISOString().slice(0, 10)

@@ -66,6 +66,23 @@ export interface MetricResult {
   asOf?: string | null;
 }
 
+/**
+ * The single branch/process id to use for TARGET lookup only — never for the metric's
+ * own value, which already aggregates the caller's full scope correctly via
+ * buildScopeWhere*. Every wrapEnriched() call site used to pass scope.branchIds[0] /
+ * scope.processIds[0] unconditionally, so a scope naming several branches or processes
+ * (a Process Manager whose one process spans multiple branches, a role with several
+ * explicit assignments) had its target/variance/status-vs-target silently compared
+ * against whichever branch happened to be first in the array, while the value itself
+ * stayed a correct multi-branch aggregate. Returns null — "no specific id, fall through
+ * to the org-wide target" — for anything other than exactly one id, rather than
+ * guessing. A scope with exactly one branch/process (by far the common case) is
+ * unaffected.
+ */
+function targetScopeId(ids: readonly string[]): string | null {
+  return ids.length === 1 ? ids[0] : null;
+}
+
 async function wrapEnriched(
   metricCode: string,
   value: number | null,
@@ -150,11 +167,21 @@ export async function getHeadcountMetrics(scope: DashboardScope): Promise<Metric
     // of the single slowest query instead of the sum of all three.
     const [[rows], [reqRows], [availRows]] = await Promise.all([
       db.execute<RowDataPacket[]>(
-        // active_status alone. The extra employment_status conjunct made this tile
-        // disagree with the headcount and employee-master reports (1,123 vs 1,125 on
-        // 2026-08-07) and excluded anyone on probation, notice or suspension from the
-        // company's headline headcount.
-        `SELECT COUNT(*) AS active FROM employees e WHERE e.active_status = 1 AND ${scopeSql}`,
+        // active_status alone, plus date_of_joining — not employment_status. The
+        // employment_status conjunct is deliberately absent: it made this tile disagree
+        // with the headcount and employee-master reports (1,123 vs 1,125 on 2026-08-07)
+        // and excluded anyone on probation, notice or suspension from the company's
+        // headline headcount, which is wrong — those people are here.
+        //
+        // date_of_joining is a different question: a pre-boarded record with a FUTURE
+        // join date is someone who has not started yet, not someone currently on the
+        // payroll. management.service.ts's three headcount queries already require
+        // date_of_joining <= CURDATE(); this one didn't, so a super_admin switching
+        // between the Super Admin and CEO/Manager dashboard tabs could see two
+        // different "headcount" numbers the moment a future-dated hire exists (0
+        // employees affected as of 2026-08-13 — this was a latent, not live, gap).
+        `SELECT COUNT(*) AS active FROM employees e
+          WHERE e.active_status = 1 AND e.date_of_joining <= CURDATE() AND ${scopeSql}`,
         scopeParams
       ),
       // Required HC: today's planned HC from slot requirements, fallback to workforce mandate
@@ -191,7 +218,7 @@ export async function getHeadcountMetrics(scope: DashboardScope): Promise<Metric
     const short = required != null && available != null ? required - available : null;
 
     const status: MetricResult["status"] = active === 0 ? "warn" : "ok";
-    return wrapEnriched("HEADCOUNT", active, { active, required, available, short }, status, true, scope.branchIds[0], scope.processIds[0]);
+    return wrapEnriched("HEADCOUNT", active, { active, required, available, short }, status, true, targetScopeId(scope.branchIds), targetScopeId(scope.processIds));
   } catch (err) {
     return nullResult("HEADCOUNT", err);
   }
@@ -259,7 +286,7 @@ export async function getOnboardingMetrics(scope: DashboardScope): Promise<Metri
       "ONBOARDING",
       submitted + pending,
       { submitted, pending, otpVerified, otpPending: otpVerified, stuck, joined, total },
-      status, true, scope.branchIds[0], scope.processIds[0], total,
+      status, true, targetScopeId(scope.branchIds), targetScopeId(scope.processIds), total,
     );
   } catch (err) {
     return nullResult("ONBOARDING", err);
@@ -363,7 +390,7 @@ export async function getAttendanceMetrics(scope: DashboardScope): Promise<Metri
       const noAttendanceSourceEarly = await coveragePromise;
       void noAttendanceSourceEarly;
       return wrapEnriched("ATTENDANCE", null, {}, "unknown", true,
-        scope.branchIds[0], scope.processIds[0], 0);
+        targetScopeId(scope.branchIds), targetScopeId(scope.processIds), 0);
     }
 
     // Status vocabulary comes from shared/attendanceStatus.ts. Previously this counted
@@ -452,7 +479,7 @@ export async function getAttendanceMetrics(scope: DashboardScope): Promise<Metri
       attendanceRate,
       noAttendanceSource,
       unreconciledPct,
-    }, status, true, scope.branchIds[0], scope.processIds[0], totalRecords);
+    }, status, true, targetScopeId(scope.branchIds), targetScopeId(scope.processIds), totalRecords);
 
     // The day this actually describes — two days back today. Presenting it as
     // "now" is what makes an old figure look like a broken one.
@@ -545,7 +572,7 @@ export async function getPayrollReadinessMetrics(scope: DashboardScope): Promise
       "PAYROLL_READINESS",
       readyCount,
       { total, readyCount, blockerCount, missingBank, missingPan, missingUan },
-      status, true, scope.branchIds[0], scope.processIds[0], total
+      status, true, targetScopeId(scope.branchIds), targetScopeId(scope.processIds), total
     );
   } catch (err) {
     return nullResult("PAYROLL_READINESS", err);
@@ -584,7 +611,7 @@ export async function getIncentiveMetrics(scope: DashboardScope): Promise<Metric
       "INCENTIVE",
       pendingBatches,
       { pendingBatches, pendingAmount, approvedAmount, rejectedBatches },
-      status, false, scope.branchIds[0], scope.processIds[0], Number(r.source_rows ?? 0)
+      status, false, targetScopeId(scope.branchIds), targetScopeId(scope.processIds), Number(r.source_rows ?? 0)
     );
   } catch (err) {
     return nullResult("INCENTIVE", err);
@@ -621,7 +648,7 @@ export async function getTatMetrics(scope: DashboardScope): Promise<MetricResult
     const status: MetricResult["status"] =
       breached > 0 ? "critical" : overdue > 0 ? "warn" : "ok";
 
-    return wrapEnriched("TAT", open, { open, overdue, breached, avgAgeHours }, status, false, scope.branchIds[0], scope.processIds[0], Number(r.source_rows ?? 0));
+    return wrapEnriched("TAT", open, { open, overdue, breached, avgAgeHours }, status, false, targetScopeId(scope.branchIds), targetScopeId(scope.processIds), Number(r.source_rows ?? 0));
   } catch (err) {
     return nullResult("TAT", err);
   }
@@ -680,7 +707,7 @@ export async function getResignationMetrics(scope: DashboardScope): Promise<Metr
       "RESIGNATION",
       totalActive,
       { pendingDiscussion, accepted, withdrawn, other, totalActive },
-      status, false, scope.branchIds[0], scope.processIds[0],
+      status, false, targetScopeId(scope.branchIds), targetScopeId(scope.processIds),
       Number(r.sourceRows ?? 0)
     );
   } catch (err) {
@@ -730,8 +757,8 @@ export async function getDpdpWithdrawalMetrics(scope: DashboardScope): Promise<M
       },
       status,
       false,
-      scope.branchIds[0],
-      scope.processIds[0],
+      targetScopeId(scope.branchIds),
+      targetScopeId(scope.processIds),
     );
   } catch (err) {
     return nullResult("DPDP_WITHDRAWAL", err);
@@ -778,8 +805,8 @@ export async function getAppointmentEsignMetrics(scope: DashboardScope): Promise
       },
       status,
       false,
-      scope.branchIds[0],
-      scope.processIds[0],
+      targetScopeId(scope.branchIds),
+      targetScopeId(scope.processIds),
     );
   } catch (err) {
     return nullResult("APPOINTMENT_ESIGN", err);
@@ -829,7 +856,7 @@ export async function getBgvMetrics(scope: DashboardScope): Promise<MetricResult
     const status: MetricResult["status"] =
       breached > 0 || flagged > 0 ? "critical" : pending > 20 ? "warn" : "ok";
 
-    return wrapEnriched("BGV", pending, { pending, cleared, flagged, breached }, status, false, scope.branchIds[0], scope.processIds[0], Number(r.source_rows ?? 0));
+    return wrapEnriched("BGV", pending, { pending, cleared, flagged, breached }, status, false, targetScopeId(scope.branchIds), targetScopeId(scope.processIds), Number(r.source_rows ?? 0));
   } catch (err) {
     return nullResult("BGV", err);
   }
@@ -868,7 +895,7 @@ export async function getNameMismatchMetrics(scope: DashboardScope): Promise<Met
     const status: MetricResult["status"] =
       blocking > 0 ? "critical" : mismatch > 0 ? "warn" : "ok";
 
-    return wrapEnriched("NAME_MISMATCH", mismatch + partial, { mismatch, partial, pending, blocking }, status, false, scope.branchIds[0], scope.processIds[0], Number(r.source_rows ?? 0));
+    return wrapEnriched("NAME_MISMATCH", mismatch + partial, { mismatch, partial, pending, blocking }, status, false, targetScopeId(scope.branchIds), targetScopeId(scope.processIds), Number(r.source_rows ?? 0));
   } catch (err) {
     return nullResult("NAME_MISMATCH", err);
   }
@@ -911,8 +938,8 @@ export async function getJoiningDocEsignMetrics(scope: DashboardScope): Promise<
       },
       status,
       false,
-      scope.branchIds[0],
-      scope.processIds[0],
+      targetScopeId(scope.branchIds),
+      targetScopeId(scope.processIds),
     );
   } catch (err) {
     return nullResult("JOINING_DOC_ESIGN", err);
@@ -978,8 +1005,8 @@ export async function getAttendanceExceptionMetrics(scope: DashboardScope): Prom
       },
       status,
       false,
-      scope.branchIds[0],
-      scope.processIds[0],
+      targetScopeId(scope.branchIds),
+      targetScopeId(scope.processIds),
       Number(r.source_rows ?? 0),
     );
   } catch (err) {
@@ -1058,8 +1085,8 @@ export async function getDocumentComplianceMetrics(scope: DashboardScope): Promi
       },
       status,
       false,
-      scope.branchIds[0],
-      scope.processIds[0],
+      targetScopeId(scope.branchIds),
+      targetScopeId(scope.processIds),
       activeEmployees,
     );
   } catch (err) {
@@ -1129,8 +1156,8 @@ export async function getBiometricActivityMetrics(scope: DashboardScope): Promis
       },
       status,
       true,
-      scope.branchIds[0],
-      scope.processIds[0],
+      targetScopeId(scope.branchIds),
+      targetScopeId(scope.processIds),
       Number(r.source_rows ?? 0),
     );
   } catch (err) {
@@ -1201,8 +1228,8 @@ export async function getSalaryComponentMetrics(scope: DashboardScope): Promise<
       },
       status,
       true,
-      scope.branchIds[0],
-      scope.processIds[0],
+      targetScopeId(scope.branchIds),
+      targetScopeId(scope.processIds),
       Number(r.source_rows ?? 0),
     );
   } catch (err) {
@@ -1270,8 +1297,8 @@ export async function getRecruiterActivityMetrics(scope: DashboardScope): Promis
       },
       status,
       true,
-      scope.branchIds[0],
-      scope.processIds[0],
+      targetScopeId(scope.branchIds),
+      targetScopeId(scope.processIds),
       leads,
     );
   } catch (err) {
@@ -1335,8 +1362,8 @@ export async function getTrainingProgressMetrics(scope: DashboardScope): Promise
       },
       status,
       true,
-      scope.branchIds[0],
-      scope.processIds[0],
+      targetScopeId(scope.branchIds),
+      targetScopeId(scope.processIds),
       total,
     );
   } catch (err) {
@@ -1402,8 +1429,8 @@ export async function getLeaveApprovalMetrics(scope: DashboardScope): Promise<Me
       },
       status,
       false,
-      scope.branchIds[0],
-      scope.processIds[0],
+      targetScopeId(scope.branchIds),
+      targetScopeId(scope.processIds),
       Number(r.source_rows ?? 0),
     );
   } catch (err) {

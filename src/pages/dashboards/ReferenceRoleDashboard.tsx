@@ -474,9 +474,14 @@ export default function ReferenceRoleDashboard({ variant, subheader }: { variant
   // through to the records behind its number. Owning the drawer here and passing a
   // factory down through ReferenceDashboardData means each layout only has to spread
   // `...drilldownFor("att")` onto a tile, and no layout needs its own drawer or state.
-  const [activeDrilldown, setActiveDrilldown] = useState<{ metricCode: string; metricName: string } | null>(null);
+  const [activeDrilldown, setActiveDrilldown] = useState<
+    { metricCode: string; metricName: string; filters?: Record<string, string> } | null
+  >(null);
 
-  const drilldownFor = (metricKey: string): { onDrilldown?: () => void } => {
+  const drilldownFor = (
+    metricKey: string,
+    filters?: Record<string, string>,
+  ): { onDrilldown?: () => void } => {
     const metric = metrics[metricKey];
     // Only offer a drill-down when the metric resolved and actually exposes a route.
     if (!metric?.drilldownUrl || metric.available === false) return {};
@@ -484,6 +489,7 @@ export default function ReferenceRoleDashboard({ variant, subheader }: { variant
       onDrilldown: () => setActiveDrilldown({
         metricCode: metric.code,
         metricName: metric.label ?? metricKey,
+        filters,
       }),
     };
   };
@@ -604,6 +610,7 @@ export default function ReferenceRoleDashboard({ variant, subheader }: { variant
             dashboardCode={code}
             metricCode={activeDrilldown.metricCode}
             metricName={activeDrilldown.metricName}
+            filters={activeDrilldown.filters}
           />
         ) : null}
       </main>

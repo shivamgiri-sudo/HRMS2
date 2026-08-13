@@ -52,14 +52,14 @@ function capNote(returned: number, cap: number, noun: string): string | undefine
 export async function getDrilldown(
   metricCode: string,
   scope: DashboardScope,
-  _filters?: Record<string, unknown>,
+  filters?: Record<string, unknown>,
 ): Promise<DrilldownResult> {
   switch (metricCode) {
     case "HEADCOUNT":
       return drillHeadcount(scope);
     case "ONBOARDING":
     case "ONBOARDING_PENDING":
-      return drillOnboarding(scope);
+      return drillOnboarding(scope, filters);
     case "ATTENDANCE":
       return drillAttendance(scope);
     case "PAYROLL_READINESS":
@@ -141,11 +141,12 @@ async function drillHeadcount(scope: DashboardScope): Promise<DrilldownResult> {
               COUNT(*) AS count
          FROM employees e
          LEFT JOIN branch_master b ON b.id = e.branch_id
-        -- active_status alone, matching the HEADCOUNT tile this drilldown opens from and
-        -- the headcount/employee-master reports. It previously also required
-        -- employment_status = 'active', so the tile and the "click to see who" behind it
-        -- counted different people — the drilldown is supposed to explain the tile.
+        -- Matches getHeadcountMetrics exactly: active_status alone (never
+        -- employment_status — see that function's comment) plus date_of_joining, so
+        -- the drilldown always explains the tile it opens from rather than a
+        -- differently-defined "headcount".
         WHERE e.active_status = 1
+          AND e.date_of_joining <= CURDATE()
           AND ${scopeSql}
         GROUP BY e.branch_id, b.branch_name
         ORDER BY count DESC`,
@@ -164,18 +165,40 @@ async function drillHeadcount(scope: DashboardScope): Promise<DrilldownResult> {
 }
 
 // ─── ONBOARDING ──────────────────────────────────────────────────────────────
-async function drillOnboarding(scope: DashboardScope): Promise<DrilldownResult> {
+/**
+ * Status sets behind each ONBOARDING tile, matching getOnboardingMetrics' own buckets
+ * exactly. "Onboarding Pending" and "Onboarding Stuck" both used to open this same
+ * drilldown with no filter, so either tile showed an identical breakdown of every
+ * status — a click on "Stuck" (2 candidates) opened the same drawer as a click on
+ * "Pending" (40 candidates), with no indication which one you'd asked for.
+ */
+const ONBOARDING_BUCKET_STATUSES: Record<string, readonly string[]> = {
+  pending: ["pending", "initiated"],
+  stuck: ["stuck"],
+};
+
+async function drillOnboarding(
+  scope: DashboardScope,
+  filters?: Record<string, unknown>,
+): Promise<DrilldownResult> {
   try {
     const { sql: scopeSql, params } = buildScopeWhere(scope, "bm.id", "pm.id");
     const join = candidateScopeJoin("b.candidate_id");
 
+    const bucket = typeof filters?.bucket === "string" ? filters.bucket : null;
+    const bucketStatuses = bucket ? ONBOARDING_BUCKET_STATUSES[bucket] : null;
+    const bucketSql = bucketStatuses
+      ? ` AND b.status IN (${bucketStatuses.map(() => "?").join(",")})`
+      : "";
+    const bucketParams = bucketStatuses ?? [];
+
     const [statusRows] = await db.execute<RowDataPacket[]>(
       `SELECT b.status AS status, COUNT(*) AS count
          FROM ats_onboarding_bridge b ${join}
-        WHERE ${scopeSql}
+        WHERE ${scopeSql}${bucketSql}
         GROUP BY b.status
         ORDER BY count DESC`,
-      params,
+      [...params, ...bucketParams],
     );
 
     // ats_candidate stores full_name; it has no first_name/last_name.
@@ -186,11 +209,11 @@ async function drillOnboarding(scope: DashboardScope): Promise<DrilldownResult> 
               b.status AS status,
               b.created_at AS createdAt
          FROM ats_onboarding_bridge b ${join}
-        WHERE b.status IN ('pending','initiated','stuck','profile_submitted')
+        WHERE b.status IN (${(bucketStatuses ?? ["pending", "initiated", "stuck", "profile_submitted"]).map(() => "?").join(",")})
           AND ${scopeSql}
         ORDER BY b.created_at ASC
         LIMIT 25`,
-      params,
+      [...(bucketStatuses ?? ["pending", "initiated", "stuck", "profile_submitted"]), ...params],
     );
 
     return {
@@ -465,7 +488,12 @@ async function drillBgv(scope: DashboardScope): Promise<DrilldownResult> {
               bgv.created_at AS createdAt
          FROM candidate_bgv_check bgv
          ${candidateScopeJoin("bgv.candidate_id")}
-        WHERE COALESCE(bgv.status,'pending') NOT IN ('verified','passed','completed')
+        -- Matches getBgvMetrics's own "pending" bucket exactly (including NULL treated
+        -- as pending). The previous NOT IN ('verified','passed','completed') was a
+        -- superset that also admitted rows the tile itself buckets as cleared,
+        -- flagged or breached — the drawer behind "BGV Pending" could legitimately
+        -- return more rows than the tile's own pending count.
+        WHERE COALESCE(bgv.status,'pending') IN ('pending','not_started','queued','manual_review','in_progress')
           AND ${scopeSql}
         ORDER BY bgv.created_at ASC
         LIMIT 100`,

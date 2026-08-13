@@ -67,8 +67,12 @@ export function HrReferenceLayout({ data, filters }: { data: ReferenceDashboardD
       <ReferenceMetricGrid columns={5} loading={data.loading} metrics={[
         { label: "Selected Candidates", value: selected, helper: previousSelected === null ? "Current reporting window" : "Vs Last 30 Days", icon: UserCheck, tone: "blue", trend: variance(selected, previousSelected), href: "/ats/dashboard" },
         { label: "Onboarding Submitted", value: submitted, helper: previousSubmitted === null ? "Current reporting window" : "Vs Last 30 Days", icon: FileCheck2, tone: "green", trend: variance(submitted, previousSubmitted), href: "/onboarding" },
-        { label: "Onboarding Pending", value: pending, helper: "Awaiting completion or review", icon: Hourglass, tone: "amber", href: "/onboarding", unavailableReason: onbReason, ...drill("onb") },
-        { label: "Onboarding Stuck", value: stuck, helper: "Requires intervention", icon: TriangleAlert, tone: "red", href: "/onboarding", unavailableReason: onbReason, ...drill("onb") },
+        // Both tiles keyed the same drilldown ("onb") with no filter, so either one opened
+        // an identical, everything-included status breakdown instead of scoping to what
+        // the clicked tile actually claims. The bucket filter narrows the drawer's own
+        // query to just that tile's status set — see drillOnboarding.
+        { label: "Onboarding Pending", value: pending, helper: "Awaiting completion or review", icon: Hourglass, tone: "amber", href: "/onboarding", unavailableReason: onbReason, ...drill("onb", { bucket: "pending" }) },
+        { label: "Onboarding Stuck", value: stuck, helper: "Requires intervention", icon: TriangleAlert, tone: "red", href: "/onboarding", unavailableReason: onbReason, ...drill("onb", { bucket: "stuck" }) },
         { label: "BGV Pending", value: bgv, helper: "Verification cases open", icon: ShieldCheck, tone: "red", href: "/ats/bgv", unavailableReason: metricUnavailableReason(m, "bgv"), ...drill("bgv") },
       ]} />
 
