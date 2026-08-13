@@ -544,35 +544,21 @@ router.get(`${UUID_ROUTE}/ctc`, h(async (req: any, res: any) => {
   });
 }));
 
-router.get(UUID_ROUTE, h(async (req: any, res: any) => {
-  const userId = req.authUser!.id;
-  const targetId = String(req.params.id);
-  await assertEmployeeAccess(userId, targetId, PEOPLE_SCOPE_ROLES);
-
-  const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT e.*,
-            COALESCE(NULLIF(TRIM(e.official_email), ''), NULLIF(TRIM(e.office_email), ''), e.email) AS email,
-            COALESCE(NULLIF(TRIM(e.official_email), ''), NULLIF(TRIM(e.office_email), ''), e.email) AS official_email,
-            NULLIF(TRIM(COALESCE(e.personal_email, '')), '') AS personal_email,
-            d.designation_name,
-            dept.dept_name,
-            b.branch_name,
-            p.process_name,
-            cc.cost_centre_name,
-            CONCAT(m.first_name, ' ', COALESCE(m.last_name, '')) AS manager_name
-       FROM employees e
-       LEFT JOIN designation_master d ON d.id = e.designation_id
-       LEFT JOIN department_master dept ON dept.id = e.department_id
-       LEFT JOIN branch_master b ON b.id = e.branch_id
-       LEFT JOIN process_master p ON p.id = e.process_id
-       LEFT JOIN cost_centre_master cc ON cc.id = e.cost_centre_id
-       LEFT JOIN employees m ON m.id = COALESCE(e.reporting_manager_id, e.manager_id)
-      WHERE e.id = ?
-      LIMIT 1`,
-    [targetId],
-  );
-  if (!rows[0]) return res.status(404).json({ success: false, error: "Employee not found" });
-  return res.json({ success: true, data: rows[0] });
-}));
+// NOTE: there used to be a `router.get(UUID_ROUTE, ...)` here returning `SELECT e.*`
+// unredacted. Because this router is mounted before employee.routes.ts (app.ts) and
+// employee ids are UUIDs, that handler answered every real GET /api/employees/:id
+// request and shipped raw Aadhaar/PAN/bank/UAN to wfm, manager, branch_head,
+// process_manager and it_head — the exact exposure employeeIdentifierRedaction.ts and
+// employeeDetailRedaction.contract.test.ts were written to prevent, except the redacted
+// path (employee.routes.ts:1213 -> employee.controller.ts getEmployee) never ran because
+// this handler answered first. Removed so the request now falls through to that redacted
+// handler, which already has proper role+scope checks (employee.routes.ts:1213-1231) and
+// is unit-tested at the controller boundary. Do not re-add a plain GET /:id here — if the
+// joined display-name fields (designation_name/dept_name/branch_name/process_name/
+// cost_centre_name/manager_name) this query used to return turn out to be needed
+// somewhere, add them to employee.service.ts's getEmployee query instead, so they go
+// through redaction too. /:id/stat-card and /:id/ctc below are intentionally still
+// shadowing employee.routes.ts's copies — see the "SHADOWED" comment at
+// employee.routes.ts:1287, that duplication is deliberate and unrelated to this one.
 
 export { router as employeeSecureRouter };
