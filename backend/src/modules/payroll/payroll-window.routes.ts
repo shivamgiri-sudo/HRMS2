@@ -6,6 +6,8 @@ import { requireRole } from '../../middleware/requireRole.js';
 import type { AuthenticatedRequest } from '../../middleware/authMiddleware.js';
 import { db } from '../../db/mysql.js';
 import { isRunClosed } from './run-status.js';
+import { encryptField } from '../../shared/fieldEncryption.js';
+import { logSensitiveAction } from '../../shared/auditLog.js';
 
 const router = Router();
 const h = (fn: Function) => (req: any, res: any, next: any) => fn(req, res).catch(next);
@@ -166,7 +168,7 @@ router.patch('/bank-change-requests/:id', requireRole('payroll', 'super_admin'),
   }
 
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT id, employee_id, new_values, status FROM profile_update_approval WHERE id = ? LIMIT 1`,
+    `SELECT id, employee_id, old_values, new_values, status FROM profile_update_approval WHERE id = ? LIMIT 1`,
     [req.params.id]
   );
   const rec = (rows[0] as any);
@@ -174,6 +176,19 @@ router.patch('/bank-change-requests/:id', requireRole('payroll', 'super_admin'),
   if (rec.status !== 'pending') {
     return res.status(409).json({ success: false, message: `Request already ${rec.status}` });
   }
+
+  // Never write a raw account number into an audit log — mask to last 4 digits,
+  // same convention used for the pending-request submission's own audit entry
+  // (see the masked_account_number helper in employee.routes.ts POST /me/bank-change-request).
+  const maskAccountNumber = (values: Record<string, any> | undefined | null): Record<string, unknown> => {
+    if (!values) return {};
+    const { account_number, ...rest } = values;
+    return {
+      ...rest,
+      masked_account_number: account_number ? `****${String(account_number).slice(-4)}` : null,
+    };
+  };
+  const oldValues = typeof rec.old_values === 'string' ? JSON.parse(rec.old_values || '{}') : (rec.old_values ?? {});
 
   if (decision === 'approved') {
     // Determine effective run month: lowest draft run month, or next calendar month
@@ -189,21 +204,41 @@ router.patch('/bank-change-requests/:id', requireRole('payroll', 'super_admin'),
     // Parse new bank details from JSON
     const newValues = typeof rec.new_values === 'string' ? JSON.parse(rec.new_values) : rec.new_values;
 
-    // Mark old primary bank record inactive
+    // Archive the existing primary account (kept for history, not deleted) —
+    // matches profile-approval.service.ts's approveBankDetailsUpdate archival shape.
     await db.execute(
-      `UPDATE employee_bank_detail SET is_primary = 0 WHERE employee_id = ? AND is_primary = 1`,
+      `UPDATE employee_bank_detail SET is_primary = 0, active_status = 0 WHERE employee_id = ? AND is_primary = 1`,
       [rec.employee_id]
     );
 
-    // Insert new primary bank record
+    // account_seq has a UNIQUE KEY (employee_id, account_seq) and a DEFAULT of 1 —
+    // hardcoding 1 here would collide with the just-archived row (still present,
+    // only deactivated) on any employee's second-ever approved bank change.
+    const [seqRows] = await db.execute<RowDataPacket[]>(
+      `SELECT COALESCE(MAX(account_seq), 0) + 1 AS next_seq FROM employee_bank_detail WHERE employee_id = ?`,
+      [rec.employee_id]
+    );
+    const nextSeq = Number((seqRows[0] as any)?.next_seq ?? 1);
+
+    const encAccountNumber = newValues.account_number
+      ? encryptField(String(newValues.account_number))
+      : null;
+
+    // Insert new primary bank record — account_number_enc was previously never
+    // written here, so an approved bank change silently discarded the account
+    // number the employee submitted.
     await db.execute(
       `INSERT INTO employee_bank_detail
-         (id, employee_id, bank_name, account_holder_name, ifsc_code, account_type, is_primary, active_status)
-       VALUES (UUID(), ?, ?, ?, ?, ?, 1, 1)`,
+         (id, employee_id, is_primary, account_seq, bank_name, account_holder_name,
+          bank_branch, account_number_enc, ifsc_code, account_type, verified, active_status)
+       VALUES (UUID(), ?, 1, ?, ?, ?, ?, ?, ?, ?, 1, 1)`,
       [
         rec.employee_id,
+        nextSeq,
         newValues.bank_name ?? null,
         newValues.account_holder_name ?? null,
+        newValues.bank_branch ?? null,
+        encAccountNumber,
         newValues.ifsc_code ?? null,
         newValues.account_type ?? 'savings',
       ]
@@ -216,6 +251,18 @@ router.patch('/bank-change-requests/:id', requireRole('payroll', 'super_admin'),
         WHERE id = ?`,
       [actorUserId, note ?? null, nextRunMonth, req.params.id]
     );
+
+    await logSensitiveAction({
+      actor_user_id: actorUserId,
+      action_type: 'BANK_DETAILS_APPROVED',
+      module_key: 'PAYROLL',
+      entity_type: 'profile_update_approval',
+      entity_id: req.params.id,
+      employee_id: rec.employee_id,
+      reason: note ?? undefined,
+      old_value_json: maskAccountNumber(oldValues),
+      new_value_json: maskAccountNumber(newValues),
+    });
   } else {
     await db.execute(
       `UPDATE profile_update_approval
@@ -223,6 +270,19 @@ router.patch('/bank-change-requests/:id', requireRole('payroll', 'super_admin'),
         WHERE id = ?`,
       [actorUserId, note ?? null, req.params.id]
     );
+
+    const rejectedValues = typeof rec.new_values === 'string' ? JSON.parse(rec.new_values || '{}') : (rec.new_values ?? {});
+    await logSensitiveAction({
+      actor_user_id: actorUserId,
+      action_type: 'BANK_DETAILS_REJECTED',
+      module_key: 'PAYROLL',
+      entity_type: 'profile_update_approval',
+      entity_id: req.params.id,
+      employee_id: rec.employee_id,
+      reason: note ?? undefined,
+      old_value_json: maskAccountNumber(oldValues),
+      new_value_json: maskAccountNumber(rejectedValues),
+    });
   }
 
   return res.json({ success: true, message: `Bank change request ${decision}` });
