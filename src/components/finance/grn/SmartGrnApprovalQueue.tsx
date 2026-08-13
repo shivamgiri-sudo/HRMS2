@@ -5,8 +5,10 @@ import {
   BadgeCheck,
   Building2,
   CheckCircle2,
+  FileMinus2,
   FileText,
   Loader2,
+  Plus,
   RefreshCw,
   RotateCcw,
   Send,
@@ -207,6 +209,72 @@ export function SmartGrnApprovalQueue({ onReopenForEdit }: { onReopenForEdit?: (
     },
     onError: (error: Error) =>
       toast({ title: "Cancellation failed", description: error.message, variant: "destructive" }),
+  });
+
+  // Debit Notes — state and queries
+  const DN_ELIGIBLE_STATUSES = new Set([
+    "pending_accounts_payment", "payment_scheduled", "partially_paid", "paid", "approved",
+  ]);
+  const canRaiseDn = Boolean(
+    target?.grn_type === "vendor"
+    && target?.status
+    && DN_ELIGIBLE_STATUSES.has(target.status)
+    && capabilities?.canReviewFinanceStage
+  );
+
+  const [dnForm, setDnForm] = useState({ date: "", reason: "other", amount: "", gstAmount: "", remarks: "" });
+  const [showDnCreate, setShowDnCreate] = useState(false);
+  const DN_REASONS = [
+    { value: "quality_deficiency", label: "Quality deficiency" },
+    { value: "short_supply",       label: "Short supply" },
+    { value: "price_difference",   label: "Price difference" },
+    { value: "returns",            label: "Returns" },
+    { value: "other",              label: "Other" },
+  ];
+
+  const debitNotesQuery = useQuery({
+    queryKey: ["grn-debit-notes", target?.id],
+    queryFn: () => hrmsApi.get<any>(`/api/finance/grns/${target!.id}/debit-notes`),
+    enabled: Boolean(target?.id) && canRaiseDn,
+    staleTime: 30_000,
+  });
+  const debitNotes: any[] = (debitNotesQuery.data as any)?.data ?? [];
+
+  const createDnMutation = useMutation({
+    mutationFn: () => hrmsApi.post(`/api/finance/grns/${target!.id}/debit-note`, {
+      dnDate: dnForm.date,
+      reason: dnForm.reason,
+      amount: Number(dnForm.amount),
+      gstAmount: Number(dnForm.gstAmount || 0),
+      remarks: dnForm.remarks.trim() || undefined,
+    }),
+    onSuccess: () => {
+      toast({ title: "Debit note raised" });
+      setShowDnCreate(false);
+      setDnForm({ date: "", reason: "other", amount: "", gstAmount: "", remarks: "" });
+      void debitNotesQuery.refetch();
+    },
+    onError: (e: Error) => toast({ title: "Failed to raise debit note", description: e.message, variant: "destructive" }),
+  });
+
+  const approveDnMutation = useMutation({
+    mutationFn: (dnId: string) => hrmsApi.post(`/api/finance/debit-notes/${dnId}/approve`, {}),
+    onSuccess: () => { toast({ title: "Debit note approved" }); void debitNotesQuery.refetch(); },
+    onError: (e: Error) => toast({ title: "Approve failed", description: e.message, variant: "destructive" }),
+  });
+
+  const [cancelDnId, setCancelDnId] = useState<string | null>(null);
+  const [cancelDnReason, setCancelDnReason] = useState("");
+  const cancelDnMutation = useMutation({
+    mutationFn: ({ id, reason }: { id: string; reason: string }) =>
+      hrmsApi.post(`/api/finance/debit-notes/${id}/cancel`, { reason }),
+    onSuccess: () => {
+      toast({ title: "Debit note cancelled" });
+      setCancelDnId(null);
+      setCancelDnReason("");
+      void debitNotesQuery.refetch();
+    },
+    onError: (e: Error) => toast({ title: "Cancel failed", description: e.message, variant: "destructive" }),
   });
 
   const reopenMutation = useMutation({
@@ -464,6 +532,17 @@ export function SmartGrnApprovalQueue({ onReopenForEdit }: { onReopenForEdit?: (
                 )}
               </TabsTrigger>
               <TabsTrigger value="decision" className={GRN_SHEET_TAB_TRIGGER}>Decision</TabsTrigger>
+              {canRaiseDn && (
+                <TabsTrigger value="debit-notes" className={GRN_SHEET_TAB_TRIGGER}>
+                  <FileMinus2 className="mr-1 h-3 w-3" />
+                  Debit Notes
+                  {debitNotes.filter((d) => String(d.status) === "draft").length > 0 && (
+                    <span className="ml-1 rounded-full bg-amber-100 px-1.5 font-grn-mono text-[9.5px] font-bold text-amber-700">
+                      {debitNotes.filter((d) => String(d.status) === "draft").length}
+                    </span>
+                  )}
+                </TabsTrigger>
+              )}
             </TabsList>
 
             {/* Details tab */}
@@ -757,6 +836,133 @@ export function SmartGrnApprovalQueue({ onReopenForEdit }: { onReopenForEdit?: (
                 </div>
               )}
             </TabsContent>
+            {/* Debit Notes tab */}
+            {canRaiseDn && (
+              <TabsContent value="debit-notes" className="m-0 flex-1 overflow-y-auto">
+                <div className="space-y-3 p-4">
+                  {debitNotesQuery.isLoading ? (
+                    <div className="flex justify-center py-6"><Loader2 className="h-5 w-5 animate-spin text-grn-ink-soft" /></div>
+                  ) : debitNotes.length === 0 && !showDnCreate ? (
+                    <GrnAlert tone="info">No debit notes raised against this GRN yet.</GrnAlert>
+                  ) : (
+                    <div className="space-y-2">
+                      {debitNotes.map((dn: any) => (
+                        <div key={dn.id} className="rounded-xl border bg-white p-3 text-sm">
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="min-w-0">
+                              <p className="font-semibold text-grn-ink">{dn.dn_number}</p>
+                              <p className="text-[11px] text-grn-ink-soft mt-0.5">
+                                {dn.reason?.replace(/_/g, " ")} · ₹{Number(dn.amount).toLocaleString("en-IN")}
+                                {Number(dn.gst_amount ?? 0) > 0 && ` + ₹${Number(dn.gst_amount).toLocaleString("en-IN")} GST`}
+                                {" · "}{String(dn.dn_date).slice(0, 10)}
+                              </p>
+                              {dn.remarks && <p className="text-[11px] text-grn-ink-soft mt-0.5 italic">{dn.remarks}</p>}
+                            </div>
+                            <div className="shrink-0 flex items-center gap-1.5">
+                              {String(dn.status) === "draft" && (
+                                <>
+                                  <span className="rounded-full bg-amber-50 border border-amber-200 px-2 py-0.5 text-[10px] font-bold text-amber-700">Draft</span>
+                                  <GrnButton variant="primary" className="h-6 px-2 text-[10px]"
+                                    disabled={approveDnMutation.isPending}
+                                    onClick={() => approveDnMutation.mutate(dn.id)}>
+                                    Approve
+                                  </GrnButton>
+                                  <GrnButton variant="destructive" className="h-6 px-2 text-[10px]"
+                                    disabled={cancelDnMutation.isPending}
+                                    onClick={() => { setCancelDnId(dn.id); setCancelDnReason(""); }}>
+                                    Cancel
+                                  </GrnButton>
+                                </>
+                              )}
+                              {String(dn.status) === "approved" && (
+                                <span className="rounded-full bg-emerald-50 border border-emerald-200 px-2 py-0.5 text-[10px] font-bold text-emerald-700">Approved</span>
+                              )}
+                              {String(dn.status) === "cancelled" && (
+                                <span className="rounded-full bg-slate-100 border border-slate-200 px-2 py-0.5 text-[10px] font-bold text-slate-500">Cancelled</span>
+                              )}
+                              {String(dn.status) === "settled" && (
+                                <span className="rounded-full bg-blue-50 border border-blue-200 px-2 py-0.5 text-[10px] font-bold text-blue-700">Settled</span>
+                              )}
+                            </div>
+                          </div>
+                          {cancelDnId === dn.id && (
+                            <div className="mt-2 space-y-1.5">
+                              <input
+                                className="h-8 w-full rounded-md border border-grn-line-soft bg-white px-2.5 text-xs"
+                                placeholder="Cancellation reason (required)"
+                                autoFocus
+                                value={cancelDnReason}
+                                onChange={(e) => setCancelDnReason(e.target.value)}
+                              />
+                              <div className="flex gap-1.5">
+                                <GrnButton variant="destructive" className="h-6 px-2 text-[10px]"
+                                  disabled={!cancelDnReason.trim() || cancelDnMutation.isPending}
+                                  onClick={() => cancelDnMutation.mutate({ id: dn.id, reason: cancelDnReason.trim() })}>
+                                  {cancelDnMutation.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : "Confirm"}
+                                </GrnButton>
+                                <GrnButton className="h-6 px-2 text-[10px]" onClick={() => setCancelDnId(null)}>Back</GrnButton>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Create new debit note form */}
+                  {!showDnCreate ? (
+                    <GrnButton variant="primary" onClick={() => setShowDnCreate(true)}>
+                      <Plus className="h-3.5 w-3.5" /> Raise Debit Note
+                    </GrnButton>
+                  ) : (
+                    <div className="rounded-xl border bg-slate-50 p-3 space-y-2 text-sm">
+                      <p className="text-[11px] font-bold uppercase tracking-wider text-grn-ink-soft">New Debit Note</p>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <label className="text-[11px] font-semibold text-grn-ink mb-1 block">Date *</label>
+                          <input type="date" className="h-8 w-full rounded-md border border-grn-line-soft bg-white px-2.5 text-xs"
+                            value={dnForm.date} onChange={(e) => setDnForm((f) => ({ ...f, date: e.target.value }))} />
+                        </div>
+                        <div>
+                          <label className="text-[11px] font-semibold text-grn-ink mb-1 block">Reason *</label>
+                          <select className="h-8 w-full rounded-md border border-grn-line-soft bg-white px-2.5 text-xs"
+                            value={dnForm.reason} onChange={(e) => setDnForm((f) => ({ ...f, reason: e.target.value }))}>
+                            {DN_REASONS.map((r) => <option key={r.value} value={r.value}>{r.label}</option>)}
+                          </select>
+                        </div>
+                        <div>
+                          <label className="text-[11px] font-semibold text-grn-ink mb-1 block">Amount (₹) *</label>
+                          <input type="number" min="0.01" className="h-8 w-full rounded-md border border-grn-line-soft bg-white px-2.5 text-xs"
+                            placeholder="0.00" value={dnForm.amount}
+                            onChange={(e) => setDnForm((f) => ({ ...f, amount: e.target.value }))} />
+                        </div>
+                        <div>
+                          <label className="text-[11px] font-semibold text-grn-ink mb-1 block">GST (₹)</label>
+                          <input type="number" min="0" className="h-8 w-full rounded-md border border-grn-line-soft bg-white px-2.5 text-xs"
+                            placeholder="0.00" value={dnForm.gstAmount}
+                            onChange={(e) => setDnForm((f) => ({ ...f, gstAmount: e.target.value }))} />
+                        </div>
+                      </div>
+                      <div>
+                        <label className="text-[11px] font-semibold text-grn-ink mb-1 block">Remarks</label>
+                        <input className="h-8 w-full rounded-md border border-grn-line-soft bg-white px-2.5 text-xs"
+                          placeholder="Optional details" value={dnForm.remarks}
+                          onChange={(e) => setDnForm((f) => ({ ...f, remarks: e.target.value }))} />
+                      </div>
+                      <div className="flex gap-2 pt-1">
+                        <GrnButton variant="primary"
+                          disabled={!dnForm.date || !dnForm.amount || Number(dnForm.amount) <= 0 || createDnMutation.isPending}
+                          onClick={() => createDnMutation.mutate()}>
+                          {createDnMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
+                          Raise Note
+                        </GrnButton>
+                        <GrnButton onClick={() => setShowDnCreate(false)}>Cancel</GrnButton>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </TabsContent>
+            )}
           </Tabs>
 
           <SheetFooter className="gap-2 border-t border-grn-line-soft px-[16px] py-[12px] sm:justify-end">
