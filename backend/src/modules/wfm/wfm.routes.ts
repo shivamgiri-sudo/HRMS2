@@ -677,6 +677,43 @@ wfmRouter.get("/manager/weekoff-review", requireAuth, requireRole("admin", "hr",
   return res.json({ success: true, data: rows });
 }));
 
+/**
+ * Blocks the ordinary manager-override roster actions (realign/force-approve/
+ * escalate/reject-request) once attendance for that assignment's date has
+ * been locked for payroll. payroll-governance.service.ts's freezeAttendance()
+ * sets attendance_daily_record.is_locked = 1 at the Attendance Locked /
+ * Payroll Input Ready lifecycle step — until then these endpoints behave
+ * exactly as before. Past that lock, editing the roster date through this
+ * path would silently rewrite a day payroll has already consumed; that now
+ * requires a separate, explicitly-authorized correction/reopen workflow
+ * instead of the normal override. (Part A.3, 2026-08-13 business-decision
+ * sign-off — additive guard only, no existing successful-path behavior for
+ * unlocked dates is changed.)
+ */
+async function assertRosterDateNotLocked(
+  dbConn: (typeof import("../../db/mysql.js"))["db"],
+  assignmentId: string
+): Promise<{ blocked: true; error: string } | { blocked: false }> {
+  const [rows] = await dbConn.execute<RowDataPacket[]>(
+    `SELECT adr.is_locked
+       FROM wfm_roster_assignment wra
+       LEFT JOIN attendance_daily_record adr
+         ON adr.employee_id = wra.employee_id AND adr.record_date = wra.roster_date
+      WHERE wra.id = ?
+      LIMIT 1`,
+    [assignmentId]
+  );
+  const row = (rows as RowDataPacket[])[0];
+  if (row && Number(row.is_locked) === 1) {
+    return {
+      blocked: true,
+      error:
+        "This roster date's attendance is already locked for payroll and can no longer be edited through the normal manager-review action. Use the payroll correction/reopen workflow instead.",
+    };
+  }
+  return { blocked: false };
+}
+
 // POST /api/wfm/manager/weekoff-review/:assignmentId/realign
 wfmRouter.post("/manager/weekoff-review/:assignmentId/realign", requireAuth, requireRole("admin", "hr", "wfm", "manager", "branch_head"), h(async (req: any, res: any) => {
   const { assignmentId } = req.params;
@@ -708,6 +745,11 @@ wfmRouter.post("/manager/weekoff-review/:assignmentId/realign", requireAuth, req
     if (!(scopeCheck as RowDataPacket[])[0]) {
       return res.status(403).json({ error: "Not authorized to act on this employee" });
     }
+  }
+
+  const lockCheck = await assertRosterDateNotLocked(dbConn, assignmentId);
+  if (lockCheck.blocked) {
+    return res.status(409).json({ error: lockCheck.error });
   }
 
   const updates: string[] = [
@@ -775,6 +817,11 @@ wfmRouter.post("/manager/weekoff-review/:assignmentId/force-approve", requireAut
     }
   }
 
+  const lockCheck = await assertRosterDateNotLocked(dbConn, assignmentId);
+  if (lockCheck.blocked) {
+    return res.status(409).json({ error: lockCheck.error });
+  }
+
   await dbConn.execute(
     `UPDATE wfm_roster_assignment
         SET final_roster_status = 'force_approved_by_manager',
@@ -830,6 +877,11 @@ wfmRouter.post("/manager/weekoff-review/:assignmentId/escalate", requireAuth, re
     }
   }
 
+  const lockCheck = await assertRosterDateNotLocked(dbConn, assignmentId);
+  if (lockCheck.blocked) {
+    return res.status(409).json({ error: lockCheck.error });
+  }
+
   await dbConn.execute(
     `UPDATE wfm_roster_assignment
         SET final_roster_status = 'escalated_to_hr',
@@ -883,6 +935,11 @@ wfmRouter.post("/manager/weekoff-review/:assignmentId/reject-request", requireAu
     if (!(scopeCheck as RowDataPacket[])[0]) {
       return res.status(403).json({ error: "Not authorized to act on this employee" });
     }
+  }
+
+  const lockCheck = await assertRosterDateNotLocked(dbConn, assignmentId);
+  if (lockCheck.blocked) {
+    return res.status(409).json({ error: lockCheck.error });
   }
 
   await dbConn.execute(
