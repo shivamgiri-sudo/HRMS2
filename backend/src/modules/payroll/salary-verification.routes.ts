@@ -601,12 +601,26 @@ salaryVerificationRouter.patch(
         return res.status(400).json({ success: false, message: "status must be resolved, rejected, or acknowledged" });
       }
 
+      // Read the flag's run_month, process_id, branch_id before updating (needed for readiness check).
+      const [flagRows] = await db.execute<RowDataPacket[]>(
+        "SELECT run_month, process_id, branch_id FROM salary_verification_flag WHERE id = ? LIMIT 1",
+        [flagId]
+      );
+      const flagMeta = (flagRows as any[])[0];
+
       await db.execute(
         `UPDATE salary_verification_flag
             SET status = ?, resolved_by = ?, resolved_at = NOW(), resolution_note = ?
           WHERE id = ?`,
         [status, userId, resolutionNote ?? null, flagId]
       );
+
+      // When the last open flag for a process is resolved, auto-complete the readiness row.
+      if (flagMeta) {
+        await markReadinessDoneIfComplete(
+          flagMeta.run_month, flagMeta.branch_id, flagMeta.process_id, userId
+        );
+      }
 
       return res.json({ success: true, message: `Flag ${status}` });
     } catch (err: unknown) {
@@ -655,6 +669,64 @@ salaryVerificationRouter.post(
 );
 
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// Helper: if all employees in a process/branch are verified and there are no
+// open flags, flip payroll_branch_readiness.salary_verification_done = 1.
+// Called after any bulk or individual verification action when branchId is known.
+// Best-effort: a readiness-update failure must never break the verification call.
+// ---------------------------------------------------------------------------
+async function markReadinessDoneIfComplete(
+  runMonth: string,
+  branchId: string | undefined | null,
+  processId: string | undefined | null,
+  userId: string
+): Promise<void> {
+  if (!branchId) return;
+  try {
+    const processClause = processId ? "AND e.process_id = ?" : "";
+    const baseParams: unknown[] = [branchId];
+    if (processId) baseParams.push(processId);
+
+    const [[totRow]] = await db.execute<RowDataPacket[]>(
+      `SELECT COUNT(*) AS cnt FROM employees e WHERE e.active_status = 1 AND e.branch_id = ? ${processClause}`,
+      baseParams
+    ) as any;
+    const [[verRow]] = await db.execute<RowDataPacket[]>(
+      `SELECT COUNT(DISTINCT sev.employee_id) AS cnt
+         FROM salary_employee_verification sev
+         JOIN employees e ON e.id = sev.employee_id
+        WHERE sev.run_month = ? AND e.branch_id = ? ${processClause}`,
+      [runMonth, ...baseParams]
+    ) as any;
+    const [[flagRow]] = await db.execute<RowDataPacket[]>(
+      `SELECT COUNT(*) AS cnt
+         FROM salary_verification_flag svf
+         JOIN employees e ON e.id = svf.employee_id
+        WHERE svf.run_month = ? AND svf.status = 'open' AND e.branch_id = ? ${processClause}`,
+      [runMonth, ...baseParams]
+    ) as any;
+
+    const total = Number(totRow.cnt ?? 0);
+    const verified = Number(verRow.cnt ?? 0);
+    const openFlags = Number(flagRow.cnt ?? 0);
+
+    if (total > 0 && openFlags === 0 && verified >= total) {
+      await db.execute(
+        `UPDATE payroll_branch_readiness
+            SET salary_verification_done = 1,
+                salary_verification_at = NOW(),
+                salary_verification_by = ?
+          WHERE process_month = ?
+            AND branch_id = ?
+            AND COALESCE(process_id, '') = COALESCE(?, '')`,
+        [userId, runMonth, branchId, processId ?? null]
+      );
+    }
+  } catch {
+    // best-effort: never block the verification action on a readiness update failure
+  }
+}
+
 // POST /verify-bulk — verify all non-flagged employees for a process
 // ---------------------------------------------------------------------------
 salaryVerificationRouter.post(
@@ -710,6 +782,10 @@ salaryVerificationRouter.post(
          VALUES ${values}`,
         insertParams
       );
+
+      // Auto-flip salary_verification_done on payroll_branch_readiness when the process is
+      // now fully verified (all employees verified, zero open flags).
+      await markReadinessDoneIfComplete(runMonth, branchId ?? null, processId ?? null, userId);
 
       return res.json({ success: true, verified_count: ids.length });
     } catch (err: unknown) {

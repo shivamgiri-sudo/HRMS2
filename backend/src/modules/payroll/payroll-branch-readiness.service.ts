@@ -72,6 +72,10 @@ export interface BranchReadinessRecord {
   projected_gross: number | null;
   projected_net: number | null;
   projection_computed_at: string | null;
+  // salary verification (migration 1060)
+  salary_verification_done: number;
+  salary_verification_at: string | null;
+  salary_verification_by: string | null;
 }
 
 /** Grouped structure for HO process-level view */
@@ -829,6 +833,9 @@ export const payrollBranchReadinessService = {
       projected_gross: record.projected_gross ?? null,
       projected_net: record.projected_net ?? null,
       projection_computed_at: (record.projection_computed_at as string) ?? null,
+      salary_verification_done: Number((record as any).salary_verification_done ?? 0),
+      salary_verification_at: (record as any).salary_verification_at ?? null,
+      salary_verification_by: (record as any).salary_verification_by ?? null,
     };
   },
 
