@@ -51,6 +51,28 @@ import { hrmsApi } from "../../lib/hrmsApi";
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
 
+/**
+ * From payrollGovernanceService.readiness() (payroll-governance.service.ts) — the
+ * comprehensive engine that actually gates payroll calculation (409s
+ * POST /runs/:id/calculate on any blocker), covering attendance-finalized,
+ * missing-punch, attendance-error, leave-sync, PAN/UAN, salary-structure and
+ * statutory-config checks this page's own branch checklist does not. Org-wide
+ * for the run (not attributable to an individual branch card — see the
+ * backend helper's comment in payroll-branch-readiness.routes.ts), surfaced
+ * here as read-only, informational: does not affect readiness_score/status.
+ */
+type OrgWideGovernance =
+  | { status: "not_created" }
+  | { status: "error"; message: string }
+  | {
+      status: "checked";
+      runId: string;
+      canCalculate: boolean;
+      blockers: number;
+      warnings: number;
+      issues: Array<{ code: string; severity: string; count: number; message: string }>;
+    };
+
 interface BranchReadiness {
   branch_id: string;
   branch_name: string;
@@ -1271,6 +1293,84 @@ function BranchView({
 
 // ─── Stat Chip ──────────────────────────────────────────────────────────────────
 
+/**
+ * Surfaces payrollGovernanceService's org-wide blockers/warnings — the checks that
+ * actually gate calculation but this page's own per-branch checklist doesn't cover
+ * (PAN/UAN validity, attendance errors, salary structure, statutory config). See
+ * the OrgWideGovernance type doc for why this is org-wide rather than per-branch.
+ */
+function GovernanceBanner({ governance }: { governance: OrgWideGovernance }) {
+  const [expanded, setExpanded] = useState(false);
+
+  if (governance.status === "not_created") {
+    // No salary_prep_run exists yet for this month — nothing to check against.
+    // Distinct from "checked, zero issues": this is CONFIGURATION_MISSING, not PASS.
+    return null;
+  }
+
+  if (governance.status === "error") {
+    return (
+      <div className="flex items-center gap-3 rounded-2xl border border-slate-300 bg-slate-50 px-4 py-3 text-sm text-slate-700">
+        <AlertTriangle className="h-4 w-4 flex-shrink-0 text-slate-500" />
+        <span>
+          <strong>Compliance/statutory checks: NOT CHECKED</strong> — the governance engine failed to
+          run for this month's payroll run. This is not the same as "no issues found." Retry or check
+          server logs.
+        </span>
+      </div>
+    );
+  }
+
+  const { blockers, warnings, issues, canCalculate } = governance;
+  if (blockers === 0 && warnings === 0) {
+    return (
+      <div className="flex items-center gap-3 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
+        <span>
+          <strong>Compliance/statutory checks: PASS</strong> — no blockers or warnings from PAN/UAN
+          validity, attendance-error, salary-structure or statutory-config checks for this run.
+        </span>
+      </div>
+    );
+  }
+
+  return (
+    <div className={`rounded-2xl border px-4 py-3 text-sm ${blockers > 0 ? "border-red-200 bg-red-50 text-red-800" : "border-amber-200 bg-amber-50 text-amber-800"}`}>
+      <button
+        type="button"
+        onClick={() => setExpanded((v) => !v)}
+        className="flex w-full items-center gap-3 text-left"
+      >
+        <AlertTriangle className={`h-4 w-4 flex-shrink-0 ${blockers > 0 ? "text-red-500" : "text-amber-500"}`} />
+        <span className="flex-1">
+          <strong>Compliance/statutory checks: {canCalculate ? "WARNING" : "FAIL"}</strong> — org-wide
+          for this month's run, not per-branch: <strong>{blockers}</strong> blocker{blockers === 1 ? "" : "s"},{" "}
+          <strong>{warnings}</strong> warning{warnings === 1 ? "" : "s"}
+          {!canCalculate && " — payroll calculation is currently blocked"}.
+        </span>
+        <span className="text-xs underline">{expanded ? "Hide" : "View"} details</span>
+      </button>
+      {expanded && (
+        <ul className="mt-3 space-y-1.5 border-t border-current/20 pt-3">
+          {issues.map((issue) => (
+            <li key={issue.code} className="flex items-start gap-2 text-xs">
+              <span
+                className={`mt-0.5 shrink-0 rounded px-1.5 py-0.5 font-bold uppercase ${
+                  issue.severity === "blocker" ? "bg-red-200 text-red-800" : "bg-amber-200 text-amber-800"
+                }`}
+              >
+                {issue.severity}
+              </span>
+              <span>
+                <strong>{issue.count}</strong> — {issue.message}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 function StatChip({
   label,
   value,
@@ -1309,17 +1409,22 @@ function HOView({ month }: { month: string }) {
   const [detailBranch, setDetailBranch] = useState<BranchReadiness | null>(null);
   const [overrideBranch, setOverrideBranch] = useState<BranchReadiness | null>(null);
 
-  const { data: branches = [], isLoading, error, refetch } = useQuery<BranchReadiness[]>({
+  const { data: summaryRes, isLoading, error, refetch } = useQuery<{
+    data: BranchReadiness[];
+    governance: OrgWideGovernance;
+  }>({
     queryKey: ["branch-readiness", month],
     queryFn: async () => {
-      const res = await hrmsApi.get<{ success: boolean; data: BranchReadiness[] }>(
+      const res = await hrmsApi.get<{ success: boolean; data: BranchReadiness[]; governance: OrgWideGovernance }>(
         `/api/payroll/branch-readiness/summary?month=${month}`
       );
-      return res.data ?? [];
+      return { data: res.data ?? [], governance: res.governance ?? { status: "not_created" } };
     },
     staleTime: 60_000,
     refetchInterval: 120_000,
   });
+  const branches = summaryRes?.data ?? [];
+  const governance = summaryRes?.governance ?? { status: "not_created" as const };
 
   const stats = useMemo(() => {
     const total = branches.length;
@@ -1375,6 +1480,8 @@ function HOView({ month }: { month: string }) {
           </span>
         </div>
       )}
+
+      <GovernanceBanner governance={governance} />
 
       {/* Stats row */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">

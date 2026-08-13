@@ -13,10 +13,12 @@
 
 import { Router } from "express";
 import type { Response } from "express";
+import type { RowDataPacket } from "mysql2";
 import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { requireScopedRole } from "../../middleware/scopeMiddleware.js";
 import { payrollBranchReadinessService } from "./payroll-branch-readiness.service.js";
+import { payrollGovernanceService } from "./payroll-governance.service.js";
 import { db } from "../../db/mysql.js";
 import { triggerPayrollAttendanceFreezeRequest } from "../work-inbox/work-inbox.triggers.js";
 
@@ -52,6 +54,72 @@ function branchProcessScopeTarget(req: AuthenticatedRequest) {
 }
 
 const SCOPE_OPTIONS = { allowAdminBypass: true, requireScopeForNonAdmin: false };
+
+// ---------------------------------------------------------------------------
+// Org-wide governance readiness (payroll-governance.service.ts) — the
+// comprehensive engine that already checks attendance-finalized/missing-punch/
+// attendance-errors, leave-sync, PAN validity, salary structure, statutory
+// config, and is the ONLY engine of the four in this codebase that actually
+// gates payroll calculation (409s POST /runs/:id/calculate on any blocker).
+// It was built against payroll.routes.ts's Attendance Control Tower page, not
+// this one, and operates on a single salary_prep_run (org-wide for this
+// codebase's live data — every active month has exactly one non-synthetic
+// run, not one per branch), so it cannot be attributed down to an individual
+// branch/process card without deeper per-issue employee-branch mapping work
+// this pass doesn't attempt. What it CAN safely do today: surface the run's
+// blocker/warning counts and messages on the HO-level summary views (this
+// route, and process-readiness's /grouped-summary), where "org-wide" is
+// already the correct framing — informational, read-only, does not change
+// readiness_score/readiness_status or gate anything on this page.
+//
+// Excludes synthetic/test runs using the same creator-name filter established
+// in payroll-signoff.routes.ts for the identical problem (a test run
+// rendering identically to a real one in a payroll-facing list).
+// ---------------------------------------------------------------------------
+
+const SYNTHETIC_RUN_CREATORS = ["test-auto-gen", "codex-e2e", "smoke-test", "demo-seed"];
+
+type OrgWideGovernanceSummary =
+  | { status: "not_created" }
+  | { status: "error"; message: string }
+  | {
+      status: "checked";
+      runId: string;
+      canCalculate: boolean;
+      blockers: number;
+      warnings: number;
+      issues: Array<{ code: string; severity: string; count: number; message: string }>;
+    };
+
+async function getOrgWideGovernanceSummary(month: string): Promise<OrgWideGovernanceSummary> {
+  const placeholders = SYNTHETIC_RUN_CREATORS.map(() => "?").join(", ");
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT id FROM salary_prep_run
+      WHERE run_month = ?
+        AND LOWER(COALESCE(created_by, '')) NOT IN (${placeholders})
+      ORDER BY created_at DESC LIMIT 1`,
+    [month, ...SYNTHETIC_RUN_CREATORS]
+  );
+  const runId = (rows[0] as RowDataPacket | undefined)?.id as string | undefined;
+  if (!runId) return { status: "not_created" };
+
+  try {
+    const result = await payrollGovernanceService.readiness(runId);
+    return {
+      status: "checked",
+      runId: result.runId,
+      canCalculate: result.canCalculate,
+      blockers: result.summary.blockers,
+      warnings: result.summary.warnings,
+      issues: result.issues,
+    };
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.warn(`[BranchReadiness] governance readiness failed for run ${runId} — ${msg}`);
+    // Explicit "not checked", never silently treated as zero issues.
+    return { status: "error", message: msg };
+  }
+}
 
 // ---------------------------------------------------------------------------
 // GET /export?month=YYYY-MM&format=csv
@@ -145,6 +213,11 @@ payrollBranchReadinessRouter.get(
           ? Math.round(data.reduce((s, b) => s + b.readiness_score, 0) / total)
           : 0;
 
+      // Org-wide, not per-branch — see getOrgWideGovernanceSummary's comment. Covers
+      // PAN validity, salary structure, statutory config, attendance-error checks
+      // this page's own checklist does not.
+      const governance = await getOrgWideGovernanceSummary(month);
+
       return res.json({
         success: true,
         month,
@@ -156,6 +229,7 @@ payrollBranchReadinessRouter.get(
           blocked,
           avg_score,
         },
+        governance,
       });
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);

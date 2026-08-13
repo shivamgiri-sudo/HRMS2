@@ -20,6 +20,7 @@ import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMid
 import { requireRole } from "../../middleware/requireRole.js";
 import { requireScopedRole } from "../../middleware/scopeMiddleware.js";
 import { payrollBranchReadinessService } from "./payroll-branch-readiness.service.js";
+import { payrollGovernanceService } from "./payroll-governance.service.js";
 import { db } from "../../db/mysql.js";
 import type { RowDataPacket } from "mysql2";
 import {
@@ -71,6 +72,56 @@ function branchProcessScopeTarget(req: AuthenticatedRequest) {
 const SCOPE_OPTIONS = { allowAdminBypass: true, requireScopeForNonAdmin: false };
 
 // ---------------------------------------------------------------------------
+// Org-wide governance readiness — see the identical helper's comment in
+// payroll-branch-readiness.routes.ts for the full rationale. Duplicated here
+// rather than shared, matching this pair of files' existing convention (each
+// already has its own resolveMonth/SCOPE_OPTIONS rather than a shared module).
+// ---------------------------------------------------------------------------
+
+const SYNTHETIC_RUN_CREATORS = ["test-auto-gen", "codex-e2e", "smoke-test", "demo-seed"];
+
+type OrgWideGovernanceSummary =
+  | { status: "not_created" }
+  | { status: "error"; message: string }
+  | {
+      status: "checked";
+      runId: string;
+      canCalculate: boolean;
+      blockers: number;
+      warnings: number;
+      issues: Array<{ code: string; severity: string; count: number; message: string }>;
+    };
+
+async function getOrgWideGovernanceSummary(month: string): Promise<OrgWideGovernanceSummary> {
+  const placeholders = SYNTHETIC_RUN_CREATORS.map(() => "?").join(", ");
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT id FROM salary_prep_run
+      WHERE run_month = ?
+        AND LOWER(COALESCE(created_by, '')) NOT IN (${placeholders})
+      ORDER BY created_at DESC LIMIT 1`,
+    [month, ...SYNTHETIC_RUN_CREATORS]
+  );
+  const runId = (rows[0] as RowDataPacket | undefined)?.id as string | undefined;
+  if (!runId) return { status: "not_created" };
+
+  try {
+    const result = await payrollGovernanceService.readiness(runId);
+    return {
+      status: "checked",
+      runId: result.runId,
+      canCalculate: result.canCalculate,
+      blockers: result.summary.blockers,
+      warnings: result.summary.warnings,
+      issues: result.issues,
+    };
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.warn(`[ProcessReadiness] governance readiness failed for run ${runId} — ${msg}`);
+    return { status: "error", message: msg };
+  }
+}
+
+// ---------------------------------------------------------------------------
 // GET /grouped-summary?month=YYYY-MM
 // HO view: all branches each with their processes grouped
 // Roles: payroll_head, super_admin, payroll, admin
@@ -93,6 +144,9 @@ payrollProcessReadinessRouter.get(
         ? Math.round(data.reduce((s, b) => s + b.stats.avg_score * b.stats.total, 0) / totalProcesses)
         : 0;
 
+      // Org-wide, not per-process — see getOrgWideGovernanceSummary's comment.
+      const governance = await getOrgWideGovernanceSummary(month);
+
       return res.json({
         success: true,
         month,
@@ -102,6 +156,7 @@ payrollProcessReadinessRouter.get(
           avgScore: avg_score, avg_score,
           in_progress, blocked,
         },
+        governance,
       });
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
