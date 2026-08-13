@@ -24,6 +24,7 @@ import {
   logDocumentAccess,
 } from "../document-vault/documentVault.service.js";
 import { authorizeDocumentAccess } from "./documentVaultAuth.js";
+import { getEmployeeForUser } from "../../shared/accessGuard.js";
 import { db } from "../../db/mysql.js";
 
 // SECURITY: Document authorization is ALWAYS enforced.
@@ -490,9 +491,17 @@ router.get(
         });
       }
 
+      // Resolve the caller's own employees.id (distinct from actorUserId/users.id)
+      // so the vault's owner-bypass can actually match when this employee is
+      // viewing/downloading their own document. Best-effort: a caller with no
+      // employee record (service account, admin-only user) just gets undefined
+      // and falls through to the role check.
+      const actorEmployeeId = (await getEmployeeForUser(actorUserId).catch(() => null))?.id;
+
       const authResult = await authorizeDocumentAccess({
         actorUserId,
         actorRole,
+        actorEmployeeId,
         storedFilename: safeFile,
         action: req.query.download === "1" ? "download" : "view",
         ipAddress: req.ip,

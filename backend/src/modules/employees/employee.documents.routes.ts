@@ -7,9 +7,11 @@ import type { Response } from "express";
 import { requireAuth } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
+import { createHash } from "crypto";
 import { db } from "../../db/mysql.js";
 import type { RowDataPacket } from "mysql2";
 import { selfOrAdminHr } from "../../shared/accessGuard.js";
+import { registerUpload } from "../document-vault/documentVault.service.js";
 
 // Use process.cwd() — resolves to backend/ in both dev and production
 const UPLOADS_ROOT = path.resolve(process.cwd(), "uploads");
@@ -65,6 +67,40 @@ router.post("/:employeeId/upload", selfOrAdminHr("employeeId"), (req: any, res: 
   const documentType = (req.body?.document_type as string) || "other";
   const documentName = (req.body?.document_name as string) || req.file.originalname;
   const fileUrl = `/api/files/employee-documents/${req.file.filename}`;
+
+  // Vault inventory registration is MANDATORY — mirrors files.routes.ts's
+  // upload route (SECURITY: no untracked files allowed on disk). Without this,
+  // GET /api/files/employee-documents/:filename (what the frontend actually
+  // requests for preview/download) 403s with VAULT_ITEM_NOT_FOUND for every
+  // file uploaded here, including for the uploader — this was previously
+  // never called, so nothing uploaded through this route could be opened
+  // again by anyone. access_level "pii": these are identity/statutory
+  // documents (PAN, Aadhaar, etc.), so only HR/DPO/admin-tier roles or the
+  // owning employee (via the owner-bypass in documentVaultAuth.ts) may view
+  // or download them.
+  try {
+    const sha256 = createHash("sha256").update(fs.readFileSync(req.file.path)).digest("hex");
+    await registerUpload({
+      uploadedByUser: req.authUser!.id,
+      category: "employee-documents",
+      storedFilename: req.file.filename,
+      originalFilename: req.file.originalname,
+      mimeType: req.file.mimetype,
+      fileSizeBytes: req.file.size,
+      sha256Hash: sha256,
+      accessLevel: "pii",
+      ownerEmployeeId: employeeId,
+    });
+  } catch (vaultErr) {
+    console.error("[employee-docs] Failed to register upload in document vault:", vaultErr);
+    try { fs.unlinkSync(req.file.path); } catch {}
+    return res.status(500).json({
+      success: false,
+      message: "Failed to register file in document vault. Upload rolled back.",
+      code: "VAULT_REGISTRATION_FAILED",
+    });
+  }
+
   const id = randomUUID();
   await db.execute(
     "INSERT INTO employee_documents (id, employee_id, doc_type, doc_name, file_url, uploaded_by) VALUES (?, ?, ?, ?, ?, ?)",
