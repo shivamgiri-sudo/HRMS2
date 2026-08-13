@@ -9,6 +9,7 @@ import { wfmService } from "./wfm.service.js";
 import { getLiveTracker } from "./liveTracker.service.js";
 import { rosterPreferenceService } from "./roster-preference.service.js";
 import { getEmployeeForUser } from "../../shared/accessGuard.js";
+import { checkAssignmentDateNotLocked } from "../roster/roster-lock-guard.js";
 import {
   HALF_DAY_STATUS,
   LEAVE_STATUSES,
@@ -689,29 +690,20 @@ wfmRouter.get("/manager/weekoff-review", requireAuth, requireRole("admin", "hr",
  * instead of the normal override. (Part A.3, 2026-08-13 business-decision
  * sign-off — additive guard only, no existing successful-path behavior for
  * unlocked dates is changed.)
+ *
+ * Round 2 (2026-08-13): the query itself now lives in the shared
+ * roster-lock-guard.ts module (checkAssignmentDateNotLocked) so other
+ * roster-write paths — e.g. wfm-ext.service.ts's shift-swap apply — enforce
+ * the identical invariant via the same function rather than a second copy of
+ * this query. This wrapper is unchanged in signature/behavior; the 12
+ * existing tests in wfm.routes.test.ts (locked→409 / unlocked→200 /
+ * reason-still-required→400, per endpoint) pass unchanged against it.
  */
 async function assertRosterDateNotLocked(
   dbConn: (typeof import("../../db/mysql.js"))["db"],
   assignmentId: string
 ): Promise<{ blocked: true; error: string } | { blocked: false }> {
-  const [rows] = await dbConn.execute<RowDataPacket[]>(
-    `SELECT adr.is_locked
-       FROM wfm_roster_assignment wra
-       LEFT JOIN attendance_daily_record adr
-         ON adr.employee_id = wra.employee_id AND adr.record_date = wra.roster_date
-      WHERE wra.id = ?
-      LIMIT 1`,
-    [assignmentId]
-  );
-  const row = (rows as RowDataPacket[])[0];
-  if (row && Number(row.is_locked) === 1) {
-    return {
-      blocked: true,
-      error:
-        "This roster date's attendance is already locked for payroll and can no longer be edited through the normal manager-review action. Use the payroll correction/reopen workflow instead.",
-    };
-  }
-  return { blocked: false };
+  return checkAssignmentDateNotLocked(dbConn, assignmentId);
 }
 
 // POST /api/wfm/manager/weekoff-review/:assignmentId/realign
@@ -750,6 +742,57 @@ wfmRouter.post("/manager/weekoff-review/:assignmentId/realign", requireAuth, req
   const lockCheck = await assertRosterDateNotLocked(dbConn, assignmentId);
   if (lockCheck.blocked) {
     return res.status(409).json({ error: lockCheck.error });
+  }
+
+  // Round 2 (2026-08-13) minimum-rest audit finding: realign can move an
+  // employee onto a different shift_template_id, which can violate minimum
+  // rest against their neighboring shifts just as surely as any other
+  // roster write — but unlike manual assignment/bulk-upload, this endpoint
+  // never called into rest-policy.service.ts at all. Only checked when a
+  // new shift is actually being set (a pure date move with no shift change
+  // carries the assignment's already-validated times, unchanged). Blocking-
+  // only, no override support here yet — matches bulk-upload's posture,
+  // the more conservative of the two existing behaviors in this codebase.
+  if (new_shift_template_id) {
+    // process_id/branch_id joined in here too (not just employee_id) — without
+    // it, a process- or branch-scoped rest policy could never resolve on this
+    // endpoint, silently falling back to organization-only. Every other Area 2
+    // write path passes these; this one didn't originally.
+    const [assignRows] = await dbConn.execute<RowDataPacket[]>(
+      `SELECT wra.employee_id, wra.roster_date, e.process_id, e.branch_id
+         FROM wfm_roster_assignment wra
+         JOIN employees e ON e.id = wra.employee_id
+        WHERE wra.id = ? LIMIT 1`,
+      [assignmentId]
+    );
+    const assignRow = (assignRows as RowDataPacket[])[0];
+    if (assignRow) {
+      const [shiftRows] = await dbConn.execute<RowDataPacket[]>(
+        `SELECT start_time, end_time FROM wfm_shift_template WHERE id = ? LIMIT 1`,
+        [new_shift_template_id]
+      );
+      const shift = (shiftRows as RowDataPacket[])[0];
+      if (shift?.start_time && shift?.end_time) {
+        const effectiveDate = new_roster_date ? String(new_roster_date).slice(0, 10) : String(assignRow.roster_date).slice(0, 10);
+        const { validateMinimumRest, isRestPolicyFeatureActive } = await import("./rest-policy.service.js");
+        if (await isRestPolicyFeatureActive(dbConn)) {
+          const restResult = await validateMinimumRest(
+            { employeeId: String(assignRow.employee_id), processId: assignRow.process_id ?? null, branchId: assignRow.branch_id ?? null, forDate: effectiveDate },
+            { startTime: String(shift.start_time).slice(0, 5), endTime: String(shift.end_time).slice(0, 5) },
+            assignmentId,
+            dbConn
+          );
+          if (!restResult.ok) {
+            return res.status(409).json({
+              error: restResult.reason === "REST_POLICY_MISSING"
+                ? "No minimum-rest policy is configured for this employee/process/branch/organization — cannot verify this realignment is safe."
+                : `Realigning to this shift leaves only ${restResult.actualRestMinutes} minute(s) of rest against the ${restResult.against} shift (minimum required: ${restResult.requiredRestMinutes}).`,
+              reason: restResult.reason,
+            });
+          }
+        }
+      }
+    }
   }
 
   const updates: string[] = [

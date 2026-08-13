@@ -8,6 +8,7 @@ import type { Request } from "express";
 import { loadWeekoffRules, applyWeekoffRules, sortBySeniorPriority } from "./weekoff-rule.service.js";
 import type { WeekoffRule } from "./weekoff-rule.service.js";
 import { computeScheduledMinutes, rosterAssignmentColumns, shiftMasterColumns } from "../wfm/shift-scheduling.util.js";
+import { isRestPolicyFeatureActive, validateMinimumRest } from "../wfm/rest-policy.service.js";
 import {
   resolveWeekOffScopeDefault,
   parseRosterTemplatePattern,
@@ -85,6 +86,15 @@ export interface GenerationResult {
   // 'partial', not 'completed', and roster.governance.service.ts's publish
   // gate blocks this cycle until it is empty on a fresh run.
   weekOffPolicyMissingEmployees: string[];
+  // Area 2 (minimum rest, 2026-08-13): "employee_code — reason" entries for
+  // rows syncGeneratedToLiveAssignments() would otherwise have pushed into
+  // the live wfm_roster_assignment table, but didn't because the resolved
+  // shift assignment failed rest-policy validation. This bridge is an
+  // automated background sync — it BLOCKS on both REST_POLICY_MISSING and
+  // INSUFFICIENT_REST with no override path, the same posture as the other
+  // automated write paths (weekly generation, bulk upload). Non-empty means
+  // the run is 'partial', not 'completed'.
+  restPolicyBlockedEmployees: string[];
 }
 
 // ── Service ───────────────────────────────────────────────────────────────────
@@ -135,6 +145,7 @@ export const rosterGenerationService = {
       conflicts_found: 0,
       errors: [],
       weekOffPolicyMissingEmployees: [],
+      restPolicyBlockedEmployees: [],
     };
 
     try {
@@ -254,7 +265,19 @@ export const rosterGenerationService = {
           [runId, cycleId, dates[0] ?? cycle.week_start_date, ...result.weekOffPolicyMissingEmployees]
         );
       }
-      const runStatus = result.weekOffPolicyMissingEmployees.length > 0 ? "partial" : "completed";
+      // 10b. Area 2 (2026-08-13): sync the governance draft into the live ops
+      // table BEFORE writing the run's final status, so a row this bridge
+      // blocked on insufficient rest is reflected in the SAME status/
+      // error_details write as the week-off gap above, rather than a second
+      // update after the fact. See syncGeneratedToLiveAssignments below.
+      const syncResult = await syncGeneratedToLiveAssignments(cycleId, runId, cycle);
+      result.restPolicyBlockedEmployees = syncResult.blockedEmployeeCodes;
+      for (const entry of syncResult.blockedEmployeeCodes) {
+        result.errors.push(`INSUFFICIENT_REST_OR_MISSING_POLICY:emp:${entry}`);
+      }
+
+      const runStatus = (result.weekOffPolicyMissingEmployees.length > 0 || result.restPolicyBlockedEmployees.length > 0)
+        ? "partial" : "completed";
       await db.execute(
         `UPDATE roster_generation_run SET
            status = ?,
@@ -267,9 +290,6 @@ export const rosterGenerationService = {
          WHERE id = ?`,
         [runStatus, result.employees_processed, result.assignments_created, result.weekoffs_allocated, result.conflicts_found, result.errors.length ? JSON.stringify(result.errors) : null, runId]
       );
-
-      // 11. Update wfm_roster_assignment (live ops table) from generated roster_daily_assignment
-      await syncGeneratedToLiveAssignments(cycleId, runId, cycle);
 
     } catch (fatalErr) {
       const msg = fatalErr instanceof Error ? fatalErr.message : String(fatalErr);
@@ -333,6 +353,28 @@ export const rosterGenerationService = {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
+// Round 2 (2026-08-13) duplicate-week-off-table audit finding: week_off_preference
+// (queried below) is the table roster generation has always read, but a
+// read-only audit found it holds 0 rows in production — every real employee
+// submission goes through employee_roster_preference instead (fed by both
+// live frontend pages, NativeRosterPreference.tsx and
+// NativeWeekOffPreferences.tsx), which this function never consulted at
+// all. An employee could get a manager-approved preference and still be
+// silently rostered every day, because generation was reading a table
+// nothing writes to.
+//
+// Documented precedence rule (audit's own recommendation, not yet a formal
+// consolidation): week_off_preference wins on conflict — it carries the
+// FCFS/capacity-aware columns (week_start_date, submission_order,
+// alternate_day) the allocation/fairness engines depend on — and
+// employee_roster_preference fills in only for employees week_off_preference
+// has no approved row for. This is a read-only merge; neither table is
+// written, backfilled, or otherwise modified by this change. A real
+// consolidation (single canonical table) remains a separate, deliberately
+// out-of-scope future migration — see the audit for exactly what that would
+// require.
+const EMP_PREF_DAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+
 async function loadApprovedWeekoffs(empIds: string[]): Promise<Map<string, ApprovedWeekOff>> {
   const placeholders = empIds.map(() => "?").join(",");
   const [rows] = await db.execute<ApprovedWeekOff[]>(
@@ -341,6 +383,42 @@ async function loadApprovedWeekoffs(empIds: string[]): Promise<Map<string, Appro
   );
   const map = new Map<string, ApprovedWeekOff>();
   for (const row of rows) map.set(row.employee_id, row);
+
+  const unresolved = empIds.filter((id) => !map.has(id));
+  if (unresolved.length) {
+    try {
+      const unresolvedPlaceholders = unresolved.map(() => "?").join(",");
+      const [empPrefRows] = await db.execute<RowDataPacket[]>(
+        `SELECT id, employee_id, preferred_week_off
+           FROM employee_roster_preference
+          WHERE employee_id IN (${unresolvedPlaceholders}) AND status = 'approved'
+          ORDER BY updated_at DESC`,
+        unresolved
+      );
+      const seen = new Set<string>();
+      for (const row of empPrefRows as RowDataPacket[]) {
+        const empId = String(row.employee_id);
+        if (seen.has(empId)) continue; // most-recently-updated approved row wins if more than one
+        seen.add(empId);
+        const dayIdx = EMP_PREF_DAY_NAMES.findIndex((d) => d.toLowerCase() === String(row.preferred_week_off ?? "").toLowerCase());
+        if (dayIdx < 0) continue; // no day recorded — cannot resolve from this row
+        map.set(empId, {
+          id: String(row.id),
+          employee_id: empId,
+          preferred_day: dayIdx,
+          alternate_day: null,
+          approved: 1,
+          auto_approved: 0,
+        } as ApprovedWeekOff);
+      }
+    } catch (error) {
+      // Non-fatal, matching loadHolidays/loadApprovedLeaveDates elsewhere in
+      // this file: generation must still produce a roster if this lookup is
+      // briefly unreachable, logged rather than silently treated as "no
+      // employee_roster_preference exists."
+      console.error("[roster] employee_roster_preference fallback lookup unavailable:", (error as Error)?.message);
+    }
+  }
   return map;
 }
 
@@ -641,7 +719,7 @@ async function syncGeneratedToLiveAssignments(
   cycleId: string,
   runId: string,
   cycle: RosterCycleRow
-): Promise<void> {
+): Promise<{ blockedEmployeeCodes: string[] }> {
   // Copy roster_daily_assignment rows into wfm_roster_assignment (the live ops table)
   // Only non-weekoff, non-holiday rows get a live assignment; week-off days are excluded
   //
@@ -667,9 +745,10 @@ async function syncGeneratedToLiveAssignments(
     : `LEFT JOIN wfm_shift_master st ON st.shift_code = wst.shift_code AND st.active_status = 1`;
 
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT rda.employee_id, rda.roster_date, rda.shift_template_id,
+    `SELECT rda.employee_id, e.employee_code, rda.roster_date, rda.shift_template_id,
             st.id AS shift_master_id, st.start_time AS shift_start_time, st.end_time AS shift_end_time
        FROM roster_daily_assignment rda
+       JOIN employees e ON e.id = rda.employee_id
        LEFT JOIN wfm_shift_template wst ON wst.id = rda.shift_template_id
        ${shiftMasterJoin}
       WHERE rda.cycle_id = ? AND rda.is_week_off = 0 AND rda.is_holiday = 0`,
@@ -681,6 +760,14 @@ async function syncGeneratedToLiveAssignments(
   const raCols = await rosterAssignmentColumns();
   const hasShiftVersionId = raCols.has("shift_version_id");
   const hasScheduledMinutes = raCols.has("scheduled_minutes");
+
+  // Area 2 (2026-08-13): this bridge is an automated background sync from the
+  // governance draft into the live table — same BLOCK-with-no-override
+  // posture as weekly generation and bulk upload. isRestPolicyFeatureActive()
+  // gates the whole check so a DB without migration 1210 applied behaves
+  // exactly as before (no validation, nothing blocked).
+  const restPolicyFeatureActive = await isRestPolicyFeatureActive();
+  const blockedEmployeeCodes: string[] = [];
 
   const insertCols = ["id", "employee_id", "shift_id", "roster_date", "shift_start_time", "shift_end_time",
     "roster_status", "publish_status", "generation_run_id", "decision_source"];
@@ -706,6 +793,22 @@ async function syncGeneratedToLiveAssignments(
   for (const row of rows) {
     const shiftStart = row.shift_start_time ? String(row.shift_start_time).slice(0, 5) : null;
     const shiftEnd = row.shift_end_time ? String(row.shift_end_time).slice(0, 5) : null;
+
+    if (restPolicyFeatureActive && shiftStart && shiftEnd) {
+      const restCheck = await validateMinimumRest(
+        { employeeId: row.employee_id, processId: cycle.process_id, branchId: cycle.branch_id, forDate: String(row.roster_date).slice(0, 10) },
+        { startTime: shiftStart, endTime: shiftEnd }
+      );
+      if (!restCheck.ok) {
+        blockedEmployeeCodes.push(
+          restCheck.reason === "REST_POLICY_MISSING"
+            ? `${row.employee_code} — no minimum-rest policy configured for this employee/process/branch/organization`
+            : `${row.employee_code} — only ${restCheck.actualRestMinutes}min rest against the ${restCheck.against} shift (minimum ${restCheck.requiredRestMinutes}min); this automated sync does not support emergency override`
+        );
+        continue; // does not sync this row into the live table
+      }
+    }
+
     const params: unknown[] = [
       row.employee_id, row.shift_master_id ?? null, row.roster_date, row.shift_start_time ?? null, row.shift_end_time ?? null, runId,
     ];
@@ -721,4 +824,6 @@ async function syncGeneratedToLiveAssignments(
       params
     );
   }
+
+  return { blockedEmployeeCodes };
 }

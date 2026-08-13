@@ -14,6 +14,14 @@ const conn = {
   rollback: vi.fn(),
   release: vi.fn(),
 };
+// Separate from `conn`: in real production, withEmployeeRosterLock's
+// GET_LOCK/RELEASE_LOCK run on their OWN connection (getConnection() pulls a
+// distinct one from the pool each call) — not the batch's own transaction
+// connection. If this test returned the SAME object for both, the lock's own
+// release() calls (one per row) would inflate conn.release()'s count and
+// break the "released exactly once" assertions below, which is not a real
+// production behavior, only an artifact of a shared test double.
+const lockConn = { query: vi.fn(), release: vi.fn() };
 const { getConnection } = vi.hoisted(() => ({ getConnection: vi.fn() }));
 vi.mock("../../../db/mysql.js", () => ({ db: { getConnection } }));
 
@@ -35,12 +43,21 @@ function queueRows(...batches: unknown[][]) {
 
 describe("importRosterAssignmentBatch transaction handling", () => {
   beforeEach(() => {
-    getConnection.mockResolvedValue(conn);
+    // First getConnection() call (the batch's own transaction) returns conn;
+    // every call after that (one per row, inside withEmployeeRosterLock) gets
+    // lockConn instead — mirrors the pool handing out a distinct connection
+    // each time in real production.
+    getConnection.mockReset();
+    getConnection.mockImplementationOnce(async () => conn);
+    getConnection.mockImplementation(async () => lockConn);
     conn.execute.mockReset();
     conn.beginTransaction.mockReset();
     conn.commit.mockReset();
     conn.rollback.mockReset();
     conn.release.mockReset();
+    lockConn.query.mockReset();
+    lockConn.query.mockImplementation(async (sql: string) => (sql.includes("GET_LOCK") ? [[{ acquired: 1 }], []] : [[], []]));
+    lockConn.release.mockReset();
     logRosterChange.mockClear();
     // Schema-probe caching is module-scope and would otherwise leak the first
     // test's result (even an empty Set is a cached hit) into every test after it.

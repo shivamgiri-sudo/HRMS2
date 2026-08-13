@@ -5,10 +5,11 @@
   //     npx tsc -p tsconfig.roster-enterprise-check.json
   //
   // Deliberately narrow: only files this program has actually edited. Files
-  // like roster-generation.service.ts and wfm.routes.ts pull in unrelated
-  // modules (payroll-governance.service.ts) that concurrent sessions are
-  // actively editing in this shared repo — including them here would make
-  // this scoped check fail on someone else's in-progress work, not mine.
+  // like wfm.routes.ts pull in unrelated modules (payroll-governance.service.ts)
+  // that concurrent sessions are actively editing in this shared repo —
+  // including them here would make this scoped check fail on someone else's
+  // in-progress work, not mine. roster-generation.service.ts was re-verified
+  // clean in isolation (2026-08-13, Area 2 gap-closing pass) and re-added.
   "extends": "./tsconfig.json",
   "compilerOptions": {
     "noEmit": true
@@ -25,6 +26,7 @@
     "src/modules/wfm/__tests__/rest-policy.test.ts",
     "src/modules/wfm/__tests__/roster-service-rest-validation.test.ts",
     "src/modules/wfm/schema-probe.util.ts",
+    "src/modules/roster/roster-generation.service.ts",
     "src/modules/bulk-upload/roster-assignment-bulk.service.ts",
     "src/modules/bulk-upload/shift-roster-bulk.service.ts",
     "src/modules/bulk-upload/__tests__/roster-assignment-bulk-transaction.test.ts",

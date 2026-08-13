@@ -3,7 +3,7 @@ import { db } from "../../db/mysql.js";
 import type { RowDataPacket } from "mysql2";
 import { logRosterChange } from "../roster/roster-change-log.js";
 import { computeScheduledMinutes, rosterAssignmentColumns } from "../wfm/shift-scheduling.util.js";
-import { isRestPolicyFeatureActive, validateMinimumRest } from "../wfm/rest-policy.service.js";
+import { isRestPolicyFeatureActive, validateMinimumRest, withEmployeeRosterLock } from "../wfm/rest-policy.service.js";
 
 export async function importRosterAssignmentBatch(
   batchId: string,
@@ -104,119 +104,142 @@ export async function importRosterAssignmentBatch(
         ? computeScheduledMinutes(String(shiftStartTime).slice(0, 5), String(shiftEndTime).slice(0, 5))
         : null;
 
-      // Area 2: minimum-rest validation. Bulk upload BLOCKS on insufficient
-      // rest with no override path — an override needs an individual,
-      // deliberate approval (reason + named approver), which a CSV column
-      // can't legitimately grant. Only runs for non-week-off rows with a
-      // resolved shift time, and only once the feature is actually turned on
-      // (migration 1210 applied) — otherwise this is a no-op.
-      if (!isWeekOff && shiftStartTime && shiftEndTime && (await isRestPolicyFeatureActive(conn))) {
-        const restCheck = await validateMinimumRest(
-          { employeeId, processId: employeeRow.process_id ?? null, branchId: employeeRow.branch_id ?? null, forDate: roster_date },
-          { startTime: String(shiftStartTime).slice(0, 5), endTime: String(shiftEndTime).slice(0, 5) },
-          null,
-          conn
-        );
-        if (!restCheck.ok) {
-          const msg = restCheck.reason === "REST_POLICY_MISSING"
-            ? `Row ${batchRow.row_no}: no minimum-rest policy configured for this employee/process/branch/organization`
-            : `Row ${batchRow.row_no}: only ${restCheck.actualRestMinutes}min rest against the ${restCheck.against} shift (minimum ${restCheck.requiredRestMinutes}min) — bulk upload does not support emergency override, use manual assignment instead`;
-          errors.push(msg);
-          await conn.execute(
-            "UPDATE upload_batch_row SET row_status='error', error_messages=? WHERE id=?",
-            [JSON.stringify([msg]), batchRow.id]
+      // Area 2 concurrency fix (2026-08-13): the rest-check and the INSERT
+      // below are wrapped in ONE per-employee advisory-lock critical section
+      // — checking under the lock but writing after releasing it would leave
+      // the exact race the lock exists to close (a concurrent writer could
+      // still land between release and insert). This batch's own transaction
+      // already serializes rows WITHIN itself, but not against a DIFFERENT
+      // concurrent request for the same employee (a second bulk upload, or a
+      // manual assignment) using a different connection — GET_LOCK is
+      // visible across connections, a single-connection transaction is not.
+      // The lock's own connection is necessarily separate from `conn` (GET_LOCK
+      // is session-scoped) but every read/write below still runs on `conn`,
+      // the batch's own transaction connection, from inside the lock's
+      // critical section.
+      const rowResult = await withEmployeeRosterLock(employeeId, async (): Promise<
+        { ok: true; assignmentId: string } | { ok: false; message: string }
+      > => {
+        // Area 2: minimum-rest validation. Bulk upload BLOCKS on insufficient
+        // rest with no override path — an override needs an individual,
+        // deliberate approval (reason + named approver), which a CSV column
+        // can't legitimately grant. Only runs for non-week-off rows with a
+        // resolved shift time, and only once the feature is actually turned
+        // on (migration 1210 applied) — otherwise this is a no-op.
+        if (!isWeekOff && shiftStartTime && shiftEndTime && (await isRestPolicyFeatureActive(conn))) {
+          const restCheck = await validateMinimumRest(
+            { employeeId, processId: employeeRow.process_id ?? null, branchId: employeeRow.branch_id ?? null, forDate: roster_date },
+            { startTime: String(shiftStartTime).slice(0, 5), endTime: String(shiftEndTime).slice(0, 5) },
+            null,
+            conn
           );
-          skipped++;
-          continue;
+          if (!restCheck.ok) {
+            const message = restCheck.reason === "REST_POLICY_MISSING"
+              ? `Row ${batchRow.row_no}: no minimum-rest policy configured for this employee/process/branch/organization`
+              : `Row ${batchRow.row_no}: only ${restCheck.actualRestMinutes}min rest against the ${restCheck.against} shift (minimum ${restCheck.requiredRestMinutes}min) — bulk upload does not support emergency override, use manual assignment instead`;
+            return { ok: false, message };
+          }
         }
-      }
 
-      // Before the overwrite: this is the only record of what a re-upload changes.
-      // roster_change_log exists specifically for this (old_value_json/new_value_json/
-      // reason/changed_by) and previously received nothing from either bulk service —
-      // a same employee+date re-upload silently replaced the prior shift with no trace.
-      const [beforeRows] = await conn.execute<RowDataPacket[]>(
-        `SELECT id, shift_template_id, is_week_off FROM wfm_roster_assignment
-          WHERE employee_id = ? AND roster_date = ? LIMIT 1`,
-        [employeeId, roster_date]
-      );
-      const before = (beforeRows as RowDataPacket[])[0] as
-        | { id: string; shift_template_id: string | null; is_week_off: number }
-        | undefined;
+        // Before the overwrite: this is the only record of what a re-upload changes.
+        // roster_change_log exists specifically for this (old_value_json/new_value_json/
+        // reason/changed_by) and previously received nothing from either bulk service —
+        // a same employee+date re-upload silently replaced the prior shift with no trace.
+        const [beforeRows] = await conn.execute<RowDataPacket[]>(
+          `SELECT id, shift_template_id, is_week_off FROM wfm_roster_assignment
+            WHERE employee_id = ? AND roster_date = ? LIMIT 1`,
+          [employeeId, roster_date]
+        );
+        const before = (beforeRows as RowDataPacket[])[0] as
+          | { id: string; shift_template_id: string | null; is_week_off: number }
+          | undefined;
 
-      const assignmentId = before?.id ?? randomUUID();
+        const assignmentId = before?.id ?? randomUUID();
 
-      // shift_version_id/scheduled_minutes only exist once migration
-      // 1200_shift_versioning.sql has been applied — probe rather than assume,
-      // same pattern as the live engine (auto-roster-synced.service.ts).
-      const raCols = await rosterAssignmentColumns(conn);
-      const hasScheduledMinutes = raCols.has("scheduled_minutes");
-      const hasShiftVersionId = raCols.has("shift_version_id");
+        // shift_version_id/scheduled_minutes only exist once migration
+        // 1200_shift_versioning.sql has been applied — probe rather than assume,
+        // same pattern as the live engine (auto-roster-synced.service.ts).
+        const raCols = await rosterAssignmentColumns(conn);
+        const hasScheduledMinutes = raCols.has("scheduled_minutes");
+        const hasShiftVersionId = raCols.has("shift_version_id");
 
-      // Built as synchronized (column, placeholder, value) triples, in the exact
-      // order they'll appear in the SQL text — MySQL binds `?` positionally, so
-      // insertVals must stay index-aligned with insertPlaceholders regardless of
-      // which optional columns get spliced in. system_decision_reason is placed
-      // last on purpose, alongside its value, rather than fixed mid-list with its
-      // value appended separately later — that split is what broke the alignment.
-      const insertCols = ["id", "cycle_id", "employee_id", "roster_date", "shift_template_id", "is_week_off",
-        "shift_start_time", "shift_end_time"];
-      const insertPlaceholders = ["?", "?", "?", "?", "?", "?", "?", "?"];
-      const insertVals: unknown[] = [assignmentId, cycle_id, employeeId, roster_date, shiftTemplateId,
-        isWeekOff ? 1 : 0, shiftStartTime, shiftEndTime];
-      const updateClauses = [
-        "shift_template_id = VALUES(shift_template_id)",
-        "is_week_off = VALUES(is_week_off)",
-        "shift_start_time = VALUES(shift_start_time)",
-        "shift_end_time = VALUES(shift_end_time)",
-      ];
-      if (hasShiftVersionId) {
-        insertCols.push("shift_version_id");
-        insertPlaceholders.push("?");
-        insertVals.push(shiftTemplateId);
-        updateClauses.push("shift_version_id = VALUES(shift_version_id)");
-      }
-      if (hasScheduledMinutes) {
-        insertCols.push("scheduled_minutes");
-        insertPlaceholders.push("?");
-        insertVals.push(scheduledMinutes);
-        updateClauses.push("scheduled_minutes = VALUES(scheduled_minutes)");
-      }
-      insertCols.push("roster_status", "publish_status", "decision_source", "system_decision_reason");
-      insertPlaceholders.push("'published'", "'published'", "'bulk_upload'", "?");
-      insertVals.push(notes ?? null);
-      updateClauses.push("decision_source = 'bulk_upload'", "system_decision_reason = VALUES(system_decision_reason)", "updated_at = NOW()");
+        // Built as synchronized (column, placeholder, value) triples, in the exact
+        // order they'll appear in the SQL text — MySQL binds `?` positionally, so
+        // insertVals must stay index-aligned with insertPlaceholders regardless of
+        // which optional columns get spliced in. system_decision_reason is placed
+        // last on purpose, alongside its value, rather than fixed mid-list with its
+        // value appended separately later — that split is what broke the alignment.
+        const insertCols = ["id", "cycle_id", "employee_id", "roster_date", "shift_template_id", "is_week_off",
+          "shift_start_time", "shift_end_time"];
+        const insertPlaceholders = ["?", "?", "?", "?", "?", "?", "?", "?"];
+        const insertVals: unknown[] = [assignmentId, cycle_id, employeeId, roster_date, shiftTemplateId,
+          isWeekOff ? 1 : 0, shiftStartTime, shiftEndTime];
+        const updateClauses = [
+          "shift_template_id = VALUES(shift_template_id)",
+          "is_week_off = VALUES(is_week_off)",
+          "shift_start_time = VALUES(shift_start_time)",
+          "shift_end_time = VALUES(shift_end_time)",
+        ];
+        if (hasShiftVersionId) {
+          insertCols.push("shift_version_id");
+          insertPlaceholders.push("?");
+          insertVals.push(shiftTemplateId);
+          updateClauses.push("shift_version_id = VALUES(shift_version_id)");
+        }
+        if (hasScheduledMinutes) {
+          insertCols.push("scheduled_minutes");
+          insertPlaceholders.push("?");
+          insertVals.push(scheduledMinutes);
+          updateClauses.push("scheduled_minutes = VALUES(scheduled_minutes)");
+        }
+        insertCols.push("roster_status", "publish_status", "decision_source", "system_decision_reason");
+        insertPlaceholders.push("'published'", "'published'", "'bulk_upload'", "?");
+        insertVals.push(notes ?? null);
+        updateClauses.push("decision_source = 'bulk_upload'", "system_decision_reason = VALUES(system_decision_reason)", "updated_at = NOW()");
 
-      await conn.execute(
-        // wfm_roster_assignment has no notes, created_by or updated_by column - it
-        // carries created_at/updated_at and no actor. Those three names made every
-        // bulk roster upload fail outright.
-        //
-        // The uploader's note is kept rather than dropped: system_decision_reason is
-        // the row's only free-text field and is already the column the RTA and WFM
-        // views surface next to decision_source, which this sets to 'bulk_upload'.
-        `INSERT INTO wfm_roster_assignment
-           (${insertCols.join(", ")})
-         VALUES (${insertPlaceholders.join(", ")})
-         ON DUPLICATE KEY UPDATE
-           ${updateClauses.join(",\n           ")}`,
-        insertVals
-      );
+        await conn.execute(
+          // wfm_roster_assignment has no notes, created_by or updated_by column - it
+          // carries created_at/updated_at and no actor. Those three names made every
+          // bulk roster upload fail outright.
+          //
+          // The uploader's note is kept rather than dropped: system_decision_reason is
+          // the row's only free-text field and is already the column the RTA and WFM
+          // views surface next to decision_source, which this sets to 'bulk_upload'.
+          `INSERT INTO wfm_roster_assignment
+             (${insertCols.join(", ")})
+           VALUES (${insertPlaceholders.join(", ")})
+           ON DUPLICATE KEY UPDATE
+             ${updateClauses.join(",\n             ")}`,
+          insertVals
+        );
 
-      if (before && (before.shift_template_id !== shiftTemplateId || Boolean(before.is_week_off) !== isWeekOff)) {
-        await logRosterChange(conn, {
-          entityType: "wfm_roster_assignment",
-          entityId: before.id,
-          changedBy: userId,
-          reason: `Bulk roster upload (batch ${batchId})`,
-          oldValue: { shift_template_id: before.shift_template_id, is_week_off: Boolean(before.is_week_off) },
-          newValue: { shift_template_id: shiftTemplateId, is_week_off: isWeekOff },
-        });
+        if (before && (before.shift_template_id !== shiftTemplateId || Boolean(before.is_week_off) !== isWeekOff)) {
+          await logRosterChange(conn, {
+            entityType: "wfm_roster_assignment",
+            entityId: before.id,
+            changedBy: userId,
+            reason: `Bulk roster upload (batch ${batchId})`,
+            oldValue: { shift_template_id: before.shift_template_id, is_week_off: Boolean(before.is_week_off) },
+            newValue: { shift_template_id: shiftTemplateId, is_week_off: isWeekOff },
+          });
+        }
+
+        return { ok: true, assignmentId };
+      });
+
+      if (!rowResult.ok) {
+        errors.push(rowResult.message);
+        await conn.execute(
+          "UPDATE upload_batch_row SET row_status='error', error_messages=? WHERE id=?",
+          [JSON.stringify([rowResult.message]), batchRow.id]
+        );
+        skipped++;
+        continue;
       }
 
       await conn.execute(
         "UPDATE upload_batch_row SET row_status='imported', target_record_id=? WHERE id=?",
-        [assignmentId, batchRow.id]
+        [rowResult.assignmentId, batchRow.id]
       );
       imported++;
     }
