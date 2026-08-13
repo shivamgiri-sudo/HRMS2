@@ -169,7 +169,11 @@ export interface ReadinessCategoriesResult {
 }
 
 /** Bump on any change to what a check means. Surfaced in the UI next to the evaluated timestamp. */
-export const READINESS_CATEGORIES_VERSION = "categories-v1.0.0";
+// v1.1.0 (2026-08-13): PAYFILE_CALCULATION_INCOMPLETE stopped reading the unmaintained
+// calculation_status column, which made it flag 100% of every run, and the real defect it was
+// failing to find became its own check, PAYFILE_GROSS_WITHOUT_PAYABLE_DAYS_BASIS. A stored
+// v1.0.0 result is not comparable with a v1.1.0 one on those two codes.
+export const READINESS_CATEGORIES_VERSION = "categories-v1.1.0";
 
 // â”€â”€â”€ Schema probing (fail-closed) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
@@ -1228,18 +1232,61 @@ async function paymentFileChecks(scope: RunScope): Promise<CategoryCheckResult[]
 
   return Promise.all([
     // Nothing may be paid before the calculation is complete for every line.
+    //
+    // CORRECTED 2026-08-13. This first read salary_prep_line.calculation_status against an
+    // allowlist of ('calculated','complete','completed'). Two things were wrong with that:
+    // NOTHING in backend/src writes calculation_status — the only reference to it in the whole
+    // codebase was this check — so it is an unmaintained column carrying values left by
+    // out-of-band scripts ('system_calculated', 'db_bill_sync', 'v2'), none of which were in the
+    // allowlist. The check therefore flagged 100% of every run's lines, including the 1,414 July
+    // lines the engine had calculated perfectly well. An always-red check is not a gate; it is
+    // noise that trains people to ignore the page.
+    //
+    // `status` is the column the engine actually maintains — calculatePayrollRun's INSERT ends
+    // `status = 'calculated'` — so it is what this now reads, together with needs_recalculation.
     runCheck({ code: "PAYFILE_CALCULATION_INCOMPLETE", layer: "PAYROLL_CALCULATION", severity: "P0" }, async () => {
       const sql = `
-        SELECT ${EMP_IDENTITY}, spl.status AS line_status, spl.calculation_status, spl.needs_recalculation
+        SELECT ${EMP_IDENTITY}, spl.status AS line_status, spl.needs_recalculation
           FROM salary_prep_line spl
           JOIN employees e ON e.id = spl.employee_id
          WHERE spl.run_id = ?
-           AND (LOWER(COALESCE(spl.calculation_status, '')) NOT IN ('calculated', 'complete', 'completed')
+           AND (LOWER(COALESCE(spl.status, '')) NOT IN ('calculated', 'approved', 'excluded', 'blocked')
                 OR COALESCE(spl.needs_recalculation, 0) = 1)`;
       const { count, sample } = await population(sql, [runId]);
       return count === 0
-        ? pass("Every line in the run is calculated and none is flagged for recalculation.")
-        : fail(count, `${count} payroll lines are not in a completed calculation state or are flagged as needing recalculation. A payment file built now would pay stale figures.`, undefined, sample);
+        ? pass("Every line in the run is in a calculated or approved state and none is flagged for recalculation.")
+        : fail(count, `${count} payroll lines are not in a calculated/approved state or are flagged as needing recalculation. A payment file built now would pay stale figures.`, undefined, sample);
+    }),
+
+    // Gross with no payable-days basis.
+    //
+    // This is the check the one above was failing to be. A line carrying money whose
+    // final_payable_days is zero was not produced by the payroll engine — the engine derives
+    // gross FROM payable days, so the two cannot disagree in that direction. It means the figure
+    // arrived by some other route (a db_bill mirror, a seed, a manual load) and nothing about it
+    // can be recomputed, explained to the employee, or defended in an audit.
+    //
+    // Measured live 2026-08-13, which is also why this is a separate check rather than folded in
+    // above: July 1 line, June 1,215, May 1,148. It discriminates, where the old check did not.
+    runCheck({ code: "PAYFILE_GROSS_WITHOUT_PAYABLE_DAYS_BASIS", layer: "PAYROLL_CALCULATION", severity: "P0" }, async () => {
+      const sql = `
+        SELECT ${EMP_IDENTITY}, ROUND(spl.gross_salary, 2) AS gross_salary,
+               ROUND(spl.net_salary, 2) AS net_salary,
+               spl.final_payable_days, spl.paid_working_days, spl.status AS line_status
+          FROM salary_prep_line spl
+          JOIN employees e ON e.id = spl.employee_id
+         WHERE spl.run_id = ?
+           AND spl.gross_salary > 0
+           AND COALESCE(spl.final_payable_days, 0) = 0`;
+      const { count, sample } = await population(sql, [runId]);
+      return count === 0
+        ? pass("Every line carrying gross pay has a payable-days basis behind it.")
+        : fail(
+            count,
+            `${count} payroll lines carry gross pay while final_payable_days is 0. The payroll engine derives gross from payable days, so these figures did not come from it — they cannot be recomputed, explained on a payslip, or defended in an audit. Do not resolve this by recalculating the run; establish where the figures came from first.`,
+            undefined,
+            sample,
+          );
     }),
 
     // Approval / lock state.
