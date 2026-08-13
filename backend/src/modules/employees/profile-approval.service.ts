@@ -4,7 +4,6 @@ import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
 import { sendSMS } from "../communication/sms.helper.js";
-import { encryptField } from "../../shared/fieldEncryption.js";
 
 /**
  * A pending row for this employee + request_type, if one already exists.
@@ -94,123 +93,13 @@ export const profileApprovalService = {
     return { id, status: "pending", routed_to: "payroll" };
   },
 
-  async getPendingBankDetailsApprovals(reviewerEmployeeId: string) {
-    const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT pua.*,
-              CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')) AS employee_name,
-              e.employee_code, b.branch_name
-       FROM profile_update_approval pua
-       LEFT JOIN employees e ON e.id = pua.employee_id
-       LEFT JOIN branch_master b ON b.id = e.branch_id
-       WHERE pua.request_type = 'bank_details' AND pua.status = 'pending'
-       ORDER BY pua.requested_at DESC`,
-      []
-    );
-    return rows;
-  },
-
-  async approveBankDetailsUpdate(
-    reviewerId: string,
-    approvalId: string,
-    approved: boolean,
-    reviewerNote?: string
-  ) {
-    const [req] = await db.execute<RowDataPacket[]>(
-      `SELECT * FROM profile_update_approval WHERE id = ? AND request_type = 'bank_details'`,
-      [approvalId]
-    );
-
-    if (!req.length) throw new Error("Approval request not found");
-    const approval = (req[0] as any);
-
-    if (approved) {
-      const newVals = JSON.parse(approval.new_values || "{}");
-
-      // Archive existing primary account (keep for history, mark non-primary)
-      await db.execute(
-        `UPDATE employee_bank_detail
-         SET is_primary = 0, active_status = 0
-         WHERE employee_id = ? AND is_primary = 1`,
-        [approval.employee_id]
-      );
-
-      // Determine effective run month: earliest draft run, or next calendar month
-      const today = new Date();
-      const nextMonth = new Date(today.getFullYear(), today.getMonth() + 1, 1);
-      const defaultEffective = `${nextMonth.getFullYear()}-${String(nextMonth.getMonth() + 1).padStart(2, '0')}`;
-
-      const [draftRuns] = await db.execute<RowDataPacket[]>(
-        `SELECT run_month FROM salary_prep_run
-         WHERE status = 'draft' ORDER BY run_month ASC LIMIT 1`
-      );
-      const effectiveRunMonth = draftRuns[0]?.run_month ?? defaultEffective;
-
-      // Insert new primary account with encrypted account number.
-      const encAccountNumber = newVals.account_number
-        ? encryptField(String(newVals.account_number))
-        : null;
-      await db.execute(
-        `INSERT INTO employee_bank_detail
-           (id, employee_id, is_primary, account_seq, bank_name, account_holder_name,
-            bank_branch, account_number_enc, ifsc_code, account_type, verified, active_status)
-         VALUES (UUID(), ?, 1, 1, ?, ?, ?, ?, ?, ?, 1, 1)`,
-        [
-          approval.employee_id,
-          newVals.bank_name,
-          newVals.account_holder_name,
-          newVals.bank_branch || null,
-          encAccountNumber,
-          newVals.ifsc_code,
-          newVals.account_type,
-        ]
-      );
-
-      // Record effective run month on the approval record
-      await db.execute(
-        `UPDATE profile_update_approval SET effective_run_month = ? WHERE id = ?`,
-        [effectiveRunMonth, approvalId]
-      );
-    }
-
-    await db.execute(
-      `UPDATE profile_update_approval
-       SET status = ?, reviewed_by = ?, reviewed_at = NOW(), reviewer_note = ?
-       WHERE id = ?`,
-      [approved ? "approved" : "rejected", reviewerId, reviewerNote || null, approvalId]
-    );
-
-    await logSensitiveAction({
-      actor_user_id: reviewerId,
-      action_type: approved ? "BANK_DETAILS_APPROVED" : "BANK_DETAILS_REJECTED",
-      module_key: "EMPLOYEE_PROFILE",
-      entity_type: "profile_update_approval",
-      entity_id: approvalId,
-      change_summary: {
-        approved,
-        note: reviewerNote,
-        employee_id: approval.employee_id,
-        old_values: approval.old_values,
-        new_values: approval.new_values,
-      },
-    });
-
-    // SMS — bank update approved or rejected (fire-and-forget)
-    try {
-      const [empRow] = await db.execute<RowDataPacket[]>(
-        `SELECT CONCAT(first_name,' ',COALESCE(last_name,'')) AS name, mobile, personal_phone
-         FROM employees WHERE id = ? LIMIT 1`, [approval.employee_id]
-      );
-      const emp = (empRow[0] as any);
-      const phone = emp?.mobile ?? emp?.personal_phone ?? null;
-      if (phone) {
-        const key = approved ? 'bank_update_approved' : 'bank_update_rejected';
-        const vars: Record<string, string> = approved
-          ? { name: String(emp.name) }
-          : { name: String(emp.name), reason: reviewerNote ?? 'Not specified' };
-        sendSMS(phone, key, vars).catch(() => {});
-      }
-    } catch { /* non-fatal */ }
-  },
+  // getPendingBankDetailsApprovals / approveBankDetailsUpdate used to live here. Removed:
+  // their only caller was profile-approval.routes.ts, which was never mounted in app.ts —
+  // confirmed via profile-trust-audit (2026-08-13) and re-verified unreferenced anywhere
+  // before deletion. The live bank-approval review path is
+  // PATCH /api/payroll/bank-change-requests/:id (payroll-window.routes.ts), fixed
+  // separately to persist account_number_enc, compute account_seq correctly and write
+  // this same audit trail — see that file for the reviewer that actually runs.
 };
 
 export async function submitStatutoryDetailsForApproval(

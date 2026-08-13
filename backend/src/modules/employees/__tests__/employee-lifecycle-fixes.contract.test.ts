@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import * as fs from 'fs';
 import * as path from 'path';
+import { SELF_EDITABLE_PERSONAL_COLUMNS } from '../fieldOwnership.js';
 
 // ── Task 1: employment_status case consistency ──────────────────────────────
 describe('activateEmployee — employment_status case', () => {
@@ -68,11 +69,14 @@ describe('PATCH /me — official_email not self-serviceable', () => {
     // let any column through, which is the defect the 403 above only partially covers.
     expect(section).toMatch(/for\s*\(\s*const\s+field\s+of\s+ALLOWED_FIELDS\s*\)/);
     expect(section).not.toMatch(/Object\.keys\(\s*req\.body\s*\)/);
-    const allowlist = section.slice(
-      section.indexOf('ALLOWED_FIELDS'),
-      section.indexOf(']', section.indexOf('ALLOWED_FIELDS')),
-    );
-    expect(allowlist).not.toContain('official_email');
+  });
+
+  // ALLOWED_FIELDS is now sourced from fieldOwnership.ts's SELF_EDITABLE_PERSONAL_COLUMNS
+  // (see that file — the single source of truth this replaced three disagreeing allowlists
+  // with), rather than a literal array in this file, so this asserts against the real,
+  // live-imported value instead of regex-slicing a moving target string.
+  it('the live field-ownership matrix does not mark official_email as employee-editable', () => {
+    expect(SELF_EDITABLE_PERSONAL_COLUMNS).not.toContain('official_email');
   });
 });
 

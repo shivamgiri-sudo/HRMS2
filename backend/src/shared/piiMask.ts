@@ -23,13 +23,10 @@ export function maskPii(value: string | null | undefined, type: PiiFieldType): s
   }
 }
 
-export function maskEmployeeRecord(record: Record<string, unknown>, role: string): Record<string, unknown> {
-  const isPrivileged = ["admin", "hr", "finance", "payroll"].includes(role);
-  if (isPrivileged) return record;
-  const masked = { ...record };
-  if (masked.mobile)         masked.mobile = maskPii(String(masked.mobile), "mobile");
-  if (masked.pan_number)     masked.pan_number = maskPii(String(masked.pan_number), "pan");
-  if (masked.aadhaar_number) masked.aadhaar_number = maskPii(String(masked.aadhaar_number), "aadhaar");
-  if (masked.upi_id)         masked.upi_id = maskPii(String(masked.upi_id), "upi_id");
-  return masked;
-}
+// maskEmployeeRecord used to live here — a second, competing employee-record masker with
+// its own role list (admin/hr/finance/payroll), alongside redactEmployeeIdentifiers.ts's
+// IDENTIFIER_FIELDS + RAW_IDENTIFIER_ROLES, which is what GET /api/employees/:id actually
+// uses. Zero call sites anywhere in the backend — confirmed unreferenced (profile-trust-audit,
+// 2026-08-13; re-verified before deletion). Removed rather than kept alongside the real one,
+// per fieldOwnership.ts: PII masking should have exactly one implementation, not two that can
+// silently drift apart on which roles/fields they cover.

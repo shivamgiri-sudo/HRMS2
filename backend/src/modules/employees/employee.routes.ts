@@ -19,6 +19,7 @@ import { bootstrapCandidateForEmployee } from "./employee-bgv-bootstrap.service.
 import { encryptField, decryptField } from "../../shared/fieldEncryption.js";
 import { encryptPanForSync, blindIndexPan } from "../../shared/syncPiiEncryption.js";
 import { validateBankFields, validateStatutoryFields } from "../../shared/statutoryFormat.js";
+import { SELF_EDITABLE_PERSONAL_COLUMNS } from "./fieldOwnership.js";
 
 const router = Router();
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -315,12 +316,10 @@ router.patch("/me", h(async (req: any, res: any) => {
 
   // official_email is the canonical login identity — HR-only, never self-service.
   // address→address_line1, no "address" or "country" column in prod schema.
-  const ALLOWED_FIELDS = [
-    "mobile", "personal_email", "personal_phone", "alternate_mobile",
-    "address_line1", "address_line2", "city", "state", "pincode",
-    "date_of_birth", "gender", "marital_status",
-    "blood_group", "working_hours_start", "working_hours_end", "working_days"
-  ];
+  // Derived from fieldOwnership.ts (the single source of truth for who can edit what) rather
+  // than hand-maintained here — this was previously one of three independently-maintained,
+  // disagreeing field lists across the codebase; see that file's header for the other two.
+  const ALLOWED_FIELDS = SELF_EDITABLE_PERSONAL_COLUMNS;
 
   // Reject any attempt to update official_email through self-service.
   if (req.body.official_email !== undefined) {
