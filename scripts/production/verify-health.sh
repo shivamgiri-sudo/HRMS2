@@ -6,6 +6,14 @@ die() {
   exit 1
 }
 
+# EXPECTED_GIT_SHA: pass the SHA you just deployed. When set, this script fails the deploy
+# unless the running process actually reports that SHA via /api/health/version — added after
+# the 2026-08-13 outage (docs/incidents/2026-08-13-migration-1006-production-outage.md), where
+# `pm2 list` reporting "online" was mistaken for a successful deploy while the HTTP listener
+# had never bound at all. PM2 process status is not evidence of application health; this
+# script — actually invoked, not eyeballed — is.
+EXPECTED_GIT_SHA="${EXPECTED_GIT_SHA:-}"
+BACKEND_PORT="${BACKEND_PORT:-5055}"
 BASE_URL="${BASE_URL:-http://127.0.0.1:5055}"
 EXPECTED_ASSESSMENT_STATUS="${EXPECTED_ASSESSMENT_STATUS:-enabled}"
 EXPECTED_ONE_ASSESSMENT_ATTEMPT="${EXPECTED_ONE_ASSESSMENT_ATTEMPT:-true}"
@@ -65,6 +73,72 @@ check_status() {
 
   print_fail "$path" "$expected" "$code" "$body"
   return 1
+}
+
+check_port_bound() {
+  # Fails fast, before any HTTP attempt, with an unambiguous message — a connection-refused
+  # curl error further down can look like a slow server if you're not already watching for
+  # it. This is exactly the check that would have caught the outage in under a second: PM2
+  # reported the process "online" for the entire ~24 minutes it never had this port open.
+  if command -v ss >/dev/null 2>&1; then
+    if ss -tln "( sport = :$BACKEND_PORT )" 2>/dev/null | grep -q ":$BACKEND_PORT"; then
+      printf 'PASS port %s is bound\n' "$BACKEND_PORT"
+      return 0
+    fi
+  elif command -v netstat >/dev/null 2>&1; then
+    if netstat -tln 2>/dev/null | grep -q ":$BACKEND_PORT "; then
+      printf 'PASS port %s is bound\n' "$BACKEND_PORT"
+      return 0
+    fi
+  else
+    printf 'WARN neither ss nor netstat available — skipping port-bound check, relying on HTTP checks only\n' >&2
+    return 0
+  fi
+  printf 'FAIL port %s is not bound — the process may show as "online" in PM2 while never having started its HTTP listener (this is exactly how the 2026-08-13 outage went undetected)\n' "$BACKEND_PORT" >&2
+  return 1
+}
+
+check_version_and_schema() {
+  local response code body headers commit_value pending_value applied_value
+
+  response="$(request /api/health/version version)"
+  code="$(printf '%s\n' "$response" | sed -n '1p')"
+  body="$(printf '%s\n' "$response" | sed -n '2p')"
+  headers="$(printf '%s\n' "$response" | sed -n '3p')"
+
+  if [[ "$code" != "200" ]]; then
+    print_fail /api/health/version 200 "$code" "$body"
+    return 1
+  fi
+
+  if ! node - "$body" "$EXPECTED_GIT_SHA" <<'EOF' >/dev/null 2>&1
+const fs = require('fs');
+const bodyPath = process.argv[2];
+const expectedSha = process.argv[3];
+const payload = JSON.parse(fs.readFileSync(bodyPath, 'utf8'));
+
+const problems = [];
+if (!payload || payload.success !== true) problems.push('success!=true');
+if (!payload.commit || payload.commit === 'unknown') problems.push('commit unknown — build did not stamp itself');
+if (expectedSha && payload.commit && !expectedSha.startsWith(payload.commit) && !payload.commit.startsWith(expectedSha)) {
+  problems.push(`commit=${payload.commit} does not match expected ${expectedSha} — old code is still running`);
+}
+if (!payload.schema || payload.schema.valid !== true) problems.push('schema.valid!=true');
+if (payload.schema && Number(payload.schema.pending) !== 0) problems.push(`schema.pending=${payload.schema.pending} — code and database are from different releases`);
+
+if (problems.length > 0) { console.error(problems.join('; ')); process.exit(1); }
+EOF
+  then
+    print_fail /api/health/version 200 "$code" "$body"
+    return 1
+  fi
+
+  commit_value="$(node -e "console.log(JSON.parse(require('fs').readFileSync(process.argv[1],'utf8')).commit)" "$body")"
+  pending_value="$(node -e "console.log(JSON.parse(require('fs').readFileSync(process.argv[1],'utf8')).schema.pending)" "$body")"
+  applied_value="$(node -e "console.log(JSON.parse(require('fs').readFileSync(process.argv[1],'utf8')).schema.applied)" "$body")"
+
+  printf 'PASS /api/health/version -> commit=%s schema.applied=%s schema.pending=%s\n' "$commit_value" "$applied_value" "$pending_value"
+  return 0
 }
 
 check_json_root_health() {
@@ -206,6 +280,8 @@ check_redirect() {
 
 failures=0
 
+check_port_bound || failures=$((failures + 1))
+check_version_and_schema || failures=$((failures + 1))
 check_json_root_health || failures=$((failures + 1))
 check_assessment_health || failures=$((failures + 1))
 check_status assessment_page /api/ats-ext/assessment 200 || failures=$((failures + 1))

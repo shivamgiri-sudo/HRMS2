@@ -28,6 +28,45 @@ Do not use these commands on production:
 - `git pull origin main`
 - `git checkout .`
 
+## Mandatory pre-restart gate (added 2026-08-13, non-negotiable)
+
+On 2026-08-13, a production restart pulled in a migration with DDL syntax this MySQL build
+rejects. The migration had not been authored by whoever deployed it, had not been tested
+against anything but production itself, and PM2 reporting the process "online" was treated as
+proof the deploy succeeded when the HTTP listener had never bound. ~24 minutes of full
+downtime. Full incident record: `docs/incidents/2026-08-13-migration-1006-production-outage.md`.
+
+This applies to **every** production deploy — the formal `deploy-backend.sh` path below and
+any manual `git pull` + restart. Ownership of a migration is irrelevant: a pull, merge,
+rebase, or cherry-pick can introduce a migration nobody on the deploying session wrote.
+
+**Before stopping or restarting the healthy production process:**
+
+1. **Target SHA validation** — know exactly what `FROM_SHA` (current production `HEAD`) and
+   `TARGET_SHA` (what you're about to deploy) are. Do not restart against a moving target.
+2. **Enumerate every pending migration in the range** — not just the one you came to deploy:
+   `git diff --name-status FROM_SHA..TARGET_SHA -- backend/sql/*.sql`
+3. **Static compatibility audit** — `node backend/scripts/audit-migration-collations.mjs`.
+   Catches MariaDB-only conditional DDL (`ADD COLUMN IF NOT EXISTS` and five siblings — the
+   exact 1006 failure) and collation-drift-prone `DEFAULT CHARSET` declarations. Also runs on
+   every `npm test` via `backend/src/db/__tests__/migration-syntax-compatibility.test.ts`, but
+   run it explicitly here too — that test only fails on *new* violations against a known
+   baseline; this step is your confirmation nothing pending is on that list either.
+4. **Non-production migration dry run** — `npx tsx backend/scripts/migration-preflight.ts
+   FROM_SHA TARGET_SHA`. Clones production's actual schema (structure only) into an isolated
+   database and runs every pending migration against it twice (first-apply, then rerun, to
+   prove idempotency) before anything touches the real service. **Do not skip this because the
+   migration "looks fine" or because production itself is the only environment available** —
+   that is exactly the reasoning that produced this incident. See the script's own header for
+   current setup status (a DBA grant for the isolated preflight database against the real
+   production host is still open — see the readiness doc).
+5. **Build/test** — `npm run build` (both `backend/` and root), `npm test` in `backend/`.
+6. **Deployment eligibility** — all four above green, or do not proceed.
+
+Only after that sequence passes: stop the healthy process, switch the checkout, restart,
+**then run verification** (below) before considering the deploy complete. A restart that
+fails verification is a failed deploy, not a deploy with a follow-up TODO.
+
 ## Required Environment
 
 Set these before running the scripts:
@@ -111,14 +150,24 @@ scripts/production/deploy-backend.sh --dry-run <from-sha> <target-sha> <test-pat
 
 ## Verification
 
-Run the health check script after any deployment:
+**PM2 reporting a process "online" is not evidence of a successful deploy.** On 2026-08-13,
+`hrms2-backend` showed `online` in `pm2 list` for the entire ~24-minute outage — the process
+was alive and had failed to bind its HTTP listener at all, because migration verification runs
+before `app.listen()`. Only the checks below, actually run, count as verification.
+
+Run the health check script after any deployment, with `EXPECTED_GIT_SHA` set to the SHA you
+just deployed:
 
 ```bash
-scripts/production/verify-health.sh
+EXPECTED_GIT_SHA=$(git rev-parse HEAD) scripts/production/verify-health.sh
 ```
 
 Expected checks:
 
+- port `5055` (`$BACKEND_PORT`) is actually bound — checked first, before any HTTP attempt
+- `/api/health/version` -> `200`, `schema.valid=true`, `schema.pending=0`, and `commit` matches
+  `EXPECTED_GIT_SHA` — a mismatch means either old code is still running or the code and
+  database are from different releases; both are a failed deploy
 - `/api/health` -> `200` and `success=true` when JSON is present
 - `/api/ats-ext/assessment/health` -> `200` with `success=true`
 - `/api/ats-ext/assessment/health` -> `data.status=<expected>` and the published candidate limit fields
@@ -128,7 +177,10 @@ Expected checks:
 - `/api/ats-ext/assessment-template-builder` -> `308` with a `Location` header exactly equal to `/api/ats-ext/assessment-admin/template-builder`
 - `/api/ats/queue/public-display?branch=NOIDA` -> `200`
 - exactly one listener must be present on port `5055`
-- PM2 process `4` must be online
+- PM2 process `4` must be online — necessary, never sufficient on its own
+
+If any check fails: this is a failed deploy. Roll back (see below) rather than leaving the
+service in a state where PM2 says one thing and `/api/health/version` says another.
 
 The expected assessment state can be supplied explicitly:
 
