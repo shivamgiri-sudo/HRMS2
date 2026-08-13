@@ -20,7 +20,10 @@ describe("attendance hub contracts", () => {
     expect(routesSource).not.toContain("e.hire_date");
     expect(routesSource).not.toContain("e.is_manager");
     expect(routesSource).not.toContain("e.emergency_contact_name");
-    expect(routesSource).toContain("e.address_line1 AS address");
+    // address1 is the real, populated column (see fieldOwnership.ts's address_line1 entry);
+    // address_line1 was a near-empty column that only this route used to read, so /employees/me
+    // now sources both the "address" and "address_line1" wire fields from address1.
+    expect(routesSource).toContain("e.address1 AS address");
     expect(routesSource).toContain("e.employment_status AS status");
     expect(routesSource).toContain("e.date_of_joining AS hire_date");
     expect(routesSource).toContain("isOfficialEmail");

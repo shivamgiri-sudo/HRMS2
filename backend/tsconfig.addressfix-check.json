@@ -1,0 +1,9 @@
+{
+  "extends": "./tsconfig.json",
+  "include": [
+    "src/modules/employees/employee.routes.ts",
+    "src/modules/employees/fieldOwnership.ts",
+    "src/modules/employees/employee.service.ts"
+  ],
+  "compilerOptions": { "noEmit": true }
+}

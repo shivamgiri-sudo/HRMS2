@@ -37,6 +37,12 @@ export interface FieldOwnership {
   immutable: boolean;
   /** The route(s) that actually enforce this — not aspirational, what's live today. */
   liveRoute: string;
+  /**
+   * The real `employees` column this field writes to, when it differs from the object key
+   * (the wire/request-body field name). Omit when they're the same. Only needed for
+   * address_line1 today — see its notes.
+   */
+  dbColumn?: string;
   notes?: string;
 }
 
@@ -76,10 +82,16 @@ export const FIELD_OWNERSHIP: Record<string, FieldOwnership> = {
     tab: "personal", employeeEditable: true, hrEditable: true,
     approvalRequired: false, immutable: false,
     liveRoute: "PATCH /me, PATCH /:id",
-    notes: "PATCH /me writes address_line1; PATCH /:id writes address1 — same underlying " +
-      "column intent, different name on each live path. Flagged, not yet unified: needs a " +
-      "live-schema check before either side is changed, per this project's standing rule to " +
-      "verify against the live DB rather than the schema files.",
+    dbColumn: "address1",
+    notes: "Live-schema check done 2026-08-13 (was previously just flagged): address1 is " +
+      "the real, populated column (30,120 of 58,840 rows) — used by admin PATCH /:id, " +
+      "onboarding creation and every document/form-fill path. address_line1 is a near-empty " +
+      "column (2 of 58,840 rows) that only GET/PATCH /me ever touched, so an employee's own " +
+      "Profile page showed a blank address for ~99.99% of accounts, and any self-service " +
+      "address edit silently landed in a column nothing else reads — invisible to HR, ID " +
+      "cards and offer letters, which all read address1. GET/PATCH /me now read and write " +
+      "address1 too, keeping address_line1 only as the wire field name (Profile.tsx's " +
+      "contract), not the storage column — see dbColumn.",
   },
   address_line2: {
     tab: "personal", employeeEditable: true, hrEditable: false,
@@ -303,10 +315,18 @@ const NON_COLUMN_FIELDS = new Set([
 ]);
 
 /**
- * The exact set of `employees` columns PATCH /me (employee.routes.ts) is allowed to write —
- * derived from this matrix rather than hand-maintained a second time, so the route's
- * allowlist and this file's employeeEditable flags cannot silently drift apart again.
+ * The exact set of request-body field names PATCH /me (employee.routes.ts) is allowed to
+ * write — derived from this matrix rather than hand-maintained a second time, so the
+ * route's allowlist and this file's employeeEditable flags cannot silently drift apart
+ * again. Almost every entry is also the literal `employees` column name; where the wire
+ * name and the real column differ (address_line1 → address1), use dbColumnFor() below to
+ * get the column PATCH /me should actually write and GET /me should actually read.
  */
 export const SELF_EDITABLE_PERSONAL_COLUMNS: string[] = Object.entries(FIELD_OWNERSHIP)
   .filter(([key, f]) => f.tab === "personal" && f.employeeEditable && !NON_COLUMN_FIELDS.has(key))
   .map(([key]) => key);
+
+/** The real `employees` column a self-editable field name writes to. Same as `field` unless FIELD_OWNERSHIP declares a dbColumn override. */
+export function dbColumnFor(field: string): string {
+  return FIELD_OWNERSHIP[field]?.dbColumn ?? field;
+}
