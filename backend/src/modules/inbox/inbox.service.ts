@@ -256,6 +256,15 @@ export interface PendingSummary {
   due_soon: number;
   on_track: number;
   by_module: Record<string, number>;
+  /**
+   * True when one or more of the three source queries returned exactly its LIMIT — i.e.
+   * there is at least one more row than was fetched, silently dropped, with no signal to
+   * the caller. Previously there was no way to tell "this is really everything" from "this
+   * is the first 200/300 of more" — a queue that grew past the cap would just quietly stop
+   * showing its oldest/lowest-priority items. The frontend surfaces this as a banner rather
+   * than fixing it by raising the caps, which only moves the same silent cliff further out.
+   */
+  truncated: boolean;
 }
 
 export interface TimelineEvent {
@@ -541,13 +550,24 @@ export async function getMyPending(userId: string): Promise<{ items: PendingTask
       acc[i.module] = (acc[i.module] ?? 0) + 1;
       return acc;
     }, {}),
+    // Each source's row count hitting its own LIMIT means there's at least one more row
+    // than was fetched — could be exactly one over, could be thousands; the query alone
+    // can't tell which; a caller who needs the real count can COUNT(*) separately.
+    truncated:
+      (tatRows as RowDataPacket[]).length === 300 ||
+      (inboxRows as RowDataPacket[]).length === 200 ||
+      (workItemRows as RowDataPacket[]).length === 200,
   };
 
   return { items, summary };
 }
 
-export async function getTimeline(referenceType: string, referenceId: string): Promise<TimelineEvent[]> {
+export async function getTimeline(referenceType: string, referenceId: string, workItemId?: string): Promise<TimelineEvent[]> {
   const events: TimelineEvent[] = [];
+  // Populated by the mira_feedback/incentive blocks below so the generic workItemId block
+  // at the end doesn't push the same underlying work_item_audit_log row twice — see that
+  // block's comment for why both can otherwise fire for the same row.
+  const seenAuditLogIds = new Set<string>();
 
   // sensitive_action_log — column names verified against live mas_hrms schema 2026-08-13.
   // The previous version (created_at, performed_by_user_id, details, reference_type,
@@ -641,6 +661,7 @@ export async function getTimeline(referenceType: string, referenceId: string): P
     ).catch(() => [[] as RowDataPacket[]]);
 
     (miraRows as RowDataPacket[]).forEach((r) => {
+      seenAuditLogIds.add(String(r.id));
       events.push({
         id: `mira-${String(r.id)}`,
         event_time: String(r.created_at),
@@ -663,8 +684,46 @@ export async function getTimeline(referenceType: string, referenceId: string): P
     ).catch(() => [[] as RowDataPacket[]]);
 
     (incRows as RowDataPacket[]).forEach((r) => {
+      seenAuditLogIds.add(String(r.id));
       events.push({
         id: `inc-${String(r.id)}`,
+        event_time: String(r.created_at),
+        actor: String(r.actor ?? "system"),
+        action: String(r.action ?? ""),
+        details: r.details ? String(r.details) : undefined,
+        source_table: "work_item_audit_log",
+      });
+    });
+  }
+
+  // Generic: any work_item's own completion/escalation/reassignment/triage history, keyed
+  // by the work_item's own primary key rather than the business entity it points at.
+  //
+  // The two blocks above only find their audit rows because MIRA_FEEDBACK and incentive
+  // batches happen to set entity_id = the work_item's own id (a deliberate self-reference,
+  // see ai-feedback.service.ts). Every other producer — the 22-type registry
+  // (action-item-registry.ts), EMPLOYEE_CODE_PENDING, EMPLOYEE_ONBOARDING_MANUAL_REVIEW —
+  // sets entity_id to the actual business entity (employee/candidate/branch/...), so
+  // work_item_audit_log rows written by completeWorkItem()/escalateWorkItem()/
+  // reassignWorkItem() (work-inbox.service.ts) for those items were unreachable from this
+  // endpoint no matter what referenceType/referenceId the caller passed — there was no
+  // column to look them up by. The frontend now passes the work_item's own id (task.id,
+  // which is exactly wi.id from getMyPending's workItemRows) as a separate query param for
+  // work_item-sourced tasks; this is the branch that uses it. Guarded by seenAuditLogIds so
+  // it doesn't duplicate rows the mira_feedback/incentive blocks already added.
+  if (workItemId) {
+    const [genRows] = await db.execute<RowDataPacket[]>(
+      `SELECT id, performed_at AS created_at, performed_by AS actor, action AS action, remarks AS details
+       FROM work_item_audit_log
+       WHERE work_item_id = ?
+       ORDER BY performed_at DESC LIMIT 50`,
+      [workItemId],
+    ).catch(() => [[] as RowDataPacket[]]);
+
+    (genRows as RowDataPacket[]).forEach((r) => {
+      if (seenAuditLogIds.has(String(r.id))) return;
+      events.push({
+        id: `wi-${String(r.id)}`,
         event_time: String(r.created_at),
         actor: String(r.actor ?? "system"),
         action: String(r.action ?? ""),

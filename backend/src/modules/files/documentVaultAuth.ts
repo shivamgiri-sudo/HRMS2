@@ -23,6 +23,15 @@ export interface DocumentAuthOptions {
   reason?: string;
   ipAddress?: string;
   userAgent?: string;
+  /**
+   * The caller's own employees.id, if they have an employee record — NOT the same
+   * value as actorUserId (users.id). owner_employee_id on the vault item is always
+   * an employees.id, so without this the owner-bypass below can never match a real
+   * employee, only an id that happens to collide by accident. Resolve via
+   * accessGuard.getEmployeeForUser(actorUserId) at the call site; optional because
+   * not every actor (e.g. a service account, or a candidate) has one.
+   */
+  actorEmployeeId?: string;
 }
 
 export interface DocumentAuthResult {
@@ -93,8 +102,13 @@ export async function authorizeDocumentAccess(opts: DocumentAuthOptions): Promis
   const allowedRoles = ACCESS_LEVEL_POLICY[accessLevel] ?? ACCESS_LEVEL_POLICY.confidential;
 
   // Owner bypass: a document's registered owner can always access their own file
-  // (candidate owner access is handled upstream in the candidate file route)
-  const isOwner = item.owner_employee_id != null && item.owner_employee_id === opts.actorUserId;
+  // (candidate owner access is handled upstream in the candidate file route).
+  // Must compare against the caller's employees.id (actorEmployeeId), not their
+  // users.id (actorUserId) — owner_employee_id is always an employees.id, and
+  // those two id spaces are distinct in this schema (employees.user_id is the FK
+  // between them). Comparing against actorUserId here used to mean this bypass
+  // could never actually match a real employee.
+  const isOwner = item.owner_employee_id != null && item.owner_employee_id === opts.actorEmployeeId;
 
   if (!isOwner && !allowedRoles.has(opts.actorRole)) {
     await logDocumentAccess({

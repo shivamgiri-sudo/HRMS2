@@ -21,7 +21,10 @@ router.get("/my-pending", h(async (req: AuthenticatedRequest, res: Response) => 
 // GET /timeline/:referenceType/:referenceId — cross-module audit timeline
 router.get("/timeline/:referenceType/:referenceId", h(async (req: AuthenticatedRequest, res: Response) => {
   const { referenceType, referenceId } = req.params;
-  const events = await getTimeline(referenceType, referenceId);
+  // Optional: the work_item's own id, for tasks whose entity_id doesn't self-reference it —
+  // see getTimeline's workItemId block for why this is needed.
+  const workItemId = typeof req.query.workItemId === "string" ? req.query.workItemId : undefined;
+  const events = await getTimeline(referenceType, referenceId, workItemId);
   return res.json({ success: true, events });
 }));
 

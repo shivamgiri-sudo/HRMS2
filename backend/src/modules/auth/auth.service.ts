@@ -575,6 +575,7 @@ export const authService = {
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT rt.id AS token_id, rt.user_id, rt.token_family_id, rt.rotated_at, rt.password_changed_at_snapshot,
               au.email, au.is_blocked, au.password_changed_at AS current_password_changed_at, au.session_version,
+              COALESCE(au.is_read_only, 0) AS is_read_only,
               -- employees has no status column, so this query threw ER_BAD_FIELD_ERROR on
               -- every refresh: token refresh was broken outright and the inactive-employee
               -- check below never ran. It failed closed (refresh denied), so no session was
@@ -656,7 +657,11 @@ export const authService = {
 
     const primaryRole = await getUserPrimaryRole(token.user_id);
     const accessToken = jwt.sign(
-      { sub: token.user_id, email: token.email, role: primaryRole },
+      // is_read_only must match the claim the login-issued token carries (see login() above) —
+      // it was previously omitted here, so a read-only user's flag silently reset to "false"
+      // client-side (decodeJwtUser reads it straight off the token) the first time their
+      // session refreshed. (2026-08-13 auth audit)
+      { sub: token.user_id, email: token.email, is_read_only: Boolean(token.is_read_only), role: primaryRole },
       JWT_SECRET,
       { expiresIn: JWT_EXPIRES_IN }
     );
@@ -823,8 +828,21 @@ export const authService = {
 
   verifyAccessToken(token: string): { id: string; email: string; scope?: string } | null {
     try {
-      const payload = jwt.verify(token, JWT_SECRET) as { sub: string; email: string; scope?: string };
-      return { id: payload.sub, email: payload.email, scope: payload.scope };
+      const payload = jwt.verify(token, JWT_SECRET) as { sub?: unknown; email?: unknown; scope?: unknown };
+      // SECURITY (2026-08-13 auth audit): the ATS candidate-portal token is also signed
+      // with JWT_SECRET (a separate audience that should carry its own secret — tracked
+      // separately, needs a coordinated credential change to fix at the source). Its
+      // payload shape is { candidate_id, candidate_code }, with no `sub`. Without this
+      // check, such a token still passes signature verification here and produces
+      // req.authUser = { id: undefined }, which then flows into every downstream query
+      // as a bindable-but-meaningless value instead of being rejected outright. Require
+      // a real string `sub` so any token from a different audience is refused up front.
+      if (typeof payload.sub !== "string" || !payload.sub) return null;
+      return {
+        id: payload.sub,
+        email: typeof payload.email === "string" ? payload.email : "",
+        scope: typeof payload.scope === "string" ? payload.scope : undefined,
+      };
     } catch {
       return null;
     }

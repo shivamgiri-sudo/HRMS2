@@ -6,6 +6,15 @@
  * user_roles FK constraint (or its equivalent enum column) in a new migration.
  *
  * Rule: never use a raw string where Role is expected — import this enum.
+ *
+ * AUDIT NOTE (2026-08-13): this file's alias tables (LEGACY_ROLE_EQUIVALENTS,
+ * ROLE_ALIASES) answer set-membership questions for requireRole() and are
+ * distinct in purpose from shared/roleResolver.ts's ROLE_PRIORITY (which picks
+ * one "primary" role for display/audit context) — the two compose correctly
+ * today (roleResolver supplies the raw role facts, this file's expandRoles()
+ * applies alias expansion on top), but see the fuller cross-reference note in
+ * roleResolver.ts for the other role-resolution paths that don't compose with
+ * either of these (shared/accessGuard.ts, auth-launch.routes.ts).
  */
 export const Role = {
   SUPER_ADMIN:         "super_admin",

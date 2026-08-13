@@ -3,6 +3,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { getDemoCred, buildDemoSession } from "@/lib/demoCreds";
 import { apiUrl } from "@/lib/apiBase";
 import { useInactivityTimeout } from "@/hooks/useInactivityTimeout";
+import { toast } from "@/hooks/use-toast";
 
 export interface HrmsUser {
   id: string;
@@ -95,11 +96,49 @@ const DEFINITIVE_LOGOUT_CODES = new Set([
   'TOKEN_INVALID',
 ]);
 
-// Returns the decoded user on success, null on transient failure,
-// and throws a special sentinel on definitive server rejection.
-const DEFINITIVE_LOGOUT = Symbol('DEFINITIVE_LOGOUT');
+// User-facing explanation per definitive-logout code, shown when the *background*
+// silent-refresh path discovers the session was revoked server-side. Before this
+// (2026-08-13 auth audit), only the ACCOUNT_DEACTIVATED case — triggered by an
+// ordinary API call's 401, handled in lib/hrmsApi.ts — got an explanatory toast;
+// a user bounced by the proactive refresh timer instead (the far more common path,
+// since it fires every ~19 minutes regardless of whether the user is actively
+// clicking around) was silently returned to /auth with zero explanation.
+const DEFINITIVE_LOGOUT_MESSAGES: Record<string, { title: string; description: string }> = {
+  EMPLOYEE_INACTIVE: {
+    title: 'Account inactive',
+    description: 'Your account has been deactivated. Please contact HR for assistance.',
+  },
+  USER_BLOCKED: {
+    title: 'Account inactive',
+    description: 'Your account has been deactivated. Please contact HR for assistance.',
+  },
+  PASSWORD_CHANGED: {
+    title: 'Signed out',
+    description: 'Your password was changed. Please sign in again with your new password.',
+  },
+  TOKEN_REUSED: {
+    title: 'Security sign-out',
+    description: 'Unusual activity was detected on your session, so all devices were signed out for your security. Please sign in again.',
+  },
+};
+const DEFAULT_DEFINITIVE_LOGOUT_MESSAGE = { title: 'Session ended', description: 'Please sign in again.' };
 
-async function tryRefresh(): Promise<HrmsUser | null | typeof DEFINITIVE_LOGOUT> {
+function showDefinitiveLogoutToast(code: string | undefined) {
+  const { title, description } = (code && DEFINITIVE_LOGOUT_MESSAGES[code]) ?? DEFAULT_DEFINITIVE_LOGOUT_MESSAGE;
+  toast({ title, description, variant: 'destructive' });
+}
+
+// Returns the decoded user on success, null on transient failure,
+// or a tagged result on definitive server rejection (session revoked).
+interface DefinitiveLogoutResult {
+  definitiveLogout: true;
+  code?: string;
+}
+function isDefinitiveLogout(value: unknown): value is DefinitiveLogoutResult {
+  return typeof value === 'object' && value !== null && (value as { definitiveLogout?: unknown }).definitiveLogout === true;
+}
+
+async function tryRefresh(): Promise<HrmsUser | null | DefinitiveLogoutResult> {
   try {
     const { ok, status, payload } = await fetchJson('/api/auth/refresh', {
       method: 'POST',
@@ -117,7 +156,7 @@ async function tryRefresh(): Promise<HrmsUser | null | typeof DEFINITIVE_LOGOUT>
         localStorage.removeItem('hrms_must_change_password');
         localStorage.removeItem('hrms_2fa_required');
         localStorage.removeItem('hrms_2fa_verified');
-        return DEFINITIVE_LOGOUT;
+        return { definitiveLogout: true, code };
       }
       // Transient (5xx, network, timeout) — keep the session alive
       return null;
@@ -201,7 +240,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     refreshTimerRef.current = setTimeout(async () => {
       refreshTimerRef.current = null;
       const result = await tryRefresh();
-      if (result === DEFINITIVE_LOGOUT) {
+      if (isDefinitiveLogout(result)) {
+        showDefinitiveLogoutToast(result.code);
         clearAuthState();
         return;
       }
@@ -233,13 +273,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         // Token exists but is expired — attempt silent refresh
         localStorage.removeItem('hrms_access_token');
         const result = await tryRefresh();
-        if (result !== null && result !== DEFINITIVE_LOGOUT) {
+        if (result !== null && !isDefinitiveLogout(result)) {
           setUser(result);
           setIsLoading(false);
           scheduleRefresh();
           return;
         }
-        if (result !== DEFINITIVE_LOGOUT) {
+        if (isDefinitiveLogout(result)) {
+          // Revoked server-side (deactivated, blocked, password changed, token
+          // reuse) while the tab was closed/idle — explain why, same as the
+          // background-timer path.
+          showDefinitiveLogoutToast(result.code);
+        } else {
           // Transient failure on boot — still clear the stale token but do not
           // destroy the refresh cookie; the user will be prompted to log in
           localStorage.removeItem('hrms_refresh_token');
