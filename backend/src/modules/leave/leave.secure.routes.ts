@@ -11,7 +11,16 @@ export const leaveSecureRouter = Router();
 leaveSecureRouter.use(requireAuth);
 
 const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any, next: any) => fn(req, res).catch(next);
-const LEAVE_VIEW_SCOPE_ROLES = ["manager", "assistant_manager", "tl", "branch_head", "process_manager", "hr", "payroll_hr", "payroll_branch", "wfm"];
+// team_leader and tl are two distinct, independently assignable roles in
+// workforce_role_catalog (54 files reference team_leader vs. a handful for tl) — this
+// array only recognized tl. hasAnyRole/buildScopeWhereClause do a literal string match
+// with no alias expansion, so a team_leader-only caller fell through to "1=0" here and
+// leaveListScope's fallback then restricted them to their own single employee record —
+// never their team's requests — even though 6 of the 8 live team_leader accounts
+// (verified 2026-08-13) hold a user_assignment_scope row granting them exactly this
+// visibility, and TeamLeaveTab.tsx (MyTeamPage's Leave tab, whose own gate already
+// admits team_leader) calls this endpoint expecting it to work.
+const LEAVE_VIEW_SCOPE_ROLES = ["manager", "assistant_manager", "tl", "team_leader", "branch_head", "process_manager", "hr", "payroll_hr", "payroll_branch", "wfm"];
 
 async function leaveListScope(userId: string): Promise<{ sql: string; params: unknown[] }> {
   if (await hasAnyRole(userId, "super_admin")) return { sql: "1=1", params: [] };
