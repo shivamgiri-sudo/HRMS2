@@ -49,6 +49,8 @@ interface PendingSummary {
   due_soon: number;
   on_track: number;
   by_module: Record<string, number>;
+  /** True when a source query hit its row cap — there is more than what's shown. */
+  truncated?: boolean;
 }
 
 interface TimelineEvent {
@@ -213,14 +215,23 @@ function ActionSheet({
   useEffect(() => {
     if (!task?.entity_type || !task?.entity_id) return;
     setTlLoading(true);
+    // work_item-sourced tasks (Mira complaints, registry-driven approvals, ...) mostly don't
+    // self-reference — entity_id is the business entity (employee/candidate/...), not the
+    // work_item's own id — so a completion/escalation/reassignment recorded against this
+    // item is otherwise unreachable from entity_type/entity_id alone. task.id IS the
+    // work_item's own id (see getMyPending's workItemRows), passed through so the backend's
+    // generic workItemId branch can find it. See getTimeline (inbox.service.ts) for the
+    // dedup that keeps this from double-showing rows the mira_feedback/incentive-specific
+    // lookups already cover.
+    const workItemParam = task.source === "work_item" ? `?workItemId=${encodeURIComponent(task.id)}` : "";
     hrmsApi
       .get<{ success: boolean; events: TimelineEvent[] }>(
-        `/api/inbox/timeline/${task.entity_type}/${task.entity_id}`,
+        `/api/inbox/timeline/${task.entity_type}/${task.entity_id}${workItemParam}`,
       )
       .then((r) => setTimeline(r.events ?? []))
       .catch(() => setTimeline([]))
       .finally(() => setTlLoading(false));
-  }, [task?.entity_type, task?.entity_id]);
+  }, [task?.entity_type, task?.entity_id, task?.source, task?.id]);
 
   const handleAct = async () => {
     if (!task) return;
@@ -412,6 +423,7 @@ export default function NativeWorkInbox() {
   const [error, setError]         = useState("");
   const [activeModule, setActiveModule] = useState<string>("all");
   const [riskFilter, setRiskFilter]     = useState<RiskFilter>("all");
+  const [search, setSearch]       = useState("");
   const [selected, setSelected]   = useState<PendingTask | null>(null);
 
   const load = useCallback(async () => {
@@ -436,9 +448,22 @@ export default function NativeWorkInbox() {
   const moduleCounts = summary?.by_module ?? {};
   const moduleList = Object.entries(moduleCounts).sort((a, b) => b[1] - a[1]);
 
+  // Search runs over whatever /my-pending already fetched (up to ~700 rows across the three
+  // sources' caps), not a server-side full-text query against the underlying tables — those
+  // hold tens of thousands of rows per source and a real search would need its own scoped
+  // endpoint. This finds anything currently on screen; it can't find an item that got cut by
+  // the LIMIT before it ever reached the browser — that's what the truncation banner is for.
+  const searchTerm = search.trim().toLowerCase();
   const filtered = items.filter((item) => {
     if (activeModule !== "all" && item.module !== activeModule) return false;
     if (riskFilter !== "all" && item.risk !== riskFilter) return false;
+    if (searchTerm) {
+      const haystack = [item.title, item.description, item.employee_name, item.requested_by_name, item.requested_by_code]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
+      if (!haystack.includes(searchTerm)) return false;
+    }
     return true;
   });
 
@@ -518,8 +543,28 @@ export default function NativeWorkInbox() {
           </div>
         )}
 
+        {summary?.truncated && (
+          <div className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm font-semibold text-slate-600">
+            <AlertTriangle className="h-4 w-4 flex-shrink-0 text-slate-400" />
+            Showing the first batch of results — one or more categories has more pending items
+            than fit here. Use the module or risk filters to narrow down; the oldest/lowest
+            priority items in an over-full category may not be listed above.
+          </div>
+        )}
+
         {/* Filters */}
         <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm space-y-4">
+          {/* Search */}
+          <div>
+            <p className="mb-2 text-[10px] font-black uppercase tracking-widest text-slate-400">Search</p>
+            <input
+              type="text"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search title, description, employee or requester…"
+              className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2 text-sm text-slate-800 placeholder:text-slate-400 focus:border-slate-400 focus:bg-white focus:outline-none"
+            />
+          </div>
           {/* Module tabs */}
           <div>
             <p className="mb-2 text-[10px] font-black uppercase tracking-widest text-slate-400">Module</p>
@@ -582,8 +627,14 @@ export default function NativeWorkInbox() {
           ) : filtered.length === 0 ? (
             <div className="col-span-full flex flex-col items-center justify-center rounded-2xl border border-dashed border-slate-200 bg-white py-20 text-slate-400">
               <BellOff className="mb-3 h-10 w-10 opacity-30" />
-              <p className="font-semibold">No pending tasks</p>
-              <p className="mt-1 text-sm">Great work! Everything is actioned.</p>
+              <p className="font-semibold">
+                {items.length === 0 ? "No pending tasks" : "No matches"}
+              </p>
+              <p className="mt-1 text-sm">
+                {items.length === 0
+                  ? "Great work! Everything is actioned."
+                  : "Nothing matches the current search and filters."}
+              </p>
             </div>
           ) : (
             filtered.map((task) => (
