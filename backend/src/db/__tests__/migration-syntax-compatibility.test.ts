@@ -62,7 +62,6 @@ const KNOWN_LEGACY_VIOLATIONS = new Set([
   "1038_salary_prep_line_component_reason.sql",
   "1064_celebration_post_type.sql",
   "1200_shift_versioning.sql",
-  "1210_minimum_rest_policy.sql",
   "204_personal_contact_fields.sql",
   "206_ats_recruiter_contact_details.sql",
   "206_leave_el_accrual_ledger.sql",

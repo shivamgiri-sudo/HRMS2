@@ -58,9 +58,21 @@ CREATE TABLE IF NOT EXISTS wfm_rest_policy (
 -- generated column so two NULL-effective_to rows for the same scope still
 -- collide on the UNIQUE index (MySQL treats NULL as distinct in a UNIQUE key
 -- otherwise, which would silently allow two "current" rows for one scope).
-ALTER TABLE wfm_rest_policy
-  ADD COLUMN IF NOT EXISTS effective_to_bound DATE
-    GENERATED ALWAYS AS (COALESCE(effective_to, '9999-12-31')) STORED;
+--
+-- FIXED 2026-08-13 (migration-certification re-check, round 2 follow-up):
+-- this ALTER previously used `ADD COLUMN IF NOT EXISTS`. That exact clause
+-- is what took production down for ~24 minutes on migration 1006 — every
+-- variant throws ER_PARSE_ERROR on this server's MySQL 8.0.42 build at the
+-- IF NOT EXISTS token itself, not a semantic "already exists" failure (see
+-- docs/incidents/2026-08-13-migration-1006-production-outage.md). Rewritten
+-- to the same information_schema-guard + PREPARE/EXECUTE idiom 1006's own
+-- fix and every other guarded ALTER in this codebase already uses.
+SET @c_effective_to_bound := (SELECT COUNT(*) FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'wfm_rest_policy' AND COLUMN_NAME = 'effective_to_bound');
+SET @add_col := IF(@c_effective_to_bound = 0,
+  'ALTER TABLE wfm_rest_policy ADD COLUMN effective_to_bound DATE GENERATED ALWAYS AS (COALESCE(effective_to, ''9999-12-31'')) STORED',
+  'SELECT "effective_to_bound already exists" AS info');
+PREPARE stmt FROM @add_col; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 SET @uq_exists := (SELECT COUNT(*) FROM information_schema.STATISTICS
   WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'wfm_rest_policy' AND INDEX_NAME = 'uq_wfm_rest_policy_scope_window');
