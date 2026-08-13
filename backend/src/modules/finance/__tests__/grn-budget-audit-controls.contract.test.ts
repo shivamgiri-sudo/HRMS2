@@ -54,6 +54,20 @@ vi.mock("../../../shared/auditLog.js", () => ({
   logSensitiveAction: vi.fn().mockResolvedValue(undefined),
 }));
 
+// Stubs the budget-side effects (reserve/consume/release) so the STATE_CHANGED runtime tests
+// below can drive grn.service.ts's reviewGrn() end to end without also having to fake
+// lockActiveBudgetLine's own SELECT/UPDATE sequence. Every method resolves to undefined —
+// the tests only assert on what reviewGrn() itself does with the guarded UPDATE's
+// affectedRows, not on budget-line arithmetic (that's covered elsewhere).
+vi.mock("../../process-pnl/budget-consumption.service.js", () => ({
+  budgetConsumptionService: {
+    reserve: vi.fn().mockResolvedValue(undefined),
+    consume: vi.fn().mockResolvedValue(undefined),
+    release: vi.fn().mockResolvedValue(undefined),
+    reverseConsumption: vi.fn().mockResolvedValue(undefined),
+  },
+}));
+
 // ─────────────────────────────────────────────────────────────────────────────
 // P0-1  Legacy GRN validation bypass removed
 // ─────────────────────────────────────────────────────────────────────────────
@@ -254,47 +268,6 @@ describe("P1-5: smart GRN review UPDATEs include expected status in WHERE and ch
     expect(svc).toContain("STATE_CHANGED");
     const count = (svc.match(/STATE_CHANGED/g) ?? []).length;
     expect(count).toBeGreaterThanOrEqual(2);
-  });
-
-  // P1-5 covered the smart-path branch_head and finance_head-approve UPDATEs. The
-  // finance_head-reject UPDATE in the same review() function was still a bare
-  // `WHERE id = ?` with no affectedRows check — the one arm left unguarded.
-  it("smart review's finance_head-reject UPDATE is also guarded (was the missing arm)", () => {
-    const svc = read("src/modules/finance/grn-smart.service.ts");
-    const fn = svc.slice(svc.indexOf("async review("));
-    const rejectIdx = fn.indexOf("releaseAllocations(connection, allocations)");
-    expect(rejectIdx).toBeGreaterThan(-1);
-    const rejectBlock = fn.slice(rejectIdx, rejectIdx + 1200);
-    expect(rejectBlock).toContain("AND status = 'branch_head_approved'");
-    expect(rejectBlock).toContain("STATE_CHANGED");
-  });
-});
-
-// ─────────────────────────────────────────────────────────────────────────────
-// P1-5b  The legacy (non-allocation) GRN path had the identical gap in all three
-// of its review UPDATEs — P1-5 only ever touched grn-smart.service.ts. A GRN
-// reviewed through the legacy path (no cost allocations saved) got none of the
-// same-file protection its smart-path sibling already had.
-// ─────────────────────────────────────────────────────────────────────────────
-describe("P1-5b: legacy grn.service.ts reviewGrn UPDATEs also guarded", () => {
-  it("branch_head UPDATE uses AND status = 'submitted'", () => {
-    const svc = read("src/modules/finance/grn.service.ts");
-    const fn = svc.slice(svc.indexOf("async reviewGrn("));
-    expect(fn).toContain("AND status = 'submitted'");
-  });
-
-  it("finance_head approve and reject UPDATEs both use AND status = 'branch_head_approved'", () => {
-    const svc = read("src/modules/finance/grn.service.ts");
-    const fn = svc.slice(svc.indexOf("async reviewGrn("));
-    const count = (fn.match(/AND status = 'branch_head_approved'/g) ?? []).length;
-    expect(count).toBe(2);
-  });
-
-  it("all three UPDATEs assert affectedRows === 1 and throw STATE_CHANGED on mismatch", () => {
-    const svc = read("src/modules/finance/grn.service.ts");
-    const fn = svc.slice(svc.indexOf("async reviewGrn("), svc.indexOf("\n  async", svc.indexOf("async reviewGrn(") + 10));
-    const count = (fn.match(/STATE_CHANGED/g) ?? []).length;
-    expect(count).toBe(3);
   });
 });
 
@@ -562,6 +535,111 @@ describe("GRN smart review maker-checker — runtime paths (DB mocked)", () => {
     await expect(
       grnSmartService.review(GRN_ID, "approved", undefined, BH_REVIEWER, "branch_head"),
     ).rejects.toThrow(/PROVISION_GRN_NOT_SUPPORTED/);
+  });
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // Follow-up to P1-5/P1-5b: prove the guard actually fires at runtime, not just
+  // that the WHERE clause and STATE_CHANGED string are present in source. Each
+  // test drives the real service function with a mocked connection whose guarded
+  // UPDATE resolves affectedRows: 0 — the exact shape MySQL returns when a
+  // concurrent reviewer already moved the row's status between this function's
+  // SELECT...FOR UPDATE read and its own UPDATE.
+  // ───────────────────────────────────────────────────────────────────────────
+  it("branch_head reject: STATE_CHANGED/409 when affectedRows is 0", async () => {
+    setupReviewMocks(); // status: submitted (default) — no reserveAllocations call on reject
+    mockConnection.execute.mockResolvedValueOnce([{ affectedRows: 0 }, undefined]); // guarded UPDATE
+    const { grnSmartService } = await import("../grn-smart.service.js");
+    await expect(
+      grnSmartService.review(GRN_ID, "rejected", "not needed", BH_REVIEWER, "branch_head"),
+    ).rejects.toMatchObject({ code: "STATE_CHANGED", statusCode: 409 });
+  });
+
+  it("finance_head reject: STATE_CHANGED/409 when affectedRows is 0", async () => {
+    setupReviewMocks({ status: "branch_head_approved", branch_head_reviewed_by: BH_REVIEWER });
+    // releaseAllocations: allocationRow.lifecycle_status is 'pending' (not 'reserved'), so it
+    // skips budgetConsumptionService.release and only issues the grn_cost_allocation UPDATE.
+    mockConnection.execute.mockResolvedValueOnce([{ affectedRows: 1 }, undefined]); // grn_cost_allocation UPDATE
+    mockConnection.execute.mockResolvedValueOnce([{ affectedRows: 0 }, undefined]); // guarded UPDATE
+    const { grnSmartService } = await import("../grn-smart.service.js");
+    await expect(
+      grnSmartService.review(GRN_ID, "rejected", "not needed", FINANCE_HEAD, "finance_head"),
+    ).rejects.toMatchObject({ code: "STATE_CHANGED", statusCode: 409 });
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Unit tests — legacy (non-allocation) GRN review runtime behaviour, P1-5b
+// ─────────────────────────────────────────────────────────────────────────────
+describe("Legacy grn.service.ts reviewGrn — STATE_CHANGED runtime paths (DB mocked)", () => {
+  const GRN_ID = "grn-legacy-001";
+  const BH_REVIEWER = "user-bh-legacy";
+  const FINANCE_HEAD = "user-fh-legacy";
+
+  function grnRow(overrides: Record<string, unknown> = {}) {
+    return {
+      id: GRN_ID,
+      status: "submitted",
+      grn_type: "vendor",
+      accounting_period: "2026-07",
+      submitted_by: "user-submitter-legacy",
+      branch_head_reviewed_by: null,
+      finance_head_reviewed_by: null,
+      branch_id: "br-001",
+      budget_line_id: "bl-001",
+      amount_with_tax: 1000,
+      amount_without_tax: 847,
+      tax_amount: 153,
+      quantity: 1,
+      ...overrides,
+    };
+  }
+
+  // reviewGrn's own SELECT...FOR UPDATE, then isPeriodLocked (both against the real
+  // grn_request/finance_period columns, not the allocation-aware smart path).
+  function setupLegacyMocks(grnOverrides: Record<string, unknown> = {}) {
+    mockConnection.execute
+      .mockResolvedValueOnce([[grnRow(grnOverrides)], []])              // SELECT ... FOR UPDATE
+      .mockResolvedValueOnce([[{ status: "open" }], []]);                // isPeriodLocked
+  }
+
+  beforeEach(() => {
+    mockExecute.mockReset();
+    mockConnection.execute.mockReset();
+    mockConnection.beginTransaction.mockResolvedValue(undefined);
+    mockConnection.commit.mockResolvedValue(undefined);
+    mockConnection.rollback.mockResolvedValue(undefined);
+    mockConnection.release.mockResolvedValue(undefined);
+    vi.resetModules();
+  });
+
+  it("branch_head decision: STATE_CHANGED/409 when affectedRows is 0", async () => {
+    setupLegacyMocks(); // status: submitted
+    mockConnection.execute.mockResolvedValueOnce([{ affectedRows: 0 }, undefined]); // guarded UPDATE
+    const { grnService } = await import("../grn.service.js");
+    await expect(
+      grnService.reviewGrn(GRN_ID, { decision: "rejected", reviewNote: "not needed" }, BH_REVIEWER, "branch_head"),
+    ).rejects.toMatchObject({ code: "STATE_CHANGED", statusCode: 409 });
+  });
+
+  it("finance_head approve: STATE_CHANGED/409 when affectedRows is 0", async () => {
+    setupLegacyMocks({ status: "branch_head_approved", branch_head_reviewed_by: BH_REVIEWER });
+    // budgetConsumptionService.consume is module-mocked (see top of file), so the next call
+    // reviewGrn's finance_head-approve branch makes is the guarded UPDATE itself.
+    mockConnection.execute.mockResolvedValueOnce([{ affectedRows: 0 }, undefined]); // guarded UPDATE
+    const { grnService } = await import("../grn.service.js");
+    await expect(
+      grnService.reviewGrn(GRN_ID, { decision: "approved", reviewNote: "ok" }, FINANCE_HEAD, "finance_head"),
+    ).rejects.toMatchObject({ code: "STATE_CHANGED", statusCode: 409 });
+  });
+
+  it("finance_head reject: STATE_CHANGED/409 when affectedRows is 0", async () => {
+    setupLegacyMocks({ status: "branch_head_approved", branch_head_reviewed_by: BH_REVIEWER });
+    // budgetConsumptionService.release is module-mocked — next call is the guarded UPDATE.
+    mockConnection.execute.mockResolvedValueOnce([{ affectedRows: 0 }, undefined]); // guarded UPDATE
+    const { grnService } = await import("../grn.service.js");
+    await expect(
+      grnService.reviewGrn(GRN_ID, { decision: "rejected", reviewNote: "not needed" }, FINANCE_HEAD, "finance_head"),
+    ).rejects.toMatchObject({ code: "STATE_CHANGED", statusCode: 409 });
   });
 });
 
