@@ -107,7 +107,19 @@ export async function hasRoleForRequest(
   return hasRole(user.id, ...roles);
 }
 
-/** All active role keys for a user, from user_roles plus scoped assignments. */
+/**
+ * All active role keys for a user, from user_roles plus scoped assignments.
+ *
+ * AUDIT NOTE (2026-08-13): this duplicates the first two sources
+ * shared/roleResolver.ts's getUserRoleKeys() also reads, but not its later
+ * fallbacks — notably the "employee" default it returns for an active,
+ * mapped employee with no row in either table. So hasRole(userId, "employee")
+ * here can answer false for a caller requireAuth (which uses roleResolver)
+ * already treats as an employee. Confirmed fail-closed (false-deny), not a
+ * privilege-escalation risk, so left as a documented follow-up rather than
+ * merged into roleResolver.ts in this pass — see the note there for the full
+ * list of independently-maintained role-resolution paths.
+ */
 async function fetchUserRoles(userId: string): Promise<string[]> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT role_key FROM user_roles WHERE user_id = ? AND active_status = 1

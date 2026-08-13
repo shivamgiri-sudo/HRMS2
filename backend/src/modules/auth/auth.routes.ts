@@ -223,30 +223,18 @@ router.post("/register", authLimiter, h(async (req, res) => {
       await db.execute('UPDATE auth_invitation SET consumed_at = NOW() WHERE id = ?', [inviteRows[0].id]);
       userId = await authService.register(email, password);
     } else if (activationToken) {
-      // Employee activation flow - validate against employee_activation_tokens
-      const tokenHash = crypto.createHash('sha256').update(String(activationToken)).digest('hex');
-      const [activationRows] = await db.execute<RowDataPacket[]>(
-        `SELECT t.id, t.employee_id, t.consumed_at, e.email AS employee_email
-         FROM employee_activation_tokens t
-         JOIN employees e ON e.id = t.employee_id
-         WHERE t.token_hash = ? AND t.expires_at > NOW()`,
-        [tokenHash]
-      );
-      if (!activationRows.length) {
-        return res.status(403).json({ error: "Invalid or expired activation token", code: "ACTIVATION_INVALID" });
-      }
-      if (activationRows[0].consumed_at) {
-        return res.status(403).json({ error: "Activation token has already been used", code: "ACTIVATION_CONSUMED" });
-      }
-      // Verify email matches employee (case-insensitive)
-      if (String(activationRows[0].employee_email).toLowerCase() !== String(email).toLowerCase()) {
-        return res.status(403).json({ error: "Email does not match employee record", code: "EMAIL_MISMATCH" });
-      }
-      // Mark activation as consumed
-      await db.execute('UPDATE employee_activation_tokens SET consumed_at = NOW() WHERE id = ?', [activationRows[0].id]);
-      userId = await authService.register(email, password);
-      // Link user to employee
-      await db.execute('UPDATE employees SET user_id = ? WHERE id = ?', [userId, activationRows[0].employee_id]);
+      // Employee self-activation via token is DISABLED — the `employee_activation_tokens`
+      // table it depends on was never migrated (confirmed absent from
+      // MIGRATION_MANIFEST.lock.json and the live schema snapshot, 2026-08-13 auth audit).
+      // Previously this branch queried the missing table and let the raw MySQL error
+      // ("Table 'mas_hrms.employee_activation_tokens' doesn't exist") reach the caller
+      // on this unauthenticated endpoint. Fail closed with a clear, non-leaking error
+      // instead. Use the invitation-token flow (HR-issued) for employee self-service
+      // registration until/unless this feature is deliberately implemented.
+      return res.status(501).json({
+        error: "Employee activation via token is not available. Please contact HR for an invitation link.",
+        code: "ACTIVATION_NOT_IMPLEMENTED",
+      });
     } else {
       // Should not reach here due to hasToken check above
       return res.status(403).json({ error: "Registration requires a valid token", code: "INVITATION_REQUIRED" });
@@ -256,6 +244,15 @@ router.post("/register", authLimiter, h(async (req, res) => {
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : "Registration failed";
     if (message.includes("Duplicate entry")) return res.status(409).json({ error: "Email already registered" });
+
+    // SECURITY: mask raw DB-infrastructure errors (missing table, connection loss, etc.)
+    // the same way /login does — this endpoint is unauthenticated, and previously returned
+    // the raw MySQL error message verbatim (see the removed employee_activation_tokens branch).
+    const dbFailure = classifyLoginError(error);
+    if (dbFailure.status === 503) {
+      return res.status(503).json({ error: dbFailure.message });
+    }
+
     const status = typeof error === "object" && error !== null && "status" in error && typeof (error as { status?: unknown }).status === "number"
       ? (error as { status: number }).status
       : 400;
@@ -811,10 +808,13 @@ router.post("/admin-reset-password", requireAuth, h(async (req, res) => {
 // ═══════════════════════════════════════════════════════════════
 
 // GET /api/auth/sessions — List active sessions for current user
-// Pass current refresh token via header (x-refresh-token) or query param (?token=...) to mark isCurrent
+// Pass current refresh token via header (x-refresh-token) to mark isCurrent.
+// SECURITY: the ?token=... query-param fallback was removed (2026-08-13 auth audit) —
+// refresh tokens in a URL query string leak into server access logs, browser history,
+// and the Referer header of any cross-origin request made from this page. Header only.
 router.get("/sessions", requireAuth, h(async (req, res) => {
   const userId = req.authUser!.id;
-  const currentRefreshToken = req.headers['x-refresh-token'] || req.query.token;
+  const currentRefreshToken = req.headers['x-refresh-token'];
   const currentTokenHash = currentRefreshToken
     ? crypto.createHash('sha256').update(String(currentRefreshToken)).digest('hex')
     : null;
