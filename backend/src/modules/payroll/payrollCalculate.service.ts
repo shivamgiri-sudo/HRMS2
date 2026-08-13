@@ -1636,10 +1636,27 @@ export async function calculatePayrollRunScoped(
   }
 
   // 7. Update run totals + status
+  //
+  // Root-caused 2026-08-14: 'approved' is deliberately not in
+  // CLOSED_RUN_STATUSES (run-status.ts) — an approved run can still reach
+  // this UPDATE and be silently demoted back to 'processing' by a
+  // recalculation. Before this fix, finance_approved_by/at,
+  // ceo_acknowledged_by/at and validation_status were left untouched when
+  // that happened, so a run could carry a finance/CEO/Head-Payroll signature
+  // dated against figures a subsequent recalculation had since changed —
+  // the signature and the numbers underneath it silently diverging with no
+  // record that it happened. Recalculation itself is not blocked here (route
+  // -level confirmation is a separate, softer guard in payroll.routes.ts) —
+  // but every approval stamp this run carries is cleared in the same
+  // statement that changes its figures, so a stale signature can never
+  // describe numbers other than the ones it was actually given for.
   await conn.execute(
     `UPDATE salary_prep_run
         SET status = 'processing', total_employees = ?,
-            total_gross = ?, total_deductions = ?, total_net = ?
+            total_gross = ?, total_deductions = ?, total_net = ?,
+            finance_approved_by = NULL, finance_approved_at = NULL, finance_remarks = NULL,
+            ceo_acknowledged_by = NULL, ceo_acknowledged_at = NULL, ceo_remarks = NULL,
+            validation_status = NULL, validated_by = NULL, validated_at = NULL
       WHERE id = ?`,
     [processedCount, totalGross, totalDed, totalNet, runId]
   );

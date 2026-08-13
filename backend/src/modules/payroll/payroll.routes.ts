@@ -552,6 +552,34 @@ router.post("/runs/:id/calculate", payrollRunLimiter, requireRole("admin", "supe
       }
     }
 
+    // Root-caused 2026-08-14: 'approved' is deliberately not a closed status
+    // (run-status.ts) — recalculation was reachable on an approved, finance
+    // -signed, CEO-acknowledged or Head-Payroll-validated run with no warning,
+    // silently reverting status to 'processing' and leaving those signatures
+    // dated against figures the recalculation had since changed (the engine
+    // now clears the stamps when that happens — see payrollCalculate.service.ts
+    // — but this gate stops it happening by accident in the first place).
+    if (!forceRecalc) {
+      const [approvalCheck] = await db.execute<RowDataPacket[]>(
+        `SELECT status, finance_approved_at, ceo_acknowledged_at, validation_status
+           FROM salary_prep_run WHERE id = ? LIMIT 1`,
+        [req.params.id]
+      );
+      const runRow = (approvalCheck as RowDataPacket[])[0];
+      const approvalMarkers: string[] = [];
+      if (String(runRow?.status ?? "").toLowerCase() === "approved") approvalMarkers.push("status=approved");
+      if (runRow?.finance_approved_at) approvalMarkers.push("finance-approved");
+      if (runRow?.ceo_acknowledged_at) approvalMarkers.push("CEO-acknowledged");
+      if (runRow?.validation_status === "validated") approvalMarkers.push("Head-Payroll-validated");
+      if (approvalMarkers.length > 0) {
+        return res.status(409).json({
+          success: false,
+          message: `This run is already ${approvalMarkers.join(", ")}. Recalculating will change its figures and clear every one of those signatures, since a signature must never describe numbers other than the ones it was actually given for. Pass force=true to confirm and re-collect sign-off afterward.`,
+          data: { approvalMarkers },
+        });
+      }
+    }
+
     const result = await calculatePayrollRun(req.params.id, actorId);
     void logSensitiveAction({
       actor_user_id: actorId,
