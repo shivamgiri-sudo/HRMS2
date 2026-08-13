@@ -29,6 +29,9 @@
   "modules/org-chart/org-chart.validation.ts": [
     "org_chart_data_issue"
   ],
+  "modules/payroll/bank-payment-readiness.routes.ts": [
+    "payroll_bank_exception"
+  ],
   "modules/payroll/payroll-statutory-filing.routes.ts": [
     "statutory_filing_record"
   ],

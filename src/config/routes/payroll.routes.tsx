@@ -25,6 +25,7 @@ const AttendanceControlTower    = lazy(() => import("@/pages/payroll/AttendanceC
 const RunningPayrollBreakdown   = lazy(() => import("@/pages/payroll/RunningPayrollBreakdown"));
 const HolidayMaster             = lazy(() => import("@/pages/payroll/HolidayMaster"));
 const DisbursalManagement       = lazy(() => import("@/pages/payroll/DisbursalManagement"));
+const BankPaymentReadiness      = lazy(() => import("@/pages/payroll/BankPaymentReadiness"));
 const HolidayWorkRequest        = lazy(() => import("@/pages/payroll/HolidayWorkRequest"));
 const HolidayWorkApprovals      = lazy(() => import("@/pages/payroll/HolidayWorkApprovals"));
 const PayrollValidationScreen   = lazy(() => import("@/pages/payroll/PayrollValidationScreen"));
@@ -105,6 +106,11 @@ export const payrollRouteElements = (
       <Route path="/payroll/incentives"     element={<ProtectedRoute><Gate pageCode="PAYROLL_INCENTIVES"><NativeIncentives /></Gate></ProtectedRoute>} />
       <Route path="/payroll/overtime"       element={<ProtectedRoute roles={['admin','super_admin','wfm','payroll','payroll_head']}><Gate pageCode="PAYROLL_OVERTIME"><PayrollOvertimeManagement /></Gate></ProtectedRoute>} />
       <Route path="/payroll/disbursal"      element={<ProtectedRoute roles={['super_admin','payroll','payroll_head','finance']}><Gate pageCode="PAYROLL_DISBURSAL"><DisbursalManagement /></Gate></ProtectedRoute>} />
+      {/* Roles mirror READ_ROLES in bank-payment-readiness.routes.ts, and the Gate resolves
+          PAYROLL_BANK_READINESS from role_page_access (seeded by migration 1142). Full account
+          numbers are NOT released by either gate — GET /payment-file separately requires
+          hasOrgWideScope(). */}
+      <Route path="/payroll/bank-readiness" element={<ProtectedRoute roles={['super_admin','admin','payroll_head','payroll','payroll_admin','payroll_branch','finance','finance_head','hr','branch_head','branch_admin']}><Gate pageCode="PAYROLL_BANK_READINESS"><BankPaymentReadiness /></Gate></ProtectedRoute>} />
       <Route path="/payroll/config-flags"   element={<ProtectedRoute roles={['super_admin','admin','payroll_head','payroll_branch']}><Gate pageCode="PAYROLL_CONFIG_FLAGS"><PayrollConfigFlags /></Gate></ProtectedRoute>} />
       <Route path="/payroll/recalculation-queue" element={<ProtectedRoute roles={['super_admin','admin','payroll_head','payroll_branch']}><Gate pageCode="PAYROLL_RECALCULATION_QUEUE"><RecalculationQueue /></Gate></ProtectedRoute>} />
       {/* Double-gated until now: ProtectedRoute resolves this path to

@@ -103,6 +103,7 @@ export const PAGE_CODE_BY_ROUTE: Record<string, string> = {
   "/payroll-hr/dashboard": "PAYROLL_HR_DASHBOARD",
   "/payroll/audit-trail": "PAYROLL_AUDIT_TRAIL",
   "/payroll/attendance-control-tower": "PAYROLL_ATTENDANCE_CONTROL_TOWER",
+  "/payroll/bank-readiness": "PAYROLL_BANK_READINESS",
   "/payroll/branch-readiness": "PAYROLL_BRANCH_READINESS",
   "/payroll/bulk-outputs": "PAYROLL_BULK_OUTPUTS",
   "/payroll/calendar": "PAYROLL_CALENDAR",
