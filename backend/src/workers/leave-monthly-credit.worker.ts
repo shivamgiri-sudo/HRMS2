@@ -8,6 +8,15 @@ try {
   process.exit(1);
 }
 
+// prorateMonthlyCredit used to be duplicated here as a self-contained inline copy —
+// this worker used it in production while an identical, unit-tested copy sat in
+// leave-policy.service.ts with zero live callers, so a future fix to the tested
+// copy would silently not affect real behaviour. Now imports the one tested
+// implementation; the formula is unchanged (verified byte-identical before the
+// switch). (2026-08-13 audit)
+import { leavePolicyService } from "../modules/leave/leave-policy.service.js";
+const { prorateMonthlyCredit } = leavePolicyService;
+
 // ── Configuration ────────────────────────────────────────────────────────────
 
 const CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000; // Check every 6 hours
@@ -15,39 +24,6 @@ const CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000; // Check every 6 hours
 let intervalRef: ReturnType<typeof setInterval> | undefined;
 
 // ── Business Logic ───────────────────────────────────────────────────────────
-
-/**
- * Inline prorate logic — intentionally NOT imported from leave-policy.service
- * to keep this worker self-contained.
- *
- * Returns:
- *   1.0  — employee joined before the credit month (full credit)
- *   0..1 — employee joined during the credit month (prorated)
- *   0    — employee joins after the credit month (no credit)
- */
-function prorateMonthlyCredit(
-  joinDateStr: string,
-  creditMonth: number,
-  creditYear: number
-): number {
-  const join = new Date(joinDateStr);
-  const joinYear = join.getFullYear();
-  const joinMonth = join.getMonth() + 1; // 1-indexed
-  const joinDay = join.getDate();
-
-  if (joinYear < creditYear || (joinYear === creditYear && joinMonth < creditMonth)) {
-    return 1.0;
-  }
-
-  if (joinYear === creditYear && joinMonth === creditMonth) {
-    // new Date(year, month, 0) → last day of the credit month (month is 1-indexed, day 0 = prev month last day)
-    const daysInMonth = new Date(creditYear, creditMonth, 0).getDate();
-    const daysRemaining = daysInMonth - joinDay + 1;
-    return Math.round((daysRemaining / daysInMonth) * 100) / 100;
-  }
-
-  return 0; // joined after the credit month
-}
 
 // ── Core Processing Function ─────────────────────────────────────────────────
 

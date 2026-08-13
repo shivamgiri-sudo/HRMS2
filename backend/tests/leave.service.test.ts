@@ -6,9 +6,13 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // drain the mockResolvedValueOnce queue, the values those tests had queued
 // leaked into listRequests / getBalance / listHolidays / createHoliday and broke
 // them too.
-const { getConnection, connExecute } = vi.hoisted(() => ({
+const { getConnection, connExecute, connQuery } = vi.hoisted(() => ({
   getConnection: vi.fn(),
   connExecute: vi.fn(),
+  // Separate from connExecute: reviewRequest's FOR UPDATE lock and
+  // submitRequest's GET_LOCK/RELEASE_LOCK mutex now run on a dedicated
+  // connection via conn.query(...), not conn.execute(...). (2026-08-13 audit)
+  connQuery: vi.fn(),
 }));
 
 vi.mock("../src/db/mysql.js", () => ({
@@ -57,17 +61,32 @@ beforeEach(() => {
   exec.mockResolvedValue([[], []]);
   connExecute.mockReset();
   connExecute.mockResolvedValue([{ affectedRows: 1 }, []]);
+  connQuery.mockReset();
+  // Default: GET_LOCK acquires successfully. Individual reviewRequest tests
+  // override this via routeConn's FOR UPDATE pattern (conn.execute, not
+  // conn.query) for the double-approval status check; submitRequest's mutex
+  // uses conn.query and is satisfied by this default.
+  connQuery.mockResolvedValue([[{ acquired: 1 }], []]);
   commit.mockReset();
   rollback.mockReset();
   getConnection.mockReset();
   getConnection.mockResolvedValue({
     execute: connExecute,
+    query: connQuery,
     beginTransaction: vi.fn().mockResolvedValue(undefined),
     commit,
     rollback,
     release: vi.fn(),
   });
 });
+
+// The FOR UPDATE status-lock reviewRequest now runs first inside its
+// transaction — every test that reaches the transaction must route it to the
+// same status getRequest() returned, or the (correct, intentional) status-
+// changed-by-another-action guard fires instead of the behaviour under test.
+function forUpdateLock(status: string): [RegExp, unknown] {
+  return [/FOR UPDATE/i, [[{ status }], []]];
+}
 
 describe("leaveService.listLeaveTypes", () => {
   it("returns leave types", async () => {
@@ -125,6 +144,7 @@ describe("leaveService.reviewRequest", () => {
     exec.mockResolvedValueOnce([[fakeRequest], []]);                              // getRequest
     exec.mockResolvedValue([[{ ...fakeRequest, status: "approved" }], []]);       // re-fetch + post-commit reads
     routeConn([
+      forUpdateLock("pending"),
       [/FROM leave_type_master/i, [[{ max_days_per_year: 12 }], []]],
       [/FROM leave_balance_ledger/i, [[fakeBalance], []]],
       [/FROM attendance_daily_record/i, [[], []]],
@@ -145,6 +165,7 @@ describe("leaveService.reviewRequest", () => {
     exec.mockResolvedValueOnce([[fakeRequest], []]);
     exec.mockResolvedValue([[{ ...fakeRequest, status: "approved" }], []]);
     routeConn([
+      forUpdateLock("pending"),
       [/FROM leave_type_master/i, [[{ max_days_per_year: 12 }], []]],
       [/FROM leave_balance_ledger/i, [[fakeBalance], []]],
       [/FROM attendance_daily_record/i, [[], []]],
@@ -171,6 +192,7 @@ describe("leaveService.reviewRequest", () => {
     exec.mockResolvedValueOnce([[fakeRequest], []]);
     exec.mockResolvedValue([[{ ...fakeRequest, status: "approved" }], []]);
     routeConn([
+      forUpdateLock("pending"),
       [/FROM leave_type_master/i, [[{ max_days_per_year: 12 }], []]],
       [/FROM leave_balance_ledger/i, [[], []]],   // no ledger row
       [/FROM attendance_daily_record/i, [[], []]],
@@ -198,6 +220,7 @@ describe("leaveService.reviewRequest", () => {
     exec.mockResolvedValueOnce([[fakeRequest], []]);
     exec.mockResolvedValue([[{ ...fakeRequest, status: "approved" }], []]);
     routeConn([
+      forUpdateLock("pending"),
       [/FROM leave_type_master/i, [[{ max_days_per_year: 12 }], []]],
       [/FROM leave_balance_ledger/i, [[fakeBalance], []]],
       [/FROM attendance_daily_record/i, [[], []]],
@@ -220,6 +243,7 @@ describe("leaveService.reviewRequest", () => {
     exec.mockResolvedValueOnce([[fakeRequest], []]);
     exec.mockResolvedValue([[{ ...fakeRequest, status: "approved" }], []]);
     routeConn([
+      forUpdateLock("pending"),
       [/FROM leave_type_master/i, [[{ max_days_per_year: 12 }], []]],
       [/FROM leave_balance_ledger/i, [[fakeBalance], []]],
       [/FROM attendance_daily_record/i, [[], []]],
@@ -235,6 +259,7 @@ describe("leaveService.reviewRequest", () => {
     exec.mockResolvedValueOnce([[fakeRequest], []]);
     exec.mockResolvedValue([[{ ...fakeRequest, status: "branch_head_approved" }], []]);
     routeConn([
+      forUpdateLock("pending"),
       [/FROM leave_type_master/i, [[{ max_days_per_year: 12 }], []]],
       [/FROM leave_balance_ledger/i, [[fakeBalance], []]],
       [/FROM attendance_daily_record/i, [[], []]],
@@ -251,7 +276,7 @@ describe("leaveService.reviewRequest", () => {
     // MIS report name a rejecter as the approver.
     exec.mockResolvedValueOnce([[fakeRequest], []]);
     exec.mockResolvedValue([[{ ...fakeRequest, status: "rejected" }], []]);
-    routeConn([[/FROM attendance_daily_record/i, [[], []]]]);
+    routeConn([forUpdateLock("pending"), [/FROM attendance_daily_record/i, [[], []]]]);
 
     await leaveService.reviewRequest("lr-1", { status: "rejected" }, "user-mgr-1");
 
@@ -263,6 +288,7 @@ describe("leaveService.reviewRequest", () => {
   it("throws when insufficient balance and rolls back", async () => {
     exec.mockResolvedValueOnce([[fakeRequest], []]);
     routeConn([
+      forUpdateLock("pending"),
       [/FROM leave_type_master/i, [[{ max_days_per_year: 12 }], []]],
       [/FROM leave_balance_ledger/i, [[{ ...fakeBalance, allocated_days: 2, used_days: 0 }], []]],
     ]);
@@ -282,6 +308,7 @@ describe("leaveService.reviewRequest", () => {
     exec.mockResolvedValueOnce([[{ ...fakeRequest, status: "approved" }], []]);
     exec.mockResolvedValue([[{ ...fakeRequest, status: "cancelled" }], []]);
     routeConn([
+      forUpdateLock("approved"),
       [/FROM attendance_daily_record/i, [[
         { record_date: "2026-06-01", attendance_status: "leave_approved", lwp_value: 0, is_locked: 0 },
         { record_date: "2026-06-02", attendance_status: "leave_approved", lwp_value: 0, is_locked: 0 },
@@ -307,7 +334,7 @@ describe("leaveService.reviewRequest", () => {
   it("rejects request without touching the balance ledger", async () => {
     exec.mockResolvedValueOnce([[fakeRequest], []]);
     exec.mockResolvedValue([[{ ...fakeRequest, status: "rejected" }], []]);
-    routeConn([]);
+    routeConn([forUpdateLock("pending")]);
 
     const r = await leaveService.reviewRequest("lr-1", { status: "rejected" }, "mgr-1");
 

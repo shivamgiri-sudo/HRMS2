@@ -922,7 +922,10 @@ const QUERIES: Record<string, Builder> = {
                lbl.allocated_days,
                lbl.used_days,
                lbl.adjusted_days,
-               (lbl.allocated_days - lbl.used_days + lbl.adjusted_days) AS closing_balance
+               -- Floored at 0 to match leaveService.getBalance(), the canonical UI path
+               -- (leave.service.ts) — this report used to be able to show a negative
+               -- balance for the same employee/type the UI showed as 0. (2026-08-13 audit)
+               GREATEST(0, lbl.allocated_days - lbl.used_days + lbl.adjusted_days) AS closing_balance
              FROM leave_balance_ledger lbl
              JOIN employees e ON e.id = lbl.employee_id
              JOIN leave_type_master ltm ON ltm.id = lbl.leave_type_id

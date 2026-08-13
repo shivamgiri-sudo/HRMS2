@@ -22,11 +22,43 @@ async function leaveListScope(userId: string): Promise<{ sql: string; params: un
   return { sql: "1=0", params: [] };
 }
 
+// Role required to approve a leave request that has escalated to the Branch
+// Head tier (3rd EL occurrence in a year, or a >12-day single EL application —
+// see leave.service.ts submitRequest). Read from leave_policy_config so a
+// future policy change takes effect without a code change; the column has
+// existed since 150_leave_policy_engine.sql but nothing read it before this
+// fix — canReviewLeave applied the ordinary reporting-manager check to these
+// requests exactly as to a ordinary one, so any manager could approve an
+// escalation meant to require Branch Head sign-off. (2026-08-13 audit)
+async function getExceptionApproverRole(leaveTypeId: string | null): Promise<string> {
+  if (!leaveTypeId) return "branch_head";
+  try {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT exception_approver_role FROM leave_policy_config WHERE leave_type_id = ? LIMIT 1`,
+      [leaveTypeId]
+    );
+    const role = (rows[0] as any)?.exception_approver_role;
+    return typeof role === "string" && role.trim() ? role.trim() : "branch_head";
+  } catch {
+    return "branch_head";
+  }
+}
+
 async function canReviewLeave(userId: string, requestId: string): Promise<boolean> {
   if (await hasAnyRole(userId, "super_admin", "admin", "hr", "hr_admin", "payroll_hr")) return true;
-  const [rows] = await db.execute<RowDataPacket[]>(`SELECT lr.employee_id, e.branch_id, e.process_id, e.lob_id, e.department_id, e.reporting_manager_id, e.manager_id FROM leave_request lr JOIN employees e ON e.id = lr.employee_id WHERE lr.id = ? LIMIT 1`, [requestId]);
+  const [rows] = await db.execute<RowDataPacket[]>(`SELECT lr.employee_id, lr.status, lr.leave_type_id, e.branch_id, e.process_id, e.lob_id, e.department_id, e.reporting_manager_id, e.manager_id FROM leave_request lr JOIN employees e ON e.id = lr.employee_id WHERE lr.id = ? LIMIT 1`, [requestId]);
   const target = rows[0] as any;
   if (!target) return false;
+
+  // Branch Head escalation tier requires the configured escalation role — not
+  // just "is this the caller's ordinary reporting manager", which is what the
+  // fallthrough below checks and which every request used to go through
+  // identically regardless of status.
+  if (["pending_branch_head", "branch_head_approved", "branch_head_rejected"].includes(String(target.status))) {
+    const requiredRole = await getExceptionApproverRole(target.leave_type_id ?? null);
+    return hasAnyRole(userId, requiredRole);
+  }
+
   const callerEmp = await getEmployeeForUser(userId);
   if (callerEmp?.id && callerEmp.id === target.employee_id) return false;
   const { approverId } = await resolveEffectiveApprover(target.employee_id);

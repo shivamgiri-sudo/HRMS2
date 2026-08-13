@@ -101,10 +101,13 @@ function bucketAggregates(): string {
     );
   }
   for (const [prefix, bucket] of buckets) {
+    // Floored at 0 to match leaveService.getBalance(), the canonical UI path —
+    // without this, this report could show a negative remaining balance the
+    // UI shows as 0 for the same employee/bucket. (2026-08-13 audit)
     parts.push(
-      `ROUND(COALESCE(SUM(CASE WHEN ${LEAVE_BUCKET_SQL} = '${bucket}' ` +
+      `GREATEST(0, ROUND(COALESCE(SUM(CASE WHEN ${LEAVE_BUCKET_SQL} = '${bucket}' ` +
       `THEN COALESCE(lbl.allocated_days,0) + COALESCE(lbl.adjusted_days,0) ` +
-      `- COALESCE(lbl.used_days,0) END),0),2) AS ${prefix}_remain`
+      `- COALESCE(lbl.used_days,0) END),0),2)) AS ${prefix}_remain`
     );
   }
   return parts.join(',\n           ');
