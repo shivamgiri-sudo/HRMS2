@@ -2066,16 +2066,42 @@ router.get("/minimum-wages", requireRole("admin", "hr", "super_admin", "finance"
 
 // GET /api/payroll/runs/:id/neft-summary — count of employees with/without bank details
 router.get("/runs/:id/neft-summary", requireRole("admin", "super_admin", "finance", "payroll"), h(async (req: AuthenticatedRequest, res: Response) => {
+  // This is the figure Finance reads BEFORE exporting, so it must use the same definition of
+  // "payable" the export itself uses, or the preview and the file disagree.
+  //
+  // It previously counted an employee as banked whenever any employee_bank_detail row existed
+  // with a non-null ifsc_code — ignoring whether that row was the active primary one, whether an
+  // account number existed at all, and whether the IFSC was routable. total_net summed everyone,
+  // banked or not, so the headline matched the export's old overstated TOTAL rather than what
+  // could be paid.
+  // `payable` is computed once in a derived table rather than repeated across six aggregates —
+  // repeating it is how the export and this summary drifted apart in the first place.
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT
-       COUNT(*)                                                                          AS total,
-       SUM(CASE WHEN ebd.id IS NOT NULL AND ebd.ifsc_code IS NOT NULL THEN 1 ELSE 0 END) AS with_bank,
-       SUM(CASE WHEN ebd.id IS NULL OR ebd.ifsc_code IS NULL THEN 1 ELSE 0 END)          AS missing_bank,
-       SUM(spl.net_salary)                                                               AS total_net
-     FROM salary_prep_line spl
-     JOIN employees e ON e.id = spl.employee_id
-     LEFT JOIN employee_bank_detail ebd ON ebd.employee_id = spl.employee_id
-     WHERE spl.run_id = ? AND spl.net_salary > 0`,
+       COUNT(*)                                                     AS total,
+       SUM(is_payable)                                              AS with_bank,
+       SUM(1 - is_payable)                                          AS missing_bank,
+       SUM(net_salary)                                              AS total_net,
+       SUM(CASE WHEN is_payable = 1 THEN net_salary ELSE 0 END)     AS payable_net,
+       SUM(CASE WHEN is_payable = 0 THEN net_salary ELSE 0 END)     AS unpayable_net
+     FROM (
+       SELECT spl.net_salary,
+              CASE
+                WHEN ebd.employee_id IS NOT NULL
+                 AND COALESCE(NULLIF(TRIM(ebd.account_number), ''),
+                              NULLIF(TRIM(ebd.account_number_enc), '')) IS NOT NULL
+                 AND UPPER(TRIM(COALESCE(ebd.ifsc_code, ''))) REGEXP '^[A-Z]{4}0[A-Z0-9]{6}$'
+                THEN 1 ELSE 0
+              END AS is_payable
+         FROM salary_prep_line spl
+         JOIN employees e ON e.id = spl.employee_id
+         LEFT JOIN employee_bank_detail ebd
+                ON ebd.employee_id = spl.employee_id
+               AND ebd.active_status = 1
+               AND ebd.is_primary = 1
+        WHERE spl.run_id = ? AND spl.net_salary > 0
+          AND LOWER(COALESCE(spl.status, '')) NOT IN ('excluded', 'blocked')
+     ) scored`,
     [req.params.id]
   );
   res.json({ success: true, data: (rows as RowDataPacket[])[0] });
@@ -2127,7 +2153,13 @@ router.get(
               spl.status AS line_status
          FROM salary_prep_line spl
          JOIN employees e ON e.id = spl.employee_id
-         LEFT JOIN employee_bank_detail ebd ON ebd.employee_id = spl.employee_id
+         -- Active primary account only. This feeds NEFT file preparation, so an unfiltered join
+         -- would hand Finance one row per bank record — each carrying the full net_salary — and
+         -- the duplicate is invisible in a spreadsheet of 1,000 rows.
+         LEFT JOIN employee_bank_detail ebd
+                ON ebd.employee_id = spl.employee_id
+               AND ebd.active_status = 1
+               AND ebd.is_primary = 1
         WHERE spl.run_id = ?
           AND spl.net_salary > 0
         ORDER BY e.employee_code ASC`,
@@ -2179,6 +2211,11 @@ router.get("/runs/:id/neft-export", requireRole("admin", "super_admin", "finance
     return res.status(403).json({ success: false, message: "Payroll must be validated before generating NEFT export. Current status: " + run.validation_status });
   }
 
+  // Active primary account only — see the identical filter on /neft-lines. Unfiltered, this
+  // emits one CSV row per employee_bank_detail row, each carrying the FULL net_salary and each
+  // added to the declared total, so an employee with two bank rows is instructed to be paid
+  // twice. It duplicates nothing today (verified live: 12,858 employees hold bank rows, maximum
+  // 1 each) but the bank-change-approval workflow exists to create the second row.
   const [lines] = await db.execute<RowDataPacket[]>(
     `SELECT spl.employee_id, spl.net_salary, spl.gross_salary, spl.total_deductions,
             e.employee_code, e.full_name, e.email,
@@ -2186,11 +2223,18 @@ router.get("/runs/:id/neft-export", requireRole("admin", "super_admin", "finance
             ebd.account_number_enc, ebd.account_number AS account_number_legacy
      FROM salary_prep_line spl
      JOIN employees e ON e.id = spl.employee_id
-     LEFT JOIN employee_bank_detail ebd ON ebd.employee_id = spl.employee_id
+     LEFT JOIN employee_bank_detail ebd
+            ON ebd.employee_id = spl.employee_id
+           AND ebd.active_status = 1
+           AND ebd.is_primary = 1
      WHERE spl.run_id = ? AND spl.net_salary > 0
+       AND LOWER(COALESCE(spl.status, '')) NOT IN ('excluded', 'blocked')
      ORDER BY e.employee_code`,
     [runId]
   );
+
+  /** RBI IFSC: 4 letters, a literal zero, then 6 alphanumerics. A failing value cannot be routed. */
+  const IFSC_RE = /^[A-Z]{4}0[A-Z0-9]{6}$/;
 
   // Standard Indian bank NEFT format
   // Columns: Sr No, Employee Code, Employee Name, Bank Name, IFSC Code, Account Number, Net Amount, Remarks
@@ -2198,23 +2242,67 @@ router.get("/runs/:id/neft-export", requireRole("admin", "super_admin", "finance
   let srNo = 1;
   let totalAmount = 0;
 
+  // Employees who cannot be paid are NOT written as payment instructions and NOT counted in the
+  // declared total.
+  //
+  // Previously every payable line was emitted with "NOT_LINKED" substituted for a missing
+  // account or IFSC, while its net_salary was still added to TOTAL. The bank rejects those rows
+  // and pays the rest, so the file's own total never matched what moved — and the gap is not
+  // small. On the FINALIZED 2026-04 run, now the certification golden month: 143 of 982 payable
+  // employees have no usable account, carrying Rs 19,37,731 of the Rs 1,76,04,080 declared
+  // (11.0%). Payable net is Rs 1,56,66,349.
+  //
+  // They are not dropped either — silently shortening a payment file is the worse failure. They
+  // are listed in an EXCLUDED block after TOTAL with the reason, and summarised in response
+  // headers so a caller can reconcile without parsing the CSV. No employee's pay changes; only
+  // what is asserted to be payable right now.
+  const unpayable: Array<{ code: string; name: string; amount: number; reason: string }> = [];
+
   for (const line of lines as RowDataPacket[]) {
-    const accountNo = resolveAccountNumber({ account_number_enc: (line as any).account_number_enc, account_number: (line as any).account_number_legacy }) ?? "NOT_LINKED";
-    const ifsc = (line.ifsc_code as string | null) ?? "NOT_LINKED";
+    const accountNo = resolveAccountNumber({ account_number_enc: (line as any).account_number_enc, account_number: (line as any).account_number_legacy });
+    const ifsc = ((line.ifsc_code as string | null) ?? "").trim().toUpperCase();
     const bank = ((line.bank_name as string | null) ?? "").replace(/,/g, " ");
     const name = ((line.full_name as string | null) ?? "").replace(/,/g, " ");
-    const amount = Number(line.net_salary).toFixed(2);
+    const net = Number(line.net_salary);
+    const code = line.employee_code as string;
+
+    const reason = !accountNo ? "NO_ACTIVE_PRIMARY_ACCOUNT"
+      : !ifsc ? "IFSC_MISSING"
+      : !IFSC_RE.test(ifsc) ? "IFSC_INVALID_FORMAT"
+      : null;
+
+    if (reason) {
+      unpayable.push({ code, name, amount: net, reason });
+      continue;
+    }
+
     const remarks = `SALARY ${run.run_month as string}`;
-    csvRows.push(`${srNo},${line.employee_code as string},${name},${bank},${ifsc},${accountNo},${amount},${remarks}`);
+    csvRows.push(`${srNo},${code},${name},${bank},${ifsc},${accountNo},${net.toFixed(2)},${remarks}`);
     srNo++;
-    totalAmount += Number(line.net_salary);
+    totalAmount += net;
   }
 
   csvRows.push(`TOTAL,,,,,,${totalAmount.toFixed(2)},`);
 
+  const excludedTotal = unpayable.reduce((sum, u) => sum + u.amount, 0);
+  if (unpayable.length > 0) {
+    csvRows.push("");
+    csvRows.push("EXCLUDED — NOT PAYABLE, NOT INCLUDED IN TOTAL ABOVE");
+    csvRows.push("Employee Code,Employee Name,Net Amount,Reason");
+    for (const u of unpayable) {
+      csvRows.push(`${u.code},${u.name},${u.amount.toFixed(2)},${u.reason}`);
+    }
+    csvRows.push(`EXCLUDED_TOTAL,,${excludedTotal.toFixed(2)},`);
+  }
+
   const csv = csvRows.join("\n");
   const filename = `NEFT_${run.run_month as string}_${runId.slice(0, 8)}.csv`;
 
+  // Machine-readable reconciliation, so a caller never has to infer these by parsing the CSV.
+  res.setHeader("X-Payroll-Payable-Count", String(srNo - 1));
+  res.setHeader("X-Payroll-Payable-Total", totalAmount.toFixed(2));
+  res.setHeader("X-Payroll-Excluded-Count", String(unpayable.length));
+  res.setHeader("X-Payroll-Excluded-Total", excludedTotal.toFixed(2));
   res.setHeader("Content-Type", "text/csv");
   res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
   res.send(csv);
