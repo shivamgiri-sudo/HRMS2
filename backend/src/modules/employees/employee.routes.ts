@@ -18,6 +18,7 @@ import { isOfficialEmail } from "../../shared/officialEmail.js";
 import { bootstrapCandidateForEmployee } from "./employee-bgv-bootstrap.service.js";
 import { encryptField, decryptField } from "../../shared/fieldEncryption.js";
 import { encryptPanForSync, blindIndexPan } from "../../shared/syncPiiEncryption.js";
+import { validateBankFields, validateStatutoryFields } from "../../shared/statutoryFormat.js";
 
 const router = Router();
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -600,7 +601,19 @@ const hrProfileGate = [requireRole("super_admin", "admin", "hr"), requireScopedR
 // that's candidate-journey-specific verification infra, out of scope for field parity).
 router.put("/:employeeId/bank-details", ...hrProfileGate, h(async (req: any, res: any) => {
   const empId = req.params.employeeId;
-  const { bank_name, account_holder_name, bank_branch, ifsc_code, account_type, account_number } = req.body;
+  const { bank_name, account_holder_name, bank_branch, account_type, account_number } = req.body;
+  const ifsc_code = typeof req.body.ifsc_code === "string" ? req.body.ifsc_code.trim().toUpperCase() : req.body.ifsc_code;
+
+  // This route wrote straight to employee_bank_detail with no format check at all —
+  // an HR user could enter any string as an IFSC/account number and it would be
+  // silently stored. The correct patterns already exist in
+  // employee.profile.validation.ts, but that file backs a dead write path with
+  // different field semantics; validateBankFields carries the same widths against
+  // this route's actual fields instead.
+  const formatErrors = validateBankFields({ ifsc_code, account_number });
+  if (formatErrors.length) {
+    return res.status(400).json({ success: false, error: "Invalid format", details: formatErrors });
+  }
 
   // verification_status and masked_account_number are not real columns on
   // employee_bank_detail (this INSERT 500'd on every call — confirmed live). See the
@@ -638,8 +651,20 @@ router.put("/:employeeId/bank-details", ...hrProfileGate, h(async (req: any, res
 // PUT /api/employees/:employeeId/statutory-details — HR entry, mirrors PUT /me/statutory-details
 router.put("/:employeeId/statutory-details", ...hrProfileGate, h(async (req: any, res: any) => {
   const empId = req.params.employeeId;
-  const { epf_number, esi_number, uan_number, pan_number, aadhaar_id, pf_eligible, esi_eligible, epf_date,
+  const { esi_number, uan_number, aadhaar_id, pf_eligible, esi_eligible, epf_date,
           previous_pf_member, eps_member, international_worker, declaration_accepted } = req.body;
+  const epf_number = typeof req.body.epf_number === "string" ? req.body.epf_number.trim() : req.body.epf_number;
+  const pan_number = typeof req.body.pan_number === "string" ? req.body.pan_number.trim().toUpperCase() : req.body.pan_number;
+
+  // This route wrote straight to employee_statutory_info with no format check at
+  // all — an HR user could enter any string as a PAN/Aadhaar/UAN/ESI number and it
+  // would be silently stored. See the matching bank-details fix above and
+  // statutoryFormat.ts for why these checks aren't just reused from
+  // employee.profile.validation.ts's (dead-path, different-field-names) schema.
+  const formatErrors = validateStatutoryFields({ pan_number, aadhaar_id, uan_number, esi_number, epf_number });
+  if (formatErrors.length) {
+    return res.status(400).json({ success: false, error: "Invalid format", details: formatErrors });
+  }
 
   const STAT_FIELDS: string[] = ["employee_id"];
   const statVals: any[] = [empId];

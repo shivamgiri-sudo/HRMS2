@@ -196,4 +196,38 @@ describe("PATCH /api/statutory-change-requests/:id — approve", () => {
 
     expect(conn.release).toHaveBeenCalledTimes(1);
   });
+
+  it("rejects an approval carrying a malformed PAN, rolls back, never writes or audits", async () => {
+    const conn = makeConnection({
+      ...PENDING_REQUEST,
+      new_values: JSON.stringify({ ...JSON.parse(PENDING_REQUEST.new_values), pan_number: "NOT-A-PAN" }),
+    });
+    getConnection.mockResolvedValue(conn);
+
+    const res = await request(app())
+      .patch(`/api/statutory-change-requests/${APPROVAL_ID}`)
+      .send({ decision: "approved" });
+
+    expect(res.status).toBe(400);
+    expect(res.body.details.some((d: any) => d.field === "pan_number")).toBe(true);
+    expect(conn.statements.some((s) => s.includes("INSERT INTO employee_statutory_info"))).toBe(false);
+    expect(conn.rollback).toHaveBeenCalledTimes(1);
+    expect(conn.commit).not.toHaveBeenCalled();
+    expect(logSensitiveAction).not.toHaveBeenCalled();
+  });
+
+  it("rejects an approval carrying a malformed Aadhaar", async () => {
+    const conn = makeConnection({
+      ...PENDING_REQUEST,
+      new_values: JSON.stringify({ ...JSON.parse(PENDING_REQUEST.new_values), aadhaar_id: "123" }),
+    });
+    getConnection.mockResolvedValue(conn);
+
+    const res = await request(app())
+      .patch(`/api/statutory-change-requests/${APPROVAL_ID}`)
+      .send({ decision: "approved" });
+
+    expect(res.status).toBe(400);
+    expect(res.body.details.some((d: any) => d.field === "aadhaar_id")).toBe(true);
+  });
 });

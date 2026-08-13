@@ -174,4 +174,38 @@ describe("PATCH /api/payroll/bank-change-requests/:id — approve", () => {
     expect(res.status).toBe(409);
     expect(logSensitiveAction).not.toHaveBeenCalled();
   });
+
+  it("rejects an approval carrying a malformed IFSC, before touching employee_bank_detail", async () => {
+    dbExecute
+      .mockResolvedValueOnce([[{
+        ...PENDING_REQUEST,
+        new_values: JSON.stringify({ ...JSON.parse(PENDING_REQUEST.new_values), ifsc_code: "NOT-AN-IFSC" }),
+      }]])
+      .mockResolvedValueOnce([[{ run_month: "2026-09" }]]); // SELECT salary_prep_run, reached before validation
+
+    const res = await request(app())
+      .patch(`/api/payroll/bank-change-requests/${APPROVAL_ID}`)
+      .send({ decision: "approved" });
+
+    expect(res.status).toBe(400);
+    expect(res.body.details.some((d: any) => d.field === "ifsc_code")).toBe(true);
+    expect(dbExecute.mock.calls.some((c) => String(c[0]).includes("INSERT INTO employee_bank_detail"))).toBe(false);
+    expect(logSensitiveAction).not.toHaveBeenCalled();
+  });
+
+  it("rejects an approval carrying a malformed account number", async () => {
+    dbExecute
+      .mockResolvedValueOnce([[{
+        ...PENDING_REQUEST,
+        new_values: JSON.stringify({ ...JSON.parse(PENDING_REQUEST.new_values), account_number: "abc123" }),
+      }]])
+      .mockResolvedValueOnce([[{ run_month: "2026-09" }]]);
+
+    const res = await request(app())
+      .patch(`/api/payroll/bank-change-requests/${APPROVAL_ID}`)
+      .send({ decision: "approved" });
+
+    expect(res.status).toBe(400);
+    expect(res.body.details.some((d: any) => d.field === "account_number")).toBe(true);
+  });
 });

@@ -161,3 +161,83 @@ describe("DELETE /api/employees/:id", () => {
     expect(r.status).toBe(204);
   });
 });
+
+// These two HR direct-entry routes wrote straight to the DB with no format
+// check at all before this fix — any string could land in employee_bank_detail
+// / employee_statutory_info as an IFSC/account number/PAN/Aadhaar/UAN/ESI.
+describe("PUT /api/employees/:employeeId/bank-details — format validation", () => {
+  it("400s on a malformed IFSC, never reaches the INSERT", async () => {
+    const r = await request(app).put("/api/employees/emp-1/bank-details").set(AUTH).send({
+      bank_name: "Test Bank", account_holder_name: "Ravi Kumar",
+      ifsc_code: "NOT-AN-IFSC", account_type: "Savings",
+    });
+    expect(r.status).toBe(400);
+    expect(r.body.details.some((d: any) => d.field === "ifsc_code")).toBe(true);
+    expect(mockExecute.mock.calls.some((c) => String(c[0]).includes("INSERT INTO employee_bank_detail"))).toBe(false);
+  });
+
+  it("400s on a malformed account number", async () => {
+    const r = await request(app).put("/api/employees/emp-1/bank-details").set(AUTH).send({
+      bank_name: "Test Bank", account_holder_name: "Ravi Kumar",
+      ifsc_code: "HDFC0001234", account_type: "Savings", account_number: "not-digits",
+    });
+    expect(r.status).toBe(400);
+    expect(r.body.details.some((d: any) => d.field === "account_number")).toBe(true);
+  });
+
+  it("accepts a well-formed IFSC + account number, uppercasing IFSC before storage", async () => {
+    const r = await request(app).put("/api/employees/emp-1/bank-details").set(AUTH).send({
+      bank_name: "Test Bank", account_holder_name: "Ravi Kumar",
+      ifsc_code: "hdfc0001234", account_type: "Savings", account_number: "50100234567890",
+    });
+    expect(r.status).toBe(200);
+    const insertCall = mockExecute.mock.calls.find((c) => String(c[0]).includes("INSERT INTO employee_bank_detail"));
+    expect(insertCall).toBeTruthy();
+    expect(insertCall![1]).toContain("HDFC0001234");
+  });
+});
+
+describe("PUT /api/employees/:employeeId/statutory-details — format validation", () => {
+  it("400s on a malformed PAN, never reaches the INSERT", async () => {
+    const r = await request(app).put("/api/employees/emp-1/statutory-details").set(AUTH).send({
+      pan_number: "NOT-A-PAN",
+    });
+    expect(r.status).toBe(400);
+    expect(r.body.details.some((d: any) => d.field === "pan_number")).toBe(true);
+    expect(mockExecute.mock.calls.some((c) => String(c[0]).includes("INSERT INTO employee_statutory_info"))).toBe(false);
+  });
+
+  it("400s on a malformed Aadhaar", async () => {
+    const r = await request(app).put("/api/employees/emp-1/statutory-details").set(AUTH).send({
+      aadhaar_id: "12345",
+    });
+    expect(r.status).toBe(400);
+    expect(r.body.details.some((d: any) => d.field === "aadhaar_id")).toBe(true);
+  });
+
+  it("400s on a malformed UAN", async () => {
+    const r = await request(app).put("/api/employees/emp-1/statutory-details").set(AUTH).send({
+      uan_number: "123",
+    });
+    expect(r.status).toBe(400);
+    expect(r.body.details.some((d: any) => d.field === "uan_number")).toBe(true);
+  });
+
+  it("400s on a malformed ESI number", async () => {
+    const r = await request(app).put("/api/employees/emp-1/statutory-details").set(AUTH).send({
+      esi_number: "123",
+    });
+    expect(r.status).toBe(400);
+    expect(r.body.details.some((d: any) => d.field === "esi_number")).toBe(true);
+  });
+
+  it("accepts a well-formed PAN, uppercasing it before storage", async () => {
+    const r = await request(app).put("/api/employees/emp-1/statutory-details").set(AUTH).send({
+      pan_number: "abcde1234f",
+    });
+    expect(r.status).toBe(200);
+    const insertCall = mockExecute.mock.calls.find((c) => String(c[0]).includes("INSERT INTO employee_statutory_info"));
+    expect(insertCall).toBeTruthy();
+    expect(insertCall![1]).toContain("ABCDE1234F");
+  });
+});

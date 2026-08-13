@@ -8,6 +8,7 @@ import { db } from '../../db/mysql.js';
 import { isRunClosed } from './run-status.js';
 import { encryptField } from '../../shared/fieldEncryption.js';
 import { logSensitiveAction } from '../../shared/auditLog.js';
+import { validateBankFields } from '../../shared/statutoryFormat.js';
 
 const router = Router();
 const h = (fn: Function) => (req: any, res: any, next: any) => fn(req, res).catch(next);
@@ -203,6 +204,16 @@ router.patch('/bank-change-requests/:id', requireRole('payroll', 'super_admin'),
 
     // Parse new bank details from JSON
     const newValues = typeof rec.new_values === 'string' ? JSON.parse(rec.new_values) : rec.new_values;
+    if (typeof newValues.ifsc_code === 'string') newValues.ifsc_code = newValues.ifsc_code.trim().toUpperCase();
+
+    // Neither the employee's original submission (POST /me/bank-change-request)
+    // nor this approve step validated format before this fix — Payroll HO could
+    // approve, and the request could carry, a malformed IFSC/account number that
+    // would then be silently stored.
+    const formatErrors = validateBankFields({ ifsc_code: newValues.ifsc_code, account_number: newValues.account_number });
+    if (formatErrors.length) {
+      return res.status(400).json({ success: false, message: 'Invalid format in submitted values', details: formatErrors });
+    }
 
     // Archive the existing primary account (kept for history, not deleted) —
     // matches profile-approval.service.ts's approveBankDetailsUpdate archival shape.

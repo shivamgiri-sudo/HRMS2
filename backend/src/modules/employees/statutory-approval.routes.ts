@@ -21,6 +21,7 @@ import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { db } from "../../db/mysql.js";
 import { encryptPanForSync, blindIndexPan } from "../../shared/syncPiiEncryption.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
+import { validateStatutoryFields } from "../../shared/statutoryFormat.js";
 
 const router = Router();
 const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any, next: any) => fn(req, res).catch(next);
@@ -92,9 +93,21 @@ router.patch("/:id", requireRole(...REVIEWER_ROLES), h(async (req: Authenticated
       // parallel deliberately rather than sharing a helper, so this file stays
       // readable against the route it mirrors without an extra indirection layer.
       const {
-        epf_number, esi_number, uan_number, pan_number, aadhaar_id,
+        epf_number, esi_number, uan_number, aadhaar_id,
         pf_eligible, esi_eligible, epf_date,
       } = newValues;
+      const pan_number = typeof newValues.pan_number === "string" ? newValues.pan_number.trim().toUpperCase() : newValues.pan_number;
+
+      // Neither the employee's original submission (PUT /me/statutory-details)
+      // nor this approve step validated format before this fix — an employee
+      // could submit, and HR could approve, a malformed PAN/Aadhaar/UAN/ESI that
+      // would then be silently stored. Same check as the HR-direct-entry route
+      // (employee.routes.ts PUT /:employeeId/statutory-details).
+      const formatErrors = validateStatutoryFields({ pan_number, aadhaar_id, uan_number, esi_number, epf_number });
+      if (formatErrors.length) {
+        await connection.rollback();
+        return res.status(400).json({ success: false, error: "Invalid format in submitted values", details: formatErrors });
+      }
 
       const STAT_FIELDS: string[] = ["employee_id"];
       const statVals: any[] = [rec.employee_id];
