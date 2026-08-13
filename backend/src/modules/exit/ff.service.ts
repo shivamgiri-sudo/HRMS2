@@ -152,6 +152,29 @@ async function recordGratuityAudit(
   }
 }
 
+/**
+ * The settlement's own arithmetic: what is paid out, less what is recovered.
+ *
+ * This is not a statutory or company formula — it is nothing more than the sum of the fields
+ * the settlement already stores, and it deliberately invents no component that is not there.
+ */
+export function ffComponentSum(data: {
+  earnedLeaveEncashment?: number;
+  gratuityAmount?: number;
+  salaryHold?: number;
+  noticeRecovery?: number;
+  advancesRecovery?: number;
+}): number {
+  const n = (v: unknown) => Number(v ?? 0);
+  return (
+    n(data.earnedLeaveEncashment) + n(data.gratuityAmount) + n(data.salaryHold)
+    - n(data.noticeRecovery) - n(data.advancesRecovery)
+  );
+}
+
+/** Rupee tolerance. Components are stored to two decimals, so anything above this is a real gap. */
+export const FF_NET_TOLERANCE = 0.01;
+
 export const ffService = {
   async createFF(
     exitRequestId: string,
@@ -165,6 +188,30 @@ export const ffService = {
     );
     const exitReq = (exitRows as any[])[0];
     if (!exitReq) throw new Error("Exit request not found");
+
+    // net_payable arrives from the caller like every other figure on FfInput — there is no F&F
+    // calculation engine deriving it (see the module audit). Nothing checked that it agreed with
+    // the components stored alongside it, so a settlement could be written whose headline amount
+    // was unrelated to its own workings, and the discrepancy would only ever be found by someone
+    // adding the columns up by hand in a dispute.
+    //
+    // This does not compute the settlement — it cannot, and pretending to would be worse. It
+    // only refuses to store a total that contradicts its own parts. If the two disagree the
+    // caller must say which is right; silently trusting either is how a wrong number becomes a
+    // payment.
+    const expectedNet = ffComponentSum(data);
+    const suppliedNet = Number(data.netPayable ?? 0);
+    if (Math.abs(suppliedNet - expectedNet) > FF_NET_TOLERANCE) {
+      throw new Error(
+        `F&F net payable (${suppliedNet.toFixed(2)}) does not equal its own components ` +
+        `(${expectedNet.toFixed(2)} = leave encashment ${Number(data.earnedLeaveEncashment ?? 0).toFixed(2)} ` +
+        `+ gratuity ${Number(data.gratuityAmount ?? 0).toFixed(2)} ` +
+        `+ salary hold ${Number(data.salaryHold ?? 0).toFixed(2)} ` +
+        `- notice recovery ${Number(data.noticeRecovery ?? 0).toFixed(2)} ` +
+        `- advances recovery ${Number(data.advancesRecovery ?? 0).toFixed(2)}). ` +
+        `Correct the components or the net before saving — a settlement total that disagrees with its own workings cannot be approved or paid.`
+      );
+    }
 
     const id = randomUUID();
     await db.execute(

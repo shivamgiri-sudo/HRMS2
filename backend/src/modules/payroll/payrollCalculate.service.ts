@@ -1058,7 +1058,13 @@ export async function calculatePayrollRunScoped(
            JOIN incentive_upload_batch ibu ON ibu.id = iul.batch_id
           WHERE iul.employee_id = ?
             AND ibu.pay_month = ?
-            AND ibu.status = 'approved'`,
+            -- 'applied' must be here, not just 'approved'. incentives.service.ts applyToRun()
+            -- transitions a consumed batch to 'applied', so with the narrower filter the very
+            -- next recalculation found no approved batch and wrote incentive_total = 0 —
+            -- silently removing an approved incentive from an employee's pay. The two paths
+            -- now agree on which batches are payable. Verified before the change:
+            -- incentive_upload_batch holds 0 rows, so no current figure moves.
+            AND ibu.status IN ('approved', 'applied')`,
         [emp.employee_id, runMonthPfx]
       );
       approvedIncentives = Number((incentiveRows as Array<{ total_incentives: number }>)[0]?.total_incentives ?? 0);
@@ -1067,20 +1073,48 @@ export async function calculatePayrollRunScoped(
     }
 
     // 5g. Approved reimbursement claims for the run month (added to net earnings, not gross)
+    //
+    // ⚠️ FIXED 2026-08-13 — this read had never worked, on any run, since it was written.
+    //
+    // It selected `claim_amount`, which employee_reimbursement_claim does not have; the real
+    // columns are amount_claimed and amount_approved. Every execution therefore raised
+    // ER_BAD_FIELD_ERROR, and the bare `catch {}` below swallowed it and left
+    // approvedReimbursements at 0 — so an approved reimbursement could never reach an
+    // employee's pay by this path, and nothing anywhere said so. No other writer of
+    // salary_prep_line.reimbursement_total exists, which is why that column is 0.00 across all
+    // 80,469 payroll lines ever written.
+    //
+    // amount_approved is used on its own, NOT COALESCEd to amount_claimed. If an approver
+    // reduced a claim, the claimed figure is the wrong number to pay; and if amount_approved is
+    // NULL the approval simply did not record an amount, which must not be silently resolved
+    // into a payment. Both cases are left unpaid and surface through the
+    // REIMBURSEMENT_APPROVED_NOT_SETTLED readiness check instead of being guessed at here.
+    //
+    // ⚠️ THIS CHANGES A MONEY PATH. employee_reimbursement_claim holds 0 rows in production, so
+    // this is provably a no-op on every existing and current run — but the first approved claim
+    // filed after this ships will now actually be paid, which is the intended behaviour and has
+    // not previously happened. Payroll/Finance sign-off is listed for it.
     let approvedReimbursements = 0;
     try {
       const runMonthPfx = run.run_month.slice(0, 7);
       const [reimRows] = await db.execute<RowDataPacket[]>(
-        `SELECT SUM(COALESCE(claim_amount, 0)) AS total_reimbursements
+        `SELECT COALESCE(SUM(amount_approved), 0) AS total_reimbursements
            FROM employee_reimbursement_claim
           WHERE employee_id = ?
             AND claim_month = ?
-            AND status = 'approved'`,
+            AND status = 'approved'
+            AND amount_approved IS NOT NULL`,
         [emp.employee_id, runMonthPfx]
       );
       approvedReimbursements = Number((reimRows as Array<{ total_reimbursements: number }>)[0]?.total_reimbursements ?? 0);
-    } catch {
-      // employee_reimbursement_claim may not exist or claim_month column may differ — non-fatal
+    } catch (err) {
+      // Still non-fatal — a missing table in an older environment must not stop payroll — but
+      // never again silent. A swallowed exception here is indistinguishable from "this employee
+      // had no reimbursement", and that is exactly how the defect above survived unnoticed.
+      console.error(
+        `[payroll-calc] reimbursement read failed for employee ${emp.employee_id} in ${run.run_month}; ` +
+        `treating as 0 — any approved claim for this employee is NOT being paid: ${(err as Error).message}`,
+      );
     }
 
     // Custom deductions from employee_deduction_entries (canteen, uniform, etc.)
