@@ -18,6 +18,7 @@ import { Router } from "express";
 import type { Response } from "express";
 import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
+import { requireScopedRole } from "../../middleware/scopeMiddleware.js";
 import { payrollBranchReadinessService } from "./payroll-branch-readiness.service.js";
 import { db } from "../../db/mysql.js";
 import type { RowDataPacket } from "mysql2";
@@ -38,6 +39,36 @@ function resolveMonth(raw: unknown): string {
   const now = new Date();
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
 }
+
+// ---------------------------------------------------------------------------
+// Row-level scope: every :branchId/:processId route below previously checked
+// role membership only — a branch_head/payroll_branch/wfm/process_manager
+// account could pass any OTHER branch's or process's id and read or mutate
+// (checklist, sign-off, freeze-request) readiness state outside their own
+// assignment. requireScopedRole restricts to what the caller's
+// user_assignment_scope rows actually cover; super_admin always bypasses
+// (built into hasScopedAccess) and admin bypasses via allowAdminBypass.
+//
+// requireScopeForNonAdmin: false is deliberate, not a weaker default — a
+// caller with ZERO rows in user_assignment_scope keeps today's unrestricted
+// behaviour (this is non-regressive: nobody who currently has access loses
+// it) while a caller who DOES have real scope data is, for the first time,
+// actually restricted to it. Verified live 2026-08-13 before writing this:
+// branch_head/payroll_branch/wfm/process_manager users mostly do have real
+// branch/process assignment rows (process_manager: 21 of 22 users), so this
+// closes the gap for the population it was found on without a data backfill
+// that would mean fabricating who's assigned where.
+// ---------------------------------------------------------------------------
+
+function branchScopeTarget(req: AuthenticatedRequest) {
+  return { branchId: req.params.branchId };
+}
+
+function branchProcessScopeTarget(req: AuthenticatedRequest) {
+  return { branchId: req.params.branchId, processId: req.params.processId };
+}
+
+const SCOPE_OPTIONS = { allowAdminBypass: true, requireScopeForNonAdmin: false };
 
 // ---------------------------------------------------------------------------
 // GET /grouped-summary?month=YYYY-MM
@@ -241,6 +272,11 @@ payrollProcessReadinessRouter.get(
   "/branch/:branchId",
   requireAuth,
   requireRole("branch_head", "payroll_branch", "payroll_head", "super_admin", "payroll", "wfm", "process_manager"),
+  requireScopedRole(
+    ["branch_head", "payroll_branch", "payroll_head", "payroll", "wfm", "process_manager"],
+    branchScopeTarget,
+    SCOPE_OPTIONS
+  ),
   async (req: AuthenticatedRequest, res: Response) => {
     try {
       const { branchId } = req.params;
@@ -282,6 +318,11 @@ payrollProcessReadinessRouter.get(
   requireRole(
     "branch_head", "payroll_branch", "payroll_head", "super_admin",
     "payroll", "wfm", "process_manager", "admin", "hr"
+  ),
+  requireScopedRole(
+    ["branch_head", "payroll_branch", "payroll_head", "payroll", "wfm", "process_manager", "admin", "hr"],
+    branchProcessScopeTarget,
+    SCOPE_OPTIONS
   ),
   async (req: AuthenticatedRequest, res: Response) => {
     try {
@@ -325,6 +366,11 @@ payrollProcessReadinessRouter.post(
   "/:branchId/:processId/checklist",
   requireAuth,
   requireRole("wfm", "process_manager", "branch_head", "payroll_branch"),
+  requireScopedRole(
+    ["wfm", "process_manager", "branch_head", "payroll_branch"],
+    branchProcessScopeTarget,
+    SCOPE_OPTIONS
+  ),
   async (req: AuthenticatedRequest, res: Response) => {
     try {
       const { branchId, processId } = req.params;
@@ -390,6 +436,7 @@ payrollProcessReadinessRouter.post(
   "/:branchId/:processId/signoff",
   requireAuth,
   requireRole("process_manager", "branch_head"),
+  requireScopedRole(["process_manager", "branch_head"], branchProcessScopeTarget, SCOPE_OPTIONS),
   async (req: AuthenticatedRequest, res: Response) => {
     try {
       const { branchId, processId } = req.params;
@@ -460,6 +507,11 @@ payrollProcessReadinessRouter.post(
   "/:branchId/:processId/request-freeze",
   requireAuth,
   requireRole("wfm", "process_manager", "branch_head", "payroll_branch"),
+  requireScopedRole(
+    ["wfm", "process_manager", "branch_head", "payroll_branch"],
+    branchProcessScopeTarget,
+    SCOPE_OPTIONS
+  ),
   async (req: AuthenticatedRequest, res: Response) => {
     try {
       const { branchId, processId } = req.params;
@@ -502,6 +554,11 @@ payrollProcessReadinessRouter.get(
   requireRole(
     "branch_head", "payroll_branch", "payroll_head", "super_admin",
     "payroll", "wfm", "process_manager"
+  ),
+  requireScopedRole(
+    ["branch_head", "payroll_branch", "payroll_head", "payroll", "wfm", "process_manager"],
+    branchProcessScopeTarget,
+    SCOPE_OPTIONS
   ),
   async (req: AuthenticatedRequest, res: Response) => {
     try {
