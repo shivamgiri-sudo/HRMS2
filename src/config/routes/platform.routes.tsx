@@ -31,6 +31,7 @@ const NativeProvisioningRecipients   = lazy(() => import("@/pages/NativeProvisio
 const NativeFraudAlertReview         = lazy(() => import("@/pages/NativeFraudAlertReview"));
 const NativeBranchPayrollHrSignatory = lazy(() => import("@/pages/NativeBranchPayrollHrSignatory"));
 const NativeDocumentVerification    = lazy(() => import("@/pages/NativeDocumentVerification"));
+const NativeStatutoryApprovals      = lazy(() => import("@/pages/NativeStatutoryApprovals"));
 const NativeOrgMasters              = lazy(() => import("@/pages/NativeOrgMasters"));
 const NativeLocationPolicyMasters   = lazy(() => import("@/pages/NativeLocationPolicyMasters"));
 const NativeWorkflowAdmin           = lazy(() => import("@/pages/NativeWorkflowAdmin"));
@@ -122,6 +123,7 @@ export const platformRouteElements = (
       {/* Assets / documents */}
       <Route path="/assets-manager"       element={<ProtectedRoute><Gate pageCode="ASSETS_MANAGER"><NativeAssetsManager /></Gate></ProtectedRoute>} />
       <Route path="/document-verification" element={<ProtectedRoute><Gate pageCode="EMPLOYEE_MANAGEMENT"><NativeDocumentVerification /></Gate></ProtectedRoute>} />
+      <Route path="/statutory-change-approvals" element={<ProtectedRoute roles={['super_admin','admin','hr']}><NativeStatutoryApprovals /></ProtectedRoute>} />
 
       {/* Letters */}
       <Route path="/letters"                   element={<ProtectedRoute><Gate pageCode="LETTERS"><NativeLetters /></Gate></ProtectedRoute>} />

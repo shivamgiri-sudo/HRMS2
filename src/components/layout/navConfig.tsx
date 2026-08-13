@@ -155,6 +155,7 @@ export const navGroups: NavGroup[] = [
           { label: "Appointment Letters", href: "/provisioning/appointment-letter", icon: ic(FileText), pageCode: "PROVISIONING_APPOINTMENT_LETTER", roles: ["hr","admin","super_admin"], description: "E-sign tracking" },
           { label: "Joining Documents",   href: "/ats/joining-documents-tracker", icon: ic(FileCheck), roles: ["admin","hr","payroll_hr","super_admin"], description: "Joining doc formalities" },
           { label: "Document Verification",href: "/document-verification",   icon: ic(FileCheck),   roles: ["admin","hr"],         description: "Documents" },
+          { label: "Statutory Detail Approvals", href: "/statutory-change-approvals", icon: ic(ShieldCheck), roles: ["admin","hr","super_admin"], description: "PAN/Aadhaar/UAN/ESI change requests" },
           { label: "BGV Verification",    href: "/ats/bgv",                  icon: ic(FileCheck),   pageCode: "ATS_BGV",           roles: ["admin","hr","payroll_hr","payroll"], description: "BGV center" },
           { label: "Enhanced BGV", href: "/ats/bgv-enhanced", icon: ic(ShieldCheck), roles: ["admin","hr","super_admin"], description: "Enhanced verification workflow" },
           { label: "BGV Reports",         href: "/ats/bgv-report",           icon: ic(FileCheck),   roles: ["admin","hr","payroll_hr","payroll"],         description: "BGV" },
