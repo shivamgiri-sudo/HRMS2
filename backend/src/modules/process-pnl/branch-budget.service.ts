@@ -84,6 +84,31 @@ export interface BudgetLineCorrectionInput {
   note: string;
 }
 
+export interface TaxAmendmentPreflight {
+  budgetId: string;
+  budgetStatus: string;
+  periodCode: string | null;
+  periodLocked: boolean;
+  lineId: string;
+  itemName: string;
+  currentTaxTreatment: string;
+  currentGstRate: number;
+  currentGstType: string;
+  currentRecoverablePct: number;
+  baseAmount: number;
+  taxAmount: number;
+  grossAmount: number;
+  recoverableTaxAmount: number;
+  pnlCostAmount: number;
+  reservedAmount: number;
+  consumedAmount: number;
+  reservedQuantity: number;
+  consumedQuantity: number;
+  openGrnCount: number;
+  canAmend: boolean;
+  blockedReason: "PERIOD_LOCKED" | "BUDGET_LINE_ALREADY_IN_USE" | "PENDING_AMENDMENT_EXISTS" | "WRONG_STATUS" | null;
+}
+
 function roundMoney(value: number) {
   return Math.round((Number(value) + Number.EPSILON) * 100) / 100;
 }
@@ -159,6 +184,25 @@ export function calculateBudgetLine(line: BudgetLineInput) {
     gstType,
     recoverablePct,
   };
+}
+
+function canonicalizeTaxPatch(patch: {
+  taxTreatment: BudgetTaxTreatment;
+  gstRate: number;
+  gstType: BudgetGstType;
+  recoverableTaxPct: number;
+}) {
+  if (patch.taxTreatment === "non_gst" || patch.taxTreatment === "exempt") {
+    return {
+      taxTreatment: patch.taxTreatment,
+      gstRate: 0,
+      gstType: "none" as BudgetGstType,
+      recoverableTaxPct: 0,
+    };
+  }
+  if (patch.gstRate < 0 || patch.gstRate > 100) throw new Error("Invalid GST rate");
+  if (patch.recoverableTaxPct < 0 || patch.recoverableTaxPct > 100) throw new Error("Invalid recoverable %");
+  return patch;
 }
 
 function validateLine(line: BudgetLineInput, index: number) {
@@ -2042,6 +2086,24 @@ export const branchBudgetService = {
     } finally {
       connection.release();
     }
+  },
+
+  async listTransfers(budgetId: string) {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT t.*,
+              fl.item_name AS from_item_name, fl.head AS from_head,
+              tl.item_name AS to_item_name,   tl.head AS to_head,
+              e.full_name AS created_by_name
+         FROM finance_budget_transfer t
+         LEFT JOIN finance_budget_line fl ON fl.id = t.from_line_id
+         LEFT JOIN finance_budget_line tl ON tl.id = t.to_line_id
+         LEFT JOIN employees e ON e.id = t.created_by
+        WHERE t.budget_id = ?
+        ORDER BY t.created_at DESC
+        LIMIT 100`,
+      [budgetId]
+    );
+    return rows as RowDataPacket[];
   },
 
   async getGrnsForLine(lineId: string) {

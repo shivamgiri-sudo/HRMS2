@@ -1,10 +1,11 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useSearchParams } from "react-router-dom";
 import {
   AlertCircle,
   AlertTriangle,
   ArrowLeftRight,
+  Clock,
   Eye,
   BarChart2,
   Building2,
@@ -25,6 +26,8 @@ import {
   Send,
   Settings2,
   ShieldCheck,
+  ThumbsDown,
+  ThumbsUp,
   Trash2,
   TrendingUp,
   XCircle,
@@ -540,6 +543,7 @@ export default function BranchBudgetManagementWorkspace() {
     transferAmount: string;
     reason: string;
   };
+  const qc = useQueryClient();
   const [transferTarget, setTransferTarget] = useState<TransferTarget | null>(null);
   const transferMutation = useMutation({
     mutationFn: (t: TransferTarget) =>
@@ -550,10 +554,34 @@ export default function BranchBudgetManagementWorkspace() {
         reason: t.reason,
       }),
     onSuccess: () => {
-      toast.success("Budget transfer applied");
+      toast.success("Transfer submitted for approval — a different Finance Head or Accounts Head must approve it");
       setTransferTarget(null);
+      void qc.invalidateQueries({ queryKey: ["budget-transfers"] });
     },
     onError: (error: Error) => toast.error(error.message ?? "Transfer failed"),
+  });
+
+  // Fetch pending/recent transfers for the active budget.
+  const transfersQuery = useQuery({
+    queryKey: ["budget-transfers", detailId],
+    queryFn: () =>
+      hrmsApi.get<{ success: boolean; data: Array<Record<string, unknown>> }>(
+        `/api/finance/pnl/budgets/${detailId}/transfers`
+      ),
+    enabled: Boolean(detailId),
+    staleTime: 30_000,
+  });
+  const transferRows = (transfersQuery.data as any)?.data ?? [];
+
+  const approveTransferMutation = useMutation({
+    mutationFn: ({ id, decision, remarks }: { id: string; decision: "approve" | "reject"; remarks?: string }) =>
+      hrmsApi.post(`/api/finance/pnl/budget-transfers/${id}/review`, { decision, remarks }),
+    onSuccess: (_, vars) => {
+      toast.success(vars.decision === "approve" ? "Transfer approved — budget lines updated" : "Transfer rejected");
+      void qc.invalidateQueries({ queryKey: ["budget-transfers"] });
+      void qc.invalidateQueries({ queryKey: ["branch-budget-detail"] });
+    },
+    onError: (error: Error) => toast.error(error.message ?? "Action failed"),
   });
 
   type AmendTarget = {
@@ -2200,13 +2228,77 @@ export default function BranchBudgetManagementWorkspace() {
         }}
       />
 
+      {/* 2-A pending: Transfer approval panel — visible when there are transfers for the
+          selected budget that the current user did not create (maker-checker). */}
+      {detailId && transferRows.length > 0 && (
+        <div className="fixed bottom-0 left-0 right-0 z-40 border-t bg-white shadow-[0_-4px_24px_rgba(0,0,0,0.10)] p-4">
+          <div className="mx-auto max-w-3xl">
+            <p className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">
+              Budget Transfers ({transferRows.length})
+            </p>
+            <div className="space-y-2 max-h-48 overflow-y-auto">
+              {(transferRows as any[]).map((tr: any) => (
+                <div key={tr.id} className="flex items-center justify-between gap-3 rounded-lg border bg-slate-50 px-3 py-2">
+                  <div className="min-w-0 flex-1">
+                    <span className="text-xs font-medium text-slate-800 truncate block">
+                      {tr.from_head} › {tr.from_item_name} → {tr.to_head} › {tr.to_item_name}
+                    </span>
+                    <span className="text-[11px] text-slate-500">
+                      ₹{Number(tr.transfer_amount).toLocaleString("en-IN")} · {tr.reason?.slice(0, 60)}
+                      {tr.created_by_name ? ` · by ${tr.created_by_name}` : ""}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    {String(tr.status) === "pending" ? (
+                      <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 border border-amber-200 px-2 py-0.5 text-[10px] font-semibold text-amber-700">
+                        <Clock className="h-3 w-3" /> Pending
+                      </span>
+                    ) : String(tr.status) === "approved" ? (
+                      <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 border border-emerald-200 px-2 py-0.5 text-[10px] font-semibold text-emerald-700">
+                        <CheckCircle2 className="h-3 w-3" /> Approved
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 border border-slate-200 px-2 py-0.5 text-[10px] font-semibold text-slate-500">
+                        Rejected
+                      </span>
+                    )}
+                    {/* Maker-checker: only show approve/reject if this user did not submit */}
+                    {String(tr.status) === "pending" && String(tr.created_by) !== user?.id && (
+                      <>
+                        <button
+                          className="inline-flex items-center gap-1 rounded-md bg-emerald-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-50"
+                          disabled={approveTransferMutation.isPending}
+                          onClick={() => approveTransferMutation.mutate({ id: tr.id, decision: "approve" })}
+                        >
+                          <ThumbsUp className="h-3 w-3" /> Approve
+                        </button>
+                        <button
+                          className="inline-flex items-center gap-1 rounded-md border border-red-300 bg-white px-2.5 py-1 text-xs font-semibold text-red-700 hover:bg-red-50 disabled:opacity-50"
+                          disabled={approveTransferMutation.isPending}
+                          onClick={() => {
+                            const reason = window.prompt("Rejection reason (required):");
+                            if (reason?.trim()) approveTransferMutation.mutate({ id: tr.id, decision: "reject", remarks: reason.trim() });
+                          }}
+                        >
+                          <ThumbsDown className="h-3 w-3" /> Reject
+                        </button>
+                      </>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* 2-A: Budget transfer / virement dialog */}
       {transferTarget && detailQuery.data?.lines && (
         <Dialog open onOpenChange={(open) => { if (!open) setTransferTarget(null); }}>
           <DialogContent className="max-w-md">
-            <DialogHeader><DialogTitle>Transfer Budget Between Lines</DialogTitle></DialogHeader>
+            <DialogHeader><DialogTitle>Submit Budget Transfer</DialogTitle></DialogHeader>
             <div className="space-y-4 py-2 text-sm">
-              <p className="text-muted-foreground">Move approved budget from a surplus line to a deficit line. The transfer is immediate and audited.</p>
+              <p className="text-muted-foreground">Move approved budget from a surplus line to a deficit line. Requires approval from a different Finance Head or Accounts Head before lines are updated.</p>
               <div className="space-y-1">
                 <Label>From (source line) *</Label>
                 <select className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm" value={transferTarget.fromLineId} onChange={(e) => setTransferTarget((t) => t && ({ ...t, fromLineId: e.target.value }))}>
@@ -2236,8 +2328,8 @@ export default function BranchBudgetManagementWorkspace() {
                 disabled={transferMutation.isPending || !transferTarget.fromLineId || !transferTarget.toLineId || !transferTarget.transferAmount || !transferTarget.reason.trim() || transferTarget.fromLineId === transferTarget.toLineId}
                 onClick={() => void transferMutation.mutateAsync(transferTarget)}
               >
-                {transferMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <ArrowLeftRight className="mr-2 h-4 w-4" />}
-                Apply Transfer
+                {transferMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Send className="mr-2 h-4 w-4" />}
+                Submit Transfer
               </Button>
             </DialogFooter>
           </DialogContent>

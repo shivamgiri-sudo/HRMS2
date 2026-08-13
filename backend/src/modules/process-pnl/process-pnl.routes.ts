@@ -387,6 +387,17 @@ router.post(
   })
 );
 
+// 2-A: List all transfers for a budget — pending, approved, and rejected.
+router.get(
+  "/pnl/budgets/:budgetId/transfers",
+  requireRole("finance_head", "accounts_head", "super_admin"),
+  h(async (req, res) => {
+    await assertBranchOf(req, await branchBudgetService.get(req.params.budgetId).then((b: any) => b?.branch_id));
+    const data = await branchBudgetService.listTransfers(req.params.budgetId);
+    res.json({ success: true, data });
+  })
+);
+
 // 4-D: GRN drill-through per budget line — shows all GRN cost allocations that consumed a line.
 router.get(
   "/pnl/budget-lines/:lineId/grns",
