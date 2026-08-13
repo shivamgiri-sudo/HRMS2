@@ -18,6 +18,19 @@ const SENSITIVE_FIELDS: Array<{ inputKey: keyof UpdateEmployeeInput; dbCol: stri
   { inputKey: "reportingManagerId", dbCol: "reporting_manager_id",label: "Reporting Manager" },
   { inputKey: "employmentStatus",   dbCol: "employment_status",   label: "Employment Status" },
   { inputKey: "employmentType",     dbCol: "employment_type",     label: "Employment Type" },
+  // Previously outside this list entirely: admin edits to these wrote silently, with no
+  // before/after audit row at all, unlike every field above. dateOfJoining in particular
+  // feeds payroll/tenure calculations elsewhere, and officialEmail is the login identity.
+  { inputKey: "dateOfJoining",      dbCol: "date_of_joining",     label: "Date of Joining" },
+  { inputKey: "firstName",          dbCol: "first_name",          label: "First Name" },
+  { inputKey: "lastName",           dbCol: "last_name",           label: "Last Name" },
+  { inputKey: "officialEmail",      dbCol: "official_email",      label: "Official Email" },
+  { inputKey: "mobile",             dbCol: "mobile",              label: "Mobile" },
+  { inputKey: "personalEmail",      dbCol: "personal_email",      label: "Personal Email" },
+  { inputKey: "dateOfBirth",        dbCol: "date_of_birth",       label: "Date of Birth" },
+  { inputKey: "gender",             dbCol: "gender",              label: "Gender" },
+  { inputKey: "address1",           dbCol: "address1",            label: "Address" },
+  { inputKey: "city",               dbCol: "city",                label: "City" },
 ];
 
 const assignSalary = async (employeeId: string, structureId: string, ctcAnnual: number, effectiveFrom: string) => {
@@ -376,7 +389,9 @@ export const employeeService = {
     // Snapshot current sensitive field values before update for audit trail
     const [snapRows] = await db.execute<RowDataPacket[]>(
       `SELECT branch_id, department_id, process_id, designation_id,
-              reporting_manager_id, employment_status, employment_type, active_status
+              reporting_manager_id, employment_status, employment_type, active_status,
+              date_of_joining, first_name, last_name, official_email, mobile,
+              personal_email, date_of_birth, gender, address1, city
        FROM employees WHERE id = ? LIMIT 1`,
       [id]
     );

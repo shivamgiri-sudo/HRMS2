@@ -116,6 +116,11 @@ describe("employeeService.updateEmployee", () => {
   it("updates allowed fields", async () => {
     exec.mockResolvedValueOnce([[fakeEmployee], []]);        // getEmployee
     exec.mockResolvedValueOnce([{ affectedRows: 1 }, []]);  // UPDATE
+    // mobile is now in SENSITIVE_FIELDS (previously only Employment fields were), so
+    // changing it fires an audit-log write. void logSensitiveAction(...) invokes its
+    // async body synchronously up to its own first await, so its db.execute() call
+    // consumes a queued mock value before the re-fetch below does.
+    exec.mockResolvedValueOnce([{ affectedRows: 1 }, []]);  // audit log INSERT
     exec.mockResolvedValueOnce([[{ ...fakeEmployee, mobile: "8888888888" }], []]); // re-fetch
     const r = await employeeService.updateEmployee("emp-1", { mobile: "8888888888" }, "user-1");
     expect(r.mobile).toBe("8888888888");
@@ -135,6 +140,60 @@ describe("employeeService.updateEmployee", () => {
     const r = await employeeService.updateEmployee("emp-1", {}, "user-1");
     expect(r.employee_code).toBe("MCN001");
     expect(exec.mock.calls.some(([sql]) => /^\s*UPDATE employees/i.test(sql as string))).toBe(false);
+  });
+
+  // Previously only Employment fields (branch/department/process/designation/reporting
+  // manager/employment status+type) were audited on admin edits — a name, contact, DOB,
+  // address or date-of-joining change wrote silently, with no before/after row at all.
+  it.each([
+    ["firstName", "Suresh", "first_name", "Ravi"],
+    ["dateOfJoining", "2026-05-01", "date_of_joining", "2026-01-01"],
+    ["dateOfBirth", "1995-03-15", "date_of_birth", "1990-01-01"],
+    ["address1", "221B Baker Street", "address1", "Old Address"],
+    ["city", "Bengaluru", "city", "Mumbai"],
+  ])("audits a %s change with before/after values", async (inputKey, newValue, dbCol, oldValue) => {
+    exec.mockResolvedValueOnce([[{ ...fakeEmployee, [dbCol]: oldValue }], []]); // snapshot
+    exec.mockResolvedValueOnce([{ affectedRows: 1 }, []]);                      // UPDATE
+    exec.mockResolvedValueOnce([{ affectedRows: 1 }, []]);                      // audit log INSERT
+    exec.mockResolvedValueOnce([[{ ...fakeEmployee, [dbCol]: newValue }], []]); // re-fetch
+
+    await employeeService.updateEmployee("emp-1", { [inputKey]: newValue } as any, "user-1");
+
+    const auditCall = exec.mock.calls.find(([sql]) => /INSERT INTO sensitive_action_log/i.test(sql as string));
+    expect(auditCall, `expected an audit log write for ${inputKey}`).toBeTruthy();
+    const params = auditCall![1] as unknown[];
+    expect(params).toContain("EMPLOYEE_PROFILE_UPDATED");
+    const paramsStr = JSON.stringify(params);
+    expect(paramsStr).toContain(newValue);
+    expect(paramsStr).toContain(oldValue);
+  });
+
+  it("audits an officialEmail change, on top of its separate auth_user.email sync", async () => {
+    exec.mockResolvedValueOnce([[{ ...fakeEmployee, official_email: "ravi.old@mcn.com" }], []]); // snapshot
+    exec.mockResolvedValueOnce([{ affectedRows: 1 }, []]);                                          // UPDATE employees
+    exec.mockResolvedValueOnce([{ affectedRows: 1 }, []]);                                          // audit log INSERT
+    exec.mockResolvedValueOnce([[{ user_id: "user-1" }], []]);                                      // SELECT employees.user_id (auth_user sync)
+    exec.mockResolvedValueOnce([[], []]);                                                            // SELECT auth_user email conflict — none
+    exec.mockResolvedValueOnce([{ affectedRows: 1 }, []]);                                          // UPDATE auth_user
+    exec.mockResolvedValueOnce([[{ ...fakeEmployee, official_email: "suresh@mcn.com" }], []]);      // re-fetch
+
+    await employeeService.updateEmployee("emp-1", { officialEmail: "suresh@mcn.com" }, "user-1");
+
+    const auditCall = exec.mock.calls.find(([sql]) => /INSERT INTO sensitive_action_log/i.test(sql as string));
+    expect(auditCall).toBeTruthy();
+    const paramsStr = JSON.stringify(auditCall![1]);
+    expect(paramsStr).toContain("suresh@mcn.com");
+    expect(paramsStr).toContain("ravi.old@mcn.com");
+  });
+
+  it("does not audit an unchanged sensitive field re-sent with the same value", async () => {
+    exec.mockResolvedValueOnce([[fakeEmployee], []]);        // snapshot: mobile = "9999999999"
+    exec.mockResolvedValueOnce([{ affectedRows: 1 }, []]);  // UPDATE
+    exec.mockResolvedValueOnce([[fakeEmployee], []]);        // re-fetch (no audit INSERT in between)
+
+    await employeeService.updateEmployee("emp-1", { mobile: "9999999999" }, "user-1");
+
+    expect(exec.mock.calls.some(([sql]) => /INSERT INTO sensitive_action_log/i.test(sql as string))).toBe(false);
   });
 });
 

@@ -329,17 +329,42 @@ router.patch("/me", h(async (req: any, res: any) => {
 
   const updates: string[] = [];
   const values: any[] = [];
+  const changedFields: string[] = [];
   for (const field of ALLOWED_FIELDS) {
     if (req.body[field] !== undefined) {
       updates.push(`\`${field}\` = ?`);
       values.push(req.body[field]);
+      changedFields.push(field);
     }
   }
 
   if (!updates.length) return res.status(400).json({ success: false, error: "No updatable fields provided" });
 
+  // This route wrote with no audit trail at all — DOB, gender, address, contact and
+  // marital-status changes were silent. Read the before-state for exactly the fields being
+  // changed (not the whole row) so the log carries a real diff, matching the shape
+  // employee.service.ts's admin PATCH /:id already uses for Employment-field changes.
+  const beforeCols = changedFields.map((f) => `\`${f}\``).join(", ");
+  const [beforeRows] = await db.execute(`SELECT ${beforeCols} FROM employees WHERE id = ? LIMIT 1`, [empId]) as any[];
+  const oldValues = beforeRows[0] ?? {};
+  const newValues: Record<string, unknown> = {};
+  for (const field of changedFields) newValues[field] = req.body[field];
+
   values.push(empId);
   await db.execute(`UPDATE employees SET ${updates.join(", ")} WHERE id = ?`, values);
+
+  void logSensitiveAction({
+    actor_user_id: userId,
+    action_type: "EMPLOYEE_SELF_PROFILE_UPDATED",
+    module_key: "employees",
+    entity_type: "employee",
+    entity_id: empId,
+    employee_id: empId,
+    old_value_json: oldValues,
+    new_value_json: newValues,
+    change_summary: { fields_updated: changedFields },
+    req,
+  });
 
   return res.json({ success: true, message: "Profile updated" });
 }));
@@ -529,12 +554,31 @@ router.put("/me/emergency-contact", h(async (req: any, res: any) => {
     return res.status(400).json({ success: false, error: "name, relationship, and mobile are required" });
   }
 
+  const [beforeRows] = await db.execute(
+    "SELECT name, relationship, mobile, address FROM employee_emergency_contact WHERE employee_id = ? AND contact_seq = 1 LIMIT 1",
+    [empId]
+  ) as any[];
+  const oldValues = beforeRows[0] ?? null;
+
   await db.execute(
     `INSERT INTO employee_emergency_contact (employee_id, contact_seq, is_primary, name, relationship, mobile, address)
      VALUES (?, 1, 1, ?, ?, ?, ?)
      ON DUPLICATE KEY UPDATE name = VALUES(name), relationship = VALUES(relationship), mobile = VALUES(mobile), address = VALUES(address)`,
     [empId, name, relationship, mobile, address ?? null]
   );
+
+  void logSensitiveAction({
+    actor_user_id: userId,
+    action_type: "EMPLOYEE_SELF_EMERGENCY_CONTACT_UPDATED",
+    module_key: "employees",
+    entity_type: "employee",
+    entity_id: empId,
+    employee_id: empId,
+    old_value_json: oldValues ?? undefined,
+    new_value_json: { name, relationship, mobile, address: address ?? null },
+    req,
+  });
+
   return res.json({ success: true, message: "Emergency contact saved" });
 }));
 
@@ -555,17 +599,20 @@ router.put("/me/nominee", h(async (req: any, res: any) => {
     return res.status(400).json({ success: false, error: "nominee_name and relationship are required" });
   }
 
+  let oldValues: Record<string, unknown> | null = null;
   try {
     // Check if nominee already exists for this employee
     const [existingRows] = await db.execute(
-      "SELECT id FROM employee_nominee WHERE employee_id = ? ORDER BY created_at ASC LIMIT 1",
+      "SELECT id, nominee_name, relationship, date_of_birth, mobile, address FROM employee_nominee WHERE employee_id = ? ORDER BY created_at ASC LIMIT 1",
       [empId]
     ) as any[];
 
     if (existingRows.length) {
+      const { id, ...prior } = existingRows[0];
+      oldValues = prior;
       await db.execute(
         `UPDATE employee_nominee SET nominee_name = ?, relationship = ?, date_of_birth = ?, mobile = ?, address = ? WHERE id = ?`,
-        [nominee_name, relationship, date_of_birth ?? null, mobile ?? null, address ?? null, existingRows[0].id]
+        [nominee_name, relationship, date_of_birth ?? null, mobile ?? null, address ?? null, id]
       );
     } else {
       await db.execute(
@@ -580,6 +627,21 @@ router.put("/me/nominee", h(async (req: any, res: any) => {
       [nominee_name, relationship, empId]
     );
   }
+
+  // Nominee determines who a death-benefit payout goes to — audited like the other
+  // self-service writes above, not just the admin-entered version below.
+  void logSensitiveAction({
+    actor_user_id: userId,
+    action_type: "EMPLOYEE_SELF_NOMINEE_UPDATED",
+    module_key: "employees",
+    entity_type: "employee",
+    entity_id: empId,
+    employee_id: empId,
+    old_value_json: oldValues ?? undefined,
+    new_value_json: { nominee_name, relationship, date_of_birth: date_of_birth ?? null, mobile: mobile ?? null, address: address ?? null },
+    req,
+  });
+
   return res.json({ success: true, message: "Nominee saved" });
 }));
 
@@ -753,12 +815,31 @@ router.put("/:employeeId/emergency-contact", ...hrProfileGate, h(async (req: any
     return res.status(400).json({ success: false, error: "name, relationship, and mobile are required" });
   }
 
+  const [beforeRows] = await db.execute(
+    "SELECT name, relationship, mobile, address FROM employee_emergency_contact WHERE employee_id = ? AND contact_seq = 1 LIMIT 1",
+    [empId]
+  ) as any[];
+  const oldValues = beforeRows[0] ?? null;
+
   await db.execute(
     `INSERT INTO employee_emergency_contact (employee_id, contact_seq, is_primary, name, relationship, mobile, address)
      VALUES (?, 1, 1, ?, ?, ?, ?)
      ON DUPLICATE KEY UPDATE name = VALUES(name), relationship = VALUES(relationship), mobile = VALUES(mobile), address = VALUES(address)`,
     [empId, name, relationship, mobile, address ?? null]
   );
+
+  void logSensitiveAction({
+    actor_user_id: req.authUser!.id,
+    action_type: "EMERGENCY_CONTACT_HR_ENTRY",
+    module_key: "employees",
+    entity_type: "employee",
+    entity_id: empId,
+    employee_id: empId,
+    old_value_json: oldValues ?? undefined,
+    new_value_json: { name, relationship, mobile, address: address ?? null },
+    req,
+  });
+
   return res.json({ success: true, message: "Emergency contact saved" });
 }));
 
@@ -770,16 +851,19 @@ router.put("/:employeeId/nominee", ...hrProfileGate, h(async (req: any, res: any
     return res.status(400).json({ success: false, error: "nominee_name and relationship are required" });
   }
 
+  let oldValues: Record<string, unknown> | null = null;
   try {
     const [existingRows] = await db.execute(
-      "SELECT id FROM employee_nominee WHERE employee_id = ? ORDER BY created_at ASC LIMIT 1",
+      "SELECT id, nominee_name, relationship, date_of_birth, mobile, address FROM employee_nominee WHERE employee_id = ? ORDER BY created_at ASC LIMIT 1",
       [empId]
     ) as any[];
 
     if (existingRows.length) {
+      const { id, ...prior } = existingRows[0];
+      oldValues = prior;
       await db.execute(
         `UPDATE employee_nominee SET nominee_name = ?, relationship = ?, date_of_birth = ?, mobile = ?, address = ? WHERE id = ?`,
-        [nominee_name, relationship, date_of_birth ?? null, mobile ?? null, address ?? null, existingRows[0].id]
+        [nominee_name, relationship, date_of_birth ?? null, mobile ?? null, address ?? null, id]
       );
     } else {
       await db.execute(
@@ -793,6 +877,19 @@ router.put("/:employeeId/nominee", ...hrProfileGate, h(async (req: any, res: any
       [nominee_name, relationship, empId]
     );
   }
+
+  void logSensitiveAction({
+    actor_user_id: req.authUser!.id,
+    action_type: "NOMINEE_HR_ENTRY",
+    module_key: "employees",
+    entity_type: "employee",
+    entity_id: empId,
+    employee_id: empId,
+    old_value_json: oldValues ?? undefined,
+    new_value_json: { nominee_name, relationship, date_of_birth: date_of_birth ?? null, mobile: mobile ?? null, address: address ?? null },
+    req,
+  });
+
   return res.json({ success: true, message: "Nominee saved" });
 }));
 
