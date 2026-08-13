@@ -103,6 +103,29 @@ describe("the summary Finance reads first agrees with the file they get", () => 
     expect(SUMMARY_HANDLER).not.toMatch(/ebd\.id IS NOT NULL AND ebd\.ifsc_code IS NOT NULL/);
   });
 
+  it("reads the account columns only to test presence, never into its response", () => {
+    // The summary must establish payability without becoming another place an account number
+    // reaches a caller. bank-export-gating.contract.test.ts counts this site, so the claim that
+    // it is a presence test rather than an export is enforced here rather than merely asserted
+    // in a comment there.
+    //
+    // Every reference to either column must sit inside the COALESCE(...) IS NOT NULL guard, and
+    // the SELECT list must be aggregates only — no per-employee row leaves this endpoint.
+    const guarded = SUMMARY_HANDLER.match(
+      /COALESCE\(NULLIF\(TRIM\(ebd\.account_number\), ''\),\s*NULLIF\(TRIM\(ebd\.account_number_enc\), ''\)\) IS NOT NULL/,
+    );
+    expect(guarded, "account columns must be read inside a presence guard").not.toBeNull();
+
+    const legacyReads = (SUMMARY_HANDLER.match(/ebd\.account_number(?!_enc)\b/g) ?? []).length;
+    const encReads = (SUMMARY_HANDLER.match(/ebd\.account_number_enc\b/g) ?? []).length;
+    expect(legacyReads, "one presence read only").toBe(1);
+    expect(encReads, "one presence read only").toBe(1);
+
+    // No aliasing an account column out of the query.
+    expect(SUMMARY_HANDLER).not.toMatch(/account_number(_enc)?\s+AS\s/i);
+    expect(SUMMARY_HANDLER).not.toMatch(/resolveAccountNumber/);
+  });
+
   it("computes payability ONCE, then reuses it, rather than repeating the predicate", () => {
     // Repetition is how the summary and the export drifted apart originally, so the property
     // worth pinning is "defined once, referenced many times" — not the alias's spelling.

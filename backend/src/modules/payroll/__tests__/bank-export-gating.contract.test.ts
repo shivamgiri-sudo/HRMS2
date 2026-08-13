@@ -95,6 +95,19 @@ describe("tripwire: no new ungated account-number export", () => {
     // either kind instead of being satisfied by a number that happens to add up. The enc count
     // drops back to 0 when the legacy column is retired by the planned migration 1111, and that
     // is a deliberate update, not a silent pass.
+    // 2026-08-14 NEFT total-integrity fix: +1 legacy +1 enc in payroll.routes.ts, at
+    //   GET /runs/:id/neft-summary
+    // New totals: payroll.routes.ts 3+3, payroll-extended.routes.ts 4+4 = 7 legacy + 7 enc.
+    //
+    // This site is deliberately different in kind from the other six and is the reason the
+    // count moved without a new export appearing. The summary reads both columns ONLY inside a
+    // COALESCE(...) IS NOT NULL presence test, to decide whether an employee is payable; it
+    // never selects an account number into its response, which returns six aggregate numbers
+    // and nothing per-employee. It exists because /neft-summary is the figure Finance reads
+    // before exporting, and it previously called an employee "banked" on the strength of a
+    // non-null ifsc_code alone — so the preview disagreed with the file, by Rs 19,37,731 on the
+    // 2026-04 run. Establishing payability honestly requires touching the columns; exposing
+    // them does not, and is not done here.
     const countLegacy = (s: string) => (s.match(/ebd\.account_number(?!_enc)\b/g) ?? []).length;
     const countEnc = (s: string) => (s.match(/ebd\.account_number_enc\b/g) ?? []).length;
     const legacy = countLegacy(ROUTES) + countLegacy(EXTENDED);
@@ -103,7 +116,7 @@ describe("tripwire: no new ungated account-number export", () => {
       "A payroll endpoint reading bank account numbers was added or removed. " +
       "If added, gate it with hasOrgWideScope (payment file) or buildScopeWhereClause " +
       "(report) and update this count deliberately.";
-    expect(legacy, `${message} (legacy account_number reads)`).toBe(6);
-    expect(enc, `${message} (encrypted account_number_enc reads)`).toBe(6);
+    expect(legacy, `${message} (legacy account_number reads)`).toBe(7);
+    expect(enc, `${message} (encrypted account_number_enc reads)`).toBe(7);
   });
 });
