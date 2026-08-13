@@ -291,14 +291,22 @@ leaveRouter.get("/eligibility/:employeeId", h(async (req: AuthenticatedRequest, 
   const isFemale = ["female", "f"].includes(gender);
   const isMale   = ["male", "m"].includes(gender);
 
-  // ML/MTRL = female only; PL/PTRL = male only; all other types = everyone
+  // MTRL (Maternity Leave, 180 days) = female only; PL/PTRL = male only;
+  // all other types, including ML, = everyone.
+  //
+  // CORRECTED (2026-08-13, live-DB verified): ML was renamed from "Maternity
+  // Leave" to "Medical Leave" by migration 204 (confirmed applied
+  // 2026-06-17) and is meant for all employees — MTRL is the dedicated
+  // maternity type that replaced ML's old meaning. This endpoint still
+  // gated ML as female-only, so it had been hiding "Medical Leave" from
+  // every male employee since that rename.
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT id, leave_code, leave_name, max_days_per_year, carry_forward, requires_approval, paid_leave
      FROM leave_type_master
      WHERE active_status = 1
        AND (
-         leave_code NOT IN ('ML','MTRL','PL','PTRL')
-         OR (leave_code IN ('ML','MTRL') AND ?)
+         leave_code NOT IN ('MTRL','PL','PTRL')
+         OR (leave_code = 'MTRL' AND ?)
          OR (leave_code IN ('PL','PTRL') AND ?)
        )
      ORDER BY leave_name ASC`,

@@ -43,23 +43,33 @@ function Toggle({
   checked,
   onChange,
   label,
+  disabled,
+  disabledNote,
 }: {
   checked: boolean;
   onChange: (v: boolean) => void;
   label: string;
+  /** Renders inert/greyed-out and ignores clicks — for a setting the backend doesn't act on yet. */
+  disabled?: boolean;
+  /** Tooltip shown when disabled, explaining why. */
+  disabledNote?: string;
 }) {
   return (
     <button
       type="button"
-      onClick={() => onChange(!checked)}
+      disabled={disabled}
+      title={disabled ? disabledNote : undefined}
+      onClick={() => { if (!disabled) onChange(!checked); }}
       className={`flex items-center gap-2 rounded-xl border px-3 py-2.5 text-sm font-semibold transition-colors w-full ${
-        checked
-          ? "border-emerald-300 bg-emerald-50 text-emerald-700"
-          : "border-slate-200 bg-slate-50 text-slate-500"
+        disabled
+          ? "border-slate-200 bg-slate-100 text-slate-400 cursor-not-allowed opacity-70"
+          : checked
+            ? "border-emerald-300 bg-emerald-50 text-emerald-700"
+            : "border-slate-200 bg-slate-50 text-slate-500"
       }`}
     >
       <span
-        className={`inline-flex h-5 w-10 flex-shrink-0 rounded-full transition-colors ${checked ? "bg-emerald-500" : "bg-slate-300"}`}
+        className={`inline-flex h-5 w-10 flex-shrink-0 rounded-full transition-colors ${checked && !disabled ? "bg-emerald-500" : "bg-slate-300"}`}
       >
         <span
           className={`block h-5 w-5 rounded-full bg-white shadow transition-transform ${checked ? "translate-x-5" : "translate-x-0"}`}
@@ -220,6 +230,8 @@ function LeaveTypeModal({
               checked={form.requires_approval}
               onChange={(v) => set("requires_approval", v)}
               label="Needs Approval"
+              disabled
+              disabledNote="Not enforced yet — every leave type currently requires manager approval regardless of this setting. Confirmed workflow is Employee → Reporting Manager → Approved for all types."
             />
             <Toggle
               checked={form.paid_leave}
@@ -227,6 +239,9 @@ function LeaveTypeModal({
               label="Paid Leave"
             />
           </div>
+          <p className="text-xs text-slate-400 -mt-1">
+            "Needs Approval" is saved but not currently enforced — every leave type requires manager approval today.
+          </p>
         </div>
 
         <div className="flex gap-3 border-t p-6">

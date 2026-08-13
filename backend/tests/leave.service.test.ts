@@ -48,6 +48,18 @@ function routeConn(handlers: Array<[RegExp, unknown]>) {
   });
 }
 
+// Same idea as routeConn, but for db.execute (the pool) — classifyLeaveDays/
+// getEmployeeLeaveScope run outside reviewRequest's transaction, so they go
+// through `exec`, not `connExecute`.
+function routeExec(handlers: Array<[RegExp, unknown]>) {
+  exec.mockImplementation((sql: string) => {
+    for (const [pattern, result] of handlers) {
+      if (pattern.test(sql)) return Promise.resolve(result);
+    }
+    return Promise.resolve([[], []]);
+  });
+}
+
 const fakeType = { id: "lt-1", leave_code: "CL", leave_name: "Casual Leave", max_days_per_year: 12, carry_forward: 0, requires_approval: 1, paid_leave: 1, active_status: 1 };
 const fakeRequest = { id: "lr-1", employee_id: "emp-1", leave_type_id: "lt-1", from_date: "2026-06-01", to_date: "2026-06-03", total_days: 3, status: "pending" };
 const fakeBalance = { id: "bal-1", employee_id: "emp-1", leave_type_id: "lt-1", balance_year: 2026, allocated_days: 12, used_days: 0, adjusted_days: 0 };
@@ -145,7 +157,7 @@ describe("leaveService.reviewRequest", () => {
     exec.mockResolvedValue([[{ ...fakeRequest, status: "approved" }], []]);       // re-fetch + post-commit reads
     routeConn([
       forUpdateLock("pending"),
-      [/FROM leave_type_master/i, [[{ max_days_per_year: 12 }], []]],
+      [/FROM leave_type_master/i, [[{ leave_code: 'CL', paid_leave: 1, max_days_per_year: 12 }], []]],
       [/FROM leave_balance_ledger/i, [[fakeBalance], []]],
       [/FROM attendance_daily_record/i, [[], []]],
     ]);
@@ -166,7 +178,7 @@ describe("leaveService.reviewRequest", () => {
     exec.mockResolvedValue([[{ ...fakeRequest, status: "approved" }], []]);
     routeConn([
       forUpdateLock("pending"),
-      [/FROM leave_type_master/i, [[{ max_days_per_year: 12 }], []]],
+      [/FROM leave_type_master/i, [[{ leave_code: 'CL', paid_leave: 1, max_days_per_year: 12 }], []]],
       [/FROM leave_balance_ledger/i, [[fakeBalance], []]],
       [/FROM attendance_daily_record/i, [[], []]],
     ]);
@@ -193,7 +205,7 @@ describe("leaveService.reviewRequest", () => {
     exec.mockResolvedValue([[{ ...fakeRequest, status: "approved" }], []]);
     routeConn([
       forUpdateLock("pending"),
-      [/FROM leave_type_master/i, [[{ max_days_per_year: 12 }], []]],
+      [/FROM leave_type_master/i, [[{ leave_code: 'CL', paid_leave: 1, max_days_per_year: 12 }], []]],
       [/FROM leave_balance_ledger/i, [[], []]],   // no ledger row
       [/FROM attendance_daily_record/i, [[], []]],
     ]);
@@ -221,7 +233,7 @@ describe("leaveService.reviewRequest", () => {
     exec.mockResolvedValue([[{ ...fakeRequest, status: "approved" }], []]);
     routeConn([
       forUpdateLock("pending"),
-      [/FROM leave_type_master/i, [[{ max_days_per_year: 12 }], []]],
+      [/FROM leave_type_master/i, [[{ leave_code: 'CL', paid_leave: 1, max_days_per_year: 12 }], []]],
       [/FROM leave_balance_ledger/i, [[fakeBalance], []]],
       [/FROM attendance_daily_record/i, [[], []]],
       // The reviewer arrives as an auth user id; the report joins approved_by to
@@ -244,7 +256,7 @@ describe("leaveService.reviewRequest", () => {
     exec.mockResolvedValue([[{ ...fakeRequest, status: "approved" }], []]);
     routeConn([
       forUpdateLock("pending"),
-      [/FROM leave_type_master/i, [[{ max_days_per_year: 12 }], []]],
+      [/FROM leave_type_master/i, [[{ leave_code: 'CL', paid_leave: 1, max_days_per_year: 12 }], []]],
       [/FROM leave_balance_ledger/i, [[fakeBalance], []]],
       [/FROM attendance_daily_record/i, [[], []]],
       [/FROM employees WHERE user_id/i, [[], []]],
@@ -260,7 +272,7 @@ describe("leaveService.reviewRequest", () => {
     exec.mockResolvedValue([[{ ...fakeRequest, status: "branch_head_approved" }], []]);
     routeConn([
       forUpdateLock("pending"),
-      [/FROM leave_type_master/i, [[{ max_days_per_year: 12 }], []]],
+      [/FROM leave_type_master/i, [[{ leave_code: 'CL', paid_leave: 1, max_days_per_year: 12 }], []]],
       [/FROM leave_balance_ledger/i, [[fakeBalance], []]],
       [/FROM attendance_daily_record/i, [[], []]],
       [/FROM employees WHERE user_id/i, [[{ id: "emp-bh-2" }], []]],
@@ -289,7 +301,7 @@ describe("leaveService.reviewRequest", () => {
     exec.mockResolvedValueOnce([[fakeRequest], []]);
     routeConn([
       forUpdateLock("pending"),
-      [/FROM leave_type_master/i, [[{ max_days_per_year: 12 }], []]],
+      [/FROM leave_type_master/i, [[{ leave_code: 'CL', paid_leave: 1, max_days_per_year: 12 }], []]],
       [/FROM leave_balance_ledger/i, [[{ ...fakeBalance, allocated_days: 2, used_days: 0 }], []]],
     ]);
 
@@ -315,6 +327,10 @@ describe("leaveService.reviewRequest", () => {
         { record_date: "2026-06-03", attendance_status: "leave_approved", lwp_value: 0, is_locked: 0 },
       ], []]],
       [/FROM attendance_state_snapshot/i, [[], []]],
+      // No leave_balance_deduction rows recorded — exercises the backward-
+      // compat fallback (pre-fix approval, restores from total_days/from_date's
+      // year, same as this test always asserted).
+      [/FROM leave_balance_deduction/i, [[], []]],
     ]);
 
     await leaveService.reviewRequest("lr-1", { status: "cancelled" }, "mgr-1");
@@ -342,6 +358,124 @@ describe("leaveService.reviewRequest", () => {
     const sql = connExecute.mock.calls.map(([s]) => s).join("\n");
     expect(sql).not.toMatch(/UPDATE leave_balance_ledger/i);
     expect(sql).not.toMatch(/INSERT IGNORE INTO attendance_state_snapshot/i);
+  });
+
+  // ── 2026-08-13 policy sign-off: #18/#19/#28/#29 ───────────────────────────
+  it("excludes a Week Off/holiday day from balance and attendance, and marks approved LWP as absent with a distinct reason", async () => {
+    const lwpRequest = { ...fakeRequest, leave_type_id: "lt-lwp", from_date: "2026-06-01", to_date: "2026-06-03", total_days: 2, status: "pending" };
+    exec.mockResolvedValueOnce([[lwpRequest], []]); // getRequest, before the transaction
+    routeExec([
+      [/FROM employees WHERE id = \?/i, [[{ branch_id: null, cost_centre_id: null, designation_id: null }], []]],
+      [/FROM leave_holiday_master/i, [[{ holiday_date: "2026-06-02" }], []]], // 06-02 is a holiday
+      [/FROM wfm_roster_assignment/i, [[], []]],
+      [/FROM leave_request WHERE id = \?/i, [[{ ...lwpRequest, status: "approved" }], []]], // post-commit getRequest
+    ]);
+    routeConn([
+      forUpdateLock("pending"),
+      [/FROM leave_type_master/i, [[{ leave_code: "LWP", paid_leave: 0, max_days_per_year: 0 }], []]],
+      [/FROM leave_balance_ledger/i, [[], []]], // no existing row — permissive create path
+      [/FROM attendance_daily_record/i, [[], []]],
+    ]);
+
+    await leaveService.reviewRequest("lr-1", { status: "approved" }, "mgr-1");
+
+    const insertCall = connExecute.mock.calls.find(([s]) => /INSERT INTO attendance_daily_record/i.test(String(s)));
+    expect(insertCall, "attendance insert must run").toBeDefined();
+    const [, params] = insertCall!;
+    // Only 06-01 and 06-03 are chargeable — 06-02 (holiday) is never written.
+    expect(params).not.toContain("2026-06-02");
+    expect(params).toContain("2026-06-01");
+    expect(params).toContain("2026-06-03");
+    // Both chargeable days go in as 'absent' (LWP is unpaid) with the
+    // distinguishing reason, using the existing 'absent' status rather than
+    // inventing a nonexistent 'lwp' ENUM value.
+    expect(params.filter((p) => p === "absent")).toHaveLength(2);
+    expect(params).toContain("Approved LWP");
+    expect(params).not.toContain("leave_approved");
+
+    // Balance deducted only for the 2 chargeable days, not the 3-day span.
+    const balanceCall = connExecute.mock.calls.find(([s]) => /INSERT INTO leave_balance_ledger/i.test(String(s)));
+    expect(balanceCall, "balance ledger row must be created").toBeDefined();
+    expect(balanceCall![1]).toContain(2);
+
+    // Recorded for exact reversal / audit trail.
+    const deductionCall = connExecute.mock.calls.find(([s]) => /INSERT INTO leave_balance_deduction/i.test(String(s)));
+    expect(deductionCall).toBeDefined();
+  });
+
+  // ── 2026-08-13 policy sign-off: #12 ────────────────────────────────────────
+  it("splits balance deduction by calendar year for a request crossing a year boundary", async () => {
+    const crossYear = { ...fakeRequest, from_date: "2026-12-30", to_date: "2027-01-02", total_days: 4, status: "pending" };
+    exec.mockResolvedValueOnce([[crossYear], []]);
+    routeExec([
+      [/FROM employees WHERE id = \?/i, [[{ branch_id: null, cost_centre_id: null, designation_id: null }], []]],
+      [/FROM leave_holiday_master/i, [[], []]],
+      [/FROM wfm_roster_assignment/i, [[], []]],
+      [/FROM leave_request WHERE id = \?/i, [[{ ...crossYear, status: "approved" }], []]],
+    ]);
+    routeConn([
+      forUpdateLock("pending"),
+      [/FROM leave_type_master/i, [[{ leave_code: "EL", paid_leave: 1, max_days_per_year: 18 }], []]],
+      [/FROM leave_balance_ledger/i, [[{ allocated_days: 18, used_days: 0, adjusted_days: 0 }], []]],
+      [/FROM attendance_daily_record/i, [[], []]],
+    ]);
+
+    await leaveService.reviewRequest("lr-1", { status: "approved" }, "mgr-1");
+
+    // Two separate balance UPDATEs, one per year, not one deduction of 4
+    // attributed entirely to 2026.
+    const balanceUpdates = connExecute.mock.calls.filter(([s]) => /UPDATE leave_balance_ledger/i.test(String(s)));
+    expect(balanceUpdates.length).toBe(2);
+    const deductionInserts = connExecute.mock.calls.filter(([s]) => /INSERT INTO leave_balance_deduction/i.test(String(s)));
+    expect(deductionInserts.length).toBe(2);
+    const years = deductionInserts.map(([, params]) => (params as unknown[])[2]);
+    expect(years).toContain(2026);
+    expect(years).toContain(2027);
+    // 2 chargeable days in 2026 (Dec 30-31), 2 in 2027 (Jan 1-2).
+    const days = deductionInserts.map(([, params]) => (params as unknown[])[3]);
+    expect(days).toEqual([2, 2]);
+  });
+
+  // ── 2026-08-13 policy sign-off: #7 ─────────────────────────────────────────
+  it("pools CL and ML — draws the shortfall from ML when CL's own balance is insufficient", async () => {
+    const clRequest = { ...fakeRequest, leave_type_id: "lt-cl", from_date: "2026-06-01", to_date: "2026-06-02", total_days: 2, status: "pending" };
+    exec.mockResolvedValueOnce([[clRequest], []]);
+    routeExec([
+      [/FROM employees WHERE id = \?/i, [[{ branch_id: null, cost_centre_id: null, designation_id: null }], []]],
+      [/FROM leave_holiday_master/i, [[], []]],
+      [/FROM wfm_roster_assignment/i, [[], []]],
+      [/FROM leave_request WHERE id = \?/i, [[{ ...clRequest, status: "approved" }], []]],
+    ]);
+    let balanceCallCount = 0;
+    connExecute.mockImplementation((sql: string) => {
+      if (/FOR UPDATE/i.test(sql)) return Promise.resolve([[{ status: "pending" }], []]);
+      if (/SELECT id FROM leave_request/i.test(sql)) return Promise.resolve([[], []]); // approval overlap check
+      if (/SELECT leave_code, paid_leave, max_days_per_year FROM leave_type_master/i.test(sql)) {
+        return Promise.resolve([[{ leave_code: "CL", paid_leave: 1, max_days_per_year: 7 }], []]);
+      }
+      if (/SELECT id FROM leave_type_master WHERE leave_code = \?/i.test(sql)) {
+        return Promise.resolve([[{ id: "lt-ml" }], []]); // resolves the ML partner type id
+      }
+      if (/SELECT allocated_days, adjusted_days, used_days FROM leave_balance_ledger/i.test(sql)) {
+        balanceCallCount++;
+        // 1st read = CL's own balance (1 day available, need 2); 2nd = ML's (has slack).
+        if (balanceCallCount === 1) return Promise.resolve([[{ allocated_days: 1, used_days: 0, adjusted_days: 0 }], []]);
+        return Promise.resolve([[{ allocated_days: 5, used_days: 0, adjusted_days: 0 }], []]);
+      }
+      if (/FROM attendance_daily_record/i.test(sql)) return Promise.resolve([[], []]);
+      return Promise.resolve([{ affectedRows: 1 }, []]);
+    });
+
+    await leaveService.reviewRequest("lr-1", { status: "approved" }, "mgr-1");
+
+    const deductionInserts = connExecute.mock.calls.filter(([s]) => /INSERT INTO leave_balance_deduction/i.test(String(s)));
+    expect(deductionInserts.length).toBe(2); // 1 day from CL (primary), 1 from ML (pooled)
+    const typeIds = deductionInserts.map(([, params]) => (params as unknown[])[1]);
+    expect(typeIds).toContain("lt-cl");
+    expect(typeIds).toContain("lt-ml");
+    const isPrimaryFlags = deductionInserts.map(([, params]) => (params as unknown[])[4]);
+    expect(isPrimaryFlags).toContain(1); // CL bucket marked primary
+    expect(isPrimaryFlags).toContain(0); // ML bucket marked pooled/non-primary
   });
 });
 
@@ -387,5 +521,31 @@ describe("leaveService.createHoliday", () => {
     exec.mockResolvedValueOnce([[fakeHoliday], []]);
     const r = await leaveService.createHoliday({ holidayName: "Diwali", holidayDate: "2026-10-20", holidayType: "national" });
     expect(r.holiday_name).toBe("Diwali");
+  });
+});
+
+// ── 2026-08-13 policy sign-off: #13 ─────────────────────────────────────────
+describe("leaveService.lapseUnresolvedLeaves", () => {
+  it("does NOT lapse a cross-month request when the closing month isn't its last month", async () => {
+    // 30-Aug to 03-Sep, still pending when August closes — the September
+    // portion hasn't had its own payroll month close yet, so the whole
+    // request must survive to be decided (or lapsed in turn) in September.
+    exec.mockResolvedValueOnce([[], []]); // no pending rows match this month's query
+    const result = await leaveService.lapseUnresolvedLeaves("run-1", "2026-08", ["emp-1"]);
+    expect(result.lapsed).toBe(0);
+    const [sql, params] = exec.mock.calls[0];
+    // The query must include the new to_date <= monthEnd guard.
+    expect(sql).toMatch(/to_date\s*<=\s*\?/);
+    expect(params).toContain("2026-08-31");
+  });
+
+  it("lapses a request whose own last month is the one closing", async () => {
+    const septRequest = { id: "lr-2", employee_id: "emp-1", leave_type_id: "lt-1", from_date: "2026-09-01", to_date: "2026-09-02", total_days: 2 };
+    exec.mockResolvedValueOnce([[septRequest], []]); // pending-rows query
+    exec.mockResolvedValueOnce([{ affectedRows: 1 }, []]); // UPDATE ... SET status='lapsed'
+    exec.mockResolvedValueOnce([{ affectedRows: 1 }, []]); // audit log insert
+
+    const result = await leaveService.lapseUnresolvedLeaves("run-2", "2026-09", ["emp-1"]);
+    expect(result.lapsed).toBe(1);
   });
 });

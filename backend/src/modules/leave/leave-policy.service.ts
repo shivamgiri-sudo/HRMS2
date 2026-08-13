@@ -196,26 +196,46 @@ async function checkELInSameMonth(
 // ---------------------------------------------------------------------------
 // checkELOccurrences
 // ---------------------------------------------------------------------------
+// CORRECTED (#14, policy sign-off 2026-08-13): previously took a single
+// `year` and matched only `YEAR(lr.from_date) = ?`, so a Dec/Jan-spanning EL
+// request was attributed entirely to from_date's year for occurrence-
+// counting purposes, same root cause as #12's balance-year bug. Now takes
+// the new request's own from/to date range, determines every calendar year
+// it touches, and reports an exception if ANY of those years would reach
+// its 3rd occurrence — an employee taking EL across a year boundary is
+// genuinely taking EL in both years, so both years' counts are relevant.
 async function checkELOccurrences(
   employeeId: string,
-  year: number
+  fromDate: string,
+  toDate: string
 ): Promise<{ count: number; isException: boolean }> {
-  const sql = `
-    SELECT COUNT(*) AS cnt
-    FROM leave_request lr
-    WHERE lr.employee_id = ?
-      AND lr.leave_type_id IN (
-        SELECT id FROM leave_type_master WHERE leave_code = 'EL'
-      )
-      AND lr.status IN ('approved', 'pending', 'pending_branch_head')
-      AND YEAR(lr.from_date) = ?
-  `;
+  const fromYear = new Date(fromDate).getFullYear();
+  const toYear = new Date(toDate).getFullYear();
+  let maxCount = 0;
+  let isException = false;
 
-  const [rows] = await db.execute<RowDataPacket[]>(sql, [employeeId, year]);
-  const count = Number(rows[0]?.cnt ?? 0);
+  for (let year = fromYear; year <= toYear; year++) {
+    const sql = `
+      SELECT COUNT(*) AS cnt
+      FROM leave_request lr
+      WHERE lr.employee_id = ?
+        AND lr.leave_type_id IN (
+          SELECT id FROM leave_type_master WHERE leave_code = 'EL'
+        )
+        AND lr.status IN ('approved', 'pending', 'pending_branch_head')
+        AND lr.from_date <= ?
+        AND lr.to_date   >= ?
+    `;
+    const [rows] = await db.execute<RowDataPacket[]>(
+      sql, [employeeId, `${year}-12-31`, `${year}-01-01`]
+    );
+    const count = Number(rows[0]?.cnt ?? 0);
+    maxCount = Math.max(maxCount, count);
+    // isException = would become the 3rd application (count >= 2 existing) in this year
+    if (count >= 2) isException = true;
+  }
 
-  // isException = would become the 3rd application (count >= 2 existing)
-  return { count, isException: count >= 2 };
+  return { count: maxCount, isException };
 }
 
 // ---------------------------------------------------------------------------
@@ -229,14 +249,25 @@ function checkELSingleGoCap(requestedDays: number): { exceeded: boolean; cap: nu
 // ---------------------------------------------------------------------------
 // requiresBranchHeadApproval
 // ---------------------------------------------------------------------------
+// DEAD CODE (confirmed 2026-08-13, leave-module audit): exported but never
+// called anywhere in this codebase. submitRequest (leave.service.ts) does
+// NOT use this function's ">12 days -> Branch Head" rule — a single EL
+// application over 12 days is hard-REJECTED there via checkELSingleGoCap,
+// never routed to pending_branch_head. Only the 3rd-occurrence-in-a-year
+// rule (checkELOccurrences, called directly from leave.service.ts) is live.
+// Left in place rather than deleted, per policy sign-off, since removing it
+// is a product decision (restore the documented >12-day escalation, or
+// formally retire this description of behaviour that doesn't exist) that
+// hasn't been made — do not call this function without that decision first.
 async function requiresBranchHeadApproval(
   employeeId: string,
   requestedDays: number,
-  year: number
+  fromDate: string,
+  toDate: string
 ): Promise<boolean> {
   if (requestedDays > 12) return true;
 
-  const { isException } = await checkELOccurrences(employeeId, year);
+  const { isException } = await checkELOccurrences(employeeId, fromDate, toDate);
   return isException;
 }
 
@@ -303,6 +334,14 @@ function prorateAnnualCredit(
 // ---------------------------------------------------------------------------
 // getCombinedCLMLBalance
 // ---------------------------------------------------------------------------
+// SUPERSEDED (2026-08-13, leave-module audit — #7 policy sign-off): real
+// CL/ML pooling (CL-first, ML-remainder, per this pair's own source-of-truth
+// design doc) is now implemented directly in leave.service.ts's
+// reviewRequest() approval branch, applied automatically whenever the
+// requested type's own balance is insufficient. This function — a plain sum
+// with no deduction-order logic — was the prior, unused, non-functional
+// stand-in; kept for now as a display-only "combined available" helper
+// (still exported, still has zero callers) rather than removed outright.
 async function getCombinedCLMLBalance(
   employeeId: string,
   year: number

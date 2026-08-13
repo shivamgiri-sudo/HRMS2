@@ -5,9 +5,12 @@ import { getEffectiveConfig } from "../customization/customization-engine.js";
 import { sendSMS } from "../communication/sms.helper.js";
 import { notifyLeaveSubmitted, notifyLeaveDecision } from "./leave.notifications.js";
 import { leavePolicyService } from "./leave-policy.service.js";
-import { captureAttendanceSnapshot, enumerateDates, readAttendanceSnapshots } from "../../shared/attendanceSnapshot.js";
+import { captureAttendanceSnapshot, readAttendanceSnapshots } from "../../shared/attendanceSnapshot.js";
 import { applyRestore, planLeaveRestore, rederiveDates, type DateRestorePlan } from "../../shared/attendanceRestore.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
+import {
+  classifyLeaveDays, getEmployeeLeaveScope, chargeableDates,
+} from "../../shared/leaveChargeableDays.js";
 import type {
   LeaveBalanceLedger,
   LeaveHoliday,
@@ -39,6 +42,73 @@ async function loadAttendanceRowsForRestore(
     out.set(String((row as any).record_date).slice(0, 10), row);
   }
   return out;
+}
+
+/** Groups ISO date strings (YYYY-MM-DD) by their calendar year. */
+function groupDatesByYear(dates: string[]): Map<number, string[]> {
+  const map = new Map<number, string[]>();
+  for (const d of dates) {
+    const year = Number(d.slice(0, 4));
+    if (!map.has(year)) map.set(year, []);
+    map.get(year)!.push(d);
+  }
+  return map;
+}
+
+// CL and ML pool together per the leave module's own source-of-truth design
+// (docs/superpowers/plans/2026-06-17-leave-system-source-of-truth.md:26,
+// "Deduction order: CL first, remainder from ML") and leave_policy_config's
+// pool_with column (CL -> 'ML,HDCL', ML -> 'CL,HDML' — HDCL/HDML are dangling
+// references to a half-day leave type that was never built, so they're
+// ignored here; half-day leave is rejected server-side elsewhere in this
+// file). EL's pool_with is NULL — explicitly not pooled. Hardcoded rather
+// than parsed from pool_with because there are exactly two pooled types in
+// this system and parsing would just mean filtering out HDCL/HDML anyway;
+// this mirrors how checkMonthlyCapExceeded already hardcodes CL/ML.
+// (2026-08-13, leave-module audit — policy sign-off on #7.)
+const POOL_PARTNER_CODE: Readonly<Record<string, string>> = { CL: "ML", ML: "CL" };
+
+interface BalanceSnapshot {
+  exists: boolean;
+  allocatedDays: number;
+  adjustedDays: number;
+  usedDays: number;
+  available: number;
+}
+
+async function readBalance(
+  conn: any, employeeId: string, leaveTypeId: string, year: number
+): Promise<BalanceSnapshot> {
+  const [rows] = await conn.execute(
+    `SELECT allocated_days, adjusted_days, used_days FROM leave_balance_ledger
+      WHERE employee_id = ? AND leave_type_id = ? AND balance_year = ?`,
+    [employeeId, leaveTypeId, year]
+  );
+  const row = (rows as RowDataPacket[])[0] as any;
+  if (!row) return { exists: false, allocatedDays: 0, adjustedDays: 0, usedDays: 0, available: 0 };
+  const allocatedDays = Number(row.allocated_days ?? 0);
+  const adjustedDays = Number(row.adjusted_days ?? 0);
+  const usedDays = Number(row.used_days ?? 0);
+  return { exists: true, allocatedDays, adjustedDays, usedDays, available: Math.max(0, allocatedDays + adjustedDays - usedDays) };
+}
+
+async function applyBalanceDeduction(
+  conn: any, employeeId: string, leaveTypeId: string, year: number, days: number, balanceExists: boolean
+): Promise<void> {
+  if (days <= 0) return;
+  if (balanceExists) {
+    await conn.execute(
+      `UPDATE leave_balance_ledger SET used_days = used_days + ?
+        WHERE employee_id = ? AND leave_type_id = ? AND balance_year = ?`,
+      [days, employeeId, leaveTypeId, year]
+    );
+  } else {
+    await conn.execute(
+      `INSERT INTO leave_balance_ledger (id, employee_id, leave_type_id, balance_year, allocated_days, used_days, adjusted_days)
+       VALUES (UUID(), ?, ?, ?, 0, ?, 0)`,
+      [employeeId, leaveTypeId, year, days]
+    );
+  }
 }
 
 export const leaveService = {
@@ -105,12 +175,21 @@ export const leaveService = {
     );
     const leaveCode = (ltCodeRows as Array<{ leave_code: string }>)[0]?.leave_code ?? null;
 
-    // ── Gender eligibility (ML/MTRL = female only; PL/PTRL = male only) ────
-    // Mirrors GET /api/leave/eligibility/:employeeId (leave.routes.ts) exactly,
-    // which was previously advisory-only — it filtered what the UI showed as
-    // selectable, but nothing stopped a direct API call submitting the
-    // "wrong"-gender type anyway. (2026-08-13 audit)
-    const GENDER_RESTRICTED_CODES = new Set(["ML", "MTRL", "PL", "PTRL"]);
+    // ── Gender eligibility (MTRL = female only; PL/PTRL = male only) ───────
+    // Mirrors GET /api/leave/eligibility/:employeeId (leave.routes.ts).
+    //
+    // CORRECTED (2026-08-13, live-DB verified): 'ML' was renamed from
+    // "Maternity Leave" to "Medical Leave" by migration 204 (confirmed
+    // applied 2026-06-17 via schema_migrations — NOT by 210, which was never
+    // executed despite its comment claiming otherwise) and is meant for ALL
+    // employees, per 204/210's own stated intent and the live leave_name.
+    // 'MTRL' is the dedicated Maternity Leave type (180 days) that replaced
+    // ML's old meaning — that is the one that should be female-restricted.
+    // The original fix here (making this a hard server-side check) had
+    // inherited the stale ML-as-maternity gate from the display-only
+    // eligibility endpoint and would have *actively blocked* male employees
+    // from Medical Leave, worse than the previous advisory-only version.
+    const GENDER_RESTRICTED_CODES = new Set(["MTRL", "PL", "PTRL"]);
     if (leaveCode && GENDER_RESTRICTED_CODES.has(leaveCode)) {
       const [genderRows] = await db.execute<RowDataPacket[]>(
         `SELECT gender FROM employees WHERE id = ? LIMIT 1`,
@@ -119,7 +198,7 @@ export const leaveService = {
       const gender = String((genderRows as RowDataPacket[])[0]?.gender ?? "").toLowerCase().trim();
       const isFemale = ["female", "f"].includes(gender);
       const isMale = ["male", "m"].includes(gender);
-      const isFemaleOnly = leaveCode === "ML" || leaveCode === "MTRL";
+      const isFemaleOnly = leaveCode === "MTRL";
       const isMaleOnly = leaveCode === "PL" || leaveCode === "PTRL";
       if ((isFemaleOnly && !isFemale) || (isMaleOnly && !isMale)) {
         throw new Error(
@@ -128,10 +207,28 @@ export const leaveService = {
       }
     }
 
+    // ── Authoritative chargeable-day count (#18) ────────────────────────────
+    // "Do not trust a client-calculated leave-day count." The client's
+    // totalDays (computed with a hardcoded Sat/Sun assumption, not the
+    // employee's actual roster week-off) is no longer used for policy checks
+    // or storage — this server-side count, from the same classifyLeaveDays()
+    // service reviewRequest's attendance write uses, is authoritative for
+    // both. (2026-08-13, leave-module audit — policy sign-off on #18/#19.)
+    const submitScope = await getEmployeeLeaveScope(input.employeeId);
+    const submitClassification = await classifyLeaveDays(
+      input.employeeId, submitScope, input.fromDate, input.toDate
+    );
+    const chargeableCount = chargeableDates(submitClassification).length;
+    if (chargeableCount === 0) {
+      throw new Error(
+        `Every date in ${input.fromDate} – ${input.toDate} is a Week Off or company holiday for this employee — there are no working days to charge leave against.`
+      );
+    }
+
     // ── CL / ML policy enforcement ────────────────────────────────────────
     if (leaveCode === 'CL' || leaveCode === 'ML') {
       // More than 2 continuous days must be applied as EL
-      if (input.totalDays > 2) {
+      if (chargeableCount > 2) {
         throw new Error(
           `${leaveCode} can only be applied for up to 2 continuous days. For longer leave, please apply for Earned Leave (EL).`
         );
@@ -139,7 +236,7 @@ export const leaveService = {
 
       // Combined CL+ML monthly cap (policy engine: leave → cl_ml_policy → monthly_cap_days, default 2)
       const capCheck = await leavePolicyService.checkMonthlyCapExceeded(
-        input.employeeId, input.fromDate, input.toDate, input.totalDays
+        input.employeeId, input.fromDate, input.toDate, chargeableCount
       );
       if (capCheck.exceeded) {
         throw new Error(
@@ -153,7 +250,7 @@ export const leaveService = {
     let initialStatus = 'pending';
     if (leaveCode === 'EL') {
       // Single-application cap: max 12 days
-      const singleGo = leavePolicyService.checkELSingleGoCap(input.totalDays);
+      const singleGo = leavePolicyService.checkELSingleGoCap(chargeableCount);
       if (singleGo.exceeded) {
         throw new Error(
           `Earned Leave cannot exceed ${singleGo.cap} days in a single application.`
@@ -170,9 +267,12 @@ export const leaveService = {
         );
       }
 
-      // 3rd occurrence in the year → requires Branch Head approval
+      // 3rd occurrence in the year → requires Branch Head approval.
+      // Counts by which calendar year(s) this request's dates actually fall
+      // in, not just from_date's year — a Dec/Jan-spanning EL request is
+      // relevant to both years' occurrence counts. (2026-08-13, #14 fix)
       const occurrences = await leavePolicyService.checkELOccurrences(
-        input.employeeId, new Date(input.fromDate).getFullYear()
+        input.employeeId, input.fromDate, input.toDate
       );
       if (occurrences.isException) {
         initialStatus = 'pending_branch_head';
@@ -212,11 +312,13 @@ export const leaveService = {
           );
         }
 
+        // total_days stores the authoritative chargeable count (#18), not the
+        // client-submitted input.totalDays.
         await lockConn.execute(
           `INSERT INTO leave_request (id, employee_id, leave_type_id, from_date, to_date, total_days, reason, status)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
           [id, input.employeeId, input.leaveTypeId, input.fromDate, input.toDate,
-           input.totalDays, input.reason ?? null, initialStatus]
+           chargeableCount, input.reason ?? null, initialStatus]
         );
       } finally {
         await lockConn.query("SELECT RELEASE_LOCK(?)", [lockName]).catch(() => {});
@@ -238,7 +340,7 @@ export const leaveService = {
       employee_id: input.employeeId,
       new_value_json: {
         status: initialStatus, leave_type_id: input.leaveTypeId, leave_code: leaveCode,
-        from_date: input.fromDate, to_date: input.toDate, total_days: input.totalDays,
+        from_date: input.fromDate, to_date: input.toDate, total_days: chargeableCount,
       },
     }).catch(() => {});
 
@@ -272,7 +374,7 @@ export const leaveService = {
             user_id: managerUserId,
             type: 'leave_request',
             title: `[ACTION REQUIRED] Leave Request: ${emp?.full_name ?? input.employeeId}`,
-            description: `${emp?.employee_code ?? ''} applied for ${leaveType} from ${input.fromDate} to ${input.toDate} (${input.totalDays} day${input.totalDays === 1 ? '' : 's'})${input.reason ? `. Reason: ${input.reason}` : '.'}`,
+            description: `${emp?.employee_code ?? ''} applied for ${leaveType} from ${input.fromDate} to ${input.toDate} (${chargeableCount} day${chargeableCount === 1 ? '' : 's'})${input.reason ? `. Reason: ${input.reason}` : '.'}`,
             // The leave request, not the employee. Keyed on the employee this
             // collapsed every request a person raised onto one alert, so a
             // second application never reached the manager and approving one
@@ -415,88 +517,164 @@ export const leaveService = {
           );
         }
 
-        const duration = request.total_days;
         const employeeId = request.employee_id;
         const leaveTypeId = request.leave_type_id;
-        const year = new Date(request.from_date).getFullYear();
 
         const [typeRows] = await conn.execute(
-          `SELECT max_days_per_year FROM leave_type_master WHERE id = ? LIMIT 1`,
+          `SELECT leave_code, paid_leave, max_days_per_year FROM leave_type_master WHERE id = ? LIMIT 1`,
           [leaveTypeId]
         );
-        const maxDaysPerYear: number = Number((typeRows as RowDataPacket[])[0]?.max_days_per_year ?? 0);
+        const typeInfo = (typeRows as RowDataPacket[])[0] as any;
+        if (!typeInfo) throw new Error("Leave type not found");
+        const leaveCode = String(typeInfo.leave_code ?? "");
+        const isPaidType = Number(typeInfo.paid_leave) === 1;
+        const maxDaysPerYear: number = Number(typeInfo.max_days_per_year ?? 0);
 
-        const [balanceRows] = await conn.execute(
-          `SELECT * FROM leave_balance_ledger
-           WHERE employee_id = ? AND leave_type_id = ? AND balance_year = ?`,
-          [employeeId, leaveTypeId, year]
+        // Authoritative chargeable-day classification (#18/#19, policy sign-off
+        // 2026-08-13): only days that are neither the employee's actual roster
+        // Week Off nor a company holiday are charged against the balance or
+        // written to attendance as leave. A Week Off/holiday inside the range
+        // is left completely untouched here — whether it's PAID is a separate
+        // question, governed entirely by payroll's existing Week Off
+        // eligibility logic, never by this leave-approval code path.
+        const approvalScope = await getEmployeeLeaveScope(employeeId);
+        const approvalClassification = await classifyLeaveDays(
+          employeeId, approvalScope, String(request.from_date), String(request.to_date)
         );
-
-        if ((balanceRows as RowDataPacket[]).length === 0) {
-          if (maxDaysPerYear > 0 && duration > maxDaysPerYear) {
-            throw new Error(
-              `No leave allocation found for this employee. ` +
-              `Requested ${duration} day(s) exceeds the annual maximum of ${maxDaysPerYear} for this leave type.`
-            );
-          }
-          await conn.execute(
-            `INSERT INTO leave_balance_ledger (id, employee_id, leave_type_id, balance_year, allocated_days, used_days, adjusted_days)
-             VALUES (UUID(), ?, ?, ?, 0, ?, 0)`,
-            [employeeId, leaveTypeId, year, duration]
-          );
-        } else {
-          const balance = (balanceRows as RowDataPacket[])[0];
-          const allocatedDays = Number(balance.allocated_days ?? 0);
-          const adjustedDays  = Number(balance.adjusted_days ?? 0);
-          const usedDays      = Number(balance.used_days ?? 0);
-          const availableBalance = allocatedDays + adjustedDays - usedDays;
-
-          if (duration > availableBalance) {
-            throw new Error(`Insufficient leave balance. Available: ${availableBalance}, Requested: ${duration}`);
-          }
-          if (maxDaysPerYear > 0 && (usedDays + duration) > maxDaysPerYear) {
-            throw new Error(
-              `Approving this request would exceed the annual limit of ${maxDaysPerYear} day(s) ` +
-              `for this leave type. Already used: ${usedDays}.`
-            );
-          }
-
-          await conn.execute(
-            `UPDATE leave_balance_ledger
-             SET used_days = used_days + ?
-             WHERE employee_id = ? AND leave_type_id = ? AND balance_year = ?`,
-            [duration, employeeId, leaveTypeId, year]
+        const chargeable = chargeableDates(approvalClassification);
+        if (chargeable.length === 0) {
+          throw new Error(
+            "This leave request has no chargeable working days — every date falls on a Week Off or company holiday. Nothing to approve."
           );
         }
 
-        // Snapshot every calendar day in the range before the upsert below
-        // overwrites it. Without this a discard cannot tell which days already
-        // had an attendance row, and would resurrect deleted rows or strand
-        // rows it should have removed.
+        // Year-bucketed balance deduction (#12, policy sign-off 2026-08-13):
+        // a request crossing a calendar-year boundary (e.g. 30-Dec to 03-Jan)
+        // deducts from EACH year's own leave_balance_ledger row, not the
+        // whole duration from from_date's year alone.
+        //
+        // CL/ML pooling (#7, policy sign-off 2026-08-13): per this module's
+        // own source-of-truth design (see POOL_PARTNER_CODE above), a CL (or
+        // ML) request draws its own type's balance first; any shortfall is
+        // drawn from the pooled partner type's balance for the same year,
+        // rather than failing outright the moment the requested type alone
+        // is insufficient.
+        const partnerCode = POOL_PARTNER_CODE[leaveCode] ?? null;
+        let partnerTypeId: string | null = null;
+        if (partnerCode) {
+          const [partnerTypeRows] = await conn.execute(
+            `SELECT id FROM leave_type_master WHERE leave_code = ? AND active_status = 1 LIMIT 1`,
+            [partnerCode]
+          );
+          partnerTypeId = (partnerTypeRows as RowDataPacket[])[0]?.id ?? null;
+        }
+
+        const byYear = groupDatesByYear(chargeable);
+        const deductionBuckets: Array<{ leaveTypeId: string; year: number; days: number; isPrimary: boolean }> = [];
+
+        for (const [year, datesInYear] of byYear) {
+          const daysNeeded = datesInYear.length;
+
+          const primary = await readBalance(conn, employeeId, leaveTypeId, year);
+          // No ledger row yet for the DIRECTLY REQUESTED type (e.g. HR hasn't
+          // run balance-seeding for this employee/type/year) is treated
+          // permissively, same as before this rewrite: the row is created
+          // with the requested days as used_days, gated only by
+          // maxDaysPerYear below — not as "0 available, insufficient
+          // balance". This is an administrative-gap fallback, not a real
+          // shortfall, so it does not apply to a POOLED PARTNER type below:
+          // pooling should only draw from balance that was actually
+          // allocated, never invent credit from an allocation that was
+          // never set up for the other type.
+          const fromPrimary = primary.exists ? Math.min(daysNeeded, primary.available) : daysNeeded;
+          let remainder = daysNeeded - fromPrimary;
+
+          let fromPartner = 0;
+          let partner: BalanceSnapshot | null = null;
+          if (remainder > 0 && partnerTypeId) {
+            partner = await readBalance(conn, employeeId, partnerTypeId, year);
+            fromPartner = partner.exists ? Math.min(remainder, partner.available) : 0;
+            remainder -= fromPartner;
+          }
+
+          if (remainder > 0) {
+            const poolNote = partnerTypeId
+              ? ` (pooled with ${partnerCode}: ${primary.available} ${leaveCode} + ${partner?.available ?? 0} ${partnerCode})`
+              : "";
+            throw new Error(
+              `Insufficient leave balance for ${year}. Available: ${primary.available + fromPartner}${poolNote}, Requested: ${daysNeeded}.`
+            );
+          }
+          // maxDaysPerYear is enforced on the requested type's own usage —
+          // pooling covers a balance shortfall, not the annual cap.
+          if (maxDaysPerYear > 0 && (primary.usedDays + fromPrimary) > maxDaysPerYear) {
+            throw new Error(
+              `Approving this request would exceed the annual limit of ${maxDaysPerYear} day(s) ` +
+              `for ${leaveCode} in ${year}. Already used: ${primary.usedDays}.`
+            );
+          }
+
+          if (fromPrimary > 0) {
+            await applyBalanceDeduction(conn, employeeId, leaveTypeId, year, fromPrimary, primary.exists);
+            deductionBuckets.push({ leaveTypeId, year, days: fromPrimary, isPrimary: true });
+          }
+          if (fromPartner > 0 && partnerTypeId) {
+            await applyBalanceDeduction(conn, employeeId, partnerTypeId, year, fromPartner, partner!.exists);
+            deductionBuckets.push({ leaveTypeId: partnerTypeId, year, days: fromPartner, isPrimary: false });
+          }
+        }
+
+        // Record exactly what was deducted, per (type, year) bucket — the
+        // audit trail for a pooled transaction, and what reject/cancel reads
+        // back to reverse precisely instead of re-deriving (see below).
+        for (const bucket of deductionBuckets) {
+          await conn.execute(
+            `INSERT INTO leave_balance_deduction (id, leave_request_id, leave_type_id, balance_year, days_deducted, is_primary_type)
+             VALUES (UUID(), ?, ?, ?, ?, ?)`,
+            [id, bucket.leaveTypeId, bucket.year, bucket.days, bucket.isPrimary ? 1 : 0]
+          );
+        }
+
+        // Snapshot only the chargeable days before the upsert below overwrites
+        // them — Week Off/holiday days were never touched, so there's nothing
+        // to snapshot or later restore for them.
         await captureAttendanceSnapshot(conn, {
           sourceType: "leave",
           sourceId: id,
           employeeId: request.employee_id,
-          dates: enumerateDates(String(request.from_date), String(request.to_date)),
+          dates: chargeable,
           capturedBy: reviewerId,
         });
 
-        // Sync attendance records for the approved date range in a single query
+        // Attendance write, chargeable days only (#19). Paid vs unpaid leave
+        // type get different treatment (#28/#29): a paid type marks the day
+        // 'leave_approved' (lwp_value 0.00) exactly as before; an unpaid type
+        // (LWP) marks it 'absent' — the SAME status an unplanned/unauthorized
+        // absence gets, so it flows through payroll's existing paid_base
+        // calculation identically (that CASE expression only pays 'present',
+        // 'late', 'half_day' and 'leave_approved' — 'absent' already
+        // contributes zero, no new divisor or formula needed) — with
+        // lwp_value 1.00 (existing column, already read into the payslip's
+        // reported "LWP days" figure) and status_change_reason = 'Approved
+        // LWP' so it stays distinguishable from an ordinary absence for
+        // reporting/audit, without inventing a nonexistent 'lwp' ENUM value.
+        const attendanceStatus = isPaidType ? "leave_approved" : "absent";
+        const lwpValue = isPaidType ? 0 : 1;
+        const changeReason = isPaidType ? null : "Approved LWP";
+        const valuesSql = chargeable.map(() => "(UUID(), ?, ?, ?, ?, ?, 'leave_service')").join(", ");
+        const valuesParams: unknown[] = [];
+        for (const d of chargeable) {
+          valuesParams.push(request.employee_id, d, attendanceStatus, lwpValue, changeReason);
+        }
         await conn.execute(
           `INSERT INTO attendance_daily_record
-               (id, employee_id, record_date, attendance_status, lwp_value, created_by)
-           SELECT UUID(), ?, cal_date, 'leave_approved', 0.00, 'leave_service'
-           FROM (
-             WITH RECURSIVE cal AS (
-               SELECT ? AS cal_date
-               UNION ALL
-               SELECT DATE_ADD(cal_date, INTERVAL 1 DAY) FROM cal WHERE cal_date < ?
-             ) SELECT cal_date FROM cal
-           ) AS dates
+               (id, employee_id, record_date, attendance_status, lwp_value, status_change_reason, created_by)
+           VALUES ${valuesSql}
            ON DUPLICATE KEY UPDATE
-             attendance_status = IF(is_locked = 0, 'leave_approved', attendance_status),
-             lwp_value         = IF(is_locked = 0, 0.00, lwp_value)`,
-          [request.employee_id, request.from_date, request.to_date]
+             attendance_status    = IF(is_locked = 0, VALUES(attendance_status), attendance_status),
+             lwp_value            = IF(is_locked = 0, VALUES(lwp_value), lwp_value),
+             status_change_reason = IF(is_locked = 0, VALUES(status_change_reason), status_change_reason)`,
+          valuesParams
         );
       }
 
@@ -504,43 +682,96 @@ export const leaveService = {
       // branch_head_approved is treated as approved for balance/ADR purposes.
       if ((input.status === 'rejected' || input.status === 'cancelled') &&
           (request.status === 'approved' || request.status === 'branch_head_approved')) {
-        const duration = request.total_days;
         const employeeId = request.employee_id;
-        const leaveTypeId = request.leave_type_id;
-        const year = new Date(request.from_date).getFullYear();
 
         // Revert attendance through the shared restore, the same path a discard
-        // uses. The previous version wrote 'absent' + lwp_value 1.00 across every
-        // calendar day in the range — but approval also writes every calendar
-        // day, so cancelling a leave that spanned a weekend or a holiday turned
-        // those days into unpaid absences the employee never took.
-        const restoreDates = enumerateDates(String(request.from_date), String(request.to_date));
+        // uses. Recomputed fresh from the current roster/holiday data rather
+        // than reusing the approval-time classification — planLeaveRestore
+        // itself only reverts a day whose CURRENT status is still
+        // 'leave_approved' (mode 'skip_owned' otherwise), so recomputation
+        // drift here is self-limiting: it can only ever under-revert a day
+        // something else already changed, never touch one it shouldn't.
+        const restoreScope = await getEmployeeLeaveScope(employeeId);
+        const restoreClassification = await classifyLeaveDays(
+          employeeId, restoreScope, String(request.from_date), String(request.to_date)
+        );
+        const restoreDates = chargeableDates(restoreClassification);
         const adrRows = await loadAttendanceRowsForRestore(conn, employeeId, restoreDates);
         const snapshots = await readAttendanceSnapshots(conn, "leave", id);
         revertPlans = restoreDates.map((d) => planLeaveRestore(d, adrRows.get(d), snapshots.get(d)));
 
-        // Balance restore must be computed from the SAME plan that decides what
-        // attendance actually gets reverted — not from the raw request duration.
-        // A locked day (payroll freeze or a later correction) is left untouched
-        // by applyRestore below (mode 'skip_locked'); crediting the full duration
-        // back regardless meant an employee could gain a free day on top of a
-        // period payroll had already paid as leave. (2026-08-13 audit)
-        const lockedDayCount = revertPlans.filter((p) => p.mode === "skip_locked").length;
-        const restorableDuration = Math.max(0, duration - lockedDayCount);
-        if (lockedDayCount > 0) {
-          console.warn(
-            `[leave-service] ${input.status} of leave ${id}: ${lockedDayCount} of ${duration} day(s) ` +
-            `fall in a payroll-locked attendance period and were not reverted; balance restore reduced ` +
-            `from ${duration} to ${restorableDuration}.`
+        // Balance restore reads back exactly what approval recorded it
+        // deducted (leave_balance_deduction — see the approval branch above),
+        // per (leave_type_id, year) bucket, rather than re-deriving it. This
+        // is what makes a cross-year (#12) or CL/ML-pooled (#7) approval
+        // reversible precisely: the recorded bucket already knows exactly
+        // how many days came from which type/year, which a fresh
+        // classification pass alone cannot reconstruct.
+        //
+        // Locked days are excluded from the restore exactly as before — a day
+        // applyRestore leaves untouched (mode 'skip_locked', payroll freeze
+        // or a later correction) must not also credit its balance back, or
+        // an employee gains a free day on top of a period payroll already
+        // paid as leave. Locked-day counts are computed per YEAR (from the
+        // fresh revertPlans, which reflect real current attendance-row state
+        // regardless of any drift) and then applied against the recorded
+        // buckets for that year, primary-type first — mirroring the same
+        // "primary first, partner second" order approval used, so a partial
+        // restore reduces from the same side a partial approval would have
+        // drawn from last. (2026-08-13, policy sign-off on #12/#13/#14/#7/#20)
+        const lockedDatesInYear = new Map<number, number>();
+        for (const plan of revertPlans) {
+          if (plan.mode !== "skip_locked") continue;
+          const y = Number(plan.date.slice(0, 4));
+          lockedDatesInYear.set(y, (lockedDatesInYear.get(y) ?? 0) + 1);
+        }
+        const totalLockedDays = revertPlans.filter((p) => p.mode === "skip_locked").length;
+
+        const [bucketRows] = await conn.execute(
+          `SELECT leave_type_id, balance_year, days_deducted, is_primary_type
+             FROM leave_balance_deduction WHERE leave_request_id = ?
+             ORDER BY balance_year, is_primary_type DESC`,
+          [id]
+        );
+        const buckets = bucketRows as Array<{ leave_type_id: string; balance_year: number; days_deducted: number; is_primary_type: number }>;
+
+        if (buckets.length === 0) {
+          // Pre-fix approval (no leave_balance_deduction rows recorded yet) —
+          // fall back to the single-bucket behaviour this replaces, using
+          // from_date's year and the full recorded total_days, reduced by
+          // the total locked-day count. Only reachable for leave approved
+          // before this fix shipped.
+          const leaveTypeId = request.leave_type_id;
+          const year = new Date(request.from_date).getFullYear();
+          const restorable = Math.max(0, Number(request.total_days) - totalLockedDays);
+          await conn.execute(
+            `UPDATE leave_balance_ledger SET used_days = GREATEST(0, used_days - ?)
+              WHERE employee_id = ? AND leave_type_id = ? AND balance_year = ?`,
+            [restorable, employeeId, leaveTypeId, year]
           );
+        } else {
+          for (const year of new Set(buckets.map((b) => b.balance_year))) {
+            const yearBuckets = buckets.filter((b) => b.balance_year === year);
+            let lockedRemaining = lockedDatesInYear.get(year) ?? 0;
+            for (const bucket of yearBuckets) {
+              const restorable = Math.max(0, Number(bucket.days_deducted) - lockedRemaining);
+              lockedRemaining = Math.max(0, lockedRemaining - Number(bucket.days_deducted));
+              if (restorable <= 0) continue;
+              await conn.execute(
+                `UPDATE leave_balance_ledger SET used_days = GREATEST(0, used_days - ?)
+                  WHERE employee_id = ? AND leave_type_id = ? AND balance_year = ?`,
+                [restorable, employeeId, bucket.leave_type_id, year]
+              );
+            }
+          }
         }
 
-        await conn.execute(
-          `UPDATE leave_balance_ledger
-              SET used_days = GREATEST(0, used_days - ?)
-            WHERE employee_id = ? AND leave_type_id = ? AND balance_year = ?`,
-          [restorableDuration, employeeId, leaveTypeId, year]
-        );
+        if (totalLockedDays > 0) {
+          console.warn(
+            `[leave-service] ${input.status} of leave ${id}: ${totalLockedDays} day(s) ` +
+            `fall in a payroll-locked attendance period and were not reverted; balance restore reduced accordingly.`
+          );
+        }
 
         await applyRestore(
           conn, employeeId, revertPlans, snapshots, reviewerId,
@@ -832,19 +1063,33 @@ export const leaveService = {
     const monthEnd = `${runMonth}-${String(lastDay).padStart(2, '0')}`;
     const reason = `Payroll cycle ${runMonth} locked — leave not approved before cycle close`;
 
-    // Fetch pending leave requests that overlap this month for the run's employees
+    // Fetch pending leave requests still unresolved as THIS month closes, for
+    // the run's employees.
+    //
+    // pending_branch_head requests are also unresolved at payroll close: they
+    // reached the branch-head stage but were never actioned, so they must be
+    // lapsed alongside ordinary pending requests.
+    //
+    // CORRECTED (#13, policy sign-off 2026-08-13): the original condition
+    // only checked overlap with this month (from_date <= monthEnd AND
+    // to_date >= monthStart), which lapsed a cross-month request (e.g. 30-Aug
+    // to 03-Sep) IN FULL the moment August closed — including the September
+    // portion, whose own payroll month hadn't closed yet and so hadn't had
+    // its own chance to be decided. "Do not consume/process the entire
+    // request in the first month." The added `to_date <= monthEnd` clause
+    // means a request only lapses once the closing month is its OWN LAST
+    // month — a request extending beyond the month being closed survives to
+    // be decided (or lapsed in turn) at its own later month's close instead.
     const placeholders = employeeIds.map(() => '?').join(', ');
-    // pending_branch_head requests are also unresolved at payroll close:
-    // they reached the branch-head stage but were never actioned, so they
-    // must be lapsed alongside ordinary pending requests.
     const [pendingRows] = await db.execute<RowDataPacket[]>(
       `SELECT id, employee_id, leave_type_id, from_date, to_date, total_days
          FROM leave_request
         WHERE status IN ('pending', 'pending_branch_head')
           AND from_date <= ?
           AND to_date >= ?
+          AND to_date <= ?
           AND employee_id IN (${placeholders})`,
-      [monthEnd, monthStart, ...employeeIds],
+      [monthEnd, monthStart, monthEnd, ...employeeIds],
     );
 
     if (!(pendingRows as any[]).length) return { lapsed: 0 };
