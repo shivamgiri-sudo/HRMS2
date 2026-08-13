@@ -9,6 +9,7 @@ import { hrmsApi } from "@/lib/hrmsApi";
 import { StatusBadge as SmartHRStatusBadge, normalizeStatus } from "@/components/ui/status-badge";
 import { formatISTDate, formatIST } from "@/lib/utils";
 import { useWorkforceAccess } from "@/hooks/useUserRole";
+import { useAuth } from "@/contexts/AuthContext";
 
 // ─── BPO IT sub-categories ────────────────────────────────────────────────────
 
@@ -187,6 +188,7 @@ const STATUS_FILTER_TABS = [
 
 export default function NativeHelpdesk() {
   const { roleKeys } = useWorkforceAccess();
+  const { user } = useAuth();
   const isAdminMode = roleKeys.some(r =>
     ["admin", "hr", "super_admin", "it", "branch_it", "it_admin"].includes(r)
   );
@@ -539,7 +541,12 @@ export default function NativeHelpdesk() {
   const filteredTickets = tickets.filter((t) => {
     const q = ticketSearch.trim().toLowerCase();
     const statusMatch = statusFilter === "all" || t.status === statusFilter;
-    const assignedMatch = !myTicketsOnly || !!(t.assigned_to && t.assigned_name);
+    // t.assigned_to is auth_user.id (helpdesk.service.ts's TICKET_SELECT joins
+    // auth_user u ON u.id = t.assigned_to; /take assigns req.authUser.id into this same
+    // column) — this used to only check "is assigned to *someone*", so "My Tickets"
+    // showed every agent's queue combined, not the caller's own. An agent had no way to
+    // see just what was actually theirs to work.
+    const assignedMatch = !myTicketsOnly || t.assigned_to === user?.id;
     const text = [t.subject, t.category, t.it_subcategory, t.status, t.priority, t.ticket_number, t.ticket_code, t.full_name, t.branch_name].join(" ").toLowerCase();
     return statusMatch && assignedMatch && (!q || text.includes(q));
   });
