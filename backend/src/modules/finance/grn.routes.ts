@@ -11,7 +11,7 @@ import {
 } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { db } from "../../db/mysql.js";
-import { listFinanceApprovalEvents } from "../../shared/financeApprovalEvent.js";
+import { listFinanceApprovalEvents, recordFinanceApprovalEvent } from "../../shared/financeApprovalEvent.js";
 import { budgetCoverageRouter } from "../process-pnl/budget-coverage.routes.js";
 import { financeExpenseMasterService } from "../process-pnl/finance-expense-master.service.js";
 import {
@@ -922,6 +922,12 @@ grnRouter.get(
 const DN_WRITE_ROLES: RoleKey[] = ["finance_head", "accounts_head", "super_admin"];
 const DN_READ_ROLES: RoleKey[] = [...DN_WRITE_ROLES, "finance", "branch_admin", "branch_head", "admin"];
 
+// P1-8: Statuses that mean Finance Head has approved the GRN and a vendor payment exists
+// or is expected — the only statuses where a vendor debit note makes business sense.
+const DN_ELIGIBLE_GRN_STATUSES = [
+  "pending_accounts_payment", "payment_scheduled", "partially_paid", "paid", "approved",
+];
+
 grnRouter.post(
   "/grns/:id/debit-note",
   requireWriteAccess,
@@ -930,6 +936,17 @@ grnRouter.post(
   async (req: ScopedGrnRequest, res) => {
     try {
       const grn = req.financeGrn!;
+      // P1-8: Debit notes are vendor-only and only valid once Finance Head has approved.
+      if (String(grn.grn_type) !== "vendor") {
+        res.status(400).json({ error: "Debit notes can only be raised against vendor GRNs" });
+        return;
+      }
+      if (!DN_ELIGIBLE_GRN_STATUSES.includes(String(grn.status))) {
+        res.status(400).json({
+          error: `Debit notes can only be raised against Finance Head-approved GRNs (current status: ${grn.status})`,
+        });
+        return;
+      }
       const { dnDate, reason, amount, gstAmount, remarks } = req.body ?? {};
       if (!dnDate || !/^\d{4}-\d{2}-\d{2}$/.test(String(dnDate))) {
         res.status(400).json({ error: "dnDate is required (YYYY-MM-DD)" });
@@ -986,6 +1003,118 @@ grnRouter.get(
       res.json({ success: true, data: rows });
     } catch (error: unknown) {
       res.status(500).json({ error: "Failed to fetch debit notes" });
+    }
+  }
+);
+
+// P1-8: Debit note lifecycle — approve (draft → approved) and cancel (draft/approved → cancelled).
+// Settlement (approved → settled) is NOT IMPLEMENTED — requires Finance sign-off on vendor
+// account reconciliation and payment adjustment workflow before this can be built.
+grnRouter.post(
+  "/debit-notes/:id/approve",
+  requireWriteAccess,
+  requireRole(...DN_WRITE_ROLES),
+  async (req: AuthenticatedRequest, res) => {
+    try {
+      const user = actor(req);
+      const [dnRows] = await db.execute<RowDataPacket[]>(
+        "SELECT * FROM vendor_debit_note WHERE id = ? LIMIT 1",
+        [req.params.id]
+      );
+      const dn = (dnRows as RowDataPacket[])[0];
+      if (!dn) { res.status(404).json({ error: "Debit note not found" }); return; }
+      if (String(dn.status) !== "draft") {
+        res.status(400).json({ error: `Debit note is already ${dn.status} and cannot be approved` });
+        return;
+      }
+      await assertFinanceRecordBranch({
+        userId: user.id, primaryRole: user.role, userRoles: user.roles,
+        recordBranchId: String(dn.branch_id),
+      });
+      const [result] = await db.execute<any>(
+        `UPDATE vendor_debit_note
+            SET status = 'approved', approved_by = ?, approved_at = NOW(), updated_by = ?
+          WHERE id = ? AND status = 'draft'`,
+        [user.id, user.id, req.params.id]
+      );
+      if ((result as any).affectedRows !== 1) {
+        res.status(409).json({ error: "Debit note status changed; refresh and try again" });
+        return;
+      }
+      await recordFinanceApprovalEvent({
+        entityType: "debit_note",
+        entityId: req.params.id,
+        action: "approve",
+        fromStatus: "draft",
+        toStatus: "approved",
+        decision: "approved",
+        actorUserId: user.id,
+        actorRole: user.role,
+      });
+      res.json({ success: true, newStatus: "approved" });
+    } catch (error: unknown) {
+      const msg = error instanceof Error ? error.message : "Failed to approve debit note";
+      res.status(400).json({ error: msg });
+    }
+  }
+);
+
+grnRouter.post(
+  "/debit-notes/:id/cancel",
+  requireWriteAccess,
+  requireRole(...DN_WRITE_ROLES),
+  async (req: AuthenticatedRequest, res) => {
+    try {
+      const user = actor(req);
+      const reason = String(req.body?.reason ?? "").trim();
+      if (!reason) {
+        res.status(400).json({ error: "A reason is required to cancel a debit note" });
+        return;
+      }
+      const [dnRows] = await db.execute<RowDataPacket[]>(
+        "SELECT * FROM vendor_debit_note WHERE id = ? LIMIT 1",
+        [req.params.id]
+      );
+      const dn = (dnRows as RowDataPacket[])[0];
+      if (!dn) { res.status(404).json({ error: "Debit note not found" }); return; }
+      if (String(dn.status) === "cancelled") {
+        res.status(400).json({ error: "Debit note is already cancelled" });
+        return;
+      }
+      if (String(dn.status) === "settled") {
+        res.status(400).json({ error: "Settled debit notes cannot be cancelled" });
+        return;
+      }
+      await assertFinanceRecordBranch({
+        userId: user.id, primaryRole: user.role, userRoles: user.roles,
+        recordBranchId: String(dn.branch_id),
+      });
+      const prevStatus = String(dn.status);
+      const [result] = await db.execute<any>(
+        `UPDATE vendor_debit_note
+            SET status = 'cancelled', updated_by = ?
+          WHERE id = ? AND status NOT IN ('cancelled', 'settled')`,
+        [user.id, req.params.id]
+      );
+      if ((result as any).affectedRows !== 1) {
+        res.status(409).json({ error: "Debit note status changed; refresh and try again" });
+        return;
+      }
+      await recordFinanceApprovalEvent({
+        entityType: "debit_note",
+        entityId: req.params.id,
+        action: "cancel",
+        fromStatus: prevStatus,
+        toStatus: "cancelled",
+        decision: "cancelled",
+        actorUserId: user.id,
+        actorRole: user.role,
+        remarks: reason,
+      });
+      res.json({ success: true, newStatus: "cancelled" });
+    } catch (error: unknown) {
+      const msg = error instanceof Error ? error.message : "Failed to cancel debit note";
+      res.status(400).json({ error: msg });
     }
   }
 );

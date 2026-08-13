@@ -475,6 +475,40 @@ async function buildValidations(connection: PoolConnection, grnId: string) {
     });
   }
 
+  // HSN/SAC: warn if any invoice component is missing its statutory commodity code.
+  // Non-blocking — the approved business rule on mandatory vs optional is not yet codified
+  // in this system; adding the check here makes it visible in the validation panel so Finance
+  // can act on it without the field being silently ignored.
+  if (invoiceComponents.length) {
+    const missingHsn = (invoiceComponents as any[]).filter(
+      (c) => !String(c.hsn_sac_code ?? "").trim()
+    );
+    results.push({
+      code: "HSN_SAC_REQUIRED",
+      status: missingHsn.length ? "warning" : "passed",
+      severity: missingHsn.length ? "warning" : "info",
+      blocking: false,
+      message: missingHsn.length
+        ? `${missingHsn.length} invoice component(s) are missing a HSN/SAC code — required for statutory compliance`
+        : "HSN/SAC codes captured on all invoice components",
+      details: { missingCount: missingHsn.length },
+    });
+  }
+
+  // IRN: if an e-invoice reference number is present, the acknowledgement number must be too.
+  if (grn.grn_type === "vendor" && String(grn.irn ?? "").trim()) {
+    const hasAck = Boolean(String(grn.irn_ack_no ?? "").trim());
+    results.push({
+      code: "IRN_ACK_REQUIRED",
+      status: hasAck ? "passed" : "warning",
+      severity: hasAck ? "info" : "warning",
+      blocking: false,
+      message: hasAck
+        ? "IRN acknowledgement number captured"
+        : "IRN is present but acknowledgement number (IRN ACK No) is missing",
+    });
+  }
+
   await connection.execute("DELETE FROM grn_validation_result WHERE grn_request_id = ?", [grnId]);
   for (const result of results) {
     await connection.execute(

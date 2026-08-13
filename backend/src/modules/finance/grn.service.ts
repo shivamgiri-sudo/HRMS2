@@ -818,6 +818,19 @@ export const grnService = {
       if (result.affectedRows !== 1) {
         throw new Error("GRN status changed before reversal; refresh and try again");
       }
+      // Write into the reviewer-facing financial timeline inside the transaction so the
+      // approval sequence never shows a complete chain with the reversal silently elsewhere.
+      await recordFinanceApprovalEvent({
+        entityType: "grn",
+        entityId: grnId,
+        action: "reverse",
+        fromStatus: String(grn.status),
+        toStatus: "consumption_reversed",
+        decision: "reversed",
+        actorUserId,
+        actorRole,
+        remarks: trimmedReason,
+      }, connection);
       await connection.commit();
     } catch (error) {
       await connection.rollback();
