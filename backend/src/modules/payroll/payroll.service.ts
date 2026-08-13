@@ -351,28 +351,70 @@ export const payrollService = {
       console.warn("[createRun] Branch readiness check skipped:", msg);
     }
 
-    const [dup] = await db.execute<RowDataPacket[]>(
-      `SELECT id FROM salary_prep_run
-        WHERE run_month = ?
-          AND (branch_filter <=> ?)
-          AND (process_filter <=> ?)
-        LIMIT 1`,
-      [input.runMonth, input.branchFilter ?? null, input.processFilter ?? null]
-    );
-    if ((dup as RowDataPacket[]).length > 0) throw new Error("Payroll run already exists for this month");
-
-    // Compute payroll window close date: last day of run_month + 30 calendar days
-    const [runYear, runMo] = input.runMonth.split('-').map(Number);
-    const lastDayOfRunMonth = new Date(runYear, runMo, 0); // day=0 of next month = last day of this month
-    lastDayOfRunMonth.setDate(lastDayOfRunMonth.getDate() + 30);
-    const windowCloseDate = lastDayOfRunMonth.toISOString().slice(0, 10);
-
+    // Root-caused 2026-08-14: the SELECT-then-INSERT below is a TOCTOU race —
+    // two near-simultaneous create calls for the same (month, branch_filter,
+    // process_filter) can both pass the duplicate check before either INSERTs,
+    // producing the exact "two full-company runs for one month" defect this
+    // audit found live in production (2026-03: a 226-line run and a
+    // 1,140-line run coexisting). The DB-level unique constraint
+    // (uq_run_month_branch_process) cannot close this on its own — MySQL
+    // treats NULL <> NULL in a unique index, and both filter columns are
+    // nullable — so an application-level lock is the fix, not a schema
+    // change.
+    //
+    // GET_LOCK/RELEASE_LOCK are per-CONNECTION (MySQL session-scoped), not
+    // global — acquiring on one pooled connection does nothing to serialize a
+    // check+insert that runs on a different one. Every step here therefore
+    // runs on the single connection this function checks out, matching the
+    // transactional pattern used elsewhere in this file (see
+    // createSalaryAssignment above) — not `db.execute`, which draws a fresh
+    // connection from the pool per call and would silently defeat the lock.
+    const lockKey = `payroll_run_create:${input.runMonth}:${input.branchFilter ?? ""}:${input.processFilter ?? ""}`;
     const id = randomUUID();
-    await db.execute(
-      `INSERT INTO salary_prep_run (id, run_month, branch_filter, process_filter, window_close_date, created_by)
-       VALUES (?, ?, ?, ?, ?, ?)`,
-      [id, input.runMonth, input.branchFilter ?? null, input.processFilter ?? null, windowCloseDate, userId]
-    );
+    const conn = await (db as any).getConnection();
+    try {
+      const [lockRows] = await conn.execute(`SELECT GET_LOCK(?, 10) AS acquired`, [lockKey]);
+      const acquired = Number((lockRows as RowDataPacket[])[0]?.acquired) === 1;
+      if (!acquired) {
+        throw new Error("Another request is creating a payroll run for this month right now. Try again in a moment.");
+      }
+
+      await conn.beginTransaction();
+      try {
+        const [dup] = await conn.execute(
+          `SELECT id FROM salary_prep_run
+            WHERE run_month = ?
+              AND (branch_filter <=> ?)
+              AND (process_filter <=> ?)
+            LIMIT 1`,
+          [input.runMonth, input.branchFilter ?? null, input.processFilter ?? null]
+        );
+        if ((dup as RowDataPacket[]).length > 0) throw new Error("Payroll run already exists for this month");
+
+        // Compute payroll window close date: last day of run_month + 30 calendar days
+        const [runYear, runMo] = input.runMonth.split('-').map(Number);
+        const lastDayOfRunMonth = new Date(runYear, runMo, 0); // day=0 of next month = last day of this month
+        lastDayOfRunMonth.setDate(lastDayOfRunMonth.getDate() + 30);
+        const windowCloseDate = lastDayOfRunMonth.toISOString().slice(0, 10);
+
+        await conn.execute(
+          `INSERT INTO salary_prep_run (id, run_month, branch_filter, process_filter, window_close_date, created_by)
+           VALUES (?, ?, ?, ?, ?, ?)`,
+          [id, input.runMonth, input.branchFilter ?? null, input.processFilter ?? null, windowCloseDate, userId]
+        );
+        await conn.commit();
+      } catch (err) {
+        await conn.rollback();
+        throw err;
+      } finally {
+        // Best-effort release — a held lock past this connection's release
+        // back to the pool still self-clears when the underlying MySQL
+        // session ends, so a failed RELEASE here is not a leak.
+        await conn.execute(`SELECT RELEASE_LOCK(?)`, [lockKey]).catch(() => {});
+      }
+    } finally {
+      conn.release();
+    }
     return this.getRun(id);
   },
 
