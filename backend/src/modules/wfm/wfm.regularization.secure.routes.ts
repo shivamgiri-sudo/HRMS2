@@ -14,7 +14,14 @@ export const wfmRegularizationSecureRouter = Router();
 wfmRegularizationSecureRouter.use(requireAuth);
 
 const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any, next: any) => fn(req, res).catch(next);
-const WFM_VIEW_SCOPE_ROLES = ["wfm", "hr", "payroll_hr", "payroll_branch", "branch_head", "manager", "assistant_manager", "tl", "process_manager"];
+// team_leader and tl are two distinct, independently assignable roles in
+// WORKFORCE_ROLE_CATALOG (team_leader is the canonical one used across the rest of the
+// backend — 54 files reference it vs. a handful for tl). This file only recognized tl,
+// so live team_leader holders (8 active accounts vs. 1 tl, verified 2026-08-13) fell
+// through buildScopeWhereClause to self-only scope: they saw only their own
+// regularization requests, never their team's, despite AttendanceRegularization.tsx's
+// own APPROVER_ROLES granting them the bulk-approve/per-row approve UI.
+const WFM_VIEW_SCOPE_ROLES = ["wfm", "hr", "payroll_hr", "payroll_branch", "branch_head", "manager", "assistant_manager", "tl", "team_leader", "process_manager"];
 const WFM_APPROVAL_SCOPE_ROLES = ["wfm"];
 
 async function employeeTarget(employeeId: string) {
@@ -427,7 +434,7 @@ wfmRegularizationSecureRouter.post("/regularizations", h(async (req: any, res: a
     return res.status(403).json({ success: false, error: "Forbidden: employee is outside your WFM scope" });
   }
 
-  const isPrivileged = await hasAnyRole(req.authUser.id, "admin", "hr", "wfm", "manager", "assistant_manager", "tl", "branch_head", "process_manager", "ceo");
+  const isPrivileged = await hasAnyRole(req.authUser.id, "admin", "hr", "wfm", "manager", "assistant_manager", "tl", "team_leader", "branch_head", "process_manager", "ceo");
   const requestedByType = isPrivileged && callerEmp?.id !== requestedEmployeeId ? "manager" : "employee";
   const data = await wfmService.submitRegularization(
     { ...input, employeeId: requestedEmployeeId, requestedByType } as any,
@@ -695,7 +702,7 @@ wfmRegularizationSecureRouter.post("/regularizations/batch", h(async (req: any, 
     return res.status(403).json({ success: false, error: "Forbidden" });
   }
 
-  const isPrivileged = await hasAnyRole(req.authUser.id, "admin", "hr", "wfm", "manager", "assistant_manager", "tl", "branch_head", "process_manager", "ceo");
+  const isPrivileged = await hasAnyRole(req.authUser.id, "admin", "hr", "wfm", "manager", "assistant_manager", "tl", "team_leader", "branch_head", "process_manager", "ceo");
   const requestedByType = isPrivileged && callerEmp?.id !== requestedEmployeeId ? "manager" : "employee";
 
   const commonFields = {
@@ -856,7 +863,7 @@ wfmRegularizationSecureRouter.patch("/regularizations/:id/review", h(async (req:
 // ── Reason codes ──────────────────────────────────────────────────────────
 wfmRegularizationSecureRouter.get("/regularizations/reasons", h(async (req: any, res: any) => {
   const { hasRole: checkRole } = await import("../../shared/accessGuard.js");
-  const isManager = await checkRole(req.authUser.id, 'admin', 'hr', 'wfm', 'manager', 'assistant_manager', 'tl', 'branch_head', 'process_manager');
+  const isManager = await checkRole(req.authUser.id, 'admin', 'hr', 'wfm', 'manager', 'assistant_manager', 'tl', 'team_leader', 'branch_head', 'process_manager');
   const data = await wfmService.listReasons(isManager ? undefined : 'employee');
   return res.json({ success: true, data });
 }));
