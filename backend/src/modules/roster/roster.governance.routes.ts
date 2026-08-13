@@ -7,6 +7,7 @@ import { rosterGovernanceService, type RosterCycle } from "./roster.governance.s
 import { rosterGenerationService } from "./roster-generation.service.js";
 import { rtaSyncService } from "./rta-sync.service.js";
 import { weekoffAllocationService } from "./weekoff-allocation.service.js";
+import { weekOffPolicyConfigService } from "./week-off-policy-config.service.js";
 import { db } from "../../db/mysql.js";
 import type { RowDataPacket } from "mysql2";
 
@@ -83,6 +84,55 @@ router.post("/shifts/templates", h(async (req: AuthenticatedRequest, res: Respon
   }
   const data = await rosterGovernanceService.createShiftTemplate(req.body, req.authUser!.id, req);
   return res.status(201).json({ data });
+}));
+
+// ── Week-off Policy Default (tier 3-5 of Part A.1's hierarchy) ────────────────
+// Round 2 (2026-08-13), P1 gap: week_off_policy_default was deliberately
+// seeded with zero rows (never defaults to Sunday) and nothing could ever
+// populate it except direct SQL. Admin/WFM config, same posture as shift
+// templates directly above.
+router.get("/week-off-policy-default", h(async (req: AuthenticatedRequest, res: Response) => {
+  const data = await weekOffPolicyConfigService.list({
+    scope_type: req.query.scope_type as string | undefined,
+    active_status: req.query.active_status as string | undefined,
+  });
+  return res.json({ success: true, data });
+}));
+
+router.get("/week-off-policy-default/:id", h(async (req: AuthenticatedRequest, res: Response) => {
+  const data = await weekOffPolicyConfigService.get(req.params.id);
+  return res.json({ success: true, data });
+}));
+
+router.post("/week-off-policy-default", h(async (req: AuthenticatedRequest, res: Response) => {
+  const { scope_type, process_id, branch_id } = req.body;
+  const admin = await hasRole(req.authUser!.id, "admin");
+  if (!admin) {
+    const scopedWfm = scope_type === "process"
+      ? await hasProcessScope(req.authUser!.id, process_id, branch_id ?? null, "wfm")
+      : await hasRole(req.authUser!.id, "wfm");
+    if (!scopedWfm) {
+      return res.status(403).json({ success: false, message: "Forbidden: week-off policy defaults require Admin, or mapped WFM scope for a process-level policy" });
+    }
+  }
+  const data = await weekOffPolicyConfigService.create(req.body, req.authUser!.id, req);
+  return res.status(201).json({ success: true, data });
+}));
+
+router.patch("/week-off-policy-default/:id", h(async (req: AuthenticatedRequest, res: Response) => {
+  if (!(await hasRole(req.authUser!.id, "admin", "wfm"))) {
+    return res.status(403).json({ success: false, message: "Forbidden: Admin or WFM only" });
+  }
+  const data = await weekOffPolicyConfigService.update(req.params.id, req.body, req.authUser!.id, req);
+  return res.json({ success: true, data });
+}));
+
+router.delete("/week-off-policy-default/:id", h(async (req: AuthenticatedRequest, res: Response) => {
+  if (!(await hasRole(req.authUser!.id, "admin", "wfm"))) {
+    return res.status(403).json({ success: false, message: "Forbidden: Admin or WFM only" });
+  }
+  await weekOffPolicyConfigService.deactivate(req.params.id, req.authUser!.id, req);
+  return res.json({ success: true, message: "Week-off policy default deactivated" });
 }));
 
 // ── Roster Cycles ─────────────────────────────────────────────────────────────

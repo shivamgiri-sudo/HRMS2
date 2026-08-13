@@ -1,0 +1,8 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": { "noEmit": true },
+  "include": [
+    "src/modules/roster/week-off-policy-config.service.ts",
+    "src/modules/roster/roster.governance.routes.ts"
+  ]
+}
