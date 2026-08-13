@@ -85,18 +85,54 @@ async function latestHealthForEmployees(employeeIds: string[]) {
   return new Map(rows.map((row: any) => [String(row.employee_id), row]));
 }
 
+/**
+ * Pulse responses live in `pulse_response`, not `pulse_check`.
+ *
+ * `pulse_check` is the QUESTION table — id, pulse_question, pulse_type, response_type,
+ * active_status, created_at, updated_at. It has no employee_id and no submitted_at, and never has.
+ * Every read here used to select `employee_id`, `submitted_at`, `mood_score` and `mood_rating` from
+ * it, which is ER_BAD_FIELD_ERROR on every call. scalar() swallows the error and returns its
+ * fallback, so the module reported a mood of 3 and 0 pulses for every employee as though those were
+ * measurements. Nothing surfaced the difference.
+ *
+ * Migration 1000_fix_engagement_schema_columns.sql tried to fix this by adding response columns to
+ * pulse_check. That is the wrong direction — it would create a second response store beside
+ * pulse_response — and it never applied, which is the only reason there is one store today.
+ *
+ * Column mapping: submitted_at -> COALESCE(response_time, response_date); mood -> response_value.
+ */
+const PULSE_WINDOW_SQL = "COALESCE(pr.response_time, pr.response_date) >= DATE_SUB(NOW(), INTERVAL ? DAY)";
+
+/**
+ * `response_value` is varchar(50) and holds whatever the question's response_type produced — a
+ * rating for a scale question, a word for a choice one. Averaging it requires an explicit numeric
+ * filter and an explicit cast, not an implicit coercion that would silently read 'happy' as 0 and
+ * drag the mean down.
+ */
+const PULSE_NUMERIC_SQL = "pr.response_value REGEXP '^[0-9]+(\\\\.[0-9]+)?$'";
+
+/** Average pulse rating over `days`, or null when the employee has no numeric response at all. */
+async function pulseAverage(employeeId: string, days: number): Promise<number | null> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT AVG(CAST(pr.response_value AS DECIMAL(10,2))) AS score
+       FROM pulse_response pr
+      WHERE pr.employee_id = ? AND ${PULSE_WINDOW_SQL} AND ${PULSE_NUMERIC_SQL}`,
+    [employeeId, days],
+  );
+  const value = (rows[0] as { score?: unknown } | undefined)?.score;
+  if (value === null || value === undefined) return null;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
 async function calculateEmployeeSnapshot(employee: any) {
   const employeeId = String(employee.id);
-  const pulseAvg = await scalar(
-    `SELECT AVG(COALESCE(mood_score, mood_rating)) AS score
-       FROM pulse_check
-      WHERE employee_id = ? AND submitted_at >= DATE_SUB(NOW(), INTERVAL 90 DAY)`,
-    [employeeId],
-    3
-  );
+  // null, not 3: an employee with no pulse response has no measured mood, and inventing one puts a
+  // fabricated number into 20% of their engagement score. The weight is redistributed below.
+  const pulseAvg = await pulseAverage(employeeId, 90);
   const pulses = await scalar(
-    "SELECT COUNT(*) AS cnt FROM pulse_check WHERE employee_id = ? AND submitted_at >= DATE_SUB(NOW(), INTERVAL 90 DAY)",
-    [employeeId]
+    `SELECT COUNT(*) AS cnt FROM pulse_response pr WHERE pr.employee_id = ? AND ${PULSE_WINDOW_SQL}`,
+    [employeeId, 90]
   );
   const kudosReceived = await scalar(
     "SELECT COUNT(*) AS cnt FROM kudos_transaction WHERE receiver_id = ? AND sent_at >= DATE_SUB(NOW(), INTERVAL 90 DAY)",
@@ -132,24 +168,38 @@ async function calculateEmployeeSnapshot(employee: any) {
     attendanceScore = days > 0 ? clamp(100 - (absent / days) * 100) : 72;
   }
 
-  const pulseScore = clamp((pulseAvg / 5) * 100);
+  const pulseScore = pulseAvg === null ? null : clamp((pulseAvg / 5) * 100);
   const recognitionScore = clamp(kudosReceived * 10 + kudosGiven * 5);
   const participationScore = clamp(surveyResponses * 20 + pulses * 8);
   const supportFrictionScore = clamp(100 - openTickets * 12 - openGrievances * 25);
   const performanceScore = 70;
   const careerGrowthScore = 65;
-  const engagementScore = clamp(
-    pulseScore * 0.2 +
-    recognitionScore * 0.15 +
-    participationScore * 0.12 +
-    attendanceScore * 0.16 +
-    performanceScore * 0.12 +
-    supportFrictionScore * 0.18 +
-    careerGrowthScore * 0.07
-  );
+
+  /*
+   * Weights are renormalised over the components that actually have a value, rather than scoring a
+   * missing pulse as though it were measured. Previously a fabricated mood of 3 became a pulse
+   * score of 60 and carried a fifth of the engagement score for every employee in the estate.
+   * Dropping the term and rescaling the rest keeps the score on the same 0-100 footing while
+   * saying, truthfully, that it was computed from less evidence — which data_confidence_score
+   * already exists to express.
+   */
+  const weighted: Array<[number | null, number]> = [
+    [pulseScore, 0.2],
+    [recognitionScore, 0.15],
+    [participationScore, 0.12],
+    [attendanceScore, 0.16],
+    [performanceScore, 0.12],
+    [supportFrictionScore, 0.18],
+    [careerGrowthScore, 0.07],
+  ];
+  const present = weighted.filter(([value]) => value !== null) as Array<[number, number]>;
+  const weightTotal = present.reduce((sum, [, weight]) => sum + weight, 0);
+  const engagementScore = weightTotal > 0
+    ? clamp(present.reduce((sum, [value, weight]) => sum + value * weight, 0) / weightTotal)
+    : 0;
 
   const drivers: string[] = [];
-  if (pulseScore < 45) drivers.push("Low pulse mood");
+  if (pulseScore !== null && pulseScore < 45) drivers.push("Low pulse mood");
   if (recognitionScore < 25) drivers.push("Low recognition activity");
   if (openTickets > 0) drivers.push(`${openTickets} unresolved support ticket(s)`);
   if (openGrievances > 0) drivers.push("Open grievance");
@@ -170,7 +220,8 @@ async function calculateEmployeeSnapshot(employee: any) {
     data_confidence_score: confidence,
     risk_label: riskLabel(engagementScore),
     component_scores: {
-      pulse: Math.round(pulseScore),
+      // null where there is no pulse response, so a reader can tell "not measured" from a low mood.
+      pulse: pulseScore === null ? null : Math.round(pulseScore),
       recognition: Math.round(recognitionScore),
       participation: Math.round(participationScore),
       attendance: Math.round(attendanceScore),
@@ -312,7 +363,9 @@ export async function getPeopleExperienceCommandCenter(scope: PeopleExperienceSc
     supportParams
   );
   const pulseResponses = await scalar(
-    `SELECT COUNT(DISTINCT employee_id) FROM pulse_check WHERE employee_id IN (${employeeIds.length ? employeeIds.map(() => "?").join(",") : "NULL"}) AND submitted_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)`,
+    `SELECT COUNT(DISTINCT pr.employee_id) FROM pulse_response pr
+      WHERE pr.employee_id IN (${employeeIds.length ? employeeIds.map(() => "?").join(",") : "NULL"})
+        AND COALESCE(pr.response_time, pr.response_date) >= DATE_SUB(NOW(), INTERVAL 30 DAY)`,
     supportParams
   );
   const pulseParticipation = total ? Math.round((pulseResponses / total) * 100) : 0;
@@ -512,12 +565,28 @@ async function recognitionHealth(employeeIds: string[]) {
 }
 
 async function pulseHealth(employeeIds: string[], total: number) {
-  if (employeeIds.length === 0) return { response_rate: 0, average_mood_score: 0, enps_score: 0 };
+  if (employeeIds.length === 0) return { response_rate: 0, average_mood_score: null, enps_score: 0 };
   const placeholders = employeeIds.map(() => "?").join(",");
-  const responses = await scalar(`SELECT COUNT(DISTINCT employee_id) FROM pulse_check WHERE employee_id IN (${placeholders}) AND submitted_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)`, employeeIds);
+  const responses = await scalar(
+    `SELECT COUNT(DISTINCT pr.employee_id) FROM pulse_response pr
+      WHERE pr.employee_id IN (${placeholders})
+        AND COALESCE(pr.response_time, pr.response_date) >= DATE_SUB(NOW(), INTERVAL 30 DAY)`,
+    employeeIds,
+  );
+  // null rather than 0 when nobody responded: a 0 average mood is a terrible score, not an absent
+  // one, and this figure feeds a management dashboard.
+  const [moodRows] = await db.execute<RowDataPacket[]>(
+    `SELECT AVG(CAST(pr.response_value AS DECIMAL(10,2))) AS score FROM pulse_response pr
+      WHERE pr.employee_id IN (${placeholders})
+        AND COALESCE(pr.response_time, pr.response_date) >= DATE_SUB(NOW(), INTERVAL 30 DAY)
+        AND pr.response_value REGEXP '^[0-9]+(\\\\.[0-9]+)?$'`,
+    employeeIds,
+  );
+  const moodRaw = (moodRows[0] as { score?: unknown } | undefined)?.score;
+  const averageMood = moodRaw === null || moodRaw === undefined ? null : Number(moodRaw);
   return {
     response_rate: total ? Math.round((responses / total) * 100) : 0,
-    average_mood_score: await scalar(`SELECT AVG(COALESCE(mood_score, mood_rating)) FROM pulse_check WHERE employee_id IN (${placeholders}) AND submitted_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)`, employeeIds),
+    average_mood_score: averageMood !== null && Number.isFinite(averageMood) ? averageMood : null,
     enps_score: await calculateEnps(employeeIds),
   };
 }
