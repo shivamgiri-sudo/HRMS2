@@ -5,6 +5,7 @@ import type { WfmRosterPlan, WfmRosterAssignment } from "./wfm.types.js";
 import { computeScheduledMinutes, rosterAssignmentColumns } from "./shift-scheduling.util.js";
 import { isRestPolicyFeatureActive, validateMinimumRest, logRestOverride, withEmployeeRosterLock } from "./rest-policy.service.js";
 import { checkEmployeeDateNotLocked } from "../roster/roster-lock-guard.js";
+import { logSensitiveAction } from "../../shared/auditLog.js";
 
 export interface CreatePlanInput {
   planName: string;
@@ -287,7 +288,32 @@ export const rosterService = {
         "SELECT * FROM wfm_roster_assignment WHERE employee_id = ? AND roster_date = ? LIMIT 1",
         [input.employeeId, input.rosterDate]
       );
-      return (rows as WfmRosterAssignment[])[0];
+      const result = (rows as WfmRosterAssignment[])[0];
+
+      // Round 2 governance-matrix finding (2026-08-13): this was the only one
+      // of the four real roster-write engines with no audit trail at all for
+      // an ordinary assignment — roster-generation.service.ts writes
+      // roster_decision_audit per employee/date, auto-roster-synced.service.ts
+      // has its own wfm_roster_event_log, this had neither. Fire-and-forget
+      // via logSensitiveAction (its own try/catch already ensures an audit
+      // write failure can never fail the assignment itself), on the pool
+      // connection rather than `conn` — an audit row doesn't need to be in
+      // the same named-lock section as the write it's recording.
+      logSensitiveAction({
+        actor_user_id: userId,
+        action_type: "WFM_ROSTER_ASSIGNMENT_UPSERTED",
+        module_key: "wfm_roster_assignment",
+        entity_type: "wfm_roster_assignment",
+        entity_id: result?.id,
+        change_summary: {
+          employee_id: input.employeeId,
+          roster_date: input.rosterDate,
+          shift_id: input.shiftId ?? null,
+          plan_id: input.planId ?? null,
+        },
+      }).catch((error) => console.error("[roster.service] audit log write failed (assignment itself already succeeded):", (error as Error)?.message));
+
+      return result;
     });
   },
 
