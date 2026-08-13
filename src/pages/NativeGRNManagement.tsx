@@ -1,4 +1,5 @@
 import { FileCheck2, FileClock, FileText, GitBranch, Search, Wallet } from "lucide-react";
+import { useState } from "react";
 import { Link } from "react-router-dom";
 import { BudgetLinkedGrnForm } from "@/components/finance/grn/BudgetLinkedGrnForm";
 import { GrnHistoryTable } from "@/components/finance/grn/GrnHistoryTable";
@@ -53,6 +54,19 @@ export default function NativeGRNManagement() {
 
   const queueCount = summary?.inQueue.count ?? 0;
 
+  const [activeTab, setActiveTab] = useState<string>("create");
+  const [editGrnId, setEditGrnId] = useState<string | null>(null);
+
+  function handleReopenForEdit(grnId: string) {
+    setEditGrnId(grnId);
+    setActiveTab("create");
+  }
+
+  function handleEditComplete() {
+    setEditGrnId(null);
+    setActiveTab("queue");
+  }
+
   return (
     <DashboardLayout>
       {/* grn-scope carries this page's palette and IBM Plex face (src/styles/grn.css). The
@@ -61,7 +75,7 @@ export default function NativeGRNManagement() {
           so the Create tab's action bar can actually stick. Any overflow ancestor here would
           silently disable that. */}
       <div className="grn-scope mx-auto w-full max-w-[1360px] pb-16">
-        <Tabs defaultValue="create">
+        <Tabs value={activeTab} onValueChange={setActiveTab}>
           <div>
             <nav className="mb-2.5 flex items-center gap-1.5 text-[11.5px] text-grn-ink-soft" aria-label="Breadcrumb">
               <Link to="/" className="hover:text-grn-brand">Home</Link>
@@ -123,7 +137,7 @@ export default function NativeGRNManagement() {
           </div>
 
           <TabsContent value="create" className="mt-4">
-            <BudgetLinkedGrnForm />
+            <BudgetLinkedGrnForm editGrnId={editGrnId} onEditComplete={handleEditComplete} />
           </TabsContent>
           {canAttribute && (
             <TabsContent value="attribution" className="mt-4">
@@ -132,7 +146,7 @@ export default function NativeGRNManagement() {
           )}
           {canReview && (
             <TabsContent value="queue" className="mt-4">
-              <SmartGrnApprovalQueue />
+              <SmartGrnApprovalQueue onReopenForEdit={handleReopenForEdit} />
             </TabsContent>
           )}
           {/* Search sits beside History rather than replacing it: History is a status-chip

@@ -1558,7 +1558,7 @@ export const grnSmartService = {
     return { success: true };
   },
 
-  async reopen(grnId: string, actorUserId: string, actorRole: string) {
+  async reopen(grnId: string, actorUserId: string, actorRole: string, actorRoles: string[] = []) {
     const connection = await db.getConnection();
     try {
       await connection.beginTransaction();
@@ -1567,7 +1567,9 @@ export const grnSmartService = {
         throw new Error(`Only rejected GRNs can be reopened. Current status: ${grn.status}`);
       }
       // Ownership check: only the original creator OR finance leadership can reopen.
-      const isFinanceLeader = ["finance_head", "accounts_head", "super_admin"].includes(actorRole);
+      // Check the full roles array — primary role alone misses multi-role users (e.g. admin+finance_head).
+      const allRoles = new Set([actorRole, ...actorRoles]);
+      const isFinanceLeader = ["finance_head", "accounts_head", "super_admin", "admin"].some(r => allRoles.has(r));
       if (!isFinanceLeader && String(grn.created_by) !== actorUserId) {
         throw new Error("Only the GRN creator or Finance Head can reopen this GRN.");
       }

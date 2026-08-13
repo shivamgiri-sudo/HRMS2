@@ -490,7 +490,7 @@ smartGrnRouter.post(
   async (req: SmartRequest, res) => {
     try {
       const user = actor(req);
-      const data = await grnSmartService.reopen(req.params.id, user.id, user.role);
+      const data = await grnSmartService.reopen(req.params.id, user.id, user.role, user.roles);
       res.json(data);
     } catch (error) {
       res.status(400).json({
