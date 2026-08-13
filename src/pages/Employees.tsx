@@ -47,9 +47,11 @@ import {
   useEmployeeDirectoryAnalytics,
   useEmployeeDirectoryMasters,
   useEmployeeSearchOptions,
+  fetchAllFilteredEmployeeRows,
+  ExportTooLargeError,
 } from "@/hooks/useEmployees";
 import { useIsAdminOrHR } from "@/hooks/useUserRole";
-import { useSorting } from "@/hooks/useSorting";
+import { useSorting, sortItems } from "@/hooks/useSorting";
 import { useDebounce } from "@/hooks/useDebounce";
 
 import { Button } from "@/components/ui/button";
@@ -334,8 +336,36 @@ const Employees = () => {
     });
   };
 
-  const exportToCSV = (startDate?: Date, endDate?: Date) => {
-    const dataToExport = filterByDateRange(sortedEmployees, startDate, endDate);
+  // Export used to run against `sortedEmployees` — whichever page happened to be loaded on
+  // screen (10 rows by default) — so "export" silently produced a file covering a fraction
+  // of what the applied filters actually matched. This fetches every matching page through
+  // fetchAllFilteredEmployeeRows, which reuses the same scoped /api/employees endpoint (and
+  // therefore the same RBAC/row-scope) the screen itself calls — capped at 5,000 rows so a
+  // wide filter can't fire hundreds of requests or hand the browser an unworkable PDF job.
+  const buildExportDataset = async (startDate?: Date, endDate?: Date): Promise<Employee[]> => {
+    const rows = await fetchAllFilteredEmployeeRows({
+      recordStatus,
+      status: employmentStatus,
+      search: debouncedSearch || undefined,
+      departmentId: departmentFilter === "all" ? undefined : departmentFilter,
+      processId: processFilter === "all" ? undefined : processFilter,
+      branchId: branchFilter === "all" ? undefined : branchFilter,
+    });
+    return filterByDateRange(sortItems(rows, sortConfig), startDate, endDate);
+  };
+
+  const exportToCSV = async (startDate?: Date, endDate?: Date) => {
+    const toastId = toast.loading("Fetching all matching employees…");
+    let dataToExport: Employee[];
+    try {
+      dataToExport = await buildExportDataset(startDate, endDate);
+    } catch (err: unknown) {
+      const message = err instanceof ExportTooLargeError
+        ? err.message
+        : err instanceof Error ? err.message : "Export failed";
+      toast.error(message, { id: toastId });
+      return;
+    }
 
     const headers = [
       "Employee No.",
@@ -381,11 +411,21 @@ const Employees = () => {
     link.click();
     URL.revokeObjectURL(link.href);
 
-    toast.success(`${dataToExport.length} employees exported to CSV`);
+    toast.success(`${dataToExport.length} employees exported to CSV`, { id: toastId });
   };
 
-  const exportToPDF = (startDate?: Date, endDate?: Date) => {
-    const dataToExport = filterByDateRange(sortedEmployees, startDate, endDate);
+  const exportToPDF = async (startDate?: Date, endDate?: Date) => {
+    const toastId = toast.loading("Fetching all matching employees…");
+    let dataToExport: Employee[];
+    try {
+      dataToExport = await buildExportDataset(startDate, endDate);
+    } catch (err: unknown) {
+      const message = err instanceof ExportTooLargeError
+        ? err.message
+        : err instanceof Error ? err.message : "Export failed";
+      toast.error(message, { id: toastId });
+      return;
+    }
 
     const doc = new jsPDF();
 
@@ -446,7 +486,7 @@ const Employees = () => {
       `employee-directory${dateRange}-${new Date().toISOString().split("T")[0]}.pdf`
     );
 
-    toast.success(`${dataToExport.length} employees exported to PDF`);
+    toast.success(`${dataToExport.length} employees exported to PDF`, { id: toastId });
   };
 
   const handleBulkAction = (action: string, ids: string[]) => {

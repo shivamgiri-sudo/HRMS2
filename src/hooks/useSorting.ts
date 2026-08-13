@@ -15,6 +15,52 @@ export interface UseSortingReturn<T> {
   clearSort: () => void;
 }
 
+/**
+ * Pure comparator, extracted so callers that need the on-screen sort order applied to a
+ * dataset the hook itself never held — e.g. exporting the full filtered result set, not
+ * just the current page — can reuse the exact same ordering instead of re-implementing it.
+ */
+export function sortItems<T>(items: T[], sortConfig: SortConfig<T>): T[] {
+  if (!sortConfig.key || !sortConfig.direction) {
+    return items;
+  }
+
+  return [...items].sort((a, b) => {
+    const aValue = a[sortConfig.key!];
+    const bValue = b[sortConfig.key!];
+
+    // Handle null/undefined values
+    if (aValue == null && bValue == null) return 0;
+    if (aValue == null) return sortConfig.direction === "asc" ? 1 : -1;
+    if (bValue == null) return sortConfig.direction === "asc" ? -1 : 1;
+
+    // Handle different types
+    if (typeof aValue === "string" && typeof bValue === "string") {
+      const comparison = aValue.localeCompare(bValue, undefined, { sensitivity: "base" });
+      return sortConfig.direction === "asc" ? comparison : -comparison;
+    }
+
+    if (typeof aValue === "number" && typeof bValue === "number") {
+      return sortConfig.direction === "asc" ? aValue - bValue : bValue - aValue;
+    }
+
+    // Handle dates (string format)
+    if (typeof aValue === "string" && typeof bValue === "string") {
+      const dateA = new Date(aValue).getTime();
+      const dateB = new Date(bValue).getTime();
+      if (!isNaN(dateA) && !isNaN(dateB)) {
+        return sortConfig.direction === "asc" ? dateA - dateB : dateB - dateA;
+      }
+    }
+
+    // Fallback to string comparison
+    const strA = String(aValue);
+    const strB = String(bValue);
+    const comparison = strA.localeCompare(strB);
+    return sortConfig.direction === "asc" ? comparison : -comparison;
+  });
+}
+
 export function useSorting<T>(
   items: T[],
   initialSortKey?: keyof T,
@@ -25,46 +71,7 @@ export function useSorting<T>(
     direction: initialSortKey ? initialDirection : null,
   });
 
-  const sortedItems = useMemo(() => {
-    if (!sortConfig.key || !sortConfig.direction) {
-      return items;
-    }
-
-    return [...items].sort((a, b) => {
-      const aValue = a[sortConfig.key!];
-      const bValue = b[sortConfig.key!];
-
-      // Handle null/undefined values
-      if (aValue == null && bValue == null) return 0;
-      if (aValue == null) return sortConfig.direction === "asc" ? 1 : -1;
-      if (bValue == null) return sortConfig.direction === "asc" ? -1 : 1;
-
-      // Handle different types
-      if (typeof aValue === "string" && typeof bValue === "string") {
-        const comparison = aValue.localeCompare(bValue, undefined, { sensitivity: "base" });
-        return sortConfig.direction === "asc" ? comparison : -comparison;
-      }
-
-      if (typeof aValue === "number" && typeof bValue === "number") {
-        return sortConfig.direction === "asc" ? aValue - bValue : bValue - aValue;
-      }
-
-      // Handle dates (string format)
-      if (typeof aValue === "string" && typeof bValue === "string") {
-        const dateA = new Date(aValue).getTime();
-        const dateB = new Date(bValue).getTime();
-        if (!isNaN(dateA) && !isNaN(dateB)) {
-          return sortConfig.direction === "asc" ? dateA - dateB : dateB - dateA;
-        }
-      }
-
-      // Fallback to string comparison
-      const strA = String(aValue);
-      const strB = String(bValue);
-      const comparison = strA.localeCompare(strB);
-      return sortConfig.direction === "asc" ? comparison : -comparison;
-    });
-  }, [items, sortConfig]);
+  const sortedItems = useMemo(() => sortItems(items, sortConfig), [items, sortConfig]);
 
   const requestSort = (key: keyof T) => {
     setSortConfig((prev) => {

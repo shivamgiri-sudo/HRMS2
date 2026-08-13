@@ -152,6 +152,70 @@ export async function fetchAllEmployeeRows(recordStatus: "active" | "inactive" |
   return rows.concat(...remainingPages.map((page) => page.data ?? []));
 }
 
+// Directory export used to run against `sortedEmployees` — whatever was already loaded for
+// the current on-screen page (10 rows by default) — so "export" silently produced a file
+// covering a fraction of what the filters actually matched. This fetches every page the
+// current filters match, not just the visible one, reusing the same scoped/authenticated
+// /api/employees endpoint the screen itself uses (so RBAC and row-scope stay identical to
+// the screen — no separate export path to drift out of sync with it).
+//
+// Two guards, both deliberate:
+//  - EXPORT_MAX_ROWS: an export covering all ~58k employees (e.g. recordStatus=all with no
+//    other filter) would fire ~300 requests and hand the browser a PDF/CSV job it has no
+//    business doing inline. Refuses outright above the cap rather than silently truncating,
+//    so "5,000 exported" never reads as "that's everyone."
+//  - EXPORT_PAGE_CONCURRENCY: remaining pages fetch in small batches, not all at once —
+//    a few hundred concurrent requests to one endpoint is not a reasonable thing to ask the
+//    API to absorb just because a browser tab wanted a CSV.
+const EXPORT_PAGE_SIZE = 200;
+const EXPORT_MAX_ROWS = 5000;
+const EXPORT_PAGE_CONCURRENCY = 5;
+
+export class ExportTooLargeError extends Error {
+  constructor(public readonly total: number, public readonly max: number) {
+    super(`Matches ${total} employees; export is capped at ${max}. Narrow the filters (branch, process, department, status) and try again.`);
+    this.name = "ExportTooLargeError";
+  }
+}
+
+export async function fetchAllFilteredEmployeeRows(
+  filters: Omit<EmployeeDirectoryFilters, "page" | "limit">
+): Promise<Employee[]> {
+  const buildUrl = (page: number) => {
+    const params = new URLSearchParams({
+      page: String(page),
+      limit: String(EXPORT_PAGE_SIZE),
+      recordStatus: filters.recordStatus,
+    });
+    if (filters.status) params.set("status", filters.status);
+    if (filters.search) params.set("search", filters.search);
+    if (filters.departmentId) params.set("departmentId", filters.departmentId);
+    if (filters.processId) params.set("processId", filters.processId);
+    if (filters.branchId) params.set("branchId", filters.branchId);
+    return `/api/employees?${params.toString()}`;
+  };
+
+  const firstPage = await hrmsApi.get<EmployeePage>(buildUrl(1));
+  const total = Number(firstPage.total ?? (firstPage.data ?? []).length);
+  if (total > EXPORT_MAX_ROWS) {
+    throw new ExportTooLargeError(total, EXPORT_MAX_ROWS);
+  }
+
+  const rows = [...(firstPage.data ?? [])];
+  const totalPages = Math.ceil(total / EXPORT_PAGE_SIZE);
+
+  for (let batchStart = 2; batchStart <= totalPages; batchStart += EXPORT_PAGE_CONCURRENCY) {
+    const batchPages = Array.from(
+      { length: Math.min(EXPORT_PAGE_CONCURRENCY, totalPages - batchStart + 1) },
+      (_, i) => batchStart + i
+    );
+    const batchResults = await Promise.all(batchPages.map((page) => hrmsApi.get<EmployeePage>(buildUrl(page))));
+    for (const page of batchResults) rows.push(...(page.data ?? []));
+  }
+
+  return rows.map(mapEmployee);
+}
+
 function formatEmployeeDate(value: unknown): string {
   if (!value) return "";
   const datePart = String(value).match(/^\d{4}-\d{2}-\d{2}/)?.[0];
