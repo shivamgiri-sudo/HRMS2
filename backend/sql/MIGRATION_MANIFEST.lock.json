@@ -499,6 +499,7 @@
     "1133_performance_feedback_request_overall_comments.sql",
     "1134_upload_batch_import_audit.sql",
     "1135_mira_fix_draft.sql",
+    "1137_lms_admin_role_catalog.sql",
     "440_finance_phase1.sql",
     "441_finance_phases_2_3_4.sql"
   ],
@@ -590,6 +591,7 @@
     "1080_credit_notes_and_budget_adjustments.sql",
     "1126_salary_prep_line_component_unique_key.sql",
     "1127_scope_apr_eligibility_by_process.sql",
+    "1136_employee_bank_detail_account_blind_index.sql",
     "127_ats_candidate_unique_constraints.sql",
     "133_phase2_security_fixes.sql",
     "136_incentive_module.sql",
