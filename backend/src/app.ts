@@ -53,6 +53,7 @@ import { employeeSecureRouter } from "./modules/employees/employee.secure.routes
 import { employeeGovernanceRouter } from "./modules/employees/employee-governance.routes.js";
 import { employeePhotoCompatRouter } from "./modules/employees/employee.photo.compat.routes.js";
 import { rmChangeRouter } from "./modules/employees/rm-change.routes.js";
+import { statutoryApprovalRouter } from "./modules/employees/statutory-approval.routes.js";
 import { employeeJoiningDocumentsRouter, hrDocumentTemplatesRouter, payrollEpfComplianceRouter, publicEmployeeDocumentRouter } from "./modules/employees/employee.compliance.routes.js";
 import companySealRouter from "./modules/employees/companySeal.routes.js";
 import branchPayrollHrSignatoryRouter from "./modules/employees/branchPayrollHrSignatory.routes.js";
@@ -391,6 +392,7 @@ app.use("/api/employees", joiningKitRouter);
 app.use("/api/employees", employeeReactivationRouter);
 app.use("/api/bgv/employee", employeeBgvRouter);
 app.use("/api/rm-change", rmChangeRouter);
+app.use("/api/statutory-change-requests", statutoryApprovalRouter);
 app.use("/api/kpi/process-role", kpiProcessRoleRouter);
 app.use("/api/kpi-master", kpiMasterRouter);
 app.use("/api/kpi", kpiRouter);
