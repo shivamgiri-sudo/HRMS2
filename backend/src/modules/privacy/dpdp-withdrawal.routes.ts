@@ -67,6 +67,27 @@ dpdpWithdrawalRouter.get(
   })
 );
 
+// GET /dpdp-withdrawal/stats — aggregate stats for dashboard
+//
+// Must stay registered before /dpdp-withdrawal/:id (below): Express matches routes in
+// registration order, and :id matches any literal segment — this route used to sit ~80
+// lines further down, after /dpdp-withdrawal/:id, so every request here was swallowed by
+// the :id handler as svc.getById('stats', ...), which never matches a real row (id is a
+// UUID) and 404s "Not found or access denied". Confirmed live-broken 2026-08-13:
+// NativeDPDPWithdrawalAdmin.tsx's stats cards call this exact endpoint on every load, and
+// its fetchStats() swallows the error ("stats are non-critical"), so the cards just
+// silently render empty forever instead of surfacing the 404. Moved here, immediately
+// after the other static /dpdp-withdrawal routes and before the first /:id route.
+dpdpWithdrawalRouter.get(
+  "/dpdp-withdrawal/stats",
+  requireAuth,
+  requireRole("hr", "admin", "dpo", "compliance", "super_admin"),
+  h(async (_req: AuthenticatedRequest, res: Response) => {
+    const data = await svc.getStats();
+    return res.json({ success: true, data });
+  })
+);
+
 // GET /dpdp-withdrawal/:id — get single (own or HR)
 dpdpWithdrawalRouter.get(
   "/dpdp-withdrawal/:id",
@@ -148,16 +169,7 @@ dpdpWithdrawalRouter.get(
   })
 );
 
-// GET /dpdp-withdrawal/stats — aggregate stats for dashboard
-dpdpWithdrawalRouter.get(
-  "/dpdp-withdrawal/stats",
-  requireAuth,
-  requireRole("hr", "admin", "dpo", "compliance", "super_admin"),
-  h(async (_req: AuthenticatedRequest, res: Response) => {
-    const data = await svc.getStats();
-    return res.json({ success: true, data });
-  })
-);
+// GET /dpdp-withdrawal/stats moved above, before /dpdp-withdrawal/:id — see the comment there.
 
 // GET /dpdp-withdrawal/:id/tasks — implementation tasks
 dpdpWithdrawalRouter.get(
