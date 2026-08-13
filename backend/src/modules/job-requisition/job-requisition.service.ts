@@ -47,11 +47,24 @@ import {
  * (@example.com, @e2etest.local, recruiter@mascallnet.com) plus one real recruiter who has
  * never logged in. Those resolve to "1=0" and see nothing — correct fail-closed
  * behaviour; the fix for them is a scope assignment, not a looser query.
+ *
+ * `includeOwnRequisitions` (default true) ORs in `requested_by = actor`. canCreateForBranch
+ * only validates branch on create (and is a no-op when the actor's scope has no branch at
+ * all — true for anyone whose only assignment is process-scoped), so it's possible to raise
+ * a requisition whose process/branch doesn't match the raiser's own read scope. Proven live
+ * 2026-08-13: a T&Q user scoped to process "BACK OFFICE" raised two drafts against process
+ * "Onfido" and could not see her own drafts to submit them. Passing
+ * `includeOwnRequisitions: false` (used only by getPendingForApproval) keeps this out of the
+ * approver queue, so a requester can never see — or self-approve — their own item there.
  */
-async function requisitionScope(actor: EnterpriseUser, alias: "jr" | ""): Promise<ScopeCondition> {
+async function requisitionScope(
+  actor: EnterpriseUser,
+  alias: "jr" | "",
+  opts: { includeOwnRequisitions?: boolean } = {},
+): Promise<ScopeCondition> {
   const scope = await resolveUserBusinessScope(actor);
   const table = alias || "job_requisition";
-  return buildProcessScopeCondition(scope, {
+  const base = buildProcessScopeCondition(scope, {
     // MIN(), not a bare SELECT. addAssignmentPredicates emits `<expr> = ?`, so this
     // expression must yield at most one row — and branch_master has seven duplicated
     // branch_name values live (Head Office x3, plus HYDERABAD / JAIPUR / JAIPUR IDC /
@@ -70,6 +83,12 @@ async function requisitionScope(actor: EnterpriseUser, alias: "jr" | ""): Promis
     branchId: `(SELECT MIN(bm.id) FROM branch_master bm WHERE bm.branch_name = ${table}.branch_name)`,
     processId: `${table}.process_id`,
   });
+
+  if (opts.includeOwnRequisitions === false || base.sql === "1=1") return base;
+  return {
+    sql: `(${base.sql}) OR ${table}.requested_by = ?`,
+    params: [...base.params, scope.userId],
+  };
 }
 import { inboxService } from "../inbox/inbox.service.js";
 import type {
@@ -1031,7 +1050,10 @@ export const jobRequisitionService = {
    */
   async getPendingForApproval(approverRole: string, actor: EnterpriseUser): Promise<JobRequisitionSummary[]> {
     void approverRole;
-    const scope = await requisitionScope(actor, "jr");
+    // includeOwnRequisitions: false — this is the approver's queue, not a "my requisitions"
+    // view. Without the opt-out, a requester who also holds an approver role would see (and
+    // could act on) their own pending item here purely because they authored it.
+    const scope = await requisitionScope(actor, "jr", { includeOwnRequisitions: false });
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT
         jr.*,
