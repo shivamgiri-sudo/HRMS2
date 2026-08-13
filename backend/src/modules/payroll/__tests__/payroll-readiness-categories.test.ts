@@ -26,6 +26,8 @@
  *   CHECK_ERROR across all three active months.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 
 // ─── Fake database ───────────────────────────────────────────────────────────
 
@@ -328,6 +330,53 @@ describe("4. full & final readiness", () => {
     const { check } = await checkByCode("FF_PAID_BUT_EMPLOYEE_ACTIVE");
     expect(check.state).toBe("FAIL");
     expect(check.severity).toBe("P0");
+  });
+});
+
+describe("payroll-calculation readiness reads the column the engine actually maintains", () => {
+  it("PASSES when every line is calculated and none needs recalculation", async () => {
+    const { check } = await checkByCode("PAYFILE_CALCULATION_INCOMPLETE");
+    expect(check.state).toBe("PASS");
+  });
+
+  it("FAILS when lines are in a non-calculated state", async () => {
+    baseline(...population(/NOT IN \('calculated', 'approved', 'excluded', 'blocked'\)/, 12));
+    const { check } = await checkByCode("PAYFILE_CALCULATION_INCOMPLETE");
+    expect(check.state).toBe("FAIL");
+    expect(check.affectedEmployees).toBe(12);
+  });
+
+  it("does not read calculation_status, which nothing in the codebase writes", async () => {
+    // The original check tested calculation_status against an allowlist that matched none of
+    // the values out-of-band scripts had left there, so it flagged 100% of every run — an
+    // always-red gate is indistinguishable from no gate. Pinned so it cannot come back.
+    const src = readFileSync(
+      resolve(process.cwd(), "src/modules/payroll/payroll-readiness-categories.service.ts"),
+      "utf8",
+    ).replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+    expect(src).not.toMatch(/spl\.calculation_status/);
+  });
+
+  it("FAILS when gross pay exists with no payable-days basis", async () => {
+    // The engine derives gross FROM payable days, so a line with money and zero days did not
+    // come from it. Live: July 1, June 1,215, May 1,148 — it discriminates.
+    baseline(...population(/COALESCE\(spl\.final_payable_days, 0\) = 0/, 1215));
+    const { check, result } = await checkByCode("PAYFILE_GROSS_WITHOUT_PAYABLE_DAYS_BASIS");
+    expect(check.state).toBe("FAIL");
+    expect(check.severity).toBe("P0");
+    expect(check.affectedEmployees).toBe(1215);
+    expect(result.canPay).toBe(false);
+  });
+
+  it("PASSES when every line carrying gross has a payable-days basis", async () => {
+    const { check } = await checkByCode("PAYFILE_GROSS_WITHOUT_PAYABLE_DAYS_BASIS");
+    expect(check.state).toBe("PASS");
+  });
+
+  it("tells the reader not to fix it by recalculating", async () => {
+    baseline(...population(/COALESCE\(spl\.final_payable_days, 0\) = 0/, 3));
+    const { check } = await checkByCode("PAYFILE_GROSS_WITHOUT_PAYABLE_DAYS_BASIS");
+    expect(check.message).toMatch(/Do not resolve this by recalculating/);
   });
 });
 
