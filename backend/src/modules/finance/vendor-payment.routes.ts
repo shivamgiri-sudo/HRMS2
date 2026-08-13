@@ -275,6 +275,32 @@ router.get(
   })
 );
 
+// 4-B: AP Aging — unpaid balances grouped into standard overdue buckets.
+//
+// Must stay registered before /vendor-payments/:id (below): Express matches routes in
+// registration order, and :id matches any literal segment including "aging" — this route
+// used to sit ~200 lines further down, after /vendor-payments/:id, so every request here
+// was swallowed by the :id handler as WHERE vendor_payment_tracking.id = 'aging', which
+// never matches a row and 404s "Record not found". Confirmed live-broken 2026-08-13: the
+// AP Aging panel (VendorPaymentDispatchPage.tsx's showAging toggle) has 404ed on every use
+// since this route was added. Moved here, immediately after the other static
+// /vendor-payments/... sub-paths and before the first /vendor-payments/:id route.
+router.get(
+  "/vendor-payments/aging",
+  requireRole(...PAYMENT_READ_ROLES),
+  h(async (req, res) => {
+    const user = actor(req);
+    const branchScope = await resolveFinanceBranchScopeSet({
+      userId: user.id,
+      primaryRole: user.role,
+      userRoles: user.roles,
+      requestedBranchId: req.query.branchId ? String(req.query.branchId) : undefined,
+    });
+    const { rows: data } = await vendorPaymentService.getAgingReport({ branchScope });
+    res.json({ success: true, data });
+  })
+);
+
 router.get(
   "/vendor-payments/:id/transactions",
   requireRole(...PAYMENT_READ_ROLES),
@@ -480,22 +506,7 @@ router.get(
   }
 );
 
-// 4-B: AP Aging — unpaid balances grouped into standard overdue buckets.
-router.get(
-  "/vendor-payments/aging",
-  requireRole(...PAYMENT_READ_ROLES),
-  h(async (req, res) => {
-    const user = actor(req);
-    const branchScope = await resolveFinanceBranchScopeSet({
-      userId: user.id,
-      primaryRole: user.role,
-      userRoles: user.roles,
-      requestedBranchId: req.query.branchId ? String(req.query.branchId) : undefined,
-    });
-    const { rows: data } = await vendorPaymentService.getAgingReport({ branchScope });
-    res.json({ success: true, data });
-  })
-);
+// 4-B: AP Aging moved above, before /vendor-payments/:id — see the comment there.
 
 // 4-C: Vendor ledger — running statement for a single vendor.
 router.get(
