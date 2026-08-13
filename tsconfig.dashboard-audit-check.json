@@ -1,0 +1,13 @@
+{
+  // Typecheck for the home-dashboard audit fixes (2026-08-13): empty-vs-failed tile
+  // styling, asOf date-only display, Payroll header controls.
+  //
+  //     npx tsc -p tsconfig.dashboard-audit-check.json
+  "extends": "./tsconfig.app.json",
+  "include": [
+    "src/pages/dashboards/ReferenceDashboardUI.tsx",
+    "src/pages/dashboards/reference-dashboard-model.ts",
+    "src/pages/dashboards/ReferenceRoleDashboard.tsx",
+    "src/vite-env.d.ts"
+  ]
+}

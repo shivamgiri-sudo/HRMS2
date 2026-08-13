@@ -688,10 +688,22 @@ export const managementService = {
            ) AS onboarding_in_progress`,
       ),
       db.execute<RowDataPacket[]>(
+        // Joined to active employees and scoped, matching dashboard-metric.service.ts's
+        // getLeaveApprovalMetrics — the metric the Manager/HR dashboard reads this same
+        // figure from. Previously an unscoped raw count of every leave_request row
+        // regardless of status of the employee who filed it or the branchId/processId
+        // this function already accepts: it counted requests from inactive/exited
+        // employees and ignored scope entirely, so this tile and that metric could (and
+        // did) show two different numbers for "pending leave approvals" in the same
+        // session — live-verified 26 (this query, unscoped) vs 11 (the metric) on
+        // 2026-08-13.
         `SELECT
-           (SELECT COUNT(*) FROM leave_request WHERE LOWER(status) = 'pending') AS pending_leave_approvals,
+           (SELECT COUNT(*) FROM leave_request lr
+              JOIN employees e ON e.id = lr.employee_id AND e.active_status = 1
+             WHERE LOWER(lr.status) = 'pending'${empScopeJoinWhere}) AS pending_leave_approvals,
            (SELECT COUNT(*) FROM performance_alert
              WHERE acknowledged = 0 AND severity IN ('high', 'critical')) AS critical_performance_alerts`,
+        scopeParams,
       ),
       db.execute<RowDataPacket[]>(
         `SELECT

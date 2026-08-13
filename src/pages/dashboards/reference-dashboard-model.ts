@@ -123,7 +123,10 @@ export function metricAsOf(
   key: string,
 ): string | null {
   const value = (metrics[key] as { asOf?: unknown } | undefined)?.asOf;
-  return typeof value === "string" && value ? value : null;
+  // The contract carries asOf as a full ISO datetime (so it validates as one field for
+  // every metric), but what a tile wants to say is which DAY the figure describes — a
+  // trailing "T00:00:00.000Z" printed inline in prose reads as broken, not precise.
+  return typeof value === "string" && value ? value.slice(0, 10) : null;
 }
 
 /**
@@ -145,6 +148,14 @@ export function emptySourceMetricKeys(metrics: Record<string, MetricResult>): st
 }
 
 /**
+ * The exact string metricUnavailableReason returns for an empty-but-reachable source, as
+ * opposed to a genuine failure. Exported so a renderer can tell "nothing has happened
+ * yet" apart from "this is broken" without re-deriving the distinction from errorCode
+ * itself or, worse, guessing from the reason text.
+ */
+export const METRIC_NO_DATA_REASON = "No data recorded yet";
+
+/**
  * Why a metric has nothing to show, phrased for a dashboard tile — or null when the
  * metric carries a real measurement (including a real zero).
  */
@@ -159,7 +170,7 @@ export function metricUnavailableReason(
       ? "Source query failed"
       : "Source unavailable";
   }
-  if (metric.errorCode === "NO_DATA_IN_SOURCE") return "No data recorded yet";
+  if (metric.errorCode === "NO_DATA_IN_SOURCE") return METRIC_NO_DATA_REASON;
   return null;
 }
 

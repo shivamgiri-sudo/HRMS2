@@ -50,6 +50,64 @@ describe("canonical dashboard metric contract", () => {
     expect(dashboardMetricSchema.parse(metric)).toEqual(metric);
   });
 
+  it("uses the metric's own anchor date for asOf, not the request time it shares a parameter name with", () => {
+    // getAttendanceMetrics anchors on the last substantially-processed day (often 1-2
+    // days back) and attaches it as result.asOf — a bare date, e.g. "2026-08-11". The
+    // function used to have its own Date parameter also named `asOf` (the request
+    // time), which silently won every time because of the shared name: every metric's
+    // asOf was "now", defeating the one freshness signal that says a two-day-old
+    // attendance figure is old rather than broken.
+    const generatedAt = new Date("2026-08-13T09:41:07.812Z");
+    const metric = adaptLegacyMetric(
+      "ATTENDANCE",
+      {
+        value: 78,
+        previousValue: null,
+        target: null,
+        variance: null,
+        variancePct: null,
+        changePct: null,
+        status: "ok",
+        trend: null,
+        drilldownApi: "/api/example",
+        actionUrl: null,
+        detail: {},
+        asOf: "2026-08-11",
+      },
+      scope,
+      generatedAt,
+    );
+
+    expect(metric.asOf).toBe("2026-08-11T00:00:00.000Z");
+    expect(metric.asOf).not.toBe(generatedAt.toISOString());
+    expect(dashboardMetricSchema.parse(metric)).toEqual(metric);
+  });
+
+  it("falls back to the request time when the metric didn't compute its own asOf", () => {
+    const generatedAt = new Date("2026-08-13T09:41:07.812Z");
+    const metric = adaptLegacyMetric(
+      "HEADCOUNT",
+      {
+        value: 1337,
+        previousValue: null,
+        target: null,
+        variance: null,
+        variancePct: null,
+        changePct: null,
+        status: "ok",
+        trend: null,
+        drilldownApi: "/api/example",
+        actionUrl: null,
+        detail: {},
+      },
+      scope,
+      generatedAt,
+    );
+
+    expect(metric.asOf).toBe(generatedAt.toISOString());
+    expect(dashboardMetricSchema.parse(metric)).toEqual(metric);
+  });
+
   it("does not convert an unavailable source to zero or healthy", () => {
     const metric = adaptLegacyMetric(
       "HEADCOUNT",

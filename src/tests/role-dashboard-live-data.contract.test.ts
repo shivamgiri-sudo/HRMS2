@@ -192,11 +192,15 @@ describe("role dashboard live-data contracts", () => {
     }
   });
 
-  it("uses dashboard-scoped filters for HR and both WFM dashboard variants", () => {
+  it("uses dashboard-scoped filters for HR, both WFM variants, and Payroll", () => {
     const dashboard = read("src/pages/dashboards/ReferenceRoleDashboard.tsx");
     const filters = read("src/components/dashboard/ScopedFilterBar.tsx");
 
-    expect(dashboard).toContain('["hr", "wfm", "wfm_attendance", "ceo", "quality", "operations", "manager", "super_admin"].includes(variant)');
+    // "payroll" was missing here: ReferenceDashboardShell.tsx, the only other source
+    // PayrollReferenceLayout's header falls back to, is never mounted anywhere in the
+    // app — so the Payroll dashboard's header rendered no filter bar and no refresh
+    // control at all, unlike every other listed dashboard. Fixed 2026-08-13.
+    expect(dashboard).toContain('["hr", "wfm", "wfm_attendance", "ceo", "quality", "operations", "manager", "super_admin", "payroll"].includes(variant)');
     expect(dashboard).toContain("dashboardCode={code}");
     expect(filters).toContain("dashboardCode?: string");
     expect(filters).toContain("/api/dashboards/${dashboardCode}/filters");

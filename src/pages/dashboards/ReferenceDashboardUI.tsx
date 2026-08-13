@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import {
   ArrowRight,
   CheckCircle2,
+  CircleDashed,
   RefreshCw,
   TriangleAlert,
   TrendingDown,
@@ -27,7 +28,7 @@ import type { NavItem } from "@/components/layout/SidebarNav";
 import { useAccessibleNavGroups } from "@/lib/navigationAccess";
 import { useUserRole } from "@/hooks/useUserRole";
 import { cn } from "@/lib/utils";
-import type { Tone } from "./reference-dashboard-model";
+import { METRIC_NO_DATA_REASON, type Tone } from "./reference-dashboard-model";
 import { formatValue } from "./reference-dashboard-model";
 
 const TONE: Record<Tone, { icon: string; value: string; border: string; bar: string; soft: string }> = {
@@ -211,9 +212,29 @@ export function ReferenceMetricCard({ metric, loading = false }: { metric: Refer
               {formatValue(metric.value, metric.valueSuffix ?? "")}
             </p>
             {metric.unavailableReason ? (
-              <p className="mt-2 truncate text-xs font-medium text-[#b45309]" title={metric.unavailableReason}>
-                {metric.unavailableReason}
-              </p>
+              // An empty-but-reachable source ("no data recorded yet") and a genuine
+              // query failure previously shared identical amber styling and position —
+              // a user had to read the exact wording to tell them apart. A source that
+              // simply holds no rows yet is not an incident; give it neutral slate
+              // styling and a dashed-circle icon instead of the warning treatment a
+              // real failure gets.
+              metric.unavailableReason === METRIC_NO_DATA_REASON ? (
+                <p
+                  className="mt-2 flex items-center gap-1 truncate text-xs font-medium text-[#71809a]"
+                  title={metric.unavailableReason}
+                >
+                  <CircleDashed className="h-3 w-3 shrink-0" aria-hidden="true" />
+                  {metric.unavailableReason}
+                </p>
+              ) : (
+                <p
+                  className="mt-2 flex items-center gap-1 truncate text-xs font-medium text-[#b45309]"
+                  title={metric.unavailableReason}
+                >
+                  <TriangleAlert className="h-3 w-3 shrink-0" aria-hidden="true" />
+                  {metric.unavailableReason}
+                </p>
+              )
             ) : metric.helper ? (
               <p className="mt-2 truncate text-xs text-[#71809a]">{metric.helper}</p>
             ) : null}

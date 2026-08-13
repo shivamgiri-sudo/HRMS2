@@ -535,7 +535,13 @@ export default function ReferenceRoleDashboard({ variant, subheader }: { variant
     return parts.length > 0 ? `${parts.join(". ")}. Available dashboard data is still shown.` : null;
   }, [employeeSourceErrors, networkErrorCount, unavailableMetrics]);
 
-  const filterControl = ["hr", "wfm", "wfm_attendance", "ceo", "quality", "operations", "manager", "super_admin"].includes(variant) ? (
+  // "payroll" was missing from this list, and ReferenceDashboardShell.tsx — the only
+  // other source PayrollReferenceLayout's header falls back to — is never mounted
+  // anywhere in the app, so its header's right-hand slot (branch/process filter,
+  // refresh, "data as of") rendered permanently empty. This control is generic
+  // (driven by dashboardCode, not the variant), so adding payroll here is the same
+  // fix every other listed dashboard already has, not a new behavior.
+  const filterControl = ["hr", "wfm", "wfm_attendance", "ceo", "quality", "operations", "manager", "super_admin", "payroll"].includes(variant) ? (
     <div className="flex flex-wrap items-center justify-end gap-3">
       <ScopedFilterBar
         onBranchChange={setBranchId}

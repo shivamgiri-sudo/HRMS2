@@ -507,11 +507,20 @@ export async function narrowDashboardScope(
     if (rows.length === 0) return deny();
   }
 
+  // Narrow only the dimension the caller actually supplied. A PROCESS_ALL user who
+  // filters by branch alone previously lost their process restriction entirely here
+  // (processIds fell back to []), and buildScopeWhere's CUSTOM_SCOPE branch skips the
+  // process clause whenever processIds is empty — so "my process, this branch" silently
+  // became "every process at this branch". The same widening ran the other way for a
+  // BRANCH_ALL user filtering by process alone. Carrying the caller's own already-granted
+  // scope forward for the untouched dimension (instead of clearing it) keeps both filters
+  // in effect together; it can only narrow what buildScopeWhere returns, never widen it,
+  // because it is always a subset of (or equal to) what `scope` already allowed.
   return {
     ...scope,
     level: "CUSTOM_SCOPE",
-    branchIds: branchId ? [branchId] : [],
-    processIds: processId ? [processId] : [],
+    branchIds: branchId ? [branchId] : scope.branchIds,
+    processIds: processId ? [processId] : scope.processIds,
   };
 }
 

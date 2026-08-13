@@ -146,11 +146,24 @@ function numberFromDetail(result: MetricResult, key?: string): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
+/**
+ * A metric-supplied `asOf` is usually a bare date ("2026-08-11" — the day the metric's
+ * own query is anchored on), not a full ISO datetime, so it fails the contract's
+ * `z.string().datetime()` check as-is. Anchoring it to midnight UTC keeps the day the
+ * metric actually describes while still satisfying the schema. Falls back to the
+ * request's own generation time when the metric didn't compute one of its own.
+ */
+function normalizeAsOf(value: string | null | undefined, generatedAt: Date): string {
+  if (!value) return generatedAt.toISOString();
+  const parsed = /^\d{4}-\d{2}-\d{2}$/.test(value) ? new Date(`${value}T00:00:00.000Z`) : new Date(value);
+  return Number.isNaN(parsed.getTime()) ? generatedAt.toISOString() : parsed.toISOString();
+}
+
 export function adaptLegacyMetric(
   metricCode: string,
   result: MetricResult,
   scope: DashboardScope,
-  asOf: Date,
+  generatedAt: Date,
 ): DashboardMetric {
   const definition = Object.values(METRICS).find((item) => item.code === metricCode);
   if (!definition) throw new Error(`Metric definition not found: ${metricCode}`);
@@ -191,7 +204,11 @@ export function adaptLegacyMetric(
     errorMessage,
     source: definition.source,
     sourceTable: definition.sourceTable,
-    asOf: available ? asOf.toISOString() : null,
+    // Prefer the metric's own anchor date (e.g. attendance's last-reconciled day) over
+    // the request time — this was previously always the request time regardless of
+    // what the metric itself computed, because this parameter shared its name with the
+    // one below and silently won every time. See normalizeAsOf above.
+    asOf: available ? normalizeAsOf(result.asOf, generatedAt) : null,
     periodStart: null,
     periodEnd: null,
     timezone: "Asia/Kolkata",

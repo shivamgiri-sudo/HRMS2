@@ -127,7 +127,12 @@ function sourceUnavailable(err: unknown): never {
 // ─── HEADCOUNT: grouped by branch ────────────────────────────────────────────
 async function drillHeadcount(scope: DashboardScope): Promise<DrilldownResult> {
   try {
-    const { sql: scopeSql, params } = buildScopeWhere(scope, "e.branch_id", "e.process_id");
+    // buildScopeWhere has no case for TEAM_ONLY/SELF_ONLY and falls back to 1=0 for both —
+    // correct for tables it can't otherwise scope, but wrong here: employees carries an id
+    // this scope already resolves team/self membership by. A manager's own "Team Members"
+    // tile (which does use buildScopeWhereEmployees and shows the real count) previously
+    // opened a drilldown that always reported 0 regardless of team size.
+    const { sql: scopeSql, params } = buildScopeWhereEmployees(scope, "e");
     // `branches` does not exist (the table is branch_master) and employees has no
     // `status` column — the old query threw on both.
     const [rows] = await db.execute<RowDataPacket[]>(
@@ -210,7 +215,8 @@ async function drillOnboarding(scope: DashboardScope): Promise<DrilldownResult> 
 // ─── ATTENDANCE: today's exceptions ──────────────────────────────────────────
 async function drillAttendance(scope: DashboardScope): Promise<DrilldownResult> {
   try {
-    const { sql: scopeSql, params } = buildScopeWhere(scope, "e.branch_id", "e.process_id");
+    // Same TEAM_ONLY/SELF_ONLY gap as drillHeadcount above — use the employee-aware builder.
+    const { sql: scopeSql, params } = buildScopeWhereEmployees(scope, "e");
 
     // Anchor on the latest day that actually carries records. Production attendance
     // trails by a day or two, so CURDATE() routinely selects a near-empty day.
@@ -259,7 +265,7 @@ async function drillAttendance(scope: DashboardScope): Promise<DrilldownResult> 
 // ─── PAYROLL_READINESS ───────────────────────────────────────────────────────
 async function drillPayrollReadiness(scope: DashboardScope): Promise<DrilldownResult> {
   try {
-    const { sql: scopeSql, params } = buildScopeWhere(scope, "e.branch_id", "e.process_id");
+    const { sql: scopeSql, params } = buildScopeWhereEmployees(scope, "e");
     // Counts only, never per-employee bank/PAN/UAN values: this drilldown is reachable
     // from dashboards whose viewers are not payroll roles.
     const [rows] = await db.execute<RowDataPacket[]>(
@@ -410,7 +416,7 @@ async function drillIncentive(scope: DashboardScope): Promise<DrilldownResult> {
 async function drillResignation(scope: DashboardScope): Promise<DrilldownResult> {
   try {
     // exit_request has no branch_id/process_id — scope through the employee.
-    const { sql: scopeSql, params } = buildScopeWhere(scope, "e.branch_id", "e.process_id");
+    const { sql: scopeSql, params } = buildScopeWhereEmployees(scope, "e");
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT er.id AS exitId,
               COALESCE(e.full_name, CONCAT_WS(' ', e.first_name, e.last_name)) AS employeeName,
@@ -549,7 +555,7 @@ async function drillJoiningDocEsign(scope: DashboardScope): Promise<DrilldownRes
   try {
     // Rows key on employee_id when the joiner has converted, candidate_id before that.
     // Scope through the employee, which is the only reliable branch/process link.
-    const { sql: scopeSql, params } = buildScopeWhere(scope, "e.branch_id", "e.process_id");
+    const { sql: scopeSql, params } = buildScopeWhereEmployees(scope, "e");
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT jd.id AS checklistId,
               jd.employee_id AS employeeId,
@@ -590,7 +596,7 @@ async function drillAttendanceExceptions(scope: DashboardScope): Promise<Drilldo
   try {
     // Date column is issue_date; open-ness is resolved_at IS NULL. There is no
     // created_at and no status column on this table.
-    const { sql: scopeSql, params } = buildScopeWhere(scope, "emp.branch_id", "emp.process_id");
+    const { sql: scopeSql, params } = buildScopeWhereEmployees(scope, "emp");
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT ari.issue_type AS issueType,
               ari.severity AS severity,
