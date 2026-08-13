@@ -5,7 +5,7 @@ import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { db } from "../../db/mysql.js";
 import { randomUUID } from "crypto";
 import type { RowDataPacket } from "mysql2";
-import { createTatInstance, checkAndEscalateTat, completeTatInstance } from "./tat.service.js";
+import { createTatInstance, checkAndEscalateTat, completeTatInstance, assertTatTaskAccess } from "./tat.service.js";
 import { getUserRoleContext } from "../../shared/roleResolver.js";
 import { resolveDashboardScopeForRequest, scopeToSqlWhere } from "../../shared/dashboardScope.js";
 
@@ -217,8 +217,9 @@ router.post("/tasks/recalculate", requireRole("admin", "hr"), h(async (_req: any
   return res.json({ success: true, affected });
 }));
 
-// POST /tat/tasks/:id/complete — mark a task as completed
+// POST /tat/tasks/:id/complete — mark a task as completed (owner, owner-role, or privileged role only)
 router.post("/tasks/:id/complete", h(async (req: AuthenticatedRequest, res: any) => {
+  await assertTatTaskAccess(req.authUser!.id, req.params.id);
   await completeTatInstance(req.params.id, req.authUser!.id);
   return res.json({ success: true });
 }));

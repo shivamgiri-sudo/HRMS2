@@ -1,6 +1,6 @@
 import { db } from "../../db/mysql.js";
 import { randomUUID } from "crypto";
-import type { RowDataPacket } from "mysql2";
+import type { RowDataPacket, ResultSetHeader } from "mysql2";
 import { getUserRoleContext } from "../../shared/roleResolver.js";
 
 /**
@@ -278,11 +278,22 @@ export async function getTeamWorkItems(userId: string, limit = 100) {
   return rows;
 }
 
+/**
+ * `assertWorkItemAccess` reads status, then this function writes it in a separate round
+ * trip — a gap two concurrent "complete" clicks on the same item could both pass through,
+ * each inserting its own work_item_audit_log row for the same completion. Conditioning the
+ * UPDATE on status closes that: the loser's affectedRows is 0 and it throws instead of
+ * writing a duplicate audit entry.
+ */
 export async function completeWorkItem(id: string, userId: string, remarks?: string): Promise<void> {
-  await db.execute(
-    `UPDATE work_item SET status='completed', completed_at=NOW(), completed_by=?, updated_at=NOW() WHERE id=?`,
+  const [result] = await db.execute<ResultSetHeader>(
+    `UPDATE work_item SET status='completed', completed_at=NOW(), completed_by=?, updated_at=NOW()
+     WHERE id=? AND status NOT IN ('completed', 'cancelled')`,
     [userId, id]
   );
+  if (!result.affectedRows) {
+    throw Object.assign(new Error('Work item not found or already completed'), { statusCode: 409 });
+  }
   await db.execute(
     `INSERT INTO work_item_audit_log (id, work_item_id, action, from_status, to_status, remarks, performed_by)
      VALUES (UUID(), ?, 'complete', 'pending', 'completed', ?, ?)`,

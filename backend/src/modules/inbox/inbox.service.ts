@@ -1,6 +1,7 @@
 import { randomUUID } from "crypto";
 import type { ResultSetHeader, RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
+import { buildActionDeeplink } from "../work-inbox/action-item-registry.js";
 
 interface InboxFilters {
   user_id: string;
@@ -207,7 +208,16 @@ export const inboxService = {
 
 export interface PendingTask {
   id: string;
-  source: "tat" | "inbox";
+  /**
+   * "work_item" is its own source (not folded into "inbox") specifically so the frontend
+   * can route its completion action to POST /api/work-inbox/:id/complete (work_item table)
+   * instead of PATCH /api/inbox/:id/actioned (work_inbox_item table) — the two were
+   * previously both tagged "inbox", so completing a work_item-sourced task silently
+   * updated zero rows in the wrong table and the item reappeared on next load. Reported
+   * live 2026-08-13: 6 real pending work_item rows, the oldest 15 days stale, none
+   * completable through the UI's own "Act & Close" button.
+   */
+  source: "tat" | "inbox" | "work_item";
   module: string;
   title: string;
   description?: string;
@@ -409,6 +419,7 @@ export async function getMyPending(userId: string): Promise<{ items: PendingTask
   const [workItemRows] = await db.execute<RowDataPacket[]>(
     `SELECT wi.id,
             COALESCE(NULLIF(wi.module_code, ''), wi.item_type) AS module,
+            wi.item_type,
             wi.title,
             wi.description,
             wi.entity_type,
@@ -472,18 +483,32 @@ export async function getMyPending(userId: string): Promise<{ items: PendingTask
     }),
     // work_item rows. Unlike work_inbox_item these DO carry a real deadline
     // (due_at), so calcRisk can distinguish a genuine breach from mere age here.
+    //
+    // source: "work_item" (not "inbox") — see the PendingTask.source doc comment. The
+    // frontend needs to tell this table apart from work_inbox_item to call the right
+    // completion endpoint.
+    //
+    // action_url comes from the item-type registry's deeplink pattern
+    // (action-item-registry.ts), the same lookup work-inbox.service.ts's createWorkItem
+    // path assumes exists elsewhere. It resolves to undefined for item types outside the
+    // 22-type registry (MIRA_FEEDBACK, EMPLOYEE_CODE_PENDING,
+    // EMPLOYEE_ONBOARDING_MANUAL_REVIEW today) — those still render without an "Open"
+    // button, which is a separate, pre-existing gap (no registry entry for them at all,
+    // not something this lookup can fix).
     ...(workItemRows as RowDataPacket[]).map((row): PendingTask => {
       const createdAt = String(row.created_at ?? "");
       const agingH = createdAt ? (now - new Date(createdAt).getTime()) / 3_600_000 : 0;
       const dueAt = row.due_at ? String(row.due_at) : null;
+      const entityId = row.entity_id ? String(row.entity_id) : undefined;
       return {
         id: String(row.id),
-        source: "inbox",
+        source: "work_item",
         module: String(row.module ?? "general"),
         title: String(row.title ?? ""),
         description: row.description ? String(row.description) : undefined,
         entity_type: row.entity_type ? String(row.entity_type) : undefined,
-        entity_id: row.entity_id ? String(row.entity_id) : undefined,
+        entity_id: entityId,
+        action_url: entityId ? buildActionDeeplink(String(row.item_type ?? ""), entityId) : undefined,
         priority: String(row.priority ?? "normal"),
         tat_deadline: dueAt ?? undefined,
         created_at: createdAt,
@@ -524,12 +549,19 @@ export async function getMyPending(userId: string): Promise<{ items: PendingTask
 export async function getTimeline(referenceType: string, referenceId: string): Promise<TimelineEvent[]> {
   const events: TimelineEvent[] = [];
 
-  // sensitive_action_log
+  // sensitive_action_log — column names verified against live mas_hrms schema 2026-08-13.
+  // The previous version (created_at, performed_by_user_id, details, reference_type,
+  // reference_id) named no column that actually exists on this table — every call threw
+  // "Unknown column 'created_at' in 'field list'" and was silently swallowed by the
+  // .catch() below, so this source never once contributed an event, for any entity type,
+  // since getTimeline was written. Real columns: acted_at, actor_user_id, entity_type,
+  // entity_id, change_summary/reason (no single "details" column).
   const [salRows] = await db.execute<RowDataPacket[]>(
-    `SELECT id, created_at, performed_by_user_id AS actor, action_type AS action, details, 'sensitive_action_log' AS src
+    `SELECT id, acted_at AS created_at, actor_user_id AS actor, action_type AS action,
+            COALESCE(change_summary, reason) AS details, 'sensitive_action_log' AS src
      FROM sensitive_action_log
-     WHERE reference_type = ? AND reference_id = ?
-     ORDER BY created_at DESC LIMIT 100`,
+     WHERE entity_type = ? AND entity_id = ?
+     ORDER BY acted_at DESC LIMIT 100`,
     [referenceType, referenceId],
   ).catch(() => [[] as RowDataPacket[]]);
 
@@ -567,14 +599,18 @@ export async function getTimeline(referenceType: string, referenceId: string): P
     });
   });
 
-  // Module-specific: exit_retention_action (resignation lifecycle audit)
+  // Module-specific: exit_retention_action (resignation lifecycle audit). Column names
+  // verified against live mas_hrms schema 2026-08-13 — performed_at/performed_by do not
+  // exist on this table (real columns: created_at, action_owner_user_id/created_by), so
+  // every resignation/exit_request timeline silently lost this entire source to the
+  // .catch() below since the day this block was added.
   if (referenceType === "resignation" || referenceType === "exit_request") {
     const [resRows] = await db.execute<RowDataPacket[]>(
-      `SELECT id, performed_at AS created_at, performed_by AS actor,
+      `SELECT id, created_at, COALESCE(action_owner_user_id, created_by) AS actor,
               action_type AS action, action_summary AS details
        FROM exit_retention_action
        WHERE exit_request_id = ?
-       ORDER BY performed_at DESC LIMIT 50`,
+       ORDER BY created_at DESC LIMIT 50`,
       [referenceId],
     ).catch(() => [[] as RowDataPacket[]]);
 

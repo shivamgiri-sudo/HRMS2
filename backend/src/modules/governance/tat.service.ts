@@ -1,6 +1,7 @@
 import { db } from "../../db/mysql.js";
 import { randomUUID } from "crypto";
 import type { RowDataPacket, ResultSetHeader } from "mysql2";
+import { getUserRoleContext } from "../../shared/roleResolver.js";
 
 /**
  * Create a TAT-tracked task instance and a corresponding work item.
@@ -196,15 +197,55 @@ export async function checkAndEscalate(): Promise<number> {
 }
 
 /**
+ * Authorization gate for completing a TAT task. Previously the route (`requireAuth` only)
+ * and `completeTatInstance` (bare `UPDATE ... WHERE id=?`) had no ownership or role check
+ * at all — any authenticated user who knew or enumerated a task_tat_instance id could
+ * complete anyone else's task. Mirrors `assertWorkItemAccess` in
+ * modules/work-inbox/work-inbox.service.ts, the equivalent gate for the sibling `work_item`
+ * table, so the two tables that make up the Work Inbox enforce access the same way.
+ */
+export async function assertTatTaskAccess(userId: string, taskId: string): Promise<void> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    "SELECT assigned_to, owner_user_id, owner_role, status FROM task_tat_instance WHERE id = ? LIMIT 1",
+    [taskId]
+  );
+  const task = (rows as RowDataPacket[])[0];
+  if (!task) {
+    throw Object.assign(new Error("TAT task not found"), { statusCode: 404 });
+  }
+  if (task.status === "completed" || task.status === "cancelled") {
+    throw Object.assign(new Error("TAT task already " + task.status), { statusCode: 400 });
+  }
+  const { roleKeys } = await getUserRoleContext(userId);
+  const isPrivileged = roleKeys.some((r) =>
+    ["super_admin", "admin", "ho_hr", "hr_branch", "branch_head", "operations_head"].includes(r)
+  );
+  const isOwner = task.assigned_to === userId || task.owner_user_id === userId;
+  const hasOwnerRole = task.owner_role && roleKeys.includes(task.owner_role);
+  if (!isOwner && !hasOwnerRole && !isPrivileged) {
+    throw Object.assign(new Error("Not authorized to complete this task"), { statusCode: 403 });
+  }
+}
+
+/**
  * Mark a TAT instance as completed and log the completion in task_escalation_log.
+ *
+ * The UPDATE is conditioned on status here (not just in assertTatTaskAccess above) so two
+ * concurrent completions of the same task can't both succeed and both write a completion
+ * row to task_escalation_log — the second call's affectedRows is 0 and it throws rather
+ * than silently duplicating the audit trail, the same race class fixed on completeWorkItem
+ * in modules/work-inbox/work-inbox.service.ts.
  */
 export async function completeTatInstance(id: string, completedBy: string): Promise<void> {
-  await db.execute(
+  const [result] = await db.execute<ResultSetHeader>(
     `UPDATE task_tat_instance
      SET status = 'completed', completed_at = NOW(), updated_at = NOW()
-     WHERE id = ?`,
+     WHERE id = ? AND status NOT IN ('completed', 'cancelled')`,
     [id]
   );
+  if (!result.affectedRows) {
+    throw Object.assign(new Error("TAT task not found or already completed"), { statusCode: 409 });
+  }
 
   // Real columns: tat_instance_id / triggered_at / notified_user_id / action_taken.
   // The previous names (task_tat_instance_id, action, notify_user_id, created_at) do not

@@ -24,7 +24,7 @@ type Risk = "breached" | "aged" | "due_soon" | "on_track";
 
 interface PendingTask {
   id: string;
-  source: "tat" | "inbox";
+  source: "tat" | "inbox" | "work_item";
   module: string;
   title: string;
   description?: string;
@@ -447,6 +447,13 @@ export default function NativeWorkInbox() {
     if (!task) return;
     if (task.source === "tat") {
       await hrmsApi.post(`/api/governance/tat/tasks/${id}/complete`, { remarks: remarks || undefined });
+    } else if (task.source === "work_item") {
+      // work_item rows (role-assigned approvals, Mira complaints, etc.) live in a
+      // different table than work_inbox_item — PATCH /api/inbox/:id/actioned updates
+      // work_inbox_item and silently affects 0 rows for these, so the item reappeared on
+      // every reload with no error anywhere. Found live 2026-08-13: 6 pending work_item
+      // rows, the oldest 15 days stale, none completable through this button until now.
+      await hrmsApi.post(`/api/work-inbox/${id}/complete`, { remarks: remarks || undefined });
     } else {
       await hrmsApi.patch(`/api/inbox/${id}/actioned`, {});
     }
