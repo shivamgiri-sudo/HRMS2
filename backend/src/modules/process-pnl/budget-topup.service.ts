@@ -299,6 +299,15 @@ export const budgetTopupService = {
       if (!request) throw new Error("Top-up request not found");
       const status = String(request.status);
 
+      // P0P1-4: Maker-checker — the approver cannot be the person who raised the request,
+      // regardless of role.  Applies to both approve and reject so a requester cannot
+      // "reject" their own request to unblock a later re-submission either.
+      if (String(request.requested_by) === actorId) {
+        throw new Error(
+          "Maker-checker violation: the approver cannot be the same person who submitted this top-up request"
+        );
+      }
+
       if (decision === "reject") {
         if (!["submitted", "branch_head_approved"].includes(status)) {
           throw new Error(`Cannot reject a top-up request in status ${status}`);
