@@ -545,6 +545,8 @@ export default function BranchBudgetManagementWorkspace() {
   };
   const qc = useQueryClient();
   const [transferTarget, setTransferTarget] = useState<TransferTarget | null>(null);
+  const [rejectTransferId, setRejectTransferId] = useState<string | null>(null);
+  const [rejectTransferReason, setRejectTransferReason] = useState("");
   const transferMutation = useMutation({
     mutationFn: (t: TransferTarget) =>
       hrmsApi.post(`/api/finance/pnl/budgets/${t.budgetId}/transfer`, {
@@ -2280,10 +2282,7 @@ export default function BranchBudgetManagementWorkspace() {
                         <button
                           className="inline-flex items-center gap-1 rounded-md border border-red-300 bg-white px-2.5 py-1 text-xs font-semibold text-red-700 hover:bg-red-50 disabled:opacity-50"
                           disabled={approveTransferMutation.isPending}
-                          onClick={() => {
-                            const reason = window.prompt("Rejection reason (required):");
-                            if (reason?.trim()) approveTransferMutation.mutate({ id: tr.id, decision: "reject", remarks: reason.trim() });
-                          }}
+                          onClick={() => { setRejectTransferId(tr.id); setRejectTransferReason(""); }}
                         >
                           <ThumbsDown className="h-3 w-3" /> Reject
                         </button>
@@ -2340,6 +2339,41 @@ export default function BranchBudgetManagementWorkspace() {
           </DialogContent>
         </Dialog>
       )}
+
+      {/* Transfer rejection dialog — replaces window.prompt() */}
+      <Dialog open={Boolean(rejectTransferId)} onOpenChange={(open) => { if (!open) { setRejectTransferId(null); setRejectTransferReason(""); } }}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader><DialogTitle>Reject Transfer</DialogTitle></DialogHeader>
+          <div className="space-y-3 py-1">
+            <p className="text-sm text-muted-foreground">Provide a reason so the submitter knows what to correct.</p>
+            <Textarea
+              autoFocus
+              rows={3}
+              placeholder="e.g. Source line is already reserved against open GRNs; use a different line."
+              value={rejectTransferReason}
+              onChange={(e) => setRejectTransferReason(e.target.value)}
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => { setRejectTransferId(null); setRejectTransferReason(""); }}>Cancel</Button>
+            <Button
+              variant="destructive"
+              disabled={!rejectTransferReason.trim() || approveTransferMutation.isPending}
+              onClick={() => {
+                if (rejectTransferId && rejectTransferReason.trim()) {
+                  approveTransferMutation.mutate(
+                    { id: rejectTransferId, decision: "reject", remarks: rejectTransferReason.trim() },
+                    { onSettled: () => { setRejectTransferId(null); setRejectTransferReason(""); } }
+                  );
+                }
+              }}
+            >
+              {approveTransferMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+              Confirm Rejection
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Tax-treatment amendment dialog — two-step maker-checker flow.
           Step 1 (this): requestor opens preflight, fills form, submits amendment request.
