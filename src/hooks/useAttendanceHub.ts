@@ -53,6 +53,13 @@ export interface DailyRecord {
   clock_in: string | null;
   clock_out: string | null;
   raw_minutes: number | null;
+  /**
+   * Worked minutes less that day's kiosk-tracked break time (break-management module,
+   * 2026-07+), floored at 0. Falls back to raw_minutes on any day with no break-kiosk
+   * row (the vast majority historically — the feature is new and coverage is still
+   * sparse), which is the correct default: no measured break, no deduction.
+   */
+  net_minutes: number | null;
   location: string | null;
   source: string | null;
 }
@@ -67,7 +74,21 @@ export interface AttendanceSummary {
   totalLwp: number;
   lateMarks: number;
   totalWorkingDays: number;
+  /**
+   * Gross worked hours for the month — MTD (capped at today) when `month` is the
+   * current calendar month, full-month total otherwise. See the backend's WHERE
+   * clause (wfm.routes.ts, GET /attendance/summary/:employeeId/:month) for the exact
+   * cap logic; this field is already MTD by construction, no client-side capping needed.
+   */
   totalHours: number;
+  /** Hours beyond 480 min (8h) worked in a single day, summed over the same MTD window as totalHours. */
+  otHours: number;
+  /**
+   * totalHours less kiosk-tracked break time, floored per day before summing. Equals
+   * totalHours for any employee/month with no break-kiosk data (sparse historical
+   * coverage, 2026-07+ feature) — that's the correct default, not a gap.
+   */
+  netHours: number;
   wfoDays: number;
   attendancePct: number;
 }

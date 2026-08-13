@@ -1397,6 +1397,35 @@ wfmRouter.get("/attendance/summary/:employeeId/:month", h(async (req: any, res: 
        COALESCE(${expectedToWorkSql()}, 0) AS expectedToWork,
        COALESCE(ROUND(${attendedDaysSql()} / NULLIF(${expectedToWorkSql()}, 0) * 100, 1), 0) AS attendancePct,
        COALESCE(ROUND(SUM(COALESCE(raw_minutes, 0)) / 60, 2), 0) AS totalHours,
+       -- OT threshold (480 min = 8h/day) matches the existing precedent in
+       -- biometric-summary.routes.ts (getGrnVendorActuals-adjacent OT reporting) rather
+       -- than inventing a new definition. GREATEST(...,0) so a short day contributes 0,
+       -- never a negative offset to the SUM.
+       COALESCE(ROUND(SUM(GREATEST(COALESCE(raw_minutes, 0) - 480, 0)) / 60, 2), 0) AS otHours,
+       -- Net Hours = worked minutes less break minutes, per day, floored at 0 before
+       -- summing (a bad single day can't push the month negative). A correlated
+       -- subquery rather than a JOIN on the main FROM: several break_daily_summary
+       -- columns (employee_id, attendance_status, branch_id, process_id, ...) collide by
+       -- name with attendance_daily_record's own, which would make every unqualified
+       -- column reference above (attendance_status, work_mode, ...) ambiguous the moment
+       -- a second table entered the FROM clause. Isolating the join in its own subquery
+       -- leaves the rest of this query, including the shared presentSql()/statusList()
+       -- helpers, untouched. break_daily_summary is a new (2026-07+) kiosk-break feature
+       -- with sparse historical coverage — days with no break row simply net to their
+       -- full worked minutes, which is the correct default, not a bug.
+       (SELECT COALESCE(ROUND(SUM(GREATEST(
+                 COALESCE(adr2.raw_minutes, 0) - COALESCE(bds.total_break_minutes, 0), 0
+               )) / 60, 2), 0)
+          FROM attendance_daily_record adr2
+          LEFT JOIN break_daily_summary bds
+            ON bds.employee_id = adr2.employee_id AND bds.shift_date = adr2.record_date
+         WHERE adr2.employee_id = ?
+           AND DATE_FORMAT(adr2.record_date, '%Y-%m') = ?
+           AND (
+             ? <> DATE_FORMAT(CONVERT_TZ(NOW(), '+00:00', '+05:30'), '%Y-%m')
+             OR adr2.record_date <= DATE(CONVERT_TZ(NOW(), '+00:00', '+05:30'))
+           )
+       ) AS netHours,
        COALESCE(SUM(CASE WHEN work_mode IN ('wfo', 'office') THEN 1 ELSE 0 END), 0) AS wfoDays
      FROM attendance_daily_record
      WHERE employee_id = ?
@@ -1405,7 +1434,7 @@ wfmRouter.get("/attendance/summary/:employeeId/:month", h(async (req: any, res: 
          ? <> DATE_FORMAT(CONVERT_TZ(NOW(), '+00:00', '+05:30'), '%Y-%m')
          OR record_date <= DATE(CONVERT_TZ(NOW(), '+00:00', '+05:30'))
        )`,
-    [employeeId, month, month]
+    [employeeId, month, month, employeeId, month, month]
   );
 
   // Unreachable default removed — see /my-attendance above. The COALESCEs are the guard.

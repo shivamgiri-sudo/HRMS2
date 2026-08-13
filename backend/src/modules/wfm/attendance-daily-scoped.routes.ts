@@ -100,6 +100,17 @@ export async function scopedAttendanceDailyHandler(req: AuthenticatedRequest, re
     LEFT JOIN process_master pm ON pm.id = COALESCE(adr.process_id, e.process_id)
     LEFT JOIN cost_centre_master ccm ON ccm.id = e.cost_centre_id
   `;
+  // Separate from fromSql (used by both the count and data queries) rather than adding
+  // break_daily_summary to fromSql itself: bds shares several column names with
+  // attendance_daily_record (employee_id, attendance_status, branch_id, process_id, ...),
+  // and `adr.*` below already spreads all of adr's columns unqualified into the result —
+  // adding bds to the shared FROM would risk a second, differently-timed edit here
+  // reintroducing an unqualified reference that collides. Keeping the join local to the
+  // one query that needs it (net_minutes) is the safer scope.
+  const fromSqlWithBreaks = `${fromSql}
+    LEFT JOIN break_daily_summary bds
+      ON bds.employee_id = adr.employee_id AND bds.shift_date = adr.record_date
+  `;
   const whereSql = `WHERE ${where.join(" AND ")}`;
 
   const [countRows] = await db.execute<RowDataPacket[]>(
@@ -142,6 +153,12 @@ export async function scopedAttendanceDailyHandler(req: AuthenticatedRequest, re
             -- Gated on attendance_source so biometric rows skip the lookup.
             ${aprSelect}
             ROUND(COALESCE(adr.raw_minutes, adr.biometric_minutes, adr.dialler_minutes, 0) / 60, 2) AS total_hours,
+            -- Net Hours = worked minutes less this day's kiosk-tracked break minutes,
+            -- floored at 0. break_daily_summary is a 2026-07+ feature with sparse
+            -- historical coverage (bds.total_break_minutes NULL on any day without a
+            -- kiosk row) — COALESCE to 0 so those days net to their full worked minutes
+            -- rather than showing a blank/wrong value.
+            GREATEST(COALESCE(adr.raw_minutes, 0) - COALESCE(bds.total_break_minutes, 0), 0) AS net_minutes,
             adr.attendance_status,
             adr.attendance_status AS status,
             adr.clock_in_location AS clock_in_location_name,
@@ -156,7 +173,7 @@ export async function scopedAttendanceDailyHandler(req: AuthenticatedRequest, re
             bm.branch_name,
             pm.process_name,
             ccm.cost_centre_name
-       ${fromSql}
+       ${fromSqlWithBreaks}
        ${whereSql}
       ORDER BY adr.record_date DESC, e.employee_code ASC
       LIMIT ${limit} OFFSET ${offset}`,

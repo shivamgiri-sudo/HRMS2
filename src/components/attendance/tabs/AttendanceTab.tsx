@@ -186,7 +186,30 @@ export function AttendanceTab({ employeeId }: Props) {
         </div>
       </div>
 
-      {/* Summary strip */}
+      {/* Hours strip — MTD when currentMonth is the calendar's current month (the backend
+          caps at today server-side, see useAttendanceSummary's endpoint), full-month total
+          for a past month. Kept visually separate from the day-count strip below: hours are
+          a different unit and the more commonly-asked-about figure, so they sit first,
+          directly under the month navigator. */}
+      {summaryLoading ? (
+        <div className="flex gap-3">
+          {Array.from({ length: 2 }).map((_, i) => <Skeleton key={`h-${i}`} className="h-16 flex-1 rounded-xl" />)}
+        </div>
+      ) : summary ? (
+        <div className="grid grid-cols-2 gap-2">
+          {[
+            { label: "MTD Hours", value: `${Number(summary.totalHours).toFixed(1)}h`, cls: "bg-indigo-50 text-indigo-800 border-indigo-100" },
+            { label: "OT Hours", value: `${Number(summary.otHours).toFixed(1)}h`, cls: "bg-cyan-50 text-cyan-800 border-cyan-100" },
+          ].map(item => (
+            <div key={item.label} className={`rounded-xl border p-3 text-center ${item.cls}`}>
+              <p className="text-lg font-bold">{item.value}</p>
+              <p className="text-[10px] font-medium mt-0.5 opacity-80">{item.label}</p>
+            </div>
+          ))}
+        </div>
+      ) : null}
+
+      {/* Day-count summary strip */}
       {summaryLoading ? (
         <div className="flex gap-3">
           {Array.from({ length: 7 }).map((_, i) => <Skeleton key={i} className="h-16 flex-1 rounded-xl" />)}
@@ -253,6 +276,7 @@ export function AttendanceTab({ employeeId }: Props) {
                   <th className="px-4 py-3 text-left">Login</th>
                   <th className="px-4 py-3 text-left">Logout</th>
                   <th className="px-4 py-3 text-left">Hours</th>
+                  <th className="px-4 py-3 text-left">Net Hours</th>
                   <th className="px-4 py-3 text-left">Source</th>
                 </tr>
               </thead>
@@ -276,6 +300,10 @@ export function AttendanceTab({ employeeId }: Props) {
                       <td className="px-4 py-2.5 text-xs text-slate-600">{fmtTime(r.clock_in)}</td>
                       <td className="px-4 py-2.5 text-xs text-slate-600">{fmtTime(r.clock_out)}</td>
                       <td className="px-4 py-2.5 text-xs text-slate-600">{fmtMins(r.raw_minutes)}</td>
+                      {/* Same value as Hours whenever there's no break-kiosk row for the day
+                          (the common case today — break tracking is a new, still-sparse
+                          feature) — that's the correct default, not a rendering gap. */}
+                      <td className="px-4 py-2.5 text-xs text-slate-600">{fmtMins(r.net_minutes)}</td>
                       <td className="px-4 py-2.5">
                         <span className={`inline-flex rounded px-1.5 py-0.5 text-[10px] font-semibold ${srcMeta.cls}`}>
                           {srcMeta.label}
