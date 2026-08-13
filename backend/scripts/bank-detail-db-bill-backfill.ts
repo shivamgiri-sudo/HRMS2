@@ -18,10 +18,11 @@
  *   This writes account_number_enc. Off-host, loadKey() silently substitutes the all-zeros
  *   development key, so every row written would be ciphertext production can never decrypt —
  *   and because resolveAccountNumber() falls through a failed decrypt to the legacy column,
- *   which these new rows do not have, the result is not a visible error but 155 employees who
+ *   which these new rows do not have, the result is not a visible error but ~90 employees who
  *   look banked and resolve to nothing at payment time. That is strictly worse than the MISSING
  *   state being fixed. The script therefore proves it holds the production key by decrypting
  *   ciphertext already stored in this database before it writes anything, and exits otherwise.
+ *   Verified working on the production host 2026-08-13: "key parity: 25/25 decrypt".
  *   Same guard, same reason, as scripts/bank-account-encrypt-backfill.ts.
  *
  * WHY ONLY THE CONFIRMED-RECEIPT MONTH
@@ -57,15 +58,19 @@
  *   SKIPPED, never written with a blank one: a bank file row without an IFSC is rejected by the
  *   bank, so such a record would convert a visible MISSING into an invisible INVALID.
  *
- * EXPECTED SCALE (measured read-only, 2026-08-13)
- *   383 bankless active employees -> 105 have a confirmed June credit -> 90 of those also have
- *   a valid IFSC, and 88 of the 90 are independently corroborated by employees.bank_account_number
- *   holding the same number the credit went to. So this creates ~90 records, not 155: the
- *   "155 recoverable" figure counted account numbers alone and did not account for IFSC.
+ * EXPECTED SCALE (dry run ON THE PRODUCTION HOST, 2026-08-13)
+ *   383 bankless active employees -> 105 have a confirmed 2026-06-30 credit -> 90 of those also
+ *   have a valid IFSC, all 90 from employees.ifsc_code and none from employee_master. 86 of the
+ *   90 are independently corroborated, in that employees.bank_account_number holds the same
+ *   number the confirmed credit went to; 4 rest on the credit alone. 15 are skipped for having
+ *   no valid IFSC from any source, 278 for having no confirmed credit.
+ *
+ *   So this creates 90 records, not the 155 quoted earlier: that figure counted recoverable
+ *   ACCOUNT NUMBERS and silently assumed an IFSC would be available for each.
  */
 import "dotenv/config";
 import { db } from "../src/db/mysql.js";
-import { billQuery } from "../src/db/billDb.js";
+import { billQuery, closeBillPool } from "../src/db/billDb.js";
 import { checkKeyParity, encryptField } from "../src/shared/fieldEncryption.js";
 import { logSensitiveAction } from "../src/shared/auditLog.js";
 import type { RowDataPacket, ResultSetHeader } from "mysql2";
@@ -303,4 +308,13 @@ main()
     console.error(`[bank-backfill] FATAL ${parts.join(" | ") || String(err)}`);
     process.exitCode = 1;
   })
-  .finally(() => { void (db as unknown as { end?: () => Promise<void> }).end?.(); });
+  .finally(async () => {
+    // BOTH pools, not just mas_hrms. Closing only db leaves the db_bill pool's idle sockets
+    // open and node never exits: observed on the production host 2026-08-13, where the dry run
+    // printed its complete report and then sat there until an external timeout killed it at
+    // exit code 124. Harmless for a dry run, genuinely bad for --apply — the operator sees a
+    // hung process after a write and cannot tell "finished, pool open" from "still writing",
+    // and the temptation is to Ctrl-C a script midway through creating payment destinations.
+    await (db as unknown as { end?: () => Promise<void> }).end?.().catch(() => {});
+    await closeBillPool().catch(() => {});
+  });
