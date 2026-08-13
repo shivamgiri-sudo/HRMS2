@@ -79,4 +79,29 @@ describe("budget top-up request workflow", () => {
     const service = read("src/modules/process-pnl/budget-consumption.service.ts");
     expect(service).toContain("export async function lockActiveBudgetLine");
   });
+
+  it("review() enforces maker-checker — approver cannot be the request submitter (P0P1-4)", () => {
+    const service = read("src/modules/process-pnl/budget-topup.service.ts");
+    // The guard must appear before the status dispatch (before 'if (decision === "reject")')
+    const makerCheckerIdx = service.indexOf("Maker-checker violation");
+    const rejectDispatchIdx = service.indexOf('if (decision === "reject")');
+    expect(makerCheckerIdx).toBeGreaterThan(-1);
+    expect(rejectDispatchIdx).toBeGreaterThan(-1);
+    // Guard fires before either branch of the review decision
+    expect(makerCheckerIdx).toBeLessThan(rejectDispatchIdx);
+    // Checks actor vs request submitter, not role names
+    expect(service).toContain("request.requested_by");
+    expect(service.slice(makerCheckerIdx - 100, makerCheckerIdx + 200)).toContain("actorId");
+  });
+
+  it("period lock is re-checked inside the finance_head transaction (P0-3)", () => {
+    const service = read("src/modules/process-pnl/budget-topup.service.ts");
+    expect(service).toContain("import { isPeriodLocked }");
+    // Lock check must appear after the finance_head status gate and before applyTopupToLine
+    const fhIdx = service.indexOf('effectiveRole === "finance_head"');
+    const lockIdx = service.indexOf("isPeriodLocked(", fhIdx);
+    const applyIdx = service.indexOf("applyTopupToLine(", fhIdx);
+    expect(lockIdx).toBeGreaterThan(fhIdx);
+    expect(lockIdx).toBeLessThan(applyIdx);
+  });
 });
