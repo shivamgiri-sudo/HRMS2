@@ -6,6 +6,29 @@ import { logSensitiveAction } from "../../shared/auditLog.js";
 import { sendSMS } from "../communication/sms.helper.js";
 import { encryptField } from "../../shared/fieldEncryption.js";
 
+/**
+ * A pending row for this employee + request_type, if one already exists.
+ *
+ * profile_update_approval's only unique key is its own `id` PK — a fresh
+ * randomUUID() on every submit call. The INSERT below is followed by
+ * `ON DUPLICATE KEY UPDATE`, which was clearly meant to replace an existing
+ * pending request in place (the UI tells the employee exactly that: "New
+ * requests will replace the pending one"), but a fresh id can never collide
+ * with anything, so that clause could never actually fire — conflicting
+ * pending requests for the same employee stacked up unbounded. Reusing the
+ * existing pending row's id when one exists makes the ON DUPLICATE clause
+ * do real work.
+ */
+async function findPendingApprovalId(employeeId: string, requestType: string): Promise<string | null> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT id FROM profile_update_approval
+     WHERE employee_id = ? AND request_type = ? AND status = 'pending'
+     LIMIT 1`,
+    [employeeId, requestType]
+  );
+  return (rows[0] as any)?.id ?? null;
+}
+
 export const profileApprovalService = {
   async submitBankDetailsForApproval(
     userId: string,
@@ -14,11 +37,12 @@ export const profileApprovalService = {
     oldValues?: Record<string, any>
   ) {
     const [existing] = await db.execute<RowDataPacket[]>(
-      `SELECT old_values FROM profile_update_approval
+      `SELECT id, old_values FROM profile_update_approval
        WHERE employee_id = ? AND request_type = 'bank_details' AND status = 'pending'
        LIMIT 1`,
       [employeeId]
     );
+    const existingPendingId = (existing[0] as any)?.id ?? null;
 
     const oldVals = oldValues || (existing[0] as any)?.old_values || {};
 
@@ -35,7 +59,7 @@ export const profileApprovalService = {
       [pennyDropId, employeeId, acctHash, newValues.ifsc_code ?? newValues.ifscCode ?? '']
     );
 
-    const id = randomUUID();
+    const id = existingPendingId ?? randomUUID();
     await db.execute(
       `INSERT INTO profile_update_approval
          (id, employee_id, request_type, old_values, new_values, status, requested_by_role,
@@ -194,7 +218,11 @@ export async function submitStatutoryDetailsForApproval(
   employeeId: string,
   newValues: Record<string, unknown>
 ): Promise<{ id: string; message: string }> {
-  const id = randomUUID();
+  // Same fix as submitBankDetailsForApproval above: reuse an existing pending
+  // request's id so ON DUPLICATE KEY UPDATE actually replaces it, instead of
+  // stacking a fresh conflicting request every time this is called.
+  const existingPendingId = await findPendingApprovalId(employeeId, 'statutory_details');
+  const id = existingPendingId ?? randomUUID();
   await db.execute(
     `INSERT INTO profile_update_approval
        (id, employee_id, request_type, old_values, new_values, status,
