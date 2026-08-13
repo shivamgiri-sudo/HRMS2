@@ -34,7 +34,7 @@ async function getEmployeeCode(userId: string): Promise<string | null> {
 router.get(
   '/team-quality',
   requireAuth,
-  requireRole('admin', 'hr', 'ceo', 'process_manager', 'team_leader', 'manager', 'branch_head'),
+  requireRole('admin', 'hr', 'ceo', 'process_manager', 'team_leader', 'manager', 'branch_head', 'assistant_manager'),
   async (req: AuthenticatedRequest, res: Response) => {
     try {
       const userId = req.authUser?.id;

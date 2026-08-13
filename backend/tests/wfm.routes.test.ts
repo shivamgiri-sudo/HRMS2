@@ -212,3 +212,51 @@ describe("PATCH /api/wfm/regularizations/:id/review", () => {
     expect(r.status).toBe(400);
   });
 });
+
+// Part A.3 (2026-08-13): the 4 manager-override actions previously mutated
+// wfm_roster_assignment with no check on whether attendance for that date was
+// already locked for payroll. These lock the SELECT ... adr.is_locked query
+// each handler now runs before its UPDATE, so a real "locked" answer blocks
+// with 409 and a false/absent answer leaves the pre-existing success path
+// (200) unchanged.
+describe("Manager weekoff-review overrides — attendance-lock guard (Part A.3)", () => {
+  const isLockCheckSql = (sql: string) => /SELECT adr\.is_locked/i.test(sql);
+
+  function mockAttendanceLocked(locked: boolean) {
+    mockExecute.mockImplementation(async (sql: unknown) => {
+      const text = String(sql);
+      if (isLockCheckSql(text)) return [[{ is_locked: locked ? 1 : 0 }], []];
+      if (/COUNT\(\*\)/i.test(text)) return [[{ total: 1 }], []];
+      return [[], []];
+    });
+  }
+
+  const ENDPOINTS: Array<{ name: string; path: string; body: Record<string, unknown> }> = [
+    { name: "realign", path: "/api/wfm/manager/weekoff-review/assign-1/realign", body: { reason: "shift change", new_roster_date: "2026-05-22" } },
+    { name: "force-approve", path: "/api/wfm/manager/weekoff-review/assign-1/force-approve", body: { reason: "approve as requested" } },
+    { name: "escalate", path: "/api/wfm/manager/weekoff-review/assign-1/escalate", body: { reason: "needs HR review" } },
+    { name: "reject-request", path: "/api/wfm/manager/weekoff-review/assign-1/reject-request", body: { reason: "not eligible" } },
+  ];
+
+  for (const { name, path, body } of ENDPOINTS) {
+    it(`${name}: returns 409 when attendance for the assignment's date is already locked`, async () => {
+      mockAttendanceLocked(true);
+      const r = await request(app).post(path).set(AUTH).send(body);
+      expect(r.status).toBe(409);
+      expect(r.body.error).toMatch(/locked/i);
+    });
+
+    it(`${name}: proceeds to 200 as before when attendance is not locked`, async () => {
+      mockAttendanceLocked(false);
+      const r = await request(app).post(path).set(AUTH).send(body);
+      expect(r.status).toBe(200);
+      expect(r.body.success).toBe(true);
+    });
+
+    it(`${name}: still requires reason before any lock check runs`, async () => {
+      mockAttendanceLocked(true);
+      const r = await request(app).post(path).set(AUTH).send({});
+      expect(r.status).toBe(400);
+    });
+  }
+});

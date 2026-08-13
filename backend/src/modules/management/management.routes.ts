@@ -72,14 +72,14 @@ router.get("/coaching", h(async (req: AuthenticatedRequest, res: Response) => {
   return res.json({ data: await managementService.listCoachingSessions({ employee_id: emp.id }) });
 }));
 
-router.post("/coaching", requireRole("admin", "hr", "qa", "manager", "branch_head", "process_manager"), h(async (req: AuthenticatedRequest, res: Response) => {
+router.post("/coaching", requireRole("admin", "hr", "qa", "manager", "branch_head", "process_manager", "team_leader", "assistant_manager"), h(async (req: AuthenticatedRequest, res: Response) => {
   const { employee_id, session_date, session_type } = req.body;
   if (!employee_id || !session_date || !session_type)
     return res.status(400).json({ error: "employee_id, session_date, session_type required" });
   res.status(201).json({ data: await managementService.createCoachingSession(req.body, req.authUser!.id, req) });
 }));
 
-router.get("/alerts", requireRole("admin", "hr", "manager", "branch_head", "ceo", "process_manager", "qa"), h(async (req: AuthenticatedRequest, res: Response) => {
+router.get("/alerts", requireRole("admin", "hr", "manager", "branch_head", "ceo", "process_manager", "qa", "team_leader", "assistant_manager"), h(async (req: AuthenticatedRequest, res: Response) => {
   const userId = req.authUser!.id;
   const acknowledged = req.query.acknowledged !== undefined ? req.query.acknowledged === "true" : undefined;
   const { employeeIds, isWide } = await resolveTeamScope(userId);
@@ -91,7 +91,7 @@ router.get("/alerts", requireRole("admin", "hr", "manager", "branch_head", "ceo"
   res.json({ data: await managementService.listAlerts(filters as any) });
 }));
 
-router.post("/alerts/:id/acknowledge", requireRole("admin", "hr", "manager", "branch_head", "ceo", "process_manager", "qa"), h(async (req: AuthenticatedRequest, res: Response) => {
+router.post("/alerts/:id/acknowledge", requireRole("admin", "hr", "manager", "branch_head", "ceo", "process_manager", "qa", "team_leader", "assistant_manager"), h(async (req: AuthenticatedRequest, res: Response) => {
   await managementService.acknowledgeAlert(req.params.id, req.authUser!.id, req);
   res.json({ ok: true });
 }));
@@ -125,7 +125,7 @@ router.get("/system-dashboard", requireRole("admin", "super_admin"), h(async (_r
 // ─── TNI (Training Needs Identification) ─────────────────────────────────────
 
 // Returns the calling manager's direct reports (for coaching modal dropdowns, etc.)
-router.get("/team-members", requireRole("admin", "hr", "manager", "branch_head", "ceo", "process_manager", "qa"), h(async (req: AuthenticatedRequest, res: Response) => {
+router.get("/team-members", requireRole("admin", "hr", "manager", "branch_head", "ceo", "process_manager", "qa", "team_leader", "assistant_manager"), h(async (req: AuthenticatedRequest, res: Response) => {
   const userId = req.authUser!.id;
   if (await hasRole(userId, "admin", "hr", "ceo")) {
     // Wide roles: return a small employee list (name + id only) filtered by process if provided
@@ -242,7 +242,7 @@ router.get("/ceo-metrics", requireRole("admin", "hr", "ceo", "finance"), h(async
 
 // ─── Management Team Dashboard endpoints (ManagementDashboard.tsx) ───────────
 
-router.get("/team-overview", requireRole("admin", "hr", "manager", "branch_head", "ceo", "process_manager"), h(async (req: AuthenticatedRequest, res: Response) => {
+router.get("/team-overview", requireRole("admin", "hr", "manager", "branch_head", "ceo", "process_manager", "team_leader", "assistant_manager"), h(async (req: AuthenticatedRequest, res: Response) => {
   const { employeeIds, isWide } = await resolveTeamScope(req.authUser!.id);
 
   // Build scoped WHERE clause
@@ -319,7 +319,7 @@ router.get("/team-overview", requireRole("admin", "hr", "manager", "branch_head"
   }});
 }));
 
-router.get("/agent-performance", requireRole("admin", "hr", "manager", "branch_head", "ceo", "process_manager"), h(async (req: AuthenticatedRequest, res: Response) => {
+router.get("/agent-performance", requireRole("admin", "hr", "manager", "branch_head", "ceo", "process_manager", "team_leader", "assistant_manager"), h(async (req: AuthenticatedRequest, res: Response) => {
   const { employeeIds, isWide } = await resolveTeamScope(req.authUser!.id);
   const filters: Record<string, unknown> = { ...req.query };
   if (!isWide && employeeIds) filters.employee_ids = employeeIds;
