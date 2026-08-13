@@ -167,8 +167,9 @@ function isUsable(provider: AiProvider): boolean {
 }
 
 /** See the file header "PROVIDER RESOLUTION" note for why this exists instead of a bare
- * aiProviderRegistry.getDefault() call. */
-async function resolveWorkingProvider(): Promise<AiProvider | null> {
+ * aiProviderRegistry.getDefault() call. Exported so mira-fix-draft-generate.service.ts
+ * shares the exact same resolution order rather than duplicating it. */
+export async function resolveWorkingProvider(): Promise<AiProvider | null> {
   const envKeyed: Array<[string, string | undefined]> = [
     ['claude', process.env.ANTHROPIC_API_KEY],
     ['openrouter', process.env.OPENROUTER_API_KEY],
