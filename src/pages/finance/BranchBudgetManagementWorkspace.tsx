@@ -584,40 +584,8 @@ export default function BranchBudgetManagementWorkspace() {
     onError: (error: Error) => toast.error(error.message ?? "Action failed"),
   });
 
-  type AmendTarget = {
-    budgetId: string;
-    lineId: string;
-    itemName: string;
-    taxTreatment: BranchBudgetLineInput["taxTreatment"];
-    gstRate: number;
-    gstType: NonNullable<BranchBudgetLineInput["gstType"]>;
-    recoverableTaxPct: number;
-    reason: string;
-  };
-  const [amendTarget, setAmendTarget] = useState<AmendTarget | null>(null);
-
-  const amendMutation = useMutation({
-    mutationFn: async (target: AmendTarget) => {
-      if (!target.reason.trim()) throw new Error("A reason is required.");
-      const response = await hrmsApi.patch(
-        `/api/finance/pnl/budgets/${target.budgetId}/lines/${target.lineId}/tax-treatment`,
-        {
-          taxTreatment: target.taxTreatment,
-          gstRate: target.gstRate,
-          gstType: target.gstType,
-          recoverableTaxPct: target.recoverableTaxPct,
-          reason: target.reason,
-        }
-      );
-      return response.data;
-    },
-    onSuccess: () => {
-      toast.success("Budget line tax treatment corrected and audit log written.");
-      setAmendTarget(null);
-      void detailQuery.refetch();
-    },
-    onError: (error: Error) => toast.error(error.message),
-  });
+  // amendDialogLineId: which line has the Tax Amendment dialog open (new two-step flow)
+  const [amendDialogLineId, setAmendDialogLineId] = useState<string | null>(null);
 
   const currentBudget = budgets[0];
   const editableBudget = EDITABLE_BUDGET_STATUSES.includes(currentBudget?.status ?? "")
@@ -692,6 +660,20 @@ export default function BranchBudgetManagementWorkspace() {
     });
     return [...map.values()].sort((a, b) => a.head.localeCompare(b.head) || (a.subHead ?? "").localeCompare(b.subHead ?? ""));
   }, [detailQuery.data]);
+  // Tax amendment queue — pending and recent amendments for the active/selected budget.
+  const taxAmendmentsQuery = useQuery({
+    queryKey: ["budget-tax-amendments", savedBudgetId ?? detailId],
+    queryFn: async () => {
+      const id = savedBudgetId ?? detailId;
+      if (!id) return [];
+      const resp = await hrmsApi.get<{ success: boolean; data: TaxAmendmentRecord[] }>(
+        `/api/finance/pnl/budget-tax-amendments?budgetId=${id}`
+      );
+      return resp.data.data ?? [];
+    },
+    enabled: Boolean(savedBudgetId ?? detailId),
+  });
+
   const { coverageQuery, saveCoverage } = useBudgetCoverage(detailId);
   const { mastersQuery, saveHead, saveSubHead, deleteHead, deleteSubHead } =
     useFinanceExpenseMasters(Boolean(capabilities?.canManageExpenseMaster));
@@ -1658,28 +1640,27 @@ export default function BranchBudgetManagementWorkspace() {
                       <Field label="Unit rate *"><Input type="number" min="0" step="0.01" value={line.unitRate} disabled={!canEdit} onChange={(event) => updateLine(index, { unitRate: Number(event.target.value) })} /></Field>
                       <Field label="Tax treatment *">
                         <div className="flex items-center gap-2">
-                          <select className="h-10 flex-1 rounded-md border border-input bg-background px-3 text-sm" value={line.taxTreatment} disabled={!canEdit} onChange={(event) => { const treatment = event.target.value as BranchBudgetLineInput["taxTreatment"]; updateLine(index, { taxTreatment: treatment, gstRate: ["exempt", "non_gst"].includes(treatment) ? 0 : line.gstRate, gstType: ["exempt", "non_gst"].includes(treatment) ? "none" : line.gstType, recoverableTaxPct: ["exempt", "non_gst"].includes(treatment) ? 0 : line.recoverableTaxPct }); }}><option value="exclusive">Tax exclusive</option><option value="inclusive">Tax inclusive</option><option value="exempt">Exempt</option><option value="reverse_charge">Reverse charge</option><option value="non_gst">Non-GST</option></select>
-                          {!canEdit && canAmendTax && ["non_gst", "exempt"].includes(line.taxTreatment) && line.id && savedBudgetId && (
+                          <select className="h-10 flex-1 rounded-md border border-input bg-background px-3 text-sm" value={line.taxTreatment} disabled={!canEdit} onChange={(event) => { const treatment = event.target.value as BranchBudgetLineInput["taxTreatment"]; updateLine(index, { taxTreatment: treatment, gstRate: ["exempt", "non_gst"].includes(treatment) ? 0 : line.gstRate, gstType: ["exempt", "non_gst"].includes(treatment) ? "none" : line.gstType, recoverableTaxPct: ["exempt", "non_gst"].includes(treatment) ? 0 : line.recoverableTaxPct }); }}>
+                            {TAX_TREATMENT_OPTIONS.map(({ value, label }) => <option key={value} value={value}>{label}</option>)}
+                          </select>
+                          {!canEdit && canAmendTax && line.id && savedBudgetId && (
                             <Button
                               type="button"
                               variant="outline"
                               size="sm"
                               className="shrink-0 border-amber-400 text-amber-700 hover:bg-amber-50"
-                              onClick={() => setAmendTarget({
-                                budgetId: savedBudgetId,
-                                lineId: line.id!,
-                                itemName: line.itemName,
-                                taxTreatment: "exclusive",
-                                gstRate: 18,
-                                gstType: "cgst_sgst",
-                                recoverableTaxPct: 100,
-                                reason: "",
-                              })}
+                              onClick={() => setAmendDialogLineId(line.id!)}
                             >
-                              Fix GST
+                              Amend Tax
                             </Button>
                           )}
                         </div>
+                        {canEdit && ["non_gst", "exempt"].includes(line.taxTreatment) && (
+                          <p className="mt-1.5 flex items-start gap-1.5 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                            <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                            This line is <strong>non-taxable</strong> — GRNs raised against it cannot include GST invoice components. If the vendor charges GST and the budget represents the base cost, use <strong>GST Exclusive</strong> instead.
+                          </p>
+                        )}
                       </Field>
                       <Field label="GST rate *"><select className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm" value={line.gstRate} disabled={!canEdit || ["exempt", "non_gst"].includes(line.taxTreatment)} onChange={(event) => updateLine(index, { gstRate: Number(event.target.value) })}>{GST_RATES.map((rate) => <option key={rate} value={rate}>{rate}%</option>)}</select></Field>
                       <Field label="GST type *"><select className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm" value={line.gstType} disabled={!canEdit || ["exempt", "non_gst"].includes(line.taxTreatment)} onChange={(event) => updateLine(index, { gstType: event.target.value as BranchBudgetLineInput["gstType"] })}><option value="cgst_sgst">CGST + SGST</option><option value="igst">IGST</option><option value="none">None</option></select></Field>
@@ -1693,6 +1674,19 @@ export default function BranchBudgetManagementWorkspace() {
                       </Field>
                       <Field label="Business justification and quantity/rate basis *" span={4}><Textarea value={line.justification} disabled={!canEdit} onChange={(event) => updateLine(index, { justification: event.target.value })} /></Field>
                       <div className="grid gap-3 md:col-span-2 sm:grid-cols-4 xl:col-span-4"><Metric label="Without tax" value={money(amount.base)} /><Metric label="Tax" value={money(amount.tax)} tone="blue" /><Metric label="With tax" value={money(amount.gross)} tone="emerald" /><Metric label="P&L cost" value={money(amount.pnlCost)} tone="amber" /></div>
+                      {Number(line.unitRate) > 0 && (
+                        <div className="md:col-span-2 xl:col-span-4 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-xs">
+                          <p className="mb-2 font-semibold text-slate-600">Planning breakdown (Model A)</p>
+                          <div className="grid grid-cols-2 gap-x-6 gap-y-0.5">
+                            <span className="text-slate-500">Base Budget</span><span className="text-right font-mono text-slate-700">{money(amount.base)}</span>
+                            <span className="text-slate-500">GST @ {line.gstRate}%</span><span className="text-right font-mono text-slate-700">{money(amount.tax)}</span>
+                            <span className="font-medium text-slate-600">Gross Budget Exposure</span><span className="text-right font-mono font-semibold text-slate-700">{money(amount.gross)}</span>
+                            <span className="text-emerald-600">Recoverable GST</span><span className="text-right font-mono text-emerald-700">{money(amount.base + amount.tax - amount.pnlCost)}</span>
+                            <span className="text-rose-600">Non-Recoverable GST</span><span className="text-right font-mono text-rose-700">{money(amount.pnlCost - amount.base)}</span>
+                            <span className="font-semibold text-slate-700">P&amp;L Budget</span><span className="text-right font-mono font-semibold text-slate-700">{money(amount.pnlCost)}</span>
+                          </div>
+                        </div>
+                      )}
                       {scope === "branch_common" && line.allocationDriver === "manual" && Boolean(activeCostCentres.length) && (
                         <div className="rounded-2xl border border-slate-200 bg-slate-50/60 p-4 md:col-span-2 xl:col-span-4">
                           <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Manual cost-centre split % (must total 100%)</p>
@@ -1894,6 +1888,17 @@ export default function BranchBudgetManagementWorkspace() {
                     <div className="rounded-2xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
                       <span className="font-semibold">{openCorrectionCount} open correction note(s)</span> against this budget. Each one is shown on its own budget line in the Plan Builder tab.
                     </div>
+                  )}
+
+                  {canAmendTax && (savedBudgetId ?? detailId) && (
+                    <TaxAmendmentApprovalQueue
+                      budgetId={(savedBudgetId ?? detailId)!}
+                      currentUserId={user?.id ?? ""}
+                      onReviewed={() => {
+                        void detailQuery.refetch();
+                        void taxAmendmentsQuery.refetch();
+                      }}
+                    />
                   )}
 
                   {budgets.map((budget) => {
@@ -2336,96 +2341,21 @@ export default function BranchBudgetManagementWorkspace() {
         </Dialog>
       )}
 
-      {/* Tax-treatment amendment dialog — Finance Head / Super Admin only, for active budgets
-          where a line was planned as non_gst/exempt but the vendor invoice carries GST. */}
-      {amendTarget && (
-        <Dialog open onOpenChange={(open) => { if (!open) setAmendTarget(null); }}>
-          <DialogContent className="max-w-md">
-            <DialogHeader>
-              <DialogTitle>Correct Tax Treatment</DialogTitle>
-            </DialogHeader>
-            <div className="space-y-4 py-2 text-sm">
-              <p className="text-muted-foreground">
-                Budget line <strong>{amendTarget.itemName}</strong> is currently marked{" "}
-                <strong className="text-amber-700">{amendTarget.taxTreatment.replace("_", "-")}</strong>.
-                Update it to allow GST-bearing vendor invoices. This amendment is audited.
-              </p>
-              <div className="grid grid-cols-2 gap-3">
-                <div className="space-y-1">
-                  <Label>Tax treatment</Label>
-                  <select
-                    className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
-                    value={amendTarget.taxTreatment}
-                    onChange={(e) => setAmendTarget((t) => t && ({ ...t, taxTreatment: e.target.value as any, gstRate: ["exempt", "non_gst"].includes(e.target.value) ? 0 : t.gstRate, gstType: ["exempt", "non_gst"].includes(e.target.value) ? "none" : t.gstType, recoverableTaxPct: ["exempt", "non_gst"].includes(e.target.value) ? 0 : t.recoverableTaxPct }))}
-                  >
-                    <option value="exclusive">Tax exclusive</option>
-                    <option value="inclusive">Tax inclusive</option>
-                    <option value="reverse_charge">Reverse charge</option>
-                    <option value="exempt">Exempt</option>
-                    <option value="non_gst">Non-GST</option>
-                  </select>
-                </div>
-                <div className="space-y-1">
-                  <Label>GST rate</Label>
-                  <select
-                    className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
-                    value={amendTarget.gstRate}
-                    disabled={["exempt", "non_gst"].includes(amendTarget.taxTreatment)}
-                    onChange={(e) => setAmendTarget((t) => t && ({ ...t, gstRate: Number(e.target.value) }))}
-                  >
-                    {GST_RATES.map((rate) => (
-                      <option key={rate} value={rate}>{rate}%</option>
-                    ))}
-                  </select>
-                </div>
-                <div className="space-y-1">
-                  <Label>GST type</Label>
-                  <select
-                    className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
-                    value={amendTarget.gstType}
-                    disabled={["exempt", "non_gst"].includes(amendTarget.taxTreatment)}
-                    onChange={(e) => setAmendTarget((t) => t && ({ ...t, gstType: e.target.value as any }))}
-                  >
-                    <option value="cgst_sgst">CGST + SGST</option>
-                    <option value="igst">IGST</option>
-                    <option value="none">None</option>
-                  </select>
-                </div>
-                <div className="space-y-1">
-                  <Label>Recoverable GST %</Label>
-                  <Input
-                    type="number"
-                    min="0"
-                    max="100"
-                    className="h-9"
-                    value={amendTarget.recoverableTaxPct}
-                    disabled={["exempt", "non_gst"].includes(amendTarget.taxTreatment)}
-                    onChange={(e) => setAmendTarget((t) => t && ({ ...t, recoverableTaxPct: Number(e.target.value) }))}
-                  />
-                </div>
-              </div>
-              <div className="space-y-1">
-                <Label>Reason for amendment <span className="text-destructive">*</span></Label>
-                <Textarea
-                  placeholder="e.g. Vendor charges 18% GST on this service; budget was planned without tax in error."
-                  value={amendTarget.reason}
-                  onChange={(e) => setAmendTarget((t) => t && ({ ...t, reason: e.target.value }))}
-                  rows={3}
-                />
-              </div>
-            </div>
-            <DialogFooter>
-              <Button variant="outline" onClick={() => setAmendTarget(null)}>Cancel</Button>
-              <Button
-                disabled={!amendTarget.reason.trim() || amendMutation.isPending}
-                onClick={() => amendMutation.mutate(amendTarget)}
-              >
-                {amendMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-                Save amendment
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
+      {/* Tax-treatment amendment dialog — two-step maker-checker flow.
+          Step 1 (this): requestor opens preflight, fills form, submits amendment request.
+          Step 2: a different Finance Head / Super Admin approves or rejects in the Approval tab. */}
+      {amendDialogLineId && savedBudgetId && (
+        <TaxAmendmentDialog
+          budgetId={savedBudgetId}
+          lineId={amendDialogLineId}
+          onClose={() => setAmendDialogLineId(null)}
+          onSubmitted={() => {
+            setAmendDialogLineId(null);
+            toast.success("Tax amendment requested — awaiting Finance Head approval before taking effect.");
+            void detailQuery.refetch();
+            void taxAmendmentsQuery.refetch();
+          }}
+        />
       )}
       {/* Delete budget AlertDialog — replaces window.prompt() */}
       <AlertDialog open={Boolean(pendingDeleteBudget)} onOpenChange={(open) => { if (!open) { setPendingDeleteBudget(null); setDeleteBudgetReason(""); } }}>
@@ -2938,12 +2868,12 @@ type SubHeadDraft = {
   defaultAllocationDriver: string;
 };
 
-const TAX_TREATMENTS: BranchBudgetLineInput["taxTreatment"][] = [
-  "exclusive",
-  "inclusive",
-  "exempt",
-  "reverse_charge",
-  "non_gst",
+const TAX_TREATMENT_OPTIONS: { value: BranchBudgetLineInput["taxTreatment"]; label: string }[] = [
+  { value: "exclusive",      label: "GST Exclusive — budget amount is before GST" },
+  { value: "inclusive",      label: "GST Inclusive — budget amount already includes GST" },
+  { value: "non_gst",        label: "Non-GST — no GST expected on this supply" },
+  { value: "exempt",         label: "GST Exempt — supply is GST-exempt" },
+  { value: "reverse_charge", label: "Reverse Charge (RCM)" },
 ];
 
 const NEW_SUB_HEAD: SubHeadDraft = {
@@ -3003,8 +2933,12 @@ function SubHeadForm({
         <label className="space-y-1 text-[11px] text-slate-500">
           Tax treatment
           <select className={field} value={draft.defaultTaxTreatment} onChange={(event) => set("defaultTaxTreatment", event.target.value as SubHeadDraft["defaultTaxTreatment"])}>
-            {TAX_TREATMENTS.map((value) => <option key={value} value={value}>{value.replaceAll("_", " ")}</option>)}
+            {TAX_TREATMENT_OPTIONS.map(({ value, label }) => <option key={value} value={value}>{label}</option>)}
           </select>
+          <span className="mt-0.5 block leading-4 text-slate-400">
+            <strong className="text-slate-500">GST Exclusive:</strong> budget = pre-GST base; GST added on invoice.{" "}
+            <strong className="text-slate-500">Non-GST / Exempt:</strong> use only when no GST invoice is expected — not simply because the budget is entered before GST.
+          </span>
         </label>
         <label className="space-y-1 text-[11px] text-slate-500">
           GST rate
@@ -3307,5 +3241,396 @@ function ExpenseMasterPanel({
         </CardContent>
       </Card>
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Tax Amendment types and components
+// ---------------------------------------------------------------------------
+
+export interface TaxAmendmentRecord {
+  id: string;
+  budget_id: string;
+  line_id: string;
+  item_name: string;
+  old_tax_treatment: string;
+  new_tax_treatment: string;
+  old_gst_rate: number;
+  new_gst_rate: number;
+  old_gross: number;
+  new_gross: number;
+  old_pnl: number;
+  new_pnl: number;
+  gross_delta: number;
+  pnl_delta: number;
+  reason: string;
+  requested_by: string;
+  requested_at: string;
+  approved_by: string | null;
+  approved_at: string | null;
+  rejected_by: string | null;
+  rejected_at: string | null;
+  rejection_reason: string | null;
+  status: "pending" | "approved" | "rejected";
+}
+
+interface TaxAmendmentPreflight {
+  budgetId: string;
+  budgetStatus: string;
+  periodLocked: boolean;
+  lineId: string;
+  itemName: string;
+  currentTaxTreatment: string;
+  currentGstRate: number;
+  currentGstType: string;
+  currentRecoverablePct: number;
+  baseAmount: number;
+  taxAmount: number;
+  grossAmount: number;
+  recoverableTaxAmount: number;
+  pnlCostAmount: number;
+  reservedAmount: number;
+  consumedAmount: number;
+  openGrnCount: number;
+  canAmend: boolean;
+  blockedReason: "PERIOD_LOCKED" | "BUDGET_LINE_ALREADY_IN_USE" | "PENDING_AMENDMENT_EXISTS" | "WRONG_STATUS" | null;
+}
+
+const BLOCKED_MESSAGES: Record<NonNullable<TaxAmendmentPreflight["blockedReason"]>, string> = {
+  BUDGET_LINE_ALREADY_IN_USE:
+    "This budget line has reservations, consumption, or an open GRN against it. A simple tax treatment correction is not available. Ask Finance to raise a controlled budget revision.",
+  PERIOD_LOCKED:
+    "The accounting period for this budget is locked. Tax treatment amendments are blocked until the period is reopened.",
+  PENDING_AMENDMENT_EXISTS:
+    "A tax amendment is already pending approval for this line. It must be approved or rejected before a new one can be raised.",
+  WRONG_STATUS:
+    "The budget must be in Active status to raise a tax treatment amendment.",
+};
+
+function TaxAmendmentDialog({
+  budgetId,
+  lineId,
+  onClose,
+  onSubmitted,
+}: {
+  budgetId: string;
+  lineId: string;
+  onClose: () => void;
+  onSubmitted: () => void;
+}) {
+  const preflightQuery = useQuery({
+    queryKey: ["tax-amendment-preflight", budgetId, lineId],
+    queryFn: async () => {
+      const resp = await hrmsApi.get<{ success: boolean; data: TaxAmendmentPreflight }>(
+        `/api/finance/pnl/budgets/${budgetId}/lines/${lineId}/tax-amendment-preflight`
+      );
+      return resp.data.data;
+    },
+    staleTime: 0,
+  });
+
+  const preflight = preflightQuery.data;
+
+  const [form, setForm] = useState({
+    taxTreatment: "exclusive" as BranchBudgetLineInput["taxTreatment"],
+    gstRate: 18,
+    gstType: "cgst_sgst" as NonNullable<BranchBudgetLineInput["gstType"]>,
+    recoverableTaxPct: 100,
+    reason: "",
+  });
+
+  // Pre-fill from preflight once loaded
+  useEffect(() => {
+    if (preflight) {
+      setForm((f) => ({
+        ...f,
+        taxTreatment: preflight.currentTaxTreatment as BranchBudgetLineInput["taxTreatment"],
+        gstRate: preflight.currentGstRate,
+        gstType: preflight.currentGstType as NonNullable<BranchBudgetLineInput["gstType"]>,
+        recoverableTaxPct: preflight.currentRecoverablePct,
+      }));
+    }
+  }, [preflight]);
+
+  const requestMutation = useMutation({
+    mutationFn: async () => {
+      if (!form.reason.trim()) throw new Error("A reason is required.");
+      const resp = await hrmsApi.patch(
+        `/api/finance/pnl/budgets/${budgetId}/lines/${lineId}/tax-treatment`,
+        {
+          taxTreatment: form.taxTreatment,
+          gstRate: form.gstRate,
+          gstType: form.gstType,
+          recoverableTaxPct: form.recoverableTaxPct,
+          reason: form.reason,
+        }
+      );
+      return resp.data;
+    },
+    onSuccess: onSubmitted,
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const isNonGst = ["non_gst", "exempt"].includes(form.taxTreatment);
+  const field = "h-9 w-full rounded-md border border-input bg-background px-3 text-sm";
+
+  return (
+    <Dialog open onOpenChange={(open) => { if (!open) onClose(); }}>
+      <DialogContent className="max-w-lg">
+        <DialogHeader>
+          <DialogTitle>Amend Tax Treatment</DialogTitle>
+          {preflight && (
+            <p className="text-sm text-muted-foreground pt-1">
+              Line: <strong>{preflight.itemName}</strong>
+            </p>
+          )}
+        </DialogHeader>
+
+        {preflightQuery.isLoading && (
+          <div className="flex justify-center py-10">
+            <Loader2 className="h-6 w-6 animate-spin text-slate-400" />
+          </div>
+        )}
+
+        {preflightQuery.isError && (
+          <p className="py-4 text-center text-sm text-rose-600">Failed to load preflight data.</p>
+        )}
+
+        {preflight?.blockedReason && (
+          <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+            <p className="font-semibold mb-1">Amendment not available</p>
+            <p>{BLOCKED_MESSAGES[preflight.blockedReason]}</p>
+          </div>
+        )}
+
+        {preflight?.canAmend && (
+          <div className="space-y-4 py-1 text-sm">
+            {/* Current vs proposed financial impact */}
+            <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-xs">
+              <p className="mb-2 font-semibold text-slate-600">Current values</p>
+              <div className="grid grid-cols-2 gap-x-4 gap-y-0.5 text-slate-500">
+                <span>Treatment</span><span className="font-mono text-right">{preflight.currentTaxTreatment.replace("_", " ")}</span>
+                <span>Gross Budget</span><span className="font-mono text-right">{money(preflight.grossAmount)}</span>
+                <span>P&L Budget</span><span className="font-mono text-right">{money(preflight.pnlCostAmount)}</span>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1">
+                <Label>New tax treatment <span className="text-destructive">*</span></Label>
+                <select
+                  className={field}
+                  value={form.taxTreatment}
+                  onChange={(e) => {
+                    const t = e.target.value as BranchBudgetLineInput["taxTreatment"];
+                    setForm((f) => ({
+                      ...f,
+                      taxTreatment: t,
+                      gstRate: ["exempt", "non_gst"].includes(t) ? 0 : f.gstRate,
+                      gstType: ["exempt", "non_gst"].includes(t) ? "none" : f.gstType,
+                      recoverableTaxPct: ["exempt", "non_gst"].includes(t) ? 0 : f.recoverableTaxPct,
+                    }));
+                  }}
+                >
+                  {TAX_TREATMENT_OPTIONS.map(({ value, label }) => <option key={value} value={value}>{label}</option>)}
+                </select>
+              </div>
+              <div className="space-y-1">
+                <Label>GST rate</Label>
+                <select className={field} value={form.gstRate} disabled={isNonGst}
+                  onChange={(e) => setForm((f) => ({ ...f, gstRate: Number(e.target.value) }))}>
+                  {GST_RATES.map((r) => <option key={r} value={r}>{r}%</option>)}
+                </select>
+              </div>
+              <div className="space-y-1">
+                <Label>GST type</Label>
+                <select className={field} value={form.gstType} disabled={isNonGst}
+                  onChange={(e) => setForm((f) => ({ ...f, gstType: e.target.value as any }))}>
+                  <option value="cgst_sgst">CGST + SGST</option>
+                  <option value="igst">IGST</option>
+                  <option value="none">None</option>
+                </select>
+              </div>
+              <div className="space-y-1">
+                <Label>Recoverable GST %</Label>
+                <Input type="number" min="0" max="100" className="h-9"
+                  value={form.recoverableTaxPct} disabled={isNonGst}
+                  onChange={(e) => setForm((f) => ({ ...f, recoverableTaxPct: Number(e.target.value) }))} />
+              </div>
+            </div>
+
+            <div className="space-y-1">
+              <Label>Reason for amendment <span className="text-destructive">*</span></Label>
+              <Textarea
+                placeholder="e.g. Sub-head default was set to Non-GST in error; vendor charges 18% GST on this service."
+                value={form.reason}
+                onChange={(e) => setForm((f) => ({ ...f, reason: e.target.value }))}
+                rows={3}
+              />
+            </div>
+
+            <p className="text-xs text-muted-foreground">
+              This amendment request will be sent to Finance Head for approval. No budget values change until a second authorised reviewer approves.
+            </p>
+          </div>
+        )}
+
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>Cancel</Button>
+          {preflight?.canAmend && (
+            <Button
+              disabled={!form.reason.trim() || requestMutation.isPending}
+              onClick={() => requestMutation.mutate()}
+            >
+              {requestMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+              Submit Amendment Request
+            </Button>
+          )}
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+export function TaxAmendmentApprovalQueue({
+  budgetId,
+  currentUserId,
+  onReviewed,
+}: {
+  budgetId: string;
+  currentUserId: string;
+  onReviewed: () => void;
+}) {
+  const amendmentsQuery = useQuery({
+    queryKey: ["budget-tax-amendments", budgetId],
+    queryFn: async () => {
+      const resp = await hrmsApi.get<{ success: boolean; data: TaxAmendmentRecord[] }>(
+        `/api/finance/pnl/budget-tax-amendments?budgetId=${budgetId}`
+      );
+      return resp.data.data ?? [];
+    },
+  });
+
+  const [rejectTarget, setRejectTarget] = useState<string | null>(null);
+  const [rejectReason, setRejectReason] = useState("");
+
+  const reviewMutation = useMutation({
+    mutationFn: async ({ id, decision, reason }: { id: string; decision: "approved" | "rejected"; reason?: string }) => {
+      const resp = await hrmsApi.post(`/api/finance/pnl/budget-tax-amendments/${id}/review`, { decision, reason });
+      return resp.data;
+    },
+    onSuccess: () => {
+      toast.success("Amendment reviewed");
+      setRejectTarget(null);
+      setRejectReason("");
+      void amendmentsQuery.refetch();
+      onReviewed();
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const pending = (amendmentsQuery.data ?? []).filter((a) => a.status === "pending");
+
+  if (amendmentsQuery.isLoading) {
+    return <div className="flex justify-center py-6"><Loader2 className="h-5 w-5 animate-spin text-slate-400" /></div>;
+  }
+
+  if (!pending.length) return null;
+
+  return (
+    <>
+      <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 p-4">
+        <h3 className="mb-3 flex items-center gap-2 text-sm font-semibold text-amber-800">
+          <AlertTriangle className="h-4 w-4" />
+          Pending Tax Treatment Amendments ({pending.length})
+        </h3>
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="text-left text-slate-500 border-b border-amber-200">
+                <th className="pb-2 pr-4">Line</th>
+                <th className="pb-2 pr-4">Change</th>
+                <th className="pb-2 pr-4 text-right">Gross Δ</th>
+                <th className="pb-2 pr-4 text-right">P&L Δ</th>
+                <th className="pb-2 pr-4">Requested</th>
+                <th className="pb-2">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {pending.map((a) => (
+                <tr key={a.id} className="border-t border-amber-100">
+                  <td className="py-2 pr-4 font-medium text-slate-700 max-w-[140px] truncate" title={a.item_name}>{a.item_name}</td>
+                  <td className="py-2 pr-4 text-slate-600 whitespace-nowrap">
+                    <span className="rounded bg-amber-100 px-1.5 py-0.5">{a.old_tax_treatment.replace("_", " ")}</span>
+                    {" → "}
+                    <span className="rounded bg-emerald-100 px-1.5 py-0.5">{a.new_tax_treatment.replace("_", " ")}</span>
+                  </td>
+                  <td className={`py-2 pr-4 font-mono text-right whitespace-nowrap ${Number(a.gross_delta) > 0 ? "text-rose-600" : "text-slate-600"}`}>
+                    {Number(a.gross_delta) > 0 ? "+" : ""}{money(Number(a.gross_delta))}
+                  </td>
+                  <td className={`py-2 pr-4 font-mono text-right whitespace-nowrap ${Number(a.pnl_delta) > 0 ? "text-rose-600" : "text-slate-600"}`}>
+                    {Number(a.pnl_delta) > 0 ? "+" : ""}{money(Number(a.pnl_delta))}
+                  </td>
+                  <td className="py-2 pr-4 text-slate-500 whitespace-nowrap">
+                    {new Date(a.requested_at).toLocaleDateString("en-IN", { day: "2-digit", month: "short" })}
+                  </td>
+                  <td className="py-2">
+                    {a.requested_by === currentUserId ? (
+                      <span className="text-slate-400 italic">You raised this</span>
+                    ) : (
+                      <div className="flex gap-2">
+                        <button
+                          disabled={reviewMutation.isPending}
+                          onClick={() => reviewMutation.mutate({ id: a.id, decision: "approved" })}
+                          className="rounded bg-emerald-600 px-2 py-1 text-white text-[11px] font-medium hover:bg-emerald-700 disabled:opacity-50"
+                        >
+                          Approve
+                        </button>
+                        <button
+                          disabled={reviewMutation.isPending}
+                          onClick={() => { setRejectTarget(a.id); setRejectReason(""); }}
+                          className="rounded border border-rose-300 px-2 py-1 text-rose-600 text-[11px] font-medium hover:bg-rose-50 disabled:opacity-50"
+                        >
+                          Reject
+                        </button>
+                      </div>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* Reject reason dialog */}
+      {rejectTarget && (
+        <Dialog open onOpenChange={(open) => { if (!open) { setRejectTarget(null); setRejectReason(""); } }}>
+          <DialogContent className="max-w-sm">
+            <DialogHeader><DialogTitle>Reject Amendment</DialogTitle></DialogHeader>
+            <div className="space-y-2 py-1">
+              <Label>Reason for rejection <span className="text-destructive">*</span></Label>
+              <Textarea
+                rows={3}
+                placeholder="Explain why this amendment is being rejected…"
+                value={rejectReason}
+                onChange={(e) => setRejectReason(e.target.value)}
+              />
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => { setRejectTarget(null); setRejectReason(""); }}>Cancel</Button>
+              <Button
+                variant="destructive"
+                disabled={!rejectReason.trim() || reviewMutation.isPending}
+                onClick={() => reviewMutation.mutate({ id: rejectTarget!, decision: "rejected", reason: rejectReason })}
+              >
+                {reviewMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                Confirm Rejection
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      )}
+    </>
   );
 }

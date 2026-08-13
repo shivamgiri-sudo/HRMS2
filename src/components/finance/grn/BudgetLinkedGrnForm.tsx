@@ -834,7 +834,7 @@ export function BudgetLinkedGrnForm({
             const badGroup = vendorCostCentreGroups.find((g) => g.costCentreKey === badSplit.costCentreKey);
             const badLine = badGroup?.lines.find((l) => l.id === badSplit.budgetLineId);
             const label = badLine?.tax_treatment === "exempt" ? "exempt" : "non-taxable";
-            next.costCentreSplit = `"${badGroup?.costCentreName || "Unassigned"}": budget line is marked ${label} — it cannot carry a GST invoice component. Ask Finance to correct the budget line's tax treatment in Branch Budget Management.`;
+            next.costCentreSplit = `"${badGroup?.costCentreName || "Unassigned"}": budget line is marked ${label} — it cannot carry a GST invoice component. Ask Finance to review this in Branch Budget Management → Approval tab → Amend Tax button on the affected line. If the line has already been reserved or consumed, Finance will need to raise a controlled budget revision instead.`;
           }
         }
         if (!invoiceComponents.some((item) => Number(item.amountWithoutTax) > 0)) {

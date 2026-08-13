@@ -934,7 +934,7 @@ export const grnSmartService = {
         if (exemptSplit) {
           const label = String(exemptSplit.line.tax_treatment) === "exempt" ? "exempt" : "non-taxable";
           throw new Error(
-            `Cost centre "${exemptSplit.line.cost_centre_name || "Unassigned"}": budget line is marked ${label} and cannot carry a GST-bearing invoice component.`
+            `Cost centre "${exemptSplit.line.cost_centre_name || "Unassigned"}": budget line is marked ${label} and cannot carry a GST-bearing invoice component. Finance should review the budget line tax treatment in Branch Budget Management → Approval tab → Amend Tax button. If the line is unused and the period is open, a Tax Treatment Amendment can be requested; otherwise a controlled budget revision is required.`
           );
         }
       }
