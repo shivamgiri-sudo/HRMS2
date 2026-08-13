@@ -19,7 +19,7 @@ import { bootstrapCandidateForEmployee } from "./employee-bgv-bootstrap.service.
 import { encryptField, decryptField } from "../../shared/fieldEncryption.js";
 import { encryptPanForSync, blindIndexPan } from "../../shared/syncPiiEncryption.js";
 import { validateBankFields, validateStatutoryFields } from "../../shared/statutoryFormat.js";
-import { SELF_EDITABLE_PERSONAL_COLUMNS } from "./fieldOwnership.js";
+import { SELF_EDITABLE_PERSONAL_COLUMNS, dbColumnFor } from "./fieldOwnership.js";
 
 const router = Router();
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -83,7 +83,12 @@ router.get("/me", h(async (req: any, res: any) => {
        e.mobile, e.personal_email, e.personal_phone, e.alternate_mobile,
        e.avatar_url, e.photo_url,
        e.gender, e.date_of_birth, e.marital_status, e.blood_group,
-       e.address_line1 AS address, e.address_line1, e.city, e.state, e.country, e.pincode,
+       -- address1 is the real, populated column (30,120/58,840 rows) — used by admin
+       -- PATCH /:id, onboarding creation and every document/form-fill path. address_line1
+       -- is a near-empty column (2/58,840) that only this route used to touch, so an
+       -- employee's own profile showed a blank address almost always. Read from address1
+       -- under the address_line1 alias so the wire contract (Profile.tsx) is unchanged.
+       e.address1 AS address, e.address1 AS address_line1, e.city, e.state, e.country, e.pincode,
        e.employment_status AS status, e.employment_status, e.employment_type,
        e.designation_id, e.department_id, e.branch_id, e.process_id,
        e.reporting_manager_id, e.manager_id,
@@ -331,7 +336,9 @@ router.patch("/me", h(async (req: any, res: any) => {
   const changedFields: string[] = [];
   for (const field of ALLOWED_FIELDS) {
     if (req.body[field] !== undefined) {
-      updates.push(`\`${field}\` = ?`);
+      // dbColumnFor: almost every field's request-body name is also its real `employees`
+      // column, except address_line1, which writes to address1 — see fieldOwnership.ts.
+      updates.push(`\`${dbColumnFor(field)}\` = ?`);
       values.push(req.body[field]);
       changedFields.push(field);
     }
@@ -343,7 +350,12 @@ router.patch("/me", h(async (req: any, res: any) => {
   // marital-status changes were silent. Read the before-state for exactly the fields being
   // changed (not the whole row) so the log carries a real diff, matching the shape
   // employee.service.ts's admin PATCH /:id already uses for Employment-field changes.
-  const beforeCols = changedFields.map((f) => `\`${f}\``).join(", ");
+  // Aliased back to the wire field name only where the real column (dbColumnFor) differs,
+  // so oldValues/newValues agree on key names without changing the SQL shape for every
+  // other field that already matches 1:1.
+  const beforeCols = changedFields
+    .map((f) => { const col = dbColumnFor(f); return col === f ? `\`${col}\`` : `\`${col}\` AS \`${f}\``; })
+    .join(", ");
   const [beforeRows] = await db.execute(`SELECT ${beforeCols} FROM employees WHERE id = ? LIMIT 1`, [empId]) as any[];
   const oldValues = beforeRows[0] ?? {};
   const newValues: Record<string, unknown> = {};

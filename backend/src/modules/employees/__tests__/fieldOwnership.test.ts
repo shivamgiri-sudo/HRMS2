@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { FIELD_OWNERSHIP, SELF_EDITABLE_PERSONAL_COLUMNS } from "../fieldOwnership.js";
+import { FIELD_OWNERSHIP, SELF_EDITABLE_PERSONAL_COLUMNS, dbColumnFor } from "../fieldOwnership.js";
 
 describe("FIELD_OWNERSHIP", () => {
   it("every entry has exactly one ownership shape it can honestly claim", () => {
@@ -59,5 +59,23 @@ describe("SELF_EDITABLE_PERSONAL_COLUMNS", () => {
     expect(SELF_EDITABLE_PERSONAL_COLUMNS).not.toContain("employment_status");
     expect(SELF_EDITABLE_PERSONAL_COLUMNS).not.toContain("emergency_contact");
     expect(SELF_EDITABLE_PERSONAL_COLUMNS).not.toContain("nominee");
+  });
+});
+
+describe("dbColumnFor", () => {
+  // Regression test, 2026-08-13: address_line1 is a near-empty column (2 of 58,840 rows)
+  // that only /employees/me ever touched; address1 is the real, populated one every other
+  // path (admin edit, onboarding, document form-fill) reads and writes. Self-service must
+  // resolve to the real column or an employee's own address edit is invisible everywhere
+  // else in the system.
+  it("maps address_line1 (the wire field) to address1 (the real column)", () => {
+    expect(dbColumnFor("address_line1")).toBe("address1");
+    expect(FIELD_OWNERSHIP.address_line1.dbColumn).toBe("address1");
+  });
+
+  it("falls back to the field name itself when no override is declared", () => {
+    expect(dbColumnFor("mobile")).toBe("mobile");
+    expect(dbColumnFor("city")).toBe("city");
+    expect(dbColumnFor("some_field_not_in_the_matrix")).toBe("some_field_not_in_the_matrix");
   });
 });
