@@ -93,7 +93,10 @@ reportingLeaveBalanceRouter.get("/leave-balances", requireAuth, h(async (req: an
       leaveType: String(row.leave_name),
       total,
       used,
-      remaining: total - used,
+      // Floored at 0 to match leaveService.getBalance(), the canonical UI path —
+      // this report could otherwise show a negative balance the UI shows as 0
+      // for the same employee/type. (2026-08-13 audit)
+      remaining: Math.max(0, total - used),
     });
   }
 

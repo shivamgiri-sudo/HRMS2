@@ -36,9 +36,13 @@ describe("GET /leave/requests/my", () => {
     // GET /requests deliberately widens for privileged roles — an admin gets their whole
     // branch. That is not what "my recent activity" means, so this route must pin the
     // employee to the caller for everyone, not only for unprivileged users.
+    // Boundary is GET /requests/legacy, the next distinct route after /requests/my
+    // in the file — GET /requests and PATCH /requests/:id/review (which used to sit
+    // between them) were removed as dead code: leaveSecureRouter is mounted first in
+    // app.ts and always won for both paths. (2026-08-13 audit)
     const handler = routes.slice(
       routes.indexOf('leaveRouter.get("/requests/my"'),
-      routes.indexOf('leaveRouter.get("/requests"')
+      routes.indexOf('leaveRouter.get("/requests/legacy"')
     );
     expect(handler).toContain("getEmployeeForUser(req.authUser!.id)");
     expect(handler).toContain("query.employeeId = callerEmp.id");
@@ -47,9 +51,13 @@ describe("GET /leave/requests/my", () => {
   });
 
   it("answers a login with no employee record with an empty feed, not an error", () => {
+    // Boundary is GET /requests/legacy, the next distinct route after /requests/my
+    // in the file — GET /requests and PATCH /requests/:id/review (which used to sit
+    // between them) were removed as dead code: leaveSecureRouter is mounted first in
+    // app.ts and always won for both paths. (2026-08-13 audit)
     const handler = routes.slice(
       routes.indexOf('leaveRouter.get("/requests/my"'),
-      routes.indexOf('leaveRouter.get("/requests"')
+      routes.indexOf('leaveRouter.get("/requests/legacy"')
     );
     expect(handler).toMatch(/if \(!callerEmp\) return res\.json\(\{\s*success: true, data: \[\], total: 0/);
   });

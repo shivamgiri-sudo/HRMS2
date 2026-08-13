@@ -7,6 +7,7 @@ import { notifyLeaveSubmitted, notifyLeaveDecision } from "./leave.notifications
 import { leavePolicyService } from "./leave-policy.service.js";
 import { captureAttendanceSnapshot, enumerateDates, readAttendanceSnapshots } from "../../shared/attendanceSnapshot.js";
 import { applyRestore, planLeaveRestore, rederiveDates, type DateRestorePlan } from "../../shared/attendanceRestore.js";
+import { logSensitiveAction } from "../../shared/auditLog.js";
 import type {
   LeaveBalanceLedger,
   LeaveHoliday,
@@ -82,8 +83,20 @@ export const leaveService = {
     return (rows as LeaveType[])[0];
   },
 
-  async submitRequest(input: LeaveRequestInput): Promise<LeaveRequest> {
+  async submitRequest(input: LeaveRequestInput, actorUserId?: string): Promise<LeaveRequest> {
     const id = randomUUID();
+
+    // Half-day leave is not supported anywhere in this system: no schema field,
+    // no UI. leaveRequestSchema's `min(0.5)` technically accepts a fraction, but
+    // if one ever reached here it would deduct correctly from the balance while
+    // attendance/payroll paid the day in full (no partial-day attendance status
+    // exists). Reject non-integer totalDays here as a safety patch until/unless
+    // half-day leave is deliberately built end-to-end. (2026-08-13 audit)
+    if (!Number.isInteger(input.totalDays)) {
+      throw new Error(
+        "Half-day leave is not supported. totalDays must be a whole number."
+      );
+    }
 
     // ── Resolve leave_code for policy enforcement ─────────────────────────
     const [ltCodeRows] = await db.execute<RowDataPacket[]>(
@@ -91,6 +104,29 @@ export const leaveService = {
       [input.leaveTypeId]
     );
     const leaveCode = (ltCodeRows as Array<{ leave_code: string }>)[0]?.leave_code ?? null;
+
+    // ── Gender eligibility (ML/MTRL = female only; PL/PTRL = male only) ────
+    // Mirrors GET /api/leave/eligibility/:employeeId (leave.routes.ts) exactly,
+    // which was previously advisory-only — it filtered what the UI showed as
+    // selectable, but nothing stopped a direct API call submitting the
+    // "wrong"-gender type anyway. (2026-08-13 audit)
+    const GENDER_RESTRICTED_CODES = new Set(["ML", "MTRL", "PL", "PTRL"]);
+    if (leaveCode && GENDER_RESTRICTED_CODES.has(leaveCode)) {
+      const [genderRows] = await db.execute<RowDataPacket[]>(
+        `SELECT gender FROM employees WHERE id = ? LIMIT 1`,
+        [input.employeeId]
+      );
+      const gender = String((genderRows as RowDataPacket[])[0]?.gender ?? "").toLowerCase().trim();
+      const isFemale = ["female", "f"].includes(gender);
+      const isMale = ["male", "m"].includes(gender);
+      const isFemaleOnly = leaveCode === "ML" || leaveCode === "MTRL";
+      const isMaleOnly = leaveCode === "PL" || leaveCode === "PTRL";
+      if ((isFemaleOnly && !isFemale) || (isMaleOnly && !isMale)) {
+        throw new Error(
+          `This leave type is not available for your profile. Please contact HR if you believe this is incorrect.`
+        );
+      }
+    }
 
     // ── CL / ML policy enforcement ────────────────────────────────────────
     if (leaveCode === 'CL' || leaveCode === 'ML') {
@@ -146,28 +182,65 @@ export const leaveService = {
     // Reject if an approved/pending request already covers any of the same dates.
     // Two requests for the same range each pass individual policy checks but would
     // double-deduct the balance on approval without this guard.
-    const [overlapRows] = await db.execute<RowDataPacket[]>(
-      `SELECT id FROM leave_request
-        WHERE employee_id = ?
-          AND status IN ('approved', 'pending', 'pending_branch_head')
-          AND from_date <= ?
-          AND to_date   >= ?
-        LIMIT 1`,
-      [input.employeeId, input.toDate, input.fromDate]
-    );
-    if ((overlapRows as RowDataPacket[]).length > 0) {
-      throw new Error(
-        `A leave request already exists for one or more dates in the range ` +
-        `${input.fromDate} – ${input.toDate}. Cancel the existing request before applying again.`
-      );
+    //
+    // The check and the insert are wrapped in a MySQL named lock scoped to this
+    // employee (advisory lock, held on one dedicated connection) so two
+    // near-simultaneous submissions cannot both pass the check before either
+    // INSERT commits — the plain SELECT-then-INSERT sequence this replaced had
+    // exactly that race window. (2026-08-13 audit)
+    const lockName = `leave_submit_${input.employeeId}`;
+    const lockConn = await (db as any).getConnection();
+    try {
+      const [lockRows] = await lockConn.query("SELECT GET_LOCK(?, 10) AS acquired", [lockName]);
+      if (Number((lockRows as any)?.[0]?.acquired) !== 1) {
+        throw new Error("Another leave submission for this employee is already in progress. Please try again.");
+      }
+      try {
+        const [overlapRows] = await lockConn.execute(
+          `SELECT id FROM leave_request
+            WHERE employee_id = ?
+              AND status IN ('approved', 'pending', 'pending_branch_head')
+              AND from_date <= ?
+              AND to_date   >= ?
+            LIMIT 1`,
+          [input.employeeId, input.toDate, input.fromDate]
+        );
+        if ((overlapRows as RowDataPacket[]).length > 0) {
+          throw new Error(
+            `A leave request already exists for one or more dates in the range ` +
+            `${input.fromDate} – ${input.toDate}. Cancel the existing request before applying again.`
+          );
+        }
+
+        await lockConn.execute(
+          `INSERT INTO leave_request (id, employee_id, leave_type_id, from_date, to_date, total_days, reason, status)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+          [id, input.employeeId, input.leaveTypeId, input.fromDate, input.toDate,
+           input.totalDays, input.reason ?? null, initialStatus]
+        );
+      } finally {
+        await lockConn.query("SELECT RELEASE_LOCK(?)", [lockName]).catch(() => {});
+      }
+    } finally {
+      lockConn.release();
     }
 
-    await db.execute(
-      `INSERT INTO leave_request (id, employee_id, leave_type_id, from_date, to_date, total_days, reason, status)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      [id, input.employeeId, input.leaveTypeId, input.fromDate, input.toDate,
-       input.totalDays, input.reason ?? null, initialStatus]
-    );
+    // Platform-wide audit trail — previously only approve/reject/cancel decisions
+    // were logged (to leave_approval_log); the submission itself had no audit
+    // event at all, and none of the leave module's actions reached the
+    // platform-wide sensitive_action_log other HR modules use. (2026-08-13 audit)
+    await logSensitiveAction({
+      actor_user_id: actorUserId ?? input.employeeId,
+      action_type: "LEAVE_SUBMITTED",
+      module_key: "leave",
+      entity_type: "leave_request",
+      entity_id: id,
+      employee_id: input.employeeId,
+      new_value_json: {
+        status: initialStatus, leave_type_id: input.leaveTypeId, leave_code: leaveCode,
+        from_date: input.fromDate, to_date: input.toDate, total_days: input.totalDays,
+      },
+    }).catch(() => {});
 
     // Notify reporting manager — they are Stage 1 approver
     try {
@@ -291,6 +364,27 @@ export const leaveService = {
     try {
       await conn.beginTransaction();
 
+      // Lock the row and re-check its status now that we hold the lock. Without
+      // this, two concurrent PATCH .../review calls (double-click, a stale UI
+      // retry, two managers) that both read 'pending' before either transaction
+      // started could both pass every check below and both mutate the balance —
+      // a real double-deduction, not just a double-write. A second caller who
+      // loses the race gets a clear 409 instead. (2026-08-13 audit)
+      const [lockedRows] = await conn.execute(
+        `SELECT status FROM leave_request WHERE id = ? FOR UPDATE`,
+        [id]
+      );
+      const lockedStatus = (lockedRows as RowDataPacket[])[0]?.status;
+      if (lockedStatus === undefined) {
+        throw new Error("Leave request not found");
+      }
+      if (lockedStatus !== request.status) {
+        throw Object.assign(
+          new Error(`This leave request was already moved to '${lockedStatus}' by another action. Refresh and try again.`),
+          { statusCode: 409 }
+        );
+      }
+
       // Handle approval - deduct leave balance.
       // branch_head_approved is the terminal approval status for the two EL
       // exception paths (>12-day EL and 3rd occurrence in year), so it must
@@ -298,6 +392,27 @@ export const leaveService = {
       if (input.status === 'approved' || input.status === 'branch_head_approved') {
         if (!request.leave_type_id) {
           throw new Error("Leave type is required for approval");
+        }
+
+        // Nothing checked, at approval time, whether this request's dates
+        // overlap an already-approved request for the same employee — only
+        // submission time did. Two overlapping requests, however they came to
+        // both exist, could previously both be approved independently, each
+        // deducting its own balance for the same days. (2026-08-13 audit)
+        const [approvalOverlapRows] = await conn.execute(
+          `SELECT id FROM leave_request
+            WHERE employee_id = ?
+              AND id != ?
+              AND status IN ('approved', 'branch_head_approved')
+              AND from_date <= ?
+              AND to_date   >= ?
+            LIMIT 1`,
+          [request.employee_id, id, request.to_date, request.from_date]
+        );
+        if ((approvalOverlapRows as RowDataPacket[]).length > 0) {
+          throw new Error(
+            `Cannot approve — this employee already has an approved leave request overlapping ${request.from_date} – ${request.to_date}.`
+          );
         }
 
         const duration = request.total_days;
@@ -394,13 +509,6 @@ export const leaveService = {
         const leaveTypeId = request.leave_type_id;
         const year = new Date(request.from_date).getFullYear();
 
-        await conn.execute(
-          `UPDATE leave_balance_ledger
-              SET used_days = GREATEST(0, used_days - ?)
-            WHERE employee_id = ? AND leave_type_id = ? AND balance_year = ?`,
-          [duration, employeeId, leaveTypeId, year]
-        );
-
         // Revert attendance through the shared restore, the same path a discard
         // uses. The previous version wrote 'absent' + lwp_value 1.00 across every
         // calendar day in the range — but approval also writes every calendar
@@ -410,6 +518,30 @@ export const leaveService = {
         const adrRows = await loadAttendanceRowsForRestore(conn, employeeId, restoreDates);
         const snapshots = await readAttendanceSnapshots(conn, "leave", id);
         revertPlans = restoreDates.map((d) => planLeaveRestore(d, adrRows.get(d), snapshots.get(d)));
+
+        // Balance restore must be computed from the SAME plan that decides what
+        // attendance actually gets reverted — not from the raw request duration.
+        // A locked day (payroll freeze or a later correction) is left untouched
+        // by applyRestore below (mode 'skip_locked'); crediting the full duration
+        // back regardless meant an employee could gain a free day on top of a
+        // period payroll had already paid as leave. (2026-08-13 audit)
+        const lockedDayCount = revertPlans.filter((p) => p.mode === "skip_locked").length;
+        const restorableDuration = Math.max(0, duration - lockedDayCount);
+        if (lockedDayCount > 0) {
+          console.warn(
+            `[leave-service] ${input.status} of leave ${id}: ${lockedDayCount} of ${duration} day(s) ` +
+            `fall in a payroll-locked attendance period and were not reverted; balance restore reduced ` +
+            `from ${duration} to ${restorableDuration}.`
+          );
+        }
+
+        await conn.execute(
+          `UPDATE leave_balance_ledger
+              SET used_days = GREATEST(0, used_days - ?)
+            WHERE employee_id = ? AND leave_type_id = ? AND balance_year = ?`,
+          [restorableDuration, employeeId, leaveTypeId, year]
+        );
+
         await applyRestore(
           conn, employeeId, revertPlans, snapshots, reviewerId,
           `Leave ${input.status} — auto-reverted by leave service`
@@ -445,15 +577,30 @@ export const leaveService = {
         const sets = ['status = ?', 'approved_by = ?', 'approved_at = NOW()'];
         if (input.status === 'branch_head_approved') sets.push(`approval_level = 'branch_head'`);
 
-        await conn.execute(
-          `UPDATE leave_request SET ${sets.join(', ')} WHERE id = ?`,
-          [input.status, approvedBy, id]
+        // `AND status = ?` + affectedRows check is defense-in-depth alongside the
+        // FOR UPDATE lock above (same pattern discardService already uses for its
+        // own status transition) — belt and suspenders against a double-approval.
+        const [approveResult] = await conn.execute(
+          `UPDATE leave_request SET ${sets.join(', ')} WHERE id = ? AND status = ?`,
+          [input.status, approvedBy, id, request.status]
         );
+        if ((approveResult as any).affectedRows !== 1) {
+          throw Object.assign(
+            new Error("This leave request was already updated by another action. Refresh and try again."),
+            { statusCode: 409 }
+          );
+        }
       } else {
-        await conn.execute(
-          "UPDATE leave_request SET status = ? WHERE id = ?",
-          [input.status, id]
+        const [otherResult] = await conn.execute(
+          "UPDATE leave_request SET status = ? WHERE id = ? AND status = ?",
+          [input.status, id, request.status]
         );
+        if ((otherResult as any).affectedRows !== 1) {
+          throw Object.assign(
+            new Error("This leave request was already updated by another action. Refresh and try again."),
+            { statusCode: 409 }
+          );
+        }
       }
       await conn.execute(
         `INSERT INTO leave_approval_log (id, leave_request_id, action, action_by, remarks)
@@ -468,6 +615,23 @@ export const leaveService = {
     } finally {
       conn.release();
     }
+
+    // Platform-wide audit trail — leave_approval_log already captured action/
+    // actor/timestamp/remarks, but nothing in this module reached the platform's
+    // sensitive_action_log the way other HR modules do, so there was no
+    // before/after balance snapshot for approve/reject/cancel decisions.
+    // (2026-08-13 audit)
+    await logSensitiveAction({
+      actor_user_id: reviewerId,
+      action_type: `LEAVE_${input.status.toUpperCase()}`,
+      module_key: "leave",
+      entity_type: "leave_request",
+      entity_id: id,
+      employee_id: request.employee_id,
+      reason: input.remarks ?? undefined,
+      old_value_json: { status: request.status },
+      new_value_json: { status: input.status, total_days: request.total_days },
+    }).catch(() => {});
 
     // Rebuild any day the revert neutralised. Must run after commit AND after the
     // status left 'approved', or attendance-engine would resolve these days back

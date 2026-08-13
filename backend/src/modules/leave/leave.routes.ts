@@ -10,7 +10,6 @@ import type { Response } from "express";
 import { leaveController } from "./leave.controller.js";
 import { leaveService } from "./leave.service.js";
 import { getEmployeeForUser, hasRole } from "../../shared/accessGuard.js";
-import { buildScopeWhereClause } from "../../shared/scopeAccess.js";
 
 export const leaveRouter = Router();
 leaveRouter.use(requireAuth);
@@ -128,32 +127,16 @@ leaveRouter.get("/requests/my", h(async (req: AuthenticatedRequest, res: Respons
   return leaveController.listRequests(req, res);
 }));
 
-// Employee self-scope: employees see only their own leave requests; privileged roles filtered by branch.
-leaveRouter.get("/requests", h(async (req: AuthenticatedRequest, res: Response) => {
-  const userId = req.authUser!.id;
-  const privileged = await isLeavePrivileged(userId);
-  if (!privileged) {
-    const callerEmp = await getEmployeeForUser(userId);
-    if (!callerEmp) return res.status(403).json({ success: false, message: "No employee record linked to your login" });
-    (req.query as Record<string, unknown>).employeeId = callerEmp.id;
-  } else {
-    // super_admin sees all; head-office admin/hr see all; others scoped to their branch
-    const isSuperAdmin = await hasRole(userId, "super_admin");
-    if (!isSuperAdmin) {
-      const scoped = await buildScopeWhereClause(
-        userId,
-        ["admin", "hr", "manager", "branch_head", "process_manager", "wfm", "payroll_head", "payroll_admin"],
-        { branchId: "e.branch_id", processId: "e.process_id" },
-        { allowAdminBypass: true, allowCeoAllRead: true }
-      );
-      (req as any).scopeFilter = scoped;
-    }
-  }
-  return leaveController.listRequests(req, res);
-}));
-
-leaveRouter.patch("/requests/:id/review", requireRole("admin", "hr", "manager"), h(leaveController.reviewRequest.bind(leaveController)));
-
+// GET /requests and PATCH /requests/:id/review used to be defined here, but both
+// are dead code: app.ts mounts leaveSecureRouter at /api/leave before leaveRouter,
+// and Express's router.use() stops at the first router with a matching route —
+// leaveSecureRouter's own GET /requests and PATCH /requests/:id/review (which has
+// real DB-backed reporting-manager scope, via resolveEffectiveApprover) always won.
+// This file's PATCH /requests/:id/review was requireRole("admin","hr","manager")
+// with NO row-scope check at all — reachable only by accident (e.g. a future
+// change to app.ts's mount order), it would let any "manager"-role user approve
+// any employee's leave. Removed rather than left dormant. (2026-08-13 audit)
+//
 // GET /requests/legacy?employeeId=&year= — historical leave records from db_bill
 leaveRouter.get("/requests/legacy", h(async (req: AuthenticatedRequest, res: Response) => {
   const privileged = await isLeavePrivileged(req.authUser!.id);
@@ -250,11 +233,37 @@ leaveRouter.get("/holidays",                      h(leaveController.listHolidays
 leaveRouter.post("/holidays",                     requireRole("admin", "hr", "super_admin"), h(leaveController.createHoliday.bind(leaveController)));
 
 // POST /balance/seed — bulk seed leave balances during onboarding
+//
+// SECURITY/DATA-INTEGRITY (2026-08-13 audit): this writes allocated_days directly,
+// bypassing reviewRequest()'s "duration > availableBalance" guard, so it could push
+// an existing employee's balance negative (allocated_days cut below their existing
+// used_days) with no signal. Not blocked outright — HR may be deliberately
+// correcting an allocation, including one below current usage — but every such
+// row is now flagged back in the response instead of happening silently.
 leaveRouter.post("/balance/seed", requireRole("admin", "hr", "super_admin"), h(async (req: AuthenticatedRequest, res: Response) => {
   const rows = req.body as Array<{ employee_id: string; leave_type_id: string; year: number; allocated_days: number }>;
   if (!Array.isArray(rows)) return res.status(400).json({ error: "Array required" });
+  const negativeBalanceWarnings: Array<{ employee_id: string; leave_type_id: string; year: number; allocated_days: number; used_days: number; adjusted_days: number; would_be_available: number }> = [];
   for (const row of rows) {
     if (!row.employee_id || !row.leave_type_id || !row.year || row.allocated_days === undefined) continue;
+
+    const [existingRows] = await db.execute<RowDataPacket[]>(
+      `SELECT used_days, adjusted_days FROM leave_balance_ledger
+        WHERE employee_id = ? AND leave_type_id = ? AND balance_year = ? LIMIT 1`,
+      [row.employee_id, row.leave_type_id, row.year]
+    );
+    const existing = existingRows[0] as { used_days?: number; adjusted_days?: number } | undefined;
+    const usedDays = Number(existing?.used_days ?? 0);
+    const adjustedDays = Number(existing?.adjusted_days ?? 0);
+    const wouldBeAvailable = Number(row.allocated_days) + adjustedDays - usedDays;
+    if (wouldBeAvailable < 0) {
+      negativeBalanceWarnings.push({
+        employee_id: row.employee_id, leave_type_id: row.leave_type_id, year: row.year,
+        allocated_days: row.allocated_days, used_days: usedDays, adjusted_days: adjustedDays,
+        would_be_available: wouldBeAvailable,
+      });
+    }
+
     await db.execute(
       `INSERT INTO leave_balance_ledger (id, employee_id, leave_type_id, balance_year, allocated_days, used_days, adjusted_days)
        VALUES (?, ?, ?, ?, ?, 0, 0)
@@ -262,7 +271,7 @@ leaveRouter.post("/balance/seed", requireRole("admin", "hr", "super_admin"), h(a
       [randomUUID(), row.employee_id, row.leave_type_id, row.year, row.allocated_days]
     );
   }
-  res.json({ success: true, count: rows.length });
+  res.json({ success: true, count: rows.length, negativeBalanceWarnings });
 }));
 
 // GET /eligibility/:employeeId — returns leave types eligible for this employee (gender-filtered)
@@ -299,6 +308,13 @@ leaveRouter.get("/eligibility/:employeeId", h(async (req: AuthenticatedRequest, 
 }));
 
 // POST /admin/sync-used-days-from-db-bill — sync 2026 used_days from db_bill (admin/hr only)
+//
+// SECURITY/DATA-INTEGRITY (2026-08-13 audit): writes used_days directly with no
+// comparison to allocated_days+adjusted_days, unlike reviewRequest()'s guard. Not
+// blocked outright — db_bill's historical usage is the real ground truth this sync
+// exists to backfill, and it may legitimately exceed what mas_hrms was ever
+// allocated — but any row this would push into a negative available balance is
+// now flagged back in the response instead of happening silently.
 leaveRouter.post("/admin/sync-used-days-from-db-bill", requireRole("admin", "hr", "super_admin"), h(async (req: AuthenticatedRequest, res: Response) => {
   const year = Number(req.query.year ?? 2026);
   const legacy = await getLegacyPool();
@@ -330,6 +346,7 @@ leaveRouter.post("/admin/sync-used-days-from-db-bill", requireRole("admin", "hr"
   ];
 
   let updated = 0;
+  const negativeBalanceWarnings: Array<{ employee_code: string; leave_code: string; allocated_days: number; adjusted_days: number; new_used_days: number; would_be_available: number }> = [];
   for (const row of dbBillRows) {
     const empId = empMap[row.EmpCode];
     if (!empId) continue;
@@ -339,12 +356,21 @@ leaveRouter.post("/admin/sync-used-days-from-db-bill", requireRole("admin", "hr"
       const ltId = ltMap[code];
       if (!ltId) continue;
       const [existing] = await db.execute<RowDataPacket[]>(
-        `SELECT id, used_days FROM leave_balance_ledger WHERE employee_id = ? AND leave_type_id = ? AND balance_year = ?`,
+        `SELECT id, used_days, allocated_days, adjusted_days FROM leave_balance_ledger WHERE employee_id = ? AND leave_type_id = ? AND balance_year = ?`,
         [empId, ltId, year]
       );
       if (!existing.length) continue;
       const currentUsed = Number(existing[0].used_days ?? 0);
       if (currentUsed >= usedDays) continue;
+      const allocatedDays = Number(existing[0].allocated_days ?? 0);
+      const adjustedDays = Number(existing[0].adjusted_days ?? 0);
+      const wouldBeAvailable = allocatedDays + adjustedDays - usedDays;
+      if (wouldBeAvailable < 0) {
+        negativeBalanceWarnings.push({
+          employee_code: row.EmpCode, leave_code: code, allocated_days: allocatedDays,
+          adjusted_days: adjustedDays, new_used_days: usedDays, would_be_available: wouldBeAvailable,
+        });
+      }
       await db.execute(
         `UPDATE leave_balance_ledger SET used_days = ? WHERE employee_id = ? AND leave_type_id = ? AND balance_year = ?`,
         [usedDays, empId, ltId, year]
@@ -353,5 +379,5 @@ leaveRouter.post("/admin/sync-used-days-from-db-bill", requireRole("admin", "hr"
     }
   }
 
-  res.json({ success: true, message: `Synced ${year} used_days from db_bill`, updated, employees: dbBillRows.length });
+  res.json({ success: true, message: `Synced ${year} used_days from db_bill`, updated, employees: dbBillRows.length, negativeBalanceWarnings });
 }));

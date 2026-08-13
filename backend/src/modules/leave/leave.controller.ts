@@ -23,7 +23,7 @@ export const leaveController = {
 
   async submitRequest(req: AuthenticatedRequest, res: Response) {
     const input = leaveRequestSchema.parse(req.body);
-    const data = await leaveService.submitRequest(input);
+    const data = await leaveService.submitRequest(input, req.authUser!.id);
     return res.status(201).json({ success: true, data, message: "Leave request submitted" });
   },
 

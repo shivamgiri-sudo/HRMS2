@@ -1,5 +1,6 @@
 import { db } from "../db/mysql.js";
-import type { ResultSetHeader, RowDataPacket } from "mysql2";
+import type { RowDataPacket, ResultSetHeader } from "mysql2";
+import { leaveService } from "../modules/leave/leave.service.js";
 
 export interface DeprovisionResult {
   lmsMappingsRevoked: number;
@@ -85,16 +86,49 @@ export async function deprovisionEmployeeAccess(
   // retroactively would rewrite settled history and diverge from payroll. Only
   // future-dated requests are withdrawn. Both the legacy (from_date/to_date) and
   // current (start_date/end_date) column pairs are populated, hence COALESCE.
+  //
+  // Routed through leaveService.reviewRequest() per row instead of a raw bulk
+  // UPDATE (2026-08-13 audit): the previous UPDATE flipped leave_request.status
+  // straight to 'cancelled' without going through the balance-restore/
+  // attendance-revert logic every other cancellation path uses, leaving
+  // leave_balance_ledger.used_days un-decremented and any attendance_daily_record
+  // rows already written for those future dates unreverted — the leave_request
+  // row said "cancelled" but the balance and attendance tables disagreed. This
+  // also inherits reviewRequest's payroll-lock-aware balance restore, so even if
+  // the "future date ⇒ cannot yet be in a finalized payroll run" assumption this
+  // query relies on is ever violated, the balance restore still cannot over-credit
+  // a locked day.
   await step("leave", async () => {
-    const [res] = await db.execute<ResultSetHeader>(
-      `UPDATE leave_request
-          SET status = 'cancelled'
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT id FROM leave_request
         WHERE employee_id = ?
-          AND status IN ('pending', 'approved')
+          AND status IN ('pending', 'approved', 'pending_branch_head', 'branch_head_approved')
           AND COALESCE(start_date, from_date) > CURDATE()`,
       [employeeId]
     );
-    result.leaveRequestsCancelled = res?.affectedRows ?? 0;
+    const ids = (rows as RowDataPacket[]).map((r) => String((r as any).id));
+    let cancelled = 0;
+    const rowFailures: string[] = [];
+    for (const requestId of ids) {
+      try {
+        await leaveService.reviewRequest(
+          requestId,
+          { status: "cancelled", remarks: reason },
+          "system:employeeDeprovisioning"
+        );
+        cancelled++;
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        rowFailures.push(`leave_request ${requestId}: ${message}`);
+      }
+    }
+    result.leaveRequestsCancelled = cancelled;
+    if (rowFailures.length > 0) {
+      // Surface partial failures without throwing — this step must not roll
+      // back the already-committed deactivation, and one bad row must not
+      // stop the rest from being cancelled.
+      throw new Error(`${rowFailures.length} of ${ids.length} leave request(s) could not be cancelled: ${rowFailures.join("; ")}`);
+    }
   });
 
   // Assets are counted, not mutated.
