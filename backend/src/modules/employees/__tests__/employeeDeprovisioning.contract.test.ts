@@ -3,6 +3,18 @@ import fs from "fs";
 import path from "path";
 
 import { db } from "../../../db/mysql.js";
+
+// Leave cancellation is routed through leaveService.reviewRequest() (2026-08-13 audit) so
+// balance-restore and attendance-revert run the same way every other cancellation path
+// uses it, instead of a raw UPDATE that left leave_balance_ledger/attendance_daily_record
+// disagreeing with leave_request.status. reviewRequest itself does its own locking,
+// transaction and balance-restore work — genuinely tested in leave.service's own suite —
+// so this file mocks it rather than re-deriving its whole internal SQL surface here.
+const { reviewRequestMock } = vi.hoisted(() => ({ reviewRequestMock: vi.fn() }));
+vi.mock("../../leave/leave.service.js", () => ({
+  leaveService: { reviewRequest: reviewRequestMock },
+}));
+
 import { deprovisionEmployeeAccess } from "../../../shared/employeeDeprovisioning.js";
 import { employeeService } from "../employee.service.js";
 
@@ -34,6 +46,7 @@ function capture(): Captured[] {
       return Promise.resolve([[{ id: "emp-1", employment_status: "Active", active_status: 1 }], []]);
     }
     if (sql.includes("COUNT(*) AS n FROM asset_assignment")) return Promise.resolve([[{ n: 3 }], []]);
+    if (sql.includes("SELECT id FROM leave_request")) return Promise.resolve([[{ id: "leave-1" }, { id: "leave-2" }], []]);
     return Promise.resolve([{ affectedRows: 2 } as never, []]);
   });
   return calls;
@@ -43,6 +56,8 @@ describe("deprovisionEmployeeAccess uses schema that actually exists", () => {
   beforeEach(() => {
     mockExecute.mockReset();
     mockExecute.mockResolvedValue([[], []]);
+    reviewRequestMock.mockReset();
+    reviewRequestMock.mockResolvedValue({});
   });
 
   it("revokes LMS access on the real column", async () => {
@@ -56,18 +71,45 @@ describe("deprovisionEmployeeAccess uses schema that actually exists", () => {
     expect(result.lmsMappingsRevoked).toBe(2);
   });
 
-  it("cancels leave on the singular table, and only future-dated rows", async () => {
+  it("cancels leave on the singular table, only future-dated rows, through reviewRequest", async () => {
     const calls = capture();
-    await deprovisionEmployeeAccess("emp-1", "employee_exit");
+    const result = await deprovisionEmployeeAccess("emp-1", "employee_exit");
 
-    const leave = calls.find((c) => /UPDATE leave_request\b/.test(c.sql));
-    expect(leave).toBeDefined();
-    expect(leave?.sql).not.toContain("leave_requests");
-    expect(leave?.sql).not.toContain("cancellation_reason");
-    expect(leave?.sql).not.toContain("updated_at");
+    // The candidate lookup: singular table, future-dated only.
+    const select = calls.find((c) => /SELECT id FROM leave_request\b/.test(c.sql));
+    expect(select).toBeDefined();
+    expect(select?.sql).not.toContain("leave_requests");
     // Leave already taken is settled history — cancelling it would diverge from
     // attendance and payroll.
-    expect(leave?.sql).toContain("> CURDATE()");
+    expect(select?.sql).toContain("> CURDATE()");
+
+    // No raw UPDATE against leave_request — cancellation goes through reviewRequest()
+    // so balance-restore and attendance-revert run instead of leaving leave_balance_ledger
+    // and attendance_daily_record disagreeing with a directly-flipped status (2026-08-13 audit).
+    expect(calls.some((c) => /UPDATE leave_request\b/.test(c.sql))).toBe(false);
+
+    // Every candidate id from the SELECT gets reviewed as cancelled, by the system actor.
+    expect(reviewRequestMock).toHaveBeenCalledTimes(2);
+    expect(reviewRequestMock).toHaveBeenCalledWith(
+      "leave-1", { status: "cancelled", remarks: "employee_exit" }, "system:employeeDeprovisioning"
+    );
+    expect(reviewRequestMock).toHaveBeenCalledWith(
+      "leave-2", { status: "cancelled", remarks: "employee_exit" }, "system:employeeDeprovisioning"
+    );
+    expect(result.leaveRequestsCancelled).toBe(2);
+  });
+
+  it("surfaces a partial reviewRequest failure without losing the rows that did cancel", async () => {
+    capture();
+    reviewRequestMock.mockImplementation(async (id: string) => {
+      if (id === "leave-2") throw new Error("This leave request was already moved to 'cancelled'.");
+      return {};
+    });
+
+    const result = await deprovisionEmployeeAccess("emp-1", "employee_exit");
+
+    expect(result.leaveRequestsCancelled).toBe(1);
+    expect(result.failures.some((f) => f.includes("leave-2"))).toBe(true);
   });
 
   it("counts open assets rather than inventing a return", async () => {
