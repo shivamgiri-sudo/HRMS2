@@ -1363,7 +1363,42 @@ export function buildSchemaMigrationsInsertStatement(
   }
 
   const sql = `INSERT INTO schema_migrations (${columns.join(", ")}) VALUES (${values.join(", ")})`;
-  if (options.success) return sql;
+
+  // A SUCCESS must be recordable over a previous FAILURE, for exactly the reason the failure
+  // branch below documents — and this half was missed when that one was fixed, which turned the
+  // bug into its mirror image and made it permanent instead of merely repeatable.
+  //
+  // What happened on production 2026-08-13, to 1006_payroll_process_readiness_extend.sql:
+  //   1. It failed once and left a success = 0 row.
+  //   2. On the next boot its SQL ran again and SUCCEEDED — it is idempotent, and every column
+  //      and index it adds was verifiably already present on the live table.
+  //   3. This function then returned a bare INSERT to record that success, which collided with
+  //      the row from step 1: "Duplicate entry ... for key 'schema_migrations.PRIMARY'".
+  //   4. The runner caught that and reported it as THE MIGRATION failing — so the error attached
+  //      to the migration names a primary key it never touches, which is why it reads as a
+  //      corrupt migration rather than a bookkeeping bug, and why rewriting the migration (the
+  //      obvious response) cannot possibly help.
+  //   5. The failure path, which does upsert, rewrote success = 0. Back to step 2, forever.
+  //
+  // With STOP_ON_FIRST_FAILURE that poisoned row blocked all 7 migrations queued behind it, and
+  // renaming the file was the only escape — which re-runs an applied migration everywhere else.
+  //
+  // On success we therefore also clear the stale failure: flip success back to 1 and null the
+  // error_message, so the row reflects the run that just worked rather than the one that did not.
+  if (options.success) {
+    const successUpdates = [...updates];
+    if (capabilities.hasSuccess) successUpdates.push("success = 1");
+    // Without this the row keeps the old failure's text beside success = 1, which is the kind of
+    // contradiction that costs an hour the next time someone reads this table during an incident.
+    if (capabilities.hasErrorMessage) successUpdates.push("error_message = NULL");
+    if (capabilities.hasStartTime) successUpdates.push("start_time = VALUES(start_time)");
+    if (capabilities.hasDurationMs) successUpdates.push("duration_ms = VALUES(duration_ms)");
+    if (capabilities.hasExecutor) successUpdates.push("executor = VALUES(executor)");
+    // Same guarantee as the failure branch: every entry above is conditional on an optional
+    // column, so on a minimal table the clause could otherwise be empty and the statement invalid.
+    const clause = successUpdates.length > 0 ? successUpdates : ["filename = filename"];
+    return `${sql} ON DUPLICATE KEY UPDATE ${clause.join(", ")}`;
+  }
 
   // A failure MUST be recordable more than once. Every `updates` entry above is conditional on an
   // optional column, so on a table without them the clause was omitted entirely — the first failure

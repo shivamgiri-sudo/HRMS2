@@ -31,21 +31,33 @@ describe("buildSchemaMigrationsAppliedRowsQuery", () => {
 
 describe("buildSchemaMigrationsInsertStatement", () => {
   it("writes only filename when governance columns do not exist yet", () => {
-    expect(
-      buildSchemaMigrationsInsertStatement(
-        {
-          hasChecksumSha256: false,
-          hasEnvironment: false,
-          hasStartTime: false,
-          hasEndTime: false,
-          hasDurationMs: false,
-          hasExecutor: false,
-          hasSuccess: false,
-          hasErrorMessage: false,
-        },
-        { success: true }
-      )
-    ).toBe("INSERT INTO schema_migrations (filename) VALUES (?)");
+    const sql = buildSchemaMigrationsInsertStatement(
+      {
+        hasChecksumSha256: false,
+        hasEnvironment: false,
+        hasStartTime: false,
+        hasEndTime: false,
+        hasDurationMs: false,
+        hasExecutor: false,
+        hasSuccess: false,
+        hasErrorMessage: false,
+      },
+      { success: true }
+    );
+    // This test is about the COLUMN LIST — that no governance column is named on a table which
+    // does not have one. It previously asserted the whole string with toBe(), which also pinned
+    // the ABSENCE of a duplicate-key clause, and that was incidental rather than intended.
+    //
+    // The success path now upserts, for the reason in migration-success-overwrites-failure.test.ts:
+    // a bare INSERT could not record success over a previous failure row, which permanently wedged
+    // 1006_payroll_process_readiness_extend.sql on production and blocked 7 migrations behind it.
+    // On a minimal table the clause degrades to the no-op `filename = filename`, exactly as the
+    // failure path has always done — so the two paths stay symmetrical and the statement stays
+    // valid. Asserting the INSERT half keeps this test's real subject intact.
+    expect(sql.slice(0, sql.indexOf(" ON DUPLICATE"))).toBe(
+      "INSERT INTO schema_migrations (filename) VALUES (?)"
+    );
+    expect(sql).toContain("ON DUPLICATE KEY UPDATE filename = filename");
   });
 
   it("adds duplicate-key failure updates only for supported columns", () => {
