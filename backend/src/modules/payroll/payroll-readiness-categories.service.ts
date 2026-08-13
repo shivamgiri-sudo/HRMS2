@@ -1482,22 +1482,69 @@ async function paymentFileChecks(scope: RunScope): Promise<CategoryCheckResult[]
           );
     }),
 
-    // No file history at all.
+    // Payment-file history, and whether a regeneration changed the file.
+    //
+    // Upgraded 2026-08-14 from a permanent SOURCE_MISSING. The history now exists:
+    // payroll_register_export_log carries file_name, content_sha256, total_amount and the
+    // excluded count/amount for every bank export, written by /neft-export before the file is
+    // handed over (migration 1215).
+    //
+    // The condition worth failing on is NOT "the file was generated twice" — regenerating is
+    // legitimate and common. It is "the file was generated twice AND the content changed", which
+    // means whoever holds the earlier copy is holding a different set of payment instructions
+    // from whoever holds the later one. That is the duplicate-payment hazard, and distinct
+    // hashes for one run are exactly its fingerprint.
     runCheck({ code: "PAYFILE_GENERATION_NOT_REPRODUCIBLE", layer: "PAYMENT_FILE", severity: "P1" }, async () => {
-      const haveHistory =
-        (await tableExists("payroll_payment_file")) ||
-        (await tableExists("payroll_bank_file_log")) ||
-        (await tableExists("payment_file_history"));
-      if (haveHistory) {
-        return pass("A generated-payment-file history table exists.");
+      if (!(await tableExists("payroll_register_export_log"))) {
+        return sourceMissing(
+          "payroll_register_export_log does not exist, so no bank export can be recorded and a regenerated file " +
+            "cannot be proven identical to the one already submitted.",
+        );
       }
-      return sourceMissing(
-        "No generated-payment-file history exists anywhere in the schema: nothing records a file name, content hash, " +
-          "generation timestamp, generating user or batch identifier for a bank export. A regenerated file therefore " +
-          "cannot be proven identical to the one already submitted, and there is no evidence trail if a duplicate " +
-          "payment is ever disputed.",
-        { probed: ["payroll_payment_file", "payroll_bank_file_log", "payment_file_history"] },
+      if (!(await columnExists("payroll_register_export_log", "content_sha256"))) {
+        return sourceMissing(
+          "payroll_register_export_log exists but has no content_sha256 column (migration 1215 not applied), so a " +
+            "recorded export cannot be compared byte-for-byte against a regeneration.",
+          { migration: "1215_payment_file_reproducibility.sql" },
+        );
+      }
+
+      const sql = `
+        SELECT run_id,
+               COUNT(*)                          AS generations,
+               COUNT(DISTINCT content_sha256)    AS distinct_versions,
+               MAX(file_name)                    AS latest_file_name
+          FROM payroll_register_export_log
+         WHERE run_id = ? AND register_type = 'bank_register' AND content_sha256 IS NOT NULL
+         GROUP BY run_id
+        HAVING COUNT(DISTINCT content_sha256) > 1`;
+      const { count, sample } = await population(sql, [runId]);
+      if (count > 0) {
+        return fail(
+          0,
+          "This run's bank payment file has been generated more than once with DIFFERENT contents. Whoever holds an " +
+            "earlier copy is holding different payment instructions from whoever holds the latest. Establish which " +
+            "version was submitted to the bank before generating or submitting another.",
+          undefined,
+          sample,
+        );
+      }
+
+      const [rows] = await db.execute<RowDataPacket[]>(
+        `SELECT COUNT(*) AS c FROM payroll_register_export_log
+          WHERE run_id = ? AND register_type = 'bank_register' AND content_sha256 IS NOT NULL`,
+        [runId],
       );
+      const generations = readCount(rows[0] as Record<string, unknown>);
+      return generations === 0
+        ? notApplicable(
+            "No bank payment file has been generated for this run yet, so there is nothing to reproduce. " +
+              "The history exists and will record the first one.",
+          )
+        : pass(
+            `The bank payment file has been generated ${generations} time(s) and every version hashes identically, so it is reproducible.`,
+            { generations },
+          );
     }),
 
     // PAYSLIP_COMPONENT_TOTAL_MISMATCH — root-caused 2026-08-13, fixed 2026-08-14

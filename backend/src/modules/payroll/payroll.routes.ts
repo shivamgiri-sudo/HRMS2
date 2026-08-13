@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { sqlLimitOffset } from "../../db/pagination.js";
-import { randomUUID } from "crypto";
+import { randomUUID, createHash } from "crypto";
 import path from "path";
 import fs from "fs";
 import multer from "multer";
@@ -2326,7 +2326,45 @@ router.get("/runs/:id/neft-export", requireRole("admin", "super_admin", "finance
   const csv = csvRows.join("\n");
   const filename = `NEFT_${run.run_month as string}_${runId.slice(0, 8)}.csv`;
 
+  // Record what this file actually contained, BEFORE handing it over.
+  //
+  // Without this a regenerated export cannot be shown to be identical to the one already sent to
+  // the bank, and a disputed duplicate payment has no evidence on either side. The hash is of the
+  // exact bytes sent, so "reproducible" becomes checkable: regenerate, hash, compare. Two rows
+  // for one run with DIFFERENT hashes is the real hazard — the file was regenerated and it
+  // changed — which the readiness gate can then surface for a human to adjudicate.
+  //
+  // Written to payroll_register_export_log rather than a new table: it already exists, already
+  // has a live writer in payrollCompliance.routes.ts, and its register_type enum already carries
+  // 'bank_register'. A second payment-file log beside it would be the two-rival-systems mistake
+  // this audit keeps finding elsewhere.
+  //
+  // Deliberately NOT wrapped in try/catch. If the file cannot be recorded it must not be handed
+  // out — an untracked payment file is the precise condition this exists to prevent, and a
+  // swallowed failure here would leave the log silently incomplete while the money still moved.
+  // The existing compliance writer takes the same un-caught approach, so this is consistent
+  // rather than a new convention.
+  const contentSha256 = createHash("sha256").update(csv, "utf8").digest("hex");
+  await db.execute(
+    `INSERT INTO payroll_register_export_log
+       (id, run_id, register_type, filter_json, generated_by, row_count,
+        file_name, content_sha256, total_amount, excluded_count, excluded_amount)
+     VALUES (UUID(), ?, 'bank_register', ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      runId,
+      JSON.stringify({ endpoint: "neft-export" }),
+      req.authUser?.id ?? null,
+      srNo - 1,
+      filename,
+      contentSha256,
+      totalAmount.toFixed(2),
+      unpayable.length,
+      excludedTotal.toFixed(2),
+    ],
+  );
+
   // Machine-readable reconciliation, so a caller never has to infer these by parsing the CSV.
+  res.setHeader("X-Payroll-File-Sha256", contentSha256);
   res.setHeader("X-Payroll-Payable-Count", String(srNo - 1));
   res.setHeader("X-Payroll-Payable-Total", totalAmount.toFixed(2));
   res.setHeader("X-Payroll-Excluded-Count", String(unpayable.length));
