@@ -600,6 +600,7 @@
     "1126_salary_prep_line_component_unique_key.sql",
     "1127_scope_apr_eligibility_by_process.sql",
     "1136_employee_bank_detail_account_blind_index.sql",
+    "1214_repair_live_payroll_schema_gaps.sql",
     "127_ats_candidate_unique_constraints.sql",
     "133_phase2_security_fixes.sql",
     "136_incentive_module.sql",
