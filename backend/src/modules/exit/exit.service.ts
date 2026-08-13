@@ -292,13 +292,23 @@ export const exitService = {
       // the mapper and the activation guard's exclusion list must stay in one place.
       const nextEmploymentStatus = employmentStatusForExit(exitRec.exit_type, exitRec.exit_sub_type);
 
+      // Not caught-and-continued like the deprovisioning steps below this point are
+      // deliberately meant to be (see deprovisionEmployeeAccess's own docstring) — this is
+      // the one write the whole "exited" outcome exists to make, and it was previously
+      // silently swallowed: a failure here (deadlock, dropped connection, pool exhaustion —
+      // this codebase has a documented history of DB-pool starvation) still let the
+      // function fall through to session revocation, F&F creation and deprovisioning, then
+      // return success. exit_request.status was already 'exited' at that point, so HR saw a
+      // success toast while the employee stayed active_status=1 — the exact 93-employee
+      // mismatch the comment above this describes, just reintroduced with a new cause.
+      // Left unprotected here so it throws like the exit_request.status UPDATE immediately
+      // above it, which stops the rest of this branch from running against an employee who
+      // was never actually deactivated, and surfaces a real error instead of a false
+      // "Exit request status updated to exited".
       await db.execute(
         `UPDATE employees SET active_status = 0, employment_status = ?, date_of_exit = ?, updated_at = NOW() WHERE id = ?`,
         [nextEmploymentStatus, lastWorkingDay, employeeId]
-      ).catch((err: unknown) => {
-        logger.error({ err, exitRequestId: id }, '[exit] Employee status update failed');
-        return null;
-      });
+      );
 
       // Sessions outlive the status change: the access token in the leaver's
       // browser is valid for up to 24h after active_status goes to 0, and
