@@ -22,13 +22,15 @@ const { hasRole, hasProcessScope, getEmployeeForUser } = vi.hoisted(() => ({
 }));
 vi.mock("../../../shared/accessGuard.js", () => ({ hasRole, hasProcessScope, getEmployeeForUser }));
 
-const { updateCapacityConfig, allocateWeekOff, submitWeekOffPreference } = vi.hoisted(() => ({
+const { updateCapacityConfig, allocateWeekOff, submitWeekOffPreference, getNotifications, markNotificationRead } = vi.hoisted(() => ({
   updateCapacityConfig: vi.fn().mockResolvedValue({ id: "cfg-1" }),
   allocateWeekOff: vi.fn().mockResolvedValue({ id: "alloc-1" }),
   submitWeekOffPreference: vi.fn().mockResolvedValue({ preference_id: "pref-1", auto_approved: false, notification: "" }),
+  getNotifications: vi.fn().mockResolvedValue([]),
+  markNotificationRead: vi.fn().mockResolvedValue(undefined),
 }));
 vi.mock("../roster-capacity.service.js", () => ({
-  rosterCapacityService: { updateCapacityConfig, allocateWeekOff, submitWeekOffPreference },
+  rosterCapacityService: { updateCapacityConfig, allocateWeekOff, submitWeekOffPreference, getNotifications, markNotificationRead },
 }));
 
 import { rosterCapacityController } from "../roster-capacity.controller.js";
@@ -52,6 +54,8 @@ describe("roster-capacity.controller scope enforcement", () => {
     updateCapacityConfig.mockClear();
     allocateWeekOff.mockClear();
     submitWeekOffPreference.mockClear();
+    getNotifications.mockClear();
+    markNotificationRead.mockClear();
   });
 
   it("self-locks preference submission to the caller's own employee id and process, ignoring any body-supplied values", async () => {
@@ -120,5 +124,65 @@ describe("roster-capacity.controller scope enforcement", () => {
 
     expect(res.status).toHaveBeenCalledWith(403);
     expect(allocateWeekOff).not.toHaveBeenCalled();
+  });
+
+  it("refuses to read another employee's notification history (no auth check existed at all before this fix)", async () => {
+    hasRole.mockResolvedValue(false);
+    getEmployeeForUser.mockResolvedValue({ id: "self-emp-1", employee_code: "MAS001" });
+
+    const req = mockReq({ params: { employeeId: "someone-elses-employee-id" } });
+    const res = mockRes();
+
+    await rosterCapacityController.getNotifications(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(403);
+    expect(getNotifications).not.toHaveBeenCalled();
+  });
+
+  it("allows reading the caller's own notification history", async () => {
+    hasRole.mockResolvedValue(false);
+    getEmployeeForUser.mockResolvedValue({ id: "self-emp-1", employee_code: "MAS001" });
+
+    const req = mockReq({ params: { employeeId: "self-emp-1" } });
+    const res = mockRes();
+
+    await rosterCapacityController.getNotifications(req, res);
+    expect(getNotifications).toHaveBeenCalledWith("self-emp-1", false);
+  });
+
+  it("allows admin/hr/wfm to read any employee's notification history", async () => {
+    hasRole.mockResolvedValue(true);
+
+    const req = mockReq({ params: { employeeId: "any-employee-id" } });
+    const res = mockRes();
+
+    await rosterCapacityController.getNotifications(req, res);
+    expect(getNotifications).toHaveBeenCalled();
+  });
+
+  it("refuses to mark another employee's notification read", async () => {
+    hasRole.mockResolvedValue(false);
+    getEmployeeForUser.mockResolvedValue({ id: "self-emp-1", employee_code: "MAS001" });
+    execute.mockResolvedValue([[{ employee_id: "someone-elses-employee-id" }], []]);
+
+    const req = mockReq({ params: { notificationId: "notif-1" } });
+    const res = mockRes();
+
+    await rosterCapacityController.markNotificationRead(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(403);
+    expect(markNotificationRead).not.toHaveBeenCalled();
+  });
+
+  it("allows marking the caller's own notification read", async () => {
+    hasRole.mockResolvedValue(false);
+    getEmployeeForUser.mockResolvedValue({ id: "self-emp-1", employee_code: "MAS001" });
+    execute.mockResolvedValue([[{ employee_id: "self-emp-1" }], []]);
+
+    const req = mockReq({ params: { notificationId: "notif-1" } });
+    const res = mockRes();
+
+    await rosterCapacityController.markNotificationRead(req, res);
+    expect(markNotificationRead).toHaveBeenCalledWith("notif-1");
   });
 });

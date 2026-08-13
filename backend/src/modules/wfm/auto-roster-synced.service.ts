@@ -21,11 +21,22 @@ const CORE_TABLES = [
 
 const dayNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
-function dateRange(startDate: string, endDate: string): string[] {
+// Pinned to UTC construction/increment (Date.UTC + setUTCDate), not the local-timezone
+// constructor this used to use. `new Date(\`${startDate}T00:00:00\`)` builds midnight in
+// the HOST's timezone, and toISOString() converts that back to UTC — on a host running
+// IST (UTC+5:30, confirmed the case here; see hrms2-host-timezone-date-bugs and the
+// identical bug fixed in roster-generation.service.ts's getDatesInRange), midnight IST
+// is 18:30 the PREVIOUS day in UTC, so every date this returned was one day earlier
+// than the startDate/endDate strings it was given — for generateDraft(), the plan's
+// entire live-engine roster generation range. Date.UTC is timezone-independent
+// regardless of what the host's OS timezone is set to.
+export function dateRange(startDate: string, endDate: string): string[] {
   const out: string[] = [];
-  const start = new Date(`${startDate}T00:00:00`);
-  const end = new Date(`${endDate}T00:00:00`);
-  for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+  const [sy, sm, sd] = startDate.split("-").map(Number);
+  const [ey, em, ed] = endDate.split("-").map(Number);
+  const start = new Date(Date.UTC(sy, sm - 1, sd));
+  const end = new Date(Date.UTC(ey, em - 1, ed));
+  for (let d = new Date(start); d <= end; d.setUTCDate(d.getUTCDate() + 1)) {
     out.push(d.toISOString().slice(0, 10));
   }
   return out;

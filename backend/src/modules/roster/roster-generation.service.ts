@@ -142,6 +142,7 @@ export const rosterGenerationService = {
       const approvedLeaveDates = await loadApprovedLeaveDates(
         empIds, cycle.week_start_date, cycle.week_end_date,
       );
+      const frozenShiftAssignments = await loadFrozenShiftAssignments(empIds, cycle.week_start_date);
 
       // 5. Load active shift templates for this process
       const [shiftTemplates] = await db.execute<ShiftTemplateRow[]>(
@@ -183,6 +184,7 @@ export const rosterGenerationService = {
             holidays,
             approvedWeekoffs,
             approvedLeaveDates,
+            frozenShiftAssignments,
             shiftTemplates,
             defaultShift,
             rosterTemplate,
@@ -334,6 +336,51 @@ export async function loadApprovedLeaveDates(empIds: string[], from: string, to:
   return dates;
 }
 
+/**
+ * Each frozen employee's most recent known shift before the cycle being generated,
+ * from wfm_roster_assignment — the live ops table, so this reflects what actually
+ * happened, not just what an earlier generation run proposed.
+ *
+ * employees.shift_rotation_type = 'frozen' is documented (225_employee_shift_rotation_type.sql)
+ * as "always gets the same shift, never auto-reassigned" — but the frozen branch below
+ * computed shiftTemplateId identically to the non-frozen branch three lines later
+ * (defaultShift?.id), so the flag changed only the audit label, never the outcome. There
+ * is no separate "designated shift" column on employees to read instead; the only record
+ * of "the shift this employee is meant to keep" is the shift they were last actually on.
+ * A frozen employee with no prior assignment at all still falls back to defaultShift —
+ * there is nothing yet to preserve.
+ */
+export async function loadFrozenShiftAssignments(empIds: string[], beforeDate: string): Promise<Map<string, string>> {
+  const map = new Map<string, string>();
+  if (empIds.length === 0) return map;
+  try {
+    const placeholders = empIds.map(() => "?").join(",");
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT wra.employee_id, wra.shift_template_id
+         FROM wfm_roster_assignment wra
+         INNER JOIN (
+           SELECT employee_id, MAX(roster_date) AS last_date
+             FROM wfm_roster_assignment
+            WHERE employee_id IN (${placeholders})
+              AND roster_date < ?
+              AND shift_template_id IS NOT NULL
+            GROUP BY employee_id
+         ) latest ON latest.employee_id = wra.employee_id AND latest.last_date = wra.roster_date
+        WHERE wra.shift_template_id IS NOT NULL`,
+      [...empIds, beforeDate]
+    );
+    for (const row of rows as RowDataPacket[]) {
+      if (row.shift_template_id) map.set(String(row.employee_id), String(row.shift_template_id));
+    }
+  } catch (error) {
+    // Non-fatal: falling back to defaultShift for every frozen employee is exactly
+    // today's behavior, not a regression, so a lookup failure degrades to that rather
+    // than blocking generation.
+    console.error("[roster] frozen-shift lookup unavailable; frozen employees will use the default shift:", (error as Error)?.message);
+  }
+  return map;
+}
+
 async function loadHolidays(from: string, to: string): Promise<Set<string>> {
   const set = new Set<string>();
   try {
@@ -388,6 +435,7 @@ async function processEmployee(ctx: {
   holidays: Set<string>;
   approvedWeekoffs: Map<string, ApprovedWeekOff>;
   approvedLeaveDates: Set<string>;
+  frozenShiftAssignments: Map<string, string>;
   shiftTemplates: ShiftTemplateRow[];
   defaultShift: ShiftTemplateRow | null;
   rosterTemplate: RosterTemplateRow | null;
@@ -396,7 +444,7 @@ async function processEmployee(ctx: {
   runId: string;
   result: GenerationResult;
 }): Promise<void> {
-  const { emp, dates, holidays, approvedWeekoffs, approvedLeaveDates, defaultShift, weekoffRules, cycleId, runId, result } = ctx;
+  const { emp, dates, holidays, approvedWeekoffs, approvedLeaveDates, frozenShiftAssignments, defaultShift, weekoffRules, cycleId, runId, result } = ctx;
   const weekoff = approvedWeekoffs.get(emp.id);
   let lastWeekoffDate: string | null = null;
 
@@ -455,9 +503,16 @@ async function processEmployee(ctx: {
         lastWeekoffDate = date;
       }
     } else if (emp.shift_rotation_type === "frozen") {
+      // "Never auto-reassigned" means keep whatever shift this employee was last
+      // actually on — not the same defaultShift every other employee gets. That was
+      // this branch's entire bug: the flag changed decisionType/ruleApplied for the
+      // audit trail but computed an identical shiftTemplateId to the non-frozen
+      // branch below, so a frozen employee was reassigned exactly like everyone else
+      // on every run. Falls back to defaultShift only when there's no prior
+      // assignment yet to preserve (a newly-frozen or newly-joined employee).
       decisionType = "shift_frozen";
-      shiftTemplateId = defaultShift?.id ?? null;
-      ruleApplied = "frozen_rotation";
+      shiftTemplateId = frozenShiftAssignments.get(emp.id) ?? defaultShift?.id ?? null;
+      ruleApplied = frozenShiftAssignments.has(emp.id) ? "frozen_rotation" : "frozen_rotation_no_prior_shift";
     } else {
       // For weekly/daily/rotating — use defaultShift (template-based rotation can be enhanced later)
       decisionType = "shift_assigned";

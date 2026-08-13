@@ -23,6 +23,14 @@ async function ownEmployeeProcessId(employeeId: string): Promise<string | null> 
   return (rows[0] as { process_id?: string } | undefined)?.process_id ?? null;
 }
 
+async function notificationOwnerId(notificationId: string): Promise<string | null> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    'SELECT employee_id FROM weekoff_preference_notification WHERE id = ? LIMIT 1',
+    [notificationId],
+  );
+  return (rows[0] as { employee_id?: string } | undefined)?.employee_id ?? null;
+}
+
 export const rosterCapacityController = {
   // ========== Capacity Config ==========
   async getCapacityConfig(req: Request, res: Response) {
@@ -119,6 +127,15 @@ export const rosterCapacityController = {
   async getNotifications(req: Request, res: Response) {
     try {
       const { employeeId } = req.params;
+      // No auth check beyond requireAuth existed here at all, despite the route
+      // comment reading "Employee can view own" — any authenticated user could read
+      // any other employee's week-off notification history by id.
+      if (!(await hasRole(req.authUser!.id, 'admin', 'hr', 'wfm'))) {
+        const caller = await getEmployeeForUser(req.authUser!.id);
+        if (!caller || caller.id !== employeeId) {
+          return res.status(403).json({ error: 'Not authorized to view this employee\'s notifications' });
+        }
+      }
       const unreadOnly = req.query.unreadOnly === 'true';
 
       const notifications = await rosterCapacityService.getNotifications(
@@ -136,6 +153,15 @@ export const rosterCapacityController = {
   async markNotificationRead(req: Request, res: Response) {
     try {
       const { notificationId } = req.params;
+      // No ownership check at all — any authenticated user could mark any other
+      // employee's notification read by id.
+      if (!(await hasRole(req.authUser!.id, 'admin', 'hr', 'wfm'))) {
+        const owner = await notificationOwnerId(notificationId);
+        const caller = await getEmployeeForUser(req.authUser!.id);
+        if (!owner || !caller || owner !== caller.id) {
+          return res.status(403).json({ error: 'Not authorized to modify this notification' });
+        }
+      }
       await rosterCapacityService.markNotificationRead(notificationId);
       res.json({ message: 'Notification marked as read' });
     } catch (error: unknown) {

@@ -74,7 +74,9 @@ async function runForProcess(processId: string): Promise<void> {
     return;
   }
 
-  // Copy-forward slot requirements from the equivalent week last year
+  // Copy-forward slot requirements from last week (a flat 7-day shift, not "the
+  // equivalent week last year" as this comment used to claim — prevMonday below is
+  // from_date minus 7 days, nothing year-scale)
   // (date-specific rows only — rows with requirement_date IS NULL are DOW templates that already apply)
   const prevMonday = (() => {
     const d = new Date(from_date + "T00:00:00");

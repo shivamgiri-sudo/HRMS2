@@ -77,6 +77,6 @@ describe("processEmployee checks approved leave before any other scheduling deci
 
   it("generateForCycle loads leave dates and threads them into processEmployee", () => {
     expect(source).toMatch(/const approvedLeaveDates = await loadApprovedLeaveDates\(/);
-    expect(source).toMatch(/approvedLeaveDates,\s*\n\s*shiftTemplates,/);
+    expect(source).toMatch(/approvedLeaveDates,\s*\n\s*(\w+,\s*\n\s*)?shiftTemplates,/);
   });
 });
