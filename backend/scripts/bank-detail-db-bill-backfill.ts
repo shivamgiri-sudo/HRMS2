@@ -40,12 +40,28 @@
  *   - Write the legacy plaintext column. Only account_number_enc is written, matching both live
  *     write paths; adding new plaintext PII to fix a data gap trades one problem for a worse one.
  *
- * IFSC
- *   db_bill.salary_data has no IFSC column, so it comes from db_bill.employee_master.IFSCCode
- *   for the same employee code. An employee with a confirmed credit but no valid IFSC is
- *   REPORTED and SKIPPED rather than written with a blank one — a bank file row without an IFSC
- *   is rejected by the bank, so a record like that would convert a visible MISSING into an
- *   invisible INVALID.
+ * IFSC — AND WHY THE OBVIOUS SOURCE IS THE WRONG ONE
+ *   db_bill.salary_data has no IFSC column at all, so it must come from somewhere else.
+ *   db_bill.employee_master.IFSCCode is the obvious candidate and is nearly useless here:
+ *   measured 2026-08-13, it supplies a valid IFSC for essentially none of the bankless active
+ *   employees, because employee_master is dominated by legacy and IDC codes rather than the
+ *   current workforce. A first version of this script used it and produced ZERO eligible rows
+ *   while looking like it had run correctly.
+ *
+ *   The source that actually covers them is employees.ifsc_code — the frozen legacy sibling of
+ *   employees.bank_account_number. It has no writer in the application either, but it was
+ *   populated at migration and holds a valid IFSC for 131 of the 383. employee_master is kept
+ *   only as a fallback for the rows it can still answer.
+ *
+ *   An employee with a confirmed credit but no valid IFSC from either source is REPORTED and
+ *   SKIPPED, never written with a blank one: a bank file row without an IFSC is rejected by the
+ *   bank, so such a record would convert a visible MISSING into an invisible INVALID.
+ *
+ * EXPECTED SCALE (measured read-only, 2026-08-13)
+ *   383 bankless active employees -> 105 have a confirmed June credit -> 90 of those also have
+ *   a valid IFSC, and 88 of the 90 are independently corroborated by employees.bank_account_number
+ *   holding the same number the credit went to. So this creates ~90 records, not 155: the
+ *   "155 recoverable" figure counted account numbers alone and did not account for IFSC.
  */
 import "dotenv/config";
 import { db } from "../src/db/mysql.js";
@@ -133,7 +149,10 @@ async function main(): Promise<void> {
   // there is no code path here that overwrites an existing account.
   const [targets] = await db.query<RowDataPacket[]>(
     `SELECT e.id, e.employee_code,
-            COALESCE(NULLIF(TRIM(e.full_name),''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS full_name
+            COALESCE(NULLIF(TRIM(e.full_name),''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS full_name,
+            e.ifsc_code                          AS employees_ifsc,
+            e.bank_name                          AS employees_bank,
+            CAST(e.bank_account_number AS CHAR)  AS employees_account
        FROM employees e
       WHERE e.active_status = 1
         AND NOT EXISTS (SELECT 1 FROM employee_bank_detail b
@@ -145,6 +164,7 @@ async function main(): Promise<void> {
   // ── 4. Decide, then (optionally) write ──
   const skips: Skip[] = [];
   const planned: Array<{ id: string; code: string; name: string; account: string; ifsc: string;
+                         ifscSource: string; corroborated: boolean;
                          bank: string | null; branch: string | null; holder: string | null }> = [];
 
   for (const t of targets as any[]) {
@@ -156,14 +176,28 @@ async function main(): Promise<void> {
       continue;
     }
     const m = masterMap.get(code);
-    const ifsc = norm(m?.IFSCCode).toUpperCase();
+    // employees.ifsc_code first — see the IFSC note in the header. employee_master answers for
+    // almost none of the current workforce and is a fallback only.
+    const employeesIfsc = norm(t.employees_ifsc).toUpperCase();
+    const masterIfsc = norm(m?.IFSCCode).toUpperCase();
+    const ifsc = IFSC_RE.test(employeesIfsc) ? employeesIfsc : masterIfsc;
+    const ifscSource = IFSC_RE.test(employeesIfsc) ? "employees.ifsc_code" : "db_bill.employee_master";
     if (!IFSC_RE.test(ifsc)) {
-      skips.push({ code, reason: `no valid IFSC in db_bill employee_master ('${ifsc || "(empty)"}')` });
+      skips.push({
+        code,
+        reason: `no valid IFSC in employees.ifsc_code or db_bill employee_master ('${employeesIfsc || "(empty)"}')`,
+      });
       continue;
     }
+    // Independent corroboration: does the frozen legacy account column hold the same number the
+    // salary actually went to? Not a gate — it is absent for some rows — but it is the difference
+    // between one source and two, and the operator should see which they are getting.
+    const corroborated = norm(t.employees_account) === account;
     planned.push({
-      id: t.id, code, name: String(t.full_name ?? "").trim(), account, ifsc,
-      bank: m?.AcBank ?? null, branch: m?.AcBranch ?? null, holder: m?.AccHolder ?? null,
+      id: t.id, code, name: String(t.full_name ?? "").trim(), account, ifsc, ifscSource, corroborated,
+      bank: m?.AcBank ?? t.employees_bank ?? null,
+      branch: m?.AcBranch ?? null,
+      holder: m?.AccHolder ?? null,
     });
   }
 
@@ -178,9 +212,20 @@ async function main(): Promise<void> {
     console.log(`    ${String(n).padStart(5)}  ${reason}`);
   }
 
+  const corroboratedCount = planned.filter((p) => p.corroborated).length;
+  const fromEmployeesIfsc = planned.filter((p) => p.ifscSource === "employees.ifsc_code").length;
+  console.log(`\n[bank-backfill] evidence behind the eligible rows:`);
+  console.log(`    ${String(corroboratedCount).padStart(5)}  confirmed credit AND employees.bank_account_number agree (two independent sources)`);
+  console.log(`    ${String(planned.length - corroboratedCount).padStart(5)}  confirmed credit only (one source)`);
+  console.log(`    ${String(fromEmployeesIfsc).padStart(5)}  IFSC from employees.ifsc_code`);
+  console.log(`    ${String(planned.length - fromEmployeesIfsc).padStart(5)}  IFSC from db_bill.employee_master`);
+
   console.log(`\n[bank-backfill] sample of planned rows (accounts masked):`);
   for (const p of planned.slice(0, 15)) {
-    console.log(`    ${p.code.padEnd(12)} ${mask(p.account)}  ${p.ifsc}  ${p.bank ?? ""}`);
+    console.log(
+      `    ${p.code.padEnd(12)} ${mask(p.account)}  ${p.ifsc.padEnd(12)} ` +
+      `${p.corroborated ? "corroborated " : "single-source"}  ${p.bank ?? ""}`,
+    );
   }
 
   if (!APPLY) {
