@@ -8,6 +8,13 @@ import type { Request } from "express";
 import { loadWeekoffRules, applyWeekoffRules, sortBySeniorPriority } from "./weekoff-rule.service.js";
 import type { WeekoffRule } from "./weekoff-rule.service.js";
 import { computeScheduledMinutes, rosterAssignmentColumns, shiftMasterColumns } from "../wfm/shift-scheduling.util.js";
+import {
+  resolveWeekOffScopeDefault,
+  parseRosterTemplatePattern,
+  isWeekOffByTemplate,
+  type RosterTemplatePattern,
+  type WeekOffScopeSource,
+} from "./weekoff-policy.service.js";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -72,6 +79,12 @@ export interface GenerationResult {
   weekoffs_allocated: number;
   conflicts_found: number;
   errors: string[];
+  // Part A.1 (2026-08-13): employee_codes for which NO tier of the week-off
+  // hierarchy (employee preference -> roster template -> process/branch/org
+  // default) resolved anything this cycle. Non-empty means the run is
+  // 'partial', not 'completed', and roster.governance.service.ts's publish
+  // gate blocks this cycle until it is empty on a fresh run.
+  weekOffPolicyMissingEmployees: string[];
 }
 
 // ── Service ───────────────────────────────────────────────────────────────────
@@ -121,6 +134,7 @@ export const rosterGenerationService = {
       weekoffs_allocated: 0,
       conflicts_found: 0,
       errors: [],
+      weekOffPolicyMissingEmployees: [],
     };
 
     try {
@@ -168,6 +182,16 @@ export const rosterGenerationService = {
       );
       const rosterTemplate = templateRows[0] ?? null;
 
+      // 7a. Part A.1 (2026-08-13): tier 2 and tier 3-5 of the week-off
+      // hierarchy, resolved once per cycle (not per employee — both are
+      // scoped to this cycle's process/branch, not to any one employee).
+      // Tier 1 (approvedWeekoffs, loaded in step 4) still takes priority
+      // per-employee inside processEmployee.
+      const templatePattern: RosterTemplatePattern | null = rosterTemplate
+        ? parseRosterTemplatePattern(rosterTemplate.pattern_json)
+        : null;
+      const scopeDefault = await resolveWeekOffScopeDefault(cycle.process_id, cycle.branch_id);
+
       // 7b. Load process week-off rules (blackout, min_gap, force_sunday, senior_priority)
       const weekoffRules = await loadWeekoffRules(cycle.process_id).catch(() => [] as WeekoffRule[]);
       const sortedEmployees = sortBySeniorPriority(weekoffRules, employees as any[]) as EmployeeRow[];
@@ -189,6 +213,8 @@ export const rosterGenerationService = {
             shiftTemplates,
             defaultShift,
             rosterTemplate,
+            templatePattern,
+            scopeDefault,
             weekoffRules,
             cycleId,
             runId,
@@ -208,10 +234,30 @@ export const rosterGenerationService = {
         }
       }
 
-      // 10. Update run record to completed
+      // 10. Update run record to completed (or 'partial' — an existing,
+      // previously-unused ENUM value — when the week-off hierarchy left one
+      // or more employees fully unresolved this cycle; see Part A.1 above).
+      // Recorded into error_details with the WEEK_OFF_POLICY_MISSING: prefix
+      // roster.governance.service.ts's publish gate greps for, alongside
+      // whatever ordinary per-employee errors already occurred.
+      if (result.weekOffPolicyMissingEmployees.length > 0) {
+        for (const code of result.weekOffPolicyMissingEmployees) {
+          result.errors.push(
+            `WEEK_OFF_POLICY_MISSING:emp:${code} — no employee preference, roster template, or process/branch/org default resolved a week-off day for this cycle`
+          );
+        }
+        await db.execute(
+          `INSERT INTO roster_decision_audit
+             (id, run_id, cycle_id, employee_id, roster_date, decision_type, rule_applied, is_week_off)
+           SELECT UUID(), ?, ?, e.id, ?, 'weekoff_denied', 'week_off_policy_missing', 0
+             FROM employees e WHERE e.employee_code IN (${result.weekOffPolicyMissingEmployees.map(() => "?").join(",")})`,
+          [runId, cycleId, dates[0] ?? cycle.week_start_date, ...result.weekOffPolicyMissingEmployees]
+        );
+      }
+      const runStatus = result.weekOffPolicyMissingEmployees.length > 0 ? "partial" : "completed";
       await db.execute(
         `UPDATE roster_generation_run SET
-           status = 'completed',
+           status = ?,
            employees_processed = ?,
            assignments_created = ?,
            weekoffs_allocated = ?,
@@ -219,7 +265,7 @@ export const rosterGenerationService = {
            error_details = ?,
            completed_at = NOW()
          WHERE id = ?`,
-        [result.employees_processed, result.assignments_created, result.weekoffs_allocated, result.conflicts_found, result.errors.length ? JSON.stringify(result.errors) : null, runId]
+        [runStatus, result.employees_processed, result.assignments_created, result.weekoffs_allocated, result.conflicts_found, result.errors.length ? JSON.stringify(result.errors) : null, runId]
       );
 
       // 11. Update wfm_roster_assignment (live ops table) from generated roster_daily_assignment
@@ -440,16 +486,40 @@ async function processEmployee(ctx: {
   shiftTemplates: ShiftTemplateRow[];
   defaultShift: ShiftTemplateRow | null;
   rosterTemplate: RosterTemplateRow | null;
+  templatePattern: RosterTemplatePattern | null;
+  scopeDefault: { day: number; source: WeekOffScopeSource } | null;
   weekoffRules: WeekoffRule[];
   cycleId: string;
   runId: string;
   result: GenerationResult;
 }): Promise<void> {
-  const { emp, dates, holidays, approvedWeekoffs, approvedLeaveDates, frozenShiftAssignments, defaultShift, weekoffRules, cycleId, runId, result } = ctx;
+  const { emp, dates, holidays, approvedWeekoffs, approvedLeaveDates, frozenShiftAssignments, defaultShift, templatePattern, scopeDefault, weekoffRules, cycleId, runId, result } = ctx;
   const weekoff = approvedWeekoffs.get(emp.id);
+
+  // Part A.1 (2026-08-13): resolve which tier of the hierarchy — employee
+  // preference -> roster template -> process/branch/org default -- grants
+  // this employee a week-off at all, once per employee rather than
+  // re-deriving it every date. "unresolved" is a real, tracked outcome (see
+  // GenerationResult.weekOffPolicyMissingEmployees), never silently treated
+  // as "this employee works every day" without a trace.
+  let resolvedDay: number | null = null;
+  let weekOffSource: "employee_preference" | "roster_template" | WeekOffScopeSource | "unresolved" = "unresolved";
+  if (weekoff) {
+    resolvedDay = weekoff.preferred_day;
+    weekOffSource = "employee_preference";
+  } else if (templatePattern) {
+    weekOffSource = "roster_template";
+  } else if (scopeDefault) {
+    resolvedDay = scopeDefault.day;
+    weekOffSource = scopeDefault.source;
+  } else {
+    result.weekOffPolicyMissingEmployees.push(emp.employee_code);
+  }
+
   let lastWeekoffDate: string | null = null;
 
-  for (const date of dates) {
+  for (let dateIdx = 0; dateIdx < dates.length; dateIdx++) {
+    const date = dates[dateIdx];
     // On approved leave: no shift assignment at all for this date, matching
     // auto-roster-synced.service.ts's getEmployeePool(), which filters these
     // employees out before scheduling anything. Checked before holiday/week-off so
@@ -460,7 +530,13 @@ async function processEmployee(ctx: {
     const isHoliday = ctx.holidays.has(date);
     const dateObj = new Date(date + "T00:00:00");
     const dayOfWeek = dateObj.getDay(); // 0=Sun
-    let isWeekOffDay = weekoff ? weekoff.preferred_day === dayOfWeek : false;
+
+    let isWeekOffDay: boolean;
+    if (weekOffSource === "roster_template" && templatePattern) {
+      isWeekOffDay = isWeekOffByTemplate(templatePattern, dateIdx) ?? false;
+    } else {
+      isWeekOffDay = resolvedDay !== null && resolvedDay === dayOfWeek;
+    }
 
     let decisionType: string;
     let shiftTemplateId: string | null = null;
@@ -469,12 +545,14 @@ async function processEmployee(ctx: {
     if (isHoliday) {
       decisionType = "holiday_applied";
       ruleApplied = "holiday_override";
-    } else if (isWeekOffDay && weekoff) {
-      // Apply process week-off rules before granting the week-off
+    } else if (isWeekOffDay) {
+      // Apply process week-off rules before granting the week-off — same
+      // gate regardless of which tier resolved this day, so blackout/min-gap
+      // rules can't be bypassed just because no explicit preference exists.
       const ruling = applyWeekoffRules(weekoffRules, {
         employeeId: emp.id,
         designation: emp.designation,
-        preferredDay: weekoff.preferred_day,
+        preferredDay: resolvedDay,
         candidateDate: date,
         dow: dayOfWeek,
         lastWeekoffDate,
@@ -499,7 +577,7 @@ async function processEmployee(ctx: {
         }
       } else {
         decisionType = "weekoff_assigned";
-        ruleApplied = "fcfs";
+        ruleApplied = weekOffSource === "employee_preference" ? "fcfs" : weekOffSource;
         result.weekoffs_allocated++;
         lastWeekoffDate = date;
       }

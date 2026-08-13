@@ -277,6 +277,45 @@ export const rosterGovernanceService = {
       throw Object.assign(new Error(`Invalid transition: ${cycle.status} → ${newStatus}. Allowed: ${allowed.join(", ") || "none"}`), { statusCode: 400 });
     }
 
+    // Part A.1 (2026-08-13): block publish when the most recent generation
+    // run for this cycle left any employee with no resolvable week-off
+    // policy (no employee preference, roster template, or process/branch/org
+    // default — see roster-generation.service.ts's GenerationResult.
+    // weekOffPolicyMissingEmployees). That run is recorded as status='partial'
+    // with WEEK_OFF_POLICY_MISSING: entries in error_details; check the JSON
+    // directly rather than trusting status alone, since 'partial' can also
+    // cover ordinary per-employee conflicts unrelated to week-off policy.
+    if (newStatus === "published") {
+      const [runRows] = await db.execute<RowDataPacket[]>(
+        `SELECT error_details FROM roster_generation_run
+          WHERE cycle_id = ? AND status IN ('completed', 'partial')
+          ORDER BY started_at DESC LIMIT 1`,
+        [id]
+      );
+      const latestRun = runRows[0] as { error_details: unknown } | undefined;
+      if (latestRun?.error_details) {
+        let errorList: unknown[] = [];
+        if (Array.isArray(latestRun.error_details)) {
+          errorList = latestRun.error_details;
+        } else if (typeof latestRun.error_details === "string") {
+          try { errorList = JSON.parse(latestRun.error_details); } catch { errorList = []; }
+        }
+        const missing = errorList.filter(
+          (e): e is string => typeof e === "string" && e.startsWith("WEEK_OFF_POLICY_MISSING")
+        );
+        if (missing.length > 0) {
+          throw Object.assign(
+            new Error(
+              `Cannot publish: ${missing.length} employee(s) in this cycle have no resolvable week-off policy ` +
+              `(no employee preference, roster template, or process/branch/org default configured). ` +
+              `Configure week_off_policy_default or an employee/process default, then regenerate before publishing.`
+            ),
+            { statusCode: 409, weekOffPolicyMissing: missing }
+          );
+        }
+      }
+    }
+
     const now = new Date().toISOString().slice(0, 19).replace("T", " ");
     const extra: string[] = [];
     const params: unknown[] = [];
