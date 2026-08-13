@@ -53,6 +53,27 @@ type OrgWideGovernance =
       issues: Array<{ code: string; severity: string; count: number; message: string }>;
     };
 
+/**
+ * From GET /api/payroll/readiness-categories/month/:month
+ * (payroll-readiness-categories.service.ts) — see the identical type doc in
+ * BranchPayrollReadiness.tsx. Kept in sync deliberately: both named readiness
+ * pages must show the same canonical payment-readiness verdict, not independent
+ * interpretations of it.
+ */
+type PaymentReadinessCategories =
+  | { status: "not_created" }
+  | { status: "error"; message: string }
+  | {
+      status: "checked";
+      canPay: boolean;
+      canPayBlockedBy: string[];
+      evaluatedAt: string;
+      governanceVersion: string;
+      summary: { p0: number; p1: number; p2: number; failed: number; checkErrors: number; sourceMissing: number };
+      layers: Array<{ layer: string; state: string; checks: number; failed: number; p0: number; p1: number; affectedEmployees: number }>;
+      checks: Array<{ code: string; layer: string; state: string; severity: string; affectedEmployees: number; message: string }>;
+    };
+
 interface ProcessReadiness {
   branch_id: string;
   branch_name: string;
@@ -988,6 +1009,109 @@ function GovernanceBanner({ governance }: { governance: OrgWideGovernance }) {
   );
 }
 
+/**
+ * Surfaces the payment-readiness depth layer (payroll-readiness-categories.service.ts)
+ * alongside GovernanceBanner. Kept as its own banner deliberately: a month can be
+ * "calculation technically available" (governance PASS) while simultaneously
+ * "NOT READY FOR PAYMENT" (canPay=false) — see the identical component in
+ * BranchPayrollReadiness.tsx, which this mirrors so both named pages show the
+ * same canonical verdict rather than independent interpretations of it.
+ */
+function PaymentReadinessBanner({ readiness }: { readiness: PaymentReadinessCategories }) {
+  const [expanded, setExpanded] = useState(false);
+
+  if (readiness.status === "not_created") return null;
+
+  if (readiness.status === "error") {
+    return (
+      <div className="flex items-center gap-3 rounded-2xl border border-slate-300 bg-slate-50 px-4 py-3 text-sm text-slate-700">
+        <AlertCircle className="h-4 w-4 flex-shrink-0 text-slate-500" />
+        <span>
+          <strong>Payment readiness: NOT CHECKED</strong> — {readiness.message}. This is not the same as
+          "ready to pay."
+        </span>
+      </div>
+    );
+  }
+
+  const { canPay, canPayBlockedBy, summary, layers, checks, evaluatedAt, governanceVersion } = readiness;
+  const notGreenChecks = checks.filter((c) => c.state !== "PASS" && c.state !== "NOT_APPLICABLE");
+
+  if (canPay && summary.p0 === 0 && summary.p1 === 0 && summary.sourceMissing === 0 && summary.checkErrors === 0) {
+    return (
+      <div className="flex items-center gap-3 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
+        <span>
+          <strong>Payment readiness: READY TO PAY</strong> — incentive, reimbursement, recovery, F&amp;F and
+          payment-file checks all clear ({governanceVersion}, evaluated {new Date(evaluatedAt).toLocaleString()}).
+        </span>
+      </div>
+    );
+  }
+
+  return (
+    <div className={cn("rounded-2xl border px-4 py-3 text-sm", !canPay ? "border-red-200 bg-red-50 text-red-800" : "border-amber-200 bg-amber-50 text-amber-800")}>
+      <button type="button" onClick={() => setExpanded((v) => !v)} className="flex w-full items-center gap-3 text-left">
+        <AlertCircle className={cn("h-4 w-4 flex-shrink-0", !canPay ? "text-red-500" : "text-amber-500")} />
+        <span className="flex-1">
+          <strong>Payment readiness: {canPay ? "WARNING" : "NOT READY FOR PAYMENT"}</strong> — incentive /
+          reimbursement / recovery / F&amp;F / payment-file layer:{" "}
+          <strong>{summary.p0}</strong> P0, <strong>{summary.p1}</strong> P1, <strong>{summary.p2}</strong> P2
+          {summary.sourceMissing > 0 && <>, <strong>{summary.sourceMissing}</strong> source-missing</>}
+          {summary.checkErrors > 0 && <>, <strong>{summary.checkErrors}</strong> check-error</>}
+          {!canPay && canPayBlockedBy.length > 0 && ` — blocked by ${canPayBlockedBy.join(", ")}`}.
+        </span>
+        <span className="text-xs underline">{expanded ? "Hide" : "View"} details</span>
+      </button>
+      {expanded && (
+        <>
+          <div className="mt-3 flex flex-wrap gap-1.5 border-t border-current/20 pt-3">
+            {layers
+              .filter((l) => l.state !== "PASS")
+              .map((l) => (
+                <span
+                  key={l.layer}
+                  className={cn(
+                    "rounded px-2 py-1 text-[11px] font-semibold uppercase",
+                    l.state === "SOURCE_MISSING" ? "bg-slate-200 text-slate-700" : l.p0 > 0 ? "bg-red-200 text-red-800" : "bg-amber-200 text-amber-800",
+                  )}
+                  title={`${l.checks} checks, ${l.failed} failed, ${l.affectedEmployees} employees affected`}
+                >
+                  {l.layer}: {l.state}
+                </span>
+              ))}
+          </div>
+          <ul className="mt-3 space-y-1.5">
+            {notGreenChecks.map((c) => (
+              <li key={c.code} className="flex items-start gap-2 text-xs">
+                <span
+                  className={cn(
+                    "mt-0.5 shrink-0 rounded px-1.5 py-0.5 font-bold uppercase",
+                    c.state === "SOURCE_MISSING"
+                      ? "bg-slate-200 text-slate-700"
+                      : c.state === "CHECK_ERROR"
+                        ? "bg-red-300 text-red-900"
+                        : c.severity === "P0"
+                          ? "bg-red-200 text-red-800"
+                          : c.severity === "P1"
+                            ? "bg-amber-200 text-amber-800"
+                            : "bg-slate-100 text-slate-600",
+                  )}
+                >
+                  {c.state === "FAIL" ? c.severity : c.state}
+                </span>
+                <span>
+                  {c.affectedEmployees > 0 && <><strong>{c.affectedEmployees}</strong> — </>}
+                  {c.message}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+    </div>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // HOGroupedView
 // ---------------------------------------------------------------------------
@@ -1041,6 +1165,22 @@ function HOGroupedView({ roleKeys, autoOpenProcessId }: { roleKeys: string[]; au
   const summary = data?.summary ?? { totalBranches: 0, totalProcesses: 0, readyProcesses: 0, avgScore: 0 };
   const governance: OrgWideGovernance = data?.governance ?? { status: "not_created" };
 
+  const { data: paymentReadinessData } = useQuery({
+    queryKey: ["payment-readiness-categories", month],
+    queryFn: async () => {
+      try {
+        const res = await apiFetch(`/api/payroll/readiness-categories/month/${month}`);
+        if (res.status === "not_created" || !res.data) return { status: "not_created" as const };
+        return { status: "checked" as const, ...res.data };
+      } catch (err) {
+        return { status: "error" as const, message: err instanceof Error ? err.message : "Payment readiness check failed" };
+      }
+    },
+    refetchInterval: 120_000,
+    retry: false,
+  });
+  const paymentReadiness: PaymentReadinessCategories = paymentReadinessData ?? { status: "not_created" };
+
   const csvUrl = `/api/payroll/process-readiness/export?month=${month}&format=csv`;
   const canExport = roleKeys.some(r => ["payroll_head", "super_admin", "admin"].includes(r));
 
@@ -1072,6 +1212,7 @@ function HOGroupedView({ roleKeys, autoOpenProcessId }: { roleKeys: string[]; au
       </div>
 
       <GovernanceBanner governance={governance} />
+      <PaymentReadinessBanner readiness={paymentReadiness} />
 
       {/* Summary stats */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">

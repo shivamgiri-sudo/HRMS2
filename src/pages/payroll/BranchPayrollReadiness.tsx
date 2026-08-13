@@ -73,6 +73,31 @@ type OrgWideGovernance =
       issues: Array<{ code: string; severity: string; count: number; message: string }>;
     };
 
+/**
+ * From GET /api/payroll/readiness-categories/month/:month
+ * (payroll-readiness-categories.service.ts) — the deeper, employee-level layer
+ * underneath payrollGovernanceService: incentive/reimbursement/recovery/F&F/
+ * payment-file, each check reporting PASS/FAIL/BLOCKED/NOT_APPLICABLE/
+ * SOURCE_MISSING/CHECK_ERROR rather than blocker/warning. Answers a distinct
+ * question from OrgWideGovernance — "may this run be PAID", not "may this run
+ * be CALCULATED" — so a month can show canCalculate=true here and canPay=false.
+ * Deliberately NOT merged into one score with the governance banner above: the
+ * whole point of a layered gate is that the two can disagree.
+ */
+type PaymentReadinessCategories =
+  | { status: "not_created" }
+  | { status: "error"; message: string }
+  | {
+      status: "checked";
+      canPay: boolean;
+      canPayBlockedBy: string[];
+      evaluatedAt: string;
+      governanceVersion: string;
+      summary: { p0: number; p1: number; p2: number; failed: number; checkErrors: number; sourceMissing: number };
+      layers: Array<{ layer: string; state: string; checks: number; failed: number; p0: number; p1: number; affectedEmployees: number }>;
+      checks: Array<{ code: string; layer: string; state: string; severity: string; affectedEmployees: number; message: string }>;
+    };
+
 interface BranchReadiness {
   branch_id: string;
   branch_name: string;
@@ -1371,6 +1396,109 @@ function GovernanceBanner({ governance }: { governance: OrgWideGovernance }) {
   );
 }
 
+/**
+ * Surfaces the payment-readiness depth layer alongside GovernanceBanner. The two
+ * are shown separately, not blended: a month can be "calculation technically
+ * available" (governance PASS) while simultaneously "NOT READY FOR PAYMENT"
+ * (canPay=false) — that distinction is the reason this is its own banner.
+ */
+function PaymentReadinessBanner({ readiness }: { readiness: PaymentReadinessCategories }) {
+  const [expanded, setExpanded] = useState(false);
+
+  if (readiness.status === "not_created") return null;
+
+  if (readiness.status === "error") {
+    return (
+      <div className="flex items-center gap-3 rounded-2xl border border-slate-300 bg-slate-50 px-4 py-3 text-sm text-slate-700">
+        <AlertTriangle className="h-4 w-4 flex-shrink-0 text-slate-500" />
+        <span>
+          <strong>Payment readiness: NOT CHECKED</strong> — {readiness.message}. This is not the same as
+          "ready to pay."
+        </span>
+      </div>
+    );
+  }
+
+  const { canPay, canPayBlockedBy, summary, layers, checks, evaluatedAt, governanceVersion } = readiness;
+  const notGreenChecks = checks.filter((c) => c.state !== "PASS" && c.state !== "NOT_APPLICABLE");
+
+  if (canPay && summary.p0 === 0 && summary.p1 === 0 && summary.sourceMissing === 0 && summary.checkErrors === 0) {
+    return (
+      <div className="flex items-center gap-3 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
+        <span>
+          <strong>Payment readiness: READY TO PAY</strong> — incentive, reimbursement, recovery, F&amp;F and
+          payment-file checks all clear ({governanceVersion}, evaluated {new Date(evaluatedAt).toLocaleString()}).
+        </span>
+      </div>
+    );
+  }
+
+  return (
+    <div className={`rounded-2xl border px-4 py-3 text-sm ${!canPay ? "border-red-200 bg-red-50 text-red-800" : "border-amber-200 bg-amber-50 text-amber-800"}`}>
+      <button type="button" onClick={() => setExpanded((v) => !v)} className="flex w-full items-center gap-3 text-left">
+        <AlertTriangle className={`h-4 w-4 flex-shrink-0 ${!canPay ? "text-red-500" : "text-amber-500"}`} />
+        <span className="flex-1">
+          <strong>Payment readiness: {canPay ? "WARNING" : "NOT READY FOR PAYMENT"}</strong> — incentive /
+          reimbursement / recovery / F&amp;F / payment-file layer:{" "}
+          <strong>{summary.p0}</strong> P0, <strong>{summary.p1}</strong> P1, <strong>{summary.p2}</strong> P2
+          {summary.sourceMissing > 0 && <>, <strong>{summary.sourceMissing}</strong> source-missing</>}
+          {summary.checkErrors > 0 && <>, <strong>{summary.checkErrors}</strong> check-error</>}
+          {!canPay && canPayBlockedBy.length > 0 && ` — blocked by ${canPayBlockedBy.join(", ")}`}.
+        </span>
+        <span className="text-xs underline">{expanded ? "Hide" : "View"} details</span>
+      </button>
+      {expanded && (
+        <>
+          <div className="mt-3 flex flex-wrap gap-1.5 border-t border-current/20 pt-3">
+            {layers
+              .filter((l) => l.state !== "PASS")
+              .map((l) => (
+                <span
+                  key={l.layer}
+                  className={`rounded px-2 py-1 text-[11px] font-semibold uppercase ${
+                    l.state === "SOURCE_MISSING"
+                      ? "bg-slate-200 text-slate-700"
+                      : l.p0 > 0
+                        ? "bg-red-200 text-red-800"
+                        : "bg-amber-200 text-amber-800"
+                  }`}
+                  title={`${l.checks} checks, ${l.failed} failed, ${l.affectedEmployees} employees affected`}
+                >
+                  {l.layer}: {l.state}
+                </span>
+              ))}
+          </div>
+          <ul className="mt-3 space-y-1.5">
+            {notGreenChecks.map((c) => (
+              <li key={c.code} className="flex items-start gap-2 text-xs">
+                <span
+                  className={`mt-0.5 shrink-0 rounded px-1.5 py-0.5 font-bold uppercase ${
+                    c.state === "SOURCE_MISSING"
+                      ? "bg-slate-200 text-slate-700"
+                      : c.state === "CHECK_ERROR"
+                        ? "bg-red-300 text-red-900"
+                        : c.severity === "P0"
+                          ? "bg-red-200 text-red-800"
+                          : c.severity === "P1"
+                            ? "bg-amber-200 text-amber-800"
+                            : "bg-slate-100 text-slate-600"
+                  }`}
+                >
+                  {c.state === "FAIL" ? c.severity : c.state}
+                </span>
+                <span>
+                  {c.affectedEmployees > 0 && <><strong>{c.affectedEmployees}</strong> — </>}
+                  {c.message}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+    </div>
+  );
+}
+
 function StatChip({
   label,
   value,
@@ -1425,6 +1553,26 @@ function HOView({ month }: { month: string }) {
   });
   const branches = summaryRes?.data ?? [];
   const governance = summaryRes?.governance ?? { status: "not_created" as const };
+
+  const { data: paymentReadiness } = useQuery<PaymentReadinessCategories>({
+    queryKey: ["payment-readiness-categories", month],
+    queryFn: async () => {
+      try {
+        const res = await hrmsApi.get<{ success: boolean; status: string; data: Omit<Extract<PaymentReadinessCategories, { status: "checked" }>, "status"> | null }>(
+          `/api/payroll/readiness-categories/month/${month}`
+        );
+        if (res.status === "not_created" || !res.data) return { status: "not_created" as const };
+        return { status: "checked" as const, ...res.data };
+      } catch (err) {
+        // The route 503s (never 200-with-empty-body) on a check failure — surface
+        // that as NOT CHECKED, never silently drop it to "not_created".
+        return { status: "error" as const, message: err instanceof Error ? err.message : "Payment readiness check failed" };
+      }
+    },
+    staleTime: 60_000,
+    refetchInterval: 120_000,
+    retry: false,
+  });
 
   const stats = useMemo(() => {
     const total = branches.length;
@@ -1482,6 +1630,7 @@ function HOView({ month }: { month: string }) {
       )}
 
       <GovernanceBanner governance={governance} />
+      <PaymentReadinessBanner readiness={paymentReadiness ?? { status: "not_created" }} />
 
       {/* Stats row */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
