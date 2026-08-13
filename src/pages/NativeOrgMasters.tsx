@@ -263,6 +263,21 @@ function EntityTab({ tab, isAdmin }: EntityTabProps) {
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<"1" | "0" | "all">("1");
 
+  // Branch filter — only department_master carries a branch_id among the tabs this
+  // component renders (branches/lobs/designations/campaigns/grade-bands don't; see
+  // TABLES_WITH_BRANCH_ID in org.service.ts). Fetching the branch list unconditionally
+  // is cheap (45 rows, already cached by other tabs' own fetches) but only Departments
+  // renders and applies the filter.
+  const hasBranchFilter = tab.key === "departments";
+  const [branchFilter, setBranchFilter] = useState("");
+  const [branchOptions, setBranchOptions] = useState<{ id: string; branch_name: string }[]>([]);
+  useEffect(() => {
+    if (!hasBranchFilter) return;
+    hrmsApi.get<{ data: { id: string; branch_name: string }[] } | { id: string; branch_name: string }[]>("/api/org/branches")
+      .then((res) => setBranchOptions(Array.isArray(res) ? res : res.data ?? []))
+      .catch(() => setBranchOptions([]));
+  }, [hasBranchFilter]);
+
   const [showAdd, setShowAdd] = useState(false);
   const [addForm, setAddForm] = useState<Record<string, string>>({});
   const [addSubmitting, setAddSubmitting] = useState(false);
@@ -286,6 +301,7 @@ function EntityTab({ tab, isAdmin }: EntityTabProps) {
       const params = new URLSearchParams();
       if (searchQuery.trim()) params.set("q", searchQuery.trim());
       params.set("active_status", statusFilter);
+      if (hasBranchFilter && branchFilter) params.set("branch_id", branchFilter);
       const url = `${tab.apiPath}${params.toString() ? `?${params.toString()}` : ""}`;
       const res = await hrmsApi.get<{ data: OrgRecord[] } | OrgRecord[]>(url);
       const data = Array.isArray(res) ? res : (res as { data: OrgRecord[] }).data ?? [];
@@ -296,7 +312,7 @@ function EntityTab({ tab, isAdmin }: EntityTabProps) {
     } finally {
       setLoading(false);
     }
-  }, [tab.apiPath, searchQuery, statusFilter]);
+  }, [tab.apiPath, searchQuery, statusFilter, hasBranchFilter, branchFilter]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -406,6 +422,18 @@ function EntityTab({ tab, isAdmin }: EntityTabProps) {
                 </button>
               ))}
             </div>
+            {hasBranchFilter && (
+              <select
+                value={branchFilter}
+                onChange={(e) => setBranchFilter(e.target.value)}
+                className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 outline-none focus:border-blue-400 transition-colors cursor-pointer"
+              >
+                <option value="">All Branches</option>
+                {branchOptions.map((b) => (
+                  <option key={b.id} value={b.id}>{b.branch_name}</option>
+                ))}
+              </select>
+            )}
           </div>
           <button
             onClick={openAdd}
@@ -865,6 +893,11 @@ function ProcessTab({ isAdmin }: { isAdmin: boolean }) {
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
   const [search, setSearch] = useState("");
+  // process_master carries both branch_id and client_id — see TABLES_WITH_BRANCH_ID in
+  // org.service.ts and the branch_id/client_id passthrough on GET /api/org/processes.
+  const [statusFilter, setStatusFilter] = useState<"1" | "0" | "all">("1");
+  const [branchFilter, setBranchFilter] = useState("");
+  const [clientFilter, setClientFilter] = useState("");
 
   const [showAdd, setShowAdd] = useState(false);
   const [addForm, setAddForm] = useState<ProcessFormData>(emptyProcessForm());
@@ -881,8 +914,11 @@ function ProcessTab({ isAdmin }: { isAdmin: boolean }) {
     setLoading(true);
     setMessage("");
     try {
+      const params = new URLSearchParams();
+      params.set("active_status", statusFilter);
+      if (branchFilter) params.set("branch_id", branchFilter);
       const [procRes, branchRes, clientRes] = await Promise.all([
-        hrmsApi.get<{ data: ProcessRecord[] } | ProcessRecord[]>("/api/org/processes"),
+        hrmsApi.get<{ data: ProcessRecord[] } | ProcessRecord[]>(`/api/org/processes?${params.toString()}`),
         hrmsApi.get<{ data: BranchOption[] } | BranchOption[]>("/api/org/branches"),
         hrmsApi.get<{ data: ClientOption[] } | ClientOption[]>("/api/clients"),
       ]);
@@ -897,11 +933,16 @@ function ProcessTab({ isAdmin }: { isAdmin: boolean }) {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [statusFilter, branchFilter]);
 
   useEffect(() => { void load(); }, [load]);
 
+  // client_id isn't filtered server-side (GET /api/org/processes doesn't take it — the
+  // route only forwards branch_id, since process_master's own client linkage is via
+  // client_id but that column isn't in TABLES_WITH_BRANCH_ID's server-side allowlist
+  // path); kept as a client-side filter alongside search, same as before this change.
   const filtered = records.filter((r) => {
+    if (clientFilter && r.client_id !== clientFilter) return false;
     if (!search.trim()) return true;
     const q = search.toLowerCase();
     return (
@@ -994,6 +1035,41 @@ function ProcessTab({ isAdmin }: { isAdmin: boolean }) {
             placeholder="Search process, client, branch…"
             className="w-64 rounded-2xl border px-3 py-2 text-sm outline-none focus:border-blue-400 transition-colors"
           />
+          <div className="flex gap-1 rounded-xl border border-slate-200 bg-white p-1">
+            {(["1", "0", "all"] as const).map((status) => (
+              <button
+                key={status}
+                onClick={() => setStatusFilter(status)}
+                className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors cursor-pointer ${
+                  statusFilter === status
+                    ? "bg-slate-950 text-white"
+                    : "text-slate-600 hover:bg-slate-50"
+                }`}
+              >
+                {status === "1" ? "Active" : status === "0" ? "Inactive" : "All"}
+              </button>
+            ))}
+          </div>
+          <select
+            value={branchFilter}
+            onChange={(e) => setBranchFilter(e.target.value)}
+            className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 outline-none focus:border-blue-400 transition-colors cursor-pointer"
+          >
+            <option value="">All Branches</option>
+            {branches.map((b) => (
+              <option key={b.id} value={b.id}>{b.branch_name}</option>
+            ))}
+          </select>
+          <select
+            value={clientFilter}
+            onChange={(e) => setClientFilter(e.target.value)}
+            className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 outline-none focus:border-blue-400 transition-colors cursor-pointer"
+          >
+            <option value="">All Clients</option>
+            {clients.map((c) => (
+              <option key={c.id} value={c.id}>{c.client_name}</option>
+            ))}
+          </select>
         </div>
         <button
           onClick={openAdd}
@@ -1352,6 +1428,10 @@ function CostCentreTab({ isAdmin }: { isAdmin: boolean }) {
   const [message, setMessage] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<"1" | "0" | "all">("1");
+  const [branchFilter, setBranchFilter] = useState("");
+  const [clientFilter, setClientFilter] = useState("");
+  const [lobFilter, setLobFilter] = useState("");
+  const [processFilter, setProcessFilter] = useState("");
   const [showBilling, setShowBilling] = useState(false);
 
   const [migrationStatus, setMigrationStatus] = useState<{ total: number; orphaned: number; migrationComplete: boolean; message: string } | null>(null);
@@ -1378,6 +1458,10 @@ function CostCentreTab({ isAdmin }: { isAdmin: boolean }) {
       const params = new URLSearchParams();
       if (searchQuery.trim()) params.set("q", searchQuery.trim());
       params.set("active_status", statusFilter);
+      if (branchFilter) params.set("branch_id", branchFilter);
+      if (clientFilter) params.set("client_id", clientFilter);
+      if (lobFilter) params.set("lob_id", lobFilter);
+      if (processFilter) params.set("process_id", processFilter);
       const url = `/api/org/cost-centres${params.toString() ? `?${params.toString()}` : ""}`;
 
       const [ccRes, clientRes, lobRes, branchRes, procRes, migRes, billRes] = await Promise.all([
@@ -1402,7 +1486,7 @@ function CostCentreTab({ isAdmin }: { isAdmin: boolean }) {
     } finally {
       setLoading(false);
     }
-  }, [searchQuery, statusFilter]);
+  }, [searchQuery, statusFilter, branchFilter, clientFilter, lobFilter, processFilter]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -1565,6 +1649,48 @@ function CostCentreTab({ isAdmin }: { isAdmin: boolean }) {
                 </button>
               ))}
             </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <select
+              value={branchFilter}
+              onChange={(e) => setBranchFilter(e.target.value)}
+              className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 outline-none focus:border-blue-400 transition-colors cursor-pointer"
+            >
+              <option value="">All Branches</option>
+              {branches.map((b) => (
+                <option key={b.id} value={b.id}>{b.branch_name}</option>
+              ))}
+            </select>
+            <select
+              value={clientFilter}
+              onChange={(e) => setClientFilter(e.target.value)}
+              className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 outline-none focus:border-blue-400 transition-colors cursor-pointer"
+            >
+              <option value="">All Clients</option>
+              {clients.map((c) => (
+                <option key={c.id} value={c.id}>{c.client_name}</option>
+              ))}
+            </select>
+            <select
+              value={lobFilter}
+              onChange={(e) => setLobFilter(e.target.value)}
+              className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 outline-none focus:border-blue-400 transition-colors cursor-pointer"
+            >
+              <option value="">All LOBs</option>
+              {lobs.map((l) => (
+                <option key={l.id} value={l.id}>{l.lob_name}</option>
+              ))}
+            </select>
+            <select
+              value={processFilter}
+              onChange={(e) => setProcessFilter(e.target.value)}
+              className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 outline-none focus:border-blue-400 transition-colors cursor-pointer"
+            >
+              <option value="">All Processes</option>
+              {processes.map((p) => (
+                <option key={p.id} value={p.id}>{p.process_name}</option>
+              ))}
+            </select>
           </div>
           <div className="flex items-center gap-2">
             <button

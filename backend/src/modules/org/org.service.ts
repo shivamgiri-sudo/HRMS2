@@ -33,7 +33,22 @@ interface ListOptions {
   limit?: number;
   entityType?: string;
   employeeId?: string;
+  branch_id?: string;
+  client_id?: string;
+  lob_id?: string;
+  process_id?: string;
 }
+
+// Tables that actually carry a branch_id column — listActive() is generic across every
+// whitelisted master table, and most of them (lob/designation/campaign/grade_band/policy/
+// branch itself) have no such column. Applying the filter outside this set would 500 on an
+// unknown-column error the moment a caller passed branch_id for one of those tabs.
+const TABLES_WITH_BRANCH_ID = new Set([
+  "department_master",
+  "cost_centre_master",
+  "process_master",
+  "location_master",
+]);
 
 async function listActive(table: string, orderCol = "created_at", options: ListOptions = {}): Promise<RowDataPacket[]> {
   assertMasterTable(table);
@@ -96,6 +111,14 @@ async function listActive(table: string, orderCol = "created_at", options: ListO
     if (searchTerms.length > 0) {
       whereClauses.push(`(${searchTerms.join(" OR ")})`);
     }
+  }
+
+  // Branch filter — only for tables that have the column (see TABLES_WITH_BRANCH_ID above).
+  // Silently ignored for tables that don't, rather than erroring: a tab with no branch
+  // concept (LOBs, Designations, ...) simply never sends this param.
+  if (options.branch_id && TABLES_WITH_BRANCH_ID.has(table)) {
+    whereClauses.push("branch_id = ?");
+    params.push(options.branch_id);
   }
 
   const whereClause = whereClauses.length > 0 ? `WHERE ${whereClauses.join(" AND ")}` : "";
@@ -406,7 +429,7 @@ export const campaignService = {
 
 export const costCentreService = {
   async list(options: ListOptions = {}) {
-    const { q, active_status, page, limit, employeeId } = options;
+    const { q, active_status, page, limit, employeeId, branch_id, client_id, lob_id, process_id } = options;
     const whereClauses: string[] = [];
     const params: (string | number)[] = [];
 
@@ -424,6 +447,13 @@ export const costCentreService = {
       whereClauses.push("(cc.cost_centre_name LIKE ? OR cc.cost_centre_code LIKE ? OR cl.client_name LIKE ? OR p.process_name LIKE ?)");
       params.push(`%${q.trim()}%`, `%${q.trim()}%`, `%${q.trim()}%`, `%${q.trim()}%`);
     }
+
+    // Relationship filters — same axes the Add/Edit form already requires (client, LOB,
+    // branch, process), now usable to narrow the list too.
+    if (branch_id)  { whereClauses.push("cc.branch_id = ?");  params.push(branch_id); }
+    if (client_id)  { whereClauses.push("cc.client_id = ?");  params.push(client_id); }
+    if (lob_id)     { whereClauses.push("cc.lob_id = ?");     params.push(lob_id); }
+    if (process_id) { whereClauses.push("cc.process_id = ?"); params.push(process_id); }
 
     const whereClause = whereClauses.length > 0 ? `WHERE ${whereClauses.join(" AND ")}` : "";
 

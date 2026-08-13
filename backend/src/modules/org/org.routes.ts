@@ -31,12 +31,15 @@ function buildCrud(
   }
 ) {
   router.get(path, h(async (req: Request, res: Response) => {
-    const { q, active_status, page, limit } = req.query;
+    const { q, active_status, page, limit, branch_id } = req.query;
     const options = {
       q: q as string | undefined,
       active_status: active_status as string | undefined,
       page: page ? parseInt(page as string, 10) : undefined,
       limit: limit ? parseInt(limit as string, 10) : undefined,
+      // Ignored by list() for tables with no branch_id column (see TABLES_WITH_BRANCH_ID
+      // in org.service.ts) — safe to always pass through.
+      branch_id: branch_id as string | undefined,
     };
     res.json({ data: await svc.list(options) });
   }));
@@ -175,12 +178,16 @@ router.get("/cost-centres/migration-status", h(async (_req: Request, res: Respon
 
 // Cost-centres: list with full relationship joins
 router.get("/cost-centres", h(async (req: Request, res: Response) => {
-  const { q, active_status, page, limit } = req.query;
+  const { q, active_status, page, limit, branch_id, client_id, lob_id, process_id } = req.query;
   const options = {
     q: q as string | undefined,
     active_status: active_status as string | undefined,
     page: page ? parseInt(page as string, 10) : undefined,
     limit: limit ? parseInt(limit as string, 10) : undefined,
+    branch_id: branch_id as string | undefined,
+    client_id: client_id as string | undefined,
+    lob_id: lob_id as string | undefined,
+    process_id: process_id as string | undefined,
   };
   const rows = await costCentreService.list(options);
   return res.json({ data: rows });
