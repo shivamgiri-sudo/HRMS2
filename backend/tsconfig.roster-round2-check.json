@@ -1,0 +1,26 @@
+{
+  // Typecheck for round-2 roster/WFM fixes (shift-swap, immutability,
+  // minimum-rest wiring gaps, shared lock-guard) — 2026-08-13.
+  // Deliberately my own scoped file rather than reusing
+  // tsconfig.roster-enterprise-check.json, which a concurrent session has
+  // already narrowed away from wfm.routes.ts/roster-generation.service.ts
+  // specifically to avoid exactly this kind of cross-session interference.
+  //
+  //     npx tsc -p tsconfig.roster-round2-check.json
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true
+  },
+  "include": [
+    "src/modules/wfm/wfm.routes.ts",
+    "src/modules/roster/roster-lock-guard.ts",
+    "src/modules/roster/weekoff-policy.service.ts",
+    "src/modules/roster/roster.governance.service.ts",
+    "src/modules/wfm-extensions/wfm-ext.service.ts",
+    "src/modules/wfm-extensions/wfm-ext.routes.ts",
+    "src/modules/wfm/roster.service.ts",
+    "src/modules/wfm/roster.controller.ts",
+    "src/modules/wfm/auto-roster-synced.service.ts",
+    "src/modules/wfm/auto-roster-synced.routes.ts"
+  ]
+}
