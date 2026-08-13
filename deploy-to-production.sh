@@ -116,6 +116,10 @@ echo -e "${YELLOW}Step 2: Preflight — will a restart leave health at 503?${NC}
 echo "--------------------------------------"
 cd "$ROOT/backend"
 npm run preflight
+# preflight reads src/. Production executes dist/. Before 2026-08-13 nothing compared them,
+# and a green preflight against a 35-commit-stale artifact was the result: it listed 7 pending
+# migrations from a file the runtime would never execute. The parity gate runs after the build
+# (Step 3a), where dist exists and can be compared.
 echo
 
 echo -e "${YELLOW}Step 3: Build backend${NC}"
@@ -126,6 +130,16 @@ echo "--------------------------------------"
 npm run build
 echo -e "${GREEN}✓ Backend built${NC}"
 echo
+
+echo -e "${YELLOW}Step 3a: Release integrity — is the artifact the source we just pulled?${NC}"
+echo "--------------------------------------"
+# NON-BYPASSABLE. Proves EXPECTED_GIT_SHA == BACKEND_BUILD_SHA and that the source migration
+# manifest equals the compiled one, BEFORE anything restarts. A build that silently produced a
+# different manifest than src/ is exactly how migrations "apply" and then do not.
+# set -e stops the deploy here on failure, which is the intent.
+npm run release:verify
+echo
+
 
 echo -e "${YELLOW}Step 4: Build frontend${NC}"
 echo "--------------------------------------"
@@ -180,6 +194,12 @@ cd "$ROOT/backend"
 # Confirms every manifest migration actually applied. A 503 here is the schema, not the
 # network — read the failing filename it prints rather than restarting again.
 npm run preflight:post
+
+# The release certificate: source == artifact == BOTH runtimes, and schema.pending == 0.
+# preflight:post proves the schema; this proves the processes are actually serving the commit
+# that was approved, including hrms2-workers, which exposes no endpoint and was previously only
+# ever INFERRED to have restarted.
+npm run release:certify
 
 # Re-check after the preflight, still tolerating a slow boot.
 if code=$(wait_for_health 30); then

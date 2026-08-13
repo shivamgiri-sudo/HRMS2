@@ -16,6 +16,8 @@
     "migrate:status": "tsx src/scripts/migrate.ts --status",
     "preflight": "node scripts/deploy-preflight.mjs",
     "preflight:post": "node scripts/deploy-preflight.mjs --post",
+    "release:verify": "node scripts/release-integrity-check.mjs",
+    "release:certify": "node scripts/release-integrity-check.mjs --post",
     "typecheck": "tsc --noEmit",
     "check:routes": "vitest run src/platform/__tests__/route-contract.test.ts",
     "test:baseline": "node scripts/check-test-baseline.mjs",
