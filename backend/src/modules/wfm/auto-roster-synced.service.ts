@@ -5,6 +5,7 @@ import { loadWeekoffRules } from "../roster/weekoff-rule.service.js";
 import { computeScheduledMinutes } from "./shift-scheduling.util.js";
 import { isRestPolicyFeatureActive, hasAnyRestPolicyConfigured, validateMinimumRest, logRestOverride } from "./rest-policy.service.js";
 import { checkEmployeeDateNotLocked } from "../roster/roster-lock-guard.js";
+import { resolveWeekOffScopeDefault } from "../roster/weekoff-policy.service.js";
 
 type AnyRow = Record<string, any>;
 
@@ -774,6 +775,23 @@ export const autoRosterSyncedService = {
     const branchName = await getBranchName(plan.branch_id);
     const dates = dateRange(String(plan.from_date).slice(0, 10), String(plan.to_date).slice(0, 10));
     const prefs = await getWeekOffPreferences(plan.process_id);
+    // Governance-engine convergence (round 2, 2026-08-13): tier 3-5 of Part
+    // A.1's week-off hierarchy (process/branch/org default) is a single
+    // day-of-week value, so — unlike tier 2's roster_template, which is
+    // indexed by cycle date-position and would need restructuring this
+    // engine's day-of-week-keyed shape to consume — it drops in directly as
+    // a fallback for any employee neither week_off_preference nor
+    // employee_roster_preference resolved. Resolved once per plan, not per
+    // employee. Never a hard block on lookup failure, matching every other
+    // non-critical lookup in this function.
+    const scopeDefault = await resolveWeekOffScopeDefault(plan.process_id, plan.branch_id ?? null).catch((error) => {
+      console.error("[auto-roster] week_off_policy_default lookup unavailable; unresolved employees stay unresolved:", (error as Error)?.message);
+      return null;
+    });
+    const preferredDayFor = (empId: string): number | null => {
+      const explicit = prefs.get(empId);
+      return explicit !== undefined ? explicit : (scopeDefault?.day ?? null);
+    };
     const shrinkagePct = Number(control.shrinkage_pct ?? 15);
     const weekoffRules = await loadWeekoffRules(plan.process_id).catch(() => [] as Awaited<ReturnType<typeof loadWeekoffRules>>);
     const blackoutDates = new Set(
@@ -827,8 +845,8 @@ export const autoRosterSyncedService = {
         const candidates = pool
           .filter((e) => !assignedToday.has(String(e.id)))
           .sort((a, b) => {
-            const prefA = prefs.get(String(a.id)) === dow ? 1 : 0;
-            const prefB = prefs.get(String(b.id)) === dow ? 1 : 0;
+            const prefA = preferredDayFor(String(a.id)) === dow ? 1 : 0;
+            const prefB = preferredDayFor(String(b.id)) === dow ? 1 : 0;
             return prefA - prefB || String(a.employee_code ?? a.id).localeCompare(String(b.employee_code ?? b.id));
           });
 
@@ -943,7 +961,7 @@ export const autoRosterSyncedService = {
       const hcFloor = await getHcFloorForDate(plan.process_id, rosterDate);
       const currentlyRostered = assignedToday.size;
 
-      for (const emp of pool.filter((e) => !assignedToday.has(String(e.id)) && prefs.get(String(e.id)) === dow)) {
+      for (const emp of pool.filter((e) => !assignedToday.has(String(e.id)) && preferredDayFor(String(e.id)) === dow)) {
         const weekoffGranted = skipped; // already granted week-offs on this date so far
 
         // If floor is set and granting one more would leave us below floor → deny
