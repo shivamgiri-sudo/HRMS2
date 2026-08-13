@@ -215,6 +215,11 @@ router.patch('/bank-change-requests/:id', requireRole('payroll', 'super_admin'),
       return res.status(400).json({ success: false, message: 'Invalid format in submitted values', details: formatErrors });
     }
 
+    // TODO(cross-employee duplicate check): shared/bankAccountDuplicate.ts has
+    // findDuplicateAccountOwner(), written and unit tested, but not called here yet — see
+    // its header comment and 1136_employee_bank_detail_account_blind_index.sql for the
+    // migration + backfill sequence that must complete on this database first.
+
     // Archive the existing primary account (kept for history, not deleted) —
     // matches profile-approval.service.ts's approveBankDetailsUpdate archival shape.
     await db.execute(

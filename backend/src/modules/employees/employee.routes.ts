@@ -615,6 +615,12 @@ router.put("/:employeeId/bank-details", ...hrProfileGate, h(async (req: any, res
     return res.status(400).json({ success: false, error: "Invalid format", details: formatErrors });
   }
 
+  // TODO(cross-employee duplicate check): shared/bankAccountDuplicate.ts has
+  // findDuplicateAccountOwner(), written and unit tested, but not called here yet — it
+  // depends on migration 1136 + its backfill having run and been verified on this
+  // database first. See the header comment in that file and in
+  // 1136_employee_bank_detail_account_blind_index.sql before wiring it in.
+
   // verification_status and masked_account_number are not real columns on
   // employee_bank_detail (this INSERT 500'd on every call — confirmed live). See the
   // matching fix and comment on PUT /me/bank-details above.
