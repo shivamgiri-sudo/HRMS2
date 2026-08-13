@@ -1,0 +1,5 @@
+{
+  "extends": "./tsconfig.json",
+  "include": ["src/modules/ats-assessment/**/*.ts"],
+  "exclude": ["node_modules", "dist", "src/modules/ats-assessment/__tests__"]
+}

@@ -1600,18 +1600,8 @@ async function finalizeAssessment(
   );
   const responseMap = new Map(responses.map((response) => [response.question_id, response]));
   const missing = definition.questions.filter((question) => !hasAnswer(answerValue(responseMap.get(question.id))));
-  if (missing.length && !options.allowIncomplete) {
-    // Include question numbers for better debugging
-    const missingNumbers = missing.map((q) => {
-      const idx = definition.questions.findIndex((dq) => dq.id === q.id);
-      return idx >= 0 ? idx + 1 : q.id;
-    });
-    throw appError(
-      `Please answer all questions (${missing.length} remaining: Q${missingNumbers.slice(0, 5).join(", Q")}${missing.length > 5 ? "..." : ""})`,
-      400,
-      "ASSESSMENT_INCOMPLETE",
-    );
-  }
+  const hasQuestions = definition.questions.length > 0;
+  const mcqDone = hasQuestions && missing.length === 0;
 
   // Auto-submit any active (started but not submitted) typing attempts before final scoring
   const activeTyping = await rows<TypingRow>(
@@ -1671,8 +1661,18 @@ async function finalizeAssessment(
   );
   // Passed attempt always outranks failed before score comparison.
   const bestTyping = selectBestTypingAttempt(typingAttempts);
-  if (definition.typing.required && !bestTyping && !options.allowIncomplete) {
-    throw appError("Complete at least one typing attempt", 400, "TYPING_REQUIRED");
+  const typingDone = Boolean(bestTyping);
+
+  // A candidate may complete either offered section on its own — the assessment questions
+  // or the typing test — as long as at least one of the two is fully done. Only block when
+  // NEITHER offered section has been completed (or, for auto-submission on timeout, never).
+  const sectionsOffered = hasQuestions || definition.typing.required;
+  if (sectionsOffered && !mcqDone && !typingDone && !options.allowIncomplete) {
+    throw appError(
+      "Please complete either the assessment questions or the typing test before submitting.",
+      400,
+      "ASSESSMENT_OR_TYPING_REQUIRED",
+    );
   }
 
   const sections: Record<string, SectionScore> = {};
@@ -1682,12 +1682,15 @@ async function finalizeAssessment(
 
   for (const question of definition.questions) {
     const response = responseMap.get(question.id);
-    const answered = hasAnswer(answerValue(response));
     const score = scoreQuestion(question, response);
-    awarded += score.awarded;
-    if (answered) maximum += question.marks;
-    manualReviewRequired ||= score.manual;
-    addSectionScore(sections, question.sectionKey, question.sectionTitle, score.awarded, answered ? question.marks : 0);
+    // Only counted toward the score/percentage when the whole MCQ section was completed —
+    // a section the candidate skipped in favour of typing should not drag the result down.
+    if (mcqDone) {
+      awarded += score.awarded;
+      maximum += question.marks;
+      manualReviewRequired ||= score.manual;
+      addSectionScore(sections, question.sectionKey, question.sectionTitle, score.awarded, question.marks);
+    }
     await executor.execute(
       `UPDATE ats_assessment_response
        SET marks_awarded = ?, evaluation_notes = ?, evaluation_mode = ?
@@ -1698,18 +1701,24 @@ async function finalizeAssessment(
 
   // Typing is scored separately — net_wpm and accuracy are the primary signals.
   // It does NOT contribute to overall_score / percentage (MCQ score).
+  // typingPassed stays null (not "false") when typing was never attempted, so a
+  // legitimately skipped typing section can't silently fail an assessment-only submission.
   let typingPassed: boolean | null = null;
-  if (definition.typing.required) {
-    const typingScore = Number(bestTyping?.score_percentage ?? 0);
+  if (definition.typing.required && bestTyping) {
+    const typingScore = Number(bestTyping.score_percentage ?? 0);
     const typingMarks = round((typingScore / 100) * TYPING_WEIGHT_MARKS);
-    typingPassed = Boolean(bestTyping?.passed_benchmark);
+    typingPassed = Boolean(bestTyping.passed_benchmark);
     addSectionScore(sections, "typing", "Typing Test", typingMarks, TYPING_WEIGHT_MARKS);
     // Note: typingMarks intentionally excluded from awarded/maximum (MCQ score)
   }
 
   finishSectionScores(sections);
   const percentage = maximum ? round((awarded / maximum) * 100) : 0;
-  const preliminaryPassed = percentage >= definition.passingPercentage && typingPassed !== false;
+  // Pass/fail is judged only on whichever section(s) were actually completed — an
+  // unattempted section never drags the result down, but at least one must be done.
+  const mcqOk = !mcqDone || percentage >= definition.passingPercentage;
+  const typingOk = typingPassed === null || typingPassed === true;
+  const preliminaryPassed = (mcqDone || typingPassed !== null) && mcqOk && typingOk;
   const status: AttemptStatus = manualReviewRequired ? "manual_review" : "completed";
   const result: "pass" | "fail" | "pending_review" = manualReviewRequired
     ? "pending_review"
