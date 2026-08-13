@@ -152,8 +152,62 @@ export const wfmService = {
     return this.getShift(id);
   },
 
-  async updateShift(id: string, input: UpdateShiftInput, _userId: string): Promise<WfmShift> {
-    await this.getShift(id);
+  /**
+   * True once this specific wfm_shift_master row has ever been referenced by a
+   * roster assignment — draft or published, it doesn't matter, because a value
+   * someone has already relied on for a real schedule is exactly the value that
+   * must not silently change under them. Checked live rather than trusting
+   * is_locked alone, since no write path sets that flag yet (it exists for this
+   * function to set going forward, and for a future backfill to seed for
+   * pre-migration rows).
+   */
+  async isShiftLocked(id: string): Promise<boolean> {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT 1 FROM wfm_shift_master WHERE id = ? AND is_locked = 1 LIMIT 1
+       UNION ALL
+       SELECT 1 FROM wfm_roster_assignment WHERE shift_id = ? OR shift_version_id = ? LIMIT 1`,
+      [id, id, id],
+    ).catch(async (err) => {
+      // shift_version_id may not exist yet if migration 1200 hasn't been applied —
+      // fall back to the pre-migration column set rather than failing the whole check.
+      if (String((err as Error)?.message ?? "").includes("shift_version_id")) {
+        return db.execute<RowDataPacket[]>(
+          `SELECT 1 FROM wfm_shift_master WHERE id = ? AND is_locked = 1 LIMIT 1
+           UNION ALL
+           SELECT 1 FROM wfm_roster_assignment WHERE shift_id = ? LIMIT 1`,
+          [id, id],
+        );
+      }
+      throw err;
+    });
+    return (rows as RowDataPacket[]).length > 0;
+  },
+
+  /** Fields that redefine WHEN/HOW LONG a shift runs — the ones payroll/attendance
+   *  reproduction depends on. Everything else (name, branch/process labels, active
+   *  status) is administrative metadata and safe to edit in place regardless of
+   *  whether the shift has been used, because it carries no historical-interpretation
+   *  risk the way a start/end time change does. */
+  isTimeDefiningShiftEdit(input: UpdateShiftInput): boolean {
+    return input.startTime !== undefined || input.endTime !== undefined || input.requiredMinutes !== undefined;
+  },
+
+  async updateShift(id: string, input: UpdateShiftInput, userId: string): Promise<WfmShift & { versioned?: boolean }> {
+    await this.getShift(id); // throws "Shift not found" if id is bad, same as before
+
+    if (this.isTimeDefiningShiftEdit(input) && (await this.isShiftLocked(id))) {
+      // Editing "General Shift 09:00-18:00" in place used to silently change what
+      // every historical roster row referencing it means, retroactively — no
+      // versioning, no snapshot, nothing. Once this row has been used, a
+      // time-defining change creates a new version instead (mirroring
+      // wfm_shift_template, which has never had an UPDATE route at all for
+      // exactly this reason); the old row's own start/end time is untouched, so
+      // whatever already relied on it keeps reading the value that was actually
+      // scheduled.
+      const created = await this.createShiftVersion(id, input, userId);
+      return { ...created, versioned: true };
+    }
+
     const sets: string[] = [];
     const params: unknown[] = [];
     if (input.shiftName       !== undefined) { sets.push("shift_name = ?");        params.push(input.shiftName); }
@@ -168,6 +222,51 @@ export const wfmService = {
       await db.execute(`UPDATE wfm_shift_master SET ${sets.join(", ")} WHERE id = ?`, params);
     }
     return this.getShift(id);
+  },
+
+  /**
+   * Creates a new, independent wfm_shift_master row carrying the next version
+   * number for this shift_code lineage, closes the previous version's
+   * effective_to, and marks the previous version locked (belt-and-braces: it may
+   * already be locked by virtue of being referenced, but a version that is being
+   * superseded should never be editable again even if nothing has used it yet).
+   * The new row starts unlocked — it only locks once something actually
+   * references it, same rule as every other version.
+   */
+  async createShiftVersion(currentId: string, input: UpdateShiftInput, userId: string): Promise<WfmShift> {
+    const current = await this.getShift(currentId);
+    const lineageRoot = current.parent_shift_id ?? current.id;
+    const nextVersion = (current.version ?? 1) + 1;
+    const effectiveFrom = new Date().toISOString().slice(0, 10);
+
+    const newId = randomUUID();
+    await db.execute(
+      `INSERT INTO wfm_shift_master
+         (id, shift_code, parent_shift_id, version, shift_name, start_time, end_time,
+          required_minutes, branch_name, process_name, active_status,
+          effective_from, is_locked, created_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)`,
+      [
+        newId,
+        current.shift_code,
+        lineageRoot,
+        nextVersion,
+        input.shiftName        ?? current.shift_name,
+        input.startTime        ?? current.start_time,
+        input.endTime          ?? current.end_time,
+        input.requiredMinutes  ?? current.required_minutes,
+        input.branchName       ?? current.branch_name,
+        input.processName      ?? current.process_name,
+        (input.activeStatus ?? Boolean(current.active_status)) ? 1 : 0,
+        effectiveFrom,
+        userId,
+      ],
+    );
+    await db.execute(
+      `UPDATE wfm_shift_master SET effective_to = DATE_SUB(?, INTERVAL 1 DAY), is_locked = 1 WHERE id = ?`,
+      [effectiveFrom, currentId],
+    );
+    return this.getShift(newId);
   },
 
   // ─── Attendance Sessions ───────────────────────────────────────────────────

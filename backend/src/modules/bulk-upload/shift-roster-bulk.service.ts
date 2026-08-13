@@ -2,6 +2,7 @@ import { randomUUID } from "crypto";
 import { db } from "../../db/mysql.js";
 import type { RowDataPacket } from "mysql2";
 import { logRosterChange } from "../roster/roster-change-log.js";
+import { computeScheduledMinutes, rosterAssignmentColumns } from "../wfm/shift-scheduling.util.js";
 
 const DAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"] as const;
 
@@ -112,6 +113,7 @@ export async function importShiftRosterBatch(
     const allAssignments: {
       id: string; cycle_id: string; employee_id: string; roster_date: string;
       shift_template_id: string | null; is_week_off: number; system_decision_reason: string | null;
+      shift_start_time: string | null; shift_end_time: string | null; scheduled_minutes: number | null;
     }[] = [];
     const rowStatusUpdates: { id: string; status: string; errors?: string[]; targetRecordIds: string[] }[] = [];
 
@@ -226,6 +228,8 @@ export async function importShiftRosterBatch(
         const rosterDateStr = rosterDate.toISOString().slice(0, 10);
 
         let shiftTemplateId: string | null = null;
+        let shiftStartTime: string | null = null;
+        let shiftEndTime: string | null = null;
 
         if (!isWeekOff) {
           const parsed = parseShiftTiming(cellValue);
@@ -239,6 +243,11 @@ export async function importShiftRosterBatch(
             rowErrors.push(`${DAYS[i].toUpperCase()}: failed to resolve shift template — ${(e as Error).message}`);
             continue;
           }
+          // parsed.startTime/endTime is what the uploaded cell literally said, so it's
+          // used directly for the snapshot rather than re-reading it back off the
+          // (possibly pre-existing, possibly reused) shift template row.
+          shiftStartTime = parsed.startTime;
+          shiftEndTime = parsed.endTime;
         }
 
         // Collect assignment for batch insert
@@ -250,7 +259,12 @@ export async function importShiftRosterBatch(
           roster_date: rosterDateStr,
           shift_template_id: shiftTemplateId,
           is_week_off: isWeekOff ? 1 : 0,
-          system_decision_reason: notes ?? null
+          system_decision_reason: notes ?? null,
+          shift_start_time: shiftStartTime,
+          shift_end_time: shiftEndTime,
+          scheduled_minutes: shiftStartTime && shiftEndTime
+            ? computeScheduledMinutes(shiftStartTime.slice(0, 5), shiftEndTime.slice(0, 5))
+            : null,
         });
         rowAssignmentIds.push(assignmentId);
         dayImported++;
@@ -291,21 +305,56 @@ export async function importShiftRosterBatch(
         });
       }
 
-      const placeholders = allAssignments.map(() => "(?,?,?,?,?,?,'published','published','bulk_upload',?)").join(",");
-      const params = allAssignments.flatMap((a) => [
-        a.id, a.cycle_id, a.employee_id, a.roster_date, a.shift_template_id, a.is_week_off, a.system_decision_reason,
-      ]);
+      // shift_version_id/scheduled_minutes only exist once migration
+      // 1200_shift_versioning.sql has been applied — probe rather than assume,
+      // same pattern as the live engine (auto-roster-synced.service.ts) and
+      // roster-assignment-bulk.service.ts.
+      const raCols = await rosterAssignmentColumns(conn);
+      const hasScheduledMinutes = raCols.has("scheduled_minutes");
+      const hasShiftVersionId = raCols.has("shift_version_id");
+
+      const rowCols = ["id", "cycle_id", "employee_id", "roster_date", "shift_template_id", "is_week_off",
+        "shift_start_time", "shift_end_time"];
+      const rowPlaceholderParts = ["?", "?", "?", "?", "?", "?", "?", "?"];
+      const updateClauses = [
+        "shift_template_id = VALUES(shift_template_id)",
+        "is_week_off = VALUES(is_week_off)",
+        "shift_start_time = VALUES(shift_start_time)",
+        "shift_end_time = VALUES(shift_end_time)",
+      ];
+      if (hasShiftVersionId) {
+        rowCols.push("shift_version_id");
+        rowPlaceholderParts.push("?");
+        updateClauses.push("shift_version_id = VALUES(shift_version_id)");
+      }
+      if (hasScheduledMinutes) {
+        rowCols.push("scheduled_minutes");
+        rowPlaceholderParts.push("?");
+        updateClauses.push("scheduled_minutes = VALUES(scheduled_minutes)");
+      }
+      rowCols.push("roster_status", "publish_status", "decision_source", "system_decision_reason");
+      rowPlaceholderParts.push("'published'", "'published'", "'bulk_upload'", "?");
+      updateClauses.push("decision_source = 'bulk_upload'", "system_decision_reason = VALUES(system_decision_reason)", "updated_at = CURRENT_TIMESTAMP");
+
+      const placeholders = allAssignments.map(() => `(${rowPlaceholderParts.join(",")})`).join(",");
+      // Built in the exact same order as rowCols/rowPlaceholderParts, per row —
+      // shift_version_id uses the shift_template_id (an already-immutable,
+      // append-only id — see the resolveShiftTemplate comment) as its stable
+      // reference, matching the null value for week-off rows.
+      const params = allAssignments.flatMap((a) => {
+        const row = [a.id, a.cycle_id, a.employee_id, a.roster_date, a.shift_template_id, a.is_week_off,
+          a.shift_start_time, a.shift_end_time];
+        if (hasShiftVersionId) row.push(a.shift_template_id);
+        if (hasScheduledMinutes) row.push(a.scheduled_minutes);
+        row.push(a.system_decision_reason);
+        return row;
+      });
       await conn.execute(
         `INSERT INTO wfm_roster_assignment
-           (id, cycle_id, employee_id, roster_date, shift_template_id, is_week_off,
-            roster_status, publish_status, decision_source, system_decision_reason)
+           (${rowCols.join(", ")})
          VALUES ${placeholders}
          ON DUPLICATE KEY UPDATE
-           shift_template_id = VALUES(shift_template_id),
-           is_week_off = VALUES(is_week_off),
-           decision_source = 'bulk_upload',
-           system_decision_reason = VALUES(system_decision_reason),
-           updated_at = CURRENT_TIMESTAMP`,
+           ${updateClauses.join(",\n           ")}`,
         params,
       );
 

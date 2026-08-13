@@ -10,6 +10,16 @@ export interface WfmShift {
   active_status: number;
   created_at: string;
   updated_at: string;
+  // Added by migration 1200_shift_versioning.sql. Optional (not `| null`) so
+  // reads against a DB that hasn't had the migration applied yet still type-check —
+  // the columns simply won't be present in the row.
+  parent_shift_id?: string | null;
+  version?: number;
+  effective_from?: string | null;
+  effective_to?: string | null;
+  is_locked?: number;
+  created_by?: string | null;
+  approved_by?: string | null;
 }
 
 export interface WfmRosterPlan {

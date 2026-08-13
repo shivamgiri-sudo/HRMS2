@@ -1,0 +1,29 @@
+{
+  // Typecheck for the roster enterprise-controls program (shift versioning,
+  // minimum rest, week-off policy, roster lifecycle lock) commissioned 2026-08-13.
+  //
+  //     npx tsc -p tsconfig.roster-enterprise-check.json
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true
+  },
+  "include": [
+    "src/modules/wfm/wfm.service.ts",
+    "src/modules/wfm/wfm.types.ts",
+    "src/modules/wfm/wfm.controller.ts",
+    "src/modules/wfm/wfm.routes.ts",
+    "src/modules/wfm/auto-roster-synced.service.ts",
+    "src/modules/wfm/auto-roster-synced.routes.ts",
+    "src/modules/wfm/roster.service.ts",
+    "src/modules/wfm/roster.controller.ts",
+    "src/modules/wfm/shift-scheduling.util.ts",
+    "src/modules/wfm/__tests__/shift-versioning.test.ts",
+    "src/modules/roster/roster-generation.service.ts",
+    "src/modules/roster/roster.governance.service.ts",
+    "src/modules/roster/roster.governance.routes.ts",
+    "src/modules/bulk-upload/roster-assignment-bulk.service.ts",
+    "src/modules/bulk-upload/shift-roster-bulk.service.ts",
+    "src/modules/bulk-upload/__tests__/roster-assignment-bulk-transaction.test.ts",
+    "src/modules/bulk-upload/__tests__/shift-roster-bulk-transaction.test.ts"
+  ]
+}

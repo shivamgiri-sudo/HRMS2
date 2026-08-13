@@ -23,6 +23,7 @@ const { logRosterChange } = vi.hoisted(() => ({ logRosterChange: vi.fn().mockRes
 vi.mock("../../roster/roster-change-log.js", () => ({ logRosterChange }));
 
 import { importShiftRosterBatch } from "../shift-roster-bulk.service.js";
+import { __resetSchemaCachesForTests } from "../../wfm/shift-scheduling.util.js";
 
 function queueRows(...batches: unknown[][]) {
   let call = 0;
@@ -42,6 +43,9 @@ describe("importShiftRosterBatch transaction handling", () => {
     conn.rollback.mockReset();
     conn.release.mockReset();
     logRosterChange.mockClear();
+    // Schema-probe caching is module-scope and would otherwise leak the first
+    // test's result (even an empty Set is a cached hit) into every test after it.
+    __resetSchemaCachesForTests();
   });
 
   it("begins, commits, and releases on a clean run; sets target_record_id on the imported row", async () => {
@@ -60,6 +64,10 @@ describe("importShiftRosterBatch transaction handling", () => {
       // resolveShiftTemplate: SELECT wfm_shift_template by start/end time
       [{ id: "shift-1" }],
       // SELECT existing wfm_roster_assignment (before-value pre-fetch)
+      [],
+      // SELECT INFORMATION_SCHEMA.COLUMNS (shift-versioning schema probe) -> no
+      // versioning columns yet, so the INSERT below falls back to the
+      // pre-migration column set
       [],
       // INSERT wfm_roster_assignment (batch)
       [],
@@ -96,6 +104,7 @@ describe("importShiftRosterBatch transaction handling", () => {
       [],
       [{ id: "shift-1" }],
       [],
+      [], // schema probe -> no versioning columns
       [],
       [],
       [],
@@ -109,7 +118,10 @@ describe("importShiftRosterBatch transaction handling", () => {
     expect(insertCall, "batch INSERT not found").toBeDefined();
     const [sql, params] = insertCall!;
     expect(sql).not.toMatch(/o'brien/);
-    expect(sql).toMatch(/VALUES \(\?,\?,\?,\?,\?,\?,'published','published','bulk_upload',\?\)/);
+    // 8 columns (id..shift_end_time) as placeholders, then the 3 fixed literal
+    // status/source columns, then system_decision_reason's placeholder — no
+    // shift_version_id/scheduled_minutes since the schema probe found neither.
+    expect(sql).toMatch(/VALUES \(\?,\?,\?,\?,\?,\?,\?,\?,'published','published','bulk_upload',\?\)/);
     expect(params).toContain("o'brien's note");
   });
 

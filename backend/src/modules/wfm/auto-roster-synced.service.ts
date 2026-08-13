@@ -2,6 +2,7 @@ import { randomUUID } from "crypto";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { loadWeekoffRules } from "../roster/weekoff-rule.service.js";
+import { computeScheduledMinutes } from "./shift-scheduling.util.js";
 
 type AnyRow = Record<string, any>;
 
@@ -312,9 +313,25 @@ async function getWeekOffPreferences(processId: string | null | undefined): Prom
   return map;
 }
 
-async function getShiftForSlot(slotStart: string, slotEnd: string): Promise<AnyRow | null> {
-  if (!(await schema.hasTable("wfm_shift"))) return null;
-  const cols = await schema.columns("wfm_shift");
+/**
+ * Was reading from `wfm_shift` — a third, undocumented shift table (no CREATE TABLE
+ * for it exists in backend/sql/ at all) that nothing writes to. It happened to match
+ * wfm_shift_master's 3 rows only because both were seeded once with the same
+ * hand-picked ids (shift-gen-001/eve-001/ngt-001); wfm.service.ts's shift CRUD has
+ * always written to wfm_shift_master only, so wfm_shift silently stops reflecting
+ * reality the moment anyone adds or edits a shift through the normal admin flow, with
+ * nothing to catch the drift. Redirected to wfm_shift_master, the table that is
+ * actually maintained and the one wfm_roster_assignment.shift_id's own FK constraint
+ * already points at.
+ *
+ * forDate additionally scopes to the version that was actually effective on that
+ * date (migration 1200_shift_versioning.sql) — never a superseded historical
+ * version — degrading to "any active row" on a DB that hasn't had that migration
+ * applied yet.
+ */
+async function getShiftForSlot(slotStart: string, slotEnd: string, forDate?: string): Promise<AnyRow | null> {
+  if (!(await schema.hasTable("wfm_shift_master"))) return null;
+  const cols = await schema.columns("wfm_shift_master");
   const startCol = cols.has("start_time") ? "start_time" : null;
   const endCol = cols.has("end_time") ? "end_time" : null;
   if (!startCol || !endCol) return null;
@@ -323,18 +340,33 @@ async function getShiftForSlot(slotStart: string, slotEnd: string): Promise<AnyR
   if (cols.has("shift_code")) select.push("shift_code");
   if (cols.has("shift_name")) select.push("shift_name");
   select.push(`${startCol} AS start_time`, `${endCol} AS end_time`);
+  if (cols.has("required_minutes")) select.push("required_minutes");
+
+  const hasVersionCols = cols.has("effective_from") && cols.has("effective_to");
+  const dateFilter = hasVersionCols && forDate
+    ? `AND (effective_from IS NULL OR effective_from <= ?) AND (effective_to IS NULL OR effective_to >= ?)`
+    : "";
+  const dateParams = dateFilter ? [forDate, forDate] : [];
+  const orderByVersion = cols.has("version") ? "version DESC, " : "";
 
   const [exact] = await db.execute<RowDataPacket[]>(
-    `SELECT ${select.join(", ")} FROM wfm_shift WHERE ${startCol} = ? AND ${endCol} = ? LIMIT 1`,
-    [`${slotStart}:00`.slice(0, 8), `${slotEnd}:00`.slice(0, 8)]
+    `SELECT ${select.join(", ")} FROM wfm_shift_master
+      WHERE ${startCol} = ? AND ${endCol} = ? AND active_status = 1 ${dateFilter}
+      ORDER BY ${orderByVersion}start_time ASC
+      LIMIT 1`,
+    [`${slotStart}:00`.slice(0, 8), `${slotEnd}:00`.slice(0, 8), ...dateParams]
   );
   if (exact[0]) return exact[0] as AnyRow;
 
   const [fallback] = await db.execute<RowDataPacket[]>(
-    `SELECT ${select.join(", ")} FROM wfm_shift ORDER BY active_status DESC, start_time ASC LIMIT 1`
+    `SELECT ${select.join(", ")} FROM wfm_shift_master WHERE active_status = 1 ${dateFilter}
+      ORDER BY ${orderByVersion}start_time ASC
+      LIMIT 1`,
+    dateParams
   );
   return (fallback[0] as AnyRow | undefined) ?? null;
 }
+
 
 async function getRequirementsForPlan(plan: AnyRow, rosterDate?: string): Promise<AnyRow[]> {
   const params: unknown[] = [plan.process_id ?? "", plan.branch_id ?? ""];
@@ -621,6 +653,11 @@ export const autoRosterSyncedService = {
       throw Object.assign(new Error("Published/locked roster cannot be regenerated."), { statusCode: 409 });
     }
 
+    // Checked once per run, not once per row: whether migration 1200_shift_versioning.sql
+    // has been applied to this database yet. Degrades to the pre-migration column set
+    // when it hasn't, rather than failing every insert with an unknown-column error.
+    const hasShiftVersionCols = await schema.hasColumn("wfm_roster_assignment", "shift_version_id");
+
     // This DELETE previously wiped every non-published assignment in the plan
     // unconditionally, with no check of wfm_roster_assignment_control.change_lock_status
     // — the column the schema defines specifically so a manual per-employee override
@@ -694,7 +731,8 @@ export const autoRosterSyncedService = {
         const target = plannedWithShrinkage(Number(req.required_hc ?? 0), effectiveShrink);
         const slotStart = toTime(req.slot_start)!;
         const slotEnd = toTime(req.slot_end)!;
-        const shift = await getShiftForSlot(slotStart, slotEnd);
+        const shift = await getShiftForSlot(slotStart, slotEnd, rosterDate);
+        const scheduledMinutes = computeScheduledMinutes(slotStart, slotEnd);
 
         const candidates = pool
           .filter((e) => !assignedToday.has(String(e.id)))
@@ -718,16 +756,27 @@ export const autoRosterSyncedService = {
         for (const emp of selected) {
           assignedToday.add(String(emp.id));
           const assignmentId = randomUUID();
+          // shift_version_id is the SAME id as shift_id here — getShiftForSlot now
+          // resolves against wfm_shift_master, the versioned table, so whatever row
+          // it returned already IS a specific version. Stored under both column
+          // names for backward compatibility: existing joins keep using shift_id
+          // unchanged, new payroll-facing code should prefer shift_version_id.
+          const versionCols = hasShiftVersionCols ? ", shift_version_id, scheduled_minutes" : "";
+          const versionPlaceholders = hasShiftVersionCols ? ", ?, ?" : "";
+          const versionUpdateClause = hasShiftVersionCols
+            ? ", shift_version_id = VALUES(shift_version_id), scheduled_minutes = VALUES(scheduled_minutes)"
+            : "";
+          const versionParams = hasShiftVersionCols ? [shift?.id ?? null, scheduledMinutes] : [];
           await db.execute(
             `INSERT INTO wfm_roster_assignment
-             (id, employee_id, shift_id, plan_id, roster_date, roster_status, shift_start_time, shift_end_time, branch_name, process_name, publish_status)
-             VALUES (?, ?, ?, ?, ?, 'Rostered', ?, ?, ?, ?, 'draft')
+             (id, employee_id, shift_id, plan_id, roster_date, roster_status, shift_start_time, shift_end_time, branch_name, process_name, publish_status${versionCols})
+             VALUES (?, ?, ?, ?, ?, 'Rostered', ?, ?, ?, ?, 'draft'${versionPlaceholders})
              ON DUPLICATE KEY UPDATE
                shift_id = VALUES(shift_id),
                shift_start_time = VALUES(shift_start_time),
                shift_end_time = VALUES(shift_end_time),
                roster_status = VALUES(roster_status),
-               publish_status = 'draft'`,
+               publish_status = 'draft'${versionUpdateClause}`,
             [
               assignmentId,
               emp.id,
@@ -738,6 +787,7 @@ export const autoRosterSyncedService = {
               `${slotEnd}:00`.slice(0, 8),
               branchName,
               processName,
+              ...versionParams,
             ]
           );
           await db.execute(
@@ -768,7 +818,7 @@ export const autoRosterSyncedService = {
             message: `Week-off denied for employee ${(emp as AnyRow).employee_code ?? emp.id} on ${rosterDate}: SLA floor requires ${hcFloor} agents, granting would leave ${currentlyRostered - weekoffGranted - 1}.`,
           });
           // Re-assign this employee to default shift to maintain coverage
-          const anyShift = await getShiftForSlot("00:00", "23:59").catch(() => null);
+          const anyShift = await getShiftForSlot("00:00", "23:59", rosterDate).catch(() => null);
           const deniedAssignmentId = randomUUID();
           await db.execute(
             `INSERT INTO wfm_roster_assignment

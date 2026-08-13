@@ -7,6 +7,7 @@ import { logSensitiveAction } from "../../shared/auditLog.js";
 import type { Request } from "express";
 import { loadWeekoffRules, applyWeekoffRules, sortBySeniorPriority } from "./weekoff-rule.service.js";
 import type { WeekoffRule } from "./weekoff-rule.service.js";
+import { computeScheduledMinutes, rosterAssignmentColumns, shiftMasterColumns } from "../wfm/shift-scheduling.util.js";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -565,27 +566,81 @@ async function syncGeneratedToLiveAssignments(
 ): Promise<void> {
   // Copy roster_daily_assignment rows into wfm_roster_assignment (the live ops table)
   // Only non-weekoff, non-holiday rows get a live assignment; week-off days are excluded
+  //
+  // Before migration 1200_shift_versioning.sql, wfm_shift_master.shift_code carried
+  // a lone UNIQUE index, so "the one active row with this shift_code" was
+  // unambiguous. After it, multiple versions can share a shift_code with
+  // active_status=1 (only the superseded one gets is_locked=1, not
+  // active_status=0) — matching on shift_code alone would then silently pick an
+  // arbitrary version. shiftMasterColumns() probes for the version column and
+  // only takes the version-aware path once it actually exists, so behavior on a
+  // DB that hasn't had the migration applied is byte-for-byte unchanged.
+  const smCols = await shiftMasterColumns();
+  const isVersioned = smCols.has("version");
+  const shiftMasterJoin = isVersioned
+    ? `LEFT JOIN (
+         SELECT sm.id, sm.shift_code, sm.start_time, sm.end_time
+           FROM wfm_shift_master sm
+           INNER JOIN (
+             SELECT shift_code, MAX(version) AS max_version
+               FROM wfm_shift_master WHERE active_status = 1 GROUP BY shift_code
+           ) latest ON latest.shift_code = sm.shift_code AND latest.max_version = sm.version
+       ) st ON st.shift_code = wst.shift_code`
+    : `LEFT JOIN wfm_shift_master st ON st.shift_code = wst.shift_code AND st.active_status = 1`;
+
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT rda.employee_id, rda.roster_date, rda.shift_template_id,
-            st.id AS shift_master_id
+            st.id AS shift_master_id, st.start_time AS shift_start_time, st.end_time AS shift_end_time
        FROM roster_daily_assignment rda
        LEFT JOIN wfm_shift_template wst ON wst.id = rda.shift_template_id
-       LEFT JOIN wfm_shift_master st ON st.shift_code = wst.shift_code AND st.active_status = 1
+       ${shiftMasterJoin}
       WHERE rda.cycle_id = ? AND rda.is_week_off = 0 AND rda.is_holiday = 0`,
     [cycleId]
   );
 
+  // shift_version_id/scheduled_minutes only exist once migration 1200 has been
+  // applied — same probe-and-degrade pattern as every other Area 4 write path.
+  const raCols = await rosterAssignmentColumns();
+  const hasShiftVersionId = raCols.has("shift_version_id");
+  const hasScheduledMinutes = raCols.has("scheduled_minutes");
+
+  const insertCols = ["id", "employee_id", "shift_id", "roster_date", "shift_start_time", "shift_end_time",
+    "roster_status", "publish_status", "generation_run_id", "decision_source"];
+  const placeholders = ["UUID()", "?", "?", "?", "?", "?", "'Rostered'", "'draft'", "?", "'rule_engine'"];
+  const updateClauses = [
+    "shift_id          = VALUES(shift_id)",
+    "shift_start_time  = VALUES(shift_start_time)",
+    "shift_end_time    = VALUES(shift_end_time)",
+    "generation_run_id = VALUES(generation_run_id)",
+    "decision_source   = 'rule_engine'",
+  ];
+  if (hasShiftVersionId) {
+    insertCols.push("shift_version_id");
+    placeholders.push("?");
+    updateClauses.push("shift_version_id = VALUES(shift_version_id)");
+  }
+  if (hasScheduledMinutes) {
+    insertCols.push("scheduled_minutes");
+    placeholders.push("?");
+    updateClauses.push("scheduled_minutes = VALUES(scheduled_minutes)");
+  }
+
   for (const row of rows) {
+    const shiftStart = row.shift_start_time ? String(row.shift_start_time).slice(0, 5) : null;
+    const shiftEnd = row.shift_end_time ? String(row.shift_end_time).slice(0, 5) : null;
+    const params: unknown[] = [
+      row.employee_id, row.shift_master_id ?? null, row.roster_date, row.shift_start_time ?? null, row.shift_end_time ?? null, runId,
+    ];
+    if (hasShiftVersionId) params.push(row.shift_master_id ?? null);
+    if (hasScheduledMinutes) params.push(shiftStart && shiftEnd ? computeScheduledMinutes(shiftStart, shiftEnd) : null);
+
     await db.execute(
       `INSERT INTO wfm_roster_assignment
-         (id, employee_id, shift_id, roster_date, roster_status, publish_status,
-          generation_run_id, decision_source)
-       VALUES (UUID(), ?, ?, ?, 'Rostered', 'draft', ?, 'rule_engine')
+         (${insertCols.join(", ")})
+       VALUES (${placeholders.join(", ")})
        ON DUPLICATE KEY UPDATE
-         shift_id          = VALUES(shift_id),
-         generation_run_id = VALUES(generation_run_id),
-         decision_source   = 'rule_engine'`,
-      [row.employee_id, row.shift_master_id ?? null, row.roster_date, runId]
+         ${updateClauses.join(",\n         ")}`,
+      params
     );
   }
 }

@@ -2,6 +2,7 @@ import { randomUUID } from "crypto";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import type { WfmRosterPlan, WfmRosterAssignment } from "./wfm.types.js";
+import { computeScheduledMinutes, rosterAssignmentColumns } from "./shift-scheduling.util.js";
 
 export interface CreatePlanInput {
   planName: string;
@@ -128,27 +129,54 @@ export const rosterService = {
   },
 
   async assignEmployee(input: AssignInput, _userId: string): Promise<WfmRosterAssignment> {
+    // shift_version_id/scheduled_minutes only exist once migration
+    // 1200_shift_versioning.sql has been applied — probe rather than assume,
+    // same pattern as every other Area 4 write path. shiftId is already what
+    // gets stored as shift_id, and (per wfm.service.ts's updateShift) a
+    // wfm_shift_master row becomes immutable the moment anything references it —
+    // so shiftId itself is already the stable, exact-version reference this
+    // snapshot needs; no separate lookup required.
+    const raCols = await rosterAssignmentColumns();
+    const hasShiftVersionId = raCols.has("shift_version_id");
+    const hasScheduledMinutes = raCols.has("scheduled_minutes");
+    const scheduledMinutes = input.shiftStartTime && input.shiftEndTime
+      ? computeScheduledMinutes(input.shiftStartTime.slice(0, 5), input.shiftEndTime.slice(0, 5))
+      : null;
+
+    const insertCols = ["id", "employee_id", "shift_id", "plan_id", "roster_date", "roster_status",
+      "shift_start_time", "shift_end_time", "branch_name", "process_name"];
+    const placeholders = ["UUID()", "?", "?", "?", "?", "?", "?", "?", "?", "?"];
+    const params: unknown[] = [
+      input.employeeId, input.shiftId ?? null, input.planId ?? null, input.rosterDate,
+      input.rosterStatus ?? "Rostered", input.shiftStartTime ?? null, input.shiftEndTime ?? null,
+      input.branchName ?? null, input.processName ?? null,
+    ];
+    const updateClauses = [
+      "shift_id = VALUES(shift_id)",
+      "shift_start_time = VALUES(shift_start_time)",
+      "shift_end_time = VALUES(shift_end_time)",
+      "roster_status = VALUES(roster_status)",
+    ];
+    if (hasShiftVersionId) {
+      insertCols.push("shift_version_id");
+      placeholders.push("?");
+      params.push(input.shiftId ?? null);
+      updateClauses.push("shift_version_id = VALUES(shift_version_id)");
+    }
+    if (hasScheduledMinutes) {
+      insertCols.push("scheduled_minutes");
+      placeholders.push("?");
+      params.push(scheduledMinutes);
+      updateClauses.push("scheduled_minutes = VALUES(scheduled_minutes)");
+    }
+
     await db.execute(
       `INSERT INTO wfm_roster_assignment
-         (id, employee_id, shift_id, plan_id, roster_date, roster_status,
-          shift_start_time, shift_end_time, branch_name, process_name)
-       VALUES (UUID(), ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         (${insertCols.join(", ")})
+       VALUES (${placeholders.join(", ")})
        ON DUPLICATE KEY UPDATE
-         shift_id = VALUES(shift_id),
-         shift_start_time = VALUES(shift_start_time),
-         shift_end_time = VALUES(shift_end_time),
-         roster_status = VALUES(roster_status)`,
-      [
-        input.employeeId,
-        input.shiftId ?? null,
-        input.planId ?? null,
-        input.rosterDate,
-        input.rosterStatus ?? "Rostered",
-        input.shiftStartTime ?? null,
-        input.shiftEndTime ?? null,
-        input.branchName ?? null,
-        input.processName ?? null,
-      ]
+         ${updateClauses.join(",\n         ")}`,
+      params
     );
     const [rows] = await db.execute<RowDataPacket[]>(
       "SELECT * FROM wfm_roster_assignment WHERE employee_id = ? AND roster_date = ? LIMIT 1",

@@ -2,6 +2,7 @@ import { randomUUID } from "crypto";
 import { db } from "../../db/mysql.js";
 import type { RowDataPacket } from "mysql2";
 import { logRosterChange } from "../roster/roster-change-log.js";
+import { computeScheduledMinutes, rosterAssignmentColumns } from "../wfm/shift-scheduling.util.js";
 
 export async function importRosterAssignmentBatch(
   batchId: string,
@@ -64,12 +65,21 @@ export async function importRosterAssignmentBatch(
       }
       const employeeId = (empRows as RowDataPacket[])[0].id as string;
 
-      // Resolve shift_template_id from code (if not week-off)
+      // Resolve shift_template_id from code (if not week-off). wfm_shift_template
+      // is already an append-only/versioned table (no UPDATE route has ever
+      // existed for it) — the id itself is the stable, immutable reference Area 4
+      // requires, so no separate shift_version_id is needed for this path. What
+      // WAS missing is the start/end-time and duration snapshot on the assignment
+      // row itself: shift_start_time/shift_end_time existed as columns but were
+      // never populated by this bulk path, so a bulk-uploaded row could not be
+      // reconstructed without a live join back through wfm_shift_template.
       let shiftTemplateId: string | null = null;
+      let shiftStartTime: string | null = null;
+      let shiftEndTime: string | null = null;
       const isWeekOff = is_week_off === "1" || is_week_off === "true";
       if (!isWeekOff && shift_code) {
         const [shiftRows] = await conn.execute<RowDataPacket[]>(
-          "SELECT id FROM wfm_shift_template WHERE shift_code = ? AND active_status = 1 LIMIT 1",
+          "SELECT id, start_time, end_time FROM wfm_shift_template WHERE shift_code = ? AND active_status = 1 LIMIT 1",
           [shift_code]
         );
         if (!(shiftRows as RowDataPacket[]).length) {
@@ -82,8 +92,14 @@ export async function importRosterAssignmentBatch(
           skipped++;
           continue;
         }
-        shiftTemplateId = (shiftRows as RowDataPacket[])[0].id as string;
+        const shiftRow = (shiftRows as RowDataPacket[])[0];
+        shiftTemplateId = shiftRow.id as string;
+        shiftStartTime = shiftRow.start_time as string;
+        shiftEndTime = shiftRow.end_time as string;
       }
+      const scheduledMinutes = shiftStartTime && shiftEndTime
+        ? computeScheduledMinutes(String(shiftStartTime).slice(0, 5), String(shiftEndTime).slice(0, 5))
+        : null;
 
       // Before the overwrite: this is the only record of what a re-upload changes.
       // roster_change_log exists specifically for this (old_value_json/new_value_json/
@@ -99,6 +115,48 @@ export async function importRosterAssignmentBatch(
         | undefined;
 
       const assignmentId = before?.id ?? randomUUID();
+
+      // shift_version_id/scheduled_minutes only exist once migration
+      // 1200_shift_versioning.sql has been applied — probe rather than assume,
+      // same pattern as the live engine (auto-roster-synced.service.ts).
+      const raCols = await rosterAssignmentColumns(conn);
+      const hasScheduledMinutes = raCols.has("scheduled_minutes");
+      const hasShiftVersionId = raCols.has("shift_version_id");
+
+      // Built as synchronized (column, placeholder, value) triples, in the exact
+      // order they'll appear in the SQL text — MySQL binds `?` positionally, so
+      // insertVals must stay index-aligned with insertPlaceholders regardless of
+      // which optional columns get spliced in. system_decision_reason is placed
+      // last on purpose, alongside its value, rather than fixed mid-list with its
+      // value appended separately later — that split is what broke the alignment.
+      const insertCols = ["id", "cycle_id", "employee_id", "roster_date", "shift_template_id", "is_week_off",
+        "shift_start_time", "shift_end_time"];
+      const insertPlaceholders = ["?", "?", "?", "?", "?", "?", "?", "?"];
+      const insertVals: unknown[] = [assignmentId, cycle_id, employeeId, roster_date, shiftTemplateId,
+        isWeekOff ? 1 : 0, shiftStartTime, shiftEndTime];
+      const updateClauses = [
+        "shift_template_id = VALUES(shift_template_id)",
+        "is_week_off = VALUES(is_week_off)",
+        "shift_start_time = VALUES(shift_start_time)",
+        "shift_end_time = VALUES(shift_end_time)",
+      ];
+      if (hasShiftVersionId) {
+        insertCols.push("shift_version_id");
+        insertPlaceholders.push("?");
+        insertVals.push(shiftTemplateId);
+        updateClauses.push("shift_version_id = VALUES(shift_version_id)");
+      }
+      if (hasScheduledMinutes) {
+        insertCols.push("scheduled_minutes");
+        insertPlaceholders.push("?");
+        insertVals.push(scheduledMinutes);
+        updateClauses.push("scheduled_minutes = VALUES(scheduled_minutes)");
+      }
+      insertCols.push("roster_status", "publish_status", "decision_source", "system_decision_reason");
+      insertPlaceholders.push("'published'", "'published'", "'bulk_upload'", "?");
+      insertVals.push(notes ?? null);
+      updateClauses.push("decision_source = 'bulk_upload'", "system_decision_reason = VALUES(system_decision_reason)", "updated_at = NOW()");
+
       await conn.execute(
         // wfm_roster_assignment has no notes, created_by or updated_by column - it
         // carries created_at/updated_at and no actor. Those three names made every
@@ -108,17 +166,11 @@ export async function importRosterAssignmentBatch(
         // the row's only free-text field and is already the column the RTA and WFM
         // views surface next to decision_source, which this sets to 'bulk_upload'.
         `INSERT INTO wfm_roster_assignment
-           (id, cycle_id, employee_id, roster_date, shift_template_id, is_week_off,
-            roster_status, publish_status, decision_source, system_decision_reason)
-         VALUES (?, ?, ?, ?, ?, ?, 'published', 'published', 'bulk_upload', ?)
+           (${insertCols.join(", ")})
+         VALUES (${insertPlaceholders.join(", ")})
          ON DUPLICATE KEY UPDATE
-           shift_template_id = VALUES(shift_template_id),
-           is_week_off = VALUES(is_week_off),
-           decision_source = 'bulk_upload',
-           system_decision_reason = VALUES(system_decision_reason),
-           updated_at = NOW()`,
-        [assignmentId, cycle_id, employeeId, roster_date, shiftTemplateId,
-         isWeekOff ? 1 : 0, notes ?? null]
+           ${updateClauses.join(",\n           ")}`,
+        insertVals
       );
 
       if (before && (before.shift_template_id !== shiftTemplateId || Boolean(before.is_week_off) !== isWeekOff)) {

@@ -21,6 +21,7 @@ const { logRosterChange } = vi.hoisted(() => ({ logRosterChange: vi.fn().mockRes
 vi.mock("../../roster/roster-change-log.js", () => ({ logRosterChange }));
 
 import { importRosterAssignmentBatch } from "../roster-assignment-bulk.service.js";
+import { __resetSchemaCachesForTests } from "../../wfm/shift-scheduling.util.js";
 
 function queueRows(...batches: unknown[][]) {
   let call = 0;
@@ -40,6 +41,9 @@ describe("importRosterAssignmentBatch transaction handling", () => {
     conn.rollback.mockReset();
     conn.release.mockReset();
     logRosterChange.mockClear();
+    // Schema-probe caching is module-scope and would otherwise leak the first
+    // test's result (even an empty Set is a cached hit) into every test after it.
+    __resetSchemaCachesForTests();
   });
 
   it("begins and commits a transaction on a clean run, and always releases the connection", async () => {
@@ -47,9 +51,12 @@ describe("importRosterAssignmentBatch transaction handling", () => {
     // 2: SELECT employees (resolve employee_code)
     // 3: SELECT wfm_shift_template (resolve shift_code)
     // 4: SELECT existing wfm_roster_assignment (before-value lookup)
-    // 5: INSERT wfm_roster_assignment
-    // 6: UPDATE upload_batch_row
-    // 7: UPDATE upload_batch
+    // 5: SELECT INFORMATION_SCHEMA.COLUMNS (shift-versioning schema probe) -> no
+    //    versioning columns yet, so the INSERT below falls back to the
+    //    pre-migration column set
+    // 6: INSERT wfm_roster_assignment
+    // 7: UPDATE upload_batch_row
+    // 8: UPDATE upload_batch
     queueRows(
       [{ id: "row-1", row_no: 1, normalized_data: JSON.stringify({
         cycle_id: "cycle-1", employee_code: "MAS001", roster_date: "2026-08-17",
@@ -57,6 +64,7 @@ describe("importRosterAssignmentBatch transaction handling", () => {
       }) }],
       [{ id: "emp-1" }],
       [{ id: "shift-1" }],
+      [],
       [],
       [],
       [],
