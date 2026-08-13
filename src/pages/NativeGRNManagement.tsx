@@ -14,6 +14,7 @@ import {
   GRN_TABS_LIST,
 } from "@/components/finance/grn/grn-ui";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useCanAttributeGrnLob, useGrnNeedsLobCount, useGrnSummary } from "@/hooks/useGrnSummary";
 import { useHasRole } from "@/hooks/useUserRole";
@@ -22,7 +23,7 @@ function HeaderStat({ value, label }: { value: React.ReactNode; label: string })
   return (
     <div className="text-right">
       <div className="font-grn-mono text-[18px] font-semibold leading-tight text-grn-ink">{value}</div>
-      <div className="mt-0.5 text-[10.5px] uppercase tracking-[0.06em] text-grn-ink-soft">{label}</div>
+      <div className="mt-0.5 text-xs uppercase tracking-[0.06em] text-grn-ink-soft">{label}</div>
     </div>
   );
 }
@@ -93,9 +94,9 @@ export default function NativeGRNManagement() {
                 </p>
               </div>
               <div className="flex gap-6">
-                <HeaderStat value={summaryQuery.isLoading ? "—" : queueCount} label="In queue" />
+                <HeaderStat value={summaryQuery.isLoading ? <Skeleton className="inline-block h-5 w-10" /> : queueCount} label="In queue" />
                 <HeaderStat
-                  value={summaryQuery.isLoading ? "—" : money(summary?.inQueue.value, 0)}
+                  value={summaryQuery.isLoading ? <Skeleton className="inline-block h-5 w-16" /> : money(summary?.inQueue.value, 0)}
                   label="Pending value"
                 />
                 {/* Hidden rather than zeroed for roles the attribution endpoint rejects — see

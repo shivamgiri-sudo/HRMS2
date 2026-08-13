@@ -31,6 +31,16 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -238,6 +248,24 @@ function statusLabel(value: string) {
   return value.replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
+function statusBadge(value: string) {
+  const s = value.toLowerCase();
+  const cls = s.includes("active") || s.includes("approved") || s.includes("approve")
+    ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+    : s.includes("submit")
+      ? "border-blue-200 bg-blue-50 text-blue-700"
+      : s.includes("reject")
+        ? "border-rose-200 bg-rose-50 text-rose-700"
+        : s.includes("revision")
+          ? "border-amber-200 bg-amber-50 text-amber-700"
+          : "border-slate-200 bg-slate-50 text-slate-700";
+  return (
+    <span className={`inline-flex rounded-full border px-2.5 py-1 text-[11px] font-bold uppercase tracking-wider ${cls}`}>
+      {statusLabel(value)}
+    </span>
+  );
+}
+
 function unwrapList(value: any): any[] {
   return value?.data ?? value ?? [];
 }
@@ -343,7 +371,7 @@ function Metric({ label, value, tone = "slate" }: {
   };
   return (
     <div className={`rounded-2xl border p-4 ${tones[tone]}`}>
-      <p className="text-[10px] font-semibold uppercase tracking-[0.15em] text-slate-500">{label}</p>
+      <p className="text-xs font-semibold uppercase tracking-[0.15em] text-slate-600">{label}</p>
       <p className="mt-2 text-lg font-black text-slate-950">{value}</p>
     </div>
   );
@@ -384,7 +412,7 @@ function CoverageDecision({
             key={status}
             disabled={!editable}
             onClick={() => onChange({ status, reason: status === "planned" ? "" : draft.reason })}
-            className={`rounded-xl border px-2 py-2 text-[10px] font-semibold transition ${
+            className={`min-h-[44px] rounded-xl border px-2 py-2 text-xs font-semibold transition ${
               draft.status === status
                 ? status === "planned"
                   ? "border-emerald-300 bg-emerald-50 text-emerald-700"
@@ -453,6 +481,15 @@ export default function BranchBudgetManagementWorkspace() {
   /** Per-line correction notes typed inside the review dialog (keyed by lineId or head|sub). */
   const [dialogLineNotes, setDialogLineNotes] = useState<Record<string, string>>({});
   const [dialogRemarks, setDialogRemarks] = useState("");
+  /** Budget pending delete confirmation — drives the delete AlertDialog. */
+  const [pendingDeleteBudget, setPendingDeleteBudget] = useState<BranchBudgetSummary | null>(null);
+  const [deleteBudgetReason, setDeleteBudgetReason] = useState("");
+  /** Expense head/sub-head pending delete — drives the master-delete AlertDialog. */
+  const [pendingDeleteMaster, setPendingDeleteMaster] = useState<
+    | { type: "head"; head: FinanceExpenseHead }
+    | { type: "subhead"; head: FinanceExpenseHead; subHead: FinanceExpenseSubHead }
+    | null
+  >(null);
   const [importDialogOpen, setImportDialogOpen] = useState(false);
   /** The table planner is the fast path and therefore the default; the card editor stays one click
    *  away for the fields the table has no room for. */
@@ -1193,23 +1230,27 @@ export default function BranchBudgetManagementWorkspace() {
 
   /** Super-admin removal. The server decides between a true delete and a supersede based on
    *  whether any GRN has consumed against the budget, and says which it did. */
-  async function removeBudget(budget: BranchBudgetSummary) {
-    const reason = window.prompt(
-      `Delete ${budget.budget_number}?
+  function removeBudget(budget: BranchBudgetSummary) {
+    setPendingDeleteBudget(budget);
+    setDeleteBudgetReason("");
+  }
 
-If any GRN has consumed against it, it will be closed instead of deleted so the spend history survives.
-
-Reason:`
-    );
-    if (!reason?.trim()) return;
+  async function confirmRemoveBudget() {
+    if (!pendingDeleteBudget) return;
     try {
-      const result = await deleteBudget.mutateAsync({ id: budget.id, reason: reason.trim() });
+      const result = await deleteBudget.mutateAsync({
+        id: pendingDeleteBudget.id,
+        reason: deleteBudgetReason.trim(),
+      });
       toast.success(result.message);
       setSavedBudgetId(null);
       setLoadedDetailId(null);
       setLines([blankLine()]);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Unable to remove the budget");
+    } finally {
+      setPendingDeleteBudget(null);
+      setDeleteBudgetReason("");
     }
   }
 
@@ -1489,7 +1530,7 @@ Reason:`
                 const openNotes = openCorrectionsFor(line);
                 return (
                   <Card key={line.id ?? index} className="overflow-hidden rounded-3xl border-slate-200 shadow-sm">
-                    <CardHeader className="flex flex-row items-start justify-between border-b border-slate-100 bg-slate-50/70"><div><CardTitle className="text-base">Budget line {index + 1}</CardTitle><p className="mt-1 text-xs text-slate-500">All factual, commercial, allocation and tax fields are mandatory.</p></div><Button variant="ghost" size="icon" disabled={!canEdit || lines.length === 1} onClick={() => setLines((current) => current.filter((_, lineIndex) => lineIndex !== index))}><Trash2 className="h-4 w-4 text-rose-500" /></Button></CardHeader>
+                    <CardHeader className="flex flex-row items-start justify-between border-b border-slate-100 bg-slate-50/70"><div><CardTitle className="text-base">Budget line {index + 1}</CardTitle><p className="mt-1 text-xs text-slate-500">All factual, commercial, allocation and tax fields are mandatory.</p></div><Button variant="ghost" size="icon" aria-label={`Remove budget line ${index + 1}`} disabled={!canEdit || lines.length === 1} onClick={() => setLines((current) => current.filter((_, lineIndex) => lineIndex !== index))}><Trash2 className="h-4 w-4 text-rose-500" /></Button></CardHeader>
                     {/* Corrections a reviewer raised against this exact head/sub-head, so the branch
                         admin fixing the budget sees the instruction on the line it belongs to. */}
                     {Boolean(openNotes.length) && (
@@ -1705,7 +1746,7 @@ Reason:`
                         <div className="flex flex-wrap items-center justify-between gap-3 bg-slate-50 px-4 py-3">
                           <div>
                             <p className="text-sm font-bold">{group.itemName}</p>
-                            <p className="text-[10px] text-slate-500">{group.head}{group.subHead ? ` / ${group.subHead}` : ""} · {group.costCentreCount} cost centre(s)</p>
+                            <p className="text-xs text-slate-500">{group.head}{group.subHead ? ` / ${group.subHead}` : ""} · {group.costCentreCount} cost centre(s)</p>
                           </div>
                           <div className="flex items-center gap-4">
                             {!group.unitConsistent && <Badge variant="destructive" className="text-[10px]">Mixed units — verify before relying on Branch unit</Badge>}
@@ -1772,7 +1813,7 @@ Reason:`
                               <div className="flex items-center gap-2">
                                 {r.ready ? <CheckCircle2 className="h-4 w-4 text-emerald-600" /> : <AlertTriangle className="h-4 w-4 text-amber-600" />}
                                 <p className="text-sm font-semibold text-slate-900">{r.label}</p>
-                                <Badge variant="outline" className={r.ready ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-amber-200 bg-amber-50 text-amber-700"}>
+                                <Badge variant="outline" className={r.ready ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-rose-200 bg-rose-50 text-rose-700"}>
                                   {r.ready ? "Ready" : "Incomplete"}
                                 </Badge>
                               </div>
@@ -1834,7 +1875,7 @@ Reason:`
                         <div>
                           <div className="flex gap-2">
                             <p className="font-semibold">{budget.budget_number}</p>
-                            <Badge variant="outline">{statusLabel(budget.status)}</Badge>
+                            {statusBadge(budget.status)}
                           </div>
                           <p className="mt-1 text-xs text-slate-500">{budget.branch_name} · {budget.period_code} · Revision {budget.revision_no}</p>
                         </div>
@@ -1878,8 +1919,9 @@ Reason:`
 
               {/* Budget Review Detail Dialog */}
               <Dialog open={Boolean(reviewingBudgetId)} onOpenChange={(open) => { if (!open) { setReviewingBudgetId(null); setDialogRemarks(""); setDialogLineNotes({}); } }}>
-                <DialogContent className="max-h-[90vh] max-w-4xl overflow-y-auto">
-                  <DialogHeader>
+                <DialogContent className="flex max-h-[90vh] max-w-4xl flex-col gap-0 overflow-hidden p-0">
+                  {/* sticky header */}
+                  <DialogHeader className="shrink-0 border-b border-slate-200 px-6 py-4">
                     <DialogTitle>
                       {reviewDetailQuery.data
                         ? `Review — ${reviewDetailQuery.data.budget_number} (${reviewDetailQuery.data.branch_name} · ${reviewDetailQuery.data.period_code} · Rev ${reviewDetailQuery.data.revision_no})`
@@ -1887,8 +1929,10 @@ Reason:`
                     </DialogTitle>
                   </DialogHeader>
 
+                  {/* scrollable content area */}
+                  <div className="min-h-0 flex-1 overflow-y-auto px-6 py-4">
                   {reviewDetailQuery.isLoading && (
-                    <div className="flex justify-center py-12">
+                    <div className="flex min-h-[200px] items-center justify-center">
                       <Loader2 className="h-6 w-6 animate-spin text-slate-400" />
                     </div>
                   )}
@@ -1976,7 +2020,7 @@ Reason:`
                             <div className="space-y-1.5">
                               {rd.approvals.map((a, idx) => (
                                 <div key={idx} className="flex items-start gap-3 rounded-lg border border-slate-100 bg-slate-50 px-3 py-2 text-xs">
-                                  <Badge variant="outline" className="shrink-0 text-[10px]">{a.action}</Badge>
+                                  <span className="shrink-0">{statusBadge(a.action)}</span>
                                   <span className="font-medium text-slate-700">{a.actor_role}</span>
                                   <span className="text-slate-500">{a.remarks ?? ""}</span>
                                   <span className="ml-auto shrink-0 text-slate-400">{a.created_at ? new Date(a.created_at).toLocaleDateString() : ""}</span>
@@ -2002,8 +2046,10 @@ Reason:`
                       </div>
                     );
                   })()}
+                  </div>{/* end scrollable content */}
 
-                  <DialogFooter className="gap-2 pt-2">
+                  {/* sticky footer — always visible regardless of content height */}
+                  <DialogFooter className="shrink-0 gap-2 border-t border-slate-200 px-6 py-3">
                     <Button variant="outline" onClick={() => { setReviewingBudgetId(null); setDialogRemarks(""); setDialogLineNotes({}); }}>
                       Close
                     </Button>
@@ -2086,7 +2132,7 @@ Reason:`
                                 <td className="px-3 py-2 text-right tabular-nums">{money(budgeted)}</td>
                                 <td className="px-3 py-2 text-right tabular-nums text-amber-700">{money(reserved)}</td>
                                 <td className="px-3 py-2 text-right tabular-nums text-emerald-700">{money(consumed)}</td>
-                                <td className="px-3 py-2 text-right tabular-nums">{money(available)}</td>
+                                <td className={`px-3 py-2 text-right tabular-nums ${available < 0 ? "font-semibold text-rose-600" : "text-slate-700"}`}>{money(available)}</td>
                                 <td className="px-3 py-2 text-right">
                                   <Badge variant="outline" className={consumedPct >= 100 ? "border-rose-200 bg-rose-50 text-rose-700" : consumedPct >= 80 ? "border-amber-200 bg-amber-50 text-amber-700" : "border-slate-200 bg-slate-50 text-slate-600"}>
                                     {consumedPct}%
@@ -2120,17 +2166,11 @@ Reason:`
                 busy={saveHead.isPending || saveSubHead.isPending || deleteHead.isPending || deleteSubHead.isPending}
                 onSaveHead={async (payload) => { await saveHead.mutateAsync(payload); toast.success("Expense Head saved"); }}
                 onSaveSubHead={async (payload) => { await saveSubHead.mutateAsync(payload); toast.success("Expense Sub-head saved"); }}
-                onDeleteHead={async (head) => {
-                  const subHeadNote = head.subHeads.length ? ` and its ${head.subHeads.length} sub-head(s)` : "";
-                  if (!window.confirm(`Delete "${head.headName}"${subHeadNote}?\n\nIf any budget line, GRN or coverage review already uses it, it is retired (set inactive) instead of removed so the history stays readable.`)) return;
-                  const result = await deleteHead.mutateAsync(head.id);
-                  reportExpenseMasterDelete("Head", result);
-                  setLines((prev) => prev.filter((l) => l.head !== head.headName));
+                onDeleteHead={(head) => {
+                  setPendingDeleteMaster({ type: "head", head });
                 }}
-                onDeleteSubHead={async (_head, item) => {
-                  if (!window.confirm(`Delete sub-head "${item.subHeadName}"?\n\nIf any budget line, GRN or coverage review already uses it, it is retired (set inactive) instead of removed so the history stays readable.`)) return;
-                  const result = await deleteSubHead.mutateAsync(item.id);
-                  reportExpenseMasterDelete("Sub-head", result);
+                onDeleteSubHead={(_head, item) => {
+                  setPendingDeleteMaster({ type: "subhead", head: _head, subHead: item });
                   setLines((prev) => prev.filter((l) => !(l.head === _head.headName && l.subHead === item.subHeadName)));
                 }}
               />
@@ -2290,6 +2330,84 @@ Reason:`
           </DialogContent>
         </Dialog>
       )}
+      {/* Delete budget AlertDialog — replaces window.prompt() */}
+      <AlertDialog open={Boolean(pendingDeleteBudget)} onOpenChange={(open) => { if (!open) { setPendingDeleteBudget(null); setDeleteBudgetReason(""); } }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete {pendingDeleteBudget?.budget_number}?</AlertDialogTitle>
+            <AlertDialogDescription>
+              If any GRN has already consumed against this budget it will be <strong>closed</strong> rather than deleted, preserving spend history. This action is audited and cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <div className="my-2 space-y-1.5">
+            <Label htmlFor="delete-budget-reason">Reason <span className="text-destructive" aria-hidden>*</span></Label>
+            <Textarea
+              id="delete-budget-reason"
+              rows={3}
+              placeholder="Explain why this budget is being removed…"
+              value={deleteBudgetReason}
+              onChange={(e) => setDeleteBudgetReason(e.target.value)}
+            />
+          </div>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              disabled={!deleteBudgetReason.trim() || deleteBudget.isPending}
+              onClick={() => void confirmRemoveBudget()}
+            >
+              {deleteBudget.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+              Delete / close budget
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Delete expense master AlertDialog — replaces window.confirm() */}
+      <AlertDialog open={Boolean(pendingDeleteMaster)} onOpenChange={(open) => { if (!open) setPendingDeleteMaster(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {pendingDeleteMaster?.type === "head"
+                ? `Delete expense head "${pendingDeleteMaster.head.headName}"?`
+                : `Delete sub-head "${pendingDeleteMaster?.subHead?.subHeadName}"?`}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {pendingDeleteMaster?.type === "head" && pendingDeleteMaster.head.subHeads.length > 0 && (
+                <span>This head has <strong>{pendingDeleteMaster.head.subHeads.length} sub-head(s)</strong> which will also be affected. </span>
+              )}
+              If any budget line, GRN or coverage review already uses this item it will be <strong>retired (set inactive)</strong> instead of removed, so history stays readable.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              disabled={deleteHead.isPending || deleteSubHead.isPending}
+              onClick={async () => {
+                if (!pendingDeleteMaster) return;
+                try {
+                  if (pendingDeleteMaster.type === "head") {
+                    const result = await deleteHead.mutateAsync(pendingDeleteMaster.head.id);
+                    reportExpenseMasterDelete("Head", result);
+                    setLines((prev) => prev.filter((l) => l.head !== pendingDeleteMaster.head.headName));
+                  } else {
+                    const result = await deleteSubHead.mutateAsync(pendingDeleteMaster.subHead.id);
+                    reportExpenseMasterDelete("Sub-head", result);
+                  }
+                } catch (err) {
+                  toast.error(err instanceof Error ? err.message : "Unable to delete");
+                } finally {
+                  setPendingDeleteMaster(null);
+                }
+              }}
+            >
+              {(deleteHead.isPending || deleteSubHead.isPending) ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+              Delete / retire
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </DashboardLayout>
   );
 }
@@ -2492,7 +2610,7 @@ function MetersPanel({
                     <th className="px-4 py-2 text-right">Rate / unit</th>
                     <th className="px-4 py-2">Actual</th>
                     <th className="px-4 py-2">Estimated</th>
-                    <th className="px-4 py-2" />
+                    <th className="px-4 py-2" scope="col" aria-label="Actions" />
                   </tr>
                 </thead>
                 <tbody>
@@ -3028,7 +3146,7 @@ function ExpenseMasterPanel({
                           <tr key={item.id} className={`border-b border-slate-100 last:border-0 ${item.activeStatus ? "" : "bg-amber-50/60"}`}>
                             <td className="px-3 py-2 font-medium text-slate-800">
                               {item.subHeadName}
-                              {!item.activeStatus && <span className="ml-2 text-[10px] uppercase text-amber-700">inactive</span>}
+                              {!item.activeStatus && <Badge className="ml-2 border-amber-200 bg-amber-50 text-amber-700 text-[10px]">Inactive</Badge>}
                             </td>
                             <td className="px-3 py-2 text-slate-600">{item.defaultUnit}</td>
                             <td className="px-3 py-2 text-slate-600">{item.defaultTaxTreatment.replaceAll("_", " ")}</td>

@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import {
   AlertTriangle,
@@ -164,15 +164,17 @@ function BranchSelect({
 
 function StatusPill({ value }: { value: unknown }) {
   const status = String(value ?? "unknown").toLowerCase();
-  const className = status.includes("approved") || status.includes("active") || status.includes("validated") || status.includes("locked")
-    ? "border-emerald-200 bg-emerald-50 text-emerald-700"
-    : status.includes("reject") || status.includes("reverse") || status.includes("inactive")
-      ? "border-rose-200 bg-rose-50 text-rose-700"
-      : "border-amber-200 bg-amber-50 text-amber-700";
+  const className = status.includes("locked")
+    ? "border-violet-200 bg-violet-50 text-violet-700"
+    : status.includes("approved") || status.includes("active") || status.includes("validated")
+      ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+      : status.includes("reject") || status.includes("reverse") || status.includes("inactive")
+        ? "border-rose-200 bg-rose-50 text-rose-700"
+        : "border-amber-200 bg-amber-50 text-amber-700";
   return <span className={`inline-flex rounded-full border px-2.5 py-1 text-[11px] font-bold uppercase tracking-wider ${className}`}>{titleCase(status)}</span>;
 }
 
-function MasterTable({ columns, rows, emptyText, maxHeight = 420, onRowClick }: { columns: Column[]; rows: AnyRow[]; emptyText: string; maxHeight?: number; onRowClick?: (row: AnyRow) => void }) {
+function MasterTable({ columns, rows, emptyText, maxHeight = 420, onRowClick, selectedId }: { columns: Column[]; rows: AnyRow[]; emptyText: string; maxHeight?: number; onRowClick?: (row: AnyRow) => void; selectedId?: string | number | null }) {
   return (
     <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
       <div className="overflow-auto" style={{ maxHeight }}>
@@ -187,19 +189,22 @@ function MasterTable({ columns, rows, emptyText, maxHeight = 420, onRowClick }: 
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
-            {rows.map((row, rowIndex) => (
-              <tr
-                key={String(row.id ?? `${rowIndex}-${row[columns[0]?.key]}`)}
-                className={`transition hover:bg-sky-50/40 ${onRowClick ? "cursor-pointer" : ""}`}
-                onClick={() => onRowClick?.(row)}
-              >
-                {columns.map((column) => (
-                  <td key={column.key} className={`whitespace-nowrap px-4 py-3 text-slate-700 ${column.align === "right" ? "text-right" : "text-left"}`}>
-                    {column.render ? column.render(row[column.key], row) : String(row[column.key] ?? "-")}
-                  </td>
-                ))}
-              </tr>
-            ))}
+            {rows.map((row, rowIndex) => {
+              const isSelected = selectedId != null && String(row.id) === String(selectedId);
+              return (
+                <tr
+                  key={String(row.id ?? `${rowIndex}-${row[columns[0]?.key]}`)}
+                  className={`transition ${isSelected ? "bg-sky-50 ring-1 ring-inset ring-sky-200" : "hover:bg-sky-50/40"} ${onRowClick ? "cursor-pointer" : ""}`}
+                  onClick={() => onRowClick?.(row)}
+                >
+                  {columns.map((column) => (
+                    <td key={column.key} className={`whitespace-nowrap px-4 py-3 ${isSelected ? "text-slate-900" : "text-slate-700"} ${column.align === "right" ? "text-right" : "text-left"}`}>
+                      {column.render ? column.render(row[column.key], row) : String(row[column.key] ?? "-")}
+                    </td>
+                  ))}
+                </tr>
+              );
+            })}
             {rows.length === 0 ? (
               <tr><td colSpan={columns.length} className="px-4 py-12 text-center text-sm text-slate-500">{emptyText}</td></tr>
             ) : null}
@@ -287,7 +292,7 @@ function SplitPane({
             <span className="text-xs font-semibold">
               {selectedRow ? "Edit entry" : "Add new"}
             </span>
-            <Button variant="ghost" size="sm" className="h-6 w-6 p-0" onClick={onClose}>
+            <Button variant="ghost" size="sm" aria-label="Close form panel" className="h-8 w-8 min-w-[2rem] p-0" onClick={onClose}>
               ×
             </Button>
           </div>
@@ -323,6 +328,9 @@ export default function PnlMasterControlCenterPage() {
   const [selectedRow, setSelectedRow] = useState<AnyRow | null>(null);
   // For commercial tab which has multiple form types
   const [commercialFormType, setCommercialFormType] = useState<"rule" | "contract" | "rate">("rule");
+  // Delivery tab has two side-by-side SplitPanes; separate open states prevent both from opening simultaneously
+  const [deliveryFormOpen, setDeliveryFormOpen] = useState(false);
+  const [revenueFormOpen, setRevenueFormOpen] = useState(false);
 
   const legacy = usePnlConfiguration(period, processFilter || undefined);
   const bpo = useBpoPnlConfiguration(period, processFilter || undefined, branchFilter || undefined);
@@ -522,6 +530,109 @@ export default function PnlMasterControlCenterPage() {
     status: "draft",
   });
 
+  // P1: populate the active tab's form when a row is selected for editing
+  useEffect(() => {
+    if (!selectedRow || !formOpen) return;
+    if (activeTab === "commercial") {
+      if (commercialFormType === "rule") {
+        setRevenueRuleForm({
+          processId: String(selectedRow.process_id ?? ""),
+          contractId: selectedRow.contract_id ?? null,
+          ruleName: String(selectedRow.rule_name ?? ""),
+          billingModel: String(selectedRow.billing_model ?? "per_seat"),
+          metricKey: String(selectedRow.metric_key ?? "billable_seats"),
+          rateAmount: Number(selectedRow.rate_amount ?? 0),
+          currencyCode: String(selectedRow.currency_code ?? "INR"),
+          fxToInr: Number(selectedRow.fx_to_inr ?? 1),
+          monthlyMinimumCommitment: Number(selectedRow.monthly_minimum_commitment ?? 0),
+          includedUnits: Number(selectedRow.included_units ?? 0),
+          overageRate: Number(selectedRow.overage_rate ?? 0),
+          mandatedSeats: Number(selectedRow.mandated_seats ?? 0),
+          qualityGatePct: selectedRow.quality_gate_pct != null ? Number(selectedRow.quality_gate_pct) : null,
+          slaGatePct: selectedRow.sla_gate_pct != null ? Number(selectedRow.sla_gate_pct) : null,
+          effectiveFrom: String(selectedRow.effective_from ?? firstDay(period)),
+          effectiveTo: selectedRow.effective_to != null ? String(selectedRow.effective_to) : null,
+          status: String(selectedRow.status ?? "approved"),
+          approvalReference: String(selectedRow.approval_reference ?? ""),
+        });
+      } else if (commercialFormType === "contract") {
+        setContractForm({
+          process_id: String(selectedRow.process_id ?? ""),
+          client_id: String(selectedRow.client_id ?? ""),
+          contract_name: String(selectedRow.contract_name ?? ""),
+          billing_type: String(selectedRow.billing_type ?? "per_seat"),
+          billing_rate: Number(selectedRow.billing_rate ?? 0),
+          currency: String(selectedRow.currency ?? "INR"),
+          monthly_minimum_commitment: Number(selectedRow.monthly_minimum_commitment ?? 0),
+          effective_from: String(selectedRow.effective_from ?? firstDay(period)),
+          status: String(selectedRow.status ?? "active"),
+        });
+      } else if (commercialFormType === "rate") {
+        setRateForm({
+          process_id: String(selectedRow.process_id ?? ""),
+          contract_id: String(selectedRow.contract_id ?? ""),
+          rate_type: String(selectedRow.rate_type ?? "seat_rate"),
+          rate_amount: Number(selectedRow.rate_amount ?? 0),
+          unit: String(selectedRow.unit ?? "seat"),
+          effective_from: String(selectedRow.effective_from ?? firstDay(period)),
+          approval_reference: String(selectedRow.approval_reference ?? ""),
+        });
+      }
+    } else if (activeTab === "costs") {
+      setCostForm({
+        processId: selectedRow.process_id != null ? String(selectedRow.process_id) : null,
+        branchId: selectedRow.branch_id != null ? String(selectedRow.branch_id) : null,
+        periodCode: String(selectedRow.period_code ?? period),
+        costType: String(selectedRow.cost_type ?? "depreciation"),
+        description: String(selectedRow.description ?? ""),
+        amountInr: Number(selectedRow.amount_inr ?? 0),
+        allocationDriver: String(selectedRow.allocation_driver ?? "direct"),
+        manualAllocationPct: selectedRow.manual_allocation_pct != null ? Number(selectedRow.manual_allocation_pct) : null,
+        sourceReference: String(selectedRow.source_reference ?? "finance-master"),
+        status: String(selectedRow.status ?? "approved"),
+      });
+    } else if (activeTab === "allocation") {
+      setAllocationForm({
+        branchId: String(selectedRow.branch_id ?? ""),
+        processId: selectedRow.process_id != null ? String(selectedRow.process_id) : null,
+        poolType: String(selectedRow.pool_type ?? "bmc_people"),
+        allocationDriver: String(selectedRow.allocation_driver ?? "active_hc"),
+        manualAllocationPct: selectedRow.manual_allocation_pct != null ? Number(selectedRow.manual_allocation_pct) : null,
+        effectiveFrom: String(selectedRow.effective_from ?? firstDay(period)),
+        effectiveTo: selectedRow.effective_to != null ? String(selectedRow.effective_to) : null,
+        status: String(selectedRow.status ?? "approved"),
+      });
+    } else if (activeTab === "classification") {
+      setClassificationForm({
+        ruleName: String(selectedRow.rule_name ?? ""),
+        scopeType: String(selectedRow.scope_type ?? "designation"),
+        scopeKey: String(selectedRow.scope_key ?? ""),
+        processId: selectedRow.process_id != null ? String(selectedRow.process_id) : null,
+        branchId: selectedRow.branch_id != null ? String(selectedRow.branch_id) : null,
+        pnlBucket: String(selectedRow.pnl_bucket ?? "agent_salary"),
+        priority: Number(selectedRow.priority ?? 100),
+        effectiveFrom: String(selectedRow.effective_from ?? firstDay(period)),
+        effectiveTo: selectedRow.effective_to != null ? String(selectedRow.effective_to) : null,
+        activeStatus: selectedRow.active_status != null ? Boolean(selectedRow.active_status) : true,
+      });
+    } else if (activeTab === "plans") {
+      setPlanForm({
+        process_id: String(selectedRow.process_id ?? ""),
+        period_code: String(selectedRow.period_code ?? period),
+        contracted_seats: Number(selectedRow.contracted_seats ?? 0),
+        required_productive_hc: Number(selectedRow.required_productive_hc ?? 0),
+        planned_shrinkage_pct: Number(selectedRow.planned_shrinkage_pct ?? 0),
+        required_roster_hc: Number(selectedRow.required_roster_hc ?? 0),
+        buffer_target_pct: Number(selectedRow.buffer_target_pct ?? 0),
+        revenue_budget: Number(selectedRow.revenue_budget ?? 0),
+        direct_cost_budget: Number(selectedRow.direct_cost_budget ?? 0),
+        indirect_cost_budget: Number(selectedRow.indirect_cost_budget ?? 0),
+        profit_budget: Number(selectedRow.profit_budget ?? 0),
+        status: String(selectedRow.status ?? "draft"),
+      });
+    }
+  }, [selectedRow]);
+
   async function saveWithToast(action: () => Promise<unknown>, successMessage: string) {
     try {
       await action();
@@ -555,11 +666,8 @@ export default function PnlMasterControlCenterPage() {
     <DashboardLayout>
       <div className="flex h-full flex-col">
         {/* 48px slim header */}
-        <div
-          aria-label="Govern process mappings, contracts, hybrid billing, delivery evidence, cost classification"
-          className="flex items-center justify-between border-b px-4 h-12 shrink-0 bg-white"
-        >
-          <h1 className="text-sm font-semibold">P&L Master & Control Center</h1>
+        <div className="flex items-center justify-between border-b px-4 h-12 shrink-0 bg-white">
+          <h1 className="text-base font-bold text-slate-900">P&L Master &amp; Control Center</h1>
           <div className="flex items-center gap-3">
             {period && <Badge variant="outline" className="text-xs">{period}</Badge>}
             <Button variant="outline" size="sm" className="text-xs gap-1.5" onClick={() => setBulkUploadOpen(true)}>
@@ -586,7 +694,7 @@ export default function PnlMasterControlCenterPage() {
                 <Field label="Financial period"><MonthYearPicker value={period} onChange={updatePeriod} /></Field>
                 <Field label="Process filter"><ProcessSelect value={processFilter} onChange={setProcessFilter} processes={processes} allowBlank /></Field>
                 <Field label="Branch filter"><BranchSelect value={branchFilter} onChange={setBranchFilter} branches={branches} allowBlank /></Field>
-                <div className="flex items-end"><Button variant="outline" className="w-full rounded-xl" onClick={() => { legacy.referenceQuery.refetch(); legacy.contractsQuery.refetch(); bpo.revenueRulesQuery.refetch(); bpo.classificationRulesQuery.refetch(); }}><RefreshCw className="mr-2 h-4 w-4" />Refresh</Button></div>
+                <div className="flex items-end"><Button variant="outline" className="w-full rounded-xl" disabled={legacy.referenceQuery.isFetching || legacy.contractsQuery.isFetching || bpo.revenueRulesQuery.isFetching || bpo.classificationRulesQuery.isFetching} onClick={() => { legacy.referenceQuery.refetch(); legacy.contractsQuery.refetch(); bpo.revenueRulesQuery.refetch(); bpo.classificationRulesQuery.refetch(); }}><RefreshCw className="mr-2 h-4 w-4" />Refresh</Button></div>
               </div>
             </section>
 
@@ -599,15 +707,19 @@ export default function PnlMasterControlCenterPage() {
                   { label: "Revenue rules", value: revenueRules.length, detail: `${health.withoutRule.length} processes require a billing rule`, tone: health.withoutRule.length ? "rose" : "emerald" },
                   { label: "Classification rules", value: classificationRules.length, detail: "Employee, designation, department and expense rules", tone: "violet" },
                   { label: "Allocation policies", value: allocationPolicies.length, detail: `${health.allocationIssues.length} manual pools not balanced to 100%`, tone: health.allocationIssues.length ? "rose" : "sky" },
-                ].map(({ label, value, detail }) => (
-                  <Card key={label} className="rounded-2xl border-slate-200 shadow-sm">
+                ].map(({ label, value, detail, tone }) => {
+                  const borderClass = tone === "rose" ? "border-rose-300 bg-rose-50/60" : tone === "amber" ? "border-amber-300 bg-amber-50/60" : tone === "emerald" ? "border-emerald-200" : "border-slate-200";
+                  const detailClass = tone === "rose" ? "text-rose-700" : tone === "amber" ? "text-amber-700" : "text-slate-500";
+                  return (
+                  <Card key={label} className={`rounded-2xl shadow-sm ${borderClass}`}>
                     <CardContent className="p-4">
                       <p className="text-xs font-bold uppercase tracking-wider text-slate-500">{label}</p>
                       <p className="mt-1 text-2xl font-black text-slate-950">{value}</p>
-                      <p className="mt-1 text-xs text-slate-500">{detail}</p>
+                      <p className={`mt-1 text-xs ${detailClass}`}>{detail}</p>
                     </CardContent>
                   </Card>
-                ))}
+                  );
+                })}
               </div>
             )}
 
@@ -664,7 +776,7 @@ export default function PnlMasterControlCenterPage() {
                       <Field label="Proposed rate change %"><Input className="rounded-xl" type="number" value={impactRateChange} onChange={(event) => setImpactRateChange(numberValue(event.target.value))} /></Field>
                       <div className="grid gap-3 sm:grid-cols-3">
                         <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4"><p className="text-xs font-bold uppercase tracking-wider text-slate-500">Current proxy</p><p className="mt-2 text-xl font-black text-slate-950">{currency(impactPreview.currentMonthlyRevenue)}</p></div>
-                        <div className="rounded-2xl border border-sky-200 bg-sky-50 p-4"><p className="text-xs font-bold uppercase tracking-wider text-sky-700">Impact</p><p className="mt-2 text-xl font-black text-sky-950">{currency(impactPreview.delta)}</p></div>
+                        <div className={`rounded-2xl border p-4 ${impactPreview.delta < 0 ? "border-rose-200 bg-rose-50" : "border-sky-200 bg-sky-50"}`}><p className={`text-xs font-bold uppercase tracking-wider ${impactPreview.delta < 0 ? "text-rose-700" : "text-sky-700"}`}>Impact</p><p className={`mt-2 text-xl font-black ${impactPreview.delta < 0 ? "text-rose-950" : "text-sky-950"}`}>{impactPreview.delta < 0 ? "−" : "+"}{currency(Math.abs(impactPreview.delta))}</p></div>
                         <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4"><p className="text-xs font-bold uppercase tracking-wider text-emerald-700">Revised proxy</p><p className="mt-2 text-xl font-black text-emerald-950">{currency(impactPreview.revised)}</p></div>
                       </div>
                       <p className="rounded-2xl border border-amber-100 bg-amber-50 px-4 py-3 text-xs leading-5 text-amber-800">Preview uses {impactPreview.ruleCount} configured rule(s), monthly minimums, mandated seats and FX. The live P&amp;L remains unchanged until the approved master is saved.</p>
@@ -688,6 +800,9 @@ export default function PnlMasterControlCenterPage() {
                             <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-rose-500" />
                           </div>
                         ))}
+                        {health.unmappedProcesses.length > 8 && (
+                          <p className="px-4 py-2 text-xs text-slate-500">+{health.unmappedProcesses.length - 8} more — filter by process to view all</p>
+                        )}
                       </div>
                     )}
                   </div>
@@ -699,12 +814,12 @@ export default function PnlMasterControlCenterPage() {
                     ) : (
                       <div className="divide-y divide-slate-100">
                         {health.withoutRule.slice(0, 8).map((process) => (
-                          <button type="button" key={process.id} onClick={() => { setRevenueRuleForm((current) => ({ ...current, processId: process.id })); setSearchParams({ period, tab: "commercial" }); }} className="flex w-full items-center justify-between gap-2 px-4 py-2 text-left hover:bg-amber-50/60">
+                          <button type="button" key={process.id} aria-label={`Create billing rule for ${process.process_name}`} onClick={() => { setRevenueRuleForm((current) => ({ ...current, processId: process.id })); setSearchParams({ period, tab: "commercial" }); }} className="flex w-full items-center justify-between gap-2 px-4 py-2 text-left hover:bg-amber-50/60">
                             <div className="min-w-0">
                               <p className="truncate text-sm font-medium text-slate-900">{process.process_name}</p>
                               <p className="text-[11px] text-slate-500">Create commercial billing rule</p>
                             </div>
-                            <ArrowRight className="h-3.5 w-3.5 shrink-0 text-amber-600" />
+                            <ArrowRight aria-hidden className="h-3.5 w-3.5 shrink-0 text-amber-600" />
                           </button>
                         ))}
                       </div>
@@ -760,6 +875,7 @@ export default function PnlMasterControlCenterPage() {
                     tableSlot={
                       <MasterTable
                         emptyText="No revenue rule is configured for this scope."
+                        selectedId={selectedRow?.id}
                         rows={revenueRules}
                         onRowClick={(row) => { setSelectedRow(row); setFormOpen(true); }}
                         columns={[{ key: "process_id", label: "Process", render: (value) => processName.get(String(value)) ?? String(value) }, { key: "rule_name", label: "Rule" }, { key: "billing_model", label: "Model", render: titleCase }, { key: "rate_amount", label: "Rate", align: "right", render: currency }, { key: "monthly_minimum_commitment", label: "Minimum", align: "right", render: currency }, { key: "status", label: "Status", render: (value) => <StatusPill value={value} /> }]}
@@ -810,6 +926,7 @@ export default function PnlMasterControlCenterPage() {
                       <MasterTable
                         rows={contracts as AnyRow[]}
                         emptyText="No contract configured."
+                        selectedId={selectedRow?.id}
                         onRowClick={(row) => { setSelectedRow(row); setFormOpen(true); }}
                         columns={[{ key: "process_name", label: "Process" }, { key: "contract_name", label: "Contract" }, { key: "billing_type", label: "Type", render: titleCase }, { key: "billing_rate", label: "Base rate", align: "right", render: currency }, { key: "status", label: "Status", render: (value) => <StatusPill value={value} /> }]}
                       />
@@ -848,6 +965,7 @@ export default function PnlMasterControlCenterPage() {
                       <MasterTable
                         rows={rates as AnyRow[]}
                         emptyText="No rate card configured."
+                        selectedId={selectedRow?.id}
                         onRowClick={(row) => { setSelectedRow(row); setFormOpen(true); }}
                         columns={[{ key: "process_name", label: "Process" }, { key: "rate_type", label: "Rate type", render: titleCase }, { key: "rate_amount", label: "Amount", align: "right", render: currency }, { key: "unit", label: "Unit" }, { key: "effective_from", label: "Effective" }]}
                       />
@@ -877,18 +995,41 @@ export default function PnlMasterControlCenterPage() {
                   {/* Delivery split-pane */}
                   <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden" style={{ minHeight: 480 }}>
                     <SplitPane
-                      formOpen={formOpen}
+                      formOpen={deliveryFormOpen}
                       tableLabel="Delivery register"
-                      onAdd={openAdd}
-                      onClose={closeForm}
+                      onAdd={() => { setSelectedRow(null); setDeliveryFormOpen(true); }}
+                      onClose={() => { setDeliveryFormOpen(false); setSelectedRow(null); }}
                       selectedRow={selectedRow}
-                      onSave={() => saveWithToast(() => bpo.saveDeliveryActual.mutateAsync(deliveryForm as DeliveryActualPayload & Record<string, unknown>), "Validated delivery saved.").then(closeForm)}
+                      onSave={() => saveWithToast(() => bpo.saveDeliveryActual.mutateAsync(deliveryForm as DeliveryActualPayload & Record<string, unknown>), "Validated delivery saved.").then(() => { setDeliveryFormOpen(false); setSelectedRow(null); })}
                       saving={bpo.saveDeliveryActual.isPending}
                       tableSlot={
                         <MasterTable
                           rows={deliveryActuals}
                           emptyText="No delivery records for the selected period."
-                          onRowClick={(row) => { setSelectedRow(row); setFormOpen(true); }}
+                          selectedId={selectedRow?.id}
+                          onRowClick={(row) => {
+                            setSelectedRow(row);
+                            setDeliveryFormOpen(true);
+                            setDeliveryForm({
+                              processId: String(row.process_id ?? ""),
+                              periodCode: String(row.period_code ?? period),
+                              activityDate: String(row.activity_date ?? today()),
+                              metricKey: String(row.metric_key ?? "billable_seats"),
+                              plannedUnits: Number(row.planned_units ?? 0),
+                              deliveredUnits: Number(row.delivered_units ?? 0),
+                              acceptedUnits: Number(row.accepted_units ?? 0),
+                              rejectedUnits: Number(row.rejected_units ?? 0),
+                              billableUnits: Number(row.billable_units ?? 0),
+                              productiveHours: Number(row.productive_hours ?? 0),
+                              loginHours: Number(row.login_hours ?? 0),
+                              talkMinutes: Number(row.talk_minutes ?? 0),
+                              qualityScore: row.quality_score != null ? Number(row.quality_score) : null,
+                              slaScore: row.sla_score != null ? Number(row.sla_score) : null,
+                              dataSource: String(row.data_source ?? "manual"),
+                              sourceReference: String(row.source_reference ?? "finance-master"),
+                              status: String(row.status ?? "validated"),
+                            });
+                          }}
                           columns={[{ key: "process_id", label: "Process", render: (value) => processName.get(String(value)) ?? String(value) }, { key: "metric_key", label: "Metric" }, { key: "delivered_units", label: "Delivered", align: "right" }, { key: "billable_units", label: "Billable", align: "right" }, { key: "quality_score", label: "Quality", align: "right", render: percent }, { key: "status", label: "Status", render: (value) => <StatusPill value={value} /> }]}
                         />
                       }
@@ -922,18 +1063,34 @@ export default function PnlMasterControlCenterPage() {
                   {/* Revenue component split-pane */}
                   <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden" style={{ minHeight: 480 }}>
                     <SplitPane
-                      formOpen={formOpen}
+                      formOpen={revenueFormOpen}
                       tableLabel="Revenue addition or deduction ledger"
-                      onAdd={openAdd}
-                      onClose={closeForm}
+                      onAdd={() => { setSelectedRow(null); setRevenueFormOpen(true); }}
+                      onClose={() => { setRevenueFormOpen(false); setSelectedRow(null); }}
                       selectedRow={selectedRow}
-                      onSave={() => saveWithToast(() => bpo.saveRevenueComponent.mutateAsync(revenueComponentForm as RevenueComponentPayload & Record<string, unknown>), "Revenue component saved.").then(closeForm)}
+                      onSave={() => saveWithToast(() => bpo.saveRevenueComponent.mutateAsync(revenueComponentForm as RevenueComponentPayload & Record<string, unknown>), "Revenue component saved.").then(() => { setRevenueFormOpen(false); setSelectedRow(null); })}
                       saving={bpo.saveRevenueComponent.isPending}
                       tableSlot={
                         <MasterTable
                           rows={revenueComponents}
                           emptyText="No revenue components for the selected period."
-                          onRowClick={(row) => { setSelectedRow(row); setFormOpen(true); }}
+                          selectedId={selectedRow?.id}
+                          onRowClick={(row) => {
+                            setSelectedRow(row);
+                            setRevenueFormOpen(true);
+                            setRevenueComponentForm({
+                              processId: String(row.process_id ?? ""),
+                              periodCode: String(row.period_code ?? period),
+                              componentType: String(row.component_type ?? "incentive"),
+                              direction: (row.direction as "increase" | "decrease") ?? "increase",
+                              description: String(row.description ?? ""),
+                              amountInr: Number(row.amount_inr ?? 0),
+                              recognitionDate: String(row.recognition_date ?? today()),
+                              invoiceReference: String(row.invoice_reference ?? ""),
+                              sourceReference: String(row.source_reference ?? "finance-master"),
+                              status: String(row.status ?? "approved"),
+                            });
+                          }}
                           columns={[{ key: "process_id", label: "Process", render: (value) => processName.get(String(value)) ?? String(value) }, { key: "component_type", label: "Type", render: titleCase }, { key: "direction", label: "Direction", render: titleCase }, { key: "amount_inr", label: "Amount", align: "right", render: (value, row) => `${row.direction === "decrease" ? "-" : "+"}${currency(value)}` }, { key: "status", label: "Status", render: (value) => <StatusPill value={value} /> }]}
                         />
                       }
@@ -971,6 +1128,7 @@ export default function PnlMasterControlCenterPage() {
                     <MasterTable
                       rows={costComponents}
                       emptyText="No cost components for the selected period."
+                      selectedId={selectedRow?.id}
                       onRowClick={(row) => { setSelectedRow(row); setFormOpen(true); }}
                       columns={[{ key: "process_id", label: "Process", render: (value) => value ? processName.get(String(value)) ?? String(value) : "Shared" }, { key: "branch_id", label: "Branch", render: (value) => value ? branchName.get(String(value)) ?? String(value) : "Organisation" }, { key: "cost_type", label: "Cost type", render: titleCase }, { key: "description", label: "Description" }, { key: "amount_inr", label: "Amount", align: "right", render: currency }, { key: "status", label: "Status", render: (value) => <StatusPill value={value} /> }]}
                     />
@@ -1035,6 +1193,7 @@ export default function PnlMasterControlCenterPage() {
                     <MasterTable
                       rows={allocationPolicies}
                       emptyText="No allocation policy configured."
+                      selectedId={selectedRow?.id}
                       onRowClick={(row) => { setSelectedRow(row); setFormOpen(true); }}
                       columns={[{ key: "branch_id", label: "Branch", render: (value) => branchName.get(String(value)) ?? String(value) }, { key: "process_id", label: "Process", render: (value) => value ? processName.get(String(value)) ?? String(value) : "Branch pool" }, { key: "pool_type", label: "Pool", render: titleCase }, { key: "allocation_driver", label: "Driver", render: titleCase }, { key: "manual_allocation_pct", label: "Manual %", align: "right", render: (value) => value == null ? "-" : percent(value) }, { key: "status", label: "Status", render: (value) => <StatusPill value={value} /> }]}
                     />
@@ -1071,6 +1230,7 @@ export default function PnlMasterControlCenterPage() {
                     <MasterTable
                       rows={classificationRules}
                       emptyText="No classification rule configured."
+                      selectedId={selectedRow?.id}
                       onRowClick={(row) => { setSelectedRow(row); setFormOpen(true); }}
                       columns={[{ key: "rule_name", label: "Rule" }, { key: "scope_type", label: "Scope", render: titleCase }, { key: "scope_key", label: "Key" }, { key: "pnl_bucket", label: "P&L bucket", render: titleCase }, { key: "priority", label: "Priority", align: "right" }, { key: "active_status", label: "Status", render: (value) => <StatusPill value={Number(value) === 0 ? "inactive" : "active"} /> }]}
                     />
@@ -1113,6 +1273,7 @@ export default function PnlMasterControlCenterPage() {
                     <MasterTable
                       rows={plans as AnyRow[]}
                       emptyText="No monthly plan configured for this period."
+                      selectedId={selectedRow?.id}
                       onRowClick={(row) => { setSelectedRow(row); setFormOpen(true); }}
                       columns={[{ key: "process_name", label: "Process" }, { key: "contracted_seats", label: "Seats", align: "right" }, { key: "required_roster_hc", label: "Roster HC", align: "right" }, { key: "revenue_budget", label: "Revenue", align: "right", render: currency }, { key: "profit_budget", label: "Profit", align: "right", render: currency }, { key: "status", label: "Status", render: (value) => <StatusPill value={value} /> }]}
                     />
@@ -1159,15 +1320,21 @@ export default function PnlMasterControlCenterPage() {
                   <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
                     <div className="flex items-center gap-2 mb-3"><LockKeyhole className="h-4 w-4 text-amber-600" /><p className="text-sm font-black text-slate-950">Period governance</p></div>
                     <div className="space-y-2">
-                      {periods.slice(0, 8).map((row) => (
-                        <div key={row.id} className="flex items-center justify-between rounded-2xl border border-slate-200 px-4 py-3">
-                          <div>
-                            <p className="text-sm font-black text-slate-900">{row.period_code}</p>
-                            <p className="text-xs text-slate-500">{row.locked_at ? `Locked ${new Date(row.locked_at).toLocaleString("en-IN")}` : "Available for governance"}</p>
+                      {legacy.periodsQuery.isLoading ? (
+                        [1, 2, 3].map((n) => <Skeleton key={n} className="h-[3.25rem] rounded-2xl" />)
+                      ) : periods.length === 0 ? (
+                        <p className="py-4 text-center text-xs text-slate-500">No periods configured. Add periods via the Period Close workflow.</p>
+                      ) : (
+                        periods.slice(0, 8).map((row) => (
+                          <div key={row.id} className="flex items-center justify-between rounded-2xl border border-slate-200 px-4 py-3">
+                            <div>
+                              <p className="text-sm font-black text-slate-900">{row.period_code}</p>
+                              <p className="text-xs text-slate-500">{row.locked_at ? `Locked ${new Date(row.locked_at).toLocaleString("en-IN")}` : "Available for governance"}</p>
+                            </div>
+                            <StatusPill value={row.status} />
                           </div>
-                          <StatusPill value={row.status} />
-                        </div>
-                      ))}
+                        ))
+                      )}
                     </div>
                   </div>
 
@@ -1177,7 +1344,7 @@ export default function PnlMasterControlCenterPage() {
                       {([["Payroll", classificationRules.length > 0], ["Commercial rules", revenueRules.length > 0], ["Delivery actuals", deliveryActuals.length > 0], ["GRN allocations", true], ["Vendor payments", true], ["Monthly plans", plans.length > 0]] as [string, boolean][]).map(([label, ready]) => (
                         <div key={label} className="flex items-center justify-between rounded-2xl border border-slate-200 px-4 py-3">
                           <span className="text-sm font-bold text-slate-800">{label}</span>
-                          {ready ? <CheckCircle2 className="h-5 w-5 text-emerald-500" /> : <XCircle className="h-5 w-5 text-rose-500" />}
+                          {ready ? <CheckCircle2 aria-label="Ready" className="h-5 w-5 text-emerald-500" /> : <XCircle aria-label="Not ready" className="h-5 w-5 text-rose-500" />}
                         </div>
                       ))}
                     </div>
