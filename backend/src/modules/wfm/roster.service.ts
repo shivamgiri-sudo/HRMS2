@@ -3,6 +3,7 @@ import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import type { WfmRosterPlan, WfmRosterAssignment } from "./wfm.types.js";
 import { computeScheduledMinutes, rosterAssignmentColumns } from "./shift-scheduling.util.js";
+import { isRestPolicyFeatureActive, validateMinimumRest, logRestOverride } from "./rest-policy.service.js";
 
 export interface CreatePlanInput {
   planName: string;
@@ -24,6 +25,31 @@ export interface AssignInput {
   branchName?: string | null;
   processName?: string | null;
   rosterStatus?: string;
+  /** Area 2 emergency override — both required together. Only takes effect
+   *  when the resolved policy has allows_emergency_override=1; otherwise
+   *  insufficient rest blocks the assignment regardless of these fields. */
+  restOverrideReason?: string | null;
+  restOverrideApprovedBy?: string | null;
+}
+
+export class InsufficientRestError extends Error {
+  code = "INSUFFICIENT_REST" as const;
+  statusCode = 422;
+  constructor(public details: { actualRestMinutes?: number; requiredRestMinutes?: number; against?: string; canOverride?: boolean }) {
+    super(
+      `Assignment blocked: only ${details.actualRestMinutes} minutes rest against the ${details.against} shift ` +
+      `(minimum ${details.requiredRestMinutes} minutes required).` +
+      (details.canOverride ? " An emergency override is permitted with reason + approver." : " This policy does not permit emergency override.")
+    );
+  }
+}
+
+export class RestPolicyMissingError extends Error {
+  code = "REST_POLICY_MISSING" as const;
+  statusCode = 422;
+  constructor() {
+    super("No minimum-rest policy is configured for this employee, process, branch, or organization. Configure one in Admin > Roster Controls > Minimum Rest before assigning shifts.");
+  }
 }
 
 export interface BulkAssignRow {
@@ -128,7 +154,61 @@ export const rosterService = {
     return rows as WfmRosterPlan[];
   },
 
-  async assignEmployee(input: AssignInput, _userId: string): Promise<WfmRosterAssignment> {
+  async assignEmployee(input: AssignInput, userId: string): Promise<WfmRosterAssignment> {
+    // Area 2: minimum-rest validation. Manual assignment BLOCKS by default,
+    // same as automated generation — the difference is a manual assignment can
+    // carry an explicit emergency override (reason + approver), which an
+    // automated generation run never supplies on its own. Only runs when both
+    // a candidate shift's times are known (nothing to validate a week-off
+    // against) and the feature has actually been turned on (migration 1210
+    // applied) — otherwise this is a no-op, preserving current behavior.
+    if (input.shiftStartTime && input.shiftEndTime && (await isRestPolicyFeatureActive())) {
+      const [empRows] = await db.execute<RowDataPacket[]>(
+        "SELECT process_id, branch_id FROM employees WHERE id = ? LIMIT 1", [input.employeeId]
+      );
+      const emp = empRows[0] as { process_id?: string | null; branch_id?: string | null } | undefined;
+      const restCheck = await validateMinimumRest(
+        { employeeId: input.employeeId, processId: emp?.process_id ?? null, branchId: emp?.branch_id ?? null, forDate: input.rosterDate },
+        { startTime: input.shiftStartTime, endTime: input.shiftEndTime }
+      );
+
+      if (!restCheck.ok) {
+        if (restCheck.reason === "REST_POLICY_MISSING") {
+          throw new RestPolicyMissingError();
+        }
+        // INSUFFICIENT_REST: only proceeds if the resolved policy explicitly
+        // allows an emergency override AND the caller supplied both a reason
+        // and an approver — matching "override requires reason, approver,
+        // timestamp and audit entry" exactly. Anything less than that is a
+        // block, not a silent pass.
+        const canUseOverride = restCheck.canOverride && input.restOverrideReason && input.restOverrideApprovedBy;
+        if (!canUseOverride) {
+          throw new InsufficientRestError({
+            actualRestMinutes: restCheck.actualRestMinutes, requiredRestMinutes: restCheck.requiredRestMinutes,
+            against: restCheck.against, canOverride: restCheck.canOverride,
+          });
+        }
+
+        const neighbor = restCheck.neighborShift!;
+        const candidateStartAt = `${input.rosterDate} ${input.shiftStartTime.slice(0, 5)}:00`;
+        const candidateEndAt = `${input.rosterDate} ${input.shiftEndTime.slice(0, 5)}:00`;
+        const neighborAt = `${neighbor.date} ${neighbor.time}:00`;
+        await logRestOverride({
+          employeeId: input.employeeId,
+          rosterDate: input.rosterDate,
+          previousShiftEndAt: restCheck.against === "previous" ? neighborAt : candidateEndAt,
+          nextShiftStartAt: restCheck.against === "next" ? neighborAt : candidateStartAt,
+          actualRestMinutes: restCheck.actualRestMinutes!,
+          requiredRestMinutes: restCheck.requiredRestMinutes!,
+          policyId: restCheck.policy?.id ?? null,
+          source: "manual_assignment",
+          reason: input.restOverrideReason!,
+          requestedBy: userId,
+          approvedBy: input.restOverrideApprovedBy!,
+        });
+      }
+    }
+
     // shift_version_id/scheduled_minutes only exist once migration
     // 1200_shift_versioning.sql has been applied — probe rather than assume,
     // same pattern as every other Area 4 write path. shiftId is already what

@@ -3,6 +3,7 @@ import { db } from "../../db/mysql.js";
 import type { RowDataPacket } from "mysql2";
 import { logRosterChange } from "../roster/roster-change-log.js";
 import { computeScheduledMinutes, rosterAssignmentColumns } from "../wfm/shift-scheduling.util.js";
+import { isRestPolicyFeatureActive, validateMinimumRest } from "../wfm/rest-policy.service.js";
 
 export async function importRosterAssignmentBatch(
   batchId: string,
@@ -48,9 +49,10 @@ export async function importRosterAssignmentBatch(
         continue;
       }
 
-      // Resolve employee_id from code
+      // Resolve employee_id from code (process_id/branch_id pulled here too, for
+      // the Area 2 rest-policy scope resolution below — avoids a second round trip)
       const [empRows] = await conn.execute<RowDataPacket[]>(
-        "SELECT id FROM employees WHERE employee_code = ? AND employment_status = 'active' LIMIT 1",
+        "SELECT id, process_id, branch_id FROM employees WHERE employee_code = ? AND employment_status = 'active' LIMIT 1",
         [employee_code]
       );
       if (!(empRows as RowDataPacket[]).length) {
@@ -63,7 +65,8 @@ export async function importRosterAssignmentBatch(
         skipped++;
         continue;
       }
-      const employeeId = (empRows as RowDataPacket[])[0].id as string;
+      const employeeRow = (empRows as RowDataPacket[])[0];
+      const employeeId = employeeRow.id as string;
 
       // Resolve shift_template_id from code (if not week-off). wfm_shift_template
       // is already an append-only/versioned table (no UPDATE route has ever
@@ -100,6 +103,33 @@ export async function importRosterAssignmentBatch(
       const scheduledMinutes = shiftStartTime && shiftEndTime
         ? computeScheduledMinutes(String(shiftStartTime).slice(0, 5), String(shiftEndTime).slice(0, 5))
         : null;
+
+      // Area 2: minimum-rest validation. Bulk upload BLOCKS on insufficient
+      // rest with no override path — an override needs an individual,
+      // deliberate approval (reason + named approver), which a CSV column
+      // can't legitimately grant. Only runs for non-week-off rows with a
+      // resolved shift time, and only once the feature is actually turned on
+      // (migration 1210 applied) — otherwise this is a no-op.
+      if (!isWeekOff && shiftStartTime && shiftEndTime && (await isRestPolicyFeatureActive(conn))) {
+        const restCheck = await validateMinimumRest(
+          { employeeId, processId: employeeRow.process_id ?? null, branchId: employeeRow.branch_id ?? null, forDate: roster_date },
+          { startTime: String(shiftStartTime).slice(0, 5), endTime: String(shiftEndTime).slice(0, 5) },
+          null,
+          conn
+        );
+        if (!restCheck.ok) {
+          const msg = restCheck.reason === "REST_POLICY_MISSING"
+            ? `Row ${batchRow.row_no}: no minimum-rest policy configured for this employee/process/branch/organization`
+            : `Row ${batchRow.row_no}: only ${restCheck.actualRestMinutes}min rest against the ${restCheck.against} shift (minimum ${restCheck.requiredRestMinutes}min) — bulk upload does not support emergency override, use manual assignment instead`;
+          errors.push(msg);
+          await conn.execute(
+            "UPDATE upload_batch_row SET row_status='error', error_messages=? WHERE id=?",
+            [JSON.stringify([msg]), batchRow.id]
+          );
+          skipped++;
+          continue;
+        }
+      }
 
       // Before the overwrite: this is the only record of what a re-upload changes.
       // roster_change_log exists specifically for this (old_value_json/new_value_json/

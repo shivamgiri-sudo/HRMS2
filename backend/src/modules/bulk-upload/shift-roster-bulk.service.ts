@@ -3,6 +3,7 @@ import { db } from "../../db/mysql.js";
 import type { RowDataPacket } from "mysql2";
 import { logRosterChange } from "../roster/roster-change-log.js";
 import { computeScheduledMinutes, rosterAssignmentColumns } from "../wfm/shift-scheduling.util.js";
+import { isRestPolicyFeatureActive, resolveRestPolicy, restGapMinutes, validateMinimumRest } from "../wfm/rest-policy.service.js";
 
 const DAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"] as const;
 
@@ -214,6 +215,15 @@ export async function importShiftRosterBatch(
       let dayImported = 0;
       const rowErrors: string[] = [];
       const rowAssignmentIds: string[] = [];
+      // Area 2: the most recently collected working day for THIS employee within
+      // THIS row's 7-day loop. Days are processed Monday->Sunday in order, so this
+      // is always the nearest preceding day already staged in allAssignments — the
+      // one case a database-only adjacency check (findAdjacentShifts, which only
+      // sees already-committed rows) cannot catch: two new days in the SAME upload
+      // that are adjacent to each other (e.g. a late Monday shift followed by an
+      // early Tuesday shift, both new).
+      let lastCollectedShift: { date: string; time: string } | null = null;
+      const restPolicyFeatureActive = await isRestPolicyFeatureActive(conn);
 
       for (let i = 0; i < DAYS.length; i++) {
         const dayKey = `${DAYS[i]}_shift`;
@@ -248,6 +258,35 @@ export async function importShiftRosterBatch(
           // (possibly pre-existing, possibly reused) shift template row.
           shiftStartTime = parsed.startTime;
           shiftEndTime = parsed.endTime;
+        }
+
+        // Area 2: minimum-rest validation. BLOCKS with no override path, same as
+        // roster-assignment-bulk.service.ts — an override needs an individual,
+        // deliberate approval a CSV upload can't legitimately grant.
+        if (!isWeekOff && shiftStartTime && shiftEndTime && restPolicyFeatureActive) {
+          const candidateStart = { date: rosterDateStr, time: shiftStartTime.slice(0, 5) };
+          if (lastCollectedShift) {
+            const gapWithinBatch = restGapMinutes(lastCollectedShift, candidateStart);
+            const policy = await resolveRestPolicy(
+              { employeeId, processId: employeeProcessId, branchId: employeeBranchId, forDate: rosterDateStr }, conn
+            );
+            if (policy && gapWithinBatch < policy.minimumRestMinutes) {
+              rowErrors.push(`${DAYS[i].toUpperCase()}: only ${gapWithinBatch}min rest against the shift on ${lastCollectedShift.date} in this same upload (minimum ${policy.minimumRestMinutes}min) — bulk upload does not support emergency override, use manual assignment instead`);
+              continue;
+            }
+          }
+          const restCheck = await validateMinimumRest(
+            { employeeId, processId: employeeProcessId, branchId: employeeBranchId, forDate: rosterDateStr },
+            { startTime: shiftStartTime.slice(0, 5), endTime: shiftEndTime.slice(0, 5) },
+            null, conn
+          );
+          if (!restCheck.ok) {
+            rowErrors.push(restCheck.reason === "REST_POLICY_MISSING"
+              ? `${DAYS[i].toUpperCase()}: no minimum-rest policy configured for this employee/process/branch/organization`
+              : `${DAYS[i].toUpperCase()}: only ${restCheck.actualRestMinutes}min rest against the ${restCheck.against} shift (minimum ${restCheck.requiredRestMinutes}min) — bulk upload does not support emergency override, use manual assignment instead`);
+            continue;
+          }
+          lastCollectedShift = { date: rosterDateStr, time: shiftEndTime.slice(0, 5) };
         }
 
         // Collect assignment for batch insert

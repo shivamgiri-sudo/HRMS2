@@ -24,6 +24,7 @@ vi.mock("../../roster/roster-change-log.js", () => ({ logRosterChange }));
 
 import { importShiftRosterBatch } from "../shift-roster-bulk.service.js";
 import { __resetSchemaCachesForTests } from "../../wfm/shift-scheduling.util.js";
+import { __resetSchemaProbeCachesForTests } from "../../wfm/schema-probe.util.js";
 
 function queueRows(...batches: unknown[][]) {
   let call = 0;
@@ -46,6 +47,7 @@ describe("importShiftRosterBatch transaction handling", () => {
     // Schema-probe caching is module-scope and would otherwise leak the first
     // test's result (even an empty Set is a cached hit) into every test after it.
     __resetSchemaCachesForTests();
+    __resetSchemaProbeCachesForTests();
   });
 
   it("begins, commits, and releases on a clean run; sets target_record_id on the imported row", async () => {
@@ -60,6 +62,10 @@ describe("importShiftRosterBatch transaction handling", () => {
       // SELECT weekly_roster_cycle (none found)
       [],
       // INSERT weekly_roster_cycle
+      [],
+      // Area 2: SELECT INFORMATION_SCHEMA.TABLES (isRestPolicyFeatureActive,
+      // once per row before the day loop) -> wfm_rest_policy doesn't exist yet,
+      // so every day's rest-check below is skipped -- no further Area 2 queries
       [],
       // resolveShiftTemplate: SELECT wfm_shift_template by start/end time
       [{ id: "shift-1" }],
@@ -102,6 +108,7 @@ describe("importShiftRosterBatch transaction handling", () => {
       [{ id: "emp-1", process_id: "process-1", branch_id: "branch-1" }],
       [],
       [],
+      [], // Area 2: isRestPolicyFeatureActive -> wfm_rest_policy doesn't exist yet
       [{ id: "shift-1" }],
       [],
       [], // schema probe -> no versioning columns
@@ -123,6 +130,42 @@ describe("importShiftRosterBatch transaction handling", () => {
     // shift_version_id/scheduled_minutes since the schema probe found neither.
     expect(sql).toMatch(/VALUES \(\?,\?,\?,\?,\?,\?,\?,\?,'published','published','bulk_upload',\?\)/);
     expect(params).toContain("o'brien's note");
+  });
+
+  it("blocks a day on insufficient rest against an existing DB row (Area 2), with no override path in bulk upload", async () => {
+    queueRows(
+      // SELECT upload_batch_row -> only Monday has a shift, an overnight one
+      [{ id: "row-1", row_no: 1, normalized_data: JSON.stringify({
+        employee_code: "MAS001", week_start_date: "2026-08-17",
+        mon_shift: "22:00-07:00",
+      }) }],
+      // SELECT employees
+      [{ id: "emp-1", process_id: "process-1", branch_id: "branch-1" }],
+      // SELECT weekly_roster_cycle (none found)
+      [],
+      // INSERT weekly_roster_cycle
+      [],
+      // Area 2: isRestPolicyFeatureActive -> wfm_rest_policy EXISTS this time
+      [{ TABLE_NAME: "wfm_rest_policy" }],
+      // resolveShiftTemplate: SELECT wfm_shift_template by start/end time
+      [{ id: "shift-1" }],
+      // resolveRestPolicy scopes: employee, process, branch, organization
+      [], [], [],
+      [{ id: "policy-1", scope_type: "organization", scope_id: null, minimum_rest_minutes: 600, allows_emergency_override: 0 }],
+      // findAdjacentShifts: previous ends 18:00 the same day (only 4h before
+      // the candidate's 22:00 start), next -> none
+      [{ roster_date: "2026-08-17", shift_end_time: "18:00:00" }],
+      [],
+    );
+
+    const result = await importShiftRosterBatch("batch-1", "user-1");
+
+    expect(result.errors[0]).toMatch(/only \d+min rest/);
+    expect(result.errors[0]).toMatch(/does not support emergency override/);
+    const insertCall = conn.execute.mock.calls.find(
+      ([sql]: [string]) => typeof sql === "string" && sql.startsWith("INSERT INTO wfm_roster_assignment"),
+    );
+    expect(insertCall, "a day blocked on insufficient rest must never be inserted").toBeUndefined();
   });
 
   it("rolls back and releases on an unexpected failure", async () => {

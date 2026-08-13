@@ -3,6 +3,7 @@ import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { loadWeekoffRules } from "../roster/weekoff-rule.service.js";
 import { computeScheduledMinutes } from "./shift-scheduling.util.js";
+import { isRestPolicyFeatureActive, hasAnyRestPolicyConfigured, validateMinimumRest } from "./rest-policy.service.js";
 
 type AnyRow = Record<string, any>;
 
@@ -658,6 +659,31 @@ export const autoRosterSyncedService = {
     // when it hasn't, rather than failing every insert with an unknown-column error.
     const hasShiftVersionCols = await schema.hasColumn("wfm_roster_assignment", "shift_version_id");
 
+    // Area 2 (minimum rest between shifts) fail-fast: checked BEFORE the destructive
+    // DELETE below, so a config-missing refusal never wipes existing draft data.
+    // isRestPolicyFeatureActive() distinguishes "migration 1210 not applied yet"
+    // (preserve current behavior — no validation at all) from "applied, but nothing
+    // configured at any scope for this process/branch/org" (the fail-closed state the
+    // business explicitly asked for: refuse to generate rather than silently treat the
+    // minimum as zero). Checked once per run against the plan's own process/branch,
+    // not per employee — a wholly-unconfigured policy is a single clear error, not 200
+    // identical per-employee errors buried in the conflict log.
+    const restPolicyFeatureActive = await isRestPolicyFeatureActive();
+    if (restPolicyFeatureActive) {
+      const anyPolicyConfigured = await hasAnyRestPolicyConfigured({
+        processId: plan.process_id, branchId: plan.branch_id, forDate: String(plan.from_date).slice(0, 10),
+      });
+      if (!anyPolicyConfigured) {
+        throw Object.assign(
+          new Error(
+            "No minimum-rest policy is configured for this process, branch, or organization. " +
+            "Configure one in Admin > Roster Controls > Minimum Rest before generating this roster."
+          ),
+          { statusCode: 422, code: "REST_POLICY_MISSING" }
+        );
+      }
+    }
+
     // This DELETE previously wiped every non-published assignment in the plan
     // unconditionally, with no check of wfm_roster_assignment_control.change_lock_status
     // — the column the schema defines specifically so a manual per-employee override
@@ -754,6 +780,30 @@ export const autoRosterSyncedService = {
         }
 
         for (const emp of selected) {
+          // Area 2: normal automated assignment BLOCKS on insufficient rest — no
+          // silent override path here. restPolicyFeatureActive is false whenever
+          // migration 1210 hasn't been applied, in which case this is a no-op and
+          // behavior is unchanged from before Area 2 existed.
+          if (restPolicyFeatureActive) {
+            const restCheck = await validateMinimumRest(
+              { employeeId: String(emp.id), processId: plan.process_id, branchId: plan.branch_id, forDate: rosterDate },
+              { startTime: slotStart, endTime: slotEnd }
+            );
+            if (!restCheck.ok) {
+              await insertConflict({
+                plan_id: planId,
+                employee_id: String(emp.id),
+                roster_date: rosterDate,
+                conflict_type: restCheck.reason === "REST_POLICY_MISSING" ? "rest_policy_missing" : "insufficient_rest",
+                severity: "critical",
+                message: restCheck.reason === "REST_POLICY_MISSING"
+                  ? `Employee ${(emp as AnyRow).employee_code ?? emp.id}: no minimum-rest policy resolved for ${rosterDate}. Assignment blocked.`
+                  : `Employee ${(emp as AnyRow).employee_code ?? emp.id}: only ${restCheck.actualRestMinutes}min rest against ${restCheck.against} shift (minimum ${restCheck.requiredRestMinutes}min). Automated assignment blocked${restCheck.canOverride ? " — eligible for manager emergency override." : "."}`,
+              });
+              continue; // not assigned to this slot; leaves the slot understaffed rather than silently violating rest
+            }
+          }
+
           assignedToday.add(String(emp.id));
           const assignmentId = randomUUID();
           // shift_version_id is the SAME id as shift_id here — getShiftForSlot now

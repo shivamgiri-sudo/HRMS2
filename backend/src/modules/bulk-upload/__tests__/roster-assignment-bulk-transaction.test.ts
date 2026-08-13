@@ -22,6 +22,7 @@ vi.mock("../../roster/roster-change-log.js", () => ({ logRosterChange }));
 
 import { importRosterAssignmentBatch } from "../roster-assignment-bulk.service.js";
 import { __resetSchemaCachesForTests } from "../../wfm/shift-scheduling.util.js";
+import { __resetSchemaProbeCachesForTests } from "../../wfm/schema-probe.util.js";
 
 function queueRows(...batches: unknown[][]) {
   let call = 0;
@@ -43,27 +44,35 @@ describe("importRosterAssignmentBatch transaction handling", () => {
     logRosterChange.mockClear();
     // Schema-probe caching is module-scope and would otherwise leak the first
     // test's result (even an empty Set is a cached hit) into every test after it.
+    // Two separate cache stores now: shift-versioning columns (Area 4) and the
+    // generic table-existence probe rest-policy.service.ts uses (Area 2).
     __resetSchemaCachesForTests();
+    __resetSchemaProbeCachesForTests();
   });
 
   it("begins and commits a transaction on a clean run, and always releases the connection", async () => {
     // 1: SELECT upload_batch_row -> one valid row
-    // 2: SELECT employees (resolve employee_code)
+    // 2: SELECT employees (resolve employee_code; also pulls process_id/branch_id
+    //    for Area 2's rest-policy scope resolution)
     // 3: SELECT wfm_shift_template (resolve shift_code)
-    // 4: SELECT existing wfm_roster_assignment (before-value lookup)
-    // 5: SELECT INFORMATION_SCHEMA.COLUMNS (shift-versioning schema probe) -> no
-    //    versioning columns yet, so the INSERT below falls back to the
+    // 4: SELECT INFORMATION_SCHEMA.TABLES (Area 2: isRestPolicyFeatureActive ->
+    //    wfm_rest_policy doesn't exist yet) -> feature inactive, so the rest-gap
+    //    check below is skipped entirely -- no further Area 2 queries this row
+    // 5: SELECT existing wfm_roster_assignment (before-value lookup)
+    // 6: SELECT INFORMATION_SCHEMA.COLUMNS (Area 4: shift-versioning schema probe)
+    //    -> no versioning columns yet, so the INSERT below falls back to the
     //    pre-migration column set
-    // 6: INSERT wfm_roster_assignment
-    // 7: UPDATE upload_batch_row
-    // 8: UPDATE upload_batch
+    // 7: INSERT wfm_roster_assignment
+    // 8: UPDATE upload_batch_row
+    // 9: UPDATE upload_batch
     queueRows(
       [{ id: "row-1", row_no: 1, normalized_data: JSON.stringify({
         cycle_id: "cycle-1", employee_code: "MAS001", roster_date: "2026-08-17",
         shift_code: "GEN", is_week_off: "0", notes: null,
       }) }],
-      [{ id: "emp-1" }],
+      [{ id: "emp-1", process_id: "process-1", branch_id: "branch-1" }],
       [{ id: "shift-1" }],
+      [],
       [],
       [],
       [],
@@ -91,6 +100,47 @@ describe("importRosterAssignmentBatch transaction handling", () => {
     expect(conn.commit).not.toHaveBeenCalled();
     expect(conn.rollback).toHaveBeenCalledTimes(1);
     expect(conn.release).toHaveBeenCalledTimes(1);
+  });
+
+  it("blocks a row on insufficient rest (Area 2) once wfm_rest_policy is active, with no override path in bulk upload", async () => {
+    // 1: upload_batch_row  2: employees  3: wfm_shift_template
+    // 4: INFORMATION_SCHEMA.TABLES -> wfm_rest_policy EXISTS this time
+    // 5: wfm_rest_policy (employee scope) -> none
+    // 6: wfm_rest_policy (process scope) -> none
+    // 7: wfm_rest_policy (branch scope) -> none
+    // 8: wfm_rest_policy (organization scope) -> a policy, 600min minimum, no override
+    // 9: findAdjacentShifts previous -> ends 22:00 the day before (only 6h gap to 04:00 start)
+    // 10: findAdjacentShifts next -> none
+    // 11: UPDATE upload_batch_row (error)   12: UPDATE upload_batch
+    queueRows(
+      [{ id: "row-1", row_no: 1, normalized_data: JSON.stringify({
+        cycle_id: "cycle-1", employee_code: "MAS001", roster_date: "2026-08-17",
+        shift_code: "NGT", is_week_off: "0", notes: null,
+      }) }],
+      [{ id: "emp-1", process_id: "process-1", branch_id: "branch-1" }],
+      [{ id: "shift-1", start_time: "04:00:00", end_time: "13:00:00" }],
+      [{ TABLE_NAME: "wfm_rest_policy" }],
+      [],
+      [],
+      [],
+      [{ id: "policy-1", scope_type: "organization", scope_id: null, minimum_rest_minutes: 600, allows_emergency_override: 0 }],
+      [{ roster_date: "2026-08-16", shift_end_time: "22:00:00" }],
+      [],
+      [],
+      [],
+    );
+
+    const result = await importRosterAssignmentBatch("batch-1", "user-1");
+
+    expect(result.skipped).toBe(1);
+    expect(result.errors[0]).toMatch(/only 360min rest/);
+    expect(result.errors[0]).toMatch(/does not support emergency override/);
+    const insertCall = conn.execute.mock.calls.find(
+      ([sql]: [string]) => typeof sql === "string" && sql.startsWith("INSERT INTO wfm_roster_assignment"),
+    );
+    expect(insertCall, "a row blocked on insufficient rest must never be inserted").toBeUndefined();
+    expect(conn.commit).toHaveBeenCalledTimes(1);
+    expect(conn.rollback).not.toHaveBeenCalled();
   });
 
   it("still collects a row-level validation failure without rolling back the transaction", async () => {
