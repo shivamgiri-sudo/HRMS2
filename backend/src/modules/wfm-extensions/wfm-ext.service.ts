@@ -1,7 +1,11 @@
 import { randomUUID } from "crypto";
-import type { RowDataPacket } from "mysql2";
+import type { RowDataPacket, ResultSetHeader } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
+import { getEmployeeForUser, hasRole } from "../../shared/accessGuard.js";
+import { checkEmployeeDateNotLocked } from "../roster/roster-lock-guard.js";
+import { rosterAssignmentColumns } from "../wfm/shift-scheduling.util.js";
+import { validateMinimumRest, isRestPolicyFeatureActive, logRestOverride } from "../wfm/rest-policy.service.js";
 import type { Request } from "express";
 
 type ScopeFilter = { sql?: string; params?: unknown[] };
@@ -67,9 +71,272 @@ export const rosterSwapService = {
     return rows[0];
   },
 
-  async review(id: string, status: "approved" | "rejected", reviewedBy: string, req?: Request) {
-    await db.execute("UPDATE wfm_roster_swap_request SET status = ?, reviewed_by = ?, reviewed_at = NOW() WHERE id = ?", [status, reviewedBy, id]);
-    await logSensitiveAction({ actor_user_id: reviewedBy, action_type: "ROSTER_SWAP_REVIEWED", module_key: "WFM", entity_type: "wfm_roster_swap_request", entity_id: id, change_summary: { status }, req });
+  /**
+   * Counterpart (swap_with_emp_id) accepts or declines — the lifecycle step
+   * that never existed before round 2: a manager could previously approve a
+   * swap the second employee never agreed to, because nothing recorded
+   * their side at all. Requires migration 1212 (counterpart_status column);
+   * degrades to a clear error rather than silently no-op if that column
+   * isn't present yet.
+   */
+  async respond(id: string, response: "accepted" | "declined", userId: string, req?: Request) {
+    const emp = await getEmployeeForUser(userId);
+    const [rows] = await db.execute<RowDataPacket[]>("SELECT * FROM wfm_roster_swap_request WHERE id = ? LIMIT 1", [id]);
+    const swap = rows[0] as any;
+    if (!swap) throw Object.assign(new Error("Swap request not found"), { statusCode: 404 });
+    if (!emp || emp.id !== swap.swap_with_emp_id) {
+      throw Object.assign(new Error("Only the employee named as the swap counterpart can respond to this request"), { statusCode: 403 });
+    }
+    if (swap.status !== "pending") {
+      throw Object.assign(new Error(`Cannot respond — this request is already ${swap.status}`), { statusCode: 409 });
+    }
+    if (swap.counterpart_status === undefined) {
+      throw Object.assign(new Error("Counterpart-response tracking is not available on this database yet (migration 1212 not applied)"), { statusCode: 501 });
+    }
+    if (swap.counterpart_status !== "pending") {
+      throw Object.assign(new Error(`Already responded (${swap.counterpart_status})`), { statusCode: 409 });
+    }
+    await db.execute(
+      "UPDATE wfm_roster_swap_request SET counterpart_status = ?, counterpart_responded_at = NOW() WHERE id = ?",
+      [response, id]
+    );
+    await logSensitiveAction({ actor_user_id: userId, action_type: "ROSTER_SWAP_COUNTERPART_RESPONDED", module_key: "WFM", entity_type: "wfm_roster_swap_request", entity_id: id, change_summary: { response }, req });
+    const [after] = await db.execute<RowDataPacket[]>("SELECT * FROM wfm_roster_swap_request WHERE id = ? LIMIT 1", [id]);
+    return after[0];
+  },
+
+  /**
+   * status='rejected': unchanged in spirit (just flips the flag), but now
+   * idempotency-guarded — a second call against an already-processed
+   * request 409s instead of silently re-writing reviewed_by/reviewed_at.
+   * status='approved': delegates to applyApprovedSwap(), which is where the
+   * actual roster mutation, validation, and transactional apply happens —
+   * review() no longer just flips a status column and stops there (the root
+   * cause of the dead swap workflow: it had a decision but never a roster
+   * write to make it real).
+   */
+  async review(
+    id: string,
+    status: "approved" | "rejected",
+    reviewedBy: string,
+    req?: Request,
+    opts?: { forceWithoutCounterpartAcceptance?: boolean; restOverrideReason?: string }
+  ) {
+    if (status === "rejected") {
+      const [result] = await db.execute<ResultSetHeader>(
+        "UPDATE wfm_roster_swap_request SET status = 'rejected', reviewed_by = ?, reviewed_at = NOW() WHERE id = ? AND status = 'pending'",
+        [reviewedBy, id]
+      );
+      if ((result as ResultSetHeader).affectedRows === 0) {
+        throw Object.assign(new Error("Request not found, or already processed"), { statusCode: 409 });
+      }
+      await logSensitiveAction({ actor_user_id: reviewedBy, action_type: "ROSTER_SWAP_REVIEWED", module_key: "WFM", entity_type: "wfm_roster_swap_request", entity_id: id, change_summary: { status }, req });
+      return { status: "rejected" as const, applied: false };
+    }
+    return rosterSwapService.applyApprovedSwap(id, reviewedBy, req, opts);
+  },
+
+  /**
+   * The actual "approve → validate → mutate the roster → audit" apply,
+   * transactional: both assignment rows are updated or neither is. Guards,
+   * in order:
+   *  1. Row lock (SELECT ... FOR UPDATE) + status='pending' check — this is
+   *     both the stale/double-approval guard AND the concurrency guard: a
+   *     second concurrent call blocks on the row lock until the first
+   *     commits, then sees status='approved' and 409s. Replaying an
+   *     already-applied approval can never re-run the swap.
+   *  2. Counterpart must have accepted, unless the caller is privileged and
+   *     explicitly passes forceWithoutCounterpartAcceptance (matches the
+   *     established isPrivileged-bypass pattern used elsewhere in this
+   *     codebase's manager-override endpoints).
+   *  3. Both employees must actually have a wfm_roster_assignment row on
+   *     swap_date — nothing to exchange otherwise.
+   *  4. Neither may be a week-off day (nothing to swap).
+   *  5. Neither date may be attendance/payroll-locked (roster-lock-guard.ts,
+   *     the same shared function wfm.routes.ts's manager-override endpoints
+   *     use).
+   *  6. Minimum-rest re-validated for BOTH employees against the shift
+   *     they're about to receive — an emergency override is honored only
+   *     if the resolved policy explicitly allows it and a reason was
+   *     supplied, and is logged to wfm_rest_override_log with source
+   *     'shift_swap' exactly as rest-policy.service.ts's own RestOverrideInput
+   *     type already anticipated.
+   *  7. Same-process required for both employees unless the caller is
+   *     privileged — no existing swap-specific eligibility rule was found
+   *     in this codebase's audit, so this is a conservative default, not a
+   *     rediscovered requirement; revisit if a real business rule exists.
+   */
+  async applyApprovedSwap(
+    id: string,
+    reviewedBy: string,
+    req?: Request,
+    opts?: { forceWithoutCounterpartAcceptance?: boolean; restOverrideReason?: string }
+  ) {
+    const conn = await db.getConnection();
+    try {
+      await conn.beginTransaction();
+
+      const [lockRows] = await conn.execute<RowDataPacket[]>(
+        "SELECT * FROM wfm_roster_swap_request WHERE id = ? FOR UPDATE",
+        [id]
+      );
+      const swap = lockRows[0] as any;
+      if (!swap) throw Object.assign(new Error("Swap request not found"), { statusCode: 404 });
+      if (swap.status !== "pending") {
+        throw Object.assign(new Error(`Cannot approve — this request is already ${swap.status}`), { statusCode: 409 });
+      }
+
+      if (swap.counterpart_status !== undefined && swap.counterpart_status !== "accepted" && !opts?.forceWithoutCounterpartAcceptance) {
+        throw Object.assign(
+          new Error(`Cannot approve — the counterpart employee has not accepted this swap (status: ${swap.counterpart_status})`),
+          { statusCode: 409 }
+        );
+      }
+
+      const [reqEmpRows] = await conn.execute<RowDataPacket[]>("SELECT process_id FROM employees WHERE id = ? LIMIT 1", [swap.requester_emp_id]);
+      const [tgtEmpRows] = await conn.execute<RowDataPacket[]>("SELECT process_id FROM employees WHERE id = ? LIMIT 1", [swap.swap_with_emp_id]);
+      const isPrivileged = await hasRole(reviewedBy, "admin", "hr");
+      if (!isPrivileged && reqEmpRows[0]?.process_id !== tgtEmpRows[0]?.process_id) {
+        throw Object.assign(new Error("Requester and counterpart are in different processes — cross-process swaps require admin/hr approval"), { statusCode: 409 });
+      }
+
+      const [reqAssignRows] = await conn.execute<RowDataPacket[]>(
+        "SELECT * FROM wfm_roster_assignment WHERE employee_id = ? AND roster_date = ? LIMIT 1",
+        [swap.requester_emp_id, swap.swap_date]
+      );
+      const [tgtAssignRows] = await conn.execute<RowDataPacket[]>(
+        "SELECT * FROM wfm_roster_assignment WHERE employee_id = ? AND roster_date = ? LIMIT 1",
+        [swap.swap_with_emp_id, swap.swap_date]
+      );
+      const reqAssign = reqAssignRows[0] as any;
+      const tgtAssign = tgtAssignRows[0] as any;
+      if (!reqAssign || !tgtAssign) {
+        throw Object.assign(new Error("Both employees must have a roster assignment on the swap date to apply this swap"), { statusCode: 409 });
+      }
+      if (Number(reqAssign.is_week_off) === 1 || Number(tgtAssign.is_week_off) === 1) {
+        throw Object.assign(new Error("Cannot swap a week-off day — there is no shift to exchange"), { statusCode: 409 });
+      }
+
+      const swapDateStr = String(swap.swap_date).slice(0, 10);
+      const lockReq = await checkEmployeeDateNotLocked(conn, swap.requester_emp_id, swapDateStr, "Requester's roster date");
+      if (lockReq.blocked) throw Object.assign(new Error(lockReq.error), { statusCode: 409 });
+      const lockTgt = await checkEmployeeDateNotLocked(conn, swap.swap_with_emp_id, swapDateStr, "Counterpart's roster date");
+      if (lockTgt.blocked) throw Object.assign(new Error(lockTgt.error), { statusCode: 409 });
+
+      let restOverrideUsed = false;
+      if (await isRestPolicyFeatureActive(conn)) {
+        const checks: Array<{ label: string; employeeId: string; assignmentId: string; candidate: any }> = [
+          { label: "requester", employeeId: swap.requester_emp_id, assignmentId: reqAssign.id, candidate: tgtAssign },
+          { label: "counterpart", employeeId: swap.swap_with_emp_id, assignmentId: tgtAssign.id, candidate: reqAssign },
+        ];
+        for (const check of checks) {
+          if (!check.candidate.shift_start_time || !check.candidate.shift_end_time) continue;
+          const result = await validateMinimumRest(
+            { employeeId: check.employeeId, forDate: swapDateStr },
+            { startTime: String(check.candidate.shift_start_time).slice(0, 5), endTime: String(check.candidate.shift_end_time).slice(0, 5) },
+            check.assignmentId,
+            conn
+          );
+          if (!result.ok) {
+            if (result.reason === "REST_POLICY_MISSING" || !result.canOverride || !opts?.restOverrideReason) {
+              throw Object.assign(
+                new Error(`Swap would leave the ${check.label} with insufficient rest (${result.reason}${result.reason === "INSUFFICIENT_REST" ? `: ${result.actualRestMinutes}min actual vs ${result.requiredRestMinutes}min required` : ""}).`),
+                { statusCode: 409, restViolation: result }
+              );
+            }
+            restOverrideUsed = true;
+            if (result.neighborShift) {
+              const isAgainstPrevious = result.against === "previous";
+              await logRestOverride({
+                employeeId: check.employeeId,
+                rosterDate: swapDateStr,
+                previousShiftEndAt: isAgainstPrevious ? `${result.neighborShift.date} ${result.neighborShift.time}:00` : `${swapDateStr} ${String(check.candidate.shift_end_time).slice(0, 5)}:00`,
+                nextShiftStartAt: isAgainstPrevious ? `${swapDateStr} ${String(check.candidate.shift_start_time).slice(0, 5)}:00` : `${result.neighborShift.date} ${result.neighborShift.time}:00`,
+                actualRestMinutes: result.actualRestMinutes!,
+                requiredRestMinutes: result.requiredRestMinutes!,
+                policyId: result.policy?.id ?? null,
+                source: "shift_swap",
+                reason: opts!.restOverrideReason!,
+                requestedBy: swap.requester_emp_id,
+                approvedBy: reviewedBy,
+              }, conn);
+            }
+          }
+        }
+      }
+
+      const beforeState = {
+        requester: { employee_id: reqAssign.employee_id, shift_id: reqAssign.shift_id, shift_version_id: reqAssign.shift_version_id ?? null, shift_start_time: reqAssign.shift_start_time, shift_end_time: reqAssign.shift_end_time },
+        target: { employee_id: tgtAssign.employee_id, shift_id: tgtAssign.shift_id, shift_version_id: tgtAssign.shift_version_id ?? null, shift_start_time: tgtAssign.shift_start_time, shift_end_time: tgtAssign.shift_end_time },
+      };
+
+      // Cross-assign, preserving shift_version_id/scheduled_minutes when the
+      // columns exist (migration 1200) so the swapped-in shift stays pinned
+      // to the exact version that was scheduled, not a re-resolved "current"
+      // shift — same probe-and-degrade pattern shift-scheduling.util.ts's
+      // other callers use, so this behaves identically on a DB that hasn't
+      // had 1200 applied yet (those two columns just aren't touched).
+      const raCols = await rosterAssignmentColumns(conn);
+      const hasShiftVersionId = raCols.has("shift_version_id");
+      const hasScheduledMinutes = raCols.has("scheduled_minutes");
+      const buildSwapUpdate = (targetAssignmentId: string, sourceAssign: any) => {
+        const sets = ["shift_id = ?", "shift_start_time = ?", "shift_end_time = ?"];
+        const vals: unknown[] = [sourceAssign.shift_id, sourceAssign.shift_start_time, sourceAssign.shift_end_time];
+        if (hasShiftVersionId) { sets.push("shift_version_id = ?"); vals.push(sourceAssign.shift_version_id ?? null); }
+        if (hasScheduledMinutes) { sets.push("scheduled_minutes = ?"); vals.push(sourceAssign.scheduled_minutes ?? null); }
+        vals.push(targetAssignmentId);
+        return { sql: `UPDATE wfm_roster_assignment SET ${sets.join(", ")} WHERE id = ?`, vals };
+      };
+      const reqUpdate = buildSwapUpdate(reqAssign.id, tgtAssign);
+      const tgtUpdate = buildSwapUpdate(tgtAssign.id, reqAssign);
+      await conn.execute(reqUpdate.sql, reqUpdate.vals);
+      await conn.execute(tgtUpdate.sql, tgtUpdate.vals);
+
+      const afterState = {
+        requester: { employee_id: reqAssign.employee_id, shift_id: tgtAssign.shift_id, shift_version_id: tgtAssign.shift_version_id ?? null, shift_start_time: tgtAssign.shift_start_time, shift_end_time: tgtAssign.shift_end_time },
+        target: { employee_id: tgtAssign.employee_id, shift_id: reqAssign.shift_id, shift_version_id: reqAssign.shift_version_id ?? null, shift_start_time: reqAssign.shift_start_time, shift_end_time: reqAssign.shift_end_time },
+      };
+
+      const swapReqCols = await (async () => {
+        const [rows] = await conn.execute<RowDataPacket[]>(
+          `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'wfm_roster_swap_request'`
+        );
+        return new Set((rows as RowDataPacket[]).map((r) => String(r.COLUMN_NAME)));
+      })();
+      const hasLifecycleCols = swapReqCols.has("applied_at");
+      if (hasLifecycleCols) {
+        await conn.execute(
+          `UPDATE wfm_roster_swap_request
+              SET status = 'approved', reviewed_by = ?, reviewed_at = NOW(), applied_at = NOW(),
+                  requester_assignment_id = ?, target_assignment_id = ?,
+                  before_state_json = ?, after_state_json = ?, rest_override_used = ?
+            WHERE id = ?`,
+          [reviewedBy, reqAssign.id, tgtAssign.id, JSON.stringify(beforeState), JSON.stringify(afterState), restOverrideUsed ? 1 : 0, id]
+        );
+      } else {
+        // Migration 1212 not applied yet — still apply the roster mutation
+        // (that's the actual fix), just without the extra audit columns to
+        // write into.
+        await conn.execute(
+          "UPDATE wfm_roster_swap_request SET status = 'approved', reviewed_by = ?, reviewed_at = NOW() WHERE id = ?",
+          [reviewedBy, id]
+        );
+      }
+
+      await conn.commit();
+      await logSensitiveAction({
+        actor_user_id: reviewedBy, action_type: "ROSTER_SWAP_APPLIED", module_key: "WFM",
+        entity_type: "wfm_roster_swap_request", entity_id: id,
+        change_summary: { requester_emp_id: swap.requester_emp_id, swap_with_emp_id: swap.swap_with_emp_id, swap_date: swapDateStr, restOverrideUsed, before: beforeState, after: afterState },
+        req,
+      });
+      return { status: "approved" as const, applied: true, restOverrideUsed };
+    } catch (err) {
+      await conn.rollback();
+      throw err;
+    } finally {
+      conn.release();
+    }
   },
 };
 

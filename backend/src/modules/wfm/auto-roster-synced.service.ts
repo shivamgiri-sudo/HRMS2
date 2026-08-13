@@ -3,7 +3,7 @@ import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { loadWeekoffRules } from "../roster/weekoff-rule.service.js";
 import { computeScheduledMinutes } from "./shift-scheduling.util.js";
-import { isRestPolicyFeatureActive, hasAnyRestPolicyConfigured, validateMinimumRest } from "./rest-policy.service.js";
+import { isRestPolicyFeatureActive, hasAnyRestPolicyConfigured, validateMinimumRest, logRestOverride } from "./rest-policy.service.js";
 
 type AnyRow = Record<string, any>;
 
@@ -1083,6 +1083,12 @@ export const autoRosterSyncedService = {
     new_roster_status?: string;
     change_category?: "shift_change" | "weekoff_change" | "leave_adjustment" | "emergency" | "support_staff_update";
     change_reason: string;
+    /** Round 2 (2026-08-13): only meaningful when the resolved rest policy's
+     *  allows_emergency_override=1 — otherwise insufficient rest blocks the
+     *  change regardless. Callers reaching this function are already
+     *  route-gated to admin/process_manager, so unlike bulk-upload this path
+     *  does support an override rather than a hard block. */
+    restOverrideReason?: string | null;
   }, actorId: string) {
     if (!input.change_reason || input.change_reason.trim().length < 8) {
       throw Object.assign(new Error("Change reason is mandatory and must be meaningful."), { statusCode: 400 });
@@ -1100,6 +1106,63 @@ export const autoRosterSyncedService = {
     const newStatus = input.new_roster_status ?? old.roster_status;
     const newStart = input.new_shift_start_time ? `${input.new_shift_start_time}:00`.slice(0, 8) : old.shift_start_time;
     const newEnd = input.new_shift_end_time ? `${input.new_shift_end_time}:00`.slice(0, 8) : old.shift_end_time;
+
+    // Round 2 (2026-08-13) minimum-rest audit finding: this endpoint is the
+    // one place in the codebase that can change a LIVE, PUBLISHED
+    // assignment's shift/times — the same category of write generateDraft()
+    // (this file's own initial-generation path, a few hundred lines above)
+    // already validates — but it never called into rest-policy.service.ts at
+    // all. Only runs when the shift/time is actually changing (a pure
+    // status/category change reuses the already-scheduled, already-
+    // validated times) and the feature is active (migration 1210 applied).
+    const shiftIsChanging = Boolean(input.new_shift_id || input.new_shift_start_time || input.new_shift_end_time);
+    if (shiftIsChanging && newStart && newEnd && (await isRestPolicyFeatureActive())) {
+      // Employee's own process_id/branch_id, not just employeeId/org — without
+      // this, a process- or branch-scoped policy could never resolve here
+      // even though every other Area 2 write path (generateDraft, manual
+      // assignment, both bulk-upload paths, the governance sync bridge) does
+      // pass it, silently falling back to organization-only for this one
+      // endpoint. wfm_roster_assignment only carries denormalized
+      // branch_name/process_name strings, not the ids resolveRestPolicy needs.
+      const [empRows] = await db.execute<RowDataPacket[]>(
+        "SELECT process_id, branch_id FROM employees WHERE id = ? LIMIT 1", [old.employee_id]
+      );
+      const emp = empRows[0] as { process_id?: string | null; branch_id?: string | null } | undefined;
+      const restCheck = await validateMinimumRest(
+        { employeeId: String(old.employee_id), processId: emp?.process_id ?? null, branchId: emp?.branch_id ?? null, forDate: String(old.roster_date).slice(0, 10) },
+        { startTime: String(newStart).slice(0, 5), endTime: String(newEnd).slice(0, 5) },
+        input.assignment_id
+      );
+      if (!restCheck.ok) {
+        if (restCheck.reason === "REST_POLICY_MISSING" || !restCheck.canOverride || !input.restOverrideReason) {
+          throw Object.assign(
+            new Error(
+              restCheck.reason === "REST_POLICY_MISSING"
+                ? "No minimum-rest policy is configured for this employee/process/branch/organization — cannot verify this change is safe."
+                : `This change leaves only ${restCheck.actualRestMinutes} minute(s) of rest against the ${restCheck.against} shift (minimum required: ${restCheck.requiredRestMinutes}).`
+            ),
+            { statusCode: 409, code: restCheck.reason }
+          );
+        }
+        const neighbor = restCheck.neighborShift!;
+        const candidateStartAt = `${String(old.roster_date).slice(0, 10)} ${String(newStart).slice(0, 5)}:00`;
+        const candidateEndAt = `${String(old.roster_date).slice(0, 10)} ${String(newEnd).slice(0, 5)}:00`;
+        const neighborAt = `${neighbor.date} ${neighbor.time}:00`;
+        await logRestOverride({
+          employeeId: String(old.employee_id),
+          rosterDate: String(old.roster_date).slice(0, 10),
+          previousShiftEndAt: restCheck.against === "previous" ? neighborAt : candidateEndAt,
+          nextShiftStartAt: restCheck.against === "next" ? neighborAt : candidateStartAt,
+          actualRestMinutes: restCheck.actualRestMinutes!,
+          requiredRestMinutes: restCheck.requiredRestMinutes!,
+          policyId: restCheck.policy?.id ?? null,
+          source: "manual_assignment",
+          reason: input.restOverrideReason!,
+          requestedBy: actorId,
+          approvedBy: actorId,
+        });
+      }
+    }
 
     await db.execute(
       `UPDATE wfm_roster_assignment

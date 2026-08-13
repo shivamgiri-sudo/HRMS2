@@ -333,6 +333,28 @@ export const rosterGenerationService = {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
+// Round 2 (2026-08-13) duplicate-week-off-table audit finding: week_off_preference
+// (queried below) is the table roster generation has always read, but a
+// read-only audit found it holds 0 rows in production — every real employee
+// submission goes through employee_roster_preference instead (fed by both
+// live frontend pages, NativeRosterPreference.tsx and
+// NativeWeekOffPreferences.tsx), which this function never consulted at
+// all. An employee could get a manager-approved preference and still be
+// silently rostered every day, because generation was reading a table
+// nothing writes to.
+//
+// Documented precedence rule (audit's own recommendation, not yet a formal
+// consolidation): week_off_preference wins on conflict — it carries the
+// FCFS/capacity-aware columns (week_start_date, submission_order,
+// alternate_day) the allocation/fairness engines depend on — and
+// employee_roster_preference fills in only for employees week_off_preference
+// has no approved row for. This is a read-only merge; neither table is
+// written, backfilled, or otherwise modified by this change. A real
+// consolidation (single canonical table) remains a separate, deliberately
+// out-of-scope future migration — see the audit for exactly what that would
+// require.
+const EMP_PREF_DAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+
 async function loadApprovedWeekoffs(empIds: string[]): Promise<Map<string, ApprovedWeekOff>> {
   const placeholders = empIds.map(() => "?").join(",");
   const [rows] = await db.execute<ApprovedWeekOff[]>(
@@ -341,6 +363,42 @@ async function loadApprovedWeekoffs(empIds: string[]): Promise<Map<string, Appro
   );
   const map = new Map<string, ApprovedWeekOff>();
   for (const row of rows) map.set(row.employee_id, row);
+
+  const unresolved = empIds.filter((id) => !map.has(id));
+  if (unresolved.length) {
+    try {
+      const unresolvedPlaceholders = unresolved.map(() => "?").join(",");
+      const [empPrefRows] = await db.execute<RowDataPacket[]>(
+        `SELECT id, employee_id, preferred_week_off
+           FROM employee_roster_preference
+          WHERE employee_id IN (${unresolvedPlaceholders}) AND status = 'approved'
+          ORDER BY updated_at DESC`,
+        unresolved
+      );
+      const seen = new Set<string>();
+      for (const row of empPrefRows as RowDataPacket[]) {
+        const empId = String(row.employee_id);
+        if (seen.has(empId)) continue; // most-recently-updated approved row wins if more than one
+        seen.add(empId);
+        const dayIdx = EMP_PREF_DAY_NAMES.findIndex((d) => d.toLowerCase() === String(row.preferred_week_off ?? "").toLowerCase());
+        if (dayIdx < 0) continue; // no day recorded — cannot resolve from this row
+        map.set(empId, {
+          id: String(row.id),
+          employee_id: empId,
+          preferred_day: dayIdx,
+          alternate_day: null,
+          approved: 1,
+          auto_approved: 0,
+        } as ApprovedWeekOff);
+      }
+    } catch (error) {
+      // Non-fatal, matching loadHolidays/loadApprovedLeaveDates elsewhere in
+      // this file: generation must still produce a roster if this lookup is
+      // briefly unreachable, logged rather than silently treated as "no
+      // employee_roster_preference exists."
+      console.error("[roster] employee_roster_preference fallback lookup unavailable:", (error as Error)?.message);
+    }
+  }
   return map;
 }
 

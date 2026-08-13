@@ -4,6 +4,7 @@ import { db } from "../../db/mysql.js";
 import type { WfmRosterPlan, WfmRosterAssignment } from "./wfm.types.js";
 import { computeScheduledMinutes, rosterAssignmentColumns } from "./shift-scheduling.util.js";
 import { isRestPolicyFeatureActive, validateMinimumRest, logRestOverride } from "./rest-policy.service.js";
+import { checkEmployeeDateNotLocked } from "../roster/roster-lock-guard.js";
 
 export interface CreatePlanInput {
   planName: string;
@@ -155,6 +156,17 @@ export const rosterService = {
   },
 
   async assignEmployee(input: AssignInput, userId: string): Promise<WfmRosterAssignment> {
+    // Round 2 (2026-08-13) audit finding: this is the only roster-mutating
+    // service in the codebase with no attendance/payroll-lock check at all —
+    // an admin (who bypasses the route-level plan-status scope guard
+    // entirely, see scopeMiddleware.ts) could silently overwrite an
+    // assignment on a date wfm.routes.ts's manager-override endpoints
+    // already refuse to touch. Same shared function, same invariant.
+    const lockResult = await checkEmployeeDateNotLocked(db, input.employeeId, input.rosterDate);
+    if (lockResult.blocked) {
+      throw Object.assign(new Error(lockResult.error), { statusCode: 409, code: "ROSTER_DATE_LOCKED" });
+    }
+
     // Area 2: minimum-rest validation. Manual assignment BLOCKS by default,
     // same as automated generation — the difference is a manual assignment can
     // carry an explicit emergency override (reason + approver), which an
