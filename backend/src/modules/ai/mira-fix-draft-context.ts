@@ -94,16 +94,47 @@ export function findCandidateFiles(keywords: string[], repoRoot: string = REPO_R
 }
 
 /**
- * Reads each candidate file, truncated to MAX_FILE_CHARS. Skips (rather than throws on) a
- * file that can no longer be read — git grep and the read are not atomic, and a file rename
- * or delete between the two must not fail the whole draft attempt.
+ * Truncating from the start of a file is wrong for anything past MAX_FILE_CHARS in —
+ * verified live 2026-08-13: a real generation attempt against runPendingMigrations.ts
+ * (1400+ lines) got the first 4000 chars, which ends well before verifySchemaVersion()
+ * near the bottom, and the model correctly declined rather than guess at code it couldn't
+ * see. Centers the window on the first keyword match instead, biased toward what follows
+ * it (a match is usually a declaration; the interesting code is after the name, not
+ * before it). Falls back to the first MAX_FILE_CHARS when no keyword actually appears in
+ * this particular file's content (git grep can match on ripgrep semantics readFileSync
+ * content search does not exactly replicate) — never worse than the old behavior, only
+ * better when a match is found.
  */
-export function readContextFiles(filePaths: string[], repoRoot: string = REPO_ROOT): ContextFile[] {
+function extractRelevantWindow(content: string, keywords: string[]): string {
+  const lower = content.toLowerCase();
+  let matchIndex = -1;
+  for (const kw of keywords) {
+    const idx = lower.indexOf(kw);
+    if (idx !== -1 && (matchIndex === -1 || idx < matchIndex)) matchIndex = idx;
+  }
+  if (matchIndex === -1) return content.slice(0, MAX_FILE_CHARS);
+
+  const BEFORE = 1200;
+  const start = Math.max(0, matchIndex - BEFORE);
+  const end = Math.min(content.length, start + MAX_FILE_CHARS);
+  const prefix = start > 0 ? '...[truncated]...\n' : '';
+  const suffix = end < content.length ? '\n...[truncated]...' : '';
+  return prefix + content.slice(start, end) + suffix;
+}
+
+/**
+ * Reads each candidate file, windowed around the first matching keyword and capped to
+ * MAX_FILE_CHARS. Skips (rather than throws on) a file that can no longer be read — git
+ * grep and the read are not atomic, and a file rename or delete between the two must not
+ * fail the whole draft attempt.
+ */
+export function readContextFiles(filePaths: string[], keywords: string[] = [], repoRoot: string = REPO_ROOT): ContextFile[] {
   const out: ContextFile[] = [];
   for (const relPath of filePaths) {
     try {
       const full = path.join(repoRoot, relPath);
-      const content = readFileSync(full, 'utf8').slice(0, MAX_FILE_CHARS);
+      const raw = readFileSync(full, 'utf8');
+      const content = extractRelevantWindow(raw, keywords);
       out.push({ path: relPath, content });
     } catch {
       continue;
@@ -116,5 +147,5 @@ export function readContextFiles(filePaths: string[], repoRoot: string = REPO_RO
 export function buildContextBundle(complaintText: string, diagnosisText: string, repoRoot: string = REPO_ROOT): ContextFile[] {
   const keywords = extractKeywords(`${complaintText} ${diagnosisText}`);
   const files = findCandidateFiles(keywords, repoRoot);
-  return readContextFiles(files, repoRoot);
+  return readContextFiles(files, keywords, repoRoot);
 }
