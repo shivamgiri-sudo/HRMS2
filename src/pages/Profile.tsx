@@ -48,7 +48,6 @@ import {
 } from "@/components/profile/ProfileSensitiveDetails";
 
 interface ProfileForm {
-  official_email: string;
   mobile: string;
   personal_email: string;
   personal_phone: string;
@@ -142,7 +141,7 @@ const Profile = () => {
     return { m: now.getMonth(), y: now.getFullYear() };
   });
   const [formData, setFormData] = useState<ProfileForm>({
-    official_email: "", mobile: "", personal_email: "", personal_phone: "", alternate_mobile: "", address_line1: "", city: "",
+    mobile: "", personal_email: "", personal_phone: "", alternate_mobile: "", address_line1: "", city: "",
     date_of_birth: "", gender: "", marital_status: "", blood_group: "",
     working_hours_start: "09:00", working_hours_end: "18:00",
     working_days: [1, 2, 3, 4, 5, 6], // Default: Mon-Sat (Sunday off)
@@ -200,7 +199,6 @@ const Profile = () => {
       if (!avatarUrl) setAvatarUrl(employee.avatar_url ?? null);
       const fmt = (t: string | null) => (t ? t.slice(0, 5) : "");
       setFormData({
-        official_email: employee.official_email || "",
         mobile: employee.mobile || "",
         personal_email: employee.personal_email || "",
         personal_phone: employee.personal_phone || "",
@@ -247,7 +245,6 @@ const Profile = () => {
     setIsEditing(false);
     const fmt = (t: string | null) => (t ? t.slice(0, 5) : "");
     if (employee) setFormData({
-      official_email: employee.official_email || "",
       mobile: employee.mobile || "",
       personal_email: employee.personal_email || "",
       personal_phone: employee.personal_phone || "",
@@ -511,18 +508,23 @@ const Profile = () => {
                           </div>
                           <div className="space-y-1.5">
                             <Label className="text-xs font-bold text-slate-500 uppercase tracking-wide">Official Email</Label>
+                            {/* Read-only: official_email is the login identity, HR-only —
+                                the backend 403s any self-service PATCH /me that even carries
+                                this key, changed or not. Was previously rendered as an
+                                editable input wired to nothing the backend would accept,
+                                which made every save on this tab fail regardless of what
+                                the employee actually changed. */}
                             <Input
                               type="email"
-                              value={formData.official_email}
-                              onChange={(e) => setFormData(p => ({ ...p, official_email: e.target.value.toLowerCase() }))}
-                              disabled={!isEditing}
+                              value={employee.official_email || ""}
+                              disabled
                               placeholder="name@teammas.in"
-                              className="rounded-xl"
+                              className="rounded-xl bg-slate-50"
                             />
                             <p className={`text-xs font-semibold ${employee.official_email_compliant ? "text-emerald-600" : "text-amber-600"}`}>
                               {employee.official_email_compliant
                                 ? "Official email verified"
-                                : "Use @teammas.in or @teammas.co.in"}
+                                : "Use @teammas.in or @teammas.co.in"} · Contact HR to change
                             </p>
                           </div>
                           <div className="space-y-1.5">
