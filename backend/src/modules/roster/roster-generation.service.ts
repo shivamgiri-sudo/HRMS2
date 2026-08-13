@@ -9,6 +9,7 @@ import { loadWeekoffRules, applyWeekoffRules, sortBySeniorPriority } from "./wee
 import type { WeekoffRule } from "./weekoff-rule.service.js";
 import { computeScheduledMinutes, rosterAssignmentColumns, shiftMasterColumns } from "../wfm/shift-scheduling.util.js";
 import { isRestPolicyFeatureActive, validateMinimumRest } from "../wfm/rest-policy.service.js";
+import { checkEmployeeDateNotLocked } from "./roster-lock-guard.js";
 import {
   resolveWeekOffScopeDefault,
   parseRosterTemplatePattern,
@@ -793,6 +794,22 @@ async function syncGeneratedToLiveAssignments(
   for (const row of rows) {
     const shiftStart = row.shift_start_time ? String(row.shift_start_time).slice(0, 5) : null;
     const shiftEnd = row.shift_end_time ? String(row.shift_end_time).slice(0, 5) : null;
+
+    // Round 2 follow-up (2026-08-13): this bridge is the last of the two
+    // remaining P0 lock gaps — generateForCycle() only ever checked
+    // weekly_roster_cycle.status (a draft/submitted cycle passes that check
+    // regardless of whether the underlying dates have since had attendance
+    // independently locked for payroll), never attendance_daily_record
+    // .is_locked itself. Same shared roster-lock-guard.ts function
+    // auto-roster-synced.service.ts's generateDraft() and every other
+    // write path in this program now use — checked before the rest-policy
+    // validation below since a locked date is a harder stop regardless of
+    // rest outcome.
+    const lockResult = await checkEmployeeDateNotLocked(db, String(row.employee_id), String(row.roster_date).slice(0, 10));
+    if (lockResult.blocked) {
+      blockedEmployeeCodes.push(`${row.employee_code} — ${String(row.roster_date).slice(0, 10)} is already locked for payroll; this sync does not overwrite a locked date`);
+      continue; // does not sync this row into the live table
+    }
 
     if (restPolicyFeatureActive && shiftStart && shiftEnd) {
       const restCheck = await validateMinimumRest(
